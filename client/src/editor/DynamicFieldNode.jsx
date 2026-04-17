@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { Node, mergeAttributes, InputRule, PasteRule } from '@tiptap/core';
 import { NodeViewWrapper, ReactNodeViewRenderer } from '@tiptap/react';
 import { getDynamicFieldByKey } from '../lib/dynamicFields.js';
@@ -8,14 +9,8 @@ import { getDynamicFieldByKey } from '../lib/dynamicFields.js';
 // looked up at render time from the registry — renaming a label in the
 // registry never changes saved content.
 //
-// Raw token form: users may type or paste `{{key}}` and an input/paste
-// rule promotes it to this node. The user never sees the raw token in
-// the editor after promotion.
-//
-// Serialised form (HTML saved to DB):
-//   <span data-type="dynamic-field" data-field-key="first_name">שם פרטי</span>
-// The text inside is the label at serialisation time — human-readable
-// fallback only; the fieldKey is still the source of truth on parse.
+// Clicking a chip opens a small inline menu that lets the user convert it
+// back to raw `{{key}}` text or remove it outright.
 
 export const DynamicFieldNode = Node.create({
   name: 'dynamicField',
@@ -80,9 +75,9 @@ export const DynamicFieldNode = Node.create({
     };
   },
 
-  // Custom InputRule rather than nodeInputRule, because nodeInputRule
-  // replaces only the capture-group range — it leaves the `{{` and `}}`
-  // outside the replacement. We need to consume the entire match.
+  // Custom InputRule rather than nodeInputRule: we must consume the full
+  // `{{...}}` match including the surrounding braces. nodeInputRule would
+  // leave the braces outside the replacement.
   addInputRules() {
     const type = this.type;
     return [
@@ -112,27 +107,129 @@ export const DynamicFieldNode = Node.create({
   },
 });
 
-function ChipView({ node }) {
+function ChipView({ node, editor, getPos }) {
   const key = node.attrs.fieldKey;
   const field = getDynamicFieldByKey(key);
   const known = !!field;
   const label = field?.label;
+
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+  const triggerRef = useRef(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onDoc(e) {
+      if (menuRef.current?.contains(e.target)) return;
+      if (triggerRef.current?.contains(e.target)) return;
+      setMenuOpen(false);
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') setMenuOpen(false);
+    }
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
+
+  function convertToText(e) {
+    e?.preventDefault();
+    const pos = typeof getPos === 'function' ? getPos() : null;
+    if (typeof pos !== 'number') return;
+    const from = pos;
+    const to = pos + node.nodeSize;
+    // Delete the chip, then drop in the raw `{{key}}` text at the same
+    // position. Programmatic insertContent doesn't trigger input rules,
+    // so the text stays as text.
+    editor
+      .chain()
+      .focus(undefined, { scrollIntoView: false })
+      .deleteRange({ from, to })
+      .insertContentAt(from, `{{${key}}}`)
+      .run();
+    setMenuOpen(false);
+  }
+
+  function removeChip(e) {
+    e?.preventDefault();
+    const pos = typeof getPos === 'function' ? getPos() : null;
+    if (typeof pos !== 'number') return;
+    editor
+      .chain()
+      .focus(undefined, { scrollIntoView: false })
+      .deleteRange({ from: pos, to: pos + node.nodeSize })
+      .run();
+    setMenuOpen(false);
+  }
+
+  const tooltip = known
+    ? `${field.description ? field.description + ' — ' : ''}{{${key}}}`
+    : `שדה לא מוכר: {{${key}}}`;
+
   return (
     <NodeViewWrapper
       as="span"
-      contentEditable={false}
       dir="rtl"
+      contentEditable={false}
       data-type="dynamic-field"
       data-field-key={key || ''}
-      title={`{{${key}}}`}
-      className={`inline-flex items-center gap-1 rounded px-2 py-0.5 mx-0.5 text-[0.9em] select-none align-baseline border ${
+      className={`relative inline-flex items-center gap-1 rounded-md px-2 py-0.5 mx-0.5 text-[0.9em] select-none align-baseline border transition-colors ${
         known
-          ? 'bg-blue-100 text-blue-800 border-blue-200'
-          : 'bg-amber-100 text-amber-900 border-amber-300'
+          ? 'bg-blue-100 text-blue-800 border-blue-200 hover:bg-blue-200'
+          : 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200'
       }`}
+      title={tooltip}
     >
-      <span aria-hidden="true" className="text-[0.85em] opacity-70">✦</span>
-      <span>{known ? label : `{{${key}}}`}</span>
+      <span
+        ref={triggerRef}
+        role="button"
+        tabIndex={0}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          setMenuOpen((v) => !v);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setMenuOpen((v) => !v);
+          }
+        }}
+        className="cursor-pointer flex items-center gap-1"
+      >
+        <span aria-hidden="true" className="text-[0.85em] opacity-70">
+          {known ? '✦' : '⚠'}
+        </span>
+        <span>{known ? label : `{{${key}}}`}</span>
+      </span>
+      {menuOpen && (
+        <span
+          ref={menuRef}
+          dir="rtl"
+          contentEditable={false}
+          role="menu"
+          className="absolute top-full start-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg py-1 z-30 min-w-[160px] flex flex-col text-[13px] font-normal text-gray-800"
+        >
+          <button
+            role="menuitem"
+            type="button"
+            onMouseDown={convertToText}
+            className="w-full text-right px-3 py-1.5 hover:bg-gray-50"
+          >
+            המר לטקסט
+          </button>
+          <button
+            role="menuitem"
+            type="button"
+            onMouseDown={removeChip}
+            className="w-full text-right px-3 py-1.5 hover:bg-red-50 text-red-600"
+          >
+            הסר
+          </button>
+        </span>
+      )}
     </NodeViewWrapper>
   );
 }

@@ -1,5 +1,5 @@
-/* Minimal editor-content styles. Scoped to .rt-editor-prose so they never
-   leak outside the editor. No @apply — plain CSS to keep build predictable. */
+/* Editor content styles. Scoped to .rt-editor-prose so they never leak.
+   Plain CSS — no @apply. */
 
 .rt-editor-prose {
   direction: rtl;
@@ -69,8 +69,7 @@
   font-style: italic;
 }
 
-/* Fallback chip style for raw HTML that isn't going through the React
-   node view (e.g. external rendering in the future). */
+/* Fallback chip style for raw HTML not going through the React node view. */
 .rt-editor-prose span[data-type='dynamic-field'] {
   display: inline-block;
   background: rgb(219 234 254);
@@ -83,10 +82,28 @@
   white-space: nowrap;
 }
 
-/* ProseMirror internals — keep the caret visible even in empty docs. */
+/* Placeholder shown only when the editor is completely empty. RTL-aware
+   (float: right) so the hint sits at the natural start edge. */
+.rt-editor-prose .is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: rgb(156 163 175);
+  pointer-events: none;
+  float: right;
+  height: 0;
+}
+
 .ProseMirror {
   outline: none;
 }
 .ProseMirror-focused {
   outline: none;
+}
+
+/* Toolbar horizontal-scroll polish on mobile. */
+[role='toolbar']::-webkit-scrollbar {
+  height: 4px;
+}
+[role='toolbar']::-webkit-scrollbar-thumb {
+  background: rgb(203 213 225);
+  border-radius: 2px;
 }

@@ -18,6 +18,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@tiptap/core": "^2.11.7",
     "@tiptap/extension-link": "^2.11.7",
+    "@tiptap/extension-placeholder": "^2.11.7",
     "@tiptap/extension-text-align": "^2.11.7",
     "@tiptap/extension-underline": "^2.11.7",
     "@tiptap/pm": "^2.11.7",

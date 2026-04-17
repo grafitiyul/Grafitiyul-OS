@@ -3,13 +3,13 @@ import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
 import TextAlign from '@tiptap/extension-text-align';
+import Placeholder from '@tiptap/extension-placeholder';
 import { useEffect } from 'react';
 import { DynamicFieldNode } from './DynamicFieldNode.jsx';
 import Toolbar from './Toolbar.jsx';
+import { sanitizePastedHtml } from './pasteSanitizer.js';
 import './editor.css';
 
-// Treat these HTML forms as "no content" so the dirty check doesn't flip
-// just because TipTap normalised an empty document.
 function isEmptyHtml(html) {
   if (!html) return true;
   const stripped = html.replace(/\s+/g, '');
@@ -21,8 +21,7 @@ function isEmptyHtml(html) {
   );
 }
 
-// Promote plain-text stored content (from before the editor shipped) into a
-// minimal HTML form that TipTap will render with preserved line breaks.
+// Promote legacy plain-text content into minimal HTML.
 function normaliseIncoming(raw) {
   if (!raw) return '';
   if (/<[a-z][a-z0-9]*[\s>/]/i.test(raw)) return raw; // already HTML
@@ -41,6 +40,7 @@ export default function RichEditor({
   value,
   onChange,
   ariaLabel,
+  placeholder = 'כתבו כאן תוכן...',
   minHeight = 220,
 }) {
   const editor = useEditor({
@@ -58,6 +58,12 @@ export default function RichEditor({
       TextAlign.configure({
         types: ['heading', 'paragraph'],
       }),
+      Placeholder.configure({
+        placeholder,
+        emptyEditorClass: 'is-editor-empty',
+        emptyNodeClass: 'is-empty',
+        showOnlyCurrent: false,
+      }),
       DynamicFieldNode,
     ],
     content: normaliseIncoming(value),
@@ -66,6 +72,7 @@ export default function RichEditor({
       onChange?.(isEmptyHtml(html) ? '' : html);
     },
     editorProps: {
+      transformPastedHTML: sanitizePastedHtml,
       attributes: {
         class: 'rt-editor-prose',
         dir: 'rtl',
@@ -74,9 +81,6 @@ export default function RichEditor({
     },
   });
 
-  // When the parent swaps to editing a different item, sync the editor
-  // content. Passing `false` for emitUpdate prevents a spurious onChange
-  // that would otherwise mark the form dirty.
   useEffect(() => {
     if (!editor) return;
     const incoming = normaliseIncoming(value);

@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { DYNAMIC_FIELDS } from '../lib/dynamicFields.js';
+import LinkPopover from './LinkPopover.jsx';
 
 export default function Toolbar({ editor }) {
   if (!editor) return null;
 
   return (
     <div
-      className="flex items-center gap-0.5 p-1 border-b border-gray-200 bg-gray-50/80 rounded-t-md overflow-x-auto"
+      className="flex items-center gap-1 p-1.5 border-b border-gray-200 bg-gray-50 rounded-t-md overflow-x-auto"
+      style={{ WebkitOverflowScrolling: 'touch', scrollbarWidth: 'thin' }}
       role="toolbar"
       aria-label="סרגל עיצוב"
     >
@@ -125,13 +127,16 @@ function IconBtn({ children, label, shortcut, active, onClick, disabled }) {
     <button
       type="button"
       aria-label={label}
+      aria-pressed={active ? 'true' : 'false'}
       title={shortcut ? `${label} (${shortcut})` : label}
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
       disabled={disabled}
-      className={`w-8 h-8 flex items-center justify-center rounded text-[13px] transition ${
-        active ? 'bg-blue-100 text-blue-800' : 'text-gray-700 hover:bg-gray-200'
-      } disabled:opacity-40 disabled:cursor-not-allowed`}
+      className={`relative w-9 h-9 flex items-center justify-center rounded-md text-[13px] transition ${
+        active
+          ? 'bg-blue-100 text-blue-700 ring-1 ring-blue-200'
+          : 'text-gray-700 hover:bg-gray-200'
+      } disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed`}
     >
       {children}
     </button>
@@ -153,7 +158,7 @@ function HeadingSelect({ editor }) {
       value={value}
       onChange={(e) => set(e.target.value)}
       onMouseDown={(e) => e.stopPropagation()}
-      className="h-8 px-2 text-sm border border-gray-200 rounded hover:bg-gray-100 bg-white shrink-0"
+      className="h-9 px-2 text-sm border border-gray-200 rounded-md hover:bg-gray-100 bg-white shrink-0"
       aria-label="סגנון כותרת"
     >
       <option value="p">טקסט</option>
@@ -165,19 +170,33 @@ function HeadingSelect({ editor }) {
 }
 
 function LinkButton({ editor }) {
-  function run() {
-    const current = editor.getAttributes('link').href || '';
-    // Prompt is a simple but adequate UX for slice 3.
-    const url = window.prompt('הקישו כתובת (ריק = הסרה):', current);
-    if (url === null) return;
-    const chain = editor.chain().focus().extendMarkRange('link');
-    if (url === '') chain.unsetLink().run();
-    else chain.setLink({ href: url }).run();
-  }
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef(null);
   return (
-    <IconBtn label="קישור" active={editor.isActive('link')} onClick={run}>
-      <LinkSVG />
-    </IconBtn>
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        aria-label="קישור"
+        aria-pressed={editor.isActive('link') ? 'true' : 'false'}
+        title="קישור"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpen((v) => !v)}
+        className={`relative w-9 h-9 flex items-center justify-center rounded-md text-[13px] transition shrink-0 ${
+          editor.isActive('link')
+            ? 'bg-blue-100 text-blue-700 ring-1 ring-blue-200'
+            : 'text-gray-700 hover:bg-gray-200'
+        }`}
+      >
+        <LinkSVG />
+      </button>
+      <LinkPopover
+        editor={editor}
+        open={open}
+        anchorEl={btnRef.current}
+        onClose={() => setOpen(false)}
+      />
+    </>
   );
 }
 
@@ -203,7 +222,13 @@ function DynamicFieldMenu({ editor }) {
 
   function insert(key) {
     setOpen(false);
-    editor.chain().focus().insertDynamicField(key).run();
+    // scrollIntoView: false avoids the viewport jumping when the field is
+    // inserted at a cursor that was already visible.
+    editor
+      .chain()
+      .focus(undefined, { scrollIntoView: false })
+      .insertDynamicField(key)
+      .run();
   }
 
   return (
@@ -212,17 +237,17 @@ function DynamicFieldMenu({ editor }) {
         type="button"
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => setOpen((v) => !v)}
-        className="h-8 px-2 text-[13px] rounded bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 flex items-center gap-1"
+        className="h-9 px-3 text-[13px] rounded-md bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 flex items-center gap-1 font-medium"
         aria-haspopup="menu"
         aria-expanded={open}
       >
         <span>+ שדה דינמי</span>
-        <span className="text-[9px]">▼</span>
+        <span className="text-[9px] opacity-70">▼</span>
       </button>
       {open && (
         <div
           role="menu"
-          className="absolute top-full right-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg z-30 py-1 min-w-[200px]"
+          className="absolute top-full right-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg z-30 py-1 min-w-[260px]"
         >
           {DYNAMIC_FIELDS.map((f) => (
             <button
@@ -230,15 +255,22 @@ function DynamicFieldMenu({ editor }) {
               type="button"
               key={f.key}
               onClick={() => insert(f.key)}
-              className="w-full text-right px-3 py-1.5 text-sm hover:bg-gray-50 flex items-center gap-3"
+              className="w-full text-right px-3 py-2 hover:bg-gray-50 flex flex-col gap-0.5"
             >
-              <span className="flex-1">{f.label}</span>
-              <span
-                className="text-[10px] text-gray-500 font-mono bg-gray-100 rounded px-1.5 py-0.5"
-                dir="ltr"
-              >
-                {`{{${f.key}}}`}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="flex-1 text-sm font-medium text-gray-900">
+                  {f.label}
+                </span>
+                <span
+                  className="text-[10px] text-gray-500 font-mono bg-gray-100 rounded px-1.5 py-0.5"
+                  dir="ltr"
+                >
+                  {`{{${f.key}}}`}
+                </span>
+              </div>
+              {f.description && (
+                <div className="text-[11px] text-gray-500">{f.description}</div>
+              )}
             </button>
           ))}
         </div>
