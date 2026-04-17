@@ -78,6 +78,30 @@ app.get('*', (_req, res, next) => {
   });
 });
 
+// Global error handler. Keeps the server alive on DB or handler errors
+// and returns a structured JSON 500 instead of crashing the Node process
+// (which would make Railway return 502 until the next restart).
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, _next) => {
+  console.error('[server error]', err);
+  res.set('Cache-Control', 'no-store');
+  if (res.headersSent) return;
+  res.status(500).json({
+    error: 'internal_error',
+    message: err?.message || 'unknown error',
+  });
+});
+
+// Last-resort safety net: never let an unhandled promise rejection or
+// uncaught exception take the process down. Errors from route handlers
+// already flow through the handler above; this is defence in depth.
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
+});
+
 const port = Number(process.env.PORT) || 4000;
 
 app.listen(port, () => {

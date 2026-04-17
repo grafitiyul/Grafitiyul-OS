@@ -10,7 +10,7 @@
   },
   "scripts": {
     "dev": "node --watch src/index.js",
-    "start": "node src/index.js",
+    "start": "prisma migrate deploy && node src/index.js",
     "build": "prisma generate",
     "postinstall": "prisma generate",
     "prisma:push": "prisma db push",
