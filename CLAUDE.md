@@ -144,13 +144,18 @@ Always:
 - admin protection not implemented yet
 
 ### Workflow
-- no full local development workflow
-- no need to run local dev servers by default
-- no need to maintain a local testing workflow
-- one terminal in this project folder may be used for management
-  actions: git, push, deploy-related scripts
+- standard setup: **one project terminal**, rooted at
+  `C:\Projects\grafitiyul-os`
+- this terminal is used for:
+  - `git status` / `git diff`
+  - `git add` / `git commit` / `git push`
+  - simple project management commands (one-off scripts,
+    deploy-related checks, Railway CLI if used)
+- this terminal is NOT used for:
+  - running local dev servers (no `npm run dev` loops)
+  - local testing / test watchers
 - deployment flow: GitHub → Railway auto deploy
-- pushing to main is effectively the deploy trigger in normal work
+- pushing to `main` is the effective deploy trigger
 
 ## 13) Implementation rule
 For major features:
