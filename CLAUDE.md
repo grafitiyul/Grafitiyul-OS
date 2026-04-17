@@ -140,10 +140,17 @@ Always:
 4. avoid premature complexity
 
 ## 12) Current constraints
-- no local workflow required
-- GitHub → Railway auto deploy
 - early stage system
 - admin protection not implemented yet
+
+### Workflow
+- no full local development workflow
+- no need to run local dev servers by default
+- no need to maintain a local testing workflow
+- one terminal in this project folder may be used for management
+  actions: git, push, deploy-related scripts
+- deployment flow: GitHub → Railway auto deploy
+- pushing to main is effectively the deploy trigger in normal work
 
 ## 13) Implementation rule
 For major features:
