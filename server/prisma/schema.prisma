@@ -1,0 +1,11 @@
+// Grafitiyul OS - Prisma schema
+// Starting clean. Models will be added as modules are built.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}

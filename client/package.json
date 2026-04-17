@@ -1,0 +1,23 @@
+{
+  "name": "grafitiyul-os-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Grafitiyul OS frontend (React + Vite). Built output is served by the server in production.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^5.4.11"
+  }
+}
