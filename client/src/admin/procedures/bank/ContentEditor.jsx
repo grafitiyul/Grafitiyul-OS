@@ -133,7 +133,7 @@ export default function ContentEditor({ mode }) {
                 value={form.body}
                 onChange={(html) => setForm({ ...form, body: html })}
                 ariaLabel="תוכן הפריט"
-                minHeight={260}
+                minContentHeight={260}
               />
             </Field>
           </Section>

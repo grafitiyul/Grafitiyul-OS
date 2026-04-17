@@ -1,21 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 
-// Inline link panel anchored to a toolbar button. Opens in-place so the
-// user never loses their selection. Enter applies, Esc cancels.
+// Inline link panel anchored to a toolbar button. Opens ABOVE the button
+// because the toolbar sits at the bottom of the editor widget.
 export default function LinkPopover({ editor, open, anchorEl, onClose }) {
   const [url, setUrl] = useState('');
   const [pos, setPos] = useState(null);
   const inputRef = useRef(null);
   const popRef = useRef(null);
 
-  // Capture popover position + prefill URL each time we open.
   useEffect(() => {
     if (!open || !anchorEl) {
       setPos(null);
       return;
     }
     const rect = anchorEl.getBoundingClientRect();
-    setPos({ top: rect.bottom + 6, left: rect.left });
+    // top of anchor in viewport; popover will sit above it via transform
+    setPos({ anchorTop: rect.top, left: rect.left });
     const current = editor?.getAttributes('link')?.href || '';
     setUrl(current);
     const t = setTimeout(() => {
@@ -25,7 +25,6 @@ export default function LinkPopover({ editor, open, anchorEl, onClose }) {
     return () => clearTimeout(t);
   }, [open, anchorEl, editor]);
 
-  // Close on outside click / Esc.
   useEffect(() => {
     if (!open) return;
     function onDoc(e) {
@@ -74,7 +73,13 @@ export default function LinkPopover({ editor, open, anchorEl, onClose }) {
       dir="rtl"
       role="dialog"
       aria-label="עריכת קישור"
-      style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 60 }}
+      style={{
+        position: 'fixed',
+        top: pos.anchorTop,
+        left: pos.left,
+        transform: 'translateY(calc(-100% - 6px))',
+        zIndex: 60,
+      }}
       className="bg-white border border-gray-200 rounded-md shadow-lg p-2 min-w-[300px]"
     >
       <div className="flex items-center gap-2">

@@ -1,14 +1,66 @@
 import { useEffect, useRef, useState } from 'react';
 import { DYNAMIC_FIELDS } from '../lib/dynamicFields.js';
 import LinkPopover from './LinkPopover.jsx';
+import ColorPicker from './ColorPicker.jsx';
+
+// ---- palette / option tables (stable values, never reference labels) ----
+
+export const TEXT_COLORS = [
+  { value: '#111827', name: 'ברירת מחדל כהה' },
+  { value: '#6b7280', name: 'אפור' },
+  { value: '#dc2626', name: 'אדום' },
+  { value: '#ea580c', name: 'כתום' },
+  { value: '#ca8a04', name: 'חום-צהוב' },
+  { value: '#16a34a', name: 'ירוק' },
+  { value: '#0891b2', name: 'טורקיז' },
+  { value: '#2563eb', name: 'כחול' },
+  { value: '#9333ea', name: 'סגול' },
+  { value: '#db2777', name: 'ורוד' },
+  { value: '#64748b', name: 'אפור-כחול' },
+  { value: '#be185d', name: 'בורדו' },
+  { value: '#15803d', name: 'ירוק כהה' },
+  { value: '#1e40af', name: 'כחול כהה' },
+];
+
+export const HIGHLIGHT_COLORS = [
+  { value: '#fef08a', name: 'צהוב' },
+  { value: '#bbf7d0', name: 'ירוק בהיר' },
+  { value: '#bfdbfe', name: 'כחול בהיר' },
+  { value: '#fbcfe8', name: 'ורוד בהיר' },
+  { value: '#e9d5ff', name: 'סגול בהיר' },
+  { value: '#fed7aa', name: 'כתום בהיר' },
+  { value: '#fecaca', name: 'אדום בהיר' },
+];
+
+export const FONT_FAMILIES = [
+  { value: '', name: 'ברירת מחדל' },
+  { value: 'Heebo, system-ui, sans-serif', name: 'Heebo' },
+  { value: 'Assistant, system-ui, sans-serif', name: 'Assistant' },
+  { value: 'Rubik, system-ui, sans-serif', name: 'Rubik' },
+  { value: 'Arial, sans-serif', name: 'Arial' },
+  { value: '"Times New Roman", serif', name: 'Times New Roman' },
+  { value: '"Courier New", monospace', name: 'Courier New' },
+];
+
+export const FONT_SIZES = [
+  { value: '', name: 'ברירת מחדל' },
+  { value: '12px', name: '12' },
+  { value: '14px', name: '14' },
+  { value: '16px', name: '16' },
+  { value: '18px', name: '18' },
+  { value: '20px', name: '20' },
+  { value: '24px', name: '24' },
+  { value: '32px', name: '32' },
+];
+
+// ---- toolbar ----
 
 export default function Toolbar({ editor }) {
   if (!editor) return null;
 
   return (
     <div
-      className="flex items-center gap-1 p-1.5 border-b border-gray-200 bg-gray-50 rounded-t-md overflow-x-auto"
-      style={{ WebkitOverflowScrolling: 'touch', scrollbarWidth: 'thin' }}
+      className="flex flex-wrap items-center gap-1 p-1.5 bg-gray-50 rounded-b-md"
       role="toolbar"
       aria-label="סרגל עיצוב"
     >
@@ -33,6 +85,8 @@ export default function Toolbar({ editor }) {
       <Divider />
 
       <HeadingSelect editor={editor} />
+      <FontFamilySelect editor={editor} />
+      <FontSizeSelect editor={editor} />
       <Divider />
 
       <Group>
@@ -61,6 +115,10 @@ export default function Toolbar({ editor }) {
           <span className="underline font-semibold">U</span>
         </IconBtn>
       </Group>
+      <Divider />
+
+      <TextColorButton editor={editor} />
+      <HighlightButton editor={editor} />
       <Divider />
 
       <Group>
@@ -122,7 +180,7 @@ function Divider() {
   return <span className="w-px h-5 bg-gray-300 mx-1 shrink-0" aria-hidden />;
 }
 
-function IconBtn({ children, label, shortcut, active, onClick, disabled }) {
+function IconBtn({ children, label, shortcut, active, onClick, disabled, style }) {
   return (
     <button
       type="button"
@@ -132,6 +190,7 @@ function IconBtn({ children, label, shortcut, active, onClick, disabled }) {
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
       disabled={disabled}
+      style={style}
       className={`relative w-9 h-9 flex items-center justify-center rounded-md text-[13px] transition ${
         active
           ? 'bg-blue-100 text-blue-700 ring-1 ring-blue-200'
@@ -140,6 +199,26 @@ function IconBtn({ children, label, shortcut, active, onClick, disabled }) {
     >
       {children}
     </button>
+  );
+}
+
+function Select({ value, onChange, options, label, minWidth = 110 }) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onMouseDown={(e) => e.stopPropagation()}
+      className="h-9 px-2 text-sm border border-gray-200 rounded-md hover:bg-gray-100 bg-white shrink-0"
+      style={{ minWidth }}
+      aria-label={label}
+      title={label}
+    >
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.name}
+        </option>
+      ))}
+    </select>
   );
 }
 
@@ -154,18 +233,141 @@ function HeadingSelect({ editor }) {
     else chain.setHeading({ level: Number(v.slice(1)) }).run();
   }
   return (
-    <select
+    <Select
       value={value}
-      onChange={(e) => set(e.target.value)}
-      onMouseDown={(e) => e.stopPropagation()}
-      className="h-9 px-2 text-sm border border-gray-200 rounded-md hover:bg-gray-100 bg-white shrink-0"
-      aria-label="סגנון כותרת"
-    >
-      <option value="p">טקסט</option>
-      <option value="h1">כותרת 1</option>
-      <option value="h2">כותרת 2</option>
-      <option value="h3">כותרת 3</option>
-    </select>
+      onChange={set}
+      label="סגנון כותרת"
+      minWidth={100}
+      options={[
+        { value: 'p', name: 'טקסט' },
+        { value: 'h1', name: 'כותרת 1' },
+        { value: 'h2', name: 'כותרת 2' },
+        { value: 'h3', name: 'כותרת 3' },
+      ]}
+    />
+  );
+}
+
+function FontFamilySelect({ editor }) {
+  const current = editor.getAttributes('textStyle').fontFamily || '';
+  function set(v) {
+    const chain = editor.chain().focus();
+    if (!v) chain.unsetFontFamily().run();
+    else chain.setFontFamily(v).run();
+  }
+  return (
+    <Select
+      value={current}
+      onChange={set}
+      label="גופן"
+      minWidth={120}
+      options={FONT_FAMILIES}
+    />
+  );
+}
+
+function FontSizeSelect({ editor }) {
+  const current = editor.getAttributes('textStyle').fontSize || '';
+  function set(v) {
+    const chain = editor.chain().focus();
+    if (!v) chain.unsetFontSize().run();
+    else chain.setFontSize(v).run();
+  }
+  return (
+    <Select
+      value={current}
+      onChange={set}
+      label="גודל גופן"
+      minWidth={70}
+      options={FONT_SIZES}
+    />
+  );
+}
+
+function TextColorButton({ editor }) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef(null);
+  const current = editor.getAttributes('textStyle').color;
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        aria-label="צבע טקסט"
+        title="צבע טקסט"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpen((v) => !v)}
+        className="relative w-9 h-9 flex flex-col items-center justify-center rounded-md text-[13px] transition text-gray-700 hover:bg-gray-200 shrink-0"
+      >
+        <span className="font-bold leading-none">A</span>
+        <span
+          className="mt-0.5 h-[3px] w-5 rounded"
+          style={{ background: current || '#111827' }}
+        />
+      </button>
+      <ColorPicker
+        open={open}
+        anchorEl={btnRef.current}
+        onClose={() => setOpen(false)}
+        onPick={(c) => {
+          editor.chain().focus().setColor(c).run();
+          setOpen(false);
+        }}
+        onClear={() => {
+          editor.chain().focus().unsetColor().run();
+          setOpen(false);
+        }}
+        colors={TEXT_COLORS}
+        currentColor={current}
+        title="צבע טקסט"
+      />
+    </>
+  );
+}
+
+function HighlightButton({ editor }) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef(null);
+  const current = editor.getAttributes('highlight').color;
+  const active = editor.isActive('highlight');
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        aria-label="הדגשת רקע"
+        aria-pressed={active ? 'true' : 'false'}
+        title="הדגשת רקע"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpen((v) => !v)}
+        className={`relative w-9 h-9 flex flex-col items-center justify-center rounded-md text-[13px] transition shrink-0 ${
+          active ? 'ring-1 ring-blue-200' : 'text-gray-700 hover:bg-gray-200'
+        }`}
+      >
+        <span
+          className="font-bold leading-none px-1 rounded"
+          style={{ background: current || '#fef08a' }}
+        >
+          A
+        </span>
+      </button>
+      <ColorPicker
+        open={open}
+        anchorEl={btnRef.current}
+        onClose={() => setOpen(false)}
+        onPick={(c) => {
+          editor.chain().focus().setHighlight({ color: c }).run();
+          setOpen(false);
+        }}
+        onClear={() => {
+          editor.chain().focus().unsetHighlight().run();
+          setOpen(false);
+        }}
+        colors={HIGHLIGHT_COLORS}
+        currentColor={current}
+        title="צבע רקע"
+      />
+    </>
   );
 }
 
@@ -222,8 +424,6 @@ function DynamicFieldMenu({ editor }) {
 
   function insert(key) {
     setOpen(false);
-    // scrollIntoView: false avoids the viewport jumping when the field is
-    // inserted at a cursor that was already visible.
     editor
       .chain()
       .focus(undefined, { scrollIntoView: false })
@@ -247,7 +447,7 @@ function DynamicFieldMenu({ editor }) {
       {open && (
         <div
           role="menu"
-          className="absolute top-full right-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg z-30 py-1 min-w-[260px]"
+          className="absolute bottom-full right-0 mb-1 bg-white border border-gray-200 rounded-md shadow-lg z-30 py-1 min-w-[260px]"
         >
           {DYNAMIC_FIELDS.map((f) => (
             <button
@@ -279,7 +479,7 @@ function DynamicFieldMenu({ editor }) {
   );
 }
 
-// -------- inline SVG icons (16px, currentColor) --------
+// -------- inline SVG icons --------
 
 function UndoSVG() {
   return (
@@ -323,21 +523,9 @@ function OrderedSVG() {
 }
 function AlignSVG({ side }) {
   const lines = {
-    right: [
-      [6, 6, 21, 6],
-      [3, 12, 21, 12],
-      [9, 18, 21, 18],
-    ],
-    center: [
-      [6, 6, 18, 6],
-      [3, 12, 21, 12],
-      [6, 18, 18, 18],
-    ],
-    left: [
-      [3, 6, 18, 6],
-      [3, 12, 21, 12],
-      [3, 18, 15, 18],
-    ],
+    right: [[6, 6, 21, 6], [3, 12, 21, 12], [9, 18, 21, 18]],
+    center: [[6, 6, 18, 6], [3, 12, 21, 12], [6, 18, 18, 18]],
+    left: [[3, 6, 18, 6], [3, 12, 21, 12], [3, 18, 15, 18]],
   }[side];
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

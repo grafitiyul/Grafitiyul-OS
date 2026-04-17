@@ -169,7 +169,7 @@ export default function QuestionEditor({ mode }) {
                 value={form.questionText}
                 onChange={(html) => setField({ questionText: html })}
                 ariaLabel="נוסח השאלה"
-                minHeight={160}
+                minContentHeight={160}
               />
             </Field>
           </Section>

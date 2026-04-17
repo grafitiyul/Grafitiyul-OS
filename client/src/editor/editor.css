@@ -9,6 +9,9 @@
   color: rgb(17 24 39);
   outline: none;
   min-height: 180px;
+  max-width: 100%;
+  /* Never force horizontal scroll — break words when needed. */
+  overflow-wrap: anywhere;
   word-break: break-word;
 }
 
@@ -37,12 +40,14 @@
 
 .rt-editor-prose p {
   margin: 0;
+  max-width: 100%;
 }
 
 .rt-editor-prose ul,
 .rt-editor-prose ol {
   padding-inline-start: 1.75em;
   margin: 0.3em 0;
+  max-width: 100%;
 }
 .rt-editor-prose ul {
   list-style: disc;
@@ -69,6 +74,32 @@
   font-style: italic;
 }
 
+/* Highlight (background color) rendered as <mark>. */
+.rt-editor-prose mark {
+  background: rgb(254 240 138);
+  color: inherit;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+/* Preformatted / code blocks — don't force page-level horizontal scroll. */
+.rt-editor-prose pre {
+  max-width: 100%;
+  overflow-x: auto;
+  background: rgb(243 244 246);
+  border-radius: 4px;
+  padding: 0.5em 0.75em;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9em;
+}
+.rt-editor-prose code {
+  background: rgb(243 244 246);
+  border-radius: 3px;
+  padding: 0 3px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9em;
+}
+
 /* Fallback chip style for raw HTML not going through the React node view. */
 .rt-editor-prose span[data-type='dynamic-field'] {
   display: inline-block;
@@ -82,8 +113,7 @@
   white-space: nowrap;
 }
 
-/* Placeholder shown only when the editor is completely empty. RTL-aware
-   (float: right) so the hint sits at the natural start edge. */
+/* Placeholder shown only when the editor is completely empty. RTL-aware. */
 .rt-editor-prose .is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   color: rgb(156 163 175);
@@ -92,18 +122,22 @@
   height: 0;
 }
 
+/* ProseMirror internals — also need wrapping so long runs can't widen. */
 .ProseMirror {
   outline: none;
+  max-width: 100%;
 }
 .ProseMirror-focused {
   outline: none;
 }
 
-/* Toolbar horizontal-scroll polish on mobile. */
-[role='toolbar']::-webkit-scrollbar {
-  height: 4px;
+/* Editor widget shell + scrollable content region. */
+.rt-editor-shell {
+  min-height: 0;
 }
-[role='toolbar']::-webkit-scrollbar-thumb {
-  background: rgb(203 213 225);
-  border-radius: 2px;
+.rt-editor-scroll {
+  max-width: 100%;
+}
+.rt-editor-toolbar-wrap {
+  /* Background handled by the toolbar itself; this keeps the border flush. */
 }
