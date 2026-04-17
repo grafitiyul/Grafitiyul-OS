@@ -1,5 +1,4 @@
-// Grafitiyul OS - Prisma schema
-// Starting clean. Models will be added as modules are built.
+// Grafitiyul OS - Prisma schema (V1: Learning / Procedures module)
 
 generator client {
   provider = "prisma-client-js"
@@ -8,4 +7,93 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+// Reusable content item in the bank
+model ContentItem {
+  id           String     @id @default(cuid())
+  title        String
+  body         String     @default("")
+  internalNote String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  flowNodes    FlowNode[]
+}
+
+// Reusable question item in the bank
+// answerType: 'open_text' | 'single_choice'
+model QuestionItem {
+  id           String     @id @default(cuid())
+  title        String
+  questionText String     @default("")
+  answerType   String
+  options      String[]   @default([])
+  internalNote String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  flowNodes    FlowNode[]
+}
+
+// status: 'draft' | 'published'
+model Flow {
+  id          String     @id @default(cuid())
+  title       String
+  description String?
+  status      String     @default("draft")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  nodes       FlowNode[]
+  attempts    Attempt[]
+}
+
+// Recursive tree: a node is a content ref, question ref, or a group container.
+// Groups can nest groups (no depth limit at the data level).
+model FlowNode {
+  id              String        @id @default(cuid())
+  flow            Flow          @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  flowId          String
+  parent          FlowNode?     @relation("NodeChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  parentId        String?
+  children        FlowNode[]    @relation("NodeChildren")
+  order           Int
+  kind            String        // 'content' | 'question' | 'group'
+  contentItem     ContentItem?  @relation(fields: [contentItemId], references: [id])
+  contentItemId   String?
+  questionItem    QuestionItem? @relation(fields: [questionItemId], references: [id])
+  questionItemId  String?
+  groupTitle      String?
+  checkpointAfter Boolean       @default(false)
+  answers         Answer[]
+  currentFor      Attempt[]     @relation("AttemptCurrentNode")
+}
+
+// status: 'in_progress' | 'awaiting_review' | 'returned' | 'completed'
+model Attempt {
+  id            String    @id @default(cuid())
+  flow          Flow      @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  flowId        String
+  learnerName   String
+  status        String    @default("in_progress")
+  currentNode   FlowNode? @relation("AttemptCurrentNode", fields: [currentNodeId], references: [id])
+  currentNodeId String?
+  reviewNote    String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  answers       Answer[]
+}
+
+// reviewStatus: 'pending' | 'approved' | 'returned'
+model Answer {
+  id             String    @id @default(cuid())
+  attempt        Attempt   @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  attemptId      String
+  flowNode       FlowNode  @relation(fields: [flowNodeId], references: [id], onDelete: Cascade)
+  flowNodeId     String
+  openText       String?
+  selectedOption String?
+  reviewStatus   String    @default("pending")
+  submittedAt    DateTime  @default(now())
+  reviewedAt     DateTime?
+
+  @@unique([attemptId, flowNodeId])
 }
