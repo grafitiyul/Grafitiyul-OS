@@ -8,6 +8,7 @@ import {
   ITEM_KIND_LABELS,
 } from './config.js';
 import EditorTopBar from './EditorTopBar.jsx';
+import RichEditor from '../../../editor/RichEditor.jsx';
 
 const EMPTY = {
   title: '',
@@ -162,13 +163,13 @@ export default function QuestionEditor({ mode }) {
             </Field>
             <Field
               label="נוסח השאלה"
-              hint="הטקסט שיראה העובד. עורך עשיר יתווסף בשלב הבא."
+              hint="הטקסט שיראה העובד. תומך בעיצוב, קישורים ושדות דינמיים."
             >
-              <textarea
+              <RichEditor
                 value={form.questionText}
-                onChange={(e) => setField({ questionText: e.target.value })}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-base min-h-[120px] focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
-                placeholder="לדוגמה: מה הצעד הראשון לפתיחת המשמרת?"
+                onChange={(html) => setField({ questionText: html })}
+                ariaLabel="נוסח השאלה"
+                minHeight={160}
               />
             </Field>
           </Section>

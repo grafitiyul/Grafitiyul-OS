@@ -3,6 +3,7 @@ import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import { ITEM_KIND_LABELS, ITEM_KINDS } from './config.js';
 import EditorTopBar from './EditorTopBar.jsx';
+import RichEditor from '../../../editor/RichEditor.jsx';
 
 const EMPTY = { title: '', body: '', internalNote: '' };
 
@@ -126,13 +127,13 @@ export default function ContentEditor({ mode }) {
             </Field>
             <Field
               label="תוכן"
-              hint="עורך פשוט בגרסה זו. עורך עשיר (עם מדיה ושדות דינמיים) יתווסף בשלב הבא."
+              hint="עיצוב, רשימות, קישורים ושדות דינמיים נתמכים. תמיכה במדיה תתווסף בשלב הבא."
             >
-              <textarea
+              <RichEditor
                 value={form.body}
-                onChange={(e) => setForm({ ...form, body: e.target.value })}
-                className="w-full border border-gray-300 rounded-md px-3 py-2 text-base min-h-[240px] focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
-                placeholder="תוכן הפריט..."
+                onChange={(html) => setForm({ ...form, body: html })}
+                ariaLabel="תוכן הפריט"
+                minHeight={260}
               />
             </Field>
           </Section>

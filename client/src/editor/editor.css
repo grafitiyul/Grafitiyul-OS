@@ -1,0 +1,92 @@
+/* Minimal editor-content styles. Scoped to .rt-editor-prose so they never
+   leak outside the editor. No @apply — plain CSS to keep build predictable. */
+
+.rt-editor-prose {
+  direction: rtl;
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1.65;
+  color: rgb(17 24 39);
+  outline: none;
+  min-height: 180px;
+  word-break: break-word;
+}
+
+.rt-editor-prose > * + * {
+  margin-top: 0.5em;
+}
+
+.rt-editor-prose h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 0.6em 0 0.25em;
+}
+.rt-editor-prose h2 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.35;
+  margin: 0.55em 0 0.25em;
+}
+.rt-editor-prose h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 0.5em 0 0.25em;
+}
+
+.rt-editor-prose p {
+  margin: 0;
+}
+
+.rt-editor-prose ul,
+.rt-editor-prose ol {
+  padding-inline-start: 1.75em;
+  margin: 0.3em 0;
+}
+.rt-editor-prose ul {
+  list-style: disc;
+}
+.rt-editor-prose ol {
+  list-style: decimal;
+}
+.rt-editor-prose li > p {
+  margin: 0;
+}
+
+.rt-editor-prose a {
+  color: rgb(37 99 235);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.rt-editor-prose u {
+  text-decoration: underline;
+}
+.rt-editor-prose strong {
+  font-weight: 700;
+}
+.rt-editor-prose em {
+  font-style: italic;
+}
+
+/* Fallback chip style for raw HTML that isn't going through the React
+   node view (e.g. external rendering in the future). */
+.rt-editor-prose span[data-type='dynamic-field'] {
+  display: inline-block;
+  background: rgb(219 234 254);
+  color: rgb(30 64 175);
+  border: 1px solid rgb(191 219 254);
+  border-radius: 4px;
+  padding: 0 6px;
+  font-size: 0.9em;
+  margin: 0 2px;
+  white-space: nowrap;
+}
+
+/* ProseMirror internals — keep the caret visible even in empty docs. */
+.ProseMirror {
+  outline: none;
+}
+.ProseMirror-focused {
+  outline: none;
+}
