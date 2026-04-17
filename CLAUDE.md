@@ -173,3 +173,26 @@ Do not skip.
 - No limit on group nesting
 - Checkpoints control review flow (not every question)
 - One-service deployment on Railway
+
+## 15) Caching / freshness rule
+
+The user does NOT accept hidden or stale caching behavior that can
+cause one user to see old content while another sees new content.
+
+Project rule:
+- prefer `no-store` by default for app/document/data responses unless
+  there is an explicit reason otherwise
+- if revalidation is used, it must be explicit, controlled, and explained
+- do not rely on hidden framework caching
+- do not allow stale HTML/app shell behavior that can leave users on
+  old builds
+- if any caching is introduced, explain exactly:
+  - what is cached
+  - where
+  - for how long
+  - why it is safe
+
+This rule also applies to any future use of Next.js or similar
+frameworks:
+- no hidden Next.js caching behavior
+- no silent stale app state across users/devices
