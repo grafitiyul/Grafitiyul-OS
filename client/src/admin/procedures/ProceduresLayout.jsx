@@ -1,6 +1,9 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { TABS } from './config.js';
 
+// The procedures module's top-level layout: a desktop tab switcher header
+// and an outlet that each tab component fills with its own list/work-area
+// layout. Keeps the shell simple and lets every tab own its own structure.
 export default function ProceduresLayout() {
   const { pathname } = useLocation();
   const activeKey =
@@ -8,57 +11,26 @@ export default function ProceduresLayout() {
     TABS[0].key;
 
   return (
-    <div className="h-full flex">
-      {/* List pane: full width on mobile, fixed width on desktop */}
-      <aside className="w-full lg:w-[360px] lg:shrink-0 lg:border-l lg:border-gray-200 bg-white flex flex-col min-h-0">
-        {/* Desktop-only tab switcher */}
-        <div className="hidden lg:block p-2 border-b border-gray-200 bg-gray-50/60">
-          <div className="flex gap-1">
-            {TABS.map((tab) => (
-              <Link
-                key={tab.key}
-                to={`/admin/procedures/${tab.path}`}
-                className={`flex-1 text-center px-2 py-2 text-[13px] rounded-md transition ${
-                  activeKey === tab.key
-                    ? 'bg-white border border-gray-200 font-semibold text-gray-900 shadow-sm'
-                    : 'text-gray-600 hover:bg-white/70'
-                }`}
-              >
-                {tab.label}
-              </Link>
-            ))}
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          <Outlet />
-        </div>
-      </aside>
-
-      {/* Work area — desktop only in slice 1 (no entity selection yet) */}
-      <section className="hidden lg:flex flex-1 items-center justify-center p-10 bg-gray-50">
-        <WorkAreaEmpty activeKey={activeKey} />
-      </section>
-    </div>
-  );
-}
-
-function WorkAreaEmpty({ activeKey }) {
-  const title = {
-    flows: 'בחרו זרימה לעריכה',
-    bank: 'בחרו פריט לעריכה',
-    approvals: 'בחרו תשובה לאישור',
-  }[activeKey];
-  const sub = {
-    flows: 'הרשימה מימין מציגה את כל הזרימות',
-    bank: 'הרשימה מימין מציגה את כל הפריטים בבנק',
-    approvals: 'הרשימה מימין מציגה תשובות הממתינות לאישור',
-  }[activeKey];
-
-  return (
-    <div className="text-center max-w-sm">
-      <div className="text-5xl mb-5 opacity-40">◎</div>
-      <div className="text-lg font-semibold text-gray-800 mb-1">{title}</div>
-      <div className="text-sm text-gray-500">{sub}</div>
+    <div className="h-full flex flex-col">
+      {/* Desktop-only tab switcher. On mobile, the bottom tab bar handles nav. */}
+      <div className="hidden lg:flex items-center gap-1 px-3 py-2 border-b border-gray-200 bg-white">
+        {TABS.map((tab) => (
+          <Link
+            key={tab.key}
+            to={`/admin/procedures/${tab.path}`}
+            className={`px-3 py-1.5 text-[13px] rounded-md transition ${
+              activeKey === tab.key
+                ? 'bg-blue-50 text-blue-700 font-semibold'
+                : 'text-gray-600 hover:bg-gray-100'
+            }`}
+          >
+            {tab.label}
+          </Link>
+        ))}
+      </div>
+      <div className="flex-1 min-h-0">
+        <Outlet />
+      </div>
     </div>
   );
 }

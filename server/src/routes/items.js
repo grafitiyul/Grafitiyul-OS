@@ -10,6 +10,12 @@ router.get('/content', async (_req, res) => {
   res.json(items);
 });
 
+router.get('/content/:id', async (req, res) => {
+  const item = await prisma.contentItem.findUnique({ where: { id: req.params.id } });
+  if (!item) return res.status(404).json({ error: 'not found' });
+  res.json(item);
+});
+
 router.post('/content', async (req, res) => {
   const { title, body = '', internalNote = null } = req.body;
   if (!title) return res.status(400).json({ error: 'title required' });
@@ -40,6 +46,12 @@ router.delete('/content/:id', async (req, res) => {
 router.get('/questions', async (_req, res) => {
   const items = await prisma.questionItem.findMany({ orderBy: { updatedAt: 'desc' } });
   res.json(items);
+});
+
+router.get('/questions/:id', async (req, res) => {
+  const item = await prisma.questionItem.findUnique({ where: { id: req.params.id } });
+  if (!item) return res.status(404).json({ error: 'not found' });
+  res.json(item);
 });
 
 router.post('/questions', async (req, res) => {
