@@ -196,3 +196,35 @@ This rule also applies to any future use of Next.js or similar
 frameworks:
 - no hidden Next.js caching behavior
 - no silent stale app state across users/devices
+
+---
+
+Clarification — safe vs unsafe caching:
+
+Not all caching is forbidden. The restriction is specifically against
+caching that can create inconsistent or stale application state across users.
+
+Forbidden (must always be fresh / no-store unless explicitly justified):
+- HTML documents (app shell / index.html)
+- API responses that affect user-visible state
+- any application state that can diverge between users or sessions
+
+Allowed (safe caching), only if immutable and content-addressed:
+- static build assets (JS/CSS) with content hashes in filenames
+  (e.g. /assets/index-abc123.js)
+- images and video files that are not expected to change in place
+
+Rule for allowed caching:
+- the URL must change when the content changes
+- the asset must be guaranteed immutable
+- no user should ever receive an outdated version under the same URL
+
+If any caching is introduced, still document:
+- what is cached
+- where
+- for how long
+- why it is safe
+
+Goal:
+Ensure that all users always see a consistent and up-to-date application,
+while still allowing safe performance optimizations where correctness is guaranteed.
