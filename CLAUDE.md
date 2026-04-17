@@ -85,8 +85,8 @@ DO NOT introduce hard limits on:
 - composition freedom
 
 ## 7) Builder UX rules
-- library on LEFT
-- work area on RIGHT
+- library on the leading edge (right in RTL)
+- work area on the main edge (left in RTL)
 - drag and drop preferred
 
 Support:

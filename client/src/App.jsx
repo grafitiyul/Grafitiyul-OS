@@ -1,20 +1,23 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
-import AdminLayout from './admin/AdminLayout.jsx';
-import FlowsList from './admin/FlowsList.jsx';
-import Bank from './admin/Bank.jsx';
-import FlowBuilder from './admin/FlowBuilder.jsx';
-import Review from './admin/Review.jsx';
+import AppShell from './shell/AppShell.jsx';
+import ProceduresLayout from './admin/procedures/ProceduresLayout.jsx';
+import FlowsList from './admin/procedures/flows/FlowsList.jsx';
+import BankList from './admin/procedures/bank/BankList.jsx';
+import ApprovalsList from './admin/procedures/approvals/ApprovalsList.jsx';
 import LearnerRuntime from './learner/LearnerRuntime.jsx';
 
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/admin" replace />} />
-      <Route path="/admin" element={<AdminLayout />}>
-        <Route index element={<FlowsList />} />
-        <Route path="bank" element={<Bank />} />
-        <Route path="flows/:id/edit" element={<FlowBuilder />} />
-        <Route path="flows/:id/review" element={<Review />} />
+      <Route path="/admin" element={<AppShell />}>
+        <Route index element={<Navigate to="/admin/procedures/flows" replace />} />
+        <Route path="procedures" element={<ProceduresLayout />}>
+          <Route index element={<Navigate to="flows" replace />} />
+          <Route path="flows" element={<FlowsList />} />
+          <Route path="bank" element={<BankList />} />
+          <Route path="approvals" element={<ApprovalsList />} />
+        </Route>
       </Route>
       <Route path="/flow/:id" element={<LearnerRuntime />} />
     </Routes>

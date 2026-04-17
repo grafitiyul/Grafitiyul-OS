@@ -86,7 +86,7 @@ export default function LearnerRuntime() {
   if (!flow) {
     return (
       <Screen>
-        <div className="text-gray-500">Loading…</div>
+        <div className="text-gray-500">טוען…</div>
       </Screen>
     );
   }
@@ -131,7 +131,7 @@ export default function LearnerRuntime() {
   if (!currentNode) {
     return (
       <Screen>
-        <div className="text-gray-500">This flow has no runnable items yet.</div>
+        <div className="text-gray-500">אין פריטים פעילים בזרימה זו.</div>
       </Screen>
     );
   }
@@ -183,7 +183,7 @@ function Screen({ children, preview }) {
 function PreviewBanner() {
   return (
     <div className="fixed top-0 inset-x-0 bg-amber-100 text-amber-900 text-xs text-center py-1 z-50">
-      Preview mode — no data is saved
+      תצוגה מקדימה — הנתונים לא נשמרים
     </div>
   );
 }
@@ -200,7 +200,7 @@ function NameGate({ isMobile, flow, name, setName, onStart }) {
           Grafitiyul OS
         </div>
         <h1 className="text-2xl font-semibold mb-6">{flow.title}</h1>
-        <label className="block text-sm font-medium mb-2">Your name</label>
+        <label className="block text-sm font-medium mb-2">שם מלא</label>
         <input
           autoFocus
           className="w-full border rounded px-3 py-3 mb-4 text-lg"
@@ -213,7 +213,7 @@ function NameGate({ isMobile, flow, name, setName, onStart }) {
           disabled={!name.trim()}
           className="w-full bg-blue-600 text-white rounded px-4 py-3 text-lg disabled:opacity-40"
         >
-          Start
+          התחל
         </button>
       </div>
     </div>
@@ -256,7 +256,7 @@ function ItemScreen({ node, isMobile, isPreview, existingAnswer, onNext }) {
               isMobile ? 'text-xl mb-3' : 'text-3xl mb-4'
             }`}
           >
-            {ci?.title || '(deleted content)'}
+            {ci?.title || '(תוכן נמחק)'}
           </h2>
           <div
             className={`whitespace-pre-wrap text-gray-800 ${
@@ -273,7 +273,7 @@ function ItemScreen({ node, isMobile, isPreview, existingAnswer, onNext }) {
               isMobile ? 'text-xl mb-2' : 'text-3xl mb-3'
             }`}
           >
-            {qi?.title || '(deleted question)'}
+            {qi?.title || '(שאלה נמחקה)'}
           </h2>
           <div
             className={`text-gray-700 whitespace-pre-wrap ${
@@ -312,7 +312,7 @@ function ItemScreen({ node, isMobile, isPreview, existingAnswer, onNext }) {
               }`}
               value={openText}
               onChange={(e) => setOpenText(e.target.value)}
-              placeholder="Your answer…"
+              placeholder="התשובה שלך…"
             />
           )}
         </>
@@ -326,7 +326,7 @@ function ItemScreen({ node, isMobile, isPreview, existingAnswer, onNext }) {
             disabled={!canSubmit}
             onClick={submit}
           >
-            {isContent ? 'Next' : 'Submit'}
+            {isContent ? 'הבא' : 'שלח'}
           </button>
         </>
       ) : (
@@ -335,7 +335,7 @@ function ItemScreen({ node, isMobile, isPreview, existingAnswer, onNext }) {
           disabled={!canSubmit}
           onClick={submit}
         >
-          {isContent ? 'Next →' : 'Submit →'}
+          {isContent ? 'הבא ←' : 'שלח ←'}
         </button>
       )}
     </Shell>
@@ -371,10 +371,9 @@ function WaitingScreen() {
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="text-center max-w-md">
         <div className="text-5xl mb-4">⏳</div>
-        <h2 className="text-2xl font-semibold mb-2">Waiting for review</h2>
+        <h2 className="text-2xl font-semibold mb-2">ממתין לאישור</h2>
         <p className="text-gray-600">
-          Your progress has been submitted. An admin will review it shortly —
-          this screen updates automatically.
+          התשובות שלך נשלחו לאישור. המסך יתעדכן אוטומטית לאחר אישור.
         </p>
       </div>
     </div>
@@ -385,21 +384,21 @@ function ReturnedScreen({ attempt, onResume }) {
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-lg shadow p-8 max-w-md w-full">
-        <h2 className="text-2xl font-semibold mb-3">Sent back for correction</h2>
+        <h2 className="text-2xl font-semibold mb-3">הוחזר לתיקון</h2>
         {attempt.reviewNote && (
           <div className="bg-amber-50 border border-amber-200 rounded p-3 mb-4 text-sm whitespace-pre-wrap">
-            <div className="font-medium mb-1">Reviewer note</div>
+            <div className="font-medium mb-1">הערת מאשר</div>
             {attempt.reviewNote}
           </div>
         )}
         <p className="text-gray-600 mb-6">
-          Please redo this section of the flow.
+          יש לחזור על החלק הזה בזרימה.
         </p>
         <button
           className="w-full bg-blue-600 text-white rounded px-4 py-3 text-lg"
           onClick={onResume}
         >
-          Continue
+          המשך
         </button>
       </div>
     </div>
@@ -413,10 +412,10 @@ function CompletedScreen({ preview }) {
       <div className="text-center">
         <div className="text-6xl mb-4">✓</div>
         <h2 className="text-2xl font-semibold">
-          {preview ? 'Preview complete' : 'Flow complete'}
+          {preview ? 'התצוגה המקדימה הסתיימה' : 'הזרימה הושלמה'}
         </h2>
         <p className="text-gray-600 mt-2">
-          {preview ? 'End of preview.' : 'Thank you.'}
+          {preview ? 'סוף התצוגה המקדימה.' : 'תודה.'}
         </p>
       </div>
     </div>
