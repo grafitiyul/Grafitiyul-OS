@@ -228,3 +228,21 @@ If any caching is introduced, still document:
 Goal:
 Ensure that all users always see a consistent and up-to-date application,
 while still allowing safe performance optimizations where correctness is guaranteed.
+
+---
+
+Service Workers / PWA caching:
+
+Do not introduce a service worker or any offline caching layer
+that serves cached HTML, API responses, or application state
+without explicit control and documentation.
+
+If a service worker is ever added:
+- it must not cache application HTML or API responses by default
+- it must not create a situation where users can run a stale version
+  of the app without noticing
+- its caching strategy must be explicitly defined and documented
+
+Goal:
+Avoid hidden client-side caching layers that bypass normal
+HTTP cache rules and create inconsistent application behavior.
