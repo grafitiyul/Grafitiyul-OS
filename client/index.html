@@ -10,9 +10,32 @@
       rel="stylesheet"
     />
     <title>Grafitiyul OS</title>
+    <style>
+      html,
+      body,
+      #root {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        background: rgb(249 250 251);
+        font-family: 'Heebo', system-ui, -apple-system, 'Segoe UI', Arial,
+          sans-serif;
+      }
+      .gos-initial-loading {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #6b7280;
+        font-size: 14px;
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="gos-initial-loading">טוען…</div>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
