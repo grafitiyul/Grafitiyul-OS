@@ -150,7 +150,7 @@ export default function QuestionEditor({ mode }) {
       />
 
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-2xl mx-auto p-4 lg:p-8 space-y-6">
+        <div className="max-w-5xl mx-auto p-4 lg:p-8 space-y-6">
           <Section title="תצוגה לעובד">
             <Field label="כותרת (פנימית)">
               <input
