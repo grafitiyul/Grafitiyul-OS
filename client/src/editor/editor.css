@@ -100,6 +100,24 @@
   font-size: 0.9em;
 }
 
+/* Embedded media — applies in both the editor and the learner surface. */
+.rt-editor-prose img,
+.rt-editor-prose video,
+.gos-prose img,
+.gos-prose video {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+.rt-editor-prose img[data-type='media-image'],
+.gos-prose img[data-type='media-image'] {
+  /* Inline styles from the extension drive the concrete max-width/margin. */
+}
+.rt-editor-prose video[data-type='media-video'],
+.gos-prose video[data-type='media-video'] {
+  background: #000;
+}
+
 /* Fallback chip style for raw HTML not going through the React node view. */
 .rt-editor-prose span[data-type='dynamic-field'] {
   display: inline-block;
@@ -140,4 +158,44 @@
 }
 .rt-editor-toolbar-wrap {
   /* Background handled by the toolbar itself; this keeps the border flush. */
+}
+
+/* Learner / read-only prose. Mirrors rt-editor-prose visuals without
+   editor-only behaviors. Used by LearnerRuntime for content + question text. */
+.gos-prose {
+  direction: rtl;
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1.65;
+  color: rgb(17 24 39);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.gos-prose > * + * { margin-top: 0.5em; }
+.gos-prose h1 { font-size: 1.5rem; font-weight: 700; line-height: 1.3; margin: 0.6em 0 0.25em; }
+.gos-prose h2 { font-size: 1.25rem; font-weight: 700; line-height: 1.35; margin: 0.55em 0 0.25em; }
+.gos-prose h3 { font-size: 1.125rem; font-weight: 600; line-height: 1.4; margin: 0.5em 0 0.25em; }
+.gos-prose p { margin: 0; max-width: 100%; }
+.gos-prose ul, .gos-prose ol { padding-inline-start: 1.75em; margin: 0.3em 0; }
+.gos-prose ul { list-style: disc; }
+.gos-prose ol { list-style: decimal; }
+.gos-prose li > p { margin: 0; }
+.gos-prose a { color: rgb(37 99 235); text-decoration: underline; text-underline-offset: 2px; }
+.gos-prose strong { font-weight: 700; }
+.gos-prose em { font-style: italic; }
+.gos-prose u { text-decoration: underline; }
+.gos-prose mark { background: rgb(254 240 138); color: inherit; padding: 0 2px; border-radius: 2px; }
+.gos-prose pre { max-width: 100%; overflow-x: auto; background: rgb(243 244 246); border-radius: 4px; padding: 0.5em 0.75em; }
+.gos-prose code { background: rgb(243 244 246); border-radius: 3px; padding: 0 3px; }
+.gos-prose span[data-type='dynamic-field'] {
+  display: inline-block;
+  background: rgb(219 234 254);
+  color: rgb(30 64 175);
+  border: 1px solid rgb(191 219 254);
+  border-radius: 4px;
+  padding: 0 6px;
+  font-size: 0.9em;
+  margin: 0 2px;
+  white-space: nowrap;
 }

@@ -259,12 +259,11 @@ function ItemScreen({ node, isMobile, isPreview, existingAnswer, onNext }) {
             {ci?.title || '(תוכן נמחק)'}
           </h2>
           <div
-            className={`whitespace-pre-wrap text-gray-800 ${
+            className={`gos-prose text-gray-800 ${
               isMobile ? 'text-base' : 'text-lg leading-relaxed mb-8'
             }`}
-          >
-            {ci?.body || ''}
-          </div>
+            dangerouslySetInnerHTML={{ __html: ci?.body || '' }}
+          />
         </>
       ) : (
         <>
@@ -276,12 +275,11 @@ function ItemScreen({ node, isMobile, isPreview, existingAnswer, onNext }) {
             {qi?.title || '(שאלה נמחקה)'}
           </h2>
           <div
-            className={`text-gray-700 whitespace-pre-wrap ${
+            className={`gos-prose text-gray-700 ${
               isMobile ? 'text-base mb-4' : 'text-lg mb-6'
             }`}
-          >
-            {qi?.questionText || ''}
-          </div>
+            dangerouslySetInnerHTML={{ __html: qi?.questionText || '' }}
+          />
           {isChoice ? (
             <div className={isMobile ? 'space-y-2' : 'space-y-3 mb-8'}>
               {(qi?.options || []).map((opt, i) => (

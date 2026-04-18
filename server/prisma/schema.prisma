@@ -97,3 +97,16 @@ model Answer {
 
   @@unique([attemptId, flowNodeId])
 }
+
+// Embedded media uploaded by admins and referenced inside item HTML.
+// `bytes` holds the raw file. The content is immutable for a given id.
+// kind: 'image' | 'video'
+model MediaAsset {
+  id        String   @id @default(cuid())
+  kind      String
+  mimeType  String
+  filename  String
+  byteSize  Int
+  bytes     Bytes
+  createdAt DateTime @default(now())
+}

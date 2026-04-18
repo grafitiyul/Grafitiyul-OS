@@ -21,6 +21,24 @@ const OFFICE_TAG_PREFIX = /^(O|V|W|XML):/i;
 
 const KEEP_ATTRS_BY_TAG = {
   A: new Set(['href', 'target', 'rel']),
+  IMG: new Set([
+    'src',
+    'alt',
+    'data-type',
+    'data-field-key',
+    'data-width',
+    'data-align',
+  ]),
+  VIDEO: new Set([
+    'src',
+    'controls',
+    'preload',
+    'playsinline',
+    'data-type',
+    'data-width',
+    'data-align',
+  ]),
+  SOURCE: new Set(['src', 'type']),
 };
 
 export function sanitizePastedHtml(html) {

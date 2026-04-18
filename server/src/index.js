@@ -7,6 +7,7 @@ import itemsRouter from './routes/items.js';
 import flowsRouter from './routes/flows.js';
 import attemptsRouter from './routes/attempts.js';
 import reviewsRouter from './routes/reviews.js';
+import mediaRouter from './routes/media.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -36,6 +37,7 @@ app.use('/api/items', itemsRouter);
 app.use('/api/flows', flowsRouter);
 app.use('/api/attempts', attemptsRouter);
 app.use('/api/reviews', reviewsRouter);
+app.use('/api/media', mediaRouter);
 
 // Unknown /api/* paths get a real JSON 404 instead of falling through to
 // the SPA fallback (which would serve HTML for an API request).

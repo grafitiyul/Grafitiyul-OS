@@ -11,6 +11,8 @@ import Highlight from '@tiptap/extension-highlight';
 import { useEffect } from 'react';
 import { DynamicFieldNode } from './DynamicFieldNode.jsx';
 import { FontSize } from './FontSize.js';
+import { MediaImage } from './MediaImage.jsx';
+import { MediaVideo } from './MediaVideo.jsx';
 import Toolbar from './Toolbar.jsx';
 import { sanitizePastedHtml } from './pasteSanitizer.js';
 import './editor.css';
@@ -74,6 +76,8 @@ export default function RichEditor({
       FontFamily.configure({ types: ['textStyle'] }),
       FontSize,
       Highlight.configure({ multicolor: true }),
+      MediaImage.configure({ inline: false, allowBase64: false }),
+      MediaVideo,
       DynamicFieldNode,
     ],
     content: normaliseIncoming(value),
