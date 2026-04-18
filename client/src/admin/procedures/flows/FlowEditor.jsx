@@ -4,6 +4,27 @@ import { api } from '../../../lib/api.js';
 import { ITEM_KINDS, ITEM_KIND_LABELS } from '../bank/config.js';
 import ItemPicker from './ItemPicker.jsx';
 import ItemPreview from './ItemPreview.jsx';
+import ResizeHandle from '../../../shell/ResizeHandle.jsx';
+import DeleteFlowDialog from '../../common/DeleteFlowDialog.jsx';
+
+// Inner items-pane width (inside the flow editor). Separate from the
+// tab-level list pane width so the user can size them independently.
+const ITEMS_WIDTH_KEY = 'gos.procedures.flowItemsPaneWidth';
+const ITEMS_DEFAULT = 300;
+const ITEMS_MIN = 220;
+const ITEMS_MAX = 480;
+
+function readStoredItemsWidth() {
+  try {
+    const raw = localStorage.getItem(ITEMS_WIDTH_KEY);
+    if (!raw) return ITEMS_DEFAULT;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return ITEMS_DEFAULT;
+    return Math.max(ITEMS_MIN, Math.min(ITEMS_MAX, n));
+  } catch {
+    return ITEMS_DEFAULT;
+  }
+}
 
 function uid() {
   return 'n_' + Math.random().toString(36).slice(2, 12);
@@ -37,6 +58,17 @@ export default function FlowEditor() {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [itemsWidth, setItemsWidth] = useState(readStoredItemsWidth);
+
+  function persistItemsWidth(w) {
+    setItemsWidth(w);
+    try {
+      localStorage.setItem(ITEMS_WIDTH_KEY, String(w));
+    } catch {
+      /* ignore */
+    }
+  }
 
   const load = useCallback(async () => {
     setLoadError(null);
@@ -89,7 +121,7 @@ export default function FlowEditor() {
     setNodes(next);
     setSelectedIdx(next.length - 1);
     setDirty(true);
-    setPickerOpen(false);
+    // Picker stays open — user can add several items in one session.
   }
 
   function removeAt(idx) {
@@ -139,15 +171,13 @@ export default function FlowEditor() {
     }
   }
 
-  async function deleteFlow() {
-    if (!confirm('למחוק את הזרימה? פעולה זו בלתי הפיכה.')) return;
-    try {
-      await api.flows.remove(flowId);
-      await refreshFlowsList?.();
-      navigate('/admin/procedures/flows', { replace: true });
-    } catch (e) {
-      alert('מחיקה נכשלה: ' + e.message);
-    }
+  function openDeleteDialog() {
+    setDeleteOpen(true);
+  }
+  async function performDelete() {
+    await api.flows.remove(flowId);
+    await refreshFlowsList?.();
+    navigate('/admin/procedures/flows', { replace: true });
   }
 
   if (loadError) {
@@ -177,12 +207,15 @@ export default function FlowEditor() {
         canSave={dirty}
         onSave={save}
         onBlurTitle={saveTitleOnBlur}
-        onDelete={deleteFlow}
+        onDelete={openDeleteDialog}
         showBack={hasSelection}
         onBack={() => setSelectedIdx(null)}
       />
 
-      <div className="flex-1 flex min-h-0">
+      <div
+        className="flex-1 flex min-h-0"
+        style={{ '--flow-items-width': `${itemsWidth}px` }}
+      >
         <ItemsPane
           nodes={nodes}
           selectedIdx={selectedIdx}
@@ -192,6 +225,13 @@ export default function FlowEditor() {
           onMoveDown={moveDown}
           onAdd={() => setPickerOpen(true)}
           hidden={hasSelection /* mobile: hide when preview is up */}
+        />
+        <ResizeHandle
+          currentWidth={itemsWidth}
+          onResize={persistItemsWidth}
+          minWidth={ITEMS_MIN}
+          maxWidth={ITEMS_MAX}
+          ariaLabel="שינוי רוחב רשימת הפריטים בזרימה"
         />
         <PreviewPane
           node={selectedNode}
@@ -203,6 +243,12 @@ export default function FlowEditor() {
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
         onPick={addItem}
+      />
+      <DeleteFlowDialog
+        open={deleteOpen}
+        flowTitle={flow.title}
+        onClose={() => setDeleteOpen(false)}
+        onConfirm={performDelete}
       />
     </div>
   );
@@ -266,8 +312,8 @@ function ItemsPane({
   hidden,
 }) {
   const cls = hidden
-    ? 'hidden lg:flex w-full lg:w-[300px] lg:shrink-0 flex-col bg-white min-h-0 lg:border-l lg:border-gray-200'
-    : 'flex w-full lg:w-[300px] lg:shrink-0 flex-col bg-white min-h-0 lg:border-l lg:border-gray-200';
+    ? 'hidden lg:flex w-full lg:w-[var(--flow-items-width)] lg:shrink-0 flex-col bg-white min-h-0'
+    : 'flex w-full lg:w-[var(--flow-items-width)] lg:shrink-0 flex-col bg-white min-h-0';
   return (
     <aside className={cls}>
       <div className="p-3 border-b border-gray-200 shrink-0">
@@ -331,14 +377,24 @@ function FlowItemRow({
         isSelected ? 'bg-blue-50' : 'hover:bg-gray-50'
       }`}
     >
-      <div className="flex items-center gap-2">
-        <span className="text-[11px] text-gray-400 font-mono w-5 text-center" dir="ltr">
+      <div className="flex items-start gap-2">
+        <span
+          className="text-[11px] text-gray-400 font-mono w-5 text-center mt-1 shrink-0"
+          dir="ltr"
+        >
           {idx + 1}
         </span>
-        <span className={`text-[10px] px-1.5 py-0.5 rounded ${badgeCls}`}>
+        <span
+          className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 mt-1 ${badgeCls}`}
+        >
           {ITEM_KIND_LABELS[kind]}
         </span>
-        <span className="flex-1 text-sm truncate text-gray-900">{title}</span>
+        <span
+          className="flex-1 min-w-0 text-sm text-gray-900 leading-relaxed"
+          style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
+        >
+          {title}
+        </span>
         <RowBtn
           onClick={(e) => {
             e.stopPropagation();
@@ -386,7 +442,7 @@ function RowBtn({ children, onClick, disabled, label, variant }) {
       disabled={disabled}
       aria-label={label}
       title={label}
-      className={`w-6 h-6 rounded text-[10px] flex items-center justify-center transition ${color} disabled:opacity-25 disabled:cursor-not-allowed`}
+      className={`w-7 h-7 shrink-0 rounded text-[12px] flex items-center justify-center transition ${color} disabled:opacity-25 disabled:cursor-not-allowed`}
     >
       {children}
     </button>

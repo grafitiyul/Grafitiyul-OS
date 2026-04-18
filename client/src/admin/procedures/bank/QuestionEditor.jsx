@@ -9,6 +9,7 @@ import {
 } from './config.js';
 import EditorTopBar from './EditorTopBar.jsx';
 import RichEditor from '../../../editor/RichEditor.jsx';
+import DeleteItemDialog from '../../common/DeleteItemDialog.jsx';
 
 const EMPTY = {
   title: '',
@@ -121,16 +122,14 @@ export default function QuestionEditor({ mode }) {
     }
   }
 
-  async function onDelete() {
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  function onDelete() {
     if (mode !== 'edit') return;
-    if (!confirm('למחוק את השאלה?')) return;
-    try {
-      await api.questionItems.remove(id);
-      await refresh();
-      navigate('/admin/procedures/bank', { replace: true });
-    } catch (e) {
-      alert(e.message);
-    }
+    setDeleteOpen(true);
+  }
+  async function onDeleted() {
+    await refresh();
+    navigate('/admin/procedures/bank', { replace: true });
   }
 
   if (loadError) return <LoadError error={loadError} />;
@@ -147,6 +146,15 @@ export default function QuestionEditor({ mode }) {
         canDelete={mode === 'edit'}
         onSave={onSave}
         onDelete={onDelete}
+      />
+
+      <DeleteItemDialog
+        open={deleteOpen}
+        kind="question"
+        itemId={id}
+        itemTitle={form.title}
+        onClose={() => setDeleteOpen(false)}
+        onDeleted={onDeleted}
       />
 
       <div className="flex-1 overflow-y-auto">

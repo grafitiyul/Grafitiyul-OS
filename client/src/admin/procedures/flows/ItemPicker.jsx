@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../../lib/api.js';
 import {
   ITEM_KINDS,
@@ -7,8 +7,10 @@ import {
 } from '../bank/config.js';
 import { relativeHebrew } from '../../../lib/relativeTime.js';
 
-// Modal picker: lists all Item Bank items with search + type filter.
-// Clicking an item calls onPick(kind, itemId) and closes.
+// Modal picker for the flow editor.
+// Multi-pick: clicking an item adds it to the flow AND keeps the picker
+// open. A footer shows the running count of items added in this session.
+// Close via the X, the "סיים" button, Esc, or backdrop click.
 export default function ItemPicker({ open, onClose, onPick }) {
   const [content, setContent] = useState([]);
   const [questions, setQuestions] = useState([]);
@@ -16,11 +18,16 @@ export default function ItemPicker({ open, onClose, onPick }) {
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
+  const [addedCount, setAddedCount] = useState(0);
+  const [flashId, setFlashId] = useState(null);
+  const flashTimer = useRef(null);
 
   useEffect(() => {
     if (!open) return;
     setSearch('');
     setFilter('all');
+    setAddedCount(0);
+    setFlashId(null);
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -54,6 +61,13 @@ export default function ItemPicker({ open, onClose, onPick }) {
     return () => document.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
+  useEffect(
+    () => () => {
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+    },
+    [],
+  );
+
   const combined = useMemo(() => {
     const all = [
       ...content.map((i) => ({ ...i, kind: ITEM_KINDS.CONTENT })),
@@ -71,6 +85,14 @@ export default function ItemPicker({ open, onClose, onPick }) {
       return true;
     });
   }, [combined, search, filter]);
+
+  function pick(item) {
+    onPick(item.kind, item.id, item);
+    setAddedCount((n) => n + 1);
+    setFlashId(`${item.kind}:${item.id}`);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlashId(null), 900);
+  }
 
   if (!open) return null;
 
@@ -143,34 +165,61 @@ export default function ItemPicker({ open, onClose, onPick }) {
           )}
           {!loading && !error && filtered.length > 0 && (
             <ul className="divide-y divide-gray-100">
-              {filtered.map((item) => (
-                <li key={`${item.kind}:${item.id}`}>
-                  <button
-                    onClick={() => onPick(item.kind, item.id, item)}
-                    className="w-full text-right px-3 py-3 hover:bg-gray-50 transition block"
-                  >
-                    <div className="flex items-center gap-2 mb-1">
-                      <span
-                        className={`text-[10px] px-1.5 py-0.5 rounded ${
-                          item.kind === ITEM_KINDS.QUESTION
-                            ? 'bg-amber-100 text-amber-800'
-                            : 'bg-blue-100 text-blue-800'
-                        }`}
-                      >
-                        {ITEM_KIND_LABELS[item.kind]}
-                      </span>
-                      <span className="font-medium text-gray-900 truncate flex-1">
-                        {item.title || '(ללא כותרת)'}
-                      </span>
-                    </div>
-                    <div className="text-[11px] text-gray-500">
-                      {relativeHebrew(item.updatedAt)}
-                    </div>
-                  </button>
-                </li>
-              ))}
+              {filtered.map((item) => {
+                const rowKey = `${item.kind}:${item.id}`;
+                const justAdded = flashId === rowKey;
+                return (
+                  <li key={rowKey}>
+                    <button
+                      onClick={() => pick(item)}
+                      className={`w-full text-right px-3 py-3 transition block ${
+                        justAdded ? 'bg-green-50' : 'hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <span
+                          className={`text-[10px] px-1.5 py-0.5 rounded ${
+                            item.kind === ITEM_KINDS.QUESTION
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-blue-100 text-blue-800'
+                          }`}
+                        >
+                          {ITEM_KIND_LABELS[item.kind]}
+                        </span>
+                        <span className="font-medium text-gray-900 truncate flex-1">
+                          {item.title || '(ללא כותרת)'}
+                        </span>
+                        {justAdded && (
+                          <span className="text-[11px] text-green-700 font-medium shrink-0">
+                            ✓ נוסף
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-gray-500">
+                        {relativeHebrew(item.updatedAt)}
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
+        </div>
+        <div className="p-3 border-t border-gray-200 flex items-center gap-2 shrink-0">
+          <div className="flex-1 text-[13px] text-gray-600">
+            {addedCount === 0
+              ? 'לחצו על פריט כדי להוסיף לזרימה'
+              : addedCount === 1
+              ? 'נוסף פריט אחד בהפעלה הנוכחית'
+              : `נוספו ${addedCount} פריטים בהפעלה הנוכחית`}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-sm bg-blue-600 hover:bg-blue-700 text-white rounded px-4 py-1.5 font-medium"
+          >
+            סיים
+          </button>
         </div>
       </div>
     </div>

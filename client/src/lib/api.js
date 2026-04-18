@@ -16,6 +16,7 @@ export const api = {
   contentItems: {
     list: () => request('/api/items/content'),
     get: (id) => request(`/api/items/content/${id}`),
+    usage: (id) => request(`/api/items/content/${id}/usage`),
     create: (data) => request('/api/items/content', { method: 'POST', body: JSON.stringify(data) }),
     update: (id, data) =>
       request(`/api/items/content/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -24,6 +25,7 @@ export const api = {
   questionItems: {
     list: () => request('/api/items/questions'),
     get: (id) => request(`/api/items/questions/${id}`),
+    usage: (id) => request(`/api/items/questions/${id}/usage`),
     create: (data) => request('/api/items/questions', { method: 'POST', body: JSON.stringify(data) }),
     update: (id, data) =>
       request(`/api/items/questions/${id}`, { method: 'PUT', body: JSON.stringify(data) }),

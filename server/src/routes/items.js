@@ -23,6 +23,20 @@ router.get(
   }),
 );
 
+// Flows currently referencing this content item — used by the client to
+// show the user where the item is in use before attempting a delete.
+router.get(
+  '/content/:id/usage',
+  handle(async (req, res) => {
+    const flows = await prisma.flow.findMany({
+      where: { nodes: { some: { contentItemId: req.params.id } } },
+      select: { id: true, title: true },
+      orderBy: { title: 'asc' },
+    });
+    res.json(flows);
+  }),
+);
+
 router.post(
   '/content',
   handle(async (req, res) => {
@@ -73,6 +87,19 @@ router.get(
     const item = await prisma.questionItem.findUnique({ where: { id: req.params.id } });
     if (!item) return res.status(404).json({ error: 'not found' });
     res.json(item);
+  }),
+);
+
+// Flows currently referencing this question item.
+router.get(
+  '/questions/:id/usage',
+  handle(async (req, res) => {
+    const flows = await prisma.flow.findMany({
+      where: { nodes: { some: { questionItemId: req.params.id } } },
+      select: { id: true, title: true },
+      orderBy: { title: 'asc' },
+    });
+    res.json(flows);
   }),
 );
 

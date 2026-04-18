@@ -4,6 +4,7 @@ import { api } from '../../../lib/api.js';
 import { ITEM_KIND_LABELS, ITEM_KINDS } from './config.js';
 import EditorTopBar from './EditorTopBar.jsx';
 import RichEditor from '../../../editor/RichEditor.jsx';
+import DeleteItemDialog from '../../common/DeleteItemDialog.jsx';
 
 const EMPTY = { title: '', body: '', internalNote: '' };
 
@@ -81,16 +82,14 @@ export default function ContentEditor({ mode }) {
     }
   }
 
-  async function onDelete() {
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  function onDelete() {
     if (mode !== 'edit') return;
-    if (!confirm('למחוק את הפריט?')) return;
-    try {
-      await api.contentItems.remove(id);
-      await refresh();
-      navigate('/admin/procedures/bank', { replace: true });
-    } catch (e) {
-      alert(e.message);
-    }
+    setDeleteOpen(true);
+  }
+  async function onDeleted() {
+    await refresh();
+    navigate('/admin/procedures/bank', { replace: true });
   }
 
   if (loadError) {
@@ -111,6 +110,15 @@ export default function ContentEditor({ mode }) {
         canDelete={mode === 'edit'}
         onSave={onSave}
         onDelete={onDelete}
+      />
+
+      <DeleteItemDialog
+        open={deleteOpen}
+        kind="content"
+        itemId={id}
+        itemTitle={form.title}
+        onClose={() => setDeleteOpen(false)}
+        onDeleted={onDeleted}
       />
 
       <div className="flex-1 overflow-y-auto">
