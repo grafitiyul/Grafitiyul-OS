@@ -368,27 +368,6 @@ export default function FlowEditor() {
     setCollapsed((c) => ({ ...c, [id]: !c[id] }));
   }
 
-  // Move up / move down within current parent (buttons, mobile fallback).
-  function moveWithinParent(id, direction) {
-    const node = nodes.find((n) => n.id === id);
-    if (!node) return;
-    const siblings = nodes
-      .filter((n) => (n.parentId ?? null) === (node.parentId ?? null))
-      .sort((a, b) => a.order - b.order);
-    const idx = siblings.findIndex((n) => n.id === id);
-    if (idx < 0) return;
-    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
-    if (targetIdx < 0 || targetIdx >= siblings.length) return;
-    const targetId = siblings[targetIdx].id;
-    const next = applyMove(
-      nodes,
-      id,
-      targetId,
-      direction === 'up' ? 'before' : 'after',
-    );
-    commit(next);
-  }
-
   function openMoveTo(id) {
     setMoveTargetId(id);
   }
@@ -563,8 +542,6 @@ export default function FlowEditor() {
           onAddItemBelow={addItemBelow}
           onAddGroupBelow={addGroupBelow}
           onMoveTo={openMoveTo}
-          onMoveUp={(id) => moveWithinParent(id, 'up')}
-          onMoveDown={(id) => moveWithinParent(id, 'down')}
           sensors={sensors}
           onDragStart={onDragStart}
           onDragOver={onDragOver}
@@ -730,8 +707,6 @@ function ItemsPane({
   onAddItemBelow,
   onAddGroupBelow,
   onMoveTo,
-  onMoveUp,
-  onMoveDown,
   sensors,
   onDragStart,
   onDragOver,
@@ -742,19 +717,6 @@ function ItemsPane({
   const cls = hidden
     ? 'hidden lg:flex w-full lg:w-[var(--flow-items-width)] lg:shrink-0 flex-col bg-white min-h-0'
     : 'flex w-full lg:w-[var(--flow-items-width)] lg:shrink-0 flex-col bg-white min-h-0';
-
-  // Precompute can-move-up / can-move-down per node.
-  const moveability = useMemo(() => {
-    const m = {};
-    for (const n of nodes) {
-      const siblings = nodes
-        .filter((x) => (x.parentId ?? null) === (n.parentId ?? null))
-        .sort((a, b) => a.order - b.order);
-      const idx = siblings.findIndex((x) => x.id === n.id);
-      m[n.id] = { up: idx > 0, down: idx < siblings.length - 1 };
-    }
-    return m;
-  }, [nodes]);
 
   return (
     <aside className={cls}>
@@ -793,7 +755,6 @@ function ItemsPane({
             >
               <ul className="space-y-0.5">
                 {visible.map(({ node, depth }) => {
-                  const can = moveability[node.id] || {};
                   const hint = overId === node.id ? overPos : null;
                   return (
                     <li key={node.id}>
@@ -813,10 +774,6 @@ function ItemsPane({
                         onAddItemBelow={() => onAddItemBelow(node.id)}
                         onAddGroupBelow={() => onAddGroupBelow(node.id)}
                         onMoveTo={() => onMoveTo(node.id)}
-                        onMoveUp={() => onMoveUp(node.id)}
-                        onMoveDown={() => onMoveDown(node.id)}
-                        canMoveUp={!!can.up}
-                        canMoveDown={!!can.down}
                       />
                     </li>
                   );

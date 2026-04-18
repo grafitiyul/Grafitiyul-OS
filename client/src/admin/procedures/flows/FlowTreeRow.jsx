@@ -4,9 +4,10 @@ import { CSS } from '@dnd-kit/utilities';
 import { ITEM_KINDS, ITEM_KIND_LABELS } from '../bank/config.js';
 
 // A single row in the flow tree. Renders either an item or a group header.
-// Drag-handle comes from useSortable; depth drives the indentation;
-// `dropHint` shows the before/after/inside visual indicator when this row
-// is the current drag target.
+// Primary affordances visible on the row: drag handle, type, title.
+// Everything else (move-to, add below, checkpoint toggle, delete) lives in
+// a single ⋯ menu. Groups are visually heavier than items so the tree
+// hierarchy reads at a glance.
 export default function FlowTreeRow({
   node,
   depth,
@@ -18,15 +19,11 @@ export default function FlowTreeRow({
   onToggleCollapse,
   onUpdate,
   onRemove,
-  onAddItem, // (groups only)
-  onAddGroup, // (groups only)
+  onAddItem, // (groups only — contextual "+ פריט" under expanded group)
+  onAddGroup, // (groups only — contextual "+ קבוצה" under expanded group)
   onAddItemBelow,
   onAddGroupBelow,
   onMoveTo,
-  onMoveUp,
-  onMoveDown,
-  canMoveUp,
-  canMoveDown,
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: node.id });
@@ -38,6 +35,8 @@ export default function FlowTreeRow({
   };
 
   const isGroup = node.kind === 'group';
+  const isCheckpoint = !!node.checkpointAfter;
+
   const item =
     node.kind === ITEM_KINDS.CONTENT
       ? node.contentItem
@@ -48,13 +47,27 @@ export default function FlowTreeRow({
     ? node.groupTitle || '(ללא שם)'
     : item?.title || '(פריט נמחק)';
 
+  const kindLabel = isGroup ? 'קבוצה' : ITEM_KIND_LABELS[node.kind];
   const kindBadgeCls = isGroup
-    ? 'bg-purple-100 text-purple-800'
+    ? 'bg-purple-100 text-purple-800 border border-purple-200'
     : node.kind === ITEM_KINDS.QUESTION
     ? 'bg-amber-100 text-amber-800'
     : 'bg-blue-100 text-blue-800';
 
-  const kindLabel = isGroup ? 'קבוצה' : ITEM_KIND_LABELS[node.kind];
+  // Two tiers of row styling. Groups are visually heavier: colored accent
+  // strip on the leading edge, light purple background, bold title.
+  // Items are flat; hover only. Selected wins either way.
+  const rowCls = [
+    'group flex items-start gap-2 py-1.5 ps-2 pe-2 rounded-md transition cursor-pointer relative',
+    isSelected
+      ? 'bg-blue-50 ring-1 ring-blue-300'
+      : isGroup
+      ? 'bg-purple-50/80 hover:bg-purple-100/70'
+      : 'hover:bg-gray-50',
+    dropHint === 'inside' ? 'ring-2 ring-blue-400 bg-blue-50' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   return (
     <div ref={setNodeRef} style={style} className="relative">
@@ -72,19 +85,14 @@ export default function FlowTreeRow({
           e.stopPropagation();
           onSelect();
         }}
-        className={`group flex items-start gap-1.5 px-2 py-1.5 rounded-md transition cursor-pointer ${
-          isSelected
-            ? 'bg-blue-50 ring-1 ring-blue-300'
-            : isGroup
-            ? 'hover:bg-purple-50'
-            : 'hover:bg-gray-50'
-        } ${dropHint === 'inside' ? 'ring-2 ring-blue-400 bg-blue-50' : ''}`}
+        className={rowCls}
         style={{
           marginInlineStart: depth * 20,
-          // Group rows get a soft border treatment so the hierarchy reads.
+          // Colored leading-edge bar for groups — reads as "container".
           ...(isGroup
             ? {
-                background: isSelected ? undefined : 'rgba(243,232,255,0.35)',
+                borderInlineStart: '3px solid rgb(168 85 247)',
+                paddingInlineStart: 8,
               }
             : {}),
         }}
@@ -97,7 +105,7 @@ export default function FlowTreeRow({
           onClick={(e) => e.stopPropagation()}
           aria-label="גרור להזזה"
           title="גרור להזזה"
-          className="shrink-0 w-5 h-5 flex items-center justify-center text-gray-400 hover:text-gray-700 cursor-grab active:cursor-grabbing mt-0.5"
+          className="shrink-0 w-5 h-6 flex items-center justify-center text-gray-400 hover:text-gray-700 cursor-grab active:cursor-grabbing mt-0.5"
           style={{ touchAction: 'none' }}
         >
           <span className="font-mono text-[11px] leading-none">⋮⋮</span>
@@ -112,19 +120,26 @@ export default function FlowTreeRow({
               onToggleCollapse();
             }}
             aria-label={isCollapsed ? 'הצג תוכן קבוצה' : 'קפל קבוצה'}
-            className="shrink-0 w-5 h-5 flex items-center justify-center text-gray-500 hover:text-gray-900 mt-0.5"
+            className="shrink-0 w-6 h-6 flex items-center justify-center text-purple-700 hover:bg-purple-200/70 rounded mt-0.5"
           >
-            <span className="text-[10px]" style={{ display: 'inline-block', transform: isCollapsed ? 'rotate(-90deg)' : 'none', transition: 'transform 0.12s' }}>
+            <span
+              className="text-[13px]"
+              style={{
+                display: 'inline-block',
+                transform: isCollapsed ? 'rotate(-90deg)' : 'none',
+                transition: 'transform 0.12s',
+              }}
+            >
               ▼
             </span>
           </button>
         ) : (
-          <span className="shrink-0 w-5" />
+          <span className="shrink-0 w-6" aria-hidden />
         )}
 
         {/* Type badge */}
         <span
-          className={`shrink-0 mt-0.5 text-[10px] px-1.5 py-0.5 rounded ${kindBadgeCls}`}
+          className={`shrink-0 mt-1 text-[10px] px-1.5 py-0.5 rounded leading-tight ${kindBadgeCls}`}
         >
           {kindLabel}
         </span>
@@ -136,64 +151,43 @@ export default function FlowTreeRow({
             onChange={(e) => onUpdate({ groupTitle: e.target.value })}
             onClick={(e) => e.stopPropagation()}
             placeholder="שם הקבוצה"
-            className="flex-1 min-w-0 text-sm font-medium bg-transparent border-0 focus:outline-none focus:bg-white focus:ring-1 focus:ring-blue-300 rounded px-1"
+            className="flex-1 min-w-0 text-[15px] font-semibold text-gray-900 bg-transparent border-0 focus:outline-none focus:bg-white focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5"
           />
         ) : (
           <span
-            className="flex-1 min-w-0 text-sm text-gray-900 leading-relaxed"
+            className="flex-1 min-w-0 text-sm text-gray-900 leading-relaxed pt-0.5"
             style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
           >
             {title}
           </span>
         )}
 
-        {/* Actions row */}
-        <div className="shrink-0 flex items-center gap-0.5 mt-0.5">
-          <CheckpointToggle
-            on={!!node.checkpointAfter}
-            onToggle={() =>
-              onUpdate({ checkpointAfter: !node.checkpointAfter })
-            }
-          />
-          <RowBtn
-            onClick={(e) => {
-              e.stopPropagation();
-              onMoveUp();
-            }}
-            disabled={!canMoveUp}
-            label="העבר למעלה"
+        {/* Read-only checkpoint indicator (toggle lives in the menu) */}
+        {isCheckpoint && (
+          <span
+            className="shrink-0 mt-0.5 inline-flex items-center gap-0.5 text-[11px] text-purple-700 bg-purple-100 border border-purple-200 rounded px-1.5 py-0.5"
+            title="נקודת ביקורת — הלומד ימתין לאישור לפני המשך"
           >
-            ▲
-          </RowBtn>
-          <RowBtn
-            onClick={(e) => {
-              e.stopPropagation();
-              onMoveDown();
-            }}
-            disabled={!canMoveDown}
-            label="העבר למטה"
-          >
-            ▼
-          </RowBtn>
-          <RowMenu
-            onAddItemBelow={onAddItemBelow}
-            onAddGroupBelow={onAddGroupBelow}
-            onMoveTo={onMoveTo}
-          />
-          <RowBtn
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemove();
-            }}
-            label={isGroup ? 'הסר קבוצה' : 'הסר מהזרימה'}
-            variant="danger"
-          >
-            ×
-          </RowBtn>
-        </div>
+            <span aria-hidden>⚑</span>
+            <span className="hidden sm:inline">ביקורת</span>
+          </span>
+        )}
+
+        {/* Single secondary-actions menu */}
+        <RowMenu
+          isCheckpoint={isCheckpoint}
+          onMoveTo={onMoveTo}
+          onAddItemBelow={onAddItemBelow}
+          onAddGroupBelow={onAddGroupBelow}
+          onToggleCheckpoint={() =>
+            onUpdate({ checkpointAfter: !isCheckpoint })
+          }
+          onRemove={onRemove}
+          isGroup={isGroup}
+        />
       </div>
 
-      {/* Empty-group hint + contextual add buttons when expanded */}
+      {/* Expanded group: contextual add buttons under its children */}
       {isGroup && !isCollapsed && (
         <div
           style={{ marginInlineStart: (depth + 1) * 20 }}
@@ -239,7 +233,15 @@ export default function FlowTreeRow({
   );
 }
 
-function RowMenu({ onAddItemBelow, onAddGroupBelow, onMoveTo }) {
+function RowMenu({
+  isCheckpoint,
+  onMoveTo,
+  onAddItemBelow,
+  onAddGroupBelow,
+  onToggleCheckpoint,
+  onRemove,
+  isGroup,
+}) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef(null);
   const menuRef = useRef(null);
@@ -263,14 +265,19 @@ function RowMenu({ onAddItemBelow, onAddGroupBelow, onMoveTo }) {
   }, [open]);
 
   return (
-    <div className="relative" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="relative shrink-0 mt-0.5"
+      onClick={(e) => e.stopPropagation()}
+    >
       <button
         ref={btnRef}
         type="button"
         aria-label="פעולות נוספות"
         title="פעולות נוספות"
+        aria-haspopup="menu"
+        aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="w-7 h-7 shrink-0 rounded text-[12px] flex items-center justify-center transition text-gray-500 hover:bg-gray-200"
+        className="w-7 h-7 shrink-0 rounded text-[14px] flex items-center justify-center transition text-gray-500 hover:bg-gray-200 hover:text-gray-800"
       >
         ⋯
       </button>
@@ -279,90 +286,81 @@ function RowMenu({ onAddItemBelow, onAddGroupBelow, onMoveTo }) {
           ref={menuRef}
           role="menu"
           dir="rtl"
-          className="absolute top-full end-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg py-1 z-30 min-w-[180px] text-[13px]"
+          className="absolute top-full end-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg py-1 z-30 min-w-[200px] text-[13px]"
         >
-          {onAddItemBelow && (
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                onAddItemBelow();
-              }}
-              className="w-full text-right px-3 py-1.5 hover:bg-gray-50"
-            >
-              + פריט מתחת
-            </button>
-          )}
-          {onAddGroupBelow && (
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                onAddGroupBelow();
-              }}
-              className="w-full text-right px-3 py-1.5 hover:bg-gray-50"
-            >
-              + קבוצה מתחת
-            </button>
-          )}
-          {(onAddItemBelow || onAddGroupBelow) && onMoveTo && (
-            <div className="h-px bg-gray-100 my-1" aria-hidden />
-          )}
-          {onMoveTo && (
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                onMoveTo();
-              }}
-              className="w-full text-right px-3 py-1.5 hover:bg-gray-50"
-            >
-              העבר אל...
-            </button>
-          )}
+          <MenuItem
+            onClick={() => {
+              setOpen(false);
+              onMoveTo();
+            }}
+          >
+            העבר אל...
+          </MenuItem>
+          <MenuDivider />
+          <MenuItem
+            onClick={() => {
+              setOpen(false);
+              onAddItemBelow();
+            }}
+          >
+            + פריט מתחת
+          </MenuItem>
+          <MenuItem
+            onClick={() => {
+              setOpen(false);
+              onAddGroupBelow();
+            }}
+          >
+            + קבוצה מתחת
+          </MenuItem>
+          <MenuDivider />
+          <MenuItem
+            onClick={() => {
+              setOpen(false);
+              onToggleCheckpoint();
+            }}
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                aria-hidden
+                className={isCheckpoint ? 'text-purple-600' : 'text-gray-400'}
+              >
+                ⚑
+              </span>
+              {isCheckpoint ? 'בטל נקודת ביקורת' : 'סמן נקודת ביקורת'}
+            </span>
+          </MenuItem>
+          <MenuDivider />
+          <MenuItem
+            danger
+            onClick={() => {
+              setOpen(false);
+              onRemove();
+            }}
+          >
+            {isGroup ? 'מחק קבוצה' : 'מחק פריט'}
+          </MenuItem>
         </div>
       )}
     </div>
   );
 }
 
-function CheckpointToggle({ on, onToggle }) {
+function MenuItem({ children, onClick, danger }) {
   return (
     <button
-      type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        onToggle();
-      }}
-      aria-pressed={on}
-      aria-label={on ? 'בטל נקודת ביקורת' : 'סמן כנקודת ביקורת'}
-      title="נקודת ביקורת"
-      className={`w-7 h-7 shrink-0 rounded text-[11px] flex items-center justify-center transition ${
-        on
-          ? 'bg-purple-100 text-purple-700 ring-1 ring-purple-300'
-          : 'text-gray-400 hover:bg-gray-100 hover:text-gray-700'
-      }`}
-    >
-      ⚑
-    </button>
-  );
-}
-
-function RowBtn({ children, onClick, disabled, label, variant }) {
-  const color =
-    variant === 'danger'
-      ? 'text-red-600 hover:bg-red-50'
-      : 'text-gray-500 hover:bg-gray-200';
-  return (
-    <button
+      role="menuitem"
       type="button"
       onClick={onClick}
-      disabled={disabled}
-      aria-label={label}
-      title={label}
-      className={`w-7 h-7 shrink-0 rounded text-[12px] flex items-center justify-center transition ${color} disabled:opacity-25 disabled:cursor-not-allowed`}
+      className={`w-full text-right px-3 py-1.5 transition ${
+        danger ? 'text-red-600 hover:bg-red-50' : 'hover:bg-gray-50'
+      }`}
     >
       {children}
     </button>
   );
+}
+
+function MenuDivider() {
+  return <div className="h-px bg-gray-100 my-1" aria-hidden />;
 }
