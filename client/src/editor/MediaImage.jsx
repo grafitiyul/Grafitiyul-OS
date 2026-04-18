@@ -129,9 +129,97 @@ function ImageView({ node, updateAttributes, deleteNode, selected }) {
   const { src, alt, width, align, caption } = node.attrs;
   const [menuOpen, setMenuOpen] = useState(false);
   const [replaceBusy, setReplaceBusy] = useState(false);
+  const [resizing, setResizing] = useState(false);
   const menuRef = useRef(null);
   const imgRef = useRef(null);
   const replaceInputRef = useRef(null);
+
+  // Handle position follows alignment: always at the corner OPPOSITE the
+  // alignment anchor. Dragging "away from the anchor" grows the image.
+  // - align=start (RTL: right-anchored) → handle on physical left
+  // - align=end   (RTL: left-anchored)  → handle on physical right
+  // - align=center                      → handle on physical right (arbitrary)
+  const handleSide = align === 'end' ? 'right' : 'left';
+
+  const handleRef = useRef(null);
+
+  // Attach resize listeners via native DOM — inside a TipTap node view,
+  // React's synthetic pointer events can be swallowed by ProseMirror's
+  // own handling. Native addEventListener is reliable.
+  useEffect(() => {
+    const el = handleRef.current;
+    if (!el) return;
+
+    function start(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      const contentEl =
+        imgRef.current?.closest('.rt-editor-prose') ||
+        imgRef.current?.parentElement;
+      if (!contentEl) return;
+      const containerWidthPx = contentEl.getBoundingClientRect().width;
+      const startX = e.clientX;
+      const startWidthPct = Number(node.attrs.width) || 50;
+      const startWidthPx = (startWidthPct / 100) * containerWidthPx;
+
+      setResizing(true);
+      document.body.style.cursor = 'ew-resize';
+      document.body.style.userSelect = 'none';
+
+      function onMove(ev) {
+        const cx =
+          ev.clientX != null
+            ? ev.clientX
+            : ev.touches && ev.touches[0]
+            ? ev.touches[0].clientX
+            : null;
+        if (cx == null) return;
+        const deltaX = cx - startX;
+        const widthDeltaPx = handleSide === 'right' ? deltaX : -deltaX;
+        const minPx = containerWidthPx * 0.1;
+        const newPx = Math.max(
+          minPx,
+          Math.min(containerWidthPx, startWidthPx + widthDeltaPx),
+        );
+        const newPct = Math.max(
+          10,
+          Math.min(100, Math.round((newPx / containerWidthPx) * 100)),
+        );
+        updateAttributes({ width: String(newPct) });
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.removeEventListener('touchmove', onMove);
+        document.removeEventListener('touchend', onUp);
+        document.removeEventListener('touchcancel', onUp);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        setResizing(false);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      document.addEventListener('touchmove', onMove, { passive: false });
+      document.addEventListener('touchend', onUp);
+      document.addEventListener('touchcancel', onUp);
+    }
+
+    el.addEventListener('mousedown', start);
+    el.addEventListener('touchstart', (e) => {
+      if (e.touches && e.touches.length === 1) {
+        const t = e.touches[0];
+        start({
+          preventDefault: () => e.preventDefault(),
+          stopPropagation: () => e.stopPropagation(),
+          clientX: t.clientX,
+          clientY: t.clientY,
+        });
+      }
+    }, { passive: false });
+    return () => {
+      el.removeEventListener('mousedown', start);
+    };
+  }, [handleSide, node.attrs.width, updateAttributes]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -191,27 +279,60 @@ function ImageView({ node, updateAttributes, deleteNode, selected }) {
       }}
       contentEditable={false}
     >
-      <img
-        ref={imgRef}
-        src={src}
-        alt={alt || ''}
-        data-type="media-image"
-        data-width={width}
-        data-align={align}
-        onClick={(e) => {
-          e.preventDefault();
-          setMenuOpen((v) => !v);
-        }}
-        style={{
-          width: '100%',
-          height: 'auto',
-          display: 'block',
-          cursor: 'pointer',
-          borderRadius: '4px',
-          outline: selected || menuOpen ? '2px solid rgb(37 99 235)' : 'none',
-          outlineOffset: '2px',
-        }}
-      />
+      <div style={{ position: 'relative', display: 'inline-block', width: '100%' }}>
+        <img
+          ref={imgRef}
+          src={src}
+          alt={alt || ''}
+          data-type="media-image"
+          data-width={width}
+          data-align={align}
+          onClick={(e) => {
+            if (resizing) return;
+            e.preventDefault();
+            setMenuOpen((v) => !v);
+          }}
+          style={{
+            width: '100%',
+            height: 'auto',
+            display: 'block',
+            cursor: 'pointer',
+            borderRadius: '4px',
+            outline:
+              selected || menuOpen || resizing
+                ? '2px solid rgb(37 99 235)'
+                : 'none',
+            outlineOffset: '2px',
+          }}
+        />
+        <button
+          ref={handleRef}
+          type="button"
+          aria-label="שינוי גודל תמונה (גרירה)"
+          title="גרור כדי לשנות את גודל התמונה"
+          onClick={(e) => e.stopPropagation()}
+          className="gos-image-resize-handle"
+          style={{
+            position: 'absolute',
+            // Placed at the top corner: the top edge of an image is always
+            // the first part visible as the user scrolls into it, so the
+            // handle is never clipped even when the image is near the
+            // editor's max-height boundary.
+            top: 6,
+            [handleSide]: 6,
+            width: 16,
+            height: 16,
+            padding: 0,
+            background: 'rgb(37 99 235)',
+            border: '2px solid white',
+            borderRadius: '50%',
+            cursor: handleSide === 'right' ? 'nwse-resize' : 'nesw-resize',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
+            touchAction: 'none',
+            zIndex: 5,
+          }}
+        />
+      </div>
       {caption && (
         <figcaption
           className="gos-media-caption"

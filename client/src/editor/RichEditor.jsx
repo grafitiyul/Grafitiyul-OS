@@ -13,6 +13,7 @@ import { DynamicFieldNode } from './DynamicFieldNode.jsx';
 import { FontSize } from './FontSize.js';
 import { MediaImage } from './MediaImage.jsx';
 import { MediaVideo } from './MediaVideo.jsx';
+import { MediaEmbed } from './MediaEmbed.jsx';
 import Toolbar from './Toolbar.jsx';
 import UploadBanner from './UploadBanner.jsx';
 import { sanitizePastedHtml } from './pasteSanitizer.js';
@@ -80,6 +81,7 @@ export default function RichEditor({
       Highlight.configure({ multicolor: true }),
       MediaImage.configure({ inline: false, allowBase64: false }),
       MediaVideo,
+      MediaEmbed,
       DynamicFieldNode,
     ],
     content: normaliseIncoming(value),

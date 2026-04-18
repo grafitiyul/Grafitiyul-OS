@@ -38,7 +38,9 @@ export default function VideoUrlDialog({ open, onClose, onInsert }) {
       setError(v.error);
       return;
     }
-    onInsert(v.url);
+    // Pass the typed result to the caller so it can choose the right
+    // insertion path (embed vs direct <video>).
+    onInsert(v);
     onClose();
   }
 
@@ -91,7 +93,7 @@ export default function VideoUrlDialog({ open, onClose, onInsert }) {
                 if (error) setError('');
               }}
               onKeyDown={onKey}
-              placeholder="https://example.com/video.mp4"
+              placeholder="https://youtube.com/watch?v=… או https://example.com/video.mp4"
               className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
             />
           </label>
@@ -101,8 +103,7 @@ export default function VideoUrlDialog({ open, onClose, onInsert }) {
             </div>
           )}
           <div className="text-[11px] text-gray-500 leading-relaxed">
-            נתמכים קישורים ישירים לקבצי וידאו (MP4, WebM, OGV). עדיין אין תמיכה
-            בעמודי YouTube / Vimeo.
+            נתמכים: YouTube, Vimeo, וקישורים ישירים לקבצי וידאו (MP4, WebM, OGV).
           </div>
         </div>
         <div className="p-3 border-t border-gray-200 flex items-center gap-2 justify-end">

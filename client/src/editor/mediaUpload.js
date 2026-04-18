@@ -91,12 +91,22 @@ export function uploadMediaWithProgress(file, kind, onProgress) {
   return promise;
 }
 
-// Simple URL-shape check for the video-by-URL flow. We accept http(s) and
-// explicitly reject YouTube/Vimeo watch-page URLs (those require an iframe
-// embed node, not a <video> tag).
+import { parseEmbedUrl } from './embedProviders.js';
+
+// Typed result for the video-URL flow. The dialog consumer picks the right
+// insertion path based on `kind`:
+//   { ok: true, kind: 'embed', provider, videoId, embedUrl }
+//   { ok: true, kind: 'direct', url }
+//   { ok: false, error }
 export function validateExternalVideoUrl(url) {
   const raw = String(url || '').trim();
   if (!raw) return { ok: false, error: 'יש להזין כתובת' };
+
+  // Try YouTube / Vimeo first — those become an iframe embed.
+  const embed = parseEmbedUrl(raw);
+  if (embed) return { ok: true, kind: 'embed', ...embed };
+
+  // Otherwise accept only http(s) direct URLs.
   let u;
   try {
     u = new URL(raw);
@@ -106,20 +116,18 @@ export function validateExternalVideoUrl(url) {
   if (u.protocol !== 'http:' && u.protocol !== 'https:') {
     return { ok: false, error: 'יש להשתמש ב-http או https' };
   }
+  // Known platform host we couldn't parse — reject with a clear message so the
+  // user knows we tried but the URL format wasn't recognised.
   const host = u.hostname.toLowerCase();
   if (
-    host === 'youtube.com' ||
-    host === 'www.youtube.com' ||
-    host === 'm.youtube.com' ||
+    host.endsWith('youtube.com') ||
     host === 'youtu.be' ||
-    host === 'vimeo.com' ||
-    host === 'www.vimeo.com'
+    host.endsWith('vimeo.com')
   ) {
     return {
       ok: false,
-      error:
-        'עדיין אין תמיכה ב-YouTube / Vimeo. יש להשתמש בקישור ישיר לקובץ וידאו (MP4, WebM).',
+      error: 'לא הצלחנו לזהות מזהה וידאו בכתובת. ודאו שמדובר בקישור תקין.',
     };
   }
-  return { ok: true, url: raw };
+  return { ok: true, kind: 'direct', url: raw };
 }

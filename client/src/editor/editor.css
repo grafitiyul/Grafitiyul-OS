@@ -151,6 +151,59 @@
   display: block;
   border-radius: 4px;
 }
+
+/* Image resize handle: permanently present but faint; highlights on hover
+   and during the drag. Pointer-events stays on so it's always grabbable.
+   Touchable because it also listens to touch/pen via pointerdown. */
+.rt-editor-prose .gos-image-resize-handle {
+  opacity: 0.4;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.rt-editor-prose figure[data-type='media-image-figure']:hover .gos-image-resize-handle,
+.rt-editor-prose .gos-image-resize-handle:hover,
+.rt-editor-prose .gos-image-resize-handle:focus-visible {
+  opacity: 1;
+  transform: scale(1.15);
+}
+
+/* Embedded video (YouTube / Vimeo) wrapper. Width and alignment come from
+   inline styles in renderHTML; these rules are the backup when a paste
+   strips style. */
+.rt-editor-prose div[data-type='media-embed'],
+.gos-prose div[data-type='media-embed'] {
+  margin: 0.5em 0;
+  display: block;
+}
+.rt-editor-prose div[data-type='media-embed'][data-width='25'],
+.gos-prose div[data-type='media-embed'][data-width='25'] { max-width: 25%; }
+.rt-editor-prose div[data-type='media-embed'][data-width='50'],
+.gos-prose div[data-type='media-embed'][data-width='50'] { max-width: 50%; }
+.rt-editor-prose div[data-type='media-embed'][data-width='75'],
+.gos-prose div[data-type='media-embed'][data-width='75'] { max-width: 75%; }
+.rt-editor-prose div[data-type='media-embed'][data-width='100'],
+.gos-prose div[data-type='media-embed'][data-width='100'] { max-width: 100%; }
+.rt-editor-prose div[data-type='media-embed'][data-align='center'],
+.gos-prose div[data-type='media-embed'][data-align='center'] {
+  margin-inline: auto;
+}
+.rt-editor-prose div[data-type='media-embed'][data-align='start'],
+.gos-prose div[data-type='media-embed'][data-align='start'] {
+  margin-inline-start: 0;
+  margin-inline-end: auto;
+}
+.rt-editor-prose div[data-type='media-embed'][data-align='end'],
+.gos-prose div[data-type='media-embed'][data-align='end'] {
+  margin-inline-start: auto;
+  margin-inline-end: 0;
+}
+.gos-prose div[data-type='media-embed'] .gos-media-embed-frame,
+.rt-editor-prose div[data-type='media-embed'] .gos-media-embed-frame {
+  position: relative;
+}
+.gos-prose div[data-type='media-embed'] iframe,
+.rt-editor-prose div[data-type='media-embed'] iframe {
+  max-width: 100%;
+}
 .rt-editor-prose .gos-media-caption,
 .gos-prose .gos-media-caption {
   font-size: 0.875rem;

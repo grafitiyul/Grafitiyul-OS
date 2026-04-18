@@ -323,12 +323,18 @@ function VideoMenuButton({ editor, setUploadState }) {
     });
   }
 
-  function insertByUrl(url) {
-    editor
-      .chain()
-      .focus(undefined, { scrollIntoView: false })
-      .insertMediaVideo({ src: url })
-      .run();
+  function insertByUrl(result) {
+    const chain = editor.chain().focus(undefined, { scrollIntoView: false });
+    if (result?.kind === 'embed') {
+      chain
+        .insertMediaEmbed({
+          provider: result.provider,
+          videoId: result.videoId,
+        })
+        .run();
+    } else {
+      chain.insertMediaVideo({ src: result?.url || '' }).run();
+    }
   }
 
   return (

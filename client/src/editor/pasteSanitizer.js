@@ -14,7 +14,11 @@ const PRESERVED_STYLE_PROPS = {
   'text-align': /^(right|left|center|justify)$/i,
 };
 
-const DROP_TAGS = new Set(['META', 'STYLE', 'SCRIPT', 'LINK']);
+// Iframes are always dropped on paste: embed nodes carry their data via
+// (data-provider, data-video-id) on the outer <div data-type="media-embed">,
+// and MediaEmbed.renderHTML reconstructs the iframe from those. This means
+// any pasted iframe (trusted or not) is reliably stripped.
+const DROP_TAGS = new Set(['META', 'STYLE', 'SCRIPT', 'LINK', 'IFRAME']);
 
 // Office/Word-specific tags like <o:p>, <v:shape>, <w:Something>.
 const OFFICE_TAG_PREFIX = /^(O|V|W|XML):/i;
@@ -41,6 +45,10 @@ const KEEP_ATTRS_BY_TAG = {
   SOURCE: new Set(['src', 'type']),
   FIGURE: new Set(['data-type', 'data-width', 'data-align']),
   FIGCAPTION: new Set(['class']),
+  // Embed wrapper. The actual iframe src is reconstructed from
+  // data-provider + data-video-id in MediaEmbed.renderHTML, so we
+  // don't trust whatever src was in the pasted iframe.
+  DIV: new Set(['data-type', 'data-provider', 'data-video-id', 'data-width', 'data-align', 'class']),
 };
 
 export function sanitizePastedHtml(html) {
