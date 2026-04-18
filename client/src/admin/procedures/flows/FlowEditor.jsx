@@ -1,18 +1,33 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
+import {
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+} from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { api } from '../../../lib/api.js';
 import { ITEM_KINDS, ITEM_KIND_LABELS } from '../bank/config.js';
 import ItemPicker from './ItemPicker.jsx';
 import ItemPreview from './ItemPreview.jsx';
 import ResizeHandle from '../../../shell/ResizeHandle.jsx';
 import DeleteFlowDialog from '../../common/DeleteFlowDialog.jsx';
+import FlowTreeRow from './FlowTreeRow.jsx';
+import {
+  buildTree,
+  flattenVisible,
+  applyMove,
+  removeSubtree,
+  countItems,
+  uid,
+} from './treeOps.js';
 
-// Inner items-pane width (inside the flow editor). Separate from the
-// tab-level list pane width so the user can size them independently.
 const ITEMS_WIDTH_KEY = 'gos.procedures.flowItemsPaneWidth';
-const ITEMS_DEFAULT = 300;
-const ITEMS_MIN = 220;
-const ITEMS_MAX = 480;
+const ITEMS_DEFAULT = 360;
+const ITEMS_MIN = 260;
+const ITEMS_MAX = 560;
 
 function readStoredItemsWidth() {
   try {
@@ -26,24 +41,19 @@ function readStoredItemsWidth() {
   }
 }
 
-function uid() {
-  return 'n_' + Math.random().toString(36).slice(2, 12);
-}
-
-// Shape the server returns for each node includes the joined item:
-//   { id, order, kind, contentItemId, questionItemId, contentItem, questionItem, ... }
-// We keep the same shape in local state so the preview doesn't need extra fetches.
-function toPayload(nodes) {
-  return nodes.map((n, idx) => ({
-    id: n.id,
-    parentId: null,
-    order: idx,
-    kind: n.kind,
-    contentItemId: n.contentItemId || null,
-    questionItemId: n.questionItemId || null,
-    groupTitle: null,
-    checkpointAfter: false,
-  }));
+// Strip fields the server doesn't need before save. The joined contentItem /
+// questionItem objects are server-only reads.
+function toServerShape(node) {
+  return {
+    id: node.id,
+    parentId: node.parentId || null,
+    order: node.order,
+    kind: node.kind,
+    contentItemId: node.contentItemId || null,
+    questionItemId: node.questionItemId || null,
+    groupTitle: node.groupTitle || null,
+    checkpointAfter: !!node.checkpointAfter,
+  };
 }
 
 export default function FlowEditor() {
@@ -51,15 +61,25 @@ export default function FlowEditor() {
   const navigate = useNavigate();
   const { refresh: refreshFlowsList } = useOutletContext() || {};
 
-  const [flow, setFlow] = useState(null); // meta only
-  const [nodes, setNodes] = useState([]); // in-order
+  const [flow, setFlow] = useState(null);
+  const [nodes, setNodes] = useState([]);
   const [loadError, setLoadError] = useState(null);
-  const [selectedIdx, setSelectedIdx] = useState(null);
+  const [selectedId, setSelectedId] = useState(null);
+  const [collapsed, setCollapsed] = useState({});
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerParentId, setPickerParentId] = useState(null);
+
   const [deleteOpen, setDeleteOpen] = useState(false);
+
   const [itemsWidth, setItemsWidth] = useState(readStoredItemsWidth);
+
+  // DnD transient state
+  const [activeId, setActiveId] = useState(null);
+  const [overId, setOverId] = useState(null);
+  const [overPos, setOverPos] = useState(null);
 
   function persistItemsWidth(w) {
     setItemsWidth(w);
@@ -74,20 +94,18 @@ export default function FlowEditor() {
     setLoadError(null);
     setFlow(null);
     setNodes([]);
-    setSelectedIdx(null);
+    setSelectedId(null);
+    setDirty(false);
     try {
       const f = await api.flows.get(flowId);
-      // Keep only the flat, non-group nodes (slice 5 scope). Sort by order.
-      const flat = (f.nodes || [])
-        .filter((n) => n.parentId == null && n.kind !== 'group')
-        .sort((a, b) => a.order - b.order);
       setFlow({
         id: f.id,
         title: f.title || '',
         status: f.status || 'draft',
       });
-      setNodes(flat);
-      setDirty(false);
+      // Accept any structure the server returns — flat list is the canonical
+      // shape already (parentId + order).
+      setNodes(f.nodes || []);
     } catch (e) {
       setLoadError(e.message);
     }
@@ -96,6 +114,168 @@ export default function FlowEditor() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const tree = useMemo(() => buildTree(nodes), [nodes]);
+  const visible = useMemo(
+    () => flattenVisible(tree, collapsed),
+    [tree, collapsed],
+  );
+  const visibleIds = useMemo(() => visible.map((v) => v.node.id), [visible]);
+  const selectedNode = useMemo(
+    () => (selectedId ? nodes.find((n) => n.id === selectedId) : null),
+    [nodes, selectedId],
+  );
+
+  // --- Mutations ------------------------------------------------------
+
+  function markDirty(next) {
+    setNodes(next);
+    setDirty(true);
+  }
+
+  function updateNode(id, updates) {
+    markDirty(nodes.map((n) => (n.id === id ? { ...n, ...updates } : n)));
+  }
+
+  function removeNode(id) {
+    markDirty(removeSubtree(nodes, id));
+    if (id === selectedId) setSelectedId(null);
+  }
+
+  function addItem(kind, itemId, itemData) {
+    const parentId = pickerParentId;
+    const siblings = nodes.filter((n) => (n.parentId ?? null) === parentId);
+    const newNode = {
+      id: uid(),
+      kind,
+      contentItemId: kind === ITEM_KINDS.CONTENT ? itemId : null,
+      questionItemId: kind === ITEM_KINDS.QUESTION ? itemId : null,
+      contentItem: kind === ITEM_KINDS.CONTENT ? itemData : null,
+      questionItem: kind === ITEM_KINDS.QUESTION ? itemData : null,
+      groupTitle: null,
+      parentId: parentId || null,
+      order: siblings.length,
+      checkpointAfter: false,
+    };
+    markDirty([...nodes, newNode]);
+    setSelectedId(newNode.id);
+    // Picker stays open (multi-pick).
+  }
+
+  function addGroup(parentId = null) {
+    const siblings = nodes.filter((n) => (n.parentId ?? null) === parentId);
+    const group = {
+      id: uid(),
+      kind: 'group',
+      contentItemId: null,
+      questionItemId: null,
+      contentItem: null,
+      questionItem: null,
+      groupTitle: 'קבוצה חדשה',
+      parentId: parentId || null,
+      order: siblings.length,
+      checkpointAfter: false,
+    };
+    markDirty([...nodes, group]);
+    setSelectedId(group.id);
+  }
+
+  function openPicker(parentId) {
+    setPickerParentId(parentId || null);
+    setPickerOpen(true);
+  }
+
+  function toggleCollapse(id) {
+    setCollapsed((c) => ({ ...c, [id]: !c[id] }));
+  }
+
+  // Move up / move down within current parent (buttons, mobile fallback).
+  function moveWithinParent(id, direction) {
+    const node = nodes.find((n) => n.id === id);
+    if (!node) return;
+    const siblings = nodes
+      .filter((n) => (n.parentId ?? null) === (node.parentId ?? null))
+      .sort((a, b) => a.order - b.order);
+    const idx = siblings.findIndex((n) => n.id === id);
+    if (idx < 0) return;
+    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= siblings.length) return;
+    const targetId = siblings[targetIdx].id;
+    const next = applyMove(
+      nodes,
+      id,
+      targetId,
+      direction === 'up' ? 'before' : 'after',
+    );
+    markDirty(next);
+  }
+
+  // --- DnD handlers ---------------------------------------------------
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+
+  function onDragStart(event) {
+    setActiveId(event.active.id);
+    setOverId(null);
+    setOverPos(null);
+  }
+
+  function onDragOver(event) {
+    const { active, over } = event;
+    if (!over || over.id === active.id) {
+      setOverId(null);
+      setOverPos(null);
+      return;
+    }
+    const overNode = nodes.find((n) => n.id === over.id);
+    if (!overNode) {
+      setOverId(null);
+      setOverPos(null);
+      return;
+    }
+    const overRect = over.rect;
+    const activeTransl = active.rect.current?.translated;
+    const pointerY =
+      activeTransl != null
+        ? activeTransl.top + activeTransl.height / 2
+        : overRect.top + overRect.height / 2;
+    const relY = pointerY - overRect.top;
+
+    let position = 'after';
+    if (overNode.kind === 'group') {
+      const third = overRect.height / 3;
+      if (relY < third) position = 'before';
+      else if (relY > 2 * third) position = 'after';
+      else position = 'inside';
+    } else {
+      position = relY < overRect.height / 2 ? 'before' : 'after';
+    }
+    setOverId(over.id);
+    setOverPos(position);
+  }
+
+  function onDragEnd(event) {
+    const active = event.active.id;
+    const target = overId;
+    const pos = overPos;
+    setActiveId(null);
+    setOverId(null);
+    setOverPos(null);
+    if (target && pos && target !== active) {
+      const next = applyMove(nodes, active, target, pos);
+      if (next !== nodes) markDirty(next);
+    }
+  }
+
+  function onDragCancel() {
+    setActiveId(null);
+    setOverId(null);
+    setOverPos(null);
+  }
+
+  // --- Save / delete / title ------------------------------------------
 
   async function saveTitleOnBlur() {
     if (!flow) return;
@@ -107,61 +287,12 @@ export default function FlowEditor() {
     }
   }
 
-  function addItem(kind, itemId, itemData) {
-    const newNode = {
-      id: uid(),
-      kind,
-      contentItemId: kind === ITEM_KINDS.CONTENT ? itemId : null,
-      questionItemId: kind === ITEM_KINDS.QUESTION ? itemId : null,
-      contentItem: kind === ITEM_KINDS.CONTENT ? itemData : null,
-      questionItem: kind === ITEM_KINDS.QUESTION ? itemData : null,
-      order: nodes.length,
-    };
-    const next = [...nodes, newNode];
-    setNodes(next);
-    setSelectedIdx(next.length - 1);
-    setDirty(true);
-    // Picker stays open — user can add several items in one session.
-  }
-
-  function removeAt(idx) {
-    const next = nodes.filter((_, i) => i !== idx);
-    setNodes(next);
-    setDirty(true);
-    if (selectedIdx === idx) {
-      setSelectedIdx(next.length === 0 ? null : Math.min(idx, next.length - 1));
-    } else if (selectedIdx != null && selectedIdx > idx) {
-      setSelectedIdx(selectedIdx - 1);
-    }
-  }
-
-  function moveUp(idx) {
-    if (idx <= 0) return;
-    const next = [...nodes];
-    [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
-    setNodes(next);
-    setDirty(true);
-    if (selectedIdx === idx) setSelectedIdx(idx - 1);
-    else if (selectedIdx === idx - 1) setSelectedIdx(idx);
-  }
-
-  function moveDown(idx) {
-    if (idx >= nodes.length - 1) return;
-    const next = [...nodes];
-    [next[idx + 1], next[idx]] = [next[idx], next[idx + 1]];
-    setNodes(next);
-    setDirty(true);
-    if (selectedIdx === idx) setSelectedIdx(idx + 1);
-    else if (selectedIdx === idx + 1) setSelectedIdx(idx);
-  }
-
   async function save() {
     if (!dirty) return;
     setSaving(true);
     try {
-      const payload = toPayload(nodes);
+      const payload = nodes.map(toServerShape);
       await api.flows.saveNodes(flowId, payload);
-      // Re-fetch to get fresh server ids + joined items.
       await load();
       await refreshFlowsList?.();
     } catch (e) {
@@ -171,14 +302,13 @@ export default function FlowEditor() {
     }
   }
 
-  function openDeleteDialog() {
-    setDeleteOpen(true);
-  }
   async function performDelete() {
     await api.flows.remove(flowId);
     await refreshFlowsList?.();
     navigate('/admin/procedures/flows', { replace: true });
   }
+
+  // --- Render ---------------------------------------------------------
 
   if (loadError) {
     return (
@@ -194,8 +324,7 @@ export default function FlowEditor() {
     return <div className="w-full p-6 text-sm text-gray-500">טוען…</div>;
   }
 
-  const hasSelection = selectedIdx != null;
-  const selectedNode = hasSelection ? nodes[selectedIdx] : null;
+  const hasSelection = !!selectedId;
 
   return (
     <div className="h-full w-full flex flex-col">
@@ -204,12 +333,11 @@ export default function FlowEditor() {
         setFlow={setFlow}
         dirty={dirty}
         saving={saving}
-        canSave={dirty}
         onSave={save}
         onBlurTitle={saveTitleOnBlur}
-        onDelete={openDeleteDialog}
+        onDelete={() => setDeleteOpen(true)}
         showBack={hasSelection}
-        onBack={() => setSelectedIdx(null)}
+        onBack={() => setSelectedId(null)}
       />
 
       <div
@@ -218,13 +346,29 @@ export default function FlowEditor() {
       >
         <ItemsPane
           nodes={nodes}
-          selectedIdx={selectedIdx}
-          onSelect={setSelectedIdx}
-          onRemove={removeAt}
-          onMoveUp={moveUp}
-          onMoveDown={moveDown}
-          onAdd={() => setPickerOpen(true)}
-          hidden={hasSelection /* mobile: hide when preview is up */}
+          visible={visible}
+          visibleIds={visibleIds}
+          selectedId={selectedId}
+          collapsed={collapsed}
+          activeId={activeId}
+          overId={overId}
+          overPos={overPos}
+          onSelect={setSelectedId}
+          onToggleCollapse={toggleCollapse}
+          onUpdate={updateNode}
+          onRemove={removeNode}
+          onAddItemRoot={() => openPicker(null)}
+          onAddGroupRoot={() => addGroup(null)}
+          onAddItemInto={openPicker}
+          onAddGroupInto={addGroup}
+          onMoveUp={(id) => moveWithinParent(id, 'up')}
+          onMoveDown={(id) => moveWithinParent(id, 'down')}
+          sensors={sensors}
+          onDragStart={onDragStart}
+          onDragOver={onDragOver}
+          onDragEnd={onDragEnd}
+          onDragCancel={onDragCancel}
+          hidden={hasSelection}
         />
         <ResizeHandle
           currentWidth={itemsWidth}
@@ -235,7 +379,9 @@ export default function FlowEditor() {
         />
         <PreviewPane
           node={selectedNode}
-          hidden={!hasSelection /* mobile: hide when list is up */}
+          allNodes={nodes}
+          onUpdate={updateNode}
+          hidden={!hasSelection}
         />
       </div>
 
@@ -259,7 +405,6 @@ function EditorHeader({
   setFlow,
   dirty,
   saving,
-  canSave,
   onSave,
   onBlurTitle,
   onDelete,
@@ -272,7 +417,7 @@ function EditorHeader({
         <button
           onClick={onBack}
           className="lg:hidden text-sm text-blue-600 px-1"
-          aria-label="חזרה לרשימת הפריטים"
+          aria-label="חזרה לרשימה"
         >
           חזרה
         </button>
@@ -292,7 +437,7 @@ function EditorHeader({
       </button>
       <button
         onClick={onSave}
-        disabled={!canSave || saving}
+        disabled={!dirty || saving}
         className="bg-blue-600 text-white rounded px-4 py-1.5 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed"
       >
         {saving ? 'שומר…' : dirty ? 'שמור' : 'נשמר'}
@@ -303,153 +448,119 @@ function EditorHeader({
 
 function ItemsPane({
   nodes,
-  selectedIdx,
+  visible,
+  visibleIds,
+  selectedId,
+  collapsed,
+  activeId,
+  overId,
+  overPos,
   onSelect,
+  onToggleCollapse,
+  onUpdate,
   onRemove,
+  onAddItemRoot,
+  onAddGroupRoot,
+  onAddItemInto,
+  onAddGroupInto,
   onMoveUp,
   onMoveDown,
-  onAdd,
+  sensors,
+  onDragStart,
+  onDragOver,
+  onDragEnd,
+  onDragCancel,
   hidden,
 }) {
   const cls = hidden
     ? 'hidden lg:flex w-full lg:w-[var(--flow-items-width)] lg:shrink-0 flex-col bg-white min-h-0'
     : 'flex w-full lg:w-[var(--flow-items-width)] lg:shrink-0 flex-col bg-white min-h-0';
+
+  // Precompute can-move-up / can-move-down per node.
+  const moveability = useMemo(() => {
+    const m = {};
+    for (const n of nodes) {
+      const siblings = nodes
+        .filter((x) => (x.parentId ?? null) === (n.parentId ?? null))
+        .sort((a, b) => a.order - b.order);
+      const idx = siblings.findIndex((x) => x.id === n.id);
+      m[n.id] = { up: idx > 0, down: idx < siblings.length - 1 };
+    }
+    return m;
+  }, [nodes]);
+
   return (
     <aside className={cls}>
-      <div className="p-3 border-b border-gray-200 shrink-0">
+      <div className="p-3 border-b border-gray-200 shrink-0 flex gap-2">
         <button
-          onClick={onAdd}
-          className="w-full border border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md px-3 py-2 text-sm font-medium"
+          onClick={onAddItemRoot}
+          className="flex-1 border border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md px-3 py-2 text-sm font-medium"
         >
           + הוסף פריט
         </button>
+        <button
+          onClick={onAddGroupRoot}
+          className="flex-1 border border-purple-300 text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-md px-3 py-2 text-sm font-medium"
+        >
+          + קבוצה
+        </button>
       </div>
-      <div className="flex-1 overflow-y-auto">
+
+      <div className="flex-1 overflow-y-auto p-2">
         {nodes.length === 0 ? (
           <div className="p-6 text-center text-sm text-gray-500">
-            אין פריטים. השתמשו בכפתור "הוסף פריט" כדי להתחיל.
+            אין פריטים. הוסיפו פריט או קבוצה כדי להתחיל.
           </div>
         ) : (
-          <ol className="divide-y divide-gray-100">
-            {nodes.map((n, idx) => (
-              <FlowItemRow
-                key={n.id}
-                node={n}
-                idx={idx}
-                isSelected={selectedIdx === idx}
-                canMoveUp={idx > 0}
-                canMoveDown={idx < nodes.length - 1}
-                onSelect={() => onSelect(idx)}
-                onMoveUp={() => onMoveUp(idx)}
-                onMoveDown={() => onMoveDown(idx)}
-                onRemove={() => onRemove(idx)}
-              />
-            ))}
-          </ol>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={onDragStart}
+            onDragOver={onDragOver}
+            onDragEnd={onDragEnd}
+            onDragCancel={onDragCancel}
+          >
+            <SortableContext
+              items={visibleIds}
+              strategy={verticalListSortingStrategy}
+            >
+              <ul className="space-y-0.5">
+                {visible.map(({ node, depth }) => {
+                  const can = moveability[node.id] || {};
+                  const hint = overId === node.id ? overPos : null;
+                  return (
+                    <li key={node.id}>
+                      <FlowTreeRow
+                        node={node}
+                        depth={depth}
+                        isSelected={selectedId === node.id}
+                        isCollapsed={!!collapsed[node.id]}
+                        isDraggingThis={activeId === node.id}
+                        dropHint={hint}
+                        onSelect={() => onSelect(node.id)}
+                        onToggleCollapse={() => onToggleCollapse(node.id)}
+                        onUpdate={(upd) => onUpdate(node.id, upd)}
+                        onRemove={() => onRemove(node.id)}
+                        onAddItem={() => onAddItemInto(node.id)}
+                        onAddGroup={() => onAddGroupInto(node.id)}
+                        onMoveUp={() => onMoveUp(node.id)}
+                        onMoveDown={() => onMoveDown(node.id)}
+                        canMoveUp={!!can.up}
+                        canMoveDown={!!can.down}
+                      />
+                    </li>
+                  );
+                })}
+              </ul>
+            </SortableContext>
+          </DndContext>
         )}
       </div>
     </aside>
   );
 }
 
-function FlowItemRow({
-  node,
-  idx,
-  isSelected,
-  canMoveUp,
-  canMoveDown,
-  onSelect,
-  onMoveUp,
-  onMoveDown,
-  onRemove,
-}) {
-  const kind = node.kind;
-  const item = kind === ITEM_KINDS.CONTENT ? node.contentItem : node.questionItem;
-  const title = item?.title || '(פריט נמחק)';
-  const badgeCls =
-    kind === ITEM_KINDS.QUESTION
-      ? 'bg-amber-100 text-amber-800'
-      : 'bg-blue-100 text-blue-800';
-  return (
-    <li
-      onClick={onSelect}
-      className={`group px-3 py-2 cursor-pointer transition ${
-        isSelected ? 'bg-blue-50' : 'hover:bg-gray-50'
-      }`}
-    >
-      <div className="flex items-start gap-2">
-        <span
-          className="text-[11px] text-gray-400 font-mono w-5 text-center mt-1 shrink-0"
-          dir="ltr"
-        >
-          {idx + 1}
-        </span>
-        <span
-          className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 mt-1 ${badgeCls}`}
-        >
-          {ITEM_KIND_LABELS[kind]}
-        </span>
-        <span
-          className="flex-1 min-w-0 text-sm text-gray-900 leading-relaxed"
-          style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
-        >
-          {title}
-        </span>
-        <RowBtn
-          onClick={(e) => {
-            e.stopPropagation();
-            onMoveUp();
-          }}
-          disabled={!canMoveUp}
-          label="העבר למעלה"
-        >
-          ▲
-        </RowBtn>
-        <RowBtn
-          onClick={(e) => {
-            e.stopPropagation();
-            onMoveDown();
-          }}
-          disabled={!canMoveDown}
-          label="העבר למטה"
-        >
-          ▼
-        </RowBtn>
-        <RowBtn
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove();
-          }}
-          label="הסר מהזרימה"
-          variant="danger"
-        >
-          ×
-        </RowBtn>
-      </div>
-    </li>
-  );
-}
-
-function RowBtn({ children, onClick, disabled, label, variant }) {
-  const color =
-    variant === 'danger'
-      ? 'text-red-600 hover:bg-red-50'
-      : 'text-gray-500 hover:bg-gray-200';
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={label}
-      title={label}
-      className={`w-7 h-7 shrink-0 rounded text-[12px] flex items-center justify-center transition ${color} disabled:opacity-25 disabled:cursor-not-allowed`}
-    >
-      {children}
-    </button>
-  );
-}
-
-function PreviewPane({ node, hidden }) {
+function PreviewPane({ node, allNodes, onUpdate, hidden }) {
   const cls = hidden
     ? 'hidden lg:flex flex-1 bg-gray-50 min-h-0 overflow-y-auto'
     : 'flex flex-1 bg-gray-50 min-h-0 overflow-y-auto';
@@ -461,12 +572,59 @@ function PreviewPane({ node, hidden }) {
           <div className="text-center max-w-sm">
             <div className="text-5xl mb-4 opacity-40">◎</div>
             <div className="text-lg font-semibold text-gray-800 mb-1">
-              בחרו פריט כדי לצפות בו
+              בחרו פריט או קבוצה
             </div>
             <div className="text-sm text-gray-500">
-              כל פריט נשמר בבנק הפריטים; שינוי שם בבנק ישפיע גם כאן.
+              גררו כדי לסדר מחדש, לקנן בתוך קבוצות או להוציא מהן.
             </div>
           </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (node.kind === 'group') {
+    const tree = buildTree(allNodes);
+    const inTree = tree.find((x) => x.id === node.id) || findInTree(tree, node.id);
+    const count = inTree ? countItems(inTree) : 0;
+    return (
+      <section className={cls}>
+        <div className="w-full p-4 lg:p-8">
+          <article className="max-w-3xl mx-auto">
+            <div className="flex items-center gap-2 mb-3 text-[11px]">
+              <span className="px-2 py-0.5 rounded bg-purple-100 text-purple-800">
+                קבוצה
+              </span>
+            </div>
+            <h1 className="text-2xl font-semibold text-gray-900 mb-4">
+              {node.groupTitle || '(ללא שם)'}
+            </h1>
+            <div className="bg-white border border-gray-200 rounded-lg p-4 space-y-3">
+              <Field label="שם הקבוצה">
+                <input
+                  value={node.groupTitle || ''}
+                  onChange={(e) => onUpdate(node.id, { groupTitle: e.target.value })}
+                  placeholder="שם הקבוצה"
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+                />
+              </Field>
+              <Field label="נקודת ביקורת בסיום">
+                <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={!!node.checkpointAfter}
+                    onChange={(e) =>
+                      onUpdate(node.id, { checkpointAfter: e.target.checked })
+                    }
+                  />
+                  סמן את סיום הקבוצה כנקודת ביקורת
+                </label>
+              </Field>
+              <div className="pt-2 border-t border-gray-100 text-sm text-gray-600">
+                מספר פריטים (כולל בתוך תתי-קבוצות): <b>{count}</b>
+              </div>
+            </div>
+          </article>
         </div>
       </section>
     );
@@ -479,7 +637,39 @@ function PreviewPane({ node, hidden }) {
     <section className={cls}>
       <div className="w-full p-4 lg:p-8">
         <ItemPreview kind={node.kind} item={item} />
+        <div className="max-w-3xl mx-auto mt-4 bg-white border border-gray-200 rounded-lg p-3 flex items-center gap-3">
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={!!node.checkpointAfter}
+              onChange={(e) =>
+                onUpdate(node.id, { checkpointAfter: e.target.checked })
+              }
+            />
+            <span>נקודת ביקורת אחרי פריט זה</span>
+          </label>
+        </div>
       </div>
     </section>
   );
+}
+
+function Field({ label, children }) {
+  return (
+    <div>
+      <div className="text-[11px] text-gray-500 font-medium mb-1">{label}</div>
+      {children}
+    </div>
+  );
+}
+
+function findInTree(tree, id) {
+  for (const n of tree) {
+    if (n.id === id) return n;
+    if (n.children?.length) {
+      const found = findInTree(n.children, id);
+      if (found) return found;
+    }
+  }
+  return null;
 }
