@@ -8,12 +8,13 @@ import TextStyle from '@tiptap/extension-text-style';
 import Color from '@tiptap/extension-color';
 import FontFamily from '@tiptap/extension-font-family';
 import Highlight from '@tiptap/extension-highlight';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { DynamicFieldNode } from './DynamicFieldNode.jsx';
 import { FontSize } from './FontSize.js';
 import { MediaImage } from './MediaImage.jsx';
 import { MediaVideo } from './MediaVideo.jsx';
 import Toolbar from './Toolbar.jsx';
+import UploadBanner from './UploadBanner.jsx';
 import { sanitizePastedHtml } from './pasteSanitizer.js';
 import './editor.css';
 
@@ -50,6 +51,7 @@ export default function RichEditor({
   minContentHeight = 200,
   maxHeight = '60vh',
 }) {
+  const [uploadState, setUploadState] = useState({ phase: 'idle' });
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -120,6 +122,12 @@ export default function RichEditor({
       className="rt-editor-shell border border-gray-300 rounded-md bg-white focus-within:ring-2 focus-within:ring-blue-200 focus-within:border-blue-400 flex flex-col"
       style={{ maxHeight }}
     >
+      {/* Upload feedback — visible only during / after an upload. */}
+      <UploadBanner
+        state={uploadState}
+        onDismiss={() => setUploadState({ phase: 'idle' })}
+        onCancel={uploadState?.cancel}
+      />
       {/* Content area — grows with content, scrolls internally when it exceeds maxHeight */}
       <div
         className="rt-editor-scroll flex-1 overflow-y-auto overflow-x-hidden px-3 py-2"
@@ -130,7 +138,7 @@ export default function RichEditor({
       </div>
       {/* Toolbar pinned at the bottom of the widget, always visible */}
       <div className="rt-editor-toolbar-wrap shrink-0 border-t border-gray-200">
-        <Toolbar editor={editor} />
+        <Toolbar editor={editor} setUploadState={setUploadState} />
       </div>
     </div>
   );

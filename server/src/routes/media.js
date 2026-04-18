@@ -1,6 +1,7 @@
 import express, { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
+import { detectMime, kindOfMime } from '../media/detectMime.js';
 
 const router = Router();
 
@@ -21,15 +22,12 @@ const ALLOWED_VIDEO = new Set([
   'video/quicktime',
 ]);
 
-// Upload: raw binary body. The body parser is mounted only on this route so
-// it doesn't compete with the app-level express.json() middleware.
 router.post(
   '/upload',
   express.raw({ type: '*/*', limit: '250mb' }),
   handle(async (req, res) => {
     const kind = String(req.query.kind || '');
     const filename = String(req.query.filename || 'file').slice(0, 200);
-    const mimeType = req.get('content-type') || 'application/octet-stream';
     const body = req.body;
 
     if (!Buffer.isBuffer(body) || body.length === 0) {
@@ -38,10 +36,27 @@ router.post(
     if (kind !== 'image' && kind !== 'video') {
       return res.status(400).json({ error: 'invalid kind' });
     }
-    const allowed = kind === 'image' ? ALLOWED_IMAGE : ALLOWED_VIDEO;
-    if (!allowed.has(mimeType)) {
-      return res.status(400).json({ error: `unsupported mime type: ${mimeType}` });
+
+    // The browser-reported Content-Type is NOT trusted. We sniff magic bytes.
+    const detectedMime = detectMime(body);
+    if (!detectedMime) {
+      return res
+        .status(400)
+        .json({ error: 'unsupported or corrupt file format' });
     }
+    const detectedKind = kindOfMime(detectedMime);
+    if (detectedKind !== kind) {
+      return res.status(400).json({
+        error: `declared kind=${kind} but file content is ${detectedKind}`,
+      });
+    }
+    const allowed = kind === 'image' ? ALLOWED_IMAGE : ALLOWED_VIDEO;
+    if (!allowed.has(detectedMime)) {
+      return res
+        .status(400)
+        .json({ error: `unsupported ${kind} format: ${detectedMime}` });
+    }
+
     const maxSize = kind === 'image' ? MAX_IMAGE : MAX_VIDEO;
     if (body.length > maxSize) {
       return res.status(413).json({ error: 'too large' });
@@ -50,7 +65,8 @@ router.post(
     const asset = await prisma.mediaAsset.create({
       data: {
         kind,
-        mimeType,
+        // Persist the DETECTED mime, not whatever the browser claimed.
+        mimeType: detectedMime,
         filename,
         byteSize: body.length,
         bytes: body,
@@ -70,7 +86,6 @@ router.post(
   }),
 );
 
-// Serve bytes. Content is immutable for a given id → safe long cache.
 router.get(
   '/:id',
   handle(async (req, res) => {
@@ -87,8 +102,6 @@ router.get(
       'Content-Disposition',
       `inline; filename="${encodeURIComponent(asset.filename)}"`,
     );
-    // This overrides the /api-level no-store middleware because it's set
-    // after it in the response lifecycle.
     res.set('Cache-Control', 'public, max-age=31536000, immutable');
     res.send(Buffer.from(asset.bytes));
   }),

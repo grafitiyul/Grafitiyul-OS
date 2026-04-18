@@ -1,4 +1,5 @@
-// Client-side cap before we hit the network. Server rejects above these too.
+// Client caps. Server also validates, but we reject early to avoid
+// burning bandwidth on a file we know the server will refuse.
 export const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 export const MAX_VIDEO_BYTES = 200 * 1024 * 1024;
 
@@ -16,31 +17,109 @@ export const ALLOWED_VIDEO_MIME = new Set([
   'video/quicktime',
 ]);
 
-export async function uploadMedia(file, kind) {
-  if (!file) throw new Error('no file');
-  if (kind !== 'image' && kind !== 'video') throw new Error('invalid kind');
+// Upload with real progress events. Uses XMLHttpRequest because `fetch` has
+// no built-in upload-progress API. Returns a Promise<AssetResponse>.
+// The returned Promise also has an `abort()` method to cancel mid-upload.
+export function uploadMediaWithProgress(file, kind, onProgress) {
+  if (!file) return Promise.reject(new Error('no file'));
+  if (kind !== 'image' && kind !== 'video') {
+    return Promise.reject(new Error('invalid kind'));
+  }
 
   const allowed = kind === 'image' ? ALLOWED_IMAGE_MIME : ALLOWED_VIDEO_MIME;
   if (!allowed.has(file.type)) {
-    throw new Error(`סוג קובץ לא נתמך: ${file.type || 'לא ידוע'}`);
+    return Promise.reject(
+      new Error(`סוג קובץ לא נתמך: ${file.type || 'לא ידוע'}`),
+    );
   }
 
   const maxBytes = kind === 'image' ? MAX_IMAGE_BYTES : MAX_VIDEO_BYTES;
   if (file.size > maxBytes) {
     const mb = Math.round(maxBytes / 1024 / 1024);
-    throw new Error(`הקובץ גדול מדי. מקסימום ${mb}MB.`);
+    return Promise.reject(new Error(`הקובץ גדול מדי. מקסימום ${mb}MB.`));
   }
 
-  const qs = new URLSearchParams({ kind, filename: file.name || 'file' });
-  const res = await fetch(`/api/media/upload?${qs.toString()}`, {
-    method: 'POST',
-    headers: { 'Content-Type': file.type },
-    cache: 'no-store',
-    body: file,
+  const xhr = new XMLHttpRequest();
+  const qs = new URLSearchParams({
+    kind,
+    filename: file.name || 'file',
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`${res.status} ${text || 'העלאה נכשלה'}`);
+
+  const promise = new Promise((resolve, reject) => {
+    xhr.open('POST', `/api/media/upload?${qs.toString()}`);
+    xhr.setRequestHeader('Content-Type', file.type);
+
+    xhr.upload.addEventListener('progress', (e) => {
+      if (!onProgress) return;
+      if (e.lengthComputable) {
+        onProgress({
+          loaded: e.loaded,
+          total: e.total,
+          percent: Math.round((e.loaded / e.total) * 100),
+        });
+      } else {
+        // Server didn't report total — emit indeterminate progress.
+        onProgress({ loaded: e.loaded, total: null, percent: null });
+      }
+    });
+
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText));
+        } catch {
+          reject(new Error('תגובה לא חוקית מהשרת'));
+        }
+      } else {
+        let msg = `${xhr.status}`;
+        try {
+          const j = JSON.parse(xhr.responseText);
+          if (j?.error) msg = j.error;
+        } catch {
+          if (xhr.responseText) msg = xhr.responseText;
+        }
+        reject(new Error(msg));
+      }
+    });
+
+    xhr.addEventListener('error', () => reject(new Error('שגיאת רשת')));
+    xhr.addEventListener('abort', () => reject(new Error('bcancel')));
+    xhr.send(file);
+  });
+
+  promise.abort = () => xhr.abort();
+  return promise;
+}
+
+// Simple URL-shape check for the video-by-URL flow. We accept http(s) and
+// explicitly reject YouTube/Vimeo watch-page URLs (those require an iframe
+// embed node, not a <video> tag).
+export function validateExternalVideoUrl(url) {
+  const raw = String(url || '').trim();
+  if (!raw) return { ok: false, error: 'יש להזין כתובת' };
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    return { ok: false, error: 'כתובת לא תקינה' };
   }
-  return res.json(); // { id, kind, mimeType, filename, byteSize, url }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    return { ok: false, error: 'יש להשתמש ב-http או https' };
+  }
+  const host = u.hostname.toLowerCase();
+  if (
+    host === 'youtube.com' ||
+    host === 'www.youtube.com' ||
+    host === 'm.youtube.com' ||
+    host === 'youtu.be' ||
+    host === 'vimeo.com' ||
+    host === 'www.vimeo.com'
+  ) {
+    return {
+      ok: false,
+      error:
+        'עדיין אין תמיכה ב-YouTube / Vimeo. יש להשתמש בקישור ישיר לקובץ וידאו (MP4, WebM).',
+    };
+  }
+  return { ok: true, url: raw };
 }

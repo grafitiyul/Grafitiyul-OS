@@ -109,13 +109,55 @@
   height: auto;
   border-radius: 4px;
 }
-.rt-editor-prose img[data-type='media-image'],
-.gos-prose img[data-type='media-image'] {
-  /* Inline styles from the extension drive the concrete max-width/margin. */
-}
 .rt-editor-prose video[data-type='media-video'],
 .gos-prose video[data-type='media-video'] {
   background: #000;
+}
+
+/* Media figure block: inline styles drive width/align for the common case,
+   but these rules back them up so a paste that strips style still renders
+   correctly. */
+.rt-editor-prose figure[data-type='media-image-figure'],
+.gos-prose figure[data-type='media-image-figure'] {
+  margin: 0.5em 0;
+  display: block;
+}
+.rt-editor-prose figure[data-type='media-image-figure'][data-width='25'],
+.gos-prose figure[data-type='media-image-figure'][data-width='25'] { max-width: 25%; }
+.rt-editor-prose figure[data-type='media-image-figure'][data-width='50'],
+.gos-prose figure[data-type='media-image-figure'][data-width='50'] { max-width: 50%; }
+.rt-editor-prose figure[data-type='media-image-figure'][data-width='75'],
+.gos-prose figure[data-type='media-image-figure'][data-width='75'] { max-width: 75%; }
+.rt-editor-prose figure[data-type='media-image-figure'][data-width='100'],
+.gos-prose figure[data-type='media-image-figure'][data-width='100'] { max-width: 100%; }
+.rt-editor-prose figure[data-type='media-image-figure'][data-align='center'],
+.gos-prose figure[data-type='media-image-figure'][data-align='center'] {
+  margin-inline: auto;
+}
+.rt-editor-prose figure[data-type='media-image-figure'][data-align='start'],
+.gos-prose figure[data-type='media-image-figure'][data-align='start'] {
+  margin-inline-start: 0;
+  margin-inline-end: auto;
+}
+.rt-editor-prose figure[data-type='media-image-figure'][data-align='end'],
+.gos-prose figure[data-type='media-image-figure'][data-align='end'] {
+  margin-inline-start: auto;
+  margin-inline-end: 0;
+}
+.rt-editor-prose figure[data-type='media-image-figure'] img,
+.gos-prose figure[data-type='media-image-figure'] img {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 4px;
+}
+.rt-editor-prose .gos-media-caption,
+.gos-prose .gos-media-caption {
+  font-size: 0.875rem;
+  color: rgb(107 114 128);
+  margin-top: 0.35em;
+  text-align: center;
+  line-height: 1.4;
 }
 
 /* Fallback chip style for raw HTML not going through the React node view. */

@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { DYNAMIC_FIELDS } from '../lib/dynamicFields.js';
 import LinkPopover from './LinkPopover.jsx';
 import ColorPicker from './ColorPicker.jsx';
-import { uploadMedia } from './mediaUpload.js';
+import VideoUrlDialog from './VideoUrlDialog.jsx';
+import { uploadMediaWithProgress } from './mediaUpload.js';
 
 // ---- palette / option tables (stable values, never reference labels) ----
 
@@ -56,7 +57,7 @@ export const FONT_SIZES = [
 
 // ---- toolbar ----
 
-export default function Toolbar({ editor }) {
+export default function Toolbar({ editor, setUploadState }) {
   if (!editor) return null;
 
   return (
@@ -169,8 +170,8 @@ export default function Toolbar({ editor }) {
       <Divider />
 
       <Group>
-        <ImageUploadButton editor={editor} />
-        <VideoUploadButton editor={editor} />
+        <ImageUploadButton editor={editor} setUploadState={setUploadState} />
+        <VideoMenuButton editor={editor} setUploadState={setUploadState} />
       </Group>
       <Divider />
 
@@ -179,34 +180,90 @@ export default function Toolbar({ editor }) {
   );
 }
 
-function ImageUploadButton({ editor }) {
-  const inputRef = useRef(null);
-  const [busy, setBusy] = useState(false);
+// Shared helper: runs an upload with visible progress via the editor's
+// uploadState banner and inserts the result using the provided function.
+function runUpload({
+  file,
+  kind,
+  label,
+  setUploadState,
+  onDone,
+}) {
+  const ctrl = { aborted: false };
+  setUploadState({
+    phase: 'uploading',
+    label,
+    percent: 0,
+    cancel: () => {
+      ctrl.aborted = true;
+      promise.abort?.();
+    },
+  });
 
-  async function onPick(e) {
+  const promise = uploadMediaWithProgress(file, kind, (p) => {
+    if (ctrl.aborted) return;
+    setUploadState({
+      phase: 'uploading',
+      label,
+      percent: typeof p.percent === 'number' ? p.percent : null,
+      cancel: () => {
+        ctrl.aborted = true;
+        promise.abort?.();
+      },
+    });
+  });
+
+  promise.then(
+    (asset) => {
+      if (ctrl.aborted) return;
+      onDone(asset);
+      setUploadState({ phase: 'success', label: label + ' — הושלם' });
+      setTimeout(
+        () =>
+          setUploadState((prev) =>
+            prev?.phase === 'success' ? { phase: 'idle' } : prev,
+          ),
+        2200,
+      );
+    },
+    (err) => {
+      if (err?.message === 'bcancel' || ctrl.aborted) {
+        setUploadState({ phase: 'idle' });
+        return;
+      }
+      setUploadState({ phase: 'error', error: err?.message || 'העלאה נכשלה' });
+    },
+  );
+
+  return promise;
+}
+
+function ImageUploadButton({ editor, setUploadState }) {
+  const inputRef = useRef(null);
+
+  function onPick(e) {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    setBusy(true);
-    try {
-      const asset = await uploadMedia(file, 'image');
-      editor
-        .chain()
-        .focus(undefined, { scrollIntoView: false })
-        .setImage({ src: asset.url, alt: file.name.replace(/\.[^.]+$/, '') })
-        .run();
-    } catch (err) {
-      alert('העלאת תמונה נכשלה: ' + (err.message || err));
-    } finally {
-      setBusy(false);
-    }
+    runUpload({
+      file,
+      kind: 'image',
+      label: 'מעלה תמונה',
+      setUploadState,
+      onDone: (asset) => {
+        editor
+          .chain()
+          .focus(undefined, { scrollIntoView: false })
+          .setImage({ src: asset.url, alt: file.name.replace(/\.[^.]+$/, '') })
+          .run();
+      },
+    });
   }
 
   return (
     <>
       <IconBtn
-        label={busy ? 'מעלה תמונה…' : 'הוספת תמונה'}
-        disabled={busy}
+        label="הוספת תמונה"
         onClick={() => inputRef.current?.click()}
       >
         <ImageSVG />
@@ -222,44 +279,107 @@ function ImageUploadButton({ editor }) {
   );
 }
 
-function VideoUploadButton({ editor }) {
-  const inputRef = useRef(null);
-  const [busy, setBusy] = useState(false);
+function VideoMenuButton({ editor, setUploadState }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [urlOpen, setUrlOpen] = useState(false);
+  const menuRef = useRef(null);
+  const btnRef = useRef(null);
+  const fileRef = useRef(null);
 
-  async function onPick(e) {
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onDoc(e) {
+      if (menuRef.current?.contains(e.target)) return;
+      if (btnRef.current?.contains(e.target)) return;
+      setMenuOpen(false);
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') setMenuOpen(false);
+    }
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
+
+  function onPickFile(e) {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    setBusy(true);
-    try {
-      const asset = await uploadMedia(file, 'video');
-      editor
-        .chain()
-        .focus(undefined, { scrollIntoView: false })
-        .insertMediaVideo({ src: asset.url })
-        .run();
-    } catch (err) {
-      alert('העלאת וידאו נכשלה: ' + (err.message || err));
-    } finally {
-      setBusy(false);
-    }
+    runUpload({
+      file,
+      kind: 'video',
+      label: 'מעלה וידאו',
+      setUploadState,
+      onDone: (asset) => {
+        editor
+          .chain()
+          .focus(undefined, { scrollIntoView: false })
+          .insertMediaVideo({ src: asset.url })
+          .run();
+      },
+    });
+  }
+
+  function insertByUrl(url) {
+    editor
+      .chain()
+      .focus(undefined, { scrollIntoView: false })
+      .insertMediaVideo({ src: url })
+      .run();
   }
 
   return (
     <>
-      <IconBtn
-        label={busy ? 'מעלה וידאו…' : 'הוספת וידאו'}
-        disabled={busy}
-        onClick={() => inputRef.current?.click()}
-      >
-        <VideoSVG />
-      </IconBtn>
+      <div className="relative shrink-0" ref={btnRef}>
+        <IconBtn label="הוספת וידאו" onClick={() => setMenuOpen((v) => !v)}>
+          <VideoSVG />
+        </IconBtn>
+        {menuOpen && (
+          <div
+            ref={menuRef}
+            role="menu"
+            dir="rtl"
+            className="absolute bottom-full right-0 mb-1 bg-white border border-gray-200 rounded-md shadow-lg z-30 py-1 min-w-[200px]"
+          >
+            <button
+              role="menuitem"
+              type="button"
+              onClick={() => {
+                setMenuOpen(false);
+                fileRef.current?.click();
+              }}
+              className="w-full text-right px-3 py-2 text-sm hover:bg-gray-50"
+            >
+              העלאה מקובץ
+            </button>
+            <button
+              role="menuitem"
+              type="button"
+              onClick={() => {
+                setMenuOpen(false);
+                setUrlOpen(true);
+              }}
+              className="w-full text-right px-3 py-2 text-sm hover:bg-gray-50"
+            >
+              מ-URL (קישור ישיר)
+            </button>
+          </div>
+        )}
+      </div>
       <input
-        ref={inputRef}
+        ref={fileRef}
         type="file"
         accept="video/mp4,video/webm,video/ogg,video/quicktime"
-        onChange={onPick}
+        onChange={onPickFile}
         style={{ display: 'none' }}
+      />
+      <VideoUrlDialog
+        open={urlOpen}
+        onClose={() => setUrlOpen(false)}
+        onInsert={insertByUrl}
       />
     </>
   );

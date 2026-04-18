@@ -39,6 +39,8 @@ const KEEP_ATTRS_BY_TAG = {
     'data-align',
   ]),
   SOURCE: new Set(['src', 'type']),
+  FIGURE: new Set(['data-type', 'data-width', 'data-align']),
+  FIGCAPTION: new Set(['class']),
 };
 
 export function sanitizePastedHtml(html) {

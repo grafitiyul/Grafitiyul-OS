@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useRef, useState } from 'react';
 import Image from '@tiptap/extension-image';
 import { mergeAttributes } from '@tiptap/core';
 import { NodeViewWrapper, ReactNodeViewRenderer } from '@tiptap/react';
+import { uploadMediaWithProgress } from './mediaUpload.js';
 
-// Alignment is kept as logical start | center | end so RTL stays correct.
+// Logical alignment values — RTL-safe throughout.
 const ALIGNMENTS = [
   { value: 'start', label: 'ימין' },
   { value: 'center', label: 'מרכז' },
@@ -17,39 +18,55 @@ const WIDTHS = [
   { value: '100', label: '100%' },
 ];
 
-function stylesFor(widthPct, align) {
+function figureStylesFor(widthPct, align) {
   const parts = [`max-width: ${widthPct}%`];
   if (align === 'center') {
-    parts.push('display: block', 'margin-inline: auto');
+    parts.push('margin-inline: auto');
   } else if (align === 'start') {
-    parts.push(
-      'display: block',
-      'margin-inline-end: auto',
-      'margin-inline-start: 0',
-    );
+    parts.push('margin-inline-start: 0', 'margin-inline-end: auto');
   } else if (align === 'end') {
-    parts.push(
-      'display: block',
-      'margin-inline-start: auto',
-      'margin-inline-end: 0',
-    );
+    parts.push('margin-inline-start: auto', 'margin-inline-end: 0');
   }
   return parts.join('; ');
 }
 
+// Uses @tiptap/extension-image as the base mark (schema / commands like
+// setImage). Extends it with width / align / caption attributes and a
+// serialised HTML shape of <figure><img><figcaption></figure>.
+//
+// Backward compat: slice-4 content that saved bare <img data-type="media-image">
+// is still parsed via the fallback `img` rule.
 export const MediaImage = Image.extend({
   name: 'mediaImage',
 
   addAttributes() {
     return {
       ...this.parent?.(),
-      width: { default: '100' },
+      width: { default: '50' },
       align: { default: 'center' },
+      caption: { default: '' },
     };
   },
 
   parseHTML() {
     return [
+      // New shape (this slice and onward).
+      {
+        tag: 'figure[data-type="media-image-figure"]',
+        getAttrs: (el) => {
+          const img = el.querySelector('img');
+          if (!img) return false;
+          const cap = el.querySelector('figcaption');
+          return {
+            src: img.getAttribute('src'),
+            alt: img.getAttribute('alt') || '',
+            width: el.getAttribute('data-width') || '50',
+            align: el.getAttribute('data-align') || 'center',
+            caption: cap?.textContent?.trim() || '',
+          };
+        },
+      },
+      // Backward compat: slice-4 bare <img data-type="media-image">.
       {
         tag: 'img[data-type="media-image"]',
         getAttrs: (el) => ({
@@ -57,9 +74,10 @@ export const MediaImage = Image.extend({
           alt: el.getAttribute('alt') || '',
           width: el.getAttribute('data-width') || '100',
           align: el.getAttribute('data-align') || 'center',
+          caption: '',
         }),
       },
-      // Plain <img> fallback so pasted content still works.
+      // Bare <img> fallback (pasted from elsewhere).
       {
         tag: 'img',
         getAttrs: (el) => ({
@@ -67,23 +85,39 @@ export const MediaImage = Image.extend({
           alt: el.getAttribute('alt') || '',
           width: '100',
           align: 'center',
+          caption: '',
         }),
       },
     ];
   },
 
   renderHTML({ HTMLAttributes, node }) {
-    const width = node.attrs.width || '100';
+    const width = node.attrs.width || '50';
     const align = node.attrs.align || 'center';
-    return [
-      'img',
-      mergeAttributes(HTMLAttributes, {
-        'data-type': 'media-image',
-        'data-width': width,
-        'data-align': align,
-        style: stylesFor(width, align),
-      }),
-    ];
+    const caption = node.attrs.caption || '';
+
+    const figureAttrs = {
+      'data-type': 'media-image-figure',
+      'data-width': width,
+      'data-align': align,
+      style: figureStylesFor(width, align),
+    };
+
+    // Strip Tiptap-internal-only attrs from HTMLAttributes where needed.
+    const imgAttrs = mergeAttributes(HTMLAttributes, {
+      'data-type': 'media-image',
+      style: 'width: 100%; height: auto; display: block; border-radius: 4px;',
+    });
+    // width/align/caption live on the figure, not the img.
+    delete imgAttrs['data-width'];
+    delete imgAttrs['data-align'];
+    delete imgAttrs.caption;
+
+    const children = [['img', imgAttrs]];
+    if (caption) {
+      children.push(['figcaption', { class: 'gos-media-caption' }, caption]);
+    }
+    return ['figure', figureAttrs, ...children];
   },
 
   addNodeView() {
@@ -92,9 +126,12 @@ export const MediaImage = Image.extend({
 });
 
 function ImageView({ node, updateAttributes, deleteNode, selected }) {
+  const { src, alt, width, align, caption } = node.attrs;
   const [menuOpen, setMenuOpen] = useState(false);
+  const [replaceBusy, setReplaceBusy] = useState(false);
   const menuRef = useRef(null);
   const imgRef = useRef(null);
+  const replaceInputRef = useRef(null);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -114,16 +151,44 @@ function ImageView({ node, updateAttributes, deleteNode, selected }) {
     };
   }, [menuOpen]);
 
-  const { src, alt, width, align } = node.attrs;
+  async function onPickReplacement(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setReplaceBusy(true);
+    try {
+      const asset = await uploadMediaWithProgress(file, 'image');
+      updateAttributes({ src: asset.url });
+    } catch (err) {
+      alert('החלפת תמונה נכשלה: ' + (err?.message || err));
+    } finally {
+      setReplaceBusy(false);
+    }
+  }
+
   const wrapAlign =
     align === 'center' ? 'center' : align === 'start' ? 'start' : 'end';
 
   return (
     <NodeViewWrapper
-      as="div"
+      as="figure"
       dir="rtl"
-      className="gos-media-image-wrap"
-      style={{ textAlign: wrapAlign, position: 'relative', margin: '0.5em 0' }}
+      className="gos-media-image-figure"
+      data-type="media-image-figure"
+      data-width={width}
+      data-align={align}
+      style={{
+        textAlign: wrapAlign,
+        position: 'relative',
+        margin: '0.5em 0',
+        maxWidth: `${width}%`,
+        marginInline:
+          align === 'center' ? 'auto' : undefined,
+        marginInlineStart:
+          align === 'start' ? 0 : align === 'end' ? 'auto' : undefined,
+        marginInlineEnd:
+          align === 'end' ? 0 : align === 'start' ? 'auto' : undefined,
+      }}
       contentEditable={false}
     >
       <img
@@ -138,15 +203,28 @@ function ImageView({ node, updateAttributes, deleteNode, selected }) {
           setMenuOpen((v) => !v);
         }}
         style={{
-          maxWidth: `${width}%`,
+          width: '100%',
           height: 'auto',
-          display: 'inline-block',
+          display: 'block',
           cursor: 'pointer',
           borderRadius: '4px',
           outline: selected || menuOpen ? '2px solid rgb(37 99 235)' : 'none',
           outlineOffset: '2px',
         }}
       />
+      {caption && (
+        <figcaption
+          className="gos-media-caption"
+          style={{
+            fontSize: '0.875rem',
+            color: 'rgb(107 114 128)',
+            marginTop: '0.35em',
+            textAlign: 'center',
+          }}
+        >
+          {caption}
+        </figcaption>
+      )}
       {menuOpen && (
         <MediaMenu
           ref={menuRef}
@@ -155,20 +233,39 @@ function ImageView({ node, updateAttributes, deleteNode, selected }) {
           deleteNode={deleteNode}
           onClose={() => setMenuOpen(false)}
           includeAlt
+          includeCaption
+          onReplace={() => replaceInputRef.current?.click()}
+          replaceBusy={replaceBusy}
         />
       )}
+      <input
+        ref={replaceInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/gif,image/webp"
+        onChange={onPickReplacement}
+        style={{ display: 'none' }}
+      />
     </NodeViewWrapper>
   );
 }
 
-// Shared menu used by both image and video views.
-import { forwardRef } from 'react';
+// Shared menu for image + video node views.
 export const MediaMenu = forwardRef(function MediaMenu(
-  { node, updateAttributes, deleteNode, onClose, includeAlt = false },
+  {
+    node,
+    updateAttributes,
+    deleteNode,
+    onClose,
+    includeAlt = false,
+    includeCaption = false,
+    onReplace,
+    replaceBusy,
+  },
   ref,
 ) {
   const { width, align } = node.attrs;
   const alt = node.attrs.alt || '';
+  const caption = node.attrs.caption || '';
   return (
     <div
       ref={ref}
@@ -187,7 +284,7 @@ export const MediaMenu = forwardRef(function MediaMenu(
         borderRadius: 6,
         boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
         padding: 10,
-        minWidth: 240,
+        minWidth: 260,
         zIndex: 30,
         fontSize: 13,
         color: 'rgb(17 24 39)',
@@ -219,6 +316,22 @@ export const MediaMenu = forwardRef(function MediaMenu(
           ))}
         </div>
       </MenuSection>
+      {includeCaption && (
+        <MenuSection label="כיתוב מתחת לתמונה">
+          <input
+            value={caption}
+            onChange={(e) => updateAttributes({ caption: e.target.value })}
+            placeholder="אופציונלי"
+            style={{
+              width: '100%',
+              padding: '6px 8px',
+              border: '1px solid rgb(209 213 219)',
+              borderRadius: 4,
+              fontSize: 13,
+            }}
+          />
+        </MenuSection>
+      )}
       {includeAlt && (
         <MenuSection label="טקסט חלופי (alt)">
           <input
@@ -235,7 +348,15 @@ export const MediaMenu = forwardRef(function MediaMenu(
           />
         </MenuSection>
       )}
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: 8,
+          marginTop: 8,
+          flexWrap: 'wrap',
+        }}
+      >
         <button
           type="button"
           onClick={() => {
@@ -254,21 +375,42 @@ export const MediaMenu = forwardRef(function MediaMenu(
         >
           הסר
         </button>
-        <button
-          type="button"
-          onClick={onClose}
-          style={{
-            fontSize: 12,
-            color: 'rgb(55 65 81)',
-            background: 'transparent',
-            border: '1px solid rgb(209 213 219)',
-            borderRadius: 4,
-            padding: '4px 10px',
-            cursor: 'pointer',
-          }}
-        >
-          סגור
-        </button>
+        <div style={{ display: 'flex', gap: 6, marginInlineStart: 'auto' }}>
+          {onReplace && (
+            <button
+              type="button"
+              onClick={onReplace}
+              disabled={replaceBusy}
+              style={{
+                fontSize: 12,
+                color: 'rgb(30 64 175)',
+                background: 'rgb(219 234 254)',
+                border: '1px solid rgb(191 219 254)',
+                borderRadius: 4,
+                padding: '4px 10px',
+                cursor: replaceBusy ? 'not-allowed' : 'pointer',
+                opacity: replaceBusy ? 0.6 : 1,
+              }}
+            >
+              {replaceBusy ? 'מחליף…' : 'החלף'}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              fontSize: 12,
+              color: 'rgb(55 65 81)',
+              background: 'transparent',
+              border: '1px solid rgb(209 213 219)',
+              borderRadius: 4,
+              padding: '4px 10px',
+              cursor: 'pointer',
+            }}
+          >
+            סגור
+          </button>
+        </div>
       </div>
     </div>
   );
