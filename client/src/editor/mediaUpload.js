@@ -95,14 +95,14 @@ import { parseEmbedUrl } from './embedProviders.js';
 
 // Typed result for the video-URL flow. The dialog consumer picks the right
 // insertion path based on `kind`:
-//   { ok: true, kind: 'embed', provider, videoId, embedUrl }
+//   { ok: true, kind: 'embed', provider, videoId, videoHash?, embedUrl, aspectRatio, defaultWidth }
 //   { ok: true, kind: 'direct', url }
 //   { ok: false, error }
 export function validateExternalVideoUrl(url) {
   const raw = String(url || '').trim();
   if (!raw) return { ok: false, error: 'יש להזין כתובת' };
 
-  // Try YouTube / Vimeo first — those become an iframe embed.
+  // Try YouTube / Vimeo / Google Drive first — those become iframe embeds.
   const embed = parseEmbedUrl(raw);
   if (embed) return { ok: true, kind: 'embed', ...embed };
 
@@ -116,17 +116,28 @@ export function validateExternalVideoUrl(url) {
   if (u.protocol !== 'http:' && u.protocol !== 'https:') {
     return { ok: false, error: 'יש להשתמש ב-http או https' };
   }
-  // Known platform host we couldn't parse — reject with a clear message so the
-  // user knows we tried but the URL format wasn't recognised.
+  // Known platform host we couldn't parse — reject with a clear message so
+  // the user knows we tried and what we were looking for.
   const host = u.hostname.toLowerCase();
-  if (
-    host.endsWith('youtube.com') ||
-    host === 'youtu.be' ||
-    host.endsWith('vimeo.com')
-  ) {
+  if (host.endsWith('youtube.com') || host === 'youtu.be') {
     return {
       ok: false,
-      error: 'לא הצלחנו לזהות מזהה וידאו בכתובת. ודאו שמדובר בקישור תקין.',
+      error:
+        'לא הצלחנו לזהות מזהה סרטון YouTube בכתובת. ודאו שמדובר בקישור תקין.',
+    };
+  }
+  if (host.endsWith('vimeo.com')) {
+    return {
+      ok: false,
+      error:
+        'לא הצלחנו לזהות מזהה סרטון Vimeo. לסרטון לא רשום צרפו גם את קוד הגישה (אחרי ה-ID).',
+    };
+  }
+  if (host === 'drive.google.com' || host === 'docs.google.com') {
+    return {
+      ok: false,
+      error:
+        'לא הצלחנו לזהות מזהה קובץ ב-Google Drive. השתמשו בקישור שיתוף של קובץ וידאו.',
     };
   }
   return { ok: true, kind: 'direct', url: raw };

@@ -330,6 +330,9 @@ function VideoMenuButton({ editor, setUploadState }) {
         .insertMediaEmbed({
           provider: result.provider,
           videoId: result.videoId,
+          videoHash: result.videoHash || null,
+          aspectRatio: result.aspectRatio || '16:9',
+          width: result.defaultWidth || '60',
         })
         .run();
     } else {

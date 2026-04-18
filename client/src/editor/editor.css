@@ -255,6 +255,11 @@
   /* Background handled by the toolbar itself; this keeps the border flush. */
 }
 
+@keyframes gos-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* Learner / read-only prose. Mirrors rt-editor-prose visuals without
    editor-only behaviors. Used by LearnerRuntime for content + question text. */
 .gos-prose {

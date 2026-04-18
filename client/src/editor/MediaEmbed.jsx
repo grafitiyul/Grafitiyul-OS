@@ -16,10 +16,10 @@ function wrapperStylesFor(widthPct, align) {
   return parts.join('; ');
 }
 
-// Block atom for external video embeds (YouTube / Vimeo) rendered via an
-// iframe. The src is always rebuilt from (provider, videoId) — never stored.
-// That keeps serialised content safe (no query-parameter injection through
-// a crafted paste) and makes it easy to swap privacy domains later.
+// Block atom for external video embeds (YouTube / Vimeo / Google Drive)
+// rendered via an iframe. The src is always rebuilt from (provider,
+// videoId, videoHash) — never stored. That keeps saved content safe and
+// makes it easy to swap privacy domains or parameters later.
 export const MediaEmbed = Node.create({
   name: 'mediaEmbed',
 
@@ -32,8 +32,11 @@ export const MediaEmbed = Node.create({
     return {
       provider: { default: null },
       videoId: { default: null },
-      width: { default: '75' },
+      // Optional Vimeo unlisted-video access hash.
+      videoHash: { default: null },
+      width: { default: '60' },
       align: { default: 'center' },
+      aspectRatio: { default: '16:9' },
     };
   },
 
@@ -49,8 +52,10 @@ export const MediaEmbed = Node.create({
           return {
             provider,
             videoId,
-            width: el.getAttribute('data-width') || '75',
+            videoHash: el.getAttribute('data-video-hash') || null,
+            width: el.getAttribute('data-width') || '60',
             align: el.getAttribute('data-align') || 'center',
+            aspectRatio: el.getAttribute('data-aspect-ratio') || '16:9',
           };
         },
       },
@@ -58,22 +63,31 @@ export const MediaEmbed = Node.create({
   },
 
   renderHTML({ HTMLAttributes, node }) {
-    const { provider, videoId, width, align } = node.attrs;
-    const src = buildEmbedUrl(provider, videoId);
+    const { provider, videoId, videoHash, width, align, aspectRatio } =
+      node.attrs;
+    const src = buildEmbedUrl(provider, videoId, { hash: videoHash });
     return [
       'div',
       mergeAttributes(HTMLAttributes, {
         'data-type': 'media-embed',
         'data-provider': provider,
         'data-video-id': videoId,
+        'data-video-hash': videoHash || '',
         'data-width': width,
         'data-align': align,
+        'data-aspect-ratio': aspectRatio || '16:9',
         class: 'gos-media-embed-figure',
         style: wrapperStylesFor(width, align),
       }),
       [
         'div',
-        { class: 'gos-media-embed-frame', style: 'aspect-ratio: 16 / 9;' },
+        {
+          class: 'gos-media-embed-frame',
+          style: `position:relative; aspect-ratio: ${(aspectRatio || '16:9').replace(
+            ':',
+            ' / ',
+          )};`,
+        },
         [
           'iframe',
           {
@@ -107,12 +121,27 @@ export const MediaEmbed = Node.create({
 });
 
 function EmbedView({ node, updateAttributes, deleteNode, selected }) {
-  const { provider, videoId, width, align } = node.attrs;
-  const src = buildEmbedUrl(provider, videoId);
+  const { provider, videoId, videoHash, width, align, aspectRatio } =
+    node.attrs;
+  const src = buildEmbedUrl(provider, videoId, { hash: videoHash });
 
   const [menuOpen, setMenuOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [slowLoad, setSlowLoad] = useState(false);
   const menuRef = useRef(null);
   const btnRef = useRef(null);
+  const iframeRef = useRef(null);
+
+  // Reset load state whenever the URL changes.
+  useEffect(() => {
+    setLoading(true);
+    setSlowLoad(false);
+    const timeout = setTimeout(() => {
+      if (loading) setSlowLoad(true);
+    }, 15000);
+    return () => clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -135,6 +164,9 @@ function EmbedView({ node, updateAttributes, deleteNode, selected }) {
   const wrapAlign =
     align === 'center' ? 'center' : align === 'start' ? 'start' : 'end';
 
+  const aspectCss = (aspectRatio || '16:9').replace(':', ' / ');
+  const isDrive = provider === 'drive';
+
   return (
     <NodeViewWrapper
       as="div"
@@ -143,8 +175,10 @@ function EmbedView({ node, updateAttributes, deleteNode, selected }) {
       data-type="media-embed"
       data-provider={provider}
       data-video-id={videoId}
+      data-video-hash={videoHash || ''}
       data-width={width}
       data-align={align}
+      data-aspect-ratio={aspectRatio || '16:9'}
       contentEditable={false}
       style={{
         textAlign: wrapAlign,
@@ -163,14 +197,16 @@ function EmbedView({ node, updateAttributes, deleteNode, selected }) {
           borderRadius: '4px',
         }}
       >
-        <div style={{ position: 'relative', aspectRatio: '16 / 9' }}>
+        <div style={{ position: 'relative', aspectRatio: aspectCss }}>
           {src ? (
             <iframe
+              ref={iframeRef}
               src={src}
               title={`${providerLabel(provider)} video ${videoId}`}
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen; web-share"
               allowFullScreen
               referrerPolicy="strict-origin-when-cross-origin"
+              onLoad={() => setLoading(false)}
               style={{
                 position: 'absolute',
                 inset: 0,
@@ -198,6 +234,40 @@ function EmbedView({ node, updateAttributes, deleteNode, selected }) {
               וידאו לא זמין
             </div>
           )}
+
+          {/* Loading overlay: covers the iframe until onLoad fires. */}
+          {src && loading && (
+            <div
+              aria-hidden
+              style={{
+                position: 'absolute',
+                inset: 0,
+                background: 'rgba(17,24,39,0.6)',
+                color: 'white',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: '4px',
+                gap: 6,
+                fontSize: 12,
+                pointerEvents: 'none',
+              }}
+            >
+              <div
+                style={{
+                  width: 28,
+                  height: 28,
+                  border: '3px solid rgba(255,255,255,0.25)',
+                  borderTopColor: 'white',
+                  borderRadius: '50%',
+                  animation: 'gos-spin 0.9s linear infinite',
+                }}
+              />
+              {slowLoad ? 'טעינה איטית או נכשלה…' : `טוען ${providerLabel(provider)}…`}
+            </div>
+          )}
+
           <button
             ref={btnRef}
             type="button"
@@ -212,12 +282,12 @@ function EmbedView({ node, updateAttributes, deleteNode, selected }) {
               position: 'absolute',
               top: 6,
               insetInlineEnd: 6,
-              width: 28,
-              height: 28,
-              borderRadius: 14,
-              background: 'rgba(17,24,39,0.65)',
+              width: 32,
+              height: 32,
+              borderRadius: 16,
+              background: 'rgba(17,24,39,0.75)',
               color: 'white',
-              border: 'none',
+              border: '1px solid rgba(255,255,255,0.15)',
               cursor: 'pointer',
               fontSize: 16,
               lineHeight: 1,
@@ -225,11 +295,14 @@ function EmbedView({ node, updateAttributes, deleteNode, selected }) {
               alignItems: 'center',
               justifyContent: 'center',
               zIndex: 10,
+              boxShadow: '0 2px 6px rgba(0,0,0,0.25)',
             }}
           >
             ⋯
           </button>
         </div>
+
+        {/* Provider label under the embed */}
         <div
           style={{
             marginTop: 4,
@@ -240,7 +313,29 @@ function EmbedView({ node, updateAttributes, deleteNode, selected }) {
         >
           {providerLabel(provider)}
         </div>
+
+        {/* Drive-specific helper hint — we can't detect Drive permission
+            errors cross-origin, so we always show this advice. */}
+        {isDrive && (
+          <div
+            style={{
+              marginTop: 4,
+              fontSize: 11,
+              color: 'rgb(120 53 15)',
+              background: 'rgb(254 243 199)',
+              border: '1px solid rgb(253 230 138)',
+              borderRadius: 4,
+              padding: '4px 8px',
+              textAlign: 'start',
+              lineHeight: 1.5,
+            }}
+          >
+            אם הסרטון לא מופיע, ודאו שההרשאה של הקובץ היא "כל מי שיש את הקישור"
+            (Anyone with the link).
+          </div>
+        )}
       </div>
+
       {menuOpen && (
         <MediaMenu
           ref={menuRef}

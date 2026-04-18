@@ -93,7 +93,7 @@ export default function VideoUrlDialog({ open, onClose, onInsert }) {
                 if (error) setError('');
               }}
               onKeyDown={onKey}
-              placeholder="https://youtube.com/watch?v=… או https://example.com/video.mp4"
+              placeholder="YouTube · Vimeo · Google Drive · MP4 / WebM"
               className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
             />
           </label>
@@ -102,8 +102,17 @@ export default function VideoUrlDialog({ open, onClose, onInsert }) {
               {error}
             </div>
           )}
-          <div className="text-[11px] text-gray-500 leading-relaxed">
-            נתמכים: YouTube, Vimeo, וקישורים ישירים לקבצי וידאו (MP4, WebM, OGV).
+          <div className="text-[11px] text-gray-500 leading-relaxed space-y-0.5">
+            <div>
+              נתמכים: YouTube, Vimeo, Google Drive, וקישורים ישירים לקבצי וידאו
+              (MP4, WebM, OGV).
+            </div>
+            <div>
+              עבור Vimeo לא-רשום: הדביקו את הקישור המלא (כולל קוד הגישה).
+            </div>
+            <div>
+              עבור Google Drive: הקובץ חייב להיות משותף "לכל מי שיש את הקישור".
+            </div>
           </div>
         </div>
         <div className="p-3 border-t border-gray-200 flex items-center gap-2 justify-end">

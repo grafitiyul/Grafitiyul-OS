@@ -46,9 +46,19 @@ const KEEP_ATTRS_BY_TAG = {
   FIGURE: new Set(['data-type', 'data-width', 'data-align']),
   FIGCAPTION: new Set(['class']),
   // Embed wrapper. The actual iframe src is reconstructed from
-  // data-provider + data-video-id in MediaEmbed.renderHTML, so we
-  // don't trust whatever src was in the pasted iframe.
-  DIV: new Set(['data-type', 'data-provider', 'data-video-id', 'data-width', 'data-align', 'class']),
+  // data-provider + data-video-id + data-video-hash in
+  // MediaEmbed.renderHTML, so we don't trust whatever src was in the
+  // pasted iframe.
+  DIV: new Set([
+    'data-type',
+    'data-provider',
+    'data-video-id',
+    'data-video-hash',
+    'data-width',
+    'data-align',
+    'data-aspect-ratio',
+    'class',
+  ]),
 };
 
 export function sanitizePastedHtml(html) {
