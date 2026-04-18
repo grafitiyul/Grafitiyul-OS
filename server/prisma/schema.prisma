@@ -56,46 +56,58 @@ model FlowNode {
   parentId        String?
   children        FlowNode[]    @relation("NodeChildren")
   order           Int
-  kind            String        // 'content' | 'question' | 'group'
+  kind            String // 'content' | 'question' | 'group'
   contentItem     ContentItem?  @relation(fields: [contentItemId], references: [id])
   contentItemId   String?
   questionItem    QuestionItem? @relation(fields: [questionItemId], references: [id])
   questionItemId  String?
   groupTitle      String?
   checkpointAfter Boolean       @default(false)
-  answers         Answer[]
+  answers         FlowAnswer[]
   currentFor      Attempt[]     @relation("AttemptCurrentNode")
 }
 
-// status: 'in_progress' | 'awaiting_review' | 'returned' | 'completed'
+// status: 'in_progress' | 'submitted' | 'approved'
+// A rejected question does NOT move the attempt to "rejected" — rejection
+// lives only on FlowAnswer. An attempt becomes 'approved' only when every
+// question's latest FlowAnswer has status='approved'.
 model Attempt {
-  id            String    @id @default(cuid())
-  flow          Flow      @relation(fields: [flowId], references: [id], onDelete: Cascade)
-  flowId        String
-  learnerName   String
-  status        String    @default("in_progress")
-  currentNode   FlowNode? @relation("AttemptCurrentNode", fields: [currentNodeId], references: [id])
-  currentNodeId String?
-  reviewNote    String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  answers       Answer[]
+  id               String       @id @default(cuid())
+  flow             Flow         @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  flowId           String
+  learnerName      String
+  workerIdentifier String?
+  status           String       @default("in_progress")
+  currentNode      FlowNode?    @relation("AttemptCurrentNode", fields: [currentNodeId], references: [id])
+  currentNodeId    String?
+  submittedAt      DateTime?
+  approvedAt       DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  answers          FlowAnswer[]
 }
 
-// reviewStatus: 'pending' | 'approved' | 'returned'
-model Answer {
+// Versioned answer. Each worker edit appends a new row; existing rows are
+// never mutated (except status/adminComment/reviewedAt when an admin reviews).
+// status: 'pending' | 'approved' | 'rejected'
+model FlowAnswer {
   id             String    @id @default(cuid())
   attempt        Attempt   @relation(fields: [attemptId], references: [id], onDelete: Cascade)
   attemptId      String
   flowNode       FlowNode  @relation(fields: [flowNodeId], references: [id], onDelete: Cascade)
   flowNodeId     String
+  questionItemId String
   openText       String?
-  selectedOption String?
-  reviewStatus   String    @default("pending")
-  submittedAt    DateTime  @default(now())
+  answerChoice   String?
+  answerLabel    String?
+  version        Int
+  status         String    @default("pending")
+  adminComment   String?
+  createdAt      DateTime  @default(now())
   reviewedAt     DateTime?
 
-  @@unique([attemptId, flowNodeId])
+  @@unique([attemptId, flowNodeId, version])
+  @@index([attemptId, flowNodeId])
 }
 
 // Embedded media uploaded by admins and referenced inside item HTML.

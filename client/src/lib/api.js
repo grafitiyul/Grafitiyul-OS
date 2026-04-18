@@ -6,10 +6,29 @@ async function request(path, options = {}) {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`${res.status} ${text}`);
+    let payload = null;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      /* non-JSON body */
+    }
+    const err = new Error(`${res.status} ${text}`);
+    err.status = res.status;
+    err.payload = payload;
+    throw err;
   }
   if (res.status === 204) return null;
   return res.json();
+}
+
+function qs(obj) {
+  if (!obj) return '';
+  const parts = Object.entries(obj)
+    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .map(
+      ([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`
+    );
+  return parts.length ? `?${parts.join('&')}` : '';
 }
 
 export const api = {
@@ -44,24 +63,30 @@ export const api = {
       }),
   },
   attempts: {
-    create: (flowId, learnerName) =>
+    create: (flowId, learnerName, workerIdentifier) =>
       request('/api/attempts', {
         method: 'POST',
-        body: JSON.stringify({ flowId, learnerName }),
+        body: JSON.stringify({ flowId, learnerName, workerIdentifier }),
       }),
     get: (id) => request(`/api/attempts/${id}`),
     answer: (id, payload) =>
       request(`/api/attempts/${id}/answer`, { method: 'POST', body: JSON.stringify(payload) }),
     advance: (id) => request(`/api/attempts/${id}/advance`, { method: 'POST' }),
-    resume: (id) => request(`/api/attempts/${id}/resume`, { method: 'POST' }),
+    submit: (id) => request(`/api/attempts/${id}/submit`, { method: 'POST' }),
+    outstanding: (id) => request(`/api/attempts/${id}/outstanding`),
     listForFlow: (flowId) => request(`/api/attempts/flow/${flowId}`),
   },
   reviews: {
-    approve: (id) => request(`/api/reviews/attempts/${id}/approve`, { method: 'POST' }),
-    returnForFix: (id, note) =>
-      request(`/api/reviews/attempts/${id}/return`, {
+    list: (filters) => request(`/api/reviews/attempts${qs(filters)}`),
+    get: (id) => request(`/api/reviews/attempts/${id}`),
+    approveQuestion: (id, flowNodeId) =>
+      request(`/api/reviews/attempts/${id}/questions/${flowNodeId}/approve`, {
         method: 'POST',
-        body: JSON.stringify({ note }),
+      }),
+    rejectQuestion: (id, flowNodeId, comment) =>
+      request(`/api/reviews/attempts/${id}/questions/${flowNodeId}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ comment }),
       }),
   },
 };

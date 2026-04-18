@@ -4,12 +4,14 @@ import ProceduresLayout from './admin/procedures/ProceduresLayout.jsx';
 import FlowsHome from './admin/procedures/flows/FlowsHome.jsx';
 import FlowsIndexView from './admin/procedures/flows/FlowsIndexView.jsx';
 import FlowEditor from './admin/procedures/flows/FlowEditor.jsx';
-import ApprovalsList from './admin/procedures/approvals/ApprovalsList.jsx';
+import ApprovalsHome from './admin/procedures/approvals/ApprovalsHome.jsx';
+import ApprovalsIndexView from './admin/procedures/approvals/ApprovalsIndexView.jsx';
+import ApprovalDetail from './admin/procedures/approvals/ApprovalDetail.jsx';
 import BankHome from './admin/procedures/bank/BankHome.jsx';
 import BankIndexView from './admin/procedures/bank/BankIndexView.jsx';
 import ContentEditor from './admin/procedures/bank/ContentEditor.jsx';
 import QuestionEditor from './admin/procedures/bank/QuestionEditor.jsx';
-import LearnerRuntime from './learner/LearnerRuntime.jsx';
+import { FlowEntry, AttemptRuntime } from './learner/LearnerRuntime.jsx';
 
 export default function App() {
   return (
@@ -30,10 +32,14 @@ export default function App() {
             <Route path="question/new" element={<QuestionEditor mode="new" />} />
             <Route path="question/:id" element={<QuestionEditor mode="edit" />} />
           </Route>
-          <Route path="approvals" element={<ApprovalsList />} />
+          <Route path="approvals" element={<ApprovalsHome />}>
+            <Route index element={<ApprovalsIndexView />} />
+            <Route path=":id" element={<ApprovalDetail />} />
+          </Route>
         </Route>
       </Route>
-      <Route path="/flow/:id" element={<LearnerRuntime />} />
+      <Route path="/flow/:id" element={<FlowEntry />} />
+      <Route path="/attempt/:attemptId" element={<AttemptRuntime />} />
     </Routes>
   );
 }
