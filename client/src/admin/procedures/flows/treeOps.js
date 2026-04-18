@@ -144,6 +144,63 @@ export function applyMove(flat, activeId, overId, position) {
   return flattenTree(tree);
 }
 
+// Insert a new node immediately after `afterId` in the flat array. The new
+// node inherits the `afterId` node's parent. Uses applyMove to keep order /
+// parentId normalisation in one place.
+export function insertAfter(flat, afterId, newNode) {
+  // Append the new node at root as a placeholder, then move it to after.
+  const rootSiblings = flat.filter((n) => !n.parentId);
+  const staged = [
+    ...flat,
+    { ...newNode, parentId: null, order: rootSiblings.length },
+  ];
+  if (!afterId) return staged;
+  return applyMove(staged, newNode.id, afterId, 'after');
+}
+
+// Move `nodeId` to become the last child of `targetParentId`. Pass `null` for
+// `targetParentId` to move to root. Returns the original array (no mutation)
+// if the move would cycle.
+export function moveToParent(flat, nodeId, targetParentId) {
+  if (!nodeId || nodeId === targetParentId) return flat;
+  if (targetParentId && isDescendant(flat, nodeId, targetParentId)) return flat;
+
+  const tree = buildTree(flat);
+  let extracted = null;
+  function remove(nodes) {
+    for (let i = 0; i < nodes.length; i++) {
+      if (nodes[i].id === nodeId) {
+        extracted = nodes[i];
+        nodes.splice(i, 1);
+        return true;
+      }
+      if (nodes[i].children?.length && remove(nodes[i].children)) return true;
+    }
+    return false;
+  }
+  remove(tree);
+  if (!extracted) return flat;
+
+  if (!targetParentId) {
+    tree.push(extracted);
+  } else {
+    function find(nodes) {
+      for (const n of nodes) {
+        if (n.id === targetParentId) {
+          n.children = n.children || [];
+          n.children.push(extracted);
+          return true;
+        }
+        if (n.children?.length && find(n.children)) return true;
+      }
+      return false;
+    }
+    if (!find(tree)) tree.push(extracted);
+  }
+
+  return flattenTree(tree);
+}
+
 // Remove the node and all its descendants from the flat array.
 export function removeSubtree(flat, nodeId) {
   const toRemove = new Set([nodeId]);

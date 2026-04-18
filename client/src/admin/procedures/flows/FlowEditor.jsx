@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import {
   DndContext,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   closestCenter,
@@ -14,15 +15,21 @@ import ItemPicker from './ItemPicker.jsx';
 import ItemPreview from './ItemPreview.jsx';
 import ResizeHandle from '../../../shell/ResizeHandle.jsx';
 import DeleteFlowDialog from '../../common/DeleteFlowDialog.jsx';
+import MoveToDialog from './MoveToDialog.jsx';
 import FlowTreeRow from './FlowTreeRow.jsx';
 import {
   buildTree,
   flattenVisible,
   applyMove,
+  insertAfter,
+  moveToParent,
   removeSubtree,
   countItems,
   uid,
 } from './treeOps.js';
+
+const HISTORY_LIMIT = 50;
+const COALESCE_WINDOW_MS = 1200;
 
 const ITEMS_WIDTH_KEY = 'gos.procedures.flowItemsPaneWidth';
 const ITEMS_DEFAULT = 360;
@@ -65,14 +72,49 @@ export default function FlowEditor() {
   const [nodes, setNodes] = useState([]);
   const [loadError, setLoadError] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
-  const [collapsed, setCollapsed] = useState({});
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // Collapse state — persisted per flow in localStorage.
+  const collapseKey = `gos.flow.collapsed.${flowId}`;
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      const raw = localStorage.getItem(`gos.flow.collapsed.${flowId}`);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(collapseKey, JSON.stringify(collapsed));
+    } catch {
+      /* storage unavailable */
+    }
+  }, [collapseKey, collapsed]);
+
+  // Undo / Redo history of the flat nodes array.
+  const [past, setPast] = useState([]);
+  const [future, setFuture] = useState([]);
+  const coalesceRef = useRef({ at: 0, key: null });
+  // `true` once the initial fetch has populated nodes. Used to gate the
+  // collapse-state prune so it doesn't wipe the persisted state before the
+  // real nodes arrive.
+  const loadedRef = useRef(false);
+
+  // Picker context: how to insert the picked item(s).
+  //   { mode: 'into', parentId }   — append as last child of parent (null = root)
+  //   { mode: 'after', afterId }    — insert immediately after a given node
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerParentId, setPickerParentId] = useState(null);
+  const [pickerContext, setPickerContext] = useState({
+    mode: 'into',
+    parentId: null,
+  });
 
   const [deleteOpen, setDeleteOpen] = useState(false);
+
+  // Move-to dialog (mobile-critical fallback).
+  const [moveTargetId, setMoveTargetId] = useState(null);
 
   const [itemsWidth, setItemsWidth] = useState(readStoredItemsWidth);
 
@@ -96,6 +138,10 @@ export default function FlowEditor() {
     setNodes([]);
     setSelectedId(null);
     setDirty(false);
+    setPast([]);
+    setFuture([]);
+    coalesceRef.current = { at: 0, key: null };
+    loadedRef.current = false;
     try {
       const f = await api.flows.get(flowId);
       setFlow({
@@ -103,9 +149,8 @@ export default function FlowEditor() {
         title: f.title || '',
         status: f.status || 'draft',
       });
-      // Accept any structure the server returns — flat list is the canonical
-      // shape already (parentId + order).
       setNodes(f.nodes || []);
+      loadedRef.current = true;
     } catch (e) {
       setLoadError(e.message);
     }
@@ -126,26 +171,127 @@ export default function FlowEditor() {
     [nodes, selectedId],
   );
 
-  // --- Mutations ------------------------------------------------------
+  // --- Commit / history ----------------------------------------------
 
-  function markDirty(next) {
+  // Single entry point for structural changes. Pushes the pre-change state
+  // into `past` so the user can undo. Same coalesceKey within
+  // COALESCE_WINDOW_MS collapses into a single history step (used for
+  // rapid group-title typing).
+  function commit(next, opts = {}) {
+    if (next === nodes) return;
+    const now = Date.now();
+    const k = opts.coalesceKey || null;
+    const canCoalesce =
+      k &&
+      coalesceRef.current.key === k &&
+      now - coalesceRef.current.at < COALESCE_WINDOW_MS;
+    coalesceRef.current = { at: now, key: k };
+    if (!canCoalesce) {
+      setPast((p) => {
+        const np = [...p, nodes];
+        while (np.length > HISTORY_LIMIT) np.shift();
+        return np;
+      });
+      setFuture([]);
+    }
     setNodes(next);
     setDirty(true);
   }
 
+  const canUndo = past.length > 0;
+  const canRedo = future.length > 0;
+
+  function undo() {
+    if (past.length === 0) return;
+    const prev = past[past.length - 1];
+    setFuture((f) => [...f, nodes]);
+    setPast((p) => p.slice(0, -1));
+    setNodes(prev);
+    setDirty(true);
+    coalesceRef.current = { at: 0, key: null };
+    if (selectedId && !prev.find((n) => n.id === selectedId)) {
+      setSelectedId(null);
+    }
+  }
+
+  function redo() {
+    if (future.length === 0) return;
+    const next = future[future.length - 1];
+    setPast((p) => [...p, nodes]);
+    setFuture((f) => f.slice(0, -1));
+    setNodes(next);
+    setDirty(true);
+    coalesceRef.current = { at: 0, key: null };
+    if (selectedId && !next.find((n) => n.id === selectedId)) {
+      setSelectedId(null);
+    }
+  }
+
+  // Keyboard shortcuts (Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y). Respect native
+  // undo behaviour inside text inputs.
+  useEffect(() => {
+    function onKey(e) {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const target = e.target;
+      const inInput =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable);
+      if (inInput) return;
+      const key = e.key.toLowerCase();
+      if (key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if ((key === 'z' && e.shiftKey) || key === 'y') {
+        e.preventDefault();
+        redo();
+      }
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [past, future, nodes, selectedId]);
+
+  // Prune collapse state after nodes change — drop entries for groups that
+  // no longer exist so storage doesn't accumulate cruft. Gated on
+  // `loadedRef` so we don't wipe the persisted state before the real nodes
+  // arrive from the server on first mount.
+  useEffect(() => {
+    if (!loadedRef.current) return;
+    const groupIds = new Set(
+      nodes.filter((n) => n.kind === 'group').map((n) => n.id),
+    );
+    setCollapsed((cur) => {
+      let changed = false;
+      const pruned = {};
+      for (const k of Object.keys(cur)) {
+        if (groupIds.has(k)) pruned[k] = cur[k];
+        else changed = true;
+      }
+      return changed ? pruned : cur;
+    });
+  }, [nodes]);
+
+  // --- Mutations ------------------------------------------------------
+
   function updateNode(id, updates) {
-    markDirty(nodes.map((n) => (n.id === id ? { ...n, ...updates } : n)));
+    // Coalesce rapid typing into the same history entry for group titles.
+    const coalesceKey =
+      updates.groupTitle !== undefined ? `title:${id}` : null;
+    commit(
+      nodes.map((n) => (n.id === id ? { ...n, ...updates } : n)),
+      { coalesceKey },
+    );
   }
 
   function removeNode(id) {
-    markDirty(removeSubtree(nodes, id));
+    commit(removeSubtree(nodes, id));
     if (id === selectedId) setSelectedId(null);
   }
 
-  function addItem(kind, itemId, itemData) {
-    const parentId = pickerParentId;
-    const siblings = nodes.filter((n) => (n.parentId ?? null) === parentId);
-    const newNode = {
+  function makeItemNode(kind, itemId, itemData) {
+    return {
       id: uid(),
       kind,
       contentItemId: kind === ITEM_KINDS.CONTENT ? itemId : null,
@@ -153,18 +299,14 @@ export default function FlowEditor() {
       contentItem: kind === ITEM_KINDS.CONTENT ? itemData : null,
       questionItem: kind === ITEM_KINDS.QUESTION ? itemData : null,
       groupTitle: null,
-      parentId: parentId || null,
-      order: siblings.length,
+      parentId: null,
+      order: 0,
       checkpointAfter: false,
     };
-    markDirty([...nodes, newNode]);
-    setSelectedId(newNode.id);
-    // Picker stays open (multi-pick).
   }
 
-  function addGroup(parentId = null) {
-    const siblings = nodes.filter((n) => (n.parentId ?? null) === parentId);
-    const group = {
+  function makeGroupNode() {
+    return {
       id: uid(),
       kind: 'group',
       contentItemId: null,
@@ -172,16 +314,53 @@ export default function FlowEditor() {
       contentItem: null,
       questionItem: null,
       groupTitle: 'קבוצה חדשה',
-      parentId: parentId || null,
-      order: siblings.length,
+      parentId: null,
+      order: 0,
       checkpointAfter: false,
     };
-    markDirty([...nodes, group]);
+  }
+
+  function addItem(kind, itemId, itemData) {
+    const newNode = makeItemNode(kind, itemId, itemData);
+    let next;
+    if (pickerContext.mode === 'after' && pickerContext.afterId) {
+      next = insertAfter(nodes, pickerContext.afterId, newNode);
+    } else {
+      const parentId = pickerContext.parentId || null;
+      const siblings = nodes.filter((n) => (n.parentId ?? null) === parentId);
+      next = [
+        ...nodes,
+        { ...newNode, parentId, order: siblings.length },
+      ];
+    }
+    commit(next);
+    setSelectedId(newNode.id);
+    // Picker stays open (multi-pick).
+  }
+
+  function addGroup(parentId = null) {
+    const group = makeGroupNode();
+    const siblings = nodes.filter((n) => (n.parentId ?? null) === parentId);
+    commit([
+      ...nodes,
+      { ...group, parentId: parentId || null, order: siblings.length },
+    ]);
+    setSelectedId(group.id);
+  }
+
+  function addItemBelow(afterId) {
+    setPickerContext({ mode: 'after', afterId });
+    setPickerOpen(true);
+  }
+
+  function addGroupBelow(afterId) {
+    const group = makeGroupNode();
+    commit(insertAfter(nodes, afterId, group));
     setSelectedId(group.id);
   }
 
   function openPicker(parentId) {
-    setPickerParentId(parentId || null);
+    setPickerContext({ mode: 'into', parentId: parentId || null });
     setPickerOpen(true);
   }
 
@@ -207,13 +386,27 @@ export default function FlowEditor() {
       targetId,
       direction === 'up' ? 'before' : 'after',
     );
-    markDirty(next);
+    commit(next);
+  }
+
+  function openMoveTo(id) {
+    setMoveTargetId(id);
+  }
+  function confirmMoveTo(targetParentId) {
+    if (!moveTargetId) return;
+    commit(moveToParent(nodes, moveTargetId, targetParentId));
   }
 
   // --- DnD handlers ---------------------------------------------------
 
+  // Desktop: start drag after 5px pointer movement.
+  // Touch: require a 180ms hold + 6px tolerance so scroll gestures don't
+  // accidentally start a drag.
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 180, tolerance: 6 },
+    }),
   );
 
   function onDragStart(event) {
@@ -245,9 +438,11 @@ export default function FlowEditor() {
 
     let position = 'after';
     if (overNode.kind === 'group') {
-      const third = overRect.height / 3;
-      if (relY < third) position = 'before';
-      else if (relY > 2 * third) position = 'after';
+      // Widened tolerance: the middle 60% of a group row registers as
+      // "inside". Easier to hit on touch.
+      const edge = overRect.height * 0.2;
+      if (relY < edge) position = 'before';
+      else if (relY > overRect.height - edge) position = 'after';
       else position = 'inside';
     } else {
       position = relY < overRect.height / 2 ? 'before' : 'after';
@@ -265,7 +460,7 @@ export default function FlowEditor() {
     setOverPos(null);
     if (target && pos && target !== active) {
       const next = applyMove(nodes, active, target, pos);
-      if (next !== nodes) markDirty(next);
+      if (next !== nodes) commit(next);
     }
   }
 
@@ -338,6 +533,10 @@ export default function FlowEditor() {
         onDelete={() => setDeleteOpen(true)}
         showBack={hasSelection}
         onBack={() => setSelectedId(null)}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onUndo={undo}
+        onRedo={redo}
       />
 
       <div
@@ -361,6 +560,9 @@ export default function FlowEditor() {
           onAddGroupRoot={() => addGroup(null)}
           onAddItemInto={openPicker}
           onAddGroupInto={addGroup}
+          onAddItemBelow={addItemBelow}
+          onAddGroupBelow={addGroupBelow}
+          onMoveTo={openMoveTo}
           onMoveUp={(id) => moveWithinParent(id, 'up')}
           onMoveDown={(id) => moveWithinParent(id, 'down')}
           sensors={sensors}
@@ -396,6 +598,18 @@ export default function FlowEditor() {
         onClose={() => setDeleteOpen(false)}
         onConfirm={performDelete}
       />
+      <MoveToDialog
+        open={!!moveTargetId}
+        nodes={nodes}
+        nodeId={moveTargetId}
+        currentParentId={
+          moveTargetId
+            ? nodes.find((n) => n.id === moveTargetId)?.parentId || null
+            : null
+        }
+        onClose={() => setMoveTargetId(null)}
+        onConfirm={confirmMoveTo}
+      />
     </div>
   );
 }
@@ -410,6 +624,10 @@ function EditorHeader({
   onDelete,
   showBack,
   onBack,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
 }) {
   return (
     <div className="flex items-center gap-2 p-3 border-b border-gray-200 bg-white shrink-0">
@@ -422,6 +640,20 @@ function EditorHeader({
           חזרה
         </button>
       )}
+      <HeaderIconBtn
+        label="בטל (Ctrl+Z)"
+        disabled={!canUndo}
+        onClick={onUndo}
+      >
+        <UndoSVG />
+      </HeaderIconBtn>
+      <HeaderIconBtn
+        label="חזור (Ctrl+Shift+Z)"
+        disabled={!canRedo}
+        onClick={onRedo}
+      >
+        <RedoSVG />
+      </HeaderIconBtn>
       <input
         value={flow.title}
         onChange={(e) => setFlow({ ...flow, title: e.target.value })}
@@ -446,6 +678,38 @@ function EditorHeader({
   );
 }
 
+function HeaderIconBtn({ children, onClick, disabled, label }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      title={label}
+      className="w-8 h-8 shrink-0 rounded-md text-gray-700 hover:bg-gray-200 disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed flex items-center justify-center"
+    >
+      {children}
+    </button>
+  );
+}
+
+function UndoSVG() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 7v6h6" />
+      <path d="M21 17a9 9 0 0 0-15-6.7L3 13" />
+    </svg>
+  );
+}
+function RedoSVG() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 7v6h-6" />
+      <path d="M3 17a9 9 0 0 1 15-6.7L21 13" />
+    </svg>
+  );
+}
+
 function ItemsPane({
   nodes,
   visible,
@@ -463,6 +727,9 @@ function ItemsPane({
   onAddGroupRoot,
   onAddItemInto,
   onAddGroupInto,
+  onAddItemBelow,
+  onAddGroupBelow,
+  onMoveTo,
   onMoveUp,
   onMoveDown,
   sensors,
@@ -543,6 +810,9 @@ function ItemsPane({
                         onRemove={() => onRemove(node.id)}
                         onAddItem={() => onAddItemInto(node.id)}
                         onAddGroup={() => onAddGroupInto(node.id)}
+                        onAddItemBelow={() => onAddItemBelow(node.id)}
+                        onAddGroupBelow={() => onAddGroupBelow(node.id)}
+                        onMoveTo={() => onMoveTo(node.id)}
                         onMoveUp={() => onMoveUp(node.id)}
                         onMoveDown={() => onMoveDown(node.id)}
                         canMoveUp={!!can.up}

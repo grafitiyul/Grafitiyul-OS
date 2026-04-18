@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { ITEM_KINDS, ITEM_KIND_LABELS } from '../bank/config.js';
@@ -19,6 +20,9 @@ export default function FlowTreeRow({
   onRemove,
   onAddItem, // (groups only)
   onAddGroup, // (groups only)
+  onAddItemBelow,
+  onAddGroupBelow,
+  onMoveTo,
   onMoveUp,
   onMoveDown,
   canMoveUp,
@@ -171,6 +175,11 @@ export default function FlowTreeRow({
           >
             ▼
           </RowBtn>
+          <RowMenu
+            onAddItemBelow={onAddItemBelow}
+            onAddGroupBelow={onAddGroupBelow}
+            onMoveTo={onMoveTo}
+          />
           <RowBtn
             onClick={(e) => {
               e.stopPropagation();
@@ -225,6 +234,93 @@ export default function FlowTreeRow({
           className="absolute inset-x-0 -bottom-[1px] h-0.5 bg-blue-500 z-10 pointer-events-none"
           style={{ marginInlineStart: depth * 20 }}
         />
+      )}
+    </div>
+  );
+}
+
+function RowMenu({ onAddItemBelow, onAddGroupBelow, onMoveTo }) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef(null);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e) {
+      if (btnRef.current?.contains(e.target)) return;
+      if (menuRef.current?.contains(e.target)) return;
+      setOpen(false);
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative" onClick={(e) => e.stopPropagation()}>
+      <button
+        ref={btnRef}
+        type="button"
+        aria-label="פעולות נוספות"
+        title="פעולות נוספות"
+        onClick={() => setOpen((v) => !v)}
+        className="w-7 h-7 shrink-0 rounded text-[12px] flex items-center justify-center transition text-gray-500 hover:bg-gray-200"
+      >
+        ⋯
+      </button>
+      {open && (
+        <div
+          ref={menuRef}
+          role="menu"
+          dir="rtl"
+          className="absolute top-full end-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg py-1 z-30 min-w-[180px] text-[13px]"
+        >
+          {onAddItemBelow && (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onAddItemBelow();
+              }}
+              className="w-full text-right px-3 py-1.5 hover:bg-gray-50"
+            >
+              + פריט מתחת
+            </button>
+          )}
+          {onAddGroupBelow && (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onAddGroupBelow();
+              }}
+              className="w-full text-right px-3 py-1.5 hover:bg-gray-50"
+            >
+              + קבוצה מתחת
+            </button>
+          )}
+          {(onAddItemBelow || onAddGroupBelow) && onMoveTo && (
+            <div className="h-px bg-gray-100 my-1" aria-hidden />
+          )}
+          {onMoveTo && (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onMoveTo();
+              }}
+              className="w-full text-right px-3 py-1.5 hover:bg-gray-50"
+            >
+              העבר אל...
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
