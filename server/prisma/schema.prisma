@@ -271,6 +271,9 @@ model DocumentInstance {
   snapshotPageCount Int
   businessSnapshot  Json // frozen BusinessField map (key → value) at create time
   signersSnapshot   Json // frozen SignerPerson (+ assets) list at create time
+  // Free-form visual annotations (check/x/highlight/line/note). Separate
+  // from fieldsSnapshot so annotations never flow through value resolution.
+  annotationsSnapshot Json                     @default("[]")
   createdAt         DateTime                   @default(now())
   updatedAt         DateTime                   @updatedAt
   finalizedAt       DateTime?

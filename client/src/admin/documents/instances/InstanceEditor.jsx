@@ -18,16 +18,56 @@ import { IMAGE_FIELD_TYPES, SIGNER_ASSET_MODES } from '../config.js';
 // snapshotFieldId). The sidebar shows the override panel for the currently
 // selected field.
 
+// Default rect sizes at placement time. Heights are tuned so the server's
+// font-size rule (fieldH * 0.65, floor 10pt) yields ≥ 12pt on a letter/A4
+// sized page. Mirror the sizing tuning on the client preview.
 const PLACEMENT_DEFAULT_SIZES = {
-  text: { wPct: 28, hPct: 4 },
-  date: { wPct: 18, hPct: 4 },
-  number: { wPct: 14, hPct: 4 },
-  phone: { wPct: 18, hPct: 4 },
-  email: { wPct: 22, hPct: 4 },
-  signature: { wPct: 22, hPct: 8 },
-  stamp: { wPct: 18, hPct: 10 },
-  combined: { wPct: 28, hPct: 10 },
+  text: { wPct: 32, hPct: 5 },
+  date: { wPct: 22, hPct: 5 },
+  number: { wPct: 18, hPct: 5 },
+  phone: { wPct: 22, hPct: 5 },
+  email: { wPct: 26, hPct: 5 },
+  signature: { wPct: 24, hPct: 9 },
+  stamp: { wPct: 20, hPct: 11 },
+  combined: { wPct: 30, hPct: 11 },
 };
+
+// Per-annotation-kind default sizes. Small marks stay small; highlights and
+// lines start wider; notes get room for a line of text.
+const ANNOTATION_DEFAULT_SIZES = {
+  check: { wPct: 4, hPct: 4 },
+  x: { wPct: 4, hPct: 4 },
+  highlight: { wPct: 30, hPct: 5 },
+  line: { wPct: 30, hPct: 1.5 },
+  note: { wPct: 24, hPct: 5 },
+};
+
+// Default non-geometric config per annotation kind at placement time.
+function annotationDefaults(kind) {
+  if (kind === 'highlight') return { color: '#fde047', opacity: 0.35 };
+  if (kind === 'line') return { color: '#111827', thickness: 2, orientation: 'horizontal' };
+  if (kind === 'note') return { text: 'הערה', fontSize: 14, color: '#111827' };
+  if (kind === 'x') return { color: '#b91c1c', thickness: 3 };
+  // check default
+  return { color: '#111827', thickness: 3 };
+}
+
+// Today as YYYY-MM-DD for date field default display.
+function todayIso() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// Format an ISO YYYY-MM-DD string to DD/MM/YYYY for display.
+function formatIsoDate(iso) {
+  if (!iso) return '';
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return iso;
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
 
 function localId() {
   return 'local_' + Math.random().toString(36).slice(2, 10);
@@ -48,6 +88,9 @@ export default function InstanceEditor() {
   // Local placement state — mutates on drag/resize/add/remove; persisted via
   // PUT /instances/:id/fields. Initialised from instance.fieldsSnapshot.
   const [placements, setPlacements] = useState([]);
+  // Annotation state — parallel to placements, saved separately via PUT
+  // /instances/:id/annotations. Never flows through value resolution.
+  const [annotations, setAnnotations] = useState([]);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState(null);
@@ -55,11 +98,14 @@ export default function InstanceEditor() {
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeErr, setFinalizeErr] = useState(null);
 
-  // Placement mode — set by clicking a toolbar button; cleared after placement
-  // or ESC. Shape: { fieldType, valueSource, ...refs, label? }.
+  // Placement mode — one of:
+  //   null                             (idle)
+  //   { mode: 'field', ...config }      (placing a value field)
+  //   { mode: 'annotation', kind, ... } (placing an annotation)
   const [pending, setPending] = useState(null);
 
   const [selectedId, setSelectedId] = useState(null);
+  const [selectedAnnotationId, setSelectedAnnotationId] = useState(null);
 
   const [saveTplOpen, setSaveTplOpen] = useState(false);
 
@@ -78,6 +124,11 @@ export default function InstanceEditor() {
       setPlacements(
         Array.isArray(inst.fieldsSnapshot)
           ? inst.fieldsSnapshot.map((f) => ({ ...f }))
+          : [],
+      );
+      setAnnotations(
+        Array.isArray(inst.annotationsSnapshot)
+          ? inst.annotationsSnapshot.map((a) => ({ ...a }))
           : [],
       );
       setDirty(false);
@@ -114,10 +165,11 @@ export default function InstanceEditor() {
 
   // ── Placement mutations ───────────────────────────────────────────────────
 
-  const placeAt = useCallback(
+  const placeFieldAt = useCallback(
     (page, xPct, yPct) => {
-      if (!pending || isFinalized) return;
-      const size = PLACEMENT_DEFAULT_SIZES[pending.fieldType] || { wPct: 20, hPct: 5 };
+      if (!pending || pending.mode !== 'field' || isFinalized) return;
+      const size =
+        PLACEMENT_DEFAULT_SIZES[pending.fieldType] || { wPct: 22, hPct: 5 };
       const clampX = Math.max(0, Math.min(100 - size.wPct, xPct - size.wPct / 2));
       const clampY = Math.max(0, Math.min(100 - size.hPct, yPct - size.hPct / 2));
       const newField = {
@@ -142,9 +194,47 @@ export default function InstanceEditor() {
       setPlacements((prev) => [...prev, newField]);
       setDirty(true);
       setSelectedId(newField.id);
+      setSelectedAnnotationId(null);
       setPending(null);
     },
     [pending, placements.length, isFinalized],
+  );
+
+  const placeAnnotationAt = useCallback(
+    (page, xPct, yPct) => {
+      if (!pending || pending.mode !== 'annotation' || isFinalized) return;
+      const size =
+        ANNOTATION_DEFAULT_SIZES[pending.kind] || { wPct: 8, hPct: 5 };
+      const clampX = Math.max(0, Math.min(100 - size.wPct, xPct - size.wPct / 2));
+      const clampY = Math.max(0, Math.min(100 - size.hPct, yPct - size.hPct / 2));
+      const newAnn = {
+        id: 'ann_' + Math.random().toString(36).slice(2, 10),
+        kind: pending.kind,
+        page,
+        xPct: clampX,
+        yPct: clampY,
+        wPct: size.wPct,
+        hPct: size.hPct,
+        order: annotations.length,
+        ...annotationDefaults(pending.kind),
+      };
+      setAnnotations((prev) => [...prev, newAnn]);
+      setDirty(true);
+      setSelectedAnnotationId(newAnn.id);
+      setSelectedId(null);
+      setPending(null);
+    },
+    [pending, annotations.length, isFinalized],
+  );
+
+  // Dispatch for the PdfViewer's click-to-place. PdfViewer always emits
+  // (mode, page, x, y) — mode is 'field' or 'annotation'.
+  const onPageClick = useCallback(
+    (mode, page, x, y) => {
+      if (mode === 'annotation') placeAnnotationAt(page, x, y);
+      else placeFieldAt(page, x, y);
+    },
+    [placeFieldAt, placeAnnotationAt],
   );
 
   function updatePlacement(fid, patch) {
@@ -158,11 +248,27 @@ export default function InstanceEditor() {
     setDirty(true);
   }
 
+  function updateAnnotation(aid, patch) {
+    setAnnotations((prev) =>
+      prev.map((a) => (a.id === aid ? { ...a, ...patch } : a)),
+    );
+    setDirty(true);
+  }
+
+  function deleteAnnotation(aid) {
+    setAnnotations((prev) => prev.filter((a) => a.id !== aid));
+    if (selectedAnnotationId === aid) setSelectedAnnotationId(null);
+    setDirty(true);
+  }
+
   async function saveFields() {
     setSaving(true);
     setSaveErr(null);
     try {
+      // Save both layers. Fields first so signersSnapshot / businessSnapshot
+      // refresh before any preview re-resolution; annotations second.
       await api.documents.saveInstanceFields(id, placements);
+      await api.documents.saveInstanceAnnotations(id, annotations);
       await load();
     } catch (e) {
       setSaveErr(e.message);
@@ -257,6 +363,8 @@ export default function InstanceEditor() {
   }
 
   const selected = placements.find((f) => f.id === selectedId) || null;
+  const selectedAnnotation =
+    annotations.find((a) => a.id === selectedAnnotationId) || null;
   const pdfUrl = isFinalized
     ? api.documents.instanceFinalPdfUrl(id)
     : api.documents.instancePdfUrl(id);
@@ -380,9 +488,16 @@ export default function InstanceEditor() {
           <PdfViewer
             pdfUrl={pdfUrl}
             fields={placements}
+            annotations={annotations}
             readOnly={isFinalized}
-            isPlacing={!isFinalized && !!pending}
-            onPageClick={placeAt}
+            isPlacing={
+              !isFinalized && pending
+                ? pending.mode === 'annotation'
+                  ? 'annotation'
+                  : 'field'
+                : false
+            }
+            onPageClick={onPageClick}
             onMoveField={(fid, x, y) =>
               updatePlacement(fid, { xPct: x, yPct: y })
             }
@@ -390,7 +505,11 @@ export default function InstanceEditor() {
               updatePlacement(fid, { wPct: w, hPct: h })
             }
             onDeleteField={deletePlacement}
-            onFieldClick={(fid) => !isFinalized && setSelectedId(fid)}
+            onFieldClick={(fid) => {
+              if (isFinalized) return;
+              setSelectedId(fid);
+              setSelectedAnnotationId(null);
+            }}
             selectedFieldId={selectedId}
             renderFieldContent={(f) => (
               <InstanceFieldPreview
@@ -403,6 +522,22 @@ export default function InstanceEditor() {
                 finalized={isFinalized}
               />
             )}
+            onMoveAnnotation={(aid, x, y) =>
+              updateAnnotation(aid, { xPct: x, yPct: y })
+            }
+            onResizeAnnotation={(aid, w, h) =>
+              updateAnnotation(aid, { wPct: w, hPct: h })
+            }
+            onDeleteAnnotation={deleteAnnotation}
+            onAnnotationClick={(aid) => {
+              if (isFinalized) return;
+              setSelectedAnnotationId(aid);
+              setSelectedId(null);
+            }}
+            selectedAnnotationId={selectedAnnotationId}
+            renderAnnotationContent={(ann, ctx) => (
+              <AnnotationVisual ann={ann} pageCssHeight={ctx?.pageCssHeight} />
+            )}
           />
         </div>
 
@@ -410,11 +545,15 @@ export default function InstanceEditor() {
           <aside className="hidden md:flex w-[340px] shrink-0 border-r border-gray-200 bg-white flex-col min-h-0">
             <div className="flex-1 overflow-y-auto p-4">
               <h3 className="font-semibold text-gray-900 text-sm mb-3">
-                {selected ? 'ערך' : 'בחר ערך'}
+                {selected
+                  ? 'ערך'
+                  : selectedAnnotation
+                  ? 'סימון'
+                  : 'בחר ערך או סימון'}
               </h3>
-              {!selected && (
+              {!selected && !selectedAnnotation && (
                 <div className="text-xs text-gray-500">
-                  לחץ על ערך שממוקם ב-PDF כדי לערוך אותו. השתמש בסרגל בראש העמוד כדי להוסיף ערכים חדשים.
+                  לחץ על ערך או סימון שממוקם ב-PDF כדי לערוך אותו. השתמש בסרגל בראש העמוד כדי להוסיף חדשים.
                 </div>
               )}
               {selected && (
@@ -432,6 +571,16 @@ export default function InstanceEditor() {
                     updatePlacement(selected.id, { language: lang })
                   }
                   dirtyField={selected.id.startsWith('local_')}
+                />
+              )}
+              {selectedAnnotation && (
+                <SelectedAnnotationPanel
+                  key={selectedAnnotation.id}
+                  ann={selectedAnnotation}
+                  onUpdate={(patch) =>
+                    updateAnnotation(selectedAnnotation.id, patch)
+                  }
+                  onDelete={() => deleteAnnotation(selectedAnnotation.id)}
                 />
               )}
             </div>
@@ -461,7 +610,14 @@ function PlacementToolbar({ businessFields, signers, pending, setPending }) {
   };
 
   function arm(config) {
-    setPending(pending?.token === config.token ? null : config);
+    setPending(pending?.token === config.token ? null : { mode: 'field', ...config });
+  }
+
+  function armAnnotation(kind, label) {
+    const token = `ann:${kind}`;
+    setPending(
+      pending?.token === token ? null : { mode: 'annotation', token, kind, label },
+    );
   }
 
   function armBusiness(bf) {
@@ -578,6 +734,40 @@ function PlacementToolbar({ businessFields, signers, pending, setPending }) {
       </button>
       <button onClick={armFreeText} className={btn(pending?.token === 'text')}>
         + טקסט חופשי
+      </button>
+
+      {/* Second row: visual annotations. Separate layer from value fields. */}
+      <div className="w-full h-px bg-gray-200 my-1" />
+      <span className="text-[11px] text-gray-500 font-medium">סימונים:</span>
+      <button
+        onClick={() => armAnnotation('check', '✓')}
+        className={btn(pending?.token === 'ann:check')}
+      >
+        + ✓
+      </button>
+      <button
+        onClick={() => armAnnotation('x', '✗')}
+        className={btn(pending?.token === 'ann:x')}
+      >
+        + ✗
+      </button>
+      <button
+        onClick={() => armAnnotation('highlight', 'הדגשה')}
+        className={btn(pending?.token === 'ann:highlight')}
+      >
+        + הדגשה
+      </button>
+      <button
+        onClick={() => armAnnotation('line', 'קו')}
+        className={btn(pending?.token === 'ann:line')}
+      >
+        + קו
+      </button>
+      <button
+        onClick={() => armAnnotation('note', 'הערה')}
+        className={btn(pending?.token === 'ann:note')}
+      >
+        + הערה
       </button>
     </div>
   );
@@ -723,15 +913,17 @@ function resolveInstanceText(
   liveBusinessFields,
   liveSigners,
 ) {
-  if (override && override.textValue != null) return override.textValue;
-  if (field.valueSource === 'static') return field.staticValue || '';
-  if (field.valueSource === 'business_field' && field.businessFieldId) {
+  let text = '';
+  if (override && override.textValue != null) text = override.textValue;
+  else if (field.valueSource === 'static') text = field.staticValue || '';
+  else if (field.valueSource === 'business_field' && field.businessFieldId) {
     const snap = businessMap[field.businessFieldId];
-    if (snap) return pickBusinessValue(snap, field.language);
-    const live = liveBusinessFields?.find((b) => b.id === field.businessFieldId);
-    return live ? pickBusinessValue(live, field.language) : '';
-  }
-  if (
+    if (snap) text = pickBusinessValue(snap, field.language);
+    else {
+      const live = liveBusinessFields?.find((b) => b.id === field.businessFieldId);
+      text = live ? pickBusinessValue(live, field.language) : '';
+    }
+  } else if (
     field.valueSource === 'signer_field' &&
     field.signerPersonId &&
     field.signerFieldKey
@@ -739,15 +931,27 @@ function resolveInstanceText(
     const s =
       signers.find((x) => x.id === field.signerPersonId) ||
       liveSigners?.find((x) => x.id === field.signerPersonId);
-    if (!s) return '';
-    const builtin = s[field.signerFieldKey];
-    if (typeof builtin === 'string' || typeof builtin === 'number') {
-      return String(builtin);
+    if (s) {
+      const builtin = s[field.signerFieldKey];
+      if (typeof builtin === 'string' || typeof builtin === 'number') {
+        text = String(builtin);
+      } else {
+        const extra = (s.extraFields || {})[field.signerFieldKey];
+        text = extra != null ? String(extra) : '';
+      }
     }
-    const extra = (s.extraFields || {})[field.signerFieldKey];
-    return extra != null ? String(extra) : '';
   }
-  return '';
+  // Date fallback: empty date fields auto-fill with today's date so the
+  // preview matches the finalized PDF (server applies the same rule).
+  if (field.fieldType === 'date' && !String(text).trim()) {
+    text = todayIso();
+  }
+  // Preview-side: if a date value is ISO YYYY-MM-DD, format to DD/MM/YYYY so
+  // on-screen matches what the server will write into the final PDF.
+  if (field.fieldType === 'date' && /^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    text = formatIsoDate(text);
+  }
+  return text;
 }
 
 // ── Selected field sidebar ───────────────────────────────────────────────────
@@ -1044,12 +1248,280 @@ function dataUrlToBytes(dataUrl) {
 // Bilingual value resolution. Accepts both the new shape (valueHe/valueEn)
 // and the old shape (value) so finalized instances with pre-migration
 // businessSnapshot JSON keep rendering correctly.
+//
+// HE → EN fallback: if the selected language is Hebrew but valueHe is empty
+// and valueEn has content, use valueEn. Prevents silently-empty previews for
+// English-only values. One-way: English with empty valueEn stays empty.
 function pickBusinessValue(bf, language) {
   if (!bf) return '';
   if (bf.valueHe !== undefined || bf.valueEn !== undefined) {
-    return (language === 'en' ? bf.valueEn : bf.valueHe) || '';
+    const he = bf.valueHe || '';
+    const en = bf.valueEn || '';
+    if (language === 'en') return en;
+    return he || en;
   }
   return bf.value || '';
+}
+
+// ── Annotation visual (rendered inside the overlay rect) ─────────────────────
+
+function AnnotationVisual({ ann, pageCssHeight }) {
+  if (ann.kind === 'highlight') {
+    return (
+      <div
+        className="w-full h-full"
+        style={{
+          backgroundColor: ann.color || '#fde047',
+          opacity: typeof ann.opacity === 'number' ? ann.opacity : 0.35,
+        }}
+      />
+    );
+  }
+  if (ann.kind === 'line') {
+    return <LineVisual ann={ann} />;
+  }
+  if (ann.kind === 'check') {
+    return <MarkVisual kind="check" color={ann.color || '#111827'} />;
+  }
+  if (ann.kind === 'x') {
+    return <MarkVisual kind="x" color={ann.color || '#b91c1c'} />;
+  }
+  if (ann.kind === 'note') {
+    const fontSize = clampFont(
+      typeof ann.fontSize === 'number'
+        ? ann.fontSize
+        : (ann.hPct / 100) * (pageCssHeight || 0) * 0.65,
+    );
+    return (
+      <div
+        className="w-full h-full overflow-hidden px-1 leading-tight"
+        style={{
+          color: ann.color || '#111827',
+          fontSize: `${fontSize}px`,
+          direction: 'rtl',
+          textAlign: 'right',
+        }}
+      >
+        {ann.text || <span className="opacity-50 italic">הערה</span>}
+      </div>
+    );
+  }
+  return null;
+}
+
+function clampFont(px) {
+  if (!Number.isFinite(px)) return 14;
+  return Math.max(11, Math.min(48, px));
+}
+
+function MarkVisual({ kind, color }) {
+  // SVG in the full rect so the stroke scales with the overlay size.
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="w-full h-full"
+      preserveAspectRatio="none"
+      aria-hidden
+    >
+      {kind === 'check' ? (
+        <polyline
+          points="4,13 10,19 20,6"
+          fill="none"
+          stroke={color}
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          vectorEffect="non-scaling-stroke"
+        />
+      ) : (
+        <g
+          stroke={color}
+          strokeWidth="3"
+          strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
+        >
+          <line x1="5" y1="5" x2="19" y2="19" />
+          <line x1="5" y1="19" x2="19" y2="5" />
+        </g>
+      )}
+    </svg>
+  );
+}
+
+function LineVisual({ ann }) {
+  const thickness = Math.max(1, Math.min(12, Number(ann.thickness) || 2));
+  const color = ann.color || '#111827';
+  if (ann.orientation === 'vertical') {
+    return (
+      <div className="w-full h-full flex justify-center">
+        <div style={{ width: thickness, height: '100%', backgroundColor: color }} />
+      </div>
+    );
+  }
+  return (
+    <div className="w-full h-full flex items-center">
+      <div style={{ height: thickness, width: '100%', backgroundColor: color }} />
+    </div>
+  );
+}
+
+// ── Annotation sidebar panel ─────────────────────────────────────────────────
+
+function SelectedAnnotationPanel({ ann, onUpdate, onDelete }) {
+  const kindLabel =
+    ann.kind === 'check'
+      ? 'סימן ✓'
+      : ann.kind === 'x'
+      ? 'סימן ✗'
+      : ann.kind === 'highlight'
+      ? 'הדגשה'
+      : ann.kind === 'line'
+      ? 'קו'
+      : 'הערה';
+
+  return (
+    <div className="space-y-3">
+      <div className="bg-gray-50 border border-gray-200 rounded p-2 text-xs text-gray-700">
+        <div className="font-medium text-gray-900 mb-1">{kindLabel}</div>
+        <div className="text-[11px] text-gray-500">
+          עמ׳ {ann.page} · X {ann.xPct.toFixed(1)}% · Y {ann.yPct.toFixed(1)}% · W{' '}
+          {ann.wPct.toFixed(1)}% · H {ann.hPct.toFixed(1)}%
+        </div>
+      </div>
+
+      {(ann.kind === 'check' || ann.kind === 'x' || ann.kind === 'line') && (
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <div className="text-[11px] text-gray-600 mb-1">צבע</div>
+            <input
+              type="color"
+              value={ann.color || (ann.kind === 'x' ? '#b91c1c' : '#111827')}
+              onChange={(e) => onUpdate({ color: e.target.value })}
+              className="w-full h-8 border border-gray-300 rounded"
+            />
+          </label>
+          <label className="block">
+            <div className="text-[11px] text-gray-600 mb-1">
+              עובי {Number(ann.thickness) || 2}
+            </div>
+            <input
+              type="range"
+              min={1}
+              max={10}
+              step={0.5}
+              value={Number(ann.thickness) || 2}
+              onChange={(e) => onUpdate({ thickness: Number(e.target.value) })}
+              className="w-full"
+            />
+          </label>
+        </div>
+      )}
+
+      {ann.kind === 'highlight' && (
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <div className="text-[11px] text-gray-600 mb-1">צבע</div>
+            <input
+              type="color"
+              value={ann.color || '#fde047'}
+              onChange={(e) => onUpdate({ color: e.target.value })}
+              className="w-full h-8 border border-gray-300 rounded"
+            />
+          </label>
+          <label className="block">
+            <div className="text-[11px] text-gray-600 mb-1">
+              שקיפות {Math.round((ann.opacity ?? 0.35) * 100)}%
+            </div>
+            <input
+              type="range"
+              min={0.1}
+              max={1}
+              step={0.05}
+              value={ann.opacity ?? 0.35}
+              onChange={(e) => onUpdate({ opacity: Number(e.target.value) })}
+              className="w-full"
+            />
+          </label>
+        </div>
+      )}
+
+      {ann.kind === 'line' && (
+        <div>
+          <div className="text-[11px] text-gray-600 mb-1">כיוון</div>
+          <div className="inline-flex rounded border border-gray-300 overflow-hidden">
+            <button
+              onClick={() => onUpdate({ orientation: 'horizontal' })}
+              className={`text-[12px] px-3 py-1 ${
+                (ann.orientation || 'horizontal') === 'horizontal'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-white text-gray-700'
+              }`}
+            >
+              אופקי
+            </button>
+            <button
+              onClick={() => onUpdate({ orientation: 'vertical' })}
+              className={`text-[12px] px-3 py-1 border-r border-gray-300 ${
+                ann.orientation === 'vertical'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-white text-gray-700'
+              }`}
+            >
+              אנכי
+            </button>
+          </div>
+        </div>
+      )}
+
+      {ann.kind === 'note' && (
+        <>
+          <label className="block">
+            <div className="text-[11px] text-gray-600 mb-1">טקסט</div>
+            <textarea
+              value={ann.text || ''}
+              onChange={(e) => onUpdate({ text: e.target.value })}
+              className="w-full border border-gray-300 rounded px-2 py-1 text-sm h-20"
+              dir="rtl"
+            />
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <div className="text-[11px] text-gray-600 mb-1">צבע</div>
+              <input
+                type="color"
+                value={ann.color || '#111827'}
+                onChange={(e) => onUpdate({ color: e.target.value })}
+                className="w-full h-8 border border-gray-300 rounded"
+              />
+            </label>
+            <label className="block">
+              <div className="text-[11px] text-gray-600 mb-1">
+                גודל גופן {Number(ann.fontSize) || 14}
+              </div>
+              <input
+                type="range"
+                min={8}
+                max={48}
+                step={1}
+                value={Number(ann.fontSize) || 14}
+                onChange={(e) => onUpdate({ fontSize: Number(e.target.value) })}
+                className="w-full"
+              />
+            </label>
+          </div>
+        </>
+      )}
+
+      <div className="pt-2 border-t border-gray-100">
+        <button
+          onClick={onDelete}
+          className="w-full text-[12px] text-red-700 hover:bg-red-50 border border-red-200 rounded px-3 py-1.5"
+        >
+          הסר סימון
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function SaveAsTemplateDialog({ defaultTitle, onClose, onSubmit }) {

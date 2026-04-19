@@ -640,6 +640,33 @@ router.put(
   }),
 );
 
+// Replace the instance's annotationsSnapshot (draft-only). Annotations are
+// purely visual markup — no value resolution, no bindings. Stored separately
+// from fieldsSnapshot.
+router.put(
+  '/instances/:id/annotations',
+  handle(async (req, res) => {
+    const { annotations } = req.body || {};
+    if (!Array.isArray(annotations)) {
+      return res.status(400).json({ error: 'annotations_array_required' });
+    }
+    const inst = await prisma.documentInstance.findUnique({
+      where: { id: req.params.id },
+      select: { status: true },
+    });
+    if (!inst) return res.status(404).json({ error: 'not_found' });
+    if (inst.status === 'finalized') {
+      return res.status(409).json({ error: 'instance_finalized' });
+    }
+    const normalised = annotations.map((a, i) => normaliseAnnotation(a, i));
+    await prisma.documentInstance.update({
+      where: { id: req.params.id },
+      data: { annotationsSnapshot: normalised },
+    });
+    res.json({ annotations: normalised });
+  }),
+);
+
 // Save the current instance placements as a new library template.
 // Creates: DocumentTemplate (origin='library') + DocumentField rows that
 // mirror the instance's fieldsSnapshot + reuses the instance's snapshot.
@@ -850,27 +877,43 @@ router.post(
       }
 
       // Text field → resolve text value by source.
-      if (ov && ov.textValue != null) return { ...f, textValue: ov.textValue };
-      if (f.valueSource === 'static') return { ...f, textValue: f.staticValue || '' };
-      if (f.valueSource === 'business_field' && f.businessFieldId) {
+      let textValue = '';
+      if (ov && ov.textValue != null) textValue = ov.textValue;
+      else if (f.valueSource === 'static') textValue = f.staticValue || '';
+      else if (f.valueSource === 'business_field' && f.businessFieldId) {
         const bf = businessSnapshot[f.businessFieldId];
-        return { ...f, textValue: resolveBusinessFieldValue(bf, f.language) };
-      }
-      if (f.valueSource === 'signer_field' && f.signerPersonId && f.signerFieldKey) {
+        textValue = resolveBusinessFieldValue(bf, f.language);
+      } else if (
+        f.valueSource === 'signer_field' &&
+        f.signerPersonId &&
+        f.signerFieldKey
+      ) {
         const signer = signersSnapshot.find((s) => s.id === f.signerPersonId);
-        if (!signer) return { ...f, textValue: '' };
-        const direct = signer[f.signerFieldKey];
-        if (typeof direct === 'string' || typeof direct === 'number') {
-          return { ...f, textValue: String(direct) };
+        if (signer) {
+          const direct = signer[f.signerFieldKey];
+          if (typeof direct === 'string' || typeof direct === 'number') {
+            textValue = String(direct);
+          } else {
+            const extra = (signer.extraFields || {})[f.signerFieldKey];
+            textValue = extra != null ? String(extra) : '';
+          }
         }
-        const extra = (signer.extraFields || {})[f.signerFieldKey];
-        return { ...f, textValue: extra != null ? String(extra) : '' };
       }
-      return { ...f, textValue: '' };
+      // Date fallback: empty date fields auto-fill with today's date so a
+      // placed date never renders blank. Overrides / bound values take
+      // precedence if present.
+      if (f.fieldType === 'date' && !String(textValue).trim()) {
+        textValue = todayIso();
+      }
+      return { ...f, textValue };
     });
 
+    const annotationsSnapshot = Array.isArray(inst.annotationsSnapshot)
+      ? inst.annotationsSnapshot
+      : [];
+
     const sourcePdf = Buffer.from(inst.snapshotPdfBytes);
-    const pdfBytes = await renderFinalPdf(sourcePdf, resolved);
+    const pdfBytes = await renderFinalPdf(sourcePdf, resolved, annotationsSnapshot);
 
     const final = await prisma.$transaction(async (tx) => {
       const fd = await tx.finalDocument.create({
@@ -953,12 +996,85 @@ function normalisePlacement(f, i) {
 // Accepts both shapes: new bilingual { valueHe, valueEn } and pre-migration
 // { value } (back-compat for finalized instances whose businessSnapshot was
 // frozen before the bilingual change).
+//
+// HE → EN fallback: if the selected language is Hebrew but valueHe is empty
+// and valueEn has content, fall back to valueEn. This prevents silently-empty
+// fields for business values that only have English text. The fallback is
+// one-way: English with empty valueEn stays empty (strict, per spec).
 function resolveBusinessFieldValue(bf, language) {
   if (!bf) return '';
   if (bf.valueHe !== undefined || bf.valueEn !== undefined) {
-    return (language === 'en' ? bf.valueEn : bf.valueHe) ?? '';
+    const he = bf.valueHe || '';
+    const en = bf.valueEn || '';
+    if (language === 'en') return en;
+    return he || en; // HE default with EN fallback when HE is empty
   }
   return bf.value ?? '';
+}
+
+// Today's date in ISO (YYYY-MM-DD). Used as an auto-default for date fields
+// that have no override and no static/bound value — so the placed field
+// shows a real date instead of an empty box.
+// Normalise a raw annotation into the shape we persist. Keeps only the
+// fields we recognise per-kind, drops anything else (defence in depth).
+// Client-generated ids are preserved (needed to keep selection stable
+// across saves; same pattern as field placements).
+const ANN_KINDS = new Set(['check', 'x', 'highlight', 'line', 'note']);
+function normaliseAnnotation(a, i) {
+  const kind = ANN_KINDS.has(a?.kind) ? a.kind : 'check';
+  const base = {
+    id: String(a.id || `ann_${Math.random().toString(36).slice(2, 10)}`),
+    kind,
+    page: Math.max(1, Number(a.page || 1)),
+    xPct: clamp01to100(a.xPct),
+    yPct: clamp01to100(a.yPct),
+    wPct: clamp01to100(a.wPct),
+    hPct: clamp01to100(a.hPct),
+    order: Number.isFinite(a.order) ? a.order : i,
+  };
+  if (kind === 'highlight') {
+    return {
+      ...base,
+      color: typeof a.color === 'string' ? a.color : '#fde047',
+      opacity: Number.isFinite(a.opacity) ? clamp01(a.opacity) : 0.35,
+    };
+  }
+  if (kind === 'line') {
+    return {
+      ...base,
+      color: typeof a.color === 'string' ? a.color : '#111827',
+      thickness: Number.isFinite(a.thickness) ? Math.max(0.5, Math.min(10, a.thickness)) : 2,
+      orientation: a.orientation === 'vertical' ? 'vertical' : 'horizontal',
+    };
+  }
+  if (kind === 'note') {
+    return {
+      ...base,
+      text: a.text != null ? String(a.text) : '',
+      fontSize: Number.isFinite(a.fontSize) ? Math.max(8, Math.min(48, a.fontSize)) : 12,
+      color: typeof a.color === 'string' ? a.color : '#111827',
+    };
+  }
+  // check / x
+  return {
+    ...base,
+    color: typeof a.color === 'string' ? a.color : kind === 'x' ? '#b91c1c' : '#111827',
+    thickness: Number.isFinite(a.thickness) ? Math.max(1, Math.min(10, a.thickness)) : 3,
+  };
+}
+
+function clamp01(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return 0;
+  return Math.max(0, Math.min(1, v));
+}
+
+function todayIso() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 export default router;

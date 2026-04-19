@@ -274,7 +274,7 @@ export default function TemplateEditor() {
           fields={fields}
           readOnly={hasInstances}
           isPlacing={!hasInstances}
-          onPageClick={addFieldAt}
+          onPageClick={(_mode, page, x, y) => addFieldAt(page, x, y)}
           onMoveField={(fid, x, y) => updateField(fid, { xPct: x, yPct: y })}
           onResizeField={(fid, w, h) => updateField(fid, { wPct: w, hPct: h })}
           onDeleteField={(fid) => removeField(fid)}

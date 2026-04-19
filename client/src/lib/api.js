@@ -195,6 +195,11 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify({ fields }),
       }),
+    saveInstanceAnnotations: (id, annotations) =>
+      request(`/api/documents/instances/${id}/annotations`, {
+        method: 'PUT',
+        body: JSON.stringify({ annotations }),
+      }),
     saveInstanceAsTemplate: (id, title, description) =>
       request(`/api/documents/instances/${id}/save-as-template`, {
         method: 'POST',

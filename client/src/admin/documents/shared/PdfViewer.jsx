@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 // Vite: ?url returns the built asset URL for the worker.
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -6,27 +6,31 @@ import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
 // PdfViewer — renders a PDF into stacked <canvas> pages and overlays
-// percentage-positioned field divs on top. Ported from recruitment/PdfViewer.tsx.
+// percentage-positioned rectangles on top. Supports two overlay layers:
 //
-// Fields use percentage coordinates (0..100) from each page's top-left, so
-// they remain correct at any canvas scale. Drag + resize only fire onMove /
-// onResize — the parent owns field state and re-renders us with new coords.
+//   1. fields       — value placements. Colored chrome box, label, delete ×.
+//   2. annotations  — visual markup (check / x / highlight / line / note).
+//                     Chrome-less; the raw visual fills the rect.
+//
+// Both layers share drag + resize semantics via useOverlayInteractions.
 //
 // Props:
-//   pdfUrl           required — any URL returning application/pdf
+//   pdfUrl           required
 //   fields           required — [{ id, page, xPct, yPct, wPct, hPct, fieldType, label }]
-//   readOnly         disable click-to-place + drag/resize
-//   onPageClick      (page, xPct, yPct) — user clicked empty area while placing
-//   onMoveField      (fieldId, xPct, yPct) — drag ended a move
-//   onResizeField    (fieldId, wPct, hPct) — drag ended a resize
-//   onDeleteField    (fieldId) — × button on field
-//   onFieldClick     (fieldId) — clicked body of existing field (select it)
-//   renderFieldContent  optional — return React content for the field body
-//   selectedFieldId  for highlighting
-//   isPlacing        true to show crosshair on page
+//   annotations      optional — [{ id, kind, page, xPct, yPct, wPct, hPct, ... }]
+//   readOnly         disables click-to-place + drag/resize for both layers
+//   isPlacing        'field' | 'annotation' | true | false — when set, clicking
+//                    empty space calls onPageClick(kind, page, xPct, yPct).
+//                    `true` is treated as 'field' for back-compat.
+//   onPageClick      (page, xPct, yPct)  OR  (kind, page, xPct, yPct) if using
+//                    annotation placement. The component emits the 4-arg form
+//                    whenever isPlacing === 'annotation'.
+//   (for each layer) onMoveX/onResizeX/onDeleteX/onXClick + selectedXId
+//   renderFieldContent / renderAnnotationContent — callback returns inner JSX.
 export default function PdfViewer({
   pdfUrl,
   fields,
+  annotations = [],
   readOnly = false,
   isPlacing = false,
   onPageClick,
@@ -36,6 +40,12 @@ export default function PdfViewer({
   onFieldClick,
   renderFieldContent,
   selectedFieldId,
+  onMoveAnnotation,
+  onResizeAnnotation,
+  onDeleteAnnotation,
+  onAnnotationClick,
+  renderAnnotationContent,
+  selectedAnnotationId,
 }) {
   const [pdfDoc, setPdfDoc] = useState(null);
   const [numPages, setNumPages] = useState(0);
@@ -121,15 +131,22 @@ export default function PdfViewer({
             pageNum={pageNum}
             containerWidth={containerWidth}
             fields={fields.filter((f) => f.page === pageNum)}
+            annotations={annotations.filter((a) => a.page === pageNum)}
             readOnly={readOnly}
             isPlacing={isPlacing}
-            onPageClick={(xPct, yPct) => onPageClick?.(pageNum, xPct, yPct)}
+            onPageClick={onPageClick}
             onMoveField={onMoveField}
             onResizeField={onResizeField}
             onDeleteField={onDeleteField}
             onFieldClick={onFieldClick}
             renderFieldContent={renderFieldContent}
             selectedFieldId={selectedFieldId}
+            onMoveAnnotation={onMoveAnnotation}
+            onResizeAnnotation={onResizeAnnotation}
+            onDeleteAnnotation={onDeleteAnnotation}
+            onAnnotationClick={onAnnotationClick}
+            renderAnnotationContent={renderAnnotationContent}
+            selectedAnnotationId={selectedAnnotationId}
           />
         ))
       ) : null}
@@ -142,6 +159,7 @@ function PdfPage({
   pageNum,
   containerWidth,
   fields,
+  annotations,
   readOnly,
   isPlacing,
   onPageClick,
@@ -151,6 +169,12 @@ function PdfPage({
   onFieldClick,
   renderFieldContent,
   selectedFieldId,
+  onMoveAnnotation,
+  onResizeAnnotation,
+  onDeleteAnnotation,
+  onAnnotationClick,
+  renderAnnotationContent,
+  selectedAnnotationId,
 }) {
   const canvasRef = useRef(null);
   const [rendered, setRendered] = useState(false);
@@ -204,13 +228,23 @@ function PdfPage({
     };
   }, [pdfDoc, pageNum, containerWidth]);
 
+  const placementMode =
+    isPlacing === true ? 'field' : typeof isPlacing === 'string' ? isPlacing : null;
+
   const handleContainerClick = (e) => {
-    if (readOnly || !isPlacing || !rendered) return;
+    if (readOnly || !placementMode || !rendered) return;
     if (e.target.closest('[data-field-overlay]')) return;
+    if (e.target.closest('[data-annotation-overlay]')) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const xPct = ((e.clientX - rect.left) / rect.width) * 100;
     const yPct = ((e.clientY - rect.top) / rect.height) * 100;
-    onPageClick?.(xPct, yPct);
+    // Always emit (kind, page, xPct, yPct) so callers can dispatch by kind.
+    // Back-compat: legacy callers that destructure (page, x, y) still work
+    // if we fall back to 3-arg when mode === 'field' and the callback likely
+    // predates annotations. We detect that via the presence of a dedicated
+    // annotation channel on the component — if the caller passed annotations
+    // props, assume they want the 4-arg signature.
+    onPageClick?.(placementMode, pageNum, xPct, yPct);
   };
 
   return (
@@ -226,7 +260,7 @@ function PdfPage({
         data-pdf-page
         className="relative"
         style={{
-          cursor: !readOnly && isPlacing && rendered ? 'crosshair' : 'default',
+          cursor: !readOnly && placementMode && rendered ? 'crosshair' : 'default',
           width: cssWidth || 'auto',
           height: cssHeight || 'auto',
         }}
@@ -240,6 +274,7 @@ function PdfPage({
               field={field}
               readOnly={readOnly}
               selected={selectedFieldId === field.id}
+              pageCssHeight={cssHeight}
               onMove={onMoveField}
               onResize={onResizeField}
               onDelete={onDeleteField}
@@ -247,24 +282,33 @@ function PdfPage({
               renderContent={renderFieldContent}
             />
           ))}
+        {rendered &&
+          annotations.map((ann) => (
+            <AnnotationOverlay
+              key={ann.id}
+              ann={ann}
+              readOnly={readOnly}
+              selected={selectedAnnotationId === ann.id}
+              pageCssHeight={cssHeight}
+              onMove={onMoveAnnotation}
+              onResize={onResizeAnnotation}
+              onDelete={onDeleteAnnotation}
+              onClick={onAnnotationClick}
+              renderContent={renderAnnotationContent}
+            />
+          ))}
       </div>
     </div>
   );
 }
 
-const MIN_W_PCT = 5;
-const MIN_H_PCT = 2;
+// ─── Shared drag + resize interactions ───────────────────────────────────────
 
-function FieldOverlay({
-  field,
-  readOnly,
-  selected,
-  onMove,
-  onResize,
-  onDelete,
-  onClick,
-  renderContent,
-}) {
+const MIN_W_PCT = 3;
+const MIN_H_PCT = 1.5;
+
+function useOverlayInteractions({ rect, readOnly, onMove, onResize, onClick }) {
+  // rect: { id, xPct, yPct, wPct, hPct }
   const dragRef = useRef(null);
   const resizeRef = useRef(null);
 
@@ -277,8 +321,8 @@ function FieldOverlay({
     dragRef.current = {
       ptrX: e.clientX,
       ptrY: e.clientY,
-      startX: field.xPct,
-      startY: field.yPct,
+      startX: rect.xPct,
+      startY: rect.yPct,
     };
   }
 
@@ -286,22 +330,28 @@ function FieldOverlay({
     if (!dragRef.current || !onMove) return;
     const page = e.currentTarget.closest('[data-pdf-page]');
     if (!page) return;
-    const rect = page.getBoundingClientRect();
-    const dxPct = ((e.clientX - dragRef.current.ptrX) / rect.width) * 100;
-    const dyPct = ((e.clientY - dragRef.current.ptrY) / rect.height) * 100;
-    const newX = Math.max(0, Math.min(dragRef.current.startX + dxPct, 100 - field.wPct));
-    const newY = Math.max(0, Math.min(dragRef.current.startY + dyPct, 100 - field.hPct));
-    onMove(field.id, newX, newY);
+    const pageRect = page.getBoundingClientRect();
+    const dxPct = ((e.clientX - dragRef.current.ptrX) / pageRect.width) * 100;
+    const dyPct = ((e.clientY - dragRef.current.ptrY) / pageRect.height) * 100;
+    const newX = Math.max(
+      0,
+      Math.min(dragRef.current.startX + dxPct, 100 - rect.wPct),
+    );
+    const newY = Math.max(
+      0,
+      Math.min(dragRef.current.startY + dyPct, 100 - rect.hPct),
+    );
+    onMove(rect.id, newX, newY);
   }
 
   function onBodyPointerUp(e) {
-    const wasDragging =
+    const moved =
       !!dragRef.current &&
       (Math.abs(e.clientX - dragRef.current.ptrX) > 3 ||
         Math.abs(e.clientY - dragRef.current.ptrY) > 3);
     dragRef.current = null;
     e.currentTarget.releasePointerCapture(e.pointerId);
-    if (!wasDragging && onClick && !readOnly) onClick(field.id);
+    if (!moved && onClick && !readOnly) onClick(rect.id);
   }
 
   function onResizePointerDown(e) {
@@ -311,8 +361,8 @@ function FieldOverlay({
     resizeRef.current = {
       ptrX: e.clientX,
       ptrY: e.clientY,
-      startW: field.wPct,
-      startH: field.hPct,
+      startW: rect.wPct,
+      startH: rect.hPct,
     };
   }
 
@@ -320,12 +370,18 @@ function FieldOverlay({
     if (!resizeRef.current || !onResize) return;
     const page = e.currentTarget.closest('[data-pdf-page]');
     if (!page) return;
-    const rect = page.getBoundingClientRect();
-    const dxPct = ((e.clientX - resizeRef.current.ptrX) / rect.width) * 100;
-    const dyPct = ((e.clientY - resizeRef.current.ptrY) / rect.height) * 100;
-    const newW = Math.max(MIN_W_PCT, Math.min(resizeRef.current.startW + dxPct, 100 - field.xPct));
-    const newH = Math.max(MIN_H_PCT, Math.min(resizeRef.current.startH + dyPct, 100 - field.yPct));
-    onResize(field.id, newW, newH);
+    const pageRect = page.getBoundingClientRect();
+    const dxPct = ((e.clientX - resizeRef.current.ptrX) / pageRect.width) * 100;
+    const dyPct = ((e.clientY - resizeRef.current.ptrY) / pageRect.height) * 100;
+    const newW = Math.max(
+      MIN_W_PCT,
+      Math.min(resizeRef.current.startW + dxPct, 100 - rect.xPct),
+    );
+    const newH = Math.max(
+      MIN_H_PCT,
+      Math.min(resizeRef.current.startH + dyPct, 100 - rect.yPct),
+    );
+    onResize(rect.id, newW, newH);
   }
 
   function onResizePointerUp(e) {
@@ -333,8 +389,57 @@ function FieldOverlay({
     e.currentTarget.releasePointerCapture(e.pointerId);
   }
 
+  return {
+    body: {
+      onPointerDown: onBodyPointerDown,
+      onPointerMove: onBodyPointerMove,
+      onPointerUp: onBodyPointerUp,
+    },
+    resize: {
+      onPointerDown: onResizePointerDown,
+      onPointerMove: onResizePointerMove,
+      onPointerUp: onResizePointerUp,
+    },
+  };
+}
+
+// Client-side text sizing rule for fields. Mirrors the server-side rule in
+// pdfRender.js (ratio 0.65 of field height, clamped). Working in CSS pixels
+// because the preview is pixel-based; the PDF's PT-based equivalent renders
+// to the same visual ratio.
+function fieldFontSizePx(fieldHPct, pageCssHeightPx) {
+  if (!pageCssHeightPx) return 14;
+  const heightPx = (fieldHPct / 100) * pageCssHeightPx;
+  return Math.max(11, Math.min(48, heightPx * 0.65));
+}
+
+// ─── Field overlay (chrome + dynamic fontSize) ───────────────────────────────
+
+function FieldOverlay({
+  field,
+  readOnly,
+  selected,
+  pageCssHeight,
+  onMove,
+  onResize,
+  onDelete,
+  onClick,
+  renderContent,
+}) {
+  const { body, resize } = useOverlayInteractions({
+    rect: field,
+    readOnly,
+    onMove,
+    onResize,
+    onClick,
+  });
+
   const cfg = TYPE_STYLES[field.fieldType] || TYPE_STYLES.text;
   const selectedRing = selected ? 'ring-2 ring-blue-500' : '';
+  const fontSizePx = useMemo(
+    () => fieldFontSizePx(field.hPct, pageCssHeight),
+    [field.hPct, pageCssHeight],
+  );
 
   return (
     <div
@@ -349,14 +454,15 @@ function FieldOverlay({
         touchAction: 'none',
         userSelect: 'none',
       }}
-      onPointerDown={onBodyPointerDown}
-      onPointerMove={onBodyPointerMove}
-      onPointerUp={onBodyPointerUp}
+      {...body}
     >
       <div
         className={`relative h-full border-2 rounded ${cfg.border} ${cfg.bg} flex items-center px-1 overflow-hidden ${selectedRing}`}
       >
-        <div className={`text-[10px] font-semibold leading-tight truncate flex-1 ${cfg.text}`}>
+        <div
+          className={`font-semibold leading-tight truncate flex-1 ${cfg.text}`}
+          style={{ fontSize: `${fontSizePx}px` }}
+        >
           {renderContent ? renderContent(field) : field.label || cfg.label}
           {field.required && <span className="text-red-500 ml-0.5">*</span>}
         </div>
@@ -374,25 +480,92 @@ function FieldOverlay({
           </button>
         )}
       </div>
-      {!readOnly && onResize && (
-        <div
-          data-resize
-          style={{
-            position: 'absolute',
-            bottom: 0,
-            left: 0,
-            width: 10,
-            height: 10,
-            cursor: 'nwse-resize',
-            touchAction: 'none',
-          }}
-          className="bg-white border border-gray-400 rounded-sm opacity-70 hover:opacity-100"
-          onPointerDown={onResizePointerDown}
-          onPointerMove={onResizePointerMove}
-          onPointerUp={onResizePointerUp}
-        />
-      )}
+      {!readOnly && onResize && <ResizeHandle {...resize} />}
     </div>
+  );
+}
+
+// ─── Annotation overlay (chrome-less, renders the actual visual) ─────────────
+
+function AnnotationOverlay({
+  ann,
+  readOnly,
+  selected,
+  pageCssHeight,
+  onMove,
+  onResize,
+  onDelete,
+  onClick,
+  renderContent,
+}) {
+  const { body, resize } = useOverlayInteractions({
+    rect: ann,
+    readOnly,
+    onMove,
+    onResize,
+    onClick,
+  });
+
+  const selectionRing = selected
+    ? 'outline outline-2 outline-offset-1 outline-blue-500'
+    : '';
+
+  return (
+    <div
+      data-annotation-overlay
+      style={{
+        position: 'absolute',
+        left: `${ann.xPct}%`,
+        top: `${ann.yPct}%`,
+        width: `${ann.wPct}%`,
+        height: `${ann.hPct}%`,
+        cursor: readOnly ? 'default' : 'grab',
+        touchAction: 'none',
+        userSelect: 'none',
+      }}
+      {...body}
+    >
+      <div
+        className={`relative h-full w-full overflow-hidden rounded-sm ${selectionRing}`}
+      >
+        {renderContent
+          ? renderContent(ann, { pageCssHeight })
+          : null}
+        {!readOnly && onDelete && selected && (
+          <button
+            data-del
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(ann.id);
+            }}
+            className="absolute top-0 right-0 w-4 h-4 rounded-full bg-white/90 hover:bg-red-100 border border-gray-400 flex items-center justify-center text-gray-600 hover:text-red-600 text-[10px] leading-none"
+            title="הסר סימון"
+          >
+            ×
+          </button>
+        )}
+      </div>
+      {!readOnly && onResize && selected && <ResizeHandle {...resize} />}
+    </div>
+  );
+}
+
+function ResizeHandle(handlers) {
+  return (
+    <div
+      data-resize
+      style={{
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        width: 10,
+        height: 10,
+        cursor: 'nwse-resize',
+        touchAction: 'none',
+      }}
+      className="bg-white border border-gray-400 rounded-sm opacity-70 hover:opacity-100"
+      {...handlers}
+    />
   );
 }
 
