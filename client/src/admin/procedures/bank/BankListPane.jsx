@@ -146,7 +146,8 @@ export default function BankListPane({
     const a = parseDragId(active.id);
     const o = parseDragId(over.id);
 
-    // Folder ⇄ folder: reorder folders.
+    // Folder ⇄ folder: reorder folders (separate pipeline — folders don't
+    // carry a sortOrder inside a parent folder, they order at top level).
     if (a.kind === 'folder' && o.kind === 'folder') {
       const ids = localFolders.map((f) => f.id);
       const from = ids.indexOf(a.id);
@@ -159,83 +160,109 @@ export default function BankListPane({
       return;
     }
 
-    // Item dropped onto a folder header → move to that folder (appended).
-    if (a.kind !== 'folder' && o.kind === 'folder') {
-      const targetFolderId = o.id === '__ungrouped__' ? null : o.id;
-      moveItem(a, targetFolderId);
-      return;
+    // Folders cannot be dropped onto items.
+    if (a.kind === 'folder') return;
+
+    // ── Unified item drop ──
+    // Every item drop — same-folder reorder, cross-folder move, drop on a
+    // folder header — flows through the SAME pipeline:
+    //   1. Resolve target folder + insertion index from the drop target.
+    //   2. Build the full ordered list of items in that folder.
+    //   3. Remove the dragged item from that list (no-op if it wasn't in
+    //      the target folder to begin with).
+    //   4. Insert the dragged item at the resolved index.
+    //   5. Commit sortOrders 0..N locally (plus folderId if it changed).
+    //   6. POST the full ordered list + target folderId to /reorder.
+    // The server now atomically sets folderId + sortOrder for every entry,
+    // so one call handles BOTH move and reorder with no partial-update
+    // race window.
+    const aItem = findItem(a);
+    if (!aItem) return;
+
+    let targetFolderId;
+    let dropOnFolderHeader;
+    let overItem = null;
+    if (o.kind === 'folder') {
+      targetFolderId = o.id === '__ungrouped__' ? null : o.id;
+      dropOnFolderHeader = true;
+    } else {
+      overItem = findItem(o);
+      if (!overItem) return;
+      targetFolderId = overItem.folderId || null;
+      dropOnFolderHeader = false;
     }
 
-    // Item ⇄ item: reorder within the (possibly new) folder.
-    if (a.kind !== 'folder' && o.kind !== 'folder') {
-      const aItem = findItem(a);
-      const oItem = findItem(o);
-      if (!aItem || !oItem) return;
-      const targetFolderId = oItem.folderId || null;
-      const sameFolder = (aItem.folderId || null) === targetFolderId;
-      if (!sameFolder) {
-        moveItem(a, targetFolderId);
-        return;
-      }
-      // Same folder: compute combined ordered list and reindex across kinds.
-      // Kind is tagged explicitly by source array (not by field shape) so
-      // we never misclassify.
-      const folderItems = [
-        ...localContent
-          .filter((i) => (i.folderId || null) === targetFolderId)
-          .map((i) => ({ ...i, kind: ITEM_KINDS.CONTENT })),
-        ...localQuestions
-          .filter((i) => (i.folderId || null) === targetFolderId)
-          .map((i) => ({ ...i, kind: ITEM_KINDS.QUESTION })),
-      ].sort((x, y) => (x.sortOrder ?? 0) - (y.sortOrder ?? 0));
-      const from = folderItems.findIndex(
-        (i) => i.id === aItem.id && i.kind === aItem.kind,
+    // Full ordered list of items in the target folder, kind-tagged by source
+    // array so classification is always correct.
+    const targetItems = [
+      ...localContent
+        .filter((i) => (i.folderId || null) === targetFolderId)
+        .map((i) => ({ ...i, kind: ITEM_KINDS.CONTENT })),
+      ...localQuestions
+        .filter((i) => (i.folderId || null) === targetFolderId)
+        .map((i) => ({ ...i, kind: ITEM_KINDS.QUESTION })),
+    ].sort((x, y) => (x.sortOrder ?? 0) - (y.sortOrder ?? 0));
+
+    // Remove the dragged item if it's already in the target folder. No-op
+    // for cross-folder drops.
+    const withoutDragged = targetItems.filter(
+      (i) => !(i.id === aItem.id && i.kind === a.kind),
+    );
+
+    // Insertion index. Drop on folder header → top of folder (most
+    // predictable; avoids the surprise "jumps to end" behavior the user
+    // reported). Drop on item → at that item's position.
+    let insertIdx;
+    if (dropOnFolderHeader) {
+      insertIdx = 0;
+    } else {
+      insertIdx = withoutDragged.findIndex(
+        (i) => i.id === overItem.id && i.kind === o.kind,
       );
-      const to = folderItems.findIndex(
-        (i) => i.id === oItem.id && i.kind === oItem.kind,
-      );
-      if (from < 0 || to < 0) return;
-      const reordered = arrayMove(folderItems, from, to).map((i, idx) => ({
-        ...i,
+      if (insertIdx < 0) insertIdx = withoutDragged.length;
+    }
+
+    const dragged = { ...aItem, kind: a.kind, folderId: targetFolderId };
+    const finalList = [
+      ...withoutDragged.slice(0, insertIdx),
+      dragged,
+      ...withoutDragged.slice(insertIdx),
+    ];
+
+    // Project new sortOrder + folderId back into per-kind local state.
+    // Only items in `finalList` are touched; items in OTHER folders stay
+    // untouched (including whatever gap this move leaves in the source
+    // folder — gaps are harmless, sortOrder is ordinal not cardinal).
+    const updates = new Map();
+    finalList.forEach((item, idx) => {
+      updates.set(`${item.kind}:${item.id}`, {
         sortOrder: idx,
-      }));
-
-      // Index new sortOrders by id+kind so we can project them back into
-      // the per-kind state arrays in one pass.
-      const contentOrder = new Map();
-      const questionOrder = new Map();
-      for (const r of reordered) {
-        if (r.kind === ITEM_KINDS.CONTENT) contentOrder.set(r.id, r.sortOrder);
-        else questionOrder.set(r.id, r.sortOrder);
-      }
-
-      // Apply both state updates in a single synchronous commit so dnd-kit
-      // animates the drop against the already-updated DOM.
-      flushSync(() => {
-        setLocalContent((prev) =>
-          prev.map((i) =>
-            contentOrder.has(i.id)
-              ? { ...i, sortOrder: contentOrder.get(i.id) }
-              : i,
-          ),
-        );
-        setLocalQuestions((prev) =>
-          prev.map((i) =>
-            questionOrder.has(i.id)
-              ? { ...i, sortOrder: questionOrder.get(i.id) }
-              : i,
-          ),
-        );
+        folderId: targetFolderId,
       });
+    });
 
-      // Fire-and-forget persist. Rollback by refetch if the server errors.
-      api.bankItems
-        .reorder(
-          reordered.map((i) => ({ kind: i.kind, id: i.id })),
-          targetFolderId,
-        )
-        .catch(() => onChanged?.());
-    }
+    flushSync(() => {
+      setLocalContent((prev) =>
+        prev.map((i) => {
+          const patch = updates.get(`${ITEM_KINDS.CONTENT}:${i.id}`);
+          return patch ? { ...i, ...patch } : i;
+        }),
+      );
+      setLocalQuestions((prev) =>
+        prev.map((i) => {
+          const patch = updates.get(`${ITEM_KINDS.QUESTION}:${i.id}`);
+          return patch ? { ...i, ...patch } : i;
+        }),
+      );
+    });
+
+    // Fire-and-forget persist. Rollback by refetch if the server errors.
+    api.bankItems
+      .reorder(
+        finalList.map((i) => ({ kind: i.kind, id: i.id })),
+        targetFolderId,
+      )
+      .catch(() => onChanged?.());
   }
 
   function findItem({ kind, id }) {

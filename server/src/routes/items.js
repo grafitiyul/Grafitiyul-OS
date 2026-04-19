@@ -117,9 +117,14 @@ router.delete(
 );
 
 // Unified cross-kind reorder. Body: { ordered: [{ kind, id }, ...], folderId? }.
-// Reassigns sortOrder across BOTH content and question tables so the bank
-// list's drag order is respected exactly as shown — no forced alternation
-// by kind. Atomic under a single $transaction.
+// Atomically:
+//   1. moves every item in `ordered` INTO the target folder
+//   2. reassigns sortOrder by position in the `ordered` array
+// Handles same-folder reorder AND cross-folder drag in one call — the
+// client builds the full ordered list for the target folder (with the
+// dragged item inserted at the drop position), and this endpoint both
+// sets folderId + sortOrder atomically, so there is no "item silently
+// skipped because its current folderId did not match the scope" bug.
 router.put(
   '/reorder',
   handle(async (req, res) => {
@@ -128,26 +133,27 @@ router.put(
       return res.status(400).json({ error: 'ordered_array_required' });
     }
     const scopeFolder = folderId === undefined ? undefined : folderId || null;
-    // Build one updateMany per entry. Unknown kinds are skipped entirely —
-    // no placeholder query, no side effects. The where clause scopes to
-    // the target folder so a stale client payload cannot move rows out of
-    // their folder by accident.
+    // One updateMany per entry. Unknown kinds are skipped entirely — no
+    // placeholder query, no side effects. The where clause scopes ONLY by
+    // id (not folderId) so this endpoint can also MOVE items into the
+    // target folder — which is exactly what cross-folder drags require.
+    // The data payload always sets sortOrder; if scopeFolder is defined
+    // (the normal path), it also sets folderId so the item ends up in
+    // the right folder even when it started in a different one.
     const ops = [];
     ordered.forEach((entry, index) => {
       const kind = entry?.kind;
       const id = entry?.id;
       if (!id) return;
-      const where = {
-        id,
-        ...(scopeFolder === undefined ? {} : { folderId: scopeFolder }),
-      };
+      const data = { sortOrder: index };
+      if (scopeFolder !== undefined) data.folderId = scopeFolder;
       if (kind === 'content') {
         ops.push(
-          prisma.contentItem.updateMany({ where, data: { sortOrder: index } }),
+          prisma.contentItem.updateMany({ where: { id }, data }),
         );
       } else if (kind === 'question') {
         ops.push(
-          prisma.questionItem.updateMany({ where, data: { sortOrder: index } }),
+          prisma.questionItem.updateMany({ where: { id }, data }),
         );
       }
     });
