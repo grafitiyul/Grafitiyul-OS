@@ -244,7 +244,10 @@ function PdfPage({
     // predates annotations. We detect that via the presence of a dedicated
     // annotation channel on the component — if the caller passed annotations
     // props, assume they want the 4-arg signature.
-    onPageClick?.(placementMode, pageNum, xPct, yPct);
+    onPageClick?.(placementMode, pageNum, xPct, yPct, {
+      pageCssWidth: rect.width,
+      pageCssHeight: rect.height,
+    });
   };
 
   // Drag-and-drop placement from the toolbar. Reuses the exact same page-
@@ -276,7 +279,10 @@ function PdfPage({
     const rect = e.currentTarget.getBoundingClientRect();
     const xPct = ((e.clientX - rect.left) / rect.width) * 100;
     const yPct = ((e.clientY - rect.top) / rect.height) * 100;
-    onPageClick?.(placementMode, pageNum, xPct, yPct);
+    onPageClick?.(placementMode, pageNum, xPct, yPct, {
+      pageCssWidth: rect.width,
+      pageCssHeight: rect.height,
+    });
   };
 
   return (
@@ -501,8 +507,15 @@ function FieldOverlay({
         className={`relative h-full border-2 rounded ${cfg.border} ${cfg.bg} flex items-center px-1 overflow-hidden ${selectedRing}`}
       >
         <div
-          className={`font-semibold leading-tight truncate flex-1 ${cfg.text}`}
-          style={{ fontSize: `${fontSizePx}px` }}
+          className={`leading-tight truncate flex-1 ${cfg.text}`}
+          style={{
+            fontSize: `${fontSizePx}px`,
+            // Match the font family + weight used by measureTextPx so the
+            // rendered width equals the measured width that drove sizing.
+            // Regular weight also mirrors pdf-lib's render (no synth-bold).
+            fontFamily: '"Heebo", Arial, sans-serif',
+            fontWeight: 400,
+          }}
         >
           {renderContent ? renderContent(field) : field.label || cfg.label}
           {field.required && <span className="text-red-500 ml-0.5">*</span>}

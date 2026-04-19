@@ -55,6 +55,42 @@ function annotationDefaults(kind) {
   return { color: '#111827', thickness: 3 };
 }
 
+const HEB_RE = /[\u0590-\u05FF]/;
+
+// Text-like field types get content-sized width at placement. Signatures /
+// stamps / combined keep their fixed rect defaults.
+const TEXT_FIELD_TYPES = new Set(['text', 'date', 'number', 'phone', 'email']);
+
+// Measure visual text width in CSS pixels at a given font size. Uses a
+// shared off-screen canvas so we don't pay setup cost per call. Font family
+// matches what stamps use — same family family as the on-screen preview so
+// WYSIWYG holds. The server-side NotoSansHebrew may differ by a few
+// percent; we pad when we use the result to absorb that variance.
+let _measureCanvas = null;
+function measureTextPx(text, fontPx) {
+  if (typeof document === 'undefined') return 0;
+  if (!_measureCanvas) _measureCanvas = document.createElement('canvas');
+  const ctx = _measureCanvas.getContext('2d');
+  ctx.font = `${fontPx}px "Heebo", Arial, sans-serif`;
+  return ctx.measureText(String(text || '')).width;
+}
+
+// Resolve what text to measure for a freshly-placed field given the pending
+// toolbar config + the current live data. Used only for sizing the initial
+// box — the actual value at render time is resolved via resolveInstanceText.
+function resolvePlacementText(pending, liveBusinessFields) {
+  if (!pending) return '';
+  if (pending.fieldType === 'date') return formatIsoDate(todayIso());
+  if (pending.valueSource === 'business_field' && pending.businessFieldId) {
+    const bf = liveBusinessFields?.find((b) => b.id === pending.businessFieldId);
+    if (bf) return pickBusinessValue(bf, 'he');
+    return pending.label || '';
+  }
+  if (pending.valueSource === 'static') return pending.staticValue || '';
+  // override_only text / free text: use label as the measurement placeholder.
+  return pending.label || 'טקסט';
+}
+
 // Today as YYYY-MM-DD for date field default display.
 function todayIso() {
   const d = new Date();
@@ -169,12 +205,44 @@ export default function InstanceEditor() {
   // ── Placement mutations ───────────────────────────────────────────────────
 
   const placeFieldAt = useCallback(
-    (page, xPct, yPct) => {
+    (page, xPct, yPct, dims) => {
       if (!pending || pending.mode !== 'field' || isFinalized) return;
-      const size =
-        PLACEMENT_DEFAULT_SIZES[pending.fieldType] || { wPct: 22, hPct: 5 };
-      const clampX = Math.max(0, Math.min(100 - size.wPct, xPct - size.wPct / 2));
+
+      // Content-sized width for text-like fields. Signatures / stamps /
+      // combined keep their fixed defaults.
+      const isTextLike = TEXT_FIELD_TYPES.has(pending.fieldType);
+      let size;
+      let anchor = 'center'; // 'center' | 'left' | 'right'
+
+      if (isTextLike && dims?.pageCssWidth && dims?.pageCssHeight) {
+        const heightPct = 2.6;
+        const fontPx = (heightPct / 100) * dims.pageCssHeight * 0.6;
+        const text = resolvePlacementText(pending, liveBusinessFields);
+        const measured = measureTextPx(text, fontPx);
+        // ~10px of horizontal breathing room total (5 per side) absorbs the
+        // Heebo ↔ NotoSansHebrew font-metric variance so the PDF never clips.
+        const PAD_PX = 10;
+        const widthPx = Math.max(measured + PAD_PX, 28);
+        const widthPct = Math.min(96, (widthPx / dims.pageCssWidth) * 100);
+        size = { wPct: widthPct, hPct: heightPct };
+        // RTL anchor for Hebrew content: drop point = right edge.
+        anchor = HEB_RE.test(text) ? 'right' : 'left';
+      } else {
+        size = PLACEMENT_DEFAULT_SIZES[pending.fieldType] || { wPct: 22, hPct: 5 };
+      }
+
+      // Horizontal anchor:
+      //   center → drop point is the center (legacy; used for image fields).
+      //   left   → drop point is the left edge (LTR content).
+      //   right  → drop point is the right edge (RTL content).
+      let rawX;
+      if (anchor === 'right') rawX = xPct - size.wPct;
+      else if (anchor === 'left') rawX = xPct;
+      else rawX = xPct - size.wPct / 2;
+
+      const clampX = Math.max(0, Math.min(100 - size.wPct, rawX));
       const clampY = Math.max(0, Math.min(100 - size.hPct, yPct - size.hPct / 2));
+
       const newField = {
         id: localId(),
         page,
@@ -200,7 +268,7 @@ export default function InstanceEditor() {
       setSelectedAnnotationId(null);
       setPending(null);
     },
-    [pending, placements.length, isFinalized],
+    [pending, placements.length, isFinalized, liveBusinessFields],
   );
 
   const placeAnnotationAt = useCallback(
@@ -230,12 +298,13 @@ export default function InstanceEditor() {
     [pending, annotations.length, isFinalized],
   );
 
-  // Dispatch for the PdfViewer's click-to-place. PdfViewer always emits
-  // (mode, page, x, y) — mode is 'field' or 'annotation'.
+  // Dispatch for the PdfViewer's click/drop-to-place. PdfViewer emits
+  // (mode, page, x, y, dims) — mode is 'field' or 'annotation', dims
+  // carries the page's current CSS width/height for content-aware sizing.
   const onPageClick = useCallback(
-    (mode, page, x, y) => {
+    (mode, page, x, y, dims) => {
       if (mode === 'annotation') placeAnnotationAt(page, x, y);
-      else placeFieldAt(page, x, y);
+      else placeFieldAt(page, x, y, dims);
     },
     [placeFieldAt, placeAnnotationAt],
   );
@@ -965,9 +1034,16 @@ function InstanceFieldPreview({
   );
   const showEnChip =
     field.valueSource === 'business_field' && field.language === 'en';
+  const displayed = text || field.label || '—';
+  const isRtl = HEB_RE.test(displayed);
   return (
-    <span className="truncate flex items-center gap-1">
-      {text || field.label || '—'}
+    <span
+      dir={isRtl ? 'rtl' : 'ltr'}
+      className={`truncate flex items-center gap-1 w-full ${
+        isRtl ? 'justify-end' : 'justify-start'
+      }`}
+    >
+      {displayed}
       {showEnChip && (
         <span
           className="shrink-0 text-[8px] font-bold bg-indigo-600 text-white px-1 py-0 rounded leading-none"
