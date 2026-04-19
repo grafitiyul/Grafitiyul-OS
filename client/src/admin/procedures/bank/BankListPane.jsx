@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   DndContext,
@@ -105,8 +106,21 @@ export default function BankListPane({
   );
 
   // ── Drag handlers ──
+  //
+  // Invariants for "no snap-back":
+  //   1. State updates are flushed SYNCHRONOUSLY (flushSync) before
+  //      onDragEnd returns, so dnd-kit animates the dropped item into its
+  //      new DOM position rather than back to its original slot.
+  //   2. Persistence is fire-and-forget — `await`ing the network call
+  //      inside onDragEnd lets dnd-kit's drop animation run before React
+  //      commits, which causes the visual snap-back.
+  //   3. `refresh()` is NEVER called on success. The optimistic state IS
+  //      the truth; calling refresh would swap in server data during a
+  //      `loading=true` flash that briefly unmounts the list, and any
+  //      transient race would show the old order. We only refresh on
+  //      error (as a rollback).
 
-  async function onDragEnd(event) {
+  function onDragEnd(event) {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
     const a = parseDragId(active.id);
@@ -118,25 +132,21 @@ export default function BankListPane({
       const from = ids.indexOf(a.id);
       const to = ids.indexOf(o.id);
       if (from < 0 || to < 0) return;
-      const next = arrayMove(ids, from, to);
-      setLocalFolders(next.map((id) => localFolders.find((f) => f.id === id)));
-      try {
-        await api.folders.reorder(next);
-      } finally {
-        onChanged?.();
-      }
+      const nextIds = arrayMove(ids, from, to);
+      const nextFolders = nextIds.map((id) => localFolders.find((f) => f.id === id));
+      flushSync(() => setLocalFolders(nextFolders));
+      api.folders.reorder(nextIds).catch(() => onChanged?.());
       return;
     }
 
     // Item dropped onto a folder header → move to that folder (appended).
     if (a.kind !== 'folder' && o.kind === 'folder') {
       const targetFolderId = o.id === '__ungrouped__' ? null : o.id;
-      await moveItem(a, targetFolderId);
+      moveItem(a, targetFolderId);
       return;
     }
 
-    // Item ⇄ item: reorder within the (possibly new) folder, respecting
-    // mixed-kind order — no forced alternation.
+    // Item ⇄ item: reorder within the (possibly new) folder.
     if (a.kind !== 'folder' && o.kind !== 'folder') {
       const aItem = findItem(a);
       const oItem = findItem(o);
@@ -144,13 +154,12 @@ export default function BankListPane({
       const targetFolderId = oItem.folderId || null;
       const sameFolder = (aItem.folderId || null) === targetFolderId;
       if (!sameFolder) {
-        // Cross-folder: set folderId + append, then reindex.
-        await moveItem(a, targetFolderId);
+        moveItem(a, targetFolderId);
         return;
       }
       // Same folder: compute combined ordered list and reindex across kinds.
-      // Tag kind explicitly by source array (not by field shape) so we never
-      // misclassify an item.
+      // Kind is tagged explicitly by source array (not by field shape) so
+      // we never misclassify.
       const folderItems = [
         ...localContent
           .filter((i) => (i.folderId || null) === targetFolderId)
@@ -170,31 +179,42 @@ export default function BankListPane({
         ...i,
         sortOrder: idx,
       }));
-      // Apply optimistically.
-      setLocalContent((prev) =>
-        prev.map((i) => {
-          const m = reordered.find(
-            (r) => r.id === i.id && r.kind === ITEM_KINDS.CONTENT,
-          );
-          return m ? { ...i, sortOrder: m.sortOrder } : i;
-        }),
-      );
-      setLocalQuestions((prev) =>
-        prev.map((i) => {
-          const m = reordered.find(
-            (r) => r.id === i.id && r.kind === ITEM_KINDS.QUESTION,
-          );
-          return m ? { ...i, sortOrder: m.sortOrder } : i;
-        }),
-      );
-      try {
-        await api.bankItems.reorder(
+
+      // Index new sortOrders by id+kind so we can project them back into
+      // the per-kind state arrays in one pass.
+      const contentOrder = new Map();
+      const questionOrder = new Map();
+      for (const r of reordered) {
+        if (r.kind === ITEM_KINDS.CONTENT) contentOrder.set(r.id, r.sortOrder);
+        else questionOrder.set(r.id, r.sortOrder);
+      }
+
+      // Apply both state updates in a single synchronous commit so dnd-kit
+      // animates the drop against the already-updated DOM.
+      flushSync(() => {
+        setLocalContent((prev) =>
+          prev.map((i) =>
+            contentOrder.has(i.id)
+              ? { ...i, sortOrder: contentOrder.get(i.id) }
+              : i,
+          ),
+        );
+        setLocalQuestions((prev) =>
+          prev.map((i) =>
+            questionOrder.has(i.id)
+              ? { ...i, sortOrder: questionOrder.get(i.id) }
+              : i,
+          ),
+        );
+      });
+
+      // Fire-and-forget persist. Rollback by refetch if the server errors.
+      api.bankItems
+        .reorder(
           reordered.map((i) => ({ kind: i.kind, id: i.id })),
           targetFolderId,
-        );
-      } finally {
-        onChanged?.();
-      }
+        )
+        .catch(() => onChanged?.());
     }
   }
 
@@ -204,17 +224,45 @@ export default function BankListPane({
     return null;
   }
 
-  async function moveItem({ kind, id }, targetFolderId) {
-    const setter = kind === ITEM_KINDS.CONTENT ? setLocalContent : setLocalQuestions;
-    setter((prev) =>
-      prev.map((i) => (i.id === id ? { ...i, folderId: targetFolderId } : i)),
-    );
-    try {
-      if (kind === ITEM_KINDS.CONTENT) await api.contentItems.move(id, targetFolderId);
-      else await api.questionItems.move(id, targetFolderId);
-    } finally {
-      onChanged?.();
-    }
+  // Move an item to a target folder. Updates folderId + sortOrder
+  // optimistically (appended at the end of the target folder), then persists
+  // in the background. Only rolls back on failure.
+  function moveItem({ kind, id }, targetFolderId) {
+    // Compute a sortOrder that appends the item at the end of the target
+    // folder locally, so the visible order matches where the drop landed
+    // even before the server responds.
+    const appendOrder =
+      Math.max(
+        -1,
+        ...[
+          ...localContent.filter((i) => (i.folderId || null) === targetFolderId),
+          ...localQuestions.filter((i) => (i.folderId || null) === targetFolderId),
+        ].map((i) => i.sortOrder ?? 0),
+      ) + 1;
+
+    flushSync(() => {
+      if (kind === ITEM_KINDS.CONTENT) {
+        setLocalContent((prev) =>
+          prev.map((i) =>
+            i.id === id
+              ? { ...i, folderId: targetFolderId, sortOrder: appendOrder }
+              : i,
+          ),
+        );
+      } else {
+        setLocalQuestions((prev) =>
+          prev.map((i) =>
+            i.id === id
+              ? { ...i, folderId: targetFolderId, sortOrder: appendOrder }
+              : i,
+          ),
+        );
+      }
+    });
+
+    const mover =
+      kind === ITEM_KINDS.CONTENT ? api.contentItems.move : api.questionItems.move;
+    mover(id, targetFolderId).catch(() => onChanged?.());
   }
 
   // ── Folder dialogs ──
@@ -313,7 +361,13 @@ export default function BankListPane({
         onScroll={onScroll}
         className="flex-1 overflow-y-auto"
       >
-        {loading && <div className="p-6 text-center text-sm text-gray-500">טוען…</div>}
+        {/* Loading spinner only on the INITIAL load (no local data yet).
+            We never unmount the list on subsequent refreshes — that would
+            tear down DndContext + all Sortables right after a drop, causing
+            the item to snap-back visually. */}
+        {loading && totalCount === 0 && localFolders.length === 0 && (
+          <div className="p-6 text-center text-sm text-gray-500">טוען…</div>
+        )}
         {error && !loading && (
           <div className="p-6 text-center">
             <div className="text-sm text-red-600 mb-2">שגיאה בטעינה</div>
@@ -329,12 +383,12 @@ export default function BankListPane({
         {!loading && !error && totalCount === 0 && localFolders.length === 0 && (
           <EmptyListState />
         )}
-        {!loading && !error && totalCount > 0 && visibleCount === 0 && (
+        {!error && totalCount > 0 && visibleCount === 0 && (
           <div className="p-6 text-center text-sm text-gray-500">
             לא נמצאו פריטים תואמים.
           </div>
         )}
-        {!loading && !error && (
+        {!error && (totalCount > 0 || localFolders.length > 0) && (
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}

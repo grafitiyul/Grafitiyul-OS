@@ -128,30 +128,33 @@ router.put(
       return res.status(400).json({ error: 'ordered_array_required' });
     }
     const scopeFolder = folderId === undefined ? undefined : folderId || null;
-    const ops = ordered.map((entry, index) => {
-      const { kind, id } = entry || {};
+    // Build one updateMany per entry. Unknown kinds are skipped entirely —
+    // no placeholder query, no side effects. The where clause scopes to
+    // the target folder so a stale client payload cannot move rows out of
+    // their folder by accident.
+    const ops = [];
+    ordered.forEach((entry, index) => {
+      const kind = entry?.kind;
+      const id = entry?.id;
+      if (!id) return;
+      const where = {
+        id,
+        ...(scopeFolder === undefined ? {} : { folderId: scopeFolder }),
+      };
       if (kind === 'content') {
-        return prisma.contentItem.updateMany({
-          where: {
-            id,
-            ...(scopeFolder === undefined ? {} : { folderId: scopeFolder }),
-          },
-          data: { sortOrder: index },
-        });
+        ops.push(
+          prisma.contentItem.updateMany({ where, data: { sortOrder: index } }),
+        );
+      } else if (kind === 'question') {
+        ops.push(
+          prisma.questionItem.updateMany({ where, data: { sortOrder: index } }),
+        );
       }
-      if (kind === 'question') {
-        return prisma.questionItem.updateMany({
-          where: {
-            id,
-            ...(scopeFolder === undefined ? {} : { folderId: scopeFolder }),
-          },
-          data: { sortOrder: index },
-        });
-      }
-      return prisma.$queryRaw`SELECT 1`; // no-op placeholder for unknown kinds
     });
-    await prisma.$transaction(ops);
-    res.json({ ok: true });
+    if (ops.length > 0) {
+      await prisma.$transaction(ops);
+    }
+    res.json({ ok: true, count: ops.length });
   }),
 );
 
