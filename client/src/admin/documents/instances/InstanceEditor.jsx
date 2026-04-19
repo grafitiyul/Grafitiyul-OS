@@ -442,7 +442,11 @@ export default function InstanceEditor() {
     : api.documents.instancePdfUrl(id);
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col">
+    // h-full (not flex-1) because DocumentsLayout's outlet wrapper is a
+    // plain block div — flex-1 would be ignored and this container would
+    // collapse to content height, breaking the inner scroll container and
+    // the sticky toolbar.
+    <div className="h-full flex flex-col">
       <header className="bg-white border-b border-gray-200 px-5 py-3 shrink-0">
         <div className="flex items-start gap-3">
           <div className="flex-1 min-w-0">
@@ -542,7 +546,11 @@ export default function InstanceEditor() {
         <div className="flex-1 min-w-0 overflow-y-auto bg-gray-100">
           {!isFinalized && (
             <div
-              className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-gray-200 shadow-sm px-4 py-2"
+              // Solid bg-white (no backdrop-blur) to avoid stacking-context
+              // quirks with position: sticky. Parent <div> above this has
+              // overflow-y-auto and a definite height (from h-full chain),
+              // which makes this element the sticky target.
+              className="sticky top-0 z-20 bg-white border-b border-gray-200 shadow-sm px-4 py-2"
             >
               <PlacementToolbar
                 businessFields={liveBusinessFields}
