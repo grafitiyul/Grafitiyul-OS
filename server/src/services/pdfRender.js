@@ -50,9 +50,13 @@ const NUMERIC_FIELD_TYPES = new Set(['date', 'phone', 'number', 'email']);
 // Text sizing rule for value fields. Scales with field height; floor keeps
 // small fields readable; cap keeps oversized fields from looking absurd.
 // The same ratio is mirrored on the client preview so WYSIWYG holds.
+//
+// Tuning: default placement height is 2.6%, which targets ~12–13pt on both
+// A4 (842pt × 0.026 × 0.60 ≈ 13.1pt) and Letter (792pt × 0.026 × 0.60 ≈
+// 12.4pt). Resize still scales text proportionally via the same ratio.
 const TEXT_SIZE_MIN = 10;
 const TEXT_SIZE_MAX = 36;
-const TEXT_SIZE_RATIO = 0.65;
+const TEXT_SIZE_RATIO = 0.6;
 function fontSizeForFieldHeight(fieldHPt) {
   return Math.max(TEXT_SIZE_MIN, Math.min(TEXT_SIZE_MAX, fieldHPt * TEXT_SIZE_RATIO));
 }

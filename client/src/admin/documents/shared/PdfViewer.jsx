@@ -404,13 +404,13 @@ function useOverlayInteractions({ rect, readOnly, onMove, onResize, onClick }) {
 }
 
 // Client-side text sizing rule for fields. Mirrors the server-side rule in
-// pdfRender.js (ratio 0.65 of field height, clamped). Working in CSS pixels
+// pdfRender.js (ratio 0.60 of field height, clamped). Working in CSS pixels
 // because the preview is pixel-based; the PDF's PT-based equivalent renders
 // to the same visual ratio.
 function fieldFontSizePx(fieldHPct, pageCssHeightPx) {
-  if (!pageCssHeightPx) return 14;
+  if (!pageCssHeightPx) return 13;
   const heightPx = (fieldHPct / 100) * pageCssHeightPx;
-  return Math.max(11, Math.min(48, heightPx * 0.65));
+  return Math.max(10, Math.min(48, heightPx * 0.6));
 }
 
 // ─── Field overlay (chrome + dynamic fontSize) ───────────────────────────────

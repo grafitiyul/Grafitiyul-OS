@@ -18,15 +18,18 @@ import { IMAGE_FIELD_TYPES, SIGNER_ASSET_MODES } from '../config.js';
 // snapshotFieldId). The sidebar shows the override panel for the currently
 // selected field.
 
-// Default rect sizes at placement time. Heights are tuned so the server's
-// font-size rule (fieldH * 0.65, floor 10pt) yields ≥ 12pt on a letter/A4
-// sized page. Mirror the sizing tuning on the client preview.
+// Default rect sizes at placement time. Heights are tuned to match typical
+// form-text proportions on the page: the server's rule fontSize = h * 0.60
+// yields ~12–13pt at h=2.6% on A4 (842 * 0.026 * 0.60 ≈ 13.1pt) and Letter
+// (792 * 0.026 * 0.60 ≈ 12.4pt). Resize still scales text proportionally.
+// Widths are narrower than before so fields blend into the document rather
+// than sitting as large overlays.
 const PLACEMENT_DEFAULT_SIZES = {
-  text: { wPct: 32, hPct: 5 },
-  date: { wPct: 22, hPct: 5 },
-  number: { wPct: 18, hPct: 5 },
-  phone: { wPct: 22, hPct: 5 },
-  email: { wPct: 26, hPct: 5 },
+  text: { wPct: 24, hPct: 2.6 },
+  date: { wPct: 14, hPct: 2.6 },
+  number: { wPct: 10, hPct: 2.6 },
+  phone: { wPct: 14, hPct: 2.6 },
+  email: { wPct: 20, hPct: 2.6 },
   signature: { wPct: 24, hPct: 9 },
   stamp: { wPct: 20, hPct: 11 },
   combined: { wPct: 30, hPct: 11 },
