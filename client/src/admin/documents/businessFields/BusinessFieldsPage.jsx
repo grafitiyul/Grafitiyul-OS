@@ -26,8 +26,8 @@ export default function BusinessFieldsPage() {
     refresh();
   }, [refresh]);
 
-  async function addField({ key, label, value, category }) {
-    await api.businessFields.create({ key, label, value, category });
+  async function addField({ key, label, valueHe, valueEn, category }) {
+    await api.businessFields.create({ key, label, valueHe, valueEn, category });
     setCreating(false);
     await refresh();
   }
@@ -107,7 +107,8 @@ export default function BusinessFieldsPage() {
 function CreateRow({ onCancel, onSubmit }) {
   const [label, setLabel] = useState('');
   const [key, setKey] = useState('');
-  const [value, setValue] = useState('');
+  const [valueHe, setValueHe] = useState('');
+  const [valueEn, setValueEn] = useState('');
   const [category, setCategory] = useState('');
 
   function submit(e) {
@@ -116,7 +117,8 @@ function CreateRow({ onCancel, onSubmit }) {
     onSubmit({
       label: label.trim(),
       key: key.trim() || undefined,
-      value,
+      valueHe,
+      valueEn,
       category: category.trim() || null,
     });
   }
@@ -144,12 +146,21 @@ function CreateRow({ onCancel, onSubmit }) {
           hint="אופציונלי — יתמלא אוטומטית מהתווית."
         />
       </div>
-      <FieldInput
-        label="ערך"
-        value={value}
-        onChange={setValue}
-        placeholder="למשל: גרפיטיול בע״מ"
-      />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <FieldInput
+          label="ערך (עברית)"
+          value={valueHe}
+          onChange={setValueHe}
+          placeholder="למשל: גרפיטיול בע״מ"
+        />
+        <FieldInput
+          label="ערך (אנגלית)"
+          value={valueEn}
+          onChange={setValueEn}
+          dir="ltr"
+          placeholder="e.g. Grafitiyul Ltd."
+        />
+      </div>
       <FieldInput
         label="קטגוריה"
         value={category}
@@ -179,18 +190,29 @@ function CreateRow({ onCancel, onSubmit }) {
 
 function FieldRow({ field, onChanged }) {
   const [label, setLabel] = useState(field.label);
-  const [value, setValue] = useState(field.value || '');
+  const [valueHe, setValueHe] = useState(field.valueHe ?? field.value ?? '');
+  const [valueEn, setValueEn] = useState(field.valueEn ?? '');
   const [category, setCategory] = useState(field.category || '');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
+  const originalHe = field.valueHe ?? field.value ?? '';
+  const originalEn = field.valueEn ?? '';
   const dirty =
-    label !== field.label || value !== field.value || (category || '') !== (field.category || '');
+    label !== field.label ||
+    valueHe !== originalHe ||
+    valueEn !== originalEn ||
+    (category || '') !== (field.category || '');
 
   async function save() {
     setErr(null);
     setSaving(true);
     try {
-      await api.businessFields.update(field.id, { label, value, category: category || null });
+      await api.businessFields.update(field.id, {
+        label,
+        valueHe,
+        valueEn,
+        category: category || null,
+      });
       await onChanged();
     } catch (e) {
       setErr(e.message);
@@ -217,7 +239,7 @@ function FieldRow({ field, onChanged }) {
 
   return (
     <li className="bg-white border border-gray-200 rounded-lg p-4">
-      <div className="grid grid-cols-1 sm:grid-cols-[180px,1fr,180px,auto] gap-3 items-start">
+      <div className="grid grid-cols-1 md:grid-cols-[180px,1fr,1fr,160px,auto] gap-3 items-start">
         <div>
           <FieldInput label="תווית" value={label} onChange={setLabel} compact />
           <div
@@ -227,7 +249,19 @@ function FieldRow({ field, onChanged }) {
             {field.key}
           </div>
         </div>
-        <FieldInput label="ערך" value={value} onChange={setValue} compact />
+        <FieldInput
+          label="ערך (עברית)"
+          value={valueHe}
+          onChange={setValueHe}
+          compact
+        />
+        <FieldInput
+          label="ערך (אנגלית)"
+          value={valueEn}
+          onChange={setValueEn}
+          dir="ltr"
+          compact
+        />
         <FieldInput
           label="קטגוריה"
           value={category}

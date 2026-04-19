@@ -137,6 +137,7 @@ export default function InstanceEditor() {
         signerFieldKey: pending.signerFieldKey || null,
         signerAssetMode: pending.signerAssetMode || null,
         staticValue: pending.staticValue || null,
+        language: 'he',
       };
       setPlacements((prev) => [...prev, newField]);
       setDirty(true);
@@ -427,6 +428,9 @@ export default function InstanceEditor() {
                   onSaveImage={(bytes) => saveImageOverride(selected.id, bytes)}
                   onClear={() => clearOverride(selected.id)}
                   onDelete={() => deletePlacement(selected.id)}
+                  onSetLanguage={(lang) =>
+                    updatePlacement(selected.id, { language: lang })
+                  }
                   dirtyField={selected.id.startsWith('local_')}
                 />
               )}
@@ -694,7 +698,21 @@ function InstanceFieldPreview({
     liveBusinessFields,
     liveSigners,
   );
-  return <span className="truncate">{text || field.label || '—'}</span>;
+  const showEnChip =
+    field.valueSource === 'business_field' && field.language === 'en';
+  return (
+    <span className="truncate flex items-center gap-1">
+      {text || field.label || '—'}
+      {showEnChip && (
+        <span
+          className="shrink-0 text-[8px] font-bold bg-indigo-600 text-white px-1 py-0 rounded leading-none"
+          dir="ltr"
+        >
+          EN
+        </span>
+      )}
+    </span>
+  );
 }
 
 function resolveInstanceText(
@@ -709,9 +727,9 @@ function resolveInstanceText(
   if (field.valueSource === 'static') return field.staticValue || '';
   if (field.valueSource === 'business_field' && field.businessFieldId) {
     const snap = businessMap[field.businessFieldId];
-    if (snap) return snap.value || '';
+    if (snap) return pickBusinessValue(snap, field.language);
     const live = liveBusinessFields?.find((b) => b.id === field.businessFieldId);
-    return live?.value || '';
+    return live ? pickBusinessValue(live, field.language) : '';
   }
   if (
     field.valueSource === 'signer_field' &&
@@ -743,9 +761,11 @@ function SelectedPanel({
   onSaveImage,
   onClear,
   onDelete,
+  onSetLanguage,
   dirtyField,
 }) {
   const isImage = IMAGE_FIELD_TYPES.has(field.fieldType);
+  const isBusiness = field.valueSource === 'business_field';
   const hasOverride = !!(
     override &&
     (override.textValue != null || override.assetBytes != null)
@@ -766,6 +786,38 @@ function SelectedPanel({
           </div>
         )}
       </div>
+
+      {isBusiness && (
+        <div>
+          <div className="text-[11px] text-gray-600 mb-1">שפה</div>
+          <div className="inline-flex rounded border border-gray-300 overflow-hidden">
+            <button
+              onClick={() => onSetLanguage('he')}
+              className={`text-[12px] px-3 py-1 ${
+                field.language !== 'en'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              עברית
+            </button>
+            <button
+              onClick={() => onSetLanguage('en')}
+              className={`text-[12px] px-3 py-1 border-r border-gray-300 ${
+                field.language === 'en'
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+              dir="ltr"
+            >
+              English
+            </button>
+          </div>
+          <div className="text-[10px] text-gray-500 mt-1">
+            ברירת המחדל עברית. ניתן להעביר לאנגלית לשדה הזה בלבד.
+          </div>
+        </div>
+      )}
 
       {!dirtyField && isImage && (
         <ImageOverride
@@ -987,6 +1039,17 @@ function dataUrlToBytes(dataUrl) {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
+}
+
+// Bilingual value resolution. Accepts both the new shape (valueHe/valueEn)
+// and the old shape (value) so finalized instances with pre-migration
+// businessSnapshot JSON keep rendering correctly.
+function pickBusinessValue(bf, language) {
+  if (!bf) return '';
+  if (bf.valueHe !== undefined || bf.valueEn !== undefined) {
+    return (language === 'en' ? bf.valueEn : bf.valueHe) || '';
+  }
+  return bf.value || '';
 }
 
 function SaveAsTemplateDialog({ defaultTitle, onClose, onSubmit }) {

@@ -135,7 +135,10 @@ model BusinessField {
   id        String   @id @default(cuid())
   key       String   @unique
   label     String
-  value     String   @default("")
+  // Bilingual values — each field carries its Hebrew and English text so
+  // documents can render either language without duplicating field rows.
+  valueHe   String   @default("")
+  valueEn   String   @default("")
   category  String?
   order     Int      @default(0)
   createdAt DateTime @default(now())
@@ -248,6 +251,8 @@ model DocumentField {
   signerFieldKey  String?
   signerAssetMode String?
   staticValue     String?
+  // Language selector for business_field resolution. Defaults to Hebrew.
+  language        String  @default("he") // 'he' | 'en'
 
   @@index([templateId, page])
 }

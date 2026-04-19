@@ -100,6 +100,7 @@ export default function TemplateEditor() {
             : newFieldType
           : null,
         staticValue: null,
+        language: 'he',
       };
       setFields((prev) => [...prev, f]);
       setSelectedId(f.id);
@@ -139,6 +140,7 @@ export default function TemplateEditor() {
         signerFieldKey: f.signerFieldKey || null,
         signerAssetMode: f.signerAssetMode || null,
         staticValue: f.staticValue || null,
+        language: f.language === 'en' ? 'en' : 'he',
       }));
       await api.documents.saveTemplateFields(id, payload);
       await load();
@@ -506,21 +508,58 @@ function FieldSidebar({ field, readOnly, businessFields, signers, onUpdate, onDe
       </SidebarField>
 
       {field.valueSource === 'business_field' && (
-        <SidebarField label="שדה קבוע">
-          <select
-            disabled={readOnly}
-            value={field.businessFieldId || ''}
-            onChange={(e) => onUpdate({ businessFieldId: e.target.value || null })}
-            className="w-full border border-gray-300 rounded px-2 py-1 text-sm disabled:bg-gray-50"
-          >
-            <option value="">— בחר —</option>
-            {businessFields.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.label} {b.value ? ` — ${truncate(b.value, 30)}` : ''}
-              </option>
-            ))}
-          </select>
-        </SidebarField>
+        <>
+          <SidebarField label="שדה קבוע">
+            <select
+              disabled={readOnly}
+              value={field.businessFieldId || ''}
+              onChange={(e) =>
+                onUpdate({ businessFieldId: e.target.value || null })
+              }
+              className="w-full border border-gray-300 rounded px-2 py-1 text-sm disabled:bg-gray-50"
+            >
+              <option value="">— בחר —</option>
+              {businessFields.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.label}
+                  {(() => {
+                    const v = b.valueHe ?? b.value ?? '';
+                    return v ? ` — ${truncate(v, 30)}` : '';
+                  })()}
+                </option>
+              ))}
+            </select>
+          </SidebarField>
+          <SidebarField label="שפה">
+            <div className="inline-flex rounded border border-gray-300 overflow-hidden">
+              <button
+                type="button"
+                disabled={readOnly}
+                onClick={() => onUpdate({ language: 'he' })}
+                className={`text-[12px] px-3 py-1 ${
+                  field.language !== 'en'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                עברית
+              </button>
+              <button
+                type="button"
+                disabled={readOnly}
+                onClick={() => onUpdate({ language: 'en' })}
+                dir="ltr"
+                className={`text-[12px] px-3 py-1 border-r border-gray-300 ${
+                  field.language === 'en'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                English
+              </button>
+            </div>
+          </SidebarField>
+        </>
       )}
 
       {(field.valueSource === 'signer_field' ||
@@ -699,14 +738,32 @@ function FieldLivePreview({ field, businessFields, signers }) {
     return <span className="italic opacity-70">{field.label || 'חתימה'}</span>;
   }
 
-  return <span className="truncate">{text || field.label || 'טקסט'}</span>;
+  const showEnChip =
+    field.valueSource === 'business_field' && field.language === 'en';
+  return (
+    <span className="truncate flex items-center gap-1">
+      {text || field.label || 'טקסט'}
+      {showEnChip && (
+        <span
+          className="shrink-0 text-[8px] font-bold bg-indigo-600 text-white px-1 py-0 rounded leading-none"
+          dir="ltr"
+        >
+          EN
+        </span>
+      )}
+    </span>
+  );
 }
 
 function resolveLiveText(field, businessFields, signers) {
   if (field.valueSource === 'static') return field.staticValue || '';
   if (field.valueSource === 'business_field' && field.businessFieldId) {
     const bf = businessFields.find((b) => b.id === field.businessFieldId);
-    return bf?.value || '';
+    if (!bf) return '';
+    if (bf.valueHe !== undefined || bf.valueEn !== undefined) {
+      return (field.language === 'en' ? bf.valueEn : bf.valueHe) || '';
+    }
+    return bf.value || '';
   }
   if (field.valueSource === 'signer_field' && field.signerPersonId && field.signerFieldKey) {
     const s = signers.find((x) => x.id === field.signerPersonId);

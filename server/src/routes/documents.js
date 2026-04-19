@@ -144,7 +144,8 @@ router.post(
         id: bf.id,
         key: bf.key,
         label: bf.label,
-        value: bf.value,
+        valueHe: bf.valueHe,
+        valueEn: bf.valueEn,
       };
     }
 
@@ -332,6 +333,7 @@ router.put(
         signerFieldKey: f.signerFieldKey || null,
         signerAssetMode: f.signerAssetMode || null,
         staticValue: f.staticValue != null ? String(f.staticValue) : null,
+        language: f.language === 'en' ? 'en' : 'he',
       });
     }
 
@@ -404,7 +406,8 @@ router.post(
       id: bf.id,
       key: bf.key,
       label: bf.label,
-      value: bf.value,
+      valueHe: bf.valueHe,
+      valueEn: bf.valueEn,
     };
 
     // Collect signer persons referenced by any field. Snapshot per-person
@@ -460,6 +463,7 @@ router.post(
       signerFieldKey: f.signerFieldKey,
       signerAssetMode: f.signerAssetMode,
       staticValue: f.staticValue,
+      language: f.language || 'he',
     }));
 
     const created = await prisma.documentInstance.create({
@@ -619,7 +623,8 @@ router.put(
         id: bf.id,
         key: bf.key,
         label: bf.label,
-        value: bf.value,
+        valueHe: bf.valueHe,
+        valueEn: bf.valueEn,
       };
     }
 
@@ -682,6 +687,7 @@ router.post(
             signerFieldKey: f.signerFieldKey || null,
             signerAssetMode: f.signerAssetMode || null,
             staticValue: f.staticValue || null,
+            language: f.language === 'en' ? 'en' : 'he',
           })),
         });
       }
@@ -848,7 +854,7 @@ router.post(
       if (f.valueSource === 'static') return { ...f, textValue: f.staticValue || '' };
       if (f.valueSource === 'business_field' && f.businessFieldId) {
         const bf = businessSnapshot[f.businessFieldId];
-        return { ...f, textValue: bf?.value ?? '' };
+        return { ...f, textValue: resolveBusinessFieldValue(bf, f.language) };
       }
       if (f.valueSource === 'signer_field' && f.signerPersonId && f.signerFieldKey) {
         const signer = signersSnapshot.find((s) => s.id === f.signerPersonId);
@@ -939,7 +945,20 @@ function normalisePlacement(f, i) {
     signerFieldKey: f.signerFieldKey || null,
     signerAssetMode: f.signerAssetMode || null,
     staticValue: f.staticValue != null ? String(f.staticValue) : null,
+    language: f.language === 'en' ? 'en' : 'he',
   };
+}
+
+// Resolve a business field's display value given a language selector.
+// Accepts both shapes: new bilingual { valueHe, valueEn } and pre-migration
+// { value } (back-compat for finalized instances whose businessSnapshot was
+// frozen before the bilingual change).
+function resolveBusinessFieldValue(bf, language) {
+  if (!bf) return '';
+  if (bf.valueHe !== undefined || bf.valueEn !== undefined) {
+    return (language === 'en' ? bf.valueEn : bf.valueHe) ?? '';
+  }
+  return bf.value ?? '';
 }
 
 export default router;

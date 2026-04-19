@@ -26,10 +26,21 @@ router.get(
   }),
 );
 
+// Input body accepts `valueHe` + `valueEn`. Legacy `value` is also accepted
+// and written into `valueHe` so older clients (or a stale admin window open
+// across the deploy) don't crash — forward-compatible read shape.
+function readBilingualValues(body) {
+  const out = {};
+  if (body.valueHe !== undefined) out.valueHe = String(body.valueHe ?? '');
+  else if (body.value !== undefined) out.valueHe = String(body.value ?? '');
+  if (body.valueEn !== undefined) out.valueEn = String(body.valueEn ?? '');
+  return out;
+}
+
 router.post(
   '/',
   handle(async (req, res) => {
-    const { key, label, value, category, order } = req.body || {};
+    const { key, label, category, order } = req.body || {};
     if (!label || !String(label).trim()) {
       return res.status(400).json({ error: 'label required' });
     }
@@ -41,11 +52,14 @@ router.post(
     });
     if (existing) finalKey = `${finalKey}_${Math.random().toString(36).slice(2, 5)}`;
 
+    const { valueHe = '', valueEn = '' } = readBilingualValues(req.body || {});
+
     const created = await prisma.businessField.create({
       data: {
         key: finalKey,
         label: String(label).trim(),
-        value: value ? String(value) : '',
+        valueHe,
+        valueEn,
         category: category ? String(category) : null,
         order: Number.isFinite(order) ? order : 0,
       },
@@ -57,10 +71,10 @@ router.post(
 router.put(
   '/:id',
   handle(async (req, res) => {
-    const { label, value, category, order } = req.body || {};
+    const { label, category, order } = req.body || {};
     const data = {};
     if (label !== undefined) data.label = String(label);
-    if (value !== undefined) data.value = String(value ?? '');
+    Object.assign(data, readBilingualValues(req.body || {}));
     if (category !== undefined) data.category = category ? String(category) : null;
     if (order !== undefined && Number.isFinite(order)) data.order = order;
     const updated = await prisma.businessField.update({
