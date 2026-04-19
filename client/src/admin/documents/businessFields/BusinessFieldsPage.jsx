@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../../lib/api.js';
+
+const CATEGORY_DATALIST_ID = 'gos-bf-categories';
 
 export default function BusinessFieldsPage() {
   const [items, setItems] = useState([]);
@@ -30,8 +32,20 @@ export default function BusinessFieldsPage() {
     await refresh();
   }
 
+  const knownCategories = useMemo(() => {
+    const set = new Set();
+    for (const f of items) if (f.category) set.add(f.category);
+    return [...set].sort((a, b) => a.localeCompare(b, 'he'));
+  }, [items]);
+
   return (
     <div className="h-full flex flex-col bg-gray-50">
+      {/* Shared datalist for category autocomplete — prevents retyping. */}
+      <datalist id={CATEGORY_DATALIST_ID}>
+        {knownCategories.map((c) => (
+          <option key={c} value={c} />
+        ))}
+      </datalist>
       <header className="bg-white border-b border-gray-200 px-5 py-4">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -141,6 +155,7 @@ function CreateRow({ onCancel, onSubmit }) {
         value={category}
         onChange={setCategory}
         placeholder="זהות / כתובות / בנק"
+        list={CATEGORY_DATALIST_ID}
       />
       <div className="flex items-center gap-2 pt-1">
         <button
@@ -218,6 +233,7 @@ function FieldRow({ field, onChanged }) {
           value={category}
           onChange={setCategory}
           compact
+          list={CATEGORY_DATALIST_ID}
         />
         <div className="flex flex-col gap-1 pt-5">
           <button
@@ -254,6 +270,7 @@ function FieldInput({
   autoFocus,
   required,
   placeholder,
+  list,
 }) {
   return (
     <label className="block">
@@ -269,6 +286,7 @@ function FieldInput({
         dir={dir}
         value={value}
         required={required}
+        list={list}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         className={`w-full border border-gray-300 rounded px-2 py-${

@@ -5,9 +5,19 @@ import { DOC_TABS } from './config.js';
 // outlet for the active tab below. Mirrors ProceduresLayout.
 export default function DocumentsLayout() {
   const { pathname } = useLocation();
-  const activeKey =
-    DOC_TABS.find((t) => pathname.startsWith(`/admin/documents/${t.path}`))?.key ||
-    DOC_TABS[0].key;
+  // Longest path prefix wins so '' (index) doesn't shadow 'templates'/'signers'.
+  const activeKey = (() => {
+    const matches = DOC_TABS.filter((t) => {
+      const full = `/admin/documents${t.path ? '/' + t.path : ''}`;
+      if (t.path === '') return pathname === '/admin/documents';
+      return pathname === full || pathname.startsWith(full + '/');
+    });
+    if (matches.length) return matches.sort((a, b) => b.path.length - a.path.length)[0].key;
+    // Fallback: an instance editor lives under /admin/documents/instances/:id
+    // which doesn't match any tab path; keep "index" (primary) highlighted.
+    if (pathname.startsWith('/admin/documents/instances/')) return 'index';
+    return 'index';
+  })();
 
   return (
     <div className="h-full flex flex-col">
@@ -15,7 +25,7 @@ export default function DocumentsLayout() {
         {DOC_TABS.map((tab) => (
           <Link
             key={tab.key}
-            to={`/admin/documents/${tab.path}`}
+            to={tab.path ? `/admin/documents/${tab.path}` : '/admin/documents'}
             className={`px-3 py-1.5 text-[13px] rounded-md transition ${
               activeKey === tab.key
                 ? 'bg-blue-50 text-blue-700 font-semibold'
@@ -32,7 +42,7 @@ export default function DocumentsLayout() {
         {DOC_TABS.map((tab) => (
           <Link
             key={tab.key}
-            to={`/admin/documents/${tab.path}`}
+            to={tab.path ? `/admin/documents/${tab.path}` : '/admin/documents'}
             className={`shrink-0 px-3 py-1.5 text-[12px] rounded-md ${
               activeKey === tab.key
                 ? 'bg-blue-50 text-blue-700 font-semibold'

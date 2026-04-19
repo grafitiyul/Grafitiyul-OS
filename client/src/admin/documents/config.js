@@ -1,6 +1,8 @@
 // Stable internal keys — never rely on the Hebrew labels for logic.
+// Order reflects primary → secondary: instances list first, templates demoted.
 export const DOC_TABS = [
-  { key: 'templates', path: 'templates', label: 'מסמכים', glyph: '📄' },
+  { key: 'index', path: '', label: 'מסמכים', glyph: '📄' },
+  { key: 'templates', path: 'templates', label: 'תבניות', glyph: '🗂' },
   { key: 'signers', path: 'signers', label: 'חותמים', glyph: '✒️' },
   { key: 'fields', path: 'fields', label: 'שדות קבועים', glyph: '🏷' },
 ];

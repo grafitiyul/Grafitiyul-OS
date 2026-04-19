@@ -13,6 +13,7 @@ import ContentEditor from './admin/procedures/bank/ContentEditor.jsx';
 import QuestionEditor from './admin/procedures/bank/QuestionEditor.jsx';
 import { FlowEntry, AttemptRuntime } from './learner/LearnerRuntime.jsx';
 import DocumentsLayout from './admin/documents/DocumentsLayout.jsx';
+import DocumentsIndexPage from './admin/documents/index_/DocumentsIndexPage.jsx';
 import TemplatesPage from './admin/documents/templates/TemplatesPage.jsx';
 import TemplateEditor from './admin/documents/templates/TemplateEditor.jsx';
 import InstanceEditor from './admin/documents/instances/InstanceEditor.jsx';
@@ -44,7 +45,7 @@ export default function App() {
           </Route>
         </Route>
         <Route path="documents" element={<DocumentsLayout />}>
-          <Route index element={<Navigate to="templates" replace />} />
+          <Route index element={<DocumentsIndexPage />} />
           <Route path="templates" element={<TemplatesPage />}>
             <Route path=":id" element={<TemplateEditor />} />
           </Route>

@@ -213,10 +213,13 @@ model DocumentTemplate {
   snapshot    DocumentSnapshot   @relation(fields: [snapshotId], references: [id])
   snapshotId  String
   status      String             @default("draft") // 'draft' | 'published'
+  origin      String             @default("library") // 'adhoc' | 'library'
   createdAt   DateTime           @default(now())
   updatedAt   DateTime           @updatedAt
   fields      DocumentField[]
   instances   DocumentInstance[]
+
+  @@index([origin])
 }
 
 // A placement on the template PDF. Percentage coordinates (0..100) from the

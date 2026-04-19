@@ -171,6 +171,35 @@ export const api = {
       }
       return res.json();
     },
+    // Document-first upload: atomic creation of source + snapshot + adhoc
+    // template + draft instance. Client navigates straight to the returned
+    // instance id. Used as the primary entry point.
+    newFromPdf: async (bytes, filename) => {
+      const q = qs({ filename });
+      const res = await fetch(`/api/documents/new${q}`, {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/pdf' },
+        body: bytes,
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        const err = new Error(`${res.status} ${text}`);
+        err.status = res.status;
+        throw err;
+      }
+      return res.json();
+    },
+    saveInstanceFields: (id, fields) =>
+      request(`/api/documents/instances/${id}/fields`, {
+        method: 'PUT',
+        body: JSON.stringify({ fields }),
+      }),
+    saveInstanceAsTemplate: (id, title, description) =>
+      request(`/api/documents/instances/${id}/save-as-template`, {
+        method: 'POST',
+        body: JSON.stringify({ title, description }),
+      }),
     snapshotPdfUrl: (snapshotId) => `/api/documents/snapshots/${snapshotId}/pdf`,
     listTemplates: () => request('/api/documents/templates'),
     createTemplate: (data) =>

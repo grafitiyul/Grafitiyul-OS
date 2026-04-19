@@ -103,12 +103,108 @@ router.get(
   }),
 );
 
+// ── Document-first composite upload ──────────────────────────────────────────
+//
+// Primary entry point for the new UX: raw PDF bytes in → (source + passthrough
+// snapshot + silent adhoc template + empty draft instance) out in one atomic
+// transaction. Client redirects straight into the instance editor; user never
+// sees the template step.
+router.post(
+  '/new',
+  express.raw({ type: '*/*', limit: '30mb' }),
+  handle(async (req, res) => {
+    const body = req.body;
+    const filename = String(req.query.filename || 'document.pdf').slice(0, 200);
+    const title = stripPdfExt(filename) || 'מסמך חדש';
+
+    if (!Buffer.isBuffer(body) || body.length === 0) {
+      return res.status(400).json({ error: 'empty_body' });
+    }
+    if (body.length > MAX_PDF_BYTES) {
+      return res.status(413).json({ error: 'too_large' });
+    }
+    if (!looksLikePdf(body)) {
+      return res.status(400).json({ error: 'pdf_required' });
+    }
+
+    let pageCount;
+    try {
+      pageCount = await countPdfPages(body);
+    } catch {
+      return res.status(400).json({ error: 'invalid_pdf' });
+    }
+
+    // Snapshot business field + signer state at instance-creation time (same
+    // logic as POST /instances but inlined for atomicity). Adhoc template is
+    // created with origin='adhoc' so it doesn't pollute the library list.
+    const businessFields = await prisma.businessField.findMany();
+    const businessSnapshot = {};
+    for (const bf of businessFields) {
+      businessSnapshot[bf.id] = {
+        id: bf.id,
+        key: bf.key,
+        label: bf.label,
+        value: bf.value,
+      };
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const src = await tx.documentSource.create({
+        data: {
+          filename,
+          mimeType: 'application/pdf',
+          sourceKind: 'pdf',
+          bytes: body,
+          byteSize: body.length,
+        },
+      });
+      const snap = await tx.documentSnapshot.create({
+        data: {
+          sourceId: src.id,
+          pdfBytes: body,
+          pageCount,
+          generator: 'passthrough',
+          generatorVersion: 'v1',
+        },
+      });
+      const tpl = await tx.documentTemplate.create({
+        data: {
+          title,
+          snapshotId: snap.id,
+          origin: 'adhoc',
+        },
+      });
+      const inst = await tx.documentInstance.create({
+        data: {
+          templateId: tpl.id,
+          title,
+          status: 'draft',
+          fieldsSnapshot: [],
+          snapshotPdfBytes: body,
+          snapshotPageCount: pageCount,
+          businessSnapshot,
+          signersSnapshot: [],
+        },
+        select: { id: true, title: true, status: true, createdAt: true },
+      });
+      return { instance: inst, templateId: tpl.id };
+    });
+
+    res.status(201).json(result);
+  }),
+);
+
 // ── Templates ────────────────────────────────────────────────────────────────
+//
+// GET /templates returns library-origin templates only by default. Pass
+// `?origin=all` to include adhoc (used nowhere in the UI; diagnostic only).
 
 router.get(
   '/templates',
-  handle(async (_req, res) => {
+  handle(async (req, res) => {
+    const where = req.query.origin === 'all' ? {} : { origin: 'library' };
     const templates = await prisma.documentTemplate.findMany({
+      where,
       orderBy: { createdAt: 'desc' },
       include: {
         snapshot: { select: { id: true, pageCount: true } },
@@ -430,14 +526,168 @@ router.delete(
   handle(async (req, res) => {
     const inst = await prisma.documentInstance.findUnique({
       where: { id: req.params.id },
-      select: { status: true },
+      select: { status: true, templateId: true },
     });
     if (!inst) return res.status(404).json({ error: 'not_found' });
     if (inst.status === 'finalized') {
       return res.status(409).json({ error: 'cannot_delete_finalized' });
     }
-    await prisma.documentInstance.delete({ where: { id: req.params.id } });
+    // Delete the instance; if it was attached to an adhoc template that has
+    // no other instances, drop the adhoc template too (it exists only to
+    // support the single instance that just got deleted).
+    await prisma.$transaction(async (tx) => {
+      await tx.documentInstance.delete({ where: { id: req.params.id } });
+      const tpl = await tx.documentTemplate.findUnique({
+        where: { id: inst.templateId },
+        select: { origin: true, snapshotId: true, _count: { select: { instances: true } } },
+      });
+      if (tpl && tpl.origin === 'adhoc' && tpl._count.instances === 0) {
+        await tx.documentTemplate.delete({ where: { id: inst.templateId } });
+        // Snapshot & source cascade via DocumentSnapshot -> DocumentSource FK
+        // only if we explicitly delete the snapshot; but DocumentTemplate ->
+        // snapshot is RESTRICT, so we must delete it after the template.
+        try {
+          await tx.documentSnapshot.delete({ where: { id: tpl.snapshotId } });
+          // Source cascades from snapshot (CASCADE on sourceId), so no extra work.
+        } catch {
+          // Another template could be referencing this snapshot — leave it.
+        }
+      }
+    });
     res.status(204).end();
+  }),
+);
+
+// Replace the instance's fieldsSnapshot (draft-only). This is the new
+// instance-first placement save — placements live on the instance, not the
+// template, so edits cannot retroactively affect other instances.
+router.put(
+  '/instances/:id/fields',
+  handle(async (req, res) => {
+    const { fields } = req.body || {};
+    if (!Array.isArray(fields)) {
+      return res.status(400).json({ error: 'fields_array_required' });
+    }
+    const inst = await prisma.documentInstance.findUnique({
+      where: { id: req.params.id },
+      select: { status: true, templateId: true },
+    });
+    if (!inst) return res.status(404).json({ error: 'not_found' });
+    if (inst.status === 'finalized') {
+      return res.status(409).json({ error: 'instance_finalized' });
+    }
+
+    const normalised = fields.map((f, i) => normalisePlacement(f, i));
+
+    // Refresh the signers snapshot in case new signer bindings were added.
+    // Business snapshot is refreshed too — values may have changed since
+    // the instance was created, and the user expects live preview to show
+    // the current business field value while the instance is still draft.
+    const signerIds = new Set(
+      normalised.filter((f) => f.signerPersonId).map((f) => f.signerPersonId),
+    );
+    const signers = signerIds.size
+      ? await prisma.signerPerson.findMany({
+          where: { id: { in: [...signerIds] } },
+          include: {
+            assets: {
+              select: {
+                id: true,
+                assetType: true,
+                label: true,
+                createdAt: true,
+              },
+              orderBy: { createdAt: 'desc' },
+            },
+          },
+        })
+      : [];
+    const signersSnapshot = signers.map((s) => ({
+      id: s.id,
+      displayName: s.displayName,
+      role: s.role,
+      email: s.email,
+      phone: s.phone,
+      extraFields: s.extraFields,
+      assets: s.assets,
+    }));
+
+    const businessFields = await prisma.businessField.findMany();
+    const businessSnapshot = {};
+    for (const bf of businessFields) {
+      businessSnapshot[bf.id] = {
+        id: bf.id,
+        key: bf.key,
+        label: bf.label,
+        value: bf.value,
+      };
+    }
+
+    await prisma.documentInstance.update({
+      where: { id: req.params.id },
+      data: {
+        fieldsSnapshot: normalised,
+        signersSnapshot,
+        businessSnapshot,
+      },
+    });
+    res.json({ fields: normalised });
+  }),
+);
+
+// Save the current instance placements as a new library template.
+// Creates: DocumentTemplate (origin='library') + DocumentField rows that
+// mirror the instance's fieldsSnapshot + reuses the instance's snapshot.
+router.post(
+  '/instances/:id/save-as-template',
+  handle(async (req, res) => {
+    const { title, description } = req.body || {};
+    if (!title || !String(title).trim()) {
+      return res.status(400).json({ error: 'title_required' });
+    }
+    const inst = await prisma.documentInstance.findUnique({
+      where: { id: req.params.id },
+      include: { template: { select: { snapshotId: true } } },
+    });
+    if (!inst) return res.status(404).json({ error: 'not_found' });
+    const fieldsSnapshot = Array.isArray(inst.fieldsSnapshot) ? inst.fieldsSnapshot : [];
+    const snapshotId = inst.template?.snapshotId;
+    if (!snapshotId) return res.status(500).json({ error: 'snapshot_missing' });
+
+    const tpl = await prisma.$transaction(async (tx) => {
+      const t = await tx.documentTemplate.create({
+        data: {
+          title: String(title).trim(),
+          description: description ? String(description) : null,
+          snapshotId,
+          origin: 'library',
+        },
+      });
+      if (fieldsSnapshot.length > 0) {
+        await tx.documentField.createMany({
+          data: fieldsSnapshot.map((f, i) => ({
+            templateId: t.id,
+            page: f.page,
+            xPct: f.xPct,
+            yPct: f.yPct,
+            wPct: f.wPct,
+            hPct: f.hPct,
+            fieldType: f.fieldType,
+            label: f.label || '',
+            required: !!f.required,
+            order: Number.isFinite(f.order) ? f.order : i,
+            valueSource: f.valueSource,
+            businessFieldId: f.businessFieldId || null,
+            signerPersonId: f.signerPersonId || null,
+            signerFieldKey: f.signerFieldKey || null,
+            signerAssetMode: f.signerAssetMode || null,
+            staticValue: f.staticValue || null,
+          })),
+        });
+      }
+      return t;
+    });
+    res.status(201).json(tpl);
   }),
 );
 
@@ -661,6 +911,35 @@ function clamp01to100(n) {
   const v = Number(n);
   if (!Number.isFinite(v)) return 0;
   return Math.max(0, Math.min(100, v));
+}
+
+function stripPdfExt(name) {
+  return String(name || '').replace(/\.pdf$/i, '').trim();
+}
+
+// Normalise a raw placement object into the shape we persist in fieldsSnapshot
+// (same shape as DocumentField rows). Used by both PUT /instances/:id/fields
+// and save-as-template. Client-assigned ids (e.g. local_xyz) are preserved so
+// overrides keep resolving across saves.
+function normalisePlacement(f, i) {
+  return {
+    id: String(f.id || `local_${Math.random().toString(36).slice(2, 10)}`),
+    page: Math.max(1, Number(f.page || 1)),
+    xPct: clamp01to100(f.xPct),
+    yPct: clamp01to100(f.yPct),
+    wPct: clamp01to100(f.wPct),
+    hPct: clamp01to100(f.hPct),
+    fieldType: String(f.fieldType || 'text'),
+    label: f.label ? String(f.label) : '',
+    required: !!f.required,
+    order: Number.isFinite(f.order) ? f.order : i,
+    valueSource: String(f.valueSource || 'override_only'),
+    businessFieldId: f.businessFieldId || null,
+    signerPersonId: f.signerPersonId || null,
+    signerFieldKey: f.signerFieldKey || null,
+    signerAssetMode: f.signerAssetMode || null,
+    staticValue: f.staticValue != null ? String(f.staticValue) : null,
+  };
 }
 
 export default router;
