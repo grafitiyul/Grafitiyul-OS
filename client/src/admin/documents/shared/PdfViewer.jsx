@@ -247,6 +247,38 @@ function PdfPage({
     onPageClick?.(placementMode, pageNum, xPct, yPct);
   };
 
+  // Drag-and-drop placement from the toolbar. Reuses the exact same page-
+  // relative percentage math as the click handler — no new placement logic.
+  const [dragOver, setDragOver] = useState(false);
+
+  const onPageDragOver = (e) => {
+    if (readOnly || !placementMode || !rendered) return;
+    // Signal we accept the drop — without preventDefault the browser rejects.
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    if (!dragOver) setDragOver(true);
+  };
+
+  const onPageDragLeave = (e) => {
+    // dragleave fires when moving over child elements too; only clear if we
+    // truly left the page container.
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    setDragOver(false);
+  };
+
+  const onPageDrop = (e) => {
+    if (readOnly || !placementMode || !rendered) {
+      setDragOver(false);
+      return;
+    }
+    e.preventDefault();
+    setDragOver(false);
+    const rect = e.currentTarget.getBoundingClientRect();
+    const xPct = ((e.clientX - rect.left) / rect.width) * 100;
+    const yPct = ((e.clientY - rect.top) / rect.height) * 100;
+    onPageClick?.(placementMode, pageNum, xPct, yPct);
+  };
+
   return (
     <div
       dir="ltr"
@@ -256,6 +288,12 @@ function PdfPage({
       <div className="absolute top-1.5 left-1.5 z-10 bg-gray-700/70 text-white text-xs px-1.5 py-0.5 rounded pointer-events-none">
         עמ׳ {pageNum}
       </div>
+      {dragOver && (
+        <div
+          aria-hidden
+          className="absolute inset-0 z-20 pointer-events-none ring-4 ring-blue-400 ring-inset bg-blue-400/5"
+        />
+      )}
       <div
         data-pdf-page
         className="relative"
@@ -265,6 +303,9 @@ function PdfPage({
           height: cssHeight || 'auto',
         }}
         onClick={handleContainerClick}
+        onDragOver={onPageDragOver}
+        onDragLeave={onPageDragLeave}
+        onDrop={onPageDrop}
       >
         <canvas ref={canvasRef} style={{ display: 'block' }} />
         {rendered &&

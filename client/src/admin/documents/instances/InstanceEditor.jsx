@@ -467,27 +467,32 @@ export default function InstanceEditor() {
           </div>
         )}
 
-        {!isFinalized && (
-          <PlacementToolbar
-            businessFields={liveBusinessFields}
-            signers={liveSigners}
-            pending={pending}
-            setPending={setPending}
-          />
-        )}
       </header>
 
       <div className="flex-1 min-h-0 flex">
-        <div className="flex-1 min-w-0 overflow-y-auto bg-gray-100 p-5">
-          {pending && (
-            <div className="mb-3 bg-blue-600 text-white rounded px-3 py-1.5 text-sm flex items-center gap-3">
-              <span>📍</span>
-              <span className="flex-1">
-                ממתין למיקום — לחץ על ה-PDF. <kbd className="opacity-80">ESC</kbd> לביטול.
-              </span>
-              <span className="text-[11px] opacity-80">{pending.label}</span>
+        <div className="flex-1 min-w-0 overflow-y-auto bg-gray-100">
+          {!isFinalized && (
+            <div
+              className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-gray-200 shadow-sm px-4 py-2"
+            >
+              <PlacementToolbar
+                businessFields={liveBusinessFields}
+                signers={liveSigners}
+                pending={pending}
+                setPending={setPending}
+              />
+              {pending && (
+                <div className="mt-2 bg-blue-50 border border-blue-200 text-blue-900 rounded px-3 py-1 text-[12px] flex items-center gap-2">
+                  <span>📍</span>
+                  <span className="flex-1">
+                    גרור את הפריט אל ה-PDF, או לחץ עליו פעם אחת. <kbd className="opacity-70">ESC</kbd> לביטול.
+                  </span>
+                  <span className="text-[11px] opacity-80">{pending.label}</span>
+                </div>
+              )}
             </div>
           )}
+          <div className="p-5">
           <PdfViewer
             pdfUrl={pdfUrl}
             fields={placements}
@@ -542,6 +547,7 @@ export default function InstanceEditor() {
               <AnnotationVisual ann={ann} pageCssHeight={ctx?.pageCssHeight} />
             )}
           />
+          </div>
         </div>
 
         {!isFinalized && (
@@ -603,6 +609,34 @@ export default function InstanceEditor() {
 }
 
 // ── Toolbar ──────────────────────────────────────────────────────────────────
+//
+// Primary interaction is drag-and-drop: each button is a drag source; drop
+// onto any PDF page places the pre-wired value/annotation at the drop point.
+// Click-to-place still works as a fallback (touch devices, accessibility).
+// Both paths share the same `pending` state + the same PdfPage placement
+// math via onPageClick(mode, page, xPct, yPct).
+
+// Returns the props to spread onto a draggable toolbar button. Pure function,
+// not a hook — safe to call inside .map().
+function makeArmProps(setPending, pendingToken, config) {
+  const active = pendingToken === config.token;
+  return {
+    active,
+    draggable: true,
+    onClick: () => setPending(active ? null : config),
+    onDragStart: (e) => {
+      e.dataTransfer.effectAllowed = 'copy';
+      // Token is only used by the browser drag layer; real payload is
+      // carried via the `pending` state (PdfPage reads placementMode).
+      e.dataTransfer.setData('text/plain', config.token);
+      setPending(config);
+    },
+    onDragEnd: (e) => {
+      // If the drop wasn't consumed, clear pending so the UI returns to idle.
+      if (e.dataTransfer.dropEffect === 'none') setPending(null);
+    },
+  };
+}
 
 function PlacementToolbar({ businessFields, signers, pending, setPending }) {
   const [signerMode, setSignerMode] = useState(null); // 'draw'|'stamp'|'combined'|null — active signer picker
@@ -612,81 +646,98 @@ function PlacementToolbar({ businessFields, signers, pending, setPending }) {
     combined: 'חתימה + חותמת',
   };
 
-  function arm(config) {
-    setPending(pending?.token === config.token ? null : { mode: 'field', ...config });
-  }
-
-  function armAnnotation(kind, label) {
-    const token = `ann:${kind}`;
-    setPending(
-      pending?.token === token ? null : { mode: 'annotation', token, kind, label },
-    );
-  }
-
-  function armBusiness(bf) {
-    arm({
+  function businessConfig(bf) {
+    return {
+      mode: 'field',
       token: `bf:${bf.id}`,
       fieldType: 'text',
       valueSource: 'business_field',
       businessFieldId: bf.id,
       label: bf.label,
-    });
+    };
   }
 
-  function armSigner(signer, mode) {
+  function signerConfig(signer, mode) {
     const ft =
       mode === 'draw' ? 'signature' : mode === 'stamp' ? 'stamp' : 'combined';
-    arm({
+    return {
+      mode: 'field',
       token: `signer:${signer.id}:${mode}`,
       fieldType: ft,
       valueSource: 'signer_asset',
       signerPersonId: signer.id,
       signerAssetMode: mode,
       label: `${signerModeLabel[mode]} — ${signer.displayName}`,
-    });
-    setSignerMode(null);
+    };
   }
 
-  function armDate() {
-    arm({
-      token: 'date',
-      fieldType: 'date',
-      valueSource: 'override_only',
-      label: 'תאריך',
-    });
-  }
-  function armFreeText() {
-    arm({
-      token: 'text',
-      fieldType: 'text',
-      valueSource: 'override_only',
-      label: 'טקסט חופשי',
-    });
+  const dateConfig = {
+    mode: 'field',
+    token: 'date',
+    fieldType: 'date',
+    valueSource: 'override_only',
+    label: 'תאריך',
+  };
+  const freeTextConfig = {
+    mode: 'field',
+    token: 'text',
+    fieldType: 'text',
+    valueSource: 'override_only',
+    label: 'טקסט חופשי',
+  };
+
+  function annotationConfig(kind, label) {
+    return {
+      mode: 'annotation',
+      token: `ann:${kind}`,
+      kind,
+      label,
+    };
   }
 
   const btn = (active) =>
-    `text-[12px] rounded px-3 py-1.5 border transition ${
+    `text-[12px] rounded px-3 py-1.5 border transition select-none ${
       active
         ? 'bg-blue-600 text-white border-blue-600 shadow'
-        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50 hover:border-blue-300 cursor-grab active:cursor-grabbing'
     }`;
 
+  const { active: dateActive, ...dateProps } = makeArmProps(
+    setPending,
+    pending?.token,
+    dateConfig,
+  );
+  const { active: freeTextActive, ...freeTextProps } = makeArmProps(
+    setPending,
+    pending?.token,
+    freeTextConfig,
+  );
+
   return (
-    <div className="mt-3 flex items-center gap-2 flex-wrap">
+    <div className="flex items-center gap-2 flex-wrap">
       {businessFields.length === 0 ? (
         <span className="text-[11px] text-gray-500 italic">
           עדיין אין שדות קבועים של העסק. הגדר אותם בלשונית "שדות קבועים".
         </span>
       ) : (
         <>
-          <span className="text-[11px] text-gray-500 font-medium">ערכים קבועים:</span>
+          <span className="text-[11px] text-gray-500 font-medium">ערכים:</span>
           {businessFields.map((bf) => {
-            const active = pending?.token === `bf:${bf.id}`;
+            const props = makeArmProps(
+              setPending,
+              pending?.token,
+              businessConfig(bf),
+            );
+            const { active, ...rest } = props;
             return (
               <button
                 key={bf.id}
-                onClick={() => armBusiness(bf)}
-                title={bf.value ? `ערך נוכחי: ${bf.value}` : 'אין ערך מוגדר'}
+                {...rest}
+                title={
+                  (bf.valueHe || bf.valueEn || bf.value)
+                    ? `ערך נוכחי: ${bf.valueHe || bf.valueEn || bf.value}`
+                    : 'אין ערך מוגדר'
+                }
                 className={btn(active)}
               >
                 + {bf.label}
@@ -703,8 +754,10 @@ function PlacementToolbar({ businessFields, signers, pending, setPending }) {
         signers={signers}
         open={signerMode === 'draw'}
         activeToken={pending?.token}
+        setPending={setPending}
+        pendingToken={pending?.token}
+        makeConfig={(s) => signerConfig(s, 'draw')}
         onOpen={() => setSignerMode((m) => (m === 'draw' ? null : 'draw'))}
-        onPick={(s) => armSigner(s, 'draw')}
         onClose={() => setSignerMode(null)}
       />
       <SignerButton
@@ -713,8 +766,10 @@ function PlacementToolbar({ businessFields, signers, pending, setPending }) {
         signers={signers}
         open={signerMode === 'stamp'}
         activeToken={pending?.token}
+        setPending={setPending}
+        pendingToken={pending?.token}
+        makeConfig={(s) => signerConfig(s, 'stamp')}
         onOpen={() => setSignerMode((m) => (m === 'stamp' ? null : 'stamp'))}
-        onPick={(s) => armSigner(s, 'stamp')}
         onClose={() => setSignerMode(null)}
       />
       <SignerButton
@@ -723,55 +778,46 @@ function PlacementToolbar({ businessFields, signers, pending, setPending }) {
         signers={signers}
         open={signerMode === 'combined'}
         activeToken={pending?.token}
+        setPending={setPending}
+        pendingToken={pending?.token}
+        makeConfig={(s) => signerConfig(s, 'combined')}
         onOpen={() =>
           setSignerMode((m) => (m === 'combined' ? null : 'combined'))
         }
-        onPick={(s) => armSigner(s, 'combined')}
         onClose={() => setSignerMode(null)}
       />
 
       <span className="w-px h-5 bg-gray-300 mx-1" />
 
-      <button onClick={armDate} className={btn(pending?.token === 'date')}>
+      <button {...dateProps} className={btn(dateActive)}>
         + תאריך
       </button>
-      <button onClick={armFreeText} className={btn(pending?.token === 'text')}>
+      <button {...freeTextProps} className={btn(freeTextActive)}>
         + טקסט חופשי
       </button>
 
       {/* Second row: visual annotations. Separate layer from value fields. */}
       <div className="w-full h-px bg-gray-200 my-1" />
       <span className="text-[11px] text-gray-500 font-medium">סימונים:</span>
-      <button
-        onClick={() => armAnnotation('check', '✓')}
-        className={btn(pending?.token === 'ann:check')}
-      >
-        + ✓
-      </button>
-      <button
-        onClick={() => armAnnotation('x', '✗')}
-        className={btn(pending?.token === 'ann:x')}
-      >
-        + ✗
-      </button>
-      <button
-        onClick={() => armAnnotation('highlight', 'הדגשה')}
-        className={btn(pending?.token === 'ann:highlight')}
-      >
-        + הדגשה
-      </button>
-      <button
-        onClick={() => armAnnotation('line', 'קו')}
-        className={btn(pending?.token === 'ann:line')}
-      >
-        + קו
-      </button>
-      <button
-        onClick={() => armAnnotation('note', 'הערה')}
-        className={btn(pending?.token === 'ann:note')}
-      >
-        + הערה
-      </button>
+      {[
+        { kind: 'check', label: '+ ✓', cfgLabel: '✓' },
+        { kind: 'x', label: '+ ✗', cfgLabel: '✗' },
+        { kind: 'highlight', label: '+ הדגשה', cfgLabel: 'הדגשה' },
+        { kind: 'line', label: '+ קו', cfgLabel: 'קו' },
+        { kind: 'note', label: '+ הערה', cfgLabel: 'הערה' },
+      ].map(({ kind, label, cfgLabel }) => {
+        const props = makeArmProps(
+          setPending,
+          pending?.token,
+          annotationConfig(kind, cfgLabel),
+        );
+        const { active, ...rest } = props;
+        return (
+          <button key={kind} {...rest} className={btn(active)}>
+            {label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -782,8 +828,10 @@ function SignerButton({
   signers,
   open,
   activeToken,
+  setPending,
+  pendingToken,
+  makeConfig,
   onOpen,
-  onPick,
   onClose,
 }) {
   const disabled = signers.length === 0;
@@ -791,11 +839,26 @@ function SignerButton({
     (s.assets || []).some((a) => a.assetType === mode),
   );
 
+  // When exactly one eligible signer exists, the main button becomes a direct
+  // drag source for that signer's config. Otherwise the button opens a picker
+  // popover; each signer inside the popover is itself a drag source.
+  const singleEligible = eligible.length === 1 ? eligible[0] : null;
+  const singleProps = singleEligible
+    ? makeArmProps(setPending, pendingToken, makeConfig(singleEligible))
+    : null;
+
+  const thisActive =
+    !!singleProps?.active ||
+    (activeToken?.startsWith('signer:') && activeToken.endsWith(`:${mode}`));
+
   return (
     <div className="relative">
       <button
         disabled={disabled}
         title={disabled ? 'אין חותמים. צור חותם בלשונית "חותמים".' : undefined}
+        draggable={!!singleProps}
+        onDragStart={singleProps?.onDragStart}
+        onDragEnd={singleProps?.onDragEnd}
         onClick={() => {
           if (eligible.length === 0) {
             window.alert(
@@ -803,38 +866,47 @@ function SignerButton({
             );
             return;
           }
-          if (eligible.length === 1) {
-            onPick(eligible[0]);
+          if (singleProps) {
+            singleProps.onClick();
             return;
           }
           onOpen();
         }}
-        className={`text-[12px] rounded px-3 py-1.5 border transition ${
-          open
+        className={`text-[12px] rounded px-3 py-1.5 border transition select-none ${
+          open || thisActive
             ? 'bg-blue-600 text-white border-blue-600 shadow'
-            : activeToken?.startsWith(`signer:`) && activeToken.endsWith(`:${mode}`)
-            ? 'bg-blue-100 text-blue-800 border-blue-300'
-            : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-        } disabled:opacity-40`}
+            : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50 hover:border-blue-300'
+        } ${singleProps ? 'cursor-grab active:cursor-grabbing' : ''} disabled:opacity-40`}
       >
         {label}
       </button>
       {open && (
         <div
-          className="absolute z-30 top-full mt-1 min-w-[200px] bg-white border border-gray-200 rounded-md shadow-lg py-1"
+          className="absolute z-30 top-full mt-1 min-w-[220px] bg-white border border-gray-200 rounded-md shadow-lg py-1"
           dir="rtl"
           onMouseLeave={onClose}
         >
-          {eligible.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => onPick(s)}
-              className="w-full text-right px-3 py-1.5 text-sm hover:bg-gray-50"
-            >
-              {s.displayName}
-              {s.role && <span className="text-gray-500"> — {s.role}</span>}
-            </button>
-          ))}
+          {eligible.map((s) => {
+            const itemProps = makeArmProps(
+              setPending,
+              pendingToken,
+              makeConfig(s),
+            );
+            const { active, ...rest } = itemProps;
+            return (
+              <button
+                key={s.id}
+                {...rest}
+                onClickCapture={() => onClose()}
+                className={`w-full text-right px-3 py-1.5 text-sm hover:bg-gray-50 ${
+                  active ? 'bg-blue-50 text-blue-800' : ''
+                } cursor-grab active:cursor-grabbing`}
+              >
+                {s.displayName}
+                {s.role && <span className="text-gray-500"> — {s.role}</span>}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
