@@ -1,13 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../../lib/api.js';
-import {
-  ITEM_KINDS,
-  ITEM_KIND_LABELS,
-  LIST_FILTERS,
-} from '../bank/config.js';
+import { ITEM_KINDS, ITEM_KIND_LABELS, LIST_FILTERS } from '../bank/config.js';
 import { relativeHebrew } from '../../../lib/relativeTime.js';
 import { titleToPlain } from '../../../editor/TitleEditor.jsx';
-import InlineItemEditor from './InlineItemEditor.jsx';
 
 // Modal picker for the flow editor. Multi-pick: each click adds the item
 // and keeps the picker open. In addition to picking existing items, the
@@ -16,7 +11,13 @@ import InlineItemEditor from './InlineItemEditor.jsx';
 //     not a cramped modal)
 //   - import an entire bank folder as a flow group (folder → group
 //     materialization; it's a one-shot copy, not a live link).
-export default function ItemPicker({ open, onClose, onPick, onPickFolder }) {
+export default function ItemPicker({
+  open,
+  onClose,
+  onPick,
+  onPickFolder,
+  onCreateNew, // (kind) — FlowEditor knows its own flowId + picker context
+}) {
   const [content, setContent] = useState([]);
   const [questions, setQuestions] = useState([]);
   const [folders, setFolders] = useState([]);
@@ -100,9 +101,6 @@ export default function ItemPicker({ open, onClose, onPick, onPickFolder }) {
     });
   }, [combined, search, filter]);
 
-  // Side-panel inline editor state.
-  const [createKind, setCreateKind] = useState(null);
-
   function pick(item) {
     onPick(item.kind, item.id, item);
     setAddedCount((n) => n + 1);
@@ -111,11 +109,10 @@ export default function ItemPicker({ open, onClose, onPick, onPickFolder }) {
     flashTimer.current = setTimeout(() => setFlashId(null), 900);
   }
 
-  async function handleCreated(created, kind) {
-    if (kind === ITEM_KINDS.CONTENT) setContent((prev) => [...prev, created]);
-    else setQuestions((prev) => [...prev, created]);
-    pick({ ...created, kind });
-    setCreateKind(null);
+  function handleCreateClick(kind) {
+    // Delegate to the FlowEditor — it owns the pending-insert context
+    // (flowId + pickerContext) and does the navigation to the main editor.
+    onCreateNew?.(kind);
   }
 
   function folderItems(folderId) {
@@ -204,17 +201,17 @@ export default function ItemPicker({ open, onClose, onPick, onPickFolder }) {
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => setCreateKind(ITEM_KINDS.CONTENT)}
+                  onClick={() => handleCreateClick(ITEM_KINDS.CONTENT)}
                   className="flex-1 text-[12px] border border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md px-2 py-1.5"
                 >
-                  + צור תוכן חדש כאן
+                  + צור תוכן חדש
                 </button>
                 <button
                   type="button"
-                  onClick={() => setCreateKind(ITEM_KINDS.QUESTION)}
+                  onClick={() => handleCreateClick(ITEM_KINDS.QUESTION)}
                   className="flex-1 text-[12px] border border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100 rounded-md px-2 py-1.5"
                 >
-                  + צור שאלה חדשה כאן
+                  + צור שאלה חדשה
                 </button>
               </div>
               <div className="flex gap-1 bg-gray-100 rounded-md p-1">
@@ -325,13 +322,6 @@ export default function ItemPicker({ open, onClose, onPick, onPickFolder }) {
         </div>
       </div>
 
-      {createKind && (
-        <InlineItemEditor
-          kind={createKind}
-          onClose={() => setCreateKind(null)}
-          onFinalize={(created) => handleCreated(created, createKind)}
-        />
-      )}
     </div>
   );
 }

@@ -25,14 +25,28 @@ async function reindexByIds(model, ids, scope = {}) {
   );
 }
 
-// Next sortOrder for an append, scoped to a folder (null = root).
-async function nextSortOrder(model, folderId) {
-  const top = await model.findFirst({
-    where: { folderId: folderId ?? null },
-    orderBy: { sortOrder: 'desc' },
-    select: { sortOrder: true },
-  });
-  return (top?.sortOrder ?? -1) + 1;
+// Next sortOrder for an append, GLOBAL across content + question in the
+// same folder. sortOrder is a single monotonic index per folder shared by
+// both tables so there are no ties between them — the bank list orders
+// purely by sortOrder, with no hidden tie-breaker that would look like
+// forced alternation.
+async function nextSortOrder(_unusedModel, folderId) {
+  const scope = { folderId: folderId ?? null };
+  const [topContent, topQuestion] = await Promise.all([
+    prisma.contentItem.findFirst({
+      where: scope,
+      orderBy: { sortOrder: 'desc' },
+      select: { sortOrder: true },
+    }),
+    prisma.questionItem.findFirst({
+      where: scope,
+      orderBy: { sortOrder: 'desc' },
+      select: { sortOrder: true },
+    }),
+  ]);
+  const maxContent = topContent?.sortOrder ?? -1;
+  const maxQuestion = topQuestion?.sortOrder ?? -1;
+  return Math.max(maxContent, maxQuestion) + 1;
 }
 
 // ---------- Item bank folders ----------

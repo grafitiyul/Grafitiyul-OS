@@ -1,11 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
+import {
+  useNavigate,
+  useOutletContext,
+  useParams,
+  useSearchParams,
+} from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import { ITEM_KIND_LABELS, ITEM_KINDS } from './config.js';
 import EditorTopBar from './EditorTopBar.jsx';
 import RichEditor from '../../../editor/RichEditor.jsx';
 import TitleEditor, { titleToPlain } from '../../../editor/TitleEditor.jsx';
 import DeleteItemDialog from '../../common/DeleteItemDialog.jsx';
+import {
+  commitPending,
+  getPending,
+  clearPending,
+} from '../flows/pendingFlowInsert.js';
 
 // Content-item editor. Autosaves to the server on every change so the user
 // never loses work; the row exists from the first keystroke (see the bank
@@ -15,11 +25,18 @@ export default function ContentEditor() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { refresh } = useOutletContext();
+  const [searchParams] = useSearchParams();
+  // If this editor was opened from a flow's "+ create new" button, the
+  // return-to-flow context is stashed in sessionStorage; the flag below
+  // unlocks the "הוסף לזרימה" primary action in the header.
+  const returnToFlow = searchParams.get('returnTo') === 'flow';
+  const pending = returnToFlow ? getPending() : null;
 
   const [form, setForm] = useState(null);
   const [savedAt, setSavedAt] = useState(null);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState(null);
+  const [insertingToFlow, setInsertingToFlow] = useState(false);
 
   // Latest form snapshot available to the debounced saver without forcing
   // the effect to re-run on every keystroke.
@@ -91,6 +108,34 @@ export default function ContentEditor() {
     navigate('/admin/procedures/bank', { replace: true });
   }, [navigate, refresh]);
 
+  async function addToFlow() {
+    if (!id || !pending) return;
+    setInsertingToFlow(true);
+    try {
+      // Make sure any in-flight autosave finishes so the flow inserts the
+      // latest version of the item. A simple immediate PUT is enough —
+      // the server accepts concurrent updates (last write wins).
+      await api.contentItems.update(id, {
+        title: form.title,
+        body: form.body,
+        internalNote: form.internalNote.trim() || null,
+      });
+      const { flowId } = await commitPending(ITEM_KINDS.CONTENT, id, form);
+      await refresh?.();
+      navigate(`/admin/procedures/flows/${flowId}`);
+    } catch (e) {
+      window.alert('הוספה לזרימה נכשלה: ' + e.message);
+    } finally {
+      setInsertingToFlow(false);
+    }
+  }
+
+  function cancelReturnToFlow() {
+    clearPending();
+    // Keep the draft in the bank so the user doesn't lose what they typed.
+    navigate(`/admin/procedures/bank/content/${id}`, { replace: true });
+  }
+
   if (loadError) return <LoadError error={loadError} />;
   if (!form) return <div className="p-6 text-sm text-gray-500">טוען…</div>;
 
@@ -115,6 +160,14 @@ export default function ContentEditor() {
         onClose={() => setDeleteOpen(false)}
         onDeleted={onDeleted}
       />
+
+      {returnToFlow && pending && (
+        <ReturnToFlowBanner
+          busy={insertingToFlow}
+          onSubmit={addToFlow}
+          onCancel={cancelReturnToFlow}
+        />
+      )}
 
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-5xl mx-auto p-4 lg:p-8 space-y-6">
@@ -199,6 +252,33 @@ function Field({ label, hint, children }) {
       <label className="block text-sm font-medium text-gray-800 mb-1">{label}</label>
       {children}
       {hint && <div className="text-[11px] text-gray-500 mt-1">{hint}</div>}
+    </div>
+  );
+}
+
+function ReturnToFlowBanner({ busy, onSubmit, onCancel }) {
+  return (
+    <div className="bg-blue-50 border-b border-blue-200 px-5 py-3 flex items-center gap-3 shrink-0">
+      <span>⤴</span>
+      <div className="flex-1 text-sm text-blue-900">
+        נוצר כחלק מזרימה. סיים את הפריט וסגור אותו מיד לתוך הזרימה.
+      </div>
+      <button
+        type="button"
+        onClick={onCancel}
+        disabled={busy}
+        className="text-[12px] text-gray-600 px-3 py-1.5 rounded hover:bg-blue-100 disabled:opacity-40"
+      >
+        השאר בבנק
+      </button>
+      <button
+        type="button"
+        onClick={onSubmit}
+        disabled={busy}
+        className="text-sm bg-blue-600 text-white rounded px-4 py-1.5 font-medium hover:bg-blue-700 disabled:opacity-40"
+      >
+        {busy ? 'מוסיף…' : 'הוסף לזרימה'}
+      </button>
     </div>
   );
 }

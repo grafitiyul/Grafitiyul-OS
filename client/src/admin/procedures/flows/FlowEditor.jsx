@@ -10,8 +10,9 @@ import {
 } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { api } from '../../../lib/api.js';
-import { ITEM_KINDS, ITEM_KIND_LABELS } from '../bank/config.js';
+import { ITEM_KINDS, ITEM_KIND_LABELS, ANSWER_TYPES } from '../bank/config.js';
 import ItemPicker from './ItemPicker.jsx';
+import { setPending as setPendingFlowInsert } from './pendingFlowInsert.js';
 import ItemPreview from './ItemPreview.jsx';
 import ResizeHandle from '../../../shell/ResizeHandle.jsx';
 import DeleteFlowDialog from '../../common/DeleteFlowDialog.jsx';
@@ -390,6 +391,32 @@ export default function FlowEditor() {
     setPickerOpen(true);
   }
 
+  // "Create new item from inside a flow" — pre-creates a real row in the
+  // bank, stashes the current picker context, and navigates to the bank
+  // editor in the main content area. The editor detects ?returnTo=flow
+  // and shows a primary "הוסף לזרימה" button that completes the insertion.
+  // No popup / side panel — same editing surface as the normal bank flow.
+  async function createItemInMainEditor(kind) {
+    try {
+      const created =
+        kind === ITEM_KINDS.QUESTION
+          ? await api.questionItems.create({
+              title: '',
+              questionText: '',
+              answerType: ANSWER_TYPES.OPEN_TEXT,
+              options: [],
+            })
+          : await api.contentItems.create({ title: '', body: '' });
+      setPendingFlowInsert(flow.id, pickerContext);
+      setPickerOpen(false);
+      navigate(
+        `/admin/procedures/bank/${kind}/${created.id}?returnTo=flow`,
+      );
+    } catch (e) {
+      window.alert('יצירה נכשלה: ' + e.message);
+    }
+  }
+
   function toggleCollapse(id) {
     setCollapsed((c) => ({ ...c, [id]: !c[id] }));
   }
@@ -609,6 +636,7 @@ export default function FlowEditor() {
         onClose={() => setPickerOpen(false)}
         onPick={addItem}
         onPickFolder={addFolderAsGroup}
+        onCreateNew={createItemInMainEditor}
       />
       <DeleteFlowDialog
         open={deleteOpen}

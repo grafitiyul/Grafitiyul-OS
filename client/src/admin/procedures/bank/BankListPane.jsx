@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   DndContext,
@@ -56,6 +56,24 @@ export default function BankListPane({
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const navigate = useNavigate();
   const { id: selectedId } = useParams();
+
+  // Scroll preservation. The list re-renders every time the user edits an
+  // item (autosave → refresh → props change). Without this, browsers
+  // sometimes reset scrollTop to 0 when React reconciles the new tree, or
+  // when the sortable registrations swap. We track scrollTop in a ref on
+  // every scroll event and restore it synchronously after every commit.
+  const scrollRef = useRef(null);
+  const savedScrollRef = useRef(0);
+  function onScroll(e) {
+    savedScrollRef.current = e.currentTarget.scrollTop;
+  }
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (el.scrollTop !== savedScrollRef.current) {
+      el.scrollTop = savedScrollRef.current;
+    }
+  });
 
   // Optimistic local copies for snappy drag feedback.
   const [localContent, setLocalContent] = useState(content);
@@ -131,17 +149,16 @@ export default function BankListPane({
         return;
       }
       // Same folder: compute combined ordered list and reindex across kinds.
-      const folderItems = [...localContent, ...localQuestions]
-        .filter((i) => (i.folderId || null) === targetFolderId)
-        .map((i) => ({
-          ...i,
-          kind: i.id && i.answerType ? ITEM_KINDS.QUESTION : ITEM_KINDS.CONTENT,
-        }))
-        .sort(
-          (x, y) =>
-            (x.sortOrder ?? 0) - (y.sortOrder ?? 0) ||
-            new Date(x.createdAt) - new Date(y.createdAt),
-        );
+      // Tag kind explicitly by source array (not by field shape) so we never
+      // misclassify an item.
+      const folderItems = [
+        ...localContent
+          .filter((i) => (i.folderId || null) === targetFolderId)
+          .map((i) => ({ ...i, kind: ITEM_KINDS.CONTENT })),
+        ...localQuestions
+          .filter((i) => (i.folderId || null) === targetFolderId)
+          .map((i) => ({ ...i, kind: ITEM_KINDS.QUESTION })),
+      ].sort((x, y) => (x.sortOrder ?? 0) - (y.sortOrder ?? 0));
       const from = folderItems.findIndex(
         (i) => i.id === aItem.id && i.kind === aItem.kind,
       );
@@ -291,7 +308,11 @@ export default function BankListPane({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div
+        ref={scrollRef}
+        onScroll={onScroll}
+        className="flex-1 overflow-y-auto"
+      >
         {loading && <div className="p-6 text-center text-sm text-gray-500">טוען…</div>}
         {error && !loading && (
           <div className="p-6 text-center">
@@ -413,24 +434,20 @@ function buildGroupedView(content, questions, folders, search, filter) {
     return titleToPlain(item.title).toLowerCase().includes(q);
   };
 
+  // Sort by the globally-unique sortOrder only. No tie-breaker — the
+  // server guarantees unique sortOrder per folder across both kinds after
+  // the reindex migration, so ties would only appear if the data is
+  // inconsistent. Any tie-breaker here would re-introduce the "alternating
+  // by kind" behavior the user explicitly rejected.
   const ordered = [];
+  const byOrder = (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
   for (const f of folders) {
     const bucket = byFolder.get(f.id);
-    // Unified sort by sortOrder alone — mixed kinds in the order the user
-    // dragged them. createdAt is the tie-breaker only.
-    bucket.items.sort(
-      (a, b) =>
-        (a.sortOrder ?? 0) - (b.sortOrder ?? 0) ||
-        new Date(a.createdAt) - new Date(b.createdAt),
-    );
+    bucket.items.sort(byOrder);
     ordered.push({ ...bucket, items: bucket.items.filter(matches) });
   }
   const ung = byFolder.get('__ungrouped__');
-  ung.items.sort(
-    (a, b) =>
-      (a.sortOrder ?? 0) - (b.sortOrder ?? 0) ||
-      new Date(a.createdAt) - new Date(b.createdAt),
-  );
+  ung.items.sort(byOrder);
   ordered.push({ ...ung, items: ung.items.filter(matches) });
   return ordered;
 }

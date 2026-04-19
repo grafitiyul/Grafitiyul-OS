@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
+import {
+  useNavigate,
+  useOutletContext,
+  useParams,
+  useSearchParams,
+} from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import {
   ANSWER_TYPES,
@@ -11,6 +16,11 @@ import EditorTopBar from './EditorTopBar.jsx';
 import RichEditor from '../../../editor/RichEditor.jsx';
 import TitleEditor, { titleToPlain } from '../../../editor/TitleEditor.jsx';
 import DeleteItemDialog from '../../common/DeleteItemDialog.jsx';
+import {
+  commitPending,
+  getPending,
+  clearPending,
+} from '../flows/pendingFlowInsert.js';
 
 // Question-item editor. Same autosave pattern as ContentEditor — the server
 // row already exists when this page loads; every change is PUT-saved.
@@ -18,11 +28,15 @@ export default function QuestionEditor() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { refresh } = useOutletContext();
+  const [searchParams] = useSearchParams();
+  const returnToFlow = searchParams.get('returnTo') === 'flow';
+  const pending = returnToFlow ? getPending() : null;
 
   const [form, setForm] = useState(null);
   const [savedAt, setSavedAt] = useState(null);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState(null);
+  const [insertingToFlow, setInsertingToFlow] = useState(false);
 
   const formRef = useRef(null);
   formRef.current = form;
@@ -111,6 +125,35 @@ export default function QuestionEditor() {
     navigate('/admin/procedures/bank', { replace: true });
   }, [navigate, refresh]);
 
+  async function addToFlow() {
+    if (!id || !pending) return;
+    setInsertingToFlow(true);
+    try {
+      await api.questionItems.update(id, {
+        title: form.title,
+        questionText: form.questionText,
+        answerType: form.answerType,
+        options:
+          form.answerType === ANSWER_TYPES.SINGLE_CHOICE
+            ? form.options.map((o) => o.trim()).filter(Boolean)
+            : [],
+        internalNote: form.internalNote.trim() || null,
+      });
+      const { flowId } = await commitPending(ITEM_KINDS.QUESTION, id, form);
+      await refresh?.();
+      navigate(`/admin/procedures/flows/${flowId}`);
+    } catch (e) {
+      window.alert('הוספה לזרימה נכשלה: ' + e.message);
+    } finally {
+      setInsertingToFlow(false);
+    }
+  }
+
+  function cancelReturnToFlow() {
+    clearPending();
+    navigate(`/admin/procedures/bank/question/${id}`, { replace: true });
+  }
+
   if (loadError) return <LoadError error={loadError} />;
   if (!form) return <div className="p-6 text-sm text-gray-500">טוען…</div>;
 
@@ -135,6 +178,14 @@ export default function QuestionEditor() {
         onClose={() => setDeleteOpen(false)}
         onDeleted={onDeleted}
       />
+
+      {returnToFlow && pending && (
+        <ReturnToFlowBanner
+          busy={insertingToFlow}
+          onSubmit={addToFlow}
+          onCancel={cancelReturnToFlow}
+        />
+      )}
 
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-5xl mx-auto p-4 lg:p-8 space-y-6">
@@ -275,6 +326,33 @@ function Field({ label, hint, children }) {
       <label className="block text-sm font-medium text-gray-800 mb-1">{label}</label>
       {children}
       {hint && <div className="text-[11px] text-gray-500 mt-1">{hint}</div>}
+    </div>
+  );
+}
+
+function ReturnToFlowBanner({ busy, onSubmit, onCancel }) {
+  return (
+    <div className="bg-blue-50 border-b border-blue-200 px-5 py-3 flex items-center gap-3 shrink-0">
+      <span>⤴</span>
+      <div className="flex-1 text-sm text-blue-900">
+        נוצר כחלק מזרימה. סיים את הפריט וסגור אותו מיד לתוך הזרימה.
+      </div>
+      <button
+        type="button"
+        onClick={onCancel}
+        disabled={busy}
+        className="text-[12px] text-gray-600 px-3 py-1.5 rounded hover:bg-blue-100 disabled:opacity-40"
+      >
+        השאר בבנק
+      </button>
+      <button
+        type="button"
+        onClick={onSubmit}
+        disabled={busy}
+        className="text-sm bg-blue-600 text-white rounded px-4 py-1.5 font-medium hover:bg-blue-700 disabled:opacity-40"
+      >
+        {busy ? 'מוסיף…' : 'הוסף לזרימה'}
+      </button>
     </div>
   );
 }
