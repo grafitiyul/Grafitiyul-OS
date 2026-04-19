@@ -41,7 +41,14 @@ router.get(
       orderBy: { createdAt: 'desc' },
       include: {
         assets: {
-          select: { id: true, assetType: true, label: true, byteSize: true, createdAt: true },
+          select: {
+            id: true,
+            assetType: true,
+            label: true,
+            byteSize: true,
+            stampConfigJson: true,
+            createdAt: true,
+          },
         },
       },
     });
@@ -56,7 +63,14 @@ router.get(
       where: { id: req.params.id },
       include: {
         assets: {
-          select: { id: true, assetType: true, label: true, byteSize: true, createdAt: true },
+          select: {
+            id: true,
+            assetType: true,
+            label: true,
+            byteSize: true,
+            stampConfigJson: true,
+            createdAt: true,
+          },
         },
       },
     });
@@ -123,9 +137,29 @@ router.delete(
 
 // ── Assets ───────────────────────────────────────────────────────────────────
 //
-// Two upload flavours:
-//   POST /:id/assets/draw     (JSON: { dataUrl, label? }) — from SignaturePad
-//   POST /:id/assets/image    (raw PNG bytes ?assetType=stamp|combined&label=)
+// JSON creation flavours (primary):
+//   POST /:id/assets/draw       { dataUrl, label? }
+//   POST /:id/assets/stamp      { dataUrl, stampConfig, label? }
+//   POST /:id/assets/combined   { dataUrl, layout, label? }
+//
+// PNG-upload fallback:
+//   POST /:id/assets/image      raw PNG bytes ?assetType=stamp|combined&label=
+//
+// Update (in-place re-edit, keeps asset id stable):
+//   PUT  /:id/assets/:assetId   { dataUrl?, stampConfigJson?, label? }
+//
+// Selection for the list returns `stampConfigJson` so the client can reopen
+// the correct builder (stamp / combined) pre-populated.
+
+const ASSET_SELECT = {
+  id: true,
+  personId: true,
+  assetType: true,
+  label: true,
+  byteSize: true,
+  stampConfigJson: true,
+  createdAt: true,
+};
 
 router.get(
   '/:id/assets',
@@ -133,14 +167,7 @@ router.get(
     const assets = await prisma.signerAsset.findMany({
       where: { personId: req.params.id },
       orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        personId: true,
-        assetType: true,
-        label: true,
-        byteSize: true,
-        createdAt: true,
-      },
+      select: ASSET_SELECT,
     });
     res.json(assets);
   }),
@@ -186,14 +213,7 @@ router.post(
         drawBytes: buf,
         byteSize: buf.length,
       },
-      select: {
-        id: true,
-        personId: true,
-        assetType: true,
-        label: true,
-        byteSize: true,
-        createdAt: true,
-      },
+      select: ASSET_SELECT,
     });
     res.status(201).json(created);
   }),
@@ -232,16 +252,121 @@ router.post(
         renderedBytes: body,
         byteSize: body.length,
       },
-      select: {
-        id: true,
-        personId: true,
-        assetType: true,
-        label: true,
-        byteSize: true,
-        createdAt: true,
-      },
+      select: ASSET_SELECT,
     });
     res.status(201).json(created);
+  }),
+);
+
+// Stamp builder create — persists rendered PNG + the StampConfig JSON so the
+// builder can reopen the exact config later.
+router.post(
+  '/:id/assets/stamp',
+  handle(async (req, res) => {
+    const { dataUrl, stampConfig, label } = req.body || {};
+    const buf = dataUrlToBuffer(dataUrl);
+    if (!buf || !isPng(buf)) {
+      return res.status(400).json({ error: 'invalid_png_data_url' });
+    }
+    if (buf.length > MAX_ASSET_BYTES) {
+      return res.status(413).json({ error: 'too_large' });
+    }
+    if (!stampConfig || typeof stampConfig !== 'object') {
+      return res.status(400).json({ error: 'stampConfig_required' });
+    }
+    const person = await prisma.signerPerson.findUnique({
+      where: { id: req.params.id },
+      select: { id: true },
+    });
+    if (!person) return res.status(404).json({ error: 'person_not_found' });
+
+    const created = await prisma.signerAsset.create({
+      data: {
+        personId: person.id,
+        assetType: 'stamp',
+        label: label ? String(label) : null,
+        renderedBytes: buf,
+        stampConfigJson: stampConfig,
+        byteSize: buf.length,
+      },
+      select: ASSET_SELECT,
+    });
+    res.status(201).json(created);
+  }),
+);
+
+// Combined builder create — persists rendered composite PNG + the full
+// CompositionLayout (which references asset_ids of the source draw/stamp)
+// so the editor can reopen and continue editing.
+router.post(
+  '/:id/assets/combined',
+  handle(async (req, res) => {
+    const { dataUrl, layout, label } = req.body || {};
+    const buf = dataUrlToBuffer(dataUrl);
+    if (!buf || !isPng(buf)) {
+      return res.status(400).json({ error: 'invalid_png_data_url' });
+    }
+    if (buf.length > MAX_ASSET_BYTES) {
+      return res.status(413).json({ error: 'too_large' });
+    }
+    if (!layout || typeof layout !== 'object' || !Array.isArray(layout.elements)) {
+      return res.status(400).json({ error: 'layout_required' });
+    }
+    const person = await prisma.signerPerson.findUnique({
+      where: { id: req.params.id },
+      select: { id: true },
+    });
+    if (!person) return res.status(404).json({ error: 'person_not_found' });
+
+    const created = await prisma.signerAsset.create({
+      data: {
+        personId: person.id,
+        assetType: 'combined',
+        label: label ? String(label) : null,
+        renderedBytes: buf,
+        stampConfigJson: layout,
+        byteSize: buf.length,
+      },
+      select: ASSET_SELECT,
+    });
+    res.status(201).json(created);
+  }),
+);
+
+// In-place update — keeps asset id stable so existing document references
+// keep pointing to the same conceptual asset after a re-edit. Accepts any
+// subset of { dataUrl, stampConfig, layout, label }.
+router.put(
+  '/:id/assets/:assetId',
+  handle(async (req, res) => {
+    const { dataUrl, stampConfig, layout, label } = req.body || {};
+    const existing = await prisma.signerAsset.findFirst({
+      where: { id: req.params.assetId, personId: req.params.id },
+    });
+    if (!existing) return res.status(404).json({ error: 'not_found' });
+
+    const data = {};
+    if (dataUrl !== undefined) {
+      const buf = dataUrlToBuffer(dataUrl);
+      if (!buf || !isPng(buf)) {
+        return res.status(400).json({ error: 'invalid_png_data_url' });
+      }
+      if (buf.length > MAX_ASSET_BYTES) {
+        return res.status(413).json({ error: 'too_large' });
+      }
+      data.renderedBytes = buf;
+      data.byteSize = buf.length;
+    }
+    if (stampConfig !== undefined) data.stampConfigJson = stampConfig;
+    if (layout !== undefined) data.stampConfigJson = layout;
+    if (label !== undefined) data.label = label ? String(label) : null;
+
+    const updated = await prisma.signerAsset.update({
+      where: { id: existing.id },
+      data,
+      select: ASSET_SELECT,
+    });
+    res.json(updated);
   }),
 );
 

@@ -123,6 +123,21 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ dataUrl, label }),
       }),
+    createStampAsset: (personId, dataUrl, stampConfig, label) =>
+      request(`/api/signers/${personId}/assets/stamp`, {
+        method: 'POST',
+        body: JSON.stringify({ dataUrl, stampConfig, label }),
+      }),
+    createCombinedAsset: (personId, dataUrl, layout, label) =>
+      request(`/api/signers/${personId}/assets/combined`, {
+        method: 'POST',
+        body: JSON.stringify({ dataUrl, layout, label }),
+      }),
+    updateAsset: (personId, assetId, patch) =>
+      request(`/api/signers/${personId}/assets/${assetId}`, {
+        method: 'PUT',
+        body: JSON.stringify(patch),
+      }),
     uploadImageAsset: async (personId, bytes, assetType, label) => {
       const q = qs({ assetType, label });
       const res = await fetch(`/api/signers/${personId}/assets/image${q}`, {
