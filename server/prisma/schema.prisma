@@ -122,3 +122,181 @@ model MediaAsset {
   bytes     Bytes
   createdAt DateTime @default(now())
 }
+
+// ============================================================================
+// Business Documents module (V1)
+// ============================================================================
+
+// Global fixed fields (company name, VAT, bank details, etc.). Referenced by
+// DocumentField.valueSource = 'business_field'. Editing the value here is
+// reflected in draft instances (live preview), never in finalized ones
+// (instance carries its own frozen field snapshot).
+model BusinessField {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  label     String
+  value     String   @default("")
+  category  String?
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// A signer (person or entity). Has identity + free-form extra fields map
+// (e.g. supplier_code, national_id). Extra fields are document-specific —
+// they're referenced by DocumentField.signerFieldKey.
+model SignerPerson {
+  id          String        @id @default(cuid())
+  displayName String
+  role        String?
+  email       String?
+  phone       String?
+  extraFields Json          @default("{}")
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  assets      SignerAsset[]
+}
+
+// Signature / stamp / combined asset. renderedBytes is canonical (PNG) and
+// used by all document renders. drawBytes + stampConfigJson are retained
+// informationally for 'combined' re-composition or stamp re-render.
+// assetType: 'draw' | 'stamp' | 'combined'
+model SignerAsset {
+  id              String       @id @default(cuid())
+  person          SignerPerson @relation(fields: [personId], references: [id], onDelete: Cascade)
+  personId        String
+  assetType       String
+  label           String?
+  renderedBytes   Bytes
+  drawBytes       Bytes?
+  stampConfigJson Json?
+  byteSize        Int
+  createdAt       DateTime     @default(now())
+
+  @@index([personId])
+}
+
+// The ORIGINAL uploaded file. V1 = PDF only. Immutable for a given id.
+model DocumentSource {
+  id         String             @id @default(cuid())
+  filename   String
+  mimeType   String
+  sourceKind String
+  bytes      Bytes
+  byteSize   Int
+  createdAt  DateTime           @default(now())
+  snapshots  DocumentSnapshot[]
+}
+
+// A stable PDF rendering of a DocumentSource. V1 generator = 'passthrough'
+// (PDF source → same bytes; no conversion). Reserved for future Word/Excel
+// support without schema churn.
+model DocumentSnapshot {
+  id               String             @id @default(cuid())
+  source           DocumentSource     @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  sourceId         String
+  pdfBytes         Bytes
+  pageCount        Int
+  generator        String             @default("passthrough")
+  generatorVersion String             @default("v1")
+  createdAt        DateTime           @default(now())
+  templates        DocumentTemplate[]
+}
+
+// Reusable template: a named wrapper around a snapshot + a set of fields.
+// Editing fields is ONLY allowed when no instance exists. Deleting is blocked
+// if instances exist.
+model DocumentTemplate {
+  id          String             @id @default(cuid())
+  title       String
+  description String?
+  snapshot    DocumentSnapshot   @relation(fields: [snapshotId], references: [id])
+  snapshotId  String
+  status      String             @default("draft") // 'draft' | 'published'
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  fields      DocumentField[]
+  instances   DocumentInstance[]
+}
+
+// A placement on the template PDF. Percentage coordinates (0..100) from the
+// page top-left. valueSource + the matching reference column determine what
+// value the field gets at render time.
+//
+// fieldType:    'text' | 'signature' | 'stamp' | 'date' | 'number' | 'email' | 'phone'
+// valueSource:  'business_field' | 'signer_field' | 'signer_asset' | 'static' | 'override_only'
+// signerAssetMode: 'draw' | 'stamp' | 'combined'
+model DocumentField {
+  id              String           @id @default(cuid())
+  template        DocumentTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  templateId      String
+  page            Int
+  xPct            Float
+  yPct            Float
+  wPct            Float
+  hPct            Float
+  fieldType       String
+  label           String           @default("")
+  required        Boolean          @default(false)
+  order           Int              @default(0)
+  valueSource     String           @default("override_only")
+  businessFieldId String?
+  signerPersonId  String?
+  signerFieldKey  String?
+  signerAssetMode String?
+  staticValue     String?
+
+  @@index([templateId, page])
+}
+
+// A specific use of a template. ALWAYS carries its own frozen field list and
+// PDF bytes so later template/field/snapshot edits cannot mutate it.
+// status: 'draft' | 'finalized'
+model DocumentInstance {
+  id                String                     @id @default(cuid())
+  template          DocumentTemplate           @relation(fields: [templateId], references: [id])
+  templateId        String
+  title             String
+  status            String                     @default("draft")
+  fieldsSnapshot    Json // frozen DocumentField list at create time
+  snapshotPdfBytes  Bytes // frozen PDF bytes at create time
+  snapshotPageCount Int
+  businessSnapshot  Json // frozen BusinessField map (key → value) at create time
+  signersSnapshot   Json // frozen SignerPerson (+ assets) list at create time
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+  finalizedAt       DateTime?
+  overrides         DocumentInstanceOverride[]
+  finalDocuments    FinalDocument[]
+
+  @@index([templateId])
+}
+
+// Per-field override scoped to one instance. Never mutates global values.
+// A field can have at most one override row. Either textValue (for text-like
+// fields) or assetBytes (for signature/stamp uploads).
+model DocumentInstanceOverride {
+  id              String           @id @default(cuid())
+  instance        DocumentInstance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  instanceId      String
+  snapshotFieldId String // id from the frozen fieldsSnapshot
+  textValue       String?
+  assetBytes      Bytes?
+  updatedAt       DateTime         @updatedAt
+
+  @@unique([instanceId, snapshotFieldId])
+}
+
+// The rendered final PDF for an instance. Append-only audit trail (one row
+// per finalization; V1 finalizes once and locks the instance).
+model FinalDocument {
+  id               String           @id @default(cuid())
+  instance         DocumentInstance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  instanceId       String
+  pdfBytes         Bytes
+  pdfSize          Int
+  generatorVersion String           @default("v1")
+  generatedAt      DateTime         @default(now())
+
+  @@index([instanceId])
+}

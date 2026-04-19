@@ -12,6 +12,12 @@ import BankIndexView from './admin/procedures/bank/BankIndexView.jsx';
 import ContentEditor from './admin/procedures/bank/ContentEditor.jsx';
 import QuestionEditor from './admin/procedures/bank/QuestionEditor.jsx';
 import { FlowEntry, AttemptRuntime } from './learner/LearnerRuntime.jsx';
+import DocumentsLayout from './admin/documents/DocumentsLayout.jsx';
+import TemplatesPage from './admin/documents/templates/TemplatesPage.jsx';
+import TemplateEditor from './admin/documents/templates/TemplateEditor.jsx';
+import InstanceEditor from './admin/documents/instances/InstanceEditor.jsx';
+import SignersPage from './admin/documents/signers/SignersPage.jsx';
+import BusinessFieldsPage from './admin/documents/businessFields/BusinessFieldsPage.jsx';
 
 export default function App() {
   return (
@@ -36,6 +42,16 @@ export default function App() {
             <Route index element={<ApprovalsIndexView />} />
             <Route path=":id" element={<ApprovalDetail />} />
           </Route>
+        </Route>
+        <Route path="documents" element={<DocumentsLayout />}>
+          <Route index element={<Navigate to="templates" replace />} />
+          <Route path="templates" element={<TemplatesPage />}>
+            <Route path=":id" element={<TemplateEditor />} />
+          </Route>
+          <Route path="instances/:id" element={<InstanceEditor />} />
+          <Route path="signers" element={<SignersPage />} />
+          <Route path="signers/:id" element={<SignersPage />} />
+          <Route path="fields" element={<BusinessFieldsPage />} />
         </Route>
       </Route>
       <Route path="/flow/:id" element={<FlowEntry />} />

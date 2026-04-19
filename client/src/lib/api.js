@@ -89,4 +89,132 @@ export const api = {
         body: JSON.stringify({ comment }),
       }),
   },
+  businessFields: {
+    list: () => request('/api/business-fields'),
+    create: (data) =>
+      request('/api/business-fields', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    update: (id, data) =>
+      request(`/api/business-fields/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    remove: (id) =>
+      request(`/api/business-fields/${id}`, { method: 'DELETE' }),
+  },
+  signers: {
+    list: () => request('/api/signers'),
+    get: (id) => request(`/api/signers/${id}`),
+    create: (data) =>
+      request('/api/signers', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) =>
+      request(`/api/signers/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    remove: (id) => request(`/api/signers/${id}`, { method: 'DELETE' }),
+    listAssets: (id) => request(`/api/signers/${id}/assets`),
+    assetPngUrl: (personId, assetId) =>
+      `/api/signers/${personId}/assets/${assetId}/png`,
+    createDrawAsset: (personId, dataUrl, label) =>
+      request(`/api/signers/${personId}/assets/draw`, {
+        method: 'POST',
+        body: JSON.stringify({ dataUrl, label }),
+      }),
+    uploadImageAsset: async (personId, bytes, assetType, label) => {
+      const q = qs({ assetType, label });
+      const res = await fetch(`/api/signers/${personId}/assets/image${q}`, {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'image/png' },
+        body: bytes,
+      });
+      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+      return res.json();
+    },
+    removeAsset: (personId, assetId) =>
+      request(`/api/signers/${personId}/assets/${assetId}`, {
+        method: 'DELETE',
+      }),
+  },
+  documents: {
+    uploadPdf: async (bytes, filename) => {
+      const q = qs({ filename });
+      const res = await fetch(`/api/documents/sources${q}`, {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/pdf' },
+        body: bytes,
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        const err = new Error(`${res.status} ${text}`);
+        err.status = res.status;
+        throw err;
+      }
+      return res.json();
+    },
+    snapshotPdfUrl: (snapshotId) => `/api/documents/snapshots/${snapshotId}/pdf`,
+    listTemplates: () => request('/api/documents/templates'),
+    createTemplate: (data) =>
+      request('/api/documents/templates', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    getTemplate: (id) => request(`/api/documents/templates/${id}`),
+    updateTemplate: (id, data) =>
+      request(`/api/documents/templates/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    removeTemplate: (id) =>
+      request(`/api/documents/templates/${id}`, { method: 'DELETE' }),
+    saveTemplateFields: (id, fields) =>
+      request(`/api/documents/templates/${id}/fields`, {
+        method: 'PUT',
+        body: JSON.stringify({ fields }),
+      }),
+    listInstances: (filters) =>
+      request(`/api/documents/instances${qs(filters)}`),
+    createInstance: (data) =>
+      request('/api/documents/instances', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    getInstance: (id) => request(`/api/documents/instances/${id}`),
+    removeInstance: (id) =>
+      request(`/api/documents/instances/${id}`, { method: 'DELETE' }),
+    instancePdfUrl: (id) => `/api/documents/instances/${id}/pdf`,
+    instanceFinalPdfUrl: (id) => `/api/documents/instances/${id}/final`,
+    setOverrideText: (id, snapshotFieldId, textValue) =>
+      request(
+        `/api/documents/instances/${id}/overrides/${snapshotFieldId}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({ textValue }),
+        },
+      ),
+    setOverrideImage: async (id, snapshotFieldId, bytes) => {
+      const res = await fetch(
+        `/api/documents/instances/${id}/overrides/${snapshotFieldId}/image`,
+        {
+          method: 'PUT',
+          cache: 'no-store',
+          headers: { 'Content-Type': 'image/png' },
+          body: bytes,
+        },
+      );
+      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+      return true;
+    },
+    clearOverride: (id, snapshotFieldId) =>
+      request(
+        `/api/documents/instances/${id}/overrides/${snapshotFieldId}`,
+        { method: 'DELETE' },
+      ),
+    finalize: (id) =>
+      request(`/api/documents/instances/${id}/finalize`, { method: 'POST' }),
+  },
 };
