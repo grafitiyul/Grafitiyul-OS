@@ -80,9 +80,29 @@ export default function BankListPane({
   const [localContent, setLocalContent] = useState(content);
   const [localQuestions, setLocalQuestions] = useState(questions);
   const [localFolders, setLocalFolders] = useState(folders);
-  useEffect(() => setLocalContent(content), [content]);
-  useEffect(() => setLocalQuestions(questions), [questions]);
-  useEffect(() => setLocalFolders(folders), [folders]);
+  // Defense-in-depth against the "visible jump on item select" bug: a parent
+  // refresh that returns the same data still produces a NEW array reference
+  // from the API, which (without this guard) would replace localContent with
+  // a new reference, invalidate the `groups` memo, hand SortableContext a
+  // new items array, and force every useSortable to re-register. Skip the
+  // replacement when the shape that actually matters (id, sortOrder, folder,
+  // title) is unchanged. If a real edit lands, the signature differs and we
+  // accept the new array.
+  useEffect(() => {
+    setLocalContent((prev) =>
+      sameItemShape(prev, content) ? prev : content,
+    );
+  }, [content]);
+  useEffect(() => {
+    setLocalQuestions((prev) =>
+      sameItemShape(prev, questions) ? prev : questions,
+    );
+  }, [questions]);
+  useEffect(() => {
+    setLocalFolders((prev) =>
+      sameFolderShape(prev, folders) ? prev : folders,
+    );
+  }, [folders]);
 
   function toggleFolder(id) {
     setCollapsed((prev) => {
@@ -504,6 +524,46 @@ function buildGroupedView(content, questions, folders, search, filter) {
   ung.items.sort(byOrder);
   ordered.push({ ...ung, items: ung.items.filter(matches) });
   return ordered;
+}
+
+// Shallow-by-shape equality for the bank's items/folders. We compare only
+// the fields that affect ordering + rendering in the list, so an autosave
+// that bumps updatedAt but leaves title/sort/folder alone does NOT trigger
+// a list re-render. Title is compared as raw HTML string — cheap, and good
+// enough to catch real title edits.
+function sameItemShape(a, b) {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      x.id !== y.id ||
+      (x.sortOrder ?? 0) !== (y.sortOrder ?? 0) ||
+      (x.folderId || null) !== (y.folderId || null) ||
+      (x.title || '') !== (y.title || '')
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function sameFolderShape(a, b) {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      x.id !== y.id ||
+      (x.sortOrder ?? 0) !== (y.sortOrder ?? 0) ||
+      (x.name || '') !== (y.name || '')
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function makeDragId(kind, id) {

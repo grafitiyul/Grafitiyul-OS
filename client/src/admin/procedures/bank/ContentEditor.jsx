@@ -38,12 +38,15 @@ export default function ContentEditor() {
   const [loadError, setLoadError] = useState(null);
   const [insertingToFlow, setInsertingToFlow] = useState(false);
 
-  // Latest form snapshot available to the debounced saver without forcing
-  // the effect to re-run on every keystroke.
   const formRef = useRef(null);
   formRef.current = form;
   const idRef = useRef(id);
   idRef.current = id;
+  // Dirty flag — only the user's actual edits should trigger autosave.
+  // Loading an item from the server is NOT an edit; the old code let that
+  // transition schedule a no-op save, whose refresh() re-flowed the entire
+  // bank list through props and caused a visible jump ~700 ms after click.
+  const dirtyRef = useRef(false);
 
   // Load the existing item (row already exists — created by the bank "+ new"
   // pre-create or a prior edit session).
@@ -51,6 +54,8 @@ export default function ContentEditor() {
     let cancelled = false;
     setForm(null);
     setLoadError(null);
+    // Fresh id = not dirty until the user types.
+    dirtyRef.current = false;
     (async () => {
       try {
         const item = await api.contentItems.get(id);
@@ -70,9 +75,14 @@ export default function ContentEditor() {
     };
   }, [id]);
 
-  // Debounced server autosave.
+  // Debounced server autosave — gated on dirtyRef so it runs only for
+  // genuine user edits. Successful saves do NOT trigger a full bank refresh:
+  // the "נשמר" indicator here is local state, and the bank list's titles
+  // can stay slightly stale while editing (they refresh on next real action
+  // like create / delete / move / folder op). This keeps the list DOM
+  // absolutely stable when the user is just clicking around.
   useEffect(() => {
-    if (!form) return;
+    if (!form || !dirtyRef.current) return;
     const handle = setTimeout(async () => {
       const snapshot = formRef.current;
       const targetId = idRef.current;
@@ -85,19 +95,17 @@ export default function ContentEditor() {
           internalNote: snapshot.internalNote.trim() || null,
         });
         setSavedAt(updated.updatedAt);
-        await refresh?.();
       } catch (e) {
-        // Leave the form alone — the next change or a later retry will
-        // persist. Keep the error out of the way; the user can keep typing.
         console.warn('autosave failed:', e.message);
       } finally {
         setSaving(false);
       }
     }, 700);
     return () => clearTimeout(handle);
-  }, [form, refresh]);
+  }, [form]);
 
   function updateForm(patch) {
+    dirtyRef.current = true;
     setForm((f) => ({ ...f, ...patch }));
   }
 

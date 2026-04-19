@@ -42,11 +42,17 @@ export default function QuestionEditor() {
   formRef.current = form;
   const idRef = useRef(id);
   idRef.current = id;
+  // Dirty flag — only genuine user edits should trigger autosave.
+  // Loading an item transitions form from null → loaded; without this guard,
+  // that transition would schedule a no-op save whose refresh() re-flowed
+  // the whole bank list through props and caused a visible jump after click.
+  const dirtyRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     setForm(null);
     setLoadError(null);
+    dirtyRef.current = false;
     (async () => {
       try {
         const item = await api.questionItems.get(id);
@@ -69,7 +75,7 @@ export default function QuestionEditor() {
   }, [id]);
 
   useEffect(() => {
-    if (!form) return;
+    if (!form || !dirtyRef.current) return;
     const handle = setTimeout(async () => {
       const snapshot = formRef.current;
       const targetId = idRef.current;
@@ -87,7 +93,6 @@ export default function QuestionEditor() {
           internalNote: snapshot.internalNote.trim() || null,
         });
         setSavedAt(updated.updatedAt);
-        await refresh?.();
       } catch (e) {
         console.warn('autosave failed:', e.message);
       } finally {
@@ -95,12 +100,14 @@ export default function QuestionEditor() {
       }
     }, 700);
     return () => clearTimeout(handle);
-  }, [form, refresh]);
+  }, [form]);
 
   function setField(patch) {
+    dirtyRef.current = true;
     setForm((f) => ({ ...f, ...patch }));
   }
   function setOption(idx, value) {
+    dirtyRef.current = true;
     setForm((f) => {
       const next = [...f.options];
       next[idx] = value;
@@ -108,9 +115,11 @@ export default function QuestionEditor() {
     });
   }
   function addOption() {
+    dirtyRef.current = true;
     setForm((f) => ({ ...f, options: [...f.options, ''] }));
   }
   function removeOption(idx) {
+    dirtyRef.current = true;
     setForm((f) => {
       const next = [...f.options];
       next.splice(idx, 1);
