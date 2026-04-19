@@ -4,8 +4,11 @@ import {
   ITEM_KINDS,
   ITEM_KIND_LABELS,
   LIST_FILTERS,
+  ANSWER_TYPES,
 } from '../bank/config.js';
 import { relativeHebrew } from '../../../lib/relativeTime.js';
+import { titleToPlain } from '../../../editor/TitleEditor.jsx';
+import CreateItemInlineDialog from './CreateItemInlineDialog.jsx';
 
 // Modal picker for the flow editor.
 // Multi-pick: clicking an item adds it to the flow AND keeps the picker
@@ -81,10 +84,14 @@ export default function ItemPicker({ open, onClose, onPick }) {
     const q = search.trim().toLowerCase();
     return combined.filter((i) => {
       if (filter !== 'all' && i.kind !== filter) return false;
-      if (q && !i.title.toLowerCase().includes(q)) return false;
+      if (q && !titleToPlain(i.title).toLowerCase().includes(q)) return false;
       return true;
     });
   }, [combined, search, filter]);
+
+  // Inline creation — lets the admin produce a new item and pick it into
+  // the flow without leaving the flow editor.
+  const [createKind, setCreateKind] = useState(null); // 'content' | 'question' | null
 
   function pick(item) {
     onPick(item.kind, item.id, item);
@@ -92,6 +99,18 @@ export default function ItemPicker({ open, onClose, onPick }) {
     setFlashId(`${item.kind}:${item.id}`);
     if (flashTimer.current) clearTimeout(flashTimer.current);
     flashTimer.current = setTimeout(() => setFlashId(null), 900);
+  }
+
+  async function handleCreated(created, kind) {
+    // Refresh bank list so the new item appears, and immediately pick it
+    // into the flow.
+    if (kind === ITEM_KINDS.CONTENT) {
+      setContent((prev) => [created, ...prev]);
+    } else {
+      setQuestions((prev) => [created, ...prev]);
+    }
+    pick({ ...created, kind });
+    setCreateKind(null);
   }
 
   if (!open) return null;
@@ -131,6 +150,22 @@ export default function ItemPicker({ open, onClose, onPick }) {
             placeholder="חיפוש פריט..."
             className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
           />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setCreateKind(ITEM_KINDS.CONTENT)}
+              className="flex-1 text-[12px] border border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md px-2 py-1.5"
+            >
+              + צור תוכן חדש כאן
+            </button>
+            <button
+              type="button"
+              onClick={() => setCreateKind(ITEM_KINDS.QUESTION)}
+              className="flex-1 text-[12px] border border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100 rounded-md px-2 py-1.5"
+            >
+              + צור שאלה חדשה כאן
+            </button>
+          </div>
           <div className="flex gap-1 bg-gray-100 rounded-md p-1">
             {LIST_FILTERS.map((f) => (
               <button
@@ -186,9 +221,7 @@ export default function ItemPicker({ open, onClose, onPick }) {
                         >
                           {ITEM_KIND_LABELS[item.kind]}
                         </span>
-                        <span className="font-medium text-gray-900 truncate flex-1">
-                          {item.title || '(ללא כותרת)'}
-                        </span>
+                        <PickerTitle title={item.title} />
                         {justAdded && (
                           <span className="text-[11px] text-green-700 font-medium shrink-0">
                             ✓ נוסף
@@ -222,6 +255,31 @@ export default function ItemPicker({ open, onClose, onPick }) {
           </button>
         </div>
       </div>
+      {createKind && (
+        <CreateItemInlineDialog
+          kind={createKind}
+          onClose={() => setCreateKind(null)}
+          onCreated={(created) => handleCreated(created, createKind)}
+        />
+      )}
     </div>
+  );
+}
+
+function PickerTitle({ title }) {
+  const isHtml = typeof title === 'string' && /<[a-z]/i.test(title);
+  if (isHtml) {
+    return (
+      <span
+        className="gos-prose font-medium text-gray-900 truncate flex-1"
+        dir="rtl"
+        dangerouslySetInnerHTML={{ __html: title }}
+      />
+    );
+  }
+  return (
+    <span className="font-medium text-gray-900 truncate flex-1">
+      {titleToPlain(title) || '(ללא כותרת)'}
+    </span>
   );
 }

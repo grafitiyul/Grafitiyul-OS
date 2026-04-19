@@ -34,6 +34,7 @@ export default function BankHome() {
 
   const [content, setContent] = useState([]);
   const [questions, setQuestions] = useState([]);
+  const [folders, setFolders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -52,12 +53,14 @@ export default function BankHome() {
     try {
       setLoading(true);
       setError(null);
-      const [c, q] = await Promise.all([
+      const [c, q, f] = await Promise.all([
         api.contentItems.list(),
         api.questionItems.list(),
+        api.folders.list().catch(() => []),
       ]);
       setContent(c);
       setQuestions(q);
+      setFolders(f);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -86,9 +89,11 @@ export default function BankHome() {
         <BankListPane
           content={content}
           questions={questions}
+          folders={folders}
           loading={loading}
           error={error}
           onRetry={refresh}
+          onChanged={refresh}
         />
       </aside>
       <ResizeHandle

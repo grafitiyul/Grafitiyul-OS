@@ -299,3 +299,39 @@
   margin: 0 2px;
   white-space: nowrap;
 }
+
+/* ───────── Single-line title editor (TitleEditor.jsx) ───────── */
+/* Shares the RTL + dynamic-field chip look with the body editor but stays
+   one line, no heading sizes, no lists, no padding stack. */
+.rt-title-input {
+  direction: rtl;
+  font-family: inherit;
+  font-size: 1.125rem;
+  line-height: 1.4;
+  color: rgb(17 24 39);
+  outline: none;
+  min-height: 2.25rem;
+  font-weight: 600;
+  word-break: break-word;
+}
+.rt-title-input p { margin: 0; }
+.rt-title-input.is-editor-empty:first-child::before,
+.rt-title-input p.is-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: rgb(156 163 175);
+  pointer-events: none;
+  float: right;
+  height: 0;
+}
+.rt-title-input span[data-type='dynamic-field'] {
+  display: inline-block;
+  background: rgb(219 234 254);
+  color: rgb(30 64 175);
+  border: 1px solid rgb(191 219 254);
+  border-radius: 4px;
+  padding: 0 6px;
+  font-size: 0.9em;
+  margin: 0 2px;
+  font-weight: 500;
+  white-space: nowrap;
+}

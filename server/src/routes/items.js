@@ -4,13 +4,124 @@ import { handle } from '../asyncHandler.js';
 
 const router = Router();
 
+// Default ordering rule (set by the procedures module UX pass):
+//   oldest first, new items appended at the bottom.
+//   sortOrder ASC is the primary key; createdAt ASC is the tie-breaker so
+//   two rows created quickly still have deterministic ordering.
+const LIST_ORDER = [{ sortOrder: 'asc' }, { createdAt: 'asc' }];
+
+// Reorder helper — reindexes a list of ids atomically. Used by both content
+// and question reorder endpoints plus folder reorder. `ids` is the new order;
+// rows not in `ids` keep their existing sortOrder.
+async function reindexByIds(model, ids, scope = {}) {
+  if (!Array.isArray(ids) || ids.length === 0) return;
+  await prisma.$transaction(
+    ids.map((id, index) =>
+      model.updateMany({
+        where: { id, ...scope },
+        data: { sortOrder: index },
+      }),
+    ),
+  );
+}
+
+// Next sortOrder for an append, scoped to a folder (null = root).
+async function nextSortOrder(model, folderId) {
+  const top = await model.findFirst({
+    where: { folderId: folderId ?? null },
+    orderBy: { sortOrder: 'desc' },
+    select: { sortOrder: true },
+  });
+  return (top?.sortOrder ?? -1) + 1;
+}
+
+// ---------- Item bank folders ----------
+
+router.get(
+  '/folders',
+  handle(async (_req, res) => {
+    const folders = await prisma.itemBankFolder.findMany({
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    });
+    res.json(folders);
+  }),
+);
+
+router.post(
+  '/folders',
+  handle(async (req, res) => {
+    const { name } = req.body || {};
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ error: 'name_required' });
+    }
+    const top = await prisma.itemBankFolder.findFirst({
+      orderBy: { sortOrder: 'desc' },
+      select: { sortOrder: true },
+    });
+    const sortOrder = (top?.sortOrder ?? -1) + 1;
+    const folder = await prisma.itemBankFolder.create({
+      data: { name: String(name).trim(), sortOrder },
+    });
+    res.status(201).json(folder);
+  }),
+);
+
+// Reorder MUST be declared before the generic :id PUT — Express matches in
+// declaration order and would otherwise treat "reorder" as an id.
+router.put(
+  '/folders/reorder',
+  handle(async (req, res) => {
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids_array_required' });
+    await reindexByIds(prisma.itemBankFolder, ids);
+    res.json({ ok: true });
+  }),
+);
+
+router.put(
+  '/folders/:id',
+  handle(async (req, res) => {
+    const { name } = req.body || {};
+    const data = {};
+    if (name !== undefined) data.name = String(name).trim();
+    const folder = await prisma.itemBankFolder.update({
+      where: { id: req.params.id },
+      data,
+    });
+    res.json(folder);
+  }),
+);
+
+// Deleting a folder unsets folderId on its items (ON DELETE SET NULL) so
+// no items are lost.
+router.delete(
+  '/folders/:id',
+  handle(async (req, res) => {
+    await prisma.itemBankFolder.delete({ where: { id: req.params.id } });
+    res.status(204).end();
+  }),
+);
+
 // ---------- Content items ----------
 
 router.get(
   '/content',
   handle(async (_req, res) => {
-    const items = await prisma.contentItem.findMany({ orderBy: { updatedAt: 'desc' } });
+    const items = await prisma.contentItem.findMany({ orderBy: LIST_ORDER });
     res.json(items);
+  }),
+);
+
+// Reorder MUST be declared before the generic :id PUT — Express matches in
+// declaration order.
+router.put(
+  '/content/reorder',
+  handle(async (req, res) => {
+    const { ids, folderId = null } = req.body || {};
+    if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids_array_required' });
+    const scope = folderId === undefined ? {} : { folderId: folderId || null };
+    await reindexByIds(prisma.contentItem, ids, scope);
+    res.json({ ok: true });
   }),
 );
 
@@ -23,8 +134,6 @@ router.get(
   }),
 );
 
-// Flows currently referencing this content item — used by the client to
-// show the user where the item is in use before attempting a delete.
 router.get(
   '/content/:id/usage',
   handle(async (req, res) => {
@@ -40,9 +149,12 @@ router.get(
 router.post(
   '/content',
   handle(async (req, res) => {
-    const { title, body = '', internalNote = null } = req.body;
+    const { title, body = '', internalNote = null, folderId = null } = req.body;
     if (!title) return res.status(400).json({ error: 'title required' });
-    const item = await prisma.contentItem.create({ data: { title, body, internalNote } });
+    const sortOrder = await nextSortOrder(prisma.contentItem, folderId);
+    const item = await prisma.contentItem.create({
+      data: { title, body, internalNote, folderId: folderId || null, sortOrder },
+    });
     res.status(201).json(item);
   }),
 );
@@ -50,10 +162,15 @@ router.post(
 router.put(
   '/content/:id',
   handle(async (req, res) => {
-    const { title, body, internalNote } = req.body;
+    const { title, body, internalNote, folderId } = req.body;
+    const data = {};
+    if (title !== undefined) data.title = title;
+    if (body !== undefined) data.body = body;
+    if (internalNote !== undefined) data.internalNote = internalNote;
+    if (folderId !== undefined) data.folderId = folderId || null;
     const item = await prisma.contentItem.update({
       where: { id: req.params.id },
-      data: { title, body, internalNote },
+      data,
     });
     res.json(item);
   }),
@@ -71,13 +188,40 @@ router.delete(
   }),
 );
 
+// Move a single content item to a folder (or root when folderId is null).
+// Appends at the end of that folder's list.
+router.put(
+  '/content/:id/move',
+  handle(async (req, res) => {
+    const targetFolderId = req.body?.folderId || null;
+    const sortOrder = await nextSortOrder(prisma.contentItem, targetFolderId);
+    const item = await prisma.contentItem.update({
+      where: { id: req.params.id },
+      data: { folderId: targetFolderId, sortOrder },
+    });
+    res.json(item);
+  }),
+);
+
 // ---------- Question items ----------
 
 router.get(
   '/questions',
   handle(async (_req, res) => {
-    const items = await prisma.questionItem.findMany({ orderBy: { updatedAt: 'desc' } });
+    const items = await prisma.questionItem.findMany({ orderBy: LIST_ORDER });
     res.json(items);
+  }),
+);
+
+// Reorder MUST be declared before the generic :id PUT.
+router.put(
+  '/questions/reorder',
+  handle(async (req, res) => {
+    const { ids, folderId = null } = req.body || {};
+    if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids_array_required' });
+    const scope = folderId === undefined ? {} : { folderId: folderId || null };
+    await reindexByIds(prisma.questionItem, ids, scope);
+    res.json({ ok: true });
   }),
 );
 
@@ -90,7 +234,6 @@ router.get(
   }),
 );
 
-// Flows currently referencing this question item.
 router.get(
   '/questions/:id/usage',
   handle(async (req, res) => {
@@ -106,13 +249,29 @@ router.get(
 router.post(
   '/questions',
   handle(async (req, res) => {
-    const { title, questionText = '', answerType, options = [], internalNote = null } = req.body;
+    const {
+      title,
+      questionText = '',
+      answerType,
+      options = [],
+      internalNote = null,
+      folderId = null,
+    } = req.body;
     if (!title) return res.status(400).json({ error: 'title required' });
     if (!['open_text', 'single_choice'].includes(answerType)) {
       return res.status(400).json({ error: 'invalid answerType' });
     }
+    const sortOrder = await nextSortOrder(prisma.questionItem, folderId);
     const item = await prisma.questionItem.create({
-      data: { title, questionText, answerType, options, internalNote },
+      data: {
+        title,
+        questionText,
+        answerType,
+        options,
+        internalNote,
+        folderId: folderId || null,
+        sortOrder,
+      },
     });
     res.status(201).json(item);
   }),
@@ -121,10 +280,18 @@ router.post(
 router.put(
   '/questions/:id',
   handle(async (req, res) => {
-    const { title, questionText, answerType, options, internalNote } = req.body;
+    const { title, questionText, answerType, options, internalNote, folderId } =
+      req.body;
+    const data = {};
+    if (title !== undefined) data.title = title;
+    if (questionText !== undefined) data.questionText = questionText;
+    if (answerType !== undefined) data.answerType = answerType;
+    if (options !== undefined) data.options = options;
+    if (internalNote !== undefined) data.internalNote = internalNote;
+    if (folderId !== undefined) data.folderId = folderId || null;
     const item = await prisma.questionItem.update({
       where: { id: req.params.id },
-      data: { title, questionText, answerType, options, internalNote },
+      data,
     });
     res.json(item);
   }),
@@ -139,6 +306,19 @@ router.delete(
     } catch (e) {
       res.status(400).json({ error: 'Cannot delete — item is used in a flow.' });
     }
+  }),
+);
+
+router.put(
+  '/questions/:id/move',
+  handle(async (req, res) => {
+    const targetFolderId = req.body?.folderId || null;
+    const sortOrder = await nextSortOrder(prisma.questionItem, targetFolderId);
+    const item = await prisma.questionItem.update({
+      where: { id: req.params.id },
+      data: { folderId: targetFolderId, sortOrder },
+    });
+    res.json(item);
   }),
 );
 

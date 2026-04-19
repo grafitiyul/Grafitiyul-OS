@@ -65,10 +65,40 @@ export function sanitizePastedHtml(html) {
   if (!html) return html;
   try {
     const doc = new DOMParser().parseFromString(html, 'text/html');
+    unwrapSpuriousBold(doc.body);
     cleanSubtree(doc.body);
     return doc.body.innerHTML;
   } catch {
     return html;
+  }
+}
+
+// Bug fix: Google Docs + some Word exports wrap the entire pasted body in
+// <b id="docs-internal-guid-..."> with an INLINE font-weight: normal style.
+// TipTap's Bold mark parser treats a plain <b> as bold, so when our earlier
+// style-stripping pass removed the "font-weight:normal" override, every
+// character inherited the Bold mark and the whole paste appeared bold.
+//
+// Fix: before the style-stripping pass, unwrap any <b> or <strong> whose
+// inline font-weight is explicitly "normal" or "400", OR whose id starts
+// with "docs-internal-" (Google Docs auto-wrapper pattern). Actual bold
+// formatting from the source (real <b>/<strong> without a normal override)
+// is preserved unchanged.
+function unwrapSpuriousBold(root) {
+  const elts = root.querySelectorAll('b, strong');
+  for (const el of Array.from(elts)) {
+    const id = (el.getAttribute('id') || '').toLowerCase();
+    const style = (el.getAttribute('style') || '').toLowerCase();
+    const weight = /font-weight\s*:\s*([^;]+)/.exec(style)?.[1]?.trim();
+    const isDocsWrapper = id.startsWith('docs-internal-');
+    const isExplicitlyNormal = weight === 'normal' || weight === '400';
+    if (isDocsWrapper || isExplicitlyNormal) {
+      // Replace the <b>/<strong> with its children, preserving document order.
+      const parent = el.parentNode;
+      if (!parent) continue;
+      while (el.firstChild) parent.insertBefore(el.firstChild, el);
+      parent.removeChild(el);
+    }
   }
 }
 

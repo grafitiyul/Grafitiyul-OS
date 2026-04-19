@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { ITEM_KINDS, ITEM_KIND_LABELS } from '../bank/config.js';
+import { titleToPlain } from '../../../editor/TitleEditor.jsx';
 
 // A single row in the flow tree. Renders either an item or a group header.
 // Primary affordances visible on the row: drag handle, type, title.
@@ -24,6 +25,7 @@ export default function FlowTreeRow({
   onAddItemBelow,
   onAddGroupBelow,
   onMoveTo,
+  onPreview, // (node) → opens item / group preview
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: node.id });
@@ -144,7 +146,9 @@ export default function FlowTreeRow({
           {kindLabel}
         </span>
 
-        {/* Title (editable for groups, static for items) */}
+        {/* Title (editable for groups, static for items).
+            Item titles may contain HTML (dynamic-field chips) — render via
+            dangerouslySetInnerHTML with the shared .gos-prose class. */}
         {isGroup ? (
           <input
             value={node.groupTitle || ''}
@@ -153,13 +157,44 @@ export default function FlowTreeRow({
             placeholder="שם הקבוצה"
             className="flex-1 min-w-0 text-[15px] font-semibold text-gray-900 bg-transparent border-0 focus:outline-none focus:bg-white focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5"
           />
+        ) : isHtmlTitle(title) ? (
+          <span
+            className="gos-prose flex-1 min-w-0 text-sm text-gray-900 leading-relaxed pt-0.5"
+            style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
+            dir="rtl"
+            dangerouslySetInnerHTML={{ __html: title }}
+          />
         ) : (
           <span
             className="flex-1 min-w-0 text-sm text-gray-900 leading-relaxed pt-0.5"
             style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
           >
-            {title}
+            {titleToPlain(title) || title}
           </span>
+        )}
+
+        {/* Preview eye — available for items and groups. Groups preview
+            shows the group's items in reading order. */}
+        {onPreview && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onPreview(node);
+            }}
+            className="shrink-0 mt-0.5 text-gray-500 hover:text-blue-700 hover:bg-blue-50 rounded p-1"
+            title="תצוגה מקדימה"
+            aria-label="תצוגה מקדימה"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path
+                d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"
+                stroke="currentColor"
+                strokeWidth="1.6"
+              />
+              <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.6" />
+            </svg>
+          </button>
         )}
 
         {/* Read-only checkpoint indicator (toggle lives in the menu) */}
@@ -363,4 +398,8 @@ function MenuItem({ children, onClick, danger }) {
 
 function MenuDivider() {
   return <div className="h-px bg-gray-100 my-1" aria-hidden />;
+}
+
+function isHtmlTitle(s) {
+  return typeof s === 'string' && /<[a-z]/i.test(s);
 }

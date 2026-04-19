@@ -40,6 +40,16 @@ export const api = {
     update: (id, data) =>
       request(`/api/items/content/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     remove: (id) => request(`/api/items/content/${id}`, { method: 'DELETE' }),
+    reorder: (ids, folderId) =>
+      request('/api/items/content/reorder', {
+        method: 'PUT',
+        body: JSON.stringify({ ids, folderId: folderId ?? null }),
+      }),
+    move: (id, folderId) =>
+      request(`/api/items/content/${id}/move`, {
+        method: 'PUT',
+        body: JSON.stringify({ folderId: folderId ?? null }),
+      }),
   },
   questionItems: {
     list: () => request('/api/items/questions'),
@@ -49,6 +59,35 @@ export const api = {
     update: (id, data) =>
       request(`/api/items/questions/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     remove: (id) => request(`/api/items/questions/${id}`, { method: 'DELETE' }),
+    reorder: (ids, folderId) =>
+      request('/api/items/questions/reorder', {
+        method: 'PUT',
+        body: JSON.stringify({ ids, folderId: folderId ?? null }),
+      }),
+    move: (id, folderId) =>
+      request(`/api/items/questions/${id}/move`, {
+        method: 'PUT',
+        body: JSON.stringify({ folderId: folderId ?? null }),
+      }),
+  },
+  folders: {
+    list: () => request('/api/items/folders'),
+    create: (name) =>
+      request('/api/items/folders', {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+      }),
+    update: (id, data) =>
+      request(`/api/items/folders/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    remove: (id) => request(`/api/items/folders/${id}`, { method: 'DELETE' }),
+    reorder: (ids) =>
+      request('/api/items/folders/reorder', {
+        method: 'PUT',
+        body: JSON.stringify({ ids }),
+      }),
   },
   flows: {
     list: () => request('/api/flows'),
@@ -60,6 +99,11 @@ export const api = {
       request(`/api/flows/${id}/nodes`, {
         method: 'PUT',
         body: JSON.stringify({ nodes }),
+      }),
+    reorder: (ids) =>
+      request('/api/flows/reorder', {
+        method: 'PUT',
+        body: JSON.stringify({ ids }),
       }),
   },
   attempts: {

@@ -9,29 +9,55 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Reusable content item in the bank
+// Flat organisational folder for the item bank. Folders hold content + question
+// items and have no nesting in V1 (parentId can be added later non-breakingly).
+model ItemBankFolder {
+  id            String         @id @default(cuid())
+  name          String
+  sortOrder     Int            @default(0)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  contentItems  ContentItem[]
+  questionItems QuestionItem[]
+}
+
+// Reusable content item in the bank.
+// `title` holds HTML (single-line TipTap output) so dynamic-field chips can
+// live in the title. Plain-text titles remain valid HTML, so no migration is
+// required for the column itself — only the read sites adapt.
 model ContentItem {
-  id           String     @id @default(cuid())
+  id           String          @id @default(cuid())
   title        String
-  body         String     @default("")
+  body         String          @default("")
   internalNote String?
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  sortOrder    Int             @default(0)
+  folder       ItemBankFolder? @relation(fields: [folderId], references: [id])
+  folderId     String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
   flowNodes    FlowNode[]
+
+  @@index([folderId, sortOrder])
 }
 
 // Reusable question item in the bank
 // answerType: 'open_text' | 'single_choice'
+// `title` also holds HTML for dynamic-field chip support.
 model QuestionItem {
-  id           String     @id @default(cuid())
+  id           String          @id @default(cuid())
   title        String
-  questionText String     @default("")
+  questionText String          @default("")
   answerType   String
-  options      String[]   @default([])
+  options      String[]        @default([])
   internalNote String?
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  sortOrder    Int             @default(0)
+  folder       ItemBankFolder? @relation(fields: [folderId], references: [id])
+  folderId     String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
   flowNodes    FlowNode[]
+
+  @@index([folderId, sortOrder])
 }
 
 // status: 'draft' | 'published'
@@ -40,6 +66,7 @@ model Flow {
   title       String
   description String?
   status      String     @default("draft")
+  sortOrder   Int        @default(0)
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
   nodes       FlowNode[]

@@ -1,5 +1,20 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import {
+  DndContext,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { api } from '../../../lib/api.js';
 import { relativeHebrew } from '../../../lib/relativeTime.js';
 
@@ -9,11 +24,41 @@ export default function FlowsListPane({ flows, loading, error, onRetry, onCreate
   const navigate = useNavigate();
   const { id: selectedId } = useParams();
 
+  // Optimistic copy so drag reorder feels instant; sync whenever props change.
+  const [local, setLocal] = useState(flows);
+  useEffect(() => setLocal(flows), [flows]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return flows;
-    return flows.filter((f) => (f.title || '').toLowerCase().includes(q));
-  }, [flows, search]);
+    if (!q) return local;
+    return local.filter((f) => (f.title || '').toLowerCase().includes(q));
+  }, [local, search]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 180, tolerance: 6 },
+    }),
+  );
+
+  async function onDragEnd(event) {
+    // Drag reorder only applies when no search is active — otherwise the
+    // visible order ≠ storage order and the user's intent is ambiguous.
+    if (search.trim()) return;
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const ids = local.map((f) => f.id);
+    const from = ids.indexOf(active.id);
+    const to = ids.indexOf(over.id);
+    if (from < 0 || to < 0) return;
+    const next = arrayMove(ids, from, to);
+    setLocal(next.map((id) => local.find((f) => f.id === id)));
+    try {
+      await api.flows.reorder(next);
+    } finally {
+      onCreated?.();
+    }
+  }
 
   return (
     <div className="h-full flex flex-col">
@@ -62,35 +107,92 @@ export default function FlowsListPane({ flows, loading, error, onRetry, onCreate
           </div>
         )}
         {!loading && !error && filtered.length === 0 && (
-          <EmptyState hasAny={flows.length > 0} search={search} />
+          <EmptyState hasAny={local.length > 0} search={search} />
         )}
         {!loading && !error && filtered.length > 0 && (
-          <ul className="divide-y divide-gray-100">
-            {filtered.map((f) => (
-              <li key={f.id}>
-                <button
-                  onClick={() => navigate(`/admin/procedures/flows/${f.id}`)}
-                  className={`w-full text-right px-3 py-3 hover:bg-gray-50 transition block ${
-                    selectedId === f.id ? 'bg-blue-50' : ''
-                  }`}
-                >
-                  <div className="font-medium text-gray-900 truncate mb-1">
-                    {f.title || '(ללא שם)'}
-                  </div>
-                  <div className="flex items-center gap-2 text-[11px] text-gray-500">
-                    <span>{relativeHebrew(f.updatedAt)}</span>
-                    <span className="text-gray-300">·</span>
-                    <span>
-                      {(f._count?.nodes ?? 0)} פריטים
-                    </span>
-                  </div>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={onDragEnd}
+          >
+            <SortableContext
+              items={filtered.map((f) => f.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <ul className="divide-y divide-gray-100">
+                {filtered.map((f) => (
+                  <FlowRow
+                    key={f.id}
+                    flow={f}
+                    selected={selectedId === f.id}
+                    onOpen={() => navigate(`/admin/procedures/flows/${f.id}`)}
+                  />
+                ))}
+              </ul>
+            </SortableContext>
+          </DndContext>
         )}
       </div>
     </div>
+  );
+}
+
+function FlowRow({ flow, selected, onOpen }) {
+  const sortable = useSortable({ id: flow.id });
+  const style = {
+    transform: CSS.Transform.toString(sortable.transform),
+    transition: sortable.transition,
+    opacity: sortable.isDragging ? 0.4 : 1,
+  };
+  return (
+    <li ref={sortable.setNodeRef} style={style}>
+      <div
+        className={`group flex items-center gap-1 px-2 py-2 hover:bg-gray-50 transition ${
+          selected ? 'bg-blue-50' : ''
+        }`}
+      >
+        <button
+          {...sortable.attributes}
+          {...sortable.listeners}
+          aria-label="גרור"
+          className="shrink-0 w-5 h-6 flex items-center justify-center text-gray-400 hover:text-gray-700 cursor-grab active:cursor-grabbing"
+          style={{ touchAction: 'none' }}
+        >
+          <span className="font-mono text-[11px] leading-none">⋮⋮</span>
+        </button>
+        <button
+          onClick={onOpen}
+          className="flex-1 min-w-0 text-right block py-1"
+        >
+          <div className="font-medium text-gray-900 truncate">
+            {flow.title || '(ללא שם)'}
+          </div>
+          <div className="flex items-center gap-2 text-[11px] text-gray-500 mt-0.5">
+            <span>{relativeHebrew(flow.updatedAt)}</span>
+            <span className="text-gray-300">·</span>
+            <span>{flow._count?.nodes ?? 0} פריטים</span>
+          </div>
+        </button>
+        <a
+          href={`/flow/${flow.id}?preview=1`}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="shrink-0 text-gray-500 hover:text-blue-700 hover:bg-blue-50 rounded p-1"
+          title="תצוגה מקדימה"
+          aria-label="תצוגה מקדימה"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <path
+              d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"
+              stroke="currentColor"
+              strokeWidth="1.6"
+            />
+            <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.6" />
+          </svg>
+        </a>
+      </div>
+    </li>
   );
 }
 

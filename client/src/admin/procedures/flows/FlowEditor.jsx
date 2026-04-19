@@ -12,6 +12,7 @@ import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { api } from '../../../lib/api.js';
 import { ITEM_KINDS, ITEM_KIND_LABELS } from '../bank/config.js';
 import ItemPicker from './ItemPicker.jsx';
+import FlowNodePreviewDialog from './FlowNodePreviewDialog.jsx';
 import ItemPreview from './ItemPreview.jsx';
 import ResizeHandle from '../../../shell/ResizeHandle.jsx';
 import DeleteFlowDialog from '../../common/DeleteFlowDialog.jsx';
@@ -115,6 +116,9 @@ export default function FlowEditor() {
 
   // Move-to dialog (mobile-critical fallback).
   const [moveTargetId, setMoveTargetId] = useState(null);
+
+  // Preview dialog — shows item or group rendered as the learner sees it.
+  const [previewNode, setPreviewNode] = useState(null);
 
   const [itemsWidth, setItemsWidth] = useState(readStoredItemsWidth);
 
@@ -371,6 +375,9 @@ export default function FlowEditor() {
   function openMoveTo(id) {
     setMoveTargetId(id);
   }
+  function openPreview(node) {
+    setPreviewNode(node);
+  }
   function confirmMoveTo(targetParentId) {
     if (!moveTargetId) return;
     commit(moveToParent(nodes, moveTargetId, targetParentId));
@@ -542,6 +549,7 @@ export default function FlowEditor() {
           onAddItemBelow={addItemBelow}
           onAddGroupBelow={addGroupBelow}
           onMoveTo={openMoveTo}
+          onPreview={openPreview}
           sensors={sensors}
           onDragStart={onDragStart}
           onDragOver={onDragOver}
@@ -587,6 +595,13 @@ export default function FlowEditor() {
         onClose={() => setMoveTargetId(null)}
         onConfirm={confirmMoveTo}
       />
+      {previewNode && (
+        <FlowNodePreviewDialog
+          node={previewNode}
+          allNodes={nodes}
+          onClose={() => setPreviewNode(null)}
+        />
+      )}
     </div>
   );
 }
@@ -638,6 +653,25 @@ function EditorHeader({
         placeholder="שם הזרימה"
         className="flex-1 min-w-0 text-lg font-medium text-gray-900 bg-transparent border-0 focus:outline-none focus:bg-gray-50 rounded px-2 py-1"
       />
+      {/* Flow-level preview — opens the learner runtime in a new tab with
+          preview=1 (no attempt persistence). */}
+      <a
+        href={`/flow/${flow.id}?preview=1`}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="תצוגה מקדימה של הזרימה"
+        title="תצוגה מקדימה של הזרימה"
+        className="w-8 h-8 shrink-0 rounded-md text-gray-700 hover:bg-gray-200 flex items-center justify-center"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+          <path
+            d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"
+            stroke="currentColor"
+            strokeWidth="1.6"
+          />
+          <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.6" />
+        </svg>
+      </a>
       <button
         onClick={onDelete}
         className="text-sm text-red-600 hover:bg-red-50 rounded px-3 py-1.5"
@@ -707,6 +741,7 @@ function ItemsPane({
   onAddItemBelow,
   onAddGroupBelow,
   onMoveTo,
+  onPreview,
   sensors,
   onDragStart,
   onDragOver,
@@ -774,6 +809,7 @@ function ItemsPane({
                         onAddItemBelow={() => onAddItemBelow(node.id)}
                         onAddGroupBelow={() => onAddGroupBelow(node.id)}
                         onMoveTo={() => onMoveTo(node.id)}
+                        onPreview={onPreview}
                       />
                     </li>
                   );

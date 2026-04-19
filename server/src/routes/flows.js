@@ -8,10 +8,30 @@ router.get(
   '/',
   handle(async (_req, res) => {
     const flows = await prisma.flow.findMany({
-      orderBy: { updatedAt: 'desc' },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
       include: { _count: { select: { attempts: true, nodes: true } } },
     });
     res.json(flows);
+  }),
+);
+
+// Atomic reorder. Declared before /:id routes — Express matches in order.
+router.put(
+  '/reorder',
+  handle(async (req, res) => {
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids)) {
+      return res.status(400).json({ error: 'ids_array_required' });
+    }
+    await prisma.$transaction(
+      ids.map((id, index) =>
+        prisma.flow.updateMany({
+          where: { id },
+          data: { sortOrder: index },
+        }),
+      ),
+    );
+    res.json({ ok: true });
   }),
 );
 
@@ -33,7 +53,15 @@ router.post(
   '/',
   handle(async (req, res) => {
     const { title = 'Untitled Flow', description = null } = req.body;
-    const flow = await prisma.flow.create({ data: { title, description } });
+    // Append new flows at the bottom of the list (max sortOrder + 1).
+    const top = await prisma.flow.findFirst({
+      orderBy: { sortOrder: 'desc' },
+      select: { sortOrder: true },
+    });
+    const sortOrder = (top?.sortOrder ?? -1) + 1;
+    const flow = await prisma.flow.create({
+      data: { title, description, sortOrder },
+    });
     res.status(201).json(flow);
   }),
 );
