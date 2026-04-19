@@ -1,15 +1,15 @@
 import { useNavigate } from 'react-router-dom';
 
-// Editor header: back button (mobile), title, delete + save actions.
+// Editor header: back button (mobile), title, "saved" indicator + preview +
+// delete. There is no manual "save" button — autosave runs continuously; the
+// indicator reports the last server-confirmed save time.
 export default function EditorTopBar({
   kindLabel,
   title,
-  dirty,
-  saving,
-  canSave,
+  savedIndicator,
   canDelete,
-  onSave,
   onDelete,
+  previewUrl,
 }) {
   const navigate = useNavigate();
   return (
@@ -27,6 +27,26 @@ export default function EditorTopBar({
           {title || '(ללא כותרת)'}
         </div>
       </div>
+      {savedIndicator}
+      {previewUrl && (
+        <a
+          href={previewUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="תצוגה מקדימה"
+          title="תצוגה מקדימה"
+          className="w-8 h-8 shrink-0 rounded-md text-gray-700 hover:bg-gray-200 flex items-center justify-center"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <path
+              d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"
+              stroke="currentColor"
+              strokeWidth="1.6"
+            />
+            <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.6" />
+          </svg>
+        </a>
+      )}
       {canDelete && (
         <button
           onClick={onDelete}
@@ -35,13 +55,6 @@ export default function EditorTopBar({
           מחק
         </button>
       )}
-      <button
-        onClick={onSave}
-        disabled={!canSave || saving}
-        className="bg-blue-600 text-white rounded px-4 py-1.5 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed"
-      >
-        {saving ? 'שומר…' : dirty ? 'שמור' : 'נשמר'}
-      </button>
     </div>
   );
 }

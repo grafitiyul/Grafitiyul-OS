@@ -102,6 +102,45 @@ router.delete(
   }),
 );
 
+// Unified cross-kind reorder. Body: { ordered: [{ kind, id }, ...], folderId? }.
+// Reassigns sortOrder across BOTH content and question tables so the bank
+// list's drag order is respected exactly as shown — no forced alternation
+// by kind. Atomic under a single $transaction.
+router.put(
+  '/reorder',
+  handle(async (req, res) => {
+    const { ordered, folderId = null } = req.body || {};
+    if (!Array.isArray(ordered)) {
+      return res.status(400).json({ error: 'ordered_array_required' });
+    }
+    const scopeFolder = folderId === undefined ? undefined : folderId || null;
+    const ops = ordered.map((entry, index) => {
+      const { kind, id } = entry || {};
+      if (kind === 'content') {
+        return prisma.contentItem.updateMany({
+          where: {
+            id,
+            ...(scopeFolder === undefined ? {} : { folderId: scopeFolder }),
+          },
+          data: { sortOrder: index },
+        });
+      }
+      if (kind === 'question') {
+        return prisma.questionItem.updateMany({
+          where: {
+            id,
+            ...(scopeFolder === undefined ? {} : { folderId: scopeFolder }),
+          },
+          data: { sortOrder: index },
+        });
+      }
+      return prisma.$queryRaw`SELECT 1`; // no-op placeholder for unknown kinds
+    });
+    await prisma.$transaction(ops);
+    res.json({ ok: true });
+  }),
+);
+
 // ---------- Content items ----------
 
 router.get(
@@ -149,11 +188,25 @@ router.get(
 router.post(
   '/content',
   handle(async (req, res) => {
-    const { title, body = '', internalNote = null, folderId = null } = req.body;
-    if (!title) return res.status(400).json({ error: 'title required' });
+    // Autosave flow pre-creates rows immediately so the user's work is on
+    // the server from the first keystroke — empty title is allowed at
+    // creation time. The bank list renders these as "(ללא כותרת)" until
+    // the user types one.
+    const {
+      title = '',
+      body = '',
+      internalNote = null,
+      folderId = null,
+    } = req.body || {};
     const sortOrder = await nextSortOrder(prisma.contentItem, folderId);
     const item = await prisma.contentItem.create({
-      data: { title, body, internalNote, folderId: folderId || null, sortOrder },
+      data: {
+        title: String(title || ''),
+        body,
+        internalNote,
+        folderId: folderId || null,
+        sortOrder,
+      },
     });
     res.status(201).json(item);
   }),
@@ -250,21 +303,20 @@ router.post(
   '/questions',
   handle(async (req, res) => {
     const {
-      title,
+      title = '',
       questionText = '',
-      answerType,
+      answerType = 'open_text',
       options = [],
       internalNote = null,
       folderId = null,
-    } = req.body;
-    if (!title) return res.status(400).json({ error: 'title required' });
+    } = req.body || {};
     if (!['open_text', 'single_choice'].includes(answerType)) {
       return res.status(400).json({ error: 'invalid answerType' });
     }
     const sortOrder = await nextSortOrder(prisma.questionItem, folderId);
     const item = await prisma.questionItem.create({
       data: {
-        title,
+        title: String(title || ''),
         questionText,
         answerType,
         options,

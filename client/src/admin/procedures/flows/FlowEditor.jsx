@@ -12,7 +12,6 @@ import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { api } from '../../../lib/api.js';
 import { ITEM_KINDS, ITEM_KIND_LABELS } from '../bank/config.js';
 import ItemPicker from './ItemPicker.jsx';
-import FlowNodePreviewDialog from './FlowNodePreviewDialog.jsx';
 import ItemPreview from './ItemPreview.jsx';
 import ResizeHandle from '../../../shell/ResizeHandle.jsx';
 import DeleteFlowDialog from '../../common/DeleteFlowDialog.jsx';
@@ -117,8 +116,7 @@ export default function FlowEditor() {
   // Move-to dialog (mobile-critical fallback).
   const [moveTargetId, setMoveTargetId] = useState(null);
 
-  // Preview dialog — shows item or group rendered as the learner sees it.
-  const [previewNode, setPreviewNode] = useState(null);
+  // (Preview is now full-page in a new tab — see openPreview below.)
 
   const [itemsWidth, setItemsWidth] = useState(readStoredItemsWidth);
 
@@ -342,6 +340,30 @@ export default function FlowEditor() {
     // Picker stays open (multi-pick).
   }
 
+  // Adds a bank folder as a group node in the flow. The group inherits the
+  // folder's name; the folder's items (in their current sortOrder) become
+  // children under the new group. Folder / group stay separate entities —
+  // this is a one-shot materialization, not a live link.
+  function addFolderAsGroup(folder, itemsInFolder) {
+    const group = makeGroupNode();
+    group.groupTitle = folder.name;
+    let next;
+    if (pickerContext.mode === 'after' && pickerContext.afterId) {
+      next = insertAfter(nodes, pickerContext.afterId, group);
+    } else {
+      const parentId = pickerContext.parentId || null;
+      const siblings = nodes.filter((n) => (n.parentId ?? null) === parentId);
+      next = [...nodes, { ...group, parentId, order: siblings.length }];
+    }
+    let order = 0;
+    for (const i of itemsInFolder) {
+      const itemNode = makeItemNode(i.kind, i.id, i);
+      next = [...next, { ...itemNode, parentId: group.id, order: order++ }];
+    }
+    commit(next);
+    setSelectedId(group.id);
+  }
+
   function addGroup(parentId = null) {
     const group = makeGroupNode();
     const siblings = nodes.filter((n) => (n.parentId ?? null) === parentId);
@@ -375,8 +397,18 @@ export default function FlowEditor() {
   function openMoveTo(id) {
     setMoveTargetId(id);
   }
+  // Preview opens a full-page learner-style view in a new tab — not a
+  // cramped modal.
   function openPreview(node) {
-    setPreviewNode(node);
+    const url =
+      node.kind === 'group'
+        ? `/preview/group/${flow?.id}/${node.id}`
+        : node.kind === 'content'
+        ? `/preview/content/${node.contentItemId}`
+        : node.kind === 'question'
+        ? `/preview/question/${node.questionItemId}`
+        : null;
+    if (url) window.open(url, '_blank', 'noopener,noreferrer');
   }
   function confirmMoveTo(targetParentId) {
     if (!moveTargetId) return;
@@ -576,6 +608,7 @@ export default function FlowEditor() {
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
         onPick={addItem}
+        onPickFolder={addFolderAsGroup}
       />
       <DeleteFlowDialog
         open={deleteOpen}
@@ -595,13 +628,6 @@ export default function FlowEditor() {
         onClose={() => setMoveTargetId(null)}
         onConfirm={confirmMoveTo}
       />
-      {previewNode && (
-        <FlowNodePreviewDialog
-          node={previewNode}
-          allNodes={nodes}
-          onClose={() => setPreviewNode(null)}
-        />
-      )}
     </div>
   );
 }

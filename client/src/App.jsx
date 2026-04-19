@@ -19,6 +19,8 @@ import TemplateEditor from './admin/documents/templates/TemplateEditor.jsx';
 import InstanceEditor from './admin/documents/instances/InstanceEditor.jsx';
 import SignersPage from './admin/documents/signers/SignersPage.jsx';
 import BusinessFieldsPage from './admin/documents/businessFields/BusinessFieldsPage.jsx';
+import ItemPreviewPage from './preview/ItemPreviewPage.jsx';
+import GroupPreviewPage from './preview/GroupPreviewPage.jsx';
 
 export default function App() {
   return (
@@ -34,10 +36,10 @@ export default function App() {
           </Route>
           <Route path="bank" element={<BankHome />}>
             <Route index element={<BankIndexView />} />
-            <Route path="content/new" element={<ContentEditor mode="new" />} />
-            <Route path="content/:id" element={<ContentEditor mode="edit" />} />
-            <Route path="question/new" element={<QuestionEditor mode="new" />} />
-            <Route path="question/:id" element={<QuestionEditor mode="edit" />} />
+            {/* "new" pre-creates a row and navigates to its id; the editor
+                 only knows about existing rows. */}
+            <Route path="content/:id" element={<ContentEditor />} />
+            <Route path="question/:id" element={<QuestionEditor />} />
           </Route>
           <Route path="approvals" element={<ApprovalsHome />}>
             <Route index element={<ApprovalsIndexView />} />
@@ -57,6 +59,10 @@ export default function App() {
       </Route>
       <Route path="/flow/:id" element={<FlowEntry />} />
       <Route path="/attempt/:attemptId" element={<AttemptRuntime />} />
+      {/* Full-page previews — opened in a new tab from the eye icons. */}
+      <Route path="/preview/content/:id" element={<ItemPreviewPage kind="content" />} />
+      <Route path="/preview/question/:id" element={<ItemPreviewPage kind="question" />} />
+      <Route path="/preview/group/:flowId/:groupId" element={<GroupPreviewPage />} />
     </Routes>
   );
 }

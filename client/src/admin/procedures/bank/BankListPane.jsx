@@ -15,10 +15,11 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { ITEM_KINDS, ITEM_KIND_LABELS, LIST_FILTERS } from './config.js';
+import { ITEM_KINDS, ITEM_KIND_LABELS, LIST_FILTERS, ANSWER_TYPES } from './config.js';
 import { api } from '../../../lib/api.js';
 import { titleToPlain } from '../../../editor/TitleEditor.jsx';
-import ItemPreviewDialog from './ItemPreviewDialog.jsx';
+import PromptDialog from '../../common/PromptDialog.jsx';
+import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 
 const COLLAPSE_STORAGE_KEY = 'gos.bank.folderCollapsed';
 
@@ -38,8 +39,9 @@ function writeCollapsed(next) {
   }
 }
 
-// Bank list pane with flat folders, drag-reorder within each folder and
-// across folders, collapsible folder headers, and per-item preview.
+// Mixed content + question items are ordered by a single shared sortOrder
+// so the user's chosen drag order is preserved exactly — no alternating by
+// kind.
 export default function BankListPane({
   content,
   questions,
@@ -52,12 +54,10 @@ export default function BankListPane({
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
   const [collapsed, setCollapsed] = useState(readCollapsed);
-  const [preview, setPreview] = useState(null); // { kind, id } | null
   const navigate = useNavigate();
   const { id: selectedId } = useParams();
 
-  // Local, optimistic copies of the lists so reorders feel instant. Sync
-  // from props whenever a refresh completes.
+  // Optimistic local copies for snappy drag feedback.
   const [localContent, setLocalContent] = useState(content);
   const [localQuestions, setLocalQuestions] = useState(questions);
   const [localFolders, setLocalFolders] = useState(folders);
@@ -73,75 +73,28 @@ export default function BankListPane({
     });
   }
 
-  // Build the grouped view. UNGROUPED always rendered at the bottom.
-  const groups = useMemo(() => {
-    const byFolder = new Map();
-    byFolder.set('__ungrouped__', {
-      id: '__ungrouped__',
-      name: 'ללא תיקייה',
-      items: [],
-      isUngrouped: true,
-    });
-    for (const f of localFolders) {
-      byFolder.set(f.id, { ...f, items: [], isUngrouped: false });
-    }
-    const push = (i, kind) => {
-      const key = i.folderId || '__ungrouped__';
-      const bucket = byFolder.get(key) || byFolder.get('__ungrouped__');
-      bucket.items.push({ ...i, kind });
-    };
-    for (const i of localContent) push(i, ITEM_KINDS.CONTENT);
-    for (const i of localQuestions) push(i, ITEM_KINDS.QUESTION);
-
-    // Sort items within each bucket by sortOrder, createdAt. Apply filter + search.
-    const q = search.trim().toLowerCase();
-    const matches = (item) => {
-      if (filter !== 'all' && item.kind !== filter) return false;
-      if (!q) return true;
-      return titleToPlain(item.title).toLowerCase().includes(q);
-    };
-    const ordered = [];
-    for (const f of localFolders) {
-      const bucket = byFolder.get(f.id);
-      bucket.items.sort(
-        (a, b) =>
-          (a.sortOrder ?? 0) - (b.sortOrder ?? 0) ||
-          new Date(a.createdAt) - new Date(b.createdAt),
-      );
-      ordered.push({ ...bucket, items: bucket.items.filter(matches) });
-    }
-    const ung = byFolder.get('__ungrouped__');
-    ung.items.sort(
-      (a, b) =>
-        (a.sortOrder ?? 0) - (b.sortOrder ?? 0) ||
-        new Date(a.createdAt) - new Date(b.createdAt),
-    );
-    ordered.push({ ...ung, items: ung.items.filter(matches) });
-    return ordered;
-  }, [localContent, localQuestions, localFolders, search, filter]);
+  const groups = useMemo(
+    () => buildGroupedView(localContent, localQuestions, localFolders, search, filter),
+    [localContent, localQuestions, localFolders, search, filter],
+  );
 
   const totalCount = localContent.length + localQuestions.length;
   const visibleCount = groups.reduce((n, g) => n + g.items.length, 0);
 
-  // ── DnD sensors ──
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(TouchSensor, {
-      activationConstraint: { delay: 180, tolerance: 6 },
-    }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 6 } }),
   );
 
-  // Drag end handling. A drag id encodes (kind, id) or ('folder', id). Drops
-  // can land on another item (reorder/move) or on a folder header (move into
-  // that folder, appended). Folder rows are sortable among themselves.
+  // ── Drag handlers ──
+
   async function onDragEnd(event) {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-
     const a = parseDragId(active.id);
     const o = parseDragId(over.id);
 
-    // Case 1: folder reorder.
+    // Folder ⇄ folder: reorder folders.
     if (a.kind === 'folder' && o.kind === 'folder') {
       const ids = localFolders.map((f) => f.id);
       const from = ids.indexOf(a.id);
@@ -157,24 +110,73 @@ export default function BankListPane({
       return;
     }
 
-    // Case 2: item dropped onto a folder header → move item to that folder.
+    // Item dropped onto a folder header → move to that folder (appended).
     if (a.kind !== 'folder' && o.kind === 'folder') {
       const targetFolderId = o.id === '__ungrouped__' ? null : o.id;
       await moveItem(a, targetFolderId);
       return;
     }
 
-    // Case 3: item dropped onto another item — reorder or move.
+    // Item ⇄ item: reorder within the (possibly new) folder, respecting
+    // mixed-kind order — no forced alternation.
     if (a.kind !== 'folder' && o.kind !== 'folder') {
       const aItem = findItem(a);
       const oItem = findItem(o);
       if (!aItem || !oItem) return;
-      const sameFolder = (aItem.folderId || null) === (oItem.folderId || null);
-      if (sameFolder) {
-        await reorderWithinFolder(aItem, oItem);
-      } else {
-        // Cross-folder drop: move to the target's folder, append at the end.
-        await moveItem(a, oItem.folderId || null);
+      const targetFolderId = oItem.folderId || null;
+      const sameFolder = (aItem.folderId || null) === targetFolderId;
+      if (!sameFolder) {
+        // Cross-folder: set folderId + append, then reindex.
+        await moveItem(a, targetFolderId);
+        return;
+      }
+      // Same folder: compute combined ordered list and reindex across kinds.
+      const folderItems = [...localContent, ...localQuestions]
+        .filter((i) => (i.folderId || null) === targetFolderId)
+        .map((i) => ({
+          ...i,
+          kind: i.id && i.answerType ? ITEM_KINDS.QUESTION : ITEM_KINDS.CONTENT,
+        }))
+        .sort(
+          (x, y) =>
+            (x.sortOrder ?? 0) - (y.sortOrder ?? 0) ||
+            new Date(x.createdAt) - new Date(y.createdAt),
+        );
+      const from = folderItems.findIndex(
+        (i) => i.id === aItem.id && i.kind === aItem.kind,
+      );
+      const to = folderItems.findIndex(
+        (i) => i.id === oItem.id && i.kind === oItem.kind,
+      );
+      if (from < 0 || to < 0) return;
+      const reordered = arrayMove(folderItems, from, to).map((i, idx) => ({
+        ...i,
+        sortOrder: idx,
+      }));
+      // Apply optimistically.
+      setLocalContent((prev) =>
+        prev.map((i) => {
+          const m = reordered.find(
+            (r) => r.id === i.id && r.kind === ITEM_KINDS.CONTENT,
+          );
+          return m ? { ...i, sortOrder: m.sortOrder } : i;
+        }),
+      );
+      setLocalQuestions((prev) =>
+        prev.map((i) => {
+          const m = reordered.find(
+            (r) => r.id === i.id && r.kind === ITEM_KINDS.QUESTION,
+          );
+          return m ? { ...i, sortOrder: m.sortOrder } : i;
+        }),
+      );
+      try {
+        await api.bankItems.reorder(
+          reordered.map((i) => ({ kind: i.kind, id: i.id })),
+          targetFolderId,
+        );
+      } finally {
+        onChanged?.();
       }
     }
   }
@@ -198,42 +200,58 @@ export default function BankListPane({
     }
   }
 
-  async function reorderWithinFolder(aItem, oItem) {
-    // Both items share kind? Items of both kinds can live in the same folder
-    // so we reorder PER KIND — cross-kind reorder is collapsed by taking only
-    // items of the moved kind.
-    const kind = aItem.kind;
-    const folderId = aItem.folderId || null;
-    const list = kind === ITEM_KINDS.CONTENT ? localContent : localQuestions;
-    const sameBucket = list
-      .filter((i) => (i.folderId || null) === folderId)
-      .sort((x, y) => (x.sortOrder ?? 0) - (y.sortOrder ?? 0));
-    const from = sameBucket.findIndex((x) => x.id === aItem.id);
-    const to = sameBucket.findIndex((x) => x.id === oItem.id);
-    if (from < 0 || to < 0) return;
-    const next = arrayMove(sameBucket, from, to).map((x, idx) => ({
-      ...x,
-      sortOrder: idx,
-    }));
-    const setter = kind === ITEM_KINDS.CONTENT ? setLocalContent : setLocalQuestions;
-    setter((prev) => {
-      const byId = new Map(prev.map((i) => [i.id, i]));
-      for (const n of next) byId.set(n.id, n);
-      return [...byId.values()];
-    });
-    try {
-      const fn = kind === ITEM_KINDS.CONTENT ? api.contentItems.reorder : api.questionItems.reorder;
-      await fn(next.map((n) => n.id), folderId);
-    } finally {
-      onChanged?.();
-    }
+  // ── Folder dialogs ──
+
+  const [addFolderOpen, setAddFolderOpen] = useState(false);
+  const [renameFolder, setRenameFolder] = useState(null);
+  const [deleteFolder, setDeleteFolder] = useState(null);
+
+  async function confirmAddFolder(name) {
+    setAddFolderOpen(false);
+    await api.folders.create(name);
+    onChanged?.();
+  }
+  async function confirmRename(name) {
+    const f = renameFolder;
+    setRenameFolder(null);
+    if (!f || name === f.name) return;
+    await api.folders.update(f.id, { name });
+    onChanged?.();
+  }
+  async function confirmDelete() {
+    const f = deleteFolder;
+    setDeleteFolder(null);
+    if (!f) return;
+    await api.folders.remove(f.id);
+    onChanged?.();
   }
 
-  async function addFolder() {
-    const name = window.prompt('שם התיקייה');
-    if (!name || !name.trim()) return;
-    await api.folders.create(name.trim());
-    onChanged?.();
+  // ── Preview ──
+  function openPreview(item) {
+    const url = `/preview/${item.kind}/${item.id}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
+  // ── "+ new" pre-creates on server, then navigates to its autosave editor.
+  async function createNew(kind) {
+    try {
+      if (kind === ITEM_KINDS.CONTENT) {
+        const created = await api.contentItems.create({ title: '', body: '' });
+        onChanged?.();
+        navigate(`/admin/procedures/bank/content/${created.id}`);
+      } else {
+        const created = await api.questionItems.create({
+          title: '',
+          questionText: '',
+          answerType: ANSWER_TYPES.OPEN_TEXT,
+          options: [],
+        });
+        onChanged?.();
+        navigate(`/admin/procedures/bank/question/${created.id}`);
+      }
+    } catch (e) {
+      window.alert('יצירה נכשלה: ' + e.message);
+    }
   }
 
   return (
@@ -247,9 +265,9 @@ export default function BankListPane({
           className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
         />
         <div className="flex gap-2">
-          <NewItemMenu />
+          <NewItemMenu onCreate={createNew} />
           <button
-            onClick={addFolder}
+            onClick={() => setAddFolderOpen(true)}
             className="text-[12px] border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 rounded-md px-3 py-2"
             title="תיקייה חדשה"
           >
@@ -301,7 +319,6 @@ export default function BankListPane({
             collisionDetection={closestCenter}
             onDragEnd={onDragEnd}
           >
-            {/* Folders are sortable among themselves. */}
             <SortableContext
               items={[
                 ...localFolders.map((f) => makeDragId('folder', f.id)),
@@ -319,18 +336,9 @@ export default function BankListPane({
                   onOpen={(item) =>
                     navigate(`/admin/procedures/bank/${item.kind}/${item.id}`)
                   }
-                  onPreview={(item) => setPreview({ kind: item.kind, id: item.id })}
-                  onRenameFolder={async (folder) => {
-                    const name = window.prompt('שם התיקייה', folder.name);
-                    if (!name || name.trim() === folder.name) return;
-                    await api.folders.update(folder.id, { name: name.trim() });
-                    onChanged?.();
-                  }}
-                  onDeleteFolder={async (folder) => {
-                    if (!window.confirm(`למחוק את התיקייה "${folder.name}"? הפריטים יעברו לרמה הבסיסית.`)) return;
-                    await api.folders.remove(folder.id);
-                    onChanged?.();
-                  }}
+                  onPreview={openPreview}
+                  onRenameFolder={(f) => setRenameFolder(f)}
+                  onDeleteFolder={(f) => setDeleteFolder(f)}
                   folders={localFolders}
                   onMoveItem={moveItem}
                 />
@@ -340,19 +348,93 @@ export default function BankListPane({
         )}
       </div>
 
-      {preview && (
-        <ItemPreviewDialog
-          kind={preview.kind}
-          itemId={preview.id}
-          onClose={() => setPreview(null)}
-        />
-      )}
+      <PromptDialog
+        open={addFolderOpen}
+        title="תיקייה חדשה"
+        label="שם"
+        placeholder="למשל: תהליכי קבלה, הדרכות חובה"
+        confirmLabel="צור"
+        onClose={() => setAddFolderOpen(false)}
+        onSubmit={confirmAddFolder}
+      />
+
+      <PromptDialog
+        open={!!renameFolder}
+        title="שינוי שם התיקייה"
+        label="שם"
+        initialValue={renameFolder?.name || ''}
+        confirmLabel="שמור"
+        onClose={() => setRenameFolder(null)}
+        onSubmit={confirmRename}
+      />
+
+      <ConfirmDialog
+        open={!!deleteFolder}
+        title="מחיקת תיקייה"
+        body={
+          deleteFolder
+            ? `למחוק את התיקייה "${deleteFolder.name}"? הפריטים יעברו לרמה הבסיסית.`
+            : ''
+        }
+        confirmLabel="מחק"
+        danger
+        onCancel={() => setDeleteFolder(null)}
+        onConfirm={confirmDelete}
+      />
     </div>
   );
 }
 
-// ── Drag id encoding ────────────────────────────────────────────────────────
-// dnd-kit identifies sortables by id — we encode kind+id in a single string.
+// ── Helpers ──
+
+function buildGroupedView(content, questions, folders, search, filter) {
+  const byFolder = new Map();
+  byFolder.set('__ungrouped__', {
+    id: '__ungrouped__',
+    name: 'ללא תיקייה',
+    items: [],
+    isUngrouped: true,
+  });
+  for (const f of folders) {
+    byFolder.set(f.id, { ...f, items: [], isUngrouped: false });
+  }
+  const push = (i, kind) => {
+    const key = i.folderId || '__ungrouped__';
+    const bucket = byFolder.get(key) || byFolder.get('__ungrouped__');
+    bucket.items.push({ ...i, kind });
+  };
+  for (const i of content) push(i, ITEM_KINDS.CONTENT);
+  for (const i of questions) push(i, ITEM_KINDS.QUESTION);
+
+  const q = search.trim().toLowerCase();
+  const matches = (item) => {
+    if (filter !== 'all' && item.kind !== filter) return false;
+    if (!q) return true;
+    return titleToPlain(item.title).toLowerCase().includes(q);
+  };
+
+  const ordered = [];
+  for (const f of folders) {
+    const bucket = byFolder.get(f.id);
+    // Unified sort by sortOrder alone — mixed kinds in the order the user
+    // dragged them. createdAt is the tie-breaker only.
+    bucket.items.sort(
+      (a, b) =>
+        (a.sortOrder ?? 0) - (b.sortOrder ?? 0) ||
+        new Date(a.createdAt) - new Date(b.createdAt),
+    );
+    ordered.push({ ...bucket, items: bucket.items.filter(matches) });
+  }
+  const ung = byFolder.get('__ungrouped__');
+  ung.items.sort(
+    (a, b) =>
+      (a.sortOrder ?? 0) - (b.sortOrder ?? 0) ||
+      new Date(a.createdAt) - new Date(b.createdAt),
+  );
+  ordered.push({ ...ung, items: ung.items.filter(matches) });
+  return ordered;
+}
+
 function makeDragId(kind, id) {
   return `${kind}::${id}`;
 }
@@ -362,7 +444,7 @@ function parseDragId(dragId) {
   return { kind: dragId.slice(0, idx), id: dragId.slice(idx + 2) };
 }
 
-// ── Folder section ──────────────────────────────────────────────────────────
+// ── Folder section ──
 
 function FolderSection({
   group,
@@ -377,10 +459,7 @@ function FolderSection({
   onMoveItem,
 }) {
   const dragId = makeDragId('folder', group.id);
-  const sortable = useSortable({
-    id: dragId,
-    disabled: group.isUngrouped, // ungrouped bucket never moves
-  });
+  const sortable = useSortable({ id: dragId, disabled: group.isUngrouped });
   const style = {
     transform: CSS.Transform.toString(sortable.transform),
     transition: sortable.transition,
@@ -459,9 +538,7 @@ function FolderSection({
               />
             ))}
             {group.items.length === 0 && (
-              <li className="px-3 py-3 text-[12px] text-gray-500 italic">
-                ריקה
-              </li>
+              <li className="px-3 py-3 text-[12px] text-gray-500 italic">ריקה</li>
             )}
           </ul>
         </SortableContext>
@@ -469,8 +546,6 @@ function FolderSection({
     </div>
   );
 }
-
-// ── Item row ────────────────────────────────────────────────────────────────
 
 function ItemRow({ item, selectedId, onOpen, onPreview, folders, onMove }) {
   const dragId = makeDragId(item.kind, item.id);
@@ -625,8 +700,6 @@ function EyeIcon() {
   );
 }
 
-// ── Empty state + new-item menu ─────────────────────────────────────────────
-
 function EmptyListState() {
   return (
     <div className="p-6 text-center max-w-xs mx-auto">
@@ -639,9 +712,8 @@ function EmptyListState() {
   );
 }
 
-function NewItemMenu() {
+function NewItemMenu({ onCreate }) {
   const [open, setOpen] = useState(false);
-  const navigate = useNavigate();
   const ref = useRef(null);
 
   useEffect(() => {
@@ -662,7 +734,7 @@ function NewItemMenu() {
 
   function choose(kind) {
     setOpen(false);
-    navigate(`/admin/procedures/bank/${kind}/new`);
+    onCreate(kind);
   }
 
   return (

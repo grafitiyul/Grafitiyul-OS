@@ -70,6 +70,15 @@ export const api = {
         body: JSON.stringify({ folderId: folderId ?? null }),
       }),
   },
+  bankItems: {
+    // Unified cross-kind reorder. `ordered` = [{ kind, id }, ...] in the
+    // desired order; mixed content + question is supported.
+    reorder: (ordered, folderId) =>
+      request('/api/items/reorder', {
+        method: 'PUT',
+        body: JSON.stringify({ ordered, folderId: folderId ?? null }),
+      }),
+  },
   folders: {
     list: () => request('/api/items/folders'),
     create: (name) =>

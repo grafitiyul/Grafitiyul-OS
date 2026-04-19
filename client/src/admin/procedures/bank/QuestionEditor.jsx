@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import {
@@ -11,73 +11,40 @@ import EditorTopBar from './EditorTopBar.jsx';
 import RichEditor from '../../../editor/RichEditor.jsx';
 import TitleEditor, { titleToPlain } from '../../../editor/TitleEditor.jsx';
 import DeleteItemDialog from '../../common/DeleteItemDialog.jsx';
-import {
-  draftKeys,
-  loadDraft,
-  clearDraft,
-  makeDebouncedDraftSaver,
-} from '../../../lib/drafts.js';
 
-const EMPTY = {
-  title: '',
-  questionText: '',
-  answerType: ANSWER_TYPES.OPEN_TEXT,
-  options: [],
-  internalNote: '',
-};
-
-export default function QuestionEditor({ mode }) {
+// Question-item editor. Same autosave pattern as ContentEditor — the server
+// row already exists when this page loads; every change is PUT-saved.
+export default function QuestionEditor() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { refresh } = useOutletContext();
 
-  const [form, setForm] = useState(mode === 'new' ? EMPTY : null);
-  const [original, setOriginal] = useState(mode === 'new' ? EMPTY : null);
-  const [loadError, setLoadError] = useState(null);
+  const [form, setForm] = useState(null);
+  const [savedAt, setSavedAt] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [draftInfo, setDraftInfo] = useState(null);
-  const baseSavedAtRef = useRef(null);
+  const [loadError, setLoadError] = useState(null);
 
-  const draftKey = useMemo(
-    () => draftKeys.questionItem(mode === 'edit' ? id : 'new'),
-    [id, mode],
-  );
-
-  const draftSaverRef = useRef(null);
-  useEffect(() => {
-    draftSaverRef.current = makeDebouncedDraftSaver(
-      draftKey,
-      baseSavedAtRef.current,
-    );
-    return () => {
-      draftSaverRef.current?.flush();
-    };
-  }, [draftKey]);
+  const formRef = useRef(null);
+  formRef.current = form;
+  const idRef = useRef(id);
+  idRef.current = id;
 
   useEffect(() => {
-    if (mode !== 'edit') return;
     let cancelled = false;
     setForm(null);
-    setOriginal(null);
     setLoadError(null);
     (async () => {
       try {
         const item = await api.questionItems.get(id);
         if (cancelled) return;
-        const data = {
+        setForm({
           title: item.title || '',
           questionText: item.questionText || '',
           answerType: item.answerType || ANSWER_TYPES.OPEN_TEXT,
           options: Array.isArray(item.options) ? item.options : [],
           internalNote: item.internalNote || '',
-        };
-        baseSavedAtRef.current = item.updatedAt || null;
-        setForm(data);
-        setOriginal(data);
-        const draft = await loadDraft(draftKey);
-        if (!cancelled && draft && isDraftNewer(draft, item.updatedAt)) {
-          setDraftInfo({ data: draft.data, savedAt: draft.savedAt });
-        }
+        });
+        setSavedAt(item.updatedAt || null);
       } catch (e) {
         if (!cancelled) setLoadError(e.message);
       }
@@ -85,37 +52,36 @@ export default function QuestionEditor({ mode }) {
     return () => {
       cancelled = true;
     };
-  }, [id, mode, draftKey]);
+  }, [id]);
 
   useEffect(() => {
-    if (mode !== 'new') return;
-    let cancelled = false;
-    setForm(EMPTY);
-    setOriginal(EMPTY);
-    setLoadError(null);
-    baseSavedAtRef.current = null;
-    (async () => {
-      const draft = await loadDraft(draftKey);
-      if (!cancelled && draft?.data) {
-        setDraftInfo({ data: draft.data, savedAt: draft.savedAt });
+    if (!form) return;
+    const handle = setTimeout(async () => {
+      const snapshot = formRef.current;
+      const targetId = idRef.current;
+      if (!snapshot || !targetId) return;
+      setSaving(true);
+      try {
+        const updated = await api.questionItems.update(targetId, {
+          title: snapshot.title,
+          questionText: snapshot.questionText,
+          answerType: snapshot.answerType,
+          options:
+            snapshot.answerType === ANSWER_TYPES.SINGLE_CHOICE
+              ? snapshot.options.map((o) => o.trim()).filter(Boolean)
+              : [],
+          internalNote: snapshot.internalNote.trim() || null,
+        });
+        setSavedAt(updated.updatedAt);
+        await refresh?.();
+      } catch (e) {
+        console.warn('autosave failed:', e.message);
+      } finally {
+        setSaving(false);
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [mode, draftKey]);
-
-  const dirty =
-    form && original && JSON.stringify(form) !== JSON.stringify(original);
-  const canSave =
-    !!form && titleToPlain(form.title).trim().length > 0 && (mode === 'new' || dirty);
-
-  useEffect(() => {
-    if (!form || !draftSaverRef.current) return;
-    if (!dirty && mode === 'edit') return;
-    if (mode === 'new' && isFormEmpty(form)) return;
-    draftSaverRef.current.save(form);
-  }, [form, dirty, mode]);
+    }, 700);
+    return () => clearTimeout(handle);
+  }, [form, refresh]);
 
   function setField(patch) {
     setForm((f) => ({ ...f, ...patch }));
@@ -138,75 +104,27 @@ export default function QuestionEditor({ mode }) {
     });
   }
 
-  function restoreDraft() {
-    if (!draftInfo) return;
-    setForm(draftInfo.data);
-    setDraftInfo(null);
-  }
-  async function discardDraft() {
-    await clearDraft(draftKey);
-    setDraftInfo(null);
-  }
-
-  async function onSave() {
-    if (!canSave) return;
-    setSaving(true);
-    try {
-      const payload = {
-        title: form.title,
-        questionText: form.questionText,
-        answerType: form.answerType,
-        options:
-          form.answerType === ANSWER_TYPES.SINGLE_CHOICE
-            ? form.options.map((o) => o.trim()).filter(Boolean)
-            : [],
-        internalNote: form.internalNote.trim() || null,
-      };
-      if (mode === 'new') {
-        const created = await api.questionItems.create(payload);
-        draftSaverRef.current?.cancel();
-        await clearDraft(draftKey);
-        await refresh();
-        navigate(`/admin/procedures/bank/question/${created.id}`, { replace: true });
-      } else {
-        await api.questionItems.update(id, payload);
-        setOriginal(form);
-        draftSaverRef.current?.cancel();
-        await clearDraft(draftKey);
-        await refresh();
-      }
-    } catch (e) {
-      alert(`שמירה נכשלה: ${e.message}`);
-    } finally {
-      setSaving(false);
-    }
-  }
-
   const [deleteOpen, setDeleteOpen] = useState(false);
-  function onDelete() {
-    if (mode !== 'edit') return;
-    setDeleteOpen(true);
-  }
-  async function onDeleted() {
-    await clearDraft(draftKey);
-    await refresh();
+  const onDelete = useCallback(() => setDeleteOpen(true), []);
+  const onDeleted = useCallback(async () => {
+    await refresh?.();
     navigate('/admin/procedures/bank', { replace: true });
-  }
+  }, [navigate, refresh]);
 
   if (loadError) return <LoadError error={loadError} />;
   if (!form) return <div className="p-6 text-sm text-gray-500">טוען…</div>;
+
+  const previewUrl = `/preview/question/${id}`;
 
   return (
     <div className="h-full w-full flex flex-col">
       <EditorTopBar
         kindLabel={ITEM_KIND_LABELS[ITEM_KINDS.QUESTION]}
-        title={titleToPlain(form.title) || 'שאלה חדשה'}
-        dirty={dirty}
-        saving={saving}
-        canSave={canSave}
-        canDelete={mode === 'edit'}
-        onSave={onSave}
+        title={titleToPlain(form.title) || 'טיוטה'}
+        savedIndicator={<SavedIndicator saving={saving} savedAt={savedAt} />}
+        canDelete
         onDelete={onDelete}
+        previewUrl={previewUrl}
       />
 
       <DeleteItemDialog
@@ -220,17 +138,10 @@ export default function QuestionEditor({ mode }) {
 
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-5xl mx-auto p-4 lg:p-8 space-y-6">
-          {draftInfo && (
-            <DraftBanner
-              savedAt={draftInfo.savedAt}
-              onRestore={restoreDraft}
-              onDiscard={discardDraft}
-            />
-          )}
           <Section title="תצוגה לעובד">
             <Field
               label="כותרת"
-              hint="ניתן להשתמש בשדות דינמיים ({{key}}) בכותרת."
+              hint="תומך בשדות דינמיים בתוך הכותרת."
             >
               <div className="w-full border border-gray-300 rounded-md px-3 py-2 focus-within:ring-2 focus-within:ring-blue-200 focus-within:border-blue-400">
                 <TitleEditor
@@ -323,48 +234,26 @@ export default function QuestionEditor({ mode }) {
   );
 }
 
-function isDraftNewer(draft, serverUpdatedAt) {
-  if (!draft?.savedAt) return false;
-  if (!serverUpdatedAt) return true;
-  return new Date(draft.savedAt).getTime() > new Date(serverUpdatedAt).getTime();
-}
-
-function isFormEmpty(form) {
+function SavedIndicator({ saving, savedAt }) {
+  if (saving) {
+    return <span className="text-[12px] text-gray-500">שומר…</span>;
+  }
+  if (!savedAt) return null;
   return (
-    titleToPlain(form.title).trim() === '' &&
-    !form.questionText &&
-    (!form.options || form.options.every((o) => !o || !o.trim())) &&
-    (!form.internalNote || form.internalNote.trim() === '')
+    <span className="text-[12px] text-gray-500">
+      נשמר {formatRelative(savedAt)}
+    </span>
   );
 }
 
-function DraftBanner({ savedAt, onRestore, onDiscard }) {
-  const when = savedAt ? new Date(savedAt).toLocaleString('he-IL') : '';
-  return (
-    <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-md p-3 flex items-start gap-2 text-sm">
-      <span>📝</span>
-      <div className="flex-1">
-        <div className="font-semibold">יש טיוטה לא שמורה</div>
-        <div className="text-[12px]">
-          נשמרה אוטומטית ב-{when}. ניתן לשחזר את העבודה או להמשיך מהגרסה השמורה בשרת.
-        </div>
-      </div>
-      <div className="flex items-center gap-1 shrink-0">
-        <button
-          onClick={onRestore}
-          className="text-[12px] bg-amber-600 text-white rounded px-3 py-1 hover:bg-amber-700"
-        >
-          שחזר
-        </button>
-        <button
-          onClick={onDiscard}
-          className="text-[12px] text-gray-700 hover:bg-amber-100 rounded px-3 py-1"
-        >
-          בטל
-        </button>
-      </div>
-    </div>
-  );
+function formatRelative(iso) {
+  const d = new Date(iso);
+  const sec = Math.max(0, (Date.now() - d.getTime()) / 1000);
+  if (sec < 5) return 'עכשיו';
+  if (sec < 60) return `לפני ${Math.round(sec)} שניות`;
+  const min = Math.round(sec / 60);
+  if (min < 60) return `לפני ${min} דקות`;
+  return d.toLocaleString('he-IL');
 }
 
 function Section({ title, children }) {
