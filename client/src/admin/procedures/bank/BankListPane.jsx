@@ -11,6 +11,7 @@ import { flushSync } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   DndContext,
+  MeasuringStrategy,
   PointerSensor,
   TouchSensor,
   closestCenter,
@@ -210,7 +211,26 @@ export default function BankListPane({
   const [draggingSet, setDraggingSet] = useState(() => new Set());
   const [insertion, setInsertion] = useState(null);
   const [breadcrumbOver, setBreadcrumbOver] = useState(null);
+
+  // Authoritative pointer-Y tracking. Subscribing to window pointermove
+  // is the only reliable way to know the current cursor position during
+  // a drag — dnd-kit's `event.delta` is supposed to give the same thing
+  // but has timing edge cases (batched events, sensor quirks) that can
+  // leave us reading 0 and collapsing every drop to "above the over
+  // item". The window listener is O(1) per move and we only ever read
+  // the ref synchronously, so there's no perf concern.
   const pointerYRef = useRef(0);
+  useEffect(() => {
+    function onPointer(e) {
+      pointerYRef.current = e.clientY;
+    }
+    window.addEventListener('pointermove', onPointer, { passive: true });
+    window.addEventListener('pointerdown', onPointer, { passive: true });
+    return () => {
+      window.removeEventListener('pointermove', onPointer);
+      window.removeEventListener('pointerdown', onPointer);
+    };
+  }, []);
 
   // Cycle-prevention resolver for computeInsertion. Folders can nest;
   // dropping a folder into its own subtree is rejected.
@@ -242,14 +262,12 @@ export default function BankListPane({
     setBreadcrumbOver(null);
   }
 
+  // The window pointermove listener keeps pointerYRef authoritative —
+  // these handlers just need to recompute the insertion whenever dnd-kit
+  // tells us something relevant changed.
   function onDragMove(event) {
-    const act = event.activatorEvent;
-    if (act && typeof act.clientY === 'number') {
-      pointerYRef.current = act.clientY + (event.delta?.y || 0);
-    }
     updateOver(event);
   }
-
   function onDragOver(event) {
     updateOver(event);
   }
@@ -298,41 +316,51 @@ export default function BankListPane({
     setInsertion((prev) => (sameInsertion(prev, ins) ? prev : ins));
   }
 
-  async function onDragEnd(event) {
-    const movedIds = Array.from(draggingSet);
+  function onDragEnd(event) {
+    // Snapshot everything BEFORE clearing drag state. Relying on the
+    // state variables after calling the clear helper is fragile — React
+    // async state means they'd still be the old values inside this
+    // tick, but under concurrent rendering that guarantee can break.
+    // A local snapshot is zero-cost and removes the class of bugs.
+    const snapshotKind = dragKind;
+    const snapshotMovedIds = Array.from(draggingSet);
+    const snapshotInsertion = insertion;
     const overId = event.over?.id ? String(event.over.id) : null;
-    onDragCancel();
-    if (movedIds.length === 0) return;
 
-    // Breadcrumb drops — move dragged rows into the targeted ancestor
-    // (or root).
-    if (overId && overId.startsWith(BREADCRUMB_PREFIX)) {
-      const target =
-        overId === BREADCRUMB_ROOT_ID
-          ? null
-          : overId.slice(BREADCRUMB_PREFIX.length);
-      // Reject dropping a folder into its own subtree.
-      if (dragKind === 'folder') {
-        const f = movedIds[0];
-        if (f) {
-          const id = f.slice('folder::'.length);
-          if (target) {
-            const subtree = folderDescendantIds(id);
-            if (id === target || subtree.has(target)) return;
+    // Commit the reorder first so the optimistic DOM update happens
+    // while dnd-kit is still tearing down the overlay — the user sees
+    // the row appear in its new position immediately, no visible gap.
+    if (snapshotMovedIds.length > 0) {
+      if (overId && overId.startsWith(BREADCRUMB_PREFIX)) {
+        const target =
+          overId === BREADCRUMB_ROOT_ID
+            ? null
+            : overId.slice(BREADCRUMB_PREFIX.length);
+        if (snapshotKind === 'folder') {
+          const f = snapshotMovedIds[0];
+          if (f) {
+            const id = f.slice('folder::'.length);
+            const cycle =
+              target &&
+              (id === target || folderDescendantIds(id).has(target));
+            if (!cycle) commitFolderMoveToParent(id, target);
           }
-          return commitFolderMoveToParent(id, target);
+        } else {
+          commitItemsMoveToFolder(snapshotMovedIds, target);
         }
-        return;
+      } else if (snapshotInsertion) {
+        if (snapshotKind === 'folder') {
+          commitFolderMove(snapshotMovedIds[0], snapshotInsertion);
+        } else {
+          commitItemMove(snapshotMovedIds, snapshotInsertion);
+        }
       }
-      return commitItemsMoveToFolder(movedIds, target);
     }
 
-    // Row-level drop — use the standard insertion pipeline.
-    if (!insertion) return;
-    if (dragKind === 'folder') {
-      return commitFolderMove(movedIds[0], insertion);
-    }
-    return commitItemMove(movedIds, insertion);
+    // Clear drag state last so the original row's opacity-40 stays in
+    // place until the flushSync'd optimistic update has already moved
+    // it. No ghost-in-old-position flash.
+    onDragCancel();
   }
 
   // ── Commit helpers ──
@@ -680,6 +708,14 @@ export default function BankListPane({
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
+            // Force dnd-kit to re-measure droppable rects continuously
+            // during a drag. Default is BeforeDragging which captures
+            // rects once at drag start — if anything shifts (the drop
+            // indicator being injected between rows, scroll, etc.)
+            // the "over" detection picks the wrong target. Always is
+            // cheap enough at bank-list scale and makes positioning
+            // precise.
+            measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
             onDragStart={onDragStart}
             onDragMove={onDragMove}
             onDragOver={onDragOver}
@@ -706,6 +742,17 @@ export default function BankListPane({
                 insertion={insertion}
                 activeId={activeId}
                 draggingSet={draggingSet}
+                // When the insertion target is a specific folder (non-null
+                // parentId means "drop INTO this folder"), surface it so
+                // the folder row renders a highlight ring instead of us
+                // showing a horizontal line. Two visual modes, one
+                // consistent rule — applies identically to empty and
+                // non-empty folders.
+                dropIntoFolderId={
+                  insertion && insertion.parentId
+                    ? insertion.parentId
+                    : null
+                }
                 selectedIds={sel.selected}
                 selectableIds={selectableIds}
                 selectedFlowRoute={selectedId}
@@ -929,6 +976,7 @@ function RowsRenderer({
   insertion,
   activeId,
   draggingSet,
+  dropIntoFolderId,
   selectedIds,
   selectableIds,
   selectedFlowRoute,
@@ -939,12 +987,19 @@ function RowsRenderer({
   onRenameFolder,
   onDeleteFolder,
 }) {
+  // Show the horizontal line only for "between rows" drops. When the
+  // drop is INTO a specific folder, we don't render a line — the
+  // folder itself gets highlighted via `isDropTarget`.
+  const showLine = insertion && !dropIntoFolderId;
   return (
-    <ul className="py-1 relative">
+    <ul className="py-1 relative" style={{ margin: 0, padding: '0.25rem 0' }}>
       {rows.map((row, i) => (
         <Fragment key={row.id}>
-          {insertion?.flatIndex === i && (
-            <li className="list-none">
+          {showLine && insertion.flatIndex === i && (
+            <li
+              className="list-none"
+              style={{ margin: 0, padding: 0, height: 0, lineHeight: 0 }}
+            >
               <DropIndicator depth={insertion.depth} indent={INDENT_PX} />
             </li>
           )}
@@ -956,6 +1011,9 @@ function RowsRenderer({
             isRouteSelected={
               row.kind !== 'folder' && row.meta.id === selectedFlowRoute
             }
+            isDropTarget={
+              row.kind === 'folder' && dropIntoFolderId === row.meta.id
+            }
             onEnterFolder={onEnterFolder}
             onOpen={onOpen}
             onSelectClick={onSelectClick}
@@ -965,8 +1023,11 @@ function RowsRenderer({
           />
         </Fragment>
       ))}
-      {insertion?.flatIndex === rows.length && (
-        <li className="list-none">
+      {showLine && insertion.flatIndex === rows.length && (
+        <li
+          className="list-none"
+          style={{ margin: 0, padding: 0, height: 0, lineHeight: 0 }}
+        >
           <DropIndicator depth={insertion.depth} indent={INDENT_PX} />
         </li>
       )}
@@ -980,6 +1041,7 @@ function RowNode({
   isDragSource,
   isSelected,
   isRouteSelected,
+  isDropTarget,
   onEnterFolder,
   onOpen,
   onSelectClick,
@@ -993,6 +1055,7 @@ function RowNode({
         row={row}
         isActive={isActive}
         isDragSource={isDragSource}
+        isDropTarget={isDropTarget}
         onEnterFolder={onEnterFolder}
         onRenameFolder={onRenameFolder}
         onDeleteFolder={onDeleteFolder}
@@ -1018,6 +1081,7 @@ function FolderRow({
   row,
   isActive,
   isDragSource,
+  isDropTarget,
   onEnterFolder,
   onRenameFolder,
   onDeleteFolder,
@@ -1025,6 +1089,18 @@ function FolderRow({
   const { meta } = row;
   const drag = useDraggable({ id: row.id, data: { kind: 'folder' } });
   const drop = useDroppable({ id: row.id, data: { kind: 'folder' } });
+
+  // Combine the two refs through a stable callback so dnd-kit doesn't
+  // re-register the node on every render. Both setNodeRef returns are
+  // stable identities, but the combining closure would otherwise be a
+  // new function each render.
+  const setRef = useCallback(
+    (el) => {
+      drag.setNodeRef(el);
+      drop.setNodeRef(el);
+    },
+    [drag.setNodeRef, drop.setNodeRef],
+  );
 
   function onClick(e) {
     // Avoid entering on modifier clicks — reserved for future
@@ -1035,10 +1111,7 @@ function FolderRow({
 
   return (
     <li
-      ref={(el) => {
-        drag.setNodeRef(el);
-        drop.setNodeRef(el);
-      }}
+      ref={setRef}
       data-dnd-row={row.id}
       className={`border-b border-gray-100 select-none ${
         isActive ? 'opacity-40' : ''
@@ -1048,7 +1121,13 @@ function FolderRow({
       style={{ touchAction: 'none' }}
       onClick={onClick}
     >
-      <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-gray-100 cursor-pointer">
+      <div
+        className={`flex items-center gap-2 px-3 py-2 cursor-pointer transition ${
+          isDropTarget
+            ? 'bg-blue-100 ring-2 ring-inset ring-blue-500'
+            : 'bg-gray-50 hover:bg-gray-100'
+        }`}
+      >
         <span className="shrink-0 text-[15px]">📁</span>
         <span className="flex-1 truncate text-sm font-semibold text-gray-800">
           {meta.name}
@@ -1094,6 +1173,13 @@ function ItemRow({
 }) {
   const drag = useDraggable({ id: row.id, data: { kind: 'item' } });
   const drop = useDroppable({ id: row.id, data: { kind: 'item' } });
+  const setRef = useCallback(
+    (el) => {
+      drag.setNodeRef(el);
+      drop.setNodeRef(el);
+    },
+    [drag.setNodeRef, drop.setNodeRef],
+  );
 
   const item = row.meta;
 
@@ -1119,10 +1205,7 @@ function ItemRow({
 
   return (
     <li
-      ref={(el) => {
-        drag.setNodeRef(el);
-        drop.setNodeRef(el);
-      }}
+      ref={setRef}
       data-dnd-row={row.id}
       className={`border-b border-gray-100 select-none ${
         isActive ? 'opacity-40' : ''
