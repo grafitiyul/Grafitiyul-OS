@@ -1,34 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { PERSON_STATUS_LABELS, PERSON_STATUSES } from './config.js';
 
-// Admin guides list. Clicking a row opens the full profile. The "פתח פורטל"
-// action opens the guide's portal token URL in a new tab; "העתק קישור"
-// copies the same URL to the clipboard.
+// Admin guides list. Guides are NEVER created manually here — identity
+// comes from the recruitment system and flows in through the Import
+// action. The list displays whatever has been imported; selection for
+// further work (profile, assignment) happens via the usual row click or
+// the AssignmentDialog.
 //
-// Creation is via a lightweight modal — admin enters the identity trio
-// (externalPersonId + displayName + optional email/phone/team) and the
-// server generates a portalToken automatically.
+// "פתח פורטל" opens the guide's portal token URL; "העתק קישור" copies
+// it. Portal is disabled per-person via the profile screen.
 export default function PeopleList() {
-  const navigate = useNavigate();
   const [people, setPeople] = useState([]);
-  const [teams, setTeams] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
-  const [createOpen, setCreateOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [peopleData, teamsData] = await Promise.all([
-        api.people.list(),
-        api.teams.list(),
-      ]);
-      setPeople(peopleData);
-      setTeams(teamsData);
+      setPeople(await api.people.list());
     } catch (e) {
       setError(e.message);
     } finally {
@@ -72,11 +66,18 @@ export default function PeopleList() {
           className="border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
         />
         <button
-          onClick={() => setCreateOpen(true)}
+          onClick={() => setImportOpen(true)}
           className="bg-blue-600 hover:bg-blue-700 text-white rounded-md px-3 py-1.5 text-sm font-medium"
+          title="ייבוא מדריכים ממערכת הגיוס"
         >
-          + מדריך חדש
+          ⬇ ייבוא ממערכת הגיוס
         </button>
+      </div>
+
+      <div className="text-[12px] text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2 mb-4">
+        המדריכים והצוותים אינם נוצרים כאן. הם מגיעים ממערכת הגיוס דרך
+        פעולת הייבוא. ייבוא חוזר מעדכן שמות, אימייל, טלפון ושיוך צוות
+        לרשומות שכבר קיימות.
       </div>
 
       {loading && (
@@ -100,7 +101,7 @@ export default function PeopleList() {
       {!loading && !error && filtered.length === 0 && (
         <div className="p-10 text-center text-sm text-gray-500">
           {people.length === 0
-            ? 'אין עדיין מדריכים. לחצו "מדריך חדש" כדי להוסיף את הראשון.'
+            ? 'אין מדריכים. לחצו "ייבוא ממערכת הגיוס" כדי לייבא את הרשימה.'
             : 'לא נמצאו תוצאות.'}
         </div>
       )}
@@ -127,14 +128,12 @@ export default function PeopleList() {
         </div>
       )}
 
-      <CreatePersonDialog
-        open={createOpen}
-        teams={teams}
-        onClose={() => setCreateOpen(false)}
-        onCreated={async (created) => {
-          setCreateOpen(false);
+      <ImportPeopleDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={async () => {
+          setImportOpen(false);
           await refresh();
-          navigate(`/admin/people/${created.id}`);
         }}
       />
     </div>
@@ -225,167 +224,157 @@ function StatusChip({ status }) {
   );
 }
 
-// ── Create dialog ──
+// ── Import dialog ───────────────────────────────────────────────────────────
+// Previews the recruitment snapshot (what would be imported) before the
+// admin triggers the upsert. No fields are user-editable — the only
+// action is "ייבא" which hits POST /api/people/import. Teams should be
+// imported first so person ↔ team linkage resolves correctly.
 
-function CreatePersonDialog({ open, teams, onClose, onCreated }) {
-  const [form, setForm] = useState({
-    externalPersonId: '',
-    displayName: '',
-    email: '',
-    phone: '',
-    teamRefId: '',
-  });
-  const [busy, setBusy] = useState(false);
+function ImportPeopleDialog({ open, onClose, onImported }) {
+  const [snap, setSnap] = useState(null);
   const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
 
-  // Reset whenever the dialog reopens.
   useEffect(() => {
-    if (open) {
-      setForm({
-        externalPersonId: '',
-        displayName: '',
-        email: '',
-        phone: '',
-        teamRefId: '',
-      });
-      setErr(null);
-    }
+    if (!open) return;
+    setResult(null);
+    setErr(null);
+    setSnap(null);
+    (async () => {
+      try {
+        const [people, localTeams] = await Promise.all([
+          api.recruitment.people(),
+          api.teams.list(),
+        ]);
+        const localTeamIds = new Set(
+          localTeams.map((t) => t.externalTeamId),
+        );
+        setSnap({ people, localTeamIds });
+      } catch (e) {
+        setErr(e.message);
+      }
+    })();
   }, [open]);
 
   if (!open) return null;
 
-  async function submit(e) {
-    e.preventDefault();
+  async function doImport() {
     setBusy(true);
     setErr(null);
     try {
-      const created = await api.people.create({
-        externalPersonId: form.externalPersonId.trim(),
-        displayName: form.displayName.trim(),
-        email: form.email.trim() || null,
-        phone: form.phone.trim() || null,
-        teamRefId: form.teamRefId || null,
-      });
-      await onCreated(created);
-    } catch (e2) {
-      setErr(e2?.payload?.error || e2.message);
+      const r = await api.people.importFromRecruitment();
+      setResult(r);
+    } catch (e) {
+      setErr(e.message);
     } finally {
       setBusy(false);
     }
   }
+
+  const missingTeam = snap
+    ? snap.people.filter(
+        (p) => p.externalTeamId && !snap.localTeamIds.has(p.externalTeamId),
+      ).length
+    : 0;
 
   return (
     <div
       className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
       onClick={onClose}
     >
-      <form
-        onSubmit={submit}
+      <div
         onClick={(e) => e.stopPropagation()}
-        className="bg-white rounded-lg shadow-xl w-full max-w-md p-5"
+        className="bg-white rounded-lg shadow-xl w-full max-w-xl max-h-[85vh] flex flex-col"
       >
-        <div className="text-lg font-semibold mb-3">מדריך חדש</div>
-
-        <Field label="מזהה חיצוני (מערכת הגיוס)" required>
-          <input
-            type="text"
-            value={form.externalPersonId}
-            onChange={(e) =>
-              setForm({ ...form, externalPersonId: e.target.value })
-            }
-            required
-            dir="ltr"
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200"
-          />
-        </Field>
-
-        <Field label="שם מלא" required>
-          <input
-            type="text"
-            value={form.displayName}
-            onChange={(e) =>
-              setForm({ ...form, displayName: e.target.value })
-            }
-            required
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
-          />
-        </Field>
-
-        <div className="grid grid-cols-2 gap-2">
-          <Field label="אימייל">
-            <input
-              type="email"
-              value={form.email}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
-            />
-          </Field>
-          <Field label="טלפון">
-            <input
-              type="tel"
-              value={form.phone}
-              onChange={(e) => setForm({ ...form, phone: e.target.value })}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
-            />
-          </Field>
+        <div className="px-5 py-3 border-b border-gray-200 flex items-center">
+          <h3 className="text-lg font-semibold text-gray-900 flex-1">
+            ייבוא מדריכים ממערכת הגיוס
+          </h3>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-800 text-xl"
+            aria-label="סגור"
+          >
+            ×
+          </button>
         </div>
 
-        <Field label="צוות">
-          <select
-            value={form.teamRefId}
-            onChange={(e) => setForm({ ...form, teamRefId: e.target.value })}
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
-          >
-            <option value="">— ללא צוות —</option>
-            {teams.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.displayName}
-              </option>
-            ))}
-          </select>
-        </Field>
+        <div className="flex-1 overflow-y-auto p-5 space-y-3">
+          {!snap && !err && (
+            <div className="text-sm text-gray-500">טוען רשימת מקור…</div>
+          )}
+          {err && <div className="text-sm text-red-600">{err}</div>}
+          {snap && (
+            <>
+              <div className="text-[12px] text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2">
+                הרשומות למטה מגיעות ממערכת הגיוס. הייבוא מעדכן רשומות
+                קיימות לפי המזהה החיצוני ויוצר חדשות עבור רשומות שעדיין
+                לא קיימות. לא ניתן לערוך ידנית את הרשימה כאן.
+              </div>
+              {missingTeam > 0 && (
+                <div className="text-[12px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                  {missingTeam} מדריכים משויכים לצוות שעדיין לא יובא.
+                  מומלץ לייבא קודם את הצוותים ממסך "צוותים".
+                </div>
+              )}
 
-        {err && (
-          <div className="text-sm text-red-600 mb-2">{translateError(err)}</div>
-        )}
+              <ul className="border border-gray-200 rounded divide-y divide-gray-100">
+                {snap.people.map((p) => (
+                  <li
+                    key={p.externalPersonId}
+                    className="px-3 py-2 text-sm flex items-center gap-2"
+                  >
+                    <span className="flex-1 min-w-0">
+                      <span className="font-medium text-gray-900 block truncate">
+                        {p.displayName}
+                      </span>
+                      <span
+                        className="text-[11px] text-gray-500 font-mono block truncate"
+                        dir="ltr"
+                      >
+                        {p.externalPersonId}
+                      </span>
+                    </span>
+                    <span className="text-[11px] text-gray-600 truncate">
+                      {p.externalTeamId || '—'}
+                    </span>
+                  </li>
+                ))}
+                {snap.people.length === 0 && (
+                  <li className="px-3 py-3 text-[12px] text-gray-500 italic">
+                    אין רשומות במקור.
+                  </li>
+                )}
+              </ul>
 
-        <div className="flex justify-end gap-2 pt-2">
+              {result && (
+                <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded px-3 py-2">
+                  ייבוא הושלם: {result.created} חדשים, {result.updated}{' '}
+                  עודכנו.
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="px-5 py-3 border-t border-gray-200 flex justify-end gap-2">
           <button
-            type="button"
             onClick={onClose}
             disabled={busy}
             className="px-3 py-1.5 text-sm border border-gray-300 rounded-md"
           >
-            ביטול
+            סגור
           </button>
           <button
-            type="submit"
-            disabled={busy}
+            onClick={result ? onImported : doImport}
+            disabled={busy || !snap}
             className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md font-medium disabled:opacity-50"
           >
-            {busy ? 'יוצר…' : 'צור מדריך'}
+            {busy ? 'מייבא…' : result ? 'סיום' : 'ייבא'}
           </button>
         </div>
-      </form>
+      </div>
     </div>
   );
-}
-
-function Field({ label, required, children }) {
-  return (
-    <label className="block mb-3">
-      <div className="text-sm font-medium text-gray-800 mb-1">
-        {label} {required && <span className="text-red-500">*</span>}
-      </div>
-      {children}
-    </label>
-  );
-}
-
-function translateError(code) {
-  if (code === 'externalPersonId_required') return 'חובה להזין מזהה חיצוני';
-  if (code === 'displayName_required') return 'חובה להזין שם';
-  if (code === 'externalPersonId_already_exists')
-    return 'מזהה חיצוני זה כבר קיים במערכת';
-  return code;
 }

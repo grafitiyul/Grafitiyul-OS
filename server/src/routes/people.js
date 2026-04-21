@@ -3,6 +3,7 @@ import express, { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { detectMime, kindOfMime } from '../media/detectMime.js';
+import { getRecruitmentSnapshot } from './recruitment.js';
 
 // Guide (PersonRef + PersonProfile) CRUD, portal token management, image
 // upload, and the categorized procedures endpoint that drives the admin
@@ -63,52 +64,74 @@ router.get(
   }),
 );
 
-// ---------- Create ----------
-
+// ---------- Import from recruitment ----------
+// The ONLY creation path. Guides are never created manually because
+// externalPersonId is a system identifier owned by the recruitment system.
+// Upsert logic:
+//   * new row  → create PersonRef + empty PersonProfile + fresh portalToken
+//   * existing → refresh cached identity fields (displayName / email /
+//     phone) and team linkage; DO NOT touch portalToken, portalEnabled,
+//     status, or the operational PersonProfile — those are managed here.
+//
+// Team linkage uses the externalTeamId from the snapshot to look up an
+// already-imported TeamRef row. Teams should be imported before people;
+// people with an unknown externalTeamId are created without a team (the
+// admin can re-run the import after teams land).
 router.post(
-  '/',
-  handle(async (req, res) => {
-    const {
-      externalPersonId,
-      displayName,
-      email = null,
-      phone = null,
-      teamRefId = null,
-      identitySource = 'recruitment',
-    } = req.body || {};
-    if (!externalPersonId || !String(externalPersonId).trim()) {
-      return res.status(400).json({ error: 'externalPersonId_required' });
-    }
-    if (!displayName || !String(displayName).trim()) {
-      return res.status(400).json({ error: 'displayName_required' });
-    }
-    if (!['recruitment', 'management'].includes(identitySource)) {
-      return res.status(400).json({ error: 'invalid_identitySource' });
-    }
-    try {
-      const created = await prisma.personRef.create({
-        data: {
-          externalPersonId: String(externalPersonId).trim(),
-          displayName: String(displayName).trim(),
-          email: email || null,
-          phone: phone || null,
-          teamRefId: teamRefId || null,
-          identitySource,
-          identitySyncedAt: identitySource === 'recruitment' ? new Date() : null,
-          portalToken: newPortalToken(),
-          profile: { create: {} },
-        },
-        include: PERSON_INCLUDE,
+  '/import',
+  handle(async (_req, res) => {
+    const snap = await getRecruitmentSnapshot();
+    let created = 0;
+    let updated = 0;
+
+    // Precompute a lookup from externalTeamId → local TeamRef.id.
+    const teams = await prisma.teamRef.findMany({
+      select: { id: true, externalTeamId: true },
+    });
+    const teamByExternal = new Map(
+      teams.map((t) => [t.externalTeamId, t.id]),
+    );
+
+    for (const p of snap.people) {
+      const externalPersonId = String(p.externalPersonId || '').trim();
+      const displayName = String(p.displayName || '').trim();
+      if (!externalPersonId || !displayName) continue;
+
+      const teamRefId = p.externalTeamId
+        ? teamByExternal.get(String(p.externalTeamId).trim()) || null
+        : null;
+      const identity = {
+        displayName,
+        email: p.email || null,
+        phone: p.phone || null,
+        teamRefId,
+        identitySyncedAt: new Date(),
+      };
+
+      const existing = await prisma.personRef.findUnique({
+        where: { externalPersonId },
       });
-      res.status(201).json(created);
-    } catch (e) {
-      if (e?.code === 'P2002') {
-        return res
-          .status(409)
-          .json({ error: 'externalPersonId_already_exists' });
+      if (existing) {
+        await prisma.personRef.update({
+          where: { externalPersonId },
+          data: identity,
+        });
+        updated += 1;
+      } else {
+        await prisma.personRef.create({
+          data: {
+            externalPersonId,
+            identitySource: 'recruitment',
+            portalToken: newPortalToken(),
+            ...identity,
+            profile: { create: {} },
+          },
+        });
+        created += 1;
       }
-      throw e;
     }
+
+    res.json({ created, updated, total: snap.people.length });
   }),
 );
 

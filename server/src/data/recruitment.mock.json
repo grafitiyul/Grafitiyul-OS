@@ -1,0 +1,40 @@
+{
+  "_note": "Temporary mock snapshot of the recruitment system. Real live sync is not yet wired; this file exists so the import pipeline has a source to pull from. Edit this file to change what the 'Import from recruitment' button surfaces. When real sync lands, the /api/recruitment/* endpoints will call the live recruitment API instead of reading this file — the import endpoints that consume them stay unchanged.",
+  "teams": [
+    {
+      "externalTeamId": "REC-TEAM-001",
+      "displayName": "מדריכי סיורים — צפון"
+    },
+    {
+      "externalTeamId": "REC-TEAM-002",
+      "displayName": "מדריכי סיורים — מרכז"
+    },
+    {
+      "externalTeamId": "REC-TEAM-003",
+      "displayName": "מדריכי סיורים — דרום"
+    }
+  ],
+  "people": [
+    {
+      "externalPersonId": "REC-PERSON-1001",
+      "displayName": "דניאל כהן",
+      "email": "daniel.cohen@example.com",
+      "phone": "050-1234567",
+      "externalTeamId": "REC-TEAM-001"
+    },
+    {
+      "externalPersonId": "REC-PERSON-1002",
+      "displayName": "שירה לוי",
+      "email": "shira.levi@example.com",
+      "phone": "052-2345678",
+      "externalTeamId": "REC-TEAM-002"
+    },
+    {
+      "externalPersonId": "REC-PERSON-1003",
+      "displayName": "יואב פרץ",
+      "email": "yoav.peretz@example.com",
+      "phone": "054-3456789",
+      "externalTeamId": "REC-TEAM-003"
+    }
+  ]
+}

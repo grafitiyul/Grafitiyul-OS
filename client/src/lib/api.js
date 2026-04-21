@@ -123,17 +123,22 @@ export const api = {
   },
   teams: {
     list: () => request('/api/teams'),
-    create: (data) =>
-      request('/api/teams', { method: 'POST', body: JSON.stringify(data) }),
+    importFromRecruitment: () =>
+      request('/api/teams/import', { method: 'POST' }),
     update: (id, data) =>
       request(`/api/teams/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     remove: (id) => request(`/api/teams/${id}`, { method: 'DELETE' }),
   },
+  recruitment: {
+    snapshot: () => request('/api/recruitment'),
+    teams: () => request('/api/recruitment/teams'),
+    people: () => request('/api/recruitment/people'),
+  },
   people: {
     list: () => request('/api/people'),
     get: (id) => request(`/api/people/${id}`),
-    create: (data) =>
-      request('/api/people', { method: 'POST', body: JSON.stringify(data) }),
+    importFromRecruitment: () =>
+      request('/api/people/import', { method: 'POST' }),
     update: (id, data) =>
       request(`/api/people/${id}`, {
         method: 'PUT',

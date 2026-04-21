@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 
-// Lightweight TeamRef CRUD used to seed assignment targets. This is
-// deliberately minimal — teams are a reference layer into the recruitment
-// system, not a team-management feature.
+// TeamRef is a read-only reference layer into the recruitment system's
+// teams. Rows are NEVER created manually here. The "ייבוא" action pulls
+// the latest snapshot from the recruitment source and upserts by
+// externalTeamId. Local display-name edits are allowed as a cache
+// correction but will be overwritten on the next import.
 export default function TeamsPage() {
   const [teams, setTeams] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [createOpen, setCreateOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -33,17 +35,18 @@ export default function TeamsPage() {
         <span className="text-[12px] text-gray-500">({teams.length})</span>
         <div className="flex-1" />
         <button
-          onClick={() => setCreateOpen(true)}
+          onClick={() => setImportOpen(true)}
           className="bg-blue-600 hover:bg-blue-700 text-white rounded-md px-3 py-1.5 text-sm font-medium"
+          title="ייבוא צוותים ממערכת הגיוס"
         >
-          + צוות חדש
+          ⬇ ייבוא ממערכת הגיוס
         </button>
       </div>
 
       <div className="text-[12px] text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2 mb-4">
-        צוותים כאן הם שכבת הפניה בלבד למערכת הגיוס. המזהה החיצוני חייב
-        להתאים ל-ID של הצוות במערכת הגיוס כדי שהקצאת נהלים לצוות תעבוד
-        נכון כשמתבצעת ההזדהות האמיתית.
+        הצוותים נוצרים במערכת הגיוס ומיובאים לכאן. המזהה החיצוני הוא
+        מזהה מערכת — הוא לא נערך ידנית כאן. ייבוא חוזר מעדכן שמות של
+        צוותים שכבר יובאו ומוסיף חדשים.
       </div>
 
       {loading && (
@@ -60,7 +63,7 @@ export default function TeamsPage() {
 
       {!loading && !error && teams.length === 0 && (
         <div className="p-10 text-center text-sm text-gray-500">
-          אין עדיין צוותים. צרו צוות חדש כדי להקצות אליו נהלים.
+          אין צוותים. לחצו "ייבוא ממערכת הגיוס" כדי לטעון את הרשימה.
         </div>
       )}
 
@@ -72,12 +75,12 @@ export default function TeamsPage() {
         </ul>
       )}
 
-      <CreateTeamDialog
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        onCreated={() => {
-          setCreateOpen(false);
-          refresh();
+      <ImportTeamsDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={async () => {
+          setImportOpen(false);
+          await refresh();
         }}
       />
     </div>
@@ -104,7 +107,12 @@ function TeamRow({ team, onChanged }) {
     }
   }
   async function remove() {
-    if (!window.confirm(`למחוק את "${team.displayName}"?`)) return;
+    if (
+      !window.confirm(
+        `למחוק את "${team.displayName}"? ניתן לייבא אותו שוב ממערכת הגיוס.`,
+      )
+    )
+      return;
     await api.teams.remove(team.id);
     onChanged();
   }
@@ -151,6 +159,7 @@ function TeamRow({ team, onChanged }) {
           <button
             onClick={() => setEditing(true)}
             className="text-[12px] text-blue-700 hover:bg-blue-50 rounded px-2 py-1"
+            title="עריכה מקומית (תידרס בייבוא הבא)"
           >
             ✎
           </button>
@@ -166,34 +175,38 @@ function TeamRow({ team, onChanged }) {
   );
 }
 
-function CreateTeamDialog({ open, onClose, onCreated }) {
-  const [externalTeamId, setExternalTeamId] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [busy, setBusy] = useState(false);
+// ── Import dialog ───────────────────────────────────────────────────────────
+
+function ImportTeamsDialog({ open, onClose, onImported }) {
+  const [snap, setSnap] = useState(null);
   const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
 
   useEffect(() => {
-    if (open) {
-      setExternalTeamId('');
-      setDisplayName('');
-      setErr(null);
-    }
+    if (!open) return;
+    setResult(null);
+    setErr(null);
+    setSnap(null);
+    (async () => {
+      try {
+        setSnap(await api.recruitment.teams());
+      } catch (e) {
+        setErr(e.message);
+      }
+    })();
   }, [open]);
 
   if (!open) return null;
 
-  async function submit(e) {
-    e.preventDefault();
+  async function doImport() {
     setBusy(true);
     setErr(null);
     try {
-      await api.teams.create({
-        externalTeamId: externalTeamId.trim(),
-        displayName: displayName.trim(),
-      });
-      onCreated();
-    } catch (e2) {
-      setErr(e2?.payload?.error || e2.message);
+      const r = await api.teams.importFromRecruitment();
+      setResult(r);
+    } catch (e) {
+      setErr(e.message);
     } finally {
       setBusy(false);
     }
@@ -204,70 +217,84 @@ function CreateTeamDialog({ open, onClose, onCreated }) {
       className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
       onClick={onClose}
     >
-      <form
-        onSubmit={submit}
+      <div
         onClick={(e) => e.stopPropagation()}
-        className="bg-white rounded-lg shadow-xl w-full max-w-md p-5"
+        className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[85vh] flex flex-col"
       >
-        <div className="text-lg font-semibold mb-3">צוות חדש</div>
-
-        <label className="block mb-3">
-          <div className="text-sm font-medium text-gray-800 mb-1">
-            מזהה חיצוני (מערכת הגיוס) <span className="text-red-500">*</span>
-          </div>
-          <input
-            type="text"
-            value={externalTeamId}
-            onChange={(e) => setExternalTeamId(e.target.value)}
-            required
-            dir="ltr"
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm font-mono"
-          />
-        </label>
-
-        <label className="block mb-3">
-          <div className="text-sm font-medium text-gray-800 mb-1">
-            שם תצוגה <span className="text-red-500">*</span>
-          </div>
-          <input
-            type="text"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            required
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-          />
-        </label>
-
-        {err && (
-          <div className="text-sm text-red-600 mb-2">{translateError(err)}</div>
-        )}
-
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="px-5 py-3 border-b border-gray-200 flex items-center">
+          <h3 className="text-lg font-semibold text-gray-900 flex-1">
+            ייבוא צוותים ממערכת הגיוס
+          </h3>
           <button
-            type="button"
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-800 text-xl"
+            aria-label="סגור"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-3">
+          {!snap && !err && (
+            <div className="text-sm text-gray-500">טוען רשימת מקור…</div>
+          )}
+          {err && <div className="text-sm text-red-600">{err}</div>}
+          {snap && (
+            <>
+              <div className="text-[12px] text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2">
+                הרשומות למטה מגיעות ממערכת הגיוס. אינן ניתנות לעריכה
+                כאן.
+              </div>
+              <ul className="border border-gray-200 rounded divide-y divide-gray-100">
+                {snap.map((t) => (
+                  <li
+                    key={t.externalTeamId}
+                    className="px-3 py-2 text-sm flex items-center gap-2"
+                  >
+                    <span className="flex-1 font-medium text-gray-900 truncate">
+                      {t.displayName}
+                    </span>
+                    <span
+                      className="text-[11px] text-gray-500 font-mono"
+                      dir="ltr"
+                    >
+                      {t.externalTeamId}
+                    </span>
+                  </li>
+                ))}
+                {snap.length === 0 && (
+                  <li className="px-3 py-3 text-[12px] text-gray-500 italic">
+                    אין רשומות במקור.
+                  </li>
+                )}
+              </ul>
+              {result && (
+                <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded px-3 py-2">
+                  ייבוא הושלם: {result.created} חדשים, {result.updated}{' '}
+                  עודכנו.
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="px-5 py-3 border-t border-gray-200 flex justify-end gap-2">
+          <button
             onClick={onClose}
             disabled={busy}
             className="px-3 py-1.5 text-sm border border-gray-300 rounded-md"
           >
-            ביטול
+            סגור
           </button>
           <button
-            type="submit"
-            disabled={busy}
+            onClick={result ? onImported : doImport}
+            disabled={busy || !snap}
             className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md font-medium disabled:opacity-50"
           >
-            {busy ? 'יוצר…' : 'צור צוות'}
+            {busy ? 'מייבא…' : result ? 'סיום' : 'ייבא'}
           </button>
         </div>
-      </form>
+      </div>
     </div>
   );
-}
-
-function translateError(code) {
-  if (code === 'externalTeamId_required') return 'חובה להזין מזהה חיצוני';
-  if (code === 'displayName_required') return 'חובה להזין שם';
-  if (code === 'externalTeamId_already_exists')
-    return 'מזהה חיצוני זה כבר קיים';
-  return code;
 }

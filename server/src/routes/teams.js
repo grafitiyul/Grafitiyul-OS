@@ -1,11 +1,16 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
+import { getRecruitmentSnapshot } from './recruitment.js';
 
-// TeamRef CRUD. Teams are a lightweight reference layer over the
-// recruitment system's teams — `externalTeamId` is the stable upstream
-// handle, `displayName` is a UI hint that can go stale without breaking
-// anything that references this row.
+// TeamRef is a read-only reference layer. Rows are NEVER created manually
+// — `externalTeamId` is a system identifier that must come from the
+// recruitment system. The /import endpoint upserts from the recruitment
+// snapshot (mock today, real API later) and is the only creation path.
+//
+// Delete and update are preserved for administrative cleanup only; display
+// name may drift from the upstream label between syncs, and sometimes the
+// admin wants to remove a stale row. Re-importing brings it back.
 const router = Router();
 
 router.get(
@@ -18,31 +23,36 @@ router.get(
   }),
 );
 
+// Import teams from the recruitment source. Upserts by externalTeamId —
+// new rows are created, existing rows get their displayName refreshed.
+// Returns counts so the UI can show a useful summary.
 router.post(
-  '/',
-  handle(async (req, res) => {
-    const { externalTeamId, displayName, meta = null } = req.body || {};
-    if (!externalTeamId || !String(externalTeamId).trim()) {
-      return res.status(400).json({ error: 'externalTeamId_required' });
-    }
-    if (!displayName || !String(displayName).trim()) {
-      return res.status(400).json({ error: 'displayName_required' });
-    }
-    try {
-      const team = await prisma.teamRef.create({
-        data: {
-          externalTeamId: String(externalTeamId).trim(),
-          displayName: String(displayName).trim(),
-          meta: meta ?? undefined,
-        },
+  '/import',
+  handle(async (_req, res) => {
+    const snap = await getRecruitmentSnapshot();
+    let created = 0;
+    let updated = 0;
+    for (const t of snap.teams) {
+      const externalTeamId = String(t.externalTeamId || '').trim();
+      const displayName = String(t.displayName || '').trim();
+      if (!externalTeamId || !displayName) continue;
+      const existing = await prisma.teamRef.findUnique({
+        where: { externalTeamId },
       });
-      res.status(201).json(team);
-    } catch (e) {
-      if (e?.code === 'P2002') {
-        return res.status(409).json({ error: 'externalTeamId_already_exists' });
+      if (existing) {
+        await prisma.teamRef.update({
+          where: { externalTeamId },
+          data: { displayName },
+        });
+        updated += 1;
+      } else {
+        await prisma.teamRef.create({
+          data: { externalTeamId, displayName },
+        });
+        created += 1;
       }
-      throw e;
     }
+    res.json({ created, updated, total: snap.teams.length });
   }),
 );
 
