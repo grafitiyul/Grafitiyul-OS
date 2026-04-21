@@ -10,9 +10,109 @@
 
 const PRESERVED_DATA_ATTRS = new Set(['data-type', 'data-field-key']);
 
-const PRESERVED_STYLE_PROPS = {
-  'text-align': /^(right|left|center|justify)$/i,
+// Style-preservation policy — two scopes:
+//
+//   GLOBAL: styles that are kept on any element (text-align applies to
+//     paragraphs, headings, lists, etc).
+//
+//   SPAN-ONLY: styles that are only meaningful as part of the TipTap
+//     TextStyle mark. TextStyle parses solely from <span> elements, so
+//     preserving color/font-size on a <p> or <li> would leave an inline-
+//     style blob in saved HTML that isn't tied to any editor mark —
+//     which is exactly what the controlled rich-text policy forbids.
+//     For non-span elements with these styles, see
+//     `promoteColorAndSizeToSpans` below: it transplants color/size
+//     from the element onto a wrapping <span> around its children, so
+//     TextStyle picks them up correctly and the non-span's style is
+//     dropped by this whitelist.
+//
+// Each entry is a validator: takes the raw CSS value string, returns a
+// sanitized version, or null to reject.
+const GLOBAL_STYLE_PROPS = {
+  'text-align': (v) =>
+    /^(right|left|center|justify)$/i.test(v) ? v.toLowerCase() : null,
 };
+
+const SPAN_STYLE_PROPS = {
+  color: normalizeColor,
+  'font-size': normalizeFontSize,
+};
+
+function validatePastedStyle(tagName, prop, value) {
+  const global = GLOBAL_STYLE_PROPS[prop];
+  if (global) return global(value);
+  if (tagName === 'SPAN' && SPAN_STYLE_PROPS[prop]) {
+    return SPAN_STYLE_PROPS[prop](value);
+  }
+  return null;
+}
+
+// Color normalizer — accepts hex / rgb(a) / hsl(a) / named colors, but
+// blocks dangerous patterns (url(), expression(), javascript:, var(),
+// calc()) and meta-values (inherit, currentcolor, etc.) that don't
+// round-trip through the editor schema.
+function normalizeColor(raw) {
+  if (!raw) return null;
+  const lower = String(raw).trim().toLowerCase();
+  if (!lower) return null;
+  if (/url\(|expression\(|javascript:|var\(|calc\(/.test(lower)) return null;
+  if (
+    lower === 'inherit' ||
+    lower === 'currentcolor' ||
+    lower === 'transparent' ||
+    lower === 'initial' ||
+    lower === 'unset'
+  ) {
+    return null;
+  }
+  // Hex: #rgb, #rgba, #rrggbb, #rrggbbaa
+  if (/^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/.test(lower)) {
+    return lower;
+  }
+  // Functional: rgb(), rgba(), hsl(), hsla()
+  if (/^(rgb|rgba|hsl|hsla)\s*\([^)]*\)$/.test(lower)) {
+    return lower.replace(/\s+/g, ' ');
+  }
+  // CSS named color (simple alphabetic string).
+  if (/^[a-z]+$/.test(lower)) return lower;
+  return null;
+}
+
+// Font-size normalizer — accepts a number with an optional unit in
+// {px, pt, em, rem, %}. Blocks calc() / var(). Clamps to a sane range
+// (roughly 6px..100px equivalent) so a pasted "font-size: 9999pt"
+// doesn't blow out the layout.
+function normalizeFontSize(raw) {
+  if (!raw) return null;
+  const lower = String(raw).trim().toLowerCase();
+  if (!lower) return null;
+  if (/calc\(|var\(/.test(lower)) return null;
+  const m = /^(\d+(?:\.\d+)?)(px|pt|em|rem|%)?$/.exec(lower);
+  if (!m) return null;
+  const num = parseFloat(m[1]);
+  const unit = m[2] || 'px';
+  // Rough px equivalent for the bounds check.
+  let px;
+  switch (unit) {
+    case 'px':
+      px = num;
+      break;
+    case 'pt':
+      px = num * 1.333;
+      break;
+    case 'em':
+    case 'rem':
+      px = num * 16;
+      break;
+    case '%':
+      px = (num / 100) * 16;
+      break;
+    default:
+      px = num;
+  }
+  if (!Number.isFinite(px) || px < 6 || px > 100) return null;
+  return `${num}${unit}`;
+}
 
 // Iframes are always dropped on paste: embed nodes carry their data via
 // (data-provider, data-video-id) on the outer <div data-type="media-embed">,
@@ -67,12 +167,20 @@ export function sanitizePastedHtml(html) {
     const doc = new DOMParser().parseFromString(html, 'text/html');
     unwrapSpuriousBold(doc.body);
     // IMPORTANT: semantic-style → tag conversion must run BEFORE the
-    // generic attribute/style stripper below. Google Docs, Word and
-    // many web sources express bold/italic/underline as inline styles
-    // on <span>/<p> (font-weight: 700, font-style: italic,
-    // text-decoration: underline) rather than as <strong>/<em>/<u>
-    // tags. If we strip styles first, these formats are lost entirely.
+    // generic attribute/style stripper. Google Docs, Word and many web
+    // sources express bold/italic/underline as inline styles on
+    // <span>/<p> (font-weight: 700, font-style: italic,
+    // text-decoration: underline). If we strip styles first, these
+    // formats are lost entirely.
     convertSemanticStylesToTags(doc, doc.body);
+    // Color and font-size are also commonly carried as inline styles,
+    // but unlike weight/style/decoration they don't have semantic
+    // tags — they map onto TipTap's TextStyle mark, which ONLY parses
+    // from <span> elements. Transplant color/size from non-span
+    // elements (<p>, <li>, <div>, etc.) onto a wrapping <span> so
+    // TextStyle picks them up. The whitelist below then preserves the
+    // styles on the span and strips them from every other element.
+    promoteColorAndSizeToSpans(doc, doc.body);
     cleanSubtree(doc.body);
     return doc.body.innerHTML;
   } catch {
@@ -196,6 +304,49 @@ function isBoldWeight(raw) {
   return Number.isFinite(n) && n >= 600;
 }
 
+// Move `color` and `font-size` inline styles from non-span elements
+// onto a wrapping <span> around their children. Runs AFTER the
+// semantic-style pass (so bold/italic/underline wrapping is already in
+// place) and BEFORE the whitelist stripper (so the newly-created span
+// keeps the styles).
+//
+// Why wrap on a span specifically: TipTap's TextStyle mark — the
+// carrier for Color and FontSize marks — only matches <span
+// style="…"> during parseHTML. A <p style="color: red"> would lose
+// its color because TextStyle doesn't apply to <p>. Wrapping the
+// children in a <span style="color: red"> gives the TextStyle parser
+// a proper target without bending the schema.
+//
+// If the element is already a <span>, nothing to do — the style stays
+// on it and the whitelist preserves it.
+function promoteColorAndSizeToSpans(doc, root) {
+  // Snapshot — we're mutating the tree as we iterate.
+  const elts = Array.from(root.querySelectorAll('[style]'));
+  for (const el of elts) {
+    if (el.tagName === 'SPAN') continue;
+    if (!el.firstChild) continue;
+
+    const styles = parseInlineStyles(el.getAttribute('style') || '');
+    const color = normalizeColor(styles['color']);
+    const fontSize = normalizeFontSize(styles['font-size']);
+    if (!color && !fontSize) continue;
+
+    const styleParts = [];
+    if (color) styleParts.push(`color: ${color}`);
+    if (fontSize) styleParts.push(`font-size: ${fontSize}`);
+
+    const span = doc.createElement('span');
+    span.setAttribute('style', styleParts.join('; '));
+
+    const kids = Array.from(el.childNodes);
+    for (const k of kids) {
+      el.removeChild(k);
+      span.appendChild(k);
+    }
+    el.appendChild(span);
+  }
+}
+
 function cleanSubtree(root) {
   // Depth-first, using a snapshot of children so removing from the tree is safe.
   for (const child of Array.from(root.children)) {
@@ -224,8 +375,8 @@ function cleanAttributes(el) {
         if (colon < 0) continue;
         const prop = decl.slice(0, colon).trim().toLowerCase();
         const val = decl.slice(colon + 1).trim();
-        const re = PRESERVED_STYLE_PROPS[prop];
-        if (re && re.test(val)) kept.push(`${prop}: ${val}`);
+        const sanitized = validatePastedStyle(el.tagName, prop, val);
+        if (sanitized != null) kept.push(`${prop}: ${sanitized}`);
       }
       if (kept.length) el.setAttribute('style', kept.join('; '));
       else el.removeAttribute('style');
