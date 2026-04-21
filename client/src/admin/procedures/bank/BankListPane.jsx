@@ -7,7 +7,6 @@ import {
   useRef,
   useState,
 } from 'react';
-import { flushSync } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   DndContext,
@@ -337,20 +336,30 @@ export default function BankListPane({
   }
 
   function onDragEnd(event) {
-    // Snapshot before clearing — state reads after setState calls are
-    // fragile under concurrent rendering.
+    // Snapshot every piece of drag state we need BEFORE any clearing —
+    // state reads after a scheduled setState are fragile under React
+    // concurrent rendering.
     const snapshotMovedIds = Array.from(draggingSet);
     const snapshotInsertion = insertion;
     const overId = event.over?.id ? String(event.over.id) : null;
 
-    if (snapshotMovedIds.length === 0) {
-      onDragCancel();
-      return;
-    }
+    // Clear drag state FIRST, then commit data changes. Both sets of
+    // setState calls happen inside this same event handler, so React
+    // batches them into ONE render after onDragEnd returns. This is
+    // critical: the previous implementation used flushSync for the
+    // data update, which forced a synchronous render mid-teardown —
+    // the active draggable's DOM node was unmounted while dnd-kit was
+    // still finalizing. Its internal reconciler could then trigger a
+    // cancel-like rollback (the "brief success then jumps back" bug).
+    // Clearing drag state up front means by the time dnd-kit's
+    // teardown runs, no state references the active draggable; the
+    // commit's render is the same one that draws everything cleanly.
+    onDragCancel();
+
+    if (snapshotMovedIds.length === 0) return;
 
     // Split dragged rows by kind. Selection (and therefore draggingSet)
-    // can contain folders, items, or both — we handle all three via a
-    // single commit path.
+    // can contain folders, items, or both — one commit path for all.
     const folderDbIds = [];
     const itemRowIds = [];
     for (const rowId of snapshotMovedIds) {
@@ -374,15 +383,11 @@ export default function BankListPane({
         targetFolderId: target,
         insertion: null, // append
       });
-      onDragCancel();
       return;
     }
 
     // Row-level drop — use the insertion produced by computeInsertion.
-    if (!snapshotInsertion) {
-      onDragCancel();
-      return;
-    }
+    if (!snapshotInsertion) return;
     const targetFolderId =
       snapshotInsertion.parentId != null
         ? snapshotInsertion.parentId
@@ -393,7 +398,6 @@ export default function BankListPane({
       targetFolderId,
       insertion: snapshotInsertion,
     });
-    onDragCancel();
   }
 
   // ── Unified move commit ──
@@ -436,7 +440,6 @@ export default function BankListPane({
         itemRowIds,
         targetFolderId,
         insertion,
-        hasFolderDrag: folderDbIds.length > 0,
       });
     }
   }
@@ -482,25 +485,22 @@ export default function BankListPane({
       ...existing.slice(insertIdx),
     ];
 
-    flushSync(() => {
-      setLocalFolders((prev) =>
-        prev.map((f) => {
-          const idx = nextIds.indexOf(f.id);
-          if (idx < 0) return f;
-          return { ...f, parentId: targetFolderId || null, sortOrder: idx };
-        }),
-      );
-    });
+    // Plain setState — batches with the drag-state clear in onDragEnd
+    // into one natural render after the event handler returns. No
+    // flushSync: avoiding a synchronous render mid-dnd-teardown was
+    // the root of the "brief success then revert" bug.
+    setLocalFolders((prev) =>
+      prev.map((f) => {
+        const idx = nextIds.indexOf(f.id);
+        if (idx < 0) return f;
+        return { ...f, parentId: targetFolderId || null, sortOrder: idx };
+      }),
+    );
 
     api.folders.reorder(nextIds, targetFolderId).catch(() => onChanged?.());
   }
 
-  function commitItemsIntoTarget({
-    itemRowIds,
-    targetFolderId,
-    insertion,
-    hasFolderDrag,
-  }) {
+  function commitItemsIntoTarget({ itemRowIds, targetFolderId, insertion }) {
     const movedItems = rows
       .filter((r) => r.kind !== 'folder' && itemRowIds.includes(r.id))
       .map((r) => r.meta);
@@ -515,34 +515,32 @@ export default function BankListPane({
         .map((i) => ({ ...i, kind: ITEM_KINDS.QUESTION })),
     ].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 
+    // One formula for all cases:
+    //   - insertion null (breadcrumb append) → end of target items
+    //   - drop INTO a folder → first child (index 0)
+    //   - drop at current view level → translate view-index to
+    //     item-index by subtracting the folders that precede items in
+    //     the visible rows. Math.max clamps to 0 when the drop landed
+    //     in the folder section (dropping items-in-folder-area is
+    //     meaningless; 0 is the natural top-of-items result).
+    //
+    // This is the same formula regardless of whether folders are also
+    // being dragged. Mixed drag gets precise positioning because both
+    // folder-side and item-side commits use their own independent
+    // index calculation.
     let insertIdx;
     if (!insertion) {
       insertIdx = targetItems.length;
     } else if (insertion.parentId != null) {
-      // Drop INTO a folder → items become first children.
       insertIdx = 0;
     } else {
-      // Drop at current view level. Visible folders precede items;
-      // subtract the number of visible folders NOT currently being
-      // moved to translate the flat view index into item space.
-      // When a folder drag is also in progress the folder portion has
-      // its own landing slot; items always start fresh from 0 or the
-      // computed offset.
       const visibleFolderCount = rows.filter(
         (r) => r.kind === 'folder',
       ).length;
-      if (hasFolderDrag) {
-        // Mixed drag: the insertion index is ambiguous between
-        // folder space and item space. Put items at the start of
-        // target's items to keep the sequence predictable — "moved
-        // these all to here" semantics match the user's intent.
-        insertIdx = 0;
-      } else {
-        insertIdx = Math.max(
-          0,
-          insertion.indexInParent - visibleFolderCount,
-        );
-      }
+      insertIdx = Math.max(
+        0,
+        insertion.indexInParent - visibleFolderCount,
+      );
     }
 
     const finalList = buildTargetOrder({
@@ -559,20 +557,20 @@ export default function BankListPane({
       });
     });
 
-    flushSync(() => {
-      setLocalContent((prev) =>
-        prev.map((i) => {
-          const p = patches.get(`${ITEM_KINDS.CONTENT}:${i.id}`);
-          return p ? { ...i, ...p } : i;
-        }),
-      );
-      setLocalQuestions((prev) =>
-        prev.map((i) => {
-          const p = patches.get(`${ITEM_KINDS.QUESTION}:${i.id}`);
-          return p ? { ...i, ...p } : i;
-        }),
-      );
-    });
+    // Plain setState — batches with the drag-state clear into one
+    // render after onDragEnd returns.
+    setLocalContent((prev) =>
+      prev.map((i) => {
+        const p = patches.get(`${ITEM_KINDS.CONTENT}:${i.id}`);
+        return p ? { ...i, ...p } : i;
+      }),
+    );
+    setLocalQuestions((prev) =>
+      prev.map((i) => {
+        const p = patches.get(`${ITEM_KINDS.QUESTION}:${i.id}`);
+        return p ? { ...i, ...p } : i;
+      }),
+    );
 
     api.bankItems
       .reorder(
