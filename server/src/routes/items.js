@@ -110,15 +110,37 @@ router.put(
     const { ids, parentId = null } = req.body || {};
     if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids_array_required' });
     const parent = parentId || null;
-    await prisma.$transaction(
-      ids.map((id, index) =>
-        prisma.itemBankFolder.updateMany({
-          where: { id },
-          data: { parentId: parent, sortOrder: index },
-        }),
-      ),
-    );
-    res.json({ ok: true });
+    try {
+      await prisma.$transaction(
+        ids.map((id, index) =>
+          prisma.itemBankFolder.updateMany({
+            where: { id },
+            data: { parentId: parent, sortOrder: index },
+          }),
+        ),
+      );
+      res.json({ ok: true });
+    } catch (e) {
+      // Surface the ACTUAL failure to the client instead of letting it
+      // flow into the generic 500 handler. The browser console trace
+      // picks this up and tells us exactly what the DB / Prisma layer
+      // rejected (missing column, FK violation, type mismatch, etc).
+      console.error('[folders/reorder] failed', {
+        message: e?.message,
+        code: e?.code,
+        meta: e?.meta,
+        name: e?.name,
+        ids,
+        parentId,
+      });
+      return res.status(500).json({
+        error: 'folders_reorder_failed',
+        message: e?.message || String(e),
+        code: e?.code || null,
+        meta: e?.meta || null,
+        name: e?.name || null,
+      });
+    }
   }),
 );
 
