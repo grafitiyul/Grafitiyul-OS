@@ -69,13 +69,96 @@ router.post(
 router.put(
   '/:id',
   handle(async (req, res) => {
-    const { title, description, status } = req.body;
+    const { title, description, status, openToAll, mandatory } = req.body;
     const data = {};
     if (title !== undefined) data.title = title;
     if (description !== undefined) data.description = description;
     if (status !== undefined) data.status = status;
+    if (openToAll !== undefined) data.openToAll = !!openToAll;
+    if (mandatory !== undefined) data.mandatory = !!mandatory;
     const flow = await prisma.flow.update({ where: { id: req.params.id }, data });
     res.json(flow);
+  }),
+);
+
+// ---------- Assignment ----------
+// Read the full assignment picture for a flow: flags + target team ids +
+// target person ids. Returned as ids (not embedded rows) so the client
+// can fetch name metadata independently.
+router.get(
+  '/:id/assignment',
+  handle(async (req, res) => {
+    const flow = await prisma.flow.findUnique({
+      where: { id: req.params.id },
+      select: {
+        id: true,
+        openToAll: true,
+        mandatory: true,
+        targetTeams: { select: { teamRefId: true } },
+        targetPeople: { select: { personRefId: true } },
+      },
+    });
+    if (!flow) return res.status(404).json({ error: 'not found' });
+    res.json({
+      openToAll: flow.openToAll,
+      mandatory: flow.mandatory,
+      teamRefIds: flow.targetTeams.map((t) => t.teamRefId),
+      personRefIds: flow.targetPeople.map((p) => p.personRefId),
+    });
+  }),
+);
+
+// Replace the assignment set atomically. Any of openToAll / teamRefIds /
+// personRefIds can be omitted and will be left untouched.
+router.put(
+  '/:id/assignment',
+  handle(async (req, res) => {
+    const flowId = req.params.id;
+    const { openToAll, mandatory, teamRefIds, personRefIds } = req.body || {};
+
+    await prisma.$transaction(async (tx) => {
+      const flowData = {};
+      if (openToAll !== undefined) flowData.openToAll = !!openToAll;
+      if (mandatory !== undefined) flowData.mandatory = !!mandatory;
+      if (Object.keys(flowData).length) {
+        await tx.flow.update({ where: { id: flowId }, data: flowData });
+      }
+      if (Array.isArray(teamRefIds)) {
+        await tx.flowTargetTeam.deleteMany({ where: { flowId } });
+        if (teamRefIds.length) {
+          await tx.flowTargetTeam.createMany({
+            data: teamRefIds.map((teamRefId) => ({ flowId, teamRefId })),
+            skipDuplicates: true,
+          });
+        }
+      }
+      if (Array.isArray(personRefIds)) {
+        await tx.flowTargetPerson.deleteMany({ where: { flowId } });
+        if (personRefIds.length) {
+          await tx.flowTargetPerson.createMany({
+            data: personRefIds.map((personRefId) => ({ flowId, personRefId })),
+            skipDuplicates: true,
+          });
+        }
+      }
+    });
+
+    const updated = await prisma.flow.findUnique({
+      where: { id: flowId },
+      select: {
+        id: true,
+        openToAll: true,
+        mandatory: true,
+        targetTeams: { select: { teamRefId: true } },
+        targetPeople: { select: { personRefId: true } },
+      },
+    });
+    res.json({
+      openToAll: updated.openToAll,
+      mandatory: updated.mandatory,
+      teamRefIds: updated.targetTeams.map((t) => t.teamRefId),
+      personRefIds: updated.targetPeople.map((p) => p.personRefId),
+    });
   }),
 );
 

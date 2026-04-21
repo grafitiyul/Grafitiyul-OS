@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom';
 // Modules are keyed by stable internal keys — never by the Hebrew label.
 const MODULES = [
   { key: 'procedures', to: '/admin/procedures', label: 'נהלים', glyph: '☰' },
+  { key: 'people', to: '/admin/people', label: 'אנשים', glyph: '👥' },
   { key: 'documents', to: '/admin/documents', label: 'מסמכים', glyph: '📄' },
 ];
 

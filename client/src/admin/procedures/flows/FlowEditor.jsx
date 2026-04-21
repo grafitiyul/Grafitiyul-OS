@@ -18,6 +18,7 @@ import ResizeHandle from '../../../shell/ResizeHandle.jsx';
 import DeleteFlowDialog from '../../common/DeleteFlowDialog.jsx';
 import MoveToDialog from './MoveToDialog.jsx';
 import FlowTreeRow from './FlowTreeRow.jsx';
+import AssignmentDialog from './AssignmentDialog.jsx';
 import {
   buildTree,
   flattenVisible,
@@ -113,6 +114,7 @@ export default function FlowEditor() {
   });
 
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [assignmentOpen, setAssignmentOpen] = useState(false);
 
   // Move-to dialog (mobile-critical fallback).
   const [moveTargetId, setMoveTargetId] = useState(null);
@@ -576,6 +578,7 @@ export default function FlowEditor() {
         onSave={save}
         onBlurTitle={saveTitleOnBlur}
         onDelete={() => setDeleteOpen(true)}
+        onOpenAssignment={() => setAssignmentOpen(true)}
         showBack={hasSelection}
         onBack={() => setSelectedId(null)}
         canUndo={canUndo}
@@ -644,6 +647,11 @@ export default function FlowEditor() {
         onClose={() => setDeleteOpen(false)}
         onConfirm={performDelete}
       />
+      <AssignmentDialog
+        flowId={flow.id}
+        open={assignmentOpen}
+        onClose={() => setAssignmentOpen(false)}
+      />
       <MoveToDialog
         open={!!moveTargetId}
         nodes={nodes}
@@ -668,6 +676,7 @@ function EditorHeader({
   onSave,
   onBlurTitle,
   onDelete,
+  onOpenAssignment,
   showBack,
   onBack,
   canUndo,
@@ -726,6 +735,13 @@ function EditorHeader({
           <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.6" />
         </svg>
       </a>
+      <button
+        onClick={onOpenAssignment}
+        className="text-sm text-gray-700 border border-gray-300 hover:bg-gray-50 rounded px-3 py-1.5"
+        title="הקצאת הנוהל לצוותים / מדריכים"
+      >
+        הקצאה
+      </button>
       <button
         onClick={onDelete}
         className="text-sm text-red-600 hover:bg-red-50 rounded px-3 py-1.5"

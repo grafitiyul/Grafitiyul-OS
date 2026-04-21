@@ -21,6 +21,10 @@ import SignersPage from './admin/documents/signers/SignersPage.jsx';
 import BusinessFieldsPage from './admin/documents/businessFields/BusinessFieldsPage.jsx';
 import ItemPreviewPage from './preview/ItemPreviewPage.jsx';
 import GroupPreviewPage from './preview/GroupPreviewPage.jsx';
+import PeopleLayout from './admin/people/PeopleLayout.jsx';
+import PeopleList from './admin/people/PeopleList.jsx';
+import PersonProfile from './admin/people/PersonProfile.jsx';
+import TeamsPage from './admin/people/TeamsPage.jsx';
 
 export default function App() {
   return (
@@ -45,6 +49,11 @@ export default function App() {
             <Route index element={<ApprovalsIndexView />} />
             <Route path=":id" element={<ApprovalDetail />} />
           </Route>
+        </Route>
+        <Route path="people" element={<PeopleLayout />}>
+          <Route index element={<PeopleList />} />
+          <Route path="teams" element={<TeamsPage />} />
+          <Route path=":id" element={<PersonProfile />} />
         </Route>
         <Route path="documents" element={<DocumentsLayout />}>
           <Route index element={<DocumentsIndexPage />} />

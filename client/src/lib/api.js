@@ -114,6 +114,61 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify({ ids }),
       }),
+    getAssignment: (id) => request(`/api/flows/${id}/assignment`),
+    saveAssignment: (id, data) =>
+      request(`/api/flows/${id}/assignment`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+  },
+  teams: {
+    list: () => request('/api/teams'),
+    create: (data) =>
+      request('/api/teams', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) =>
+      request(`/api/teams/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/teams/${id}`, { method: 'DELETE' }),
+  },
+  people: {
+    list: () => request('/api/people'),
+    get: (id) => request(`/api/people/${id}`),
+    create: (data) =>
+      request('/api/people', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) =>
+      request(`/api/people/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    updateProfile: (id, data) =>
+      request(`/api/people/${id}/profile`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    remove: (id) => request(`/api/people/${id}`, { method: 'DELETE' }),
+    rotateToken: (id) =>
+      request(`/api/people/${id}/portal/rotate`, { method: 'POST' }),
+    setPortalEnabled: (id, enabled) =>
+      request(`/api/people/${id}/portal/enabled`, {
+        method: 'PUT',
+        body: JSON.stringify({ enabled }),
+      }),
+    uploadImage: async (id, file) => {
+      const q = qs({ filename: file.name });
+      const res = await fetch(`/api/people/${id}/image${q}`, {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        body: file,
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        const err = new Error(`${res.status} ${text}`);
+        err.status = res.status;
+        throw err;
+      }
+      return res.json();
+    },
+    procedures: (id) => request(`/api/people/${id}/procedures`),
   },
   attempts: {
     create: (flowId, learnerName, workerIdentifier) =>

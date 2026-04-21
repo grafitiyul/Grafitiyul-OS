@@ -61,16 +61,24 @@ model QuestionItem {
 }
 
 // status: 'draft' | 'published'
+// Assignment model: any of openToAll / team targets / person targets grants
+// visibility to a learner (union). `mandatory` drives the ללמידה vs זמינים
+// split in the learner portal — a non-mandatory visible flow sits in זמינים
+// until the learner chooses to take it.
 model Flow {
-  id          String     @id @default(cuid())
-  title       String
-  description String?
-  status      String     @default("draft")
-  sortOrder   Int        @default(0)
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  nodes       FlowNode[]
-  attempts    Attempt[]
+  id           String             @id @default(cuid())
+  title        String
+  description  String?
+  status       String             @default("draft")
+  sortOrder    Int                @default(0)
+  openToAll    Boolean            @default(false)
+  mandatory    Boolean            @default(true)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  nodes        FlowNode[]
+  attempts     Attempt[]
+  targetTeams  FlowTargetTeam[]
+  targetPeople FlowTargetPerson[]
 }
 
 // Recursive tree: a node is a content ref, question ref, or a group container.
@@ -98,12 +106,19 @@ model FlowNode {
 // A rejected question does NOT move the attempt to "rejected" — rejection
 // lives only on FlowAnswer. An attempt becomes 'approved' only when every
 // question's latest FlowAnswer has status='approved'.
+//
+// externalPersonId links an attempt to a PersonRef (the guide who took it)
+// by their stable upstream id. Nullable to stay backward-compatible with
+// pre-guide-management attempts that only carried learnerName. When real
+// auth lands, this is the field the resolver will populate; nothing else
+// in the attempt/answer pipeline needs to change.
 model Attempt {
   id               String       @id @default(cuid())
   flow             Flow         @relation(fields: [flowId], references: [id], onDelete: Cascade)
   flowId           String
   learnerName      String
   workerIdentifier String?
+  externalPersonId String?
   status           String       @default("in_progress")
   currentNode      FlowNode?    @relation("AttemptCurrentNode", fields: [currentNodeId], references: [id])
   currentNodeId    String?
@@ -112,6 +127,8 @@ model Attempt {
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   answers          FlowAnswer[]
+
+  @@index([externalPersonId])
 }
 
 // Versioned answer. Each worker edit appends a new row; existing rows are
@@ -337,4 +354,100 @@ model FinalDocument {
   generatedAt      DateTime         @default(now())
 
   @@index([instanceId])
+}
+
+// ============================================================================
+// Guide Management module — people + teams + flow assignment
+// ============================================================================
+
+// Lightweight team reference. Not a team-management system — just a lookup
+// layer over the recruitment system's team. `externalTeamId` is the stable
+// upstream id; everything else is UI hint that can go stale without
+// breaking references. See CLAUDE.md guide architecture decisions.
+model TeamRef {
+  id             String             @id @default(cuid())
+  externalTeamId String             @unique
+  displayName    String
+  meta           Json?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  members        PersonRef[]
+  flowTargets    FlowTargetTeam[]
+}
+
+// Identity layer for a guide. Today `identitySource='recruitment'` means
+// name / email / phone are a read-only mirror of the upstream recruitment
+// record. When management takes over as source of truth for a given
+// person, the flag flips to 'management' and the same fields become
+// writable here — with NO schema migration required.
+//
+// `externalPersonId` is stable across that ownership transition. All
+// procedures data (FlowTargetPerson, Attempt.externalPersonId) references
+// this id — not PersonRef.id — so ownership flips never break audit or
+// assignment data.
+//
+// `portalToken` is the learner portal's only auth for now (see CLAUDE.md
+// §12). It is regenerated on demand by the admin; `portalEnabled=false`
+// blocks access even when the token is known.
+model PersonRef {
+  id               String             @id @default(cuid())
+  externalPersonId String             @unique
+  identitySource   String             @default("recruitment") // 'recruitment' | 'management'
+  displayName      String
+  email            String?
+  phone            String?
+  identitySyncedAt DateTime?
+  status           String             @default("active") // 'active' | 'blocked'
+  team             TeamRef?           @relation(fields: [teamRefId], references: [id])
+  teamRefId        String?
+  portalToken      String             @unique
+  portalEnabled    Boolean            @default(true)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  profile          PersonProfile?
+  flowTargets      FlowTargetPerson[]
+
+  @@index([teamRefId])
+}
+
+// Operational data, always owned by management. Split out from PersonRef so
+// the identity-vs-operational authority line is structural, not
+// convention-based. One-to-one with PersonRef.
+model PersonProfile {
+  personRef    PersonRef @relation(fields: [personRefId], references: [id], onDelete: Cascade)
+  personRefId  String    @id
+  imageUrl     String?
+  description  String?
+  notes        String?
+  bankDetails  Json?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+// Flow → teams assignment. The WHERE for "flows visible to team T" indexes
+// on teamRefId, which is why this is a join table (not a string[] column
+// on Flow).
+model FlowTargetTeam {
+  flow       Flow     @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  flowId     String
+  teamRef    TeamRef  @relation(fields: [teamRefId], references: [id], onDelete: Cascade)
+  teamRefId  String
+  assignedAt DateTime @default(now())
+
+  @@id([flowId, teamRefId])
+  @@index([teamRefId])
+}
+
+// Flow → people assignment. FK is to PersonRef, but the stable handle is
+// externalPersonId — callers that resolve "flows for this person" should
+// match on externalPersonId so data survives PersonRef row reshuffles.
+model FlowTargetPerson {
+  flow        Flow      @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  flowId      String
+  personRef   PersonRef @relation(fields: [personRefId], references: [id], onDelete: Cascade)
+  personRefId String
+  assignedAt  DateTime  @default(now())
+
+  @@id([flowId, personRefId])
+  @@index([personRefId])
 }

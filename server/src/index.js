@@ -11,6 +11,8 @@ import mediaRouter from './routes/media.js';
 import businessFieldsRouter from './routes/businessFields.js';
 import signersRouter from './routes/signers.js';
 import documentsRouter from './routes/documents.js';
+import teamsRouter from './routes/teams.js';
+import peopleRouter from './routes/people.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -44,6 +46,8 @@ app.use('/api/media', mediaRouter);
 app.use('/api/business-fields', businessFieldsRouter);
 app.use('/api/signers', signersRouter);
 app.use('/api/documents', documentsRouter);
+app.use('/api/teams', teamsRouter);
+app.use('/api/people', peopleRouter);
 
 // Unknown /api/* paths get a real JSON 404 instead of falling through to
 // the SPA fallback (which would serve HTML for an API request).
