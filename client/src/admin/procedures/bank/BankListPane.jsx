@@ -397,10 +397,30 @@ export default function BankListPane({
 
     // Row-level drop — use the insertion produced by computeInsertion.
     if (!snapshotInsertion) return;
-    const targetFolderId =
-      snapshotInsertion.parentId != null
-        ? snapshotInsertion.parentId
-        : currentFolderId || null;
+
+    // CRITICAL: insertion.parentId is a ROW id (kind-prefixed, e.g.
+    // "folder::abc123") because computeInsertion works on the flat row
+    // list we built for DnD. The server / DB / FK constraint only
+    // knows the bare cuid. If we ship the row id as parentId the
+    // write fails with P2003 (foreign key violation against
+    // ItemBankFolder_parentId_fkey / ContentItem_folderId_fkey).
+    // Map it back to the DB id here, at the boundary between the DnD
+    // layer and the persistence layer. If the insertion lands at the
+    // current view's level (parentId=null) we fall back to the URL's
+    // currentFolderId, which is already a DB id.
+    const insParentRowId = snapshotInsertion.parentId;
+    let targetFolderId;
+    if (insParentRowId != null) {
+      const targetRow = rowById.get(insParentRowId);
+      targetFolderId = targetRow?.meta?.id ?? null;
+      // Defensive: if we somehow can't resolve the row (shouldn't
+      // happen for Bank where non-null parentId always points at a
+      // visible folder row), bail rather than risk a P2003.
+      if (targetFolderId == null) return;
+    } else {
+      targetFolderId = currentFolderId || null;
+    }
+
     commitMoveToFolder({
       folderDbIds,
       itemRowIds,
