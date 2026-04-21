@@ -420,27 +420,40 @@ router.get(
   }),
 );
 
+// Unified question model. See server/src/services/questionRequirement.js
+// for the shape of `requirement`. `answerType` is still written on create
+// so the deprecated column stays valid during the rollback window, but
+// all new behaviour reads allowTextAnswer + requirement.
 router.post(
   '/questions',
   handle(async (req, res) => {
     const {
       title = '',
       questionText = '',
-      answerType = 'open_text',
       options = [],
+      allowTextAnswer = true,
+      requirement = 'optional',
       internalNote = null,
       folderId = null,
     } = req.body || {};
-    if (!['open_text', 'single_choice'].includes(answerType)) {
-      return res.status(400).json({ error: 'invalid answerType' });
+    if (!Array.isArray(options)) {
+      return res.status(400).json({ error: 'invalid options' });
+    }
+    if (!REQUIREMENT_VALUES.has(String(requirement))) {
+      return res.status(400).json({ error: 'invalid requirement' });
     }
     const sortOrder = await nextSortOrder(prisma.questionItem, folderId);
     const item = await prisma.questionItem.create({
       data: {
         title: String(title || ''),
         questionText,
-        answerType,
+        // answerType mirror, derived from the new shape so pre-rollback
+        // reads of the deprecated column remain sensible. Removed in a
+        // follow-up slice.
+        answerType: deriveLegacyAnswerType({ options, allowTextAnswer }),
         options,
+        allowTextAnswer: !!allowTextAnswer,
+        requirement: String(requirement),
         internalNote,
         folderId: folderId || null,
         sortOrder,
@@ -453,15 +466,53 @@ router.post(
 router.put(
   '/questions/:id',
   handle(async (req, res) => {
-    const { title, questionText, answerType, options, internalNote, folderId } =
-      req.body;
+    const {
+      title,
+      questionText,
+      options,
+      allowTextAnswer,
+      requirement,
+      internalNote,
+      folderId,
+    } = req.body;
     const data = {};
     if (title !== undefined) data.title = title;
     if (questionText !== undefined) data.questionText = questionText;
-    if (answerType !== undefined) data.answerType = answerType;
-    if (options !== undefined) data.options = options;
+    if (options !== undefined) {
+      if (!Array.isArray(options)) {
+        return res.status(400).json({ error: 'invalid options' });
+      }
+      data.options = options;
+    }
+    if (allowTextAnswer !== undefined) data.allowTextAnswer = !!allowTextAnswer;
+    if (requirement !== undefined) {
+      if (!REQUIREMENT_VALUES.has(String(requirement))) {
+        return res.status(400).json({ error: 'invalid requirement' });
+      }
+      data.requirement = String(requirement);
+    }
     if (internalNote !== undefined) data.internalNote = internalNote;
     if (folderId !== undefined) data.folderId = folderId || null;
+
+    // Keep the deprecated answerType mirror in sync if any of the
+    // fields that derive it changed. Drops out in the cleanup slice.
+    if (options !== undefined || allowTextAnswer !== undefined) {
+      // We need the current values to derive: use whatever the caller
+      // just passed, and fall back to reading the row only when neither
+      // was sent (never happens here because we're inside this branch).
+      const current = await prisma.questionItem.findUnique({
+        where: { id: req.params.id },
+        select: { options: true, allowTextAnswer: true },
+      });
+      data.answerType = deriveLegacyAnswerType({
+        options: options !== undefined ? options : current?.options || [],
+        allowTextAnswer:
+          allowTextAnswer !== undefined
+            ? !!allowTextAnswer
+            : !!current?.allowTextAnswer,
+      });
+    }
+
     const item = await prisma.questionItem.update({
       where: { id: req.params.id },
       data,
@@ -469,6 +520,27 @@ router.put(
     res.json(item);
   }),
 );
+
+// --- Local helpers ---
+
+// Map the new unified shape back to the old binary answerType so the
+// deprecated column stays meaningful until the rollback window closes.
+//   has choices only       → single_choice
+//   has text only          → open_text
+//   both, or neither       → open_text (most permissive default)
+function deriveLegacyAnswerType({ options, allowTextAnswer }) {
+  const hasChoices = Array.isArray(options) && options.length > 0;
+  if (hasChoices && !allowTextAnswer) return 'single_choice';
+  return 'open_text';
+}
+
+const REQUIREMENT_VALUES = new Set([
+  'optional',
+  'choice',
+  'text',
+  'any',
+  'both',
+]);
 
 router.delete(
   '/questions/:id',

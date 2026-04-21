@@ -5,21 +5,17 @@ export const ITEM_KINDS = {
   QUESTION: 'question',
 };
 
-export const ANSWER_TYPES = {
-  OPEN_TEXT: 'open_text',
-  SINGLE_CHOICE: 'single_choice',
-};
-
 // Display labels. Free to change without touching any logic.
 export const ITEM_KIND_LABELS = {
   [ITEM_KINDS.CONTENT]: 'תוכן',
   [ITEM_KINDS.QUESTION]: 'שאלה',
 };
 
-export const ANSWER_TYPE_LABELS = {
-  [ANSWER_TYPES.OPEN_TEXT]: 'טקסט חופשי',
-  [ANSWER_TYPES.SINGLE_CHOICE]: 'בחירה יחידה',
-};
+// ANSWER_TYPES / ANSWER_TYPE_LABELS were removed when the question
+// item moved to the unified model (options + allowTextAnswer +
+// requirement). See client/src/lib/questionRequirement.js for the
+// replacement. The server still writes `answerType` during the
+// rollback window as a deprecated mirror column.
 
 // Filter chips in the list pane. Keys are stable.
 export const LIST_FILTERS = [

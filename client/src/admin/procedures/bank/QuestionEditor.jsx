@@ -7,12 +7,13 @@ import {
   useSearchParams,
 } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
+import { ITEM_KINDS, ITEM_KIND_LABELS } from './config.js';
 import {
-  ANSWER_TYPES,
-  ANSWER_TYPE_LABELS,
-  ITEM_KINDS,
-  ITEM_KIND_LABELS,
-} from './config.js';
+  REQUIREMENTS,
+  REQUIREMENT_LABELS,
+  validRequirementsFor,
+  coerceRequirement,
+} from '../../../lib/questionRequirement.js';
 import EditorTopBar from './EditorTopBar.jsx';
 import RichEditor from '../../../editor/RichEditor.jsx';
 import TitleEditor, { titleToPlain } from '../../../editor/TitleEditor.jsx';
@@ -61,8 +62,9 @@ export default function QuestionEditor() {
         setForm({
           title: item.title || '',
           questionText: item.questionText || '',
-          answerType: item.answerType || ANSWER_TYPES.OPEN_TEXT,
           options: Array.isArray(item.options) ? item.options : [],
+          allowTextAnswer: !!item.allowTextAnswer,
+          requirement: item.requirement || REQUIREMENTS.OPTIONAL,
           internalNote: item.internalNote || '',
         });
         setSavedAt(item.updatedAt || null);
@@ -83,14 +85,24 @@ export default function QuestionEditor() {
       if (!snapshot || !targetId) return;
       setSaving(true);
       try {
+        // Coerce requirement to something valid for the current shape
+        // before saving — e.g. if the admin removed the last option
+        // while requirement was 'choice', persist 'optional' instead of
+        // a contradictory value.
+        const cleanOptions = snapshot.options
+          .map((o) => o.trim())
+          .filter(Boolean);
+        const coerced = coerceRequirement({
+          options: cleanOptions,
+          allowTextAnswer: snapshot.allowTextAnswer,
+          requirement: snapshot.requirement,
+        });
         const updated = await api.questionItems.update(targetId, {
           title: snapshot.title,
           questionText: snapshot.questionText,
-          answerType: snapshot.answerType,
-          options:
-            snapshot.answerType === ANSWER_TYPES.SINGLE_CHOICE
-              ? snapshot.options.map((o) => o.trim()).filter(Boolean)
-              : [],
+          options: cleanOptions,
+          allowTextAnswer: !!snapshot.allowTextAnswer,
+          requirement: coerced,
           internalNote: snapshot.internalNote.trim() || null,
         });
         setSavedAt(updated.updatedAt);
@@ -150,14 +162,20 @@ export default function QuestionEditor() {
     if (!id || !pending) return;
     setInsertingToFlow(true);
     try {
+      const cleanOptions = form.options
+        .map((o) => o.trim())
+        .filter(Boolean);
+      const coerced = coerceRequirement({
+        options: cleanOptions,
+        allowTextAnswer: form.allowTextAnswer,
+        requirement: form.requirement,
+      });
       await api.questionItems.update(id, {
         title: form.title,
         questionText: form.questionText,
-        answerType: form.answerType,
-        options:
-          form.answerType === ANSWER_TYPES.SINGLE_CHOICE
-            ? form.options.map((o) => o.trim()).filter(Boolean)
-            : [],
+        options: cleanOptions,
+        allowTextAnswer: !!form.allowTextAnswer,
+        requirement: coerced,
         internalNote: form.internalNote.trim() || null,
       });
       const { flowId } = await commitPending(ITEM_KINDS.QUESTION, id, form);
@@ -238,28 +256,14 @@ export default function QuestionEditor() {
           </Section>
 
           <Section title="סוג תשובה">
-            <div className="flex gap-1 bg-gray-100 rounded-md p-1">
-              {Object.values(ANSWER_TYPES).map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setField({ answerType: t })}
-                  className={`flex-1 text-center px-3 py-2 text-sm rounded transition ${
-                    form.answerType === t
-                      ? 'bg-white shadow-sm text-gray-900 font-semibold'
-                      : 'text-gray-600'
-                  }`}
-                >
-                  {ANSWER_TYPE_LABELS[t]}
-                </button>
-              ))}
-            </div>
-
-            {form.answerType === ANSWER_TYPES.SINGLE_CHOICE && (
-              <div className="space-y-2 mt-4">
-                <div className="text-sm font-medium text-gray-800">אפשרויות</div>
+            <Field
+              label="אפשרויות לבחירה"
+              hint="אם ריק — לא תוצגנה אפשרויות. ניתן להשאיר ריק כאשר רוצים רק שדה טקסט חופשי."
+            >
+              <div className="space-y-2">
                 {form.options.length === 0 && (
-                  <div className="text-xs text-gray-500">
-                    אין אפשרויות. הוסיפו לפחות אחת.
+                  <div className="text-[12px] text-gray-500 italic">
+                    אין אפשרויות.
                   </div>
                 )}
                 {form.options.map((opt, i) => (
@@ -287,7 +291,30 @@ export default function QuestionEditor() {
                   + הוספת אפשרות
                 </button>
               </div>
-            )}
+            </Field>
+
+            <Field
+              label="שדה טקסט חופשי"
+              hint='אפשר למדריך להוסיף הערה בטקסט חופשי. משולב עם אפשרויות: ניתן להציג גם רשימת אפשרויות וגם שדה טקסט.'
+            >
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={!!form.allowTextAnswer}
+                  onChange={(e) =>
+                    setField({ allowTextAnswer: e.target.checked })
+                  }
+                />
+                <span>הצג שדה טקסט חופשי</span>
+              </label>
+            </Field>
+
+            <RequirementControl
+              options={form.options}
+              allowTextAnswer={form.allowTextAnswer}
+              value={form.requirement}
+              onChange={(r) => setField({ requirement: r })}
+            />
           </Section>
 
           <Section title="מטה-מידע">
@@ -303,6 +330,52 @@ export default function QuestionEditor() {
         </div>
       </div>
     </div>
+  );
+}
+
+// Single control for "when is this question required?". Renders only
+// the requirement values that make sense for the current question
+// shape — no contradictory options (e.g. "must select a choice" when
+// there are no choices). If the current value stops being valid
+// because the shape changed, we fall back to 'optional' visually.
+function RequirementControl({ options, allowTextAnswer, value, onChange }) {
+  const valid = validRequirementsFor({ options, allowTextAnswer });
+  // Render in a canonical order regardless of valid-set membership.
+  const order = [
+    REQUIREMENTS.OPTIONAL,
+    REQUIREMENTS.CHOICE,
+    REQUIREMENTS.TEXT,
+    REQUIREMENTS.ANY,
+    REQUIREMENTS.BOTH,
+  ];
+  const visible = order.filter((r) => valid.has(r));
+  const effective = valid.has(value) ? value : REQUIREMENTS.OPTIONAL;
+
+  return (
+    <Field
+      label="מתי חובה?"
+      hint="מה נדרש כדי שהתשובה תיחשב מלאה."
+    >
+      <div className="flex flex-col gap-1.5">
+        {visible.map((r) => (
+          <label
+            key={r}
+            className={`flex items-center gap-2 text-sm cursor-pointer rounded px-2 py-1 ${
+              effective === r ? 'bg-blue-50 text-blue-900' : ''
+            }`}
+          >
+            <input
+              type="radio"
+              name="requirement"
+              value={r}
+              checked={effective === r}
+              onChange={() => onChange(r)}
+            />
+            <span>{REQUIREMENT_LABELS[r]}</span>
+          </label>
+        ))}
+      </div>
+    </Field>
   );
 }
 

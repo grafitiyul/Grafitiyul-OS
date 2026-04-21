@@ -1,9 +1,5 @@
-import {
-  ANSWER_TYPES,
-  ANSWER_TYPE_LABELS,
-  ITEM_KINDS,
-  ITEM_KIND_LABELS,
-} from '../bank/config.js';
+import { ITEM_KINDS, ITEM_KIND_LABELS } from '../bank/config.js';
+import { REQUIREMENT_LABELS } from '../../../lib/questionRequirement.js';
 
 // Read-only preview of a content or question item. Renders the same HTML
 // the learner will see, via the shared .gos-prose surface.
@@ -66,15 +62,17 @@ function ContentView({ item }) {
 }
 
 function QuestionView({ item }) {
-  const isChoice = item.answerType === ANSWER_TYPES.SINGLE_CHOICE;
   const options = Array.isArray(item.options) ? item.options : [];
+  const hasChoices = options.length > 0;
+  const showText = !!item.allowTextAnswer;
+  const requirement = item.requirement || 'optional';
   return (
     <>
       <h1 className="text-2xl font-semibold mb-2 text-gray-900">
         {item.title}
       </h1>
       <div className="text-[11px] text-gray-500 mb-4">
-        סוג תשובה: {ANSWER_TYPE_LABELS[item.answerType] || '—'}
+        {REQUIREMENT_LABELS[requirement] || '—'}
       </div>
       {item.questionText ? (
         <div
@@ -84,13 +82,8 @@ function QuestionView({ item }) {
       ) : (
         <div className="text-sm text-gray-400 italic mb-5">(אין נוסח שאלה)</div>
       )}
-      {isChoice ? (
-        <div className="space-y-2">
-          {options.length === 0 && (
-            <div className="text-sm text-gray-400 italic">
-              אין אפשרויות מוגדרות.
-            </div>
-          )}
+      {hasChoices && (
+        <div className="space-y-2 mb-3">
           {options.map((opt, i) => (
             <div
               key={i}
@@ -103,9 +96,17 @@ function QuestionView({ item }) {
             </div>
           ))}
         </div>
-      ) : (
+      )}
+      {showText && (
         <div className="border border-dashed border-gray-300 rounded-md p-3 text-sm text-gray-500">
-          (העובד יזין כאן תשובה חופשית)
+          {hasChoices
+            ? '(שדה טקסט חופשי — הערה נוספת)'
+            : '(העובד יזין כאן תשובה חופשית)'}
+        </div>
+      )}
+      {!hasChoices && !showText && (
+        <div className="text-sm text-gray-400 italic">
+          אין אפשרויות ואין שדה טקסט.
         </div>
       )}
     </>

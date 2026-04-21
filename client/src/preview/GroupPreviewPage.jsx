@@ -114,8 +114,8 @@ function ItemCard({ node }) {
           className="gos-prose text-gray-700 mb-4"
           dangerouslySetInnerHTML={{ __html: qi?.questionText || '' }}
         />
-        {qi?.answerType === 'single_choice' && Array.isArray(qi.options) && (
-          <div className="space-y-2">
+        {Array.isArray(qi?.options) && qi.options.length > 0 && (
+          <div className="space-y-2 mb-2">
             {qi.options.map((opt, i) => (
               <div
                 key={i}
@@ -126,9 +126,11 @@ function ItemCard({ node }) {
             ))}
           </div>
         )}
-        {qi?.answerType === 'open_text' && (
+        {qi?.allowTextAnswer && (
           <div className="border border-gray-200 rounded px-4 py-6 text-gray-400 italic">
-            תשובה פתוחה — העובד יענה כאן…
+            {qi.options && qi.options.length > 0
+              ? 'הערה נוספת (טקסט חופשי)'
+              : 'תשובה פתוחה — העובד יענה כאן…'}
           </div>
         )}
       </section>

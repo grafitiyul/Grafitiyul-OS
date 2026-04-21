@@ -10,7 +10,7 @@ import {
 } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { api } from '../../../lib/api.js';
-import { ITEM_KINDS, ITEM_KIND_LABELS, ANSWER_TYPES } from '../bank/config.js';
+import { ITEM_KINDS, ITEM_KIND_LABELS } from '../bank/config.js';
 import ItemPicker from './ItemPicker.jsx';
 import { setPending as setPendingFlowInsert } from './pendingFlowInsert.js';
 import ItemPreview from './ItemPreview.jsx';
@@ -405,8 +405,9 @@ export default function FlowEditor() {
           ? await api.questionItems.create({
               title: '',
               questionText: '',
-              answerType: ANSWER_TYPES.OPEN_TEXT,
               options: [],
+              allowTextAnswer: true,
+              requirement: 'optional',
             })
           : await api.contentItems.create({ title: '', body: '' });
       setPendingFlowInsert(flow.id, pickerContext);

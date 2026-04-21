@@ -20,7 +20,7 @@ import {
   useDroppable,
   DragOverlay,
 } from '@dnd-kit/core';
-import { ITEM_KINDS, ITEM_KIND_LABELS, LIST_FILTERS, ANSWER_TYPES } from './config.js';
+import { ITEM_KINDS, ITEM_KIND_LABELS, LIST_FILTERS } from './config.js';
 import { api } from '../../../lib/api.js';
 import { titleToPlain } from '../../../editor/TitleEditor.jsx';
 import PromptDialog from '../../common/PromptDialog.jsx';
@@ -686,11 +686,15 @@ export default function BankListPane({
         onChanged?.();
         navigate(`/admin/procedures/bank/content/${created.id}${qs}`);
       } else {
+        // Default new-question shape: free-text enabled, optional.
+        // Admin opens the editor and narrows the shape (add options /
+        // change requirement) before saving.
         const created = await api.questionItems.create({
           title: '',
           questionText: '',
-          answerType: ANSWER_TYPES.OPEN_TEXT,
           options: [],
+          allowTextAnswer: true,
+          requirement: 'optional',
           folderId,
         });
         onChanged?.();

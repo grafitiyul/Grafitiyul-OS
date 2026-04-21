@@ -87,8 +87,8 @@ function QuestionBody({ item }) {
         className="gos-prose text-gray-800 mb-6"
         dangerouslySetInnerHTML={{ __html: item.questionText || '' }}
       />
-      {item.answerType === 'single_choice' && Array.isArray(item.options) && (
-        <div className="space-y-3">
+      {Array.isArray(item.options) && item.options.length > 0 && (
+        <div className="space-y-3 mb-3">
           {item.options.map((opt, i) => (
             <div
               key={i}
@@ -99,9 +99,11 @@ function QuestionBody({ item }) {
           ))}
         </div>
       )}
-      {item.answerType === 'open_text' && (
+      {item.allowTextAnswer && (
         <div className="border border-gray-200 rounded-lg px-5 py-8 text-base text-gray-400 italic">
-          תשובה פתוחה — העובד יענה כאן…
+          {item.options && item.options.length > 0
+            ? 'הערה נוספת (טקסט חופשי)'
+            : 'תשובה פתוחה — העובד יענה כאן…'}
         </div>
       )}
     </>

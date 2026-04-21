@@ -49,22 +49,39 @@ model ContentItem {
   @@index([folderId, sortOrder])
 }
 
-// Reusable question item in the bank
-// answerType: 'open_text' | 'single_choice'
-// `title` also holds HTML for dynamic-field chip support.
+// Reusable question item in the bank. Unified model — a single question
+// can present predefined choices, a free-text field, or both, with a
+// single `requirement` field controlling when an answer is required.
+//
+//   options          — choice labels; empty = no choices
+//   allowTextAnswer  — show the free-text field to the learner
+//   requirement      — one of:
+//     'optional' — the question can be skipped
+//     'choice'   — learner must select a choice (text is optional)
+//     'text'     — learner must fill the text (choice is optional)
+//     'any'      — learner must fill at least one of choice / text
+//     'both'     — learner must fill both choice and text
+//   Only the values that make sense for the current shape are allowed at
+//   the API / editor layer; see lib/questionRequirement.js.
+//
+// `answerType` is kept as a deprecated column for one release cycle so
+// a rollback is safe. New behaviour reads the three fields above and
+// ignores answerType. The column will be removed in a follow-up slice.
 model QuestionItem {
-  id           String          @id @default(cuid())
-  title        String
-  questionText String          @default("")
-  answerType   String
-  options      String[]        @default([])
-  internalNote String?
-  sortOrder    Int             @default(0)
-  folder       ItemBankFolder? @relation(fields: [folderId], references: [id])
-  folderId     String?
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
-  flowNodes    FlowNode[]
+  id              String          @id @default(cuid())
+  title           String
+  questionText    String          @default("")
+  answerType      String          // DEPRECATED — see block comment above
+  options         String[]        @default([])
+  allowTextAnswer Boolean         @default(false)
+  requirement     String          @default("optional")
+  internalNote    String?
+  sortOrder       Int             @default(0)
+  folder          ItemBankFolder? @relation(fields: [folderId], references: [id])
+  folderId        String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  flowNodes       FlowNode[]
 
   @@index([folderId, sortOrder])
 }

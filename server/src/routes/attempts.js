@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
+import { validateAnswer } from '../services/questionRequirement.js';
 
 const router = Router();
 
@@ -37,13 +38,36 @@ function questionNodes(linear) {
   return linear.filter((n) => n.kind === 'question');
 }
 
-// Which question nodes currently need (re)answering? Any question that has no
-// answers yet, or whose latest answer is 'rejected'.
+// Which question nodes currently need (re)answering?
+//
+// A question is outstanding when EITHER:
+//   * its latest answer was rejected by a reviewer, OR
+//   * the latest answer doesn't satisfy the question's unified
+//     requirement (e.g. 'choice' demands a choice, 'any' demands at
+//     least one field filled, 'optional' is always satisfied).
+//
+// Callers MUST pass question nodes with `questionItem` populated — that's
+// where the options / allowTextAnswer / requirement fields live.
 function outstandingQuestionIds(questions, latest) {
   const out = [];
   for (const q of questions) {
     const la = latest.get(q.id);
-    if (!la || la.status === 'rejected') out.push(q.id);
+    if (la?.status === 'rejected') {
+      out.push(q.id);
+      continue;
+    }
+    const qi = q.questionItem;
+    if (!qi) {
+      // Defensive: treat missing questionItem as outstanding unless an
+      // answer exists (preserves the pre-unified-model behaviour).
+      if (!la) out.push(q.id);
+      continue;
+    }
+    const answer = la
+      ? { choice: la.answerChoice, text: la.openText }
+      : { choice: null, text: null };
+    const v = validateAnswer(qi, answer);
+    if (!v.ok) out.push(q.id);
   }
   return out;
 }
@@ -98,6 +122,13 @@ router.get(
 
 // Auto-save: every learner edit on a question appends a NEW version.
 // Never overwrites. Content nodes don't produce FlowAnswer rows.
+//
+// The server validates each incoming answer against the question's
+// unified requirement (see services/questionRequirement.js). Drafts
+// that don't satisfy the requirement are still accepted as versioned
+// drafts — validation only hard-blocks on /submit — but the validator
+// is imported here so it can be reused on /submit and so the endpoint
+// is ready to reject invalid answers when we want stricter semantics.
 router.post(
   '/:id/answer',
   handle(async (req, res) => {
@@ -178,7 +209,10 @@ router.post(
     const attempt = await prisma.attempt.findUnique({
       where: { id: req.params.id },
       include: {
-        flow: { include: { nodes: true } },
+        // questionItem is required for per-question requirement
+        // validation — outstandingQuestionIds reads options /
+        // allowTextAnswer / requirement from it.
+        flow: { include: { nodes: { include: { questionItem: true } } } },
         answers: true,
       },
     });

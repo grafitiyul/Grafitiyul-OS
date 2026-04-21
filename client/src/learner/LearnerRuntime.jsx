@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
+import { validateAnswer } from '../lib/questionRequirement.js';
 
 // Entry point at /flow/:id.
 //   - ?preview=1 → local in-memory run that never hits /attempts (admin preview).
@@ -358,21 +359,46 @@ function ItemScreen({ node, isMobile, isPreview, existingAnswer, onNext }) {
   const isContent = node.kind === 'content';
   const qi = node.questionItem;
   const ci = node.contentItem;
-  const isChoice = qi?.answerType === 'single_choice';
-  const canSubmit = isContent
-    ? true
-    : isChoice
-    ? !!selected
-    : openText.trim().length > 0;
+
+  // Unified question shape. A question can show predefined choices, a
+  // free-text field, or both (see lib/questionRequirement.js for the
+  // five possible `requirement` values). The submit button is gated
+  // by validateAnswer — the same function the server uses — so the
+  // UI and the server agree on what "valid" means.
+  const hasChoices = Array.isArray(qi?.options) && qi.options.length > 0;
+  const showText = !!qi?.allowTextAnswer;
+
+  const answer = { choice: selected || null, text: openText };
+  const validation = isContent
+    ? { ok: true }
+    : validateAnswer(
+        {
+          options: qi?.options || [],
+          allowTextAnswer: showText,
+          requirement: qi?.requirement || 'optional',
+        },
+        answer,
+      );
+  const canSubmit = validation.ok;
 
   function submit() {
     if (!canSubmit) return;
-    if (isContent) onNext();
-    else if (isChoice) {
-      onNext({ answerChoice: selected, answerLabel: selected });
-    } else {
-      onNext({ openText });
+    if (isContent) {
+      onNext();
+      return;
     }
+    // Send whichever fields the learner actually filled. The server
+    // accepts both on the same FlowAnswer row, so a question with
+    // choices + text preserves both.
+    const payload = {};
+    if (selected) {
+      payload.answerChoice = selected;
+      payload.answerLabel = selected;
+    }
+    if (showText && openText.trim()) {
+      payload.openText = openText;
+    }
+    onNext(payload);
   }
 
   const Shell = isMobile ? MobileShell : DesktopShell;
@@ -410,9 +436,9 @@ function ItemScreen({ node, isMobile, isPreview, existingAnswer, onNext }) {
             }`}
             dangerouslySetInnerHTML={{ __html: qi?.questionText || '' }}
           />
-          {isChoice ? (
-            <div className={isMobile ? 'space-y-2' : 'space-y-3 mb-8'}>
-              {(qi?.options || []).map((opt, i) => (
+          {hasChoices && (
+            <div className={isMobile ? 'space-y-2 mb-4' : 'space-y-3 mb-6'}>
+              {qi.options.map((opt, i) => (
                 <label
                   key={i}
                   className={`block border rounded-lg cursor-pointer ${
@@ -432,15 +458,27 @@ function ItemScreen({ node, isMobile, isPreview, existingAnswer, onNext }) {
                   {opt}
                 </label>
               ))}
+              {selected && (
+                <button
+                  type="button"
+                  onClick={() => setSelected('')}
+                  className="text-[12px] text-gray-500 hover:text-gray-800"
+                >
+                  נקה בחירה
+                </button>
+              )}
             </div>
-          ) : (
+          )}
+          {showText && (
             <textarea
               className={`w-full border rounded px-3 py-3 ${
                 isMobile ? 'h-40 text-base' : 'h-56 text-lg mb-6 px-4 py-4'
               }`}
               value={openText}
               onChange={(e) => setOpenText(e.target.value)}
-              placeholder="התשובה שלך…"
+              placeholder={
+                hasChoices ? 'הערה נוספת (אופציונלי)' : 'התשובה שלך…'
+              }
             />
           )}
         </>
@@ -544,10 +582,19 @@ function ResubmitScreen({ attempt, isMobile, onSubmitted }) {
   const outstanding = payload.outstanding || [];
   const allFilled = outstanding.every((o) => {
     const d = drafts[o.node.id];
-    if (!d) return false;
     const qi = o.node.questionItem;
-    if (qi?.answerType === 'single_choice') return !!d.answerChoice;
-    return (d.openText || '').trim().length > 0;
+    const v = validateAnswer(
+      {
+        options: qi?.options || [],
+        allowTextAnswer: !!qi?.allowTextAnswer,
+        requirement: qi?.requirement || 'optional',
+      },
+      {
+        choice: d?.answerChoice || null,
+        text: d?.openText || null,
+      },
+    );
+    return v.ok;
   });
 
   async function submitAll() {
@@ -626,7 +673,8 @@ function ResubmitScreen({ attempt, isMobile, onSubmitted }) {
 function OutstandingBlock({ block, draft, onChange }) {
   const { node, precedingContent, lastAnswer } = block;
   const qi = node.questionItem;
-  const isChoice = qi?.answerType === 'single_choice';
+  const hasChoices = Array.isArray(qi?.options) && qi.options.length > 0;
+  const showText = !!qi?.allowTextAnswer;
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-5">
@@ -684,11 +732,11 @@ function OutstandingBlock({ block, draft, onChange }) {
         </div>
       )}
 
-      <div>
-        <div className="text-sm font-medium mb-2">התשובה החדשה שלך</div>
-        {isChoice ? (
+      <div className="space-y-3">
+        <div className="text-sm font-medium">התשובה החדשה שלך</div>
+        {hasChoices && (
           <div className="space-y-2">
-            {(qi?.options || []).map((opt, i) => (
+            {qi.options.map((opt, i) => (
               <label
                 key={i}
                 className={`block border rounded-lg cursor-pointer px-4 py-3 ${
@@ -714,12 +762,13 @@ function OutstandingBlock({ block, draft, onChange }) {
               </label>
             ))}
           </div>
-        ) : (
+        )}
+        {showText && (
           <textarea
             className="w-full border rounded px-3 py-3 h-32"
             value={draft.openText || ''}
             onChange={(e) => onChange({ openText: e.target.value })}
-            placeholder="התשובה שלך…"
+            placeholder={hasChoices ? 'הערה נוספת (אופציונלי)' : 'התשובה שלך…'}
           />
         )}
       </div>
