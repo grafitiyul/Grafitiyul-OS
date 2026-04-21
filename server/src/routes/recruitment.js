@@ -1,37 +1,120 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { Router } from 'express';
 import { handle } from '../asyncHandler.js';
 
-// Mock-backed recruitment source endpoints. Recruitment is source of truth
-// for GUIDES and (eventually) TRAINING MATERIALS — it does NOT model
-// teams. These endpoints are a read-only projection of the upstream data,
-// consumed by the import endpoints on /api/people/import (and later, when
-// training-material sync is wired, /api/training-materials/import).
+// Live recruitment-export integration.
 //
-// When live sync lands, the JSON-file load below is replaced by an HTTP
-// call to the recruitment backend. The shape contract stays the same, so
-// no downstream code needs to change.
+// The recruitment system (grafitiyul-recruitment) exposes read-only export
+// endpoints. This router proxies them into the management system's
+// /api/recruitment/* namespace and is the ONLY source of truth for
+// imported guide identity.
+//
+// Contract with upstream (per Slice 8 integration spec):
+//   GET  ${RECRUITMENT_API_BASE_URL}/api/export/guides
+//        → array of guide objects (or { guides|data|items: [...] })
+//          Fields used: id / externalPersonId / guideId / _id (first non-empty),
+//                       fullName / displayName / name,
+//                       email,
+//                       phone / mobile / phoneNumber.
+//
+// Constraints:
+//   * No caching (respect the project-wide no-store policy). Every request
+//     does a live upstream fetch.
+//   * No transformation beyond the field projection above — we never
+//     synthesize data, compute new fields, or merge rows.
+//   * The upstream export layer is owned by the recruitment team and
+//     never modified from here.
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MOCK_PATH = path.resolve(__dirname, '../data/recruitment.mock.json');
+const UPSTREAM_TIMEOUT_MS = 10_000;
 
-async function readSnapshot() {
-  const raw = await fs.readFile(MOCK_PATH, 'utf-8');
-  const parsed = JSON.parse(raw);
+function baseUrl() {
+  const v = process.env.RECRUITMENT_API_BASE_URL;
+  if (!v || !String(v).trim()) {
+    const err = new Error('recruitment_base_url_not_configured');
+    err.statusCode = 503;
+    err.detail =
+      'Set RECRUITMENT_API_BASE_URL env var to the grafitiyul-recruitment origin ' +
+      '(e.g. https://grafitiyul-recruitment.up.railway.app). Without it, ' +
+      '/api/recruitment/* cannot fetch real data.';
+    throw err;
+  }
+  return String(v).trim().replace(/\/+$/, '');
+}
+
+async function fetchUpstream(path) {
+  const url = `${baseUrl()}${path}`;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), UPSTREAM_TIMEOUT_MS);
+  let res;
+  try {
+    res = await fetch(url, {
+      cache: 'no-store',
+      signal: ctl.signal,
+      headers: { Accept: 'application/json' },
+    });
+  } catch (e) {
+    const err = new Error('recruitment_upstream_unreachable');
+    err.statusCode = 502;
+    err.detail = `GET ${url} failed: ${e?.name === 'AbortError' ? `timeout after ${UPSTREAM_TIMEOUT_MS}ms` : e?.message}`;
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    const err = new Error('recruitment_upstream_error');
+    err.statusCode = 502;
+    err.detail = `GET ${url} → ${res.status} ${body.slice(0, 200)}`;
+    throw err;
+  }
+  return res.json();
+}
+
+// Accept multiple envelope shapes. The recruitment team may ship either
+// a bare array or a wrapped object; we handle the common wrappings so the
+// contract doesn't depend on a single convention.
+function arrayOf(response) {
+  if (Array.isArray(response)) return response;
+  if (response && typeof response === 'object') {
+    if (Array.isArray(response.guides)) return response.guides;
+    if (Array.isArray(response.data)) return response.data;
+    if (Array.isArray(response.items)) return response.items;
+  }
+  return [];
+}
+
+// Pure projection. "First non-empty among a known set of field names" is
+// simple mapping, not transformation — it lets us accept either legacy
+// (id / fullName / mobile) or new (externalPersonId / displayName / phone)
+// upstream naming without reshaping values.
+function projectGuide(g) {
+  if (!g || typeof g !== 'object') return null;
+  const externalPersonId =
+    g.externalPersonId ?? g.id ?? g.guideId ?? g._id ?? null;
+  const displayName = g.displayName ?? g.fullName ?? g.name ?? null;
+  const email = g.email ?? null;
+  const phone = g.phone ?? g.mobile ?? g.phoneNumber ?? null;
+  if (externalPersonId == null || String(externalPersonId).trim() === '') {
+    return null;
+  }
+  if (displayName == null || String(displayName).trim() === '') return null;
   return {
-    people: Array.isArray(parsed.people) ? parsed.people : [],
-    trainingMaterials: Array.isArray(parsed.trainingMaterials)
-      ? parsed.trainingMaterials
-      : [],
+    externalPersonId: String(externalPersonId).trim(),
+    displayName: String(displayName).trim(),
+    email: email ? String(email).trim() || null : null,
+    phone: phone ? String(phone).trim() || null : null,
   };
 }
 
-// Exported so import endpoints in people.js (and later training-materials)
-// can reuse the same source without duplicating file-read logic.
+async function getGuides() {
+  const raw = await fetchUpstream('/api/export/guides');
+  return arrayOf(raw).map(projectGuide).filter(Boolean);
+}
+
+// Exported for /api/people/import so the same upstream call backs both
+// the preview (/api/recruitment/people) and the upsert endpoint.
 export async function getRecruitmentSnapshot() {
-  return readSnapshot();
+  const people = await getGuides();
+  return { people, trainingMaterials: [] };
 }
 
 const router = Router();
@@ -39,27 +122,39 @@ const router = Router();
 router.get(
   '/people',
   handle(async (_req, res) => {
-    const snap = await readSnapshot();
-    res.json(snap.people);
+    res.json(await getGuides());
   }),
 );
 
-// Placeholder — training-material import UI is not built yet. Endpoint
-// exists so the contract is discoverable once the feature lands.
+// Training-materials export is not yet wired on the upstream side. When
+// it lands, swap the empty array for a fetchUpstream('/api/export/...')
+// call following the same pattern as /people above.
 router.get(
   '/training-materials',
   handle(async (_req, res) => {
-    const snap = await readSnapshot();
-    res.json(snap.trainingMaterials);
+    res.json([]);
   }),
 );
 
-// Full snapshot — useful for the Import dialog to preview before pulling.
 router.get(
   '/',
   handle(async (_req, res) => {
-    res.json(await readSnapshot());
+    res.json(await getRecruitmentSnapshot());
   }),
 );
+
+// Local error handler — converts our structured errors (with statusCode +
+// detail) into proper HTTP responses so the client sees 502/503 instead
+// of a generic 500 when upstream is down or misconfigured.
+router.use((err, _req, res, _next) => {
+  console.error('[recruitment]', err);
+  const status = err?.statusCode && Number.isInteger(err.statusCode)
+    ? err.statusCode
+    : 500;
+  res.status(status).json({
+    error: err?.message || 'internal_error',
+    detail: err?.detail || null,
+  });
+});
 
 export default router;
