@@ -115,38 +115,58 @@ export function computeInsertion({
     };
   }
 
-  const above = pointerY < overRect.top + overRect.height / 2;
+  // Vertical position within the hovered row, 0..1.
+  const fractionY =
+    overRect.height > 0
+      ? (pointerY - overRect.top) / overRect.height
+      : 0.5;
 
   // ── Leaf row (non-container) ──
-  // Drop lands as a sibling of over (same parent).
+  // Two zones: above midpoint = sibling-before, below = sibling-after.
   if (!over.isContainer) {
     const parent = parentOf(over);
     if (!accepts(parent)) return null;
-    if (above) return pack(parent, localIndex(over), overIdx);
+    if (fractionY < 0.5) return pack(parent, localIndex(over), overIdx);
     return pack(parent, localIndex(over) + 1, overIdx + 1);
   }
 
   // ── Container row ──
-  // Top half:   prefer sibling-before (insert at parent level); if the
-  //             parent rejects this kind, fall through to "first child
-  //             of container" (e.g. an item drop above a folder header
-  //             when root doesn't accept items).
-  // Bottom half: prefer "first child of container"; if the container is
-  //             collapsed or rejects this kind, fall back to sibling-
-  //             after (after container in its parent).
-  if (above) {
-    const parent = parentOf(over);
+  // Three zones: top 25% = sibling-before, middle 50% = INTO container,
+  // bottom 25% = sibling-after. This makes "drop into folder" a
+  // generous, deliberate hit target (middle half of the row) and gives
+  // precise sibling control at the edges. Identical behaviour for
+  // empty and non-empty containers — no special case.
+  //
+  // Fallbacks when a zone's natural target doesn't accept the kind:
+  //   * sibling-before → into container
+  //   * into container → sibling-after
+  //   * sibling-after → into container (last resort for collapsed
+  //     containers that nothing else accepts)
+  const parent = parentOf(over);
+
+  if (fractionY < 0.25) {
     if (accepts(parent)) return pack(parent, localIndex(over), overIdx);
     if (accepts(over)) return pack(over, 0, overIdx + 1);
     return null;
   }
-  if (!over.collapsed && accepts(over)) return pack(over, 0, overIdx + 1);
-  const parent = parentOf(over);
+
+  if (fractionY < 0.75) {
+    if (!over.collapsed && accepts(over)) return pack(over, 0, overIdx + 1);
+    if (accepts(parent)) {
+      // Container rejects this kind — treat middle as sibling-after.
+      let end = overIdx;
+      for (let i = overIdx + 1; i < rows.length; i++) {
+        if (rows[i].depth > over.depth) end = i;
+        else break;
+      }
+      return pack(parent, localIndex(over) + 1, end + 1);
+    }
+    if (accepts(over)) return pack(over, 0, overIdx + 1);
+    return null;
+  }
+
+  // Bottom 25%.
   if (accepts(parent)) {
-    // Sibling-after: flatIndex must skip the container's subtree so
-    // the indicator renders at the END of its children, not
-    // immediately after the header. Descendants in `rows` are
-    // contiguous because we flatten depth-first.
     let end = overIdx;
     for (let i = overIdx + 1; i < rows.length; i++) {
       if (rows[i].depth > over.depth) end = i;
@@ -154,10 +174,6 @@ export function computeInsertion({
     }
     return pack(parent, localIndex(over) + 1, end + 1);
   }
-  // Last resort: collapsed container that nothing outside accepts. Drop
-  // into it as first child. Indicator renders below the header; the item
-  // becomes the folder's new first child even though the folder stays
-  // visually collapsed until the user expands it.
   if (accepts(over)) return pack(over, 0, overIdx + 1);
   return null;
 }

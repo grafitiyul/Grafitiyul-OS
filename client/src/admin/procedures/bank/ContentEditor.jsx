@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  useLocation,
   useNavigate,
   useOutletContext,
   useParams,
@@ -116,12 +117,17 @@ export default function ContentEditor() {
     setForm((f) => ({ ...f, ...patch }));
   }
 
+  const location = useLocation();
   const [deleteOpen, setDeleteOpen] = useState(false);
   const onDelete = useCallback(() => setDeleteOpen(true), []);
   const onDeleted = useCallback(async () => {
     await refresh?.();
-    navigate('/admin/procedures/bank', { replace: true });
-  }, [navigate, refresh]);
+    // Preserve any folder param in the URL so we return to the folder
+    // the user was viewing before opening this item.
+    navigate(`/admin/procedures/bank${location.search || ''}`, {
+      replace: true,
+    });
+  }, [navigate, refresh, location.search]);
 
   async function addToFlow() {
     if (!id || !pending) return;

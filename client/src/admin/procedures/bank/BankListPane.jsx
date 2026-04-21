@@ -193,12 +193,20 @@ export default function BankListPane({
     return m;
   }, [rows]);
 
-  const selectableIds = useMemo(
-    () => rows.filter((r) => r.kind !== 'folder').map((r) => r.id),
-    [rows],
-  );
+  // Every visible row — folder or item — is selectable. Folders get a
+  // checkbox + modifier-click handling just like items. Mixed selection
+  // (folders + items together) is supported end-to-end.
+  const selectableIds = useMemo(() => rows.map((r) => r.id), [rows]);
 
   const sel = useSelection();
+
+  // Clearing selection when the user navigates into a different folder
+  // removes the mental-model cliff of "I had things selected but they're
+  // not here anymore" — selection that spans views is confusing.
+  useEffect(() => {
+    sel.clear();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentFolderId]);
 
   // ── DnD wiring ──
   const sensors = useSensors(
@@ -251,13 +259,25 @@ export default function BankListPane({
     const id = String(event.active.id);
     const row = rowById.get(id);
     if (!row) return;
+
+    // Drag-set resolution is done HERE, directly against the live
+    // selection set, to avoid closure staleness. Rule (file-manager
+    // standard): if the dragged row is in the current selection, drag
+    // the whole selection; otherwise drag just this one row (and do
+    // not mutate the selection). The selection can contain folders
+    // AND items (mixed), so `dragKind` tracks the ACTIVE row's kind
+    // only — it's used for UX polish (overlay style, empty-slot
+    // checks), not for filtering the drag set.
+    let dragSet;
+    if (sel.selected.has(id)) {
+      dragSet = new Set(sel.selected);
+    } else {
+      dragSet = new Set([id]);
+    }
+
     setActiveId(id);
     setDragKind(row.kind === 'folder' ? 'folder' : 'item');
-    if (row.kind === 'folder') {
-      setDraggingSet(new Set([id]));
-    } else {
-      setDraggingSet(sel.dragSetFor(id));
-    }
+    setDraggingSet(dragSet);
     setInsertion(null);
     setBreadcrumbOver(null);
   }
@@ -317,231 +337,217 @@ export default function BankListPane({
   }
 
   function onDragEnd(event) {
-    // Snapshot everything BEFORE clearing drag state. Relying on the
-    // state variables after calling the clear helper is fragile — React
-    // async state means they'd still be the old values inside this
-    // tick, but under concurrent rendering that guarantee can break.
-    // A local snapshot is zero-cost and removes the class of bugs.
-    const snapshotKind = dragKind;
+    // Snapshot before clearing — state reads after setState calls are
+    // fragile under concurrent rendering.
     const snapshotMovedIds = Array.from(draggingSet);
     const snapshotInsertion = insertion;
     const overId = event.over?.id ? String(event.over.id) : null;
 
-    // Commit the reorder first so the optimistic DOM update happens
-    // while dnd-kit is still tearing down the overlay — the user sees
-    // the row appear in its new position immediately, no visible gap.
-    if (snapshotMovedIds.length > 0) {
-      if (overId && overId.startsWith(BREADCRUMB_PREFIX)) {
-        const target =
-          overId === BREADCRUMB_ROOT_ID
-            ? null
-            : overId.slice(BREADCRUMB_PREFIX.length);
-        if (snapshotKind === 'folder') {
-          const f = snapshotMovedIds[0];
-          if (f) {
-            const id = f.slice('folder::'.length);
-            const cycle =
-              target &&
-              (id === target || folderDescendantIds(id).has(target));
-            if (!cycle) commitFolderMoveToParent(id, target);
-          }
-        } else {
-          commitItemsMoveToFolder(snapshotMovedIds, target);
-        }
-      } else if (snapshotInsertion) {
-        if (snapshotKind === 'folder') {
-          commitFolderMove(snapshotMovedIds[0], snapshotInsertion);
-        } else {
-          commitItemMove(snapshotMovedIds, snapshotInsertion);
-        }
-      }
+    if (snapshotMovedIds.length === 0) {
+      onDragCancel();
+      return;
     }
 
-    // Clear drag state last so the original row's opacity-40 stays in
-    // place until the flushSync'd optimistic update has already moved
-    // it. No ghost-in-old-position flash.
+    // Split dragged rows by kind. Selection (and therefore draggingSet)
+    // can contain folders, items, or both — we handle all three via a
+    // single commit path.
+    const folderDbIds = [];
+    const itemRowIds = [];
+    for (const rowId of snapshotMovedIds) {
+      const row = rowById.get(rowId);
+      if (!row) continue;
+      if (row.kind === 'folder') folderDbIds.push(row.meta.id);
+      else itemRowIds.push(rowId);
+    }
+
+    // Breadcrumb drop → move all dragged rows into the clicked ancestor,
+    // appended at its end. No precise-index semantics (user is saying
+    // "move these OUT of here", not "into position K").
+    if (overId && overId.startsWith(BREADCRUMB_PREFIX)) {
+      const target =
+        overId === BREADCRUMB_ROOT_ID
+          ? null
+          : overId.slice(BREADCRUMB_PREFIX.length);
+      commitMoveToFolder({
+        folderDbIds,
+        itemRowIds,
+        targetFolderId: target,
+        insertion: null, // append
+      });
+      onDragCancel();
+      return;
+    }
+
+    // Row-level drop — use the insertion produced by computeInsertion.
+    if (!snapshotInsertion) {
+      onDragCancel();
+      return;
+    }
+    const targetFolderId =
+      snapshotInsertion.parentId != null
+        ? snapshotInsertion.parentId
+        : currentFolderId || null;
+    commitMoveToFolder({
+      folderDbIds,
+      itemRowIds,
+      targetFolderId,
+      insertion: snapshotInsertion,
+    });
     onDragCancel();
   }
 
-  // ── Commit helpers ──
-
-  // Folder reorder/move. One path for BOTH same-parent reorder and
-  // cross-parent move: build the target parent's ordered children with
-  // the dragged folder inserted at the computed index, then call the
-  // atomic reorder endpoint (it sets parentId + sortOrder in one
-  // transaction for every entry).
+  // ── Unified move commit ──
   //
-  // ins.parentId is null when the drop lands at the current view's
-  // level (siblings of the visible folders) and non-null when the drop
-  // lands INTO a visible sub-folder.
-  function commitFolderMove(rowId, ins) {
-    const row = rowById.get(rowId);
-    if (!row || row.kind !== 'folder') return;
-    const folderId = row.meta.id;
-    const targetParentId =
-      ins.parentId == null ? currentFolderId || null : ins.parentId;
+  // ONE code path handles:
+  //   * single-item reorder within a folder
+  //   * single-folder reorder at root
+  //   * cross-folder item move
+  //   * cross-parent folder move
+  //   * mixed multi-drag (folders + items together)
+  //   * breadcrumb drop (append semantics)
+  //
+  // The dragged rows are split by kind (folders → api.folders.reorder,
+  // items → api.bankItems.reorder) and dispatched atomically in
+  // parallel. The server endpoints both set parent/folder + sortOrder
+  // in one transaction, so from the DB's perspective it's still a
+  // single logical move per kind — there's no intermediate inconsistent
+  // state even if the two network calls resolve at different times.
+  function commitMoveToFolder({
+    folderDbIds,
+    itemRowIds,
+    targetFolderId,
+    insertion, // null ⇒ append
+  }) {
+    // Cycle prevention for folders: can't move a folder into its own
+    // subtree.
+    const safeFolderIds = folderDbIds.filter(
+      (id) => !dragFolderCreatesCycle(id, targetFolderId),
+    );
 
-    // Drop at current-view level → index is among VISIBLE folder rows
-    // (items sit after folders in the view, so the first N visible
-    // rows are folders). Drop INTO a visible sub-folder → index is 0
-    // (computeInsertion always returns 0 for "first child of over").
-    let insertIdx;
-    if (ins.parentId == null) {
-      const visibleFolderIds = rows
-        .filter((r) => r.kind === 'folder' && r.id !== rowId)
-        .map((r) => r.meta.id);
-      const neighbour = visibleFolderIds[ins.indexInParent];
-      insertIdx = neighbour != null ? indexInSiblingFolders(neighbour) : -1;
-      if (insertIdx < 0) insertIdx = siblingFolderCount(targetParentId);
-    } else {
-      insertIdx = ins.indexInParent;
+    if (safeFolderIds.length > 0) {
+      commitFoldersIntoTarget({
+        folderDbIds: safeFolderIds,
+        targetFolderId,
+        insertion,
+      });
     }
-    commitFolderMoveAt(folderId, targetParentId, insertIdx);
+    if (itemRowIds.length > 0) {
+      commitItemsIntoTarget({
+        itemRowIds,
+        targetFolderId,
+        insertion,
+        hasFolderDrag: folderDbIds.length > 0,
+      });
+    }
   }
 
-  function commitFolderMoveToParent(folderId, targetParentId) {
-    // Breadcrumb drop or explicit "move to ancestor" — append at end.
-    commitFolderMoveAt(folderId, targetParentId, siblingFolderCount(targetParentId));
-  }
-
-  function commitFolderMoveAt(folderId, targetParentId, insertIdx) {
-    if (dragFolderCreatesCycle(folderId, targetParentId)) return;
+  function commitFoldersIntoTarget({ folderDbIds, targetFolderId, insertion }) {
     const siblings = localFolders
-      .filter((f) => (f.parentId || null) === (targetParentId || null))
+      .filter((f) => (f.parentId || null) === (targetFolderId || null))
       .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-    const siblingIds = siblings.map((f) => f.id).filter((id) => id !== folderId);
-    const clampedIdx = Math.max(0, Math.min(insertIdx, siblingIds.length));
+    const existing = siblings
+      .map((f) => f.id)
+      .filter((id) => !folderDbIds.includes(id));
+
+    let insertIdx;
+    if (!insertion) {
+      insertIdx = existing.length;
+    } else if (insertion.parentId != null) {
+      // Drop INTO a folder → dropped folders become its first children.
+      insertIdx = 0;
+    } else {
+      // Drop at current view level. The visible rows put folders
+      // before items; `insertion.indexInParent` counts visible rows
+      // that remain after the moved ones are removed. Find the
+      // neighbouring folder at that index and map it to target-
+      // sibling space.
+      const visibleFolderIdsInView = rows
+        .filter(
+          (r) =>
+            r.kind === 'folder' &&
+            !folderDbIds.includes(r.meta.id),
+        )
+        .map((r) => r.meta.id);
+      const neighbour = visibleFolderIdsInView[insertion.indexInParent];
+      insertIdx =
+        neighbour != null
+          ? existing.indexOf(neighbour)
+          : existing.length;
+      if (insertIdx < 0) insertIdx = existing.length;
+    }
+    insertIdx = Math.max(0, Math.min(insertIdx, existing.length));
     const nextIds = [
-      ...siblingIds.slice(0, clampedIdx),
-      folderId,
-      ...siblingIds.slice(clampedIdx),
+      ...existing.slice(0, insertIdx),
+      ...folderDbIds,
+      ...existing.slice(insertIdx),
     ];
+
     flushSync(() => {
       setLocalFolders((prev) =>
         prev.map((f) => {
           const idx = nextIds.indexOf(f.id);
           if (idx < 0) return f;
-          return { ...f, parentId: targetParentId || null, sortOrder: idx };
-        }),
-      );
-    });
-    api.folders.reorder(nextIds, targetParentId).catch(() => onChanged?.());
-  }
-
-  function siblingFolderCount(parentId) {
-    return localFolders.filter(
-      (f) => (f.parentId || null) === (parentId || null),
-    ).length;
-  }
-  function indexInSiblingFolders(folderId) {
-    const f = folderById.get(folderId);
-    if (!f) return -1;
-    const siblings = localFolders
-      .filter((x) => (x.parentId || null) === (f.parentId || null))
-      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-    return siblings.findIndex((x) => x.id === folderId);
-  }
-
-  function dragFolderCreatesCycle(folderId, targetParentId) {
-    if (!targetParentId) return false;
-    if (targetParentId === folderId) return true;
-    return folderDescendantIds(folderId).has(targetParentId);
-  }
-
-  // Item(s) move within or across folders using the row insertion.
-  //
-  // parentId=null means "drop at current folder level" → targetFolderId
-  // = currentFolderId. Otherwise the visible row is a folder and we're
-  // dropping INTO that folder.
-  function commitItemMove(movedIds, ins) {
-    const targetFolderId =
-      ins.parentId == null ? currentFolderId || null : ins.parentId;
-
-    const movedInDisplayOrder = rows
-      .filter((r) => r.kind !== 'folder' && movedIds.includes(r.id))
-      .map((r) => r.meta);
-    if (movedInDisplayOrder.length === 0) return;
-
-    const currentTargetChildren = [
-      ...localContent
-        .filter((i) => (i.folderId || null) === targetFolderId)
-        .map((i) => ({ ...i, kind: ITEM_KINDS.CONTENT })),
-      ...localQuestions
-        .filter((i) => (i.folderId || null) === targetFolderId)
-        .map((i) => ({ ...i, kind: ITEM_KINDS.QUESTION })),
-    ].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-
-    // Remap indexInParent: in the visible view the index counts folders
-    // + items; in the target folder it only counts items. If dropping
-    // into a sub-folder (parentId is a folder id), the index is already
-    // relative to that folder's children (and folder-target children are
-    // items only in the visible world — our flat representation shows
-    // only one level). If dropping at current level (parentId=null), we
-    // subtract the number of leading folders in the visible list.
-    let insertionIndex = ins.indexInParent;
-    if (ins.parentId == null) {
-      const visibleFolders = rows.filter((r) => r.kind === 'folder').length;
-      insertionIndex = Math.max(0, ins.indexInParent - visibleFolders);
-    }
-
-    const finalList = buildTargetOrder({
-      targetChildren: currentTargetChildren,
-      insertionIndex,
-      movedRows: movedInDisplayOrder.map((m) => ({ id: m.id, kind: m.kind })),
-    });
-
-    const patches = new Map();
-    finalList.forEach((row, idx) => {
-      patches.set(`${row.kind}:${row.id}`, {
-        sortOrder: idx,
-        folderId: targetFolderId,
-      });
-    });
-
-    flushSync(() => {
-      setLocalContent((prev) =>
-        prev.map((i) => {
-          const p = patches.get(`${ITEM_KINDS.CONTENT}:${i.id}`);
-          return p ? { ...i, ...p } : i;
-        }),
-      );
-      setLocalQuestions((prev) =>
-        prev.map((i) => {
-          const p = patches.get(`${ITEM_KINDS.QUESTION}:${i.id}`);
-          return p ? { ...i, ...p } : i;
+          return { ...f, parentId: targetFolderId || null, sortOrder: idx };
         }),
       );
     });
 
-    api.bankItems
-      .reorder(
-        finalList.map((r) => ({ kind: r.kind, id: r.id })),
-        targetFolderId,
-      )
-      .catch(() => onChanged?.());
+    api.folders.reorder(nextIds, targetFolderId).catch(() => onChanged?.());
   }
 
-  // Breadcrumb-drop path for items: move all dragged items into the
-  // target folder, appended at the end. No index computation — we're
-  // explicitly saying "move OUT of here".
-  function commitItemsMoveToFolder(movedRowIds, targetFolderId) {
+  function commitItemsIntoTarget({
+    itemRowIds,
+    targetFolderId,
+    insertion,
+    hasFolderDrag,
+  }) {
     const movedItems = rows
-      .filter((r) => r.kind !== 'folder' && movedRowIds.includes(r.id))
+      .filter((r) => r.kind !== 'folder' && itemRowIds.includes(r.id))
       .map((r) => r.meta);
     if (movedItems.length === 0) return;
 
-    const currentTargetChildren = [
+    const targetItems = [
       ...localContent
-        .filter((i) => (i.folderId || null) === targetFolderId)
+        .filter((i) => (i.folderId || null) === (targetFolderId || null))
         .map((i) => ({ ...i, kind: ITEM_KINDS.CONTENT })),
       ...localQuestions
-        .filter((i) => (i.folderId || null) === targetFolderId)
+        .filter((i) => (i.folderId || null) === (targetFolderId || null))
         .map((i) => ({ ...i, kind: ITEM_KINDS.QUESTION })),
     ].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 
+    let insertIdx;
+    if (!insertion) {
+      insertIdx = targetItems.length;
+    } else if (insertion.parentId != null) {
+      // Drop INTO a folder → items become first children.
+      insertIdx = 0;
+    } else {
+      // Drop at current view level. Visible folders precede items;
+      // subtract the number of visible folders NOT currently being
+      // moved to translate the flat view index into item space.
+      // When a folder drag is also in progress the folder portion has
+      // its own landing slot; items always start fresh from 0 or the
+      // computed offset.
+      const visibleFolderCount = rows.filter(
+        (r) => r.kind === 'folder',
+      ).length;
+      if (hasFolderDrag) {
+        // Mixed drag: the insertion index is ambiguous between
+        // folder space and item space. Put items at the start of
+        // target's items to keep the sequence predictable — "moved
+        // these all to here" semantics match the user's intent.
+        insertIdx = 0;
+      } else {
+        insertIdx = Math.max(
+          0,
+          insertion.indexInParent - visibleFolderCount,
+        );
+      }
+    }
+
     const finalList = buildTargetOrder({
-      targetChildren: currentTargetChildren,
-      insertionIndex: currentTargetChildren.length, // append
+      targetChildren: targetItems,
+      insertionIndex: insertIdx,
       movedRows: movedItems.map((m) => ({ id: m.id, kind: m.kind })),
     });
 
@@ -574,6 +580,12 @@ export default function BankListPane({
         targetFolderId,
       )
       .catch(() => onChanged?.());
+  }
+
+  function dragFolderCreatesCycle(folderId, targetParentId) {
+    if (!targetParentId) return false;
+    if (targetParentId === folderId) return true;
+    return folderDescendantIds(folderId).has(targetParentId);
   }
 
   // ── Folder dialogs ──
@@ -615,6 +627,10 @@ export default function BankListPane({
   async function createNew(kind) {
     try {
       const folderId = currentFolderId || null;
+      // Preserve the folder URL param on the editor URL so the list
+      // pane stays in this folder while the editor opens (and so the
+      // editor can navigate back to the same folder on delete).
+      const qs = folderId ? `?folder=${encodeURIComponent(folderId)}` : '';
       if (kind === ITEM_KINDS.CONTENT) {
         const created = await api.contentItems.create({
           title: '',
@@ -622,7 +638,7 @@ export default function BankListPane({
           folderId,
         });
         onChanged?.();
-        navigate(`/admin/procedures/bank/content/${created.id}`);
+        navigate(`/admin/procedures/bank/content/${created.id}${qs}`);
       } else {
         const created = await api.questionItems.create({
           title: '',
@@ -632,7 +648,7 @@ export default function BankListPane({
           folderId,
         });
         onChanged?.();
-        navigate(`/admin/procedures/bank/question/${created.id}`);
+        navigate(`/admin/procedures/bank/question/${created.id}${qs}`);
       }
     } catch (e) {
       window.alert('יצירה נכשלה: ' + e.message);
@@ -742,24 +758,26 @@ export default function BankListPane({
                 insertion={insertion}
                 activeId={activeId}
                 draggingSet={draggingSet}
-                // When the insertion target is a specific folder (non-null
-                // parentId means "drop INTO this folder"), surface it so
-                // the folder row renders a highlight ring instead of us
-                // showing a horizontal line. Two visual modes, one
-                // consistent rule — applies identically to empty and
-                // non-empty folders.
                 dropIntoFolderId={
                   insertion && insertion.parentId
                     ? insertion.parentId
                     : null
                 }
                 selectedIds={sel.selected}
-                selectableIds={selectableIds}
                 selectedFlowRoute={selectedId}
                 onEnterFolder={onEnterFolder}
-                onOpen={(row) =>
-                  navigate(`/admin/procedures/bank/${row.kind}/${row.id}`)
-                }
+                onOpen={(row) => {
+                  // Preserve the folder URL so the list keeps showing
+                  // the folder the user was in when they opened the
+                  // editor. Without this, the list pane snaps to root
+                  // while the editor opens.
+                  const qs = currentFolderId
+                    ? `?folder=${encodeURIComponent(currentFolderId)}`
+                    : '';
+                  navigate(
+                    `/admin/procedures/bank/${row.kind}/${row.id}${qs}`,
+                  );
+                }}
                 onSelectClick={(id, mods) =>
                   sel.handleClick(id, mods, selectableIds)
                 }
@@ -978,7 +996,6 @@ function RowsRenderer({
   draggingSet,
   dropIntoFolderId,
   selectedIds,
-  selectableIds,
   selectedFlowRoute,
   onEnterFolder,
   onOpen,
@@ -1055,8 +1072,11 @@ function RowNode({
         row={row}
         isActive={isActive}
         isDragSource={isDragSource}
+        isSelected={isSelected}
         isDropTarget={isDropTarget}
         onEnterFolder={onEnterFolder}
+        onSelectClick={onSelectClick}
+        onToggleSelect={onToggleSelect}
         onRenameFolder={onRenameFolder}
         onDeleteFolder={onDeleteFolder}
       />
@@ -1077,23 +1097,26 @@ function RowNode({
 }
 
 // ── Folder row ──
+// Folders are first-class selectable just like items. Plain click
+// enters the folder; modifier clicks (Ctrl/Cmd/Shift) route to the
+// selection system; the checkbox is the explicit multi-select path for
+// touch + no-modifier users. Mixed selections (folders + items) are
+// supported — the drag set carries whatever is selected.
 function FolderRow({
   row,
   isActive,
   isDragSource,
+  isSelected,
   isDropTarget,
   onEnterFolder,
+  onSelectClick,
+  onToggleSelect,
   onRenameFolder,
   onDeleteFolder,
 }) {
   const { meta } = row;
   const drag = useDraggable({ id: row.id, data: { kind: 'folder' } });
   const drop = useDroppable({ id: row.id, data: { kind: 'folder' } });
-
-  // Combine the two refs through a stable callback so dnd-kit doesn't
-  // re-register the node on every render. Both setNodeRef returns are
-  // stable identities, but the combining closure would otherwise be a
-  // new function each render.
   const setRef = useCallback(
     (el) => {
       drag.setNodeRef(el);
@@ -1102,11 +1125,25 @@ function FolderRow({
     [drag.setNodeRef, drop.setNodeRef],
   );
 
-  function onClick(e) {
-    // Avoid entering on modifier clicks — reserved for future
-    // multi-select of folders if we ever add it.
-    if (e.ctrlKey || e.metaKey || e.shiftKey) return;
+  function onRowClick(e) {
+    if (e.ctrlKey || e.metaKey || e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      onSelectClick(row.id, {
+        ctrl: e.ctrlKey,
+        meta: e.metaKey,
+        shift: e.shiftKey,
+      });
+      return;
+    }
     onEnterFolder(meta.id);
+  }
+
+  function onCheckboxClick(e) {
+    e.stopPropagation();
+  }
+  function onCheckboxChange() {
+    onToggleSelect(row.id);
   }
 
   return (
@@ -1119,15 +1156,26 @@ function FolderRow({
       {...drag.attributes}
       {...drag.listeners}
       style={{ touchAction: 'none' }}
-      onClick={onClick}
+      onClick={onRowClick}
     >
       <div
         className={`flex items-center gap-2 px-3 py-2 cursor-pointer transition ${
           isDropTarget
             ? 'bg-blue-100 ring-2 ring-inset ring-blue-500'
+            : isSelected
+            ? 'bg-blue-50/60'
             : 'bg-gray-50 hover:bg-gray-100'
         }`}
       >
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={onCheckboxChange}
+          onClick={onCheckboxClick}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="shrink-0 cursor-pointer"
+          aria-label="סימון תיקייה לפעולה מרובה"
+        />
         <span className="shrink-0 text-[15px]">📁</span>
         <span className="flex-1 truncate text-sm font-semibold text-gray-800">
           {meta.name}

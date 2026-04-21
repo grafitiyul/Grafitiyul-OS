@@ -9,14 +9,16 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 //   * checkbox toggle     → same as Ctrl+click (explicit multi-select path)
 //
 // The caller passes `orderedIds` (in display order) at the moment of each
-// click so the range selection uses the current visible ordering. This
-// keeps the hook itself stateless about the rendered list — works equally
-// well for a flat bank list and for a flattened flow tree.
+// click so range selection uses the current visible ordering. This keeps
+// the hook stateless about the rendered list — works equally well for a
+// flat bank list and for a flattened flow tree.
 //
-// The drag-set resolver (`dragSetFor`) answers: "when the user starts
-// dragging id X, which ids should move together?" Standard rule:
-// if X is selected → drag all selected; else → drag just X (and don't
-// mutate selection). This matches file-manager conventions.
+// The hook deliberately does NOT provide a "dragSetFor" helper. Drag-set
+// resolution belongs at the call site where drag starts: it should
+// snapshot the live `selected` set directly, not read it through a
+// closure. That avoids a class of off-by-one bugs where a stale
+// `selected` captured by a `useCallback` closure leaks extra ids into
+// the drag set.
 export function useSelection() {
   const [selected, setSelected] = useState(() => new Set());
   const anchorRef = useRef(null);
@@ -26,6 +28,14 @@ export function useSelection() {
   const clear = useCallback(() => {
     setSelected(new Set());
     anchorRef.current = null;
+  }, []);
+
+  // Bulk replace — useful when the consumer wants to wipe selection on a
+  // context change (e.g. entering a different folder) without triggering
+  // anchor drift.
+  const replace = useCallback((ids) => {
+    setSelected(new Set(ids || []));
+    anchorRef.current = ids && ids.length ? ids[ids.length - 1] : null;
   }, []);
 
   const handleClick = useCallback((id, modifiers, orderedIds) => {
@@ -40,8 +50,7 @@ export function useSelection() {
         setSelected(new Set(orderedIds.slice(lo, hi + 1)));
         return;
       }
-      // Anchor no longer in list — fall through to treat as a plain
-      // click that establishes a new anchor.
+      // Anchor no longer in list — fall through to plain-click behavior.
     }
 
     if (ctrl) {
@@ -70,24 +79,16 @@ export function useSelection() {
     anchorRef.current = id;
   }, []);
 
-  // Called by the DnD layer at drag-start. Does NOT mutate selection —
-  // dragging a non-selected item is common enough (file managers) that
-  // we shouldn't change the current selection on drag pickup.
-  const dragSetFor = useCallback(
-    (id) => (selected.has(id) ? new Set(selected) : new Set([id])),
-    [selected],
-  );
-
   return useMemo(
     () => ({
       selected,
       isSelected,
       clear,
+      replace,
       toggle,
       handleClick,
-      dragSetFor,
       size: selected.size,
     }),
-    [selected, isSelected, clear, toggle, handleClick, dragSetFor],
+    [selected, isSelected, clear, replace, toggle, handleClick],
   );
 }
