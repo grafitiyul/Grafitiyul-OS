@@ -4,11 +4,11 @@ import { fileURLToPath } from 'node:url';
 import { Router } from 'express';
 import { handle } from '../asyncHandler.js';
 
-// Mock-backed recruitment source endpoints. These stand in for the real
-// recruitment system API until live sync is wired. The management system
-// NEVER uses these endpoints as its write-side source of truth — they're
-// read-only projections of the upstream data, consumed by the import
-// endpoints on /api/teams/import and /api/people/import.
+// Mock-backed recruitment source endpoints. Recruitment is source of truth
+// for GUIDES and (eventually) TRAINING MATERIALS — it does NOT model
+// teams. These endpoints are a read-only projection of the upstream data,
+// consumed by the import endpoints on /api/people/import (and later, when
+// training-material sync is wired, /api/training-materials/import).
 //
 // When live sync lands, the JSON-file load below is replaced by an HTTP
 // call to the recruitment backend. The shape contract stays the same, so
@@ -21,13 +21,15 @@ async function readSnapshot() {
   const raw = await fs.readFile(MOCK_PATH, 'utf-8');
   const parsed = JSON.parse(raw);
   return {
-    teams: Array.isArray(parsed.teams) ? parsed.teams : [],
     people: Array.isArray(parsed.people) ? parsed.people : [],
+    trainingMaterials: Array.isArray(parsed.trainingMaterials)
+      ? parsed.trainingMaterials
+      : [],
   };
 }
 
-// Exported so the import endpoints in teams.js / people.js can reuse the
-// same source without duplicating the file-read logic.
+// Exported so import endpoints in people.js (and later training-materials)
+// can reuse the same source without duplicating file-read logic.
 export async function getRecruitmentSnapshot() {
   return readSnapshot();
 }
@@ -35,18 +37,20 @@ export async function getRecruitmentSnapshot() {
 const router = Router();
 
 router.get(
-  '/teams',
-  handle(async (_req, res) => {
-    const snap = await readSnapshot();
-    res.json(snap.teams);
-  }),
-);
-
-router.get(
   '/people',
   handle(async (_req, res) => {
     const snap = await readSnapshot();
     res.json(snap.people);
+  }),
+);
+
+// Placeholder — training-material import UI is not built yet. Endpoint
+// exists so the contract is discoverable once the feature lands.
+router.get(
+  '/training-materials',
+  handle(async (_req, res) => {
+    const snap = await readSnapshot();
+    res.json(snap.trainingMaterials);
   }),
 );
 

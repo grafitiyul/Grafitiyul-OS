@@ -360,19 +360,18 @@ model FinalDocument {
 // Guide Management module — people + teams + flow assignment
 // ============================================================================
 
-// Lightweight team reference. Not a team-management system — just a lookup
-// layer over the recruitment system's team. `externalTeamId` is the stable
-// upstream id; everything else is UI hint that can go stale without
-// breaking references. See CLAUDE.md guide architecture decisions.
+// Team — managed natively in this system. The recruitment system is NOT
+// a source of truth for teams (it doesn't model teams at all), so TeamRef
+// has no external id. Admins create, rename, and delete teams here; guide
+// ↔ team membership is managed here too via PersonRef.teamRefId.
 model TeamRef {
-  id             String             @id @default(cuid())
-  externalTeamId String             @unique
-  displayName    String
-  meta           Json?
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
-  members        PersonRef[]
-  flowTargets    FlowTargetTeam[]
+  id          String           @id @default(cuid())
+  displayName String
+  meta        Json?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  members     PersonRef[]
+  flowTargets FlowTargetTeam[]
 }
 
 // Identity layer for a guide. Today `identitySource='recruitment'` means

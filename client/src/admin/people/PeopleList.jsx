@@ -243,14 +243,7 @@ function ImportPeopleDialog({ open, onClose, onImported }) {
     setSnap(null);
     (async () => {
       try {
-        const [people, localTeams] = await Promise.all([
-          api.recruitment.people(),
-          api.teams.list(),
-        ]);
-        const localTeamIds = new Set(
-          localTeams.map((t) => t.externalTeamId),
-        );
-        setSnap({ people, localTeamIds });
+        setSnap(await api.recruitment.people());
       } catch (e) {
         setErr(e.message);
       }
@@ -271,12 +264,6 @@ function ImportPeopleDialog({ open, onClose, onImported }) {
       setBusy(false);
     }
   }
-
-  const missingTeam = snap
-    ? snap.people.filter(
-        (p) => p.externalTeamId && !snap.localTeamIds.has(p.externalTeamId),
-      ).length
-    : 0;
 
   return (
     <div
@@ -308,19 +295,14 @@ function ImportPeopleDialog({ open, onClose, onImported }) {
           {snap && (
             <>
               <div className="text-[12px] text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2">
-                הרשומות למטה מגיעות ממערכת הגיוס. הייבוא מעדכן רשומות
-                קיימות לפי המזהה החיצוני ויוצר חדשות עבור רשומות שעדיין
-                לא קיימות. לא ניתן לערוך ידנית את הרשימה כאן.
+                הרשומות למטה מגיעות ממערכת הגיוס — שם, אימייל וטלפון.
+                הייבוא מעדכן מדריכים קיימים לפי המזהה החיצוני ויוצר
+                רשומות חדשות למי שעדיין לא קיים. שיוך לצוותים מנוהל
+                בעמוד הפרופיל של כל מדריך ולא נגזר מהייבוא.
               </div>
-              {missingTeam > 0 && (
-                <div className="text-[12px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-                  {missingTeam} מדריכים משויכים לצוות שעדיין לא יובא.
-                  מומלץ לייבא קודם את הצוותים ממסך "צוותים".
-                </div>
-              )}
 
               <ul className="border border-gray-200 rounded divide-y divide-gray-100">
-                {snap.people.map((p) => (
+                {snap.map((p) => (
                   <li
                     key={p.externalPersonId}
                     className="px-3 py-2 text-sm flex items-center gap-2"
@@ -337,11 +319,11 @@ function ImportPeopleDialog({ open, onClose, onImported }) {
                       </span>
                     </span>
                     <span className="text-[11px] text-gray-600 truncate">
-                      {p.externalTeamId || '—'}
+                      {p.email || p.phone || ''}
                     </span>
                   </li>
                 ))}
-                {snap.people.length === 0 && (
+                {snap.length === 0 && (
                   <li className="px-3 py-3 text-[12px] text-gray-500 italic">
                     אין רשומות במקור.
                   </li>

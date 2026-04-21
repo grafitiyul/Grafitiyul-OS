@@ -34,7 +34,7 @@ function newPortalToken() {
 
 const PERSON_INCLUDE = {
   profile: true,
-  team: { select: { id: true, displayName: true, externalTeamId: true } },
+  team: { select: { id: true, displayName: true } },
 };
 
 // ---------- List ----------
@@ -65,18 +65,17 @@ router.get(
 );
 
 // ---------- Import from recruitment ----------
-// The ONLY creation path. Guides are never created manually because
-// externalPersonId is a system identifier owned by the recruitment system.
-// Upsert logic:
-//   * new row  → create PersonRef + empty PersonProfile + fresh portalToken
-//   * existing → refresh cached identity fields (displayName / email /
-//     phone) and team linkage; DO NOT touch portalToken, portalEnabled,
-//     status, or the operational PersonProfile — those are managed here.
+// The ONLY creation path for guides. Recruitment is source of truth for
+// identity (name / email / phone) only — it does NOT model teams. Team
+// assignment is managed natively in this system via the guide profile,
+// so this endpoint never touches teamRefId.
 //
-// Team linkage uses the externalTeamId from the snapshot to look up an
-// already-imported TeamRef row. Teams should be imported before people;
-// people with an unknown externalTeamId are created without a team (the
-// admin can re-run the import after teams land).
+// Upsert by externalPersonId:
+//   * new row  → create PersonRef + empty PersonProfile + fresh portalToken.
+//   * existing → refresh cached identity fields (displayName / email /
+//     phone) and bump identitySyncedAt. DO NOT touch portalToken,
+//     portalEnabled, status, teamRefId, or PersonProfile — those are
+//     managed here.
 router.post(
   '/import',
   handle(async (_req, res) => {
@@ -84,27 +83,15 @@ router.post(
     let created = 0;
     let updated = 0;
 
-    // Precompute a lookup from externalTeamId → local TeamRef.id.
-    const teams = await prisma.teamRef.findMany({
-      select: { id: true, externalTeamId: true },
-    });
-    const teamByExternal = new Map(
-      teams.map((t) => [t.externalTeamId, t.id]),
-    );
-
     for (const p of snap.people) {
       const externalPersonId = String(p.externalPersonId || '').trim();
       const displayName = String(p.displayName || '').trim();
       if (!externalPersonId || !displayName) continue;
 
-      const teamRefId = p.externalTeamId
-        ? teamByExternal.get(String(p.externalTeamId).trim()) || null
-        : null;
       const identity = {
         displayName,
         email: p.email || null,
         phone: p.phone || null,
-        teamRefId,
         identitySyncedAt: new Date(),
       };
 
