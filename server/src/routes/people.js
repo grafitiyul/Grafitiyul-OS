@@ -37,16 +37,107 @@ const PERSON_INCLUDE = {
   team: { select: { id: true, displayName: true } },
 };
 
+// ---------- Upstream sync ----------
+// Upsert local PersonRef rows from the recruitment export. Identity fields
+// (displayName / email / phone) reflect the latest upstream snapshot;
+// operational fields (portalToken, portalEnabled, status, teamRefId,
+// PersonProfile) are NEVER touched on an existing row — they're owned by
+// this system.
+//
+// Called from two places:
+//   * The list endpoint (sync-on-read) so /admin/people always reflects
+//     the current recruitment roster without user action.
+//   * POST /import (retained for admin-triggered force refresh).
+async function syncFromUpstream() {
+  const snap = await getRecruitmentSnapshot();
+  let created = 0;
+  let updated = 0;
+
+  for (const p of snap.people) {
+    const externalPersonId = String(p.externalPersonId || '').trim();
+    const displayName = String(p.displayName || '').trim();
+    if (!externalPersonId || !displayName) continue;
+
+    const identity = {
+      displayName,
+      email: p.email || null,
+      phone: p.phone || null,
+      identitySyncedAt: new Date(),
+    };
+
+    const existing = await prisma.personRef.findUnique({
+      where: { externalPersonId },
+    });
+    if (existing) {
+      const data = { ...identity };
+      if (p.portalToken) data.portalToken = p.portalToken;
+      await prisma.personRef.update({
+        where: { externalPersonId },
+        data,
+      });
+      updated += 1;
+    } else {
+      await prisma.personRef.create({
+        data: {
+          externalPersonId,
+          identitySource: 'recruitment',
+          portalToken: p.portalToken || newPortalToken(),
+          ...identity,
+          profile: { create: {} },
+        },
+      });
+      created += 1;
+    }
+  }
+
+  return { created, updated, total: snap.people.length };
+}
+
 // ---------- List ----------
+// Sync-on-read: every call refreshes from recruitment before returning
+// the merged roster. No manual import button. If upstream is down we
+// still return the existing DB rows — admins get best-effort visibility
+// with an explicit `upstream.ok=false` flag so the UI can surface the
+// problem.
+//
+// Response shape:
+//   {
+//     people:   [PersonRef rows, identity = upstream-synced, operational = local],
+//     upstream: { ok: true,  syncedAt, created, updated, total }
+//               | { ok: false, error, detail }
+//   }
 
 router.get(
   '/',
   handle(async (_req, res) => {
+    let upstream;
+    try {
+      const r = await syncFromUpstream();
+      upstream = {
+        ok: true,
+        syncedAt: new Date().toISOString(),
+        created: r.created,
+        updated: r.updated,
+        total: r.total,
+      };
+    } catch (e) {
+      // Log server-side so operators can see the root cause in Railway
+      // logs; serve the current DB state anyway so the UI isn't blocked
+      // by a transient upstream outage or misconfigured env var.
+      console.error('[people list] upstream sync failed:', e);
+      upstream = {
+        ok: false,
+        error: e?.message || 'upstream_error',
+        detail: e?.detail || null,
+      };
+    }
+
     const people = await prisma.personRef.findMany({
       include: PERSON_INCLUDE,
       orderBy: [{ status: 'asc' }, { displayName: 'asc' }],
     });
-    res.json(people);
+
+    res.json({ people, upstream });
   }),
 );
 
@@ -64,69 +155,15 @@ router.get(
   }),
 );
 
-// ---------- Import from recruitment ----------
-// The ONLY creation path for guides. Recruitment is source of truth for
-// identity (name / email / phone) only — it does NOT model teams. Team
-// assignment is managed natively in this system via the guide profile,
-// so this endpoint never touches teamRefId.
-//
-// Upsert by externalPersonId:
-//   * new row  → create PersonRef + empty PersonProfile + fresh portalToken.
-//   * existing → refresh cached identity fields (displayName / email /
-//     phone) and bump identitySyncedAt. DO NOT touch portalToken,
-//     portalEnabled, status, teamRefId, or PersonProfile — those are
-//     managed here.
+// ---------- Force refresh (admin-triggered) ----------
+// The list endpoint already syncs on every read, so /import is retained
+// only as an explicit "sync now and tell me what happened" affordance
+// for operational troubleshooting. It performs the same upsert.
 router.post(
   '/import',
   handle(async (_req, res) => {
-    const snap = await getRecruitmentSnapshot();
-    let created = 0;
-    let updated = 0;
-
-    for (const p of snap.people) {
-      const externalPersonId = String(p.externalPersonId || '').trim();
-      const displayName = String(p.displayName || '').trim();
-      if (!externalPersonId || !displayName) continue;
-
-      const identity = {
-        displayName,
-        email: p.email || null,
-        phone: p.phone || null,
-        identitySyncedAt: new Date(),
-      };
-
-      const existing = await prisma.personRef.findUnique({
-        where: { externalPersonId },
-      });
-      if (existing) {
-        // Upstream portalToken (if present) takes precedence on update —
-        // recruitment is source of truth for that field. If absent, keep
-        // the existing local token so admin-shared portal URLs don't break.
-        const data = { ...identity };
-        if (p.portalToken) data.portalToken = p.portalToken;
-        await prisma.personRef.update({
-          where: { externalPersonId },
-          data,
-        });
-        updated += 1;
-      } else {
-        // Create path: use upstream portalToken if provided, otherwise
-        // generate a fresh one locally (recruitment may not include this
-        // field in its export).
-        await prisma.personRef.create({
-          data: {
-            externalPersonId,
-            identitySource: 'recruitment',
-            portalToken: p.portalToken || newPortalToken(),
-            ...identity,
-            profile: { create: {} },
-          },
-        });
-        created += 1;
-      }
-    }
-
-    res.json({ created, updated, total: snap.people.length });
+    const r = await syncFromUpstream();
+    res.json(r);
   }),
 );
 

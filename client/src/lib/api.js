@@ -134,9 +134,15 @@ export const api = {
     people: () => request('/api/recruitment/people'),
   },
   people: {
+    // Returns { people, upstream }. Sync-on-read: the server refreshes from
+    // recruitment before responding. `upstream.ok=false` means the refresh
+    // failed and the `people` array is the last-known local state — UI
+    // should surface that.
     list: () => request('/api/people'),
     get: (id) => request(`/api/people/${id}`),
-    importFromRecruitment: () =>
+    // Retained for admin troubleshooting; the main list already syncs on
+    // every read, so there's no user-facing import flow anymore.
+    forceRefresh: () =>
       request('/api/people/import', { method: 'POST' }),
     update: (id, data) =>
       request(`/api/people/${id}`, {

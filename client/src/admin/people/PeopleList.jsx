@@ -3,26 +3,33 @@ import { Link } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { PERSON_STATUS_LABELS, PERSON_STATUSES } from './config.js';
 
-// Admin guides list. Guides are NEVER created manually here — identity
-// comes from the recruitment system and flows in through the Import
-// action. The list displays whatever has been imported; selection for
-// further work (profile, assignment) happens via the usual row click or
-// the AssignmentDialog.
+// Admin guides list.
 //
-// "פתח פורטל" opens the guide's portal token URL; "העתק קישור" copies
-// it. Portal is disabled per-person via the profile screen.
+// The list is UPSTREAM-BACKED with sync-on-read: every page load hits the
+// server, which refreshes local PersonRef rows from the recruitment
+// export, then returns the merged roster (identity = recruitment,
+// operational = local: portalToken, portalEnabled, status, team, profile).
+//
+// There is no manual "import" action — guides appear automatically as
+// soon as they exist in recruitment. If the upstream refresh fails on a
+// given load, the server still returns the last-known local rows and
+// flags `upstream.ok=false` so this component can surface the problem
+// instead of silently showing stale data.
 export default function PeopleList() {
   const [people, setPeople] = useState([]);
+  const [upstream, setUpstream] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
-  const [importOpen, setImportOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setPeople(await api.people.list());
+      const r = await api.people.list();
+      setPeople(r.people || []);
+      setUpstream(r.upstream || null);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -33,6 +40,22 @@ export default function PeopleList() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  async function forceRefresh() {
+    setRefreshing(true);
+    try {
+      await api.people.forceRefresh();
+      await refresh();
+    } catch (e) {
+      // Surfacing the error via the upstream banner is enough — refresh()
+      // re-runs the list and will capture the failure through the normal
+      // response shape.
+      console.warn('force refresh failed:', e.message);
+      await refresh();
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -66,19 +89,16 @@ export default function PeopleList() {
           className="border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
         />
         <button
-          onClick={() => setImportOpen(true)}
-          className="bg-blue-600 hover:bg-blue-700 text-white rounded-md px-3 py-1.5 text-sm font-medium"
-          title="ייבוא מדריכים ממערכת הגיוס"
+          onClick={forceRefresh}
+          disabled={refreshing || loading}
+          title="רענון מיידי מול מערכת הגיוס"
+          className="text-[12px] border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 rounded-md px-3 py-1.5 disabled:opacity-50"
         >
-          ⬇ ייבוא ממערכת הגיוס
+          {refreshing ? 'מרענן…' : '⟳ רענון'}
         </button>
       </div>
 
-      <div className="text-[12px] text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2 mb-4">
-        המדריכים והצוותים אינם נוצרים כאן. הם מגיעים ממערכת הגיוס דרך
-        פעולת הייבוא. ייבוא חוזר מעדכן שמות, אימייל, טלפון ושיוך צוות
-        לרשומות שכבר קיימות.
-      </div>
+      <UpstreamStatus upstream={upstream} />
 
       {loading && (
         <div className="p-6 text-center text-sm text-gray-500">טוען…</div>
@@ -101,7 +121,9 @@ export default function PeopleList() {
       {!loading && !error && filtered.length === 0 && (
         <div className="p-10 text-center text-sm text-gray-500">
           {people.length === 0
-            ? 'אין מדריכים. לחצו "ייבוא ממערכת הגיוס" כדי לייבא את הרשימה.'
+            ? upstream?.ok === false
+              ? 'לא ניתן לטעון מדריכים ממערכת הגיוס. ראו הודעת השגיאה למעלה.'
+              : 'אין מדריכים במערכת הגיוס.'
             : 'לא נמצאו תוצאות.'}
         </div>
       )}
@@ -127,15 +149,33 @@ export default function PeopleList() {
           </table>
         </div>
       )}
+    </div>
+  );
+}
 
-      <ImportPeopleDialog
-        open={importOpen}
-        onClose={() => setImportOpen(false)}
-        onImported={async () => {
-          setImportOpen(false);
-          await refresh();
-        }}
-      />
+function UpstreamStatus({ upstream }) {
+  if (!upstream) return null;
+  if (upstream.ok) {
+    return (
+      <div className="text-[12px] text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2 mb-4">
+        המדריכים נטענים ישירות ממערכת הגיוס. נתונים תפעוליים (תמונה,
+        הערות, פרטי בנק, שיוך צוות) נשמרים במערכת זו ומתמזגים עם הזהות
+        המגיעה מהגיוס.
+      </div>
+    );
+  }
+  return (
+    <div className="text-[12px] text-amber-900 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-4">
+      <div className="font-semibold mb-1">
+        לא ניתן לסנכרן עם מערכת הגיוס כרגע.
+      </div>
+      <div>
+        מוצג מידע מקומי אחרון. סיבה:{' '}
+        <span className="font-mono" dir="ltr">
+          {upstream.error}
+          {upstream.detail ? ` — ${upstream.detail}` : ''}
+        </span>
+      </div>
     </div>
   );
 }
@@ -221,142 +261,5 @@ function StatusChip({ status }) {
     >
       {PERSON_STATUS_LABELS[status] || status}
     </span>
-  );
-}
-
-// ── Import dialog ───────────────────────────────────────────────────────────
-// Previews the recruitment snapshot (what would be imported) before the
-// admin triggers the upsert. No fields are user-editable — the only
-// action is "ייבא" which hits POST /api/people/import. Teams should be
-// imported first so person ↔ team linkage resolves correctly.
-
-function ImportPeopleDialog({ open, onClose, onImported }) {
-  const [snap, setSnap] = useState(null);
-  const [err, setErr] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState(null);
-
-  useEffect(() => {
-    if (!open) return;
-    setResult(null);
-    setErr(null);
-    setSnap(null);
-    (async () => {
-      try {
-        setSnap(await api.recruitment.people());
-      } catch (e) {
-        setErr(e.message);
-      }
-    })();
-  }, [open]);
-
-  if (!open) return null;
-
-  async function doImport() {
-    setBusy(true);
-    setErr(null);
-    try {
-      const r = await api.people.importFromRecruitment();
-      setResult(r);
-    } catch (e) {
-      setErr(e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div
-      className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
-      onClick={onClose}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="bg-white rounded-lg shadow-xl w-full max-w-xl max-h-[85vh] flex flex-col"
-      >
-        <div className="px-5 py-3 border-b border-gray-200 flex items-center">
-          <h3 className="text-lg font-semibold text-gray-900 flex-1">
-            ייבוא מדריכים ממערכת הגיוס
-          </h3>
-          <button
-            onClick={onClose}
-            className="text-gray-500 hover:text-gray-800 text-xl"
-            aria-label="סגור"
-          >
-            ×
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-5 space-y-3">
-          {!snap && !err && (
-            <div className="text-sm text-gray-500">טוען רשימת מקור…</div>
-          )}
-          {err && <div className="text-sm text-red-600">{err}</div>}
-          {snap && (
-            <>
-              <div className="text-[12px] text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2">
-                הרשומות למטה מגיעות ממערכת הגיוס — שם, אימייל וטלפון.
-                הייבוא מעדכן מדריכים קיימים לפי המזהה החיצוני ויוצר
-                רשומות חדשות למי שעדיין לא קיים. שיוך לצוותים מנוהל
-                בעמוד הפרופיל של כל מדריך ולא נגזר מהייבוא.
-              </div>
-
-              <ul className="border border-gray-200 rounded divide-y divide-gray-100">
-                {snap.map((p) => (
-                  <li
-                    key={p.externalPersonId}
-                    className="px-3 py-2 text-sm flex items-center gap-2"
-                  >
-                    <span className="flex-1 min-w-0">
-                      <span className="font-medium text-gray-900 block truncate">
-                        {p.displayName}
-                      </span>
-                      <span
-                        className="text-[11px] text-gray-500 font-mono block truncate"
-                        dir="ltr"
-                      >
-                        {p.externalPersonId}
-                      </span>
-                    </span>
-                    <span className="text-[11px] text-gray-600 truncate">
-                      {p.email || p.phone || ''}
-                    </span>
-                  </li>
-                ))}
-                {snap.length === 0 && (
-                  <li className="px-3 py-3 text-[12px] text-gray-500 italic">
-                    אין רשומות במקור.
-                  </li>
-                )}
-              </ul>
-
-              {result && (
-                <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded px-3 py-2">
-                  ייבוא הושלם: {result.created} חדשים, {result.updated}{' '}
-                  עודכנו.
-                </div>
-              )}
-            </>
-          )}
-        </div>
-
-        <div className="px-5 py-3 border-t border-gray-200 flex justify-end gap-2">
-          <button
-            onClick={onClose}
-            disabled={busy}
-            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md"
-          >
-            סגור
-          </button>
-          <button
-            onClick={result ? onImported : doImport}
-            disabled={busy || !snap}
-            className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md font-medium disabled:opacity-50"
-          >
-            {busy ? 'מייבא…' : result ? 'סיום' : 'ייבא'}
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }

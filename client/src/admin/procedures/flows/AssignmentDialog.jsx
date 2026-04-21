@@ -33,7 +33,10 @@ export default function AssignmentDialog({ flowId, open, onClose }) {
         personRefIds: new Set(assignment.personRefIds),
       });
       setTeams(t);
-      setPeople(p);
+      // api.people.list() now returns { people, upstream }. We only need
+      // the array here; an upstream hiccup still surfaces the last-known
+      // local list so the assignment picker keeps working.
+      setPeople(p?.people || []);
     } catch (e) {
       setError(e.message);
     } finally {

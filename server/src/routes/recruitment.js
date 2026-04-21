@@ -40,8 +40,23 @@ function baseUrl() {
   return String(v).trim().replace(/\/+$/, '');
 }
 
+function internalSecret() {
+  const v = process.env.INTERNAL_EXPORT_SECRET;
+  if (!v || !String(v).trim()) {
+    const err = new Error('internal_export_secret_not_configured');
+    err.statusCode = 503;
+    err.detail =
+      'Set INTERNAL_EXPORT_SECRET env var to the shared secret configured ' +
+      'on grafitiyul-recruitment. The recruitment export endpoints require ' +
+      'the x-internal-export-secret header for server-to-server auth.';
+    throw err;
+  }
+  return String(v).trim();
+}
+
 async function fetchUpstream(path) {
   const url = `${baseUrl()}${path}`;
+  const secret = internalSecret();
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), UPSTREAM_TIMEOUT_MS);
   let res;
@@ -49,7 +64,10 @@ async function fetchUpstream(path) {
     res = await fetch(url, {
       cache: 'no-store',
       signal: ctl.signal,
-      headers: { Accept: 'application/json' },
+      headers: {
+        Accept: 'application/json',
+        'x-internal-export-secret': secret,
+      },
     });
   } catch (e) {
     const err = new Error('recruitment_upstream_unreachable');
@@ -61,7 +79,11 @@ async function fetchUpstream(path) {
   }
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    const err = new Error('recruitment_upstream_error');
+    const err = new Error(
+      res.status === 401 || res.status === 403
+        ? 'recruitment_upstream_unauthorized'
+        : 'recruitment_upstream_error',
+    );
     err.statusCode = 502;
     err.detail = `GET ${url} → ${res.status} ${body.slice(0, 200)}`;
     throw err;
