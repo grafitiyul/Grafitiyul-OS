@@ -407,7 +407,7 @@ export default function FlowEditor() {
               questionText: '',
               options: [],
               allowTextAnswer: true,
-              requirement: 'optional',
+              requirement: 'text',
             })
           : await api.contentItems.create({ title: '', body: '' });
       setPendingFlowInsert(flow.id, pickerContext);

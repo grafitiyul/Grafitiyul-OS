@@ -301,9 +301,22 @@ export default function QuestionEditor() {
                 <input
                   type="checkbox"
                   checked={!!form.allowTextAnswer}
-                  onChange={(e) =>
-                    setField({ allowTextAnswer: e.target.checked })
-                  }
+                  onChange={(e) => {
+                    const nextAllow = e.target.checked;
+                    const patch = { allowTextAnswer: nextAllow };
+                    // Product decision: enabling the free-text field
+                    // also bumps the requirement to "text required" —
+                    // as long as the current requirement wasn't
+                    // explicitly stricter. Implemented here in state
+                    // (not as visual-only) so create / autosave carry
+                    // the right requirement through to the DB. Only
+                    // bump from 'optional'; respect any stricter value
+                    // the admin already picked.
+                    if (nextAllow && form.requirement === 'optional') {
+                      patch.requirement = 'text';
+                    }
+                    setField(patch);
+                  }}
                 />
                 <span>הצג שדה טקסט חופשי</span>
               </label>

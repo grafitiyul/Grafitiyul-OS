@@ -367,15 +367,25 @@ export default function BankListPane({
 
     if (snapshotMovedIds.length === 0) return;
 
-    // Split dragged rows by kind. Selection (and therefore draggingSet)
-    // can contain folders, items, or both — one commit path for all.
+    // Split dragged rows by kind, iterating `rows` in DISPLAY ORDER.
+    //
+    // Why display order (not the order the ids appear in draggingSet):
+    // draggingSet is a Set whose iteration order follows INSERTION
+    // order, i.e. the order the user clicked / ctrl-clicked. For a
+    // multi-drag that selects in a non-visible order (e.g. Ctrl-click
+    // C, then B, then A), the commit would write the target folder's
+    // children in click order (C, B, A) — visually reversing the
+    // source sequence. Iterating `rows` instead guarantees the
+    // moved items land in the target at the same relative order they
+    // had before the drag. Applies to folders AND items so mixed
+    // selections commit consistently.
+    const movedSet = new Set(snapshotMovedIds);
     const folderDbIds = [];
     const itemRowIds = [];
-    for (const rowId of snapshotMovedIds) {
-      const row = rowById.get(rowId);
-      if (!row) continue;
+    for (const row of rows) {
+      if (!movedSet.has(row.id)) continue;
       if (row.kind === 'folder') folderDbIds.push(row.meta.id);
-      else itemRowIds.push(rowId);
+      else itemRowIds.push(row.id);
     }
 
     // Breadcrumb drop → move all dragged rows into the clicked ancestor,
@@ -706,15 +716,17 @@ export default function BankListPane({
         onChanged?.();
         navigate(`/admin/procedures/bank/content/${created.id}${qs}`);
       } else {
-        // Default new-question shape: free-text enabled, optional.
-        // Admin opens the editor and narrows the shape (add options /
-        // change requirement) before saving.
+        // Default new-question shape: free-text enabled, text required.
+        // Product decision: if the admin enables a text field they
+        // probably want it filled — starting "optional" silently let
+        // learners submit empty. Admin can downgrade to 'optional'
+        // explicitly if they want.
         const created = await api.questionItems.create({
           title: '',
           questionText: '',
           options: [],
           allowTextAnswer: true,
-          requirement: 'optional',
+          requirement: 'text',
           folderId,
         });
         onChanged?.();
