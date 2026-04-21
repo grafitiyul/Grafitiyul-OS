@@ -493,10 +493,16 @@ export default function BankListPane({
 
     let insertIdx;
     if (!insertion) {
+      // Breadcrumb drop / no precise position → append at end.
       insertIdx = existing.length;
     } else if (insertion.parentId != null) {
-      // Drop INTO a folder → dropped folders become its first children.
-      insertIdx = 0;
+      // Drop INTO a folder — we can't see the target's children in
+      // drill-down mode, so there's no "drop position" inside the
+      // target to honor. Append at the end is the consistent rule
+      // (matches Finder / Explorer semantics for moving items into
+      // a folder). Previously hardcoded to 0, which made every drop
+      // into a folder land at the top regardless of drop target.
+      insertIdx = existing.length;
     } else {
       // Drop at current view level. The visible rows put folders
       // before items; `insertion.indexInParent` counts visible rows
@@ -581,24 +587,20 @@ export default function BankListPane({
         .map((i) => ({ ...i, kind: ITEM_KINDS.QUESTION })),
     ].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 
-    // One formula for all cases:
-    //   - insertion null (breadcrumb append) → end of target items
-    //   - drop INTO a folder → first child (index 0)
+    // Insertion index — matches the folder commit path:
+    //   - insertion null (breadcrumb drop) → append at end
+    //   - drop INTO a folder → append at end (drill-down hides the
+    //     target's children, no visible drop position to honor;
+    //     matches Finder / Explorer "move into folder" semantics)
     //   - drop at current view level → translate view-index to
-    //     item-index by subtracting the folders that precede items in
-    //     the visible rows. Math.max clamps to 0 when the drop landed
-    //     in the folder section (dropping items-in-folder-area is
-    //     meaningless; 0 is the natural top-of-items result).
-    //
-    // This is the same formula regardless of whether folders are also
-    // being dragged. Mixed drag gets precise positioning because both
-    // folder-side and item-side commits use their own independent
-    // index calculation.
+    //     item-index by subtracting the folders that precede items.
+    //     Math.max clamps to 0 when the drop lands in the folder
+    //     section above items.
     let insertIdx;
     if (!insertion) {
       insertIdx = targetItems.length;
     } else if (insertion.parentId != null) {
-      insertIdx = 0;
+      insertIdx = targetItems.length;
     } else {
       const visibleFolderCount = rows.filter(
         (r) => r.kind === 'folder',
@@ -1002,13 +1004,35 @@ function Breadcrumb({ path, onEnter, breadcrumbOver, activeDrag }) {
     { id: null, name: 'הבנק', isRoot: true },
     ...path.map((f) => ({ id: f.id, name: f.name })),
   ];
+  const isDragging = !!activeDrag;
+  // Only show the breadcrumb if the user is inside a folder. At root
+  // (only "הבנק"), the breadcrumb is noise — and there's nothing to
+  // "move out to". When drilled in, the breadcrumb becomes the single
+  // reliable drop target for moving rows OUT of the current folder.
+  if (path.length === 0 && !isDragging) {
+    return null;
+  }
   // The LAST segment is the current location — not a drop target for
   // the current view's own rows (you're already there).
   return (
     <nav
-      className="px-3 py-2 text-[12px] border-b border-gray-100 flex items-center gap-1 flex-wrap bg-gray-50/60"
+      // Sticky so the drop target stays in view even when the user
+      // has scrolled down inside a long folder. z-10 keeps it above
+      // row content during the sticky transition. The drag-active
+      // state bumps padding + background so it reads as a real drop
+      // zone, not a thin nav line.
+      className={`sticky top-0 z-10 px-3 flex items-center gap-1 flex-wrap border-b transition-all ${
+        isDragging
+          ? 'py-2 text-[13px] bg-blue-50/80 border-blue-200 shadow-sm'
+          : 'py-2 text-[12px] bg-gray-50/80 backdrop-blur-sm border-gray-100'
+      }`}
       aria-label="מסלול תיקיות"
     >
+      {isDragging && (
+        <span className="text-[11px] text-blue-800 font-medium me-1">
+          גררו לכאן כדי להוציא מהתיקייה:
+        </span>
+      )}
       {segments.map((seg, idx) => {
         const isLast = idx === segments.length - 1;
         return (
@@ -1017,7 +1041,7 @@ function Breadcrumb({ path, onEnter, breadcrumbOver, activeDrag }) {
             <BreadcrumbSegment
               seg={seg}
               isLast={isLast}
-              isDragging={!!activeDrag}
+              isDragging={isDragging}
               breadcrumbOver={breadcrumbOver}
               onEnter={onEnter}
             />
@@ -1036,13 +1060,17 @@ function BreadcrumbSegment({ seg, isLast, isDragging, breadcrumbOver, onEnter })
   });
   const isHot = breadcrumbOver === dropId;
 
+  // Padding bumps up during drag so the drop target is a real,
+  // easy-to-hit rectangle rather than a thin text chip.
+  const base = isDragging && !isLast ? 'px-3 py-1 rounded' : 'rounded px-2 py-0.5';
+
   const body = (
     <span
-      className={`inline-block rounded px-2 py-0.5 transition ${
+      className={`inline-block transition ${base} ${
         isHot
-          ? 'bg-blue-500 text-white'
+          ? 'bg-blue-600 text-white font-semibold ring-2 ring-blue-300'
           : isDragging && !isLast
-          ? 'bg-white border border-dashed border-blue-300 text-blue-700'
+          ? 'bg-white border-2 border-dashed border-blue-400 text-blue-800 font-medium'
           : isLast
           ? 'text-gray-900 font-semibold'
           : 'text-blue-700 hover:bg-blue-50'
