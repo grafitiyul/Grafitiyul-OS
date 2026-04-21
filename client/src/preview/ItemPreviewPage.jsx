@@ -61,7 +61,12 @@ export default function ItemPreviewPage({ kind }) {
             />
             {kind === 'content' && (
               <div
-                className="gos-prose text-gray-800 text-lg leading-relaxed"
+                // No size/line-height overrides here: gos-prose is the
+                // single authoritative renderer shared between editor
+                // (rt-editor-prose, same rules) and preview/portal.
+                // text-lg + leading-relaxed used to be applied here and
+                // silently diverged the preview from the editor.
+                className="gos-prose text-gray-800"
                 dangerouslySetInnerHTML={{ __html: item.body || '' }}
               />
             )}
@@ -79,7 +84,7 @@ function QuestionBody({ item }) {
   return (
     <>
       <div
-        className="gos-prose text-gray-800 text-lg leading-relaxed mb-6"
+        className="gos-prose text-gray-800 mb-6"
         dangerouslySetInnerHTML={{ __html: item.questionText || '' }}
       />
       {item.answerType === 'single_choice' && Array.isArray(item.options) && (

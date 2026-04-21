@@ -66,6 +66,13 @@ export function sanitizePastedHtml(html) {
   try {
     const doc = new DOMParser().parseFromString(html, 'text/html');
     unwrapSpuriousBold(doc.body);
+    // IMPORTANT: semantic-style → tag conversion must run BEFORE the
+    // generic attribute/style stripper below. Google Docs, Word and
+    // many web sources express bold/italic/underline as inline styles
+    // on <span>/<p> (font-weight: 700, font-style: italic,
+    // text-decoration: underline) rather than as <strong>/<em>/<u>
+    // tags. If we strip styles first, these formats are lost entirely.
+    convertSemanticStylesToTags(doc, doc.body);
     cleanSubtree(doc.body);
     return doc.body.innerHTML;
   } catch {
@@ -100,6 +107,93 @@ function unwrapSpuriousBold(root) {
       parent.removeChild(el);
     }
   }
+}
+
+// Convert semantic inline styles (bold / italic / underline) into the
+// corresponding HTML tags, wrapping the element's existing children.
+// Runs BEFORE style-stripping so Docs/Word paste preserves formatting:
+// a Google Docs `<span style="font-weight:700">X</span>` becomes
+// `<span><strong>X</strong></span>`, and when the style-stripper runs
+// next the now-styleless `<span>` is dropped by ProseMirror's schema
+// parser, leaving `<strong>X</strong>`.
+//
+// Policy:
+//   * font-weight: 'bold' | 'bolder' | ≥ 600   → wrap in <strong>
+//   * font-style:  'italic' | 'oblique'         → wrap in <em>
+//   * text-decoration (line): 'underline'       → wrap in <u>
+//
+// Nothing else is inferred from styles. Colors, highlights, font
+// families, sizes etc. remain out of scope for inline-style inference
+// — the editor has explicit Color/Highlight/FontSize marks for those,
+// applied through UI actions only.
+function convertSemanticStylesToTags(doc, root) {
+  // Walk a SNAPSHOT of the elements — we mutate as we go.
+  const elts = root.querySelectorAll('[style]');
+  for (const el of Array.from(elts)) {
+    const styles = parseInlineStyles(el.getAttribute('style') || '');
+
+    const wantBold = isBoldWeight(styles['font-weight']);
+    const fs = styles['font-style'];
+    const wantItalic = fs === 'italic' || fs === 'oblique';
+    const td =
+      styles['text-decoration-line'] || styles['text-decoration'] || '';
+    const wantUnderline = /\bunderline\b/.test(td);
+
+    if (!wantBold && !wantItalic && !wantUnderline) continue;
+
+    // Empty element (no children) → nothing to wrap.
+    if (!el.firstChild) continue;
+
+    // Pop current children off el, build a nested chain of wrapper
+    // tags around them, then put the whole chain back. Nesting order
+    // is strong(em(u(content))) — any order is semantically identical
+    // so we pick one deterministic shape.
+    const kids = Array.from(el.childNodes);
+    for (const k of kids) el.removeChild(k);
+
+    // Innermost wrapper holds the original kids.
+    let current;
+    if (wantUnderline) {
+      current = doc.createElement('u');
+      for (const k of kids) current.appendChild(k);
+    } else {
+      current = null;
+    }
+    if (wantItalic) {
+      const w = doc.createElement('em');
+      if (current) w.appendChild(current);
+      else for (const k of kids) w.appendChild(k);
+      current = w;
+    }
+    if (wantBold) {
+      const w = doc.createElement('strong');
+      if (current) w.appendChild(current);
+      else for (const k of kids) w.appendChild(k);
+      current = w;
+    }
+
+    el.appendChild(current);
+  }
+}
+
+function parseInlineStyles(style) {
+  const out = {};
+  for (const decl of style.split(';')) {
+    const colon = decl.indexOf(':');
+    if (colon < 0) continue;
+    const prop = decl.slice(0, colon).trim().toLowerCase();
+    const val = decl.slice(colon + 1).trim().toLowerCase();
+    if (prop) out[prop] = val;
+  }
+  return out;
+}
+
+function isBoldWeight(raw) {
+  if (!raw) return false;
+  const v = String(raw).toLowerCase().trim();
+  if (v === 'bold' || v === 'bolder') return true;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n >= 600;
 }
 
 function cleanSubtree(root) {

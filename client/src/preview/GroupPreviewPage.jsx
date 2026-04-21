@@ -94,7 +94,9 @@ function ItemCard({ node }) {
           dangerouslySetInnerHTML={{ __html: ci?.title || '(תוכן נמחק)' }}
         />
         <div
-          className="gos-prose text-gray-800 leading-relaxed"
+          // gos-prose owns size + line-height. No overrides here —
+          // editor and preview render byte-identical HTML the same way.
+          className="gos-prose text-gray-800"
           dangerouslySetInnerHTML={{ __html: ci?.body || '' }}
         />
       </section>
