@@ -86,6 +86,10 @@ function arrayOf(response) {
 // simple mapping, not transformation — it lets us accept either legacy
 // (id / fullName / mobile) or new (externalPersonId / displayName / phone)
 // upstream naming without reshaping values.
+//
+// portalToken is forwarded IF upstream provides it (spec: "portalToken if
+// present is sourced from recruitment"). When absent, the import endpoint
+// generates one locally on create and preserves the existing one on update.
 function projectGuide(g) {
   if (!g || typeof g !== 'object') return null;
   const externalPersonId =
@@ -93,6 +97,7 @@ function projectGuide(g) {
   const displayName = g.displayName ?? g.fullName ?? g.name ?? null;
   const email = g.email ?? null;
   const phone = g.phone ?? g.mobile ?? g.phoneNumber ?? null;
+  const portalToken = g.portalToken ?? null;
   if (externalPersonId == null || String(externalPersonId).trim() === '') {
     return null;
   }
@@ -102,6 +107,7 @@ function projectGuide(g) {
     displayName: String(displayName).trim(),
     email: email ? String(email).trim() || null : null,
     phone: phone ? String(phone).trim() || null : null,
+    portalToken: portalToken ? String(portalToken).trim() || null : null,
   };
 }
 

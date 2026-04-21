@@ -64,7 +64,8 @@ export default function PersonProfile() {
     <div className="max-w-4xl mx-auto p-4 lg:p-6 space-y-6">
       <BackLink />
       <ProfileHeader person={person} onChanged={refresh} onDeleted={() => navigate('/admin/people')} />
-      <IdentitySection person={person} teams={teams} onChanged={refresh} />
+      <IdentitySection person={person} onChanged={refresh} />
+      <TeamSection person={person} teams={teams} onChanged={refresh} />
       <ProfileSection person={person} onChanged={refresh} />
       <BankSection person={person} onChanged={refresh} />
       <ProceduresSection procedures={procedures} />
@@ -292,22 +293,53 @@ function StatusChip({ status }) {
 }
 
 // ── Identity section ────────────────────────────────────────────────────────
-// When identitySource='recruitment', fields are visually read-only. Admin
-// may still correct the local cache via an explicit "עריכה מקומית" toggle
-// (opens editing on the cached columns) — we do NOT pretend identity is
-// fully editable here, and the source label stays visible to set the
-// expectation. When identitySource='management' the fields are directly
-// editable.
+// Identity = displayName, email, phone. Source of truth is controlled by
+// `identitySource`:
+//   * 'recruitment' — these fields mirror the recruitment export and are
+//     strictly read-only here. To correct a value, fix it in recruitment
+//     and re-import. No local-edit override: it would drift from the
+//     upstream truth and get overwritten on next import anyway.
+//   * 'management' — management owns identity. Edit here directly.
+//
+// The team field is NOT identity — it's management-owned relationship
+// data. See <TeamSection> below, which is rendered as a separate section.
 
-function IdentitySection({ person, teams, onChanged }) {
+function IdentitySection({ person, onChanged }) {
   const isRecruitment = person.identitySource === IDENTITY_SOURCES.RECRUITMENT;
+  if (isRecruitment) {
+    return <ReadOnlyIdentity person={person} />;
+  }
+  return <EditableIdentity person={person} onChanged={onChanged} />;
+}
+
+function ReadOnlyIdentity({ person }) {
+  return (
+    <Section
+      title="זהות"
+      headerRight={
+        <span className="text-[11px] text-gray-500">
+          {IDENTITY_SOURCE_LABELS[person.identitySource]}
+        </span>
+      }
+    >
+      <div className="text-[12px] bg-gray-50 border border-gray-200 text-gray-700 rounded px-3 py-2 mb-3">
+        שדות הזהות מגיעים ממערכת הגיוס ואינם ניתנים לעריכה כאן. תיקון
+        ערך מתבצע במערכת הגיוס ונטען בייבוא הבא.
+      </div>
+      <ReadOnlyField label="שם מלא" value={person.displayName} />
+      <ReadOnlyField label="אימייל" value={person.email || '—'} />
+      <ReadOnlyField label="טלפון" value={person.phone || '—'} />
+    </Section>
+  );
+}
+
+function EditableIdentity({ person, onChanged }) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     displayName: person.displayName,
     email: person.email || '',
     phone: person.phone || '',
-    teamRefId: person.teamRefId || '',
   });
 
   useEffect(() => {
@@ -315,7 +347,6 @@ function IdentitySection({ person, teams, onChanged }) {
       displayName: person.displayName,
       email: person.email || '',
       phone: person.phone || '',
-      teamRefId: person.teamRefId || '',
     });
   }, [person]);
 
@@ -326,7 +357,6 @@ function IdentitySection({ person, teams, onChanged }) {
         displayName: form.displayName.trim(),
         email: form.email.trim() || null,
         phone: form.phone.trim() || null,
-        teamRefId: form.teamRefId || null,
       });
       await onChanged();
       setEditing(false);
@@ -334,8 +364,6 @@ function IdentitySection({ person, teams, onChanged }) {
       setSaving(false);
     }
   }
-
-  const locked = isRecruitment && !editing;
 
   return (
     <Section
@@ -350,116 +378,128 @@ function IdentitySection({ person, teams, onChanged }) {
               onClick={() => setEditing(true)}
               className="text-[12px] text-blue-700 hover:bg-blue-50 rounded px-2 py-0.5"
             >
-              {isRecruitment ? 'עריכה מקומית' : 'עריכה'}
+              עריכה
             </button>
           )}
         </div>
       }
     >
-      {isRecruitment && editing && (
-        <div className="text-[12px] bg-amber-50 border border-amber-200 text-amber-800 rounded px-3 py-2 mb-3">
-          זהות זו מנוהלת על ידי מערכת הגיוס. עריכה כאן משנה רק את
-          המטמון המקומי — השינוי ידרס בסנכרון הבא.
-        </div>
-      )}
-
-      <ReadOnlyOrEdit
-        label="שם מלא"
-        value={person.displayName}
-        locked={locked}
-        renderEdit={() => (
-          <input
-            type="text"
-            value={form.displayName}
-            onChange={(e) =>
-              setForm({ ...form, displayName: e.target.value })
-            }
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-          />
-        )}
-      />
-      <ReadOnlyOrEdit
-        label="אימייל"
-        value={person.email || '—'}
-        locked={locked}
-        renderEdit={() => (
-          <input
-            type="email"
-            value={form.email}
-            onChange={(e) => setForm({ ...form, email: e.target.value })}
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-          />
-        )}
-      />
-      <ReadOnlyOrEdit
-        label="טלפון"
-        value={person.phone || '—'}
-        locked={locked}
-        renderEdit={() => (
-          <input
-            type="tel"
-            value={form.phone}
-            onChange={(e) => setForm({ ...form, phone: e.target.value })}
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-          />
-        )}
-      />
-      <ReadOnlyOrEdit
-        label="צוות"
-        value={person.team?.displayName || '—'}
-        locked={false /* team is operational, always editable here */}
-        renderEdit={() => (
-          <select
-            value={form.teamRefId}
-            onChange={(e) =>
-              setForm({ ...form, teamRefId: e.target.value })
-            }
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-          >
-            <option value="">— ללא צוות —</option>
-            {teams.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.displayName}
-              </option>
-            ))}
-          </select>
-        )}
-      />
-
-      {editing && (
-        <div className="flex justify-end gap-2 pt-2">
-          <button
-            onClick={() => setEditing(false)}
-            disabled={saving}
-            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md"
-          >
-            ביטול
-          </button>
-          <button
-            onClick={save}
-            disabled={saving}
-            className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md font-medium disabled:opacity-50"
-          >
-            {saving ? 'שומר…' : 'שמור'}
-          </button>
-        </div>
+      {!editing ? (
+        <>
+          <ReadOnlyField label="שם מלא" value={person.displayName} />
+          <ReadOnlyField label="אימייל" value={person.email || '—'} />
+          <ReadOnlyField label="טלפון" value={person.phone || '—'} />
+        </>
+      ) : (
+        <>
+          <Field label="שם מלא">
+            <input
+              type="text"
+              value={form.displayName}
+              onChange={(e) =>
+                setForm({ ...form, displayName: e.target.value })
+              }
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+            />
+          </Field>
+          <Field label="אימייל">
+            <input
+              type="email"
+              value={form.email}
+              onChange={(e) => setForm({ ...form, email: e.target.value })}
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+            />
+          </Field>
+          <Field label="טלפון">
+            <input
+              type="tel"
+              value={form.phone}
+              onChange={(e) => setForm({ ...form, phone: e.target.value })}
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+            />
+          </Field>
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              onClick={() => setEditing(false)}
+              disabled={saving}
+              className="px-3 py-1.5 text-sm border border-gray-300 rounded-md"
+            >
+              ביטול
+            </button>
+            <button
+              onClick={save}
+              disabled={saving}
+              className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md font-medium disabled:opacity-50"
+            >
+              {saving ? 'שומר…' : 'שמור'}
+            </button>
+          </div>
+        </>
       )}
     </Section>
   );
 }
 
-function ReadOnlyOrEdit({ label, value, locked, renderEdit }) {
+function ReadOnlyField({ label, value }) {
   return (
-    <div className="mb-3">
+    <div className="mb-3 last:mb-0">
       <div className="text-[12px] text-gray-600 mb-1">{label}</div>
-      {locked ? (
-        <div className="text-sm text-gray-900 bg-gray-50 border border-gray-200 rounded px-3 py-2">
-          {value}
-        </div>
-      ) : (
-        renderEdit()
-      )}
+      <div className="text-sm text-gray-900 bg-gray-50 border border-gray-200 rounded px-3 py-2">
+        {value}
+      </div>
     </div>
+  );
+}
+
+// ── Team section ────────────────────────────────────────────────────────────
+// Team assignment is management-owned. It does NOT live in the Identity
+// section because it isn't identity data, and it stays fully editable
+// regardless of identitySource. Changes save immediately on select.
+
+function TeamSection({ person, teams, onChanged }) {
+  const [saving, setSaving] = useState(false);
+
+  async function setTeam(teamRefId) {
+    setSaving(true);
+    try {
+      await api.people.update(person.id, { teamRefId: teamRefId || null });
+      await onChanged();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Section
+      title="שיוך צוות"
+      headerRight={
+        saving ? <span className="text-[11px] text-gray-500">שומר…</span> : null
+      }
+    >
+      <div className="text-[12px] text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2 mb-3">
+        צוותים מנוהלים במערכת הזו, לא במערכת הגיוס. השיוך נשמר כאן בלבד.
+      </div>
+      <Field label="צוות">
+        <select
+          value={person.teamRefId || ''}
+          onChange={(e) => setTeam(e.target.value)}
+          disabled={saving}
+          className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+        >
+          <option value="">— ללא צוות —</option>
+          {teams.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.displayName}
+            </option>
+          ))}
+        </select>
+      </Field>
+      {teams.length === 0 && (
+        <div className="text-[12px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+          אין צוותים. צרו צוות במסך "אנשים → צוותים".
+        </div>
+      )}
+    </Section>
   );
 }
 

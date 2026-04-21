@@ -99,17 +99,25 @@ router.post(
         where: { externalPersonId },
       });
       if (existing) {
+        // Upstream portalToken (if present) takes precedence on update —
+        // recruitment is source of truth for that field. If absent, keep
+        // the existing local token so admin-shared portal URLs don't break.
+        const data = { ...identity };
+        if (p.portalToken) data.portalToken = p.portalToken;
         await prisma.personRef.update({
           where: { externalPersonId },
-          data: identity,
+          data,
         });
         updated += 1;
       } else {
+        // Create path: use upstream portalToken if provided, otherwise
+        // generate a fresh one locally (recruitment may not include this
+        // field in its export).
         await prisma.personRef.create({
           data: {
             externalPersonId,
             identitySource: 'recruitment',
-            portalToken: newPortalToken(),
+            portalToken: p.portalToken || newPortalToken(),
             ...identity,
             profile: { create: {} },
           },
