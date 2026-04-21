@@ -50,7 +50,12 @@ async function nextSortOrder(_unusedModel, folderId) {
 }
 
 // ---------- Item bank folders ----------
+// Nested: each folder has an optional parentId. sortOrder is scoped per
+// parent, so reindexing only touches siblings in the same parent.
 
+// List ALL folders (flat). The client derives the tree in memory via
+// parentId — no need for a separate /tree endpoint; flat is cheaper and
+// avoids duplicated representations.
 router.get(
   '/folders',
   handle(async (_req, res) => {
@@ -64,17 +69,23 @@ router.get(
 router.post(
   '/folders',
   handle(async (req, res) => {
-    const { name } = req.body || {};
+    const { name, parentId = null } = req.body || {};
     if (!name || !String(name).trim()) {
       return res.status(400).json({ error: 'name_required' });
     }
+    const scope = { parentId: parentId || null };
     const top = await prisma.itemBankFolder.findFirst({
+      where: scope,
       orderBy: { sortOrder: 'desc' },
       select: { sortOrder: true },
     });
     const sortOrder = (top?.sortOrder ?? -1) + 1;
     const folder = await prisma.itemBankFolder.create({
-      data: { name: String(name).trim(), sortOrder },
+      data: {
+        name: String(name).trim(),
+        parentId: parentId || null,
+        sortOrder,
+      },
     });
     res.status(201).json(folder);
   }),
@@ -82,24 +93,88 @@ router.post(
 
 // Reorder MUST be declared before the generic :id PUT — Express matches in
 // declaration order and would otherwise treat "reorder" as an id.
+//
+// Atomic parent-scoped reorder. Callers pass the full ordered children
+// of ONE parent plus the target parentId. The transaction sets BOTH
+// parentId and sortOrder on every id — so this endpoint handles both
+// same-parent reorder AND cross-parent folder moves in one call (the
+// same pattern as /reorder for items).
+//
+// Cycle prevention is left to the client today (it already computes
+// descendants on drag). We could add a server check that rejects any
+// id whose subtree contains `parentId`, but the extra round trips
+// would be noticeable at UI scale.
 router.put(
   '/folders/reorder',
   handle(async (req, res) => {
-    const { ids } = req.body || {};
+    const { ids, parentId = null } = req.body || {};
     if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids_array_required' });
-    await reindexByIds(prisma.itemBankFolder, ids);
+    const parent = parentId || null;
+    await prisma.$transaction(
+      ids.map((id, index) =>
+        prisma.itemBankFolder.updateMany({
+          where: { id },
+          data: { parentId: parent, sortOrder: index },
+        }),
+      ),
+    );
     res.json({ ok: true });
   }),
 );
 
+// Update folder. Supports renaming AND moving under a new parent in one
+// call. Moving to a new parent recomputes sortOrder to append at the end
+// of the new parent's children (the client can follow up with a reorder
+// if a more specific position is needed).
+//
+// Cycle prevention: a folder may not be moved under itself or any of its
+// descendants. We do a server-side walk up the ancestor chain from the
+// proposed parent; if we hit the folder being moved, reject.
 router.put(
   '/folders/:id',
   handle(async (req, res) => {
-    const { name } = req.body || {};
+    const id = req.params.id;
+    const { name, parentId } = req.body || {};
     const data = {};
     if (name !== undefined) data.name = String(name).trim();
+
+    if (parentId !== undefined) {
+      const nextParent = parentId || null;
+      if (nextParent === id) {
+        return res.status(400).json({ error: 'cannot_parent_self' });
+      }
+      if (nextParent) {
+        // Walk ancestors of nextParent — if any is `id`, we'd form a cycle.
+        let cursor = nextParent;
+        const seen = new Set();
+        while (cursor) {
+          if (cursor === id) {
+            return res.status(400).json({ error: 'cycle_detected' });
+          }
+          if (seen.has(cursor)) break; // safety: malformed tree
+          seen.add(cursor);
+          const f = await prisma.itemBankFolder.findUnique({
+            where: { id: cursor },
+            select: { parentId: true },
+          });
+          if (!f) break;
+          cursor = f.parentId || null;
+        }
+      }
+      data.parentId = nextParent;
+      // Append at end of new parent's children (next sortOrder). If the
+      // parent hasn't changed this is a no-op on position; the client can
+      // reorder after if needed.
+      const top = await prisma.itemBankFolder.findFirst({
+        where: { parentId: nextParent },
+        orderBy: { sortOrder: 'desc' },
+        select: { sortOrder: true },
+      });
+      data.sortOrder = (top?.sortOrder ?? -1) + 1;
+    }
+
     const folder = await prisma.itemBankFolder.update({
-      where: { id: req.params.id },
+      where: { id },
       data,
     });
     res.json(folder);
@@ -107,7 +182,8 @@ router.put(
 );
 
 // Deleting a folder unsets folderId on its items (ON DELETE SET NULL) so
-// no items are lost.
+// no items are lost, and sets parentId=null on any child folders so they
+// float up to root (the self-relation also uses ON DELETE SET NULL).
 router.delete(
   '/folders/:id',
   handle(async (req, res) => {

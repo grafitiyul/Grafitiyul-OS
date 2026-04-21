@@ -33,55 +33,31 @@ import {
 } from '../../../dnd/positioning.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Bank list pane — sortable tree of folders + items.
+// Bank list pane — nested folders, drill-down navigation.
 //
-// Built on the shared DnD primitives in client/src/dnd/ so the same
-// layer can be dropped into the flow editor later (recursive groups)
-// without refactoring the core logic:
+// Single tree (parentId-based) for folders, folderId on items. The view
+// shows ONE folder's direct children at a time: enter a folder to drill in,
+// click breadcrumb to drill out. No inline collapse/expand — only
+// context-switching navigation. This is the Finder/Explorer mental model
+// and is the mode the spec asked for.
 //
-//   * positioning.computeInsertion  — decides drop position
-//   * DropIndicator                 — thick horizontal drop line
+// DnD built on the shared primitives in client/src/dnd/:
+//   * positioning.computeInsertion  — drop position
+//   * DropIndicator                 — horizontal line between rows
 //   * useSelection                  — Ctrl / Cmd / Shift / checkbox
 //
-// Bank-specific pieces here:
-//   * flatten folders+items into a flat row list (the tree is shallow —
-//     root → folders → items — but the flat representation is the same
-//     one the flow editor will use with deeper trees).
-//   * whole-card drag (no ⋮⋮ handle). PointerSensor activation distance
-//     keeps clicks from triggering drags.
-//   * multi-drag: if the active row is in the current selection, drag
-//     ALL selected rows together; else drag just the active row
-//     (standard file-manager semantics).
+// Cross-level moves via drag are supported by breadcrumb drop targets:
+// dragging onto "הבנק" moves to root; dragging onto an ancestor moves
+// into that ancestor's children.
 //
-// Drop model (Option B — no folder-header drop):
-//   * Dragging an ITEM: folder headers are filtered out of the
-//     collision pool, so the "over" is always an item row. Cursor
-//     above the first item of a folder (below the header) resolves to
-//     inserting at index 0 of that folder via computeInsertion's
-//     standard above/below midpoint logic.
-//   * Dragging a FOLDER: collision pool is limited to folder-header
-//     rows; folders reorder at root level only.
+// The folder-drag path and item-drag path share the same pipeline. Only
+// the persistence call differs (PUT /api/items/reorder for items,
+// PUT /api/items/folders/reorder or PUT /folders/:id for folders).
 // ─────────────────────────────────────────────────────────────────────────────
 
-const COLLAPSE_STORAGE_KEY = 'gos.bank.folderCollapsed';
-const UNGROUPED_ID = '__ungrouped__';
 const INDENT_PX = 20;
-
-function readCollapsed() {
-  try {
-    const raw = localStorage.getItem(COLLAPSE_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-}
-function writeCollapsed(next) {
-  try {
-    localStorage.setItem(COLLAPSE_STORAGE_KEY, JSON.stringify(next));
-  } catch {
-    /* ignore */
-  }
-}
+const BREADCRUMB_PREFIX = 'breadcrumb::';
+const BREADCRUMB_ROOT_ID = BREADCRUMB_PREFIX + 'root';
 
 export default function BankListPane({
   content,
@@ -91,10 +67,11 @@ export default function BankListPane({
   error,
   onRetry,
   onChanged,
+  currentFolderId,
+  onEnterFolder,
 }) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
-  const [collapsed, setCollapsed] = useState(readCollapsed);
   const navigate = useNavigate();
   const { id: selectedId } = useParams();
 
@@ -129,30 +106,85 @@ export default function BankListPane({
       el.scrollTop = savedScrollRef.current;
     }
   });
+  // Reset scroll on folder change so entering a new folder starts from the
+  // top — persistence is per-folder view, not global.
+  useEffect(() => {
+    savedScrollRef.current = 0;
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [currentFolderId]);
 
-  function toggleFolder(id) {
-    setCollapsed((prev) => {
-      const next = { ...prev, [id]: !prev[id] };
-      writeCollapsed(next);
-      return next;
-    });
+  // Folder lookups — used for breadcrumb path + descendants computation.
+  const folderById = useMemo(() => {
+    const m = new Map();
+    for (const f of localFolders) m.set(f.id, f);
+    return m;
+  }, [localFolders]);
+
+  const folderChildrenIds = useMemo(() => {
+    const m = new Map();
+    for (const f of localFolders) {
+      const key = f.parentId || null;
+      if (!m.has(key)) m.set(key, []);
+      m.get(key).push(f.id);
+    }
+    return m;
+  }, [localFolders]);
+
+  function folderDescendantIds(folderId) {
+    const result = new Set();
+    const stack = [folderId];
+    while (stack.length) {
+      const cur = stack.pop();
+      const kids = folderChildrenIds.get(cur) || [];
+      for (const k of kids) {
+        if (!result.has(k)) {
+          result.add(k);
+          stack.push(k);
+        }
+      }
+    }
+    return result;
   }
 
-  // ── Build the flat row list in display order. ──
-  // Each row is a DnD-ready descriptor that feeds both the renderer and
-  // the shared positioning.computeInsertion helper.
-  const rows = useMemo(
-    () =>
-      buildRows({
-        folders: localFolders,
-        content: localContent,
-        questions: localQuestions,
-        collapsed,
-        search,
-        filter,
-      }),
-    [localFolders, localContent, localQuestions, collapsed, search, filter],
-  );
+  // Breadcrumb path: root → ... → currentFolder (exclusive of root).
+  const breadcrumbPath = useMemo(() => {
+    if (!currentFolderId) return [];
+    const path = [];
+    let cur = currentFolderId;
+    const seen = new Set();
+    while (cur && !seen.has(cur)) {
+      seen.add(cur);
+      const f = folderById.get(cur);
+      if (!f) break;
+      path.unshift(f);
+      cur = f.parentId || null;
+    }
+    return path;
+  }, [currentFolderId, folderById]);
+
+  // If currentFolderId is stale (folder was deleted), bounce back to
+  // root. We don't surface an error — the URL simply points at nothing
+  // anymore.
+  useEffect(() => {
+    if (!currentFolderId) return;
+    if (!folderById.has(currentFolderId)) {
+      onEnterFolder(null);
+    }
+  }, [currentFolderId, folderById, onEnterFolder]);
+
+  // ── Build the visible flat row list. ──
+  // Drill-down: rows are just the current folder's direct children.
+  // Folders first (like Finder), then items.
+  const rows = useMemo(() => {
+    return buildVisibleRows({
+      currentFolderId,
+      folders: localFolders,
+      content: localContent,
+      questions: localQuestions,
+      search,
+      filter,
+    });
+  }, [currentFolderId, localFolders, localContent, localQuestions, search, filter]);
 
   const rowById = useMemo(() => {
     const m = new Map();
@@ -160,23 +192,12 @@ export default function BankListPane({
     return m;
   }, [rows]);
 
-  // Ordered selectable ids (item rows only — folders are never multi-
-  // selectable via the list).
   const selectableIds = useMemo(
     () => rows.filter((r) => r.kind !== 'folder').map((r) => r.id),
     [rows],
   );
 
-  // ── Selection ──
   const sel = useSelection();
-
-  // Clear selection when the filter/search changes if the anchor rolls
-  // out of view — keeps anchor + selection consistent.
-  useEffect(() => {
-    // Intentionally don't clear on navigation — selection persists so
-    // the admin can open an item, come back, and still have their
-    // multi-selection ready to drag.
-  }, []);
 
   // ── DnD wiring ──
   const sensors = useSensors(
@@ -188,23 +209,22 @@ export default function BankListPane({
   const [dragKind, setDragKind] = useState(null);
   const [draggingSet, setDraggingSet] = useState(() => new Set());
   const [insertion, setInsertion] = useState(null);
+  const [breadcrumbOver, setBreadcrumbOver] = useState(null);
   const pointerYRef = useRef(0);
 
-  // Used by the positioning helper — Bank has no deeper nesting, so
-  // the descendants of a folder are its items. This function keeps the
-  // shape consumers-of-the-primitive will need when Flow's recursive
-  // groups land.
+  // Cycle-prevention resolver for computeInsertion. Folders can nest;
+  // dropping a folder into its own subtree is rejected.
   const descendants = useCallback(
-    (id) => {
-      const row = rowById.get(id);
-      if (!row || !row.isContainer) return null;
-      const d = new Set();
-      for (const r of rows) {
-        if (r.parentId === id) d.add(r.id);
-      }
-      return d;
+    (dndId) => {
+      if (!dndId?.startsWith('folder::')) return null;
+      const id = dndId.slice('folder::'.length);
+      const descFolderIds = folderDescendantIds(id);
+      const s = new Set();
+      s.add(dndId);
+      for (const d of descFolderIds) s.add(`folder::${d}`);
+      return s;
     },
-    [rows, rowById],
+    [folderChildrenIds], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   function onDragStart(event) {
@@ -213,30 +233,25 @@ export default function BankListPane({
     if (!row) return;
     setActiveId(id);
     setDragKind(row.kind === 'folder' ? 'folder' : 'item');
-    // Drag set resolution: if the active row is in the selection,
-    // drag the whole selection. Otherwise, drag just the active row.
     if (row.kind === 'folder') {
       setDraggingSet(new Set([id]));
     } else {
       setDraggingSet(sel.dragSetFor(id));
     }
     setInsertion(null);
+    setBreadcrumbOver(null);
   }
 
   function onDragMove(event) {
-    // Track pointer Y so computeInsertion can decide above/below the
-    // row midpoint. dnd-kit's event.delta + initial activator rect is
-    // the cleanest way to get an absolute clientY without a window
-    // listener.
     const act = event.activatorEvent;
     if (act && typeof act.clientY === 'number') {
       pointerYRef.current = act.clientY + (event.delta?.y || 0);
     }
-    updateInsertion(event);
+    updateOver(event);
   }
 
   function onDragOver(event) {
-    updateInsertion(event);
+    updateOver(event);
   }
 
   function onDragCancel() {
@@ -244,15 +259,27 @@ export default function BankListPane({
     setDragKind(null);
     setDraggingSet(new Set());
     setInsertion(null);
+    setBreadcrumbOver(null);
   }
 
-  function updateInsertion(event) {
+  function updateOver(event) {
     const overId = event.over?.id ? String(event.over.id) : null;
     if (!overId) {
       setInsertion(null);
+      setBreadcrumbOver(null);
       return;
     }
-    const overEl = document.querySelector(`[data-dnd-row="${cssEscape(overId)}"]`);
+    if (overId.startsWith(BREADCRUMB_PREFIX)) {
+      // Breadcrumb drop — not a row-level insertion. Just remember
+      // which segment is hot so the UI can highlight it.
+      setInsertion(null);
+      setBreadcrumbOver(overId);
+      return;
+    }
+    setBreadcrumbOver(null);
+    const overEl = document.querySelector(
+      `[data-dnd-row="${cssEscape(overId)}"]`,
+    );
     const overRect = overEl?.getBoundingClientRect() || null;
     const ins = computeInsertion({
       rows,
@@ -262,82 +289,219 @@ export default function BankListPane({
       overRect,
       pointerY: pointerYRef.current,
       descendants,
-      // Bank-specific policy: root level only holds folders. Items
-      // always live inside a folder (or the synthetic ungrouped
-      // bucket). The primitive respects this by falling back from
-      // "sibling at root" to "first child of container" when a
-      // folder header is the hovered row and activeKind is 'item'.
-      rootAccepts: ['folder'],
+      // In drill-down the visible rows are the direct children of the
+      // current folder. Both items and folders can live here, so root
+      // accepts everything. (The actual target folder is resolved in
+      // commit by treating parentId=null as "currentFolderId".)
+      rootAccepts: null,
     });
     setInsertion((prev) => (sameInsertion(prev, ins) ? prev : ins));
   }
 
   async function onDragEnd(event) {
     const movedIds = Array.from(draggingSet);
-    const finalInsertion = insertion;
+    const overId = event.over?.id ? String(event.over.id) : null;
     onDragCancel();
-    if (!finalInsertion || movedIds.length === 0) return;
+    if (movedIds.length === 0) return;
 
-    if (dragKind === 'folder') {
-      return commitFolderMove(movedIds[0], finalInsertion);
+    // Breadcrumb drops — move dragged rows into the targeted ancestor
+    // (or root).
+    if (overId && overId.startsWith(BREADCRUMB_PREFIX)) {
+      const target =
+        overId === BREADCRUMB_ROOT_ID
+          ? null
+          : overId.slice(BREADCRUMB_PREFIX.length);
+      // Reject dropping a folder into its own subtree.
+      if (dragKind === 'folder') {
+        const f = movedIds[0];
+        if (f) {
+          const id = f.slice('folder::'.length);
+          if (target) {
+            const subtree = folderDescendantIds(id);
+            if (id === target || subtree.has(target)) return;
+          }
+          return commitFolderMoveToParent(id, target);
+        }
+        return;
+      }
+      return commitItemsMoveToFolder(movedIds, target);
     }
-    return commitItemMove(movedIds, finalInsertion);
+
+    // Row-level drop — use the standard insertion pipeline.
+    if (!insertion) return;
+    if (dragKind === 'folder') {
+      return commitFolderMove(movedIds[0], insertion);
+    }
+    return commitItemMove(movedIds, insertion);
   }
 
-  // Folder reorder — simple arrayMove at root level. The id passed here
-  // is the DnD row id (kind-prefixed); the DB id lives on meta.
+  // ── Commit helpers ──
+
+  // Folder reorder/move. One path for BOTH same-parent reorder and
+  // cross-parent move: build the target parent's ordered children with
+  // the dragged folder inserted at the computed index, then call the
+  // atomic reorder endpoint (it sets parentId + sortOrder in one
+  // transaction for every entry).
+  //
+  // ins.parentId is null when the drop lands at the current view's
+  // level (siblings of the visible folders) and non-null when the drop
+  // lands INTO a visible sub-folder.
   function commitFolderMove(rowId, ins) {
-    if (ins.parentId != null) return; // folders never nest in Bank
     const row = rowById.get(rowId);
-    if (!row || row.kind !== 'folder' || row.meta.isUngrouped) return;
+    if (!row || row.kind !== 'folder') return;
     const folderId = row.meta.id;
-    const currentIds = localFolders.map((f) => f.id);
-    const fromIdx = currentIds.indexOf(folderId);
-    if (fromIdx < 0) return;
-    const without = currentIds.filter((id) => id !== folderId);
-    // The insertion index counts the ungrouped pseudo-row when it's
-    // visible. Subtract 1 to get the index among real folders.
-    const ungroupedVisible = rows.some(
-      (r) => r.kind === 'folder' && r.meta.isUngrouped,
-    );
-    const adjusted = ungroupedVisible
-      ? Math.max(0, ins.indexInParent - 1)
-      : ins.indexInParent;
-    const targetIdx = Math.max(0, Math.min(adjusted, without.length));
-    const nextIds = [
-      ...without.slice(0, targetIdx),
-      folderId,
-      ...without.slice(targetIdx),
-    ];
-    const nextFolders = nextIds
-      .map((id) => localFolders.find((f) => f.id === id))
-      .filter(Boolean);
-    flushSync(() => setLocalFolders(nextFolders));
-    api.folders.reorder(nextIds).catch(() => onChanged?.());
+    const targetParentId =
+      ins.parentId == null ? currentFolderId || null : ins.parentId;
+
+    // Drop at current-view level → index is among VISIBLE folder rows
+    // (items sit after folders in the view, so the first N visible
+    // rows are folders). Drop INTO a visible sub-folder → index is 0
+    // (computeInsertion always returns 0 for "first child of over").
+    let insertIdx;
+    if (ins.parentId == null) {
+      const visibleFolderIds = rows
+        .filter((r) => r.kind === 'folder' && r.id !== rowId)
+        .map((r) => r.meta.id);
+      const neighbour = visibleFolderIds[ins.indexInParent];
+      insertIdx = neighbour != null ? indexInSiblingFolders(neighbour) : -1;
+      if (insertIdx < 0) insertIdx = siblingFolderCount(targetParentId);
+    } else {
+      insertIdx = ins.indexInParent;
+    }
+    commitFolderMoveAt(folderId, targetParentId, insertIdx);
   }
 
-  // Item(s) reorder / move. Handles:
-  //   * single-folder reorder
-  //   * cross-folder move (single or multiple items)
-  //   * multi-select drag
-  // All cases resolve to a single atomic reorder POST against the
-  // target folder; the endpoint sets folderId + sortOrder in one
-  // transaction (see server/src/routes/items.js /reorder).
-  function commitItemMove(movedIds, ins) {
-    const targetFolderId = ins.parentId === UNGROUPED_ID ? null : ins.parentId;
+  function commitFolderMoveToParent(folderId, targetParentId) {
+    // Breadcrumb drop or explicit "move to ancestor" — append at end.
+    commitFolderMoveAt(folderId, targetParentId, siblingFolderCount(targetParentId));
+  }
 
-    // Resolve each moved id to the actual data row (content or
-    // question), preserving the order they appeared in the flat list
-    // — that's the user's visible multi-select order.
+  function commitFolderMoveAt(folderId, targetParentId, insertIdx) {
+    if (dragFolderCreatesCycle(folderId, targetParentId)) return;
+    const siblings = localFolders
+      .filter((f) => (f.parentId || null) === (targetParentId || null))
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    const siblingIds = siblings.map((f) => f.id).filter((id) => id !== folderId);
+    const clampedIdx = Math.max(0, Math.min(insertIdx, siblingIds.length));
+    const nextIds = [
+      ...siblingIds.slice(0, clampedIdx),
+      folderId,
+      ...siblingIds.slice(clampedIdx),
+    ];
+    flushSync(() => {
+      setLocalFolders((prev) =>
+        prev.map((f) => {
+          const idx = nextIds.indexOf(f.id);
+          if (idx < 0) return f;
+          return { ...f, parentId: targetParentId || null, sortOrder: idx };
+        }),
+      );
+    });
+    api.folders.reorder(nextIds, targetParentId).catch(() => onChanged?.());
+  }
+
+  function siblingFolderCount(parentId) {
+    return localFolders.filter(
+      (f) => (f.parentId || null) === (parentId || null),
+    ).length;
+  }
+  function indexInSiblingFolders(folderId) {
+    const f = folderById.get(folderId);
+    if (!f) return -1;
+    const siblings = localFolders
+      .filter((x) => (x.parentId || null) === (f.parentId || null))
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    return siblings.findIndex((x) => x.id === folderId);
+  }
+
+  function dragFolderCreatesCycle(folderId, targetParentId) {
+    if (!targetParentId) return false;
+    if (targetParentId === folderId) return true;
+    return folderDescendantIds(folderId).has(targetParentId);
+  }
+
+  // Item(s) move within or across folders using the row insertion.
+  //
+  // parentId=null means "drop at current folder level" → targetFolderId
+  // = currentFolderId. Otherwise the visible row is a folder and we're
+  // dropping INTO that folder.
+  function commitItemMove(movedIds, ins) {
+    const targetFolderId =
+      ins.parentId == null ? currentFolderId || null : ins.parentId;
+
     const movedInDisplayOrder = rows
       .filter((r) => r.kind !== 'folder' && movedIds.includes(r.id))
       .map((r) => r.meta);
-
     if (movedInDisplayOrder.length === 0) return;
 
-    // Current children of the target folder, in current sort order,
-    // excluding any that are being moved (they'll be re-inserted at
-    // the insertion index).
+    const currentTargetChildren = [
+      ...localContent
+        .filter((i) => (i.folderId || null) === targetFolderId)
+        .map((i) => ({ ...i, kind: ITEM_KINDS.CONTENT })),
+      ...localQuestions
+        .filter((i) => (i.folderId || null) === targetFolderId)
+        .map((i) => ({ ...i, kind: ITEM_KINDS.QUESTION })),
+    ].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+
+    // Remap indexInParent: in the visible view the index counts folders
+    // + items; in the target folder it only counts items. If dropping
+    // into a sub-folder (parentId is a folder id), the index is already
+    // relative to that folder's children (and folder-target children are
+    // items only in the visible world — our flat representation shows
+    // only one level). If dropping at current level (parentId=null), we
+    // subtract the number of leading folders in the visible list.
+    let insertionIndex = ins.indexInParent;
+    if (ins.parentId == null) {
+      const visibleFolders = rows.filter((r) => r.kind === 'folder').length;
+      insertionIndex = Math.max(0, ins.indexInParent - visibleFolders);
+    }
+
+    const finalList = buildTargetOrder({
+      targetChildren: currentTargetChildren,
+      insertionIndex,
+      movedRows: movedInDisplayOrder.map((m) => ({ id: m.id, kind: m.kind })),
+    });
+
+    const patches = new Map();
+    finalList.forEach((row, idx) => {
+      patches.set(`${row.kind}:${row.id}`, {
+        sortOrder: idx,
+        folderId: targetFolderId,
+      });
+    });
+
+    flushSync(() => {
+      setLocalContent((prev) =>
+        prev.map((i) => {
+          const p = patches.get(`${ITEM_KINDS.CONTENT}:${i.id}`);
+          return p ? { ...i, ...p } : i;
+        }),
+      );
+      setLocalQuestions((prev) =>
+        prev.map((i) => {
+          const p = patches.get(`${ITEM_KINDS.QUESTION}:${i.id}`);
+          return p ? { ...i, ...p } : i;
+        }),
+      );
+    });
+
+    api.bankItems
+      .reorder(
+        finalList.map((r) => ({ kind: r.kind, id: r.id })),
+        targetFolderId,
+      )
+      .catch(() => onChanged?.());
+  }
+
+  // Breadcrumb-drop path for items: move all dragged items into the
+  // target folder, appended at the end. No index computation — we're
+  // explicitly saying "move OUT of here".
+  function commitItemsMoveToFolder(movedRowIds, targetFolderId) {
+    const movedItems = rows
+      .filter((r) => r.kind !== 'folder' && movedRowIds.includes(r.id))
+      .map((r) => r.meta);
+    if (movedItems.length === 0) return;
+
     const currentTargetChildren = [
       ...localContent
         .filter((i) => (i.folderId || null) === targetFolderId)
@@ -349,11 +513,10 @@ export default function BankListPane({
 
     const finalList = buildTargetOrder({
       targetChildren: currentTargetChildren,
-      insertionIndex: ins.indexInParent,
-      movedRows: movedInDisplayOrder.map((m) => ({ id: m.id, kind: m.kind })),
+      insertionIndex: currentTargetChildren.length, // append
+      movedRows: movedItems.map((m) => ({ id: m.id, kind: m.kind })),
     });
 
-    // Project new sortOrder + folderId into per-kind local state.
     const patches = new Map();
     finalList.forEach((row, idx) => {
       patches.set(`${row.kind}:${row.id}`, {
@@ -392,7 +555,7 @@ export default function BankListPane({
 
   async function confirmAddFolder(name) {
     setAddFolderOpen(false);
-    await api.folders.create(name);
+    await api.folders.create(name, currentFolderId || null);
     onChanged?.();
   }
   async function confirmRename(name) {
@@ -406,11 +569,16 @@ export default function BankListPane({
     const f = deleteFolder;
     setDeleteFolder(null);
     if (!f) return;
+    // If we're currently inside the folder being deleted, drill out
+    // first so the URL doesn't end up pointing at a ghost.
+    if (f.id === currentFolderId) {
+      onEnterFolder(f.parentId || null);
+    }
     await api.folders.remove(f.id);
     onChanged?.();
   }
 
-  // ── Item actions ──
+  // ── Actions ──
   function openPreview(row) {
     const url = `/preview/${row.kind}/${row.id}`;
     window.open(url, '_blank', 'noopener,noreferrer');
@@ -418,8 +586,13 @@ export default function BankListPane({
 
   async function createNew(kind) {
     try {
+      const folderId = currentFolderId || null;
       if (kind === ITEM_KINDS.CONTENT) {
-        const created = await api.contentItems.create({ title: '', body: '' });
+        const created = await api.contentItems.create({
+          title: '',
+          body: '',
+          folderId,
+        });
         onChanged?.();
         navigate(`/admin/procedures/bank/content/${created.id}`);
       } else {
@@ -428,6 +601,7 @@ export default function BankListPane({
           questionText: '',
           answerType: ANSWER_TYPES.OPEN_TEXT,
           options: [],
+          folderId,
         });
         onChanged?.();
         navigate(`/admin/procedures/bank/question/${created.id}`);
@@ -439,6 +613,7 @@ export default function BankListPane({
 
   const totalCount = localContent.length + localQuestions.length;
   const visibleItemCount = rows.filter((r) => r.kind !== 'folder').length;
+  const visibleFolderCount = rows.filter((r) => r.kind === 'folder').length;
 
   return (
     <div className="h-full flex flex-col">
@@ -451,11 +626,15 @@ export default function BankListPane({
           className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
         />
         <div className="flex gap-2">
-          <NewItemMenu onCreate={createNew} />
+          <NewItemMenu onCreate={createNew} currentFolderId={currentFolderId} />
           <button
             onClick={() => setAddFolderOpen(true)}
             className="text-[12px] border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 rounded-md px-3 py-2"
-            title="תיקייה חדשה"
+            title={
+              currentFolderId
+                ? 'תיקייה חדשה בתוך התיקייה הנוכחית'
+                : 'תיקייה חדשה בשורש'
+            }
           >
             + תיקייה
           </button>
@@ -496,16 +675,8 @@ export default function BankListPane({
             </button>
           </div>
         )}
-        {!loading && !error && totalCount === 0 && localFolders.length === 0 && (
-          <EmptyListState />
-        )}
-        {!error && totalCount > 0 && visibleItemCount === 0 && (
-          <div className="p-6 text-center text-sm text-gray-500">
-            לא נמצאו פריטים תואמים.
-          </div>
-        )}
 
-        {!error && (totalCount > 0 || localFolders.length > 0) && (
+        {!error && (totalCount > 0 || localFolders.length > 0) ? (
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
@@ -515,28 +686,42 @@ export default function BankListPane({
             onDragEnd={onDragEnd}
             onDragCancel={onDragCancel}
           >
-            <RowsRenderer
-              rows={rows}
-              insertion={insertion}
-              activeId={activeId}
-              draggingSet={draggingSet}
-              dragKind={dragKind}
-              selectedIds={sel.selected}
-              selectableIds={selectableIds}
-              selectedFlowRoute={selectedId}
-              collapsed={collapsed}
-              onToggleFolder={toggleFolder}
-              onOpen={(row) =>
-                navigate(`/admin/procedures/bank/${row.kind}/${row.id}`)
-              }
-              onSelectClick={(id, mods) =>
-                sel.handleClick(id, mods, selectableIds)
-              }
-              onToggleSelect={sel.toggle}
-              onPreview={openPreview}
-              onRenameFolder={(f) => setRenameFolder(f)}
-              onDeleteFolder={(f) => setDeleteFolder(f)}
+            <Breadcrumb
+              path={breadcrumbPath}
+              onEnter={onEnterFolder}
+              breadcrumbOver={breadcrumbOver}
+              activeDrag={activeId}
             />
+
+            {!loading && visibleFolderCount === 0 && visibleItemCount === 0 && (
+              <EmptyFolderState
+                isRoot={!currentFolderId}
+                hasSearch={!!search}
+              />
+            )}
+
+            {(visibleFolderCount > 0 || visibleItemCount > 0) && (
+              <RowsRenderer
+                rows={rows}
+                insertion={insertion}
+                activeId={activeId}
+                draggingSet={draggingSet}
+                selectedIds={sel.selected}
+                selectableIds={selectableIds}
+                selectedFlowRoute={selectedId}
+                onEnterFolder={onEnterFolder}
+                onOpen={(row) =>
+                  navigate(`/admin/procedures/bank/${row.kind}/${row.id}`)
+                }
+                onSelectClick={(id, mods) =>
+                  sel.handleClick(id, mods, selectableIds)
+                }
+                onToggleSelect={sel.toggle}
+                onRenameFolder={(f) => setRenameFolder(f)}
+                onDeleteFolder={(f) => setDeleteFolder(f)}
+              />
+            )}
+
             <DragOverlay dropAnimation={null}>
               {activeId && dragKind === 'item' ? (
                 <DragGhost
@@ -548,12 +733,14 @@ export default function BankListPane({
               ) : null}
             </DragOverlay>
           </DndContext>
+        ) : (
+          !loading && !error && <EmptyListState />
         )}
       </div>
 
       <PromptDialog
         open={addFolderOpen}
-        title="תיקייה חדשה"
+        title={currentFolderId ? 'תת-תיקייה חדשה' : 'תיקייה חדשה'}
         label="שם"
         placeholder="למשל: תהליכי קבלה, הדרכות חובה"
         confirmLabel="צור"
@@ -574,7 +761,7 @@ export default function BankListPane({
         title="מחיקת תיקייה"
         body={
           deleteFolder
-            ? `למחוק את התיקייה "${deleteFolder.name}"? הפריטים יעברו לרמה הבסיסית.`
+            ? `למחוק את התיקייה "${deleteFolder.name}"? תת-התיקיות והפריטים בתוכה יעברו לרמה הבסיסית.`
             : ''
         }
         confirmLabel="מחק"
@@ -587,93 +774,154 @@ export default function BankListPane({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Flat-row construction
+// Flat-row construction — ONE level of the tree only (drill-down).
+// Folders first, items after. Ordered by sortOrder within each group.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function buildRows({ folders, content, questions, collapsed, search, filter }) {
+function buildVisibleRows({
+  currentFolderId,
+  folders,
+  content,
+  questions,
+  search,
+  filter,
+}) {
   const q = search.trim().toLowerCase();
-  const matches = (item, kind) => {
+  const matchesFolder = (f) => {
+    if (!q) return true;
+    return (f.name || '').toLowerCase().includes(q);
+  };
+  const matchesItem = (item, kind) => {
     if (filter !== 'all' && kind !== filter) return false;
     if (!q) return true;
     return titleToPlain(item.title).toLowerCase().includes(q);
   };
 
-  // Group items by folder.
-  const byFolder = new Map();
-  byFolder.set(UNGROUPED_ID, []);
-  for (const f of folders) byFolder.set(f.id, []);
+  const childFolders = folders
+    .filter((f) => (f.parentId || null) === (currentFolderId || null))
+    .filter(matchesFolder)
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 
-  const push = (item, kind) => {
-    const fid = item.folderId || UNGROUPED_ID;
-    const bucket = byFolder.get(fid) || byFolder.get(UNGROUPED_ID);
-    bucket.push({ ...item, kind });
-  };
-  for (const i of content) push(i, ITEM_KINDS.CONTENT);
-  for (const i of questions) push(i, ITEM_KINDS.QUESTION);
-  for (const bucket of byFolder.values()) {
-    bucket.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-  }
+  const childContent = content
+    .filter((i) => (i.folderId || null) === (currentFolderId || null))
+    .map((i) => ({ ...i, kind: ITEM_KINDS.CONTENT }))
+    .filter((i) => matchesItem(i, i.kind));
+  const childQuestions = questions
+    .filter((i) => (i.folderId || null) === (currentFolderId || null))
+    .map((i) => ({ ...i, kind: ITEM_KINDS.QUESTION }))
+    .filter((i) => matchesItem(i, i.kind));
+  const childItems = [...childContent, ...childQuestions].sort(
+    (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0),
+  );
 
   const rows = [];
-
-  const emitFolder = (folder, isUngrouped) => {
-    const children = (byFolder.get(folder.id) || []).filter((i) =>
-      matches(i, i.kind),
-    );
-    // Hide ungrouped header if there are no children there and the
-    // folder is the synthetic "ungrouped" bucket — avoids a floating
-    // "ללא תיקייה" row at the bottom of the list for clean workspaces.
-    if (isUngrouped && children.length === 0 && folders.length > 0) return;
-
-    const isCollapsed = !!collapsed[folder.id];
+  for (const f of childFolders) {
     rows.push({
-      id: rowId('folder', folder.id),
+      id: rowId('folder', f.id),
       parentId: null,
       depth: 0,
       kind: 'folder',
       isContainer: true,
-      acceptsKinds: ['item'],
-      collapsed: isCollapsed,
-      meta: {
-        id: folder.id,
-        name: folder.name,
-        isUngrouped,
-        childCount: children.length,
-      },
+      acceptsKinds: ['item', 'folder'],
+      collapsed: false,
+      meta: f,
     });
-    if (!isCollapsed) {
-      for (const child of children) {
-        rows.push({
-          id: rowId(child.kind, child.id),
-          parentId: folder.id, // parentId is the raw folder id (items
-                               // reference folderId, not the row-prefixed id)
-          depth: 1,
-          kind: 'item',
-          isContainer: false,
-          acceptsKinds: [],
-          collapsed: false,
-          meta: child, // full item payload
-        });
-      }
-    }
-  };
-
-  // Ungrouped bucket first (no pseudo-folder row unless there are items
-  // AND folders — see emitFolder guard).
-  emitFolder({ id: UNGROUPED_ID, name: 'ללא תיקייה' }, true);
-  for (const f of folders) emitFolder(f, false);
-
+  }
+  for (const item of childItems) {
+    rows.push({
+      id: rowId(item.kind, item.id),
+      parentId: null,
+      depth: 0,
+      kind: 'item',
+      isContainer: false,
+      acceptsKinds: [],
+      collapsed: false,
+      meta: item,
+    });
+  }
   return rows;
 }
 
-// Row ids carry kind as prefix so folder/item id collisions can't
-// happen and the DnD layer can read kind without a lookup.
 function rowId(kind, id) {
   return `${kind}::${id}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Renderer
+// Breadcrumb
+// ─────────────────────────────────────────────────────────────────────────────
+
+function Breadcrumb({ path, onEnter, breadcrumbOver, activeDrag }) {
+  const segments = [
+    { id: null, name: 'הבנק', isRoot: true },
+    ...path.map((f) => ({ id: f.id, name: f.name })),
+  ];
+  // The LAST segment is the current location — not a drop target for
+  // the current view's own rows (you're already there).
+  return (
+    <nav
+      className="px-3 py-2 text-[12px] border-b border-gray-100 flex items-center gap-1 flex-wrap bg-gray-50/60"
+      aria-label="מסלול תיקיות"
+    >
+      {segments.map((seg, idx) => {
+        const isLast = idx === segments.length - 1;
+        return (
+          <Fragment key={seg.id ?? '__root__'}>
+            {idx > 0 && <span className="text-gray-400 mx-0.5">›</span>}
+            <BreadcrumbSegment
+              seg={seg}
+              isLast={isLast}
+              isDragging={!!activeDrag}
+              breadcrumbOver={breadcrumbOver}
+              onEnter={onEnter}
+            />
+          </Fragment>
+        );
+      })}
+    </nav>
+  );
+}
+
+function BreadcrumbSegment({ seg, isLast, isDragging, breadcrumbOver, onEnter }) {
+  const dropId = seg.id ? BREADCRUMB_PREFIX + seg.id : BREADCRUMB_ROOT_ID;
+  const drop = useDroppable({
+    id: dropId,
+    disabled: isLast, // can't "move here" if already here
+  });
+  const isHot = breadcrumbOver === dropId;
+
+  const body = (
+    <span
+      className={`inline-block rounded px-2 py-0.5 transition ${
+        isHot
+          ? 'bg-blue-500 text-white'
+          : isDragging && !isLast
+          ? 'bg-white border border-dashed border-blue-300 text-blue-700'
+          : isLast
+          ? 'text-gray-900 font-semibold'
+          : 'text-blue-700 hover:bg-blue-50'
+      }`}
+    >
+      {seg.isRoot ? '🏠 הבנק' : seg.name}
+    </span>
+  );
+
+  if (isLast) {
+    return <span ref={drop.setNodeRef}>{body}</span>;
+  }
+  return (
+    <button
+      ref={drop.setNodeRef}
+      onClick={() => onEnter(seg.id)}
+      className="cursor-pointer"
+      type="button"
+    >
+      {body}
+    </button>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Row renderer
 // ─────────────────────────────────────────────────────────────────────────────
 
 function RowsRenderer({
@@ -681,22 +929,16 @@ function RowsRenderer({
   insertion,
   activeId,
   draggingSet,
-  dragKind,
   selectedIds,
   selectableIds,
   selectedFlowRoute,
-  collapsed,
-  onToggleFolder,
+  onEnterFolder,
   onOpen,
   onSelectClick,
   onToggleSelect,
-  onPreview,
   onRenameFolder,
   onDeleteFolder,
 }) {
-  // Compute where (if anywhere) to inject the drop indicator. If the
-  // insertion's flatIndex is at the end, we render the indicator after
-  // the last row.
   return (
     <ul className="py-1 relative">
       {rows.map((row, i) => (
@@ -714,11 +956,10 @@ function RowsRenderer({
             isRouteSelected={
               row.kind !== 'folder' && row.meta.id === selectedFlowRoute
             }
-            onToggleFolder={onToggleFolder}
+            onEnterFolder={onEnterFolder}
             onOpen={onOpen}
             onSelectClick={onSelectClick}
             onToggleSelect={onToggleSelect}
-            onPreview={onPreview}
             onRenameFolder={onRenameFolder}
             onDeleteFolder={onDeleteFolder}
           />
@@ -739,11 +980,10 @@ function RowNode({
   isDragSource,
   isSelected,
   isRouteSelected,
-  onToggleFolder,
+  onEnterFolder,
   onOpen,
   onSelectClick,
   onToggleSelect,
-  onPreview,
   onRenameFolder,
   onDeleteFolder,
 }) {
@@ -751,8 +991,9 @@ function RowNode({
     return (
       <FolderRow
         row={row}
+        isActive={isActive}
         isDragSource={isDragSource}
-        onToggleFolder={onToggleFolder}
+        onEnterFolder={onEnterFolder}
         onRenameFolder={onRenameFolder}
         onDeleteFolder={onDeleteFolder}
       />
@@ -768,42 +1009,29 @@ function RowNode({
       onOpen={onOpen}
       onSelectClick={onSelectClick}
       onToggleSelect={onToggleSelect}
-      onPreview={onPreview}
     />
   );
 }
 
 // ── Folder row ──
-// Whole row is draggable (for folder reorder) AND droppable (as a drop
-// target for items landing in this folder). Folder-folder collisions
-// resolve at the container level via acceptsKinds.
-
 function FolderRow({
   row,
+  isActive,
   isDragSource,
-  onToggleFolder,
+  onEnterFolder,
   onRenameFolder,
   onDeleteFolder,
 }) {
-  const { meta, collapsed } = row;
-  const isUngrouped = meta.isUngrouped;
+  const { meta } = row;
+  const drag = useDraggable({ id: row.id, data: { kind: 'folder' } });
+  const drop = useDroppable({ id: row.id, data: { kind: 'folder' } });
 
-  // Folder drag handle (for folder reorder). Ungrouped bucket is never
-  // draggable and never a drop target for other folders.
-  const drag = useDraggable({
-    id: row.id,
-    disabled: isUngrouped,
-    data: { kind: 'folder' },
-  });
-  // Droppable area for items landing into this folder. The computeInsertion
-  // helper distinguishes top-half vs bottom-half so Option B works
-  // cleanly — dropping on the folder header area resolves to either
-  // "above this folder" or "into this folder at top", both rendered as
-  // a line above or below the header.
-  const drop = useDroppable({
-    id: row.id,
-    data: { kind: 'folder-header' },
-  });
+  function onClick(e) {
+    // Avoid entering on modifier clicks — reserved for future
+    // multi-select of folders if we ever add it.
+    if (e.ctrlKey || e.metaKey || e.shiftKey) return;
+    onEnterFolder(meta.id);
+  }
 
   return (
     <li
@@ -812,59 +1040,48 @@ function FolderRow({
         drop.setNodeRef(el);
       }}
       data-dnd-row={row.id}
-      className={`border-b border-gray-100 ${isDragSource ? 'opacity-40' : ''}`}
-      {...(isUngrouped ? {} : drag.attributes)}
-      {...(isUngrouped ? {} : drag.listeners)}
-      style={{ touchAction: isUngrouped ? 'auto' : 'none' }}
+      className={`border-b border-gray-100 select-none ${
+        isActive ? 'opacity-40' : ''
+      }`}
+      {...drag.attributes}
+      {...drag.listeners}
+      style={{ touchAction: 'none' }}
+      onClick={onClick}
     >
-      <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 select-none">
+      <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-gray-100 cursor-pointer">
+        <span className="shrink-0 text-[15px]">📁</span>
+        <span className="flex-1 truncate text-sm font-semibold text-gray-800">
+          {meta.name}
+        </span>
+        <span className="text-gray-400 text-[12px]">›</span>
         <button
-          onClick={() => onToggleFolder(meta.id)}
-          className="flex-1 text-right flex items-center gap-2 text-sm font-semibold text-gray-800"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRenameFolder({ id: meta.id, name: meta.name });
+          }}
+          className="text-[11px] text-gray-500 hover:bg-gray-200 rounded px-2 py-0.5"
+          title="שנה שם"
         >
-          <span
-            className="text-[11px] text-gray-500"
-            style={{
-              display: 'inline-block',
-              transform: collapsed ? 'rotate(-90deg)' : 'none',
-              transition: 'transform 0.12s',
-            }}
-          >
-            ▼
-          </span>
-          <span className="truncate">{meta.name}</span>
-          <span className="text-[11px] text-gray-500 font-normal">
-            ({meta.childCount})
-          </span>
+          ✎
         </button>
-        {!isUngrouped && (
-          <>
-            <button
-              onClick={() => onRenameFolder({ id: meta.id, name: meta.name })}
-              className="text-[11px] text-gray-500 hover:bg-gray-200 rounded px-2 py-0.5"
-              title="שנה שם"
-            >
-              ✎
-            </button>
-            <button
-              onClick={() => onDeleteFolder({ id: meta.id, name: meta.name })}
-              className="text-[11px] text-red-600 hover:bg-red-50 rounded px-2 py-0.5"
-              title="מחק תיקייה"
-            >
-              ×
-            </button>
-          </>
-        )}
+        <button
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDeleteFolder({ id: meta.id, name: meta.name });
+          }}
+          className="text-[11px] text-red-600 hover:bg-red-50 rounded px-2 py-0.5"
+          title="מחק תיקייה"
+        >
+          ×
+        </button>
       </div>
     </li>
   );
 }
 
 // ── Item row ──
-// Whole card is draggable (no ⋮⋮ handle). Clicks open the editor;
-// Ctrl/Cmd/Shift clicks manage selection; checkbox toggles selection
-// explicitly for touch/mouse without modifiers.
-
 function ItemRow({
   row,
   isActive,
@@ -874,21 +1091,13 @@ function ItemRow({
   onOpen,
   onSelectClick,
   onToggleSelect,
-  onPreview,
 }) {
-  const drag = useDraggable({
-    id: row.id,
-    data: { kind: 'item' },
-  });
-  const drop = useDroppable({
-    id: row.id,
-    data: { kind: 'item' },
-  });
+  const drag = useDraggable({ id: row.id, data: { kind: 'item' } });
+  const drop = useDroppable({ id: row.id, data: { kind: 'item' } });
 
   const item = row.meta;
 
   function onRowClick(e) {
-    // Modifier click routes to selection; plain click opens the editor.
     if (e.ctrlKey || e.metaKey || e.shiftKey) {
       e.preventDefault();
       e.stopPropagation();
@@ -901,7 +1110,6 @@ function ItemRow({
     }
     onOpen({ kind: item.kind, id: item.id });
   }
-
   function onCheckboxClick(e) {
     e.stopPropagation();
   }
@@ -932,13 +1140,13 @@ function ItemRow({
             ? 'bg-blue-50/60'
             : 'hover:bg-gray-50'
         }`}
-        style={{ paddingInlineStart: INDENT_PX + 12 }}
       >
         <input
           type="checkbox"
           checked={isSelected}
           onChange={onCheckboxChange}
           onClick={onCheckboxClick}
+          onPointerDown={(e) => e.stopPropagation()}
           className="shrink-0 cursor-pointer"
           aria-label="סימון פריט לפעולה מרובה"
         />
@@ -955,18 +1163,6 @@ function ItemRow({
           html={item.title}
           className="flex-1 min-w-0 font-medium text-gray-900 truncate"
         />
-        <button
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            onPreview({ kind: item.kind, id: item.id });
-          }}
-          className="shrink-0 text-gray-500 hover:text-blue-700 hover:bg-blue-50 rounded p-1"
-          title="תצוגה מקדימה"
-          aria-label="תצוגה מקדימה"
-        >
-          <EyeIcon />
-        </button>
       </div>
     </li>
   );
@@ -986,7 +1182,7 @@ function TitleHtml({ html, className }) {
   return <span className={className}>{titleToPlain(html) || '(ללא כותרת)'}</span>;
 }
 
-// ── Drag overlay ──
+// ── Drag ghosts ──
 function DragGhost({ count, sampleRow }) {
   const label =
     count > 1
@@ -1031,9 +1227,41 @@ function SelectionBar({ sel, onClear }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Empty states
+// ─────────────────────────────────────────────────────────────────────────────
+function EmptyFolderState({ isRoot, hasSearch }) {
+  if (hasSearch) {
+    return (
+      <div className="p-6 text-center text-sm text-gray-500">
+        לא נמצאו פריטים תואמים.
+      </div>
+    );
+  }
+  return (
+    <div className="p-10 text-center text-sm text-gray-500 max-w-xs mx-auto">
+      {isRoot ? (
+        <>עדיין אין פריטים או תיקיות. התחילו בלחיצה על "+ חדש" או "+ תיקייה".</>
+      ) : (
+        <>התיקייה ריקה. הוסיפו פריטים או תת-תיקייה באמצעות הכפתורים למעלה.</>
+      )}
+    </div>
+  );
+}
+function EmptyListState() {
+  return (
+    <div className="p-6 text-center max-w-xs mx-auto">
+      <div className="text-4xl mb-3 opacity-50">☷</div>
+      <div className="font-semibold text-gray-800 mb-1">עדיין אין פריטים בבנק</div>
+      <div className="text-sm text-gray-500">
+        השתמשו בכפתור "+ חדש" כדי ליצור פריט ראשון.
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Small helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
 function sameItemShape(a, b) {
   if (a === b) return true;
   if (!a || !b || a.length !== b.length) return false;
@@ -1060,6 +1288,7 @@ function sameFolderShape(a, b) {
     if (
       x.id !== y.id ||
       (x.sortOrder ?? 0) !== (y.sortOrder ?? 0) ||
+      (x.parentId || null) !== (y.parentId || null) ||
       (x.name || '') !== (y.name || '')
     ) {
       return false;
@@ -1067,7 +1296,6 @@ function sameFolderShape(a, b) {
   }
   return true;
 }
-
 function sameInsertion(a, b) {
   if (a === b) return true;
   if (!a || !b) return false;
@@ -1078,8 +1306,6 @@ function sameInsertion(a, b) {
     a.depth === b.depth
   );
 }
-
-// CSS.escape polyfill wrapper — modern browsers have it; just in case.
 function cssEscape(s) {
   if (window.CSS && typeof window.CSS.escape === 'function') {
     return window.CSS.escape(s);
@@ -1088,35 +1314,9 @@ function cssEscape(s) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Icons / small UI
+// "+ new" menu
 // ─────────────────────────────────────────────────────────────────────────────
-
-function EyeIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"
-        stroke="currentColor"
-        strokeWidth="1.6"
-      />
-      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.6" />
-    </svg>
-  );
-}
-
-function EmptyListState() {
-  return (
-    <div className="p-6 text-center max-w-xs mx-auto">
-      <div className="text-4xl mb-3 opacity-50">☷</div>
-      <div className="font-semibold text-gray-800 mb-1">עדיין אין פריטים בבנק</div>
-      <div className="text-sm text-gray-500">
-        השתמשו בכפתור "+ חדש" כדי ליצור פריט ראשון.
-      </div>
-    </div>
-  );
-}
-
-function NewItemMenu({ onCreate }) {
+function NewItemMenu({ onCreate, currentFolderId }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -1146,6 +1346,11 @@ function NewItemMenu({ onCreate }) {
       <button
         onClick={() => setOpen((v) => !v)}
         className="w-full border border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md px-3 py-2 text-sm font-medium flex items-center justify-between"
+        title={
+          currentFolderId
+            ? 'יוצר פריט חדש בתוך התיקייה הנוכחית'
+            : 'יוצר פריט חדש בשורש'
+        }
       >
         <span>+ חדש</span>
         <span className="text-[10px]">▼</span>

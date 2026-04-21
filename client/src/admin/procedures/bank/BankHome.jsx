@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import {
+  Outlet,
+  useLocation,
+  useSearchParams,
+} from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import ResizeHandle from '../../../shell/ResizeHandle.jsx';
 import BankListPane from './BankListPane.jsx';
@@ -28,9 +32,29 @@ function readStoredWidth() {
 // a time — the list at the index route, the editor at nested routes.
 export default function BankHome() {
   const { pathname } = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const inEditor =
     pathname !== '/admin/procedures/bank' &&
     pathname !== '/admin/procedures/bank/';
+
+  // Drill-down navigation: the `folder` query param identifies the
+  // currently-entered folder. null/missing = root. Browser back/forward
+  // works because we push history via setSearchParams.
+  const currentFolderId = searchParams.get('folder') || null;
+  const setCurrentFolderId = useCallback(
+    (id) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (id) next.set('folder', id);
+          else next.delete('folder');
+          return next;
+        },
+        { replace: false },
+      );
+    },
+    [setSearchParams],
+  );
 
   const [content, setContent] = useState([]);
   const [questions, setQuestions] = useState([]);
@@ -109,6 +133,8 @@ export default function BankHome() {
           error={error}
           onRetry={refresh}
           onChanged={refresh}
+          currentFolderId={currentFolderId}
+          onEnterFolder={setCurrentFolderId}
         />
       </aside>
       <ResizeHandle

@@ -9,16 +9,25 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Flat organisational folder for the item bank. Folders hold content + question
-// items and have no nesting in V1 (parentId can be added later non-breakingly).
+// Nested organisational folder for the item bank. Folders can contain items
+// (content + question) and/or other folders — no depth cap at the data level.
+// parentId=null means the folder sits at the root. sortOrder is scoped by
+// parent, so reindexing only touches siblings in the same parent.
+// ON DELETE SET NULL on the self-relation mirrors the behaviour on items:
+// deleting a parent unparents its children rather than cascading.
 model ItemBankFolder {
-  id            String         @id @default(cuid())
+  id            String           @id @default(cuid())
   name          String
-  sortOrder     Int            @default(0)
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  parent        ItemBankFolder?  @relation("FolderChildren", fields: [parentId], references: [id], onDelete: SetNull)
+  parentId      String?
+  children      ItemBankFolder[] @relation("FolderChildren")
+  sortOrder     Int              @default(0)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
   contentItems  ContentItem[]
   questionItems QuestionItem[]
+
+  @@index([parentId, sortOrder])
 }
 
 // Reusable content item in the bank.

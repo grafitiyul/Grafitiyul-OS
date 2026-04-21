@@ -81,21 +81,24 @@ export const api = {
   },
   folders: {
     list: () => request('/api/items/folders'),
-    create: (name) =>
+    create: (name, parentId = null) =>
       request('/api/items/folders', {
         method: 'POST',
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, parentId: parentId || null }),
       }),
+    // update accepts { name?, parentId? } — passing parentId moves the
+    // folder under a new parent (pass null for root) and appends at the
+    // end of the target parent's children.
     update: (id, data) =>
       request(`/api/items/folders/${id}`, {
         method: 'PUT',
         body: JSON.stringify(data),
       }),
     remove: (id) => request(`/api/items/folders/${id}`, { method: 'DELETE' }),
-    reorder: (ids) =>
+    reorder: (ids, parentId = null) =>
       request('/api/items/folders/reorder', {
         method: 'PUT',
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify({ ids, parentId: parentId || null }),
       }),
   },
   flows: {
