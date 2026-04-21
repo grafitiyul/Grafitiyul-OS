@@ -27,7 +27,7 @@ import {
 export default function QuestionEditor() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { refresh } = useOutletContext();
+  const { refresh, patchItem } = useOutletContext();
   const [searchParams] = useSearchParams();
   const returnToFlow = searchParams.get('returnTo') === 'flow';
   const pending = returnToFlow ? getPending() : null;
@@ -93,6 +93,12 @@ export default function QuestionEditor() {
           internalNote: snapshot.internalNote.trim() || null,
         });
         setSavedAt(updated.updatedAt);
+        // Surgical sidebar update — see ContentEditor for the full
+        // rationale. Keeps the list's title live without a refetch.
+        patchItem?.('question', targetId, {
+          title: updated.title,
+          updatedAt: updated.updatedAt,
+        });
       } catch (e) {
         console.warn('autosave failed:', e.message);
       } finally {
@@ -100,7 +106,7 @@ export default function QuestionEditor() {
       }
     }, 700);
     return () => clearTimeout(handle);
-  }, [form]);
+  }, [form, patchItem]);
 
   function setField(patch) {
     dirtyRef.current = true;

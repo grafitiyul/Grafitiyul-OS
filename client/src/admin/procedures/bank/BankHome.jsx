@@ -72,6 +72,21 @@ export default function BankHome() {
     refresh();
   }, [refresh]);
 
+  // Surgical, single-item update used by editors right after autosave.
+  // This is the bank-list's "live" path: no HTTP refetch, no full state
+  // swap — just merge the patch into the matching row in place. Sidebar
+  // re-renders the one affected card; scroll position, drag state, and
+  // sortable registrations all stay intact because ids and sortOrders
+  // don't change. If we called refresh() instead, the whole list would
+  // refetch and the click-jump bug we fixed earlier would return.
+  const patchItem = useCallback((kind, id, patch) => {
+    if (!id || !patch) return;
+    const merger = (prev) =>
+      prev.map((i) => (i.id === id ? { ...i, ...patch } : i));
+    if (kind === 'content') setContent(merger);
+    else if (kind === 'question') setQuestions(merger);
+  }, []);
+
   const listCls = inEditor
     ? 'hidden lg:flex w-full lg:w-[var(--list-width)] lg:shrink-0 bg-white flex-col min-h-0'
     : 'flex w-full lg:w-[var(--list-width)] lg:shrink-0 bg-white flex-col min-h-0';
@@ -104,7 +119,7 @@ export default function BankHome() {
         ariaLabel="שינוי רוחב רשימת הפריטים"
       />
       <section className={workCls}>
-        <Outlet context={{ refresh }} />
+        <Outlet context={{ refresh, patchItem }} />
       </section>
     </div>
   );

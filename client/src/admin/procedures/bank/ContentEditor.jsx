@@ -24,7 +24,7 @@ import {
 export default function ContentEditor() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { refresh } = useOutletContext();
+  const { refresh, patchItem } = useOutletContext();
   const [searchParams] = useSearchParams();
   // If this editor was opened from a flow's "+ create new" button, the
   // return-to-flow context is stashed in sessionStorage; the flag below
@@ -76,11 +76,14 @@ export default function ContentEditor() {
   }, [id]);
 
   // Debounced server autosave — gated on dirtyRef so it runs only for
-  // genuine user edits. Successful saves do NOT trigger a full bank refresh:
-  // the "נשמר" indicator here is local state, and the bank list's titles
-  // can stay slightly stale while editing (they refresh on next real action
-  // like create / delete / move / folder op). This keeps the list DOM
-  // absolutely stable when the user is just clicking around.
+  // genuine user edits.
+  //
+  // After a successful save we do a SURGICAL patch of the bank list's
+  // copy of this row via patchItem(). That keeps the sidebar title live
+  // without a full refresh() — which would refetch everything and cause
+  // the click-jump bug we fixed earlier. Only the changed row re-renders;
+  // ids, sortOrder, and folderId are untouched so dnd-kit sortable
+  // registrations stay stable and scroll position stays put.
   useEffect(() => {
     if (!form || !dirtyRef.current) return;
     const handle = setTimeout(async () => {
@@ -95,6 +98,10 @@ export default function ContentEditor() {
           internalNote: snapshot.internalNote.trim() || null,
         });
         setSavedAt(updated.updatedAt);
+        patchItem?.('content', targetId, {
+          title: updated.title,
+          updatedAt: updated.updatedAt,
+        });
       } catch (e) {
         console.warn('autosave failed:', e.message);
       } finally {
@@ -102,7 +109,7 @@ export default function ContentEditor() {
       }
     }, 700);
     return () => clearTimeout(handle);
-  }, [form]);
+  }, [form, patchItem]);
 
   function updateForm(patch) {
     dirtyRef.current = true;
