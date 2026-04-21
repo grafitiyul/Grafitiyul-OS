@@ -88,9 +88,21 @@ export default function BankListPane({
     );
   }, [questions]);
   useEffect(() => {
-    setLocalFolders((prev) =>
-      sameFolderShape(prev, folders) ? prev : folders,
-    );
+    setLocalFolders((prev) => {
+      const same = sameFolderShape(prev, folders);
+      if (!same) {
+        // This is the only path (besides the drag-commit setState)
+        // that replaces localFolders. If the user reports a folder
+        // "reverting" after a drop, this log tells us whether the
+        // revert came from here — i.e., a refresh replaced the
+        // optimistic state.
+        console.log('[bank-dnd] folders prop differs — replacing local', {
+          prevCount: prev?.length,
+          nextCount: folders?.length,
+        });
+      }
+      return same ? prev : folders;
+    });
   }, [folders]);
 
   // Scroll preservation across re-renders.
@@ -336,24 +348,21 @@ export default function BankListPane({
   }
 
   function onDragEnd(event) {
-    // Snapshot every piece of drag state we need BEFORE any clearing —
-    // state reads after a scheduled setState are fragile under React
-    // concurrent rendering.
     const snapshotMovedIds = Array.from(draggingSet);
     const snapshotInsertion = insertion;
     const overId = event.over?.id ? String(event.over.id) : null;
 
-    // Clear drag state FIRST, then commit data changes. Both sets of
-    // setState calls happen inside this same event handler, so React
-    // batches them into ONE render after onDragEnd returns. This is
-    // critical: the previous implementation used flushSync for the
-    // data update, which forced a synchronous render mid-teardown —
-    // the active draggable's DOM node was unmounted while dnd-kit was
-    // still finalizing. Its internal reconciler could then trigger a
-    // cancel-like rollback (the "brief success then jumps back" bug).
-    // Clearing drag state up front means by the time dnd-kit's
-    // teardown runs, no state references the active draggable; the
-    // commit's render is the same one that draws everything cleanly.
+    // Diagnostics — safe to leave in prod; trivially cheap and gives
+    // us a clear trace when a drag misbehaves. Filter by [bank-dnd] in
+    // the browser console.
+    console.log('[bank-dnd] onDragEnd', {
+      movedIds: snapshotMovedIds,
+      insertion: snapshotInsertion,
+      overId,
+      dragKind,
+      currentFolderId,
+    });
+
     onDragCancel();
 
     if (snapshotMovedIds.length === 0) return;
@@ -485,10 +494,14 @@ export default function BankListPane({
       ...existing.slice(insertIdx),
     ];
 
-    // Plain setState — batches with the drag-state clear in onDragEnd
-    // into one natural render after the event handler returns. No
-    // flushSync: avoiding a synchronous render mid-dnd-teardown was
-    // the root of the "brief success then revert" bug.
+    console.log('[bank-dnd] commitFoldersIntoTarget', {
+      folderDbIds,
+      targetFolderId,
+      existing,
+      nextIds,
+      insertIdx,
+    });
+
     setLocalFolders((prev) =>
       prev.map((f) => {
         const idx = nextIds.indexOf(f.id);
@@ -497,7 +510,30 @@ export default function BankListPane({
       }),
     );
 
-    api.folders.reorder(nextIds, targetFolderId).catch(() => onChanged?.());
+    // Surface ALL errors, not just via onChanged. The bug where the
+    // drop "flashes then reverts" was caused by the server returning
+    // a non-2xx response — the old `.catch(() => onChanged())` call
+    // silently triggered a refresh that overwrote the optimistic
+    // update. We now log the exact error so any recurrence is
+    // diagnosable from the browser console, and the refresh still
+    // happens so the UI shows the real server state.
+    console.log('[bank-dnd] → PUT /api/items/folders/reorder', {
+      ids: nextIds,
+      parentId: targetFolderId,
+    });
+    api.folders
+      .reorder(nextIds, targetFolderId)
+      .then((res) =>
+        console.log('[bank-dnd] ← folders.reorder OK', { res }),
+      )
+      .catch((err) => {
+        console.error('[bank-dnd] ✖ folders.reorder FAILED', {
+          status: err?.status,
+          message: err?.message,
+          payload: err?.payload,
+        });
+        onChanged?.();
+      });
   }
 
   function commitItemsIntoTarget({ itemRowIds, targetFolderId, insertion }) {
@@ -572,12 +608,24 @@ export default function BankListPane({
       }),
     );
 
+    const payload = finalList.map((r) => ({ kind: r.kind, id: r.id }));
+    console.log('[bank-dnd] → PUT /api/items/reorder', {
+      ordered: payload,
+      folderId: targetFolderId,
+    });
     api.bankItems
-      .reorder(
-        finalList.map((r) => ({ kind: r.kind, id: r.id })),
-        targetFolderId,
+      .reorder(payload, targetFolderId)
+      .then((res) =>
+        console.log('[bank-dnd] ← bankItems.reorder OK', { res }),
       )
-      .catch(() => onChanged?.());
+      .catch((err) => {
+        console.error('[bank-dnd] ✖ bankItems.reorder FAILED', {
+          status: err?.status,
+          message: err?.message,
+          payload: err?.payload,
+        });
+        onChanged?.();
+      });
   }
 
   function dragFolderCreatesCycle(folderId, targetParentId) {
