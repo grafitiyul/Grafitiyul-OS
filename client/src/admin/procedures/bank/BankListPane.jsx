@@ -860,7 +860,17 @@ export default function BankListPane({
               insertion={insertion}
               activeId={activeId}
               draggingSet={draggingSet}
-              dropIntoFolderId={
+              // dropIntoRowId is the ROW id (kind-prefixed, e.g.
+              // "folder::abc") from computeInsertion. The renderer
+              // compares it to each row's id (also a row id), so the
+              // highlight fires for the correct row. Previously we
+              // passed it as dropIntoFolderId and compared against
+              // row.meta.id (a bare DB cuid), which NEVER matched —
+              // so the middle "drop INTO folder" zone rendered
+              // nothing. The line was also suppressed (because
+              // `dropIntoFolderId` was truthy), so the middle zone
+              // looked completely dead to the user.
+              dropIntoRowId={
                 insertion && insertion.parentId
                   ? insertion.parentId
                   : null
@@ -1113,7 +1123,7 @@ function RowsRenderer({
   insertion,
   activeId,
   draggingSet,
-  dropIntoFolderId,
+  dropIntoRowId,
   selectedIds,
   selectedFlowRoute,
   onEnterFolder,
@@ -1126,7 +1136,7 @@ function RowsRenderer({
   // Show the horizontal line only for "between rows" drops. When the
   // drop is INTO a specific folder, we don't render a line — the
   // folder itself gets highlighted via `isDropTarget`.
-  const showLine = insertion && !dropIntoFolderId;
+  const showLine = insertion && !dropIntoRowId;
   return (
     <ul className="py-1 relative" style={{ margin: 0, padding: '0.25rem 0' }}>
       {rows.map((row, i) => (
@@ -1147,8 +1157,11 @@ function RowsRenderer({
             isRouteSelected={
               row.kind !== 'folder' && row.meta.id === selectedFlowRoute
             }
+            // Compare row id to row id (both kind-prefixed) — the
+            // previous comparison against row.meta.id (a bare cuid)
+            // never matched, suppressing the "into folder" cue.
             isDropTarget={
-              row.kind === 'folder' && dropIntoFolderId === row.meta.id
+              row.kind === 'folder' && dropIntoRowId === row.id
             }
             onEnterFolder={onEnterFolder}
             onOpen={onOpen}
@@ -1278,12 +1291,21 @@ function FolderRow({
       onClick={onRowClick}
     >
       <div
-        className={`flex items-center gap-2 px-3 py-2 cursor-pointer transition ${
+        // Three visible states on a folder row during a drag:
+        //   — no interaction     → normal bg-gray-50
+        //   — selected            → bg-blue-50/60
+        //   — drop-INTO target    → strong blue fill + thick inner ring +
+        //                           bigger vertical padding + "→ לתוך"
+        //                           label + open-folder icon. This is
+        //                           unmistakably distinct from the thin
+        //                           horizontal lines above / below that
+        //                           mean sibling-before / sibling-after.
+        className={`flex items-center gap-2 px-3 transition-all ${
           isDropTarget
-            ? 'bg-blue-100 ring-2 ring-inset ring-blue-500'
+            ? 'bg-blue-500 text-white py-3 ring-4 ring-inset ring-blue-700 shadow-inner'
             : isSelected
-            ? 'bg-blue-50/60'
-            : 'bg-gray-50 hover:bg-gray-100'
+            ? 'bg-blue-50/60 py-2 cursor-pointer'
+            : 'bg-gray-50 hover:bg-gray-100 py-2 cursor-pointer'
         }`}
       >
         <input
@@ -1295,11 +1317,28 @@ function FolderRow({
           className="shrink-0 cursor-pointer"
           aria-label="סימון תיקייה לפעולה מרובה"
         />
-        <span className="shrink-0 text-[15px]">📁</span>
-        <span className="flex-1 truncate text-sm font-semibold text-gray-800">
+        <span className="shrink-0 text-[15px]">
+          {isDropTarget ? '📂' : '📁'}
+        </span>
+        <span
+          className={`flex-1 truncate text-sm font-semibold ${
+            isDropTarget ? 'text-white' : 'text-gray-800'
+          }`}
+        >
           {meta.name}
         </span>
-        <span className="text-gray-400 text-[12px]">›</span>
+        {isDropTarget && (
+          <span className="text-[11px] font-semibold bg-white/20 text-white rounded px-2 py-0.5 ring-1 ring-white/40">
+            שחרור יעביר לכאן
+          </span>
+        )}
+        <span
+          className={`text-[12px] ${
+            isDropTarget ? 'text-white/80' : 'text-gray-400'
+          }`}
+        >
+          ›
+        </span>
         <button
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
