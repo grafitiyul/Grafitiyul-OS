@@ -785,107 +785,118 @@ export default function BankListPane({
         <SelectionBar sel={sel} onClear={sel.clear} />
       </div>
 
-      <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto">
-        {loading && totalCount === 0 && localFolders.length === 0 && (
-          <div className="p-6 text-center text-sm text-gray-500">טוען…</div>
-        )}
-        {error && !loading && (
-          <div className="p-6 text-center">
-            <div className="text-sm text-red-600 mb-2">שגיאה בטעינה</div>
-            <div className="text-xs text-gray-500 mb-3 font-mono" dir="ltr">
-              {error}
+      {/*
+        DndContext wraps BOTH the breadcrumb AND the scroll area. The
+        breadcrumb lives OUTSIDE the scroll container — above it in the
+        layout column — so it never overlaps folder rows. That's a
+        regression I introduced when the breadcrumb was sticky + z-10
+        inside the scroll area: dnd-kit's closestCenter collision picked
+        the overlapping sticky breadcrumb instead of the folder row
+        directly below it, so drops-into-folder were misrouted to
+        breadcrumb drops (which go to the ancestor / root, not the
+        intended folder). Moving the breadcrumb into the flex-column
+        removes the overlap entirely; no z-index, no sticky, no
+        collision fights.
+      */}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+        onDragStart={onDragStart}
+        onDragMove={onDragMove}
+        onDragOver={onDragOver}
+        onDragEnd={onDragEnd}
+        onDragCancel={onDragCancel}
+      >
+        <Breadcrumb
+          path={breadcrumbPath}
+          onEnter={onEnterFolder}
+          breadcrumbOver={breadcrumbOver}
+          activeDrag={activeId}
+        />
+
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          className="flex-1 min-h-0 overflow-y-auto"
+        >
+          {loading && totalCount === 0 && localFolders.length === 0 && (
+            <div className="p-6 text-center text-sm text-gray-500">טוען…</div>
+          )}
+          {error && !loading && (
+            <div className="p-6 text-center">
+              <div className="text-sm text-red-600 mb-2">שגיאה בטעינה</div>
+              <div className="text-xs text-gray-500 mb-3 font-mono" dir="ltr">
+                {error}
+              </div>
+              <button
+                onClick={onRetry}
+                className="text-sm border border-gray-300 rounded px-3 py-1.5 hover:bg-gray-50"
+              >
+                נסו שוב
+              </button>
             </div>
-            <button
-              onClick={onRetry}
-              className="text-sm border border-gray-300 rounded px-3 py-1.5 hover:bg-gray-50"
-            >
-              נסו שוב
-            </button>
-          </div>
-        )}
+          )}
 
-        {!error && (totalCount > 0 || localFolders.length > 0) ? (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            // Force dnd-kit to re-measure droppable rects continuously
-            // during a drag. Default is BeforeDragging which captures
-            // rects once at drag start — if anything shifts (the drop
-            // indicator being injected between rows, scroll, etc.)
-            // the "over" detection picks the wrong target. Always is
-            // cheap enough at bank-list scale and makes positioning
-            // precise.
-            measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
-            onDragStart={onDragStart}
-            onDragMove={onDragMove}
-            onDragOver={onDragOver}
-            onDragEnd={onDragEnd}
-            onDragCancel={onDragCancel}
-          >
-            <Breadcrumb
-              path={breadcrumbPath}
-              onEnter={onEnterFolder}
-              breadcrumbOver={breadcrumbOver}
-              activeDrag={activeId}
-            />
+          {!error &&
+            !loading &&
+            totalCount === 0 &&
+            localFolders.length === 0 && <EmptyListState />}
 
-            {!loading && visibleFolderCount === 0 && visibleItemCount === 0 && (
+          {!error &&
+            !loading &&
+            (totalCount > 0 || localFolders.length > 0) &&
+            visibleFolderCount === 0 &&
+            visibleItemCount === 0 && (
               <EmptyFolderState
                 isRoot={!currentFolderId}
                 hasSearch={!!search}
               />
             )}
 
-            {(visibleFolderCount > 0 || visibleItemCount > 0) && (
-              <RowsRenderer
-                rows={rows}
-                insertion={insertion}
-                activeId={activeId}
-                draggingSet={draggingSet}
-                dropIntoFolderId={
-                  insertion && insertion.parentId
-                    ? insertion.parentId
-                    : null
-                }
-                selectedIds={sel.selected}
-                selectedFlowRoute={selectedId}
-                onEnterFolder={onEnterFolder}
-                onOpen={(row) => {
-                  // Preserve the folder URL so the list keeps showing
-                  // the folder the user was in when they opened the
-                  // editor. Without this, the list pane snaps to root
-                  // while the editor opens.
-                  const qs = currentFolderId
-                    ? `?folder=${encodeURIComponent(currentFolderId)}`
-                    : '';
-                  navigate(
-                    `/admin/procedures/bank/${row.kind}/${row.id}${qs}`,
-                  );
-                }}
-                onSelectClick={(id, mods) =>
-                  sel.handleClick(id, mods, selectableIds)
-                }
-                onToggleSelect={sel.toggle}
-                onRenameFolder={(f) => setRenameFolder(f)}
-                onDeleteFolder={(f) => setDeleteFolder(f)}
-              />
-            )}
+          {!error && (visibleFolderCount > 0 || visibleItemCount > 0) && (
+            <RowsRenderer
+              rows={rows}
+              insertion={insertion}
+              activeId={activeId}
+              draggingSet={draggingSet}
+              dropIntoFolderId={
+                insertion && insertion.parentId
+                  ? insertion.parentId
+                  : null
+              }
+              selectedIds={sel.selected}
+              selectedFlowRoute={selectedId}
+              onEnterFolder={onEnterFolder}
+              onOpen={(row) => {
+                const qs = currentFolderId
+                  ? `?folder=${encodeURIComponent(currentFolderId)}`
+                  : '';
+                navigate(
+                  `/admin/procedures/bank/${row.kind}/${row.id}${qs}`,
+                );
+              }}
+              onSelectClick={(id, mods) =>
+                sel.handleClick(id, mods, selectableIds)
+              }
+              onToggleSelect={sel.toggle}
+              onRenameFolder={(f) => setRenameFolder(f)}
+              onDeleteFolder={(f) => setDeleteFolder(f)}
+            />
+          )}
+        </div>
 
-            <DragOverlay dropAnimation={null}>
-              {activeId && dragKind === 'item' ? (
-                <DragGhost
-                  count={draggingSet.size}
-                  sampleRow={rowById.get(activeId)}
-                />
-              ) : activeId && dragKind === 'folder' ? (
-                <FolderGhost row={rowById.get(activeId)} />
-              ) : null}
-            </DragOverlay>
-          </DndContext>
-        ) : (
-          !loading && !error && <EmptyListState />
-        )}
-      </div>
+        <DragOverlay dropAnimation={null}>
+          {activeId && dragKind === 'item' ? (
+            <DragGhost
+              count={draggingSet.size}
+              sampleRow={rowById.get(activeId)}
+            />
+          ) : activeId && dragKind === 'folder' ? (
+            <FolderGhost row={rowById.get(activeId)} />
+          ) : null}
+        </DragOverlay>
+      </DndContext>
 
       <PromptDialog
         open={addFolderOpen}
@@ -1005,26 +1016,24 @@ function Breadcrumb({ path, onEnter, breadcrumbOver, activeDrag }) {
     ...path.map((f) => ({ id: f.id, name: f.name })),
   ];
   const isDragging = !!activeDrag;
-  // Only show the breadcrumb if the user is inside a folder. At root
-  // (only "הבנק"), the breadcrumb is noise — and there's nothing to
-  // "move out to". When drilled in, the breadcrumb becomes the single
-  // reliable drop target for moving rows OUT of the current folder.
+  // Only show the breadcrumb when the user is inside a folder. At
+  // root the breadcrumb is noise — there's nowhere to "move out to".
+  // When drilled in, the breadcrumb is the dedicated drop target for
+  // moving rows OUT of the current folder.
   if (path.length === 0 && !isDragging) {
     return null;
   }
-  // The LAST segment is the current location — not a drop target for
-  // the current view's own rows (you're already there).
   return (
     <nav
-      // Sticky so the drop target stays in view even when the user
-      // has scrolled down inside a long folder. z-10 keeps it above
-      // row content during the sticky transition. The drag-active
-      // state bumps padding + background so it reads as a real drop
-      // zone, not a thin nav line.
-      className={`sticky top-0 z-10 px-3 flex items-center gap-1 flex-wrap border-b transition-all ${
+      // Laid out in the flex column ABOVE the scroll area, never
+      // overlapping rows. No sticky / no z-index: drops on folder rows
+      // directly below the breadcrumb resolve to the folder, not to
+      // the breadcrumb. Drag-active state enlarges the nav enough to
+      // read as a clear drop zone without covering anything.
+      className={`shrink-0 px-3 flex items-center gap-1 flex-wrap border-b transition-all ${
         isDragging
-          ? 'py-2 text-[13px] bg-blue-50/80 border-blue-200 shadow-sm'
-          : 'py-2 text-[12px] bg-gray-50/80 backdrop-blur-sm border-gray-100'
+          ? 'py-2 text-[13px] bg-blue-50 border-blue-200'
+          : 'py-2 text-[12px] bg-gray-50/80 border-gray-100'
       }`}
       aria-label="מסלול תיקיות"
     >
