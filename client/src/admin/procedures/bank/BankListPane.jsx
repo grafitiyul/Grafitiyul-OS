@@ -1341,18 +1341,25 @@ function FolderRow({
         // Three visible states on a folder row during a drag:
         //   — no interaction     → normal bg-gray-50
         //   — selected            → bg-blue-50/60
-        //   — drop-INTO target    → strong blue fill + thick inner ring +
-        //                           bigger vertical padding + "→ לתוך"
-        //                           label + open-folder icon. This is
-        //                           unmistakably distinct from the thin
-        //                           horizontal lines above / below that
-        //                           mean sibling-before / sibling-after.
-        className={`flex items-center gap-2 px-3 transition-all ${
+        //   — drop-INTO target    → strong blue fill + thick inner ring
+        //                           + open-folder icon + "שחרור יעביר
+        //                           לכאן" pill.
+        //
+        // CRITICAL: the row MUST NOT change height when it becomes the
+        // drop target. Earlier iterations bumped padding from py-2 to
+        // py-3, which caused the row rect to grow by 16px mid-drag.
+        // With MeasuringStrategy.Always, dnd-kit re-measured every
+        // frame and closestCenter could flip targets briefly during
+        // the layout shift — so the INTO state felt flickery and
+        // unreliable. Ring + background are pure box-shadow / color
+        // changes (no layout impact); height stays py-2 in every
+        // state.
+        className={`flex items-center gap-2 px-3 py-2 transition-colors ${
           isDropTarget
-            ? 'bg-blue-500 text-white py-3 ring-4 ring-inset ring-blue-700 shadow-inner'
+            ? 'bg-blue-500 text-white ring-4 ring-inset ring-blue-700'
             : isSelected
-            ? 'bg-blue-50/60 py-2 cursor-pointer'
-            : 'bg-gray-50 hover:bg-gray-100 py-2 cursor-pointer'
+            ? 'bg-blue-50/60 cursor-pointer'
+            : 'bg-gray-50 hover:bg-gray-100 cursor-pointer'
         }`}
       >
         <input
@@ -1570,17 +1577,25 @@ function SelectionBar({ sel, onClear, onMove }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Move-selected dialog
+// Move-selected dialog — step-by-step folder navigation
 //
-// Manual counterpart to drag: pick a destination folder (or root) from
-// a searchable path-labelled list and hand it to commitMoveToFolder.
-// No duplicated move logic — this is just a destination picker that
-// calls the same commit path drag uses, with insertion=null (append).
+// Instead of one flat list of full-path labels (which gets truncated
+// and hard to scan as the bank grows), this is a pocket-navigation
+// picker: start at root, drill into a folder by clicking it, go back
+// up via the dialog's breadcrumb, confirm with "העבר לכאן".
 //
-// Cycle safety: when any of the selected rows is a folder, destinations
-// inside that folder's subtree are excluded (moving a folder into its
-// own descendant would create a cycle; the client-side check mirrors
-// the server-side rejection and keeps invalid options out of sight).
+// Navigation state is LOCAL to the dialog — `pickerFolderId` tracks
+// "where in the destination tree am I right now". It has nothing to
+// do with the main Bank's currentFolderId. Moving selection happens
+// only when the user presses "העבר לכאן".
+//
+// Cycle safety: folders in any dragged folder's subtree are excluded
+// from every level's child list — you can't even see them, let alone
+// navigate into them.
+//
+// No duplicated move logic: confirming calls `onMove(pickerFolderId)`
+// which is wired in the parent to commitMoveToFolder, the same
+// pipeline drag uses.
 // ─────────────────────────────────────────────────────────────────────────────
 function MoveSelectedDialog({
   open,
@@ -1592,18 +1607,15 @@ function MoveSelectedDialog({
   folderDescendantIds,
   onMove,
 }) {
-  const [query, setQuery] = useState('');
-  const [selectedTarget, setSelectedTarget] = useState(null); // null = root
+  const [pickerFolderId, setPickerFolderId] = useState(null);
 
   useEffect(() => {
-    if (open) {
-      setQuery('');
-      setSelectedTarget(null);
-    }
+    if (open) setPickerFolderId(null);
   }, [open]);
 
-  // Selected rows → set of db ids for folders the user is moving, so
-  // we can exclude them and their subtrees from the destination list.
+  // Excluded destinations (moved folders + their subtrees). Computed
+  // once per open cycle; folders in this set are dropped from every
+  // level's child list below.
   const excludedFolderIds = useMemo(() => {
     const out = new Set();
     const movedSet = new Set(selection);
@@ -1617,20 +1629,37 @@ function MoveSelectedDialog({
     return out;
   }, [selection, rows, folderDescendantIds]);
 
-  // Build path labels once (e.g. "הבנק / A / B") for every folder,
-  // then filter + search.
-  const destinations = useMemo(() => {
-    const list = folders
+  // Breadcrumb path of the picker's current position (independent of
+  // the bank's currentFolderId).
+  const pickerPath = useMemo(() => {
+    if (!pickerFolderId) return [];
+    const path = [];
+    let cur = pickerFolderId;
+    const seen = new Set();
+    while (cur && !seen.has(cur)) {
+      seen.add(cur);
+      const f = folderById.get(cur);
+      if (!f) break;
+      path.unshift(f);
+      cur = f.parentId || null;
+    }
+    return path;
+  }, [pickerFolderId, folderById]);
+
+  // Children of the currently-viewed picker folder, minus any that
+  // would create a cycle. Ordered by sortOrder to mirror the main
+  // bank view.
+  const childFolders = useMemo(() => {
+    return folders
+      .filter((f) => (f.parentId || null) === pickerFolderId)
       .filter((f) => !excludedFolderIds.has(f.id))
-      .map((f) => ({
-        id: f.id,
-        label: buildFolderPath(f, folderById),
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label, 'he'));
-    const q = query.trim().toLowerCase();
-    if (!q) return list;
-    return list.filter((d) => d.label.toLowerCase().includes(q));
-  }, [folders, folderById, excludedFolderIds, query]);
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  }, [folders, pickerFolderId, excludedFolderIds]);
+
+  const currentFolderName =
+    pickerFolderId === null
+      ? '🏠 הבנק (שורש)'
+      : pickerPath[pickerPath.length - 1]?.name || '';
 
   if (!open) return null;
 
@@ -1641,7 +1670,7 @@ function MoveSelectedDialog({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[85vh] flex flex-col"
+        className="bg-white rounded-lg shadow-xl w-full max-w-md h-[70vh] max-h-[540px] flex flex-col"
       >
         <div className="px-5 py-3 border-b border-gray-200 flex items-center">
           <h3 className="text-lg font-semibold text-gray-900 flex-1">
@@ -1656,48 +1685,63 @@ function MoveSelectedDialog({
           </button>
         </div>
 
-        <div className="px-5 py-2 border-b border-gray-100">
-          <input
-            type="search"
-            autoFocus
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="חיפוש תיקייה…"
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+        {/* Picker breadcrumb — click a segment to jump up the path */}
+        <nav
+          className="px-5 py-2 border-b border-gray-100 flex items-center gap-1 flex-wrap text-[13px] bg-gray-50"
+          aria-label="מסלול יעד"
+        >
+          <PickerCrumb
+            label="🏠 הבנק"
+            isCurrent={pickerFolderId === null}
+            onClick={() => setPickerFolderId(null)}
           />
-        </div>
+          {pickerPath.map((f, i) => {
+            const isCurrent = i === pickerPath.length - 1;
+            return (
+              <Fragment key={f.id}>
+                <span className="text-gray-400">›</span>
+                <PickerCrumb
+                  label={f.name}
+                  isCurrent={isCurrent}
+                  onClick={() => setPickerFolderId(f.id)}
+                />
+              </Fragment>
+            );
+          })}
+        </nav>
 
-        <ul className="flex-1 overflow-y-auto py-1">
-          <li>
-            <DestinationOption
-              label="🏠 הבנק (שורש)"
-              checked={selectedTarget === null}
-              onSelect={() => setSelectedTarget(null)}
-            />
-          </li>
-          {destinations.map((d) => (
-            <li key={d.id}>
-              <DestinationOption
-                label={d.label}
-                checked={selectedTarget === d.id}
-                onSelect={() => setSelectedTarget(d.id)}
-              />
+        {/* Children at this level — click to drill in */}
+        <ul className="flex-1 overflow-y-auto">
+          {childFolders.length === 0 ? (
+            <li className="px-5 py-8 text-center text-[13px] text-gray-500 italic">
+              אין תת-תיקיות כאן. לחצו "העבר לכאן" כדי להעביר לתיקייה הנוכחית.
             </li>
-          ))}
-          {destinations.length === 0 && query && (
-            <li className="px-5 py-3 text-[12px] text-gray-500 italic">
-              לא נמצאו תוצאות.
-            </li>
-          )}
-          {folders.length === excludedFolderIds.size && !query && (
-            <li className="px-5 py-3 text-[12px] text-gray-500">
-              ניתן להעביר רק לשורש — כל שאר התיקיות הן תוצר של הבחירה
-              הנוכחית.
-            </li>
+          ) : (
+            childFolders.map((f) => (
+              <li key={f.id}>
+                <button
+                  type="button"
+                  onClick={() => setPickerFolderId(f.id)}
+                  className="w-full flex items-center gap-2 px-5 py-2.5 text-right text-sm hover:bg-gray-50 border-b border-gray-50"
+                >
+                  <span className="shrink-0 text-[15px]">📁</span>
+                  <span className="flex-1 truncate font-medium text-gray-900">
+                    {f.name}
+                  </span>
+                  <span className="text-gray-400 text-[12px]">›</span>
+                </button>
+              </li>
+            ))
           )}
         </ul>
 
-        <div className="px-5 py-3 border-t border-gray-200 flex justify-end gap-2">
+        <div className="px-5 py-3 border-t border-gray-200 flex items-center gap-2">
+          <div className="flex-1 text-[12px] text-gray-600 truncate">
+            העבר ל־{' '}
+            <span className="font-medium text-gray-900">
+              {currentFolderName}
+            </span>
+          </div>
           <button
             onClick={onClose}
             className="px-3 py-1.5 text-sm border border-gray-300 rounded-md"
@@ -1705,7 +1749,7 @@ function MoveSelectedDialog({
             ביטול
           </button>
           <button
-            onClick={() => onMove(selectedTarget)}
+            onClick={() => onMove(pickerFolderId)}
             className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md font-medium"
           >
             העבר לכאן
@@ -1716,43 +1760,20 @@ function MoveSelectedDialog({
   );
 }
 
-function DestinationOption({ label, checked, onSelect }) {
+function PickerCrumb({ label, isCurrent, onClick }) {
   return (
     <button
       type="button"
-      onClick={onSelect}
-      className={`w-full flex items-center gap-2 px-5 py-2 text-right text-sm transition ${
-        checked
-          ? 'bg-blue-50 text-blue-900'
-          : 'text-gray-800 hover:bg-gray-50'
+      onClick={onClick}
+      className={`rounded px-2 py-0.5 transition ${
+        isCurrent
+          ? 'bg-blue-100 text-blue-900 font-semibold'
+          : 'text-blue-700 hover:bg-blue-50'
       }`}
     >
-      <input
-        type="radio"
-        name="move-destination"
-        checked={checked}
-        onChange={onSelect}
-        className="shrink-0"
-      />
-      <span className="flex-1 truncate">{label}</span>
+      {label}
     </button>
   );
-}
-
-// Walk up the parent chain from a folder, pushing names in reverse,
-// and return a "הבנק / A / B / X" path. Rendered in the destination
-// picker so each folder is unambiguous even when names repeat at
-// different levels.
-function buildFolderPath(folder, folderById) {
-  const parts = [];
-  let cur = folder;
-  const seen = new Set();
-  while (cur && !seen.has(cur.id)) {
-    seen.add(cur.id);
-    parts.unshift(cur.name);
-    cur = cur.parentId ? folderById.get(cur.parentId) : null;
-  }
-  return ['הבנק', ...parts].join(' / ');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -131,13 +131,15 @@ export function computeInsertion({
   }
 
   // ── Container row ──
-  // Three zones: top 10% = sibling-before, middle 80% = INTO container,
-  // bottom 10% = sibling-after. Widened from 25/50/25 because the
-  // middle zone is the PRIMARY action for a container (the whole point
-  // of landing on a folder row is to put something in it). Sibling
-  // drops are precise gestures aimed at the row's top / bottom edge.
-  // This matches the Notion / Linear pattern where most of a
-  // container row is "drop inside" and only a thin edge is "between".
+  // Three zones: top 5% = sibling-before, middle 90% = INTO container,
+  // bottom 5% = sibling-after. The middle is now effectively the whole
+  // row — only a tiny edge (≈2px on a 40px row) triggers sibling
+  // drop. Reason: users kept failing to land the INTO state reliably
+  // even after 25/50/25 and 10/80/10, because on a typical row the
+  // sibling edges at the old sizes were still large enough to
+  // intercept a normal drop. INTO is the primary action for a
+  // container; sibling drop is a precision gesture the user aims at
+  // explicitly.
   //
   // Fallbacks when a zone's natural target doesn't accept the kind:
   //   * sibling-before → into container
@@ -146,13 +148,13 @@ export function computeInsertion({
   //     containers that nothing else accepts)
   const parent = parentOf(over);
 
-  if (fractionY < 0.1) {
+  if (fractionY < 0.05) {
     if (accepts(parent)) return pack(parent, localIndex(over), overIdx);
     if (accepts(over)) return pack(over, 0, overIdx + 1);
     return null;
   }
 
-  if (fractionY < 0.9) {
+  if (fractionY < 0.95) {
     if (!over.collapsed && accepts(over)) return pack(over, 0, overIdx + 1);
     if (accepts(parent)) {
       // Container rejects this kind — treat middle as sibling-after.
