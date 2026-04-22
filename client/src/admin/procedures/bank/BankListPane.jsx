@@ -670,6 +670,39 @@ export default function BankListPane({
   const [addFolderOpen, setAddFolderOpen] = useState(false);
   const [renameFolder, setRenameFolder] = useState(null);
   const [deleteFolder, setDeleteFolder] = useState(null);
+  const [moveDialogOpen, setMoveDialogOpen] = useState(false);
+
+  // Manual "Move selected" flow — parallel to drag. Reuses the exact
+  // same commitMoveToFolder pipeline, so there's no duplicated move
+  // logic: the destination picker hands back a `targetFolderId` and
+  // the existing commit path does the work with insertion=null (i.e.
+  // append at end of target, matching drop-on-folder semantics).
+  function doMoveSelection(targetFolderId) {
+    // Split the current selection by kind, iterating rows in display
+    // order so the moved rows land in the target in the same order
+    // they appeared in the source. Exactly the split used in
+    // onDragEnd.
+    const movedSet = new Set(sel.selected);
+    const folderDbIds = [];
+    const itemRowIds = [];
+    for (const row of rows) {
+      if (!movedSet.has(row.id)) continue;
+      if (row.kind === 'folder') folderDbIds.push(row.meta.id);
+      else itemRowIds.push(row.id);
+    }
+    if (folderDbIds.length === 0 && itemRowIds.length === 0) {
+      setMoveDialogOpen(false);
+      return;
+    }
+    commitMoveToFolder({
+      folderDbIds,
+      itemRowIds,
+      targetFolderId,
+      insertion: null,
+    });
+    sel.clear();
+    setMoveDialogOpen(false);
+  }
 
   async function confirmAddFolder(name) {
     setAddFolderOpen(false);
@@ -782,7 +815,11 @@ export default function BankListPane({
             </button>
           ))}
         </div>
-        <SelectionBar sel={sel} onClear={sel.clear} />
+        <SelectionBar
+          sel={sel}
+          onClear={sel.clear}
+          onMove={() => setMoveDialogOpen(true)}
+        />
       </div>
 
       {/*
@@ -938,6 +975,16 @@ export default function BankListPane({
         danger
         onCancel={() => setDeleteFolder(null)}
         onConfirm={confirmDelete}
+      />
+      <MoveSelectedDialog
+        open={moveDialogOpen}
+        onClose={() => setMoveDialogOpen(false)}
+        selection={sel.selected}
+        rows={rows}
+        folders={localFolders}
+        folderById={folderById}
+        folderDescendantIds={folderDescendantIds}
+        onMove={doMoveSelection}
       />
     </div>
   );
@@ -1499,12 +1546,19 @@ function FolderGhost({ row }) {
 }
 
 // ── Selection header bar ──
-function SelectionBar({ sel, onClear }) {
+function SelectionBar({ sel, onClear, onMove }) {
   if (sel.size === 0) return null;
   return (
     <div className="flex items-center gap-2 text-[12px] bg-blue-50 border border-blue-200 text-blue-800 rounded px-2 py-1">
       <span className="font-medium">{sel.size} נבחרו</span>
       <span className="flex-1" />
+      <button
+        onClick={onMove}
+        className="bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1 text-[12px] font-medium"
+        title="העבר את הפריטים הנבחרים לתיקייה אחרת"
+      >
+        העבר…
+      </button>
       <button
         onClick={onClear}
         className="text-blue-700 hover:bg-blue-100 rounded px-2 py-0.5"
@@ -1513,6 +1567,192 @@ function SelectionBar({ sel, onClear }) {
       </button>
     </div>
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Move-selected dialog
+//
+// Manual counterpart to drag: pick a destination folder (or root) from
+// a searchable path-labelled list and hand it to commitMoveToFolder.
+// No duplicated move logic — this is just a destination picker that
+// calls the same commit path drag uses, with insertion=null (append).
+//
+// Cycle safety: when any of the selected rows is a folder, destinations
+// inside that folder's subtree are excluded (moving a folder into its
+// own descendant would create a cycle; the client-side check mirrors
+// the server-side rejection and keeps invalid options out of sight).
+// ─────────────────────────────────────────────────────────────────────────────
+function MoveSelectedDialog({
+  open,
+  onClose,
+  selection,
+  rows,
+  folders,
+  folderById,
+  folderDescendantIds,
+  onMove,
+}) {
+  const [query, setQuery] = useState('');
+  const [selectedTarget, setSelectedTarget] = useState(null); // null = root
+
+  useEffect(() => {
+    if (open) {
+      setQuery('');
+      setSelectedTarget(null);
+    }
+  }, [open]);
+
+  // Selected rows → set of db ids for folders the user is moving, so
+  // we can exclude them and their subtrees from the destination list.
+  const excludedFolderIds = useMemo(() => {
+    const out = new Set();
+    const movedSet = new Set(selection);
+    for (const row of rows) {
+      if (!movedSet.has(row.id)) continue;
+      if (row.kind !== 'folder') continue;
+      out.add(row.meta.id);
+      const desc = folderDescendantIds(row.meta.id);
+      for (const d of desc) out.add(d);
+    }
+    return out;
+  }, [selection, rows, folderDescendantIds]);
+
+  // Build path labels once (e.g. "הבנק / A / B") for every folder,
+  // then filter + search.
+  const destinations = useMemo(() => {
+    const list = folders
+      .filter((f) => !excludedFolderIds.has(f.id))
+      .map((f) => ({
+        id: f.id,
+        label: buildFolderPath(f, folderById),
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'he'));
+    const q = query.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((d) => d.label.toLowerCase().includes(q));
+  }, [folders, folderById, excludedFolderIds, query]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[85vh] flex flex-col"
+      >
+        <div className="px-5 py-3 border-b border-gray-200 flex items-center">
+          <h3 className="text-lg font-semibold text-gray-900 flex-1">
+            העברה ליעד
+          </h3>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-800 text-xl"
+            aria-label="סגור"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="px-5 py-2 border-b border-gray-100">
+          <input
+            type="search"
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="חיפוש תיקייה…"
+            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+          />
+        </div>
+
+        <ul className="flex-1 overflow-y-auto py-1">
+          <li>
+            <DestinationOption
+              label="🏠 הבנק (שורש)"
+              checked={selectedTarget === null}
+              onSelect={() => setSelectedTarget(null)}
+            />
+          </li>
+          {destinations.map((d) => (
+            <li key={d.id}>
+              <DestinationOption
+                label={d.label}
+                checked={selectedTarget === d.id}
+                onSelect={() => setSelectedTarget(d.id)}
+              />
+            </li>
+          ))}
+          {destinations.length === 0 && query && (
+            <li className="px-5 py-3 text-[12px] text-gray-500 italic">
+              לא נמצאו תוצאות.
+            </li>
+          )}
+          {folders.length === excludedFolderIds.size && !query && (
+            <li className="px-5 py-3 text-[12px] text-gray-500">
+              ניתן להעביר רק לשורש — כל שאר התיקיות הן תוצר של הבחירה
+              הנוכחית.
+            </li>
+          )}
+        </ul>
+
+        <div className="px-5 py-3 border-t border-gray-200 flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md"
+          >
+            ביטול
+          </button>
+          <button
+            onClick={() => onMove(selectedTarget)}
+            className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md font-medium"
+          >
+            העבר לכאן
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DestinationOption({ label, checked, onSelect }) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`w-full flex items-center gap-2 px-5 py-2 text-right text-sm transition ${
+        checked
+          ? 'bg-blue-50 text-blue-900'
+          : 'text-gray-800 hover:bg-gray-50'
+      }`}
+    >
+      <input
+        type="radio"
+        name="move-destination"
+        checked={checked}
+        onChange={onSelect}
+        className="shrink-0"
+      />
+      <span className="flex-1 truncate">{label}</span>
+    </button>
+  );
+}
+
+// Walk up the parent chain from a folder, pushing names in reverse,
+// and return a "הבנק / A / B / X" path. Rendered in the destination
+// picker so each folder is unambiguous even when names repeat at
+// different levels.
+function buildFolderPath(folder, folderById) {
+  const parts = [];
+  let cur = folder;
+  const seen = new Set();
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    parts.unshift(cur.name);
+    cur = cur.parentId ? folderById.get(cur.parentId) : null;
+  }
+  return ['הבנק', ...parts].join(' / ');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
