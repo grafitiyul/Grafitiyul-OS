@@ -15,6 +15,7 @@ import teamsRouter from './routes/teams.js';
 import peopleRouter from './routes/people.js';
 import recruitmentRouter from './routes/recruitment.js';
 import exportsRouter from './routes/exports.js';
+import portalRouter from './routes/portal.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -52,6 +53,7 @@ app.use('/api/teams', teamsRouter);
 app.use('/api/people', peopleRouter);
 app.use('/api/recruitment', recruitmentRouter);
 app.use('/api/exports', exportsRouter);
+app.use('/api/portal', portalRouter);
 
 // Unknown /api/* paths get a real JSON 404 instead of falling through to
 // the SPA fallback (which would serve HTML for an API request).
