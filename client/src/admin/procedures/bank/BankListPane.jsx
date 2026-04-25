@@ -25,6 +25,7 @@ import { api } from '../../../lib/api.js';
 import { titleToPlain } from '../../../editor/TitleEditor.jsx';
 import PromptDialog from '../../common/PromptDialog.jsx';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
+import ExportDialog from '../exports/ExportDialog.jsx';
 import DropIndicator from '../../../dnd/DropIndicator.jsx';
 import { useSelection } from '../../../dnd/useSelection.js';
 import {
@@ -671,6 +672,7 @@ export default function BankListPane({
   const [renameFolder, setRenameFolder] = useState(null);
   const [deleteFolder, setDeleteFolder] = useState(null);
   const [moveDialogOpen, setMoveDialogOpen] = useState(false);
+  const [exportTarget, setExportTarget] = useState(null);
 
   // Manual "Move selected" flow — parallel to drag. Reuses the exact
   // same commitMoveToFolder pipeline, so there's no duplicated move
@@ -850,6 +852,19 @@ export default function BankListPane({
           onEnter={onEnterFolder}
           breadcrumbOver={breadcrumbOver}
           activeDrag={activeId}
+          onExportCurrent={
+            currentFolderId
+              ? () => {
+                  const cur = folderById.get(currentFolderId);
+                  if (!cur) return;
+                  setExportTarget({
+                    kind: 'folder',
+                    id: cur.id,
+                    label: cur.name,
+                  });
+                }
+              : null
+          }
         />
 
         <div
@@ -929,6 +944,9 @@ export default function BankListPane({
               onToggleSelect={sel.toggle}
               onRenameFolder={(f) => setRenameFolder(f)}
               onDeleteFolder={(f) => setDeleteFolder(f)}
+              onExportFolder={(f) =>
+                setExportTarget({ kind: 'folder', id: f.id, label: f.name })
+              }
             />
           )}
         </div>
@@ -985,6 +1003,11 @@ export default function BankListPane({
         folderById={folderById}
         folderDescendantIds={folderDescendantIds}
         onMove={doMoveSelection}
+      />
+      <ExportDialog
+        open={!!exportTarget}
+        target={exportTarget}
+        onClose={() => setExportTarget(null)}
       />
     </div>
   );
@@ -1067,7 +1090,13 @@ function rowId(kind, id) {
 // Breadcrumb
 // ─────────────────────────────────────────────────────────────────────────────
 
-function Breadcrumb({ path, onEnter, breadcrumbOver, activeDrag }) {
+function Breadcrumb({
+  path,
+  onEnter,
+  breadcrumbOver,
+  activeDrag,
+  onExportCurrent,
+}) {
   const segments = [
     { id: null, name: 'הבנק', isRoot: true },
     ...path.map((f) => ({ id: f.id, name: f.name })),
@@ -1114,6 +1143,16 @@ function Breadcrumb({ path, onEnter, breadcrumbOver, activeDrag }) {
           </Fragment>
         );
       })}
+      {!isDragging && onExportCurrent && (
+        <button
+          type="button"
+          onClick={onExportCurrent}
+          className="ms-auto text-[12px] text-blue-700 border border-blue-200 hover:bg-blue-50 rounded px-2 py-0.5"
+          title="ייצוא התיקייה הנוכחית ל-Word / PDF"
+        >
+          ⤓ ייצוא
+        </button>
+      )}
     </nav>
   );
 }
@@ -1179,6 +1218,7 @@ function RowsRenderer({
   onToggleSelect,
   onRenameFolder,
   onDeleteFolder,
+  onExportFolder,
 }) {
   // Show the horizontal line only for "between rows" drops. When the
   // drop is INTO a specific folder, we don't render a line — the
@@ -1216,6 +1256,7 @@ function RowsRenderer({
             onToggleSelect={onToggleSelect}
             onRenameFolder={onRenameFolder}
             onDeleteFolder={onDeleteFolder}
+            onExportFolder={onExportFolder}
           />
         </Fragment>
       ))}
@@ -1244,6 +1285,7 @@ function RowNode({
   onToggleSelect,
   onRenameFolder,
   onDeleteFolder,
+  onExportFolder,
 }) {
   if (row.kind === 'folder') {
     return (
@@ -1258,6 +1300,7 @@ function RowNode({
         onToggleSelect={onToggleSelect}
         onRenameFolder={onRenameFolder}
         onDeleteFolder={onDeleteFolder}
+        onExportFolder={onExportFolder}
       />
     );
   }
@@ -1292,6 +1335,7 @@ function FolderRow({
   onToggleSelect,
   onRenameFolder,
   onDeleteFolder,
+  onExportFolder,
 }) {
   const { meta } = row;
   const drag = useDraggable({ id: row.id, data: { kind: 'folder' } });
@@ -1404,6 +1448,24 @@ function FolderRow({
         >
           ✎
         </button>
+        {onExportFolder && (
+          <button
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onExportFolder({ id: meta.id, name: meta.name });
+            }}
+            className={`text-[11px] rounded px-2 py-0.5 ${
+              isDropTarget
+                ? 'text-white hover:bg-white/20'
+                : 'text-gray-500 hover:bg-gray-200'
+            }`}
+            title="ייצוא ל-Word / PDF"
+            aria-label="ייצוא"
+          >
+            ⤓
+          </button>
+        )}
         <button
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {

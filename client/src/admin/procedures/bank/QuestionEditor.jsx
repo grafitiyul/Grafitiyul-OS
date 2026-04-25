@@ -18,6 +18,7 @@ import EditorTopBar from './EditorTopBar.jsx';
 import RichEditor from '../../../editor/RichEditor.jsx';
 import TitleEditor, { titleToPlain } from '../../../editor/TitleEditor.jsx';
 import DeleteItemDialog from '../../common/DeleteItemDialog.jsx';
+import ExportDialog from '../exports/ExportDialog.jsx';
 import {
   commitPending,
   getPending,
@@ -148,6 +149,7 @@ export default function QuestionEditor() {
 
   const location = useLocation();
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const onDelete = useCallback(() => setDeleteOpen(true), []);
   const onDeleted = useCallback(async () => {
     await refresh?.();
@@ -207,6 +209,17 @@ export default function QuestionEditor() {
         canDelete
         onDelete={onDelete}
         previewUrl={previewUrl}
+        onExport={() => setExportOpen(true)}
+      />
+
+      <ExportDialog
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        target={{
+          kind: 'question',
+          id,
+          label: titleToPlain(form.title) || '(ללא כותרת)',
+        }}
       />
 
       <DeleteItemDialog

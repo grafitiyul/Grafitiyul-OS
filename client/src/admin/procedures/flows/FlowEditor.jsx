@@ -19,6 +19,7 @@ import DeleteFlowDialog from '../../common/DeleteFlowDialog.jsx';
 import MoveToDialog from './MoveToDialog.jsx';
 import FlowTreeRow from './FlowTreeRow.jsx';
 import AssignmentDialog from './AssignmentDialog.jsx';
+import ExportDialog from '../exports/ExportDialog.jsx';
 import {
   buildTree,
   flattenVisible,
@@ -115,6 +116,7 @@ export default function FlowEditor() {
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [assignmentOpen, setAssignmentOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
 
   // Move-to dialog (mobile-critical fallback).
   const [moveTargetId, setMoveTargetId] = useState(null);
@@ -580,6 +582,7 @@ export default function FlowEditor() {
         onBlurTitle={saveTitleOnBlur}
         onDelete={() => setDeleteOpen(true)}
         onOpenAssignment={() => setAssignmentOpen(true)}
+        onExport={() => setExportOpen(true)}
         showBack={hasSelection}
         onBack={() => setSelectedId(null)}
         canUndo={canUndo}
@@ -665,6 +668,15 @@ export default function FlowEditor() {
         onClose={() => setMoveTargetId(null)}
         onConfirm={confirmMoveTo}
       />
+      <ExportDialog
+        open={exportOpen}
+        target={
+          exportOpen
+            ? { kind: 'flow', id: flow.id, label: flow.title || '(ללא שם)' }
+            : null
+        }
+        onClose={() => setExportOpen(false)}
+      />
     </div>
   );
 }
@@ -678,6 +690,7 @@ function EditorHeader({
   onBlurTitle,
   onDelete,
   onOpenAssignment,
+  onExport,
   showBack,
   onBack,
   canUndo,
@@ -736,6 +749,24 @@ function EditorHeader({
           <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.6" />
         </svg>
       </a>
+      {onExport && (
+        <button
+          onClick={onExport}
+          aria-label="ייצוא הנוהל"
+          title="ייצוא ל-Word / PDF"
+          className="w-8 h-8 shrink-0 rounded-md text-gray-700 hover:bg-gray-200 flex items-center justify-center"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <path
+              d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      )}
       <button
         onClick={onOpenAssignment}
         className="text-sm text-gray-700 border border-gray-300 hover:bg-gray-50 rounded px-3 py-1.5"

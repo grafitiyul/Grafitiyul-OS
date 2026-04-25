@@ -12,6 +12,7 @@ import EditorTopBar from './EditorTopBar.jsx';
 import RichEditor from '../../../editor/RichEditor.jsx';
 import TitleEditor, { titleToPlain } from '../../../editor/TitleEditor.jsx';
 import DeleteItemDialog from '../../common/DeleteItemDialog.jsx';
+import ExportDialog from '../exports/ExportDialog.jsx';
 import {
   commitPending,
   getPending,
@@ -119,6 +120,7 @@ export default function ContentEditor() {
 
   const location = useLocation();
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const onDelete = useCallback(() => setDeleteOpen(true), []);
   const onDeleted = useCallback(async () => {
     await refresh?.();
@@ -171,6 +173,17 @@ export default function ContentEditor() {
         canDelete
         onDelete={onDelete}
         previewUrl={previewUrl}
+        onExport={() => setExportOpen(true)}
+      />
+
+      <ExportDialog
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        target={{
+          kind: 'content',
+          id,
+          label: titleToPlain(form.title) || '(ללא כותרת)',
+        }}
       />
 
       <DeleteItemDialog

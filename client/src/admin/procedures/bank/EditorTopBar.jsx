@@ -1,8 +1,8 @@
 import { useNavigate } from 'react-router-dom';
 
 // Editor header: back button (mobile), title, "saved" indicator + preview +
-// delete. There is no manual "save" button — autosave runs continuously; the
-// indicator reports the last server-confirmed save time.
+// export + delete. There is no manual "save" button — autosave runs
+// continuously; the indicator reports the last server-confirmed save time.
 export default function EditorTopBar({
   kindLabel,
   title,
@@ -10,6 +10,7 @@ export default function EditorTopBar({
   canDelete,
   onDelete,
   previewUrl,
+  onExport,
 }) {
   const navigate = useNavigate();
   return (
@@ -46,6 +47,24 @@ export default function EditorTopBar({
             <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.6" />
           </svg>
         </a>
+      )}
+      {onExport && (
+        <button
+          onClick={onExport}
+          aria-label="ייצוא"
+          title="ייצוא ל-Word / PDF"
+          className="w-8 h-8 shrink-0 rounded-md text-gray-700 hover:bg-gray-200 flex items-center justify-center"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <path
+              d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
       )}
       {canDelete && (
         <button
