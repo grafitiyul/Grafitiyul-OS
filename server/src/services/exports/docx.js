@@ -1,9 +1,22 @@
 // ExportDocument → .docx Buffer.
 //
-// Hebrew is handled via paragraph-level `bidirectional: true` plus
-// right alignment by default. The `docx` package emits proper RTL
-// runs natively when those are set, so no extra bidi shaping is
-// required at this layer.
+// Hebrew / RTL handling:
+//   * Paragraph: `bidirectional: true` (sets <w:bidi/>) + right alignment.
+//   * Text run:  `rightToLeft: true` (sets <w:rtl/>) plus the complex-
+//                script mirrors of bold/italic. Without the run-level
+//                rtl mark, Word keeps Latin bidi resolution and visibly
+//                misorders punctuation, list markers, and short runs of
+//                English embedded in Hebrew.
+//   * Default font: Arial in BOTH the latin and complex-script slots so
+//                Hebrew glyphs don't fall back to a different system font.
+//
+// Numbered list isolation:
+//   * Every `<ol>` and `<ul>` allocates a unique numbering reference at
+//     render time. Word continues counters on every paragraph that
+//     shares a numId, so a single shared `gosOl` reference would make
+//     the second list start at "previous list length + 1" (showing
+//     up as 29, 30, 31 instead of 1, 2, 3). One numbering def per
+//     list is the reliable fix.
 
 import {
   AlignmentType,
@@ -29,11 +42,23 @@ const DEFAULT_IMG_H = 320;
 const HEADING_BY_DEPTH = (depth) =>
   depth <= 0 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3;
 
-// docx v9 numbering reference. Two pre-defined concrete numberings (one
-// for ul, one for ol) wired up at Document creation. Indentation steps
-// per nesting level.
-const UL_REF = 'gosUl';
-const OL_REF = 'gosOl';
+// ── List numbering allocator ───────────────────────────────────────
+// Every list encountered gets its own concrete numbering reference,
+// so Word treats each one as an independent counter. The renderer
+// builds `numbering.config[]` from `entries()` after the body is built.
+function makeListAllocator() {
+  const entries = [];
+  return {
+    alloc(ordered) {
+      const ref = `${ordered ? 'gosOl' : 'gosUl'}__${entries.length}`;
+      entries.push({ ref, ordered });
+      return ref;
+    },
+    entries() {
+      return entries;
+    },
+  };
+}
 
 function rtlPara(opts) {
   return new Paragraph({
@@ -58,14 +83,19 @@ async function loadImageBytes(src) {
   };
 }
 
-// Map raw run marks to docx TextRun props.
+// Map raw run marks to docx TextRun props. Adds the run-level RTL flag
+// plus the complex-script mirrors of bold/italic so Hebrew picks them
+// up (Word stores them on separate properties from the Latin variants).
 function runProps(run) {
   return {
     text: run.text,
     bold: !!run.bold,
+    boldComplexScript: !!run.bold,
     italics: !!run.italic,
+    italicsComplexScript: !!run.italic,
     underline: run.underline ? {} : undefined,
     strike: !!run.strike,
+    rightToLeft: true,
   };
 }
 
@@ -74,7 +104,7 @@ async function buildInlineChildren(runs) {
   const out = [];
   for (const r of runs) {
     if (r.kind === 'lineBreak') {
-      out.push(new TextRun({ break: 1 }));
+      out.push(new TextRun({ break: 1, rightToLeft: true }));
       continue;
     }
     if (r.kind === 'image') {
@@ -88,13 +118,27 @@ async function buildInlineChildren(runs) {
           }),
         );
       } else if (r.alt) {
-        out.push(new TextRun({ text: `[${r.alt}]`, italics: true }));
+        out.push(
+          new TextRun({
+            text: `[${r.alt}]`,
+            italics: true,
+            italicsComplexScript: true,
+            rightToLeft: true,
+          }),
+        );
       }
       continue;
     }
     if (r.kind === 'mediaPlaceholder') {
       const text = r.href ? `[${r.label}: ${r.href}]` : `[${r.label}]`;
-      out.push(new TextRun({ text, italics: true }));
+      out.push(
+        new TextRun({
+          text,
+          italics: true,
+          italicsComplexScript: true,
+          rightToLeft: true,
+        }),
+      );
       continue;
     }
     if (r.kind === 'text') {
@@ -123,10 +167,10 @@ function imageTypeFromMime(mime) {
 }
 
 // Walk parsed blocks → docx paragraphs.
-async function blocksToParagraphs(blocks, opts = {}) {
+async function blocksToParagraphs(blocks, ctx) {
   const out = [];
   for (const b of blocks) {
-    await pushBlock(b, out, { listLevel: 0, listRef: null, ...opts });
+    await pushBlock(b, out, ctx);
   }
   return out;
 }
@@ -161,7 +205,14 @@ async function pushBlock(b, out, ctx) {
     } else if (b.alt) {
       out.push(
         rtlPara({
-          children: [new TextRun({ text: `[${b.alt}]`, italics: true })],
+          children: [
+            new TextRun({
+              text: `[${b.alt}]`,
+              italics: true,
+              italicsComplexScript: true,
+              rightToLeft: true,
+            }),
+          ],
         }),
       );
     }
@@ -170,7 +221,16 @@ async function pushBlock(b, out, ctx) {
   if (b.type === 'video' || b.type === 'embed') {
     const text = b.src ? `[${b.label}: ${b.src}]` : `[${b.label}]`;
     out.push(
-      rtlPara({ children: [new TextRun({ text, italics: true })] }),
+      rtlPara({
+        children: [
+          new TextRun({
+            text,
+            italics: true,
+            italicsComplexScript: true,
+            rightToLeft: true,
+          }),
+        ],
+      }),
     );
     return;
   }
@@ -188,32 +248,34 @@ async function pushBlock(b, out, ctx) {
     for (const c of b.children || []) {
       const inner = [];
       await pushBlock(c, inner, ctx);
-      // Indent the resulting paragraphs.
       for (const p of inner) {
-        // docx Paragraph is immutable post-construct; rebuild with indent.
-        // Easier: emit a fresh para with the same text props would require
-        // round-tripping. We push as-is and rely on visual italic via
-        // marks. Quotes are rare in procedure content.
         out.push(p);
       }
     }
     return;
   }
   if (b.type === 'list') {
-    const ref = b.ordered ? OL_REF : UL_REF;
+    // Each list gets its OWN numbering reference. Nested lists call
+    // pushBlock recursively from the item-children loop below, which
+    // re-enters this branch and allocates a fresh ref — so they
+    // restart independently of their parent list, just like Word does
+    // when you create them by hand.
+    const ref = ctx.lists.alloc(!!b.ordered);
     for (const item of b.items || []) {
       const children = await buildInlineChildren(item.runs || []);
       out.push(
         rtlPara({
           children,
-          numbering: { reference: ref, level: ctx.listLevel },
+          numbering: { reference: ref, level: ctx.listLevel || 0 },
         }),
       );
       if (item.children?.length) {
         for (const childBlock of item.children) {
           await pushBlock(childBlock, out, {
             ...ctx,
-            listLevel: Math.min(ctx.listLevel + 1, 8),
+            // Only meaningful when childBlock is itself a list; for
+            // non-list children this value is ignored.
+            listLevel: Math.min((ctx.listLevel || 0) + 1, 8),
           });
         }
       }
@@ -236,7 +298,14 @@ function headingByHtmlLevel(level) {
 
 function titleParagraph(text, level) {
   return rtlPara({
-    children: [new TextRun({ text, bold: true })],
+    children: [
+      new TextRun({
+        text,
+        bold: true,
+        boldComplexScript: true,
+        rightToLeft: true,
+      }),
+    ],
     heading: level,
     spacing: { before: 240, after: 120 },
   });
@@ -272,20 +341,30 @@ function plainFromHtml(html) {
     .trim();
 }
 
-async function questionExtraParagraphs(qd) {
+async function questionExtraParagraphs(qd, ctx) {
   const out = [];
   if (qd.options && qd.options.length > 0) {
     out.push(
       rtlPara({
-        children: [new TextRun({ text: 'אפשרויות:', bold: true })],
+        children: [
+          new TextRun({
+            text: 'אפשרויות:',
+            bold: true,
+            boldComplexScript: true,
+            rightToLeft: true,
+          }),
+        ],
         spacing: { before: 120, after: 60 },
       }),
     );
+    // Fresh bullet list per question so option numbering can never
+    // bleed in from another paragraph.
+    const ref = ctx.lists.alloc(false);
     qd.options.forEach((opt) => {
       out.push(
         rtlPara({
-          children: [new TextRun({ text: String(opt) })],
-          numbering: { reference: UL_REF, level: 0 },
+          children: [new TextRun({ text: String(opt), rightToLeft: true })],
+          numbering: { reference: ref, level: 0 },
         }),
       );
     });
@@ -294,8 +373,13 @@ async function questionExtraParagraphs(qd) {
     out.push(
       rtlPara({
         children: [
-          new TextRun({ text: 'שדה טקסט חופשי: ', bold: true }),
-          new TextRun({ text: 'מופעל' }),
+          new TextRun({
+            text: 'שדה טקסט חופשי: ',
+            bold: true,
+            boldComplexScript: true,
+            rightToLeft: true,
+          }),
+          new TextRun({ text: 'מופעל', rightToLeft: true }),
         ],
         spacing: { before: 60 },
       }),
@@ -304,8 +388,16 @@ async function questionExtraParagraphs(qd) {
   out.push(
     rtlPara({
       children: [
-        new TextRun({ text: 'דרישה: ', bold: true }),
-        new TextRun({ text: qd.requirementLabel || qd.requirement || '' }),
+        new TextRun({
+          text: 'דרישה: ',
+          bold: true,
+          boldComplexScript: true,
+          rightToLeft: true,
+        }),
+        new TextRun({
+          text: qd.requirementLabel || qd.requirement || '',
+          rightToLeft: true,
+        }),
       ],
       spacing: { after: 120 },
     }),
@@ -316,7 +408,7 @@ async function questionExtraParagraphs(qd) {
 // Build all paragraphs for a document. `pagination`:
 //   'compact'        — sections flow continuously
 //   'page-per-item'  — page break before each content/question section
-async function buildBody(doc, opts) {
+async function buildBody(doc, opts, lists) {
   const out = [];
   out.push(titleParagraph(doc.title || '', HeadingLevel.HEADING_1));
 
@@ -345,12 +437,15 @@ async function buildBody(doc, opts) {
 
     if (s.bodyHtml) {
       const blocks = parseHtmlToBlocks(s.bodyHtml);
-      const paras = await blocksToParagraphs(blocks);
+      const paras = await blocksToParagraphs(blocks, {
+        listLevel: 0,
+        lists,
+      });
       out.push(...paras);
     }
 
     if (s.type === 'question' && s.questionData) {
-      const qParas = await questionExtraParagraphs(s.questionData);
+      const qParas = await questionExtraParagraphs(s.questionData, { lists });
       out.push(...qParas);
     }
 
@@ -372,53 +467,60 @@ function itemSeparatorParagraph() {
   });
 }
 
+// Build the per-list level definitions. A single list type can nest up
+// to 9 levels; each level is independent so a freshly-allocated ref's
+// counter starts at 1 across every level.
+function buildLevels(ordered) {
+  return Array.from({ length: 9 }, (_, level) => ({
+    level,
+    // `start: 1` is implicit per OOXML, but stating it makes the
+    // restart-from-1 contract explicit at the spot it matters.
+    start: 1,
+    format: ordered ? LevelFormat.DECIMAL : LevelFormat.BULLET,
+    text: ordered ? `%${level + 1}.` : '•',
+    alignment: AlignmentType.RIGHT,
+    style: {
+      paragraph: {
+        indent: {
+          left: 720 + level * 360,
+          hanging: ordered ? 360 : 240,
+        },
+      },
+    },
+  }));
+}
+
 export async function renderDocx(doc, opts = {}) {
-  const paragraphs = await buildBody(doc, opts);
+  const lists = makeListAllocator();
+  const paragraphs = await buildBody(doc, opts, lists);
+  const numberingConfig = lists.entries().map(({ ref, ordered }) => ({
+    reference: ref,
+    levels: buildLevels(ordered),
+  }));
   const document = new Document({
     creator: 'Grafitiyul OS',
     title: doc.title || 'Export',
     styles: {
       default: {
         document: {
-          run: { font: 'Arial', size: 22 }, // 11pt
+          run: {
+            // ascii=Latin, cs=complex script (Hebrew), hAnsi=high-ANSI.
+            // Setting all three pins Arial as the chosen face regardless
+            // of which side of bidi resolution Word lands on.
+            font: { ascii: 'Arial', cs: 'Arial', hAnsi: 'Arial' },
+            size: 22, // 11pt
+            sizeComplexScript: 22,
+          },
         },
       },
     },
     numbering: {
-      config: [
-        {
-          reference: UL_REF,
-          levels: [
-            ...Array.from({ length: 9 }, (_, level) => ({
-              level,
-              format: LevelFormat.BULLET,
-              text: '•',
-              alignment: AlignmentType.RIGHT,
-              style: {
-                paragraph: {
-                  indent: { left: 720 + level * 360, hanging: 240 },
-                },
-              },
-            })),
-          ],
-        },
-        {
-          reference: OL_REF,
-          levels: [
-            ...Array.from({ length: 9 }, (_, level) => ({
-              level,
-              format: LevelFormat.DECIMAL,
-              text: `%${level + 1}.`,
-              alignment: AlignmentType.RIGHT,
-              style: {
-                paragraph: {
-                  indent: { left: 720 + level * 360, hanging: 360 },
-                },
-              },
-            })),
-          ],
-        },
-      ],
+      // docx-package requires at least one config entry; supply a
+      // hidden no-op when the document has no lists.
+      config:
+        numberingConfig.length > 0
+          ? numberingConfig
+          : [{ reference: '__noop__', levels: buildLevels(false) }],
     },
     sections: [
       {
