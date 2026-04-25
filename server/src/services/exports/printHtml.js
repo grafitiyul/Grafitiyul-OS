@@ -152,6 +152,11 @@ const STYLES = `
   }
   .section-body a { color: #1d4ed8; text-decoration: underline; }
   .section-body hr { border: none; border-top: 1px solid #ccc; margin: 16px 0; }
+  hr.item-separator {
+    border: none;
+    border-top: 1px solid #bbb;
+    margin: 28px 0;
+  }
   .media-placeholder {
     background: #f3f4f6;
     border: 1px dashed #9ca3af;
@@ -206,9 +211,23 @@ const STYLES = `
 export function renderPrintHtml(doc, opts = {}) {
   const pagination = opts.pagination || 'compact';
   const pageTitle = htmlToPlain(doc.title) || 'Export';
-  const sections = (doc.sections || [])
-    .map((s) => sectionHtml(s, { pagination }))
-    .join('');
+  const compact = pagination !== 'page-per-item';
+  const all = doc.sections || [];
+  // Separator policy mirrors the DOCX renderer: a visible line before
+  // every item section that is not the first item in the document, in
+  // compact mode only. No separator before the first item, none after
+  // the last one.
+  let itemEmitted = false;
+  const parts = [];
+  for (const s of all) {
+    const isItem = s.type === 'content' || s.type === 'question';
+    if (compact && isItem && itemEmitted) {
+      parts.push('<hr class="item-separator" />');
+    }
+    parts.push(sectionHtml(s, { pagination }));
+    if (isItem) itemEmitted = true;
+  }
+  const sections = parts.join('');
   return `<!doctype html>
 <html lang="he" dir="rtl">
 <head>

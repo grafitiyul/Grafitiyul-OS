@@ -321,6 +321,12 @@ async function buildBody(doc, opts) {
   out.push(titleParagraph(doc.title || '', HeadingLevel.HEADING_1));
 
   const pageBreak = opts.pagination === 'page-per-item';
+  const compact = !pageBreak;
+  // Separator policy in compact mode: a horizontal line BEFORE every item
+  // section that is not the first item in the document. This produces
+  // separators between items (and around any heading that sits between
+  // them), but never before the first item or after the last one.
+  let itemEmitted = false;
 
   for (let i = 0; i < doc.sections.length; i++) {
     const s = doc.sections[i];
@@ -330,6 +336,8 @@ async function buildBody(doc, opts) {
       out.push(
         rtlPara({ children: [new TextRun({ break: 0 }), new PageBreak()] }),
       );
+    } else if (compact && isItem && itemEmitted) {
+      out.push(itemSeparatorParagraph());
     }
 
     const titleParas = await sectionTitleParagraphs(s);
@@ -345,8 +353,23 @@ async function buildBody(doc, opts) {
       const qParas = await questionExtraParagraphs(s.questionData);
       out.push(...qParas);
     }
+
+    if (isItem) itemEmitted = true;
   }
   return out;
+}
+
+// Empty paragraph with a bottom border — renders as a horizontal rule
+// between item sections in compact mode. The before/after spacing
+// gives the line some breathing room without a heavy gap.
+function itemSeparatorParagraph() {
+  return new Paragraph({
+    bidirectional: true,
+    spacing: { before: 240, after: 240 },
+    border: {
+      bottom: { color: 'BBBBBB', size: 8, style: BorderStyle.SINGLE, space: 1 },
+    },
+  });
 }
 
 export async function renderDocx(doc, opts = {}) {
