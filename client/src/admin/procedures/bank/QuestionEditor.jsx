@@ -30,7 +30,7 @@ import {
 export default function QuestionEditor() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { refresh, patchItem } = useOutletContext();
+  const { refresh, patchItem, removeQuestion } = useOutletContext();
   const [searchParams] = useSearchParams();
   const returnToFlow = searchParams.get('returnTo') === 'flow';
   const pending = returnToFlow ? getPending() : null;
@@ -151,14 +151,15 @@ export default function QuestionEditor() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const onDelete = useCallback(() => setDeleteOpen(true), []);
-  const onDeleted = useCallback(async () => {
-    await refresh?.();
+  const onDeleted = useCallback(() => {
+    // Surgical sidebar removal — no full refetch.
+    removeQuestion?.(id);
     // Preserve any folder param so we return to the folder the user
     // was in before opening this question.
     navigate(`/admin/procedures/bank${location.search || ''}`, {
       replace: true,
     });
-  }, [navigate, refresh, location.search]);
+  }, [navigate, removeQuestion, id, location.search]);
 
   async function addToFlow() {
     if (!id || !pending) return;

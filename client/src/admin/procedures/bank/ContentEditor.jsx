@@ -26,7 +26,7 @@ import {
 export default function ContentEditor() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { refresh, patchItem } = useOutletContext();
+  const { refresh, patchItem, removeContent } = useOutletContext();
   const [searchParams] = useSearchParams();
   // If this editor was opened from a flow's "+ create new" button, the
   // return-to-flow context is stashed in sessionStorage; the flag below
@@ -122,14 +122,17 @@ export default function ContentEditor() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const onDelete = useCallback(() => setDeleteOpen(true), []);
-  const onDeleted = useCallback(async () => {
-    await refresh?.();
+  const onDeleted = useCallback(() => {
+    // Surgical removal from the bank list — no full refetch. The row
+    // disappears from the sidebar in the next render with the same
+    // perceived latency as the delete API call itself.
+    removeContent?.(id);
     // Preserve any folder param in the URL so we return to the folder
     // the user was viewing before opening this item.
     navigate(`/admin/procedures/bank${location.search || ''}`, {
       replace: true,
     });
-  }, [navigate, refresh, location.search]);
+  }, [navigate, removeContent, id, location.search]);
 
   async function addToFlow() {
     if (!id || !pending) return;

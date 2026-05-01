@@ -111,6 +111,95 @@ export default function BankHome() {
     else if (kind === 'question') setQuestions(merger);
   }, []);
 
+  // ── Surgical add / remove / folder-patch ────────────────────────
+  // Every "thing changed" path used to call refresh() (a full triple-
+  // refetch of content + questions + folders). On a bank with hundreds
+  // of items that's the chunk of latency the user feels when they
+  // create / rename / delete. The helpers below mutate localStorage-
+  // free state in place; the server still sees the truth, but the UI
+  // doesn't re-flow the whole sidebar.
+  //
+  // They share one rule: the data added/removed is whatever the
+  // caller already has in hand from the API response, so no extra
+  // round trip is needed.
+  const addContent = useCallback((item) => {
+    if (!item?.id) return;
+    setContent((prev) =>
+      prev.some((i) => i.id === item.id) ? prev : [...prev, item],
+    );
+  }, []);
+  const addQuestion = useCallback((item) => {
+    if (!item?.id) return;
+    setQuestions((prev) =>
+      prev.some((i) => i.id === item.id) ? prev : [...prev, item],
+    );
+  }, []);
+  const addFolder = useCallback((folder) => {
+    if (!folder?.id) return;
+    setFolders((prev) =>
+      prev.some((f) => f.id === folder.id) ? prev : [...prev, folder],
+    );
+  }, []);
+  const patchFolder = useCallback((id, patch) => {
+    if (!id || !patch) return;
+    setFolders((prev) =>
+      prev.map((f) => (f.id === id ? { ...f, ...patch } : f)),
+    );
+  }, []);
+
+  // Removing a row is a bit more than a filter for folders: the schema
+  // uses ON DELETE SET NULL on both ItemBankFolder.parent and
+  // ContentItem.folder / QuestionItem.folder, so deleting one folder
+  // re-parents its DIRECT children (folders + items) to root. We mirror
+  // that here so the optimistic state matches what the server just did.
+  const removeMany = useCallback(
+    ({ contentIds = [], questionIds = [], folderIds = [] } = {}) => {
+      const cSet = new Set(contentIds);
+      const qSet = new Set(questionIds);
+      const fSet = new Set(folderIds);
+      if (cSet.size === 0 && qSet.size === 0 && fSet.size === 0) return;
+      if (cSet.size > 0) {
+        setContent((prev) => prev.filter((i) => !cSet.has(i.id)));
+      }
+      if (qSet.size > 0) {
+        setQuestions((prev) => prev.filter((i) => !qSet.has(i.id)));
+      }
+      if (fSet.size > 0) {
+        // 1. Drop the deleted folders themselves.
+        setFolders((prev) =>
+          prev
+            .filter((f) => !fSet.has(f.id))
+            // 2. Float ANY folder whose parent was deleted up to root.
+            .map((f) =>
+              f.parentId && fSet.has(f.parentId)
+                ? { ...f, parentId: null }
+                : f,
+            ),
+        );
+        // 3. Re-home items whose folder was deleted.
+        setContent((prev) =>
+          prev.map((i) =>
+            i.folderId && fSet.has(i.folderId) ? { ...i, folderId: null } : i,
+          ),
+        );
+        setQuestions((prev) =>
+          prev.map((i) =>
+            i.folderId && fSet.has(i.folderId) ? { ...i, folderId: null } : i,
+          ),
+        );
+      }
+    },
+    [],
+  );
+  const removeContent = useCallback(
+    (id) => removeMany({ contentIds: [id] }),
+    [removeMany],
+  );
+  const removeQuestion = useCallback(
+    (id) => removeMany({ questionIds: [id] }),
+    [removeMany],
+  );
+
   const listCls = inEditor
     ? 'hidden lg:flex w-full lg:w-[var(--list-width)] lg:shrink-0 bg-white flex-col min-h-0'
     : 'flex w-full lg:w-[var(--list-width)] lg:shrink-0 bg-white flex-col min-h-0';
@@ -135,6 +224,11 @@ export default function BankHome() {
           onChanged={refresh}
           currentFolderId={currentFolderId}
           onEnterFolder={setCurrentFolderId}
+          addContent={addContent}
+          addQuestion={addQuestion}
+          addFolder={addFolder}
+          patchFolder={patchFolder}
+          removeMany={removeMany}
         />
       </aside>
       <ResizeHandle
@@ -145,7 +239,16 @@ export default function BankHome() {
         ariaLabel="שינוי רוחב רשימת הפריטים"
       />
       <section className={workCls}>
-        <Outlet context={{ refresh, patchItem }} />
+        <Outlet
+          context={{
+            refresh,
+            patchItem,
+            // Surgical removers used by editor delete flow — eliminates the
+            // refetch-then-navigate pattern.
+            removeContent,
+            removeQuestion,
+          }}
+        />
       </section>
     </div>
   );

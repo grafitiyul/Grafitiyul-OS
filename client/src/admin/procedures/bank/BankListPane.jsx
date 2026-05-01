@@ -70,6 +70,15 @@ export default function BankListPane({
   onChanged,
   currentFolderId,
   onEnterFolder,
+  // Surgical state helpers from BankHome — every "thing changed" path
+  // uses these instead of onChanged so the sidebar doesn't refetch all
+  // three lists for create/rename/delete operations the client already
+  // has the data for.
+  addContent,
+  addQuestion,
+  addFolder,
+  patchFolder,
+  removeMany,
 }) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
@@ -673,6 +682,140 @@ export default function BankListPane({
   const [deleteFolder, setDeleteFolder] = useState(null);
   const [moveDialogOpen, setMoveDialogOpen] = useState(false);
   const [exportTarget, setExportTarget] = useState(null);
+  // Bulk delete carries its own dialog state because the body must
+  // show counts derived at the moment the user clicked.
+  const [bulkDeletePlan, setBulkDeletePlan] = useState(null);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+
+  // ── Bulk delete ─────────────────────────────────────────────────
+  // Selection bar's "מחק נבחרים" → split selection by kind, open a
+  // confirmation that surfaces the counts (and a warning if any of
+  // the selected rows are folders, because folder delete cascades to
+  // children via SET NULL on the schema). Only after confirm do we
+  // hit the API. Failures fall back to a refresh so the local state
+  // can't drift from the server.
+  function openBulkDelete() {
+    const movedSet = new Set(sel.selected);
+    const contentIds = [];
+    const questionIds = [];
+    const folderIds = [];
+    for (const row of rows) {
+      if (!movedSet.has(row.id)) continue;
+      if (row.kind === 'folder') folderIds.push(row.meta.id);
+      else if (row.meta.kind === ITEM_KINDS.CONTENT)
+        contentIds.push(row.meta.id);
+      else if (row.meta.kind === ITEM_KINDS.QUESTION)
+        questionIds.push(row.meta.id);
+    }
+    if (
+      contentIds.length === 0 &&
+      questionIds.length === 0 &&
+      folderIds.length === 0
+    ) {
+      return;
+    }
+    setBulkDeletePlan({ contentIds, questionIds, folderIds });
+  }
+
+  async function performBulkDelete() {
+    const plan = bulkDeletePlan;
+    if (!plan || bulkDeleting) return;
+    setBulkDeleting(true);
+
+    // Fire all deletes in parallel — server endpoints are independent.
+    // allSettled so a single 4xx (e.g. item used in a flow) doesn't
+    // poison the whole batch; we collect failures and report them.
+    const deleteOps = [
+      ...plan.contentIds.map((id) =>
+        api.contentItems
+          .remove(id)
+          .then(() => ({ ok: true, kind: 'content', id }))
+          .catch((e) => ({
+            ok: false,
+            kind: 'content',
+            id,
+            message: e?.message || String(e),
+          })),
+      ),
+      ...plan.questionIds.map((id) =>
+        api.questionItems
+          .remove(id)
+          .then(() => ({ ok: true, kind: 'question', id }))
+          .catch((e) => ({
+            ok: false,
+            kind: 'question',
+            id,
+            message: e?.message || String(e),
+          })),
+      ),
+      ...plan.folderIds.map((id) =>
+        api.folders
+          .remove(id)
+          .then(() => ({ ok: true, kind: 'folder', id }))
+          .catch((e) => ({
+            ok: false,
+            kind: 'folder',
+            id,
+            message: e?.message || String(e),
+          })),
+      ),
+    ];
+
+    const results = await Promise.all(deleteOps);
+    const succeeded = {
+      contentIds: [],
+      questionIds: [],
+      folderIds: [],
+    };
+    const failed = [];
+    for (const r of results) {
+      if (r.ok) {
+        if (r.kind === 'content') succeeded.contentIds.push(r.id);
+        else if (r.kind === 'question') succeeded.questionIds.push(r.id);
+        else if (r.kind === 'folder') succeeded.folderIds.push(r.id);
+      } else {
+        failed.push(r);
+      }
+    }
+
+    // Apply server-confirmed deletions to the optimistic state.
+    removeMany?.(succeeded);
+
+    // If the editor is currently showing one of the deleted rows, bail
+    // back to the bank list so the user isn't stranded on a 404.
+    const wasSelected =
+      (selectedId && succeeded.contentIds.includes(selectedId)) ||
+      (selectedId && succeeded.questionIds.includes(selectedId));
+    if (wasSelected) {
+      const qs = currentFolderId
+        ? `?folder=${encodeURIComponent(currentFolderId)}`
+        : '';
+      navigate(`/admin/procedures/bank${qs}`, { replace: true });
+    }
+
+    // If we drilled INTO a deleted folder, climb out.
+    if (
+      currentFolderId &&
+      succeeded.folderIds.includes(currentFolderId)
+    ) {
+      const cur = folderById.get(currentFolderId);
+      onEnterFolder(cur?.parentId || null);
+    }
+
+    sel.clear();
+    setBulkDeleting(false);
+    setBulkDeletePlan(null);
+
+    if (failed.length > 0) {
+      // Surface the failures in a simple alert — usually "item is used
+      // in a flow" (server's 400 message). The succeeded items are
+      // already gone from the UI; the user can retry the rest.
+      const lines = failed
+        .map((f) => `• ${labelForKind(f.kind)}: ${f.message}`)
+        .join('\n');
+      window.alert(`חלק מהפריטים לא נמחקו:\n${lines}`);
+    }
+  }
 
   // Manual "Move selected" flow — parallel to drag. Reuses the exact
   // same commitMoveToFolder pipeline, so there's no duplicated move
@@ -708,15 +851,27 @@ export default function BankListPane({
 
   async function confirmAddFolder(name) {
     setAddFolderOpen(false);
-    await api.folders.create(name, currentFolderId || null);
-    onChanged?.();
+    try {
+      const created = await api.folders.create(name, currentFolderId || null);
+      addFolder?.(created);
+    } catch (e) {
+      console.error('[bank] folder create failed', e);
+      onChanged?.();
+    }
   }
   async function confirmRename(name) {
     const f = renameFolder;
     setRenameFolder(null);
     if (!f || name === f.name) return;
-    await api.folders.update(f.id, { name });
-    onChanged?.();
+    // Optimistic patch; on error we fall back to a refresh so the user
+    // doesn't see a stale local rename.
+    patchFolder?.(f.id, { name });
+    try {
+      await api.folders.update(f.id, { name });
+    } catch (e) {
+      console.error('[bank] folder rename failed', e);
+      onChanged?.();
+    }
   }
   async function confirmDelete() {
     const f = deleteFolder;
@@ -727,8 +882,16 @@ export default function BankListPane({
     if (f.id === currentFolderId) {
       onEnterFolder(f.parentId || null);
     }
-    await api.folders.remove(f.id);
-    onChanged?.();
+    try {
+      await api.folders.remove(f.id);
+      // removeMany handles the SET NULL cascade in local state to mirror
+      // what the server schema does (children float to root, items
+      // un-foldered). No refresh required.
+      removeMany?.({ folderIds: [f.id] });
+    } catch (e) {
+      console.error('[bank] folder delete failed', e);
+      onChanged?.();
+    }
   }
 
   // ── Actions ──
@@ -750,7 +913,10 @@ export default function BankListPane({
           body: '',
           folderId,
         });
-        onChanged?.();
+        // Surgical insert into the local list — no full refresh. The
+        // navigate() below opens the editor in parallel; the row is
+        // already there when the user looks back.
+        addContent?.(created);
         navigate(`/admin/procedures/bank/content/${created.id}${qs}`);
       } else {
         // Default new-question shape: free-text enabled, text required.
@@ -766,7 +932,7 @@ export default function BankListPane({
           requirement: 'text',
           folderId,
         });
-        onChanged?.();
+        addQuestion?.(created);
         navigate(`/admin/procedures/bank/question/${created.id}${qs}`);
       }
     } catch (e) {
@@ -821,6 +987,7 @@ export default function BankListPane({
           sel={sel}
           onClear={sel.clear}
           onMove={() => setMoveDialogOpen(true)}
+          onDelete={openBulkDelete}
         />
       </div>
 
@@ -1009,7 +1176,72 @@ export default function BankListPane({
         target={exportTarget}
         onClose={() => setExportTarget(null)}
       />
+      <BulkDeleteDialog
+        plan={bulkDeletePlan}
+        busy={bulkDeleting}
+        onCancel={() => (bulkDeleting ? null : setBulkDeletePlan(null))}
+        onConfirm={performBulkDelete}
+      />
     </div>
+  );
+}
+
+function labelForKind(kind) {
+  if (kind === 'folder') return 'תיקייה';
+  if (kind === 'content') return 'תוכן';
+  if (kind === 'question') return 'שאלה';
+  return kind;
+}
+
+// Counts + warning copy. The warning fires whenever any folder is in
+// the deletion plan, because `ON DELETE SET NULL` re-homes children
+// (sub-folders + items) to root rather than wiping them — silent but
+// unintuitive without a heads-up.
+function BulkDeleteDialog({ plan, busy, onCancel, onConfirm }) {
+  if (!plan) return null;
+  const { contentIds, questionIds, folderIds } = plan;
+  const total = contentIds.length + questionIds.length + folderIds.length;
+  const lines = [];
+  if (contentIds.length > 0)
+    lines.push(`• ${contentIds.length} פריטי תוכן`);
+  if (questionIds.length > 0) lines.push(`• ${questionIds.length} שאלות`);
+  if (folderIds.length > 0) lines.push(`• ${folderIds.length} תיקיות`);
+
+  const body = (
+    <div className="space-y-3 text-sm text-gray-800">
+      <div>
+        סך הכול לסימון מחיקה: <b>{total}</b>
+      </div>
+      <ul className="space-y-0.5">
+        {lines.map((l, i) => (
+          <li key={i}>{l}</li>
+        ))}
+      </ul>
+      {folderIds.length > 0 && (
+        <div className="bg-amber-50 border border-amber-300 text-amber-900 rounded px-3 py-2 text-[13px]">
+          <b>שימו לב:</b> בעת מחיקת תיקייה, תת-התיקיות והפריטים שבתוכה
+          לא יימחקו — הם יעלו לרמה הבסיסית (השורש). בדקו שאתם בטוחים
+          לפני אישור.
+        </div>
+      )}
+      <div className="text-[12px] text-gray-500">
+        פריטים שנמצאים בשימוש בזרימה אינם ניתנים למחיקה — אם זה המצב,
+        השרת ידחה אותם וההודעה תופיע לאחר הביצוע.
+      </div>
+    </div>
+  );
+
+  return (
+    <ConfirmDialog
+      open
+      title="מחיקת מספר פריטים"
+      body={body}
+      confirmLabel={busy ? 'מוחק…' : 'מחק'}
+      cancelLabel="ביטול"
+      danger
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+    />
   );
 }
 
@@ -1384,10 +1616,13 @@ function FolderRow({
       <div
         // Three visible states on a folder row during a drag:
         //   — no interaction     → normal bg-gray-50
-        //   — selected            → bg-blue-50/60
-        //   — drop-INTO target    → strong blue fill + thick inner ring
-        //                           + open-folder icon + "שחרור יעביר
-        //                           לכאן" pill.
+        //   — checkbox-selected  → amber tint + leading accent (matches
+        //                          the SelectionBar — "this is in your
+        //                          selection set, distinct from the
+        //                          editor's open item")
+        //   — drop-INTO target   → strong blue fill + thick inner ring
+        //                          + open-folder icon + "שחרור יעביר
+        //                          לכאן" pill.
         //
         // CRITICAL: the row MUST NOT change height when it becomes the
         // drop target. Earlier iterations bumped padding from py-2 to
@@ -1398,12 +1633,12 @@ function FolderRow({
         // unreliable. Ring + background are pure box-shadow / color
         // changes (no layout impact); height stays py-2 in every
         // state.
-        className={`flex items-center gap-2 px-3 py-2 transition-colors ${
+        className={`flex items-center gap-2 px-3 py-2 border-e-4 transition-colors ${
           isDropTarget
-            ? 'bg-blue-500 text-white ring-4 ring-inset ring-blue-700'
+            ? 'bg-blue-500 text-white ring-4 ring-inset ring-blue-700 border-transparent'
             : isSelected
-            ? 'bg-blue-50/60 cursor-pointer'
-            : 'bg-gray-50 hover:bg-gray-100 cursor-pointer'
+            ? 'bg-amber-50 border-amber-400 cursor-pointer'
+            : 'bg-gray-50 hover:bg-gray-100 cursor-pointer border-transparent'
         }`}
       >
         <input
@@ -1538,12 +1773,26 @@ function ItemRow({
       onClick={onRowClick}
     >
       <div
-        className={`flex items-center gap-2 py-2 pe-2 ps-3 transition ${
-          isRouteSelected
-            ? 'bg-blue-50'
+        // Two independent visual states:
+        //   isRouteSelected → this row IS the item open in the editor.
+        //                     Strong blue background + leading accent
+        //                     bar + bold title.
+        //   isSelected      → this row is in the multi-select set.
+        //                     Amber tint, distinct hue from the editor
+        //                     state so the user can never confuse
+        //                     "open" with "ticked".
+        // Both can be true at once (the open item is also selected for
+        // bulk action). In that case we keep the blue accent (so the
+        // user sees the open relationship) and overlay the amber tint
+        // (so they see the selection too).
+        className={`flex items-center gap-2 py-2 pe-2 ps-3 border-e-4 transition-colors ${
+          isRouteSelected && isSelected
+            ? 'bg-amber-100 border-blue-600 font-semibold'
+            : isRouteSelected
+            ? 'bg-blue-100 border-blue-600 font-semibold'
             : isSelected
-            ? 'bg-blue-50/60'
-            : 'hover:bg-gray-50'
+            ? 'bg-amber-50 border-amber-400'
+            : 'border-transparent hover:bg-gray-50'
         }`}
       >
         <input
@@ -1615,11 +1864,17 @@ function FolderGhost({ row }) {
 }
 
 // ── Selection header bar ──
-function SelectionBar({ sel, onClear, onMove }) {
+//
+// Visually amber, deliberately different from the active-editor blue,
+// so the two states ("rows I have multi-selected" vs "the one item
+// open in the editor") never read as the same thing. Actions here
+// apply to the SELECTION ONLY — the editor's own delete button is
+// scoped to the active item.
+function SelectionBar({ sel, onClear, onMove, onDelete }) {
   if (sel.size === 0) return null;
   return (
-    <div className="flex items-center gap-2 text-[12px] bg-blue-50 border border-blue-200 text-blue-800 rounded px-2 py-1">
-      <span className="font-medium">{sel.size} נבחרו</span>
+    <div className="flex items-center gap-2 text-[12px] bg-amber-50 border border-amber-300 text-amber-900 rounded px-2 py-1">
+      <span className="font-semibold">{sel.size} נבחרו</span>
       <span className="flex-1" />
       <button
         onClick={onMove}
@@ -1629,8 +1884,16 @@ function SelectionBar({ sel, onClear, onMove }) {
         העבר…
       </button>
       <button
+        onClick={onDelete}
+        className="bg-red-600 hover:bg-red-700 text-white rounded px-3 py-1 text-[12px] font-medium"
+        title="מחק את הפריטים הנבחרים"
+      >
+        מחק
+      </button>
+      <button
         onClick={onClear}
-        className="text-blue-700 hover:bg-blue-100 rounded px-2 py-0.5"
+        className="text-amber-900 hover:bg-amber-100 rounded px-2 py-0.5"
+        title="נקה בחירה"
       >
         נקה
       </button>
