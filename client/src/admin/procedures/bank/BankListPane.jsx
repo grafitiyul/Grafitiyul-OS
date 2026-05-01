@@ -229,6 +229,41 @@ export default function BankListPane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentFolderId]);
 
+  // Single-selection auto-navigate.
+  //
+  // The selection (checkbox / Ctrl-click / Shift-click) and the active
+  // editor item are separate concepts — but when EXACTLY ONE item is
+  // selected, having the editor still show some other item is the
+  // confusion the user warned about: bulk Delete in the SelectionBar
+  // would act on the selection, the editor's own Delete button would
+  // act on whatever's open. Aligning the two when there's only one
+  // selection eliminates the ambiguity.
+  //
+  // Behaviour:
+  //   * size === 1 + selected row is an item (not a folder) → swap
+  //     the editor route to that item.
+  //   * size === 0 or size > 1                              → no nav.
+  //   * Selected row is a folder                            → no nav
+  //     (folders aren't editable as items; the folder card itself is
+  //     the affordance for entering it via plain click).
+  useEffect(() => {
+    if (sel.size !== 1) return;
+    const onlyId = sel.selected.values().next().value;
+    if (!onlyId) return;
+    const row = rowById.get(onlyId);
+    if (!row || row.kind === 'folder') return;
+    const itemKind = row.meta.kind;
+    const itemId = row.meta.id;
+    if (selectedId === itemId) return; // already on it
+    const qs = currentFolderId
+      ? `?folder=${encodeURIComponent(currentFolderId)}`
+      : '';
+    navigate(`/admin/procedures/bank/${itemKind}/${itemId}${qs}`);
+    // sel.size + sel.selected drive the trigger; rowById/selectedId/etc
+    // are read inside but don't need to refire on their own.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel.size, sel.selected]);
+
   // ── DnD wiring ──
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -1865,38 +1900,50 @@ function FolderGhost({ row }) {
 
 // ── Selection header bar ──
 //
-// Visually amber, deliberately different from the active-editor blue,
-// so the two states ("rows I have multi-selected" vs "the one item
-// open in the editor") never read as the same thing. Actions here
-// apply to the SELECTION ONLY — the editor's own delete button is
-// scoped to the active item.
+// Two-row bar: a count headline + an action row. Strong amber so it
+// reads as a SELECTION CONTEXT — distinct from the editor's blue.
+// Was reportedly easy to miss as a single thin line; this version is
+// big enough that nobody can claim "I didn't see a bulk delete
+// button" while the bar is on screen.
 function SelectionBar({ sel, onClear, onMove, onDelete }) {
   if (sel.size === 0) return null;
+  const countLabel =
+    sel.size === 1 ? 'פריט אחד נבחר' : `${sel.size} פריטים נבחרו`;
   return (
-    <div className="flex items-center gap-2 text-[12px] bg-amber-50 border border-amber-300 text-amber-900 rounded px-2 py-1">
-      <span className="font-semibold">{sel.size} נבחרו</span>
-      <span className="flex-1" />
-      <button
-        onClick={onMove}
-        className="bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1 text-[12px] font-medium"
-        title="העבר את הפריטים הנבחרים לתיקייה אחרת"
-      >
-        העבר…
-      </button>
-      <button
-        onClick={onDelete}
-        className="bg-red-600 hover:bg-red-700 text-white rounded px-3 py-1 text-[12px] font-medium"
-        title="מחק את הפריטים הנבחרים"
-      >
-        מחק
-      </button>
-      <button
-        onClick={onClear}
-        className="text-amber-900 hover:bg-amber-100 rounded px-2 py-0.5"
-        title="נקה בחירה"
-      >
-        נקה
-      </button>
+    <div
+      className="bg-amber-100 border-2 border-amber-400 text-amber-950 rounded-md p-2.5 shadow-sm space-y-2"
+      role="region"
+      aria-label="פעולות על פריטים נבחרים"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-bold text-sm flex items-center gap-1.5">
+          <span aria-hidden>☑</span>
+          <span>{countLabel}</span>
+        </span>
+        <button
+          onClick={onClear}
+          className="text-[12px] text-amber-900 hover:bg-amber-200 rounded px-2 py-0.5"
+          title="נקה בחירה"
+        >
+          נקה בחירה
+        </button>
+      </div>
+      <div className="flex gap-2">
+        <button
+          onClick={onMove}
+          className="flex-1 bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-2 text-sm font-medium"
+          title="העבר את הפריטים הנבחרים לתיקייה אחרת"
+        >
+          העבר…
+        </button>
+        <button
+          onClick={onDelete}
+          className="flex-1 bg-red-600 hover:bg-red-700 text-white rounded px-3 py-2 text-sm font-medium"
+          title="מחק את הפריטים הנבחרים"
+        >
+          מחק
+        </button>
+      </div>
     </div>
   );
 }
