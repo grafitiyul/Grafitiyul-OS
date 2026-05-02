@@ -1898,52 +1898,47 @@ function FolderGhost({ row }) {
   );
 }
 
-// ── Selection header bar ──
+// ── Selection toolbar ──
 //
-// Two-row bar: a count headline + an action row. Strong amber so it
-// reads as a SELECTION CONTEXT — distinct from the editor's blue.
-// Was reportedly easy to miss as a single thin line; this version is
-// big enough that nobody can claim "I didn't see a bulk delete
-// button" while the bar is on screen.
+// Single compact row that reads as a TOOLBAR, not a card. Amber tint
+// matches the selected rows so the link between count and rows is
+// obvious. Stays the same height as the filter-chip row so toggling a
+// checkbox doesn't shove the list down.
 function SelectionBar({ sel, onClear, onMove, onDelete }) {
   if (sel.size === 0) return null;
-  const countLabel =
-    sel.size === 1 ? 'פריט אחד נבחר' : `${sel.size} פריטים נבחרו`;
   return (
     <div
-      className="bg-amber-100 border-2 border-amber-400 text-amber-950 rounded-md p-2.5 shadow-sm space-y-2"
+      className="flex items-center gap-1.5 bg-amber-100 border border-amber-400 text-amber-950 rounded px-2 py-1"
       role="region"
       aria-label="פעולות על פריטים נבחרים"
     >
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-bold text-sm flex items-center gap-1.5">
-          <span aria-hidden>☑</span>
-          <span>{countLabel}</span>
-        </span>
-        <button
-          onClick={onClear}
-          className="text-[12px] text-amber-900 hover:bg-amber-200 rounded px-2 py-0.5"
-          title="נקה בחירה"
-        >
-          נקה בחירה
-        </button>
-      </div>
-      <div className="flex gap-2">
-        <button
-          onClick={onMove}
-          className="flex-1 bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-2 text-sm font-medium"
-          title="העבר את הפריטים הנבחרים לתיקייה אחרת"
-        >
-          העבר…
-        </button>
-        <button
-          onClick={onDelete}
-          className="flex-1 bg-red-600 hover:bg-red-700 text-white rounded px-3 py-2 text-sm font-medium"
-          title="מחק את הפריטים הנבחרים"
-        >
-          מחק
-        </button>
-      </div>
+      <span className="text-[11px] font-bold bg-amber-300 text-amber-950 rounded-full px-2 py-0.5 leading-none">
+        {sel.size}
+      </span>
+      <span className="text-[12px] font-medium">נבחרו</span>
+      <span className="flex-1" />
+      <button
+        onClick={onMove}
+        className="bg-blue-600 hover:bg-blue-700 text-white rounded px-2.5 py-1 text-[12px] font-medium"
+        title="העבר את הפריטים הנבחרים לתיקייה אחרת"
+      >
+        העבר…
+      </button>
+      <button
+        onClick={onDelete}
+        className="bg-red-600 hover:bg-red-700 text-white rounded px-2.5 py-1 text-[12px] font-medium"
+        title="מחק את הפריטים הנבחרים"
+      >
+        מחק
+      </button>
+      <button
+        onClick={onClear}
+        className="text-amber-900 hover:bg-amber-200 rounded text-[14px] leading-none w-6 h-6 flex items-center justify-center"
+        title="נקה בחירה"
+        aria-label="נקה בחירה"
+      >
+        ×
+      </button>
     </div>
   );
 }
