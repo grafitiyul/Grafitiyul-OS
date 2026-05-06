@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 // Guide Portal — token-gated, mobile-first task feed.
@@ -119,23 +119,77 @@ export default function GuidePortal() {
             {startError}
           </div>
         )}
-        {tasks.length === 0 ? (
-          <EmptyState />
-        ) : (
-          <ul className="space-y-3">
-            {tasks.map((task) => (
-              <li key={task.id}>
-                <TaskCard
-                  task={task}
-                  starting={startingId === task.id}
-                  disabled={!!startingId && startingId !== task.id}
-                  onOpen={() => handleOpen(task)}
-                />
-              </li>
-            ))}
-          </ul>
-        )}
+        <Sections
+          tasks={tasks}
+          startingId={startingId}
+          onOpen={handleOpen}
+        />
       </main>
+    </div>
+  );
+}
+
+// ── Section grouping ──────────────────────────────────────────────
+//
+// Tasks come back from the server already tagged with a `bucket`:
+//   todo      — needs the guide's attention (in-progress + mandatory
+//                not-started + corrections-required)
+//   available — visible but optional and untouched (the "shelf")
+//   done      — completed from the guide's POV (waiting / approved)
+//
+// Empty sections are hidden so the page stays compact. If ALL three
+// are empty, we fall back to the EmptyState — that's the case where
+// the guide has nothing visible at all (no published flows reach them).
+const SECTIONS = [
+  { key: 'todo', title: 'לביצוע', subtitle: 'נהלים שמחכים לכם להתחיל או להמשיך' },
+  { key: 'available', title: 'זמינות לקריאה', subtitle: 'נהלים פתוחים — אפשר לעיין בכל זמן' },
+  { key: 'done', title: 'הושלמו', subtitle: 'מה שכבר סיימתם' },
+];
+
+function Sections({ tasks, startingId, onOpen }) {
+  const grouped = useMemo(() => {
+    const out = { todo: [], available: [], done: [] };
+    for (const t of tasks) {
+      const b = out[t.bucket] ? t.bucket : 'todo';
+      out[b].push(t);
+    }
+    return out;
+  }, [tasks]);
+
+  const totalVisible = grouped.todo.length + grouped.available.length + grouped.done.length;
+  if (totalVisible === 0) return <EmptyState />;
+
+  return (
+    <div className="space-y-6">
+      {SECTIONS.map((s) => {
+        const items = grouped[s.key];
+        if (!items || items.length === 0) return null;
+        return (
+          <section key={s.key}>
+            <div className="px-1 mb-2">
+              <h2 className="text-sm font-bold text-gray-900">
+                {s.title}
+                <span className="ms-2 text-[11px] font-medium text-gray-500">
+                  ({items.length})
+                </span>
+              </h2>
+              <div className="text-[11px] text-gray-500">{s.subtitle}</div>
+            </div>
+            <ul className="space-y-3">
+              {items.map((task) => (
+                <li key={task.id}>
+                  <TaskCard
+                    task={task}
+                    starting={startingId === task.id}
+                    disabled={!!startingId && startingId !== task.id}
+                    onOpen={() => onOpen(task)}
+                  />
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })}
     </div>
   );
 }

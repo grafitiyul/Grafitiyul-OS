@@ -553,6 +553,25 @@ export default function FlowEditor() {
     navigate('/admin/procedures/flows', { replace: true });
   }
 
+  // Publish / unpublish. Status='published' is the gate that makes a
+  // flow visible to guides — both `/api/people/:id/procedures` and
+  // `/api/portal/:token` filter on it. There was no UI for this before,
+  // which is why the portal looked empty: every flow defaulted to
+  // 'draft' and there was no way out.
+  async function togglePublish() {
+    if (!flow) return;
+    const next = flow.status === 'published' ? 'draft' : 'published';
+    const prev = flow.status;
+    setFlow({ ...flow, status: next }); // optimistic
+    try {
+      await api.flows.update(flowId, { status: next });
+      await refreshFlowsList?.();
+    } catch (e) {
+      setFlow({ ...flow, status: prev });
+      alert('שינוי סטטוס נכשל: ' + e.message);
+    }
+  }
+
   // --- Render ---------------------------------------------------------
 
   if (loadError) {
@@ -583,6 +602,7 @@ export default function FlowEditor() {
         onDelete={() => setDeleteOpen(true)}
         onOpenAssignment={() => setAssignmentOpen(true)}
         onExport={() => setExportOpen(true)}
+        onTogglePublish={togglePublish}
         showBack={hasSelection}
         onBack={() => setSelectedId(null)}
         canUndo={canUndo}
@@ -691,6 +711,7 @@ function EditorHeader({
   onDelete,
   onOpenAssignment,
   onExport,
+  onTogglePublish,
   showBack,
   onBack,
   canUndo,
@@ -698,6 +719,7 @@ function EditorHeader({
   onUndo,
   onRedo,
 }) {
+  const isPublished = flow.status === 'published';
   return (
     <div className="flex items-center gap-2 p-3 border-b border-gray-200 bg-white shrink-0">
       {showBack && (
@@ -773,6 +795,25 @@ function EditorHeader({
         title="הקצאת הנוהל לצוותים / מדריכים"
       >
         הקצאה
+      </button>
+      {/* Publish toggle. The gate that makes flows visible to guides:
+          drafts are invisible to /api/people/:id/procedures and
+          /api/portal/:token. Color-coded so admins can see status at
+          a glance — green pill = live, gray pill = draft. */}
+      <button
+        onClick={onTogglePublish}
+        className={`text-sm rounded px-3 py-1.5 border font-medium transition-colors ${
+          isPublished
+            ? 'bg-green-600 hover:bg-green-700 text-white border-green-600'
+            : 'bg-white hover:bg-gray-50 text-gray-700 border-gray-300'
+        }`}
+        title={
+          isPublished
+            ? 'הנוהל פורסם — מדריכים שעומדים בכללי הגישה רואים אותו. לחיצה תחזיר לטיוטה.'
+            : 'הנוהל בטיוטה — מדריכים אינם רואים אותו. לחיצה תפרסם.'
+        }
+      >
+        {isPublished ? '● פורסם' : '○ טיוטה'}
       </button>
       <button
         onClick={onDelete}

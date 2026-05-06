@@ -152,6 +152,14 @@ async function collectProcedureTasks(person) {
       title: f.title || '(ללא שם)',
       description: f.description || null,
       status,
+      // Visual grouping in the portal feed. Same three sections the
+      // admin profile uses (`toLearn` / `available` / `learned`),
+      // collapsed to a stable wire enum so the client doesn't reinvent
+      // the rule:
+      //   todo      — needs the guide's attention right now
+      //   available — visible but not mandatory and not yet started
+      //   done      — finished from the guide's POV (waiting / approved)
+      bucket: bucketFor(status, f.mandatory),
       badge,
       metadata: {
         flowId: f.id,
@@ -162,6 +170,14 @@ async function collectProcedureTasks(person) {
       },
     };
   });
+}
+
+function bucketFor(status, mandatory) {
+  if (status === 'completed') return 'done';
+  if (status === 'in_progress') return 'todo';
+  // not_started: mandatory goes to "todo" (guide must start it),
+  // optional goes to "available" (the read-when-you-want shelf).
+  return mandatory ? 'todo' : 'available';
 }
 
 // ── Sort: actionable first, then completed ─────────────────────────

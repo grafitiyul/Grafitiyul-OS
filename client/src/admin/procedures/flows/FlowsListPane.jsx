@@ -164,8 +164,11 @@ function FlowRow({ flow, selected, onOpen }) {
           onClick={onOpen}
           className="flex-1 min-w-0 text-right block py-1"
         >
-          <div className="font-medium text-gray-900 truncate">
-            {flow.title || '(ללא שם)'}
+          <div className="flex items-center gap-1.5 min-w-0">
+            <div className="font-medium text-gray-900 truncate">
+              {flow.title || '(ללא שם)'}
+            </div>
+            <StatusPill status={flow.status} />
           </div>
           <div className="flex items-center gap-2 text-[11px] text-gray-500 mt-0.5">
             <span>{relativeHebrew(flow.updatedAt)}</span>
@@ -193,6 +196,25 @@ function FlowRow({ flow, selected, onOpen }) {
         </a>
       </div>
     </li>
+  );
+}
+
+// Tiny status pill — published flows are visible to guides; drafts
+// are admin-only. Surfaces this at-a-glance instead of forcing the
+// admin to open each flow's editor to find out.
+function StatusPill({ status }) {
+  const isPublished = status === 'published';
+  return (
+    <span
+      className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded leading-none ${
+        isPublished
+          ? 'bg-green-100 text-green-800'
+          : 'bg-gray-100 text-gray-600'
+      }`}
+      title={isPublished ? 'פורסם — נראה למדריכים' : 'טיוטה — אינו נראה למדריכים'}
+    >
+      {isPublished ? 'פורסם' : 'טיוטה'}
+    </span>
   );
 }
 
