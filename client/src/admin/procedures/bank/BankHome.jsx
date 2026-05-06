@@ -200,6 +200,51 @@ export default function BankHome() {
     [removeMany],
   );
 
+  // ── Reorder patches (the persistence-bug fix) ─────────────────────
+  // BankListPane keeps local copies of content / questions / folders
+  // for snappy DnD. When a drag commits, it patches local state with
+  // new sortOrder values — but if BankHome's own state isn't ALSO
+  // patched, any later autosave (every 700ms while typing in the
+  // editor) flips BankHome's array reference via patchItem(), which
+  // triggers BankListPane's prop-sync useEffect; sameItemShape then
+  // sees stale sortOrders in the prop and reverts local back to the
+  // pre-drag order. The dragged item snaps to the bottom.
+  //
+  // applyItemPatches keeps BankHome in lockstep with the drag commit
+  // so the prop-sync compares matching sortOrders and is a no-op.
+  // Callers pass Map<id, partial> for the kinds that changed; rows
+  // without an entry are untouched.
+  const applyItemPatches = useCallback(
+    ({ contentPatches, questionPatches } = {}) => {
+      if (contentPatches && contentPatches.size > 0) {
+        setContent((prev) =>
+          prev.map((i) => {
+            const p = contentPatches.get(i.id);
+            return p ? { ...i, ...p } : i;
+          }),
+        );
+      }
+      if (questionPatches && questionPatches.size > 0) {
+        setQuestions((prev) =>
+          prev.map((i) => {
+            const p = questionPatches.get(i.id);
+            return p ? { ...i, ...p } : i;
+          }),
+        );
+      }
+    },
+    [],
+  );
+  const applyFolderPatches = useCallback((patches) => {
+    if (!patches || patches.size === 0) return;
+    setFolders((prev) =>
+      prev.map((f) => {
+        const p = patches.get(f.id);
+        return p ? { ...f, ...p } : f;
+      }),
+    );
+  }, []);
+
   const listCls = inEditor
     ? 'hidden lg:flex w-full lg:w-[var(--list-width)] lg:shrink-0 bg-white flex-col min-h-0'
     : 'flex w-full lg:w-[var(--list-width)] lg:shrink-0 bg-white flex-col min-h-0';
@@ -229,6 +274,8 @@ export default function BankHome() {
           addFolder={addFolder}
           patchFolder={patchFolder}
           removeMany={removeMany}
+          applyItemPatches={applyItemPatches}
+          applyFolderPatches={applyFolderPatches}
         />
       </aside>
       <ResizeHandle

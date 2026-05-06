@@ -79,6 +79,14 @@ export default function BankListPane({
   addFolder,
   patchFolder,
   removeMany,
+  // Drag-commit reorder patches. These keep BankHome's content /
+  // questions / folders state in lockstep with BankListPane's local
+  // copy. Without them, the prop-sync useEffect would later see a
+  // stale BankHome array (from some unrelated autosave) and revert
+  // local sortOrders to pre-drag values — the "items jump back to
+  // the bottom after a few minutes" bug.
+  applyItemPatches,
+  applyFolderPatches,
 }) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
@@ -583,13 +591,24 @@ export default function BankListPane({
       insertIdx,
     });
 
+    // Build the patch map once and apply it BOTH to localFolders
+    // (snappy DnD) AND to BankHome's folders state (so the prop-sync
+    // useEffect doesn't see a stale BankHome array later and revert).
+    // See applyFolderPatches comment in BankHome.
+    const folderPatchMap = new Map();
+    nextIds.forEach((id, idx) => {
+      folderPatchMap.set(id, {
+        parentId: targetFolderId || null,
+        sortOrder: idx,
+      });
+    });
     setLocalFolders((prev) =>
       prev.map((f) => {
-        const idx = nextIds.indexOf(f.id);
-        if (idx < 0) return f;
-        return { ...f, parentId: targetFolderId || null, sortOrder: idx };
+        const p = folderPatchMap.get(f.id);
+        return p ? { ...f, ...p } : f;
       }),
     );
+    applyFolderPatches?.(folderPatchMap);
 
     // Surface ALL errors, not just via onChanged. The bug where the
     // drop "flashes then reverts" was caused by the server returning
@@ -662,28 +681,44 @@ export default function BankListPane({
       movedRows: movedItems.map((m) => ({ id: m.id, kind: m.kind })),
     });
 
-    const patches = new Map();
+    // Per-kind patch maps. Used for BOTH the local optimistic update
+    // (snappy DnD feedback) AND BankHome's source-of-truth state via
+    // applyItemPatches. Keeping BankHome in sync is what prevents the
+    // sortOrder revert on the next autosave-driven prop change.
+    const contentPatches = new Map();
+    const questionPatches = new Map();
     finalList.forEach((row, idx) => {
-      patches.set(`${row.kind}:${row.id}`, {
-        sortOrder: idx,
-        folderId: targetFolderId,
-      });
+      const patch = { sortOrder: idx, folderId: targetFolderId };
+      if (row.kind === ITEM_KINDS.CONTENT) contentPatches.set(row.id, patch);
+      else if (row.kind === ITEM_KINDS.QUESTION)
+        questionPatches.set(row.id, patch);
     });
 
     // Plain setState — batches with the drag-state clear into one
     // render after onDragEnd returns.
-    setLocalContent((prev) =>
-      prev.map((i) => {
-        const p = patches.get(`${ITEM_KINDS.CONTENT}:${i.id}`);
-        return p ? { ...i, ...p } : i;
-      }),
-    );
-    setLocalQuestions((prev) =>
-      prev.map((i) => {
-        const p = patches.get(`${ITEM_KINDS.QUESTION}:${i.id}`);
-        return p ? { ...i, ...p } : i;
-      }),
-    );
+    if (contentPatches.size > 0) {
+      setLocalContent((prev) =>
+        prev.map((i) => {
+          const p = contentPatches.get(i.id);
+          return p ? { ...i, ...p } : i;
+        }),
+      );
+    }
+    if (questionPatches.size > 0) {
+      setLocalQuestions((prev) =>
+        prev.map((i) => {
+          const p = questionPatches.get(i.id);
+          return p ? { ...i, ...p } : i;
+        }),
+      );
+    }
+    // Push the same patches up to BankHome. Without this, an autosave
+    // from any open editor (every 700ms while typing) flips BankHome's
+    // content/questions array refs via patchItem(); BankListPane's
+    // prop-sync useEffect then sees stale sortOrders and reverts the
+    // local copy back to pre-drag order — the bug that surfaces "after
+    // a few minutes" of editing post-drag.
+    applyItemPatches?.({ contentPatches, questionPatches });
 
     const payload = finalList.map((r) => ({ kind: r.kind, id: r.id }));
     console.log('[bank-dnd] → PUT /api/items/reorder', {
