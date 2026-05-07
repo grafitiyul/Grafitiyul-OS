@@ -202,6 +202,10 @@ export const api = {
     submit: (id) => request(`/api/attempts/${id}/submit`, { method: 'POST' }),
     outstanding: (id) => request(`/api/attempts/${id}/outstanding`),
     listForFlow: (flowId) => request(`/api/attempts/flow/${flowId}`),
+    // Admin reset — hard-deletes the attempt + all its FlowAnswer rows
+    // (schema cascade). The guide can then re-take the flow as if they
+    // never started it.
+    remove: (id) => request(`/api/attempts/${id}`, { method: 'DELETE' }),
   },
   reviews: {
     list: (filters) => request(`/api/reviews/attempts${qs(filters)}`),

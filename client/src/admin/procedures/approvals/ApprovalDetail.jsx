@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useParams, useOutletContext } from 'react-router-dom';
+import { useNavigate, useParams, useOutletContext } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import { relativeHebrew } from '../../../lib/relativeTime.js';
 import Dialog from '../../common/Dialog.jsx';
+import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 
 // Admin approval detail. Loads the review payload for one attempt, which
 // includes every question with its full version history and the content
@@ -11,12 +12,33 @@ import Dialog from '../../common/Dialog.jsx';
 // promotes the attempt to 'approved' on its own.
 export default function ApprovalDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const outletContext = useOutletContext() || {};
   const refreshList = outletContext.refresh;
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // Reset/delete state. Lives here at the page level so the modal
+  // survives intermediate re-renders.
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetError, setResetError] = useState(null);
+
+  async function performReset() {
+    if (resetting) return;
+    setResetError(null);
+    setResetting(true);
+    try {
+      await api.attempts.remove(id);
+      await refreshList?.();
+      // The attempt is gone — leave the detail view.
+      navigate('/admin/procedures/approvals', { replace: true });
+    } catch (e) {
+      setResetError(e?.message || 'איפוס נכשל');
+      setResetting(false);
+    }
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -98,7 +120,17 @@ export default function ApprovalDetail() {
               הוגש {attempt.submittedAt ? relativeHebrew(attempt.submittedAt) : '—'}
             </div>
           </div>
-          <AttemptStatusBadge status={attempt.status} />
+          <div className="shrink-0 flex flex-col items-end gap-2">
+            <AttemptStatusBadge status={attempt.status} />
+            <button
+              type="button"
+              onClick={() => setResetOpen(true)}
+              className="text-[12px] text-red-700 border border-red-200 hover:bg-red-50 rounded px-2 py-0.5"
+              title="אפס ניסיון — ימחק את הניסיון והתשובות, המדריך יוכל להתחיל מחדש"
+            >
+              ⟲ אפס ניסיון
+            </button>
+          </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2 text-[12px]">
           <Chip color="gray">{total} שאלות</Chip>
@@ -107,6 +139,37 @@ export default function ApprovalDetail() {
           {pending > 0 && <Chip color="amber">{pending} ממתינות</Chip>}
         </div>
       </header>
+
+      <ConfirmDialog
+        open={resetOpen}
+        title="איפוס ניסיון"
+        body={
+          <div className="space-y-3 text-sm text-gray-800">
+            <div>
+              איפוס ימחק לצמיתות את הניסיון של <b>{attempt.learnerName}</b> עבור
+              הזרימה <b>{flow.title}</b>, כולל כל התשובות וההיסטוריה. המדריך יוכל
+              להתחיל את הזרימה מחדש מתוך הפורטל שלו.
+            </div>
+            {resetError && (
+              <div className="bg-red-50 border border-red-200 text-red-800 rounded p-2 text-[13px]">
+                {resetError}
+              </div>
+            )}
+            {resetting && (
+              <div className="text-[12px] text-gray-500">מבצע איפוס בשרת…</div>
+            )}
+          </div>
+        }
+        confirmLabel={resetting ? 'מאפס…' : 'אפס ניסיון'}
+        cancelLabel="ביטול"
+        danger
+        onCancel={() => {
+          if (resetting) return;
+          setResetOpen(false);
+          setResetError(null);
+        }}
+        onConfirm={performReset}
+      />
 
       {attempt.status === 'approved' && (
         <div className="bg-green-50 border-b border-green-200 px-5 py-3 text-sm text-green-900 flex items-center gap-2">

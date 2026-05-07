@@ -411,6 +411,39 @@ router.get(
   }),
 );
 
+// ─────────────────────────────────────────────────────────────────
+// DELETE /:id — admin reset. Removes the attempt row entirely; the
+// schema cascades to FlowAnswer rows, so the guide is left in a
+// clean "not_started" state for this flow. The guide's portal task
+// flips back to "התחל" on their next view.
+//
+// We chose hard-delete over an "archive" / "soft reset" because:
+//   * It IS the cleanest cleartesting state.
+//   * Audit history isn't a goal yet (the system has no audit log).
+//   * Reopening a submitted/approved attempt for re-work has the
+//     same effect as starting over from the guide's POV — a fresh
+//     attempt with a fresh expansion is created on next start.
+// If we later need an audit trail of past attempts, the archive
+// path can be added without breaking this contract.
+// ─────────────────────────────────────────────────────────────────
+router.delete(
+  '/:id',
+  handle(async (req, res) => {
+    const attempt = await prisma.attempt.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, flowId: true, externalPersonId: true },
+    });
+    if (!attempt) return res.status(404).json({ error: 'not_found' });
+    await prisma.attempt.delete({ where: { id: attempt.id } });
+    res.json({
+      ok: true,
+      attemptId: attempt.id,
+      flowId: attempt.flowId,
+      externalPersonId: attempt.externalPersonId,
+    });
+  }),
+);
+
 // Legacy exports kept so other modules (people.js procedures bucket
 // derivation, exports, etc.) still compile. New callers should prefer
 // `latestByStep`.

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
+import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import {
   IDENTITY_SOURCES,
   IDENTITY_SOURCE_LABELS,
@@ -68,7 +69,7 @@ export default function PersonProfile() {
       <TeamSection person={person} teams={teams} onChanged={refresh} />
       <ProfileSection person={person} onChanged={refresh} />
       <BankSection person={person} onChanged={refresh} />
-      <ProceduresSection procedures={procedures} />
+      <ProceduresSection procedures={procedures} onChanged={refresh} />
     </div>
   );
 }
@@ -693,7 +694,28 @@ function BankSection({ person, onChanged }) {
 
 // ── Procedures section ──────────────────────────────────────────────────────
 
-function ProceduresSection({ procedures }) {
+function ProceduresSection({ procedures, onChanged }) {
+  // Single dialog state at the section level so the confirm modal
+  // never gets unmounted by a sibling re-render mid-confirmation.
+  const [resetTarget, setResetTarget] = useState(null);
+  const [resetting, setResetting] = useState(false);
+  const [resetError, setResetError] = useState(null);
+
+  async function performReset() {
+    if (!resetTarget?.attemptId) return;
+    setResetting(true);
+    setResetError(null);
+    try {
+      await api.attempts.remove(resetTarget.attemptId);
+      setResetTarget(null);
+      await onChanged?.();
+    } catch (e) {
+      setResetError(e?.message || 'איפוס נכשל');
+    } finally {
+      setResetting(false);
+    }
+  }
+
   if (!procedures) {
     return (
       <Section title="נהלים">
@@ -707,27 +729,74 @@ function ProceduresSection({ procedures }) {
         label="נהלים ללמידה"
         emptyLabel="אין נהלים ממתינים."
         rows={procedures.toLearn}
+        onResetClick={(row) => setResetTarget(row)}
       />
       <ProcedureBucket
         label="נהלים זמינים"
         emptyLabel="אין נהלים זמינים נוספים."
         rows={procedures.available}
+        onResetClick={(row) => setResetTarget(row)}
       />
       <ProcedureBucket
         label="נהלים שנלמדו"
         emptyLabel="עדיין לא השלים נהלים."
         rows={procedures.learned}
+        onResetClick={(row) => setResetTarget(row)}
         renderExtra={(row) =>
           row.answers && row.answers.length > 0 ? (
             <ApprovedAnswers answers={row.answers} />
           ) : null
         }
       />
+
+      <ConfirmDialog
+        open={!!resetTarget}
+        title="איפוס ניסיון"
+        body={
+          resetTarget ? (
+            <ResetDialogBody row={resetTarget} error={resetError} busy={resetting} />
+          ) : null
+        }
+        confirmLabel={resetting ? 'מאפס…' : 'אפס ניסיון'}
+        cancelLabel="ביטול"
+        danger
+        onCancel={() => {
+          if (resetting) return;
+          setResetTarget(null);
+          setResetError(null);
+        }}
+        onConfirm={performReset}
+      />
     </Section>
   );
 }
 
-function ProcedureBucket({ label, emptyLabel, rows, renderExtra }) {
+function ResetDialogBody({ row, error, busy }) {
+  return (
+    <div className="space-y-3 text-sm text-gray-800">
+      <div>
+        על ידי איפוס תימחק לצמיתות הניסיון של המדריך עבור הנוהל הזה,
+        כולל כל התשובות וההיסטוריה. המדריך יוכל להתחיל את הנוהל מחדש.
+      </div>
+      <div className="bg-gray-50 border border-gray-200 rounded p-2">
+        <div className="text-[11px] text-gray-500 uppercase tracking-wide">
+          נוהל
+        </div>
+        <div className="font-medium text-gray-900">{row.title || '(ללא שם)'}</div>
+      </div>
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-800 rounded p-2 text-[13px]">
+          {error}
+        </div>
+      )}
+      {busy && (
+        <div className="text-[12px] text-gray-500">מבצע איפוס בשרת…</div>
+      )}
+    </div>
+  );
+}
+
+function ProcedureBucket({ label, emptyLabel, rows, renderExtra, onResetClick }) {
   const [expanded, setExpanded] = useState(null);
   return (
     <div className="mb-4 last:mb-0">
@@ -741,38 +810,58 @@ function ProcedureBucket({ label, emptyLabel, rows, renderExtra }) {
           {rows.map((row) => {
             const open = expanded === row.flowId;
             const extra = renderExtra?.(row);
+            // The reset action is only meaningful when an attempt
+            // exists. For a "not_started" / no-attempt row there's
+            // nothing to reset; we hide the button rather than
+            // disable it so the row stays clean.
+            const canReset = !!row.attemptId;
             return (
               <li key={row.flowId}>
-                <button
-                  onClick={() =>
-                    extra ? setExpanded(open ? null : row.flowId) : null
-                  }
-                  className={`w-full flex items-center gap-2 px-3 py-2 text-right ${
-                    extra ? 'hover:bg-gray-50' : ''
-                  }`}
-                >
-                  <span className="flex-1 min-w-0">
-                    <span className="font-medium text-gray-900 truncate block">
-                      {row.title}
+                <div className="flex items-stretch">
+                  <button
+                    onClick={() =>
+                      extra ? setExpanded(open ? null : row.flowId) : null
+                    }
+                    className={`flex-1 flex items-center gap-2 px-3 py-2 text-right min-w-0 ${
+                      extra ? 'hover:bg-gray-50' : ''
+                    }`}
+                  >
+                    <span className="flex-1 min-w-0">
+                      <span className="font-medium text-gray-900 truncate block">
+                        {row.title}
+                      </span>
+                      {row.description && (
+                        <span className="text-[11px] text-gray-500 truncate block">
+                          {row.description}
+                        </span>
+                      )}
                     </span>
-                    {row.description && (
-                      <span className="text-[11px] text-gray-500 truncate block">
-                        {row.description}
+                    <StateChip state={row.state} />
+                    {row.mandatory ? (
+                      <span className="text-[10px] text-gray-500">חובה</span>
+                    ) : (
+                      <span className="text-[10px] text-gray-500">אופציונלי</span>
+                    )}
+                    {extra && (
+                      <span className="text-[10px] text-gray-400">
+                        {open ? '▲' : '▼'}
                       </span>
                     )}
-                  </span>
-                  <StateChip state={row.state} />
-                  {row.mandatory ? (
-                    <span className="text-[10px] text-gray-500">חובה</span>
-                  ) : (
-                    <span className="text-[10px] text-gray-500">אופציונלי</span>
+                  </button>
+                  {canReset && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onResetClick?.(row);
+                      }}
+                      className="shrink-0 px-2 my-1 mx-1 text-[12px] text-red-700 border border-red-200 hover:bg-red-50 rounded"
+                      title="אפס ניסיון — ימחק את הניסיון והתשובות, המדריך יוכל להתחיל מחדש"
+                    >
+                      ⟲ אפס
+                    </button>
                   )}
-                  {extra && (
-                    <span className="text-[10px] text-gray-400">
-                      {open ? '▲' : '▼'}
-                    </span>
-                  )}
-                </button>
+                </div>
                 {open && extra}
               </li>
             );
