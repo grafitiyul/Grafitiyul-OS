@@ -156,7 +156,26 @@ async function loadBankSnapshot(prisma) {
 // Returns an `expansion` object suitable for the Attempt.expansion column.
 export async function buildExpansion(prisma, flow) {
   const bank = await loadBankSnapshot(prisma);
-  const steps = walkFlow({ nodes: flow.nodes || [], bank });
+  const nodes = flow.nodes || [];
+  const steps = walkFlow({ nodes, bank });
+  // Diagnostic: if the flow has nodes but expansion produced none,
+  // something's misconfigured (folderRef pointing at an empty/missing
+  // bank folder, kind values stored differently, etc.). Surface in
+  // the server log so the next problem of this shape is debuggable
+  // instead of silently producing an empty SubmitScreen.
+  if (steps.length === 0 && nodes.length > 0) {
+    const summary = nodes.slice(0, 8).map((n) => ({
+      id: n.id,
+      kind: n.kind,
+      bankFolderId: n.bankFolderId || null,
+      contentItemId: n.contentItemId || null,
+      questionItemId: n.questionItemId || null,
+    }));
+    console.warn(
+      '[flowExpansion] expansion produced 0 steps from a non-empty flow',
+      { flowId: flow.id, nodeCount: nodes.length, sample: summary },
+    );
+  }
   return { version: EXPANSION_VERSION, steps };
 }
 

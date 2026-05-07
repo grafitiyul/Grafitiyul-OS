@@ -9,51 +9,77 @@ const router = Router();
 // ── Step list resolution ─────────────────────────────────────────
 //
 // The runtime treats `attempt.expansion.steps` as the canonical visit
-// order. If `expansion` is null (legacy attempts created before the
-// folderRef slice), we fall back to flattening the flow's authoring
-// tree just like the old runtime did. Both paths produce the same
-// shape of step entry, so callers don't branch on legacy-ness.
-function legacyStepsFromFlow(flow) {
-  // Mirror of the old `flattenNodes(flow.nodes)` — groups are
-  // structural and skipped; folderRef shouldn't exist on legacy
-  // attempts but we skip it defensively too.
-  const childrenByParent = new Map();
-  for (const n of flow.nodes || []) {
-    const key = n.parentId || null;
-    if (!childrenByParent.has(key)) childrenByParent.set(key, []);
-    childrenByParent.get(key).push(n);
-  }
-  for (const arr of childrenByParent.values()) {
-    arr.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-  }
-  const steps = [];
-  function visit(parentId) {
-    for (const node of childrenByParent.get(parentId) || []) {
-      if (node.kind === 'group') {
-        visit(node.id);
-        continue;
-      }
-      if (node.kind === 'content' || node.kind === 'question') {
-        steps.push({
-          stepId: node.id,
-          kind: node.kind,
-          flowNodeId: node.id,
-          bankFolderRefId: null,
-          contentItemId: node.contentItemId || null,
-          questionItemId: node.questionItemId || null,
-          checkpointAfter: !!node.checkpointAfter,
-        });
-      }
-    }
-  }
-  visit(null);
-  return steps;
+// order. Older attempts (created before the folderRef slice) have
+// `expansion=null` — for those we BUILD an expansion on first read
+// using the current flow + bank state, then persist it onto the
+// attempt so subsequent reads stay stable. Without this auto-snapshot,
+// a legacy attempt for a flow that contains only folderRef nodes
+// would have no steps at all and the runtime would jump straight to
+// the SubmitScreen — the bug this fix targets.
+
+// Fast path used by sync callers AFTER ensureExpansion has been awaited.
+function stepsFor(attempt) {
+  return attempt.expansion?.steps || [];
 }
 
-function stepsFor(attempt) {
-  if (attempt.expansion?.steps) return attempt.expansion.steps;
-  if (attempt.flow?.nodes) return legacyStepsFromFlow(attempt.flow);
-  return [];
+// Make sure `attempt.expansion` is populated. Mutates the in-memory
+// attempt object so callers can keep using sync `stepsFor()` after
+// awaiting this. For in-progress attempts, also persists the result
+// (and re-syncs the cursor: a legacy `currentNodeId` becomes the new
+// `currentStepId`; a stale cursor that no longer maps to any step is
+// reset to the first step).
+async function ensureExpansion(attempt) {
+  const hasExpansion =
+    attempt.expansion &&
+    Array.isArray(attempt.expansion.steps) &&
+    attempt.expansion.steps.length > 0;
+  if (hasExpansion) return;
+  if (!attempt.flow || !Array.isArray(attempt.flow.nodes)) return;
+
+  const fresh = await buildExpansion(prisma, attempt.flow);
+  attempt.expansion = fresh;
+
+  // Only persist for in-progress attempts. Submitted/approved attempts
+  // are read-only from a structural standpoint; we can compute on
+  // every read without writing back. (Reviews still operate on the
+  // existing FlowAnswer rows.)
+  if (attempt.status !== 'in_progress') return;
+
+  const updates = { expansion: fresh };
+
+  // Reconcile the cursor. Legacy attempts have currentNodeId but no
+  // currentStepId. For non-folderRef steps, stepId == flowNodeId, so
+  // a legacy currentNodeId IS a valid stepId in the new expansion.
+  // If the cursor no longer maps to any step (e.g. the admin removed
+  // the original node, or the legacy cursor pointed at a folderRef
+  // that's now expanded into multiple steps), reset to the first step.
+  const cursor = attempt.currentStepId || attempt.currentNodeId || null;
+  const cursorExists =
+    cursor && fresh.steps.some((s) => s.stepId === cursor);
+  if (cursorExists) {
+    if (!attempt.currentStepId) {
+      attempt.currentStepId = cursor;
+      updates.currentStepId = cursor;
+    }
+  } else {
+    const firstStep = fresh.steps[0] || null;
+    attempt.currentStepId = firstStep ? firstStep.stepId : null;
+    attempt.currentNodeId = firstStep?.flowNodeId || null;
+    updates.currentStepId = attempt.currentStepId;
+    updates.currentNodeId = attempt.currentNodeId;
+  }
+
+  try {
+    await prisma.attempt.update({ where: { id: attempt.id }, data: updates });
+  } catch (e) {
+    // Persistence failure isn't fatal — the in-memory expansion is
+    // already attached, so the current request renders correctly.
+    // Surface in logs so repeated failures are visible.
+    console.warn('[attempts] ensureExpansion persist failed', {
+      attemptId: attempt.id,
+      message: e?.message,
+    });
+  }
 }
 
 // Hydrate a step with the live content/question item rows. Item
@@ -192,6 +218,7 @@ router.get(
     });
     if (!attempt) return res.status(404).json({ error: 'not found' });
 
+    await ensureExpansion(attempt);
     const steps = await hydrateSteps(stepsFor(attempt));
     res.json({ ...attempt, steps });
   }),
@@ -216,6 +243,7 @@ router.post(
     if (attempt.status === 'approved') {
       return res.status(400).json({ error: 'attempt already approved' });
     }
+    await ensureExpansion(attempt);
     const steps = stepsFor(attempt);
     const step = steps.find((s) => s.stepId === stepId);
     if (!step) return res.status(400).json({ error: 'step not in attempt' });
@@ -270,6 +298,7 @@ router.post(
     if (attempt.status !== 'in_progress' && attempt.status !== 'submitted') {
       return res.status(400).json({ error: `cannot advance from ${attempt.status}` });
     }
+    await ensureExpansion(attempt);
     const steps = stepsFor(attempt);
     const currentId = attempt.currentStepId || attempt.currentNodeId;
     const currentIdx = steps.findIndex((s) => s.stepId === currentId);
@@ -302,6 +331,7 @@ router.post(
     if (attempt.status === 'approved') {
       return res.status(400).json({ error: 'already approved' });
     }
+    await ensureExpansion(attempt);
     const steps = await hydrateSteps(stepsFor(attempt));
     const latest = latestByStep(attempt.answers);
 
@@ -340,6 +370,7 @@ router.get(
     });
     if (!attempt) return res.status(404).json({ error: 'attempt not found' });
 
+    await ensureExpansion(attempt);
     const steps = await hydrateSteps(stepsFor(attempt));
     const latest = latestByStep(attempt.answers);
     const outstandingIds = new Set(outstandingStepIds(steps, latest));

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { latestByStep } from './attempts.js';
+import { buildExpansion } from '../services/flowExpansion.js';
 import { handle } from '../asyncHandler.js';
 
 const router = Router();
@@ -47,9 +48,27 @@ function legacyStepsFromFlow(flow) {
 // Hydrate steps for the review screen. For folderRef-derived steps we
 // look up the live ContentItem/QuestionItem rows; for direct steps we
 // already have them eager-loaded with the flow nodes.
+//
+// If the attempt predates the folderRef slice (`expansion=null`), we
+// build a fresh expansion using the current bank state. This is a
+// READ-ONLY rebuild — we don't persist back to the attempt from the
+// review path; we only need a step list so the review UI can show
+// answer history. Persisting is the runtime's responsibility.
 async function hydrateSteps(attempt) {
+  let expansion = attempt.expansion;
+  if (
+    !expansion ||
+    !Array.isArray(expansion.steps) ||
+    expansion.steps.length === 0
+  ) {
+    if (attempt.flow && Array.isArray(attempt.flow.nodes)) {
+      expansion = await buildExpansion(prisma, attempt.flow);
+    }
+  }
   const raw =
-    attempt.expansion?.steps || legacyStepsFromFlow(attempt.flow);
+    expansion?.steps && expansion.steps.length > 0
+      ? expansion.steps
+      : legacyStepsFromFlow(attempt.flow);
   const flowNodeById = new Map();
   for (const n of attempt.flow?.nodes || []) {
     flowNodeById.set(n.id, n);

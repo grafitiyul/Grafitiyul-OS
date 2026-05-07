@@ -293,13 +293,19 @@ router.post(
       return res.status(403).json({ error: 'not_visible' });
     }
 
-    // Reuse the most recent attempt regardless of status:
-    //   * in_progress / submitted → resume / correct
-    //   * approved → read-only view (the runtime already handles this)
+    // Resume any active attempt (in_progress / submitted). For an
+    // approved attempt we DON'T resume — the user is clicking התחל
+    // (or המשך) on a task card that may have been (mis-)labelled, and
+    // the safer behaviour is to start a fresh run rather than send
+    // them to a read-only ApprovedBrowser they didn't ask for. Future
+    // UX could expose explicit "view past attempt" links; today the
+    // sectioned task feed surfaces approvals separately under
+    // "הושלמו".
     const existing = await prisma.attempt.findFirst({
       where: {
         flowId: flow.id,
         externalPersonId: person.externalPersonId,
+        status: { in: ['in_progress', 'submitted'] },
       },
       orderBy: { updatedAt: 'desc' },
       select: { id: true },
