@@ -158,18 +158,53 @@ export async function buildExpansion(prisma, flow) {
   const bank = await loadBankSnapshot(prisma);
   const nodes = flow.nodes || [];
   const steps = walkFlow({ nodes, bank });
-  // Diagnostic: if the flow has nodes but expansion produced none,
-  // something's misconfigured (folderRef pointing at an empty/missing
-  // bank folder, kind values stored differently, etc.). Surface in
-  // the server log so the next problem of this shape is debuggable
-  // instead of silently producing an empty SubmitScreen.
+
+  // Per-folderRef trace — surfaces "I expanded folderRef X pointing at
+  // bank folder F and got N items" so a 0-step result can be traced
+  // back to a specific node and a specific bank folder.
+  const folderRefTrace = nodes
+    .filter((n) => n.kind === 'folderRef')
+    .map((n) => ({
+      nodeId: n.id,
+      bankFolderId: n.bankFolderId || null,
+      itemsExpanded: n.bankFolderId
+        ? walkBankFolder(bank, n.bankFolderId).length
+        : 0,
+    }));
+
+  // Always log a one-line summary — cheap, and makes Railway logs the
+  // first place to look when runtime ends up empty.
+  const kindCounts = nodes.reduce(
+    (acc, n) => ((acc[n.kind] = (acc[n.kind] || 0) + 1), acc),
+    {},
+  );
+  console.log('[flowExpansion] build', {
+    flowId: flow.id,
+    nodeCount: nodes.length,
+    kindCounts,
+    folderRefTrace,
+    bankSizes: {
+      foldersByParent: [...bank.foldersByParent].reduce(
+        (a, [, v]) => a + v.length,
+        0,
+      ),
+      itemsByFolder: [...bank.itemsByFolder].reduce(
+        (a, [, v]) => a + v.length,
+        0,
+      ),
+    },
+    stepCount: steps.length,
+  });
+
   if (steps.length === 0 && nodes.length > 0) {
-    const summary = nodes.slice(0, 8).map((n) => ({
+    const summary = nodes.slice(0, 12).map((n) => ({
       id: n.id,
       kind: n.kind,
       bankFolderId: n.bankFolderId || null,
       contentItemId: n.contentItemId || null,
       questionItemId: n.questionItemId || null,
+      parentId: n.parentId || null,
+      order: n.order,
     }));
     console.warn(
       '[flowExpansion] expansion produced 0 steps from a non-empty flow',
@@ -177,6 +212,60 @@ export async function buildExpansion(prisma, flow) {
     );
   }
   return { version: EXPANSION_VERSION, steps };
+}
+
+// Public diagnostic helper — returns the bank snapshot summary along
+// with the expansion so the debug endpoint can surface "what does the
+// expander see right now" without callers having to reach into module-
+// internal helpers.
+export async function buildExpansionWithDiagnostics(prisma, flow) {
+  const bank = await loadBankSnapshot(prisma);
+  const nodes = flow.nodes || [];
+  const steps = walkFlow({ nodes, bank });
+  const folderRefTrace = nodes
+    .filter((n) => n.kind === 'folderRef')
+    .map((n) => {
+      const items = n.bankFolderId
+        ? walkBankFolder(bank, n.bankFolderId)
+        : [];
+      return {
+        nodeId: n.id,
+        bankFolderId: n.bankFolderId || null,
+        itemsExpanded: items.length,
+        sampleItems: items.slice(0, 8).map((i) => ({
+          id: i.id,
+          kind: i.kind,
+          folderId: i.folderId || null,
+          title:
+            typeof i.title === 'string' ? i.title.slice(0, 80) : null,
+        })),
+      };
+    });
+  const bankSummary = {
+    foldersTotal: [...bank.foldersByParent].reduce(
+      (a, [, v]) => a + v.length,
+      0,
+    ),
+    itemsTotal: [...bank.itemsByFolder].reduce(
+      (a, [, v]) => a + v.length,
+      0,
+    ),
+    foldersByParent: [...bank.foldersByParent].map(([k, v]) => ({
+      parentId: k,
+      childCount: v.length,
+      childIds: v.map((f) => f.id),
+    })),
+    itemsByFolder: [...bank.itemsByFolder].map(([k, v]) => ({
+      folderId: k,
+      itemCount: v.length,
+      sample: v.slice(0, 4).map((i) => ({ id: i.id, kind: i.kind })),
+    })),
+  };
+  return {
+    expansion: { version: EXPANSION_VERSION, steps },
+    folderRefTrace,
+    bankSummary,
+  };
 }
 
 // Convenience: turn an `expansion.steps[].stepId` into the source-of-

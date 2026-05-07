@@ -2,7 +2,11 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { validateAnswer } from '../services/questionRequirement.js';
-import { buildExpansion, stepLookup } from '../services/flowExpansion.js';
+import {
+  buildExpansion,
+  buildExpansionWithDiagnostics,
+  stepLookup,
+} from '../services/flowExpansion.js';
 
 const router = Router();
 
@@ -408,6 +412,78 @@ router.get(
       orderBy: { updatedAt: 'desc' },
     });
     res.json(attempts);
+  }),
+);
+
+// ─────────────────────────────────────────────────────────────────
+// GET /:id/debug — admin-only runtime payload dump.
+//
+// Exists to short-circuit the "what is the runtime ACTUALLY seeing"
+// question when an attempt opens straight to the SubmitScreen. Returns
+// the raw flow nodes (including bankFolderId per folderRef), the bank
+// snapshot summary, the expansion the runtime is using, the hydrated
+// step list, and the cursor. Hit it with `curl /api/attempts/<id>/debug`
+// or paste in a browser tab.
+// ─────────────────────────────────────────────────────────────────
+router.get(
+  '/:id/debug',
+  handle(async (req, res) => {
+    const attempt = await prisma.attempt.findUnique({
+      where: { id: req.params.id },
+      include: {
+        flow: {
+          include: {
+            nodes: {
+              include: { contentItem: true, questionItem: true, bankFolder: true },
+            },
+          },
+        },
+        answers: {
+          select: {
+            stepId: true,
+            flowNodeId: true,
+            version: true,
+            status: true,
+          },
+        },
+      },
+    });
+    if (!attempt) return res.status(404).json({ error: 'not_found' });
+
+    const liveDiag = attempt.flow
+      ? await buildExpansionWithDiagnostics(prisma, attempt.flow)
+      : null;
+
+    res.json({
+      attempt: {
+        id: attempt.id,
+        flowId: attempt.flowId,
+        status: attempt.status,
+        currentStepId: attempt.currentStepId,
+        currentNodeId: attempt.currentNodeId,
+        externalPersonId: attempt.externalPersonId,
+        learnerName: attempt.learnerName,
+        createdAt: attempt.createdAt,
+        updatedAt: attempt.updatedAt,
+        storedExpansion: attempt.expansion,
+        storedExpansionStepCount: attempt.expansion?.steps?.length ?? null,
+      },
+      flowNodes: (attempt.flow?.nodes || []).map((n) => ({
+        id: n.id,
+        parentId: n.parentId,
+        order: n.order,
+        kind: n.kind,
+        bankFolderId: n.bankFolderId,
+        bankFolderName: n.bankFolder?.name ?? null,
+        contentItemId: n.contentItemId,
+        questionItemId: n.questionItemId,
+        groupTitle: n.groupTitle,
+      })),
+      liveExpansion: liveDiag?.expansion ?? null,
+      folderRefTrace: liveDiag?.folderRefTrace ?? [],
+      bankSummary: liveDiag?.bankSummary ?? null,
+      answers: attempt.answers,
+    });
   }),
 );
 

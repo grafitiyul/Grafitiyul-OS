@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
-import { buildExpansion } from '../services/flowExpansion.js';
+import {
+  buildExpansion,
+  buildExpansionWithDiagnostics,
+} from '../services/flowExpansion.js';
 
 const router = Router();
 
@@ -65,7 +68,9 @@ router.get(
   handle(async (req, res) => {
     const flow = await prisma.flow.findUnique({
       where: { id: req.params.id },
-      include: { nodes: true },
+      include: {
+        nodes: { include: { bankFolder: true } },
+      },
     });
     if (!flow) return res.status(404).json({ error: 'not found' });
     const expansion = await buildExpansion(prisma, flow);
@@ -103,6 +108,42 @@ router.get(
           ? questionById.get(s.questionItemId) || null
           : null,
       })),
+    });
+  }),
+);
+
+// Diagnostic dump for a flow — raw nodes (incl. bankFolderId), live
+// expansion, bank snapshot summary. Designed to be hit directly with
+// curl/browser when something looks broken at runtime.
+router.get(
+  '/:id/debug',
+  handle(async (req, res) => {
+    const flow = await prisma.flow.findUnique({
+      where: { id: req.params.id },
+      include: {
+        nodes: { include: { bankFolder: true } },
+      },
+    });
+    if (!flow) return res.status(404).json({ error: 'not_found' });
+    const diag = await buildExpansionWithDiagnostics(prisma, flow);
+    res.json({
+      flowId: flow.id,
+      title: flow.title,
+      status: flow.status,
+      nodes: (flow.nodes || []).map((n) => ({
+        id: n.id,
+        parentId: n.parentId,
+        order: n.order,
+        kind: n.kind,
+        bankFolderId: n.bankFolderId,
+        bankFolderName: n.bankFolder?.name ?? null,
+        contentItemId: n.contentItemId,
+        questionItemId: n.questionItemId,
+        groupTitle: n.groupTitle,
+      })),
+      expansion: diag.expansion,
+      folderRefTrace: diag.folderRefTrace,
+      bankSummary: diag.bankSummary,
     });
   }),
 );

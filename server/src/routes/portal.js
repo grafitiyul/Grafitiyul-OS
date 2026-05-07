@@ -319,6 +319,13 @@ router.post(
     // pick up the latest bank state on every fresh start.
     const expansion = await buildExpansion(prisma, flow);
     const firstStep = expansion.steps[0] || null;
+    console.log('[portal] new attempt creation', {
+      flowId: flow.id,
+      personId: person.id,
+      stepCount: expansion.steps.length,
+      firstStepId: firstStep?.stepId || null,
+      firstStepKind: firstStep?.kind || null,
+    });
     const created = await prisma.attempt.create({
       data: {
         flowId: flow.id,
