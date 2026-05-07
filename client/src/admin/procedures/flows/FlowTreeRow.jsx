@@ -3,6 +3,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { ITEM_KINDS, ITEM_KIND_LABELS } from '../bank/config.js';
 import { titleToPlain } from '../../../editor/TitleEditor.jsx';
+import { api } from '../../../lib/api.js';
 
 // A single row in the flow tree. Renders either an item or a group header.
 // Primary affordances visible on the row: drag handle, type, title.
@@ -37,6 +38,8 @@ export default function FlowTreeRow({
   };
 
   const isGroup = node.kind === 'group';
+  const isFolderRef = node.kind === 'folderRef';
+  const isContainer = isGroup || isFolderRef;
   const isCheckpoint = !!node.checkpointAfter;
 
   const item =
@@ -47,24 +50,36 @@ export default function FlowTreeRow({
       : null;
   const title = isGroup
     ? node.groupTitle || '(ללא שם)'
+    : isFolderRef
+    ? node.bankFolder?.name || '(תיקייה נמחקה)'
     : item?.title || '(פריט נמחק)';
 
-  const kindLabel = isGroup ? 'קבוצה' : ITEM_KIND_LABELS[node.kind];
+  const kindLabel = isGroup
+    ? 'קבוצה'
+    : isFolderRef
+    ? 'תיקייה מהבנק'
+    : ITEM_KIND_LABELS[node.kind];
   const kindBadgeCls = isGroup
     ? 'bg-purple-100 text-purple-800 border border-purple-200'
+    : isFolderRef
+    ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
     : node.kind === ITEM_KINDS.QUESTION
     ? 'bg-amber-100 text-amber-800'
     : 'bg-blue-100 text-blue-800';
 
-  // Two tiers of row styling. Groups are visually heavier: colored accent
-  // strip on the leading edge, light purple background, bold title.
-  // Items are flat; hover only. Selected wins either way.
+  // Three tiers of row styling. Groups (purple) are admin-defined
+  // containers. folderRefs (emerald) are LIVE links to bank folders
+  // — visually distinct so admins immediately read "this isn't a
+  // local container, the source of truth is in the bank". Items are
+  // flat. Selected wins either way.
   const rowCls = [
     'group flex items-start gap-2 py-1.5 ps-2 pe-2 rounded-md transition cursor-pointer relative',
     isSelected
       ? 'bg-blue-50 ring-1 ring-blue-300'
       : isGroup
       ? 'bg-purple-50/80 hover:bg-purple-100/70'
+      : isFolderRef
+      ? 'bg-emerald-50/80 hover:bg-emerald-100/70'
       : 'hover:bg-gray-50',
     dropHint === 'inside' ? 'ring-2 ring-blue-400 bg-blue-50' : '',
   ]
@@ -90,10 +105,17 @@ export default function FlowTreeRow({
         className={rowCls}
         style={{
           marginInlineStart: depth * 20,
-          // Colored leading-edge bar for groups — reads as "container".
+          // Colored leading-edge bar for containers — reads as
+          // "structural element". Purple for groups, emerald for the
+          // bank-linked folderRef.
           ...(isGroup
             ? {
                 borderInlineStart: '3px solid rgb(168 85 247)',
+                paddingInlineStart: 8,
+              }
+            : isFolderRef
+            ? {
+                borderInlineStart: '3px solid rgb(16 185 129)',
                 paddingInlineStart: 8,
               }
             : {}),
@@ -113,16 +135,20 @@ export default function FlowTreeRow({
           <span className="font-mono text-[11px] leading-none">⋮⋮</span>
         </button>
 
-        {/* Collapse chevron for groups */}
-        {isGroup ? (
+        {/* Collapse chevron for containers (groups and folderRefs) */}
+        {isContainer ? (
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
               onToggleCollapse();
             }}
-            aria-label={isCollapsed ? 'הצג תוכן קבוצה' : 'קפל קבוצה'}
-            className="shrink-0 w-6 h-6 flex items-center justify-center text-purple-700 hover:bg-purple-200/70 rounded mt-0.5"
+            aria-label={isCollapsed ? 'הצג תוכן' : 'קפל'}
+            className={`shrink-0 w-6 h-6 flex items-center justify-center rounded mt-0.5 ${
+              isFolderRef
+                ? 'text-emerald-700 hover:bg-emerald-200/70'
+                : 'text-purple-700 hover:bg-purple-200/70'
+            }`}
           >
             <span
               className="text-[13px]"
@@ -146,9 +172,11 @@ export default function FlowTreeRow({
           {kindLabel}
         </span>
 
-        {/* Title (editable for groups, static for items).
+        {/* Title (editable for groups, static for items / folderRefs).
             Item titles may contain HTML (dynamic-field chips) — render via
-            dangerouslySetInnerHTML with the shared .gos-prose class. */}
+            dangerouslySetInnerHTML with the shared .gos-prose class.
+            folderRef titles come from the bank — read-only here, edit in
+            the bank to rename. */}
         {isGroup ? (
           <input
             value={node.groupTitle || ''}
@@ -157,6 +185,13 @@ export default function FlowTreeRow({
             placeholder="שם הקבוצה"
             className="flex-1 min-w-0 text-[15px] font-semibold text-gray-900 bg-transparent border-0 focus:outline-none focus:bg-white focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5"
           />
+        ) : isFolderRef ? (
+          <span
+            className="flex-1 min-w-0 text-[15px] font-semibold text-emerald-900 leading-relaxed pt-0.5 truncate"
+            title="שם התיקייה נשלט מהבנק. לעריכה — פתחו את התיקייה בלשונית 'בנק פריטים'."
+          >
+            📁 {title}
+          </span>
         ) : isHtmlTitle(title) ? (
           <span
             className="gos-prose flex-1 min-w-0 text-sm text-gray-900 leading-relaxed pt-0.5"
@@ -254,6 +289,17 @@ export default function FlowTreeRow({
             </span>
           )}
         </div>
+      )}
+
+      {/* Expanded folderRef: read-only nested preview of bank contents.
+          The admin needs to see what's inside without bouncing back to
+          the bank tab. Bank is the source of truth — this view is
+          informational only, no inline editing here. */}
+      {isFolderRef && !isCollapsed && (
+        <FolderRefPreview
+          bankFolderId={node.bankFolderId}
+          depth={depth + 1}
+        />
       )}
 
       {/* Drop indicator — after */}
@@ -402,4 +448,143 @@ function MenuDivider() {
 
 function isHtmlTitle(s) {
   return typeof s === 'string' && /<[a-z]/i.test(s);
+}
+
+// ── FolderRefPreview ─────────────────────────────────────────────
+//
+// Read-only nested preview of a bank folder's contents — shown when
+// a folderRef row is expanded. Pulls the recursive tree from the
+// server (`api.folders.contents(id)`) so the rendering reflects the
+// CURRENT bank state (the source of truth). No DnD here — admins
+// edit folder structure in the bank tab.
+function FolderRefPreview({ bankFolderId, depth }) {
+  const [state, setState] = useState({ phase: 'loading' });
+
+  useEffect(() => {
+    if (!bankFolderId) {
+      setState({ phase: 'missing' });
+      return;
+    }
+    let cancelled = false;
+    setState({ phase: 'loading' });
+    (async () => {
+      try {
+        const data = await api.folders.contents(bankFolderId);
+        if (cancelled) return;
+        setState({ phase: 'ready', data });
+      } catch (e) {
+        if (!cancelled)
+          setState({ phase: 'error', message: e?.message || 'שגיאה' });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bankFolderId]);
+
+  if (!bankFolderId || state.phase === 'missing') {
+    return (
+      <div
+        style={{ marginInlineStart: depth * 20 }}
+        className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 my-1"
+      >
+        התיקייה המקושרת אינה קיימת יותר בבנק.
+      </div>
+    );
+  }
+  if (state.phase === 'loading') {
+    return (
+      <div
+        style={{ marginInlineStart: depth * 20 }}
+        className="text-[11px] text-gray-500 italic px-2 py-1"
+      >
+        טוען תוכן תיקייה…
+      </div>
+    );
+  }
+  if (state.phase === 'error') {
+    return (
+      <div
+        style={{ marginInlineStart: depth * 20 }}
+        className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1 my-1"
+      >
+        טעינת תוכן התיקייה נכשלה: {state.message}
+      </div>
+    );
+  }
+
+  const { children } = state.data;
+  if (!children || children.length === 0) {
+    return (
+      <div
+        style={{ marginInlineStart: depth * 20 }}
+        className="text-[11px] text-gray-500 italic bg-emerald-50/40 border border-emerald-200 rounded px-2 py-1 my-1"
+      >
+        התיקייה ריקה. ניתן להוסיף פריטים בלשונית "בנק פריטים".
+      </div>
+    );
+  }
+  return (
+    <div className="my-1">
+      {children.map((c) => (
+        <FolderRefPreviewRow key={`${c.kind}:${c.id}`} entry={c} depth={depth} />
+      ))}
+      <div
+        style={{ marginInlineStart: depth * 20 }}
+        className="text-[10px] text-emerald-700/70 italic px-2 py-0.5"
+      >
+        תצוגה לקריאה בלבד — עריכה מתבצעת בבנק.
+      </div>
+    </div>
+  );
+}
+
+function FolderRefPreviewRow({ entry, depth }) {
+  if (entry.kind === 'folder') {
+    return (
+      <>
+        <div
+          style={{ marginInlineStart: depth * 20 }}
+          className="flex items-center gap-2 px-2 py-1 text-[12px] text-emerald-900"
+        >
+          <span aria-hidden>📁</span>
+          <span className="font-medium truncate">{entry.name}</span>
+        </div>
+        {(entry.children || []).map((c) => (
+          <FolderRefPreviewRow
+            key={`${c.kind}:${c.id}`}
+            entry={c}
+            depth={depth + 1}
+          />
+        ))}
+      </>
+    );
+  }
+  const badgeCls =
+    entry.kind === 'question'
+      ? 'bg-amber-100 text-amber-800'
+      : 'bg-blue-100 text-blue-800';
+  const label = entry.kind === 'question' ? 'שאלה' : 'תוכן';
+  const titleHtml = typeof entry.title === 'string' && /<[a-z]/i.test(entry.title);
+  return (
+    <div
+      style={{ marginInlineStart: depth * 20 }}
+      className="flex items-center gap-2 px-2 py-1 text-[12px] text-gray-800"
+    >
+      <span className={`text-[10px] px-1.5 py-0.5 rounded ${badgeCls}`}>
+        {label}
+      </span>
+      {titleHtml ? (
+        <span
+          className="gos-prose flex-1 min-w-0 truncate"
+          dir="rtl"
+          dangerouslySetInnerHTML={{ __html: entry.title }}
+        />
+      ) : (
+        <span className="flex-1 min-w-0 truncate">
+          {titleToPlain(entry.title) || '(ללא כותרת)'}
+        </span>
+      )}
+    </div>
+  );
 }

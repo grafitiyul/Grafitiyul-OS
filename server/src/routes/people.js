@@ -389,7 +389,7 @@ router.get(
       orderBy: { updatedAt: 'desc' },
       include: {
         answers: {
-          orderBy: [{ flowNodeId: 'asc' }, { version: 'desc' }],
+          orderBy: [{ stepId: 'asc' }, { version: 'desc' }],
         },
       },
     });
@@ -445,15 +445,15 @@ function deriveState(attempt) {
   if (attempt.status === 'in_progress') return 'in_progress';
   if (attempt.status === 'approved') return 'approved';
   if (attempt.status === 'submitted') {
-    // Latest FlowAnswer per question; if any is rejected, the learner has
+    // Latest FlowAnswer per step; if any is rejected, the learner has
     // corrections to make.
-    const latestPerNode = new Map();
+    const latestPerStep = new Map();
     for (const ans of attempt.answers) {
-      if (!latestPerNode.has(ans.flowNodeId)) {
-        latestPerNode.set(ans.flowNodeId, ans);
+      if (!latestPerStep.has(ans.stepId)) {
+        latestPerStep.set(ans.stepId, ans);
       }
     }
-    for (const ans of latestPerNode.values()) {
+    for (const ans of latestPerStep.values()) {
       if (ans.status === 'rejected') return 'needs_correction';
     }
     return 'waiting_for_approval';
@@ -461,14 +461,17 @@ function deriveState(attempt) {
   return 'in_progress';
 }
 
-// Flatten to the latest answer per question (for the "שנלמדו" read-only view).
+// Flatten to the latest answer per step (for the "שנלמדו" read-only view).
+// Keyed by stepId so folderRef-derived answers (which have null
+// flowNodeId) appear too.
 function latestAnswers(attempt) {
   if (!attempt) return [];
-  const latestPerNode = new Map();
+  const latestPerStep = new Map();
   for (const ans of attempt.answers) {
-    if (!latestPerNode.has(ans.flowNodeId)) {
-      latestPerNode.set(ans.flowNodeId, {
-        flowNodeId: ans.flowNodeId,
+    if (!latestPerStep.has(ans.stepId)) {
+      latestPerStep.set(ans.stepId, {
+        stepId: ans.stepId,
+        flowNodeId: ans.flowNodeId, // may be null for folderRef-expanded
         questionItemId: ans.questionItemId,
         openText: ans.openText,
         answerChoice: ans.answerChoice,
@@ -479,7 +482,7 @@ function latestAnswers(attempt) {
       });
     }
   }
-  return Array.from(latestPerNode.values());
+  return Array.from(latestPerStep.values());
 }
 
 export default router;

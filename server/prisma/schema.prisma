@@ -26,6 +26,12 @@ model ItemBankFolder {
   updatedAt     DateTime         @updatedAt
   contentItems  ContentItem[]
   questionItems QuestionItem[]
+  // Reverse relation for FlowNode.kind='folderRef' — flow nodes that
+  // include this folder by reference. SetNull on delete (mirrored on
+  // FlowNode.bankFolder) so deleting a referenced bank folder
+  // gracefully degrades the folderRef to an empty block instead of
+  // orphaning rows.
+  flowNodeRefs  FlowNode[]       @relation("FlowNodeBankFolderRef")
 
   @@index([parentId, sortOrder])
 }
@@ -107,25 +113,39 @@ model Flow {
   targetPeople FlowTargetPerson[]
 }
 
-// Recursive tree: a node is a content ref, question ref, or a group container.
-// Groups can nest groups (no depth limit at the data level).
+// Recursive tree: a node is a content ref, question ref, group container,
+// or a folderRef — a reference to a bank folder. The folderRef is
+// authoring-time only; at attempt creation time the referenced folder
+// is snapshotted into Attempt.expansion so in-flight attempts don't
+// see structural changes the admin makes to the bank folder. Item
+// CONTENT (titles, bodies, options) still resolves live by id, so
+// typo fixes / wording changes propagate to in-flight attempts. Only
+// the FOLDER STRUCTURE is frozen per attempt.
 model FlowNode {
-  id              String        @id @default(cuid())
-  flow            Flow          @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  id              String          @id @default(cuid())
+  flow            Flow            @relation(fields: [flowId], references: [id], onDelete: Cascade)
   flowId          String
-  parent          FlowNode?     @relation("NodeChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  parent          FlowNode?       @relation("NodeChildren", fields: [parentId], references: [id], onDelete: Cascade)
   parentId        String?
-  children        FlowNode[]    @relation("NodeChildren")
+  children        FlowNode[]      @relation("NodeChildren")
   order           Int
-  kind            String // 'content' | 'question' | 'group'
-  contentItem     ContentItem?  @relation(fields: [contentItemId], references: [id])
+  kind            String          // 'content' | 'question' | 'group' | 'folderRef'
+  contentItem     ContentItem?    @relation(fields: [contentItemId], references: [id])
   contentItemId   String?
-  questionItem    QuestionItem? @relation(fields: [questionItemId], references: [id])
+  questionItem    QuestionItem?   @relation(fields: [questionItemId], references: [id])
   questionItemId  String?
   groupTitle      String?
-  checkpointAfter Boolean       @default(false)
+  checkpointAfter Boolean         @default(false)
+  // Set when kind='folderRef'. SetNull so deleting the bank folder
+  // degrades the folderRef to an empty block; the flow node row stays
+  // (preserves admin's intent) but the runtime expansion sees no
+  // contents.
+  bankFolder      ItemBankFolder? @relation("FlowNodeBankFolderRef", fields: [bankFolderId], references: [id], onDelete: SetNull)
+  bankFolderId    String?
   answers         FlowAnswer[]
-  currentFor      Attempt[]     @relation("AttemptCurrentNode")
+  currentFor      Attempt[]       @relation("AttemptCurrentNode")
+
+  @@index([bankFolderId])
 }
 
 // status: 'in_progress' | 'submitted' | 'approved'
@@ -146,8 +166,21 @@ model Attempt {
   workerIdentifier String?
   externalPersonId String?
   status           String       @default("in_progress")
+  // Authoring-side cursor (deprecated). Kept for legacy attempts that
+  // predate `expansion`. New runtime uses `currentStepId` against the
+  // expansion. Old attempts (expansion=null) still use this.
   currentNode      FlowNode?    @relation("AttemptCurrentNode", fields: [currentNodeId], references: [id])
   currentNodeId    String?
+  // Per-attempt resolved step list. Snapshots folderRef expansion so
+  // bank structural changes don't disrupt in-flight attempts. Item
+  // CONTENT still resolves live by id (typo fixes etc.). null on
+  // legacy attempts created before this slice — runtime falls back to
+  // computing from flow.nodes.
+  expansion        Json?
+  // Stable step id within `expansion`. For non-folderRef steps this
+  // matches the FlowNode id; for folderRef-expanded steps it's a
+  // synthetic id of the form `<folderRefNodeId>::<bankItemId>`.
+  currentStepId    String?
   submittedAt      DateTime?
   approvedAt       DateTime?
   createdAt        DateTime     @default(now())
@@ -160,12 +193,24 @@ model Attempt {
 // Versioned answer. Each worker edit appends a new row; existing rows are
 // never mutated (except status/adminComment/reviewedAt when an admin reviews).
 // status: 'pending' | 'approved' | 'rejected'
+//
+// `stepId` (not `flowNodeId`) is the canonical identity used by the new
+// runtime. For non-folderRef steps stepId == flowNodeId. For folderRef-
+// expanded steps stepId is synthetic (`<folderRefNodeId>::<bankItemId>`)
+// and flowNodeId is null — there's no real FlowNode row for those.
+// Legacy answers had flowNodeId set; the migration backfills stepId =
+// flowNodeId so they keep working.
 model FlowAnswer {
   id             String    @id @default(cuid())
   attempt        Attempt   @relation(fields: [attemptId], references: [id], onDelete: Cascade)
   attemptId      String
-  flowNode       FlowNode  @relation(fields: [flowNodeId], references: [id], onDelete: Cascade)
-  flowNodeId     String
+  // Real FlowNode link — kept for non-folderRef steps so reviews and
+  // legacy queries that join on flowNodeId still work. Nullable for
+  // folderRef-expanded steps.
+  flowNode       FlowNode? @relation(fields: [flowNodeId], references: [id], onDelete: Cascade)
+  flowNodeId     String?
+  // Attempt-stable step identifier. Matches expansion.steps[].stepId.
+  stepId         String
   questionItemId String
   openText       String?
   answerChoice   String?
@@ -176,8 +221,8 @@ model FlowAnswer {
   createdAt      DateTime  @default(now())
   reviewedAt     DateTime?
 
-  @@unique([attemptId, flowNodeId, version])
-  @@index([attemptId, flowNodeId])
+  @@unique([attemptId, stepId, version])
+  @@index([attemptId, stepId])
 }
 
 // Embedded media uploaded by admins and referenced inside item HTML.

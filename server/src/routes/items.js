@@ -104,6 +104,97 @@ router.post(
 // descendants on drag). We could add a server check that rejects any
 // id whose subtree contains `parentId`, but the extra round trips
 // would be noticeable at UI scale.
+// Recursive contents of a folder — used by the FlowEditor's read-only
+// preview of a folderRef block. Returns the folder + a tree of mixed
+// folder/content/question children, ordered by sortOrder. NOT used by
+// the bank list itself (which renders one level at a time).
+router.get(
+  '/folders/:id/contents',
+  handle(async (req, res) => {
+    const root = await prisma.itemBankFolder.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, name: true },
+    });
+    if (!root) return res.status(404).json({ error: 'not_found' });
+
+    const [allFolders, allContent, allQuestions] = await Promise.all([
+      prisma.itemBankFolder.findMany({
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+        select: {
+          id: true,
+          name: true,
+          parentId: true,
+          sortOrder: true,
+        },
+      }),
+      prisma.contentItem.findMany({
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+        select: {
+          id: true,
+          title: true,
+          folderId: true,
+          sortOrder: true,
+        },
+      }),
+      prisma.questionItem.findMany({
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+        select: {
+          id: true,
+          title: true,
+          folderId: true,
+          sortOrder: true,
+          requirement: true,
+        },
+      }),
+    ]);
+
+    const subfoldersByParent = new Map();
+    for (const f of allFolders) {
+      const key = f.parentId || null;
+      if (!subfoldersByParent.has(key)) subfoldersByParent.set(key, []);
+      subfoldersByParent.get(key).push(f);
+    }
+    const itemsByFolder = new Map();
+    for (const c of allContent) {
+      const key = c.folderId || null;
+      if (!itemsByFolder.has(key)) itemsByFolder.set(key, []);
+      itemsByFolder.get(key).push({ ...c, kind: 'content' });
+    }
+    for (const q of allQuestions) {
+      const key = q.folderId || null;
+      if (!itemsByFolder.has(key)) itemsByFolder.set(key, []);
+      itemsByFolder.get(key).push({ ...q, kind: 'question' });
+    }
+
+    function build(folderId) {
+      const subFolders = subfoldersByParent.get(folderId) || [];
+      const items = itemsByFolder.get(folderId) || [];
+      const merged = [
+        ...subFolders.map((f) => ({
+          kind: 'folder',
+          id: f.id,
+          name: f.name,
+          sortOrder: f.sortOrder ?? 0,
+          children: build(f.id),
+        })),
+        ...items.map((i) => ({
+          kind: i.kind,
+          id: i.id,
+          title: i.title,
+          sortOrder: i.sortOrder ?? 0,
+          requirement: i.requirement,
+        })),
+      ].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+      return merged;
+    }
+
+    res.json({
+      folder: { id: root.id, name: root.name },
+      children: build(root.id),
+    });
+  }),
+);
+
 router.put(
   '/folders/reorder',
   handle(async (req, res) => {

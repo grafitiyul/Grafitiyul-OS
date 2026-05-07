@@ -81,6 +81,9 @@ export const api = {
   },
   folders: {
     list: () => request('/api/items/folders'),
+    // Recursive contents tree — used by the FlowEditor's read-only
+    // preview of a folderRef block.
+    contents: (id) => request(`/api/items/folders/${id}/contents`),
     create: (name, parentId = null) =>
       request('/api/items/folders', {
         method: 'POST',
@@ -104,6 +107,9 @@ export const api = {
   flows: {
     list: () => request('/api/flows'),
     get: (id) => request(`/api/flows/${id}`),
+    // Live-resolved expansion for preview-mode (no attempt). Returns
+    // { steps: [...] } already hydrated with content/question items.
+    expansion: (id) => request(`/api/flows/${id}/expansion`),
     create: (data) => request('/api/flows', { method: 'POST', body: JSON.stringify(data) }),
     update: (id, data) => request(`/api/flows/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     remove: (id) => request(`/api/flows/${id}`, { method: 'DELETE' }),

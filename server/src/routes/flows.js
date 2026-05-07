@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
+import { buildExpansion } from '../services/flowExpansion.js';
 
 const router = Router();
 
@@ -41,11 +42,68 @@ router.get(
     const flow = await prisma.flow.findUnique({
       where: { id: req.params.id },
       include: {
-        nodes: { include: { contentItem: true, questionItem: true } },
+        nodes: {
+          include: {
+            contentItem: true,
+            questionItem: true,
+            bankFolder: true,
+          },
+        },
       },
     });
     if (!flow) return res.status(404).json({ error: 'not found' });
     res.json(flow);
+  }),
+);
+
+// Live, on-demand expansion. Used by preview mode (/flow/:id?preview=1)
+// where there's no Attempt to snapshot from. Returns the same `steps`
+// shape the runtime consumes off Attempt.expansion, with hydrated
+// content/question items so the client can render directly.
+router.get(
+  '/:id/expansion',
+  handle(async (req, res) => {
+    const flow = await prisma.flow.findUnique({
+      where: { id: req.params.id },
+      include: { nodes: true },
+    });
+    if (!flow) return res.status(404).json({ error: 'not found' });
+    const expansion = await buildExpansion(prisma, flow);
+    const steps = expansion.steps;
+    if (steps.length === 0) {
+      return res.json({ steps: [] });
+    }
+    const contentIds = new Set();
+    const questionIds = new Set();
+    for (const s of steps) {
+      if (s.contentItemId) contentIds.add(s.contentItemId);
+      if (s.questionItemId) questionIds.add(s.questionItemId);
+    }
+    const [content, questions] = await Promise.all([
+      contentIds.size > 0
+        ? prisma.contentItem.findMany({
+            where: { id: { in: [...contentIds] } },
+          })
+        : Promise.resolve([]),
+      questionIds.size > 0
+        ? prisma.questionItem.findMany({
+            where: { id: { in: [...questionIds] } },
+          })
+        : Promise.resolve([]),
+    ]);
+    const contentById = new Map(content.map((c) => [c.id, c]));
+    const questionById = new Map(questions.map((q) => [q.id, q]));
+    res.json({
+      steps: steps.map((s) => ({
+        ...s,
+        contentItem: s.contentItemId
+          ? contentById.get(s.contentItemId) || null
+          : null,
+        questionItem: s.questionItemId
+          ? questionById.get(s.questionItemId) || null
+          : null,
+      })),
+    });
   }),
 );
 
@@ -192,6 +250,7 @@ router.put(
             contentItemId: n.contentItemId || null,
             questionItemId: n.questionItemId || null,
             groupTitle: n.groupTitle || null,
+            bankFolderId: n.bankFolderId || null,
             checkpointAfter: !!n.checkpointAfter,
             parentId: null,
           },
@@ -203,6 +262,7 @@ router.put(
             contentItemId: n.contentItemId || null,
             questionItemId: n.questionItemId || null,
             groupTitle: n.groupTitle || null,
+            bankFolderId: n.bankFolderId || null,
             checkpointAfter: !!n.checkpointAfter,
           },
         });

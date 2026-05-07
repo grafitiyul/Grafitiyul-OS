@@ -62,6 +62,7 @@ function toServerShape(node) {
     contentItemId: node.contentItemId || null,
     questionItemId: node.questionItemId || null,
     groupTitle: node.groupTitle || null,
+    bankFolderId: node.bankFolderId || null,
     checkpointAfter: !!node.checkpointAfter,
   };
 }
@@ -327,6 +328,28 @@ export default function FlowEditor() {
     };
   }
 
+  // folderRef = a live link to a bank folder. The flow stores only the
+  // bankFolderId; at attempt-creation time the runtime snapshots the
+  // folder's structure so in-flight learners stay stable while new
+  // attempts pick up the latest bank state. Item content (titles,
+  // bodies, options) resolves live by id either way.
+  function makeFolderRefNode(folder) {
+    return {
+      id: uid(),
+      kind: 'folderRef',
+      bankFolderId: folder.id,
+      bankFolder: { id: folder.id, name: folder.name },
+      contentItemId: null,
+      questionItemId: null,
+      contentItem: null,
+      questionItem: null,
+      groupTitle: null,
+      parentId: null,
+      order: 0,
+      checkpointAfter: false,
+    };
+  }
+
   function addItem(kind, itemId, itemData) {
     const newNode = makeItemNode(kind, itemId, itemData);
     let next;
@@ -345,28 +368,29 @@ export default function FlowEditor() {
     // Picker stays open (multi-pick).
   }
 
-  // Adds a bank folder as a group node in the flow. The group inherits the
-  // folder's name; the folder's items (in their current sortOrder) become
-  // children under the new group. Folder / group stay separate entities —
-  // this is a one-shot materialization, not a live link.
-  function addFolderAsGroup(folder, itemsInFolder) {
-    const group = makeGroupNode();
-    group.groupTitle = folder.name;
+  // Adds a bank folder as a folderRef node — a LIVE link to the bank
+  // folder, NOT a materialised copy. The flow tree stores just one
+  // node with bankFolderId; at attempt-creation time the runtime
+  // snapshots the folder's structure into the attempt's `expansion`,
+  // so in-flight learners stay stable while new attempts pick up the
+  // latest bank state.
+  //
+  // Replaces the old "folder as group" materialisation — that path
+  // duplicated content into the flow and required manual re-import to
+  // pick up bank changes, the architecture pitfall the linked-block
+  // model is designed to avoid.
+  function addFolderRef(folder) {
+    const ref = makeFolderRefNode(folder);
     let next;
     if (pickerContext.mode === 'after' && pickerContext.afterId) {
-      next = insertAfter(nodes, pickerContext.afterId, group);
+      next = insertAfter(nodes, pickerContext.afterId, ref);
     } else {
       const parentId = pickerContext.parentId || null;
       const siblings = nodes.filter((n) => (n.parentId ?? null) === parentId);
-      next = [...nodes, { ...group, parentId, order: siblings.length }];
-    }
-    let order = 0;
-    for (const i of itemsInFolder) {
-      const itemNode = makeItemNode(i.kind, i.id, i);
-      next = [...next, { ...itemNode, parentId: group.id, order: order++ }];
+      next = [...nodes, { ...ref, parentId, order: siblings.length }];
     }
     commit(next);
-    setSelectedId(group.id);
+    setSelectedId(ref.id);
   }
 
   function addGroup(parentId = null) {
@@ -662,7 +686,7 @@ export default function FlowEditor() {
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
         onPick={addItem}
-        onPickFolder={addFolderAsGroup}
+        onPickFolder={addFolderRef}
         onCreateNew={createItemInMainEditor}
       />
       <DeleteFlowDialog

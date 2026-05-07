@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { validateAnswer } from '../lib/questionRequirement.js';
@@ -25,7 +25,10 @@ export function FlowEntry() {
     window.matchMedia('(max-width: 640px)').matches,
   );
 
-  // Preview-only local state.
+  // Preview-only local state. The step list for preview comes from
+  // /api/flows/:id/expansion so it stays consistent with what an
+  // actual attempt would render — including folderRef expansions.
+  const [previewSteps, setPreviewSteps] = useState(null);
   const [previewIdx, setPreviewIdx] = useState(0);
   const [previewAnswers, setPreviewAnswers] = useState({});
 
@@ -47,7 +50,21 @@ export function FlowEntry() {
     })();
   }, [flowId]);
 
-  const linear = useMemo(() => (flow ? flattenNodes(flow.nodes) : []), [flow]);
+  // For preview mode, pull the live-resolved step list from the server
+  // so folderRef nodes expand correctly. We don't compute this client-
+  // side anymore — it'd have to mirror the bank traversal logic and
+  // we want one source of truth.
+  useEffect(() => {
+    if (!isPreview) return;
+    (async () => {
+      try {
+        const e = await api.flows.expansion(flowId);
+        setPreviewSteps(e.steps || []);
+      } catch (err) {
+        setLoadErr(err.message || 'שגיאה');
+      }
+    })();
+  }, [isPreview, flowId]);
 
   async function startAttempt() {
     if (!learnerName.trim() || starting) return;
@@ -88,19 +105,27 @@ export function FlowEntry() {
   }
 
   if (isPreview) {
-    if (previewIdx >= linear.length) return <CompletedScreen preview />;
-    const currentNode = linear[previewIdx];
+    if (previewSteps == null) {
+      return (
+        <Screen preview>
+          <div className="text-gray-500">טוען…</div>
+        </Screen>
+      );
+    }
+    if (previewIdx >= previewSteps.length)
+      return <CompletedScreen preview />;
+    const currentStep = previewSteps[previewIdx];
     return (
       <ItemScreen
-        node={currentNode}
+        node={currentStep}
         isMobile={isMobile}
         isPreview
-        existingAnswer={previewAnswers[currentNode.id]}
+        existingAnswer={previewAnswers[currentStep.stepId]}
         onNext={(answerPayload) => {
           if (answerPayload) {
             setPreviewAnswers({
               ...previewAnswers,
-              [currentNode.id]: answerPayload,
+              [currentStep.stepId]: answerPayload,
             });
           }
           setPreviewIdx(previewIdx + 1);
@@ -167,14 +192,19 @@ export function AttemptRuntime() {
   }, [attempt?.id, attempt?.status, loadAttempt]);
 
   const flow = attempt?.flow;
-  const linear = useMemo(() => (flow ? flattenNodes(flow.nodes) : []), [flow]);
+  // The server returns the resolved, hydrated step list directly on
+  // the attempt — flow.nodes is no longer the source of truth for the
+  // runtime since it doesn't carry folderRef expansions. Falls back to
+  // [] before the first load.
+  const steps = attempt?.steps || [];
+  const currentStepId = attempt?.currentStepId || attempt?.currentNodeId;
 
   async function handleNext(answerPayload) {
-    const currentNode = linear.find((n) => n.id === attempt.currentNodeId);
-    if (!currentNode) return;
+    const currentStep = steps.find((s) => s.stepId === currentStepId);
+    if (!currentStep) return;
     if (answerPayload) {
       await api.attempts.answer(attempt.id, {
-        nodeId: currentNode.id,
+        stepId: currentStep.stepId,
         ...answerPayload,
       });
     }
@@ -216,10 +246,10 @@ export function AttemptRuntime() {
 
   // --- status: submitted ---
   if (attempt.status === 'submitted') {
-    const questionNodes = linear.filter((n) => n.kind === 'question');
-    const latest = latestAnswerByNode(attempt.answers || []);
-    const outstanding = questionNodes.filter(
-      (q) => latest.get(q.id)?.status === 'rejected',
+    const questionSteps = steps.filter((s) => s.kind === 'question');
+    const latest = latestAnswerByStep(attempt.answers || []);
+    const outstanding = questionSteps.filter(
+      (q) => latest.get(q.stepId)?.status === 'rejected',
     );
     if (outstanding.length === 0) return <WaitingScreen />;
     return (
@@ -232,16 +262,16 @@ export function AttemptRuntime() {
   }
 
   // --- status: in_progress ---
-  const currentNode =
-    linear.find((n) => n.id === attempt.currentNodeId) || null;
+  const currentStep =
+    steps.find((s) => s.stepId === currentStepId) || null;
 
-  if (!currentNode) {
+  if (!currentStep) {
     // End of linear sequence → submit screen.
     return (
       <SubmitScreen
         attempt={attempt}
         isMobile={isMobile}
-        linear={linear}
+        steps={steps}
         onSubmitted={loadAttempt}
       />
     );
@@ -249,9 +279,9 @@ export function AttemptRuntime() {
 
   return (
     <ItemScreen
-      node={currentNode}
+      node={currentStep}
       isMobile={isMobile}
-      existingAnswer={latestAnswerByNode(attempt.answers || []).get(currentNode.id)}
+      existingAnswer={latestAnswerByStep(attempt.answers || []).get(currentStep.stepId)}
       onNext={handleNext}
     />
   );
@@ -259,31 +289,14 @@ export function AttemptRuntime() {
 
 // ---------- shared helpers ----------
 
-function flattenNodes(nodes) {
-  const byParent = new Map();
-  for (const n of nodes) {
-    const key = n.parentId ?? '';
-    if (!byParent.has(key)) byParent.set(key, []);
-    byParent.get(key).push(n);
-  }
-  for (const arr of byParent.values()) arr.sort((a, b) => a.order - b.order);
-  function walk(parentId) {
-    const arr = byParent.get(parentId ?? '') || [];
-    const out = [];
-    for (const n of arr) {
-      if (n.kind === 'group') out.push(...walk(n.id));
-      else out.push(n);
-    }
-    return out;
-  }
-  return walk(null);
-}
-
-function latestAnswerByNode(answers) {
+// Latest FlowAnswer per step for a given attempt's answer rows. Keyed
+// by stepId so folderRef-expanded answers (which have null flowNodeId)
+// match correctly.
+function latestAnswerByStep(answers) {
   const out = new Map();
   for (const a of answers) {
-    const cur = out.get(a.flowNodeId);
-    if (!cur || a.version > cur.version) out.set(a.flowNodeId, a);
+    const cur = out.get(a.stepId);
+    if (!cur || a.version > cur.version) out.set(a.stepId, a);
   }
   return out;
 }
@@ -354,7 +367,10 @@ function ItemScreen({ node, isMobile, isPreview, existingAnswer, onNext }) {
   useEffect(() => {
     setOpenText(existingAnswer?.openText || '');
     setSelected(existingAnswer?.answerChoice || '');
-  }, [node.id]);
+    // ItemScreen accepts both `step` and legacy `node` shapes; the
+    // server-hydrated step always has `stepId`, the legacy preview
+    // path used `id`.
+  }, [node.stepId || node.id]);
 
   const isContent = node.kind === 'content';
   const qi = node.questionItem;
@@ -508,12 +524,12 @@ function ItemScreen({ node, isMobile, isPreview, existingAnswer, onNext }) {
   );
 }
 
-function SubmitScreen({ attempt, isMobile, linear, onSubmitted }) {
+function SubmitScreen({ attempt, isMobile, steps, onSubmitted }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
-  const questions = linear.filter((n) => n.kind === 'question');
-  const latest = latestAnswerByNode(attempt.answers || []);
-  const unanswered = questions.filter((q) => !latest.get(q.id));
+  const questions = steps.filter((s) => s.kind === 'question');
+  const latest = latestAnswerByStep(attempt.answers || []);
+  const unanswered = questions.filter((q) => !latest.get(q.stepId));
 
   async function submit() {
     setErr(null);
@@ -580,9 +596,12 @@ function ResubmitScreen({ attempt, isMobile, onSubmitted }) {
   }
 
   const outstanding = payload.outstanding || [];
+  // Each entry has `step` (preferred) plus `node` for back-compat —
+  // they're the same shape today.
+  const keyOf = (o) => o.step?.stepId || o.node?.stepId || o.node?.id;
   const allFilled = outstanding.every((o) => {
-    const d = drafts[o.node.id];
-    const qi = o.node.questionItem;
+    const d = drafts[keyOf(o)];
+    const qi = (o.step || o.node)?.questionItem;
     const v = validateAnswer(
       {
         options: qi?.options || [],
@@ -602,8 +621,9 @@ function ResubmitScreen({ attempt, isMobile, onSubmitted }) {
     setBusy(true);
     try {
       for (const o of outstanding) {
-        const d = drafts[o.node.id];
-        await api.attempts.answer(attempt.id, { nodeId: o.node.id, ...d });
+        const stepId = keyOf(o);
+        const d = drafts[stepId];
+        await api.attempts.answer(attempt.id, { stepId, ...d });
       }
       await api.attempts.submit(attempt.id);
       await onSubmitted();
@@ -614,8 +634,8 @@ function ResubmitScreen({ attempt, isMobile, onSubmitted }) {
     }
   }
 
-  function updateDraft(nodeId, patch) {
-    setDrafts((prev) => ({ ...prev, [nodeId]: { ...prev[nodeId], ...patch } }));
+  function updateDraft(stepId, patch) {
+    setDrafts((prev) => ({ ...prev, [stepId]: { ...prev[stepId], ...patch } }));
   }
 
   return (
@@ -631,14 +651,17 @@ function ResubmitScreen({ attempt, isMobile, onSubmitted }) {
         </div>
 
         <div className="space-y-5">
-          {outstanding.map((o) => (
-            <OutstandingBlock
-              key={o.node.id}
-              block={o}
-              draft={drafts[o.node.id] || {}}
-              onChange={(p) => updateDraft(o.node.id, p)}
-            />
-          ))}
+          {outstanding.map((o) => {
+            const stepId = keyOf(o);
+            return (
+              <OutstandingBlock
+                key={stepId}
+                block={o}
+                draft={drafts[stepId] || {}}
+                onChange={(p) => updateDraft(stepId, p)}
+              />
+            );
+          })}
         </div>
 
         {!allFilled && (
@@ -671,8 +694,9 @@ function ResubmitScreen({ attempt, isMobile, onSubmitted }) {
 }
 
 function OutstandingBlock({ block, draft, onChange }) {
-  const { node, precedingContent, lastAnswer } = block;
-  const qi = node.questionItem;
+  const step = block.step || block.node;
+  const { precedingContent, lastAnswer } = block;
+  const qi = step.questionItem;
   const hasChoices = Array.isArray(qi?.options) && qi.options.length > 0;
   const showText = !!qi?.allowTextAnswer;
 
@@ -684,7 +708,7 @@ function OutstandingBlock({ block, draft, onChange }) {
             תוכן קשור
           </div>
           {precedingContent.map((c) => (
-            <div key={c.id} className="mb-3 last:mb-0">
+            <div key={c.stepId || c.id} className="mb-3 last:mb-0">
               <div className="text-sm font-medium text-gray-800 mb-1">
                 {c.contentItem?.title}
               </div>
@@ -747,7 +771,7 @@ function OutstandingBlock({ block, draft, onChange }) {
               >
                 <input
                   type="radio"
-                  name={`opt-${node.id}`}
+                  name={`opt-${step.stepId}`}
                   value={opt}
                   checked={draft.answerChoice === opt}
                   onChange={(e) =>
@@ -832,8 +856,10 @@ function CompletedScreen({ preview }) {
 }
 
 function ApprovedBrowser({ flow, attempt, isMobile }) {
-  const linear = flattenNodes(flow.nodes);
-  const latest = latestAnswerByNode(attempt.answers || []);
+  // Use the same hydrated steps the runtime saw so folderRef-expanded
+  // items appear in the read-only browse view too.
+  const steps = attempt.steps || [];
+  const latest = latestAnswerByStep(attempt.answers || []);
 
   return (
     <div className="min-h-screen bg-gray-50 py-6 px-4">
@@ -848,23 +874,23 @@ function ApprovedBrowser({ flow, attempt, isMobile }) {
         </div>
 
         <div className="space-y-4">
-          {linear.map((n) => (
+          {steps.map((s) => (
             <div
-              key={n.id}
+              key={s.stepId}
               className="bg-white rounded-lg border border-gray-200 p-5"
             >
-              {n.kind === 'content' ? (
+              {s.kind === 'content' ? (
                 <>
                   <div className="text-[11px] text-gray-500 uppercase tracking-wide mb-1">
                     תוכן
                   </div>
                   <h3 className="font-semibold text-lg mb-2">
-                    {n.contentItem?.title}
+                    {s.contentItem?.title}
                   </h3>
                   <div
                     className="gos-prose text-sm text-gray-700"
                     dangerouslySetInnerHTML={{
-                      __html: n.contentItem?.body || '',
+                      __html: s.contentItem?.body || '',
                     }}
                   />
                 </>
@@ -874,12 +900,12 @@ function ApprovedBrowser({ flow, attempt, isMobile }) {
                     שאלה
                   </div>
                   <h3 className="font-semibold text-lg mb-1">
-                    {n.questionItem?.title}
+                    {s.questionItem?.title}
                   </h3>
                   <div
                     className="gos-prose text-sm text-gray-700 mb-3"
                     dangerouslySetInnerHTML={{
-                      __html: n.questionItem?.questionText || '',
+                      __html: s.questionItem?.questionText || '',
                     }}
                   />
                   <div className="bg-gray-50 border border-gray-200 rounded p-3 text-sm">
@@ -888,7 +914,7 @@ function ApprovedBrowser({ flow, attempt, isMobile }) {
                     </div>
                     <div className="text-gray-800 whitespace-pre-wrap">
                       {(() => {
-                        const la = latest.get(n.id);
+                        const la = latest.get(s.stepId);
                         if (!la) return '(ללא תשובה)';
                         return (
                           la.answerLabel ||

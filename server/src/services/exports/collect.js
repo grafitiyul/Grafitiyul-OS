@@ -210,12 +210,22 @@ export async function collectFolder(folderId, options = {}) {
 }
 
 // Flow → walks the flow tree. Groups become folder-like sections.
+// folderRef nodes are expanded inline using the bank folder collector,
+// preserving the same sectioning semantics — so an exported flow that
+// includes a bank folder reads the same as exporting that folder
+// directly under a group heading.
 export async function collectFlow(flowId, options = {}) {
   const { includeContent = true, includeQuestions = true } = options;
   const flow = await prisma.flow.findUnique({
     where: { id: flowId },
     include: {
-      nodes: { include: { contentItem: true, questionItem: true } },
+      nodes: {
+        include: {
+          contentItem: true,
+          questionItem: true,
+          bankFolder: true,
+        },
+      },
     },
   });
   if (!flow) return null;
@@ -233,7 +243,7 @@ export async function collectFlow(flowId, options = {}) {
 
   const sections = [];
 
-  function walk(parentId, depth) {
+  async function walk(parentId, depth) {
     const kids = childrenByParent.get(parentId) || [];
     for (const n of kids) {
       if (n.kind === 'group') {
@@ -243,7 +253,24 @@ export async function collectFlow(flowId, options = {}) {
           title: n.groupTitle || '(קבוצה ללא שם)',
           titleIsHtml: false,
         });
-        walk(n.id, depth + 1);
+        await walk(n.id, depth + 1);
+      } else if (n.kind === 'folderRef' && n.bankFolderId) {
+        // Inline-expand the linked bank folder. Reuse collectFolder so
+        // sectioning rules stay in one place; rebase the depth so the
+        // ref's name becomes a same-level heading and its contents
+        // nest under it.
+        const inner = await collectFolder(n.bankFolderId, options);
+        if (inner) {
+          sections.push({
+            type: 'folder',
+            depth,
+            title: inner.title || n.bankFolder?.name || '',
+            titleIsHtml: false,
+          });
+          for (const s of inner.sections) {
+            sections.push({ ...s, depth: s.depth + depth + 1 });
+          }
+        }
       } else if (n.kind === 'content' && includeContent && n.contentItem) {
         sections.push(contentItemSection(n.contentItem, { depth }));
       } else if (n.kind === 'question' && includeQuestions && n.questionItem) {
@@ -251,7 +278,7 @@ export async function collectFlow(flowId, options = {}) {
       }
     }
   }
-  walk(null, 0);
+  await walk(null, 0);
 
   return {
     title: flow.title || '(זרימה ללא שם)',

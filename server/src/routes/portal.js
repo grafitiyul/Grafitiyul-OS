@@ -22,7 +22,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
-import { flattenNodes } from './attempts.js';
+import { buildExpansion } from '../services/flowExpansion.js';
 
 const router = Router();
 
@@ -308,15 +308,20 @@ router.post(
       return res.json({ attemptId: existing.id, resumed: true });
     }
 
-    const linear = flattenNodes(flow.nodes);
-    const firstNode = linear[0] || null;
+    // Snapshot the flow's structure (incl. folderRef expansions) at
+    // attempt creation. In-flight attempts stay stable; new attempts
+    // pick up the latest bank state on every fresh start.
+    const expansion = await buildExpansion(prisma, flow);
+    const firstStep = expansion.steps[0] || null;
     const created = await prisma.attempt.create({
       data: {
         flowId: flow.id,
         learnerName: person.displayName,
         externalPersonId: person.externalPersonId,
         status: 'in_progress',
-        currentNodeId: firstNode ? firstNode.id : null,
+        expansion,
+        currentStepId: firstStep ? firstStep.stepId : null,
+        currentNodeId: firstStep?.flowNodeId || null,
       },
       select: { id: true },
     });

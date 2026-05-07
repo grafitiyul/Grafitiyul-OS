@@ -1,14 +1,106 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
-import { flattenNodes, latestByNode } from './attempts.js';
+import { latestByStep } from './attempts.js';
 import { handle } from '../asyncHandler.js';
 
 const router = Router();
 
+// Local copy of the steps resolver — same shape as in attempts.js. We
+// don't import the resolver from attempts.js because that would create
+// a router-level cycle (attempts.js exports the router as default; the
+// helpers it exports are smaller, more stable).
+function legacyStepsFromFlow(flow) {
+  const childrenByParent = new Map();
+  for (const n of flow?.nodes || []) {
+    const key = n.parentId || null;
+    if (!childrenByParent.has(key)) childrenByParent.set(key, []);
+    childrenByParent.get(key).push(n);
+  }
+  for (const arr of childrenByParent.values()) {
+    arr.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  }
+  const steps = [];
+  function visit(parentId) {
+    for (const node of childrenByParent.get(parentId) || []) {
+      if (node.kind === 'group') {
+        visit(node.id);
+        continue;
+      }
+      if (node.kind === 'content' || node.kind === 'question') {
+        steps.push({
+          stepId: node.id,
+          kind: node.kind,
+          flowNodeId: node.id,
+          contentItemId: node.contentItemId || null,
+          questionItemId: node.questionItemId || null,
+          contentItem: node.contentItem || null,
+          questionItem: node.questionItem || null,
+          checkpointAfter: !!node.checkpointAfter,
+        });
+      }
+    }
+  }
+  visit(null);
+  return steps;
+}
+
+// Hydrate steps for the review screen. For folderRef-derived steps we
+// look up the live ContentItem/QuestionItem rows; for direct steps we
+// already have them eager-loaded with the flow nodes.
+async function hydrateSteps(attempt) {
+  const raw =
+    attempt.expansion?.steps || legacyStepsFromFlow(attempt.flow);
+  const flowNodeById = new Map();
+  for (const n of attempt.flow?.nodes || []) {
+    flowNodeById.set(n.id, n);
+  }
+
+  const missingContentIds = new Set();
+  const missingQuestionIds = new Set();
+  for (const s of raw) {
+    if (s.flowNodeId) continue; // FlowNode include carries items already
+    if (s.contentItemId) missingContentIds.add(s.contentItemId);
+    if (s.questionItemId) missingQuestionIds.add(s.questionItemId);
+  }
+  const [content, questions] = await Promise.all([
+    missingContentIds.size > 0
+      ? prisma.contentItem.findMany({
+          where: { id: { in: [...missingContentIds] } },
+        })
+      : Promise.resolve([]),
+    missingQuestionIds.size > 0
+      ? prisma.questionItem.findMany({
+          where: { id: { in: [...missingQuestionIds] } },
+        })
+      : Promise.resolve([]),
+  ]);
+  const contentById = new Map(content.map((c) => [c.id, c]));
+  const questionById = new Map(questions.map((q) => [q.id, q]));
+
+  return raw.map((s) => {
+    if (s.flowNodeId) {
+      const fn = flowNodeById.get(s.flowNodeId);
+      return {
+        ...s,
+        contentItem: fn?.contentItem || null,
+        questionItem: fn?.questionItem || null,
+      };
+    }
+    return {
+      ...s,
+      contentItem: s.contentItemId
+        ? contentById.get(s.contentItemId) || null
+        : null,
+      questionItem: s.questionItemId
+        ? questionById.get(s.questionItemId) || null
+        : null,
+    };
+  });
+}
+
 // Recompute derived attempt status. Called after any per-question review.
-// Rules:
-//   - If every question's latest FlowAnswer.status === 'approved'     → attempt 'approved'
-//   - Otherwise the attempt stays wherever it was (should be 'submitted' here)
+// All steps (including folderRef-expanded) must have an approved latest
+// answer for the attempt to flip to 'approved'.
 async function recomputeAttemptStatus(attemptId) {
   const attempt = await prisma.attempt.findUnique({
     where: { id: attemptId },
@@ -18,27 +110,25 @@ async function recomputeAttemptStatus(attemptId) {
     },
   });
   if (!attempt) return null;
-  const linear = flattenNodes(attempt.flow.nodes);
-  const questions = linear.filter((n) => n.kind === 'question');
-  const latest = latestByNode(attempt.answers);
+  const steps = await hydrateSteps(attempt);
+  const questions = steps.filter((s) => s.kind === 'question');
+  const latest = latestByStep(attempt.answers);
   if (questions.length === 0) return attempt;
 
-  const allApproved = questions.every((q) => latest.get(q.id)?.status === 'approved');
+  const allApproved = questions.every(
+    (q) => latest.get(q.stepId)?.status === 'approved',
+  );
   if (allApproved && attempt.status !== 'approved') {
     return prisma.attempt.update({
       where: { id: attempt.id },
       data: { status: 'approved', approvedAt: new Date() },
     });
   }
-  // No demotion: if admin rejects a question on an already-approved attempt
-  // (shouldn't happen in practice — UI blocks review of approved attempts),
-  // we leave the attempt as-is rather than silently demoting it.
   return attempt;
 }
 
-// Full review payload for a single attempt. Groups data for the admin
-// approval screen: questions in linear order, each with its full version
-// history + the content nodes that precede it.
+// Full review payload for a single attempt. Builds question blocks in
+// runtime visit order — directly mirrors what the learner saw.
 router.get(
   '/attempts/:id',
   handle(async (req, res) => {
@@ -50,32 +140,33 @@ router.get(
             nodes: { include: { contentItem: true, questionItem: true } },
           },
         },
-        answers: { orderBy: [{ flowNodeId: 'asc' }, { version: 'asc' }] },
+        answers: { orderBy: [{ stepId: 'asc' }, { version: 'asc' }] },
       },
     });
     if (!attempt) return res.status(404).json({ error: 'not found' });
 
-    const linear = flattenNodes(attempt.flow.nodes);
-    const answersByNode = new Map();
+    const steps = await hydrateSteps(attempt);
+    const answersByStep = new Map();
     for (const a of attempt.answers) {
-      const arr = answersByNode.get(a.flowNodeId) || [];
+      const arr = answersByStep.get(a.stepId) || [];
       arr.push(a);
-      answersByNode.set(a.flowNodeId, arr);
+      answersByStep.set(a.stepId, arr);
     }
 
-    // Build per-question blocks with preceding content.
     const blocks = [];
     let precedingContent = [];
-    for (const node of linear) {
-      if (node.kind === 'content') {
-        precedingContent.push(node);
+    for (const step of steps) {
+      if (step.kind === 'content') {
+        precedingContent.push(step);
         continue;
       }
-      if (node.kind === 'question') {
-        const history = answersByNode.get(node.id) || [];
+      if (step.kind === 'question') {
+        const history = answersByStep.get(step.stepId) || [];
         const latest = history.length ? history[history.length - 1] : null;
         blocks.push({
-          node,
+          step,
+          // Back-compat: legacy clients expected `node`.
+          node: step,
           precedingContent,
           history,
           latest,
@@ -103,12 +194,15 @@ router.get(
 );
 
 // Approve the latest version of a specific question on an attempt.
+// URL param historically called :flowNodeId — kept for client back-
+// compat, but it's now treated as a stepId (which equals flowNodeId
+// for non-folderRef answers, the only kind that existed pre-slice).
 router.post(
   '/attempts/:id/questions/:flowNodeId/approve',
   handle(async (req, res) => {
-    const { id, flowNodeId } = req.params;
+    const { id, flowNodeId: stepId } = req.params;
     const latest = await prisma.flowAnswer.findFirst({
-      where: { attemptId: id, flowNodeId },
+      where: { attemptId: id, stepId },
       orderBy: { version: 'desc' },
     });
     if (!latest) return res.status(404).json({ error: 'no answer to approve' });
@@ -131,13 +225,13 @@ router.post(
 router.post(
   '/attempts/:id/questions/:flowNodeId/reject',
   handle(async (req, res) => {
-    const { id, flowNodeId } = req.params;
+    const { id, flowNodeId: stepId } = req.params;
     const { comment } = req.body || {};
     if (!comment || !String(comment).trim()) {
       return res.status(400).json({ error: 'comment required' });
     }
     const latest = await prisma.flowAnswer.findFirst({
-      where: { attemptId: id, flowNodeId },
+      where: { attemptId: id, stepId },
       orderBy: { version: 'desc' },
     });
     if (!latest) return res.status(404).json({ error: 'no answer to reject' });
@@ -154,8 +248,7 @@ router.post(
   }),
 );
 
-// List attempts for admin views. Filter by status (default 'submitted'),
-// optional flowId and workerIdentifier. Ordering: newest submission first.
+// List attempts for admin views. Counts are over latest-per-step.
 router.get(
   '/attempts',
   handle(async (req, res) => {
@@ -170,12 +263,11 @@ router.get(
       orderBy: [{ submittedAt: 'desc' }, { updatedAt: 'desc' }],
       include: {
         flow: { select: { id: true, title: true } },
-        answers: { select: { flowNodeId: true, version: true, status: true } },
+        answers: { select: { stepId: true, version: true, status: true } },
       },
     });
-    // Summarise latest-version status counts per attempt.
     const summarised = attempts.map((a) => {
-      const latest = latestByNode(a.answers);
+      const latest = latestByStep(a.answers);
       let pending = 0;
       let approved = 0;
       let rejected = 0;

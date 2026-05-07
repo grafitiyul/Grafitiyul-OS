@@ -2,76 +2,142 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { validateAnswer } from '../services/questionRequirement.js';
+import { buildExpansion, stepLookup } from '../services/flowExpansion.js';
 
 const router = Router();
 
-// Flatten a tree of flow nodes into a linear learner sequence.
-// Groups are structural only — they don't produce learner steps.
-export function flattenNodes(nodes, parentId = null) {
-  const siblings = nodes
-    .filter((n) => (n.parentId ?? null) === parentId)
-    .sort((a, b) => a.order - b.order);
-  const out = [];
-  for (const n of siblings) {
-    if (n.kind === 'group') {
-      out.push(...flattenNodes(nodes, n.id));
-    } else {
-      out.push(n);
+// ── Step list resolution ─────────────────────────────────────────
+//
+// The runtime treats `attempt.expansion.steps` as the canonical visit
+// order. If `expansion` is null (legacy attempts created before the
+// folderRef slice), we fall back to flattening the flow's authoring
+// tree just like the old runtime did. Both paths produce the same
+// shape of step entry, so callers don't branch on legacy-ness.
+function legacyStepsFromFlow(flow) {
+  // Mirror of the old `flattenNodes(flow.nodes)` — groups are
+  // structural and skipped; folderRef shouldn't exist on legacy
+  // attempts but we skip it defensively too.
+  const childrenByParent = new Map();
+  for (const n of flow.nodes || []) {
+    const key = n.parentId || null;
+    if (!childrenByParent.has(key)) childrenByParent.set(key, []);
+    childrenByParent.get(key).push(n);
+  }
+  for (const arr of childrenByParent.values()) {
+    arr.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  }
+  const steps = [];
+  function visit(parentId) {
+    for (const node of childrenByParent.get(parentId) || []) {
+      if (node.kind === 'group') {
+        visit(node.id);
+        continue;
+      }
+      if (node.kind === 'content' || node.kind === 'question') {
+        steps.push({
+          stepId: node.id,
+          kind: node.kind,
+          flowNodeId: node.id,
+          bankFolderRefId: null,
+          contentItemId: node.contentItemId || null,
+          questionItemId: node.questionItemId || null,
+          checkpointAfter: !!node.checkpointAfter,
+        });
+      }
     }
   }
-  return out;
+  visit(null);
+  return steps;
 }
 
-// Compute the latest FlowAnswer per (attempt, flowNode). Input: all rows for
-// an attempt. Returns a Map keyed by flowNodeId → latest row.
-export function latestByNode(answers) {
-  const byNode = new Map();
-  for (const a of answers) {
-    const cur = byNode.get(a.flowNodeId);
-    if (!cur || a.version > cur.version) byNode.set(a.flowNodeId, a);
+function stepsFor(attempt) {
+  if (attempt.expansion?.steps) return attempt.expansion.steps;
+  if (attempt.flow?.nodes) return legacyStepsFromFlow(attempt.flow);
+  return [];
+}
+
+// Hydrate a step with the live content/question item rows. Item
+// CONTENT (titles, bodies, options) is intentionally NOT in the
+// expansion — it's read fresh here so admin edits propagate to
+// in-flight attempts.
+function hydrateStep(step, contentById, questionById) {
+  return {
+    ...step,
+    contentItem: step.contentItemId
+      ? contentById.get(step.contentItemId) || null
+      : null,
+    questionItem: step.questionItemId
+      ? questionById.get(step.questionItemId) || null
+      : null,
+  };
+}
+
+async function hydrateSteps(steps) {
+  if (steps.length === 0) return [];
+  const contentIds = new Set();
+  const questionIds = new Set();
+  for (const s of steps) {
+    if (s.contentItemId) contentIds.add(s.contentItemId);
+    if (s.questionItemId) questionIds.add(s.questionItemId);
   }
-  return byNode;
+  const [content, questions] = await Promise.all([
+    contentIds.size > 0
+      ? prisma.contentItem.findMany({
+          where: { id: { in: [...contentIds] } },
+        })
+      : Promise.resolve([]),
+    questionIds.size > 0
+      ? prisma.questionItem.findMany({
+          where: { id: { in: [...questionIds] } },
+        })
+      : Promise.resolve([]),
+  ]);
+  const contentById = new Map(content.map((c) => [c.id, c]));
+  const questionById = new Map(questions.map((q) => [q.id, q]));
+  return steps.map((s) => hydrateStep(s, contentById, questionById));
 }
 
-// List question nodes (linear order) that the learner must answer.
-function questionNodes(linear) {
-  return linear.filter((n) => n.kind === 'question');
+// Compute the latest FlowAnswer per (attempt, step). Input: all rows
+// for an attempt. Returns Map<stepId, latest row>.
+export function latestByStep(answers) {
+  const byStep = new Map();
+  for (const a of answers) {
+    const cur = byStep.get(a.stepId);
+    if (!cur || a.version > cur.version) byStep.set(a.stepId, a);
+  }
+  return byStep;
 }
 
-// Which question nodes currently need (re)answering?
-//
-// A question is outstanding when EITHER:
-//   * its latest answer was rejected by a reviewer, OR
-//   * the latest answer doesn't satisfy the question's unified
-//     requirement (e.g. 'choice' demands a choice, 'any' demands at
-//     least one field filled, 'optional' is always satisfied).
-//
-// Callers MUST pass question nodes with `questionItem` populated — that's
-// where the options / allowTextAnswer / requirement fields live.
-function outstandingQuestionIds(questions, latest) {
+// Outstanding question stepIds — same logic as before, just keyed on
+// stepId. Each step carries the live questionItem the validator needs.
+function outstandingStepIds(steps, latest) {
   const out = [];
-  for (const q of questions) {
-    const la = latest.get(q.id);
+  for (const step of steps) {
+    if (step.kind !== 'question') continue;
+    const la = latest.get(step.stepId);
     if (la?.status === 'rejected') {
-      out.push(q.id);
+      out.push(step.stepId);
       continue;
     }
-    const qi = q.questionItem;
+    const qi = step.questionItem;
     if (!qi) {
-      // Defensive: treat missing questionItem as outstanding unless an
-      // answer exists (preserves the pre-unified-model behaviour).
-      if (!la) out.push(q.id);
+      if (!la) out.push(step.stepId);
       continue;
     }
     const answer = la
       ? { choice: la.answerChoice, text: la.openText }
       : { choice: null, text: null };
     const v = validateAnswer(qi, answer);
-    if (!v.ok) out.push(q.id);
+    if (!v.ok) out.push(step.stepId);
   }
   return out;
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Attempt creation. Builds the expansion at this moment so in-flight
+// attempts are insulated from later bank structural changes (item
+// content edits still propagate live via id lookup).
+// ─────────────────────────────────────────────────────────────────
 router.post(
   '/',
   handle(async (req, res) => {
@@ -85,8 +151,8 @@ router.post(
     });
     if (!flow) return res.status(404).json({ error: 'flow not found' });
 
-    const linear = flattenNodes(flow.nodes);
-    const firstNode = linear[0] || null;
+    const expansion = await buildExpansion(prisma, flow);
+    const firstStep = expansion.steps[0] || null;
 
     const attempt = await prisma.attempt.create({
       data: {
@@ -94,13 +160,22 @@ router.post(
         learnerName,
         workerIdentifier: workerIdentifier || null,
         status: 'in_progress',
-        currentNodeId: firstNode ? firstNode.id : null,
+        expansion,
+        currentStepId: firstStep ? firstStep.stepId : null,
+        // Also write currentNodeId for any code paths still reading it
+        // (admin views, exports, …). For folderRef-derived first steps
+        // there's no real flow node, so we leave it null.
+        currentNodeId: firstStep?.flowNodeId || null,
       },
     });
     res.status(201).json(attempt);
   }),
 );
 
+// ─────────────────────────────────────────────────────────────────
+// GET /:id — returns the attempt with its hydrated steps. The client
+// runtime renders directly from `steps`, not from `flow.nodes`.
+// ─────────────────────────────────────────────────────────────────
 router.get(
   '/:id',
   handle(async (req, res) => {
@@ -112,27 +187,27 @@ router.get(
             nodes: { include: { contentItem: true, questionItem: true } },
           },
         },
-        answers: { orderBy: [{ flowNodeId: 'asc' }, { version: 'asc' }] },
+        answers: { orderBy: [{ stepId: 'asc' }, { version: 'asc' }] },
       },
     });
     if (!attempt) return res.status(404).json({ error: 'not found' });
-    res.json(attempt);
+
+    const steps = await hydrateSteps(stepsFor(attempt));
+    res.json({ ...attempt, steps });
   }),
 );
 
-// Auto-save: every learner edit on a question appends a NEW version.
-// Never overwrites. Content nodes don't produce FlowAnswer rows.
-//
-// The server validates each incoming answer against the question's
-// unified requirement (see services/questionRequirement.js). Drafts
-// that don't satisfy the requirement are still accepted as versioned
-// drafts — validation only hard-blocks on /submit — but the validator
-// is imported here so it can be reused on /submit and so the endpoint
-// is ready to reject invalid answers when we want stricter semantics.
+// ─────────────────────────────────────────────────────────────────
+// POST /:id/answer — append a new versioned answer. Now keyed by
+// stepId. `nodeId` is accepted as an alias for back-compat with the
+// existing client; it's treated as a stepId too (legacy steps have
+// stepId == flowNodeId).
+// ─────────────────────────────────────────────────────────────────
 router.post(
   '/:id/answer',
   handle(async (req, res) => {
-    const { nodeId, openText, answerChoice, answerLabel } = req.body;
+    const stepId = req.body.stepId || req.body.nodeId;
+    const { openText, answerChoice, answerLabel } = req.body;
     const attempt = await prisma.attempt.findUnique({
       where: { id: req.params.id },
       include: { flow: { include: { nodes: true } } },
@@ -141,18 +216,19 @@ router.post(
     if (attempt.status === 'approved') {
       return res.status(400).json({ error: 'attempt already approved' });
     }
-    const node = attempt.flow.nodes.find((n) => n.id === nodeId);
-    if (!node) return res.status(400).json({ error: 'node not in flow' });
-    if (node.kind !== 'question') {
-      return res.status(400).json({ error: 'node is not a question' });
+    const steps = stepsFor(attempt);
+    const step = steps.find((s) => s.stepId === stepId);
+    if (!step) return res.status(400).json({ error: 'step not in attempt' });
+    if (step.kind !== 'question') {
+      return res.status(400).json({ error: 'step is not a question' });
     }
-    if (!node.questionItemId) {
-      return res.status(400).json({ error: 'question node has no questionItemId' });
+    if (!step.questionItemId) {
+      return res.status(400).json({ error: 'question step has no questionItemId' });
     }
 
-    // Determine next version for (attempt, node).
+    // Determine next version for (attempt, step).
     const last = await prisma.flowAnswer.findFirst({
-      where: { attemptId: attempt.id, flowNodeId: nodeId },
+      where: { attemptId: attempt.id, stepId },
       orderBy: { version: 'desc' },
       select: { version: true },
     });
@@ -161,8 +237,12 @@ router.post(
     const created = await prisma.flowAnswer.create({
       data: {
         attemptId: attempt.id,
-        flowNodeId: nodeId,
-        questionItemId: node.questionItemId,
+        // flowNodeId is null for folderRef-derived steps. The unique
+        // constraint is on (attemptId, stepId, version); the FK on
+        // flowNodeId is informational only for admin/review queries.
+        flowNodeId: step.flowNodeId || null,
+        stepId,
+        questionItemId: step.questionItemId,
         openText: openText ?? null,
         answerChoice: answerChoice ?? null,
         answerLabel: answerLabel ?? null,
@@ -174,10 +254,11 @@ router.post(
   }),
 );
 
-// Advance the current pointer. Unlike the old flow, advancing does NOT check
-// checkpoints anymore — checkpoint review now happens only at /submit time on
-// the whole attempt. Ends the attempt by setting currentNodeId=null when past
-// the last node, but the attempt stays 'in_progress' until /submit.
+// ─────────────────────────────────────────────────────────────────
+// POST /:id/advance — move the cursor forward in the expansion.
+// Sets currentStepId=null when past the last step (attempt remains
+// in_progress until /submit).
+// ─────────────────────────────────────────────────────────────────
 router.post(
   '/:id/advance',
   handle(async (req, res) => {
@@ -189,29 +270,30 @@ router.post(
     if (attempt.status !== 'in_progress' && attempt.status !== 'submitted') {
       return res.status(400).json({ error: `cannot advance from ${attempt.status}` });
     }
-    const linear = flattenNodes(attempt.flow.nodes);
-    const currentIdx = linear.findIndex((n) => n.id === attempt.currentNodeId);
-    const next = linear[currentIdx + 1];
+    const steps = stepsFor(attempt);
+    const currentId = attempt.currentStepId || attempt.currentNodeId;
+    const currentIdx = steps.findIndex((s) => s.stepId === currentId);
+    const next = steps[currentIdx + 1];
     const updated = await prisma.attempt.update({
       where: { id: attempt.id },
-      data: { currentNodeId: next ? next.id : null },
+      data: {
+        currentStepId: next ? next.stepId : null,
+        currentNodeId: next?.flowNodeId || null,
+      },
     });
     res.json(updated);
   }),
 );
 
-// Worker submit. Validates that every question has at least one answer, and
-// that no rejected question is still missing a newer version. Idempotent:
-// resubmitting after rejections also goes through here.
+// ─────────────────────────────────────────────────────────────────
+// POST /:id/submit
+// ─────────────────────────────────────────────────────────────────
 router.post(
   '/:id/submit',
   handle(async (req, res) => {
     const attempt = await prisma.attempt.findUnique({
       where: { id: req.params.id },
       include: {
-        // questionItem is required for per-question requirement
-        // validation — outstandingQuestionIds reads options /
-        // allowTextAnswer / requirement from it.
         flow: { include: { nodes: { include: { questionItem: true } } } },
         answers: true,
       },
@@ -220,67 +302,62 @@ router.post(
     if (attempt.status === 'approved') {
       return res.status(400).json({ error: 'already approved' });
     }
-    const linear = flattenNodes(attempt.flow.nodes);
-    const questions = questionNodes(linear);
-    const latest = latestByNode(attempt.answers);
+    const steps = await hydrateSteps(stepsFor(attempt));
+    const latest = latestByStep(attempt.answers);
 
-    const outstanding = outstandingQuestionIds(questions, latest);
+    const outstanding = outstandingStepIds(steps, latest);
     if (outstanding.length > 0) {
       return res.status(400).json({
         error: 'outstanding_questions',
+        outstandingStepIds: outstanding,
+        // Back-compat alias for any client still reading the old field.
         outstandingNodeIds: outstanding,
       });
     }
 
     const updated = await prisma.attempt.update({
       where: { id: attempt.id },
-      data: {
-        status: 'submitted',
-        submittedAt: new Date(),
-      },
+      data: { status: 'submitted', submittedAt: new Date() },
     });
     res.json(updated);
   }),
 );
 
-// List outstanding question nodes for a submitted attempt that has had some
-// questions rejected — used by the learner resubmit screen.
+// ─────────────────────────────────────────────────────────────────
+// GET /:id/outstanding — for the resubmit screen. Returns the steps
+// that still need a fresh answer, with the content steps that
+// precede each one (linear-sequence context).
+// ─────────────────────────────────────────────────────────────────
 router.get(
   '/:id/outstanding',
   handle(async (req, res) => {
     const attempt = await prisma.attempt.findUnique({
       where: { id: req.params.id },
       include: {
-        flow: {
-          include: {
-            nodes: { include: { contentItem: true, questionItem: true } },
-          },
-        },
+        flow: { include: { nodes: { include: { contentItem: true, questionItem: true } } } },
         answers: true,
       },
     });
     if (!attempt) return res.status(404).json({ error: 'attempt not found' });
 
-    const linear = flattenNodes(attempt.flow.nodes);
-    const questions = questionNodes(linear);
-    const latest = latestByNode(attempt.answers);
-    const outstandingIds = new Set(outstandingQuestionIds(questions, latest));
+    const steps = await hydrateSteps(stepsFor(attempt));
+    const latest = latestByStep(attempt.answers);
+    const outstandingIds = new Set(outstandingStepIds(steps, latest));
 
-    // For each outstanding question, include: question node + the content
-    // nodes that precede it in the linear sequence (up to the previous
-    // question), the last rejected answer, and the admin comment on it.
     const out = [];
     let precedingContent = [];
-    for (const node of linear) {
-      if (node.kind === 'content') {
-        precedingContent.push(node);
+    for (const step of steps) {
+      if (step.kind === 'content') {
+        precedingContent.push(step);
         continue;
       }
-      if (node.kind === 'question') {
-        if (outstandingIds.has(node.id)) {
-          const la = latest.get(node.id);
+      if (step.kind === 'question') {
+        if (outstandingIds.has(step.stepId)) {
+          const la = latest.get(step.stepId);
           out.push({
-            node,
+            step,
+            // Back-compat: legacy clients expected `node`. Same shape.
+            node: step,
             precedingContent,
             lastAnswer: la || null,
           });
@@ -302,5 +379,37 @@ router.get(
     res.json(attempts);
   }),
 );
+
+// Legacy exports kept so other modules (people.js procedures bucket
+// derivation, exports, etc.) still compile. New callers should prefer
+// `latestByStep`.
+export function flattenNodes(nodes, parentId = null) {
+  const siblings = nodes
+    .filter((n) => (n.parentId ?? null) === parentId)
+    .sort((a, b) => a.order - b.order);
+  const out = [];
+  for (const n of siblings) {
+    if (n.kind === 'group') {
+      out.push(...flattenNodes(nodes, n.id));
+    } else if (n.kind === 'content' || n.kind === 'question') {
+      out.push(n);
+    }
+    // folderRef intentionally skipped — caller would need to expand
+    // via flowExpansion to see those items.
+  }
+  return out;
+}
+
+export function latestByNode(answers) {
+  // Compatibility shim: keys by flowNodeId where present, else by stepId.
+  const byNode = new Map();
+  for (const a of answers) {
+    const key = a.flowNodeId || a.stepId;
+    if (!key) continue;
+    const cur = byNode.get(key);
+    if (!cur || a.version > cur.version) byNode.set(key, a);
+  }
+  return byNode;
+}
 
 export default router;

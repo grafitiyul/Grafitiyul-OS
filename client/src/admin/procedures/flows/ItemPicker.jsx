@@ -125,10 +125,24 @@ export default function ItemPicker({
       );
   }
 
+  // Recursive count of items in a folder INCLUDING its nested
+  // sub-folders. Drives the picker row caption — admins want the full
+  // count of items they're about to link in, not just the direct
+  // children.
+  function recursiveItemCount(folderId) {
+    let n = combined.filter((i) => (i.folderId || null) === folderId).length;
+    for (const f of folders) {
+      if ((f.parentId || null) === folderId) {
+        n += recursiveItemCount(f.id);
+      }
+    }
+    return n;
+  }
+
   function pickFolder(folder) {
-    const items = folderItems(folder.id);
-    if (items.length === 0) return;
-    onPickFolder?.(folder, items);
+    // Live folderRef link — no item duplication. The flow stores just
+    // the folder id; the runtime resolves contents at attempt time.
+    onPickFolder?.(folder);
     setAddedCount((n) => n + 1);
     setFlashId(`folder:${folder.id}`);
     if (flashTimer.current) clearTimeout(flashTimer.current);
@@ -183,8 +197,9 @@ export default function ItemPicker({
                   ? 'bg-white shadow-sm text-gray-900 font-semibold'
                   : 'text-gray-600'
               }`}
+              title="הוספת תיקייה מהבנק כבלוק חי — שינויים בבנק יתעדכנו אוטומטית"
             >
-              תיקייה כקבוצה
+              תיקייה מהבנק
             </button>
           </div>
 
@@ -296,7 +311,7 @@ export default function ItemPicker({
           {!loading && !error && view === 'folders' && (
             <FolderList
               folders={folders}
-              folderItems={folderItems}
+              recursiveItemCount={recursiveItemCount}
               flashId={flashId}
               onPick={pickFolder}
             />
@@ -306,7 +321,7 @@ export default function ItemPicker({
           <div className="flex-1 text-[13px] text-gray-600">
             {addedCount === 0
               ? view === 'folders'
-                ? 'בחרו תיקייה כדי להוסיף את הפריטים שבה כקבוצה חדשה'
+                ? 'בחרו תיקייה כדי להוסיף קישור חי לזרימה'
                 : 'לחצו על פריט כדי להוסיף לזרימה'
               : addedCount === 1
               ? 'נוסף פריט אחד בהפעלה הנוכחית'
@@ -326,7 +341,7 @@ export default function ItemPicker({
   );
 }
 
-function FolderList({ folders, folderItems, flashId, onPick }) {
+function FolderList({ folders, recursiveItemCount, flashId, onPick }) {
   if (folders.length === 0) {
     return (
       <div className="p-6 text-center text-sm text-gray-500">
@@ -334,36 +349,60 @@ function FolderList({ folders, folderItems, flashId, onPick }) {
       </div>
     );
   }
+  // Build a path label for each folder (e.g. "Parent / Child / Sub")
+  // so admins can disambiguate folders with the same leaf name.
+  const folderById = new Map(folders.map((f) => [f.id, f]));
+  function pathOf(id) {
+    const out = [];
+    let cur = folderById.get(id);
+    const seen = new Set();
+    while (cur && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      out.unshift(cur.name);
+      cur = cur.parentId ? folderById.get(cur.parentId) : null;
+    }
+    return out;
+  }
+  // Sort by path so siblings group together.
+  const sorted = [...folders].sort((a, b) =>
+    pathOf(a.id).join(' / ').localeCompare(pathOf(b.id).join(' / '), 'he'),
+  );
   return (
     <ul className="divide-y divide-gray-100">
-      {folders.map((f) => {
-        const items = folderItems(f.id);
+      {sorted.map((f) => {
+        const path = pathOf(f.id);
         const just = flashId === `folder:${f.id}`;
-        const count = items.length;
+        const count = recursiveItemCount(f.id);
         return (
           <li key={f.id}>
             <button
               onClick={() => onPick(f)}
-              disabled={count === 0}
-              className={`w-full text-right px-3 py-3 transition block disabled:opacity-50 ${
+              className={`w-full text-right px-3 py-3 transition block ${
                 just ? 'bg-green-50' : 'hover:bg-gray-50'
               }`}
             >
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-800">
-                  תיקייה
+                  📁 תיקייה
                 </span>
                 <span className="font-medium text-gray-900 truncate flex-1">
                   {f.name}
                 </span>
                 {just && (
                   <span className="text-[11px] text-green-700 font-medium shrink-0">
-                    ✓ נוסף כקבוצה
+                    ✓ קישור נוסף
                   </span>
                 )}
               </div>
-              <div className="text-[11px] text-gray-500">
-                {count} פריטים {count === 0 ? '(ריקה)' : ''}
+              <div className="text-[11px] text-gray-500 flex flex-wrap gap-x-2">
+                {path.length > 1 && (
+                  <span className="text-gray-400">
+                    {path.slice(0, -1).join(' / ')}
+                  </span>
+                )}
+                <span>
+                  {count} פריטים {count === 0 ? '(ריקה — ניתן להוסיף בהמשך)' : '(כולל תת-תיקיות)'}
+                </span>
               </div>
             </button>
           </li>
