@@ -40,13 +40,14 @@ export default function GuidePortal() {
   //   * sessionStorage — tab-scoped fallback for the runtime's home
   //     button when the user lands on /attempt/:id without the ?p
   //     query param.
-  //   * localStorage   — persistent across PWA relaunches. The
-  //     installed PWA opens to start_url=`/`, and our root Landing
-  //     component reads localStorage.gos.portalToken to send guides
-  //     back to /p/:token instead of bouncing them to admin login.
-  //     sessionStorage is wiped between PWA launches (each launch is
-  //     effectively a fresh tab), so sessionStorage alone wouldn't
-  //     survive a re-open.
+  //   * localStorage   — persistent on the same origin. Helps the
+  //     `/` Landing component when storage IS shared between browser
+  //     and PWA. Belt-and-braces only: the AUTHORITATIVE persistence
+  //     is the dynamic manifest below — it bakes the token directly
+  //     into start_url, which the browser captures at install time
+  //     and replays on every PWA launch. That works even on
+  //     platforms where the installed PWA has its own isolated
+  //     storage container (the original failure mode).
   useEffect(() => {
     if (!token) return;
     try {
@@ -59,6 +60,37 @@ export default function GuidePortal() {
     } catch {
       /* ignore */
     }
+  }, [token]);
+
+  // Rewrite the document's <link rel="manifest"> href to a per-token
+  // manifest URL while this page is mounted. When the user installs
+  // the PWA from here ("Add to Home Screen", or the browser's install
+  // prompt), the browser fetches the URL referenced by THIS link at
+  // that moment — so the captured manifest carries
+  // start_url=/launch?p=<token>. After installation, the icon launch
+  // always opens /launch?p=<token>, and the Landing component
+  // immediately routes the user back into their portal regardless of
+  // PWA storage isolation.
+  //
+  // Cleanup restores the original href on unmount so that admins
+  // navigating away from this guide page don't accidentally keep
+  // capturing this token in a future install attempt.
+  useEffect(() => {
+    if (!token) return undefined;
+    const link = document.querySelector('link[rel="manifest"]');
+    if (!link) return undefined;
+    const original = link.getAttribute('href') || '/manifest.webmanifest';
+    link.setAttribute(
+      'href',
+      `/manifest.webmanifest?p=${encodeURIComponent(token)}`,
+    );
+    return () => {
+      try {
+        link.setAttribute('href', original);
+      } catch {
+        /* ignore — page is tearing down */
+      }
+    };
   }, [token]);
 
   // Two load modes:

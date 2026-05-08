@@ -89,6 +89,69 @@ app.use('/api', (_req, res) => {
   res.status(404).json({ error: 'not found' });
 });
 
+// ---------- Token-aware PWA manifest ----------
+//
+// Mounted BEFORE express.static so it intercepts /manifest.webmanifest
+// requests instead of the static file in client/dist. The static file
+// still exists as a fallback if this route ever fails / is removed,
+// but the dynamic version is the one the GuidePortal page references
+// (with ?p=<token>) so that "Add to Home Screen" captures the
+// guide's specific token in the manifest's start_url.
+//
+// Why this matters: a PWA's start_url is captured at install time
+// from the manifest the browser fetched at that moment. Once
+// installed, the PWA always launches at that captured URL. So if the
+// guide visits /p/:token and the page references
+// /manifest.webmanifest?p=<token>, the browser captures
+// start_url=/launch?p=<token>, and every future launch from the home
+// screen replays the token directly. No reliance on cross-context
+// localStorage, no reliance on the user revisiting /p/:token.
+//
+// Public route: never auth-gated. Returns no-store so a future token
+// rotation isn't masked by a stale cached manifest.
+app.get('/manifest.webmanifest', (req, res) => {
+  const rawToken = String(req.query?.p || '');
+  // Same character class as the rest of the codebase — anything off
+  // this set is treated as "no token" and the manifest falls back to
+  // the bare /launch start_url.
+  const token = /^[A-Za-z0-9_-]+$/.test(rawToken) ? rawToken : null;
+  const startUrl = token
+    ? `/launch?p=${encodeURIComponent(token)}`
+    : '/launch';
+  res.set('Cache-Control', 'no-store');
+  res.set('Content-Type', 'application/manifest+json; charset=utf-8');
+  res.json({
+    name: 'Grafitiyul Team',
+    short_name: 'Grafitiyul Team',
+    description: 'מערכת התפעול והלמידה של גרפיתי-יול',
+    lang: 'he',
+    dir: 'rtl',
+    start_url: startUrl,
+    scope: '/',
+    display: 'standalone',
+    orientation: 'portrait',
+    background_color: '#f9fafb',
+    theme_color: '#2563eb',
+    // The two icons mirror the static manifest. SVG works on every
+    // modern install target; iOS picks up the apple-touch-icon link
+    // in index.html separately.
+    icons: [
+      {
+        src: '/icon.svg',
+        sizes: 'any',
+        type: 'image/svg+xml',
+        purpose: 'any',
+      },
+      {
+        src: '/icon-maskable.svg',
+        sizes: 'any',
+        type: 'image/svg+xml',
+        purpose: 'maskable',
+      },
+    ],
+  });
+});
+
 // ---------- Static client assets ----------
 //
 // Built assets at /assets/* have content-hashed filenames (Vite). They are
