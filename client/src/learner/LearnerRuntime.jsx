@@ -203,6 +203,20 @@ export function AttemptRuntime() {
   // polling doesn't remount the screen, reset scroll position, blow
   // away in-flight answer drafts, or re-trigger the step animation.
   const [reviewStatus, setReviewStatus] = useState(null);
+  // Correction flow state. Two layers so the UX feels intentional:
+  //   correctionConfirm — the small "are you sure?" sheet shown after
+  //     the guide taps a rejected row in the modal. Carries enough
+  //     metadata (title, admin comment) to preview the task in-place.
+  //   correctionTarget  — once confirmed, this stepId is the focused
+  //     correction target. While set, AttemptRuntime renders a single-
+  //     question CorrectionScreen INSTEAD of the natural screen for
+  //     the attempt's status. Clearing it returns the runtime to
+  //     whatever screen would have rendered naturally — i.e. exactly
+  //     where the guide was before entering correction (no explicit
+  //     "saved position" bookkeeping needed because we never mutated
+  //     the attempt cursor).
+  const [correctionConfirm, setCorrectionConfirm] = useState(null);
+  const [correctionTarget, setCorrectionTarget] = useState(null);
   const [isMobile, setIsMobile] = useState(() =>
     window.matchMedia('(max-width: 640px)').matches,
   );
@@ -484,12 +498,65 @@ export function AttemptRuntime() {
 
   // The modal lives at the AttemptRuntime level so it overlays
   // every screen and survives status transitions without remount.
+  // onClickRejected lifts the user from the list view into the
+  // confirmation sheet; the modal closes simultaneously so the sheet
+  // is the single focal point.
   const reviewModalNode = reviewModalOpen ? (
     <ReviewStatusModal
       data={reviewStatus}
       onClose={() => setReviewModalOpen(false)}
+      onClickRejected={(q) => {
+        setReviewModalOpen(false);
+        setCorrectionConfirm({
+          stepId: q.stepId,
+          title: q.title || '',
+          adminComment: q.adminComment || null,
+        });
+      }}
     />
   ) : null;
+
+  // Correction confirmation sheet. Sits on top of every screen and
+  // never blocks the current state — cancel returns the user to
+  // exactly where they were.
+  const correctionConfirmNode = correctionConfirm ? (
+    <CorrectionConfirm
+      data={correctionConfirm}
+      onCancel={() => setCorrectionConfirm(null)}
+      onConfirm={() => {
+        setCorrectionTarget({ stepId: correctionConfirm.stepId });
+        setCorrectionConfirm(null);
+      }}
+    />
+  ) : null;
+
+  // Focused correction view. When set, fully replaces the natural
+  // screen so the guide isn't dumped into the bulk ResubmitScreen.
+  // Exiting (cancel or "המשך ללמוד") clears the target — natural
+  // rendering then resumes from whatever state the attempt is in,
+  // which is the place the guide was before entering correction.
+  if (correctionTarget) {
+    return (
+      <>
+        <CorrectionScreen
+          attempt={attempt}
+          stepId={correctionTarget.stepId}
+          isMobile={isMobile}
+          homeHref={homeHref}
+          onCancel={() => setCorrectionTarget(null)}
+          onResumeLearning={async () => {
+            // Refresh both the heavy attempt and the lightweight
+            // review-status so the bar/modal show up-to-date counts
+            // when the guide returns to learning.
+            setCorrectionTarget(null);
+            await loadAttempt();
+            fetchReviewStatus();
+          }}
+        />
+        {correctionConfirmNode}
+      </>
+    );
+  }
 
   // --- status: approved ---
   if (attempt.status === 'approved') {
@@ -502,6 +569,7 @@ export function AttemptRuntime() {
           {...reviewBag}
         />
         {reviewModalNode}
+        {correctionConfirmNode}
       </>
     );
   }
@@ -528,6 +596,7 @@ export function AttemptRuntime() {
       <>
         {submittedScreen}
         {reviewModalNode}
+        {correctionConfirmNode}
       </>
     );
   }
@@ -551,6 +620,7 @@ export function AttemptRuntime() {
           {...reviewBag}
         />
         {reviewModalNode}
+        {correctionConfirmNode}
       </>
     );
   }
@@ -575,6 +645,7 @@ export function AttemptRuntime() {
         {...reviewBag}
       />
       {reviewModalNode}
+      {correctionConfirmNode}
     </>
   );
 }
@@ -1488,8 +1559,17 @@ function ReviewStatusBar({ data, onOpen, compact }) {
 //
 // `data.questions` order mirrors the runtime's step order so the
 // guide can scan the list top-to-bottom and recognise where they are.
-function ReviewStatusModal({ data, onClose }) {
-  const questions = data?.questions || [];
+function ReviewStatusModal({ data, onClose, onClickRejected }) {
+  // The list intentionally ELIDES untouched future questions.
+  // 'unanswered' = the guide has not yet provided an answer for this
+  // question step — showing those would turn the dialog into a full
+  // procedure outline, which is exactly the workflow noise the new UX
+  // is fighting. The bar in the runtime header still reflects the
+  // attempt-wide totals (server-computed), so the filter only changes
+  // what the LIST displays.
+  const visibleQuestions = (data?.questions || []).filter(
+    (q) => q.status && q.status !== 'unanswered',
+  );
   return (
     <div
       className="fixed inset-0 z-50 flex items-stretch sm:items-center justify-center bg-black/50 p-0 sm:p-4"
@@ -1504,7 +1584,7 @@ function ReviewStatusModal({ data, onClose }) {
       >
         <div className="shrink-0 px-4 py-3 border-b border-gray-200 flex items-center gap-2">
           <h2 className="text-base font-semibold text-gray-900 flex-1">
-            סטטוס תשובות
+            התשובות שלי
           </h2>
           <button
             type="button"
@@ -1523,13 +1603,18 @@ function ReviewStatusModal({ data, onClose }) {
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          {questions.length === 0 && (
+          {visibleQuestions.length === 0 && (
             <div className="text-sm text-gray-500 text-center py-8">
-              עדיין לא נמסרו תשובות לבדיקה.
+              עדיין לא נשלחו תשובות לבדיקה.
             </div>
           )}
-          {questions.map((q, i) => (
-            <ReviewStatusRow key={q.stepId} q={q} index={i + 1} />
+          {visibleQuestions.map((q, i) => (
+            <ReviewStatusRow
+              key={q.stepId}
+              q={q}
+              index={i + 1}
+              onClickRejected={onClickRejected}
+            />
           ))}
         </div>
         <div className="shrink-0 px-4 py-3 border-t border-gray-200 text-[11px] text-gray-500">
@@ -1540,13 +1625,27 @@ function ReviewStatusModal({ data, onClose }) {
   );
 }
 
-function ReviewStatusRow({ q, index }) {
+function ReviewStatusRow({ q, index, onClickRejected }) {
   const meta = STATUS_META[q.status] || STATUS_META.unanswered;
   const plainTitle = titleToPlain(q.title || '') || '(שאלה ללא כותרת)';
+  const isRejected = q.status === 'rejected';
+  // Rejected rows render as buttons so the row IS the affordance.
+  // Other rows stay informational divs — clicking them does nothing,
+  // because there's nothing actionable for an approved or pending
+  // answer (the user can't re-edit those without admin action).
+  const Wrapper = isRejected ? 'button' : 'div';
+  const wrapperProps = isRejected
+    ? {
+        type: 'button',
+        onClick: () => onClickRejected?.(q),
+        className: `w-full text-right rounded-md border p-3 transition ${meta.cardCls} hover:bg-red-100 active:bg-red-100 cursor-pointer`,
+        'aria-label': `תקן: ${plainTitle}`,
+      }
+    : {
+        className: `rounded-md border p-3 ${meta.cardCls}`,
+      };
   return (
-    <div
-      className={`rounded-md border p-3 ${meta.cardCls}`}
-    >
+    <Wrapper {...wrapperProps}>
       <div className="flex items-start gap-2">
         <span
           className={`shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-semibold ${meta.indexCls}`}
@@ -1557,14 +1656,20 @@ function ReviewStatusRow({ q, index }) {
           <div className="text-sm font-medium text-gray-900 leading-snug">
             {plainTitle}
           </div>
-          <div className="mt-1">
+          <div className="mt-1 flex items-center gap-2">
             <span
               className={`inline-block text-[11px] font-medium rounded-full px-2 py-0.5 ${meta.pillCls}`}
             >
               {meta.label}
             </span>
+            {isRejected && (
+              <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-red-700">
+                תקן עכשיו
+                <ChevronLeft />
+              </span>
+            )}
           </div>
-          {q.adminComment && q.status === 'rejected' && (
+          {q.adminComment && isRejected && (
             <div className="mt-2 text-[12px] bg-red-50 border border-red-200 text-red-900 rounded p-2 whitespace-pre-wrap">
               <span className="font-semibold">הערת מאשר: </span>
               {q.adminComment}
@@ -1572,7 +1677,7 @@ function ReviewStatusRow({ q, index }) {
           )}
         </div>
       </div>
-    </div>
+    </Wrapper>
   );
 }
 
@@ -1602,6 +1707,389 @@ const STATUS_META = {
     indexCls: 'bg-gray-300 text-gray-800',
   },
 };
+
+// ── CorrectionConfirm ─────────────────────────────────────────────
+//
+// Small bottom-anchored sheet (mobile) / centered modal (desktop)
+// shown after the guide taps a rejected row in the review-status
+// list. The whole point is to stop the abrupt "click → dumped into
+// the runtime" jump — the sheet announces the correction task,
+// previews the admin's comment, and asks for an explicit go-ahead.
+//
+// Why a separate component instead of an inline conditional?
+//   * It overlays the runtime without touching its scroll position
+//     or step animation.
+//   * It can be dismissed without losing the user's place — cancel
+//     just clears `correctionConfirm` in the parent.
+function CorrectionConfirm({ data, onCancel, onConfirm }) {
+  const plainTitle =
+    titleToPlain(data?.title || '') || '(שאלה ללא כותרת)';
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4"
+      dir="rtl"
+      role="dialog"
+      aria-modal="true"
+      onClick={onCancel}
+    >
+      <div
+        className="bg-white w-full sm:max-w-md rounded-t-xl sm:rounded-xl shadow-xl border border-gray-200"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 pt-5 pb-4">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-red-100 text-red-700 text-base">
+              ⚠
+            </span>
+            <h2 className="text-base font-semibold text-gray-900">
+              שאלה לתיקון
+            </h2>
+          </div>
+          <div className="text-sm text-gray-700 leading-snug mb-3">
+            {plainTitle}
+          </div>
+          {data?.adminComment && (
+            <div className="text-[12px] bg-red-50 border border-red-200 text-red-900 rounded p-2.5 whitespace-pre-wrap mb-3">
+              <div className="font-semibold mb-0.5">הערת מאשר</div>
+              {data.adminComment}
+            </div>
+          )}
+          <div className="text-[12px] text-gray-600">
+            התיקון יישלח שוב לבדיקת המאשר. תוכל לחזור לשם שעצרת בלימוד
+            בלחיצה על "המשך ללמוד" אחרי השליחה.
+          </div>
+        </div>
+        <div className="px-5 py-3 border-t border-gray-200 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-4 py-2 text-sm font-medium border border-gray-300 text-gray-700 bg-white rounded-md hover:bg-gray-50"
+          >
+            ביטול
+          </button>
+          <div className="flex-1" />
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="px-5 py-2.5 text-sm font-semibold bg-red-600 hover:bg-red-700 text-white rounded-md inline-flex items-center gap-1.5"
+          >
+            תקן עכשיו
+            <ChevronLeft />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── CorrectionScreen ──────────────────────────────────────────────
+//
+// Focused single-question correction. Re-uses the runtime shell so
+// the visual language matches the rest of the runtime (header bar,
+// scrollable body, sticky footer, home button) — but the body is
+// purpose-built for correction:
+//
+//   * Distinct red banner makes the "מצב תיקון" intent obvious.
+//   * The admin's rejection comment is the FIRST thing the guide
+//     reads, above their own previous answer.
+//   * After submit, a calm success state with one big "המשך ללמוד"
+//     button hands the user back to natural runtime rendering — i.e.
+//     exactly the screen they were on when they entered correction.
+//
+// Re-uses existing API endpoints (api.attempts.answer + submit). No
+// new server work, no duplicate runtime engine, no attempt mutation
+// beyond the new versioned answer the existing endpoints already
+// handle.
+function CorrectionScreen({
+  attempt,
+  stepId,
+  isMobile,
+  homeHref,
+  onCancel,
+  onResumeLearning,
+}) {
+  const step = (attempt?.steps || []).find((s) => s.stepId === stepId);
+  const latest = latestAnswerByStep(attempt?.answers || []).get(stepId);
+  const qi = step?.questionItem;
+  const hasChoices = Array.isArray(qi?.options) && qi.options.length > 0;
+  const showText = !!qi?.allowTextAnswer;
+
+  // Seed empty — the previous answer is shown read-only above so the
+  // guide can re-craft a fresh response rather than nudge an old one.
+  const [openText, setOpenText] = useState('');
+  const [selected, setSelected] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [submitted, setSubmitted] = useState(false);
+  const scrollRef = useRef(null);
+  const fallbackCompletedRef = useRef(new Set());
+  const stepKey = `correction:${stepId}`;
+  // Same scroll gate as ItemScreen — even in correction mode the
+  // guide must read everything before submitting (admin comment +
+  // their previous answer + the question itself).
+  const { isScrollable, hasReachedBottom } = useStepScrollGate(
+    scrollRef,
+    stepKey,
+    fallbackCompletedRef,
+  );
+
+  if (!step || step.kind !== 'question' || !qi) {
+    return (
+      <Screen>
+        <div className="text-center max-w-md">
+          <div className="text-5xl mb-3">⚠️</div>
+          <div className="text-red-600 font-medium mb-2">
+            השאלה לתיקון לא נמצאה
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="text-sm border border-gray-300 rounded px-3 py-1.5 hover:bg-gray-50"
+          >
+            חזרה
+          </button>
+        </div>
+      </Screen>
+    );
+  }
+
+  const validation = validateAnswer(
+    {
+      options: qi?.options || [],
+      allowTextAnswer: showText,
+      requirement: qi?.requirement || 'optional',
+    },
+    { choice: selected || null, text: openText },
+  );
+  const answerOk = validation.ok;
+  const scrollOk = !isScrollable || hasReachedBottom;
+  const canSubmit = answerOk && scrollOk && !busy;
+  const showScrollHint = answerOk && isScrollable && !hasReachedBottom;
+
+  async function submit() {
+    if (!canSubmit) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const payload = { stepId };
+      if (selected) {
+        payload.answerChoice = selected;
+        payload.answerLabel = selected;
+      }
+      if (showText && openText.trim()) {
+        payload.openText = openText;
+      }
+      await api.attempts.answer(attempt.id, payload);
+      // Re-submit so submittedAt advances and admin sees a clear
+      // "this came back for re-review" signal. If OTHER rejections
+      // remain, the server returns 'outstanding_questions' — that's
+      // an expected, non-fatal state for focused correction (the
+      // attempt is still in correction state at the question level).
+      try {
+        await api.attempts.submit(attempt.id);
+      } catch (e) {
+        if (e.payload?.error !== 'outstanding_questions') throw e;
+      }
+      setSubmitted(true);
+    } catch (e) {
+      setErr(e.payload?.error || e.message || 'שגיאה');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (submitted) {
+    return (
+      <CorrectionSuccess
+        isMobile={isMobile}
+        homeHref={homeHref}
+        onResumeLearning={onResumeLearning}
+      />
+    );
+  }
+
+  const plainTitle = titleToPlain(qi?.title || '') || '(שאלה ללא כותרת)';
+  const previousAnswerText =
+    latest?.answerLabel ||
+    latest?.answerChoice ||
+    latest?.openText ||
+    null;
+
+  return (
+    <RuntimeShell
+      isMobile={isMobile}
+      stepKey={stepKey}
+      scrollRef={scrollRef}
+      header={
+        <div className="px-4 sm:px-6 pt-3 pb-2">
+          <div className="flex items-center gap-2 text-[12px] text-gray-700">
+            <span className="text-[10px] font-semibold uppercase tracking-wide bg-red-100 text-red-800 rounded px-1.5 py-0.5">
+              מצב תיקון
+            </span>
+            <span className="text-gray-700 truncate">תיקון תשובה</span>
+            <span className="flex-1" />
+            <button
+              type="button"
+              onClick={onCancel}
+              className="text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded px-1.5 py-1 text-[12px]"
+              aria-label="ביטול"
+            >
+              ביטול
+            </button>
+            {homeHref && <HomeButton homeHref={homeHref} isMobile={isMobile} />}
+          </div>
+          <div className="mt-2 h-1 bg-red-100 rounded-full overflow-hidden">
+            <div className="h-full bg-red-500 w-1/3" aria-hidden />
+          </div>
+        </div>
+      }
+      footer={
+        <NavFooter
+          onPrev={onCancel}
+          canPrev={!busy}
+          onNext={submit}
+          canNext={canSubmit}
+          nextLabel={busy ? 'שולח…' : 'שלח תיקון'}
+          scrollHint={showScrollHint}
+        />
+      }
+    >
+      <article>
+        {latest?.adminComment && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+            <div className="text-[11px] font-bold text-red-800 uppercase tracking-wide mb-1">
+              הערת מאשר
+            </div>
+            <div className="text-sm text-red-900 whitespace-pre-wrap">
+              {latest.adminComment}
+            </div>
+          </div>
+        )}
+        <h1
+          className={`font-bold text-gray-900 mb-3 leading-tight ${
+            isMobile ? 'text-2xl' : 'text-3xl'
+          }`}
+        >
+          {plainTitle}
+        </h1>
+        <div
+          className="gos-prose is-runtime text-gray-700 mb-4"
+          dangerouslySetInnerHTML={{ __html: qi?.questionText || '' }}
+        />
+        {previousAnswerText && (
+          <div className="bg-gray-50 border border-gray-200 rounded-md p-3 mb-5 text-sm">
+            <div className="text-[11px] text-gray-500 uppercase tracking-wide mb-1">
+              התשובה הקודמת שלך
+            </div>
+            <div className="text-gray-800 whitespace-pre-wrap">
+              {previousAnswerText}
+            </div>
+          </div>
+        )}
+        <div className="text-sm font-medium text-gray-700 mb-2">
+          התשובה החדשה שלך
+        </div>
+        {hasChoices && (
+          <div className="space-y-2 mb-4">
+            {qi.options.map((opt, i) => (
+              <label
+                key={i}
+                className={`block border-2 rounded-lg cursor-pointer transition px-4 py-3 ${
+                  selected === opt
+                    ? 'border-blue-600 bg-blue-50 ring-1 ring-blue-200'
+                    : 'border-gray-200 hover:border-gray-300 bg-white'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="opt"
+                  value={opt}
+                  checked={selected === opt}
+                  onChange={(e) => setSelected(e.target.value)}
+                  className="me-2"
+                />
+                <span className={isMobile ? 'text-base' : 'text-lg'}>
+                  {opt}
+                </span>
+              </label>
+            ))}
+            {selected && (
+              <button
+                type="button"
+                onClick={() => setSelected('')}
+                className="text-[12px] text-gray-500 hover:text-gray-800"
+              >
+                נקה בחירה
+              </button>
+            )}
+          </div>
+        )}
+        {showText && (
+          <textarea
+            className={`w-full border border-gray-300 rounded-md px-3 py-3 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 ${
+              isMobile ? 'h-32 text-base' : 'h-44 text-lg px-4 py-4'
+            }`}
+            value={openText}
+            onChange={(e) => setOpenText(e.target.value)}
+            placeholder={
+              hasChoices ? 'הערה נוספת (אופציונלי)' : 'התשובה שלך…'
+            }
+          />
+        )}
+        {err && (
+          <div className="mt-4 bg-red-50 border border-red-200 text-red-800 rounded p-3 text-sm">
+            לא ניתן לשלוח: {err}
+          </div>
+        )}
+      </article>
+    </RuntimeShell>
+  );
+}
+
+function CorrectionSuccess({ isMobile, homeHref, onResumeLearning }) {
+  return (
+    <div
+      dir="rtl"
+      className="bg-gray-50 flex flex-col fixed inset-0 overflow-hidden"
+    >
+      <header className="shrink-0 bg-white border-b border-gray-200">
+        <div className="px-4 sm:px-6 py-3 flex items-center gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-wide bg-green-100 text-green-800 rounded px-1.5 py-0.5">
+            תיקון נשלח
+          </span>
+          <span className="flex-1" />
+          {homeHref && <HomeButton homeHref={homeHref} isMobile={isMobile} />}
+        </div>
+      </header>
+      <main className="flex-1 min-h-0 overflow-y-auto flex items-center justify-center p-6">
+        <div className="text-center max-w-md">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-green-100 text-green-700 flex items-center justify-center text-3xl">
+            ✓
+          </div>
+          <h1 className="text-xl sm:text-2xl font-semibold text-gray-900 mb-2">
+            התיקון נשלח לבדיקה
+          </h1>
+          <p className="text-sm text-gray-600 mb-6">
+            המסך יתעדכן אוטומטית כשהמאשר יסיים. אפשר לחזור ללמוד מהמקום
+            בו עצרת.
+          </p>
+        </div>
+      </main>
+      <footer className="shrink-0 bg-white border-t border-gray-200 shadow-[0_-2px_8px_rgba(0,0,0,0.04)]">
+        <div className="px-4 sm:px-6 py-3 flex items-center justify-center">
+          <button
+            type="button"
+            onClick={onResumeLearning}
+            className="px-5 py-3 text-base font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-md inline-flex items-center gap-1.5 min-w-[160px] justify-center"
+          >
+            <span>המשך ללמוד</span>
+            <ChevronLeft />
+          </button>
+        </div>
+      </footer>
+    </div>
+  );
+}
 
 // Secondary, deterministic navigation back to the guide portal.
 // SVG icon to bypass any bidi mirroring; aria-label in Hebrew for
