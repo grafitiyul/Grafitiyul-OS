@@ -55,39 +55,56 @@ export default function ApprovalsListPane({
   return (
     <div className="h-full flex flex-col">
       <div className="p-3 border-b border-gray-200 space-y-2 bg-white">
+        {/* View tabs (segmented control). Active: white card with blue
+            text + ring + bold weight. The previous "white-on-gray" look
+            was too subtle on light backgrounds — admins reported only
+            being able to tell active from inactive after staring. The
+            blue accent and ring make the active state unambiguous
+            without losing the segmented-control aesthetic. */}
         <div className="flex gap-1 bg-gray-100 rounded-md p-1">
-          {APPROVAL_VIEWS.map((v) => (
-            <button
-              key={v.key}
-              onClick={() => onViewChange(v.key)}
-              className={`flex-1 text-center px-2 py-1.5 text-[12px] rounded transition ${
-                viewKey === v.key
-                  ? 'bg-white shadow-sm text-gray-900 font-semibold'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              {v.label}
-            </button>
-          ))}
+          {APPROVAL_VIEWS.map((v) => {
+            const isActive = viewKey === v.key;
+            return (
+              <button
+                key={v.key}
+                onClick={() => onViewChange(v.key)}
+                aria-pressed={isActive}
+                className={`flex-1 text-center px-2 py-1.5 text-[12px] rounded transition ${
+                  isActive
+                    ? 'bg-white shadow-sm text-blue-700 font-semibold ring-1 ring-blue-200'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                {v.label}
+              </button>
+            );
+          })}
         </div>
+        {/* Status filter chips. Active: solid blue with white text —
+            unmissable next to the unselected outlined chips. Same
+            pattern an admin would expect from any modern filter UI. */}
         <div className="flex gap-1">
           {[
             { k: 'submitted', label: 'ממתין' },
             { k: 'approved', label: 'אושר' },
             { k: '', label: 'הכל' },
-          ].map((f) => (
-            <button
-              key={f.k || 'all'}
-              onClick={() => onStatusFilterChange(f.k)}
-              className={`text-[11px] px-2 py-1 rounded border ${
-                statusFilter === f.k
-                  ? 'bg-blue-50 border-blue-300 text-blue-800'
-                  : 'border-gray-200 text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
+          ].map((f) => {
+            const isActive = statusFilter === f.k;
+            return (
+              <button
+                key={f.k || 'all'}
+                onClick={() => onStatusFilterChange(f.k)}
+                aria-pressed={isActive}
+                className={`text-[11px] px-2.5 py-1 rounded-md border font-medium transition-colors ${
+                  isActive
+                    ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
+                    : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                {f.label}
+              </button>
+            );
+          })}
         </div>
         <input
           type="search"

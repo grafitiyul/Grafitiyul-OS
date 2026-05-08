@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams, useOutletContext } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import { relativeHebrew } from '../../../lib/relativeTime.js';
+import { titleToPlain } from '../../../editor/TitleEditor.jsx';
 import Dialog from '../../common/Dialog.jsx';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 
@@ -280,7 +281,9 @@ function QuestionBlock({ block, readOnly, onApprove, onReject }) {
             {precedingContent.map((c) => (
               <div key={c.id} className="bg-gray-50 rounded p-3">
                 <div className="text-sm font-medium text-gray-800 mb-1">
-                  {c.contentItem?.title}
+                  {/* Titles are TipTap HTML — strip tags for display.
+                      Body below stays rich via dangerouslySetInnerHTML. */}
+                  {titleToPlain(c.contentItem?.title || '') || 'ללא כותרת'}
                 </div>
                 <div
                   className="gos-prose text-sm text-gray-700"
@@ -294,7 +297,10 @@ function QuestionBlock({ block, readOnly, onApprove, onReject }) {
 
       <div className="px-5 py-4 border-b border-gray-100">
         <h3 className="font-semibold text-base text-gray-900 mb-1">
-          {qi?.title || '(שאלה נמחקה)'}
+          {/* Question titles are TipTap HTML; strip tags so the
+              admin sees clean text instead of "<p>...</p>". The
+              questionText body below remains rich. */}
+          {titleToPlain(qi?.title || '') || 'ללא כותרת'}
         </h3>
         <div
           className="gos-prose text-sm text-gray-700"
