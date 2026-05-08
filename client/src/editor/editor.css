@@ -15,13 +15,15 @@
   word-break: break-word;
 }
 
-/* Sibling gap between block-level children. 0.85em gives a comfortable
-   paragraph separation (≈14px at 16px body) that matches what users
-   expect coming from Google Docs / Word, without forcing them to add
-   blank lines manually. Same value on .gos-prose below keeps the
-   preview + future portal visually identical to the editor. */
+/* Sibling gap between block-level children. The previous 0.85em was
+   actually SMALLER than one line-height (1.65em), so two consecutive
+   paragraphs read like consecutive wrapped lines — paragraph
+   structure collapsed visually. 1em is bigger than the line-height
+   delta and reads as a proper paragraph break in both the editor
+   and the read-only preview. The same value on .gos-prose below
+   keeps preview, runtime and editor visually consistent. */
 .rt-editor-prose > * + * {
-  margin-top: 0.85em;
+  margin-top: 1em;
 }
 
 .rt-editor-prose h1 {
@@ -293,7 +295,10 @@
   overflow-wrap: anywhere;
   word-break: break-word;
 }
-.gos-prose > * + * { margin-top: 0.85em; }
+/* Same rationale as .rt-editor-prose above: paragraph margin must
+   exceed the line-height delta so block-level breaks are visually
+   distinct from wrapped lines / <br> soft breaks. */
+.gos-prose > * + * { margin-top: 1em; }
 .gos-prose h1 { font-size: 1.5rem; font-weight: 700; line-height: 1.3; margin: 0.6em 0 0.25em; }
 .gos-prose h2 { font-size: 1.25rem; font-weight: 700; line-height: 1.35; margin: 0.55em 0 0.25em; }
 .gos-prose h3 { font-size: 1.125rem; font-weight: 600; line-height: 1.4; margin: 0.5em 0 0.25em; }
@@ -352,7 +357,11 @@
   font-size: 17px;
   line-height: 1.72;
 }
-.gos-prose.is-runtime > * + * { margin-top: 1em; }
+/* Runtime gets a slightly bigger paragraph break than the admin
+   preview — the runtime line-height is also bigger (1.72) so we
+   need more vertical space to keep paragraph structure obvious at
+   reading distance on mobile. */
+.gos-prose.is-runtime > * + * { margin-top: 1.4em; }
 .gos-prose.is-runtime h1 { font-size: 1.7rem; line-height: 1.25; margin: 0.7em 0 0.35em; }
 .gos-prose.is-runtime h2 { font-size: 1.4rem; line-height: 1.3;  margin: 0.65em 0 0.3em; }
 .gos-prose.is-runtime h3 { font-size: 1.2rem; line-height: 1.35; margin: 0.55em 0 0.25em; }
