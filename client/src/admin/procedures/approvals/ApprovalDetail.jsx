@@ -78,6 +78,31 @@ export default function ApprovalDetail() {
     initialLoad();
   }, [initialLoad]);
 
+  // Quiet live refresh — picks up learner activity (new corrections,
+  // re-submissions) without flashing the page. softRefresh keeps the
+  // user's scroll position, the open detail card, the filter pane,
+  // any expanded history accordion, and any open dialogs intact
+  // because it only swaps the `data` prop; React reconciles per
+  // QuestionBlock via stable `key={stepId}`. Polling at 10s mirrors
+  // the runtime's review-status cadence so the two sides stay
+  // roughly in sync; focus/visibilitychange give an instant catch-up
+  // when the admin tabs back in.
+  useEffect(() => {
+    if (!id) return undefined;
+    const t = setInterval(softRefresh, 10000);
+    const onVis = () => {
+      if (document.visibilityState === 'visible') softRefresh();
+    };
+    const onFocus = () => softRefresh();
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [id, softRefresh]);
+
   // The server review payload returns each block as `{ step, node, ... }`
   // where `node` is an alias for `step` and carries `stepId` (NOT `id`).
   // Calling these with `node.id` (undefined) hit /questions/undefined/...
@@ -127,10 +152,23 @@ export default function ApprovalDetail() {
   if (!data) return null;
 
   const { attempt, flow, blocks } = data;
-  const total = blocks.length;
-  const approved = blocks.filter((b) => b.latest?.status === 'approved').length;
-  const rejected = blocks.filter((b) => b.latest?.status === 'rejected').length;
+  // Filter out questions the learner never reached. Reviewable items
+  // are: anything with at least one FlowAnswer (any status). Untouched
+  // future questions had no answer yet → no version history → no
+  // signal for the admin to act on. Showing them as "אין תשובה עדיין"
+  // cards adds noise that scales with procedure length. The filter is
+  // purely visual; the underlying review payload still carries the
+  // full question set in case future tooling needs the structural map.
+  const visibleBlocks = blocks.filter((b) => !!b.latest);
+  const total = visibleBlocks.length;
+  const approved = visibleBlocks.filter(
+    (b) => b.latest?.status === 'approved',
+  ).length;
+  const rejected = visibleBlocks.filter(
+    (b) => b.latest?.status === 'rejected',
+  ).length;
   const pending = total - approved - rejected;
+  const hiddenUntouched = blocks.length - visibleBlocks.length;
 
   return (
     <div className="flex-1 min-h-0 flex flex-col bg-gray-50">
@@ -212,13 +250,15 @@ export default function ApprovalDetail() {
       )}
 
       <div className="flex-1 overflow-y-auto px-5 py-5">
-        {blocks.length === 0 && (
+        {visibleBlocks.length === 0 && (
           <div className="text-center text-gray-500 py-12">
-            אין שאלות בזרימה זו.
+            {blocks.length === 0
+              ? 'אין שאלות בזרימה זו.'
+              : 'המדריך עדיין לא ענה על אף שאלה לבדיקה.'}
           </div>
         )}
         <div className="space-y-4 max-w-3xl">
-          {blocks.map((b) => {
+          {visibleBlocks.map((b) => {
             // `b.step` is the canonical identity (server returns
             // `step` and a `node` alias of the same object). stepId
             // exists for both real flow nodes and folderRef-derived
@@ -234,6 +274,13 @@ export default function ApprovalDetail() {
               />
             );
           })}
+          {hiddenUntouched > 0 && (
+            <div className="text-[12px] text-gray-500 text-center py-2">
+              {hiddenUntouched === 1
+                ? 'שאלה אחת נוספת בזרימה שעדיין לא נענתה.'
+                : `${hiddenUntouched} שאלות נוספות בזרימה שעדיין לא נענו.`}
+            </div>
+          )}
         </div>
       </div>
     </div>

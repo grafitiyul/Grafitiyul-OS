@@ -249,6 +249,16 @@ export default function GuidePortal() {
             setCorrectionPrompt(null);
             startTask(t, { correctionMode: true });
           }}
+          onSkip={() => {
+            // "המשך ללמידה בכל זאת" — opens the runtime WITHOUT
+            // setting the correction-mode flag, so the user lands on
+            // the natural screen for the attempt's status (waiting /
+            // approved / etc.) and can decide for themselves when to
+            // pick up the corrections via the review-status modal.
+            const t = correctionPrompt.task;
+            setCorrectionPrompt(null);
+            startTask(t, { correctionMode: false });
+          }}
         />
       )}
     </div>
@@ -268,6 +278,7 @@ function CorrectionPrompt({
   starting,
   onCancel,
   onConfirm,
+  onSkip,
 }) {
   return (
     <div
@@ -281,41 +292,56 @@ function CorrectionPrompt({
         className="bg-white w-full sm:max-w-md rounded-t-xl sm:rounded-xl shadow-xl border border-gray-200"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="px-5 pt-5 pb-4">
+        <div className="px-5 pt-4 pb-4">
           <div className="flex items-center gap-2 mb-2">
             <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-red-100 text-red-700 text-base">
               ⚠
             </span>
-            <h2 className="text-base font-semibold text-gray-900">
-              יש תיקונים לבצע
+            <h2 className="text-base font-semibold text-gray-900 flex-1">
+              יש תיקונים ממתינים
             </h2>
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={starting}
+              aria-label="סגור"
+              className="text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded p-1"
+            >
+              <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden>
+                <path
+                  d="M3 3l10 10M13 3L3 13"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
           </div>
           <div className="text-sm text-gray-700 leading-snug mb-2">
-            יש לך{' '}
+            לפני שממשיכים ב{task.title || 'נוהל זה'}, כדאי לתקן את{' '}
             <span className="font-bold text-red-700">{rejectedCount}</span>{' '}
-            {rejectedCount === 1 ? 'תיקון' : 'תיקונים'} לבצע לפני שממשיכים
-            ב{task.title || 'נוהל זה'}.
+            {rejectedCount === 1 ? 'התשובה שנדחתה' : 'התשובות שנדחו'}.
           </div>
           <div className="text-[12px] text-gray-600">
             התיקון יתבצע בתוך הנוהל הרגיל — תוכל לחזור אחורה לקרוא תוכן
-            רלוונטי לפני שתשיב מחדש.
+            רלוונטי, לתקן את התשובה, ולחזור אחר כך למקום שעצרת.
           </div>
         </div>
-        <div className="px-5 py-3 border-t border-gray-200 flex items-center gap-2">
+        <div className="px-5 py-3 border-t border-gray-200 flex flex-col-reverse sm:flex-row sm:items-center gap-2">
           <button
             type="button"
-            onClick={onCancel}
+            onClick={onSkip}
             disabled={starting}
-            className="px-4 py-2 text-sm font-medium border border-gray-300 text-gray-700 bg-white rounded-md hover:bg-gray-50 disabled:opacity-40"
+            className="w-full sm:w-auto px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-md disabled:opacity-40"
           >
-            ביטול
+            המשך ללמידה בכל זאת
           </button>
-          <div className="flex-1" />
+          <div className="hidden sm:block flex-1" />
           <button
             type="button"
             onClick={onConfirm}
             disabled={starting}
-            className="px-5 py-2.5 text-sm font-semibold bg-red-600 hover:bg-red-700 text-white rounded-md inline-flex items-center gap-1.5 disabled:opacity-60"
+            className="w-full sm:w-auto px-5 py-2.5 text-sm font-semibold bg-red-600 hover:bg-red-700 text-white rounded-md inline-flex items-center justify-center gap-1.5 disabled:opacity-60"
           >
             {starting ? 'פותח…' : 'מעבר לתיקונים'}
             <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden>
@@ -621,6 +647,12 @@ function TaskCard({ task, starting, disabled, onOpen }) {
   const isCorrection = bucket === 'correction';
   const rejectionComment = task.metadata?.rejectionComment;
   const rejectedCount = task.metadata?.rejectedCount || 0;
+  // Prominent prefix used by the correction-card to communicate the
+  // count BEFORE the user enters runtime — matches the spec phrase
+  // "X תיקונים נדרשים" so the visual cue lines up with the prompt
+  // they'll see after they tap המשך.
+  const correctionPrefixLabel =
+    rejectedCount === 1 ? 'תיקון אחד נדרש' : `${rejectedCount} תיקונים נדרשים`;
 
   return (
     <button
@@ -652,16 +684,21 @@ function TaskCard({ task, starting, disabled, onOpen }) {
           </div>
         )}
 
-        {/* Correction surface — only on cards that need fixing. We
-            show the most recent admin comment so the guide knows what
-            to address before tapping in. The runtime ResubmitScreen
-            still owns the full per-question flow once they tap. */}
+        {/* Correction surface — only on cards that need fixing.
+            Leads with the spec-mandated "X תיקונים נדרשים" so the
+            count reads at a glance, then the most recent admin
+            comment so the guide arrives at the runtime already
+            knowing what to fix. The runtime correction-detour flow
+            owns the actual per-question editing once they tap. */}
         {isCorrection && (
-          <div className="mt-2 bg-red-50 border border-red-200 rounded-md p-2.5">
-            <div className="text-[11px] font-bold text-red-800 mb-0.5">
-              {rejectedCount > 1
-                ? `${rejectedCount} שאלות נדחו ודורשות תיקון`
-                : 'תשובה נדחתה ודורשת תיקון'}
+          <div className="mt-2 bg-red-50 border border-red-300 rounded-md p-3">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-600 text-white text-[11px] font-bold">
+                !
+              </span>
+              <span className="text-[13px] font-bold text-red-800">
+                {correctionPrefixLabel}
+              </span>
             </div>
             {rejectionComment && (
               <div className="text-[12px] text-red-900 line-clamp-3 whitespace-pre-wrap">
