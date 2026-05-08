@@ -32,8 +32,8 @@ export const SESSION_COOKIE = 'gos_admin_session';
 const DEFAULT_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 const SCRYPT_KEY_LEN = 64;
 const SCRYPT_SALT_LEN = 16;
-const MIN_PASSWORD_LEN = 10;
-const MAX_USERNAME_LEN = 64;
+export const MIN_PASSWORD_LEN = 10;
+export const MAX_USERNAME_LEN = 64;
 
 function getSecret() {
   const s = process.env.SESSION_SECRET;
@@ -59,7 +59,7 @@ function constantTimeEqual(a, b) {
 // Format: `<saltHex>:<derivedKeyHex>`. Verification re-derives a key
 // from the candidate password using the stored salt and compares in
 // constant time.
-function hashPassword(password) {
+export function hashPassword(password) {
   const salt = crypto.randomBytes(SCRYPT_SALT_LEN);
   const derived = crypto.scryptSync(password, salt, SCRYPT_KEY_LEN);
   return `${salt.toString('hex')}:${derived.toString('hex')}`;
@@ -201,7 +201,7 @@ export function requireAdminAuth(req, res, next) {
     });
 }
 
-function validateUsername(raw) {
+export function validateUsername(raw) {
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
   if (trimmed.length < 3) return null;

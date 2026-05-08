@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import AppShell from './shell/AppShell.jsx';
+import Landing from './shell/Landing.jsx';
 import AdminGuard from './admin/auth/AdminGuard.jsx';
 import AdminLogin from './admin/auth/AdminLogin.jsx';
 import ProceduresLayout from './admin/procedures/ProceduresLayout.jsx';
@@ -28,11 +29,15 @@ import PeopleLayout from './admin/people/PeopleLayout.jsx';
 import PeopleList from './admin/people/PeopleList.jsx';
 import PersonProfile from './admin/people/PersonProfile.jsx';
 import TeamsPage from './admin/people/TeamsPage.jsx';
+import AdminUsersPage from './admin/users/AdminUsersPage.jsx';
 
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/admin" replace />} />
+      {/* Root route is "smart" — guides who installed the PWA from
+          their portal page need to land back on /p/:token, not on
+          /admin. See Landing.jsx for the resolution rules. */}
+      <Route path="/" element={<Landing />} />
       {/* Login lives OUTSIDE the AdminGuard so an unauthenticated user
           can actually reach it. The guard wraps every authenticated
           admin route below — its redirect target is /admin/login. */}
@@ -69,6 +74,7 @@ export default function App() {
           <Route path="teams" element={<TeamsPage />} />
           <Route path=":id" element={<PersonProfile />} />
         </Route>
+        <Route path="users" element={<AdminUsersPage />} />
         <Route path="documents" element={<DocumentsLayout />}>
           <Route index element={<DocumentsIndexPage />} />
           <Route path="templates" element={<TemplatesPage />}>

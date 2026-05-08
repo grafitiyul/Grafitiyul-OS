@@ -35,18 +35,29 @@ export default function GuidePortal() {
   // bookmarks don't accidentally re-trigger correction).
   const [correctionPrompt, setCorrectionPrompt] = useState(null);
 
-  // Stash the portal token in sessionStorage so the runtime's home
-  // button can recover it when the user lands on /attempt/:id without
-  // the ?p query param — typical cases: a runtime URL bookmarked from
-  // before this slice deployed, or a manual refresh that drops the
-  // query for whatever reason. URL stays the primary source of truth
-  // for bookmarkability; sessionStorage is the tab-scoped fallback.
+  // Stash the portal token in BOTH session and local storage:
+  //
+  //   * sessionStorage — tab-scoped fallback for the runtime's home
+  //     button when the user lands on /attempt/:id without the ?p
+  //     query param.
+  //   * localStorage   — persistent across PWA relaunches. The
+  //     installed PWA opens to start_url=`/`, and our root Landing
+  //     component reads localStorage.gos.portalToken to send guides
+  //     back to /p/:token instead of bouncing them to admin login.
+  //     sessionStorage is wiped between PWA launches (each launch is
+  //     effectively a fresh tab), so sessionStorage alone wouldn't
+  //     survive a re-open.
   useEffect(() => {
     if (!token) return;
     try {
       sessionStorage.setItem('gos.portalToken', token);
     } catch {
-      /* private mode / disabled storage — ignore, URL still works */
+      /* ignore */
+    }
+    try {
+      localStorage.setItem('gos.portalToken', token);
+    } catch {
+      /* ignore */
     }
   }, [token]);
 

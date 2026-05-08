@@ -998,13 +998,27 @@ function useStepScrollGate(scrollRef, stepId, completedStepsRef) {
   return { isScrollable, hasReachedBottom };
 }
 
-// Resolve the guide portal token from the URL or the sessionStorage
-// stash set by GuidePortal. See the call site for rationale.
+// Resolve the guide portal token from any of three sources, in
+// priority order:
+//   1. URL `?p=<token>` — RESTful, bookmark-safe, the canonical
+//      hand-off from the portal.
+//   2. sessionStorage    — tab-scoped fallback for refreshes that
+//      dropped the query string.
+//   3. localStorage      — persistent across PWA relaunches; this is
+//      what the root Landing route reads, but the runtime checks it
+//      too so a guide who deep-links into /attempt/:id from an
+//      installed PWA still gets the home button + portal context.
 function readPortalToken(searchParams) {
   const fromUrl = searchParams.get('p');
   if (fromUrl) return fromUrl;
   try {
-    return sessionStorage.getItem('gos.portalToken') || null;
+    const fromSession = sessionStorage.getItem('gos.portalToken');
+    if (fromSession) return fromSession;
+  } catch {
+    /* ignore */
+  }
+  try {
+    return localStorage.getItem('gos.portalToken') || null;
   } catch {
     return null;
   }

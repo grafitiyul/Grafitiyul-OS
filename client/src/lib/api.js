@@ -208,6 +208,24 @@ export const api = {
     // never started it.
     remove: (id) => request(`/api/attempts/${id}`, { method: 'DELETE' }),
   },
+  adminUsers: {
+    list: () => request('/api/admin-users'),
+    create: (data) =>
+      request('/api/admin-users', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    changePassword: (id, data) =>
+      request(`/api/admin-users/${id}/password`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    setActive: (id, isActive) =>
+      request(`/api/admin-users/${id}/active`, {
+        method: 'PUT',
+        body: JSON.stringify({ isActive }),
+      }),
+  },
   reviews: {
     list: (filters) => request(`/api/reviews/attempts${qs(filters)}`),
     get: (id) => request(`/api/reviews/attempts/${id}`),

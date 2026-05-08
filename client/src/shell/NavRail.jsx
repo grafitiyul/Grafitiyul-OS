@@ -5,6 +5,7 @@ const MODULES = [
   { key: 'procedures', to: '/admin/procedures', label: 'נהלים', glyph: '☰' },
   { key: 'people', to: '/admin/people', label: 'אנשים', glyph: '👥' },
   { key: 'documents', to: '/admin/documents', label: 'מסמכים', glyph: '📄' },
+  { key: 'users', to: '/admin/users', label: 'משתמשים', glyph: '🔐' },
 ];
 
 export default function NavRail() {
