@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../lib/api.js';
+import { normalizeRichHtml } from '../editor/htmlNormalize.js';
 import '../editor/editor.css';
 
 // Full-page learner-style preview for a bank item. Opened in a new tab from
@@ -67,7 +68,9 @@ export default function ItemPreviewPage({ kind }) {
                 // text-lg + leading-relaxed used to be applied here and
                 // silently diverged the preview from the editor.
                 className="gos-prose text-gray-800"
-                dangerouslySetInnerHTML={{ __html: item.body || '' }}
+                dangerouslySetInnerHTML={{
+                  __html: normalizeRichHtml(item.body || ''),
+                }}
               />
             )}
             {kind === 'question' && (
@@ -85,7 +88,9 @@ function QuestionBody({ item }) {
     <>
       <div
         className="gos-prose text-gray-800 mb-6"
-        dangerouslySetInnerHTML={{ __html: item.questionText || '' }}
+        dangerouslySetInnerHTML={{
+          __html: normalizeRichHtml(item.questionText || ''),
+        }}
       />
       {Array.isArray(item.options) && item.options.length > 0 && (
         <div className="space-y-3 mb-3">

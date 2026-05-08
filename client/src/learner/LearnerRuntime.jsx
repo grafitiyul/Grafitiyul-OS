@@ -3,6 +3,7 @@ import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { validateAnswer } from '../lib/questionRequirement.js';
 import { titleToPlain } from '../editor/TitleEditor.jsx';
+import { normalizeRichHtml } from '../editor/htmlNormalize.js';
 
 // Entry point at /flow/:id.
 //   - ?preview=1 → local in-memory run that never hits /attempts (admin preview).
@@ -1340,13 +1341,17 @@ function ItemScreen({
             {isContent ? (
               <div
                 className="gos-prose is-runtime text-gray-800"
-                dangerouslySetInnerHTML={{ __html: ci?.body || '' }}
+                dangerouslySetInnerHTML={{
+                  __html: normalizeRichHtml(ci?.body || ''),
+                }}
               />
             ) : (
               <>
                 <div
                   className="gos-prose is-runtime text-gray-700 mb-5"
-                  dangerouslySetInnerHTML={{ __html: qi?.questionText || '' }}
+                  dangerouslySetInnerHTML={{
+                    __html: normalizeRichHtml(qi?.questionText || ''),
+                  }}
                 />
 
                 {/* Previous-answer banner. Shown for the rejected step
@@ -2308,7 +2313,7 @@ function ApprovedBrowser({
                   <div
                     className="gos-prose text-sm text-gray-700"
                     dangerouslySetInnerHTML={{
-                      __html: s.contentItem?.body || '',
+                      __html: normalizeRichHtml(s.contentItem?.body || ''),
                     }}
                   />
                 </>
@@ -2323,7 +2328,9 @@ function ApprovedBrowser({
                   <div
                     className="gos-prose text-sm text-gray-700 mb-3"
                     dangerouslySetInnerHTML={{
-                      __html: s.questionItem?.questionText || '',
+                      __html: normalizeRichHtml(
+                        s.questionItem?.questionText || '',
+                      ),
                     }}
                   />
                   <div className="bg-gray-50 border border-gray-200 rounded p-3 text-sm">

@@ -3,6 +3,7 @@ import { useNavigate, useParams, useOutletContext } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import { relativeHebrew } from '../../../lib/relativeTime.js';
 import { titleToPlain } from '../../../editor/TitleEditor.jsx';
+import { normalizeRichHtml } from '../../../editor/htmlNormalize.js';
 import Dialog from '../../common/Dialog.jsx';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 
@@ -386,7 +387,9 @@ function QuestionBlock({ block, readOnly, onApprove, onReject }) {
                 </div>
                 <div
                   className="gos-prose text-sm text-gray-700"
-                  dangerouslySetInnerHTML={{ __html: c.contentItem?.body || '' }}
+                  dangerouslySetInnerHTML={{
+                    __html: normalizeRichHtml(c.contentItem?.body || ''),
+                  }}
                 />
               </div>
             ))}
@@ -403,7 +406,9 @@ function QuestionBlock({ block, readOnly, onApprove, onReject }) {
         </h3>
         <div
           className="gos-prose text-sm text-gray-700"
-          dangerouslySetInnerHTML={{ __html: qi?.questionText || '' }}
+          dangerouslySetInnerHTML={{
+            __html: normalizeRichHtml(qi?.questionText || ''),
+          }}
         />
       </div>
 

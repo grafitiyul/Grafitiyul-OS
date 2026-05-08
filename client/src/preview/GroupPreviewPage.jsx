@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../lib/api.js';
+import { normalizeRichHtml } from '../editor/htmlNormalize.js';
 import '../editor/editor.css';
 
 // Full-page preview of a group node — walks descendants in reading order,
@@ -97,7 +98,9 @@ function ItemCard({ node }) {
           // gos-prose owns size + line-height. No overrides here —
           // editor and preview render byte-identical HTML the same way.
           className="gos-prose text-gray-800"
-          dangerouslySetInnerHTML={{ __html: ci?.body || '' }}
+          dangerouslySetInnerHTML={{
+            __html: normalizeRichHtml(ci?.body || ''),
+          }}
         />
       </section>
     );
@@ -112,7 +115,9 @@ function ItemCard({ node }) {
         />
         <div
           className="gos-prose text-gray-700 mb-4"
-          dangerouslySetInnerHTML={{ __html: qi?.questionText || '' }}
+          dangerouslySetInnerHTML={{
+            __html: normalizeRichHtml(qi?.questionText || ''),
+          }}
         />
         {Array.isArray(qi?.options) && qi.options.length > 0 && (
           <div className="space-y-2 mb-2">

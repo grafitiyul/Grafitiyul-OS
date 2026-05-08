@@ -1,5 +1,6 @@
 import { ITEM_KINDS, ITEM_KIND_LABELS } from '../bank/config.js';
 import { REQUIREMENT_LABELS } from '../../../lib/questionRequirement.js';
+import { normalizeRichHtml } from '../../../editor/htmlNormalize.js';
 
 // Read-only preview of a content or question item. Renders the same HTML
 // the learner will see, via the shared .gos-prose surface.
@@ -52,7 +53,7 @@ function ContentView({ item }) {
       {item.body ? (
         <div
           className="gos-prose"
-          dangerouslySetInnerHTML={{ __html: item.body }}
+          dangerouslySetInnerHTML={{ __html: normalizeRichHtml(item.body) }}
         />
       ) : (
         <div className="text-sm text-gray-400 italic">(אין תוכן)</div>
@@ -77,7 +78,9 @@ function QuestionView({ item }) {
       {item.questionText ? (
         <div
           className="gos-prose mb-5"
-          dangerouslySetInnerHTML={{ __html: item.questionText }}
+          dangerouslySetInnerHTML={{
+            __html: normalizeRichHtml(item.questionText),
+          }}
         />
       ) : (
         <div className="text-sm text-gray-400 italic mb-5">(אין נוסח שאלה)</div>
