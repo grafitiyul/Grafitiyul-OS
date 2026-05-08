@@ -69,29 +69,11 @@ export default function InstallGuidePage() {
     }
   }, [token]);
 
-  // Rewrite the manifest link to per-token URL while THIS page is
-  // mounted. Android Chrome's install captures the link the moment
-  // the install prompt resolves; the per-token start_url then
-  // becomes the launch URL. iOS doesn't always honor the manifest,
-  // but doesn't matter — the URL of THIS page (which IS path-based)
-  // is what iOS captures.
-  useEffect(() => {
-    if (!token) return undefined;
-    const link = document.querySelector('link[rel="manifest"]');
-    if (!link) return undefined;
-    const original = link.getAttribute('href') || '/manifest.webmanifest';
-    link.setAttribute(
-      'href',
-      `/manifest.webmanifest?p=${encodeURIComponent(token)}`,
-    );
-    return () => {
-      try {
-        link.setAttribute('href', original);
-      } catch {
-        /* ignore */
-      }
-    };
-  }, [token]);
+  // (Manifest link is now rewritten server-side in the SPA fallback
+  // for any /install-guide/:token / /p/:token / /launch/:token URL.
+  // The post-mount JS rewrite that used to live here was ineffective
+  // on iOS — Safari fetches the manifest at HTML parse time and
+  // ignores later href mutations.)
 
   if (!token) {
     return <NoTokenScreen rawToken={tokenRaw} />;

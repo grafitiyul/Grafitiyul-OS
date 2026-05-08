@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -185,10 +186,76 @@ app.use(
   }),
 );
 
-// SPA fallback — serves index.html for any non-API route. Always fresh.
-app.get('*', (_req, res, next) => {
+// ── SPA fallback with token-aware manifest rewrite ─────────────────
+//
+// The audit established that iOS Safari fetches the manifest at HTML
+// parse time and caches it. Any post-mount JS that mutates the
+// <link rel="manifest"> href is ignored at "Add to Home Screen"
+// time. So we MUST serve HTML whose initial manifest link already
+// points at the per-token manifest URL.
+//
+// Strategy:
+//   * Read index.html ONCE at startup into a string template.
+//   * On every SPA request, decide whether the requested path
+//     contains a guide token (matches /p/:token, /install-guide/:token,
+//     or /launch/:token).
+//   * If yes, replace the <link rel="manifest" ...> tag with one
+//     pointing at /manifest.webmanifest?p=<token>. The dynamic
+//     manifest endpoint then returns start_url=/launch/<token> and
+//     iOS captures that correctly, regardless of any JS that runs
+//     later.
+//   * If no, serve the unmodified HTML.
+//
+// The replacement is done with a flexible regex so attribute order /
+// quoting changes from Vite don't silently break the rewrite. The
+// regex matches the FULL `<link ... rel="manifest" ...>` tag.
+
+const indexHtmlPath = path.join(clientDist, 'index.html');
+let indexHtmlTemplate = '';
+try {
+  indexHtmlTemplate = fs.readFileSync(indexHtmlPath, 'utf-8');
+} catch (e) {
+  // Build artefact missing at startup is a deploy problem — log
+  // loudly. Requests will fall through to the original sendFile path
+  // below as a last-ditch attempt.
+  console.warn('[spa] could not preload index.html', e?.message);
+}
+
+const TOKEN_PATH_RE =
+  /^\/(?:p|install-guide|launch)\/([A-Za-z0-9_-]+)\/?$/;
+const MANIFEST_LINK_RE =
+  /<link\b[^>]*\brel\s*=\s*["']manifest["'][^>]*>/i;
+
+function htmlForRequest(reqPath) {
+  if (!indexHtmlTemplate) return null;
+  const m = reqPath.match(TOKEN_PATH_RE);
+  if (!m) return indexHtmlTemplate;
+  const token = m[1];
+  // Build the replacement tag from scratch so we don't carry over
+  // any unrelated attributes that might be in the original link.
+  const replacement = `<link rel="manifest" href="/manifest.webmanifest?p=${encodeURIComponent(
+    token,
+  )}" />`;
+  if (MANIFEST_LINK_RE.test(indexHtmlTemplate)) {
+    return indexHtmlTemplate.replace(MANIFEST_LINK_RE, replacement);
+  }
+  // Defensive: if the regex didn't match (unlikely but possible if
+  // the template format changes), inject a manifest link in <head>.
+  return indexHtmlTemplate.replace(
+    /<head>/i,
+    `<head>\n    ${replacement}`,
+  );
+}
+
+app.get('*', (req, res, next) => {
   res.set('Cache-Control', 'no-store');
-  res.sendFile(path.join(clientDist, 'index.html'), (err) => {
+  const html = htmlForRequest(req.path);
+  if (html) {
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    return res.send(html);
+  }
+  // Last-ditch fallback if the template wasn't loaded.
+  res.sendFile(indexHtmlPath, (err) => {
     if (err) next();
   });
 });

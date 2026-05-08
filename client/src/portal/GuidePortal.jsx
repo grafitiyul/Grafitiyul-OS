@@ -62,36 +62,10 @@ export default function GuidePortal() {
     }
   }, [token]);
 
-  // Rewrite the document's <link rel="manifest"> href to a per-token
-  // manifest URL while this page is mounted. When the user installs
-  // the PWA from here ("Add to Home Screen", or the browser's install
-  // prompt), the browser fetches the URL referenced by THIS link at
-  // that moment — so the captured manifest carries
-  // start_url=/launch?p=<token>. After installation, the icon launch
-  // always opens /launch?p=<token>, and the Landing component
-  // immediately routes the user back into their portal regardless of
-  // PWA storage isolation.
-  //
-  // Cleanup restores the original href on unmount so that admins
-  // navigating away from this guide page don't accidentally keep
-  // capturing this token in a future install attempt.
-  useEffect(() => {
-    if (!token) return undefined;
-    const link = document.querySelector('link[rel="manifest"]');
-    if (!link) return undefined;
-    const original = link.getAttribute('href') || '/manifest.webmanifest';
-    link.setAttribute(
-      'href',
-      `/manifest.webmanifest?p=${encodeURIComponent(token)}`,
-    );
-    return () => {
-      try {
-        link.setAttribute('href', original);
-      } catch {
-        /* ignore — page is tearing down */
-      }
-    };
-  }, [token]);
+  // (Manifest link is now rewritten server-side in the SPA fallback —
+  // see server/src/index.js. The earlier post-mount JS rewrite was
+  // ineffective on iOS, which fetches the manifest at HTML parse time
+  // and ignores subsequent href mutations.)
 
   // Two load modes:
   //   loud (default) — used on mount and explicit retry; toggles the
@@ -267,7 +241,7 @@ export default function GuidePortal() {
       dir="rtl"
       data-page="guide-portal"
     >
-      <Header displayName={person?.displayName} token={token} />
+      <Header displayName={person?.displayName} />
       <main className="max-w-2xl mx-auto px-3 sm:px-6 py-4 sm:py-6 pb-12">
         {startError && (
           <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">
@@ -599,17 +573,7 @@ function Sections({ tasks, startingId, onOpen }) {
   );
 }
 
-function Header({ displayName, token }) {
-  // Hide the install affordance once the page is already running in
-  // a standalone PWA window — re-installing from inside a PWA isn't a
-  // real use case and the button just adds visual noise. We compute
-  // this once on first paint; the value can't change during the
-  // session.
-  const isStandalone =
-    typeof window !== 'undefined' &&
-    ((typeof window.matchMedia === 'function' &&
-      window.matchMedia('(display-mode: standalone)').matches) ||
-      window.navigator?.standalone === true);
+function Header({ displayName }) {
   return (
     <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
       <div className="max-w-2xl mx-auto px-4 py-3 sm:py-4 flex items-center gap-3">
@@ -624,30 +588,6 @@ function Header({ displayName, token }) {
             {displayName || 'אורח'}
           </div>
         </div>
-        {!isStandalone && token && (
-          <a
-            href={`/install-guide/${encodeURIComponent(token)}`}
-            className="shrink-0 inline-flex items-center gap-1 text-[12px] font-medium border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md px-2.5 py-1.5"
-            aria-label="התקן את האפליקציה"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width="14"
-              height="14"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden
-            >
-              <path d="M12 3v12" />
-              <path d="m7 10 5 5 5-5" />
-              <path d="M5 21h14" />
-            </svg>
-            <span>התקן אפליקציה</span>
-          </a>
-        )}
       </div>
     </header>
   );
