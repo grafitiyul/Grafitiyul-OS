@@ -28,6 +28,21 @@ export default function GuidePortal() {
   const [startingId, setStartingId] = useState(null);
   const [startError, setStartError] = useState(null);
 
+  // Stash the portal token in sessionStorage so the runtime's home
+  // button can recover it when the user lands on /attempt/:id without
+  // the ?p query param — typical cases: a runtime URL bookmarked from
+  // before this slice deployed, or a manual refresh that drops the
+  // query for whatever reason. URL stays the primary source of truth
+  // for bookmarkability; sessionStorage is the tab-scoped fallback.
+  useEffect(() => {
+    if (!token) return;
+    try {
+      sessionStorage.setItem('gos.portalToken', token);
+    } catch {
+      /* private mode / disabled storage — ignore, URL still works */
+    }
+  }, [token]);
+
   const load = useCallback(async () => {
     setState({ phase: 'loading' });
     try {

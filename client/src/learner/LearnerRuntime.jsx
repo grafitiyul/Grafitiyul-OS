@@ -164,9 +164,17 @@ export function AttemptRuntime() {
   const { attemptId } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  // Token threaded through from /p/:token → /attempt/:id?p=<token>.
-  // Used to render a stable home button in the header.
-  const portalToken = searchParams.get('p') || null;
+  // Token resolution for the runtime's home button:
+  //   1. URL `?p=<token>` (RESTful, bookmark-safe — the GuidePortal
+  //      always navigates with this query param).
+  //   2. sessionStorage fallback — the GuidePortal stashes the token
+  //      there on mount, so a user who lands on /attempt/:id WITHOUT
+  //      the query (refresh, pre-slice-deploy bookmark) still gets
+  //      the home button as long as they came in via the portal in
+  //      this tab.
+  //   3. Else null — deep-linked attempt with no portal context. The
+  //      home button hides itself when href is null.
+  const portalToken = readPortalToken(searchParams);
 
   const [attempt, setAttempt] = useState(null);
   const [loadErr, setLoadErr] = useState(null);
@@ -411,6 +419,18 @@ export function AttemptRuntime() {
 }
 
 // ---------- shared helpers ----------
+
+// Resolve the guide portal token from the URL or the sessionStorage
+// stash set by GuidePortal. See the call site for rationale.
+function readPortalToken(searchParams) {
+  const fromUrl = searchParams.get('p');
+  if (fromUrl) return fromUrl;
+  try {
+    return sessionStorage.getItem('gos.portalToken') || null;
+  } catch {
+    return null;
+  }
+}
 
 // Latest FlowAnswer per step for a given attempt's answer rows. Keyed
 // by stepId so folderRef-expanded answers (which have null flowNodeId)
