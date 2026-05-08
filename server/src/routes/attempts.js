@@ -319,6 +319,48 @@ router.post(
 );
 
 // ─────────────────────────────────────────────────────────────────
+// POST /:id/back — move the cursor back one step in the expansion.
+// If the cursor is past the end (currentStepId=null because the user
+// navigated past the last step), back lands on the LAST step.
+// At the very first step, no-op.
+// ─────────────────────────────────────────────────────────────────
+router.post(
+  '/:id/back',
+  handle(async (req, res) => {
+    const attempt = await prisma.attempt.findUnique({
+      where: { id: req.params.id },
+      include: { flow: { include: { nodes: true } } },
+    });
+    if (!attempt) return res.status(404).json({ error: 'attempt not found' });
+    if (attempt.status !== 'in_progress' && attempt.status !== 'submitted') {
+      return res.status(400).json({ error: `cannot navigate from ${attempt.status}` });
+    }
+    await ensureExpansion(attempt);
+    const steps = stepsFor(attempt);
+    if (steps.length === 0) return res.json(attempt);
+
+    const cursor = attempt.currentStepId || attempt.currentNodeId;
+    let prev;
+    if (!cursor) {
+      // Past end (e.g. on SubmitScreen). Back goes to the last step.
+      prev = steps[steps.length - 1];
+    } else {
+      const idx = steps.findIndex((s) => s.stepId === cursor);
+      if (idx <= 0) return res.json(attempt); // at first step, no-op
+      prev = steps[idx - 1];
+    }
+    const updated = await prisma.attempt.update({
+      where: { id: attempt.id },
+      data: {
+        currentStepId: prev.stepId,
+        currentNodeId: prev.flowNodeId || null,
+      },
+    });
+    res.json(updated);
+  }),
+);
+
+// ─────────────────────────────────────────────────────────────────
 // POST /:id/submit
 // ─────────────────────────────────────────────────────────────────
 router.post(

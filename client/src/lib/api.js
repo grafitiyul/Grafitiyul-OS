@@ -199,6 +199,7 @@ export const api = {
     answer: (id, payload) =>
       request(`/api/attempts/${id}/answer`, { method: 'POST', body: JSON.stringify(payload) }),
     advance: (id) => request(`/api/attempts/${id}/advance`, { method: 'POST' }),
+    back: (id) => request(`/api/attempts/${id}/back`, { method: 'POST' }),
     submit: (id) => request(`/api/attempts/${id}/submit`, { method: 'POST' }),
     outstanding: (id) => request(`/api/attempts/${id}/outstanding`),
     listForFlow: (flowId) => request(`/api/attempts/flow/${flowId}`),

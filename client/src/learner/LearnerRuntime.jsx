@@ -130,6 +130,13 @@ export function FlowEntry() {
           }
           setPreviewIdx(previewIdx + 1);
         }}
+        onPrev={previewIdx > 0 ? () => setPreviewIdx(previewIdx - 1) : null}
+        position={{
+          index: previewIdx,
+          total: previewSteps.length,
+          isFirst: previewIdx === 0,
+          isLast: previewIdx === previewSteps.length - 1,
+        }}
       />
     );
   }
@@ -212,6 +219,12 @@ export function AttemptRuntime() {
     await loadAttempt();
   }
 
+  async function handlePrev() {
+    if (!attempt || !steps.length) return;
+    await api.attempts.back(attempt.id);
+    await loadAttempt();
+  }
+
   if (loadErr) {
     return (
       <Screen>
@@ -262,17 +275,18 @@ export function AttemptRuntime() {
   }
 
   // --- status: in_progress ---
-  const currentStep =
-    steps.find((s) => s.stepId === currentStepId) || null;
+  const currentStepIndex = steps.findIndex((s) => s.stepId === currentStepId);
+  const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : null;
 
   if (!currentStep) {
-    // End of linear sequence → submit screen.
+    // End of linear sequence → submit screen. Allow stepping back.
     return (
       <SubmitScreen
         attempt={attempt}
         isMobile={isMobile}
         steps={steps}
         onSubmitted={loadAttempt}
+        onPrev={steps.length > 0 ? handlePrev : null}
       />
     );
   }
@@ -283,6 +297,13 @@ export function AttemptRuntime() {
       isMobile={isMobile}
       existingAnswer={latestAnswerByStep(attempt.answers || []).get(currentStep.stepId)}
       onNext={handleNext}
+      onPrev={currentStepIndex > 0 ? handlePrev : null}
+      position={{
+        index: currentStepIndex,
+        total: steps.length,
+        isFirst: currentStepIndex === 0,
+        isLast: currentStepIndex === steps.length - 1,
+      }}
     />
   );
 }
@@ -314,7 +335,7 @@ function Screen({ children, preview }) {
 
 function PreviewBanner() {
   return (
-    <div className="fixed top-0 inset-x-0 bg-amber-100 text-amber-900 text-xs text-center py-1 z-50">
+    <div className="shrink-0 bg-amber-100 text-amber-900 text-xs text-center py-1">
       תצוגה מקדימה — הנתונים לא נשמרים
     </div>
   );
@@ -358,7 +379,15 @@ function NameGate({ isMobile, flow, name, setName, busy, error, onStart }) {
   );
 }
 
-function ItemScreen({ node, isMobile, isPreview, existingAnswer, onNext }) {
+function ItemScreen({
+  node,
+  isMobile,
+  isPreview,
+  existingAnswer,
+  onNext,
+  onPrev,
+  position,
+}) {
   const [openText, setOpenText] = useState(existingAnswer?.openText || '');
   const [selected, setSelected] = useState(
     existingAnswer?.answerChoice || '',
@@ -367,10 +396,9 @@ function ItemScreen({ node, isMobile, isPreview, existingAnswer, onNext }) {
   useEffect(() => {
     setOpenText(existingAnswer?.openText || '');
     setSelected(existingAnswer?.answerChoice || '');
-    // ItemScreen accepts both `step` and legacy `node` shapes; the
-    // server-hydrated step always has `stepId`, the legacy preview
-    // path used `id`.
-  }, [node.stepId || node.id]);
+    // Re-seed when the step changes so going back to a previously-
+    // answered question shows the saved answer pre-filled.
+  }, [node.stepId || node.id, existingAnswer]);
 
   const isContent = node.kind === 'content';
   const qi = node.questionItem;
@@ -417,114 +445,98 @@ function ItemScreen({ node, isMobile, isPreview, existingAnswer, onNext }) {
     onNext(payload);
   }
 
-  const Shell = isMobile ? MobileShell : DesktopShell;
-
   return (
-    <Shell preview={isPreview}>
-      {isContent ? (
-        <>
-          <h2
-            className={`font-semibold ${
-              isMobile ? 'text-xl mb-3' : 'text-3xl mb-4'
-            }`}
-          >
-            {ci?.title || '(תוכן נמחק)'}
-          </h2>
+    <RuntimeShell
+      isMobile={isMobile}
+      preview={isPreview}
+      header={<RuntimeHeader position={position} kind={node.kind} />}
+      footer={
+        <NavFooter
+          onPrev={onPrev}
+          onNext={submit}
+          canPrev={!!onPrev}
+          canNext={canSubmit}
+          nextLabel="הבא"
+        />
+      }
+    >
+      <article>
+        <h1
+          className={`font-bold text-gray-900 mb-3 leading-tight ${
+            isMobile ? 'text-2xl' : 'text-3xl'
+          }`}
+        >
+          {isContent
+            ? ci?.title || '(תוכן נמחק)'
+            : qi?.title || '(שאלה נמחקה)'}
+        </h1>
+
+        {isContent ? (
           <div
-            className={`gos-prose text-gray-800 ${
-              isMobile ? 'text-base' : 'text-lg leading-relaxed mb-8'
-            }`}
+            className="gos-prose is-runtime text-gray-800"
             dangerouslySetInnerHTML={{ __html: ci?.body || '' }}
           />
-        </>
-      ) : (
-        <>
-          <h2
-            className={`font-semibold ${
-              isMobile ? 'text-xl mb-2' : 'text-3xl mb-3'
-            }`}
-          >
-            {qi?.title || '(שאלה נמחקה)'}
-          </h2>
-          <div
-            className={`gos-prose text-gray-700 ${
-              isMobile ? 'text-base mb-4' : 'text-lg mb-6'
-            }`}
-            dangerouslySetInnerHTML={{ __html: qi?.questionText || '' }}
-          />
-          {hasChoices && (
-            <div className={isMobile ? 'space-y-2 mb-4' : 'space-y-3 mb-6'}>
-              {qi.options.map((opt, i) => (
-                <label
-                  key={i}
-                  className={`block border rounded-lg cursor-pointer ${
-                    selected === opt
-                      ? 'border-blue-600 bg-blue-50'
-                      : 'hover:bg-gray-50'
-                  } ${isMobile ? 'px-4 py-3' : 'px-5 py-4 text-lg'}`}
-                >
-                  <input
-                    type="radio"
-                    name="opt"
-                    value={opt}
-                    checked={selected === opt}
-                    onChange={(e) => setSelected(e.target.value)}
-                    className={isMobile ? 'mr-2' : 'mr-3'}
-                  />
-                  {opt}
-                </label>
-              ))}
-              {selected && (
-                <button
-                  type="button"
-                  onClick={() => setSelected('')}
-                  className="text-[12px] text-gray-500 hover:text-gray-800"
-                >
-                  נקה בחירה
-                </button>
-              )}
-            </div>
-          )}
-          {showText && (
-            <textarea
-              className={`w-full border rounded px-3 py-3 ${
-                isMobile ? 'h-40 text-base' : 'h-56 text-lg mb-6 px-4 py-4'
-              }`}
-              value={openText}
-              onChange={(e) => setOpenText(e.target.value)}
-              placeholder={
-                hasChoices ? 'הערה נוספת (אופציונלי)' : 'התשובה שלך…'
-              }
+        ) : (
+          <>
+            <div
+              className="gos-prose is-runtime text-gray-700 mb-5"
+              dangerouslySetInnerHTML={{ __html: qi?.questionText || '' }}
             />
-          )}
-        </>
-      )}
-
-      {isMobile ? (
-        <>
-          <div className="flex-1" />
-          <button
-            className="w-full bg-blue-600 text-white rounded px-4 py-4 text-lg font-medium disabled:opacity-40"
-            disabled={!canSubmit}
-            onClick={submit}
-          >
-            {isContent ? 'הבא' : 'שלח'}
-          </button>
-        </>
-      ) : (
-        <button
-          className="bg-blue-600 text-white rounded px-6 py-3 text-base font-medium disabled:opacity-40"
-          disabled={!canSubmit}
-          onClick={submit}
-        >
-          {isContent ? 'הבא ←' : 'שלח ←'}
-        </button>
-      )}
-    </Shell>
+            {hasChoices && (
+              <div className="space-y-2 mb-5">
+                {qi.options.map((opt, i) => (
+                  <label
+                    key={i}
+                    className={`block border-2 rounded-lg cursor-pointer transition px-4 py-3 ${
+                      selected === opt
+                        ? 'border-blue-600 bg-blue-50 ring-1 ring-blue-200'
+                        : 'border-gray-200 hover:border-gray-300 bg-white'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="opt"
+                      value={opt}
+                      checked={selected === opt}
+                      onChange={(e) => setSelected(e.target.value)}
+                      className="me-2"
+                    />
+                    <span className={isMobile ? 'text-base' : 'text-lg'}>
+                      {opt}
+                    </span>
+                  </label>
+                ))}
+                {selected && (
+                  <button
+                    type="button"
+                    onClick={() => setSelected('')}
+                    className="text-[12px] text-gray-500 hover:text-gray-800"
+                  >
+                    נקה בחירה
+                  </button>
+                )}
+              </div>
+            )}
+            {showText && (
+              <textarea
+                className={`w-full border border-gray-300 rounded-md px-3 py-3 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 ${
+                  isMobile ? 'h-32 text-base' : 'h-44 text-lg px-4 py-4'
+                }`}
+                value={openText}
+                onChange={(e) => setOpenText(e.target.value)}
+                placeholder={
+                  hasChoices ? 'הערה נוספת (אופציונלי)' : 'התשובה שלך…'
+                }
+              />
+            )}
+          </>
+        )}
+      </article>
+    </RuntimeShell>
   );
 }
 
-function SubmitScreen({ attempt, isMobile, steps, onSubmitted }) {
+function SubmitScreen({ attempt, isMobile, steps, onSubmitted, onPrev }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const questions = steps.filter((s) => s.kind === 'question');
@@ -544,33 +556,52 @@ function SubmitScreen({ attempt, isMobile, steps, onSubmitted }) {
     }
   }
 
-  const Shell = isMobile ? MobileShell : DesktopShell;
   return (
-    <Shell>
-      <h2 className={`font-semibold ${isMobile ? 'text-2xl mb-3' : 'text-3xl mb-4'}`}>
-        סיימת את כל הפריטים
-      </h2>
-      <p className="text-gray-700 mb-6">ניתן לשלוח את התשובות לאישור.</p>
-      {unanswered.length > 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded p-3 mb-4 text-sm">
-          <div className="font-medium mb-1">שים לב</div>
-          יש {unanswered.length} שאלות ללא תשובה. חזור ומלא אותן לפני שליחה.
-        </div>
-      )}
-      {err && (
-        <div className="bg-red-50 border border-red-200 text-red-800 rounded p-3 mb-4 text-sm">
-          לא ניתן לשלוח:{' '}
-          {err === 'outstanding_questions' ? 'יש שאלות ללא תשובה' : err}
-        </div>
-      )}
-      <button
-        className="w-full bg-blue-600 text-white rounded px-4 py-3 text-lg font-medium disabled:opacity-40"
-        disabled={busy || unanswered.length > 0}
-        onClick={submit}
-      >
-        {busy ? 'שולח…' : 'שלח לאישור'}
-      </button>
-    </Shell>
+    <RuntimeShell
+      isMobile={isMobile}
+      header={
+        <RuntimeHeader
+          position={{ index: steps.length, total: steps.length, isLast: true }}
+          kind={null}
+          finishedHint
+        />
+      }
+      footer={
+        <NavFooter
+          onPrev={onPrev}
+          canPrev={!!onPrev}
+          onNext={submit}
+          canNext={!busy && unanswered.length === 0}
+          nextLabel={busy ? 'שולח…' : 'שלח לאישור'}
+        />
+      }
+    >
+      <div>
+        <h1
+          className={`font-bold text-gray-900 mb-3 leading-tight ${
+            isMobile ? 'text-2xl' : 'text-3xl'
+          }`}
+        >
+          סיימת את כל הפריטים
+        </h1>
+        <p className="text-gray-700 mb-5">
+          לחיצה על "שלח לאישור" תעביר את התשובות לבדיקה.
+        </p>
+        {unanswered.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded p-3 mb-4 text-sm">
+            <div className="font-medium mb-1">שים לב</div>
+            יש {unanswered.length} שאלות ללא תשובה. חזרו ומלאו אותן לפני
+            השליחה.
+          </div>
+        )}
+        {err && (
+          <div className="bg-red-50 border border-red-200 text-red-800 rounded p-3 mb-4 text-sm">
+            לא ניתן לשלוח:{' '}
+            {err === 'outstanding_questions' ? 'יש שאלות ללא תשובה' : err}
+          </div>
+        )}
+      </div>
+    </RuntimeShell>
   );
 }
 
@@ -800,26 +831,125 @@ function OutstandingBlock({ block, draft, onChange }) {
   );
 }
 
-function DesktopShell({ children, preview }) {
+// ── RuntimeShell ──────────────────────────────────────────────────
+//
+// Three-zone fixed-height layout used by every active runtime screen:
+//
+//     ┌ header ┐  ← shrink-0 (kind badge + step counter + progress bar)
+//     ├ scroll ┤  ← flex-1 + overflow-y-auto
+//     └ footer ┘  ← shrink-0 (prev / next nav, always in viewport)
+//
+// `100dvh` keeps the footer pinned above the iOS Safari toolbar even
+// as the URL bar shows/hides. `min-height: 100vh` is the fallback for
+// browsers that don't support dvh — slightly worse on iOS but never
+// broken.
+function RuntimeShell({ header, footer, children, preview, isMobile }) {
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-8">
+    <div
+      dir="rtl"
+      className="bg-gray-50 flex flex-col"
+      style={{ height: '100dvh', minHeight: '100vh' }}
+    >
       {preview && <PreviewBanner />}
-      <div className="bg-white rounded-xl shadow-sm max-w-2xl w-full p-12">
-        {children}
+      {header && (
+        <header className="shrink-0 bg-white border-b border-gray-200">
+          {header}
+        </header>
+      )}
+      <main className="flex-1 min-h-0 overflow-y-auto">
+        <div
+          className={`mx-auto w-full ${
+            isMobile
+              ? 'max-w-full px-4 py-5'
+              : 'max-w-2xl px-8 py-8'
+          }`}
+        >
+          {children}
+        </div>
+      </main>
+      {footer && (
+        <footer className="shrink-0 bg-white border-t border-gray-200">
+          {footer}
+        </footer>
+      )}
+    </div>
+  );
+}
+
+// Compact runtime header — kind chip + step counter + thin progress bar.
+function RuntimeHeader({ position, kind, finishedHint }) {
+  const total = position?.total ?? 0;
+  const idx = position?.index ?? 0;
+  const display = finishedHint
+    ? `${total} / ${total}`
+    : total > 0
+    ? `${Math.min(idx + 1, total)} / ${total}`
+    : '';
+  // Progress: percentage of completed-or-current steps.
+  const pct =
+    total > 0
+      ? Math.min(100, Math.round(((finishedHint ? total : idx + 1) / total) * 100))
+      : 0;
+  return (
+    <div className="px-4 sm:px-6 pt-3 pb-2">
+      <div className="flex items-center gap-2 text-[12px] text-gray-600">
+        {kind === 'content' && (
+          <span className="text-[10px] font-semibold uppercase tracking-wide bg-blue-100 text-blue-800 rounded px-1.5 py-0.5">
+            תוכן
+          </span>
+        )}
+        {kind === 'question' && (
+          <span className="text-[10px] font-semibold uppercase tracking-wide bg-amber-100 text-amber-800 rounded px-1.5 py-0.5">
+            שאלה
+          </span>
+        )}
+        {finishedHint && (
+          <span className="text-[10px] font-semibold uppercase tracking-wide bg-green-100 text-green-800 rounded px-1.5 py-0.5">
+            סיום
+          </span>
+        )}
+        <span className="flex-1" />
+        <span className="font-mono text-[12px] tabular-nums">{display}</span>
+      </div>
+      <div className="mt-2 h-1 bg-gray-100 rounded-full overflow-hidden">
+        <div
+          className="h-full bg-blue-600 transition-all"
+          style={{ width: `${pct}%` }}
+          aria-hidden
+        />
       </div>
     </div>
   );
 }
 
-function MobileShell({ children, preview }) {
+// Sticky-footer nav. RTL flex puts the FIRST child on the right (start),
+// LAST child on the left (end) — so הקודם (DOM-first) sits on the
+// RIGHT and הבא (DOM-last) sits on the LEFT, matching Hebrew reading
+// flow. Arrow glyphs match: `›` (right-pointing) on הקודם, `‹` (left-
+// pointing) on הבא.
+function NavFooter({ onPrev, canPrev, onNext, canNext, nextLabel = 'הבא' }) {
   return (
-    <div
-      className={`min-h-screen bg-white flex flex-col px-5 pb-6 ${
-        preview ? 'pt-10' : 'pt-8'
-      }`}
-    >
-      {preview && <PreviewBanner />}
-      {children}
+    <div className="px-4 sm:px-6 py-3 flex items-center gap-2">
+      <button
+        type="button"
+        onClick={onPrev}
+        disabled={!canPrev}
+        aria-label="הקודם"
+        className="px-4 py-2.5 text-sm font-medium border border-gray-300 text-gray-700 bg-white rounded-md hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+      >
+        <span aria-hidden className="text-base leading-none">›</span>
+        <span>הקודם</span>
+      </button>
+      <div className="flex-1" />
+      <button
+        type="button"
+        onClick={onNext}
+        disabled={!canNext}
+        className="px-5 py-3 text-base font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-md disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5 min-w-[120px] justify-center"
+      >
+        <span>{nextLabel}</span>
+        <span aria-hidden className="text-base leading-none">‹</span>
+      </button>
     </div>
   );
 }
