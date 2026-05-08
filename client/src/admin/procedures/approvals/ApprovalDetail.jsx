@@ -58,14 +58,20 @@ export default function ApprovalDetail() {
     load();
   }, [load]);
 
-  async function approve(flowNodeId) {
-    await api.reviews.approveQuestion(id, flowNodeId);
+  // The server review payload returns each block as `{ step, node, ... }`
+  // where `node` is an alias for `step` and carries `stepId` (NOT `id`).
+  // Calling these with `node.id` (undefined) hit /questions/undefined/...
+  // and quietly 404'd, which is why approve/reject "did nothing". The
+  // URL param is still legacy-named `flowNodeId` server-side; the value
+  // we send is a stepId, which the handler treats as such.
+  async function approve(stepId) {
+    await api.reviews.approveQuestion(id, stepId);
     await load();
     await refreshList?.();
   }
 
-  async function reject(flowNodeId, comment) {
-    await api.reviews.rejectQuestion(id, flowNodeId, comment);
+  async function reject(stepId, comment) {
+    await api.reviews.rejectQuestion(id, stepId, comment);
     await load();
     await refreshList?.();
   }
@@ -189,15 +195,22 @@ export default function ApprovalDetail() {
           </div>
         )}
         <div className="space-y-4 max-w-3xl">
-          {blocks.map((b) => (
-            <QuestionBlock
-              key={b.node.id}
-              block={b}
-              readOnly={attempt.status === 'approved'}
-              onApprove={() => approve(b.node.id)}
-              onReject={(comment) => reject(b.node.id, comment)}
-            />
-          ))}
+          {blocks.map((b) => {
+            // `b.step` is the canonical identity (server returns
+            // `step` and a `node` alias of the same object). stepId
+            // exists for both real flow nodes and folderRef-derived
+            // synthetic steps; .id does NOT.
+            const stepId = b.step?.stepId || b.node?.stepId;
+            return (
+              <QuestionBlock
+                key={stepId}
+                block={b}
+                readOnly={attempt.status === 'approved'}
+                onApprove={() => approve(stepId)}
+                onReject={(comment) => reject(stepId, comment)}
+              />
+            );
+          })}
         </div>
       </div>
     </div>
@@ -241,6 +254,10 @@ function QuestionBlock({ block, readOnly, onApprove, onReject }) {
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectComment, setRejectComment] = useState(latest?.adminComment || '');
   const [busy, setBusy] = useState(false);
+  // Inline action error — the previous try/finally swallowed failures
+  // silently, which is exactly how the "approve does nothing" bug went
+  // unseen for a slice. Anything that throws is now surfaced.
+  const [actionError, setActionError] = useState(null);
 
   const status = latest?.status || 'pending';
   const statusCls = {
@@ -249,10 +266,19 @@ function QuestionBlock({ block, readOnly, onApprove, onReject }) {
     rejected: 'bg-red-50 border-red-200',
   }[status];
 
+  function describeError(e) {
+    return (
+      e?.payload?.error || e?.message || 'הפעולה נכשלה'
+    );
+  }
+
   async function doApprove() {
     setBusy(true);
+    setActionError(null);
     try {
       await onApprove();
+    } catch (e) {
+      setActionError(describeError(e));
     } finally {
       setBusy(false);
     }
@@ -261,9 +287,12 @@ function QuestionBlock({ block, readOnly, onApprove, onReject }) {
   async function doReject() {
     if (!rejectComment.trim()) return;
     setBusy(true);
+    setActionError(null);
     try {
       await onReject(rejectComment.trim());
       setRejectOpen(false);
+    } catch (e) {
+      setActionError(describeError(e));
     } finally {
       setBusy(false);
     }
@@ -373,36 +402,54 @@ function QuestionBlock({ block, readOnly, onApprove, onReject }) {
       )}
 
       {!readOnly && latest && (
-        <div className="px-5 py-3 border-t border-gray-100 bg-white flex items-center gap-2">
-          <button
-            disabled={busy || status === 'approved'}
-            onClick={doApprove}
-            className="flex-1 sm:flex-none px-4 py-2 rounded-md text-sm font-medium bg-green-600 text-white hover:bg-green-700 disabled:opacity-40"
-          >
-            אישור
-          </button>
-          <button
-            disabled={busy}
-            onClick={() => {
-              setRejectComment('');
-              setRejectOpen(true);
-            }}
-            className="flex-1 sm:flex-none px-4 py-2 rounded-md text-sm font-medium border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-40"
-          >
-            {status === 'rejected' ? 'עדכן הערת דחייה' : 'דחייה'}
-          </button>
-        </div>
+        <>
+          {actionError && (
+            <div className="px-5 pt-3 bg-white">
+              <div className="bg-red-50 border border-red-200 text-red-800 rounded p-2 text-[13px]">
+                {actionError}
+              </div>
+            </div>
+          )}
+          <div className="px-5 py-3 border-t border-gray-100 bg-white flex items-center gap-2">
+            <button
+              disabled={busy || status === 'approved'}
+              onClick={doApprove}
+              className="flex-1 sm:flex-none px-4 py-2 rounded-md text-sm font-medium bg-green-600 text-white hover:bg-green-700 disabled:opacity-40"
+            >
+              {busy && status !== 'rejected' ? 'מאשר…' : 'אישור'}
+            </button>
+            <button
+              disabled={busy}
+              onClick={() => {
+                setRejectComment(latest?.adminComment || '');
+                setActionError(null);
+                setRejectOpen(true);
+              }}
+              className="flex-1 sm:flex-none px-4 py-2 rounded-md text-sm font-medium border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-40"
+            >
+              {status === 'rejected' ? 'עדכן הערת דחייה' : 'דחייה'}
+            </button>
+          </div>
+        </>
       )}
 
       <Dialog
         open={rejectOpen}
-        onClose={() => setRejectOpen(false)}
+        onClose={() => {
+          if (busy) return;
+          setRejectOpen(false);
+          setActionError(null);
+        }}
         title="דחיית תשובה"
         size="md"
         footer={
           <>
             <button
-              onClick={() => setRejectOpen(false)}
+              onClick={() => {
+                if (busy) return;
+                setRejectOpen(false);
+                setActionError(null);
+              }}
               className="text-sm border border-gray-300 rounded px-3 py-1.5 hover:bg-gray-50"
             >
               ביטול
@@ -428,6 +475,11 @@ function QuestionBlock({ block, readOnly, onApprove, onReject }) {
             className="w-full border border-gray-300 rounded px-3 py-2 h-32 text-sm focus:outline-none focus:ring-2 focus:ring-red-200 focus:border-red-400"
             placeholder="לדוגמה: חסר הסבר לגבי..."
           />
+          {actionError && (
+            <div className="bg-red-50 border border-red-200 text-red-800 rounded p-2 text-[13px]">
+              {actionError}
+            </div>
+          )}
         </div>
       </Dialog>
     </div>
