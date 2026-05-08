@@ -268,6 +268,23 @@ router.get(
     if (r.error === 'disabled') return disabled(res);
     const procedureTasks = await collectProcedureTasks(r.person);
     const tasks = sortTasks(procedureTasks);
+    // Diagnostic — surfaces the bucket classification of every task
+    // for this request. If the portal's review-status sections are
+    // missing on the client, this log is the ground truth: it tells
+    // us exactly which bucket each attempt landed in, so we can
+    // distinguish "no test data exists" from "classification bug"
+    // from "stale deploy" without guessing.
+    console.log('[portal tasks]', {
+      personId: r.person.id,
+      taskCount: tasks.length,
+      buckets: tasks.map((t) => ({
+        id: t.id,
+        bucket: t.bucket,
+        status: t.status,
+        rejectedCount: t.metadata?.rejectedCount || 0,
+        attemptId: t.metadata?.attemptId || null,
+      })),
+    });
     res.json({
       person: {
         displayName: r.person.displayName,

@@ -62,6 +62,25 @@ export default function GuidePortal() {
         throw new Error(`HTTP ${res.status} ${txt}`);
       }
       const data = await res.json();
+      // Diagnostic — easy way to confirm in DevTools whether the
+      // server is returning the new 5-bucket model. If every task
+      // has bucket: 'done' (the old name), the server is stale and
+      // we'll fall through the compatibility map below; if buckets
+      // are correct, any visibility issue is purely client/CSS.
+      try {
+        // eslint-disable-next-line no-console
+        console.log(
+          '[guide portal] tasks',
+          (data?.tasks || []).map((t) => ({
+            id: t.id,
+            bucket: t.bucket,
+            status: t.status,
+            rejectedCount: t.metadata?.rejectedCount || 0,
+          })),
+        );
+      } catch {
+        /* ignore */
+      }
       setState({ phase: 'ready', data });
     } catch (e) {
       setState({ phase: 'error', message: e?.message || 'שגיאה' });
@@ -192,6 +211,37 @@ const SECTIONS = [
   },
 ];
 
+// Legacy-server-compatibility shim. If the server hasn't redeployed
+// yet (e.g., Railway still has the previous build), the response
+// will still carry the old 3-bucket model: `todo`, `available`,
+// `done`. This map upgrades each task in place so the new sectioned
+// UI works regardless of which server is live. Fields used:
+//   - task.bucket    — server's bucket label
+//   - task.status    — coarse status the old model returned
+//   - task.badge     — the old model put rejection/pending hints here
+function resolveBucket(task) {
+  const b = task.bucket;
+  if (
+    b === 'correction' ||
+    b === 'todo' ||
+    b === 'available' ||
+    b === 'pending_review' ||
+    b === 'approved'
+  ) {
+    return b;
+  }
+  // Old server: `done` lumped both pending_review and approved.
+  // Disambiguate via the badge text the old server set.
+  if (b === 'done') {
+    if (task.badge?.label === 'ממתין לאישור') return 'pending_review';
+    return 'approved';
+  }
+  // Old server: `todo` could include needs-correction (warning badge).
+  // We need to lift those out so they show under דורש תיקון.
+  if (b === 'todo' && task.badge?.tone === 'warning') return 'correction';
+  return b || 'todo';
+}
+
 function Sections({ tasks, startingId, onOpen }) {
   const grouped = useMemo(() => {
     const out = {
@@ -202,8 +252,12 @@ function Sections({ tasks, startingId, onOpen }) {
       approved: [],
     };
     for (const t of tasks) {
-      const b = out[t.bucket] ? t.bucket : 'todo';
-      out[b].push(t);
+      const b = resolveBucket(t);
+      // Normalise task.bucket to the resolved value so per-bucket
+      // card styling (border, ring, CTA) matches the section it's
+      // rendered in even when the server returned a legacy bucket.
+      const normalised = t.bucket === b ? t : { ...t, bucket: b };
+      (out[b] || out.todo).push(normalised);
     }
     return out;
   }, [tasks]);
