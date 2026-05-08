@@ -32,6 +32,12 @@ export function FlowEntry() {
   const [previewSteps, setPreviewSteps] = useState(null);
   const [previewIdx, setPreviewIdx] = useState(0);
   const [previewAnswers, setPreviewAnswers] = useState({});
+  // Same per-session completion memory as AttemptRuntime, keyed by
+  // step id. Resets on flow change.
+  const previewCompletedStepsRef = useRef(new Set());
+  useEffect(() => {
+    previewCompletedStepsRef.current = new Set();
+  }, [flowId]);
 
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 640px)');
@@ -122,6 +128,7 @@ export function FlowEntry() {
         isMobile={isMobile}
         isPreview
         existingAnswer={previewAnswers[currentStep.stepId]}
+        completedStepsRef={previewCompletedStepsRef}
         onNext={(answerPayload) => {
           if (answerPayload) {
             setPreviewAnswers({
@@ -164,6 +171,13 @@ export function AttemptRuntime() {
   const { attemptId } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  // Per-attempt session memory of which step ids have been read to
+  // bottom (or are non-scrollable). Survives normal next/back nav
+  // (AttemptRuntime doesn't unmount), resets on attempt change.
+  const completedStepsRef = useRef(new Set());
+  useEffect(() => {
+    completedStepsRef.current = new Set();
+  }, [attemptId]);
   // Token resolution for the runtime's home button:
   //   1. URL `?p=<token>` (RESTful, bookmark-safe — the GuidePortal
   //      always navigates with this query param).
@@ -395,6 +409,7 @@ export function AttemptRuntime() {
         onSubmitted={loadAttempt}
         onPrev={steps.length > 0 ? handlePrev : null}
         homeHref={portalToken ? `/p/${encodeURIComponent(portalToken)}` : null}
+        completedStepsRef={completedStepsRef}
       />
     );
   }
@@ -408,6 +423,7 @@ export function AttemptRuntime() {
       onPrev={currentStepIndex > 0 ? handlePrev : null}
       homeHref={portalToken ? `/p/${encodeURIComponent(portalToken)}` : null}
       navError={navError}
+      completedStepsRef={completedStepsRef}
       position={{
         index: currentStepIndex,
         total: steps.length,
@@ -419,6 +435,92 @@ export function AttemptRuntime() {
 }
 
 // ---------- shared helpers ----------
+
+// ── useStepScrollGate ────────────────────────────────────────────
+//
+// Forces a "read to bottom before continuing" gate on scrollable
+// steps, with per-step session memory so a step the learner has
+// already read once never re-locks on revisit.
+//
+// What it does on every step change (keyed by `stepId`):
+//   1. Scrolls the runtime scroll container to top (auto behavior —
+//      no smooth scroll, the user shouldn't have to wait for an
+//      animation before seeing the new step's start).
+//   2. Seeds `hasReachedBottom` from `completedStepsRef`. If the user
+//      already read this step earlier in the session, they're not
+//      asked to scroll again.
+//   3. Measures whether the new content overflows the container. If
+//      not (short step), auto-marks it complete — short steps never
+//      lock.
+//   4. Listens to scroll events: once `scrollTop + clientHeight`
+//      reaches `scrollHeight - tolerance`, marks complete and stops
+//      caring. The 16px tolerance covers mobile rounding.
+//   5. Subscribes a ResizeObserver to the inner content wrapper so
+//      late image loads (the wrapper grows after first paint) don't
+//      give a false "not scrollable" answer once they finish.
+//
+// The completion memory lives in a ref the parent (AttemptRuntime /
+// FlowEntry) owns — that lets the parent reset it cleanly when the
+// attempt or flow changes, AND keeps the gate stable across normal
+// next/back navigation (which doesn't unmount AttemptRuntime).
+function useStepScrollGate(scrollRef, stepId, completedStepsRef) {
+  const [isScrollable, setIsScrollable] = useState(false);
+  const [hasReachedBottom, setHasReachedBottom] = useState(false);
+
+  useEffect(() => {
+    if (!scrollRef.current || !stepId) return undefined;
+    const el = scrollRef.current;
+
+    // Always reset to top on step change. The shell uses an internal
+    // scroll container (fixed inset-0 page; <main> scrolls), so
+    // window.scrollTo would no-op — we have to address the actual
+    // element.
+    el.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+
+    // Seed from session memory.
+    const already = completedStepsRef.current.has(stepId);
+    setHasReachedBottom(already);
+    setIsScrollable(false);
+
+    function evaluate() {
+      const scrollable = el.scrollHeight > el.clientHeight + 12;
+      setIsScrollable(scrollable);
+      if (!scrollable && !completedStepsRef.current.has(stepId)) {
+        completedStepsRef.current.add(stepId);
+        setHasReachedBottom(true);
+      }
+    }
+    function onScroll() {
+      if (completedStepsRef.current.has(stepId)) return;
+      const atBottom =
+        el.scrollTop + el.clientHeight >= el.scrollHeight - 16;
+      if (atBottom) {
+        completedStepsRef.current.add(stepId);
+        setHasReachedBottom(true);
+      }
+    }
+
+    evaluate();
+    el.addEventListener('scroll', onScroll, { passive: true });
+
+    // Watch for late layout changes (images, embeds, font swaps).
+    // Observing both the container AND its first child catches both
+    // viewport resizes and content-height changes.
+    const ro = new ResizeObserver(evaluate);
+    ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      ro.disconnect();
+    };
+    // scrollRef.current and completedStepsRef are stable refs; only
+    // stepId drives re-running the effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepId]);
+
+  return { isScrollable, hasReachedBottom };
+}
 
 // Resolve the guide portal token from the URL or the sessionStorage
 // stash set by GuidePortal. See the call site for rationale.
@@ -511,10 +613,23 @@ function ItemScreen({
   position,
   homeHref,
   navError,
+  completedStepsRef,
 }) {
   const [openText, setOpenText] = useState(existingAnswer?.openText || '');
   const [selected, setSelected] = useState(
     existingAnswer?.answerChoice || '',
+  );
+  const scrollRef = useRef(null);
+  const stepKey = node.stepId || node.id;
+  // Per-step completion gate — see useStepScrollGate. Falls back to a
+  // local Set when the parent didn't pass a ref (defensive; all real
+  // call sites do pass one).
+  const fallbackCompletedRef = useRef(new Set());
+  const completedRef = completedStepsRef || fallbackCompletedRef;
+  const { isScrollable, hasReachedBottom } = useStepScrollGate(
+    scrollRef,
+    stepKey,
+    completedRef,
   );
 
   useEffect(() => {
@@ -522,7 +637,7 @@ function ItemScreen({
     setSelected(existingAnswer?.answerChoice || '');
     // Re-seed when the step changes so going back to a previously-
     // answered question shows the saved answer pre-filled.
-  }, [node.stepId || node.id, existingAnswer]);
+  }, [stepKey, existingAnswer]);
 
   const isContent = node.kind === 'content';
   const qi = node.questionItem;
@@ -547,7 +662,18 @@ function ItemScreen({
         },
         answer,
       );
-  const canSubmit = validation.ok;
+  const answerOk = validation.ok;
+  // Two independent gates. Scroll-completion blocks until the user has
+  // read the step (or revisited a step that was already read once);
+  // answer validation blocks until a required answer is provided.
+  const scrollOk = !isScrollable || hasReachedBottom;
+  const canSubmit = answerOk && scrollOk;
+  // Hint shown only when scroll is the live blocker — i.e. the user
+  // CAN'T blame the answer field. If both are unmet, the user sees
+  // the answer field's own state plus a disabled button; the
+  // scroll-specific hint stays out of their way until they've
+  // resolved the answer.
+  const showScrollHint = answerOk && isScrollable && !hasReachedBottom;
 
   function submit() {
     if (!canSubmit) return;
@@ -573,7 +699,8 @@ function ItemScreen({
     <RuntimeShell
       isMobile={isMobile}
       preview={isPreview}
-      stepKey={node.stepId || node.id}
+      stepKey={stepKey}
+      scrollRef={scrollRef}
       header={
         <RuntimeHeader
           position={position}
@@ -589,6 +716,7 @@ function ItemScreen({
           canPrev={!!onPrev}
           canNext={canSubmit}
           nextLabel="הבא"
+          scrollHint={showScrollHint}
         />
       }
       banner={navError ? <NavErrorBanner message={navError} /> : null}
@@ -680,12 +808,28 @@ function SubmitScreen({
   onSubmitted,
   onPrev,
   homeHref,
+  completedStepsRef,
 }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const questions = steps.filter((s) => s.kind === 'question');
   const latest = latestAnswerByStep(attempt.answers || []);
   const unanswered = questions.filter((q) => !latest.get(q.stepId));
+
+  const scrollRef = useRef(null);
+  // Treat the submit screen as its own "step" for gating purposes.
+  // Keyed by a synthetic id that doesn't collide with any real
+  // stepId. Short submit screens auto-complete; long ones (lots of
+  // unanswered warnings) require reading.
+  const fallbackCompletedRef = useRef(new Set());
+  const completedRef = completedStepsRef || fallbackCompletedRef;
+  const { isScrollable, hasReachedBottom } = useStepScrollGate(
+    scrollRef,
+    '__submit__',
+    completedRef,
+  );
+  const scrollOk = !isScrollable || hasReachedBottom;
+  const showScrollHint = isScrollable && !hasReachedBottom;
 
   async function submit() {
     setErr(null);
@@ -704,6 +848,7 @@ function SubmitScreen({
     <RuntimeShell
       isMobile={isMobile}
       stepKey="submit"
+      scrollRef={scrollRef}
       header={
         <RuntimeHeader
           position={{ index: steps.length, total: steps.length, isLast: true }}
@@ -718,8 +863,9 @@ function SubmitScreen({
           onPrev={onPrev}
           canPrev={!!onPrev}
           onNext={submit}
-          canNext={!busy && unanswered.length === 0}
+          canNext={!busy && unanswered.length === 0 && scrollOk}
           nextLabel={busy ? 'שולח…' : 'שלח לאישור'}
+          scrollHint={showScrollHint}
         />
       }
     >
@@ -1001,9 +1147,15 @@ function RuntimeShell({
   isMobile,
   // Changes whenever the active step changes; used as React `key` on
   // the inner content wrapper so the wrapper re-mounts and the CSS
-  // animation re-fires. Also resets scroll position to the top of the
-  // new step.
+  // animation re-fires.
   stepKey,
+  // Forwarded ref onto the actual scroll container (<main>). Owned
+  // by the parent screen so it can drive scroll-to-top + bottom
+  // detection via useStepScrollGate. The animation key takes care
+  // of re-mounting the inner wrapper, but we need a stable element
+  // ref for the scroll listener / ResizeObserver — that's <main>,
+  // which doesn't remount.
+  scrollRef,
   // Optional non-blocking error strip (e.g. background save failed).
   banner,
 }) {
@@ -1019,7 +1171,7 @@ function RuntimeShell({
         </header>
       )}
       {banner && <div className="shrink-0">{banner}</div>}
-      <main className="flex-1 min-h-0 overflow-y-auto">
+      <main ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
         <div
           key={stepKey}
           className={`mx-auto w-full runtime-step-anim ${
@@ -1192,29 +1344,51 @@ function ChevronLeft(props) {
 // flow. SVG chevrons indicate direction of travel:
 //   הקודם → ChevronRight (RTL "back" = toward where the reader started)
 //   הבא   → ChevronLeft  (RTL "forward" = toward where the reader is going)
-function NavFooter({ onPrev, canPrev, onNext, canNext, nextLabel = 'הבא' }) {
+//
+// `scrollHint` shows the "scroll to bottom to continue" copy above the
+// buttons when scroll is the active blocker (caller decides this; we
+// just render).
+function NavFooter({
+  onPrev,
+  canPrev,
+  onNext,
+  canNext,
+  nextLabel = 'הבא',
+  scrollHint,
+}) {
   return (
-    <div className="px-4 sm:px-6 py-3 flex items-center gap-2">
-      <button
-        type="button"
-        onClick={onPrev}
-        disabled={!canPrev}
-        aria-label="הקודם"
-        className="px-4 py-2.5 text-sm font-medium border border-gray-300 text-gray-700 bg-white rounded-md hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
-      >
-        <ChevronRight />
-        <span>הקודם</span>
-      </button>
-      <div className="flex-1" />
-      <button
-        type="button"
-        onClick={onNext}
-        disabled={!canNext}
-        className="px-5 py-3 text-base font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-md disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5 min-w-[120px] justify-center"
-      >
-        <span>{nextLabel}</span>
-        <ChevronLeft />
-      </button>
+    <div className="px-4 sm:px-6 py-3">
+      {scrollHint && (
+        <div
+          className="mb-2 text-center text-[12px] font-medium text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-3 py-1.5"
+          role="status"
+          aria-live="polite"
+        >
+          יש לגלול עד סוף העמוד כדי להמשיך
+        </div>
+      )}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onPrev}
+          disabled={!canPrev}
+          aria-label="הקודם"
+          className="px-4 py-2.5 text-sm font-medium border border-gray-300 text-gray-700 bg-white rounded-md hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+        >
+          <ChevronRight />
+          <span>הקודם</span>
+        </button>
+        <div className="flex-1" />
+        <button
+          type="button"
+          onClick={onNext}
+          disabled={!canNext}
+          className="px-5 py-3 text-base font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-md disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5 min-w-[120px] justify-center"
+        >
+          <span>{nextLabel}</span>
+          <ChevronLeft />
+        </button>
+      </div>
     </div>
   );
 }
