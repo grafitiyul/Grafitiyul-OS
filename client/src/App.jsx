@@ -44,6 +44,12 @@ export default function App() {
           redirect to /admin/login first). */}
       <Route path="/" element={<Landing />} />
       <Route path="/launch" element={<Landing />} />
+      {/* Path-based launch URL — exists because iOS Safari
+          consistently preserves PATH segments across the "Add to
+          Home Screen" capture, even on iOS versions that drop or
+          ignore query strings or that don't honor the manifest's
+          start_url at all. */}
+      <Route path="/launch/:token" element={<Landing />} />
       {/* Login lives OUTSIDE the AdminGuard so an unauthenticated user
           can actually reach it. The guard wraps every authenticated
           admin route below — its redirect target is /admin/login. */}
@@ -99,8 +105,11 @@ export default function App() {
       {/* Dedicated install entry — public, token-bearing URL that
           iOS Safari captures verbatim on Add to Home Screen, and
           that Android Chrome resolves through a per-token manifest
-          link. See InstallGuidePage.jsx for the full rationale. */}
+          link. The PATH variant is the deterministic one (iOS
+          preserves path segments through standalone launches);
+          the query variant is kept as a back-compat alias. */}
       <Route path="/install-guide" element={<InstallGuidePage />} />
+      <Route path="/install-guide/:token" element={<InstallGuidePage />} />
       {/* Full-page previews — opened in a new tab from the eye icons. */}
       <Route path="/preview/content/:id" element={<ItemPreviewPage kind="content" />} />
       <Route path="/preview/question/:id" element={<ItemPreviewPage kind="question" />} />

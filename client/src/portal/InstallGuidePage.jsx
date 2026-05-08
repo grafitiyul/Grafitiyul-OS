@@ -1,42 +1,54 @@
 import { useEffect, useMemo } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import {
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from 'react-router-dom';
+import PwaDiagnostics from '../shell/PwaDiagnostics.jsx';
 
-// Dedicated install entry. Two distinct jobs in one component:
+// Dedicated install entry. Mounted on TWO routes:
 //
-//   * "I'm in the browser preparing to install" — render install
-//     instructions. Crucially, the URL the user is on right now (this
-//     page, with the token in the query) is what iOS Safari captures
-//     when the user taps Share → Add to Home Screen. iOS DOES NOT
-//     read the manifest's start_url; it uses the current page URL as
-//     the future launch URL. So we need a stable, public, token-bearing
-//     URL — that's exactly what /install-guide?p=<token> is.
+//   /install-guide?p=<token>          — back-compat (query form)
+//   /install-guide/:token             — PATH form. iOS Safari's
+//                                        "Add to Home Screen"
+//                                        captures the page URL
+//                                        verbatim. Path segments
+//                                        survive the standalone
+//                                        launch even on iOS versions
+//                                        that strip queries or
+//                                        ignore the manifest's
+//                                        start_url.
 //
-//   * "I'm a relaunch from the home-screen icon" — detect standalone
-//     display-mode (PWA-installed) and redirect immediately to
-//     /p/<token>. The user never sees the install instructions twice.
+// Token resolution order: path → query. The path version is the one
+// the install button on /p/:token now points at; the query version
+// stays alive for any older bookmarks.
+//
+// Two distinct behaviors in one component:
+//
+//   * Browser context — render install instructions + a "המשך
+//     לפורטל" link. iOS captures THIS URL on Add to Home Screen.
+//   * Standalone launch — display-mode standalone OR
+//     navigator.standalone is true → redirect immediately to
+//     /p/<token>. The user never sees the install screen on a
+//     relaunch.
 //
 // We also rewrite the document's manifest link to the per-token
-// dynamic manifest. That covers Android Chrome, which DOES honor
-// start_url and would otherwise replay /launch with no token.
-//
-// Two failure modes the UX handles explicitly:
-//   * Missing or malformed token → render NoTokenScreen with a
-//     diagnostics panel (mirrors MissingPortalScreen style).
-//   * Token present but user wandered here from somewhere unrelated →
-//     show "המשך לפורטל" button to bounce them out manually.
+// dynamic manifest. Belt-and-braces with the URL itself; the URL
+// is the authoritative path.
 export default function InstallGuidePage() {
+  const params = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const tokenRaw = searchParams.get('p') || '';
+  const tokenRaw =
+    params.token ||
+    searchParams.get('p') ||
+    '';
   const token = useMemo(
     () =>
       /^[A-Za-z0-9_-]+$/.test(tokenRaw) ? tokenRaw : null,
     [tokenRaw],
   );
 
-  // Standalone-detect redirect. Runs once on mount with the resolved
-  // token. window.matchMedia covers Chrome / Android / desktop PWA;
-  // window.navigator.standalone is iOS Safari's specific signal.
   useEffect(() => {
     if (!token) return;
     const isStandalone =
@@ -48,9 +60,6 @@ export default function InstallGuidePage() {
     }
   }, [token, navigate]);
 
-  // Persist the token to localStorage before any interaction. Belt-
-  // and-braces: if the user wanders elsewhere on the same origin in
-  // the same browser, they still get the right Landing redirect.
   useEffect(() => {
     if (!token) return;
     try {
@@ -62,9 +71,10 @@ export default function InstallGuidePage() {
 
   // Rewrite the manifest link to per-token URL while THIS page is
   // mounted. Android Chrome's install captures the link the moment
-  // the install prompt resolves; the per-token start_url then becomes
-  // the launch URL, so even Android paths land on /launch?p=<token>
-  // rather than the bare /launch.
+  // the install prompt resolves; the per-token start_url then
+  // becomes the launch URL. iOS doesn't always honor the manifest,
+  // but doesn't matter — the URL of THIS page (which IS path-based)
+  // is what iOS captures.
   useEffect(() => {
     if (!token) return undefined;
     const link = document.querySelector('link[rel="manifest"]');
@@ -172,26 +182,13 @@ function NoTokenScreen({ rawToken }) {
         >
           כניסת מנהל
         </a>
+        {rawToken && (
+          <div className="text-[11px] text-gray-500 mt-3">
+            (raw token: <span dir="ltr">{rawToken}</span>)
+          </div>
+        )}
       </div>
-      <details className="mt-4 max-w-md w-full bg-white border border-gray-200 rounded-lg text-[12px] text-gray-700">
-        <summary className="px-3 py-2 cursor-pointer text-gray-500">
-          פרטי איתור (Diagnostics)
-        </summary>
-        <dl className="px-3 py-2 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 font-mono">
-          <dt className="text-gray-500">path</dt>
-          <dd dir="ltr" className="text-gray-900">
-            /install-guide
-          </dd>
-          <dt className="text-gray-500">url_token_raw</dt>
-          <dd dir="ltr" className="text-gray-900 break-all">
-            {rawToken || 'none'}
-          </dd>
-          <dt className="text-gray-500">url_token_valid</dt>
-          <dd dir="ltr" className="text-gray-900">
-            {rawToken ? 'no (rejected by validator)' : 'no'}
-          </dd>
-        </dl>
-      </details>
+      <PwaDiagnostics />
     </div>
   );
 }

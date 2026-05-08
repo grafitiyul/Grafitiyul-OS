@@ -31,13 +31,19 @@ import './index.css';
   try {
     const path = window.location.pathname || '';
     const search = window.location.search || '';
-    const portalMatch = path.match(/^\/p\/([^/?#]+)/);
+    // Match any token-bearing path shape we use:
+    //   /p/<token>
+    //   /launch/<token>
+    //   /install-guide/<token>
+    const pathMatch = path.match(
+      /^\/(?:p|launch|install-guide)\/([^/?#]+)/,
+    );
     let token = null;
-    if (portalMatch && portalMatch[1]) {
+    if (pathMatch && pathMatch[1]) {
       try {
-        token = decodeURIComponent(portalMatch[1]);
+        token = decodeURIComponent(pathMatch[1]);
       } catch {
-        token = portalMatch[1];
+        token = pathMatch[1];
       }
     } else {
       const params = new URLSearchParams(search);

@@ -626,7 +626,7 @@ function Header({ displayName, token }) {
         </div>
         {!isStandalone && token && (
           <a
-            href={`/install-guide?p=${encodeURIComponent(token)}`}
+            href={`/install-guide/${encodeURIComponent(token)}`}
             className="shrink-0 inline-flex items-center gap-1 text-[12px] font-medium border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md px-2.5 py-1.5"
             aria-label="התקן את האפליקציה"
           >

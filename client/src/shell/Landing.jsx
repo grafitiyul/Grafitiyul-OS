@@ -1,44 +1,71 @@
-import { Navigate, useLocation, useSearchParams } from 'react-router-dom';
+import {
+  Navigate,
+  useLocation,
+  useParams,
+  useSearchParams,
+} from 'react-router-dom';
+import PwaDiagnostics from './PwaDiagnostics.jsx';
 
-// Root + launch resolver. Mounted on TWO paths:
+// Root + launch resolver. Mounted on FOUR paths:
 //
-//   /        — bare-domain entry. Admins typing the URL go here. If
-//              there's no portal token, they fall through to /admin
-//              (which then handles login).
-//   /launch  — manifest start_url. The PWA always opens this path on
-//              icon launch. If there's no portal token here we DO
-//              NOT redirect to /admin — that's the bug we keep
-//              fighting. Instead, we render a public "missing portal
-//              link" screen with diagnostics so the user can see
-//              exactly why the PWA didn't recognise them.
+//   /                  — bare-domain entry. Admins typing the URL go
+//                         here. If there's no portal token, they fall
+//                         through to /admin (which then handles login).
+//   /launch            — query-based launch fallback. Renders the
+//                         missing-portal screen when no token is
+//                         resolvable from URL or storage.
+//   /launch/:token     — PATH-BASED launch URL. This is the
+//                         deterministic one — iOS Safari preserves
+//                         path segments through "Add to Home Screen"
+//                         and through the standalone launch even on
+//                         versions that strip queries or ignore the
+//                         manifest's start_url. The token sits in the
+//                         path, so it always survives.
 //
-// Token resolution order, applied to both paths:
+// Token resolution order, applied to ALL three paths:
 //
-//   1. URL `?p=<token>` query param. Lets a manifest-captured
-//      start_url like /launch?p=<token> open the PWA directly into
-//      portal mode regardless of any storage state.
-//   2. localStorage `gos.portalToken` — set by the pre-mount block
-//      in main.jsx, by GuidePortal, and by step 1 below as a side
-//      effect.
-//   3. None found → fallback (admin redirect on /, missing-portal
-//      screen on /launch).
+//   1. URL path `:token`        — the most reliable shape.
+//   2. URL `?p=<token>` query   — works in browsers that preserve
+//                                 queries.
+//   3. localStorage `gos.portalToken` — final fallback for shared-
+//                                 storage contexts.
+//
+// On `/` with NO token: redirect to `/admin` (admins typing the bare
+// URL still want admin login). On `/launch*` with no token: render
+// the public missing-portal screen + diagnostics — never bounce to
+// admin.
 export default function Landing() {
+  const params = useParams();
   const [searchParams] = useSearchParams();
   const location = useLocation();
-  const isLaunchPath = location.pathname === '/launch';
+  const isLaunchPath = location.pathname.startsWith('/launch');
 
   let token = null;
-  let urlTokenPresent = false;
+  let urlPathTokenPresent = false;
+  let urlQueryTokenPresent = false;
   let storageTokenPresent = false;
 
-  const fromQuery = searchParams.get('p');
-  if (fromQuery && /^[A-Za-z0-9_-]+$/.test(fromQuery)) {
-    token = fromQuery;
-    urlTokenPresent = true;
+  const fromPath = params.token || null;
+  if (fromPath && /^[A-Za-z0-9_-]+$/.test(fromPath)) {
+    token = fromPath;
+    urlPathTokenPresent = true;
     try {
       localStorage.setItem('gos.portalToken', token);
     } catch {
       /* ignore */
+    }
+  }
+
+  if (!token) {
+    const fromQuery = searchParams.get('p');
+    if (fromQuery && /^[A-Za-z0-9_-]+$/.test(fromQuery)) {
+      token = fromQuery;
+      urlQueryTokenPresent = true;
+      try {
+        localStorage.setItem('gos.portalToken', token);
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -53,8 +80,6 @@ export default function Landing() {
       /* ignore */
     }
   } else {
-    // Even when URL won, also note whether storage already had a
-    // value — useful for diagnostics if URL & storage disagree.
     try {
       const stored = localStorage.getItem('gos.portalToken');
       storageTokenPresent = !!stored;
@@ -67,33 +92,20 @@ export default function Landing() {
     return <Navigate to={`/p/${encodeURIComponent(token)}`} replace />;
   }
 
-  // No token. Branch on path:
-  //   /       → admin (admins typing the bare URL).
-  //   /launch → public missing-portal screen with diagnostics.
   if (!isLaunchPath) {
     return <Navigate to="/admin" replace />;
   }
+
   return (
     <MissingPortalScreen
-      path={location.pathname}
-      urlTokenPresent={urlTokenPresent}
+      urlPathTokenPresent={urlPathTokenPresent}
+      urlQueryTokenPresent={urlQueryTokenPresent}
       storageTokenPresent={storageTokenPresent}
     />
   );
 }
 
-// Public launch fallback. No auth, no admin login redirect — the
-// guide gets a calm Hebrew "ask your manager for a portal link"
-// message plus a small diagnostic panel that surfaces the same
-// state the developer would see in DevTools (path, URL token,
-// localStorage token). This is what the user explicitly asked for:
-// no DevTools required to understand why the PWA didn't open the
-// portal.
-//
-// We intentionally do NOT auto-redirect to /admin from here — that
-// was the original bug. An admin who lands here can tap the small
-// "כניסת מנהל" link.
-function MissingPortalScreen({ path, urlTokenPresent, storageTokenPresent }) {
+function MissingPortalScreen() {
   return (
     <div
       dir="rtl"
@@ -119,33 +131,7 @@ function MissingPortalScreen({ path, urlTokenPresent, storageTokenPresent }) {
           כניסת מנהל
         </a>
       </div>
-
-      {/* Diagnostic panel. Always visible — user-facing, no DevTools
-          required. Useful when the PWA opens here unexpectedly so we
-          can see what the launcher actually saw. */}
-      <details className="mt-4 max-w-md w-full bg-white border border-gray-200 rounded-lg text-[12px] text-gray-700">
-        <summary className="px-3 py-2 cursor-pointer text-gray-500">
-          פרטי איתור (Diagnostics)
-        </summary>
-        <dl className="px-3 py-2 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 font-mono">
-          <dt className="text-gray-500">path</dt>
-          <dd dir="ltr" className="text-gray-900">
-            {path}
-          </dd>
-          <dt className="text-gray-500">url_token</dt>
-          <dd dir="ltr" className="text-gray-900">
-            {urlTokenPresent ? 'present' : 'none'}
-          </dd>
-          <dt className="text-gray-500">storage_token</dt>
-          <dd dir="ltr" className="text-gray-900">
-            {storageTokenPresent ? 'present' : 'none'}
-          </dd>
-          <dt className="text-gray-500">target</dt>
-          <dd dir="ltr" className="text-gray-900">
-            missing-portal-screen
-          </dd>
-        </dl>
-      </details>
+      <PwaDiagnostics />
     </div>
   );
 }

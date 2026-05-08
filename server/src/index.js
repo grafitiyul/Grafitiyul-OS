@@ -115,8 +115,14 @@ app.get('/manifest.webmanifest', (req, res) => {
   // this set is treated as "no token" and the manifest falls back to
   // the bare /launch start_url.
   const token = /^[A-Za-z0-9_-]+$/.test(rawToken) ? rawToken : null;
+  // Path-based start_url for the per-token manifest. iOS Safari has
+  // historically had trouble preserving query strings through PWA
+  // standalone launches; path segments survive consistently. Older
+  // installs that captured /launch?p=<token> still resolve through
+  // Landing's query-aware fallback, so this is purely a hardening of
+  // future installs.
   const startUrl = token
-    ? `/launch?p=${encodeURIComponent(token)}`
+    ? `/launch/${encodeURIComponent(token)}`
     : '/launch';
   res.set('Cache-Control', 'no-store');
   res.set('Content-Type', 'application/manifest+json; charset=utf-8');
