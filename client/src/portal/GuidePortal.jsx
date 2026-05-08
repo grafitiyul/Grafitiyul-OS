@@ -27,6 +27,13 @@ export default function GuidePortal() {
   const [state, setState] = useState({ phase: 'loading' });
   const [startingId, setStartingId] = useState(null);
   const [startError, setStartError] = useState(null);
+  // Correction-priority gate. When the guide taps המשך on a procedure
+  // that has rejected answers, we DON'T just resume the attempt — we
+  // first surface a small notice and ask for explicit confirmation.
+  // The runtime will then enter correction mode at the first rejected
+  // step (signalled via sessionStorage so the URL stays clean and
+  // bookmarks don't accidentally re-trigger correction).
+  const [correctionPrompt, setCorrectionPrompt] = useState(null);
 
   // Stash the portal token in sessionStorage so the runtime's home
   // button can recover it when the user lands on /attempt/:id without
@@ -139,12 +146,9 @@ export default function GuidePortal() {
     }
   }, [state]);
 
-  const handleOpen = useCallback(
-    async (task) => {
-      // Only procedure tasks have a runtime today. Future task types
-      // dispatch on `task.type` here.
-      if (task.type !== 'procedure') return;
-      if (startingId) return; // double-tap guard
+  const startTask = useCallback(
+    async (task, { correctionMode = false } = {}) => {
+      if (startingId) return;
       setStartError(null);
       setStartingId(task.id);
       try {
@@ -155,9 +159,20 @@ export default function GuidePortal() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const { attemptId } = await res.json();
         if (!attemptId) throw new Error('missing_attempt_id');
-        // Carry the portal token through to the attempt URL so the
-        // runtime's home button knows where to return. Query param
-        // (RESTful, bookmark-safe) avoids needing sessionStorage.
+        if (correctionMode) {
+          // Tab-scoped flag — the runtime reads it on first load, jumps
+          // to the first rejected step, then clears it. Per-attempt key
+          // so opening a different attempt in another tab doesn't pick
+          // up the same signal.
+          try {
+            sessionStorage.setItem(
+              `gos.enterCorrection.${attemptId}`,
+              '1',
+            );
+          } catch {
+            /* private mode — runtime falls back to natural rendering */
+          }
+        }
         navigate(`/attempt/${attemptId}?p=${encodeURIComponent(token)}`);
       } catch (e) {
         setStartError(e?.message || 'שגיאה בפתיחת הנוהל');
@@ -165,6 +180,24 @@ export default function GuidePortal() {
       }
     },
     [token, navigate, startingId],
+  );
+
+  const handleOpen = useCallback(
+    async (task) => {
+      if (task.type !== 'procedure') return;
+      if (startingId) return; // double-tap guard
+      // Corrections take priority over normal continuation. If the
+      // task has any rejected answers, we surface a confirmation
+      // notice INSTEAD of immediately starting — the actual launch
+      // happens after the guide picks "מעבר לתיקונים".
+      const rejectedCount = task.metadata?.rejectedCount || 0;
+      if (rejectedCount > 0) {
+        setCorrectionPrompt({ task, rejectedCount });
+        return;
+      }
+      startTask(task, { correctionMode: false });
+    },
+    [startingId, startTask],
   );
 
   if (state.phase === 'loading') return <CenteredMessage text="טוען…" />;
@@ -205,6 +238,98 @@ export default function GuidePortal() {
           onOpen={handleOpen}
         />
       </main>
+      {correctionPrompt && (
+        <CorrectionPrompt
+          task={correctionPrompt.task}
+          rejectedCount={correctionPrompt.rejectedCount}
+          starting={startingId === correctionPrompt.task.id}
+          onCancel={() => setCorrectionPrompt(null)}
+          onConfirm={() => {
+            const t = correctionPrompt.task;
+            setCorrectionPrompt(null);
+            startTask(t, { correctionMode: true });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── CorrectionPrompt ──────────────────────────────────────────────
+//
+// Bottom sheet (mobile) / centered modal (desktop) shown when the
+// guide taps המשך on a procedure that has rejected answers. The
+// notice is intentionally short — the goal is to set context, NOT
+// to render a full task list. The detailed per-question correction
+// happens inside the runtime once they confirm.
+function CorrectionPrompt({
+  task,
+  rejectedCount,
+  starting,
+  onCancel,
+  onConfirm,
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4"
+      dir="rtl"
+      role="dialog"
+      aria-modal="true"
+      onClick={onCancel}
+    >
+      <div
+        className="bg-white w-full sm:max-w-md rounded-t-xl sm:rounded-xl shadow-xl border border-gray-200"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 pt-5 pb-4">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-red-100 text-red-700 text-base">
+              ⚠
+            </span>
+            <h2 className="text-base font-semibold text-gray-900">
+              יש תיקונים לבצע
+            </h2>
+          </div>
+          <div className="text-sm text-gray-700 leading-snug mb-2">
+            יש לך{' '}
+            <span className="font-bold text-red-700">{rejectedCount}</span>{' '}
+            {rejectedCount === 1 ? 'תיקון' : 'תיקונים'} לבצע לפני שממשיכים
+            ב{task.title || 'נוהל זה'}.
+          </div>
+          <div className="text-[12px] text-gray-600">
+            התיקון יתבצע בתוך הנוהל הרגיל — תוכל לחזור אחורה לקרוא תוכן
+            רלוונטי לפני שתשיב מחדש.
+          </div>
+        </div>
+        <div className="px-5 py-3 border-t border-gray-200 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={starting}
+            className="px-4 py-2 text-sm font-medium border border-gray-300 text-gray-700 bg-white rounded-md hover:bg-gray-50 disabled:opacity-40"
+          >
+            ביטול
+          </button>
+          <div className="flex-1" />
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={starting}
+            className="px-5 py-2.5 text-sm font-semibold bg-red-600 hover:bg-red-700 text-white rounded-md inline-flex items-center gap-1.5 disabled:opacity-60"
+          >
+            {starting ? 'פותח…' : 'מעבר לתיקונים'}
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden>
+              <path
+                d="M10 4l-4 4 4 4"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

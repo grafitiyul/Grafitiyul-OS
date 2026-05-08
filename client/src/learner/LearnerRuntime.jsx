@@ -203,20 +203,40 @@ export function AttemptRuntime() {
   // polling doesn't remount the screen, reset scroll position, blow
   // away in-flight answer drafts, or re-trigger the step animation.
   const [reviewStatus, setReviewStatus] = useState(null);
-  // Correction flow state. Two layers so the UX feels intentional:
-  //   correctionConfirm — the small "are you sure?" sheet shown after
-  //     the guide taps a rejected row in the modal. Carries enough
+  // Correction flow state. Three layers, all client-side only:
+  //
+  //   correctionConfirm — the "are you sure?" sheet shown after the
+  //     guide taps a rejected row in the modal. Carries enough
   //     metadata (title, admin comment) to preview the task in-place.
-  //   correctionTarget  — once confirmed, this stepId is the focused
-  //     correction target. While set, AttemptRuntime renders a single-
-  //     question CorrectionScreen INSTEAD of the natural screen for
-  //     the attempt's status. Clearing it returns the runtime to
-  //     whatever screen would have rendered naturally — i.e. exactly
-  //     where the guide was before entering correction (no explicit
-  //     "saved position" bookkeeping needed because we never mutated
-  //     the attempt cursor).
+  //
+  //   correctionDetour  — once confirmed, this is the active
+  //     correction session. While set, AttemptRuntime renders the
+  //     normal ItemScreen at `currentLocalStepId` (so the guide is
+  //     INSIDE the procedure, with full prev/next nav to reread
+  //     content) but with correction UI overlaid on the rejected
+  //     question step. `returnStepId` is where "המשך מהמקום שבו
+  //     עצרתי" jumps the guide back to after submitting — could be
+  //     30 steps away, the goal is "resume where I was".
+  //
+  //   The shape:
+  //     {
+  //       currentLocalStepId,    // step ItemScreen renders during correction
+  //       returnStepId,          // saved bookmark for the resume button
+  //       phase,                 // 'editing' | 'success'
+  //       justSubmittedStepId,   // which step the user just submitted a fix for
+  //     }
+  //
+  //   No attempt mutation: navigation during correction is purely
+  //   local — the server cursor (`attempt.currentStepId`) is left
+  //   alone. That means cancelling the detour or hitting the resume
+  //   button is a 0-network operation and the guide is back where
+  //   they were instantly.
   const [correctionConfirm, setCorrectionConfirm] = useState(null);
-  const [correctionTarget, setCorrectionTarget] = useState(null);
+  const [correctionDetour, setCorrectionDetour] = useState(null);
+  // One-shot guard so the portal "enter correction" hand-off is only
+  // applied once per attempt load, even if attempt + reviewStatus
+  // refresh after the initial mount.
+  const correctionEntryRef = useRef(false);
   const [isMobile, setIsMobile] = useState(() =>
     window.matchMedia('(max-width: 640px)').matches,
   );
@@ -287,6 +307,56 @@ export function AttemptRuntime() {
       window.removeEventListener('focus', onFocus);
     };
   }, [portalToken, attemptId, fetchReviewStatus]);
+
+  // ── Portal hand-off: enter correction at first rejected step ─────
+  //
+  // The portal home stashes `gos.enterCorrection.<attemptId>=1` in
+  // sessionStorage right before navigating, when the guide tapped
+  // "מעבר לתיקונים" on a procedure with rejections. We pick that
+  // signal up the FIRST time both `attempt` and `reviewStatus` are
+  // populated (both are needed: attempt for the steps array, review-
+  // status for the authoritative rejected list). The flag is removed
+  // immediately so a tab refresh doesn't re-enter correction. Later
+  // changes to attempt/reviewStatus don't re-trigger because
+  // `correctionEntryRef` latches.
+  useEffect(() => {
+    if (correctionEntryRef.current) return;
+    if (!attempt || !reviewStatus) return;
+    let flag = null;
+    try {
+      flag = sessionStorage.getItem(`gos.enterCorrection.${attempt.id}`);
+    } catch {
+      /* private mode — ignore, nothing to consume */
+    }
+    if (!flag) {
+      // No flag: still latch so a later poll-driven attempt refresh
+      // can't accidentally re-enter correction.
+      correctionEntryRef.current = true;
+      return;
+    }
+    try {
+      sessionStorage.removeItem(`gos.enterCorrection.${attempt.id}`);
+    } catch {
+      /* ignore */
+    }
+    correctionEntryRef.current = true;
+    const firstRejected = (reviewStatus.questions || []).find(
+      (q) => q.status === 'rejected',
+    );
+    if (!firstRejected) return;
+    const lastStep = (attempt.steps || []).slice(-1)[0];
+    setCorrectionDetour({
+      currentLocalStepId: firstRejected.stepId,
+      // Returning "where they were before correction" from a portal
+      // entry-point: the procedure was already submitted, so the
+      // natural learning bookmark is the END of the sequence (the
+      // final step they completed before submitting). After fixing,
+      // המשך מהמקום שבו עצרתי jumps them back there.
+      returnStepId: lastStep?.stepId || null,
+      phase: 'editing',
+      justSubmittedStepId: null,
+    });
+  }, [attempt, reviewStatus]);
 
   // Branch-switch detector. When the lightweight poll surfaces a
   // change that would render a different screen — attempt.status
@@ -496,11 +566,125 @@ export function AttemptRuntime() {
   };
   const homeHref = portalToken ? `/p/${encodeURIComponent(portalToken)}` : null;
 
+  // ── Correction-mode local navigation ─────────────────────────────
+  //
+  // Prev/next during a correction detour walk the runtime steps
+  // PURELY locally. The server cursor is left untouched — the user
+  // is in a submitted attempt, the cursor doesn't apply, and we
+  // don't want a stray /advance call to change state on the server
+  // side. This is the "free reread" the guide needs: they can step
+  // backward to revisit content, forward to compare, then submit
+  // their fix when they land back on the rejected question.
+  function correctionLocalNavigate(direction) {
+    setCorrectionDetour((prev) => {
+      if (!prev) return prev;
+      const list = attempt?.steps || [];
+      const idx = list.findIndex(
+        (s) => s.stepId === prev.currentLocalStepId,
+      );
+      if (idx < 0) return prev;
+      const nextIdx = direction === 'prev' ? idx - 1 : idx + 1;
+      if (nextIdx < 0 || nextIdx >= list.length) return prev;
+      return {
+        ...prev,
+        currentLocalStepId: list[nextIdx].stepId,
+        phase: 'editing',
+        justSubmittedStepId: null,
+      };
+    });
+  }
+
+  // Submit a single correction. Reuses the existing answer + submit
+  // endpoints — no new server work, no duplicate runtime engine. If
+  // there are still other rejections remaining, the submit call
+  // returns 'outstanding_questions'; we treat that as expected and
+  // keep the attempt in submitted state. On success, flip the
+  // detour to its 'success' phase so ItemScreen renders the post-
+  // submit body + CTA pair (תיקון הבא / המשך מהמקום שבו עצרתי).
+  async function correctionSubmit(payload) {
+    if (!attempt || !correctionDetour) return;
+    const stepId = correctionDetour.currentLocalStepId;
+    if (!stepId) return;
+    try {
+      await api.attempts.answer(attempt.id, { stepId, ...payload });
+      try {
+        await api.attempts.submit(attempt.id);
+      } catch (e) {
+        if (e.payload?.error !== 'outstanding_questions') throw e;
+      }
+      setCorrectionDetour((prev) =>
+        prev
+          ? { ...prev, phase: 'success', justSubmittedStepId: stepId }
+          : prev,
+      );
+      // Refresh both layers so the success CTAs see up-to-date
+      // counts (especially the "more rejected?" check that drives
+      // whether תיקון הבא shows up).
+      loadAttempt();
+      fetchReviewStatus();
+    } catch (e) {
+      setNavError(e?.payload?.error || e?.message || 'שגיאה בשליחת התיקון');
+    }
+  }
+
+  // Find the next still-rejected question step (in attempt order),
+  // skipping the one the user just fixed. Wraps around if none
+  // after the current step. If genuinely no rejections remain, the
+  // CTA is hidden in ItemScreen — this is just a safe fallback.
+  function jumpToNextCorrection() {
+    if (!attempt || !correctionDetour) return;
+    const list = attempt.steps || [];
+    const latest = latestAnswerByStep(attempt.answers || []);
+    const cur = correctionDetour.currentLocalStepId;
+    const startIdx = Math.max(
+      0,
+      list.findIndex((s) => s.stepId === cur) + 1,
+    );
+    const find = (from, to) => {
+      for (let i = from; i < to; i += 1) {
+        const s = list[i];
+        if (s.kind !== 'question') continue;
+        if (latest.get(s.stepId)?.status === 'rejected') return s.stepId;
+      }
+      return null;
+    };
+    const target =
+      find(startIdx, list.length) || find(0, startIdx) || null;
+    if (!target) {
+      setCorrectionDetour(null);
+      return;
+    }
+    setCorrectionDetour((prev) =>
+      prev
+        ? {
+            ...prev,
+            currentLocalStepId: target,
+            phase: 'editing',
+            justSubmittedStepId: null,
+          }
+        : prev,
+    );
+  }
+
+  // המשך מהמקום שבו עצרתי — the "resume where I was before
+  // correction" button. Clears the detour entirely and refreshes
+  // the attempt so natural rendering picks up the new pending
+  // answers. The returnStepId currently has no server-side cursor
+  // sync (corrections happen on submitted attempts where the cursor
+  // is meaningless), but is preserved on the detour for future use
+  // and for the local-jump shape we'd want if/when correction
+  // becomes possible mid in_progress.
+  function resumeLearning() {
+    setCorrectionDetour(null);
+    loadAttempt();
+    fetchReviewStatus();
+  }
+
   // The modal lives at the AttemptRuntime level so it overlays
   // every screen and survives status transitions without remount.
   // onClickRejected lifts the user from the list view into the
-  // confirmation sheet; the modal closes simultaneously so the sheet
-  // is the single focal point.
+  // confirmation sheet; the modal closes simultaneously so the
+  // sheet is the single focal point.
   const reviewModalNode = reviewModalOpen ? (
     <ReviewStatusModal
       data={reviewStatus}
@@ -516,43 +700,119 @@ export function AttemptRuntime() {
     />
   ) : null;
 
-  // Correction confirmation sheet. Sits on top of every screen and
-  // never blocks the current state — cancel returns the user to
-  // exactly where they were.
+  // Correction confirmation sheet. Confirming starts a correction
+  // detour at the picked step. The returnStepId saved here is the
+  // user's CURRENT viewing position — for ItemScreen-mode users that
+  // is `currentStepId` (live cursor), for submitted-state users it's
+  // the last step in the sequence (their natural "end of learning"
+  // bookmark).
   const correctionConfirmNode = correctionConfirm ? (
     <CorrectionConfirm
       data={correctionConfirm}
       onCancel={() => setCorrectionConfirm(null)}
       onConfirm={() => {
-        setCorrectionTarget({ stepId: correctionConfirm.stepId });
+        const lastStep = steps[steps.length - 1] || null;
+        const returnStepId =
+          attempt?.status === 'in_progress' && currentStepId
+            ? currentStepId
+            : lastStep?.stepId || null;
+        setCorrectionDetour({
+          currentLocalStepId: correctionConfirm.stepId,
+          returnStepId,
+          phase: 'editing',
+          justSubmittedStepId: null,
+        });
         setCorrectionConfirm(null);
       }}
     />
   ) : null;
 
-  // Focused correction view. When set, fully replaces the natural
-  // screen so the guide isn't dumped into the bulk ResubmitScreen.
-  // Exiting (cancel or "המשך ללמוד") clears the target — natural
-  // rendering then resumes from whatever state the attempt is in,
-  // which is the place the guide was before entering correction.
-  if (correctionTarget) {
+  // ── Correction detour render ─────────────────────────────────────
+  //
+  // While a detour is active, we render the NORMAL ItemScreen at
+  // `currentLocalStepId` so the guide stays inside the procedure's
+  // narrative — they can prev/next freely to reread content, the
+  // home button works, the review-status bar is visible. ItemScreen
+  // detects correction mode via the `correctionPhase` /
+  // `isRejectedQuestion` props and swaps the body into a correction
+  // form (admin comment + previous answer + new-answer input) for
+  // the rejected question, or a read-only summary for non-rejected
+  // questions, or the normal content render for content steps.
+  if (correctionDetour && attempt) {
+    const list = attempt.steps || [];
+    const idx = list.findIndex(
+      (s) => s.stepId === correctionDetour.currentLocalStepId,
+    );
+    const detourStep = idx >= 0 ? list[idx] : null;
+    if (!detourStep) {
+      // Unknown step — render a safe escape hatch instead of
+      // trapping the user. Mutating state during render would loop;
+      // the user clicks "ביטול" to exit and natural rendering picks
+      // up. This branch is rare (would require the attempt's steps
+      // to lose a referenced stepId between detour creation and
+      // render), but the explicit fallback beats a blank screen.
+      return (
+        <Screen>
+          <div className="text-center max-w-md">
+            <div className="text-red-600 font-medium mb-2">
+              השאלה לתיקון לא נמצאה ברצף
+            </div>
+            <button
+              type="button"
+              onClick={() => setCorrectionDetour(null)}
+              className="text-sm border border-gray-300 rounded px-3 py-1.5 hover:bg-gray-50"
+            >
+              חזרה
+            </button>
+          </div>
+        </Screen>
+      );
+    }
+    const latestForStep = latestAnswerByStep(attempt.answers || []).get(
+      detourStep.stepId,
+    );
+    const stillRejectedSomewhere = list.some((s) => {
+      if (s.kind !== 'question') return false;
+      if (s.stepId === correctionDetour.justSubmittedStepId) return false;
+      const la = latestAnswerByStep(attempt.answers || []).get(s.stepId);
+      return la?.status === 'rejected';
+    });
     return (
       <>
-        <CorrectionScreen
-          attempt={attempt}
-          stepId={correctionTarget.stepId}
+        <ItemScreen
+          node={detourStep}
           isMobile={isMobile}
+          existingAnswer={latestForStep}
+          onNext={null}
+          onPrev={idx > 0 ? () => correctionLocalNavigate('prev') : null}
           homeHref={homeHref}
-          onCancel={() => setCorrectionTarget(null)}
-          onResumeLearning={async () => {
-            // Refresh both the heavy attempt and the lightweight
-            // review-status so the bar/modal show up-to-date counts
-            // when the guide returns to learning.
-            setCorrectionTarget(null);
-            await loadAttempt();
-            fetchReviewStatus();
+          navError={navError}
+          completedStepsRef={completedStepsRef}
+          position={{
+            index: idx,
+            total: list.length,
+            isFirst: idx === 0,
+            isLast: idx === list.length - 1,
           }}
+          {...reviewBag}
+          // ── Correction-mode props ───────────────────────────────
+          correctionMode
+          correctionPhase={correctionDetour.phase}
+          justSubmittedStepId={correctionDetour.justSubmittedStepId}
+          hasMoreRejected={stillRejectedSomewhere}
+          onCorrectionSubmit={correctionSubmit}
+          onCorrectionLocalNext={
+            idx < list.length - 1
+              ? () => correctionLocalNavigate('next')
+              : null
+          }
+          onResumeLearning={resumeLearning}
+          onNextCorrection={
+            stillRejectedSomewhere ? jumpToNextCorrection : null
+          }
+          onCancelCorrection={() => setCorrectionDetour(null)}
         />
+        {reviewModalNode}
         {correctionConfirmNode}
       </>
     );
@@ -575,26 +835,26 @@ export function AttemptRuntime() {
   }
 
   // --- status: submitted ---
+  //
+  // We no longer render the bulk ResubmitScreen here. Corrections
+  // happen INSIDE the normal runtime via `correctionDetour` (entered
+  // from the portal CTA's "מעבר לתיקונים" or from the review-status
+  // modal). When the attempt has rejections but no detour is active
+  // yet (deep-link / refresh case), WaitingScreen renders WITH a
+  // prominent rejection banner that opens the modal. The modal click
+  // → confirmation → correction detour pipeline takes over from there.
   if (attempt.status === 'submitted') {
-    const questionSteps = steps.filter((s) => s.kind === 'question');
     const latest = latestAnswerByStep(attempt.answers || []);
-    const outstanding = questionSteps.filter(
-      (q) => latest.get(q.stepId)?.status === 'rejected',
-    );
-    const submittedScreen =
-      outstanding.length === 0 ? (
-        <WaitingScreen {...reviewBag} />
-      ) : (
-        <ResubmitScreen
-          attempt={attempt}
-          isMobile={isMobile}
-          onSubmitted={loadAttempt}
-          {...reviewBag}
-        />
-      );
+    let rejectedCount = 0;
+    for (const a of latest.values()) {
+      if (a.status === 'rejected') rejectedCount += 1;
+    }
     return (
       <>
-        {submittedScreen}
+        <WaitingScreen
+          rejectedCount={rejectedCount}
+          {...reviewBag}
+        />
         {reviewModalNode}
         {correctionConfirmNode}
       </>
@@ -832,16 +1092,28 @@ function ItemScreen({
   completedStepsRef,
   reviewStatus,
   onOpenReviewModal,
+  // ── Correction-mode props (all optional). When `correctionMode`
+  // is true, ItemScreen runs INSIDE a correction detour: it uses the
+  // local nav handler chain instead of the normal `onNext`, surfaces
+  // the admin comment + previous answer for rejected steps, renders
+  // a read-only summary for non-rejected questions (so prev/next
+  // browsing through the procedure during correction doesn't let the
+  // guide accidentally re-edit approved answers), and on submit
+  // success swaps the body for a calm success state with two CTAs.
+  correctionMode,
+  correctionPhase,           // 'editing' | 'success'
+  justSubmittedStepId,
+  hasMoreRejected,
+  onCorrectionSubmit,
+  onCorrectionLocalNext,
+  onResumeLearning,
+  onNextCorrection,
+  onCancelCorrection,
 }) {
-  const [openText, setOpenText] = useState(existingAnswer?.openText || '');
-  const [selected, setSelected] = useState(
-    existingAnswer?.answerChoice || '',
-  );
+  const [openText, setOpenText] = useState('');
+  const [selected, setSelected] = useState('');
   const scrollRef = useRef(null);
   const stepKey = node.stepId || node.id;
-  // Per-step completion gate — see useStepScrollGate. Falls back to a
-  // local Set when the parent didn't pass a ref (defensive; all real
-  // call sites do pass one).
   const fallbackCompletedRef = useRef(new Set());
   const completedRef = completedStepsRef || fallbackCompletedRef;
   const { isScrollable, hasReachedBottom } = useStepScrollGate(
@@ -850,22 +1122,41 @@ function ItemScreen({
     completedRef,
   );
 
-  useEffect(() => {
-    setOpenText(existingAnswer?.openText || '');
-    setSelected(existingAnswer?.answerChoice || '');
-    // Re-seed when the step changes so going back to a previously-
-    // answered question shows the saved answer pre-filled.
-  }, [stepKey, existingAnswer]);
-
   const isContent = node.kind === 'content';
   const qi = node.questionItem;
   const ci = node.contentItem;
+  // ── Mode classification ──────────────────────────────────────────
+  // Only set when correctionMode is on; in normal mode all branches
+  // collapse to the legacy "edit my own answer" path.
+  const isRejectedQuestion =
+    correctionMode && !isContent && existingAnswer?.status === 'rejected';
+  const showCorrectionSuccess =
+    correctionMode &&
+    correctionPhase === 'success' &&
+    justSubmittedStepId === node.stepId;
+  const showCorrectionForm =
+    correctionMode && isRejectedQuestion && !showCorrectionSuccess;
+  // Read-only summary for browsing through non-rejected question
+  // steps during a correction detour. The user can scan their past
+  // answer + status, but the form is hidden so they don't
+  // accidentally re-edit an approved answer.
+  const showReadOnlyAnswered =
+    correctionMode && !isContent && !isRejectedQuestion && !!existingAnswer;
 
-  // Unified question shape. A question can show predefined choices, a
-  // free-text field, or both (see lib/questionRequirement.js for the
-  // five possible `requirement` values). The submit button is gated
-  // by validateAnswer — the same function the server uses — so the
-  // UI and the server agree on what "valid" means.
+  // Seed the answer fields. In correction mode we START EMPTY for the
+  // rejected step — the previous answer is shown in a separate banner
+  // for context, but the input box is blank to invite a fresh
+  // response. In normal mode we keep the existing pre-fill behavior.
+  useEffect(() => {
+    if (showCorrectionForm) {
+      setOpenText('');
+      setSelected('');
+    } else {
+      setOpenText(existingAnswer?.openText || '');
+      setSelected(existingAnswer?.answerChoice || '');
+    }
+  }, [stepKey, existingAnswer, showCorrectionForm]);
+
   const hasChoices = Array.isArray(qi?.options) && qi.options.length > 0;
   const showText = !!qi?.allowTextAnswer;
 
@@ -881,27 +1172,39 @@ function ItemScreen({
         answer,
       );
   const answerOk = validation.ok;
-  // Two independent gates. Scroll-completion blocks until the user has
-  // read the step (or revisited a step that was already read once);
-  // answer validation blocks until a required answer is provided.
   const scrollOk = !isScrollable || hasReachedBottom;
+  // Submit gate only matters for the form path. In correction-success
+  // / read-only / content-during-correction paths the button is
+  // either absent or has different semantics.
   const canSubmit = answerOk && scrollOk;
-  // Hint shown only when scroll is the live blocker — i.e. the user
-  // CAN'T blame the answer field. If both are unmet, the user sees
-  // the answer field's own state plus a disabled button; the
-  // scroll-specific hint stays out of their way until they've
-  // resolved the answer.
   const showScrollHint = answerOk && isScrollable && !hasReachedBottom;
 
   function submit() {
+    if (showCorrectionForm) {
+      if (!canSubmit) return;
+      const payload = {};
+      if (selected) {
+        payload.answerChoice = selected;
+        payload.answerLabel = selected;
+      }
+      if (showText && openText.trim()) {
+        payload.openText = openText;
+      }
+      onCorrectionSubmit?.(payload);
+      return;
+    }
+    // Normal mode (or correction-mode browsing of a non-form step):
+    // delegate to the legacy onNext handler if present.
+    if (correctionMode) {
+      // Browsing through correction — "next" navigates locally.
+      onCorrectionLocalNext?.();
+      return;
+    }
     if (!canSubmit) return;
     if (isContent) {
       onNext();
       return;
     }
-    // Send whichever fields the learner actually filled. The server
-    // accepts both on the same FlowAnswer row, so a question with
-    // choices + text preserves both.
     const payload = {};
     if (selected) {
       payload.answerChoice = selected;
@@ -911,6 +1214,48 @@ function ItemScreen({
       payload.openText = openText;
     }
     onNext(payload);
+  }
+
+  // ── Footer dispatch ──────────────────────────────────────────────
+  let footerNode;
+  if (showCorrectionSuccess) {
+    footerNode = (
+      <CorrectionSuccessFooter
+        hasMoreRejected={!!hasMoreRejected}
+        onResumeLearning={onResumeLearning}
+        onNextCorrection={onNextCorrection}
+      />
+    );
+  } else if (correctionMode) {
+    // Correction browsing footer. Next is either "submit fix" (on
+    // the rejected form step) or local-next (everywhere else).
+    const nextLabel = showCorrectionForm
+      ? 'שלח תיקון'
+      : 'הבא';
+    const canNext = showCorrectionForm
+      ? canSubmit
+      : !!onCorrectionLocalNext;
+    footerNode = (
+      <NavFooter
+        onPrev={onPrev}
+        canPrev={!!onPrev}
+        onNext={onCorrectionLocalNext || showCorrectionForm ? submit : null}
+        canNext={canNext}
+        nextLabel={nextLabel}
+        scrollHint={showCorrectionForm ? showScrollHint : false}
+      />
+    );
+  } else {
+    footerNode = (
+      <NavFooter
+        onPrev={onPrev}
+        onNext={submit}
+        canPrev={!!onPrev}
+        canNext={canSubmit}
+        nextLabel="הבא"
+        scrollHint={showScrollHint}
+      />
+    );
   }
 
   return (
@@ -927,97 +1272,217 @@ function ItemScreen({
           isMobile={isMobile}
           reviewStatus={reviewStatus}
           onOpenReviewModal={onOpenReviewModal}
+          correctionMode={correctionMode}
+          onCancelCorrection={onCancelCorrection}
         />
       }
-      footer={
-        <NavFooter
-          onPrev={onPrev}
-          onNext={submit}
-          canPrev={!!onPrev}
-          canNext={canSubmit}
-          nextLabel="הבא"
-          scrollHint={showScrollHint}
-        />
-      }
+      footer={footerNode}
       banner={navError ? <NavErrorBanner message={navError} /> : null}
     >
       <article>
-        <h1
-          className={`font-bold text-gray-900 mb-3 leading-tight ${
-            isMobile ? 'text-2xl' : 'text-3xl'
-          }`}
-        >
-          {/* Titles are stored as TipTap HTML so they can hold dynamic-
-              field chips. In the runtime header we want clean reading
-              text — strip tags. The body below renders rich HTML via
-              dangerouslySetInnerHTML in .gos-prose. */}
-          {isContent
-            ? titleToPlain(ci?.title || '') || '(תוכן נמחק)'
-            : titleToPlain(qi?.title || '') || '(שאלה נמחקה)'}
-        </h1>
+        {/* Correction-mode banners come first so the guide reads them
+            BEFORE the question — the admin comment is the load-bearing
+            context here, not the question itself. */}
+        {showCorrectionForm && existingAnswer?.adminComment && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+            <div className="text-[11px] font-bold text-red-800 uppercase tracking-wide mb-1">
+              הערת מאשר
+            </div>
+            <div className="text-sm text-red-900 whitespace-pre-wrap">
+              {existingAnswer.adminComment}
+            </div>
+          </div>
+        )}
 
-        {isContent ? (
-          <div
-            className="gos-prose is-runtime text-gray-800"
-            dangerouslySetInnerHTML={{ __html: ci?.body || '' }}
-          />
+        {showCorrectionSuccess ? (
+          <div className="text-center py-6">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-green-100 text-green-700 flex items-center justify-center text-3xl">
+              ✓
+            </div>
+            <h1
+              className={`font-bold text-gray-900 mb-2 leading-tight ${
+                isMobile ? 'text-xl' : 'text-2xl'
+              }`}
+            >
+              התיקון נשלח לבדיקה
+            </h1>
+            <p className="text-sm text-gray-600">
+              התשובה חזרה למצב "ממתין לבדיקה". אפשר לחזור למקום שעצרת
+              בלימוד או לעבור לתיקון הבא.
+            </p>
+          </div>
         ) : (
           <>
-            <div
-              className="gos-prose is-runtime text-gray-700 mb-5"
-              dangerouslySetInnerHTML={{ __html: qi?.questionText || '' }}
-            />
-            {hasChoices && (
-              <div className="space-y-2 mb-5">
-                {qi.options.map((opt, i) => (
-                  <label
-                    key={i}
-                    className={`block border-2 rounded-lg cursor-pointer transition px-4 py-3 ${
-                      selected === opt
-                        ? 'border-blue-600 bg-blue-50 ring-1 ring-blue-200'
-                        : 'border-gray-200 hover:border-gray-300 bg-white'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="opt"
-                      value={opt}
-                      checked={selected === opt}
-                      onChange={(e) => setSelected(e.target.value)}
-                      className="me-2"
-                    />
-                    <span className={isMobile ? 'text-base' : 'text-lg'}>
-                      {opt}
-                    </span>
-                  </label>
-                ))}
-                {selected && (
-                  <button
-                    type="button"
-                    onClick={() => setSelected('')}
-                    className="text-[12px] text-gray-500 hover:text-gray-800"
-                  >
-                    נקה בחירה
-                  </button>
-                )}
-              </div>
-            )}
-            {showText && (
-              <textarea
-                className={`w-full border border-gray-300 rounded-md px-3 py-3 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 ${
-                  isMobile ? 'h-32 text-base' : 'h-44 text-lg px-4 py-4'
-                }`}
-                value={openText}
-                onChange={(e) => setOpenText(e.target.value)}
-                placeholder={
-                  hasChoices ? 'הערה נוספת (אופציונלי)' : 'התשובה שלך…'
-                }
+            <h1
+              className={`font-bold text-gray-900 mb-3 leading-tight ${
+                isMobile ? 'text-2xl' : 'text-3xl'
+              }`}
+            >
+              {isContent
+                ? titleToPlain(ci?.title || '') || '(תוכן נמחק)'
+                : titleToPlain(qi?.title || '') || '(שאלה נמחקה)'}
+            </h1>
+
+            {isContent ? (
+              <div
+                className="gos-prose is-runtime text-gray-800"
+                dangerouslySetInnerHTML={{ __html: ci?.body || '' }}
               />
+            ) : (
+              <>
+                <div
+                  className="gos-prose is-runtime text-gray-700 mb-5"
+                  dangerouslySetInnerHTML={{ __html: qi?.questionText || '' }}
+                />
+
+                {/* Previous-answer banner. Shown for the rejected step
+                    being corrected AND for read-only browsing of any
+                    non-rejected answered question during a detour. */}
+                {(showCorrectionForm || showReadOnlyAnswered) &&
+                  existingAnswer && (
+                    <div className="bg-gray-50 border border-gray-200 rounded-md p-3 mb-4 text-sm">
+                      <div className="text-[11px] text-gray-500 uppercase tracking-wide mb-1 flex items-center gap-1.5">
+                        <span>התשובה הקודמת שלך</span>
+                        {showReadOnlyAnswered && (
+                          <ReadOnlyStatusPill
+                            status={existingAnswer.status}
+                          />
+                        )}
+                      </div>
+                      <div className="text-gray-800 whitespace-pre-wrap">
+                        {existingAnswer.answerLabel ||
+                          existingAnswer.answerChoice ||
+                          existingAnswer.openText ||
+                          '(ריק)'}
+                      </div>
+                    </div>
+                  )}
+
+                {/* Form. Hidden in read-only browsing mode + in
+                    correction-success state. */}
+                {!showReadOnlyAnswered && !showCorrectionSuccess && (
+                  <>
+                    {showCorrectionForm && (
+                      <div className="text-sm font-medium text-gray-700 mb-2">
+                        התשובה החדשה שלך
+                      </div>
+                    )}
+                    {hasChoices && (
+                      <div className="space-y-2 mb-5">
+                        {qi.options.map((opt, i) => (
+                          <label
+                            key={i}
+                            className={`block border-2 rounded-lg cursor-pointer transition px-4 py-3 ${
+                              selected === opt
+                                ? 'border-blue-600 bg-blue-50 ring-1 ring-blue-200'
+                                : 'border-gray-200 hover:border-gray-300 bg-white'
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="opt"
+                              value={opt}
+                              checked={selected === opt}
+                              onChange={(e) => setSelected(e.target.value)}
+                              className="me-2"
+                            />
+                            <span
+                              className={isMobile ? 'text-base' : 'text-lg'}
+                            >
+                              {opt}
+                            </span>
+                          </label>
+                        ))}
+                        {selected && (
+                          <button
+                            type="button"
+                            onClick={() => setSelected('')}
+                            className="text-[12px] text-gray-500 hover:text-gray-800"
+                          >
+                            נקה בחירה
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {showText && (
+                      <textarea
+                        className={`w-full border border-gray-300 rounded-md px-3 py-3 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 ${
+                          isMobile
+                            ? 'h-32 text-base'
+                            : 'h-44 text-lg px-4 py-4'
+                        }`}
+                        value={openText}
+                        onChange={(e) => setOpenText(e.target.value)}
+                        placeholder={
+                          hasChoices
+                            ? 'הערה נוספת (אופציונלי)'
+                            : 'התשובה שלך…'
+                        }
+                      />
+                    )}
+                  </>
+                )}
+              </>
             )}
           </>
         )}
       </article>
     </RuntimeShell>
+  );
+}
+
+// Tiny status pill for the read-only browsing summary inside a
+// correction detour. Keeps the visual language consistent with the
+// review-status modal without re-importing STATUS_META wholesale.
+function ReadOnlyStatusPill({ status }) {
+  if (status === 'approved') {
+    return (
+      <span className="inline-block text-[10px] font-medium rounded-full px-2 py-0.5 bg-green-100 text-green-800">
+        אושר
+      </span>
+    );
+  }
+  if (status === 'pending') {
+    return (
+      <span className="inline-block text-[10px] font-medium rounded-full px-2 py-0.5 bg-amber-100 text-amber-900">
+        ממתין לבדיקה
+      </span>
+    );
+  }
+  return null;
+}
+
+// Footer rendered after a correction is submitted. Shows the resume
+// CTA always, plus "next correction" when more rejections remain.
+function CorrectionSuccessFooter({
+  hasMoreRejected,
+  onResumeLearning,
+  onNextCorrection,
+}) {
+  return (
+    <div className="px-4 sm:px-6 py-3">
+      <div className="flex items-center gap-2">
+        {hasMoreRejected && onNextCorrection && (
+          <button
+            type="button"
+            onClick={onNextCorrection}
+            className="px-4 py-2.5 text-sm font-semibold border border-red-300 text-red-700 bg-white hover:bg-red-50 rounded-md inline-flex items-center gap-1.5"
+          >
+            <span>תיקון הבא</span>
+            <ChevronLeft />
+          </button>
+        )}
+        <div className="flex-1" />
+        <button
+          type="button"
+          onClick={onResumeLearning}
+          className="px-5 py-3 text-base font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-md inline-flex items-center gap-1.5 min-w-[180px] justify-center"
+        >
+          <span>המשך מהמקום שבו עצרתי</span>
+          <ChevronLeft />
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1122,246 +1587,6 @@ function SubmitScreen({
   );
 }
 
-function ResubmitScreen({
-  attempt,
-  isMobile,
-  onSubmitted,
-  reviewStatus,
-  onOpenReviewModal,
-}) {
-  const [payload, setPayload] = useState(null);
-  const [drafts, setDrafts] = useState({});
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
-
-  useEffect(() => {
-    (async () => {
-      const p = await api.attempts.outstanding(attempt.id);
-      setPayload(p);
-    })();
-  }, [attempt.id]);
-
-  if (!payload) {
-    return (
-      <Screen>
-        <div className="text-gray-500">טוען…</div>
-      </Screen>
-    );
-  }
-
-  const outstanding = payload.outstanding || [];
-  // Each entry has `step` (preferred) plus `node` for back-compat —
-  // they're the same shape today.
-  const keyOf = (o) => o.step?.stepId || o.node?.stepId || o.node?.id;
-  const allFilled = outstanding.every((o) => {
-    const d = drafts[keyOf(o)];
-    const qi = (o.step || o.node)?.questionItem;
-    const v = validateAnswer(
-      {
-        options: qi?.options || [],
-        allowTextAnswer: !!qi?.allowTextAnswer,
-        requirement: qi?.requirement || 'optional',
-      },
-      {
-        choice: d?.answerChoice || null,
-        text: d?.openText || null,
-      },
-    );
-    return v.ok;
-  });
-
-  async function submitAll() {
-    setErr(null);
-    setBusy(true);
-    try {
-      for (const o of outstanding) {
-        const stepId = keyOf(o);
-        const d = drafts[stepId];
-        await api.attempts.answer(attempt.id, { stepId, ...d });
-      }
-      await api.attempts.submit(attempt.id);
-      await onSubmitted();
-    } catch (e) {
-      setErr(e.payload?.error || e.message || 'שגיאה');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function updateDraft(stepId, patch) {
-    setDrafts((prev) => ({ ...prev, [stepId]: { ...prev[stepId], ...patch } }));
-  }
-
-  return (
-    <div className="min-h-screen bg-gray-50 py-6 px-4">
-      <div className={`mx-auto ${isMobile ? 'w-full' : 'max-w-2xl'}`}>
-        {reviewStatus && (
-          <div className="mb-4">
-            <ReviewStatusBar
-              data={reviewStatus}
-              onOpen={onOpenReviewModal}
-            />
-          </div>
-        )}
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">
-          <div className="font-semibold text-amber-900 mb-1">
-            יש לתקן {outstanding.length} שאלות
-          </div>
-          <div className="text-sm text-amber-900">
-            המאשר סימן שאלות שצריך לענות עליהן שוב. עדכן את התשובות ושלח.
-          </div>
-        </div>
-
-        <div className="space-y-5">
-          {outstanding.map((o) => {
-            const stepId = keyOf(o);
-            return (
-              <OutstandingBlock
-                key={stepId}
-                block={o}
-                draft={drafts[stepId] || {}}
-                onChange={(p) => updateDraft(stepId, p)}
-              />
-            );
-          })}
-        </div>
-
-        {!allFilled && (
-          <div className="mt-5 text-xs text-gray-600 bg-gray-100 border border-gray-200 rounded p-3">
-            יש להזין תשובה חדשה לכל שאלה מסומנת לפני השליחה.
-          </div>
-        )}
-        {err && (
-          <div className="mt-3 bg-red-50 border border-red-200 text-red-800 rounded p-3 text-sm">
-            לא ניתן לשלוח:{' '}
-            {err === 'outstanding_questions' ? 'יש שאלות ללא תשובה' : err}
-          </div>
-        )}
-
-        <button
-          className="mt-4 w-full bg-blue-600 text-white rounded px-4 py-3 text-lg font-medium disabled:opacity-40"
-          disabled={!allFilled || busy}
-          onClick={submitAll}
-          title={
-            !allFilled
-              ? 'יש להגיש תשובה חדשה לכל השאלות שנדחו לפני שליחה'
-              : undefined
-          }
-        >
-          {busy ? 'שולח…' : 'שלח שוב לאישור'}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function OutstandingBlock({ block, draft, onChange }) {
-  const step = block.step || block.node;
-  const { precedingContent, lastAnswer } = block;
-  const qi = step.questionItem;
-  const hasChoices = Array.isArray(qi?.options) && qi.options.length > 0;
-  const showText = !!qi?.allowTextAnswer;
-
-  return (
-    <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-5">
-      {precedingContent.length > 0 && (
-        <div className="mb-4 pb-4 border-b border-gray-100">
-          <div className="text-[11px] text-gray-500 uppercase tracking-wide mb-2">
-            תוכן קשור
-          </div>
-          {precedingContent.map((c) => (
-            <div key={c.stepId || c.id} className="mb-3 last:mb-0">
-              <div className="text-sm font-medium text-gray-800 mb-1">
-                {titleToPlain(c.contentItem?.title || '') || '(ללא כותרת)'}
-              </div>
-              <div
-                className="gos-prose text-sm text-gray-700"
-                dangerouslySetInnerHTML={{ __html: c.contentItem?.body || '' }}
-              />
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="mb-3">
-        <h3 className="font-semibold text-lg text-gray-900 mb-1">
-          {titleToPlain(qi?.title || '') || '(שאלה נמחקה)'}
-        </h3>
-        <div
-          className="gos-prose text-gray-700 text-sm"
-          dangerouslySetInnerHTML={{ __html: qi?.questionText || '' }}
-        />
-      </div>
-
-      {lastAnswer && (
-        <div className="mb-3 bg-gray-50 border border-gray-200 rounded p-3 text-sm">
-          <div className="text-[11px] text-gray-500 uppercase tracking-wide mb-1">
-            התשובה הקודמת שלך
-          </div>
-          <div className="text-gray-800 whitespace-pre-wrap">
-            {lastAnswer.answerLabel ||
-              lastAnswer.answerChoice ||
-              lastAnswer.openText ||
-              '(ריק)'}
-          </div>
-        </div>
-      )}
-
-      {lastAnswer?.adminComment && (
-        <div className="mb-3 bg-red-50 border border-red-200 rounded p-3 text-sm">
-          <div className="text-[11px] text-red-700 uppercase tracking-wide mb-1 font-semibold">
-            הערת מאשר
-          </div>
-          <div className="text-red-900 whitespace-pre-wrap">
-            {lastAnswer.adminComment}
-          </div>
-        </div>
-      )}
-
-      <div className="space-y-3">
-        <div className="text-sm font-medium">התשובה החדשה שלך</div>
-        {hasChoices && (
-          <div className="space-y-2">
-            {qi.options.map((opt, i) => (
-              <label
-                key={i}
-                className={`block border rounded-lg cursor-pointer px-4 py-3 ${
-                  draft.answerChoice === opt
-                    ? 'border-blue-600 bg-blue-50'
-                    : 'hover:bg-gray-50 border-gray-200'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name={`opt-${step.stepId}`}
-                  value={opt}
-                  checked={draft.answerChoice === opt}
-                  onChange={(e) =>
-                    onChange({
-                      answerChoice: e.target.value,
-                      answerLabel: e.target.value,
-                    })
-                  }
-                  className="mr-2"
-                />
-                {opt}
-              </label>
-            ))}
-          </div>
-        )}
-        {showText && (
-          <textarea
-            className="w-full border rounded px-3 py-3 h-32"
-            value={draft.openText || ''}
-            onChange={(e) => onChange({ openText: e.target.value })}
-            placeholder={hasChoices ? 'הערה נוספת (אופציונלי)' : 'התשובה שלך…'}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ── RuntimeShell ──────────────────────────────────────────────────
 //
 // Three-zone fixed-height layout used by every active runtime screen:
@@ -1443,6 +1668,8 @@ function RuntimeHeader({
   isMobile,
   reviewStatus,
   onOpenReviewModal,
+  correctionMode,
+  onCancelCorrection,
 }) {
   const total = position?.total ?? 0;
   const idx = position?.index ?? 0;
@@ -1459,23 +1686,38 @@ function RuntimeHeader({
   return (
     <div className="px-4 sm:px-6 pt-3 pb-2">
       <div className="flex items-center gap-2 text-[12px] text-gray-600">
-        {kind === 'content' && (
+        {correctionMode && (
+          <span className="text-[10px] font-semibold uppercase tracking-wide bg-red-100 text-red-800 rounded px-1.5 py-0.5">
+            מצב תיקון
+          </span>
+        )}
+        {!correctionMode && kind === 'content' && (
           <span className="text-[10px] font-semibold uppercase tracking-wide bg-blue-100 text-blue-800 rounded px-1.5 py-0.5">
             תוכן
           </span>
         )}
-        {kind === 'question' && (
+        {!correctionMode && kind === 'question' && (
           <span className="text-[10px] font-semibold uppercase tracking-wide bg-amber-100 text-amber-800 rounded px-1.5 py-0.5">
             שאלה
           </span>
         )}
-        {finishedHint && (
+        {!correctionMode && finishedHint && (
           <span className="text-[10px] font-semibold uppercase tracking-wide bg-green-100 text-green-800 rounded px-1.5 py-0.5">
             סיום
           </span>
         )}
         <span className="flex-1" />
         <span className="font-mono text-[12px] tabular-nums">{display}</span>
+        {correctionMode && onCancelCorrection && (
+          <button
+            type="button"
+            onClick={onCancelCorrection}
+            className="ms-1 text-[12px] text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded px-1.5 py-1"
+            aria-label="ביטול תיקון"
+          >
+            ביטול
+          </button>
+        )}
         {homeHref && <HomeButton homeHref={homeHref} isMobile={isMobile} />}
       </div>
       {/* Review-status bar — only renders when there's something to
@@ -1782,315 +2024,6 @@ function CorrectionConfirm({ data, onCancel, onConfirm }) {
   );
 }
 
-// ── CorrectionScreen ──────────────────────────────────────────────
-//
-// Focused single-question correction. Re-uses the runtime shell so
-// the visual language matches the rest of the runtime (header bar,
-// scrollable body, sticky footer, home button) — but the body is
-// purpose-built for correction:
-//
-//   * Distinct red banner makes the "מצב תיקון" intent obvious.
-//   * The admin's rejection comment is the FIRST thing the guide
-//     reads, above their own previous answer.
-//   * After submit, a calm success state with one big "המשך ללמוד"
-//     button hands the user back to natural runtime rendering — i.e.
-//     exactly the screen they were on when they entered correction.
-//
-// Re-uses existing API endpoints (api.attempts.answer + submit). No
-// new server work, no duplicate runtime engine, no attempt mutation
-// beyond the new versioned answer the existing endpoints already
-// handle.
-function CorrectionScreen({
-  attempt,
-  stepId,
-  isMobile,
-  homeHref,
-  onCancel,
-  onResumeLearning,
-}) {
-  const step = (attempt?.steps || []).find((s) => s.stepId === stepId);
-  const latest = latestAnswerByStep(attempt?.answers || []).get(stepId);
-  const qi = step?.questionItem;
-  const hasChoices = Array.isArray(qi?.options) && qi.options.length > 0;
-  const showText = !!qi?.allowTextAnswer;
-
-  // Seed empty — the previous answer is shown read-only above so the
-  // guide can re-craft a fresh response rather than nudge an old one.
-  const [openText, setOpenText] = useState('');
-  const [selected, setSelected] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
-  const [submitted, setSubmitted] = useState(false);
-  const scrollRef = useRef(null);
-  const fallbackCompletedRef = useRef(new Set());
-  const stepKey = `correction:${stepId}`;
-  // Same scroll gate as ItemScreen — even in correction mode the
-  // guide must read everything before submitting (admin comment +
-  // their previous answer + the question itself).
-  const { isScrollable, hasReachedBottom } = useStepScrollGate(
-    scrollRef,
-    stepKey,
-    fallbackCompletedRef,
-  );
-
-  if (!step || step.kind !== 'question' || !qi) {
-    return (
-      <Screen>
-        <div className="text-center max-w-md">
-          <div className="text-5xl mb-3">⚠️</div>
-          <div className="text-red-600 font-medium mb-2">
-            השאלה לתיקון לא נמצאה
-          </div>
-          <button
-            type="button"
-            onClick={onCancel}
-            className="text-sm border border-gray-300 rounded px-3 py-1.5 hover:bg-gray-50"
-          >
-            חזרה
-          </button>
-        </div>
-      </Screen>
-    );
-  }
-
-  const validation = validateAnswer(
-    {
-      options: qi?.options || [],
-      allowTextAnswer: showText,
-      requirement: qi?.requirement || 'optional',
-    },
-    { choice: selected || null, text: openText },
-  );
-  const answerOk = validation.ok;
-  const scrollOk = !isScrollable || hasReachedBottom;
-  const canSubmit = answerOk && scrollOk && !busy;
-  const showScrollHint = answerOk && isScrollable && !hasReachedBottom;
-
-  async function submit() {
-    if (!canSubmit) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      const payload = { stepId };
-      if (selected) {
-        payload.answerChoice = selected;
-        payload.answerLabel = selected;
-      }
-      if (showText && openText.trim()) {
-        payload.openText = openText;
-      }
-      await api.attempts.answer(attempt.id, payload);
-      // Re-submit so submittedAt advances and admin sees a clear
-      // "this came back for re-review" signal. If OTHER rejections
-      // remain, the server returns 'outstanding_questions' — that's
-      // an expected, non-fatal state for focused correction (the
-      // attempt is still in correction state at the question level).
-      try {
-        await api.attempts.submit(attempt.id);
-      } catch (e) {
-        if (e.payload?.error !== 'outstanding_questions') throw e;
-      }
-      setSubmitted(true);
-    } catch (e) {
-      setErr(e.payload?.error || e.message || 'שגיאה');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (submitted) {
-    return (
-      <CorrectionSuccess
-        isMobile={isMobile}
-        homeHref={homeHref}
-        onResumeLearning={onResumeLearning}
-      />
-    );
-  }
-
-  const plainTitle = titleToPlain(qi?.title || '') || '(שאלה ללא כותרת)';
-  const previousAnswerText =
-    latest?.answerLabel ||
-    latest?.answerChoice ||
-    latest?.openText ||
-    null;
-
-  return (
-    <RuntimeShell
-      isMobile={isMobile}
-      stepKey={stepKey}
-      scrollRef={scrollRef}
-      header={
-        <div className="px-4 sm:px-6 pt-3 pb-2">
-          <div className="flex items-center gap-2 text-[12px] text-gray-700">
-            <span className="text-[10px] font-semibold uppercase tracking-wide bg-red-100 text-red-800 rounded px-1.5 py-0.5">
-              מצב תיקון
-            </span>
-            <span className="text-gray-700 truncate">תיקון תשובה</span>
-            <span className="flex-1" />
-            <button
-              type="button"
-              onClick={onCancel}
-              className="text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded px-1.5 py-1 text-[12px]"
-              aria-label="ביטול"
-            >
-              ביטול
-            </button>
-            {homeHref && <HomeButton homeHref={homeHref} isMobile={isMobile} />}
-          </div>
-          <div className="mt-2 h-1 bg-red-100 rounded-full overflow-hidden">
-            <div className="h-full bg-red-500 w-1/3" aria-hidden />
-          </div>
-        </div>
-      }
-      footer={
-        <NavFooter
-          onPrev={onCancel}
-          canPrev={!busy}
-          onNext={submit}
-          canNext={canSubmit}
-          nextLabel={busy ? 'שולח…' : 'שלח תיקון'}
-          scrollHint={showScrollHint}
-        />
-      }
-    >
-      <article>
-        {latest?.adminComment && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
-            <div className="text-[11px] font-bold text-red-800 uppercase tracking-wide mb-1">
-              הערת מאשר
-            </div>
-            <div className="text-sm text-red-900 whitespace-pre-wrap">
-              {latest.adminComment}
-            </div>
-          </div>
-        )}
-        <h1
-          className={`font-bold text-gray-900 mb-3 leading-tight ${
-            isMobile ? 'text-2xl' : 'text-3xl'
-          }`}
-        >
-          {plainTitle}
-        </h1>
-        <div
-          className="gos-prose is-runtime text-gray-700 mb-4"
-          dangerouslySetInnerHTML={{ __html: qi?.questionText || '' }}
-        />
-        {previousAnswerText && (
-          <div className="bg-gray-50 border border-gray-200 rounded-md p-3 mb-5 text-sm">
-            <div className="text-[11px] text-gray-500 uppercase tracking-wide mb-1">
-              התשובה הקודמת שלך
-            </div>
-            <div className="text-gray-800 whitespace-pre-wrap">
-              {previousAnswerText}
-            </div>
-          </div>
-        )}
-        <div className="text-sm font-medium text-gray-700 mb-2">
-          התשובה החדשה שלך
-        </div>
-        {hasChoices && (
-          <div className="space-y-2 mb-4">
-            {qi.options.map((opt, i) => (
-              <label
-                key={i}
-                className={`block border-2 rounded-lg cursor-pointer transition px-4 py-3 ${
-                  selected === opt
-                    ? 'border-blue-600 bg-blue-50 ring-1 ring-blue-200'
-                    : 'border-gray-200 hover:border-gray-300 bg-white'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="opt"
-                  value={opt}
-                  checked={selected === opt}
-                  onChange={(e) => setSelected(e.target.value)}
-                  className="me-2"
-                />
-                <span className={isMobile ? 'text-base' : 'text-lg'}>
-                  {opt}
-                </span>
-              </label>
-            ))}
-            {selected && (
-              <button
-                type="button"
-                onClick={() => setSelected('')}
-                className="text-[12px] text-gray-500 hover:text-gray-800"
-              >
-                נקה בחירה
-              </button>
-            )}
-          </div>
-        )}
-        {showText && (
-          <textarea
-            className={`w-full border border-gray-300 rounded-md px-3 py-3 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 ${
-              isMobile ? 'h-32 text-base' : 'h-44 text-lg px-4 py-4'
-            }`}
-            value={openText}
-            onChange={(e) => setOpenText(e.target.value)}
-            placeholder={
-              hasChoices ? 'הערה נוספת (אופציונלי)' : 'התשובה שלך…'
-            }
-          />
-        )}
-        {err && (
-          <div className="mt-4 bg-red-50 border border-red-200 text-red-800 rounded p-3 text-sm">
-            לא ניתן לשלוח: {err}
-          </div>
-        )}
-      </article>
-    </RuntimeShell>
-  );
-}
-
-function CorrectionSuccess({ isMobile, homeHref, onResumeLearning }) {
-  return (
-    <div
-      dir="rtl"
-      className="bg-gray-50 flex flex-col fixed inset-0 overflow-hidden"
-    >
-      <header className="shrink-0 bg-white border-b border-gray-200">
-        <div className="px-4 sm:px-6 py-3 flex items-center gap-2">
-          <span className="text-[10px] font-semibold uppercase tracking-wide bg-green-100 text-green-800 rounded px-1.5 py-0.5">
-            תיקון נשלח
-          </span>
-          <span className="flex-1" />
-          {homeHref && <HomeButton homeHref={homeHref} isMobile={isMobile} />}
-        </div>
-      </header>
-      <main className="flex-1 min-h-0 overflow-y-auto flex items-center justify-center p-6">
-        <div className="text-center max-w-md">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-green-100 text-green-700 flex items-center justify-center text-3xl">
-            ✓
-          </div>
-          <h1 className="text-xl sm:text-2xl font-semibold text-gray-900 mb-2">
-            התיקון נשלח לבדיקה
-          </h1>
-          <p className="text-sm text-gray-600 mb-6">
-            המסך יתעדכן אוטומטית כשהמאשר יסיים. אפשר לחזור ללמוד מהמקום
-            בו עצרת.
-          </p>
-        </div>
-      </main>
-      <footer className="shrink-0 bg-white border-t border-gray-200 shadow-[0_-2px_8px_rgba(0,0,0,0.04)]">
-        <div className="px-4 sm:px-6 py-3 flex items-center justify-center">
-          <button
-            type="button"
-            onClick={onResumeLearning}
-            className="px-5 py-3 text-base font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-md inline-flex items-center gap-1.5 min-w-[160px] justify-center"
-          >
-            <span>המשך ללמוד</span>
-            <ChevronLeft />
-          </button>
-        </div>
-      </footer>
-    </div>
-  );
-}
-
 // Secondary, deterministic navigation back to the guide portal.
 // SVG icon to bypass any bidi mirroring; aria-label in Hebrew for
 // screen readers. Plain anchor (not router-navigate) so middle-click /
@@ -2241,23 +2174,53 @@ function NavFooter({
   );
 }
 
-function WaitingScreen({ reviewStatus, onOpenReviewModal }) {
+function WaitingScreen({ reviewStatus, onOpenReviewModal, rejectedCount }) {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center p-4 pt-6">
       {reviewStatus && (
-        <div className="w-full max-w-md mb-6">
+        <div className="w-full max-w-md mb-4">
           <ReviewStatusBar
             data={reviewStatus}
             onOpen={onOpenReviewModal}
           />
         </div>
       )}
+      {/* Rejection banner — only when the modal+bar aren't enough on
+          their own. Clicking opens the modal where the user picks a
+          rejected item to correct. The modal click → confirmation
+          sheet → correction detour pipeline handles everything from
+          here. */}
+      {rejectedCount > 0 && (
+        <button
+          type="button"
+          onClick={onOpenReviewModal}
+          className="w-full max-w-md mb-6 text-right rounded-lg border border-red-300 bg-red-50 hover:bg-red-100 active:bg-red-100 transition px-4 py-3 flex items-start gap-3"
+        >
+          <span className="shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-full bg-red-100 text-red-700 text-base">
+            ⚠
+          </span>
+          <span className="flex-1">
+            <span className="block font-semibold text-red-900">
+              יש{' '}
+              {rejectedCount === 1
+                ? 'תיקון אחד'
+                : `${rejectedCount} תיקונים`}{' '}
+              לבצע
+            </span>
+            <span className="block text-[12px] text-red-800 mt-0.5">
+              לחץ כדי לראות את התשובות שדורשות תיקון.
+            </span>
+          </span>
+        </button>
+      )}
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center max-w-md">
           <div className="text-5xl mb-4">⏳</div>
           <h2 className="text-2xl font-semibold mb-2">התשובות נשלחו לאישור</h2>
           <p className="text-gray-600">
-            המסך יתעדכן אוטומטית כאשר המאשר יסיים את הבדיקה.
+            {rejectedCount > 0
+              ? 'לאחר שתשלח את התיקונים, המסך יתעדכן אוטומטית כשהמאשר יסיים את הבדיקה.'
+              : 'המסך יתעדכן אוטומטית כאשר המאשר יסיים את הבדיקה.'}
           </p>
         </div>
       </div>
