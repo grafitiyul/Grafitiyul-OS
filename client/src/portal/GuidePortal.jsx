@@ -268,7 +268,10 @@ function TaskCard({ task, starting, disabled, onOpen }) {
               }`}
             >
               {starting ? 'פותח…' : cta}
-              {!starting && <span aria-hidden>‹</span>}
+              {/* SVG chevron — drawn explicitly so it doesn't get
+                  mirrored or reordered by the bidi resolver. In RTL,
+                  forward / proceed = LEFT, hence ChevronLeft. */}
+              {!starting && <ChevronLeftCta />}
             </span>
           )}
         </div>
@@ -372,6 +375,28 @@ function NotFoundScreen() {
         </div>
       </div>
     </div>
+  );
+}
+
+// Direction-explicit chevron — SVG, never mirrored by the bidi
+// resolver. Used in the task card's "התחל / המשך" CTA.
+function ChevronLeftCta() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="14"
+      height="14"
+      fill="none"
+      aria-hidden
+    >
+      <path
+        d="M10 4l-4 4 4 4"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 

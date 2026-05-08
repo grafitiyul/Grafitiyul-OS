@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { validateAnswer } from '../lib/questionRequirement.js';
+import { titleToPlain } from '../editor/TitleEditor.jsx';
 
 // Entry point at /flow/:id.
 //   - ?preview=1 → local in-memory run that never hits /attempts (admin preview).
@@ -466,9 +467,13 @@ function ItemScreen({
             isMobile ? 'text-2xl' : 'text-3xl'
           }`}
         >
+          {/* Titles are stored as TipTap HTML so they can hold dynamic-
+              field chips. In the runtime header we want clean reading
+              text — strip tags. The body below renders rich HTML via
+              dangerouslySetInnerHTML in .gos-prose. */}
           {isContent
-            ? ci?.title || '(תוכן נמחק)'
-            : qi?.title || '(שאלה נמחקה)'}
+            ? titleToPlain(ci?.title || '') || '(תוכן נמחק)'
+            : titleToPlain(qi?.title || '') || '(שאלה נמחקה)'}
         </h1>
 
         {isContent ? (
@@ -741,7 +746,7 @@ function OutstandingBlock({ block, draft, onChange }) {
           {precedingContent.map((c) => (
             <div key={c.stepId || c.id} className="mb-3 last:mb-0">
               <div className="text-sm font-medium text-gray-800 mb-1">
-                {c.contentItem?.title}
+                {titleToPlain(c.contentItem?.title || '') || '(ללא כותרת)'}
               </div>
               <div
                 className="gos-prose text-sm text-gray-700"
@@ -754,7 +759,7 @@ function OutstandingBlock({ block, draft, onChange }) {
 
       <div className="mb-3">
         <h3 className="font-semibold text-lg text-gray-900 mb-1">
-          {qi?.title || '(שאלה נמחקה)'}
+          {titleToPlain(qi?.title || '') || '(שאלה נמחקה)'}
         </h3>
         <div
           className="gos-prose text-gray-700 text-sm"
@@ -839,16 +844,18 @@ function OutstandingBlock({ block, draft, onChange }) {
 //     ├ scroll ┤  ← flex-1 + overflow-y-auto
 //     └ footer ┘  ← shrink-0 (prev / next nav, always in viewport)
 //
-// `100dvh` keeps the footer pinned above the iOS Safari toolbar even
-// as the URL bar shows/hides. `min-height: 100vh` is the fallback for
-// browsers that don't support dvh — slightly worse on iOS but never
-// broken.
+// `position: fixed inset-0` is the bulletproof way to fill the visible
+// viewport: the previous attempt with `height: 100dvh; minHeight: 100vh`
+// caused trouble on iOS — when the URL bar was visible the element ran
+// 100vh tall (taller than the visible area), pushing the footer below
+// the fold. Fixed positioning anchors all four edges to the viewport
+// directly, so the footer is always within reach regardless of
+// browser-chrome state.
 function RuntimeShell({ header, footer, children, preview, isMobile }) {
   return (
     <div
       dir="rtl"
-      className="bg-gray-50 flex flex-col"
-      style={{ height: '100dvh', minHeight: '100vh' }}
+      className="bg-gray-50 flex flex-col fixed inset-0 overflow-hidden"
     >
       {preview && <PreviewBanner />}
       {header && (
@@ -868,7 +875,7 @@ function RuntimeShell({ header, footer, children, preview, isMobile }) {
         </div>
       </main>
       {footer && (
-        <footer className="shrink-0 bg-white border-t border-gray-200">
+        <footer className="shrink-0 bg-white border-t border-gray-200 shadow-[0_-2px_8px_rgba(0,0,0,0.04)]">
           {footer}
         </footer>
       )}
@@ -922,11 +929,58 @@ function RuntimeHeader({ position, kind, finishedHint }) {
   );
 }
 
+// Direction-explicit chevrons — drawn as SVG so they bypass the
+// Unicode bidi resolver entirely. Single-character arrow glyphs
+// (`›` / `‹` / `→` / `←`) get reordered or visually swapped in
+// some RTL contexts depending on browser + font; SVG paths are
+// always rendered exactly as drawn.
+function ChevronRight(props) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="14"
+      height="14"
+      fill="none"
+      aria-hidden
+      {...props}
+    >
+      <path
+        d="M6 4l4 4-4 4"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+function ChevronLeft(props) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="14"
+      height="14"
+      fill="none"
+      aria-hidden
+      {...props}
+    >
+      <path
+        d="M10 4l-4 4 4 4"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 // Sticky-footer nav. RTL flex puts the FIRST child on the right (start),
 // LAST child on the left (end) — so הקודם (DOM-first) sits on the
 // RIGHT and הבא (DOM-last) sits on the LEFT, matching Hebrew reading
-// flow. Arrow glyphs match: `›` (right-pointing) on הקודם, `‹` (left-
-// pointing) on הבא.
+// flow. SVG chevrons indicate direction of travel:
+//   הקודם → ChevronRight (RTL "back" = toward where the reader started)
+//   הבא   → ChevronLeft  (RTL "forward" = toward where the reader is going)
 function NavFooter({ onPrev, canPrev, onNext, canNext, nextLabel = 'הבא' }) {
   return (
     <div className="px-4 sm:px-6 py-3 flex items-center gap-2">
@@ -937,7 +991,7 @@ function NavFooter({ onPrev, canPrev, onNext, canNext, nextLabel = 'הבא' }) {
         aria-label="הקודם"
         className="px-4 py-2.5 text-sm font-medium border border-gray-300 text-gray-700 bg-white rounded-md hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
       >
-        <span aria-hidden className="text-base leading-none">›</span>
+        <ChevronRight />
         <span>הקודם</span>
       </button>
       <div className="flex-1" />
@@ -948,7 +1002,7 @@ function NavFooter({ onPrev, canPrev, onNext, canNext, nextLabel = 'הבא' }) {
         className="px-5 py-3 text-base font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-md disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5 min-w-[120px] justify-center"
       >
         <span>{nextLabel}</span>
-        <span aria-hidden className="text-base leading-none">‹</span>
+        <ChevronLeft />
       </button>
     </div>
   );
@@ -1015,7 +1069,7 @@ function ApprovedBrowser({ flow, attempt, isMobile }) {
                     תוכן
                   </div>
                   <h3 className="font-semibold text-lg mb-2">
-                    {s.contentItem?.title}
+                    {titleToPlain(s.contentItem?.title || '') || '(ללא כותרת)'}
                   </h3>
                   <div
                     className="gos-prose text-sm text-gray-700"
@@ -1030,7 +1084,7 @@ function ApprovedBrowser({ flow, attempt, isMobile }) {
                     שאלה
                   </div>
                   <h3 className="font-semibold text-lg mb-1">
-                    {s.questionItem?.title}
+                    {titleToPlain(s.questionItem?.title || '') || '(ללא כותרת)'}
                   </h3>
                   <div
                     className="gos-prose text-sm text-gray-700 mb-3"
