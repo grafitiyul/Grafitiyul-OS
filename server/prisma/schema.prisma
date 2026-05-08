@@ -9,6 +9,33 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Internal admin user. The whole point of this table is to take admin
+// credentials OFF Railway env vars and INTO the DB so the user can
+// manage them from inside the system.
+//
+// Bootstrap rule (enforced server-side, see auth.js):
+//   * Zero ACTIVE admins → /admin is reachable, POST /api/auth/setup
+//     creates the first user. No login required.
+//   * One+ active admins → /admin requires a valid session, /setup is
+//     locked out (403). The "first-user-wins" pattern.
+//
+// `passwordHash` is a scrypt KDF output ("<saltHex>:<derivedKeyHex>") —
+// no plaintext, no need for an external bcrypt/argon2 dependency.
+// `role` is reserved for future role-based access; today everyone is
+// 'admin'. `isActive=false` is a soft-delete; the bootstrap count
+// only considers active users so a deactivated admin doesn't
+// re-open bootstrap mode.
+model AdminUser {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  role         String   @default("admin")
+  isActive     Boolean  @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
 // Nested organisational folder for the item bank. Folders can contain items
 // (content + question) and/or other folders — no depth cap at the data level.
 // parentId=null means the folder sits at the root. sortOrder is scoped by
