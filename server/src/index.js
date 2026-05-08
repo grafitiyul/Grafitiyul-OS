@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import cors from 'cors';
+import { attachAuth, requireAdminAuth, buildAuthRoutes } from './auth.js';
 import itemsRouter from './routes/items.js';
 import flowsRouter from './routes/flows.js';
 import attemptsRouter from './routes/attempts.js';
@@ -41,19 +42,44 @@ app.get('/health', (_req, res) => {
   });
 });
 
-app.use('/api/items', itemsRouter);
-app.use('/api/flows', flowsRouter);
-app.use('/api/attempts', attemptsRouter);
-app.use('/api/reviews', reviewsRouter);
-app.use('/api/media', mediaRouter);
-app.use('/api/business-fields', businessFieldsRouter);
-app.use('/api/signers', signersRouter);
-app.use('/api/documents', documentsRouter);
-app.use('/api/teams', teamsRouter);
-app.use('/api/people', peopleRouter);
-app.use('/api/recruitment', recruitmentRouter);
-app.use('/api/exports', exportsRouter);
+// Attach auth state to every request (req.adminAuth = { userId } | null).
+// `attachAuth` never blocks — it only annotates. `requireAdminAuth`
+// is the gate, applied per-router below for routes that are admin-only.
+app.use(attachAuth);
+
+// Public auth endpoints (login / logout / status). Login is the only
+// way to acquire the session cookie, so the route itself MUST be
+// reachable without auth.
+app.use('/api/auth', buildAuthRoutes(express));
+
+// ── Public routes (no auth) ────────────────────────────────────
+//
+// Used by the guide portal + learner runtime. The portal is gated on
+// its own (token in the URL); the runtime + flow + items endpoints
+// are accessed via attempt / flow / item ids that are effectively
+// unguessable. Locking these behind admin auth would break every
+// existing public guide link, which is exactly what the spec calls
+// out as forbidden.
 app.use('/api/portal', portalRouter);
+app.use('/api/attempts', attemptsRouter);
+app.use('/api/flows', flowsRouter);
+app.use('/api/items', itemsRouter);
+app.use('/api/media', mediaRouter);
+
+// ── Admin-only routes ──────────────────────────────────────────
+//
+// Reviews + people + teams + documents + business fields + signers +
+// recruitment + exports are all admin tools — no public consumer
+// hits these. requireAdminAuth runs before each router, so an
+// unauthenticated request gets a 401 JSON before any handler logic.
+app.use('/api/reviews', requireAdminAuth, reviewsRouter);
+app.use('/api/business-fields', requireAdminAuth, businessFieldsRouter);
+app.use('/api/signers', requireAdminAuth, signersRouter);
+app.use('/api/documents', requireAdminAuth, documentsRouter);
+app.use('/api/teams', requireAdminAuth, teamsRouter);
+app.use('/api/people', requireAdminAuth, peopleRouter);
+app.use('/api/recruitment', requireAdminAuth, recruitmentRouter);
+app.use('/api/exports', requireAdminAuth, exportsRouter);
 
 // Unknown /api/* paths get a real JSON 404 instead of falling through to
 // the SPA fallback (which would serve HTML for an API request).

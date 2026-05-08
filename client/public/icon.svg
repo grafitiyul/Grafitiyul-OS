@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#2563eb"/>
+  <g fill="#ffffff" font-family="'Heebo','Segoe UI',system-ui,sans-serif" font-weight="700" text-anchor="middle">
+    <text x="256" y="225" font-size="170" letter-spacing="-6">G</text>
+    <text x="256" y="370" font-size="84" letter-spacing="2">TEAM</text>
+  </g>
+</svg>

@@ -3,13 +3,31 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#2563eb" />
+    <!-- PWA manifest. Served via express.static in production, no auth.
+         No service worker is registered anywhere — the app stays
+         online-only by design (see CLAUDE.md §15: no hidden stale
+         caching). Installable yes; cached-offline no. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <!-- iOS install metadata. Safari 13+ accepts SVG for the home-
+         screen icon. The two apple-* tags ask iOS to render the app
+         in standalone (no Safari chrome) when launched from the
+         home screen. -->
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Grafitiyul" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="default"
+    />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <title>Grafitiyul OS</title>
+    <title>Grafitiyul Team</title>
     <style>
       html,
       body,

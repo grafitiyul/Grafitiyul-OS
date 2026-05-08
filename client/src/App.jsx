@@ -1,5 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import AppShell from './shell/AppShell.jsx';
+import AdminGuard from './admin/auth/AdminGuard.jsx';
+import AdminLogin from './admin/auth/AdminLogin.jsx';
 import ProceduresLayout from './admin/procedures/ProceduresLayout.jsx';
 import FlowsHome from './admin/procedures/flows/FlowsHome.jsx';
 import FlowsIndexView from './admin/procedures/flows/FlowsIndexView.jsx';
@@ -31,7 +33,18 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/admin" replace />} />
-      <Route path="/admin" element={<AppShell />}>
+      {/* Login lives OUTSIDE the AdminGuard so an unauthenticated user
+          can actually reach it. The guard wraps every authenticated
+          admin route below — its redirect target is /admin/login. */}
+      <Route path="/admin/login" element={<AdminLogin />} />
+      <Route
+        path="/admin"
+        element={
+          <AdminGuard>
+            <AppShell />
+          </AdminGuard>
+        }
+      >
         <Route index element={<Navigate to="/admin/procedures/flows" replace />} />
         <Route path="procedures" element={<ProceduresLayout />}>
           <Route index element={<Navigate to="flows" replace />} />
