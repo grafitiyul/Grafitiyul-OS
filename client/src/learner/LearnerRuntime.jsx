@@ -163,9 +163,14 @@ export function FlowEntry() {
 export function AttemptRuntime() {
   const { attemptId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  // Token threaded through from /p/:token → /attempt/:id?p=<token>.
+  // Used to render a stable home button in the header.
+  const portalToken = searchParams.get('p') || null;
 
   const [attempt, setAttempt] = useState(null);
   const [loadErr, setLoadErr] = useState(null);
+  const [navError, setNavError] = useState(null);
   const [isMobile, setIsMobile] = useState(() =>
     window.matchMedia('(max-width: 640px)').matches,
   );
@@ -207,23 +212,116 @@ export function AttemptRuntime() {
   const steps = attempt?.steps || [];
   const currentStepId = attempt?.currentStepId || attempt?.currentNodeId;
 
-  async function handleNext(answerPayload) {
-    const currentStep = steps.find((s) => s.stepId === currentStepId);
-    if (!currentStep) return;
-    if (answerPayload) {
-      await api.attempts.answer(attempt.id, {
-        stepId: currentStep.stepId,
-        ...answerPayload,
-      });
-    }
-    await api.attempts.advance(attempt.id);
-    await loadAttempt();
+  // ── Background persistence queue ─────────────────────────────────
+  //
+  // Step navigation used to be fully synchronous: every click fired
+  // answer → advance → loadAttempt sequentially and `await`-ed each
+  // round-trip before the UI changed. On Railway latency that ran ~1-2s
+  // per click, which is the "stuck" feeling the user reported.
+  //
+  // New shape: optimistic local update fires immediately (UI changes
+  // before any network call), and the persistence calls run in the
+  // background through a serialized promise chain. Serialization
+  // matters because two parallel `advance` calls would both read the
+  // same currentStepId from the DB and converge to wrong server state.
+  // The chain guarantees server state moves through the same sequence
+  // the UI showed.
+  const queueRef = useRef(Promise.resolve());
+
+  function enqueue(label, fn) {
+    queueRef.current = queueRef.current.then(async () => {
+      try {
+        await fn();
+        // Clear any prior nav error on success — the queue caught up.
+        setNavError(null);
+      } catch (e) {
+        console.error('[runtime nav]', label, e);
+        setNavError(e?.message || 'שגיאה בעדכון השרת');
+        // Don't re-throw — keep the chain alive so subsequent clicks
+        // still get processed.
+      }
+    });
   }
 
-  async function handlePrev() {
+  function handleNext(answerPayload) {
+    if (!attempt) return;
+    const idx = steps.findIndex((s) => s.stepId === currentStepId);
+    if (idx < 0) return;
+    const currentStep = steps[idx];
+    const nextStep = steps[idx + 1] || null;
+
+    // Optimistic local update — both the cursor AND, when an answer
+    // payload is included, the new FlowAnswer row. The optimistic
+    // answer carries `_optimistic: true` so debugging / future code
+    // can tell it apart from server-confirmed rows. version is
+    // bumped past the existing latest for this step so
+    // `latestAnswerByStep()` picks it up immediately when the user
+    // navigates back to this step.
+    setAttempt((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev };
+      if (answerPayload) {
+        const existing = (prev.answers || []).filter(
+          (a) => a.stepId === currentStep.stepId,
+        );
+        const maxVersion = existing.reduce(
+          (m, a) => Math.max(m, a.version || 0),
+          0,
+        );
+        const optimistic = {
+          id: `_opt_${currentStep.stepId}_${Date.now()}`,
+          attemptId: prev.id,
+          stepId: currentStep.stepId,
+          flowNodeId: currentStep.flowNodeId || null,
+          questionItemId: currentStep.questionItemId || null,
+          openText: answerPayload.openText ?? null,
+          answerChoice: answerPayload.answerChoice ?? null,
+          answerLabel: answerPayload.answerLabel ?? null,
+          version: maxVersion + 1,
+          status: 'pending',
+          _optimistic: true,
+        };
+        next.answers = [...(prev.answers || []), optimistic];
+      }
+      next.currentStepId = nextStep ? nextStep.stepId : null;
+      next.currentNodeId = nextStep?.flowNodeId || null;
+      return next;
+    });
+
+    enqueue('next', async () => {
+      if (answerPayload) {
+        await api.attempts.answer(attempt.id, {
+          stepId: currentStep.stepId,
+          ...answerPayload,
+        });
+      }
+      await api.attempts.advance(attempt.id);
+    });
+  }
+
+  function handlePrev() {
     if (!attempt || !steps.length) return;
-    await api.attempts.back(attempt.id);
-    await loadAttempt();
+    const idx = steps.findIndex((s) => s.stepId === currentStepId);
+    let prevStep;
+    if (idx < 0) {
+      // currentStepId is null — we're on the SubmitScreen (past end).
+      // Back lands on the last step, mirroring the server-side rule.
+      prevStep = steps[steps.length - 1];
+    } else if (idx > 0) {
+      prevStep = steps[idx - 1];
+    } else {
+      return; // already at the first step, no-op
+    }
+    setAttempt((prev) =>
+      prev
+        ? {
+            ...prev,
+            currentStepId: prevStep.stepId,
+            currentNodeId: prevStep.flowNodeId || null,
+          }
+        : prev,
+    );
+    enqueue('back', () => api.attempts.back(attempt.id));
   }
 
   if (loadErr) {
@@ -288,6 +386,7 @@ export function AttemptRuntime() {
         steps={steps}
         onSubmitted={loadAttempt}
         onPrev={steps.length > 0 ? handlePrev : null}
+        homeHref={portalToken ? `/p/${encodeURIComponent(portalToken)}` : null}
       />
     );
   }
@@ -299,6 +398,8 @@ export function AttemptRuntime() {
       existingAnswer={latestAnswerByStep(attempt.answers || []).get(currentStep.stepId)}
       onNext={handleNext}
       onPrev={currentStepIndex > 0 ? handlePrev : null}
+      homeHref={portalToken ? `/p/${encodeURIComponent(portalToken)}` : null}
+      navError={navError}
       position={{
         index: currentStepIndex,
         total: steps.length,
@@ -388,6 +489,8 @@ function ItemScreen({
   onNext,
   onPrev,
   position,
+  homeHref,
+  navError,
 }) {
   const [openText, setOpenText] = useState(existingAnswer?.openText || '');
   const [selected, setSelected] = useState(
@@ -450,7 +553,15 @@ function ItemScreen({
     <RuntimeShell
       isMobile={isMobile}
       preview={isPreview}
-      header={<RuntimeHeader position={position} kind={node.kind} />}
+      stepKey={node.stepId || node.id}
+      header={
+        <RuntimeHeader
+          position={position}
+          kind={node.kind}
+          homeHref={homeHref}
+          isMobile={isMobile}
+        />
+      }
       footer={
         <NavFooter
           onPrev={onPrev}
@@ -460,6 +571,7 @@ function ItemScreen({
           nextLabel="הבא"
         />
       }
+      banner={navError ? <NavErrorBanner message={navError} /> : null}
     >
       <article>
         <h1
@@ -541,7 +653,14 @@ function ItemScreen({
   );
 }
 
-function SubmitScreen({ attempt, isMobile, steps, onSubmitted, onPrev }) {
+function SubmitScreen({
+  attempt,
+  isMobile,
+  steps,
+  onSubmitted,
+  onPrev,
+  homeHref,
+}) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const questions = steps.filter((s) => s.kind === 'question');
@@ -564,11 +683,14 @@ function SubmitScreen({ attempt, isMobile, steps, onSubmitted, onPrev }) {
   return (
     <RuntimeShell
       isMobile={isMobile}
+      stepKey="submit"
       header={
         <RuntimeHeader
           position={{ index: steps.length, total: steps.length, isLast: true }}
           kind={null}
           finishedHint
+          homeHref={homeHref}
+          isMobile={isMobile}
         />
       }
       footer={
@@ -851,7 +973,20 @@ function OutstandingBlock({ block, draft, onChange }) {
 // the fold. Fixed positioning anchors all four edges to the viewport
 // directly, so the footer is always within reach regardless of
 // browser-chrome state.
-function RuntimeShell({ header, footer, children, preview, isMobile }) {
+function RuntimeShell({
+  header,
+  footer,
+  children,
+  preview,
+  isMobile,
+  // Changes whenever the active step changes; used as React `key` on
+  // the inner content wrapper so the wrapper re-mounts and the CSS
+  // animation re-fires. Also resets scroll position to the top of the
+  // new step.
+  stepKey,
+  // Optional non-blocking error strip (e.g. background save failed).
+  banner,
+}) {
   return (
     <div
       dir="rtl"
@@ -863,9 +998,11 @@ function RuntimeShell({ header, footer, children, preview, isMobile }) {
           {header}
         </header>
       )}
+      {banner && <div className="shrink-0">{banner}</div>}
       <main className="flex-1 min-h-0 overflow-y-auto">
         <div
-          className={`mx-auto w-full ${
+          key={stepKey}
+          className={`mx-auto w-full runtime-step-anim ${
             isMobile
               ? 'max-w-full px-4 py-5'
               : 'max-w-2xl px-8 py-8'
@@ -883,8 +1020,12 @@ function RuntimeShell({ header, footer, children, preview, isMobile }) {
   );
 }
 
-// Compact runtime header — kind chip + step counter + thin progress bar.
-function RuntimeHeader({ position, kind, finishedHint }) {
+// Compact runtime header — kind chip + step counter + thin progress
+// bar. Optional home button on the trailing edge (left in RTL) that
+// returns to the guide portal /p/<token>. Hidden when the runtime
+// was opened directly (no token in URL) so a deep-linked attempt
+// doesn't show a dead button.
+function RuntimeHeader({ position, kind, finishedHint, homeHref, isMobile }) {
   const total = position?.total ?? 0;
   const idx = position?.index ?? 0;
   const display = finishedHint
@@ -917,6 +1058,7 @@ function RuntimeHeader({ position, kind, finishedHint }) {
         )}
         <span className="flex-1" />
         <span className="font-mono text-[12px] tabular-nums">{display}</span>
+        {homeHref && <HomeButton homeHref={homeHref} isMobile={isMobile} />}
       </div>
       <div className="mt-2 h-1 bg-gray-100 rounded-full overflow-hidden">
         <div
@@ -925,6 +1067,55 @@ function RuntimeHeader({ position, kind, finishedHint }) {
           aria-hidden
         />
       </div>
+    </div>
+  );
+}
+
+// Secondary, deterministic navigation back to the guide portal.
+// SVG icon to bypass any bidi mirroring; aria-label in Hebrew for
+// screen readers. Plain anchor (not router-navigate) so middle-click /
+// long-press / open-in-new-tab work the way the platform expects.
+function HomeButton({ homeHref, isMobile }) {
+  return (
+    <a
+      href={homeHref}
+      title="חזרה למערכת"
+      aria-label="חזרה למערכת"
+      className="ms-1 inline-flex items-center gap-1 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded px-1.5 py-1 transition-colors"
+    >
+      <HomeIcon />
+      {!isMobile && <span className="text-[12px]">למערכת</span>}
+    </a>
+  );
+}
+
+function HomeIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M3 11l9-7 9 7" />
+      <path d="M5 10v9a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1v-9" />
+    </svg>
+  );
+}
+
+// Subtle non-blocking strip shown when a background persistence call
+// failed. The user keeps navigating; the strip clears automatically
+// the next time a queued op succeeds.
+function NavErrorBanner({ message }) {
+  return (
+    <div className="bg-red-50 border-b border-red-200 text-red-800 text-[12px] px-4 py-1.5">
+      <span className="font-medium">שמירה נכשלה: </span>
+      {message}
     </div>
   );
 }

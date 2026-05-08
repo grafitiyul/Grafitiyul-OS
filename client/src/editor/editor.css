@@ -265,6 +265,22 @@
   to { transform: rotate(360deg); }
 }
 
+/* Subtle in-step transition for the runtime content area. The wrapper
+   is re-mounted via React `key` on every step change, so this
+   keyframe runs once per navigation. Short enough (180ms) that fast
+   prev/next clicks feel responsive, not animated. Honors
+   prefers-reduced-motion. */
+@keyframes runtime-step-fade {
+  from { opacity: 0;   transform: translateY(4px); }
+  to   { opacity: 1;   transform: translateY(0);   }
+}
+.runtime-step-anim {
+  animation: runtime-step-fade 180ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .runtime-step-anim { animation: none; }
+}
+
 /* Learner / read-only prose. Mirrors rt-editor-prose visuals without
    editor-only behaviors. Used by LearnerRuntime for content + question text. */
 .gos-prose {

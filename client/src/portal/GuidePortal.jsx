@@ -83,7 +83,10 @@ export default function GuidePortal() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const { attemptId } = await res.json();
         if (!attemptId) throw new Error('missing_attempt_id');
-        navigate(`/attempt/${attemptId}`);
+        // Carry the portal token through to the attempt URL so the
+        // runtime's home button knows where to return. Query param
+        // (RESTful, bookmark-safe) avoids needing sessionStorage.
+        navigate(`/attempt/${attemptId}?p=${encodeURIComponent(token)}`);
       } catch (e) {
         setStartError(e?.message || 'שגיאה בפתיחת הנוהל');
         setStartingId(null);
