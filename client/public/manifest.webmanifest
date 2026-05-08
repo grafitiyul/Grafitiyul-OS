@@ -4,7 +4,7 @@
   "description": "מערכת התפעול והלמידה של גרפיתי-יול",
   "lang": "he",
   "dir": "rtl",
-  "start_url": "/",
+  "start_url": "/launch",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",

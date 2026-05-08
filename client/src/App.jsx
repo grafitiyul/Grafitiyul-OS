@@ -36,8 +36,13 @@ export default function App() {
     <Routes>
       {/* Root route is "smart" — guides who installed the PWA from
           their portal page need to land back on /p/:token, not on
-          /admin. See Landing.jsx for the resolution rules. */}
+          /admin. See Landing.jsx for the resolution rules.
+          /launch is the manifest's start_url; it intentionally lives
+          on a public, non-admin path so the launched PWA never has
+          to pass through /admin (which would force AdminGuard to
+          redirect to /admin/login first). */}
       <Route path="/" element={<Landing />} />
+      <Route path="/launch" element={<Landing />} />
       {/* Login lives OUTSIDE the AdminGuard so an unauthenticated user
           can actually reach it. The guard wraps every authenticated
           admin route below — its redirect target is /admin/login. */}
