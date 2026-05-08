@@ -49,6 +49,17 @@
   margin: 0;
   max-width: 100%;
 }
+/* Inter-paragraph spacing. The `> * + *` rule above doesn't actually
+   apply to <p> here: `.rt-editor-prose p { margin: 0 }` has higher
+   specificity (one class + one tag = 0,1,1) than `> * + *`
+   (one class = 0,1,0), so the reset wins for paragraphs. The fix is
+   a same-specificity rule that arrives LATER in the source, and uses
+   the universal-sibling combinator so it covers <p> after ANY block
+   (h1+p, ul+p, p+p, blockquote+p, etc.). Source-order tiebreak
+   gives this rule the win. */
+.rt-editor-prose * + p {
+  margin-top: 1em;
+}
 
 .rt-editor-prose ul,
 .rt-editor-prose ol {
@@ -304,6 +315,14 @@
 .gos-prose h3 { font-size: 1.125rem; font-weight: 600; line-height: 1.4; margin: 0.5em 0 0.25em; }
 .gos-prose h4 { font-size: 1.05rem; font-weight: 600; line-height: 1.4; margin: 0.45em 0 0.2em; }
 .gos-prose p { margin: 0; max-width: 100%; }
+/* Same fix as .rt-editor-prose above — see the long comment there.
+   `.gos-prose p` (0,1,1) overrides `> * + *` (0,1,0), so paragraph
+   spacing has to come from a 0,1,1-specificity rule placed AFTER
+   the reset. `* + p` covers <p> after any preceding block. The
+   `.gos-prose li > p` rule below keeps the higher-specificity
+   (0,1,2) win inside list items, so paragraphs nested in <li> still
+   stay margin-0. */
+.gos-prose * + p { margin-top: 1em; }
 .gos-prose ul, .gos-prose ol { padding-inline-start: 1.75em; margin: 0.3em 0; }
 .gos-prose ul { list-style: disc; }
 .gos-prose ol { list-style: decimal; }
@@ -360,8 +379,13 @@
 /* Runtime gets a slightly bigger paragraph break than the admin
    preview — the runtime line-height is also bigger (1.72) so we
    need more vertical space to keep paragraph structure obvious at
-   reading distance on mobile. */
+   reading distance on mobile. Both rules below are needed:
+     * `> * + *` covers non-<p> direct children (h1+p, ul+p, etc.)
+     * `* + p` overrides the `.gos-prose p { margin: 0 }` reset for
+       <p> elements specifically — the reset (0,1,1) blocks `> * + *`
+       (0,1,0) for paragraphs unless a 0,2,1 rule like this one wins. */
 .gos-prose.is-runtime > * + * { margin-top: 1.4em; }
+.gos-prose.is-runtime * + p { margin-top: 1.4em; }
 .gos-prose.is-runtime h1 { font-size: 1.7rem; line-height: 1.25; margin: 0.7em 0 0.35em; }
 .gos-prose.is-runtime h2 { font-size: 1.4rem; line-height: 1.3;  margin: 0.65em 0 0.3em; }
 .gos-prose.is-runtime h3 { font-size: 1.2rem; line-height: 1.35; margin: 0.55em 0 0.25em; }
