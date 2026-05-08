@@ -16,6 +16,7 @@ import ContentEditor from './admin/procedures/bank/ContentEditor.jsx';
 import QuestionEditor from './admin/procedures/bank/QuestionEditor.jsx';
 import { FlowEntry, AttemptRuntime } from './learner/LearnerRuntime.jsx';
 import GuidePortal from './portal/GuidePortal.jsx';
+import InstallGuidePage from './portal/InstallGuidePage.jsx';
 import DocumentsLayout from './admin/documents/DocumentsLayout.jsx';
 import DocumentsIndexPage from './admin/documents/index_/DocumentsIndexPage.jsx';
 import TemplatesPage from './admin/documents/templates/TemplatesPage.jsx';
@@ -95,6 +96,11 @@ export default function App() {
       <Route path="/attempt/:attemptId" element={<AttemptRuntime />} />
       {/* Guide portal — token-gated, mobile-first task feed. */}
       <Route path="/p/:token" element={<GuidePortal />} />
+      {/* Dedicated install entry — public, token-bearing URL that
+          iOS Safari captures verbatim on Add to Home Screen, and
+          that Android Chrome resolves through a per-token manifest
+          link. See InstallGuidePage.jsx for the full rationale. */}
+      <Route path="/install-guide" element={<InstallGuidePage />} />
       {/* Full-page previews — opened in a new tab from the eye icons. */}
       <Route path="/preview/content/:id" element={<ItemPreviewPage kind="content" />} />
       <Route path="/preview/question/:id" element={<ItemPreviewPage kind="question" />} />
