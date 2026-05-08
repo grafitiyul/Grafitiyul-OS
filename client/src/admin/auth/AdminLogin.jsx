@@ -18,6 +18,7 @@ export default function AdminLogin() {
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [bootChecked, setBootChecked] = useState(false);
@@ -70,11 +71,16 @@ export default function AdminLogin() {
       if (res.status === 401) {
         setError('שם משתמש או סיסמה שגויים');
       } else if (res.status === 500) {
+        // Server reports misconfiguration as 500 + error="auth_misconfigured".
+        // We show a clean Hebrew sentence and DO NOT echo the server's
+        // message back to the UI — that message names env vars, which
+        // shouldn't leak to anyone hitting a public login page.
         const data = await res.json().catch(() => null);
-        setError(
-          data?.message ||
-            'השרת לא מוגדר עדיין לאימות מנהל — בדוק את משתני הסביבה.',
-        );
+        if (data?.error === 'auth_misconfigured') {
+          setError('ההתחברות עדיין לא הוגדרה בשרת');
+        } else {
+          setError('שגיאה בשרת');
+        }
       } else {
         setError(`שגיאה (${res.status})`);
       }
@@ -129,15 +135,36 @@ export default function AdminLogin() {
             <span className="block text-sm font-medium text-gray-700 mb-1">
               סיסמה
             </span>
-            <input
-              dir="ltr"
-              type="password"
-              autoComplete="current-password"
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              disabled={busy}
-            />
+            <div className="relative">
+              <input
+                dir="ltr"
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
+                // Reserve room on the LEFT in RTL for the eye toggle so
+                // long passwords don't slide under the icon. `ps-10` =
+                // padding-inline-start, which is the trailing edge in
+                // RTL — exactly where the button sits.
+                className="w-full border border-gray-300 rounded-md ps-10 pe-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={busy}
+              />
+              <button
+                // type="button" is critical — without it the browser
+                // treats this as a submit button and a tap toggles
+                // visibility AND fires the form (double request).
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                tabIndex={-1}
+                aria-label={showPassword ? 'הסתר סיסמה' : 'הצג סיסמה'}
+                title={showPassword ? 'הסתר סיסמה' : 'הצג סיסמה'}
+                // start-0 anchors to the inline-start edge (LEFT in
+                // RTL). The icon sits inside the input's start padding.
+                className="absolute inset-y-0 start-0 flex items-center px-2 text-gray-500 hover:text-gray-800"
+              >
+                {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+              </button>
+            </div>
           </label>
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-800 rounded-md p-2 text-sm">
@@ -165,4 +192,46 @@ function safeReturnTo(raw) {
   if (!raw.startsWith('/')) return '/admin';
   if (raw.startsWith('//')) return '/admin';
   return raw;
+}
+
+// Eye / eye-off glyphs as inline SVG so the password toggle never has
+// to wait on a font/icon-set load. Mirroring is irrelevant — both
+// glyphs are visually symmetric — so no bidi care needed.
+function EyeIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+function EyeOffIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-6.5 0-10-7-10-7a18.4 18.4 0 0 1 5.06-5.94" />
+      <path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c6.5 0 10 7 10 7a18.5 18.5 0 0 1-3.16 4.19" />
+      <path d="M14.12 14.12a3 3 0 0 1-4.24-4.24" />
+      <line x1="2" y1="2" x2="22" y2="22" />
+    </svg>
+  );
 }
