@@ -142,7 +142,11 @@ export default function GuidePortal() {
     );
   }
 
-  const { person, tasks } = state.data;
+  // Defensive destructuring — a server response that's missing
+  // `tasks` (older schema, transient deploy artifact) shouldn't blow
+  // up the page. EmptyState is the right outcome for that data.
+  const person = state.data?.person || null;
+  const tasks = Array.isArray(state.data?.tasks) ? state.data.tasks : [];
   return (
     <div
       className="min-h-screen bg-gray-50"
@@ -213,14 +217,26 @@ const SECTIONS = [
 
 // Legacy-server-compatibility shim. If the server hasn't redeployed
 // yet (e.g., Railway still has the previous build), the response
-// will still carry the old 3-bucket model: `todo`, `available`,
-// `done`. This map upgrades each task in place so the new sectioned
-// UI works regardless of which server is live. Fields used:
-//   - task.bucket    — server's bucket label
-//   - task.status    — coarse status the old model returned
-//   - task.badge     — the old model put rejection/pending hints here
+// carries the old 3-bucket model — `todo`, `available`, `done` —
+// with rejection/pending state encoded in `task.badge`. We upgrade
+// each task in place so the new sectioned UI works regardless of
+// which server is currently live.
+//
+// IMPORTANT — order matters. The old server returns `bucket: 'todo'`
+// AND `badge.tone: 'warning'` for needs-correction items. We MUST
+// check that combination BEFORE accepting `todo` as the modern
+// bucket; otherwise rejected items collapse into the regular לביצוע
+// section and the admin's reject action never produces a visible
+// דורש תיקון card.
 function resolveBucket(task) {
   const b = task.bucket;
+  // Old-server compatibility — must be evaluated first.
+  if (b === 'todo' && task.badge?.tone === 'warning') return 'correction';
+  if (b === 'done') {
+    if (task.badge?.label === 'ממתין לאישור') return 'pending_review';
+    return 'approved';
+  }
+  // Modern five-bucket model.
   if (
     b === 'correction' ||
     b === 'todo' ||
@@ -230,16 +246,7 @@ function resolveBucket(task) {
   ) {
     return b;
   }
-  // Old server: `done` lumped both pending_review and approved.
-  // Disambiguate via the badge text the old server set.
-  if (b === 'done') {
-    if (task.badge?.label === 'ממתין לאישור') return 'pending_review';
-    return 'approved';
-  }
-  // Old server: `todo` could include needs-correction (warning badge).
-  // We need to lift those out so they show under דורש תיקון.
-  if (b === 'todo' && task.badge?.tone === 'warning') return 'correction';
-  return b || 'todo';
+  return 'todo';
 }
 
 function Sections({ tasks, startingId, onOpen }) {

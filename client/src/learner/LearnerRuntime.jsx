@@ -347,6 +347,12 @@ export function AttemptRuntime() {
   }
 
   if (loadErr) {
+    // Context-aware fallback. The runtime is a PUBLIC route and is
+    // typically reached from the guide portal — sending the user to
+    // `/` (which redirects to `/admin`) would dump a guide on the
+    // admin home, which is exactly the bug the user reported. If we
+    // still know the portal token, return there. Otherwise, show
+    // retry without an admin escape hatch.
     return (
       <Screen>
         <div className="text-center max-w-md">
@@ -355,12 +361,22 @@ export function AttemptRuntime() {
           <div className="text-xs text-gray-500 font-mono mb-4" dir="ltr">
             {loadErr}
           </div>
-          <button
-            onClick={() => navigate('/')}
-            className="text-sm border border-gray-300 rounded px-3 py-1.5 hover:bg-gray-50"
-          >
-            חזרה לדף הבית
-          </button>
+          <div className="flex items-center justify-center gap-2">
+            <button
+              onClick={loadAttempt}
+              className="text-sm border border-gray-300 rounded px-3 py-1.5 hover:bg-gray-50"
+            >
+              נסה שוב
+            </button>
+            {portalToken && (
+              <a
+                href={`/p/${encodeURIComponent(portalToken)}`}
+                className="text-sm bg-blue-600 text-white rounded px-3 py-1.5 hover:bg-blue-700"
+              >
+                חזרה לפורטל
+              </a>
+            )}
+          </div>
         </div>
       </Screen>
     );
