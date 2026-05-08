@@ -129,6 +129,11 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(data),
       }),
+    // Admin-only: applies new flow items to every in_progress
+    // attempt's expansion via additive merge. Existing steps are
+    // never moved or removed; only additions slot in.
+    syncAttempts: (id) =>
+      request(`/api/flows/${id}/sync-attempts`, { method: 'POST' }),
   },
   teams: {
     list: () => request('/api/teams'),

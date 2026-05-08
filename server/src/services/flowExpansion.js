@@ -275,4 +275,77 @@ export function stepLookup(expansion, stepId) {
   return expansion.steps.find((s) => s.stepId === stepId) || null;
 }
 
+// ── Additive merge (safe re-expansion for active attempts) ────────
+//
+// Used by the admin "sync active attempts" action. Goal: let admin
+// adds — new content items, new questions, new folderRef contents —
+// reach learners who have already started, WITHOUT mutating any step
+// the learner has already seen / answered.
+//
+// Rules, in order of priority:
+//   1. NEVER drop a step from `oldSteps`. Even if the admin removed
+//      the underlying flow node, the active attempt keeps it — the
+//      learner may have answered it, and currentStepId may point at
+//      it. Removing would invalidate the cursor and lose context.
+//   2. NEVER reorder existing steps relative to each other. Old
+//      ordering is the truth the learner has already navigated.
+//      Admin reorders apply only to NEW attempts.
+//   3. Insert each new step (present in `newSteps` but not in
+//      `oldSteps`) at the position implied by `newSteps` — i.e. just
+//      after the latest preceding-in-newSteps step that ALSO exists
+//      in `oldSteps`. Steps with no surviving anchor go to the
+//      front of the merged sequence.
+//
+// The result preserves old order and slots in additions in their
+// natural fresh-expansion positions. Removals from the flow are
+// effectively ignored for active attempts; reorders are also
+// ignored. Both choices are deliberate — they're the safe defaults
+// for "don't disrupt the learner".
+export function mergeAdditiveExpansion(oldSteps, newSteps) {
+  const oldList = Array.isArray(oldSteps) ? oldSteps : [];
+  const newList = Array.isArray(newSteps) ? newSteps : [];
+  if (oldList.length === 0) return [...newList];
+  if (newList.length === 0) return [...oldList];
+
+  // Tracks which step ids we've already "anchored" in the merged
+  // result. Starts as the old ids and grows as we insert each new
+  // step, so subsequent new steps that follow earlier new steps can
+  // anchor on them.
+  const anchored = new Set(oldList.map((s) => s.stepId));
+  const merged = [...oldList];
+
+  for (let i = 0; i < newList.length; i += 1) {
+    const candidate = newList[i];
+    if (!candidate?.stepId) continue;
+    if (anchored.has(candidate.stepId)) continue;
+
+    // Find the most recent newList entry preceding `candidate` that
+    // is already anchored (i.e. exists in old or was inserted by a
+    // previous iteration of this loop).
+    let anchorStepId = null;
+    for (let j = i - 1; j >= 0; j -= 1) {
+      const prior = newList[j];
+      if (prior?.stepId && anchored.has(prior.stepId)) {
+        anchorStepId = prior.stepId;
+        break;
+      }
+    }
+
+    let insertIdx;
+    if (anchorStepId === null) {
+      // No anchor among earlier newList entries — this candidate
+      // sits at the very start of the new ordering. Place it at the
+      // front so a subsequent new step that follows it can anchor.
+      insertIdx = 0;
+    } else {
+      const at = merged.findIndex((s) => s.stepId === anchorStepId);
+      insertIdx = at < 0 ? merged.length : at + 1;
+    }
+    merged.splice(insertIdx, 0, candidate);
+    anchored.add(candidate.stepId);
+  }
+
+  return merged;
+}
+
 export const FLOW_EXPANSION_VERSION = EXPANSION_VERSION;

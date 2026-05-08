@@ -118,6 +118,11 @@ export default function FlowEditor() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [assignmentOpen, setAssignmentOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  // "Apply latest flow updates to active attempts" — admin-only action
+  // that re-expands the flow and additively merges new steps into
+  // every in-progress attempt's snapshot. See SyncActiveAttemptsDialog
+  // below + server: POST /api/flows/:id/sync-attempts.
+  const [syncOpen, setSyncOpen] = useState(false);
 
   // Move-to dialog (mobile-critical fallback).
   const [moveTargetId, setMoveTargetId] = useState(null);
@@ -626,6 +631,7 @@ export default function FlowEditor() {
         onDelete={() => setDeleteOpen(true)}
         onOpenAssignment={() => setAssignmentOpen(true)}
         onExport={() => setExportOpen(true)}
+        onSyncActiveAttempts={() => setSyncOpen(true)}
         onTogglePublish={togglePublish}
         showBack={hasSelection}
         onBack={() => setSelectedId(null)}
@@ -721,6 +727,12 @@ export default function FlowEditor() {
         }
         onClose={() => setExportOpen(false)}
       />
+      <SyncActiveAttemptsDialog
+        open={syncOpen}
+        flowId={flow.id}
+        flowTitle={flow.title}
+        onClose={() => setSyncOpen(false)}
+      />
     </div>
   );
 }
@@ -735,6 +747,7 @@ function EditorHeader({
   onDelete,
   onOpenAssignment,
   onExport,
+  onSyncActiveAttempts,
   onTogglePublish,
   showBack,
   onBack,
@@ -820,6 +833,30 @@ function EditorHeader({
       >
         הקצאה
       </button>
+      {onSyncActiveAttempts && (
+        <button
+          onClick={onSyncActiveAttempts}
+          aria-label="החלת עדכונים על מדריכים פעילים"
+          title="החלת עדכונים על ניסיונות פעילים — תוסיף פריטים חדשים שהוספת לזרימה לכל המדריכים שכבר התחילו, בלי למחוק תשובות קיימות"
+          className="w-8 h-8 shrink-0 rounded-md text-gray-700 hover:bg-gray-200 flex items-center justify-center"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden
+          >
+            <path
+              d="M21 12a9 9 0 1 1-3-6.7M21 4v5h-5"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      )}
       {/* Publish toggle. The gate that makes flows visible to guides:
           drafts are invisible to /api/people/:id/procedures and
           /api/portal/:token. Color-coded so admins can see status at
@@ -1089,6 +1126,166 @@ function Field({ label, children }) {
     <div>
       <div className="text-[11px] text-gray-500 font-medium mb-1">{label}</div>
       {children}
+    </div>
+  );
+}
+
+// SyncActiveAttemptsDialog — admin-only "apply latest flow updates to
+// active attempts". Three phases:
+//
+//   * idle    — explanation + confirm button. Default open state.
+//   * busy    — the request is in flight; buttons disabled.
+//   * result  — server returned counts. Display + close button.
+//
+// We avoid the generic ConfirmDialog because we need to render the
+// post-action result inline rather than just close on confirm. The
+// dialog is otherwise visually consistent with the rest of the
+// admin chrome.
+function SyncActiveAttemptsDialog({ open, flowId, flowTitle, onClose }) {
+  const [phase, setPhase] = useState('idle');
+  const [error, setError] = useState(null);
+  const [result, setResult] = useState(null);
+
+  // Reset dialog state every time it opens — otherwise the previous
+  // result/error would flash for users opening it a second time.
+  useEffect(() => {
+    if (!open) return;
+    setPhase('idle');
+    setError(null);
+    setResult(null);
+  }, [open]);
+
+  if (!open) return null;
+
+  async function run() {
+    setPhase('busy');
+    setError(null);
+    try {
+      const r = await api.flows.syncAttempts(flowId);
+      setResult(r);
+      setPhase('result');
+    } catch (e) {
+      setError(e?.payload?.message || e?.message || 'שגיאה');
+      setPhase('idle');
+    }
+  }
+
+  const busy = phase === 'busy';
+  const done = phase === 'result';
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/40"
+      onMouseDown={(e) => {
+        if (busy) return;
+        if (e.target === e.currentTarget) onClose?.();
+      }}
+    >
+      <div
+        dir="rtl"
+        className="bg-white w-full sm:max-w-md sm:rounded-lg shadow-xl overflow-hidden flex flex-col"
+        style={{ maxHeight: '90vh' }}
+      >
+        <div className="p-3 border-b border-gray-200 flex items-center gap-2 shrink-0">
+          <div className="flex-1 font-semibold text-gray-900">
+            החלת עדכונים על מדריכים פעילים
+          </div>
+          {!busy && (
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="סגירה"
+              className="text-gray-500 hover:bg-gray-100 rounded px-2 py-1"
+            >
+              ×
+            </button>
+          )}
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 text-sm text-gray-800 leading-relaxed">
+          {!done && (
+            <>
+              <p className="mb-2">
+                הזרימה{' '}
+                <b>{flowTitle || '(ללא שם)'}</b> כוללת פריטים שהתווספו או
+                שונו מאז שמדריכים החלו לעבור עליה.
+              </p>
+              <p className="mb-2">
+                פעולה זו תוסיף את הפריטים החדשים לכל הניסיונות הפעילים.
+              </p>
+              <ul className="list-disc pe-5 space-y-1 text-[13px] text-gray-700">
+                <li>תשובות קיימות לא יושפעו.</li>
+                <li>הקדם המיקום של הצעד הנוכחי של המדריך נשמר.</li>
+                <li>פריטים שהוסרו מהזרימה — נשארים בניסיונות שכבר נפתחו.</li>
+                <li>שינויי סדר אינם חלים על ניסיונות פעילים.</li>
+              </ul>
+              {error && (
+                <div className="mt-3 bg-red-50 border border-red-200 text-red-800 rounded p-2 text-[13px]">
+                  {error}
+                </div>
+              )}
+            </>
+          )}
+          {done && (
+            <>
+              <div className="text-base font-semibold text-green-800 mb-1">
+                ✓ העדכון הופעל
+              </div>
+              <ul className="text-[13px] text-gray-700 space-y-1">
+                <li>
+                  ניסיונות פעילים שנבדקו:{' '}
+                  <b>{result?.totalActive ?? 0}</b>
+                </li>
+                <li>
+                  ניסיונות שעודכנו: <b>{result?.updated ?? 0}</b>
+                </li>
+                <li>
+                  סך פריטים חדשים שנוספו:{' '}
+                  <b>{result?.addedSteps ?? 0}</b>
+                </li>
+              </ul>
+              {(result?.updated ?? 0) === 0 && (
+                <p className="mt-3 text-[12px] text-gray-500">
+                  אין הבדלים בין הזרימה לבין הניסיונות הפעילים — לא נדרש
+                  עדכון.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+        <div className="p-3 border-t border-gray-200 flex items-center gap-2 justify-end shrink-0">
+          {!done && (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={busy}
+                className="text-sm text-gray-600 px-3 py-1.5 rounded hover:bg-gray-100 disabled:opacity-40"
+              >
+                ביטול
+              </button>
+              <button
+                type="button"
+                onClick={run}
+                disabled={busy}
+                className="text-sm bg-blue-600 hover:bg-blue-700 text-white rounded px-4 py-1.5 font-medium disabled:opacity-50"
+              >
+                {busy ? 'מעדכן…' : 'החל עדכונים'}
+              </button>
+            </>
+          )}
+          {done && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-sm bg-blue-600 hover:bg-blue-700 text-white rounded px-4 py-1.5 font-medium"
+            >
+              סגור
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

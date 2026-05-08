@@ -4,6 +4,7 @@ import { handle } from '../asyncHandler.js';
 import {
   buildExpansion,
   buildExpansionWithDiagnostics,
+  mergeAdditiveExpansion,
 } from '../services/flowExpansion.js';
 
 const router = Router();
@@ -321,6 +322,102 @@ router.put(
       include: { nodes: { include: { contentItem: true, questionItem: true } } },
     });
     res.json(updated);
+  }),
+);
+
+// ── POST /:id/sync-attempts ────────────────────────────────────
+//
+// Admin-controlled "apply latest flow updates to active attempts".
+// For every in_progress attempt on this flow, re-build the
+// expansion from the current flow state and additively merge it
+// with the attempt's existing snapshot. Existing steps are kept in
+// their original positions (so currentStepId stays valid and
+// answers aren't displaced); new steps are inserted at positions
+// implied by the fresh expansion.
+//
+// Approved / submitted attempts are LEFT ALONE — they're either
+// already locked in for review or already done, and changing their
+// step list would muddy the audit trail.
+//
+// Returns counts so the admin UI can confirm the operation.
+//   {
+//     totalActive: number,   // attempts considered (in_progress)
+//     updated:     number,   // attempts whose snapshot actually changed
+//     addedSteps:  number,   // total new steps inserted across all updated
+//   }
+//
+// Mounted in index.js — `/api/flows/*` is a public router today
+// (the runtime hits GET /:id), so this specific endpoint MUST be
+// protected manually. We do that here with a hand-rolled gate to
+// avoid splitting the flows router into two halves.
+router.post(
+  '/:id/sync-attempts',
+  handle(async (req, res) => {
+    if (!req.adminAuth?.userId) {
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+    const flowId = req.params.id;
+    const flow = await prisma.flow.findUnique({
+      where: { id: flowId },
+      include: {
+        nodes: {
+          include: {
+            contentItem: true,
+            questionItem: true,
+            bankFolder: true,
+          },
+        },
+      },
+    });
+    if (!flow) return res.status(404).json({ error: 'not_found' });
+
+    const fresh = await buildExpansion(prisma, flow);
+    const freshSteps = fresh.steps || [];
+
+    const attempts = await prisma.attempt.findMany({
+      where: { flowId, status: 'in_progress' },
+      select: { id: true, expansion: true },
+    });
+
+    let updated = 0;
+    let addedSteps = 0;
+
+    for (const a of attempts) {
+      const oldSteps = Array.isArray(a.expansion?.steps)
+        ? a.expansion.steps
+        : [];
+      const merged = mergeAdditiveExpansion(oldSteps, freshSteps);
+      // Compare lengths first — if the merge produced no new entries
+      // we don't need to write anything. Comparing lengths is cheap
+      // and avoids spurious updatedAt churn on attempts that were
+      // already up to date.
+      if (merged.length === oldSteps.length) continue;
+      const delta = merged.length - oldSteps.length;
+      addedSteps += delta;
+      await prisma.attempt.update({
+        where: { id: a.id },
+        data: {
+          expansion: {
+            version: fresh.version,
+            steps: merged,
+          },
+        },
+      });
+      updated += 1;
+    }
+
+    console.log('[flows sync-attempts]', {
+      flowId,
+      totalActive: attempts.length,
+      updated,
+      addedSteps,
+    });
+
+    res.json({
+      totalActive: attempts.length,
+      updated,
+      addedSteps,
+    });
   }),
 );
 
