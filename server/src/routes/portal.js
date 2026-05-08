@@ -296,6 +296,133 @@ router.get(
   }),
 );
 
+// ── GET /api/portal/:token/attempts/:attemptId/review-status ──────
+//
+// Lightweight, polling-friendly view of an attempt's per-question
+// review state. Used by the runtime's review-status bar and the
+// portal-home summary. Intentionally separate from the heavy
+// /api/attempts/:id payload so the runtime can poll every 10s and
+// refresh after focus/visibility changes WITHOUT triggering the
+// full attempt remount (which would reset scroll, blow away in-flight
+// answer drafts, and re-fire the step animation).
+//
+// Authz: token resolves a PersonRef; the attempt must belong to the
+// same external person. We never expose other people's attempts even
+// if the attemptId is guessed correctly.
+//
+// Response shape:
+//   {
+//     attemptId,
+//     attemptStatus,                  // 'in_progress' | 'submitted' | 'approved'
+//     counts: { pending, approved, rejected },
+//     questions: [
+//       { stepId, title, status, adminComment }
+//     ]
+//   }
+//
+// `status` is the latest FlowAnswer's status per question step, with
+// 'unanswered' for question steps that have no answer yet (so the
+// modal can render every question even before the learner answers).
+router.get(
+  '/:token/attempts/:attemptId/review-status',
+  handle(async (req, res) => {
+    const r = await resolvePerson(req.params.token);
+    if (r.error === 'not_found') return notFound(res);
+    if (r.error === 'disabled') return disabled(res);
+    const person = r.person;
+
+    const attempt = await prisma.attempt.findUnique({
+      where: { id: req.params.attemptId },
+      include: {
+        flow: { include: { nodes: true } },
+        answers: {
+          select: {
+            stepId: true,
+            flowNodeId: true,
+            version: true,
+            status: true,
+            adminComment: true,
+            answerChoice: true,
+            answerLabel: true,
+            openText: true,
+          },
+        },
+      },
+    });
+    if (!attempt) return notFound(res);
+    if (attempt.externalPersonId !== person.externalPersonId) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+
+    // Reuse the persisted expansion when present; fall back to a fresh
+    // build for legacy attempts that were created before the
+    // expansion column existed. Read-only path — never persists.
+    const steps =
+      attempt.expansion?.steps && attempt.expansion.steps.length > 0
+        ? attempt.expansion.steps
+        : (await buildExpansion(prisma, attempt.flow)).steps;
+
+    const questionSteps = steps.filter((s) => s.kind === 'question');
+
+    // Hydrate question titles in a single round-trip.
+    const questionIds = [
+      ...new Set(
+        questionSteps
+          .map((s) => s.questionItemId)
+          .filter((id) => typeof id === 'string'),
+      ),
+    ];
+    const questionItems =
+      questionIds.length > 0
+        ? await prisma.questionItem.findMany({
+            where: { id: { in: questionIds } },
+            select: { id: true, title: true },
+          })
+        : [];
+    const titleById = new Map(questionItems.map((q) => [q.id, q.title || '']));
+
+    // Latest answer per stepId.
+    const latestByStep = new Map();
+    for (const a of attempt.answers) {
+      const k = a.stepId || a.flowNodeId;
+      if (!k) continue;
+      const cur = latestByStep.get(k);
+      if (!cur || (a.version || 0) > (cur.version || 0)) {
+        latestByStep.set(k, a);
+      }
+    }
+
+    let pending = 0;
+    let approved = 0;
+    let rejected = 0;
+    const questions = questionSteps.map((s) => {
+      const la = latestByStep.get(s.stepId);
+      let status;
+      if (!la) status = 'unanswered';
+      else if (la.status === 'approved') status = 'approved';
+      else if (la.status === 'rejected') status = 'rejected';
+      else status = 'pending';
+      if (status === 'pending') pending += 1;
+      else if (status === 'approved') approved += 1;
+      else if (status === 'rejected') rejected += 1;
+      return {
+        stepId: s.stepId,
+        title: titleById.get(s.questionItemId) || '',
+        status,
+        adminComment: la?.adminComment || null,
+      };
+    });
+
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      attemptId: attempt.id,
+      attemptStatus: attempt.status,
+      counts: { pending, approved, rejected },
+      questions,
+    });
+  }),
+);
+
 // ── POST /api/portal/:token/tasks/:taskId/start ────────────────────
 //
 // Resolves the task id (`procedure:<flowId>` for now), reuses any

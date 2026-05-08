@@ -43,53 +43,91 @@ export default function GuidePortal() {
     }
   }, [token]);
 
-  const load = useCallback(async () => {
-    setState({ phase: 'loading' });
-    try {
-      const res = await fetch(`/api/portal/${encodeURIComponent(token)}`, {
-        cache: 'no-store',
-      });
-      if (res.status === 404) {
-        setState({ phase: 'not_found' });
-        return;
-      }
-      if (res.status === 403) {
-        setState({ phase: 'disabled' });
-        return;
-      }
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(`HTTP ${res.status} ${txt}`);
-      }
-      const data = await res.json();
-      // Diagnostic — easy way to confirm in DevTools whether the
-      // server is returning the new 5-bucket model. If every task
-      // has bucket: 'done' (the old name), the server is stale and
-      // we'll fall through the compatibility map below; if buckets
-      // are correct, any visibility issue is purely client/CSS.
+  // Two load modes:
+  //   loud (default) — used on mount and explicit retry; toggles the
+  //     'loading' phase so the page shows "טוען…".
+  //   silent         — used by polling and by focus/visibility
+  //     refresh; updates `state.data` in place without flashing the
+  //     loading screen, so the user's scroll position and any open
+  //     mid-tap state survive the refresh.
+  const load = useCallback(
+    async ({ silent = false } = {}) => {
+      if (!silent) setState({ phase: 'loading' });
       try {
-        // eslint-disable-next-line no-console
-        console.log(
-          '[guide portal] tasks',
-          (data?.tasks || []).map((t) => ({
-            id: t.id,
-            bucket: t.bucket,
-            status: t.status,
-            rejectedCount: t.metadata?.rejectedCount || 0,
-          })),
+        const res = await fetch(`/api/portal/${encodeURIComponent(token)}`, {
+          cache: 'no-store',
+        });
+        if (res.status === 404) {
+          if (!silent) setState({ phase: 'not_found' });
+          return;
+        }
+        if (res.status === 403) {
+          if (!silent) setState({ phase: 'disabled' });
+          return;
+        }
+        if (!res.ok) {
+          const txt = await res.text();
+          throw new Error(`HTTP ${res.status} ${txt}`);
+        }
+        const data = await res.json();
+        // Diagnostic — easy way to confirm in DevTools whether the
+        // server is returning the new 5-bucket model. If every task
+        // has bucket: 'done' (the old name), the server is stale and
+        // we'll fall through the compatibility map below; if buckets
+        // are correct, any visibility issue is purely client/CSS.
+        try {
+          // eslint-disable-next-line no-console
+          console.log(
+            '[guide portal] tasks',
+            (data?.tasks || []).map((t) => ({
+              id: t.id,
+              bucket: t.bucket,
+              status: t.status,
+              rejectedCount: t.metadata?.rejectedCount || 0,
+            })),
+          );
+        } catch {
+          /* ignore */
+        }
+        setState((prev) =>
+          silent && prev.phase !== 'ready'
+            ? prev
+            : { phase: 'ready', data },
         );
-      } catch {
-        /* ignore */
+      } catch (e) {
+        if (!silent) {
+          setState({ phase: 'error', message: e?.message || 'שגיאה' });
+        }
+        // Silent failure on background refresh: keep showing the last
+        // good data, the next poll will retry.
       }
-      setState({ phase: 'ready', data });
-    } catch (e) {
-      setState({ phase: 'error', message: e?.message || 'שגיאה' });
-    }
-  }, [token]);
+    },
+    [token],
+  );
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Soft polling so admin reviews / new published flows surface
+  // automatically. 15s matches the admin-side approvals poll. Also
+  // refresh on focus/visibility so the guide who tabs back to the
+  // portal sees current state without a manual reload.
+  useEffect(() => {
+    if (!token) return undefined;
+    const t = setInterval(() => load({ silent: true }), 15000);
+    const onVis = () => {
+      if (document.visibilityState === 'visible') load({ silent: true });
+    };
+    const onFocus = () => load({ silent: true });
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [token, load]);
 
   // Update the tab title with the guide's name once loaded.
   useEffect(() => {
@@ -160,6 +198,7 @@ export default function GuidePortal() {
             {startError}
           </div>
         )}
+        <PortalSummary tasks={tasks} />
         <Sections
           tasks={tasks}
           startingId={startingId}
@@ -247,6 +286,60 @@ function resolveBucket(task) {
     return b;
   }
   return 'todo';
+}
+
+// Compact 3-pill summary above the task list. Mirrors the per-attempt
+// review-status bar in the runtime so the guide sees the same shape
+// in both places. Counts are PROCEDURE-LEVEL here (not per-question):
+// "ממתין" = procedures awaiting admin review, "אושר" = procedures
+// fully approved, "לתיקון" = procedures with at least one rejected
+// answer.
+function PortalSummary({ tasks }) {
+  let pending = 0;
+  let approved = 0;
+  let correction = 0;
+  for (const t of tasks) {
+    const b = resolveBucket(t);
+    if (b === 'pending_review') pending += 1;
+    else if (b === 'approved') approved += 1;
+    else if (b === 'correction') correction += 1;
+  }
+  if (pending + approved + correction === 0) return null;
+  return (
+    <div
+      className="mb-4 flex items-center gap-1.5 text-[12px] font-medium text-gray-700 bg-white border border-gray-200 rounded-md px-2.5 py-2 shadow-sm"
+      role="status"
+      aria-label="סיכום סטטוס נהלים"
+    >
+      <span className="text-[10px] uppercase tracking-wide text-gray-500">
+        סיכום
+      </span>
+      <span className="flex-1" />
+      <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-900 rounded-full px-2 py-0.5">
+        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" aria-hidden />
+        ממתין {pending}
+      </span>
+      <span className="inline-flex items-center gap-1 bg-green-100 text-green-900 rounded-full px-2 py-0.5">
+        <span className="w-1.5 h-1.5 rounded-full bg-green-500" aria-hidden />
+        אושר {approved}
+      </span>
+      <span
+        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 ${
+          correction > 0
+            ? 'bg-red-100 text-red-900'
+            : 'bg-gray-100 text-gray-600'
+        }`}
+      >
+        <span
+          className={`w-1.5 h-1.5 rounded-full ${
+            correction > 0 ? 'bg-red-500' : 'bg-gray-400'
+          }`}
+          aria-hidden
+        />
+        לתיקון {correction}
+      </span>
+    </div>
+  );
 }
 
 function Sections({ tasks, startingId, onOpen }) {

@@ -193,6 +193,16 @@ export function AttemptRuntime() {
   const [attempt, setAttempt] = useState(null);
   const [loadErr, setLoadErr] = useState(null);
   const [navError, setNavError] = useState(null);
+  // Lifted modal state so the dialog can sit at the AttemptRuntime
+  // level — that lets EVERY screen (ItemScreen, SubmitScreen,
+  // WaitingScreen, ResubmitScreen, ApprovedBrowser) open the same
+  // dialog without re-mounting it on each transition.
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  // Lightweight per-question review snapshot. Refreshed every 10s
+  // and on focus/visibility change. Kept SEPARATE from `attempt` so
+  // polling doesn't remount the screen, reset scroll position, blow
+  // away in-flight answer drafts, or re-trigger the step animation.
+  const [reviewStatus, setReviewStatus] = useState(null);
   const [isMobile, setIsMobile] = useState(() =>
     window.matchMedia('(max-width: 640px)').matches,
   );
@@ -218,7 +228,81 @@ export function AttemptRuntime() {
     loadAttempt();
   }, [loadAttempt]);
 
-  // Poll while submitted so admin reviews land without manual refresh.
+  // ── Lightweight review-status polling ─────────────────────────────
+  //
+  // Token-scoped, no-store. Only fires when we know the portal token
+  // (the only context where the bar/modal are useful — a deep-linked
+  // attempt without a token has no portal home and no reviewer
+  // narrative to surface). Polls every 10s + on focus + on
+  // visibilitychange so a guide who tabs back to the runtime sees
+  // fresh review state immediately, without the heavy attempt reload.
+  const fetchReviewStatus = useCallback(async () => {
+    if (!portalToken || !attemptId) return null;
+    try {
+      const res = await fetch(
+        `/api/portal/${encodeURIComponent(portalToken)}/attempts/${encodeURIComponent(attemptId)}/review-status`,
+        { cache: 'no-store' },
+      );
+      if (!res.ok) return null;
+      const data = await res.json();
+      setReviewStatus(data);
+      return data;
+    } catch (e) {
+      // Silent — the bar keeps showing the last good snapshot until
+      // the next successful poll. Never tear the runtime down for a
+      // background fetch.
+      // eslint-disable-next-line no-console
+      console.warn('[review-status] fetch failed', e);
+      return null;
+    }
+  }, [portalToken, attemptId]);
+
+  useEffect(() => {
+    if (!portalToken || !attemptId) return undefined;
+    fetchReviewStatus();
+    const t = setInterval(fetchReviewStatus, 10000);
+    const onVis = () => {
+      if (document.visibilityState === 'visible') fetchReviewStatus();
+    };
+    const onFocus = () => fetchReviewStatus();
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [portalToken, attemptId, fetchReviewStatus]);
+
+  // Branch-switch detector. When the lightweight poll surfaces a
+  // change that would render a different screen — attempt.status
+  // moved (in_progress → submitted → approved), or the rejection
+  // count crossed the 0/non-zero boundary (WaitingScreen ↔
+  // ResubmitScreen) — pull the heavy attempt payload so the runtime
+  // catches up. We DON'T reload on every poll; only when the screen
+  // would actually change.
+  useEffect(() => {
+    if (!reviewStatus || !attempt) return;
+    const statusChanged = reviewStatus.attemptStatus !== attempt.status;
+    const remoteRejected = reviewStatus.counts?.rejected || 0;
+    const localLatest = latestAnswerByStep(attempt.answers || []);
+    let localRejected = 0;
+    for (const a of localLatest.values()) {
+      if (a.status === 'rejected') localRejected += 1;
+    }
+    const rejectedBoundaryCrossed =
+      (remoteRejected > 0 && localRejected === 0) ||
+      (remoteRejected === 0 && localRejected > 0);
+    if (statusChanged || rejectedBoundaryCrossed) {
+      loadAttempt();
+    }
+  }, [reviewStatus, attempt, loadAttempt]);
+
+  // Legacy 5s heavy poll while submitted — kept as a belt-and-braces
+  // fallback for the brief window between server deploys (if the new
+  // /review-status endpoint isn't live yet, this still picks up
+  // approvals). Once the lightweight endpoint is everywhere, this
+  // could be removed.
   const pollRef = useRef(null);
   useEffect(() => {
     if (!attempt || attempt.status !== 'submitted') return;
@@ -389,9 +473,37 @@ export function AttemptRuntime() {
     );
   }
 
+  // Common review-status bag passed to every screen so each one can
+  // render the bar on its own and trigger the modal from the same
+  // store.
+  const reviewBag = {
+    reviewStatus,
+    onOpenReviewModal: () => setReviewModalOpen(true),
+  };
+  const homeHref = portalToken ? `/p/${encodeURIComponent(portalToken)}` : null;
+
+  // The modal lives at the AttemptRuntime level so it overlays
+  // every screen and survives status transitions without remount.
+  const reviewModalNode = reviewModalOpen ? (
+    <ReviewStatusModal
+      data={reviewStatus}
+      onClose={() => setReviewModalOpen(false)}
+    />
+  ) : null;
+
   // --- status: approved ---
   if (attempt.status === 'approved') {
-    return <ApprovedBrowser flow={flow} attempt={attempt} isMobile={isMobile} />;
+    return (
+      <>
+        <ApprovedBrowser
+          flow={flow}
+          attempt={attempt}
+          isMobile={isMobile}
+          {...reviewBag}
+        />
+        {reviewModalNode}
+      </>
+    );
   }
 
   // --- status: submitted ---
@@ -401,13 +513,22 @@ export function AttemptRuntime() {
     const outstanding = questionSteps.filter(
       (q) => latest.get(q.stepId)?.status === 'rejected',
     );
-    if (outstanding.length === 0) return <WaitingScreen />;
+    const submittedScreen =
+      outstanding.length === 0 ? (
+        <WaitingScreen {...reviewBag} />
+      ) : (
+        <ResubmitScreen
+          attempt={attempt}
+          isMobile={isMobile}
+          onSubmitted={loadAttempt}
+          {...reviewBag}
+        />
+      );
     return (
-      <ResubmitScreen
-        attempt={attempt}
-        isMobile={isMobile}
-        onSubmitted={loadAttempt}
-      />
+      <>
+        {submittedScreen}
+        {reviewModalNode}
+      </>
     );
   }
 
@@ -418,35 +539,43 @@ export function AttemptRuntime() {
   if (!currentStep) {
     // End of linear sequence → submit screen. Allow stepping back.
     return (
-      <SubmitScreen
-        attempt={attempt}
-        isMobile={isMobile}
-        steps={steps}
-        onSubmitted={loadAttempt}
-        onPrev={steps.length > 0 ? handlePrev : null}
-        homeHref={portalToken ? `/p/${encodeURIComponent(portalToken)}` : null}
-        completedStepsRef={completedStepsRef}
-      />
+      <>
+        <SubmitScreen
+          attempt={attempt}
+          isMobile={isMobile}
+          steps={steps}
+          onSubmitted={loadAttempt}
+          onPrev={steps.length > 0 ? handlePrev : null}
+          homeHref={homeHref}
+          completedStepsRef={completedStepsRef}
+          {...reviewBag}
+        />
+        {reviewModalNode}
+      </>
     );
   }
 
   return (
-    <ItemScreen
-      node={currentStep}
-      isMobile={isMobile}
-      existingAnswer={latestAnswerByStep(attempt.answers || []).get(currentStep.stepId)}
-      onNext={handleNext}
-      onPrev={currentStepIndex > 0 ? handlePrev : null}
-      homeHref={portalToken ? `/p/${encodeURIComponent(portalToken)}` : null}
-      navError={navError}
-      completedStepsRef={completedStepsRef}
-      position={{
-        index: currentStepIndex,
-        total: steps.length,
-        isFirst: currentStepIndex === 0,
-        isLast: currentStepIndex === steps.length - 1,
-      }}
-    />
+    <>
+      <ItemScreen
+        node={currentStep}
+        isMobile={isMobile}
+        existingAnswer={latestAnswerByStep(attempt.answers || []).get(currentStep.stepId)}
+        onNext={handleNext}
+        onPrev={currentStepIndex > 0 ? handlePrev : null}
+        homeHref={homeHref}
+        navError={navError}
+        completedStepsRef={completedStepsRef}
+        position={{
+          index: currentStepIndex,
+          total: steps.length,
+          isFirst: currentStepIndex === 0,
+          isLast: currentStepIndex === steps.length - 1,
+        }}
+        {...reviewBag}
+      />
+      {reviewModalNode}
+    </>
   );
 }
 
@@ -630,6 +759,8 @@ function ItemScreen({
   homeHref,
   navError,
   completedStepsRef,
+  reviewStatus,
+  onOpenReviewModal,
 }) {
   const [openText, setOpenText] = useState(existingAnswer?.openText || '');
   const [selected, setSelected] = useState(
@@ -723,6 +854,8 @@ function ItemScreen({
           kind={node.kind}
           homeHref={homeHref}
           isMobile={isMobile}
+          reviewStatus={reviewStatus}
+          onOpenReviewModal={onOpenReviewModal}
         />
       }
       footer={
@@ -825,6 +958,8 @@ function SubmitScreen({
   onPrev,
   homeHref,
   completedStepsRef,
+  reviewStatus,
+  onOpenReviewModal,
 }) {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -872,6 +1007,8 @@ function SubmitScreen({
           finishedHint
           homeHref={homeHref}
           isMobile={isMobile}
+          reviewStatus={reviewStatus}
+          onOpenReviewModal={onOpenReviewModal}
         />
       }
       footer={
@@ -914,7 +1051,13 @@ function SubmitScreen({
   );
 }
 
-function ResubmitScreen({ attempt, isMobile, onSubmitted }) {
+function ResubmitScreen({
+  attempt,
+  isMobile,
+  onSubmitted,
+  reviewStatus,
+  onOpenReviewModal,
+}) {
   const [payload, setPayload] = useState(null);
   const [drafts, setDrafts] = useState({});
   const [busy, setBusy] = useState(false);
@@ -981,6 +1124,14 @@ function ResubmitScreen({ attempt, isMobile, onSubmitted }) {
   return (
     <div className="min-h-screen bg-gray-50 py-6 px-4">
       <div className={`mx-auto ${isMobile ? 'w-full' : 'max-w-2xl'}`}>
+        {reviewStatus && (
+          <div className="mb-4">
+            <ReviewStatusBar
+              data={reviewStatus}
+              onOpen={onOpenReviewModal}
+            />
+          </div>
+        )}
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">
           <div className="font-semibold text-amber-900 mb-1">
             יש לתקן {outstanding.length} שאלות
@@ -1213,7 +1364,15 @@ function RuntimeShell({
 // returns to the guide portal /p/<token>. Hidden when the runtime
 // was opened directly (no token in URL) so a deep-linked attempt
 // doesn't show a dead button.
-function RuntimeHeader({ position, kind, finishedHint, homeHref, isMobile }) {
+function RuntimeHeader({
+  position,
+  kind,
+  finishedHint,
+  homeHref,
+  isMobile,
+  reviewStatus,
+  onOpenReviewModal,
+}) {
   const total = position?.total ?? 0;
   const idx = position?.index ?? 0;
   const display = finishedHint
@@ -1248,6 +1407,15 @@ function RuntimeHeader({ position, kind, finishedHint, homeHref, isMobile }) {
         <span className="font-mono text-[12px] tabular-nums">{display}</span>
         {homeHref && <HomeButton homeHref={homeHref} isMobile={isMobile} />}
       </div>
+      {/* Review-status bar — only renders when there's something to
+          report (any answer exists, in any state). Below the chip row,
+          above the progress bar, so it never crowds the kind/counter
+          line on narrow phones. */}
+      <ReviewStatusBar
+        data={reviewStatus}
+        onOpen={onOpenReviewModal}
+        compact
+      />
       <div className="mt-2 h-1 bg-gray-100 rounded-full overflow-hidden">
         <div
           className="h-full bg-blue-600 transition-all"
@@ -1258,6 +1426,182 @@ function RuntimeHeader({ position, kind, finishedHint, homeHref, isMobile }) {
     </div>
   );
 }
+
+// ── ReviewStatusBar ───────────────────────────────────────────────
+//
+// Compact 3-pill summary of the attempt's per-question review state.
+// Tapping anywhere on the bar opens the modal with the per-question
+// breakdown (and admin comments).
+//
+// Hidden when there's nothing to report — i.e. every count is zero.
+// That keeps the header clean during the very first run, before any
+// answer has been recorded.
+function ReviewStatusBar({ data, onOpen, compact }) {
+  if (!data || !data.counts) return null;
+  const { pending = 0, approved = 0, rejected = 0 } = data.counts;
+  if (pending + approved + rejected === 0) return null;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className={`mt-2 w-full flex items-center gap-1.5 ${
+        compact ? 'text-[11px]' : 'text-[12px]'
+      } font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-md px-2 py-1 transition-colors`}
+      aria-label="פירוט סטטוס תשובות"
+    >
+      <span className="text-[10px] uppercase tracking-wide text-gray-500">
+        סטטוס תשובות
+      </span>
+      <span className="flex-1" />
+      <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-900 rounded-full px-1.5 py-0.5">
+        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" aria-hidden />
+        ממתין {pending}
+      </span>
+      <span className="inline-flex items-center gap-1 bg-green-100 text-green-900 rounded-full px-1.5 py-0.5">
+        <span className="w-1.5 h-1.5 rounded-full bg-green-500" aria-hidden />
+        אושר {approved}
+      </span>
+      <span
+        className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 ${
+          rejected > 0
+            ? 'bg-red-100 text-red-900'
+            : 'bg-gray-100 text-gray-600'
+        }`}
+      >
+        <span
+          className={`w-1.5 h-1.5 rounded-full ${
+            rejected > 0 ? 'bg-red-500' : 'bg-gray-400'
+          }`}
+          aria-hidden
+        />
+        לתיקון {rejected}
+      </span>
+    </button>
+  );
+}
+
+// ── ReviewStatusModal ─────────────────────────────────────────────
+//
+// Full-list breakdown of per-question status with admin comments.
+// Lifted to AttemptRuntime so it overlays every screen and survives
+// status transitions without remounting.
+//
+// `data.questions` order mirrors the runtime's step order so the
+// guide can scan the list top-to-bottom and recognise where they are.
+function ReviewStatusModal({ data, onClose }) {
+  const questions = data?.questions || [];
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-stretch sm:items-center justify-center bg-black/50 p-0 sm:p-4"
+      dir="rtl"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-none sm:rounded-xl shadow-xl w-full sm:max-w-lg max-h-full sm:max-h-[85vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="shrink-0 px-4 py-3 border-b border-gray-200 flex items-center gap-2">
+          <h2 className="text-base font-semibold text-gray-900 flex-1">
+            סטטוס תשובות
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded p-1"
+            aria-label="סגור"
+          >
+            <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden>
+              <path
+                d="M3 3l10 10M13 3L3 13"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {questions.length === 0 && (
+            <div className="text-sm text-gray-500 text-center py-8">
+              עדיין לא נמסרו תשובות לבדיקה.
+            </div>
+          )}
+          {questions.map((q, i) => (
+            <ReviewStatusRow key={q.stepId} q={q} index={i + 1} />
+          ))}
+        </div>
+        <div className="shrink-0 px-4 py-3 border-t border-gray-200 text-[11px] text-gray-500">
+          המסך מתעדכן אוטומטית כשהמאשר מסיים בדיקה.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReviewStatusRow({ q, index }) {
+  const meta = STATUS_META[q.status] || STATUS_META.unanswered;
+  const plainTitle = titleToPlain(q.title || '') || '(שאלה ללא כותרת)';
+  return (
+    <div
+      className={`rounded-md border p-3 ${meta.cardCls}`}
+    >
+      <div className="flex items-start gap-2">
+        <span
+          className={`shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-semibold ${meta.indexCls}`}
+        >
+          {index}
+        </span>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium text-gray-900 leading-snug">
+            {plainTitle}
+          </div>
+          <div className="mt-1">
+            <span
+              className={`inline-block text-[11px] font-medium rounded-full px-2 py-0.5 ${meta.pillCls}`}
+            >
+              {meta.label}
+            </span>
+          </div>
+          {q.adminComment && q.status === 'rejected' && (
+            <div className="mt-2 text-[12px] bg-red-50 border border-red-200 text-red-900 rounded p-2 whitespace-pre-wrap">
+              <span className="font-semibold">הערת מאשר: </span>
+              {q.adminComment}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const STATUS_META = {
+  approved: {
+    label: 'אושר',
+    cardCls: 'bg-green-50 border-green-200',
+    pillCls: 'bg-green-100 text-green-800',
+    indexCls: 'bg-green-500 text-white',
+  },
+  rejected: {
+    label: 'דורש תיקון',
+    cardCls: 'bg-red-50 border-red-200',
+    pillCls: 'bg-red-100 text-red-800',
+    indexCls: 'bg-red-500 text-white',
+  },
+  pending: {
+    label: 'ממתין לבדיקה',
+    cardCls: 'bg-amber-50 border-amber-200',
+    pillCls: 'bg-amber-100 text-amber-900',
+    indexCls: 'bg-amber-500 text-white',
+  },
+  unanswered: {
+    label: 'טרם נענה',
+    cardCls: 'bg-gray-50 border-gray-200',
+    pillCls: 'bg-gray-100 text-gray-700',
+    indexCls: 'bg-gray-300 text-gray-800',
+  },
+};
 
 // Secondary, deterministic navigation back to the guide portal.
 // SVG icon to bypass any bidi mirroring; aria-label in Hebrew for
@@ -1409,15 +1753,25 @@ function NavFooter({
   );
 }
 
-function WaitingScreen() {
+function WaitingScreen({ reviewStatus, onOpenReviewModal }) {
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-      <div className="text-center max-w-md">
-        <div className="text-5xl mb-4">⏳</div>
-        <h2 className="text-2xl font-semibold mb-2">התשובות נשלחו לאישור</h2>
-        <p className="text-gray-600">
-          המסך יתעדכן אוטומטית כאשר המאשר יסיים את הבדיקה.
-        </p>
+    <div className="min-h-screen bg-gray-50 flex flex-col items-center p-4 pt-6">
+      {reviewStatus && (
+        <div className="w-full max-w-md mb-6">
+          <ReviewStatusBar
+            data={reviewStatus}
+            onOpen={onOpenReviewModal}
+          />
+        </div>
+      )}
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center max-w-md">
+          <div className="text-5xl mb-4">⏳</div>
+          <h2 className="text-2xl font-semibold mb-2">התשובות נשלחו לאישור</h2>
+          <p className="text-gray-600">
+            המסך יתעדכן אוטומטית כאשר המאשר יסיים את הבדיקה.
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -1440,7 +1794,13 @@ function CompletedScreen({ preview }) {
   );
 }
 
-function ApprovedBrowser({ flow, attempt, isMobile }) {
+function ApprovedBrowser({
+  flow,
+  attempt,
+  isMobile,
+  reviewStatus,
+  onOpenReviewModal,
+}) {
   // Use the same hydrated steps the runtime saw so folderRef-expanded
   // items appear in the read-only browse view too.
   const steps = attempt.steps || [];
@@ -1449,6 +1809,14 @@ function ApprovedBrowser({ flow, attempt, isMobile }) {
   return (
     <div className="min-h-screen bg-gray-50 py-6 px-4">
       <div className={`mx-auto ${isMobile ? 'w-full' : 'max-w-2xl'}`}>
+        {reviewStatus && (
+          <div className="mb-4">
+            <ReviewStatusBar
+              data={reviewStatus}
+              onOpen={onOpenReviewModal}
+            />
+          </div>
+        )}
         <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
           <div className="flex items-center gap-2 font-semibold text-green-900 mb-1">
             <span>✓</span> הזרימה אושרה
