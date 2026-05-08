@@ -70,7 +70,15 @@ export default function ApprovalsHome() {
     }
   }, []);
 
-  const refresh = useCallback(async () => {
+  // Two refresh modes:
+  //   * loadFiltered — toggles `loading=true` so the side pane shows
+  //     "טוען…". Used on first mount and on filter change, where the
+  //     dataset is genuinely changing and a brief loading state is
+  //     accurate.
+  //   * softRefresh  — no loading flag. Used by polling and by post-
+  //     approve/reject refresh from the detail pane. Avoids tearing
+  //     the page down to "טוען…" + scroll-to-top after every action.
+  const loadFiltered = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -85,15 +93,32 @@ export default function ApprovalsHome() {
     }
   }, [statusFilter]);
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  const softRefresh = useCallback(async () => {
+    try {
+      const list = await api.reviews.list(
+        statusFilter ? { status: statusFilter } : {},
+      );
+      setAttempts(list);
+      setError(null);
+    } catch (e) {
+      // Silent failure on background refreshes — the existing list
+      // is still on screen, and the next attempt may succeed. Surface
+      // the error only if the polling loop keeps failing (caller can
+      // add retry-counter UX later).
+      console.warn('[approvals soft refresh] failed', e);
+    }
+  }, [statusFilter]);
 
-  // Light polling so admins see new submissions without refresh.
   useEffect(() => {
-    const t = setInterval(refresh, 15000);
+    loadFiltered();
+  }, [loadFiltered]);
+
+  // Light polling so admins see new submissions without manual
+  // refresh. Soft so it doesn't flash "טוען…" every 15s.
+  useEffect(() => {
+    const t = setInterval(softRefresh, 15000);
     return () => clearInterval(t);
-  }, [refresh]);
+  }, [softRefresh]);
 
   const listCls = inDetail
     ? 'hidden lg:flex w-full lg:w-[var(--list-width)] lg:shrink-0 bg-white flex-col min-h-0'
@@ -113,7 +138,7 @@ export default function ApprovalsHome() {
           attempts={attempts}
           loading={loading}
           error={error}
-          onRetry={refresh}
+          onRetry={loadFiltered}
           viewKey={viewKey}
           onViewChange={onViewChange}
           statusFilter={statusFilter}
@@ -128,7 +153,11 @@ export default function ApprovalsHome() {
         ariaLabel="שינוי רוחב רשימת האישורים"
       />
       <section className={workCls}>
-        <Outlet context={{ refresh }} />
+        {/* Outlet receives the SOFT refresh — post-approve/reject
+            should never collapse the list to "טוען…" or reset its
+            scroll. The only "loud" load comes from filter change
+            (above), where the data genuinely needs a moment. */}
+        <Outlet context={{ refresh: softRefresh }} />
       </section>
     </div>
   );

@@ -52,46 +52,77 @@ function disabled(res) {
 }
 
 // ── State derivation ───────────────────────────────────────────────
-// Same logic as people.js procedures endpoint. Folded into the wire
-// shape (status / badge) per the V1 spec: from the guide's POV,
-// "submitted but not approved" reads as completed-with-a-hint, and
-// "needs correction" reads as in-progress-with-a-warning.
-function deriveTaskState(attempt) {
-  if (!attempt) {
-    return { status: 'not_started', badge: null };
+// Compute the latest FlowAnswer per stepId and surface what the
+// portal needs to know: is anything rejected (needs guide action),
+// what's the most recent rejection comment, how many rejections.
+function summariseAnswers(attempt) {
+  if (!attempt || !attempt.answers) {
+    return { rejectedCount: 0, rejectionComment: null };
   }
-  if (attempt.status === 'in_progress') {
-    return { status: 'in_progress', badge: null };
+  const latestPerStep = new Map();
+  for (const ans of attempt.answers) {
+    const k = ans.stepId || ans.flowNodeId; // legacy back-compat
+    if (!k) continue;
+    const cur = latestPerStep.get(k);
+    if (!cur || (ans.version || 0) > (cur.version || 0)) {
+      latestPerStep.set(k, ans);
+    }
   }
-  if (attempt.status === 'approved') {
-    return { status: 'completed', badge: null };
+  let rejectedCount = 0;
+  let rejectionComment = null;
+  // Iterate in version-newest order. The first comment we find is
+  // the most recent rejection's note.
+  for (const ans of latestPerStep.values()) {
+    if (ans.status === 'rejected') {
+      rejectedCount += 1;
+      if (!rejectionComment && ans.adminComment) {
+        rejectionComment = ans.adminComment;
+      }
+    }
   }
+  return { rejectedCount, rejectionComment };
+}
+
+// Five-state classification, finer than the original 3-status model.
+// The portal renders one section per "kind" so guides can see at a
+// glance what's blocked, what's pending, and what's done.
+//
+//   not_started     — no attempt yet
+//   in_progress     — started, not yet submitted
+//   needs_correction— submitted, at least one answer was rejected
+//                     by the admin (action required from the guide)
+//   pending_review  — submitted, no rejections, waiting on admin
+//   approved        — admin approved everything
+function classifyAttempt(attempt) {
+  if (!attempt) return { kind: 'not_started' };
+  if (attempt.status === 'approved') return { kind: 'approved' };
+  if (attempt.status === 'in_progress') return { kind: 'in_progress' };
   if (attempt.status === 'submitted') {
-    const latestPerNode = new Map();
-    for (const ans of attempt.answers || []) {
-      if (!latestPerNode.has(ans.flowNodeId)) {
-        latestPerNode.set(ans.flowNodeId, ans);
-      }
+    const summary = summariseAnswers(attempt);
+    if (summary.rejectedCount > 0) {
+      return { kind: 'needs_correction', ...summary };
     }
-    let rejected = false;
-    for (const ans of latestPerNode.values()) {
-      if (ans.status === 'rejected') {
-        rejected = true;
-        break;
-      }
-    }
-    if (rejected) {
-      return {
-        status: 'in_progress',
-        badge: { tone: 'warning', label: 'דורש תיקון' },
-      };
-    }
-    return {
-      status: 'completed',
-      badge: { tone: 'info', label: 'ממתין לאישור' },
-    };
+    return { kind: 'pending_review' };
   }
-  return { status: 'in_progress', badge: null };
+  return { kind: 'in_progress' };
+}
+
+// Map a classified attempt to a coarse `status` for badge / styling
+// back-compat. The new portal renders by `bucket` directly; keeping
+// `status` mostly preserves the older "not_started/in_progress/
+// completed" shape for any consumer that still reads it.
+function statusFor(kind) {
+  if (kind === 'not_started') return 'not_started';
+  if (kind === 'approved' || kind === 'pending_review') return 'completed';
+  return 'in_progress';
+}
+
+function badgeFor(kind) {
+  if (kind === 'needs_correction')
+    return { tone: 'warning', label: 'דורש תיקון' };
+  if (kind === 'pending_review')
+    return { tone: 'info', label: 'ממתין לבדיקה' };
+  return null;
 }
 
 // ── Procedure-task collector ──────────────────────────────────────
@@ -124,7 +155,8 @@ async function collectProcedureTasks(person) {
 
   // All attempts (latest per flow). Match by externalPersonId so the
   // link survives PersonRef row reshuffles, mirroring the convention
-  // used elsewhere.
+  // used elsewhere. Answers include adminComment so we can show the
+  // most recent rejection note on the task card.
   const attempts = await prisma.attempt.findMany({
     where: {
       externalPersonId: person.externalPersonId,
@@ -133,8 +165,14 @@ async function collectProcedureTasks(person) {
     orderBy: { updatedAt: 'desc' },
     include: {
       answers: {
-        select: { flowNodeId: true, version: true, status: true },
-        orderBy: [{ flowNodeId: 'asc' }, { version: 'desc' }],
+        select: {
+          stepId: true,
+          flowNodeId: true,
+          version: true,
+          status: true,
+          adminComment: true,
+        },
+        orderBy: [{ stepId: 'asc' }, { version: 'desc' }],
       },
     },
   });
@@ -145,21 +183,23 @@ async function collectProcedureTasks(person) {
 
   return visibleFlows.map((f) => {
     const attempt = latestByFlow.get(f.id) || null;
-    const { status, badge } = deriveTaskState(attempt);
+    const cls = classifyAttempt(attempt);
+    const status = statusFor(cls.kind);
+    const badge = badgeFor(cls.kind);
     return {
       id: `procedure:${f.id}`,
       type: 'procedure',
       title: f.title || '(ללא שם)',
       description: f.description || null,
       status,
-      // Visual grouping in the portal feed. Same three sections the
-      // admin profile uses (`toLearn` / `available` / `learned`),
-      // collapsed to a stable wire enum so the client doesn't reinvent
-      // the rule:
-      //   todo      — needs the guide's attention right now
-      //   available — visible but not mandatory and not yet started
-      //   done      — finished from the guide's POV (waiting / approved)
-      bucket: bucketFor(status, f.mandatory),
+      // Visual grouping in the portal feed. Five buckets so guides
+      // can see review status at a glance:
+      //   correction      — admin asked for changes (highest priority)
+      //   todo            — needs to be started or continued
+      //   available       — optional, visible for browsing
+      //   pending_review  — submitted, waiting on admin
+      //   approved        — done, positive feedback
+      bucket: bucketFor(cls.kind, f.mandatory),
       badge,
       metadata: {
         flowId: f.id,
@@ -167,52 +207,54 @@ async function collectProcedureTasks(person) {
         mandatory: !!f.mandatory,
         submittedAt: attempt?.submittedAt || null,
         approvedAt: attempt?.approvedAt || null,
+        // Surfaced only for needs_correction attempts. The portal
+        // card uses these to render the urgency banner + comment
+        // snippet so the guide sees what to fix without entering
+        // the runtime first.
+        rejectedCount: cls.rejectedCount || 0,
+        rejectionComment: cls.rejectionComment || null,
       },
     };
   });
 }
 
-function bucketFor(status, mandatory) {
-  if (status === 'completed') return 'done';
-  if (status === 'in_progress') return 'todo';
+function bucketFor(kind, mandatory) {
+  if (kind === 'needs_correction') return 'correction';
+  if (kind === 'approved') return 'approved';
+  if (kind === 'pending_review') return 'pending_review';
+  if (kind === 'in_progress') return 'todo';
   // not_started: mandatory goes to "todo" (guide must start it),
   // optional goes to "available" (the read-when-you-want shelf).
   return mandatory ? 'todo' : 'available';
 }
 
-// ── Sort: actionable first, then completed ─────────────────────────
-//
-// Sort key:
-//   1. status: in_progress → not_started → completed
-//   2. within in_progress: warning badges first (needs_correction)
-//   3. within not_started: mandatory first
-//   4. within completed: most recently approved/submitted first
+// Sort by bucket priority, then by mandatory + recency within each.
+// The client groups by `bucket` for rendering, so within-bucket order
+// is what matters most; the cross-bucket order is a defensive fallback
+// for any consumer that renders without sectioning.
+const BUCKET_RANK = {
+  correction: 0,
+  todo: 1,
+  available: 2,
+  pending_review: 3,
+  approved: 4,
+};
 function sortTasks(tasks) {
-  const statusRank = { in_progress: 0, not_started: 1, completed: 2 };
   return [...tasks].sort((a, b) => {
-    const r = (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9);
+    const r = (BUCKET_RANK[a.bucket] ?? 99) - (BUCKET_RANK[b.bucket] ?? 99);
     if (r !== 0) return r;
-    if (a.status === 'in_progress') {
-      const aw = a.badge?.tone === 'warning' ? 0 : 1;
-      const bw = b.badge?.tone === 'warning' ? 0 : 1;
-      if (aw !== bw) return aw - bw;
-    }
-    if (a.status === 'not_started') {
-      const am = a.metadata?.mandatory ? 0 : 1;
-      const bm = b.metadata?.mandatory ? 0 : 1;
-      if (am !== bm) return am - bm;
-    }
-    if (a.status === 'completed') {
-      const at =
-        a.metadata?.approvedAt ||
-        a.metadata?.submittedAt ||
-        '';
-      const bt =
-        b.metadata?.approvedAt ||
-        b.metadata?.submittedAt ||
-        '';
-      if (at !== bt) return bt.localeCompare(at);
-    }
+    const am = a.metadata?.mandatory ? 0 : 1;
+    const bm = b.metadata?.mandatory ? 0 : 1;
+    if (am !== bm) return am - bm;
+    const at =
+      a.metadata?.submittedAt ||
+      a.metadata?.approvedAt ||
+      '';
+    const bt =
+      b.metadata?.submittedAt ||
+      b.metadata?.approvedAt ||
+      '';
+    if (at !== bt) return bt.localeCompare(at);
     return (a.title || '').localeCompare(b.title || '', 'he');
   });
 }

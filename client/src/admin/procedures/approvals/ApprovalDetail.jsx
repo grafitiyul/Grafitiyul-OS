@@ -41,7 +41,14 @@ export default function ApprovalDetail() {
     }
   }
 
-  const load = useCallback(async () => {
+  // Two refresh modes (mirrors ApprovalsHome):
+  //   * initialLoad — sets loading=true; used on first mount / id
+  //     change so the user sees a clear loading state when there's
+  //     genuinely no data on screen yet.
+  //   * softRefresh — silent re-fetch, no loading flag, no remount.
+  //     Used after approve/reject so the page doesn't collapse to
+  //     "טוען…" and scroll back to the top after every click.
+  const initialLoad = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -54,9 +61,22 @@ export default function ApprovalDetail() {
     }
   }, [id]);
 
+  const softRefresh = useCallback(async () => {
+    try {
+      const d = await api.reviews.get(id);
+      setData(d);
+      setError(null);
+    } catch (e) {
+      // Don't override the on-screen data on a transient failure —
+      // the next action's refresh, or the side pane's polling, will
+      // catch up. Log so persistent failures are diagnosable.
+      console.warn('[approval detail soft refresh] failed', e);
+    }
+  }, [id]);
+
   useEffect(() => {
-    load();
-  }, [load]);
+    initialLoad();
+  }, [initialLoad]);
 
   // The server review payload returns each block as `{ step, node, ... }`
   // where `node` is an alias for `step` and carries `stepId` (NOT `id`).
@@ -66,13 +86,16 @@ export default function ApprovalDetail() {
   // we send is a stepId, which the handler treats as such.
   async function approve(stepId) {
     await api.reviews.approveQuestion(id, stepId);
-    await load();
+    // Soft refresh keeps scroll position + filter selection + the
+    // open detail card. The clicked QuestionBlock updates in place
+    // via React reconciliation on its `key={stepId}`.
+    await softRefresh();
     await refreshList?.();
   }
 
   async function reject(stepId, comment) {
     await api.reviews.rejectQuestion(id, stepId, comment);
-    await load();
+    await softRefresh();
     await refreshList?.();
   }
 
@@ -92,7 +115,7 @@ export default function ApprovalDetail() {
             {error}
           </div>
           <button
-            onClick={load}
+            onClick={initialLoad}
             className="text-sm border border-gray-300 rounded px-3 py-1.5 hover:bg-gray-50"
           >
             נסה שוב

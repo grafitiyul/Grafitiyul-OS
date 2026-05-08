@@ -158,15 +158,49 @@ export default function GuidePortal() {
 // Empty sections are hidden so the page stays compact. If ALL three
 // are empty, we fall back to the EmptyState — that's the case where
 // the guide has nothing visible at all (no published flows reach them).
+//
+// Five sections matching the server's 5-bucket task model. Order is
+// deliberate: the first thing the guide should see is anything that's
+// blocked on them ("דורש תיקון"), then their open queue, then optional
+// reading material, then status feedback for what's already submitted.
 const SECTIONS = [
-  { key: 'todo', title: 'לביצוע', subtitle: 'נהלים שמחכים לכם להתחיל או להמשיך' },
-  { key: 'available', title: 'זמינות לקריאה', subtitle: 'נהלים פתוחים — אפשר לעיין בכל זמן' },
-  { key: 'done', title: 'הושלמו', subtitle: 'מה שכבר סיימתם' },
+  {
+    key: 'correction',
+    title: 'דורש תיקון',
+    subtitle: 'נהלים שהמאשר ביקש מכם לתקן — דורש פעולה',
+    accent: 'red',
+  },
+  {
+    key: 'todo',
+    title: 'לביצוע',
+    subtitle: 'נהלים שמחכים לכם להתחיל או להמשיך',
+  },
+  {
+    key: 'available',
+    title: 'זמינות לקריאה',
+    subtitle: 'נהלים פתוחים — אפשר לעיין בכל זמן',
+  },
+  {
+    key: 'pending_review',
+    title: 'ממתין לבדיקה',
+    subtitle: 'תשובות שנשלחו וממתינות לאישור המאשר',
+  },
+  {
+    key: 'approved',
+    title: 'אושר',
+    subtitle: 'נהלים שאושרו — תיעוד שהשלמתם',
+  },
 ];
 
 function Sections({ tasks, startingId, onOpen }) {
   const grouped = useMemo(() => {
-    const out = { todo: [], available: [], done: [] };
+    const out = {
+      correction: [],
+      todo: [],
+      available: [],
+      pending_review: [],
+      approved: [],
+    };
     for (const t of tasks) {
       const b = out[t.bucket] ? t.bucket : 'todo';
       out[b].push(t);
@@ -174,7 +208,10 @@ function Sections({ tasks, startingId, onOpen }) {
     return out;
   }, [tasks]);
 
-  const totalVisible = grouped.todo.length + grouped.available.length + grouped.done.length;
+  const totalVisible = SECTIONS.reduce(
+    (n, s) => n + (grouped[s.key]?.length || 0),
+    0,
+  );
   if (totalVisible === 0) return <EmptyState />;
 
   return (
@@ -182,10 +219,12 @@ function Sections({ tasks, startingId, onOpen }) {
       {SECTIONS.map((s) => {
         const items = grouped[s.key];
         if (!items || items.length === 0) return null;
+        const titleColor =
+          s.accent === 'red' ? 'text-red-800' : 'text-gray-900';
         return (
           <section key={s.key}>
             <div className="px-1 mb-2">
-              <h2 className="text-sm font-bold text-gray-900">
+              <h2 className={`text-sm font-bold ${titleColor}`}>
                 {s.title}
                 <span className="ms-2 text-[11px] font-medium text-gray-500">
                   ({items.length})
@@ -232,58 +271,137 @@ function Header({ displayName }) {
   );
 }
 
+// Per-bucket card styling. Cards re-use the same base layout but the
+// bucket controls the border tint, the icon ring, the status pill,
+// and the CTA copy/color.
+function bucketStyle(bucket) {
+  switch (bucket) {
+    case 'correction':
+      return {
+        border: 'border-red-300 hover:border-red-400 active:bg-red-50/50',
+        ring: 'bg-red-50 text-red-700 border-red-200',
+        statusLabel: 'דורש תיקון',
+        statusCls: 'bg-red-100 text-red-800',
+        cta: 'תקן תשובה',
+        ctaCls: 'text-red-700',
+      };
+    case 'pending_review':
+      return {
+        border: 'border-gray-200',
+        ring: 'bg-amber-50 text-amber-700 border-amber-200',
+        statusLabel: 'ממתין לבדיקה',
+        statusCls: 'bg-amber-100 text-amber-900',
+        cta: 'צפה',
+        ctaCls: 'text-gray-600',
+      };
+    case 'approved':
+      return {
+        border: 'border-gray-200',
+        ring: 'bg-green-50 text-green-700 border-green-200',
+        statusLabel: 'אושר',
+        statusCls: 'bg-green-100 text-green-800',
+        cta: 'צפה',
+        ctaCls: 'text-gray-600',
+      };
+    case 'available':
+      return {
+        border: 'border-gray-200 hover:border-blue-300 active:bg-blue-50/50',
+        ring: 'bg-blue-50 text-blue-700 border-blue-200',
+        statusLabel: 'זמין',
+        statusCls: 'bg-gray-100 text-gray-700',
+        cta: 'התחל',
+        ctaCls: 'text-blue-700',
+      };
+    case 'todo':
+    default:
+      return {
+        border: 'border-gray-200 hover:border-blue-300 active:bg-blue-50/50',
+        ring: 'bg-blue-50 text-blue-700 border-blue-200',
+        statusLabel: 'בתהליך',
+        statusCls: 'bg-blue-100 text-blue-800',
+        cta: 'המשך',
+        ctaCls: 'text-blue-700',
+      };
+  }
+}
+
+// Decide CTA text from bucket + whether the attempt has been started.
+// `bucketStyle` returns the default; this overrides it for the
+// not-yet-started case in the `todo` bucket.
+function ctaForTask(task, style) {
+  if (task.bucket === 'todo' && !task.metadata?.attemptId) return 'התחל';
+  return style.cta;
+}
+
 function TaskCard({ task, starting, disabled, onOpen }) {
-  const isCompleted = task.status === 'completed';
-  const cta = ctaFor(task.status);
+  const bucket = task.bucket || 'todo';
+  const style = bucketStyle(bucket);
+  const cta = ctaForTask(task, style);
+  const isCompleted =
+    bucket === 'approved' || bucket === 'pending_review';
+  const isCorrection = bucket === 'correction';
+  const rejectionComment = task.metadata?.rejectionComment;
+  const rejectedCount = task.metadata?.rejectedCount || 0;
+
   return (
     <button
       type="button"
       onClick={onOpen}
       disabled={disabled}
-      className={`w-full text-right bg-white border rounded-xl p-4 sm:p-5 transition shadow-sm flex gap-3 items-start ${
-        isCompleted
-          ? 'border-gray-200 opacity-90'
-          : 'border-gray-200 hover:border-blue-300 active:bg-blue-50/50'
+      className={`w-full text-right bg-white border rounded-xl p-4 sm:p-5 transition shadow-sm flex gap-3 items-start ${style.border} ${
+        isCompleted ? 'opacity-95' : ''
       } ${disabled ? 'opacity-50' : ''}`}
     >
-      <TaskIcon type={task.type} status={task.status} />
+      <TaskIcon type={task.type} ring={style.ring} bucket={bucket} />
       <div className="flex-1 min-w-0">
         <div className="flex flex-wrap items-center gap-2 mb-1">
           <span className="text-[10px] uppercase tracking-wide text-gray-500 font-semibold">
             {KIND_NOUN[task.type] || task.type}
           </span>
-          {task.metadata?.mandatory && task.status !== 'completed' && (
+          {task.metadata?.mandatory && !isCompleted && (
             <span className="text-[10px] font-semibold bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">
               חובה
-            </span>
-          )}
-          {task.badge && (
-            <span
-              className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
-                task.badge.tone === 'warning'
-                  ? 'bg-amber-100 text-amber-900'
-                  : 'bg-gray-100 text-gray-700'
-              }`}
-            >
-              {task.badge.label}
             </span>
           )}
         </div>
         <div className="text-base sm:text-lg font-semibold text-gray-900 leading-snug">
           {task.title}
         </div>
-        {task.description && (
+        {task.description && !isCorrection && (
           <div className="text-sm text-gray-600 mt-1 line-clamp-2">
             {task.description}
           </div>
         )}
+
+        {/* Correction surface — only on cards that need fixing. We
+            show the most recent admin comment so the guide knows what
+            to address before tapping in. The runtime ResubmitScreen
+            still owns the full per-question flow once they tap. */}
+        {isCorrection && (
+          <div className="mt-2 bg-red-50 border border-red-200 rounded-md p-2.5">
+            <div className="text-[11px] font-bold text-red-800 mb-0.5">
+              {rejectedCount > 1
+                ? `${rejectedCount} שאלות נדחו ודורשות תיקון`
+                : 'תשובה נדחתה ודורשת תיקון'}
+            </div>
+            {rejectionComment && (
+              <div className="text-[12px] text-red-900 line-clamp-3 whitespace-pre-wrap">
+                <span className="font-semibold">הערת מאשר: </span>
+                {rejectionComment}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="mt-3 flex items-center justify-between">
-          <StatusPill status={task.status} />
+          <span
+            className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${style.statusCls}`}
+          >
+            {style.statusLabel}
+          </span>
           {cta && (
             <span
-              className={`text-sm font-semibold inline-flex items-center gap-1 ${
-                isCompleted ? 'text-gray-600' : 'text-blue-700'
-              }`}
+              className={`text-sm font-semibold inline-flex items-center gap-1 ${style.ctaCls}`}
             >
               {starting ? 'פותח…' : cta}
               {/* SVG chevron — drawn explicitly so it doesn't get
@@ -298,35 +416,17 @@ function TaskCard({ task, starting, disabled, onOpen }) {
   );
 }
 
-function ctaFor(status) {
-  if (status === 'not_started') return 'התחל';
-  if (status === 'in_progress') return 'המשך';
-  if (status === 'completed') return 'צפה';
-  return null;
-}
-
-function StatusPill({ status }) {
-  const map = {
-    not_started: { label: 'טרם התחיל', cls: 'bg-gray-100 text-gray-700' },
-    in_progress: { label: 'בתהליך', cls: 'bg-amber-100 text-amber-900' },
-    completed: { label: 'הושלם', cls: 'bg-green-100 text-green-800' },
-  };
-  const m = map[status] || map.not_started;
-  return (
-    <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${m.cls}`}>
-      {m.label}
-    </span>
-  );
-}
-
-function TaskIcon({ type, status }) {
-  const ring =
-    status === 'completed'
-      ? 'bg-green-50 text-green-700 border-green-200'
-      : status === 'in_progress'
-      ? 'bg-amber-50 text-amber-700 border-amber-200'
-      : 'bg-blue-50 text-blue-700 border-blue-200';
-  const glyph = type === 'procedure' ? '📋' : '•';
+function TaskIcon({ type, ring, bucket }) {
+  const glyph =
+    bucket === 'correction'
+      ? '⚠'
+      : bucket === 'approved'
+      ? '✓'
+      : bucket === 'pending_review'
+      ? '⏳'
+      : type === 'procedure'
+      ? '📋'
+      : '•';
   return (
     <div
       className={`w-10 h-10 sm:w-11 sm:h-11 shrink-0 rounded-full border flex items-center justify-center text-lg ${ring}`}
