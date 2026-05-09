@@ -5,7 +5,13 @@
   direction: rtl;
   font-family: inherit;
   font-size: 16px;
-  line-height: 1.65;
+  /* line-height 1.55 (was 1.65) — tighter within-paragraph rhythm so
+     soft <br> line breaks visually group together as one thought,
+     while the paragraph margin below stands out clearly as a
+     separator between thoughts. The previous 1.65 spaced single-br
+     lines almost as far apart as paragraphs, which collapsed the
+     visual distinction between the two. */
+  line-height: 1.55;
   color: rgb(17 24 39);
   outline: none;
   min-height: 180px;
@@ -15,15 +21,15 @@
   word-break: break-word;
 }
 
-/* Sibling gap between block-level children. The previous 0.85em was
-   actually SMALLER than one line-height (1.65em), so two consecutive
-   paragraphs read like consecutive wrapped lines — paragraph
-   structure collapsed visually. 1em is bigger than the line-height
-   delta and reads as a proper paragraph break in both the editor
-   and the read-only preview. The same value on .gos-prose below
-   keeps preview, runtime and editor visually consistent. */
+/* Sibling gap between block-level children. With line-height now at
+   1.55 (~25px), a 1.25em (~20px) inter-block margin gives a paragraph
+   break of ~45px baseline-to-baseline vs ~25px for a soft <br> line
+   break — about 1.8× the within-paragraph spacing. Clearly distinct.
+   The same value lives on .gos-prose below so admin preview, full-
+   page preview, runtime, and the approval-detail surface all share
+   the same paragraph rhythm. */
 .rt-editor-prose > * + * {
-  margin-top: 1em;
+  margin-top: 1.25em;
 }
 
 .rt-editor-prose h1 {
@@ -58,7 +64,7 @@
    (h1+p, ul+p, p+p, blockquote+p, etc.). Source-order tiebreak
    gives this rule the win. */
 .rt-editor-prose * + p {
-  margin-top: 1em;
+  margin-top: 1.25em;
 }
 
 .rt-editor-prose ul,
@@ -300,16 +306,20 @@
   direction: rtl;
   font-family: inherit;
   font-size: 16px;
-  line-height: 1.65;
+  /* Mirrors .rt-editor-prose — see the comment there. The tighter
+     1.55 line-height keeps within-paragraph (br-separated) lines
+     visually grouped, so the inter-block margin below reads as the
+     real paragraph break. */
+  line-height: 1.55;
   color: rgb(17 24 39);
   max-width: 100%;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
-/* Same rationale as .rt-editor-prose above: paragraph margin must
-   exceed the line-height delta so block-level breaks are visually
-   distinct from wrapped lines / <br> soft breaks. */
-.gos-prose > * + * { margin-top: 1em; }
+/* Inter-block margin — 1.25em on top of the 1.55 line-height gives
+   the ~1.8× ratio between paragraph break and soft-break gaps that
+   the user defined as the source of truth in the admin preview. */
+.gos-prose > * + * { margin-top: 1.25em; }
 .gos-prose h1 { font-size: 1.5rem; font-weight: 700; line-height: 1.3; margin: 0.6em 0 0.25em; }
 .gos-prose h2 { font-size: 1.25rem; font-weight: 700; line-height: 1.35; margin: 0.55em 0 0.25em; }
 .gos-prose h3 { font-size: 1.125rem; font-weight: 600; line-height: 1.4; margin: 0.5em 0 0.25em; }
@@ -322,7 +332,7 @@
    `.gos-prose li > p` rule below keeps the higher-specificity
    (0,1,2) win inside list items, so paragraphs nested in <li> still
    stay margin-0. */
-.gos-prose * + p { margin-top: 1em; }
+.gos-prose * + p { margin-top: 1.25em; }
 .gos-prose ul, .gos-prose ol { padding-inline-start: 1.75em; margin: 0.3em 0; }
 .gos-prose ul { list-style: disc; }
 .gos-prose ol { list-style: decimal; }

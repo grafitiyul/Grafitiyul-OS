@@ -157,9 +157,9 @@ export default function GuidePortal() {
   useEffect(() => {
     if (state.phase === 'ready') {
       const name = state.data?.person?.displayName;
-      document.title = name ? `${name} · גרפיתי-יול` : 'גרפיתי-יול';
+      document.title = name ? `${name} · גרפיתיול` : 'גרפיתיול';
     } else {
-      document.title = 'גרפיתי-יול';
+      document.title = 'גרפיתיול';
     }
   }, [state]);
 
