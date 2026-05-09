@@ -366,37 +366,16 @@
   white-space: nowrap;
 }
 
-/* ───────── Reading-optimised modifier ─────────
-   Applied by LearnerRuntime on the active item screen so guides get a
-   slightly larger reading face, more breathing room between blocks,
-   and a more visible heading hierarchy than the editor preview surface
-   needs. The base .gos-prose stays as-is for admin previews and other
-   non-runtime callers — opt in here. */
-.gos-prose.is-runtime {
-  font-size: 17px;
-  line-height: 1.72;
-}
-/* Runtime gets a slightly bigger paragraph break than the admin
-   preview — the runtime line-height is also bigger (1.72) so we
-   need more vertical space to keep paragraph structure obvious at
-   reading distance on mobile. Both rules below are needed:
-     * `> * + *` covers non-<p> direct children (h1+p, ul+p, etc.)
-     * `* + p` overrides the `.gos-prose p { margin: 0 }` reset for
-       <p> elements specifically — the reset (0,1,1) blocks `> * + *`
-       (0,1,0) for paragraphs unless a 0,2,1 rule like this one wins. */
-.gos-prose.is-runtime > * + * { margin-top: 1.4em; }
-.gos-prose.is-runtime * + p { margin-top: 1.4em; }
-.gos-prose.is-runtime h1 { font-size: 1.7rem; line-height: 1.25; margin: 0.7em 0 0.35em; }
-.gos-prose.is-runtime h2 { font-size: 1.4rem; line-height: 1.3;  margin: 0.65em 0 0.3em; }
-.gos-prose.is-runtime h3 { font-size: 1.2rem; line-height: 1.35; margin: 0.55em 0 0.25em; }
-.gos-prose.is-runtime ul,
-.gos-prose.is-runtime ol { margin: 0.4em 0; padding-inline-start: 1.85em; }
-.gos-prose.is-runtime li + li { margin-top: 0.4em; }
-.gos-prose.is-runtime blockquote {
-  background: rgb(249 250 251);
-  border-radius: 4px;
-  padding: 0.5em 0.85em;
-}
+/* The previous `.gos-prose.is-runtime` modifier was deliberately
+   different from the admin-preview .gos-prose surface — bigger font,
+   bigger line-height, bigger paragraph margins, different heading
+   sizes. The intent was a "reading-optimised" mobile face for the
+   runtime. In practice it caused the runtime to NOT match the
+   admin's intentional paragraph spacing, which is the user's source
+   of truth for visual structure. The block was removed; the runtime
+   now opts into the same `.gos-prose` rules as every other read-only
+   surface. One rendering system, one source of truth, no mobile-
+   specific divergence. */
 
 /* ───────── Single-line title editor (TitleEditor.jsx) ───────── */
 /* Shares the RTL + dynamic-field chip look with the body editor but stays

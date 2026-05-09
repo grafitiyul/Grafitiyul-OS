@@ -1340,7 +1340,7 @@ function ItemScreen({
 
             {isContent ? (
               <div
-                className="gos-prose is-runtime text-gray-800"
+                className="gos-prose text-gray-800"
                 dangerouslySetInnerHTML={{
                   __html: normalizeRichHtml(ci?.body || ''),
                 }}
@@ -1348,7 +1348,7 @@ function ItemScreen({
             ) : (
               <>
                 <div
-                  className="gos-prose is-runtime text-gray-700 mb-5"
+                  className="gos-prose text-gray-700 mb-5"
                   dangerouslySetInnerHTML={{
                     __html: normalizeRichHtml(qi?.questionText || ''),
                   }}
