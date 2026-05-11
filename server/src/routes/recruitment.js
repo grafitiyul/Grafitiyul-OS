@@ -54,7 +54,7 @@ function internalSecret() {
   return String(v).trim();
 }
 
-async function fetchUpstream(path) {
+async function fetchUpstream(path, { allowNotFound = false } = {}) {
   const url = `${baseUrl()}${path}`;
   const secret = internalSecret();
   const ctl = new AbortController();
@@ -78,6 +78,13 @@ async function fetchUpstream(path) {
     clearTimeout(timer);
   }
   if (!res.ok) {
+    // 404 is the signal we get during the brief deploy window where
+    // recruitment hasn't yet shipped the new /people endpoint. The
+    // caller can pass `allowNotFound: true` to detect this and fall
+    // back to a legacy endpoint without surfacing a 502.
+    if (res.status === 404 && allowNotFound) {
+      return { __notFound: true };
+    }
     const body = await res.text().catch(() => '');
     const err = new Error(
       res.status === 401 || res.status === 403
@@ -117,7 +124,11 @@ function arrayOf(response) {
 // The names are deliberately ENGLISH and STABLE — Hebrew display labels
 // live in the client, not the database. Future upstream values can be
 // added here without a schema change.
-const KNOWN_LIFECYCLES = new Set(['trainee', 'staff', 'evaluator']);
+// Stable English values we accept. 'evaluator' was speculatively in
+// this list earlier but recruitment doesn't model evaluator as a
+// separate lifecycle — treating it as a role/permission belongs to
+// Phase 2. Any unknown value upstream sends is dropped to null.
+const KNOWN_LIFECYCLES = new Set(['trainee', 'staff']);
 
 function projectGuide(g) {
   if (!g || typeof g !== 'object') return null;
@@ -156,11 +167,32 @@ async function getGuides() {
   return arrayOf(raw).map(projectGuide).filter(Boolean);
 }
 
+// New unified people endpoint — includes both legacy guides AND
+// active trainees + team members from the candidate pipeline, each
+// row tagged with a stable English `lifecycleHint`. This is the
+// post-evolution data source for GOS "אנשים וגישה".
+async function getPeople() {
+  const raw = await fetchUpstream('/api/export/people', {
+    allowNotFound: true,
+  });
+  if (raw?.__notFound) return null;
+  return arrayOf(raw).map(projectGuide).filter(Boolean);
+}
+
 // Exported for /api/people/import so the same upstream call backs both
 // the preview (/api/recruitment/people) and the upsert endpoint.
+//
+// Prefers /api/export/people (unified roster with trainees). Falls
+// back to /api/export/guides only if upstream returns 404 — covers
+// the brief deploy window where one system is ahead of the other. A
+// 502 or any other error propagates so the caller can surface it.
 export async function getRecruitmentSnapshot() {
-  const people = await getGuides();
-  return { people, trainingMaterials: [] };
+  const unified = await getPeople();
+  if (unified !== null) {
+    return { people: unified, trainingMaterials: [] };
+  }
+  const legacy = await getGuides();
+  return { people: legacy, trainingMaterials: [] };
 }
 
 const router = Router();

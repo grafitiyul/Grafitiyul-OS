@@ -23,19 +23,20 @@ import { PERSON_STATUS_LABELS, PERSON_STATUSES } from './config.js';
 const LIFECYCLE_LABEL = {
   trainee: 'מתלמד',
   staff: 'צוות',
-  evaluator: 'מעריך',
+  // No 'evaluator' here — recruitment doesn't currently expose
+  // "evaluator" as a stable lifecycle distinct from staff/guide.
+  // Treat evaluators as a role/permission concept (Phase 2), not a
+  // separate identity type.
 };
 const LIFECYCLE_PILL_CLS = {
   trainee: 'bg-blue-100 text-blue-800 border-blue-200',
   staff: 'bg-emerald-100 text-emerald-800 border-emerald-200',
-  evaluator: 'bg-purple-100 text-purple-800 border-purple-200',
 };
 
 const LIFECYCLE_FILTERS = [
   { key: 'all', label: 'כולם' },
   { key: 'trainee', label: 'מתלמדים' },
   { key: 'staff', label: 'צוות' },
-  { key: 'evaluator', label: 'מעריכים' },
   { key: 'unknown', label: 'ללא סיווג' },
 ];
 
