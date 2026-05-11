@@ -3,10 +3,15 @@
 // free to change without touching any other code.
 export const MODULE_KEY = 'procedures';
 
+// Visual order only — routes (`path`), permissions, and the
+// /admin/procedures index redirect in App.jsx continue to use `flows`
+// as the default landing. Reordering this array changes the visible
+// order in the desktop ProceduresLayout header AND the mobile bottom
+// tab bar; both iterate this list directly.
 export const TABS = [
-  { key: 'flows', path: 'flows', label: 'זרימות', glyph: '⇆' },
   { key: 'bank', path: 'bank', label: 'בנק פריטים', glyph: '☷' },
   { key: 'approvals', path: 'approvals', label: 'אישור תשובות', glyph: '✓' },
+  { key: 'flows', path: 'flows', label: 'זרימות', glyph: '⇆' },
 ];
 
 // Approvals views. `key` is stable, `label` is display-only.
