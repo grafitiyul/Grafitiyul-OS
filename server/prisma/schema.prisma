@@ -499,6 +499,18 @@ model PersonRef {
   teamRefId        String?
   portalToken      String             @unique
   portalEnabled    Boolean            @default(true)
+  // Lifecycle hint from the upstream source-of-truth (recruitment).
+  // Stable mappable values: 'trainee' | 'staff' | 'evaluator'.
+  // Hebrew labels live in the client; the server NEVER reads display
+  // text. Null means upstream didn't tell us (older guides, or upstream
+  // hasn't shipped the field yet).
+  lifecycleHint    String?
+  // Audit timestamps for the access grant. portalEnabled is the gate;
+  // these two record WHEN it last flipped, for the access UI to show
+  // "granted X days ago" / "revoked Y days ago". They are independent
+  // of the upstream lifecycle and never touched by sync.
+  accessGrantedAt  DateTime?
+  accessRevokedAt  DateTime?
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
   profile          PersonProfile?

@@ -3,18 +3,48 @@ import { Link } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { PERSON_STATUS_LABELS, PERSON_STATUSES } from './config.js';
 
-// Admin guides list.
+// Unified "אנשים וגישה" surface.
 //
-// The list is UPSTREAM-BACKED with sync-on-read: every page load hits the
-// server, which refreshes local PersonRef rows from the recruitment
-// export, then returns the merged roster (identity = recruitment,
-// operational = local: portalToken, portalEnabled, status, team, profile).
+// Architectural intent (see audit + spec):
+//   * One identity layer (PersonRef) for everyone — trainee / staff /
+//     evaluator are lifecycle hints, not separate person types.
+//   * Recruitment is the upstream source of truth for lifecycle.
+//     GOS owns access (portalEnabled + audit timestamps).
+//   * No separate tabs per role. Two filter dimensions instead:
+//     lifecycle and access state.
 //
-// There is no manual "import" action — guides appear automatically as
-// soon as they exist in recruitment. If the upstream refresh fails on a
-// given load, the server still returns the last-known local rows and
-// flags `upstream.ok=false` so this component can surface the problem
-// instead of silently showing stale data.
+// The previous "מדריכים" header + columns are gone. Same DB-level
+// data, same upstream sync, same per-person profile route — only the
+// admin surface evolved.
+
+// Display labels live here, in the client. The server stores stable
+// English values. New upstream lifecycles can be added by extending
+// this map + the filter list below.
+const LIFECYCLE_LABEL = {
+  trainee: 'מתלמד',
+  staff: 'צוות',
+  evaluator: 'מעריך',
+};
+const LIFECYCLE_PILL_CLS = {
+  trainee: 'bg-blue-100 text-blue-800 border-blue-200',
+  staff: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+  evaluator: 'bg-purple-100 text-purple-800 border-purple-200',
+};
+
+const LIFECYCLE_FILTERS = [
+  { key: 'all', label: 'כולם' },
+  { key: 'trainee', label: 'מתלמדים' },
+  { key: 'staff', label: 'צוות' },
+  { key: 'evaluator', label: 'מעריכים' },
+  { key: 'unknown', label: 'ללא סיווג' },
+];
+
+const ACCESS_FILTERS = [
+  { key: 'all', label: 'כולם' },
+  { key: 'granted', label: 'יש גישה' },
+  { key: 'revoked', label: 'אין גישה' },
+];
+
 export default function PeopleList() {
   const [people, setPeople] = useState([]);
   const [upstream, setUpstream] = useState(null);
@@ -22,6 +52,10 @@ export default function PeopleList() {
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+
+  const [lifecycleFilter, setLifecycleFilter] = useState('all');
+  const [accessFilter, setAccessFilter] = useState('all');
+  const [pendingAccessId, setPendingAccessId] = useState(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -47,9 +81,6 @@ export default function PeopleList() {
       await api.people.forceRefresh();
       await refresh();
     } catch (e) {
-      // Surfacing the error via the upstream banner is enough — refresh()
-      // re-runs the list and will capture the failure through the normal
-      // response shape.
       console.warn('force refresh failed:', e.message);
       await refresh();
     } finally {
@@ -57,28 +88,54 @@ export default function PeopleList() {
     }
   }
 
+  async function toggleAccess(person, nextEnabled) {
+    setPendingAccessId(person.id);
+    try {
+      const updated = await api.people.setAccess(person.id, nextEnabled);
+      setPeople((rows) =>
+        rows.map((p) => (p.id === updated.id ? updated : p)),
+      );
+    } catch (e) {
+      console.warn('access toggle failed:', e.message);
+      // Refresh to recover from server-side state surprises (e.g.
+      // person was deleted in another tab).
+      refresh();
+    } finally {
+      setPendingAccessId(null);
+    }
+  }
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return people;
     return people.filter((p) => {
-      const hay = [
-        p.displayName,
-        p.email,
-        p.phone,
-        p.externalPersonId,
-        p.team?.displayName,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return hay.includes(q);
+      if (lifecycleFilter === 'unknown') {
+        if (p.lifecycleHint) return false;
+      } else if (lifecycleFilter !== 'all') {
+        if (p.lifecycleHint !== lifecycleFilter) return false;
+      }
+      if (accessFilter === 'granted' && !p.portalEnabled) return false;
+      if (accessFilter === 'revoked' && p.portalEnabled) return false;
+      if (q) {
+        const hay = [
+          p.displayName,
+          p.email,
+          p.phone,
+          p.externalPersonId,
+          p.team?.displayName,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
     });
-  }, [people, search]);
+  }, [people, search, lifecycleFilter, accessFilter]);
 
   return (
     <div className="p-4 lg:p-6 max-w-6xl mx-auto">
       <div className="flex items-center gap-3 mb-4">
-        <h1 className="text-lg font-semibold text-gray-900">מדריכים</h1>
+        <h1 className="text-lg font-semibold text-gray-900">אנשים וגישה</h1>
         <span className="text-[12px] text-gray-500">({people.length})</span>
         <div className="flex-1" />
         <input
@@ -99,6 +156,25 @@ export default function PeopleList() {
       </div>
 
       <UpstreamStatus upstream={upstream} />
+
+      {/* Filter chips. Two dimensions, both narrowing — lifecycle
+          (from upstream) and access state (local GOS truth). No tabs:
+          the same row can be a trainee with access OR a staff member
+          without access; both shapes exist concurrently. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-3 text-[12px]">
+        <FilterRow
+          label="סוג"
+          options={LIFECYCLE_FILTERS}
+          value={lifecycleFilter}
+          onChange={setLifecycleFilter}
+        />
+        <FilterRow
+          label="גישה"
+          options={ACCESS_FILTERS}
+          value={accessFilter}
+          onChange={setAccessFilter}
+        />
+      </div>
 
       {loading && (
         <div className="p-6 text-center text-sm text-gray-500">טוען…</div>
@@ -122,8 +198,8 @@ export default function PeopleList() {
         <div className="p-10 text-center text-sm text-gray-500">
           {people.length === 0
             ? upstream?.ok === false
-              ? 'לא ניתן לטעון מדריכים ממערכת הגיוס. ראו הודעת השגיאה למעלה.'
-              : 'אין מדריכים במערכת הגיוס.'
+              ? 'לא ניתן לטעון אנשים ממערכת הגיוס. ראו הודעת השגיאה למעלה.'
+              : 'אין אנשים במערכת הגיוס.'
             : 'לא נמצאו תוצאות.'}
         </div>
       )}
@@ -134,16 +210,21 @@ export default function PeopleList() {
             <thead className="bg-gray-50 text-gray-600">
               <tr>
                 <Th>שם</Th>
+                <Th>סוג</Th>
+                <Th>גישה</Th>
                 <Th>צוות</Th>
                 <Th>סטטוס</Th>
-                <Th>אימייל</Th>
-                <Th>טלפון</Th>
                 <Th className="text-left">פעולות</Th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filtered.map((p) => (
-                <PersonRow key={p.id} person={p} />
+                <PersonRow
+                  key={p.id}
+                  person={p}
+                  pendingAccess={pendingAccessId === p.id}
+                  onToggleAccess={toggleAccess}
+                />
               ))}
             </tbody>
           </table>
@@ -153,19 +234,43 @@ export default function PeopleList() {
   );
 }
 
+function FilterRow({ label, options, value, onChange }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-gray-500">{label}:</span>
+      <div className="flex flex-wrap gap-1">
+        {options.map((o) => (
+          <button
+            key={o.key}
+            type="button"
+            onClick={() => onChange(o.key)}
+            className={`px-2.5 py-1 rounded-full border text-[12px] transition-colors ${
+              value === o.key
+                ? 'bg-blue-600 text-white border-blue-600'
+                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+            }`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function UpstreamStatus({ upstream }) {
   if (!upstream) return null;
   if (upstream.ok) {
     return (
-      <div className="text-[12px] text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2 mb-4">
-        המדריכים נטענים ישירות ממערכת הגיוס. נתונים תפעוליים (תמונה,
-        הערות, פרטי בנק, שיוך צוות) נשמרים במערכת זו ומתמזגים עם הזהות
-        המגיעה מהגיוס.
+      <div className="text-[12px] text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2 mb-3">
+        רשימת האנשים נטענת ישירות ממערכת הגיוס. סיווג (מתלמד / צוות /
+        מעריך) הוא הלקסיקון של מערכת הגיוס. הגישה לפורטל היא נפרדת
+        לחלוטין — מנוהלת כאן.
       </div>
     );
   }
   return (
-    <div className="text-[12px] text-amber-900 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-4">
+    <div className="text-[12px] text-amber-900 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-3">
       <div className="font-semibold mb-1">
         לא ניתן לסנכרן עם מערכת הגיוס כרגע.
       </div>
@@ -180,7 +285,7 @@ function UpstreamStatus({ upstream }) {
   );
 }
 
-function PersonRow({ person }) {
+function PersonRow({ person, pendingAccess, onToggleAccess }) {
   const portalUrl = `${window.location.origin}/p/${person.portalToken}`;
   const [copied, setCopied] = useState(false);
 
@@ -202,17 +307,39 @@ function PersonRow({ person }) {
           {person.displayName}
         </Link>
       </Td>
+      <Td>
+        <LifecyclePill hint={person.lifecycleHint} />
+      </Td>
+      <Td>
+        <AccessPill enabled={person.portalEnabled} />
+      </Td>
       <Td>{person.team?.displayName || <Muted>—</Muted>}</Td>
       <Td>
         <StatusChip status={person.status} />
-        {!person.portalEnabled && (
-          <span className="mr-2 text-[10px] text-gray-500">פורטל חסום</span>
-        )}
       </Td>
-      <Td>{person.email || <Muted>—</Muted>}</Td>
-      <Td>{person.phone || <Muted>—</Muted>}</Td>
       <Td className="text-left">
-        <div className="flex gap-1 justify-end">
+        <div className="flex gap-1 justify-end items-center flex-wrap">
+          <button
+            type="button"
+            onClick={() => onToggleAccess(person, !person.portalEnabled)}
+            disabled={pendingAccess}
+            className={`text-[12px] rounded px-2 py-1 border disabled:opacity-50 ${
+              person.portalEnabled
+                ? 'border-red-300 text-red-700 hover:bg-red-50'
+                : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'
+            }`}
+            title={
+              person.portalEnabled
+                ? 'בטל את הגישה של האדם לפורטל GOS'
+                : 'תן לאדם גישה לפורטל GOS'
+            }
+          >
+            {pendingAccess
+              ? '…'
+              : person.portalEnabled
+              ? 'בטל גישה'
+              : 'תן גישה'}
+          </button>
           <button
             onClick={onCopy}
             className="text-[12px] text-gray-600 hover:bg-gray-100 rounded px-2 py-1"
@@ -232,6 +359,34 @@ function PersonRow({ person }) {
         </div>
       </Td>
     </tr>
+  );
+}
+
+function LifecyclePill({ hint }) {
+  if (!hint) {
+    return <span className="text-[11px] text-gray-400">—</span>;
+  }
+  const label = LIFECYCLE_LABEL[hint] || hint;
+  const cls = LIFECYCLE_PILL_CLS[hint] || 'bg-gray-100 text-gray-800 border-gray-200';
+  return (
+    <span className={`inline-flex items-center text-[11px] px-2 py-0.5 rounded-full border ${cls}`}>
+      {label}
+    </span>
+  );
+}
+
+function AccessPill({ enabled }) {
+  if (enabled) {
+    return (
+      <span className="inline-flex items-center text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+        יש גישה
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center text-[11px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 border border-gray-200">
+      אין גישה
+    </span>
   );
 }
 

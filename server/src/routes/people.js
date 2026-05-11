@@ -64,12 +64,19 @@ async function syncFromUpstream() {
       phone: p.phone || null,
       identitySyncedAt: new Date(),
     };
+    // lifecycleHint is mirrored from upstream and overwrites the
+    // local value on every sync — recruitment owns it. Null when
+    // upstream hasn't yet shipped the field, which leaves the column
+    // null and the admin UI shows "—". We DO NOT touch portalEnabled
+    // / accessGrantedAt / accessRevokedAt on existing rows; those are
+    // local-only access state.
+    const lifecycleHint = p.lifecycleHint || null;
 
     const existing = await prisma.personRef.findUnique({
       where: { externalPersonId },
     });
     if (existing) {
-      const data = { ...identity };
+      const data = { ...identity, lifecycleHint };
       if (p.portalToken) data.portalToken = p.portalToken;
       await prisma.personRef.update({
         where: { externalPersonId },
@@ -82,6 +89,15 @@ async function syncFromUpstream() {
           externalPersonId,
           identitySource: 'recruitment',
           portalToken: p.portalToken || newPortalToken(),
+          lifecycleHint,
+          // Existing infra defaults `portalEnabled=true` so newcomers
+          // arrive with access. We keep that default for now to avoid
+          // breaking the current "guide imported → link works"
+          // expectation; admins use the Access UI to revoke
+          // explicitly. A future config flag can flip this to
+          // default-off if the team wants explicit-grant semantics
+          // for new imports.
+          accessGrantedAt: new Date(),
           ...identity,
           profile: { create: {} },
         },
@@ -239,9 +255,38 @@ router.put(
     if (typeof enabled !== 'boolean') {
       return res.status(400).json({ error: 'enabled_boolean_required' });
     }
+    // Stamp the audit timestamp that matches the new state. Keeps the
+    // other one as-is (we want to remember when access was first
+    // granted even after a later revoke + regrant cycle).
+    const data = { portalEnabled: enabled };
+    if (enabled) data.accessGrantedAt = new Date();
+    else data.accessRevokedAt = new Date();
     const person = await prisma.personRef.update({
       where: { id: req.params.id },
-      data: { portalEnabled: enabled },
+      data,
+      include: PERSON_INCLUDE,
+    });
+    res.json(person);
+  }),
+);
+
+// Friendlier alias used by the unified "אנשים וגישה" UI. Same body
+// shape as the legacy /portal/enabled endpoint above (`{ enabled }`) —
+// kept separate only so the URL reads as the domain concept (access)
+// rather than the implementation detail (portal toggle).
+router.put(
+  '/:id/access',
+  handle(async (req, res) => {
+    const { enabled } = req.body || {};
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled_boolean_required' });
+    }
+    const data = { portalEnabled: enabled };
+    if (enabled) data.accessGrantedAt = new Date();
+    else data.accessRevokedAt = new Date();
+    const person = await prisma.personRef.update({
+      where: { id: req.params.id },
+      data,
       include: PERSON_INCLUDE,
     });
     res.json(person);

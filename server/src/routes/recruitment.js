@@ -112,6 +112,13 @@ function arrayOf(response) {
 // portalToken is forwarded IF upstream provides it (spec: "portalToken if
 // present is sourced from recruitment"). When absent, the import endpoint
 // generates one locally on create and preserves the existing one on update.
+// Lifecycle hints we accept from upstream. Anything off this list is
+// treated as null so unknown values don't leak into the GOS data model.
+// The names are deliberately ENGLISH and STABLE — Hebrew display labels
+// live in the client, not the database. Future upstream values can be
+// added here without a schema change.
+const KNOWN_LIFECYCLES = new Set(['trainee', 'staff', 'evaluator']);
+
 function projectGuide(g) {
   if (!g || typeof g !== 'object') return null;
   const externalPersonId =
@@ -120,6 +127,16 @@ function projectGuide(g) {
   const email = g.email ?? null;
   const phone = g.phone ?? g.mobile ?? g.phoneNumber ?? null;
   const portalToken = g.portalToken ?? null;
+  // Lifecycle hint — accept the first non-empty value among the
+  // candidate fields. We do NOT read Hebrew status / stage labels;
+  // upstream must send stable English values or null. Anything else
+  // is dropped on the floor.
+  const rawLifecycle =
+    g.lifecycleHint ?? g.personType ?? g.type ?? g.role ?? null;
+  const lifecycleHint =
+    rawLifecycle && KNOWN_LIFECYCLES.has(String(rawLifecycle).trim())
+      ? String(rawLifecycle).trim()
+      : null;
   if (externalPersonId == null || String(externalPersonId).trim() === '') {
     return null;
   }
@@ -130,6 +147,7 @@ function projectGuide(g) {
     email: email ? String(email).trim() || null : null,
     phone: phone ? String(phone).trim() || null : null,
     portalToken: portalToken ? String(portalToken).trim() || null : null,
+    lifecycleHint,
   };
 }
 

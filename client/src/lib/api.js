@@ -176,6 +176,14 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify({ enabled }),
       }),
+    // Same semantics as setPortalEnabled but routed through the
+    // domain-oriented /access endpoint. Used by the unified
+    // "אנשים וגישה" admin surface.
+    setAccess: (id, enabled) =>
+      request(`/api/people/${id}/access`, {
+        method: 'PUT',
+        body: JSON.stringify({ enabled }),
+      }),
     uploadImage: async (id, file) => {
       const q = qs({ filename: file.name });
       const res = await fetch(`/api/people/${id}/image${q}`, {
