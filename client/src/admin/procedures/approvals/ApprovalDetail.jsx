@@ -345,6 +345,27 @@ export default function ApprovalDetail() {
     });
   }, [data, id]);
 
+  // ── HOOK ORDER NOTE ─────────────────────────────────────────────
+  //
+  // Every hook MUST be called above the early returns below.
+  // Previously `useMemo(visibleBlocks)` lived after the
+  // `if (loading) / if (error) / if (!data) return …` block, which
+  // broke the rules-of-hooks contract: first render (loading=true)
+  // never reached the useMemo; second render (loading=false) did,
+  // and React threw error #310 ("Rendered more hooks than during
+  // the previous render"). The memo is now declared here, BEFORE
+  // any early return, and handles the `data == null` case via the
+  // `data?.blocks || []` fallback inside the memo body.
+  const visibleBlocks = useMemo(() => {
+    const list = data?.blocks || [];
+    return list
+      .filter((b) => !!b.latest)
+      .map((b) => {
+        const stepId = b.step?.stepId || b.node?.stepId;
+        return applyOverride(b, localOverrides[stepId]);
+      });
+  }, [data, localOverrides]);
+
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center p-8 text-gray-500">
@@ -373,28 +394,12 @@ export default function ApprovalDetail() {
   if (!data) return null;
 
   const { attempt, flow, blocks } = data;
-  // Filter out questions the learner never reached. Reviewable items
-  // are: anything with at least one FlowAnswer (any status). Untouched
-  // future questions had no answer yet → no version history → no
-  // signal for the admin to act on. Showing them as "אין תשובה עדיין"
-  // cards adds noise that scales with procedure length. The filter is
-  // purely visual; the underlying review payload still carries the
-  // full question set in case future tooling needs the structural map.
-  //
-  // `visibleBlocks` carries optimistic overrides merged in — the
-  // counts and the rendered cards both look at the same projection
-  // so an in-flight approve flips its chip AND its block state in
-  // the same React commit.
-  const visibleBlocks = useMemo(
-    () =>
-      blocks
-        .filter((b) => !!b.latest)
-        .map((b) => {
-          const stepId = b.step?.stepId || b.node?.stepId;
-          return applyOverride(b, localOverrides[stepId]);
-        }),
-    [blocks, localOverrides],
-  );
+  // `visibleBlocks` was computed above (before the early returns) so
+  // the hook order stays stable across renders. It already filters
+  // out unanswered questions AND merges optimistic overrides, so
+  // counts + per-block rendering both consume the same projection
+  // and an in-flight approve flips chip + block in the same React
+  // commit.
   const total = visibleBlocks.length;
   const approved = visibleBlocks.filter(
     (b) => b.latest?.status === 'approved',
