@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useOutletContext } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import { relativeHebrew } from '../../../lib/relativeTime.js';
@@ -6,6 +6,39 @@ import { titleToPlain } from '../../../editor/TitleEditor.jsx';
 import { normalizeRichHtml } from '../../../editor/htmlNormalize.js';
 import Dialog from '../../common/Dialog.jsx';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
+
+// Per-attempt scroll-position key. sessionStorage so the value
+// survives a tab refresh / brief navigation within the same browser
+// tab, but doesn't bleed across truly-separate browser sessions where
+// the saved offset would no longer be meaningful.
+function scrollKey(attemptId) {
+  return `gos.approval.scroll.${attemptId}`;
+}
+
+// Merge a per-block server payload with any local optimistic override.
+// The override wins unless:
+//   * server's latest answer is a NEWER version (correction came in;
+//     the admin's pending approve/reject targeted the old version, so
+//     the new pending answer takes precedence).
+//   * server's latest already reports the same status (state has
+//     caught up — override is redundant; let the server payload through
+//     so adminComment / reviewedAt etc. stay accurate).
+// The shape returned matches the server `block` so QuestionBlock
+// renders identically regardless of who owns the truth right now.
+function applyOverride(block, override) {
+  if (!override || !block?.latest) return block;
+  const sv = block.latest;
+  if (sv.version > override.version) return block;
+  if (sv.status === override.status) return block;
+  return {
+    ...block,
+    latest: {
+      ...sv,
+      status: override.status,
+      adminComment: override.adminComment ?? null,
+    },
+  };
+}
 
 // Admin approval detail. Loads the review payload for one attempt, which
 // includes every question with its full version history and the content
@@ -26,6 +59,34 @@ export default function ApprovalDetail() {
   const [resetOpen, setResetOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [resetError, setResetError] = useState(null);
+
+  // Optimistic per-stepId overrides. Keyed by stepId; each entry is
+  // `{ status: 'approved'|'rejected', adminComment, version }`.
+  // Wins over server data at render time until either the server
+  // payload catches up (status matches) or a newer answer version
+  // appears (the learner submitted a correction after we approved /
+  // rejected the previous version — in which case the override would
+  // have targeted the old version and is no longer meaningful).
+  const [localOverrides, setLocalOverrides] = useState({});
+  // Per-stepId action errors so a failed approve/reject shows inline
+  // on the right block and we can revert that override.
+  const [actionErrors, setActionErrors] = useState({});
+
+  // Generation counter. Bumped on every admin action so the periodic
+  // softRefresh polling can detect when a response was overtaken by a
+  // newer action mid-flight and discard the stale payload. Without
+  // this the polling fetch — which uses Postgres snapshot isolation —
+  // can return a snapshot taken BEFORE the approve committed, and
+  // overwriting setData with that snapshot is exactly the
+  // "approval reverts after a minute" bug the user reported.
+  const genRef = useRef(0);
+
+  // Scroll container ref + persistence. sessionStorage key is per-
+  // attempt so switching to another person doesn't drag the old
+  // scroll offset onto the new page.
+  const scrollRef = useRef(null);
+  const scrollRestoredRef = useRef(false);
+  const scrollSaveTimerRef = useRef(null);
 
   async function performReset() {
     if (resetting) return;
@@ -52,8 +113,12 @@ export default function ApprovalDetail() {
   const initialLoad = useCallback(async () => {
     setLoading(true);
     setError(null);
+    const myGen = genRef.current;
     try {
       const d = await api.reviews.get(id);
+      // Discard a stale initial load if an action superseded us (rare
+      // but possible if the user clicks approve while loading).
+      if (myGen !== genRef.current) return;
       setData(d);
     } catch (e) {
       setError(e.message || 'שגיאה');
@@ -63,8 +128,13 @@ export default function ApprovalDetail() {
   }, [id]);
 
   const softRefresh = useCallback(async () => {
+    const myGen = genRef.current;
     try {
       const d = await api.reviews.get(id);
+      // Stale-response guard: if a newer admin action ran while this
+      // fetch was in flight, drop the payload. The action's own
+      // refetch (or the next poll tick) will land authoritative data.
+      if (myGen !== genRef.current) return;
       setData(d);
       setError(null);
     } catch (e) {
@@ -76,8 +146,43 @@ export default function ApprovalDetail() {
   }, [id]);
 
   useEffect(() => {
+    // New attempt id → drop any overrides from the previous attempt,
+    // reset scroll-restore guard, and let initialLoad replace the data.
+    setLocalOverrides({});
+    setActionErrors({});
+    scrollRestoredRef.current = false;
     initialLoad();
   }, [initialLoad]);
+
+  // Prune overrides once the server payload has caught up. Without
+  // this the override would stay in place forever even after the
+  // server reports the same status, and a subsequent learner
+  // correction that drops version back to pending would still get
+  // rendered as approved (because override.status='approved' wins).
+  useEffect(() => {
+    if (!data?.blocks) return;
+    setLocalOverrides((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const block of data.blocks) {
+        const stepId = block.step?.stepId || block.node?.stepId;
+        const ov = next[stepId];
+        if (!ov) continue;
+        const sv = block.latest;
+        if (!sv) continue;
+        if (sv.version > ov.version) {
+          delete next[stepId];
+          changed = true;
+          continue;
+        }
+        if (sv.status === ov.status) {
+          delete next[stepId];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [data]);
 
   // Quiet live refresh — picks up learner activity (new corrections,
   // re-submissions) without flashing the page. softRefresh keeps the
@@ -104,26 +209,141 @@ export default function ApprovalDetail() {
     };
   }, [id, softRefresh]);
 
-  // The server review payload returns each block as `{ step, node, ... }`
-  // where `node` is an alias for `step` and carries `stepId` (NOT `id`).
-  // Calling these with `node.id` (undefined) hit /questions/undefined/...
-  // and quietly 404'd, which is why approve/reject "did nothing". The
-  // URL param is still legacy-named `flowNodeId` server-side; the value
-  // we send is a stepId, which the handler treats as such.
+  // Look up the current latest answer for a step so the optimistic
+  // override can carry the right version. If a learner submits a
+  // correction AFTER our optimistic action lands but BEFORE the
+  // server refresh, this version field is how the prune effect
+  // recognises the override as stale.
+  function latestVersionFor(stepId) {
+    const block = data?.blocks?.find(
+      (b) => (b.step?.stepId || b.node?.stepId) === stepId,
+    );
+    return block?.latest?.version ?? 0;
+  }
+
+  // Optimistic approve. Status flips instantly in the UI via the
+  // local override; the API + refetch run in the background. On
+  // failure the override is rolled back and an inline error is set
+  // on the affected block. The generation counter ensures polling
+  // softRefresh responses that started BEFORE this action are
+  // discarded when they finally land.
   async function approve(stepId) {
-    await api.reviews.approveQuestion(id, stepId);
-    // Soft refresh keeps scroll position + filter selection + the
-    // open detail card. The clicked QuestionBlock updates in place
-    // via React reconciliation on its `key={stepId}`.
-    await softRefresh();
-    await refreshList?.();
+    const version = latestVersionFor(stepId);
+    genRef.current += 1;
+    setLocalOverrides((prev) => ({
+      ...prev,
+      [stepId]: { status: 'approved', adminComment: null, version },
+    }));
+    setActionErrors((prev) => {
+      if (!prev[stepId]) return prev;
+      const next = { ...prev };
+      delete next[stepId];
+      return next;
+    });
+    try {
+      await api.reviews.approveQuestion(id, stepId);
+      // Background refetch picks up the authoritative state.
+      // softRefresh's gen guard handles the race; the prune effect
+      // clears the override once the server payload matches.
+      softRefresh();
+      refreshList?.();
+    } catch (e) {
+      setLocalOverrides((prev) => {
+        const next = { ...prev };
+        delete next[stepId];
+        return next;
+      });
+      setActionErrors((prev) => ({
+        ...prev,
+        [stepId]: e?.payload?.error || e?.message || 'אישור נכשל',
+      }));
+    }
   }
 
   async function reject(stepId, comment) {
-    await api.reviews.rejectQuestion(id, stepId, comment);
-    await softRefresh();
-    await refreshList?.();
+    const version = latestVersionFor(stepId);
+    const trimmed = String(comment || '').trim();
+    if (!trimmed) return;
+    genRef.current += 1;
+    setLocalOverrides((prev) => ({
+      ...prev,
+      [stepId]: {
+        status: 'rejected',
+        adminComment: trimmed,
+        version,
+      },
+    }));
+    setActionErrors((prev) => {
+      if (!prev[stepId]) return prev;
+      const next = { ...prev };
+      delete next[stepId];
+      return next;
+    });
+    try {
+      await api.reviews.rejectQuestion(id, stepId, trimmed);
+      softRefresh();
+      refreshList?.();
+    } catch (e) {
+      setLocalOverrides((prev) => {
+        const next = { ...prev };
+        delete next[stepId];
+        return next;
+      });
+      setActionErrors((prev) => ({
+        ...prev,
+        [stepId]: e?.payload?.error || e?.message || 'דחייה נכשלה',
+      }));
+    }
   }
+
+  // ── Scroll persistence ──────────────────────────────────────────
+  //
+  // Save scrollTop to sessionStorage on scroll (throttled), restore
+  // once after the first data load lands. Keyed by attemptId so
+  // switching to another person doesn't drag the old offset onto the
+  // new page.
+  const onScroll = useCallback(() => {
+    if (scrollSaveTimerRef.current) return;
+    scrollSaveTimerRef.current = setTimeout(() => {
+      scrollSaveTimerRef.current = null;
+      try {
+        const el = scrollRef.current;
+        if (el) sessionStorage.setItem(scrollKey(id), String(el.scrollTop));
+      } catch {
+        /* ignore */
+      }
+    }, 200);
+  }, [id]);
+
+  useEffect(() => {
+    return () => {
+      if (scrollSaveTimerRef.current) {
+        clearTimeout(scrollSaveTimerRef.current);
+        scrollSaveTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!data || scrollRestoredRef.current) return;
+    scrollRestoredRef.current = true;
+    let saved;
+    try {
+      saved = sessionStorage.getItem(scrollKey(id));
+    } catch {
+      saved = null;
+    }
+    if (saved == null) return;
+    const top = Number(saved);
+    if (!Number.isFinite(top)) return;
+    // rAF — wait one frame so the scrollable element is in the DOM
+    // and has its final content height. Browsers clamp scrollTop to
+    // the maximum automatically, so an over-large value just lands
+    // at the bottom rather than throwing.
+    requestAnimationFrame(() => {
+      if (scrollRef.current) scrollRef.current.scrollTop = top;
+    });
+  }, [data, id]);
 
   if (loading) {
     return (
@@ -160,7 +380,21 @@ export default function ApprovalDetail() {
   // cards adds noise that scales with procedure length. The filter is
   // purely visual; the underlying review payload still carries the
   // full question set in case future tooling needs the structural map.
-  const visibleBlocks = blocks.filter((b) => !!b.latest);
+  //
+  // `visibleBlocks` carries optimistic overrides merged in — the
+  // counts and the rendered cards both look at the same projection
+  // so an in-flight approve flips its chip AND its block state in
+  // the same React commit.
+  const visibleBlocks = useMemo(
+    () =>
+      blocks
+        .filter((b) => !!b.latest)
+        .map((b) => {
+          const stepId = b.step?.stepId || b.node?.stepId;
+          return applyOverride(b, localOverrides[stepId]);
+        }),
+    [blocks, localOverrides],
+  );
   const total = visibleBlocks.length;
   const approved = visibleBlocks.filter(
     (b) => b.latest?.status === 'approved',
@@ -250,7 +484,11 @@ export default function ApprovalDetail() {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto px-5 py-5">
+      <div
+        ref={scrollRef}
+        onScroll={onScroll}
+        className="flex-1 overflow-y-auto px-5 py-5"
+      >
         {visibleBlocks.length === 0 && (
           <div className="text-center text-gray-500 py-12">
             {blocks.length === 0
@@ -272,6 +510,7 @@ export default function ApprovalDetail() {
                 readOnly={attempt.status === 'approved'}
                 onApprove={() => approve(stepId)}
                 onReject={(comment) => reject(stepId, comment)}
+                externalError={actionErrors[stepId]}
               />
             );
           })}
@@ -318,17 +557,19 @@ function Chip({ children, color }) {
   );
 }
 
-function QuestionBlock({ block, readOnly, onApprove, onReject }) {
+function QuestionBlock({ block, readOnly, onApprove, onReject, externalError }) {
   const { node, precedingContent, history, latest } = block;
   const qi = node.questionItem;
   const [historyOpen, setHistoryOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectComment, setRejectComment] = useState(latest?.adminComment || '');
   const [busy, setBusy] = useState(false);
-  // Inline action error — the previous try/finally swallowed failures
-  // silently, which is exactly how the "approve does nothing" bug went
-  // unseen for a slice. Anything that throws is now surfaced.
+  // Locally-raised error (e.g. validation). Combined with the parent's
+  // `externalError` (raised when an optimistic approve/reject was
+  // rolled back) we always show a meaningful message inline on the
+  // affected block — no global toast, no other block touched.
   const [actionError, setActionError] = useState(null);
+  const visibleError = actionError || externalError || null;
 
   const status = latest?.status || 'pending';
   const statusCls = {
@@ -478,10 +719,10 @@ function QuestionBlock({ block, readOnly, onApprove, onReject }) {
 
       {!readOnly && latest && (
         <>
-          {actionError && (
+          {visibleError && (
             <div className="px-5 pt-3 bg-white">
               <div className="bg-red-50 border border-red-200 text-red-800 rounded p-2 text-[13px]">
-                {actionError}
+                {visibleError}
               </div>
             </div>
           )}
