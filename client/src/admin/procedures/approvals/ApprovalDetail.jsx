@@ -298,51 +298,142 @@ export default function ApprovalDetail() {
 
   // ── Scroll persistence ──────────────────────────────────────────
   //
-  // Save scrollTop to sessionStorage on scroll (throttled), restore
-  // once after the first data load lands. Keyed by attemptId so
-  // switching to another person doesn't drag the old offset onto the
-  // new page.
+  // Three problems the previous implementation had:
+  //
+  //   1. RESTORE TIMING. A single rAF after first paint sets scrollTop
+  //      while content height is still growing — images, embeds, the
+  //      gos-prose body — so the browser clamps to the max available
+  //      scroll at that instant (often smaller than the saved offset)
+  //      and the value never recovers. Fixed below with a retry loop:
+  //      re-set scrollTop each rAF until either (a) it lands on the
+  //      target, or (b) the container has enough scrollHeight to do so.
+  //
+  //   2. STALE CLOSURE. onScroll captured `id` via useCallback's [id]
+  //      dependency. When id changes mid-throttle (user navigates to
+  //      another person within 200ms of scrolling) the pending
+  //      setTimeout still uses the old `id` AND old scrollKey(id) —
+  //      but reads scrollRef.current.scrollTop AFTER the new render,
+  //      writing the NEW position to the OLD key. Fixed by holding
+  //      the current id in a ref the timer reads at fire time.
+  //
+  //   3. NO TRANSITION FLUSH. Switching attempts (id change) doesn't
+  //      unmount the component, so the `useEffect [] cleanup` never
+  //      fired and the last unsaved scroll position could be lost
+  //      (cleared throttle without flushing). Fixed with a per-id
+  //      effect that runs cleanup on id change AND flushes scrollTop
+  //      synchronously to the OLD id's sessionStorage key.
+  //
+  // sessionStorage is the right scope: survives tab refresh + admin-
+  // page round-trips, doesn't bleed across truly-separate sessions
+  // where the saved offset would no longer be meaningful.
+
+  // Always-current id reference for the throttled save's closure.
+  const idRef = useRef(id);
+  useEffect(() => {
+    idRef.current = id;
+  }, [id]);
+
   const onScroll = useCallback(() => {
     if (scrollSaveTimerRef.current) return;
     scrollSaveTimerRef.current = setTimeout(() => {
       scrollSaveTimerRef.current = null;
       try {
         const el = scrollRef.current;
-        if (el) sessionStorage.setItem(scrollKey(id), String(el.scrollTop));
+        if (el) {
+          sessionStorage.setItem(
+            scrollKey(idRef.current),
+            String(el.scrollTop),
+          );
+        }
       } catch {
         /* ignore */
       }
     }, 200);
-  }, [id]);
+  }, []);
 
+  // Per-id transition: when id changes or component unmounts, cancel
+  // any pending throttled save AND write the CURRENT scrollTop
+  // synchronously to the OLD id's key. This is the path that keeps
+  // "scroll → quickly navigate away → come back" working.
   useEffect(() => {
+    const idAtMount = id;
     return () => {
       if (scrollSaveTimerRef.current) {
         clearTimeout(scrollSaveTimerRef.current);
         scrollSaveTimerRef.current = null;
       }
+      try {
+        const el = scrollRef.current;
+        if (el) {
+          sessionStorage.setItem(
+            scrollKey(idAtMount),
+            String(el.scrollTop),
+          );
+        }
+      } catch {
+        /* ignore */
+      }
     };
-  }, []);
+  }, [id]);
 
+  // Restore with a retry loop. Each rAF: set scrollTop, then verify.
+  // If the browser clamped us short because content is still loading,
+  // try again on the next frame. Stop on hit OR after MAX_ATTEMPTS
+  // (~500ms) to avoid spinning on attempts whose saved offset is
+  // genuinely larger than the final scrollHeight (content shrank
+  // since save — rare; ending at the bottom is acceptable).
   useEffect(() => {
     if (!data || scrollRestoredRef.current) return;
     scrollRestoredRef.current = true;
-    let saved;
+
+    let saved = null;
     try {
       saved = sessionStorage.getItem(scrollKey(id));
     } catch {
       saved = null;
     }
     if (saved == null) return;
-    const top = Number(saved);
-    if (!Number.isFinite(top)) return;
-    // rAF — wait one frame so the scrollable element is in the DOM
-    // and has its final content height. Browsers clamp scrollTop to
-    // the maximum automatically, so an over-large value just lands
-    // at the bottom rather than throwing.
-    requestAnimationFrame(() => {
-      if (scrollRef.current) scrollRef.current.scrollTop = top;
-    });
+    const target = Number(saved);
+    if (!Number.isFinite(target) || target <= 0) return;
+
+    let cancelled = false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 30; // ~500ms at 60fps
+
+    function tryRestore() {
+      if (cancelled) return;
+      const el = scrollRef.current;
+      if (!el) {
+        if (attempts++ < MAX_ATTEMPTS) requestAnimationFrame(tryRestore);
+        return;
+      }
+      const maxScroll = el.scrollHeight - el.clientHeight;
+      const aim = Math.min(target, Math.max(0, maxScroll));
+      if (Math.abs(el.scrollTop - aim) > 0.5) {
+        el.scrollTop = aim;
+      }
+      // Done when we've reached target (content fully loaded) OR
+      // we've reached the current max and content can't grow further
+      // this attempt.
+      const reachedTarget = el.scrollTop >= target - 1;
+      const atCurrentMax = aim >= maxScroll;
+      if (reachedTarget) return;
+      if (attempts++ >= MAX_ATTEMPTS) return;
+      // Keep trying — content may still be loading and scrollHeight
+      // may grow on subsequent frames.
+      if (!atCurrentMax || maxScroll < target) {
+        requestAnimationFrame(tryRestore);
+      } else if (attempts < MAX_ATTEMPTS) {
+        // We're at current max but content might still grow; keep
+        // poking until we get to target or run out of attempts.
+        requestAnimationFrame(tryRestore);
+      }
+    }
+
+    requestAnimationFrame(tryRestore);
+    return () => {
+      cancelled = true;
+    };
   }, [data, id]);
 
   // ── HOOK ORDER NOTE ─────────────────────────────────────────────
