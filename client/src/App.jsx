@@ -36,6 +36,7 @@ import AdminUsersPage from './admin/users/AdminUsersPage.jsx';
 // root "/" route or the Landing/PWA resolver. This route is removed when the
 // real public routing lands in Step 4 (root "/" → public site via Vike).
 import PublicApp from './public/PublicApp.jsx';
+import HomePage from './public/pages/home/HomePage.jsx';
 
 export default function App() {
   return (
@@ -122,6 +123,7 @@ export default function App() {
       {/* TEMPORARY public-website foundation preview (Phase 1/2). Removed at
           Step 4 when the public site takes over root "/". */}
       <Route path="/__preview/public" element={<PublicApp />} />
+      <Route path="/__preview/home" element={<HomePage />} />
     </Routes>
   );
 }
