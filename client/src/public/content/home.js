@@ -10,14 +10,14 @@
 import { placeholder } from './media.js';
 
 export const hero = {
-  eyebrow: 'גרפיטיול',
-  // The Figma hero title is a graffiti-lettering image; this is a text stand-in.
-  title: 'יוצאים לצבוע\nאת הרחוב',
+  // Exact Figma copy (#2196:3661). The headline highlights "הסיפורים" in white
+  // over a teal Breaker-Bay blob (rendered via the <mark> in Hero.jsx).
+  titleBefore: 'לגלות את',
+  titleHighlight: 'הסיפורים',
+  titleAfter: 'שמאחורי הקירות',
   subtitle:
-    'סיורי וסדנאות גרפיטי בלב הסצנה האורבנית. בחרו סיור, חפשו מועד, הזמינו כרטיסים — ובואו ליצור.',
-  primaryCta: { label: 'חפשו סיור', href: '/tours' },
-  secondaryCta: { label: 'צרו קשר', href: '/contact' },
-  image: placeholder('Hero · גרפיטי', { w: 760, h: 680 }),
+    'אנחנו מציעים מגוון רחב של סדנאות וסיורי אמנות רחוב אינטראקטיביים עם אמני גרפיטי מקצועיים שיחשפו בפניכם את הסודות של עולם הגרפיטי',
+  cta: { label: 'חפשו והזמינו סיור', href: '/tours' },
 };
 
 export const stats = [
