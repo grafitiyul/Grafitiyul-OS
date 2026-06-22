@@ -31,6 +31,11 @@ import PeopleList from './admin/people/PeopleList.jsx';
 import PersonProfile from './admin/people/PersonProfile.jsx';
 import TeamsPage from './admin/people/TeamsPage.jsx';
 import AdminUsersPage from './admin/users/AdminUsersPage.jsx';
+// TEMPORARY (Phase 1/2 review scaffolding): mounts the public-website
+// foundation at a NON-root path so it can be reviewed without touching the
+// root "/" route or the Landing/PWA resolver. This route is removed when the
+// real public routing lands in Step 4 (root "/" → public site via Vike).
+import PublicApp from './public/PublicApp.jsx';
 
 export default function App() {
   return (
@@ -114,6 +119,9 @@ export default function App() {
       <Route path="/preview/content/:id" element={<ItemPreviewPage kind="content" />} />
       <Route path="/preview/question/:id" element={<ItemPreviewPage kind="question" />} />
       <Route path="/preview/group/:flowId/:groupId" element={<GroupPreviewPage />} />
+      {/* TEMPORARY public-website foundation preview (Phase 1/2). Removed at
+          Step 4 when the public site takes over root "/". */}
+      <Route path="/__preview/public" element={<PublicApp />} />
     </Routes>
   );
 }

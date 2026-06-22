@@ -1,0 +1,44 @@
+/* ============================================================================
+   Public website base styles — SCOPED under `.public-root`.
+
+   Everything here is guarded by the `.public-root` class so it can never
+   affect the admin/learner/portal surfaces. The public surface is RTL +
+   Hebrew-first; it sets its own font (Fredoka), background and text colour
+   independent of the global app body styles.
+   ============================================================================ */
+
+.public-root {
+  font-family: 'Fredoka', 'Heebo', system-ui, -apple-system, 'Segoe UI', Arial,
+    sans-serif;
+  /* ink-900 on white — the public reading defaults. */
+  color: #101828;
+  background: #ffffff;
+  /* Pleasant text rendering for the rounded display face. */
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* The public surface manages its own direction (RTL now; ready to flip to
+   LTR per-page when English ships). Applied on the wrapper, not <html>, so
+   the rest of the app is unaffected. */
+.public-root[dir='rtl'] {
+  direction: rtl;
+}
+.public-root[dir='ltr'] {
+  direction: ltr;
+}
+
+/* Headings inside the public surface default to the brand weight/leading.
+   Components still override with explicit `text-*` tokens where needed. */
+.public-root h1,
+.public-root h2,
+.public-root h3,
+.public-root h4 {
+  font-weight: 500;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.public-root p {
+  margin: 0;
+}
