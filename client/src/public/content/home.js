@@ -29,6 +29,9 @@ export const stats = [
   { value: '1,140+', label: 'חוות דעת מפרגנות' },
 ];
 
+// Exact section copy from Figma (#2384:4026/4027/4028). NOTE: per-card copy
+// below is representative — the exact card text + the 4 card PHOTOS are pending
+// Figma API export (rate-limited); tracked in the polish backlog.
 export const openTours = {
   title: 'תצטרפו לסיורים הפתוחים שלנו',
   subtitle:
@@ -37,30 +40,35 @@ export const openTours = {
   cards: [
     {
       id: 't1',
-      title: 'סיור גרפיטי בתל אביב',
-      city: 'תל אביב',
-      duration: '120 דק׳',
-      priceFrom: 90,
-      tag: 'מומלץ',
-      image: placeholder('סיור · תל אביב', { w: 560, h: 360 }),
+      category: 'סיור + סדנה',
+      title: 'סיור וסדנה גרפיטי בתל אביב',
+      desc: 'סיור מודרך בשכונות הגרפיטי של תל אביב, ולאחריו סדנת ריסוס מעשית. כולל חומרים.',
+      priceFrom: 150,
+      image: placeholder('תמונת סיור · ייצוא Figma בהמתנה', { w: 520, h: 420 }),
     },
     {
       id: 't2',
-      title: 'סיור + סדנה בירושלים',
-      city: 'ירושלים',
-      duration: '180 דק׳',
-      priceFrom: 150,
-      tag: 'סדנה',
-      image: placeholder('סיור + סדנה · ירושלים', { w: 560, h: 360 }),
+      category: 'סיור',
+      title: 'סיור גרפיטי בנמל תל אביב',
+      desc: 'סיור מודרך בין יצירות אמנות הרחוב המובילות של העיר עם מדריך־אמן.',
+      priceFrom: 90,
+      image: placeholder('תמונת סיור · ייצוא Figma בהמתנה', { w: 520, h: 420 }),
     },
     {
       id: 't3',
-      title: 'סדנת סטנסיל בחיפה',
-      city: 'חיפה',
-      duration: '90 דק׳',
+      category: 'סיור + סדנה',
+      title: 'סיור גרפיטי בעיר התחתית, חיפה',
+      desc: 'חוויה אורבנית בעיר התחתית בחיפה, בשילוב סדנת סטנסיל קצרה.',
       priceFrom: 120,
-      tag: 'חדש',
-      image: placeholder('סדנה · חיפה', { w: 560, h: 360 }),
+      image: placeholder('תמונת סיור · ייצוא Figma בהמתנה', { w: 520, h: 420 }),
+    },
+    {
+      id: 't4',
+      category: 'סדנה',
+      title: 'סדנת ריסוס למתחילים',
+      desc: 'סדנה מעשית ללימוד טכניקות ריסוס וסטנסיל, מתאימה לכל הרמות.',
+      priceFrom: 110,
+      image: placeholder('תמונת סיור · ייצוא Figma בהמתנה', { w: 520, h: 420 }),
     },
   ],
 };
@@ -94,11 +102,17 @@ export const events = {
 export const whyUs = {
   title: 'פעילות עם גרפיטיול זו הצלחה בטוחה!',
   subtitle: 'הערכים שלנו הופכים אותנו לבחירה המנצחת שלכם',
+  // 8 value items (Figma "Content Cards V13" — icon + paragraph). Copy read
+  // from the cached render; exact wording + the line-icons are pending API.
   values: [
-    { id: 'v1', title: 'מדריכים מקצועיים', desc: 'אמנים פעילים שמכירים כל פינה בסצנה.' },
-    { id: 'v2', title: 'חוויה לכל אחד', desc: 'מתאים למשפחות, קבוצות וחברות כאחד.' },
-    { id: 'v3', title: 'יצירה אמיתית', desc: 'יוצאים עם יצירה משלכם ביד.' },
-    { id: 'v4', title: 'גמישות מלאה', desc: 'מועדים, מיקומים ותכנים מותאמים אישית.' },
+    { id: 'v1', text: 'הסיורים שלנו קלילים וכיפיים ולא כוללים הרצאות משעממות' },
+    { id: 'v2', text: 'אנחנו קיימים מעל 12 שנים, ועברו אצלנו מעל 400,000 איש בסדנאות וסיורים' },
+    { id: 'v3', text: 'הדירוג שלנו בגוגל הוא 4.9 כוכבים מתוך 5, עם מעל 1,200 מדרגים' },
+    { id: 'v4', text: 'אנחנו בטופ 15 העסקים המומלצים של Tripadvisor בעולם, מקום 1 בתל אביב' },
+    { id: 'v5', text: 'יש לנו פתרונות חווייתיים גם לימים של גשם או חמסין' },
+    { id: 'v6', text: 'תנאי הביטול שלנו הכי גמישים והוגנים שיש בשוק' },
+    { id: 'v7', text: 'המדריכים שלנו הם גם אמני הגרפיטי המובילים במדינה' },
+    { id: 'v8', text: 'מתאימים לקבוצות מגוונות — ילדים, מתבגרים ומבוגרים, אף אחד לא יישאר מאחור' },
   ],
   companiesTitle: 'חברות מדהימות שכבר נהנו איתנו בסיורים וסדנאות',
   companies: Array.from({ length: 12 }, (_, i) => ({
@@ -111,10 +125,17 @@ export const whyUs = {
 
 export const privateCta = {
   word: 'PRIVATE',
-  title: 'סיור פרטי, בדיוק כמו שחלמתם',
-  desc: 'בונים יחד חוויה שמתאימה בדיוק לקבוצה שלכם — מהמיקום ועד התוכן.',
-  cta: { label: 'דברו איתנו', href: '/contact' },
-  image: placeholder('סיור פרטי', { w: 480, h: 480 }),
+  title: 'רוצים סיור פרטי?',
+  desc: 'צרו קשר ונבנה יחד חוויה שמתאימה בדיוק לקבוצה שלכם — מהמיקום ועד התוכן.',
+  // Checklist (Figma teal-check list). Exact wording pending API verification.
+  checklist: [
+    'גיבוש לחברות וצוותים',
+    'אירועי ימי הולדת והפקות',
+    'הפעלות לבר/בת מצווה',
+    'חוויה פרטית מותאמת אישית',
+  ],
+  cta: { label: 'השאירו פרטים ונחזור אליכם', href: '/contact' },
+  image: placeholder('תמונת סיור פרטי · ייצוא Figma בהמתנה', { w: 520, h: 520 }),
 };
 
 export const testimonials = {
