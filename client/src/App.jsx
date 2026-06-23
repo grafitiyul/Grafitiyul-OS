@@ -38,6 +38,7 @@ import AdminUsersPage from './admin/users/AdminUsersPage.jsx';
 import PublicApp from './public/PublicApp.jsx';
 import HomePage from './public/pages/home/HomePage.jsx';
 import AccessibilityPage from './public/pages/legal/AccessibilityPage.jsx';
+import ToursPage from './public/pages/tours/ToursPage.jsx';
 
 export default function App() {
   return (
@@ -126,6 +127,7 @@ export default function App() {
       <Route path="/__preview/public" element={<PublicApp />} />
       <Route path="/__preview/home" element={<HomePage />} />
       <Route path="/__preview/accessibility" element={<AccessibilityPage />} />
+      <Route path="/__preview/tours" element={<ToursPage />} />
     </Routes>
   );
 }
