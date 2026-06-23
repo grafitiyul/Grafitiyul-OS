@@ -5,6 +5,7 @@ import heroWall from '../../../assets/home/hero-wall.png';
 import heroArrow from '../../../assets/home/hero-arrow.svg';
 import heroSplat from '../../../assets/home/hero-splat.png';
 import heroHighlight from '../../../assets/home/hero-highlight.png';
+import blotTeal from '../../../assets/home/decor/blot_teal.png';
 
 // Hero (Figma "Heros V14" #2196:3652) — pixel-fidelity build.
 //
@@ -29,6 +30,13 @@ export default function Hero() {
         alt=""
         aria-hidden="true"
         className="pointer-events-none absolute -right-8 bottom-6 w-44 select-none lg:w-64"
+      />
+      {/* Teal spray splat, bottom-left (real brand asset blot_teal). */}
+      <img
+        src={blotTeal}
+        alt=""
+        aria-hidden="true"
+        className="pointer-events-none absolute -left-10 bottom-0 w-40 select-none opacity-90 lg:w-56"
       />
 
       <Container className="relative">

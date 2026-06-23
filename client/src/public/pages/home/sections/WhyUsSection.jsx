@@ -2,6 +2,7 @@ import SectionHeading from '../../../components/SectionHeading.jsx';
 import Button from '../../../components/Button.jsx';
 import Container from '../../../components/Container.jsx';
 import { whyUs } from '../../../content/home.js';
+import clientsBlot from '../../../assets/home/decor/clients_title_blot.png';
 
 // "פעילות עם גרפיטיול זו הצלחה בטוחה!" — values over a dark graffiti backdrop,
 // plus a white "companies that joined us" logo card (Figma "Content Cards V13").
@@ -35,7 +36,15 @@ export default function WhyUsSection() {
 
         {/* Companies logo card */}
         <div className="mt-16 rounded-card bg-white/95 p-8 text-center lg:p-10">
-          <h3 className="text-h3 font-bold text-ink-900">{whyUs.companiesTitle}</h3>
+          <div className="relative inline-block">
+            <img
+              src={clientsBlot}
+              alt=""
+              aria-hidden="true"
+              className="pointer-events-none absolute -top-6 left-1/2 w-44 -translate-x-1/2 select-none opacity-90"
+            />
+            <h3 className="relative text-h3 font-bold text-ink-900">{whyUs.companiesTitle}</h3>
+          </div>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-x-10 gap-y-6">
             {whyUs.companies.map((c) => (
               <img

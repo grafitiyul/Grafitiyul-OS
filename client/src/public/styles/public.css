@@ -1,3 +1,13 @@
+/* Self-hosted graffiti display font (from the brand theme) for accents like
+   "PRIVATE"/"NO RULES". Vite hashes/bundles the .ttf referenced here. */
+@font-face {
+  font-family: 'Rubik Spray Paint';
+  src: url('../assets/fonts/RubikSprayPaint-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* ============================================================================
    Public website base styles — SCOPED under `.public-root`.
 

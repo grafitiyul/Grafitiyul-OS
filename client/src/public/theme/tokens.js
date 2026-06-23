@@ -140,6 +140,9 @@ export const colors = {
 // Hebrew-first UI. Heebo is the in-house fallback already loaded by the app.
 export const fontFamily = {
   fredoka: ['Fredoka', 'Heebo', 'system-ui', '-apple-system', 'sans-serif'],
+  // Graffiti display font (self-hosted from the brand theme) for accents like
+  // "PRIVATE" / "NO RULES". @font-face is declared in styles/public.css.
+  spray: ['"Rubik Spray Paint"', 'Fredoka', 'cursive'],
 };
 
 // Type ramp merges the styleguide scale (46/32/26/20/18/16/14/10) with the
