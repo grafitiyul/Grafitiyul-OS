@@ -52,3 +52,32 @@
 .public-root p {
   margin: 0;
 }
+
+/* ── Accessibility (WCAG 2.1 AA / IS 5568) ───────────────────────────────── */
+
+/* Always-visible keyboard focus indicator across the public surface. Only
+   shows on keyboard focus (:focus-visible), so the visual design is unchanged
+   for mouse users. brand-600 outline meets non-text contrast on both the
+   light surfaces and the dark navy navbar/footer. */
+.public-root a:focus-visible,
+.public-root button:focus-visible,
+.public-root input:focus-visible,
+.public-root textarea:focus-visible,
+.public-root [tabindex]:focus-visible {
+  outline: 3px solid #1a6af6;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Honour users who request reduced motion: neutralise transitions/animations
+   and hover-scale effects. */
+@media (prefers-reduced-motion: reduce) {
+  .public-root *,
+  .public-root *::before,
+  .public-root *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

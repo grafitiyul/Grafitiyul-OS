@@ -11,8 +11,17 @@ import WhatsAppButton from './WhatsAppButton.jsx';
 export default function PublicLayout({ children, dir = 'rtl' }) {
   return (
     <PublicRoot dir={dir}>
+      {/* Skip link — first focusable element; visible only on keyboard focus. */}
+      <a
+        href="#main-content"
+        className="sr-only z-[100] rounded bg-brand-600 px-4 py-2 text-white focus:not-sr-only focus:absolute focus:right-3 focus:top-3"
+      >
+        דלגו לתוכן הראשי
+      </a>
       <NavBar />
-      <main className="flex-1">{children}</main>
+      <main id="main-content" tabIndex={-1} className="flex-1">
+        {children}
+      </main>
       <Footer />
       <WhatsAppButton />
     </PublicRoot>

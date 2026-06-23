@@ -32,7 +32,7 @@ export default function SectionHeading({
         <p
           className={cn(
             'max-w-2xl text-body-lg',
-            isDark ? 'text-white/85' : 'text-ink-500',
+            isDark ? 'text-white/85' : 'text-ink-600',
           )}
         >
           {subtitle}

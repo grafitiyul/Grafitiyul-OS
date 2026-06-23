@@ -21,7 +21,8 @@ export default function FaqSection() {
       />
       {/* "NO RULES" graffiti accent in the self-hosted spray font. */}
       <span
-        className="pointer-events-none absolute right-6 top-10 hidden -rotate-6 select-none font-spray text-[40px] leading-none text-highlight-400/80 lg:block"
+        lang="en"
+        className="pointer-events-none absolute right-6 top-10 hidden -rotate-6 select-none font-spray text-[40px] leading-none text-highlight-400 lg:block"
         aria-hidden="true"
       >
         NO RULES

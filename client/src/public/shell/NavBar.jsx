@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import Anchor from '../components/Anchor.jsx';
 import Button from '../components/Button.jsx';
 import Icon from '../components/Icon.jsx';
@@ -13,6 +13,21 @@ import { primaryNav, headerCtas } from '../content/site.js';
 // Step 3/4). Active-route highlighting is intentionally deferred to routing.
 export default function NavBar() {
   const [open, setOpen] = useState(false);
+  const toggleRef = useRef(null);
+
+  // Close the mobile menu on Escape and return focus to the toggle button
+  // (basic focus handling for the disclosure).
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        setOpen(false);
+        toggleRef.current?.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
 
   return (
     <header className="sticky top-0 z-40 bg-ink-800 text-white">
@@ -26,7 +41,7 @@ export default function NavBar() {
             <li key={item.href}>
               <Anchor
                 href={item.href}
-                className="inline-flex items-center gap-1 text-body text-brand-100 hover:text-white"
+                className="inline-flex items-center gap-1 py-2 text-body text-brand-100 hover:text-white"
               >
                 {item.label}
                 {item.hasMenu && <Icon name="chevronDown" className="h-4 w-4" />}
@@ -39,8 +54,9 @@ export default function NavBar() {
         <div className="hidden items-center gap-3 lg:flex">
           <button
             type="button"
+            lang="en"
             className="grid h-11 w-11 place-items-center rounded-pill bg-white/20 text-body font-medium text-white hover:bg-white/30"
-            aria-label="Switch language to English"
+            aria-label="החלפת שפה לאנגלית"
           >
             EN
           </button>
@@ -50,10 +66,12 @@ export default function NavBar() {
 
         {/* Mobile toggle */}
         <button
+          ref={toggleRef}
           type="button"
           className="grid h-11 w-11 place-items-center rounded-pill bg-white/10 lg:hidden"
           aria-label={open ? 'סגירת תפריט' : 'פתיחת תפריט'}
           aria-expanded={open}
+          aria-controls="mobile-menu"
           onClick={() => setOpen((v) => !v)}
         >
           <Icon name={open ? 'close' : 'menu'} className="h-6 w-6" />
@@ -62,7 +80,7 @@ export default function NavBar() {
 
       {/* Mobile sheet */}
       {open && (
-        <div className="border-t border-white/10 lg:hidden">
+        <div id="mobile-menu" className="border-t border-white/10 lg:hidden">
           <ul className="flex flex-col px-4 py-2">
             {primaryNav.map((item) => (
               <li key={item.href}>

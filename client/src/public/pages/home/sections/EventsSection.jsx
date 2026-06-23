@@ -25,7 +25,7 @@ export default function EventsSection() {
             </div>
             <div className="flex flex-1 flex-col justify-center gap-2 p-6 text-right">
               <h3 className="text-title text-brand-950">{card.title}</h3>
-              <p className="text-body text-ink-500">{card.desc}</p>
+              <p className="text-body text-ink-600">{card.desc}</p>
               <div className="mt-2">
                 <Button size="sm" variant="action" href="/contact">
                   לפרטים

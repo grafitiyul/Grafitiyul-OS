@@ -14,11 +14,13 @@ import { cn } from '../lib/cn.js';
 //   ghost      — text-only
 // size: sm | md | lg     shape: pill (default) | cta (10px radius)
 
+// Note: action-600 / brand-600 used (not 500) so white button text meets
+// WCAG AA 4.5:1 — white on cranberry-500/cerulean-500 is only ~3.9:1 / ~3.4:1.
 const VARIANTS = {
-  action: 'bg-action-500 text-white hover:bg-action-600 focus-visible:ring-action-500',
+  action: 'bg-action-600 text-white hover:bg-action-700 focus-visible:ring-action-600',
   highlight:
-    'bg-highlight-400 text-ink-900 hover:bg-highlight-500 focus-visible:ring-highlight-400',
-  brand: 'bg-brand-500 text-white hover:bg-brand-600 focus-visible:ring-brand-500',
+    'bg-highlight-400 text-ink-900 hover:bg-highlight-500 focus-visible:ring-highlight-500',
+  brand: 'bg-brand-600 text-white hover:bg-brand-700 focus-visible:ring-brand-600',
   outline:
     'bg-transparent border border-current hover:bg-white/10 focus-visible:ring-current',
   ghost: 'bg-transparent hover:bg-ink-100 text-ink-800 focus-visible:ring-ink-300',

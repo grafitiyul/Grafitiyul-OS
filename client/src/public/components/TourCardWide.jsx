@@ -29,11 +29,11 @@ export default function TourCardWide({ tour }) {
         )}
         <h3 className="text-title leading-tight text-brand-950">{tour.title}</h3>
         {tour.desc && (
-          <p className="text-body-sm leading-relaxed text-ink-500">{tour.desc}</p>
+          <p className="text-body-sm leading-relaxed text-ink-600">{tour.desc}</p>
         )}
         <div className="mt-auto flex items-center justify-between gap-3 pt-3">
           {tour.priceFrom != null && (
-            <div className="text-body-sm text-ink-500">
+            <div className="text-body-sm text-ink-600">
               החל מ־
               <span className="text-title text-action-600">₪{tour.priceFrom}</span>
             </div>

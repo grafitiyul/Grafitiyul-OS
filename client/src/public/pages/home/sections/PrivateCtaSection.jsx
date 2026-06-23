@@ -33,6 +33,7 @@ export default function PrivateCtaSection() {
                 className="h-full w-full object-cover"
               />
               <span
+                lang="en"
                 className="pointer-events-none absolute inset-0 flex items-center justify-center font-spray text-[64px] uppercase tracking-wide text-white drop-shadow-[0_4px_24px_rgba(0,0,0,0.6)]"
                 aria-hidden="true"
               >
