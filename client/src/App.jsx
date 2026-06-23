@@ -37,6 +37,7 @@ import AdminUsersPage from './admin/users/AdminUsersPage.jsx';
 // real public routing lands in Step 4 (root "/" → public site via Vike).
 import PublicApp from './public/PublicApp.jsx';
 import HomePage from './public/pages/home/HomePage.jsx';
+import AccessibilityPage from './public/pages/legal/AccessibilityPage.jsx';
 
 export default function App() {
   return (
@@ -124,6 +125,7 @@ export default function App() {
           Step 4 when the public site takes over root "/". */}
       <Route path="/__preview/public" element={<PublicApp />} />
       <Route path="/__preview/home" element={<HomePage />} />
+      <Route path="/__preview/accessibility" element={<AccessibilityPage />} />
     </Routes>
   );
 }
