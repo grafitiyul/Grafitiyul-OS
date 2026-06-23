@@ -1,6 +1,7 @@
 import Anchor from '../components/Anchor.jsx';
 import Container from '../components/Container.jsx';
 import { footerNav, legalNav, copyright, site } from '../content/site.js';
+import footerLogo from '../assets/home/photos/footer-logo.png';
 
 // Public footer. Dark navy (Figma), link groups + legal row + copyright.
 export default function Footer() {
@@ -10,8 +11,8 @@ export default function Footer() {
         <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
           {/* Brand blurb */}
           <div className="lg:col-span-2">
-            <div className="text-title font-bold">{site.name}</div>
-            <p className="mt-3 max-w-sm text-body text-brand-100/80">
+            <img src={footerLogo} alt={site.name} className="h-20 w-auto" />
+            <p className="mt-4 max-w-sm text-body text-brand-100/80">
               סיורי וסדנאות גרפיטי — חוויה אורבנית בלב הסצנה.
             </p>
           </div>
