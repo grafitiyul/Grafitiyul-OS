@@ -39,6 +39,7 @@ import PublicApp from './public/PublicApp.jsx';
 import HomePage from './public/pages/home/HomePage.jsx';
 import AccessibilityPage from './public/pages/legal/AccessibilityPage.jsx';
 import ToursPage from './public/pages/tours/ToursPage.jsx';
+import TourDetailPage from './public/pages/tours/TourDetailPage.jsx';
 
 export default function App() {
   return (
@@ -128,6 +129,7 @@ export default function App() {
       <Route path="/__preview/home" element={<HomePage />} />
       <Route path="/__preview/accessibility" element={<AccessibilityPage />} />
       <Route path="/__preview/tours" element={<ToursPage />} />
+      <Route path="/__preview/tour" element={<TourDetailPage />} />
     </Routes>
   );
 }
