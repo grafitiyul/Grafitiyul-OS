@@ -8,6 +8,21 @@
 // it is replaced by GOS/WP data without touching the section components.
 // ============================================================================
 import { placeholder } from './media.js';
+// Real photos harvested from the WordPress backup (uploads/2026).
+import tourTour from '../assets/home/photos/tour-tour.jpg';
+import tourWorkshop from '../assets/home/photos/tour-workshop.jpg';
+import tourTa from '../assets/home/photos/tour-ta.jpg';
+import tourWorkshop2 from '../assets/home/photos/tour-workshop2.jpg';
+import eventBatmitzva from '../assets/home/photos/event-batmitzva.jpg';
+import eventGroup from '../assets/home/photos/event-group.jpg';
+import eventProject from '../assets/home/photos/event-project.jpg';
+import gallery1 from '../assets/home/photos/gallery-1.jpg';
+import gallery2 from '../assets/home/photos/gallery-2.jpg';
+import gallery3 from '../assets/home/photos/gallery-3.jpg';
+import gallery4 from '../assets/home/photos/gallery-4.jpg';
+import gallery5 from '../assets/home/photos/gallery-5.jpg';
+import gallery6 from '../assets/home/photos/gallery-6.jpg';
+import privatePhoto from '../assets/home/photos/private.jpg';
 
 export const hero = {
   // Exact Figma copy (#2196:3661). The headline highlights "הסיפורים" in white
@@ -44,7 +59,7 @@ export const openTours = {
       title: 'סיור וסדנה גרפיטי בתל אביב',
       desc: 'סיור מודרך בשכונות הגרפיטי של תל אביב, ולאחריו סדנת ריסוס מעשית. כולל חומרים.',
       priceFrom: 150,
-      image: placeholder('תמונת סיור · ייצוא Figma בהמתנה', { w: 520, h: 420 }),
+      image: tourTour,
     },
     {
       id: 't2',
@@ -52,7 +67,7 @@ export const openTours = {
       title: 'סיור גרפיטי בנמל תל אביב',
       desc: 'סיור מודרך בין יצירות אמנות הרחוב המובילות של העיר עם מדריך־אמן.',
       priceFrom: 90,
-      image: placeholder('תמונת סיור · ייצוא Figma בהמתנה', { w: 520, h: 420 }),
+      image: tourWorkshop,
     },
     {
       id: 't3',
@@ -60,7 +75,7 @@ export const openTours = {
       title: 'סיור גרפיטי בעיר התחתית, חיפה',
       desc: 'חוויה אורבנית בעיר התחתית בחיפה, בשילוב סדנת סטנסיל קצרה.',
       priceFrom: 120,
-      image: placeholder('תמונת סיור · ייצוא Figma בהמתנה', { w: 520, h: 420 }),
+      image: tourTa,
     },
     {
       id: 't4',
@@ -68,7 +83,7 @@ export const openTours = {
       title: 'סדנת ריסוס למתחילים',
       desc: 'סדנה מעשית ללימוד טכניקות ריסוס וסטנסיל, מתאימה לכל הרמות.',
       priceFrom: 110,
-      image: placeholder('תמונת סיור · ייצוא Figma בהמתנה', { w: 520, h: 420 }),
+      image: tourWorkshop2,
     },
   ],
 };
@@ -82,19 +97,19 @@ export const events = {
       id: 'e1',
       title: 'גיבוש לחברות',
       desc: 'חוויית צוות צבעונית ובלתי נשכחת, מותאמת לגודל הקבוצה ולמטרות.',
-      image: placeholder('גיבוש חברות', { w: 520, h: 320 }),
+      image: eventGroup,
     },
     {
       id: 'e2',
       title: 'אירועים פרטיים',
       desc: 'ימי הולדת, מסיבות רווקים/ות ואירועים מיוחדים עם צבע ואנרגיה.',
-      image: placeholder('אירוע פרטי', { w: 520, h: 320 }),
+      image: eventBatmitzva,
     },
     {
       id: 'e3',
       title: 'סיורים לזוגות',
       desc: 'חוויה אינטימית בשניים בלב הסצנה האורבנית.',
-      image: placeholder('סיור לזוגות', { w: 520, h: 320 }),
+      image: eventProject,
     },
   ],
 };
@@ -135,7 +150,7 @@ export const privateCta = {
     'חוויה פרטית מותאמת אישית',
   ],
   cta: { label: 'השאירו פרטים ונחזור אליכם', href: '/contact' },
-  image: placeholder('תמונת סיור פרטי · ייצוא Figma בהמתנה', { w: 520, h: 520 }),
+  image: privatePhoto,
 };
 
 export const testimonials = {
@@ -152,10 +167,14 @@ export const instagram = {
   title: 'מתוך האינסטגרם שלנו',
   subtitle: 'הכי טרי, הכי צבעוני, הכי אמיתי!',
   handle: '@grafitiyul',
-  images: Array.from({ length: 6 }, (_, i) => ({
-    id: `ig${i + 1}`,
-    image: placeholder(`IG ${i + 1}`, { w: 360, h: 360 }),
-  })),
+  images: [
+    { id: 'ig1', image: gallery1 },
+    { id: 'ig2', image: gallery2 },
+    { id: 'ig3', image: gallery3 },
+    { id: 'ig4', image: gallery4 },
+    { id: 'ig5', image: gallery6 },
+    { id: 'ig6', image: gallery5 },
+  ],
 };
 
 export const press = {
