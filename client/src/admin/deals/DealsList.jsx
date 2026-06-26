@@ -1,15 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { formatMinor, toMinor } from '../../lib/money.js';
 import { DEAL_STATUS_LABELS, DEAL_STATUS_STYLES } from './config.js';
 
 // Deals — the CRM hub's primary tab. Operational list: compact summary +
-// dominant search + status tabs + a roomy table. OPEN deals come first because
-// they need action; ALL is last. דילים / OPEN·WON·LOST.
+// dominant search + a roomy, user-configurable table. OPEN deals come first
+// because they need action; ALL is last. דילים / OPEN·WON·LOST.
 
 const PAGE_SIZE = 14;
 const FILTERS_KEY = 'deals.filters.v1';
+const COLUMNS_KEY = 'deals.columns.v1';
 
 function loadFilters() {
   try {
@@ -23,6 +25,85 @@ function saveFilters(f) {
     localStorage.setItem(FILTERS_KEY, JSON.stringify(f));
   } catch {
     /* storage unavailable — non-fatal, filters just won't persist */
+  }
+}
+
+function fullName(c) {
+  if (!c) return '';
+  const he = `${c.firstNameHe || ''} ${c.lastNameHe || ''}`.trim();
+  if (he) return he;
+  return `${c.firstNameEn || ''} ${c.lastNameEn || ''}`.trim();
+}
+const dash = <span className="text-gray-400">—</span>;
+
+// Available table columns — all backed by fields the list API already returns
+// (no raw internal IDs are ever rendered). `owner` is deferred: there is no User
+// model yet, only a loose ownerUserId we must not surface, so it's disabled.
+// `def` = part of the safe default set shown to first-time users.
+const COLUMNS = [
+  { key: 'name', label: 'שם דיל', def: true,
+    render: (d) => <span className="font-semibold text-gray-900 text-[15px] group-hover:text-blue-700">{d.title}</span> },
+  { key: 'organization', label: 'ארגון', def: true,
+    render: (d) => d.organization?.name || dash, cls: 'text-gray-600' },
+  { key: 'unit', label: 'יחידה', def: false,
+    render: (d) => d.organizationUnit?.name || dash, cls: 'text-gray-600' },
+  { key: 'subtype', label: 'תת-סוג', def: false,
+    render: (d) => d.organizationSubtype?.label || dash, cls: 'text-gray-600' },
+  { key: 'stage', label: 'שלב', def: true, kind: 'stage' },
+  { key: 'status', label: 'סטטוס', def: true,
+    render: (d) => (
+      <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${DEAL_STATUS_STYLES[d.status]}`}>
+        {DEAL_STATUS_LABELS[d.status]}
+      </span>
+    ) },
+  { key: 'amount', label: 'סכום', def: true, align: 'left', dir: 'ltr',
+    cls: 'text-left font-bold text-gray-900 text-[15px] tabular-nums',
+    render: (d) => formatMinor(d.valueMinor, d.currency) },
+  { key: 'discount', label: 'הנחה', def: false, align: 'left', dir: 'ltr',
+    cls: 'text-left tabular-nums text-gray-600',
+    render: (d) => (d.discountMinor != null ? formatMinor(d.discountMinor, d.currency) : dash) },
+  { key: 'paymentTerms', label: 'תנאי תשלום', def: false,
+    render: (d) => d.paymentTerms || dash, cls: 'text-gray-600' },
+  { key: 'source', label: 'מקור', def: false,
+    render: (d) => d.source || dash, cls: 'text-gray-600' },
+  { key: 'expectedClose', label: 'תאריך סגירה צפוי', def: false, dir: 'ltr',
+    cls: 'text-gray-500 tabular-nums', render: (d) => fmtDate(d.expectedCloseDate) },
+  { key: 'closedDate', label: 'תאריך סגירה', def: false, dir: 'ltr',
+    cls: 'text-gray-500 tabular-nums', render: (d) => fmtDate(d.wonAt || d.lostAt) },
+  { key: 'lostReason', label: 'סיבת הפסד', def: false,
+    render: (d) => d.lostReason || dash, cls: 'text-gray-600' },
+  { key: 'contactCount', label: 'אנשי קשר', def: false, align: 'center',
+    cls: 'text-center tabular-nums text-gray-600', render: (d) => d._count?.contacts ?? 0 },
+  { key: 'primaryContact', label: 'איש קשר ראשי', def: false, cls: 'text-gray-600',
+    render: (d) => fullName(d.contacts?.[0]?.contact) || dash },
+  { key: 'createdAt', label: 'תאריך יצירה', def: false, dir: 'ltr',
+    cls: 'text-gray-500 tabular-nums', render: (d) => fmtDate(d.createdAt) },
+  { key: 'updatedAt', label: 'תאריך עדכון', def: true, dir: 'ltr',
+    cls: 'text-gray-500 tabular-nums', render: (d) => fmtDate(d.updatedAt) },
+  { key: 'owner', label: 'אחראי', def: false, disabled: true,
+    render: () => dash, cls: 'text-gray-600' },
+];
+const COLUMN_KEYS = new Set(COLUMNS.map((c) => c.key));
+const DEFAULT_COLUMNS = COLUMNS.filter((c) => c.def).map((c) => c.key);
+
+function loadColumns() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(COLUMNS_KEY));
+    if (Array.isArray(raw)) {
+      // Drop any keys we no longer recognise (forward/backward safe).
+      const valid = raw.filter((k) => COLUMN_KEYS.has(k));
+      if (valid.length) return valid;
+    }
+  } catch {
+    /* fall through to defaults */
+  }
+  return DEFAULT_COLUMNS;
+}
+function saveColumns(keys) {
+  try {
+    localStorage.setItem(COLUMNS_KEY, JSON.stringify(keys));
+  } catch {
+    /* storage unavailable — non-fatal */
   }
 }
 
@@ -68,6 +149,25 @@ export default function DealsList() {
   useEffect(() => {
     saveFilters({ search, status, stageId, orgId, minVal, maxVal });
   }, [search, status, stageId, orgId, minVal, maxVal]);
+
+  // Visible table columns — persisted, never reset unless the user changes them.
+  const [colKeys, setColKeys] = useState(loadColumns);
+  useEffect(() => {
+    saveColumns(colKeys);
+  }, [colKeys]);
+  // Render in the canonical COLUMNS order regardless of toggle order.
+  const visibleCols = useMemo(
+    () => COLUMNS.filter((c) => colKeys.includes(c.key)),
+    [colKeys],
+  );
+  function toggleCol(key) {
+    setColKeys((keys) => {
+      const has = keys.includes(key);
+      // Never allow zero columns — keep at least the deal name.
+      if (has && keys.length === 1) return keys;
+      return has ? keys.filter((k) => k !== key) : [...keys, key];
+    });
+  }
 
   async function refresh() {
     setError(null);
@@ -196,6 +296,9 @@ export default function DealsList() {
           {hasFilters && (
             <button onClick={clearFilters} className="text-sm text-blue-700 hover:underline px-1">נקה פילטרים</button>
           )}
+          <div className="ms-auto">
+            <ColumnPicker colKeys={colKeys} onToggle={toggleCol} />
+          </div>
         </div>
       </div>
 
@@ -220,13 +323,11 @@ export default function DealsList() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-gray-500 bg-gray-50/70 border-b border-gray-100">
-                    <Th>שם דיל</Th>
-                    <Th>ארגון</Th>
-                    <Th>שלב</Th>
-                    <Th>סטטוס</Th>
-                    <Th className="text-left">סכום</Th>
-                    <Th>אחראי</Th>
-                    <Th>תאריך עדכון</Th>
+                    {visibleCols.map((c) => (
+                      <Th key={c.key} className={c.align === 'left' ? 'text-left' : c.align === 'center' ? 'text-center' : ''}>
+                        {c.label}
+                      </Th>
+                    ))}
                     <Th className="w-10" />
                   </tr>
                 </thead>
@@ -235,6 +336,7 @@ export default function DealsList() {
                     <DealRow
                       key={d.id}
                       deal={d}
+                      cols={visibleCols}
                       stageCls={stageColor.get(d.dealStageId)}
                       onOpen={() => navigate(`/admin/crm/deals/${d.id}`)}
                       onDelete={async () => {
@@ -332,34 +434,20 @@ function CompactSelect({ value, onChange, options }) {
   );
 }
 
-function DealRow({ deal, stageCls, onOpen, onDelete }) {
+function DealRow({ deal, cols, stageCls, onOpen, onDelete }) {
   return (
     <tr className="group hover:bg-blue-50/40 cursor-pointer transition-colors" onClick={onOpen}>
-      <Td>
-        <div className="font-semibold text-gray-900 text-[15px] group-hover:text-blue-700">{deal.title}</div>
-        <div className="flex items-center gap-2 text-[11px] text-gray-400 mt-0.5">
-          <span>{deal._count?.contacts ?? 0} אנשי קשר</span>
-          {/* Reserved slot for future row indicators (open activity / WhatsApp /
-              email). Intentionally empty until those integrations are built. */}
-          <span className="flex items-center gap-1" />
-        </div>
-      </Td>
-      <Td className="text-gray-600">{deal.organization?.name || <span className="text-gray-400">—</span>}</Td>
-      <Td>
-        <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ring-inset ${stageCls || 'bg-gray-50 text-gray-600 ring-gray-100'}`}>
-          {deal.dealStage?.label}
-        </span>
-      </Td>
-      <Td>
-        <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${DEAL_STATUS_STYLES[deal.status]}`}>
-          {DEAL_STATUS_LABELS[deal.status]}
-        </span>
-      </Td>
-      <Td className="text-left font-bold text-gray-900 text-[15px] tabular-nums" dir="ltr">
-        {formatMinor(deal.valueMinor, deal.currency)}
-      </Td>
-      <Td><span className="text-gray-400">—</span></Td>
-      <Td className="text-gray-500 tabular-nums" dir="ltr">{fmtDate(deal.updatedAt)}</Td>
+      {cols.map((c) => (
+        <Td key={c.key} className={c.cls || ''} dir={c.dir}>
+          {c.kind === 'stage' ? (
+            <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ring-inset ${stageCls || 'bg-gray-50 text-gray-600 ring-gray-100'}`}>
+              {deal.dealStage?.label}
+            </span>
+          ) : (
+            c.render(deal)
+          )}
+        </Td>
+      ))}
       <Td onClickStop>
         <KebabMenu onOpen={onOpen} onDelete={onDelete} />
       </Td>
@@ -368,19 +456,143 @@ function DealRow({ deal, stageCls, onOpen, onDelete }) {
 }
 
 function KebabMenu({ onOpen, onDelete }) {
+  const btnRef = useRef(null);
   const [open, setOpen] = useState(false);
   return (
-    <div className="relative" onClick={(e) => e.stopPropagation()}>
-      <button onClick={() => setOpen((o) => !o)} className="h-8 w-8 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100" aria-label="פעולות">⋮</button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-full mt-1 z-20 min-w-[9rem] rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
-            <button onClick={() => { setOpen(false); onOpen(); }} className="block w-full text-right px-3 py-2 text-sm hover:bg-gray-50">פתח דיל</button>
-            <button onClick={() => { setOpen(false); onDelete(); }} className="block w-full text-right px-3 py-2 text-sm text-red-600 hover:bg-red-50">מחק דיל</button>
-          </div>
-        </>
-      )}
+    <div onClick={(e) => e.stopPropagation()}>
+      <button
+        ref={btnRef}
+        onClick={() => setOpen((o) => !o)}
+        className="h-8 w-8 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+        aria-label="פעולות"
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        ⋮
+      </button>
+      <AnchoredMenu anchorRef={btnRef} open={open} onClose={() => setOpen(false)} width={160}>
+        <button onClick={() => { setOpen(false); onOpen(); }} className="block w-full text-right px-3 py-2 text-sm hover:bg-gray-50">פתח דיל</button>
+        <button onClick={() => { setOpen(false); onDelete(); }} className="block w-full text-right px-3 py-2 text-sm text-red-600 hover:bg-red-50">מחק דיל</button>
+      </AnchoredMenu>
+    </div>
+  );
+}
+
+// Anchored dropdown rendered in a portal on <body>, so it escapes the table's
+// overflow-x/overflow-hidden clipping that previously made the actions menu
+// unreachable. It positions under the anchor, flips above when the bottom is
+// tight, and clamps fully inside the viewport on both axes — correct in RTL and
+// LTR alike, for first row, last row, and rows near every edge.
+function AnchoredMenu({ anchorRef, open, onClose, width = 176, align = 'end', children }) {
+  const menuRef = useRef(null);
+  const [pos, setPos] = useState(null);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setPos(null);
+      return;
+    }
+    const place = () => {
+      const a = anchorRef.current;
+      if (!a) return;
+      const r = a.getBoundingClientRect();
+      const margin = 8;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const h = menuRef.current?.offsetHeight || 0;
+      // Vertical: prefer below; flip above if it would overflow the bottom.
+      let top = r.bottom + 4;
+      if (h && top + h > vh - margin) {
+        const above = r.top - 4 - h;
+        top = above >= margin ? above : Math.max(margin, vh - margin - h);
+      }
+      // Horizontal: align the menu's end/start edge to the anchor, then clamp
+      // into the viewport so it is never clipped on either side.
+      let left = align === 'end' ? r.right - width : r.left;
+      left = Math.min(Math.max(margin, left), vw - margin - width);
+      setPos({ top, left });
+    };
+    place();
+    // Re-place once mounted (height now known) and on scroll/resize so the menu
+    // stays attached while the user scrolls the table or window.
+    const raf = requestAnimationFrame(place);
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+    };
+  }, [open, anchorRef, width, align]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+  return createPortal(
+    <>
+      <div className="fixed inset-0 z-[90]" onClick={onClose} />
+      <div
+        ref={menuRef}
+        dir="rtl"
+        style={{ position: 'fixed', top: pos?.top ?? -9999, left: pos?.left ?? -9999, width }}
+        className="z-[91] rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </>,
+    document.body,
+  );
+}
+
+// "עמודות" column picker — toggle which columns the table shows. Uses the same
+// portal-anchored menu so a long list is never clipped.
+function ColumnPicker({ colKeys, onToggle }) {
+  const btnRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  return (
+    <div onClick={(e) => e.stopPropagation()}>
+      <button
+        ref={btnRef}
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-700 hover:bg-gray-50"
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <span aria-hidden>⚙️</span>
+        עמודות
+      </button>
+      <AnchoredMenu anchorRef={btnRef} open={open} onClose={() => setOpen(false)} width={236} align="end">
+        <div className="px-3 py-1.5 text-[11px] font-semibold text-gray-400">בחירת עמודות</div>
+        <div className="max-h-[60vh] overflow-y-auto py-0.5">
+          {COLUMNS.map((c) => {
+            const checked = colKeys.includes(c.key);
+            return (
+              <label
+                key={c.key}
+                className={`flex items-center gap-2 px-3 py-1.5 text-sm ${
+                  c.disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer hover:bg-gray-50'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={c.disabled}
+                  onChange={() => onToggle(c.key)}
+                  className="accent-blue-600"
+                />
+                <span className="text-gray-700">{c.label}</span>
+                {c.disabled && <span className="text-[10px] text-gray-400">(בקרוב)</span>}
+              </label>
+            );
+          })}
+        </div>
+      </AnchoredMenu>
     </div>
   );
 }

@@ -78,6 +78,24 @@ router.get(
       include: {
         dealStage: { select: { id: true, label: true } },
         organization: { select: { id: true, name: true } },
+        organizationUnit: { select: { id: true, name: true } },
+        organizationSubtype: { select: { id: true, label: true } },
+        // Only the primary contact is needed for the optional "primary contact"
+        // table column — keep the payload lean (don't ship every contact).
+        contacts: {
+          where: { isPrimary: true },
+          take: 1,
+          select: {
+            contact: {
+              select: {
+                firstNameHe: true,
+                lastNameHe: true,
+                firstNameEn: true,
+                lastNameEn: true,
+              },
+            },
+          },
+        },
         _count: { select: { contacts: true } },
       },
     });
