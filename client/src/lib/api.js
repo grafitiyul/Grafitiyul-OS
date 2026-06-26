@@ -356,6 +356,50 @@ export const api = {
     removeOrganization: (linkId) =>
       request(`/api/contacts/organizations/${linkId}`, { method: 'DELETE' }),
   },
+  // ── Deal module (commercial core) ───────────────────────────────
+  dealStages: {
+    list: () => request('/api/deal-stages'),
+    reorder: (ids) =>
+      request('/api/deal-stages/reorder', {
+        method: 'PUT',
+        body: JSON.stringify({ ids }),
+      }),
+    create: (data) =>
+      request('/api/deal-stages', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    update: (id, data) =>
+      request(`/api/deal-stages/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    remove: (id) => request(`/api/deal-stages/${id}`, { method: 'DELETE' }),
+  },
+  deals: {
+    list: (filters) => request(`/api/deals${qs(filters)}`),
+    get: (id) => request(`/api/deals/${id}`),
+    create: (data) =>
+      request('/api/deals', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) =>
+      request(`/api/deals/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    remove: (id) => request(`/api/deals/${id}`, { method: 'DELETE' }),
+    addContact: (id, data) =>
+      request(`/api/deals/${id}/contacts`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updateContact: (linkId, data) =>
+      request(`/api/deals/contacts/${linkId}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    removeContact: (linkId) =>
+      request(`/api/deals/contacts/${linkId}`, { method: 'DELETE' }),
+  },
   reviews: {
     list: (filters) => request(`/api/reviews/attempts${qs(filters)}`),
     get: (id) => request(`/api/reviews/attempts/${id}`),

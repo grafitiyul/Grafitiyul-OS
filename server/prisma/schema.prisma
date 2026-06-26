@@ -620,6 +620,7 @@ model OrganizationSubtype {
   isActive           Boolean           @default(true)
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
+  deals              Deal[]
 
   @@index([organizationTypeId])
 }
@@ -644,6 +645,7 @@ model Organization {
   updatedAt          DateTime              @updatedAt
   units              OrganizationUnit[]
   contactLinks       ContactOrganization[]
+  deals              Deal[]
 
   @@index([organizationTypeId])
   @@index([name])
@@ -665,6 +667,7 @@ model OrganizationUnit {
   createdAt          DateTime              @default(now())
   updatedAt          DateTime              @updatedAt
   contactLinks       ContactOrganization[]
+  deals              Deal[]
 
   @@index([organizationId])
 }
@@ -682,9 +685,10 @@ model Contact {
   notes       String?
   createdAt   DateTime              @default(now())
   updatedAt   DateTime              @updatedAt
-  phones      ContactPhone[]
-  emails      ContactEmail[]
-  orgLinks    ContactOrganization[]
+  phones       ContactPhone[]
+  emails       ContactEmail[]
+  orgLinks     ContactOrganization[]
+  dealContacts DealContact[]
 
   @@index([lastNameHe])
   @@index([lastNameEn])
@@ -741,4 +745,101 @@ model ContactOrganization {
   @@index([organizationId])
   @@index([organizationUnitId])
   @@index([contactId])
+}
+
+// ============================================================================
+// Deal module (commercial core) — Deal, DealStage, DealContact
+// ============================================================================
+//
+// The Deal is the COMMERCIAL object (the Pipedrive "deal"). It OWNS the
+// commercial agreement: agreed value, discount, payment terms, pipeline stage
+// and outcome status. Operational execution (tours, scheduling) and finance
+// documents (quotes, payments, invoices) are SEPARATE and not built yet — a
+// Deal will link to Tours via a Booking and to iCount via finance later.
+//
+// Money: integer MINOR units (agorot) as BigInt + a currency code. Never float.
+// The server serializes BigInt → number in JSON (see index.js json replacer)
+// and converts incoming numbers → BigInt on write.
+//
+// `key`/slug pattern and live conventions (cuid ids, string status) mirror the
+// rest of the live schema; the Phase-0 UUID/enum target stays for the governed
+// migration.
+
+// Pipeline stage (configuration, ordered). Managed in CRM settings, drag-
+// orderable. A stage is a pipeline POSITION; won/lost is the Deal's `status`,
+// kept separate (Pipedrive model) so a closed deal still remembers its stage.
+model DealStage {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  label     String
+  labelEn   String?
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deals     Deal[]
+
+  @@index([sortOrder])
+}
+
+// The commercial agreement. Owns money + stage + outcome. Optional links to an
+// Organization, a specific Unit, and the deal's Subtype (subtype belongs to the
+// Deal, not the Organization).
+model Deal {
+  id                    String               @id @default(cuid())
+  title                 String
+  organization          Organization?        @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationId        String?
+  organizationUnit      OrganizationUnit?    @relation(fields: [organizationUnitId], references: [id], onDelete: SetNull)
+  organizationUnitId    String?
+  organizationSubtype   OrganizationSubtype? @relation(fields: [organizationSubtypeId], references: [id], onDelete: SetNull)
+  organizationSubtypeId String?
+  dealStage             DealStage            @relation(fields: [dealStageId], references: [id])
+  dealStageId           String
+  status                String               @default("open") // 'open' | 'won' | 'lost'
+  valueMinor            BigInt               @default(0)
+  currency              String               @default("ILS")
+  discountMinor         BigInt?
+  paymentTerms          String?
+  source                String?
+  ownerUserId           String? // loose actor id (no User model yet)
+  expectedCloseDate     DateTime?
+  wonAt                 DateTime?
+  lostAt                DateTime?
+  lostReason            String?
+  notes                 String?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  contacts              DealContact[]
+
+  @@index([organizationId])
+  @@index([organizationUnitId])
+  @@index([organizationSubtypeId])
+  @@index([dealStageId])
+  @@index([status])
+}
+
+// Deal ↔ Contact link. A deal often has MULTIPLE contacts with different roles
+// and per-deal communication preferences. `roles` is a structured set (array,
+// not a single flattened role): coordinator | payer | decisionMaker |
+// participant | invoiceContact | other. Preferences are operational routing,
+// later gated by Contact-level consent.
+model DealContact {
+  id                        String   @id @default(cuid())
+  deal                      Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  dealId                    String
+  contact                   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contactId                 String
+  roles                     String[] @default([])
+  isPrimary                 Boolean  @default(false)
+  receiveConfirmations      Boolean  @default(false)
+  receiveOperationalUpdates Boolean  @default(false)
+  receivePaymentLinks       Boolean  @default(false)
+  receiveQuotes             Boolean  @default(false)
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  @@unique([dealId, contactId])
+  @@index([contactId])
+  @@index([dealId])
 }

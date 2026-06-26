@@ -23,6 +23,8 @@ import organizationsRouter from './routes/organizations.js';
 import organizationTypesRouter from './routes/organizationTypes.js';
 import organizationSubtypesRouter from './routes/organizationSubtypes.js';
 import contactsRouter from './routes/contacts.js';
+import dealsRouter from './routes/deals.js';
+import dealStagesRouter from './routes/dealStages.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -30,6 +32,14 @@ const clientDist = path.resolve(__dirname, '../../client/dist');
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
+
+// Money is stored as BigInt minor units (see Deal module). JSON.stringify can't
+// serialize BigInt, so convert it to a Number on the way out. Our money values
+// (agorot) are far below Number.MAX_SAFE_INTEGER, so this is lossless. No other
+// model returns BigInt today.
+app.set('json replacer', (_key, value) =>
+  typeof value === 'bigint' ? Number(value) : value,
+);
 
 // ---------- Cache-Control policy (see CLAUDE.md §15) ----------
 //
@@ -98,6 +108,11 @@ app.use('/api/organizations', requireAdminAuth, organizationsRouter);
 app.use('/api/organization-types', requireAdminAuth, organizationTypesRouter);
 app.use('/api/organization-subtypes', requireAdminAuth, organizationSubtypesRouter);
 app.use('/api/contacts', requireAdminAuth, contactsRouter);
+
+// Deal module (commercial core): deals + pipeline stages. Admin-only. Quotes /
+// payments / tours / activities are NOT built yet.
+app.use('/api/deals', requireAdminAuth, dealsRouter);
+app.use('/api/deal-stages', requireAdminAuth, dealStagesRouter);
 
 // Unknown /api/* paths get a real JSON 404 instead of falling through to
 // the SPA fallback (which would serve HTML for an API request).

@@ -7,6 +7,7 @@ const MODULES = [
   // CRM is a secondary reference/management surface (Organizations + Contacts).
   // Daily work will move to Activities once that module is built.
   { key: 'crm', to: '/admin/crm', label: 'CRM', glyph: '🏢' },
+  { key: 'deals', to: '/admin/deals', label: 'עסקאות', glyph: '💼' },
   { key: 'documents', to: '/admin/documents', label: 'מסמכים', glyph: '📄' },
   { key: 'users', to: '/admin/users', label: 'משתמשים', glyph: '🔐' },
 ];

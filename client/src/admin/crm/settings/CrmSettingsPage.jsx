@@ -30,18 +30,21 @@ import { api } from '../../../lib/api.js';
 export default function CrmSettingsPage() {
   const [types, setTypes] = useState([]);
   const [subtypes, setSubtypes] = useState([]);
+  const [stages, setStages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      const [t, s] = await Promise.all([
+      const [t, s, st] = await Promise.all([
         api.organizationTypes.list(),
         api.organizationSubtypes.list(),
+        api.dealStages.list(),
       ]);
       setTypes(t);
       setSubtypes(s);
+      setStages(st);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -78,6 +81,7 @@ export default function CrmSettingsPage() {
         <div className="space-y-8">
           <TypesSection types={types} onChange={refresh} />
           <SubtypesSection subtypes={subtypes} types={types} onChange={refresh} />
+          <DealStagesSection stages={stages} onChange={refresh} />
         </div>
       )}
     </div>
@@ -193,6 +197,87 @@ function SubtypesSection({ subtypes, types, onChange }) {
         )}
       />
     </SettingsCard>
+  );
+}
+
+function DealStagesSection({ stages, onChange }) {
+  async function reorder(ids) {
+    try {
+      await api.dealStages.reorder(ids);
+    } catch (e) {
+      alert('שגיאה בעדכון הסדר: ' + e.message);
+    } finally {
+      onChange();
+    }
+  }
+  async function save(item, patch) {
+    await api.dealStages.update(item.id, patch);
+    await onChange();
+  }
+  async function remove(item) {
+    if (!confirm(`למחוק את השלב "${item.label}"?`)) return;
+    try {
+      await api.dealStages.remove(item.id);
+      await onChange();
+    } catch (e) {
+      if (e.payload?.error === 'stage_in_use') {
+        alert('לא ניתן למחוק שלב שמשויכות אליו עסקאות. העבירו אותן לשלב אחר תחילה.');
+      } else {
+        alert('שגיאה במחיקה: ' + e.message);
+      }
+    }
+  }
+
+  return (
+    <SettingsCard
+      title="שלבי עסקה"
+      description="צינור המכירות (Pipeline). הסדר קובע את התקדמות העסקה. נסגר / אבוד הוא סטטוס של העסקה — נפרד מהשלב."
+      footer={<AddStageForm onChange={onChange} />}
+    >
+      <SortableList
+        items={stages}
+        onReorder={reorder}
+        onSave={save}
+        onRemove={remove}
+        emptyText="טוען שלבי ברירת מחדל…"
+        renderMeta={(s) => <CountChip n={s._count?.deals ?? 0} noun="עסקאות" />}
+      />
+    </SettingsCard>
+  );
+}
+
+function AddStageForm({ onChange }) {
+  const [label, setLabel] = useState('');
+  const [labelEn, setLabelEn] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!label.trim()) return;
+    setBusy(true);
+    try {
+      await api.dealStages.create({
+        label: label.trim(),
+        labelEn: labelEn.trim() || null,
+      });
+      setLabel('');
+      setLabelEn('');
+      await onChange();
+    } catch (e) {
+      alert('שגיאה: ' + (e.payload?.error || e.message));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="flex flex-col sm:flex-row gap-2">
+      <TextInput value={label} onChange={setLabel} placeholder="שם שלב" className="flex-1" />
+      <TextInput value={labelEn} onChange={setLabelEn} placeholder="Label (EN) — אופציונלי" ltr className="sm:w-52" />
+      <PrimaryButton disabled={busy || !label.trim()}>
+        {busy ? 'מוסיף…' : 'הוסף שלב'}
+      </PrimaryButton>
+    </form>
   );
 }
 

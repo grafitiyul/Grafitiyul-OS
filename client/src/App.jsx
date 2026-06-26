@@ -39,6 +39,9 @@ import OrganizationDetail from './admin/crm/organizations/OrganizationDetail.jsx
 import ContactsList from './admin/crm/contacts/ContactsList.jsx';
 import ContactDetail from './admin/crm/contacts/ContactDetail.jsx';
 import CrmSettingsPage from './admin/crm/settings/CrmSettingsPage.jsx';
+// Deal module (commercial core) — deals + pipeline.
+import DealsList from './admin/deals/DealsList.jsx';
+import DealDetail from './admin/deals/DealDetail.jsx';
 // TEMPORARY (Phase 1/2 review scaffolding): mounts the public-website
 // foundation at a NON-root path so it can be reviewed without touching the
 // root "/" route or the Landing/PWA resolver. This route is removed when the
@@ -111,6 +114,9 @@ export default function App() {
           <Route path="contacts/:id" element={<ContactDetail />} />
           <Route path="settings" element={<CrmSettingsPage />} />
         </Route>
+        {/* Deal module (commercial core) — list + detail. */}
+        <Route path="deals" element={<DealsList />} />
+        <Route path="deals/:id" element={<DealDetail />} />
         <Route path="users" element={<AdminUsersPage />} />
         <Route path="documents" element={<DocumentsLayout />}>
           <Route index element={<DocumentsIndexPage />} />
