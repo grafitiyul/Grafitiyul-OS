@@ -45,6 +45,7 @@ import DealDetail from './admin/deals/DealDetail.jsx';
 // Global Settings module (low-frequency configuration).
 import SettingsHome from './admin/settings/SettingsHome.jsx';
 import CrmSettingsHome from './admin/settings/CrmSettingsHome.jsx';
+import DealStagesSettings from './admin/crm/settings/DealStagesSettings.jsx';
 // TEMPORARY (Phase 1/2 review scaffolding): mounts the public-website
 // foundation at a NON-root path so it can be reviewed without touching the
 // root "/" route or the Landing/PWA resolver. This route is removed when the
@@ -127,6 +128,10 @@ export default function App() {
         <Route
           path="settings/crm/organization-types"
           element={<CrmSettingsPage />}
+        />
+        <Route
+          path="settings/crm/deal-stages"
+          element={<DealStagesSettings />}
         />
         <Route path="users" element={<AdminUsersPage />} />
         <Route path="documents" element={<DocumentsLayout />}>

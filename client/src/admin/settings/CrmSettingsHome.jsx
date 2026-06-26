@@ -26,26 +26,14 @@ export default function CrmSettingsHome() {
         <CategoryCard
           to="/admin/settings/crm/organization-types"
           icon="🏷️"
-          title="סוגי ארגון, תת-סוגים ושלבים"
-          description="קטלוג סוגי ארגון, תת-סוגים לעסקאות, ושלבי צינור המכירות."
+          title="סוגי ארגון ותת-סוגים"
+          description="קטלוג סוגי הארגון ותת-הסוגים של הדילים."
         />
         <CategoryCard
-          icon="📍"
-          title="מקורות"
-          description="מקורות הגעת לידים ועסקאות."
-          comingSoon
-        />
-        <CategoryCard
-          icon="🧾"
-          title="תנאי תשלום"
-          description="תנאי תשלום סטנדרטיים לשימוש חוזר."
-          comingSoon
-        />
-        <CategoryCard
-          icon="✉️"
-          title="תבניות"
-          description="תבניות אימייל, WhatsApp והצעות מחיר."
-          comingSoon
+          to="/admin/settings/crm/deal-stages"
+          icon="📊"
+          title="שלבי דיל"
+          description="צינור המכירות — השלבים והסדר שלהם."
         />
       </CategoryGrid>
     </div>
