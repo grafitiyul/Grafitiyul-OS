@@ -1,12 +1,32 @@
 import { useCallback, useEffect, useState } from 'react';
+import {
+  DndContext,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { api } from '../../../lib/api.js';
 
 // CRM settings — Organization Types and Organization Subtypes catalogs.
 //
-// Type belongs to the Organization (School/Corporate/…) and will later drive
-// pricing/templates/terms. Subtype belongs to the future DEAL (e.g. School →
-// Teachers/Students); it is prepared here as a catalog with NO consumer until
-// Deals are built.
+// Types belong to the Organization and will drive pricing / quote wording /
+// payment terms / templates, so their DISPLAY ORDER is explicit and editable
+// (drag to reorder; persisted as sortOrder). Subtypes belong to the future
+// Deal (e.g. School → Teachers / Students) and are prepared here as a catalog.
+//
+// Rows support inline EDIT of the business fields (Hebrew label, English label,
+// and — for subtypes — the linked type). The internal `key` slug is NEVER
+// shown or edited and stays stable across renames, so existing references hold.
+
 export default function CrmSettingsPage() {
   const [types, setTypes] = useState([]);
   const [subtypes, setSubtypes] = useState([]);
@@ -14,7 +34,6 @@ export default function CrmSettingsPage() {
   const [error, setError] = useState(null);
 
   const refresh = useCallback(async () => {
-    setLoading(true);
     setError(null);
     try {
       const [t, s] = await Promise.all([
@@ -34,28 +53,395 @@ export default function CrmSettingsPage() {
     refresh();
   }, [refresh]);
 
-  if (loading) return <div className="p-6 text-sm text-gray-500">טוען…</div>;
-  if (error)
-    return (
-      <div className="p-6 text-sm text-red-600">
-        שגיאה: <span dir="ltr" className="font-mono">{error}</span>
-      </div>
-    );
-
   return (
-    <div className="p-4 lg:p-6 max-w-4xl mx-auto space-y-6">
-      <TypesCard types={types} onChange={refresh} />
-      <SubtypesCard subtypes={subtypes} types={types} onChange={refresh} />
+    <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-3xl mx-auto">
+      <header className="mb-8">
+        <h1 className="text-2xl font-bold tracking-tight text-gray-900">
+          הגדרות CRM
+        </h1>
+        <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed">
+          הקטלוגים שמזינים את תהליך העבודה. סוגי הארגון יקבעו בהמשך תמחור, נוסח
+          הצעות מחיר ותבניות — לכן הסדר שלהם משמעותי.
+        </p>
+      </header>
+
+      {loading ? (
+        <div className="py-16 text-center text-sm text-gray-400">טוען…</div>
+      ) : error ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
+          שגיאה בטעינה:{' '}
+          <span dir="ltr" className="font-mono">
+            {error}
+          </span>
+        </div>
+      ) : (
+        <div className="space-y-8">
+          <TypesSection types={types} onChange={refresh} />
+          <SubtypesSection subtypes={subtypes} types={types} onChange={refresh} />
+        </div>
+      )}
     </div>
   );
 }
 
-function TypesCard({ types, onChange }) {
+// ── Sections ────────────────────────────────────────────────────────
+
+function TypesSection({ types, onChange }) {
+  async function reorder(ids) {
+    try {
+      await api.organizationTypes.reorder(ids);
+    } catch (e) {
+      alert('שגיאה בעדכון הסדר: ' + e.message);
+    } finally {
+      onChange();
+    }
+  }
+  async function save(item, patch) {
+    await api.organizationTypes.update(item.id, patch);
+    await onChange();
+  }
+  async function remove(item) {
+    if (!confirm(`למחוק את "${item.label}"? ארגונים מקושרים יישארו ללא סוג.`))
+      return;
+    try {
+      await api.organizationTypes.remove(item.id);
+      await onChange();
+    } catch (e) {
+      alert('שגיאה במחיקה: ' + e.message);
+    }
+  }
+
+  return (
+    <SettingsCard
+      title="סוגי ארגון"
+      description="לדוגמה: בתי ספר, חברות, רשויות מקומיות. ישפיע בהמשך על תמחור, נוסח הצעות מחיר ותבניות."
+      footer={<AddTypeForm onChange={onChange} />}
+    >
+      <SortableList
+        items={types}
+        onReorder={reorder}
+        onSave={save}
+        onRemove={remove}
+        emptyText="עדיין אין סוגי ארגון. הוסיפו את הראשון למטה."
+        renderMeta={(t) => (
+          <CountChip n={t._count?.organizations ?? 0} noun="ארגונים" />
+        )}
+      />
+    </SettingsCard>
+  );
+}
+
+function SubtypesSection({ subtypes, types, onChange }) {
+  async function reorder(ids) {
+    try {
+      await api.organizationSubtypes.reorder(ids);
+    } catch (e) {
+      alert('שגיאה בעדכון הסדר: ' + e.message);
+    } finally {
+      onChange();
+    }
+  }
+  async function save(item, patch) {
+    await api.organizationSubtypes.update(item.id, patch);
+    await onChange();
+  }
+  async function remove(item) {
+    if (!confirm(`למחוק את תת-הסוג "${item.label}"?`)) return;
+    try {
+      await api.organizationSubtypes.remove(item.id);
+      await onChange();
+    } catch (e) {
+      alert('שגיאה במחיקה: ' + e.message);
+    }
+  }
+
+  return (
+    <SettingsCard
+      title="תת-סוגים"
+      description="תת-סוג שייך לעסקה, לא לארגון (לדוגמה: בית ספר → מורים / תלמידים). מוכן כקטלוג — ייכנס לשימוש כשייבנה מודול העסקאות."
+      footer={<AddSubtypeForm types={types} onChange={onChange} />}
+    >
+      <SortableList
+        items={subtypes}
+        onReorder={reorder}
+        onSave={save}
+        onRemove={remove}
+        emptyText="עדיין אין תת-סוגים."
+        renderMeta={(s) =>
+          s.organizationType ? (
+            <Pill>{s.organizationType.label}</Pill>
+          ) : (
+            <span className="shrink-0 text-[12px] text-gray-400">כללי</span>
+          )
+        }
+        // Subtype-specific edit control: reassign the linked organization type.
+        editExtra={(draft, setDraft) => (
+          <select
+            value={draft.organizationTypeId || ''}
+            onChange={(e) =>
+              setDraft((d) => ({ ...d, organizationTypeId: e.target.value }))
+            }
+            className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 sm:w-44"
+          >
+            <option value="">כללי</option>
+            {types.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        )}
+      />
+    </SettingsCard>
+  );
+}
+
+// ── Reusable card + sortable list ───────────────────────────────────
+
+function SettingsCard({ title, description, children, footer }) {
+  return (
+    <section className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+      <div className="px-5 sm:px-6 pt-5 pb-4 border-b border-gray-100">
+        <h2 className="text-[17px] font-semibold text-gray-900">{title}</h2>
+        {description && (
+          <p className="text-[13px] text-gray-500 mt-1 leading-relaxed max-w-2xl">
+            {description}
+          </p>
+        )}
+      </div>
+      <div className="p-2 sm:p-3">{children}</div>
+      {footer && (
+        <div className="px-4 sm:px-5 py-4 border-t border-gray-100 bg-gray-50/60">
+          {footer}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SortableList({
+  items,
+  onReorder,
+  onSave,
+  onRemove,
+  renderMeta,
+  editExtra,
+  emptyText,
+}) {
+  // Optimistic copy so reorder feels instant; resync when props change.
+  const [local, setLocal] = useState(items);
+  useEffect(() => setLocal(items), [items]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 180, tolerance: 6 },
+    }),
+  );
+
+  function onDragEnd(event) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const ids = local.map((i) => i.id);
+    const from = ids.indexOf(active.id);
+    const to = ids.indexOf(over.id);
+    if (from < 0 || to < 0) return;
+    const next = arrayMove(ids, from, to);
+    setLocal(next.map((id) => local.find((i) => i.id === id)));
+    onReorder(next);
+  }
+
+  if (!local.length) {
+    return (
+      <div className="px-3 py-12 text-center text-sm text-gray-400">
+        {emptyText}
+      </div>
+    );
+  }
+
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragEnd={onDragEnd}
+    >
+      <SortableContext
+        items={local.map((i) => i.id)}
+        strategy={verticalListSortingStrategy}
+      >
+        <ul className="space-y-0.5">
+          {local.map((item) => (
+            <CatalogRow
+              key={item.id}
+              item={item}
+              meta={renderMeta(item)}
+              onSave={onSave}
+              onRemove={onRemove}
+              editExtra={editExtra}
+            />
+          ))}
+        </ul>
+      </SortableContext>
+    </DndContext>
+  );
+}
+
+function CatalogRow({ item, meta, onSave, onRemove, editExtra }) {
+  const s = useSortable({ id: item.id });
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const style = {
+    transform: CSS.Transform.toString(s.transform),
+    transition: s.transition,
+  };
+
+  function startEdit() {
+    setDraft({
+      label: item.label || '',
+      labelEn: item.labelEn || '',
+      organizationTypeId: item.organizationTypeId || '',
+    });
+    setEditing(true);
+  }
+
+  async function submit(e) {
+    e?.preventDefault();
+    if (!draft.label.trim()) return;
+    setBusy(true);
+    try {
+      const patch = {
+        label: draft.label.trim(),
+        labelEn: draft.labelEn.trim() || null,
+      };
+      // Only sections that expose the extra control (subtypes) edit the link.
+      // The internal `key` is never sent, so it stays stable on rename.
+      if (editExtra) patch.organizationTypeId = draft.organizationTypeId || null;
+      await onSave(item, patch);
+      setEditing(false);
+    } catch (err) {
+      alert('שגיאה בשמירה: ' + (err.payload?.error || err.message));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ── Edit mode ──
+  if (editing) {
+    return (
+      <li ref={s.setNodeRef} style={style}>
+        <form
+          onSubmit={submit}
+          className="rounded-lg bg-blue-50/50 ring-1 ring-blue-100 px-2.5 py-2.5 flex flex-col sm:flex-row gap-2 sm:items-center"
+        >
+          <input
+            autoFocus
+            value={draft.label}
+            onChange={(e) => setDraft((d) => ({ ...d, label: e.target.value }))}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setEditing(false);
+            }}
+            placeholder="שם"
+            className="flex-1 h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+          />
+          <input
+            value={draft.labelEn}
+            onChange={(e) => setDraft((d) => ({ ...d, labelEn: e.target.value }))}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setEditing(false);
+            }}
+            placeholder="Label (EN)"
+            dir="ltr"
+            className="sm:w-44 h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+          />
+          {editExtra && editExtra(draft, setDraft)}
+          <div className="flex gap-1.5 shrink-0">
+            <button
+              type="submit"
+              disabled={busy || !draft.label.trim()}
+              className="h-10 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-50"
+            >
+              {busy ? 'שומר…' : 'שמור'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditing(false)}
+              className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-600 hover:bg-gray-50"
+            >
+              ביטול
+            </button>
+          </div>
+        </form>
+      </li>
+    );
+  }
+
+  // ── Display mode ──
+  return (
+    <li
+      ref={s.setNodeRef}
+      style={style}
+      className={s.isDragging ? 'relative z-10' : ''}
+    >
+      <div
+        className={`group flex items-center gap-3 rounded-lg px-2.5 py-2.5 transition-colors ${
+          s.isDragging
+            ? 'bg-white shadow-md ring-1 ring-gray-200'
+            : 'hover:bg-gray-50'
+        }`}
+      >
+        <button
+          {...s.attributes}
+          {...s.listeners}
+          aria-label="גרור לשינוי סדר"
+          className="shrink-0 text-gray-300 hover:text-gray-500 cursor-grab active:cursor-grabbing p-1 -m-1"
+          style={{ touchAction: 'none' }}
+        >
+          <DragIcon />
+        </button>
+        <div className="flex-1 min-w-0 flex items-baseline gap-2.5">
+          <span className="font-medium text-gray-900 text-[15px] truncate">
+            {item.label}
+          </span>
+          {item.labelEn && (
+            <span className="text-[12px] text-gray-400 truncate" dir="ltr">
+              {item.labelEn}
+            </span>
+          )}
+        </div>
+        {meta}
+        <div className="flex items-center gap-0.5 shrink-0">
+          <button
+            onClick={startEdit}
+            aria-label="עריכה"
+            title="עריכה"
+            className="text-gray-300 hover:text-blue-600 hover:bg-blue-50 rounded-md p-1.5 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition"
+          >
+            <EditIcon />
+          </button>
+          <button
+            onClick={() => onRemove(item)}
+            aria-label="מחק"
+            title="מחק"
+            className="text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-md p-1.5 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition"
+          >
+            <TrashIcon />
+          </button>
+        </div>
+      </div>
+    </li>
+  );
+}
+
+// ── Add forms (one clear primary action each) ───────────────────────
+
+function AddTypeForm({ onChange }) {
   const [label, setLabel] = useState('');
   const [labelEn, setLabelEn] = useState('');
   const [busy, setBusy] = useState(false);
 
-  async function add(e) {
+  async function submit(e) {
     e.preventDefault();
     if (!label.trim()) return;
     setBusy(true);
@@ -74,64 +460,34 @@ function TypesCard({ types, onChange }) {
     }
   }
 
-  async function remove(id) {
-    if (!confirm('למחוק סוג ארגון? ארגונים מקושרים יישארו ללא סוג.')) return;
-    try {
-      await api.organizationTypes.remove(id);
-      await onChange();
-    } catch (e) {
-      alert('שגיאה: ' + e.message);
-    }
-  }
-
   return (
-    <section className="bg-white border border-gray-200 rounded-lg p-4">
-      <h2 className="text-[14px] font-semibold text-gray-900 mb-1">סוגי ארגון</h2>
-      <p className="text-[12px] text-gray-500 mb-3">
-        ישפיע בהמשך על תמחור, נוסח הצעות מחיר, תנאי תשלום ותבניות.
-      </p>
-      {types.length ? (
-        <ul className="divide-y divide-gray-100 mb-3">
-          {types.map((t) => (
-            <li key={t.id} className="py-2 flex items-center gap-2 text-sm">
-              <span className="font-medium">{t.label}</span>
-              {t.labelEn && <span className="text-[12px] text-gray-400" dir="ltr">{t.labelEn}</span>}
-              <span className="text-[11px] text-gray-400" dir="ltr">{t.key}</span>
-              <span className="text-[12px] text-gray-500">· {t._count?.organizations ?? 0} ארגונים</span>
-              <div className="flex-1" />
-              <button
-                onClick={() => remove(t.id)}
-                className="text-[12px] text-red-600 hover:bg-red-50 rounded px-2 py-1"
-              >
-                מחק
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <div className="text-sm text-gray-400 mb-3">אין סוגי ארגון.</div>
-      )}
-      <form onSubmit={add} className="flex items-end gap-2">
-        <Field label="שם (עברית)" value={label} onChange={setLabel} />
-        <Field label="Label (EN)" value={labelEn} onChange={setLabelEn} ltr />
-        <button
-          type="submit"
-          disabled={busy || !label.trim()}
-          className="bg-gray-800 text-white text-sm rounded-md px-4 py-1.5 disabled:opacity-50"
-        >
-          הוסף
-        </button>
-      </form>
-    </section>
+    <form onSubmit={submit} className="flex flex-col sm:flex-row gap-2">
+      <TextInput
+        value={label}
+        onChange={setLabel}
+        placeholder="שם סוג ארגון"
+        className="flex-1"
+      />
+      <TextInput
+        value={labelEn}
+        onChange={setLabelEn}
+        placeholder="Label (EN) — אופציונלי"
+        ltr
+        className="sm:w-52"
+      />
+      <PrimaryButton disabled={busy || !label.trim()}>
+        {busy ? 'מוסיף…' : 'הוסף סוג'}
+      </PrimaryButton>
+    </form>
   );
 }
 
-function SubtypesCard({ subtypes, types, onChange }) {
+function AddSubtypeForm({ types, onChange }) {
   const [label, setLabel] = useState('');
   const [typeId, setTypeId] = useState('');
   const [busy, setBusy] = useState(false);
 
-  async function add(e) {
+  async function submit(e) {
     e.preventDefault();
     if (!label.trim()) return;
     setBusy(true);
@@ -150,83 +506,114 @@ function SubtypesCard({ subtypes, types, onChange }) {
     }
   }
 
-  async function remove(id) {
-    if (!confirm('למחוק תת-סוג?')) return;
-    try {
-      await api.organizationSubtypes.remove(id);
-      await onChange();
-    } catch (e) {
-      alert('שגיאה: ' + e.message);
-    }
-  }
-
   return (
-    <section className="bg-white border border-gray-200 rounded-lg p-4">
-      <h2 className="text-[14px] font-semibold text-gray-900 mb-1">תת-סוגים (לעסקאות)</h2>
-      <p className="text-[12px] text-gray-500 mb-3">
-        תת-סוג שייך לעסקה, לא לארגון (לדוגמה: בית ספר → מורים / תלמידים). מוכן
-        כקטלוג — ייכנס לשימוש כשייבנה מודול העסקאות.
-      </p>
-      {subtypes.length ? (
-        <ul className="divide-y divide-gray-100 mb-3">
-          {subtypes.map((s) => (
-            <li key={s.id} className="py-2 flex items-center gap-2 text-sm">
-              <span className="font-medium">{s.label}</span>
-              {s.organizationType && (
-                <span className="text-[12px] text-gray-500">· {s.organizationType.label}</span>
-              )}
-              <div className="flex-1" />
-              <button
-                onClick={() => remove(s.id)}
-                className="text-[12px] text-red-600 hover:bg-red-50 rounded px-2 py-1"
-              >
-                מחק
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <div className="text-sm text-gray-400 mb-3">אין תת-סוגים.</div>
-      )}
-      <form onSubmit={add} className="flex items-end gap-2 flex-wrap">
-        <Field label="שם תת-סוג" value={label} onChange={setLabel} />
-        <div className="flex flex-col gap-1">
-          <label className="text-[11px] text-gray-500">שיוך לסוג ארגון (אופציונלי)</label>
-          <select
-            value={typeId}
-            onChange={(e) => setTypeId(e.target.value)}
-            className="border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white w-48"
-          >
-            <option value="">— כללי —</option>
-            {types.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <button
-          type="submit"
-          disabled={busy || !label.trim()}
-          className="bg-gray-800 text-white text-sm rounded-md px-4 py-1.5 disabled:opacity-50"
-        >
-          הוסף
-        </button>
-      </form>
-    </section>
+    <form onSubmit={submit} className="flex flex-col sm:flex-row gap-2">
+      <TextInput
+        value={label}
+        onChange={setLabel}
+        placeholder="שם תת-סוג"
+        className="flex-1"
+      />
+      <select
+        value={typeId}
+        onChange={(e) => setTypeId(e.target.value)}
+        className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 sm:w-52"
+      >
+        <option value="">שייך לסוג ארגון — כללי</option>
+        {types.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.label}
+          </option>
+        ))}
+      </select>
+      <PrimaryButton disabled={busy || !label.trim()}>
+        {busy ? 'מוסיף…' : 'הוסף תת-סוג'}
+      </PrimaryButton>
+    </form>
   );
 }
 
-function Field({ label, value, onChange, ltr }) {
+// ── Small UI atoms ──────────────────────────────────────────────────
+
+function TextInput({ value, onChange, placeholder, ltr, className = '' }) {
   return (
-    <div className="flex flex-col gap-1">
-      <label className="text-[11px] text-gray-500">{label}</label>
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        dir={ltr ? 'ltr' : 'rtl'}
-        className="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-44"
+    <input
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      dir={ltr ? 'ltr' : 'rtl'}
+      className={`h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 ${className}`}
+    />
+  );
+}
+
+function PrimaryButton({ children, disabled }) {
+  return (
+    <button
+      type="submit"
+      disabled={disabled}
+      className="h-10 shrink-0 rounded-lg bg-blue-600 px-5 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-50 disabled:hover:bg-blue-600"
+    >
+      {children}
+    </button>
+  );
+}
+
+function CountChip({ n, noun }) {
+  return (
+    <span className="shrink-0 inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-600">
+      {n} {noun}
+    </span>
+  );
+}
+
+function Pill({ children }) {
+  return (
+    <span className="shrink-0 inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-medium text-indigo-700 ring-1 ring-inset ring-indigo-100">
+      {children}
+    </span>
+  );
+}
+
+function DragIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+      <circle cx="5.5" cy="3.5" r="1.3" />
+      <circle cx="10.5" cy="3.5" r="1.3" />
+      <circle cx="5.5" cy="8" r="1.3" />
+      <circle cx="10.5" cy="8" r="1.3" />
+      <circle cx="5.5" cy="12.5" r="1.3" />
+      <circle cx="10.5" cy="12.5" r="1.3" />
+    </svg>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M4 20h4l10.5-10.5a2.12 2.12 0 0 0-3-3L5 17v3Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
       />
-    </div>
+      <path d="M13.5 6.5l3 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M10 11v6M14 11v6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
   );
 }

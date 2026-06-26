@@ -269,6 +269,11 @@ export const api = {
   },
   organizationTypes: {
     list: () => request('/api/organization-types'),
+    reorder: (ids) =>
+      request('/api/organization-types/reorder', {
+        method: 'PUT',
+        body: JSON.stringify({ ids }),
+      }),
     create: (data) =>
       request('/api/organization-types', {
         method: 'POST',
@@ -285,6 +290,11 @@ export const api = {
   organizationSubtypes: {
     list: (organizationTypeId) =>
       request(`/api/organization-subtypes${qs({ organizationTypeId })}`),
+    reorder: (ids) =>
+      request('/api/organization-subtypes/reorder', {
+        method: 'PUT',
+        body: JSON.stringify({ ids }),
+      }),
     create: (data) =>
       request('/api/organization-subtypes', {
         method: 'POST',

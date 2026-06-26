@@ -69,6 +69,26 @@ router.post(
   }),
 );
 
+// Persist explicit display order (sortOrder = index). Before '/:id'.
+router.put(
+  '/reorder',
+  handle(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids)
+      ? req.body.ids.filter((x) => typeof x === 'string')
+      : [];
+    if (!ids.length) return res.json({ ok: true });
+    await prisma.$transaction(
+      ids.map((id, i) =>
+        prisma.organizationSubtype.update({
+          where: { id },
+          data: { sortOrder: i },
+        }),
+      ),
+    );
+    res.json({ ok: true });
+  }),
+);
+
 router.put(
   '/:id',
   handle(async (req, res) => {
