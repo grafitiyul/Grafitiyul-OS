@@ -3,6 +3,7 @@ import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
 import TextAlign from '@tiptap/extension-text-align';
+import { TextDirection } from './TextDirection.js';
 import Placeholder from '@tiptap/extension-placeholder';
 import TextStyle from '@tiptap/extension-text-style';
 import Color from '@tiptap/extension-color';
@@ -68,6 +69,8 @@ export default function RichEditor({
       TextAlign.configure({
         types: ['heading', 'paragraph'],
       }),
+      // Writing direction (RTL/LTR) per block — kept separate from alignment.
+      TextDirection,
       Placeholder.configure({
         placeholder,
         emptyEditorClass: 'is-editor-empty',

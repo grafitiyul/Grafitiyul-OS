@@ -166,6 +166,26 @@ export default function Toolbar({ editor, setUploadState }) {
       </Group>
       <Divider />
 
+      {/* Writing direction — separate from alignment. Fixes bidi for mixed
+          Hebrew/English paragraphs (English text, URLs, code, etc.). */}
+      <Group>
+        <IconBtn
+          label="כיוון פסקה: מימין לשמאל"
+          active={editor.isActive({ dir: 'rtl' })}
+          onClick={() => editor.chain().focus().setTextDirection('rtl').run()}
+        >
+          <DirSVG dir="rtl" />
+        </IconBtn>
+        <IconBtn
+          label="כיוון פסקה: משמאל לימין"
+          active={editor.isActive({ dir: 'ltr' })}
+          onClick={() => editor.chain().focus().setTextDirection('ltr').run()}
+        >
+          <DirSVG dir="ltr" />
+        </IconBtn>
+      </Group>
+      <Divider />
+
       <LinkButton editor={editor} />
       <Divider />
 
@@ -754,6 +774,29 @@ function AlignSVG({ side }) {
       {lines.map(([x1, y1, x2, y2], i) => (
         <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} />
       ))}
+    </svg>
+  );
+}
+// Writing-direction icon: paragraph lines + a baseline arrow showing the
+// direction text flows. rtl → arrow points left, ltr → arrow points right.
+function DirSVG({ dir }) {
+  const rtl = dir === 'rtl';
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="4" y1="6" x2="20" y2="6" />
+      <line x1="4" y1="11" x2="20" y2="11" />
+      <line x1={rtl ? 10 : 4} y1="16" x2={rtl ? 20 : 14} y2="16" />
+      {rtl ? (
+        <>
+          <line x1="4" y1="21" x2="10" y2="21" />
+          <polyline points="6.5 19 4 21 6.5 23" />
+        </>
+      ) : (
+        <>
+          <line x1="14" y1="21" x2="20" y2="21" />
+          <polyline points="17.5 19 20 21 17.5 23" />
+        </>
+      )}
     </svg>
   );
 }
