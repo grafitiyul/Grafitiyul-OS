@@ -638,6 +638,7 @@ model OrganizationSubtype {
   defaultPriceList   PriceList? @relation("OrgSubtypeDefaultPriceList", fields: [defaultPriceListId], references: [id], onDelete: SetNull)
   defaultPriceListId String?
   priceRules         PriceRule[]
+  pricingSegments    PricingSegment[]
 
   @@index([organizationTypeId])
 }
@@ -992,6 +993,7 @@ model ActivityType {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   priceRules PriceRule[]
+  pricingSegments PricingSegment[]
 }
 
 // Payment terms ⇄ methods with bidirectional optional defaults. The auto-fill on
@@ -1074,16 +1076,31 @@ model PriceRule {
   organizationSubtype  OrganizationSubtype? @relation(fields: [organizationSubtypeId], references: [id], onDelete: Cascade)
   organizationSubtypeId String?
 
-  priceModel String // per_head | tiered
+  // Authoring layer (Slice A) — NOT used by resolution. `pricingSegment` tags the
+  // rule with the business tab it was created under; `cardGroupId` ties sibling
+  // rules (one per chosen location) into a single editable UI "card". The engine
+  // ignores both and keeps resolving per scope as before.
+  pricingSegment       PricingSegment?      @relation(fields: [pricingSegmentId], references: [id], onDelete: SetNull)
+  pricingSegmentId     String?
+  cardGroupId          String?
 
-  // per_head model fields.
+  priceModel String // per_head | tiered | tiered_group | fixed
+
+  // per_head model fields. (per_person UX reuses per_head with a single price.)
   adultPriceMinor BigInt?
   childPriceMinor BigInt?
 
-  // tiered model fields.
+  // tiered (single-tier, legacy) model fields.
   basePriceMinor               BigInt?
   baseParticipants             Int?
+  // Also the "every participant above the last tier" rate for tiered_group.
   perAdditionalParticipantMinor BigInt?
+
+  // fixed model field — one flat total per group.
+  fixedPriceMinor BigInt?
+
+  // tiered_group model — ordered ladder of (uptoParticipants → totalPriceMinor).
+  tiers PriceTier[]
 
   // VAT override — null inherits the PriceList defaults.
   vatMode String? // included | excluded
@@ -1099,6 +1116,52 @@ model PriceRule {
   @@index([productVariantId])
   @@index([activityTypeId])
   @@index([organizationSubtypeId])
+  @@index([pricingSegmentId])
+  @@index([cardGroupId])
+}
+
+// A single tier row in a tiered_group price rule (model 1: base + tiers + extra
+// participant). `uptoParticipants` is the inclusive upper bound for this tier;
+// `totalPriceMinor` is the TOTAL group price for a group up to that size (not
+// per-person). Tiers are read in `sortOrder` order; beyond the largest tier the
+// rule's `perAdditionalParticipantMinor` applies per extra participant. No
+// hard-coded count of tiers — the owner adds as many rows as needed.
+model PriceTier {
+  id               String   @id @default(cuid())
+  priceRule        PriceRule @relation(fields: [priceRuleId], references: [id], onDelete: Cascade)
+  priceRuleId      String
+  uptoParticipants Int
+  totalPriceMinor  BigInt
+  sortOrder        Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([priceRuleId])
+}
+
+// The 6 business-facing pricing tabs (קבוצתי / פרטי / עסקי / בית ספר / סוכנים /
+// מפיקים). This is an AUTHORING catalog only — it buckets pricing cards into
+// tabs. The optional bindings let the owner map a tab to an ActivityType and/or
+// OrganizationSubtype from the admin UI (NO hard-coded org mappings). Resolution
+// does not read this table; the bindings are applied to a rule's own scope
+// fields at authoring time, so the engine is unchanged.
+model PricingSegment {
+  id                    String               @id @default(cuid())
+  key                   String               @unique
+  nameHe                String
+  nameEn                String?
+  sortOrder             Int                  @default(0)
+  active                Boolean              @default(true)
+  // Owner-set resolution bindings — null until configured in the admin UI.
+  activityType          ActivityType?        @relation(fields: [activityTypeId], references: [id], onDelete: SetNull)
+  activityTypeId        String?
+  organizationSubtype   OrganizationSubtype? @relation(fields: [organizationSubtypeId], references: [id], onDelete: SetNull)
+  organizationSubtypeId String?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  priceRules            PriceRule[]
+
+  @@index([sortOrder])
 }
 
 // A sellable extra that is NOT a Product (e.g. transport, insurance, materials).

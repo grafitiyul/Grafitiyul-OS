@@ -69,7 +69,12 @@ router.post(
 
     const priceList = await prisma.priceList.findUnique({
       where: { id: resolved.id },
-      include: { rules: { where: { active: true } } },
+      include: {
+        rules: {
+          where: { active: true },
+          include: { tiers: { orderBy: { sortOrder: 'asc' } } },
+        },
+      },
     });
     if (!priceList) return res.json({ ok: false, error: 'no_price_list' });
 

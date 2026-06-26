@@ -31,10 +31,12 @@ export function specificity(rule) {
 }
 
 // A rule matches the context when every NON-NULL scope equals the context value
-// (null scope = wildcard) AND the rule's price model matches the context model.
-function ruleMatches(rule, ctx, priceModel) {
+// (null scope = wildcard). The price model is NOT a match criterion: each card
+// chooses its own model (per_head | tiered | tiered_group | fixed), so the WINNING
+// rule's own `priceModel` drives the computation. (Pre-Slice-A this was coupled to
+// the activity type's priceModel; cards now own the model explicitly.)
+function ruleMatches(rule, ctx) {
   if (!rule.active) return false;
-  if (rule.priceModel !== priceModel) return false;
   if (rule.productId && rule.productId !== ctx.productId) return false;
   if (rule.productVariantId && rule.productVariantId !== ctx.productVariantId)
     return false;
@@ -107,15 +109,7 @@ function baseAmountMinor(rule, counts) {
         missing: ['basePriceMinor'],
       });
     }
-    // participantCount preferred; fall back to adult+child if only those given.
-    const participantCount = Math.max(
-      0,
-      Number(
-        counts.participantCount != null
-          ? counts.participantCount
-          : (Number(counts.adultCount) || 0) + (Number(counts.childCount) || 0),
-      ) || 0,
-    );
+    const participantCount = resolveParticipantCount(counts);
     const baseParticipants = Math.max(0, num(rule.baseParticipants) || 0);
     const perAdd = num(rule.perAdditionalParticipantMinor) || 0;
     const extra = Math.max(0, participantCount - baseParticipants);
@@ -132,7 +126,86 @@ function baseAmountMinor(rule, counts) {
     };
   }
 
+  // fixed — one flat total per group, independent of participant count.
+  if (rule.priceModel === 'fixed') {
+    if (num(rule.fixedPriceMinor) == null) {
+      throw new PricingError('rule_incomplete', {
+        priceModel: 'fixed',
+        missing: ['fixedPriceMinor'],
+      });
+    }
+    const perGroup = num(rule.fixedPriceMinor) || 0;
+    return {
+      amountMinor: Math.round(perGroup * groupCount),
+      debug: { groupCount, perGroupMinor: Math.round(perGroup) },
+    };
+  }
+
+  // tiered_group — model 1: an ordered ladder of (uptoParticipants → total group
+  // price). Pick the first tier whose upper bound covers the group; above the
+  // largest tier, add perAdditionalParticipantMinor per participant over it. The
+  // tier prices are TOTALS for the whole group, not per-person.
+  if (rule.priceModel === 'tiered_group') {
+    const tiers = [...(rule.tiers || [])]
+      .map((t) => ({
+        uptoParticipants: Math.max(0, num(t.uptoParticipants) || 0),
+        totalPriceMinor: num(t.totalPriceMinor) || 0,
+        sortOrder: num(t.sortOrder) || 0,
+      }))
+      .sort(
+        (a, b) =>
+          a.uptoParticipants - b.uptoParticipants || a.sortOrder - b.sortOrder,
+      );
+    if (tiers.length === 0) {
+      throw new PricingError('rule_incomplete', {
+        priceModel: 'tiered_group',
+        missing: ['tiers'],
+      });
+    }
+    const participantCount = resolveParticipantCount(counts);
+    const matchedTier = tiers.find(
+      (t) => participantCount <= t.uptoParticipants,
+    );
+    let perGroup;
+    let tierUpto;
+    let extraParticipants = 0;
+    if (matchedTier) {
+      perGroup = matchedTier.totalPriceMinor;
+      tierUpto = matchedTier.uptoParticipants;
+    } else {
+      // Above the largest tier: that tier's total + per-additional overflow.
+      const last = tiers[tiers.length - 1];
+      const perAdd = num(rule.perAdditionalParticipantMinor) || 0;
+      extraParticipants = participantCount - last.uptoParticipants;
+      perGroup = last.totalPriceMinor + extraParticipants * perAdd;
+      tierUpto = last.uptoParticipants;
+    }
+    return {
+      amountMinor: Math.round(perGroup * groupCount),
+      debug: {
+        participantCount,
+        tierUpto,
+        extraParticipants,
+        tierCount: tiers.length,
+        groupCount,
+        perGroupMinor: Math.round(perGroup),
+      },
+    };
+  }
+
   throw new PricingError('unknown_price_model', { priceModel: rule.priceModel });
+}
+
+// participantCount preferred; fall back to adult+child if only those were given.
+function resolveParticipantCount(counts) {
+  return Math.max(
+    0,
+    Number(
+      counts.participantCount != null
+        ? counts.participantCount
+        : (Number(counts.adultCount) || 0) + (Number(counts.childCount) || 0),
+    ) || 0,
+  );
 }
 
 // Split a VAT-inclusive or VAT-exclusive amount into net / vat / gross.
@@ -156,11 +229,12 @@ export function calculate({ priceList, activityType, context, counts }) {
   if (!activityType) throw new PricingError('activity_type_not_found');
   if (!priceList) throw new PricingError('no_price_list');
 
-  const priceModel = activityType.priceModel; // per_head | tiered
+  // Match on SCOPE only; the winning rule owns its price model.
   const candidates = (priceList.rules || []).filter((r) =>
-    ruleMatches(r, context, priceModel),
+    ruleMatches(r, context),
   );
   const rule = selectRule(candidates);
+  const priceModel = rule.priceModel; // per_head | tiered | tiered_group | fixed
 
   const { amountMinor, debug } = baseAmountMinor(rule, counts);
 
