@@ -472,6 +472,11 @@ export const api = {
   pricing: {
     calculate: (input) => request('/api/pricing/calculate', { method: 'POST', body: JSON.stringify(input) }),
   },
+  // Pricing Segments (Slice A) — the 6 business tabs + owner-set bindings.
+  pricingSegments: {
+    list: () => request('/api/pricing-segments'),
+    update: (id, data) => request(`/api/pricing-segments/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  },
   // ── CRM Settings — Lost Reasons & Quote Content Sections (catalog only) ──
   lostReasons: {
     list: () => request('/api/lost-reasons'),
