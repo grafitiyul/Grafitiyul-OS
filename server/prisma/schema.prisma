@@ -602,6 +602,10 @@ model OrganizationType {
   updatedAt     DateTime              @updatedAt
   organizations Organization[]
   subtypes      OrganizationSubtype[]
+  // Pricing (Slice 2): default price list for deals of this org type. Subtype
+  // overrides this. Null → fall back to the system default price list.
+  defaultPriceList   PriceList? @relation("OrgTypeDefaultPriceList", fields: [defaultPriceListId], references: [id], onDelete: SetNull)
+  defaultPriceListId String?
 
   @@index([sortOrder])
 }
@@ -621,6 +625,11 @@ model OrganizationSubtype {
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
   deals              Deal[]
+  // Pricing (Slice 2): default price list for this subtype. Overrides the
+  // OrganizationType default. Null → fall back to the type / system default.
+  defaultPriceList   PriceList? @relation("OrgSubtypeDefaultPriceList", fields: [defaultPriceListId], references: [id], onDelete: SetNull)
+  defaultPriceListId String?
+  priceRules         PriceRule[]
 
   @@index([organizationTypeId])
 }
@@ -908,6 +917,7 @@ model Product {
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   variants        ProductVariant[]
+  priceRules      PriceRule[]
 
   @@index([sortOrder])
 }
@@ -943,6 +953,7 @@ model ProductVariant {
   createdAt             DateTime   @default(now())
   updatedAt             DateTime   @updatedAt
   galleryImages         ProductVariantImage[]
+  priceRules            PriceRule[]
 
   @@unique([productId, locationId])
   @@index([productId])
@@ -972,6 +983,7 @@ model ActivityType {
   sortOrder  Int      @default(0)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  priceRules PriceRule[]
 }
 
 // Payment terms ⇄ methods with bidirectional optional defaults. The auto-fill on
@@ -1004,4 +1016,121 @@ model PaymentMethod {
   termsDefaultingHere  PaymentTerm[] @relation("TermDefaultMethod")
 
   @@index([sortOrder])
+}
+
+// ── Products & Pricing — Slice 2: Pricing Engine + Add-ons ──────────────────
+// Not yet wired to Deals. No DealLineItem, no Quotes. This is the catalog +
+// resolution foundation only.
+
+// A named set of pricing rules. One row is the system default (isDefault), used
+// when no organization type/subtype points at a specific list. VAT defaults here
+// are inherited by rules that don't override them.
+model PriceList {
+  id             String   @id @default(cuid())
+  nameHe         String
+  nameEn         String?
+  defaultVatMode String   @default("included") // included | excluded
+  defaultVatRate Int      @default(18)
+  currency       String   @default("ILS")
+  isDefault      Boolean  @default(false) // exactly one system-default list
+  active         Boolean  @default(true)
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  rules              PriceRule[]
+  addonPriceRules    AddonPriceRule[]
+  orgTypesDefaulting    OrganizationType[]    @relation("OrgTypeDefaultPriceList")
+  orgSubtypesDefaulting OrganizationSubtype[] @relation("OrgSubtypeDefaultPriceList")
+
+  @@index([sortOrder])
+}
+
+// A single pricing rule inside a PriceList. The four scope fields are optional;
+// NULL means "wildcard / matches anything". A rule matches a context when every
+// non-null scope equals the context. priceModel selects which price fields are
+// used and must match the context ActivityType's priceModel.
+model PriceRule {
+  id         String @id @default(cuid())
+  priceList   PriceList @relation(fields: [priceListId], references: [id], onDelete: Cascade)
+  priceListId String
+
+  // Scopes — null = wildcard. Cascade-delete the rule when a scoped target is
+  // removed, so a specific rule never silently becomes a broader wildcard.
+  product              Product?             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId            String?
+  productVariant       ProductVariant?      @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
+  productVariantId     String?
+  activityType         ActivityType?        @relation(fields: [activityTypeId], references: [id], onDelete: Cascade)
+  activityTypeId       String?
+  organizationSubtype  OrganizationSubtype? @relation(fields: [organizationSubtypeId], references: [id], onDelete: Cascade)
+  organizationSubtypeId String?
+
+  priceModel String // per_head | tiered
+
+  // per_head model fields.
+  adultPriceMinor BigInt?
+  childPriceMinor BigInt?
+
+  // tiered model fields.
+  basePriceMinor               BigInt?
+  baseParticipants             Int?
+  perAdditionalParticipantMinor BigInt?
+
+  // VAT override — null inherits the PriceList defaults.
+  vatMode String? // included | excluded
+  vatRate Int?
+
+  priority  Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([priceListId])
+  @@index([productId])
+  @@index([productVariantId])
+  @@index([activityTypeId])
+  @@index([organizationSubtypeId])
+}
+
+// A sellable extra that is NOT a Product (e.g. transport, insurance, materials).
+// Carries its own default price + VAT behaviour. Per-price-list overrides live
+// in AddonPriceRule.
+model Addon {
+  id               String   @id @default(cuid())
+  nameHe           String
+  nameEn           String?
+  defaultPriceMinor BigInt  @default(0)
+  currency         String   @default("ILS")
+  vatMode          String   @default("included") // included | excluded
+  vatRate          Int      @default(18)
+  defaultQuantity  Int      @default(1)
+  active           Boolean  @default(true)
+  sortOrder        Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  priceRules AddonPriceRule[]
+
+  @@index([sortOrder])
+}
+
+// Per-price-list override of an Addon's price / VAT. priceListId NULL = a global
+// override applied regardless of the resolved price list.
+model AddonPriceRule {
+  id      String @id @default(cuid())
+  addon   Addon  @relation(fields: [addonId], references: [id], onDelete: Cascade)
+  addonId String
+  priceList   PriceList? @relation(fields: [priceListId], references: [id], onDelete: Cascade)
+  priceListId String?
+  priceMinor BigInt   @default(0)
+  currency   String   @default("ILS")
+  vatMode    String   @default("included") // included | excluded
+  vatRate    Int      @default(18)
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([addonId])
+  @@index([priceListId])
 }

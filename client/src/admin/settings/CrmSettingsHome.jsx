@@ -48,6 +48,18 @@ export default function CrmSettingsHome() {
           title="הגדרות תשלום"
           description="תנאי תשלום ואמצעי תשלום וברירות מחדל."
         />
+        <CategoryCard
+          to="/admin/settings/crm/pricing"
+          icon="🧮"
+          title="תמחור"
+          description="מחירונים, חוקי תמחור וברירות מחדל לפי ארגון."
+        />
+        <CategoryCard
+          to="/admin/settings/crm/addons"
+          icon="➕"
+          title="תוספות"
+          description="פריטים נמכרים שאינם מוצרים, עם עקיפות מחיר."
+        />
       </CategoryGrid>
     </div>
   );

@@ -441,6 +441,37 @@ export const api = {
     updateMethod: (id, data) => request(`/api/payment-config/methods/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     removeMethod: (id) => request(`/api/payment-config/methods/${id}`, { method: 'DELETE' }),
   },
+  // ── Products & Pricing — Slice 2 (pricing engine + add-ons) ──
+  priceLists: {
+    list: () => request('/api/price-lists'),
+    create: (data) => request('/api/price-lists', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/api/price-lists/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/price-lists/${id}`, { method: 'DELETE' }),
+    reorder: (ids) => request('/api/price-lists/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
+    setDefault: (id) => request(`/api/price-lists/${id}/default`, { method: 'PUT' }),
+  },
+  priceRules: {
+    list: (priceListId) => request(`/api/price-rules${qs({ priceListId })}`),
+    create: (data) => request('/api/price-rules', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/api/price-rules/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/price-rules/${id}`, { method: 'DELETE' }),
+  },
+  addons: {
+    list: () => request('/api/addons'),
+    create: (data) => request('/api/addons', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/api/addons/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/addons/${id}`, { method: 'DELETE' }),
+    reorder: (ids) => request('/api/addons/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
+  },
+  addonPriceRules: {
+    list: (addonId) => request(`/api/addon-price-rules${qs({ addonId })}`),
+    create: (data) => request('/api/addon-price-rules', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/api/addon-price-rules/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/addon-price-rules/${id}`, { method: 'DELETE' }),
+  },
+  pricing: {
+    calculate: (input) => request('/api/pricing/calculate', { method: 'POST', body: JSON.stringify(input) }),
+  },
   reviews: {
     list: (filters) => request(`/api/reviews/attempts${qs(filters)}`),
     get: (id) => request(`/api/reviews/attempts/${id}`),

@@ -92,8 +92,14 @@ router.put(
 router.put(
   '/:id',
   handle(async (req, res) => {
-    const { label, labelEn, organizationTypeId, sortOrder, isActive } =
-      req.body || {};
+    const {
+      label,
+      labelEn,
+      organizationTypeId,
+      sortOrder,
+      isActive,
+      defaultPriceListId,
+    } = req.body || {};
     const data = {};
     if (label !== undefined) data.label = String(label).trim();
     if (labelEn !== undefined)
@@ -102,6 +108,9 @@ router.put(
       data.organizationTypeId = organizationTypeId || null;
     if (sortOrder !== undefined) data.sortOrder = Number(sortOrder) || 0;
     if (isActive !== undefined) data.isActive = !!isActive;
+    // Pricing (Slice 2): default price list for this subtype ('' clears it).
+    if (defaultPriceListId !== undefined)
+      data.defaultPriceListId = defaultPriceListId || null;
     const subtype = await prisma.organizationSubtype.update({
       where: { id: req.params.id },
       data,

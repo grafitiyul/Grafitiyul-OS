@@ -30,6 +30,11 @@ import locationsRouter from './routes/locations.js';
 import productsRouter from './routes/products.js';
 import activityTypesRouter from './routes/activityTypes.js';
 import paymentConfigRouter from './routes/paymentConfig.js';
+import priceListsRouter from './routes/priceLists.js';
+import priceRulesRouter from './routes/priceRules.js';
+import addonsRouter from './routes/addons.js';
+import addonPriceRulesRouter from './routes/addonPriceRules.js';
+import pricingCalcRouter from './routes/pricingCalc.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -126,6 +131,15 @@ app.use('/api/locations', requireAdminAuth, locationsRouter);
 app.use('/api/products', requireAdminAuth, productsRouter);
 app.use('/api/activity-types', requireAdminAuth, activityTypesRouter);
 app.use('/api/payment-config', requireAdminAuth, paymentConfigRouter);
+
+// Products & Pricing — Slice 2 (pricing engine + add-ons). Admin only. NOT
+// wired to Deals; no DealLineItem, no Quotes. /api/pricing/calculate is a
+// read-only test endpoint for the engine.
+app.use('/api/price-lists', requireAdminAuth, priceListsRouter);
+app.use('/api/price-rules', requireAdminAuth, priceRulesRouter);
+app.use('/api/addons', requireAdminAuth, addonsRouter);
+app.use('/api/addon-price-rules', requireAdminAuth, addonPriceRulesRouter);
+app.use('/api/pricing', requireAdminAuth, pricingCalcRouter);
 
 // Unknown /api/* paths get a real JSON 404 instead of falling through to
 // the SPA fallback (which would serve HTML for an API request).

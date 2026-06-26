@@ -88,13 +88,17 @@ router.put(
 router.put(
   '/:id',
   handle(async (req, res) => {
-    const { label, labelEn, sortOrder, isActive } = req.body || {};
+    const { label, labelEn, sortOrder, isActive, defaultPriceListId } =
+      req.body || {};
     const data = {};
     if (label !== undefined) data.label = String(label).trim();
     if (labelEn !== undefined)
       data.labelEn = labelEn ? String(labelEn).trim() : null;
     if (sortOrder !== undefined) data.sortOrder = Number(sortOrder) || 0;
     if (isActive !== undefined) data.isActive = !!isActive;
+    // Pricing (Slice 2): default price list for this org type ('' clears it).
+    if (defaultPriceListId !== undefined)
+      data.defaultPriceListId = defaultPriceListId || null;
     const type = await prisma.organizationType.update({
       where: { id: req.params.id },
       data,
