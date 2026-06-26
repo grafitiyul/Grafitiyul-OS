@@ -400,6 +400,47 @@ export const api = {
     removeContact: (linkId) =>
       request(`/api/deals/contacts/${linkId}`, { method: 'DELETE' }),
   },
+  // ── Products & Pricing — Slice 1 (catalog + files + payment config) ──
+  mediaFiles: {
+    presign: (data) =>
+      request('/api/media-files/presign', { method: 'POST', body: JSON.stringify(data) }),
+    create: (data) =>
+      request('/api/media-files', { method: 'POST', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/media-files/${id}`, { method: 'DELETE' }),
+  },
+  locations: {
+    list: () => request('/api/locations'),
+    reorder: (ids) => request('/api/locations/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
+    create: (data) => request('/api/locations', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/api/locations/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/locations/${id}`, { method: 'DELETE' }),
+  },
+  activityTypes: {
+    list: () => request('/api/activity-types'),
+  },
+  products: {
+    list: () => request('/api/products'),
+    get: (id) => request(`/api/products/${id}`),
+    create: (data) => request('/api/products', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/api/products/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/products/${id}`, { method: 'DELETE' }),
+    addVariant: (id, data) => request(`/api/products/${id}/variants`, { method: 'POST', body: JSON.stringify(data) }),
+    updateVariant: (variantId, data) => request(`/api/products/variants/${variantId}`, { method: 'PUT', body: JSON.stringify(data) }),
+    removeVariant: (variantId) => request(`/api/products/variants/${variantId}`, { method: 'DELETE' }),
+    addVariantImage: (variantId, mediaFileId) =>
+      request(`/api/products/variants/${variantId}/images`, { method: 'POST', body: JSON.stringify({ mediaFileId }) }),
+    removeVariantImage: (imageId) => request(`/api/products/variants/images/${imageId}`, { method: 'DELETE' }),
+  },
+  payment: {
+    listTerms: () => request('/api/payment-config/terms'),
+    createTerm: (data) => request('/api/payment-config/terms', { method: 'POST', body: JSON.stringify(data) }),
+    updateTerm: (id, data) => request(`/api/payment-config/terms/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    removeTerm: (id) => request(`/api/payment-config/terms/${id}`, { method: 'DELETE' }),
+    listMethods: () => request('/api/payment-config/methods'),
+    createMethod: (data) => request('/api/payment-config/methods', { method: 'POST', body: JSON.stringify(data) }),
+    updateMethod: (id, data) => request(`/api/payment-config/methods/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    removeMethod: (id) => request(`/api/payment-config/methods/${id}`, { method: 'DELETE' }),
+  },
   reviews: {
     list: (filters) => request(`/api/reviews/attempts${qs(filters)}`),
     get: (id) => request(`/api/reviews/attempts/${id}`),

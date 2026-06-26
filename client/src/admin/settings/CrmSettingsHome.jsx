@@ -35,6 +35,24 @@ export default function CrmSettingsHome() {
           title="שלבי דיל"
           description="צינור המכירות — השלבים והסדר שלהם."
         />
+        <CategoryCard
+          to="/admin/settings/crm/products"
+          icon="📦"
+          title="מוצרים"
+          description="קטלוג המוצרים והוריאציות לפי מיקום."
+        />
+        <CategoryCard
+          to="/admin/settings/crm/locations"
+          icon="📍"
+          title="מיקומים"
+          description="קטלוג המיקומים (עיר / אזור)."
+        />
+        <CategoryCard
+          to="/admin/settings/crm/payment"
+          icon="💳"
+          title="הגדרות תשלום"
+          description="תנאי תשלום ואמצעי תשלום וברירות מחדל."
+        />
       </CategoryGrid>
     </div>
   );

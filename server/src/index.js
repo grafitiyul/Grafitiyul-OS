@@ -25,6 +25,11 @@ import organizationSubtypesRouter from './routes/organizationSubtypes.js';
 import contactsRouter from './routes/contacts.js';
 import dealsRouter from './routes/deals.js';
 import dealStagesRouter from './routes/dealStages.js';
+import mediaFilesRouter from './routes/mediaFiles.js';
+import locationsRouter from './routes/locations.js';
+import productsRouter from './routes/products.js';
+import activityTypesRouter from './routes/activityTypes.js';
+import paymentConfigRouter from './routes/paymentConfig.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -113,6 +118,14 @@ app.use('/api/contacts', requireAdminAuth, contactsRouter);
 // payments / tours / activities are NOT built yet.
 app.use('/api/deals', requireAdminAuth, dealsRouter);
 app.use('/api/deal-stages', requireAdminAuth, dealStagesRouter);
+
+// Products & Pricing — Slice 1 (catalog + R2 files + payment config). Admin
+// only. Pricing engine, add-ons, and Deal integration are NOT built yet.
+app.use('/api/media-files', requireAdminAuth, mediaFilesRouter);
+app.use('/api/locations', requireAdminAuth, locationsRouter);
+app.use('/api/products', requireAdminAuth, productsRouter);
+app.use('/api/activity-types', requireAdminAuth, activityTypesRouter);
+app.use('/api/payment-config', requireAdminAuth, paymentConfigRouter);
 
 // Unknown /api/* paths get a real JSON 404 instead of falling through to
 // the SPA fallback (which would serve HTML for an API request).

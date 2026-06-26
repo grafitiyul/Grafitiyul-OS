@@ -46,6 +46,11 @@ import DealDetail from './admin/deals/DealDetail.jsx';
 import SettingsHome from './admin/settings/SettingsHome.jsx';
 import CrmSettingsHome from './admin/settings/CrmSettingsHome.jsx';
 import DealStagesSettings from './admin/crm/settings/DealStagesSettings.jsx';
+// Products & Pricing — Slice 1 (catalog + files + payment config).
+import ProductsSettings from './admin/products/ProductsSettings.jsx';
+import ProductDetail from './admin/products/ProductDetail.jsx';
+import LocationsSettings from './admin/products/LocationsSettings.jsx';
+import PaymentConfigSettings from './admin/products/PaymentConfigSettings.jsx';
 // TEMPORARY (Phase 1/2 review scaffolding): mounts the public-website
 // foundation at a NON-root path so it can be reviewed without touching the
 // root "/" route or the Landing/PWA resolver. This route is removed when the
@@ -133,6 +138,10 @@ export default function App() {
           path="settings/crm/deal-stages"
           element={<DealStagesSettings />}
         />
+        <Route path="settings/crm/products" element={<ProductsSettings />} />
+        <Route path="settings/crm/products/:id" element={<ProductDetail />} />
+        <Route path="settings/crm/locations" element={<LocationsSettings />} />
+        <Route path="settings/crm/payment" element={<PaymentConfigSettings />} />
         <Route path="users" element={<AdminUsersPage />} />
         <Route path="documents" element={<DocumentsLayout />}>
           <Route index element={<DocumentsIndexPage />} />

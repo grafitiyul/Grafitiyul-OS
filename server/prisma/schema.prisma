@@ -843,3 +843,160 @@ model DealContact {
   @@index([contactId])
   @@index([dealId])
 }
+
+// ============================================================================
+// Products & Pricing — Slice 1 (Catalog + Files + Payment configuration)
+// ============================================================================
+//
+// Product = what we sell; Pricing (Slice 2) = how price is computed; Deal lines
+// (Slice 3) = the frozen snapshot. This slice adds ONLY the catalog, the R2 file
+// metadata, the activity-type seed, and payment config. No pricing, no add-ons,
+// no Deal changes. See docs/architecture/GOS-products-pricing-architecture.md.
+//
+// Images live in Cloudflare R2; the DB stores only metadata + object keys/URLs
+// (no DB blobs for this module). Money = BigInt minor units + currency.
+
+// R2 object metadata. Foundation for a reusable Files service (images now;
+// PDFs/documents later).
+model MediaFile {
+  id           String   @id @default(cuid())
+  r2Key        String   @unique
+  url          String
+  bucket       String
+  filename     String
+  mimeType     String
+  sizeBytes    Int
+  width        Int?
+  height       Int?
+  kind         String   @default("image") // image | pdf | doc
+  uploadedById String? // loose actor id (no FK)
+  createdAt    DateTime @default(now())
+
+  variantMeetingImages ProductVariant[]      @relation("VariantMeetingImage")
+  variantGalleryLinks  ProductVariantImage[]
+}
+
+// Simple location catalog (e.g. "תל אביב - פלורנטין"). No City/Area split.
+model Location {
+  id        String           @id @default(cuid())
+  nameHe    String
+  nameEn    String?
+  active    Boolean          @default(true)
+  sortOrder Int              @default(0)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  variants  ProductVariant[]
+
+  @@index([sortOrder])
+}
+
+// What we sell. Bilingual name + rich marketing descriptions. No pricing, no
+// location/operational data (those live on the variant).
+model Product {
+  id              String           @id @default(cuid())
+  nameHe          String
+  nameEn          String?
+  marketingDescHe String? // rich HTML
+  marketingDescEn String? // rich HTML
+  active          Boolean          @default(true)
+  sortOrder       Int              @default(0)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  variants        ProductVariant[]
+
+  @@index([sortOrder])
+}
+
+// Product × Location. Owns all product-location detail incl. operational data,
+// guide-pay defaults, and per-format availability.
+model ProductVariant {
+  id                    String     @id @default(cuid())
+  product               Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId             String
+  location              Location   @relation(fields: [locationId], references: [id])
+  locationId            String
+  marketingDescHe       String? // rich HTML
+  marketingDescEn       String?
+  guideDescHe           String? // internal, rich HTML
+  guideDescEn           String?
+  durationHours         Float? // numeric source of truth; display derived
+  meetingPointHe        String?
+  meetingPointEn        String?
+  endingPointHe         String?
+  endingPointEn         String?
+  meetingPointImage     MediaFile? @relation("VariantMeetingImage", fields: [meetingPointImageId], references: [id], onDelete: SetNull)
+  meetingPointImageId   String?
+  baseGuidePaymentMinor BigInt     @default(0)
+  travelPaymentMinor    BigInt?
+  currency              String     @default("ILS")
+  // Per-format availability (defaults all true; admin disables manually).
+  availablePublic       Boolean    @default(true)
+  availablePrivate      Boolean    @default(true)
+  availableBusiness     Boolean    @default(true)
+  active                Boolean    @default(true)
+  sortOrder             Int        @default(0)
+  createdAt             DateTime   @default(now())
+  updatedAt             DateTime   @updatedAt
+  galleryImages         ProductVariantImage[]
+
+  @@unique([productId, locationId])
+  @@index([productId])
+  @@index([locationId])
+}
+
+// Ordered quote gallery for a variant (explicit per-owner join, not polymorphic).
+model ProductVariantImage {
+  id               String         @id @default(cuid())
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
+  productVariantId String
+  mediaFile        MediaFile      @relation(fields: [mediaFileId], references: [id], onDelete: Cascade)
+  mediaFileId      String
+  sortOrder        Int            @default(0)
+
+  @@index([productVariantId])
+  @@index([mediaFileId])
+}
+
+// Seeded: public | private | business. priceModel drives Slice-2 pricing.
+model ActivityType {
+  id         String   @id @default(cuid())
+  key        String   @unique // public | private | business
+  nameHe     String
+  nameEn     String?
+  priceModel String // per_head | tiered
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// Payment terms ⇄ methods with bidirectional optional defaults. The auto-fill on
+// the Deal happens in Slice 3.
+model PaymentTerm {
+  id                     String          @id @default(cuid())
+  nameHe                 String
+  nameEn                 String?
+  defaultPaymentMethod   PaymentMethod?  @relation("TermDefaultMethod", fields: [defaultPaymentMethodId], references: [id], onDelete: SetNull)
+  defaultPaymentMethodId String?
+  active                 Boolean         @default(true)
+  sortOrder              Int             @default(0)
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @updatedAt
+  methodsDefaultingHere  PaymentMethod[] @relation("MethodDefaultTerm")
+
+  @@index([sortOrder])
+}
+
+model PaymentMethod {
+  id                   String        @id @default(cuid())
+  nameHe               String
+  nameEn               String?
+  defaultPaymentTerm   PaymentTerm?  @relation("MethodDefaultTerm", fields: [defaultPaymentTermId], references: [id], onDelete: SetNull)
+  defaultPaymentTermId String?
+  active               Boolean       @default(true)
+  sortOrder            Int           @default(0)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  termsDefaultingHere  PaymentTerm[] @relation("TermDefaultMethod")
+
+  @@index([sortOrder])
+}
