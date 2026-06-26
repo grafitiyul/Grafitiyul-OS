@@ -560,3 +560,185 @@ model FlowTargetPerson {
   @@id([flowId, personRefId])
   @@index([personRefId])
 }
+
+// ============================================================================
+// CRM module (Phase 1 foundation) — Organizations, Units, Contacts
+// ============================================================================
+//
+// This is the reference-data foundation for the future Deals/Activities
+// workflow (the Pipedrive replacement). Phase 1 builds ONLY foundation:
+// Organizations, Organization Units, Organization Types, Contacts, phones,
+// emails, and contact↔organization links. NO Deals, NO Activities, NO
+// WhatsApp/Gmail/iCount/automation yet.
+//
+// Conventions: this slice follows the LIVE app conventions (cuid ids, string
+// status/type fields, no Postgres enums/citext) for consistency with the
+// existing 20+ models. The Phase-0 design (UUID v7 + enums + citext +
+// timestamptz, see docs/architecture/) remains the FUTURE TARGET applied during
+// the governed migration — not here.
+//
+// Source-of-truth notes:
+//   * Organization is the parent; Organization Units (departments/divisions)
+//     belong to it. An Organization may have zero units.
+//   * Organization Type belongs to the Organization (School/Corporate/…). It
+//     will later drive pricing, quote wording, payment terms, templates.
+//   * Organization SUBTYPE does NOT belong to the Organization — it belongs to
+//     the future Deal. OrganizationSubtype here is a prepared catalog with NO
+//     consumer yet; a Deal will reference it once Deals are built.
+//   * Finance fields exist on both Organization and Organization Unit to support
+//     the future resolution priority: Deal override → Unit → Organization →
+//     Organization Type defaults. That resolution is NOT implemented yet.
+
+// Configurable organization type. `key` is the stable internal key (logic never
+// reads the Hebrew label). Will later affect pricing/templates/terms/workflows.
+model OrganizationType {
+  id            String                @id @default(cuid())
+  key           String                @unique
+  label         String // Hebrew display label
+  labelEn       String?
+  sortOrder     Int                   @default(0)
+  isActive      Boolean               @default(true)
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  organizations Organization[]
+  subtypes      OrganizationSubtype[]
+
+  @@index([sortOrder])
+}
+
+// Subtype belongs to the DEAL, not the Organization. Prepared as a catalog now;
+// it has NO consumer until Deals exist (a Deal will reference a subtype). May be
+// scoped to an OrganizationType (e.g. School → Teachers / Students).
+model OrganizationSubtype {
+  id                 String            @id @default(cuid())
+  key                String            @unique
+  label              String
+  labelEn            String?
+  organizationType   OrganizationType? @relation(fields: [organizationTypeId], references: [id], onDelete: SetNull)
+  organizationTypeId String?
+  sortOrder          Int               @default(0)
+  isActive           Boolean           @default(true)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  @@index([organizationTypeId])
+}
+
+// The parent organization. Departments/divisions are OrganizationUnit children.
+// Finance fields are optional — many organizations have no departments. When a
+// Deal is tied to a Unit, the Unit's finance values normally win (see resolution
+// priority above).
+model Organization {
+  id                 String                @id @default(cuid())
+  name               String
+  organizationType   OrganizationType?     @relation(fields: [organizationTypeId], references: [id], onDelete: SetNull)
+  organizationTypeId String?
+  notes              String?
+  // Optional finance / identity fields.
+  taxId              String?
+  address            String?
+  financeContactName String?
+  financePhone       String?
+  financeEmail       String?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+  units              OrganizationUnit[]
+  contactLinks       ContactOrganization[]
+
+  @@index([organizationTypeId])
+  @@index([name])
+}
+
+// A department / division / business unit. Belongs to one Organization. Every
+// unit may behave differently, so it carries its own optional finance fields.
+model OrganizationUnit {
+  id                 String                @id @default(cuid())
+  organization       Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId     String
+  name               String
+  taxId              String?
+  address            String?
+  financeContactName String?
+  financePhone       String?
+  financeEmail       String?
+  sortOrder          Int                   @default(0)
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+  contactLinks       ContactOrganization[]
+
+  @@index([organizationId])
+}
+
+// A person. Bilingual required names (He + En). Full names are DERIVED at the
+// API/UI layer, not stored (no duplicate full-name columns). A contact may
+// belong to zero, one, or many organizations (via ContactOrganization), and
+// optionally to a specific unit.
+model Contact {
+  id          String                @id @default(cuid())
+  firstNameHe String
+  lastNameHe  String
+  firstNameEn String
+  lastNameEn  String
+  notes       String?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  phones      ContactPhone[]
+  emails      ContactEmail[]
+  orgLinks    ContactOrganization[]
+
+  @@index([lastNameHe])
+  @@index([lastNameEn])
+}
+
+// One of a contact's phone numbers. Exactly one should be primary (enforced at
+// the API layer for now; a partial unique index is the future-target version).
+model ContactPhone {
+  id        String   @id @default(cuid())
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contactId String
+  value     String
+  label     String?
+  isPrimary Boolean  @default(false)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([contactId])
+}
+
+// One of a contact's email addresses. One primary (API-enforced for now).
+model ContactEmail {
+  id        String   @id @default(cuid())
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contactId String
+  value     String
+  label     String?
+  isPrimary Boolean  @default(false)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([contactId])
+}
+
+// Contact ↔ Organization membership, with an optional specific Unit. A contact
+// may be linked to many organizations; within an organization it may be tied to
+// a unit or to the organization as a whole (organizationUnitId null).
+model ContactOrganization {
+  id                 String            @id @default(cuid())
+  contact            Contact           @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contactId          String
+  organization       Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId     String
+  organizationUnit   OrganizationUnit? @relation(fields: [organizationUnitId], references: [id], onDelete: SetNull)
+  organizationUnitId String?
+  role               String?
+  isPrimary          Boolean           @default(false)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  @@unique([contactId, organizationId, organizationUnitId])
+  @@index([organizationId])
+  @@index([organizationUnitId])
+  @@index([contactId])
+}

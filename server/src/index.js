@@ -19,6 +19,10 @@ import recruitmentRouter from './routes/recruitment.js';
 import exportsRouter from './routes/exports.js';
 import portalRouter from './routes/portal.js';
 import adminUsersRouter from './routes/adminUsers.js';
+import organizationsRouter from './routes/organizations.js';
+import organizationTypesRouter from './routes/organizationTypes.js';
+import organizationSubtypesRouter from './routes/organizationSubtypes.js';
+import contactsRouter from './routes/contacts.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -83,6 +87,17 @@ app.use('/api/people', requireAdminAuth, peopleRouter);
 app.use('/api/recruitment', requireAdminAuth, recruitmentRouter);
 app.use('/api/exports', requireAdminAuth, exportsRouter);
 app.use('/api/admin-users', requireAdminAuth, adminUsersRouter);
+
+// ── CRM foundation (Phase 1) ───────────────────────────────────
+//
+// Organizations / units / types / subtypes / contacts. Reference data
+// for the future Deals + Activities workflow (the Pipedrive replacement).
+// Admin-only; no public consumer. Deals, Activities, and all external
+// integrations (WhatsApp / Gmail / iCount / automation) are NOT built yet.
+app.use('/api/organizations', requireAdminAuth, organizationsRouter);
+app.use('/api/organization-types', requireAdminAuth, organizationTypesRouter);
+app.use('/api/organization-subtypes', requireAdminAuth, organizationSubtypesRouter);
+app.use('/api/contacts', requireAdminAuth, contactsRouter);
 
 // Unknown /api/* paths get a real JSON 404 instead of falling through to
 // the SPA fallback (which would serve HTML for an API request).

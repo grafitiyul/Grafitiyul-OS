@@ -239,6 +239,113 @@ export const api = {
         body: JSON.stringify({ isActive }),
       }),
   },
+  // ── CRM foundation (Phase 1) — reference data only ───────────────
+  organizations: {
+    list: () => request('/api/organizations'),
+    get: (id) => request(`/api/organizations/${id}`),
+    create: (data) =>
+      request('/api/organizations', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    update: (id, data) =>
+      request(`/api/organizations/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    remove: (id) => request(`/api/organizations/${id}`, { method: 'DELETE' }),
+    addUnit: (id, data) =>
+      request(`/api/organizations/${id}/units`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updateUnit: (unitId, data) =>
+      request(`/api/organizations/units/${unitId}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    removeUnit: (unitId) =>
+      request(`/api/organizations/units/${unitId}`, { method: 'DELETE' }),
+  },
+  organizationTypes: {
+    list: () => request('/api/organization-types'),
+    create: (data) =>
+      request('/api/organization-types', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    update: (id, data) =>
+      request(`/api/organization-types/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    remove: (id) =>
+      request(`/api/organization-types/${id}`, { method: 'DELETE' }),
+  },
+  organizationSubtypes: {
+    list: (organizationTypeId) =>
+      request(`/api/organization-subtypes${qs({ organizationTypeId })}`),
+    create: (data) =>
+      request('/api/organization-subtypes', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    update: (id, data) =>
+      request(`/api/organization-subtypes/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    remove: (id) =>
+      request(`/api/organization-subtypes/${id}`, { method: 'DELETE' }),
+  },
+  contacts: {
+    list: () => request('/api/contacts'),
+    get: (id) => request(`/api/contacts/${id}`),
+    create: (data) =>
+      request('/api/contacts', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) =>
+      request(`/api/contacts/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    remove: (id) => request(`/api/contacts/${id}`, { method: 'DELETE' }),
+    addPhone: (id, data) =>
+      request(`/api/contacts/${id}/phones`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updatePhone: (phoneId, data) =>
+      request(`/api/contacts/phones/${phoneId}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    removePhone: (phoneId) =>
+      request(`/api/contacts/phones/${phoneId}`, { method: 'DELETE' }),
+    addEmail: (id, data) =>
+      request(`/api/contacts/${id}/emails`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updateEmail: (emailId, data) =>
+      request(`/api/contacts/emails/${emailId}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    removeEmail: (emailId) =>
+      request(`/api/contacts/emails/${emailId}`, { method: 'DELETE' }),
+    addOrganization: (id, data) =>
+      request(`/api/contacts/${id}/organizations`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updateOrganization: (linkId, data) =>
+      request(`/api/contacts/organizations/${linkId}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    removeOrganization: (linkId) =>
+      request(`/api/contacts/organizations/${linkId}`, { method: 'DELETE' }),
+  },
   reviews: {
     list: (filters) => request(`/api/reviews/attempts${qs(filters)}`),
     get: (id) => request(`/api/reviews/attempts/${id}`),

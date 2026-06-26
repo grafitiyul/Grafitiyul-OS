@@ -31,6 +31,14 @@ import PeopleList from './admin/people/PeopleList.jsx';
 import PersonProfile from './admin/people/PersonProfile.jsx';
 import TeamsPage from './admin/people/TeamsPage.jsx';
 import AdminUsersPage from './admin/users/AdminUsersPage.jsx';
+// CRM foundation (Phase 1) — secondary reference/management surface. Daily work
+// will start from Activities (built later); these pages are reached from Deals.
+import CrmLayout from './admin/crm/CrmLayout.jsx';
+import OrganizationsList from './admin/crm/organizations/OrganizationsList.jsx';
+import OrganizationDetail from './admin/crm/organizations/OrganizationDetail.jsx';
+import ContactsList from './admin/crm/contacts/ContactsList.jsx';
+import ContactDetail from './admin/crm/contacts/ContactDetail.jsx';
+import CrmSettingsPage from './admin/crm/settings/CrmSettingsPage.jsx';
 // TEMPORARY (Phase 1/2 review scaffolding): mounts the public-website
 // foundation at a NON-root path so it can be reviewed without touching the
 // root "/" route or the Landing/PWA resolver. This route is removed when the
@@ -94,6 +102,14 @@ export default function App() {
           <Route index element={<PeopleList />} />
           <Route path="teams" element={<TeamsPage />} />
           <Route path=":id" element={<PersonProfile />} />
+        </Route>
+        {/* CRM foundation — Organizations + Contacts (reference data). */}
+        <Route path="crm" element={<CrmLayout />}>
+          <Route index element={<OrganizationsList />} />
+          <Route path="organizations/:id" element={<OrganizationDetail />} />
+          <Route path="contacts" element={<ContactsList />} />
+          <Route path="contacts/:id" element={<ContactDetail />} />
+          <Route path="settings" element={<CrmSettingsPage />} />
         </Route>
         <Route path="users" element={<AdminUsersPage />} />
         <Route path="documents" element={<DocumentsLayout />}>

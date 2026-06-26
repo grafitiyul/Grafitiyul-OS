@@ -4,6 +4,9 @@ import { NavLink } from 'react-router-dom';
 const MODULES = [
   { key: 'procedures', to: '/admin/procedures', label: 'נהלים', glyph: '☰' },
   { key: 'people', to: '/admin/people', label: 'אנשים וגישה', glyph: '👥' },
+  // CRM is a secondary reference/management surface (Organizations + Contacts).
+  // Daily work will move to Activities once that module is built.
+  { key: 'crm', to: '/admin/crm', label: 'CRM', glyph: '🏢' },
   { key: 'documents', to: '/admin/documents', label: 'מסמכים', glyph: '📄' },
   { key: 'users', to: '/admin/users', label: 'משתמשים', glyph: '🔐' },
 ];
