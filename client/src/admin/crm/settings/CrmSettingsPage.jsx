@@ -411,12 +411,12 @@ function CatalogRow({ item, meta, onSave, onRemove, editExtra }) {
           )}
         </div>
         {meta}
-        <div className="flex items-center gap-0.5 shrink-0">
+        <div className="flex items-center gap-1 shrink-0">
           <button
             onClick={startEdit}
             aria-label="עריכה"
             title="עריכה"
-            className="text-gray-300 hover:text-blue-600 hover:bg-blue-50 rounded-md p-1.5 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition"
+            className="text-amber-500 hover:text-amber-600 hover:bg-amber-50 rounded-md p-1.5 transition"
           >
             <EditIcon />
           </button>
@@ -424,7 +424,7 @@ function CatalogRow({ item, meta, onSave, onRemove, editExtra }) {
             onClick={() => onRemove(item)}
             aria-label="מחק"
             title="מחק"
-            className="text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-md p-1.5 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition"
+            className="text-red-500 hover:text-red-600 hover:bg-red-50 rounded-md p-1.5 transition"
           >
             <TrashIcon />
           </button>
