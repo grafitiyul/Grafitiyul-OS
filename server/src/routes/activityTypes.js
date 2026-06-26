@@ -8,8 +8,11 @@ import { handle } from '../asyncHandler.js';
 
 const router = Router();
 
+// Display names are editable data, not enum keys. The `public` row is presented
+// to the business as "קבוצתי" (see Slice C terminology cleanup); the internal
+// key stays 'public' so nothing downstream breaks.
 const DEFAULTS = [
-  { key: 'public', nameHe: 'ציבורי', nameEn: 'Public', priceModel: 'per_head' },
+  { key: 'public', nameHe: 'קבוצתי', nameEn: 'Group', priceModel: 'per_head' },
   { key: 'private', nameHe: 'פרטי', nameEn: 'Private', priceModel: 'tiered' },
   { key: 'business', nameHe: 'עסקי', nameEn: 'Business', priceModel: 'tiered' },
 ];

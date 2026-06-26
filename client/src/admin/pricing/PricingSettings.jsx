@@ -62,22 +62,25 @@ export default function PricingSettings() {
   const [activityTypes, setActivityTypes] = useState([]);
   const [orgTypes, setOrgTypes] = useState([]);
   const [orgSubtypes, setOrgSubtypes] = useState([]);
+  const [segments, setSegments] = useState([]);
 
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      const [l, p, at, ot, os] = await Promise.all([
+      const [l, p, at, ot, os, seg] = await Promise.all([
         api.priceLists.list(),
         api.products.list(),
         api.activityTypes.list(),
         api.organizationTypes.list(),
         api.organizationSubtypes.list(),
+        api.pricingSegments.list(),
       ]);
       setLists(l);
       setProducts(p);
       setActivityTypes(at);
       setOrgTypes(ot);
       setOrgSubtypes(os);
+      setSegments(seg);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -116,6 +119,13 @@ export default function PricingSettings() {
           orgSubtypes={orgSubtypes}
         />
       )}
+
+      <SegmentMappingSection
+        segments={segments}
+        activityTypes={activityTypes}
+        orgSubtypes={orgSubtypes}
+        onChanged={refresh}
+      />
 
       <OrgDefaultsSection
         lists={lists}
@@ -418,7 +428,7 @@ function RuleForm({ list, rule, products, activityTypes, orgSubtypes, onClose, o
     <form onSubmit={save} className="rounded-lg bg-blue-50/50 ring-1 ring-blue-100 p-4 space-y-4">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Field label="מודל תמחור">
-          <Select value={d.priceModel} onChange={(v) => set('priceModel', v)} options={[{ value: 'per_head', name: 'לראש (ציבורי)' }, { value: 'tiered', name: 'מדורג (פרטי/עסקי)' }]} />
+          <Select value={d.priceModel} onChange={(v) => set('priceModel', v)} options={[{ value: 'per_head', name: 'לראש' }, { value: 'tiered', name: 'מדורג' }]} />
         </Field>
         <Field label="מוצר"><Select value={d.productId} onChange={(v) => { set('productId', v); set('productVariantId', ''); }} options={productOpts} /></Field>
         <Field label="וריאציה"><Select value={d.productVariantId} onChange={(v) => set('productVariantId', v)} options={variantOpts} /></Field>
@@ -455,6 +465,41 @@ function RuleForm({ list, rule, products, activityTypes, orgSubtypes, onClose, o
         <button type="button" onClick={onClose} className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-600 hover:bg-gray-50">ביטול</button>
       </div>
     </form>
+  );
+}
+
+// ───────────────────────── Segment (tab) mappings ──────────────────────────
+//
+// The business Pricing screen shows tabs (PricingSegment). Each tab maps to an
+// Activity Type and/or Organization Subtype — this is the one-time configuration
+// that connects a business tab to the engine's resolution scope. Changing a
+// mapping here propagates to existing cards in that tab (server-side).
+
+function SegmentMappingSection({ segments, activityTypes, orgSubtypes, onChanged }) {
+  const atOpts = [{ value: '', name: '— ללא —' }, ...activityTypes.map((a) => ({ value: a.id, name: a.nameHe }))];
+  const osOpts = [{ value: '', name: '— ללא —' }, ...orgSubtypes.map((s) => ({ value: s.id, name: s.label }))];
+
+  async function setBinding(id, patch) {
+    try { await api.pricingSegments.update(id, patch); onChanged(); }
+    catch (e) { alert('שגיאה: ' + (e.payload?.error || e.message)); }
+  }
+
+  return (
+    <SettingsCard
+      title="מיפוי לשוניות תמחור"
+      description="לכל לשונית עסקית (קבוצתי / פרטי / עסקי / בית ספר / סוכנים / מפיקים) אפשר לקשר סוג פעילות ו/או תת-סוג ארגון. זהו חיבור חד-פעמי בין המסך העסקי למנוע. שינוי כאן מתעדכן גם בכרטיסים קיימים."
+    >
+      <div className="space-y-2 p-2">
+        {segments.length === 0 && <div className="text-[12px] text-gray-400">אין לשוניות.</div>}
+        {segments.map((s) => (
+          <div key={s.id} className="grid grid-cols-1 sm:grid-cols-[8rem_1fr_1fr] gap-2 items-center">
+            <span className="text-sm font-medium text-gray-800">{s.nameHe}</span>
+            <Select value={s.activityTypeId || ''} onChange={(v) => setBinding(s.id, { activityTypeId: v || null })} options={atOpts} />
+            <Select value={s.organizationSubtypeId || ''} onChange={(v) => setBinding(s.id, { organizationSubtypeId: v || null })} options={osOpts} />
+          </div>
+        ))}
+      </div>
+    </SettingsCard>
   );
 }
 

@@ -2,30 +2,38 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import BackButton from '../common/BackButton.jsx';
-import { SettingsCard } from '../crm/settings/catalogKit.jsx';
 import { formatMinor, toMinor, minorToInput } from '../../lib/money.js';
 
-// Business-facing Pricing editor (Slice B). The PRIMARY pricing experience:
-//   version (PriceList) → tab (PricingSegment) → cards → model + numbers + preview.
-// Raw Price Rules / priority / specificity / model enum names are NOT shown here;
-// the advanced engine view stays at /settings/crm/pricing/advanced.
+// Business-facing Pricing editor (Slice C). The PRIMARY pricing experience is
+// MAINTAINING PRICES, not configuring the engine:
+//   version (PriceList) → tab (PricingSegment) → card → model → values → VAT.
+// A tab opens straight onto its cards. All engine configuration (segment→activity
+// /subtype mapping, raw rules, priority) lives behind "הגדרות מתקדמות".
 //
-// A "card" is an authoring concept: a set of sibling PriceRules that share a
-// `cardGroupId`, one per chosen location (ProductVariant), all carrying identical
-// model + numbers + tiers and the tab's activity/subtype binding. The engine is
-// untouched — it still resolves per rule.
+// A "card" is sibling PriceRules sharing a `cardGroupId`, one per chosen location
+// (ProductVariant), with identical model + values + VAT. The tab's activity/subtype
+// scope is configured once in Advanced and copied onto the card's rules there; the
+// business editor never asks about it. The engine is untouched.
 
 const INPUT =
   'h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
 const LABEL = 'block text-[12px] font-medium text-gray-600 mb-1';
 
-// Friendly model labels — the priceModel enum names are never shown.
+// Friendly model labels — priceModel enum names are never shown.
 const MODELS = [
   { value: 'tiered_group', name: 'מדרגות מחיר + משתתף נוסף' },
   { value: 'per_head', name: 'מחיר לאדם' },
   { value: 'fixed', name: 'מחיר קבוע' },
 ];
 const modelName = (m) => MODELS.find((x) => x.value === m)?.name || m;
+
+// Business VAT choices → engine vatMode.
+const VAT_OPTS = [
+  { value: 'included', name: 'כולל מע״מ' },
+  { value: 'excluded', name: 'מע״מ בתוספת' },
+  { value: 'exempt', name: 'פטור ממע״מ' },
+];
+const DEFAULT_VAT_RATE = 18;
 
 function newCardGroupId() {
   const rnd =
@@ -67,46 +75,17 @@ function Money({ minor, onChange, placeholder }) {
   );
 }
 
-function IntInput({ value, onChange, placeholder }) {
-  return (
-    <input
-      dir="ltr"
-      inputMode="numeric"
-      value={value ?? ''}
-      onChange={(e) => onChange(e.target.value === '' ? null : Math.max(0, Math.floor(Number(e.target.value) || 0)))}
-      placeholder={placeholder || '0'}
-      className={`${INPUT} text-left`}
-    />
-  );
-}
-
 // ─────────────────────────────── Root ──────────────────────────────────────
 
 export default function PricingBoard() {
   const [lists, setLists] = useState([]);
   const [segments, setSegments] = useState([]);
   const [products, setProducts] = useState([]);
-  const [activityTypes, setActivityTypes] = useState([]);
-  const [orgSubtypes, setOrgSubtypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   const [versionId, setVersionId] = useState(null);
   const [segmentId, setSegmentId] = useState(null);
-
-  const loadRef = useCallback(async () => {
-    const [seg, p, at, os] = await Promise.all([
-      api.pricingSegments.list(),
-      api.products.list(),
-      api.activityTypes.list(),
-      api.organizationSubtypes.list(),
-    ]);
-    setSegments(seg);
-    setProducts(p);
-    setActivityTypes(at);
-    setOrgSubtypes(os);
-    if (!segmentId && seg.length) setSegmentId(seg[0].id);
-  }, [segmentId]);
 
   const loadLists = useCallback(async () => {
     const l = await api.priceLists.list();
@@ -122,13 +101,20 @@ export default function PricingBoard() {
   const refreshAll = useCallback(async () => {
     setError(null);
     try {
-      await Promise.all([loadLists(), loadRef()]);
+      const [seg, p] = await Promise.all([
+        api.pricingSegments.list(),
+        api.products.list(),
+        loadLists(),
+      ]);
+      setSegments(seg);
+      setProducts(p);
+      setSegmentId((cur) => cur || seg[0]?.id || null);
     } catch (e) {
       setError(e.message);
     } finally {
       setLoading(false);
     }
-  }, [loadLists, loadRef]);
+  }, [loadLists]);
 
   useEffect(() => { refreshAll(); }, [refreshAll]);
 
@@ -136,18 +122,18 @@ export default function PricingBoard() {
   const segment = segments.find((s) => s.id === segmentId) || null;
 
   return (
-    <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-4xl mx-auto space-y-6">
+    <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-4xl mx-auto space-y-5">
       <header className="flex items-start justify-between gap-3">
         <div>
           <BackButton to="/admin/settings/crm" label="חזרה להגדרות CRM" />
           <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">תמחור</h1>
           <p className="text-[15px] text-gray-500 mt-1.5">
-            בחרו גרסת תמחור, עברו בין הלשוניות, והוסיפו כרטיסי תמחור לכל מוצר ומיקום.
+            נהלו מחירים למוצרים. בחרו גרסה, עברו בין הלשוניות, והוסיפו כרטיסי תמחור.
           </p>
         </div>
         <Link to="/admin/settings/crm/pricing/advanced"
-          className="shrink-0 mt-1 text-[12px] text-gray-400 hover:text-gray-600 underline">
-          מצב מתקדם
+          className="shrink-0 mt-1 inline-flex items-center gap-1 text-[12px] text-gray-400 hover:text-gray-600">
+          ⚙ הגדרות מתקדמות
         </Link>
       </header>
 
@@ -168,9 +154,6 @@ export default function PricingBoard() {
                   version={version}
                   segment={segment}
                   products={products}
-                  activityTypes={activityTypes}
-                  orgSubtypes={orgSubtypes}
-                  onSegmentChanged={loadRef}
                 />
               )}
             </>
@@ -183,13 +166,12 @@ export default function PricingBoard() {
   );
 }
 
-// ─────────────────────────── Version selector ──────────────────────────────
+// ─────────────────────── Version selector (light bar) ──────────────────────
 
 function VersionBar({ lists, versionId, onSelect, onChanged }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
-
   const active = lists.filter((l) => l.active);
 
   async function create(e) {
@@ -206,39 +188,32 @@ function VersionBar({ lists, versionId, onSelect, onChanged }) {
   }
 
   return (
-    <SettingsCard
-      title="גרסת תמחור"
-      description="כל גרסה היא מחירון נפרד. אפשר שכמה גרסאות יהיו פעילות במקביל; בהמשך, בהצעות מחיר/דילים, תבחרו איזו גרסה פעילה להשתמש."
-    >
-      <div className="p-2 flex flex-wrap items-center gap-2">
-        {active.length === 0 && <span className="text-[13px] text-gray-400">אין גרסאות פעילות.</span>}
-        {active.map((l) => (
-          <button key={l.id} onClick={() => onSelect(l.id)}
-            className={`h-10 rounded-lg px-4 text-sm font-medium transition ${
-              versionId === l.id
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'bg-white text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50'
-            }`}>
-            {l.nameHe}
-            {l.isDefault && <span className="ms-2 text-[10px] opacity-80">ברירת מחדל</span>}
-          </button>
-        ))}
-        {adding ? (
-          <form onSubmit={create} className="flex items-center gap-1.5">
-            <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Escape') setAdding(false); }}
-              placeholder="שם גרסה" className={`${INPUT} w-40`} />
-            <button type="submit" disabled={busy || !name.trim()}
-              className="h-10 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
-              {busy ? '…' : 'צור'}
-            </button>
-            <button type="button" onClick={() => setAdding(false)} className="h-10 rounded-lg border border-gray-300 px-3 text-sm text-gray-600 hover:bg-gray-50">ביטול</button>
-          </form>
-        ) : (
-          <button onClick={() => setAdding(true)} className="h-10 rounded-lg border border-dashed border-gray-300 px-4 text-sm text-gray-500 hover:bg-gray-50">+ גרסה חדשה</button>
-        )}
-      </div>
-    </SettingsCard>
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-[12px] font-medium text-gray-500 ms-1">גרסת תמחור:</span>
+      {active.length === 0 && <span className="text-[13px] text-gray-400">אין גרסאות פעילות.</span>}
+      {active.map((l) => (
+        <button key={l.id} onClick={() => onSelect(l.id)}
+          className={`h-9 rounded-full px-4 text-[13px] font-medium transition ${
+            versionId === l.id
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'bg-white text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50'
+          }`}>
+          {l.nameHe}{l.isDefault && <span className="ms-1.5 text-[10px] opacity-80">★</span>}
+        </button>
+      ))}
+      {adding ? (
+        <form onSubmit={create} className="flex items-center gap-1.5">
+          <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Escape') setAdding(false); }}
+            placeholder="שם גרסה" className="h-9 w-36 rounded-full border border-gray-300 px-3 text-[13px] focus:outline-none focus:ring-2 focus:ring-blue-200" />
+          <button type="submit" disabled={busy || !name.trim()}
+            className="h-9 rounded-full bg-blue-600 px-3 text-[13px] font-medium text-white hover:bg-blue-700 disabled:opacity-50">{busy ? '…' : 'צור'}</button>
+          <button type="button" onClick={() => setAdding(false)} className="h-9 rounded-full px-2 text-[13px] text-gray-400 hover:text-gray-600">ביטול</button>
+        </form>
+      ) : (
+        <button onClick={() => setAdding(true)} className="h-9 rounded-full border border-dashed border-gray-300 px-3 text-[13px] text-gray-500 hover:bg-gray-50">+ גרסה</button>
+      )}
+    </div>
   );
 }
 
@@ -246,13 +221,13 @@ function VersionBar({ lists, versionId, onSelect, onChanged }) {
 
 function TabBar({ segments, segmentId, onSelect }) {
   return (
-    <div className="flex flex-wrap gap-1.5 border-b border-gray-200 pb-px">
+    <div className="flex flex-wrap gap-1 border-b border-gray-200">
       {segments.map((s) => (
         <button key={s.id} onClick={() => onSelect(s.id)}
-          className={`h-10 rounded-t-lg px-4 text-sm font-medium transition ${
+          className={`h-10 rounded-t-lg px-4 text-sm font-medium transition -mb-px border-b-2 ${
             segmentId === s.id
-              ? 'bg-white text-blue-700 ring-1 ring-gray-200 ring-b-0 -mb-px'
-              : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'
+              ? 'text-blue-700 border-blue-600'
+              : 'text-gray-500 border-transparent hover:text-gray-800'
           }`}>
           {s.nameHe}
         </button>
@@ -263,14 +238,12 @@ function TabBar({ segments, segmentId, onSelect }) {
 
 // ───────────────────────────── Segment panel ───────────────────────────────
 
-function SegmentPanel({ version, segment, products, activityTypes, orgSubtypes, onSegmentChanged }) {
+function SegmentPanel({ version, segment, products }) {
   const [rules, setRules] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [productCache, setProductCache] = useState({}); // productId -> product (with variants)
+  const [productCache, setProductCache] = useState({});
   const [adding, setAdding] = useState(false);
   const [editingCardId, setEditingCardId] = useState(null);
-
-  const bound = Boolean(segment.activityTypeId || segment.organizationSubtypeId);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -283,7 +256,6 @@ function SegmentPanel({ version, segment, products, activityTypes, orgSubtypes, 
   }, [version.id, segment.id]);
   useEffect(() => { refresh(); }, [refresh]);
 
-  // Group sibling rules into cards by cardGroupId.
   const cards = useMemo(() => groupCards(rules), [rules]);
 
   // Prefetch product details (variants → location names) for products in cards.
@@ -303,29 +275,23 @@ function SegmentPanel({ version, segment, products, activityTypes, orgSubtypes, 
     return () => { alive = false; };
   }, [cards, productCache]);
 
-  if (!bound) {
+  if (products.length === 0) {
     return (
-      <BindingNotice
-        segment={segment}
-        activityTypes={activityTypes}
-        orgSubtypes={orgSubtypes}
-        onSaved={onSegmentChanged}
-      />
+      <div className="rounded-xl border border-dashed border-gray-200 py-10 text-center text-sm text-gray-400">
+        עדיין אין מוצרים. הוסיפו מוצרים במסך המוצרים כדי לתמחר אותם.
+      </div>
     );
   }
 
   return (
     <div className="space-y-3">
-      <BindingSummary segment={segment} activityTypes={activityTypes} orgSubtypes={orgSubtypes}
-        onChange={onSegmentChanged} />
-
       {loading ? (
         <div className="py-10 text-center text-sm text-gray-400">טוען כרטיסים…</div>
       ) : (
         <>
           {cards.length === 0 && !adding && (
             <div className="rounded-xl border border-dashed border-gray-200 py-10 text-center text-sm text-gray-400">
-              אין עדיין כרטיסי תמחור בלשונית הזו.
+              אין עדיין כרטיסי תמחור בלשונית "{segment.nameHe}".
             </div>
           )}
 
@@ -350,8 +316,8 @@ function SegmentPanel({ version, segment, products, activityTypes, orgSubtypes, 
               onSaved={() => { setAdding(false); refresh(); }} />
           ) : (
             <button onClick={() => setAdding(true)}
-              className="h-11 w-full rounded-xl border border-dashed border-blue-300 text-sm font-medium text-blue-600 hover:bg-blue-50">
-              + כרטיס תמחור חדש
+              className="h-12 w-full rounded-xl bg-blue-600 text-sm font-semibold text-white shadow-sm hover:bg-blue-700">
+              ＋ כרטיס תמחור
             </button>
           )}
         </>
@@ -360,7 +326,6 @@ function SegmentPanel({ version, segment, products, activityTypes, orgSubtypes, 
   );
 }
 
-// Group flat sibling rules into card objects keyed by cardGroupId.
 function groupCards(rules) {
   const byGroup = new Map();
   for (const r of rules) {
@@ -376,10 +341,10 @@ function groupCards(rules) {
       priceModel: rep.priceModel,
       adultPriceMinor: rep.adultPriceMinor ?? null,
       childPriceMinor: rep.childPriceMinor ?? null,
-      basePriceMinor: rep.basePriceMinor ?? null,
-      baseParticipants: rep.baseParticipants ?? null,
-      perAdditionalParticipantMinor: rep.perAdditionalParticipantMinor ?? null,
       fixedPriceMinor: rep.fixedPriceMinor ?? null,
+      perAdditionalParticipantMinor: rep.perAdditionalParticipantMinor ?? null,
+      vatMode: rep.vatMode || 'included',
+      vatRate: rep.vatRate ?? DEFAULT_VAT_RATE,
       tiers: (rep.tiers || []).map((t) => ({
         uptoParticipants: Number(t.uptoParticipants),
         totalPriceMinor: Number(t.totalPriceMinor),
@@ -389,80 +354,6 @@ function groupCards(rules) {
     });
   }
   return cards;
-}
-
-// ──────────────────────── Segment binding (config) ─────────────────────────
-
-function BindingNotice({ segment, activityTypes, orgSubtypes, onSaved }) {
-  return (
-    <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 space-y-3">
-      <div className="flex items-start gap-2">
-        <span className="text-lg">⚠️</span>
-        <div>
-          <div className="font-semibold text-amber-900 text-[15px]">הלשונית "{segment.nameHe}" עדיין לא ממופה</div>
-          <p className="text-[13px] text-amber-800 mt-1 leading-relaxed">
-            כדי להוסיף כרטיסי תמחור, חברו את הלשונית לסוג פעילות ו/או לתת-סוג ארגון קיים.
-            המיפוי קובע מתי התמחור של הלשונית הזו יחול. אין מיפוי קשיח — אתם בוחרים.
-          </p>
-        </div>
-      </div>
-      <BindingEditor segment={segment} activityTypes={activityTypes} orgSubtypes={orgSubtypes} onSaved={onSaved} />
-    </div>
-  );
-}
-
-function BindingSummary({ segment, activityTypes, orgSubtypes, onChange }) {
-  const [open, setOpen] = useState(false);
-  const at = activityTypes.find((a) => a.id === segment.activityTypeId);
-  const os = orgSubtypes.find((s) => s.id === segment.organizationSubtypeId);
-  const parts = [];
-  if (at) parts.push(`סוג פעילות: ${at.nameHe}`);
-  if (os) parts.push(`תת-סוג ארגון: ${os.label}`);
-  return (
-    <div className="rounded-lg bg-gray-50 ring-1 ring-gray-100 px-3 py-2 text-[12px] text-gray-600 flex items-center gap-2">
-      <span className="text-gray-400">מיפוי:</span>
-      <span className="flex-1">{parts.join(' · ') || 'ללא'}</span>
-      <button onClick={() => setOpen((v) => !v)} className="text-blue-600 hover:underline">{open ? 'סגור' : 'שנה'}</button>
-      {open && (
-        <div className="basis-full w-full pt-2">
-          <BindingEditor segment={segment} activityTypes={activityTypes} orgSubtypes={orgSubtypes}
-            onSaved={() => { setOpen(false); onChange(); }} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function BindingEditor({ segment, activityTypes, orgSubtypes, onSaved }) {
-  const [activityTypeId, setActivityTypeId] = useState(segment.activityTypeId || '');
-  const [organizationSubtypeId, setOrganizationSubtypeId] = useState(segment.organizationSubtypeId || '');
-  const [busy, setBusy] = useState(false);
-
-  const atOpts = [{ value: '', name: '— ללא —' }, ...activityTypes.map((a) => ({ value: a.id, name: a.nameHe }))];
-  const osOpts = [{ value: '', name: '— ללא —' }, ...orgSubtypes.map((s) => ({ value: s.id, name: s.label }))];
-
-  async function save() {
-    setBusy(true);
-    try {
-      await api.pricingSegments.update(segment.id, {
-        activityTypeId: activityTypeId || null,
-        organizationSubtypeId: organizationSubtypeId || null,
-      });
-      onSaved();
-    } catch (e) { alert('שגיאה: ' + (e.payload?.error || e.message)); }
-    finally { setBusy(false); }
-  }
-
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 items-end">
-      <Field label="סוג פעילות"><Select value={activityTypeId} onChange={setActivityTypeId} options={atOpts} /></Field>
-      <Field label="תת-סוג ארגון"><Select value={organizationSubtypeId} onChange={setOrganizationSubtypeId} options={osOpts} /></Field>
-      <button onClick={save} disabled={busy || (!activityTypeId && !organizationSubtypeId)}
-        className="h-10 rounded-lg bg-blue-600 px-5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
-        {busy ? 'שומר…' : 'שמור מיפוי'}
-      </button>
-    </div>
-  );
 }
 
 // ──────────────────────────────── Card view ────────────────────────────────
@@ -477,18 +368,13 @@ function CardView({ version, card, productCache, onEdit, onChanged }) {
 
   async function duplicate() {
     try {
-      const cardGroupId = newCardGroupId();
-      const base = {
-        priceListId: version.id,
-        pricingSegmentId: undefined, // keep same segment via existing rules' value
-      };
-      // Re-read one sibling to copy its segment/scope bindings exactly.
       const rules = await api.priceRules.list(version.id);
       const src = rules.find((r) => r.id === card.rules[0]?.id);
       if (!src) return;
+      const cardGroupId = newCardGroupId();
       for (const vid of card.variantIds) {
         await api.priceRules.create({
-          ...base,
+          priceListId: version.id,
           pricingSegmentId: src.pricingSegmentId,
           productId: src.productId,
           productVariantId: vid,
@@ -498,11 +384,11 @@ function CardView({ version, card, productCache, onEdit, onChanged }) {
           priceModel: card.priceModel,
           adultPriceMinor: card.adultPriceMinor,
           childPriceMinor: card.childPriceMinor,
-          basePriceMinor: card.basePriceMinor,
-          baseParticipants: card.baseParticipants,
           perAdditionalParticipantMinor: card.perAdditionalParticipantMinor,
           fixedPriceMinor: card.fixedPriceMinor,
           tiers: card.tiers,
+          vatMode: card.vatMode,
+          vatRate: card.vatRate,
           active: true,
         });
       }
@@ -526,9 +412,10 @@ function CardView({ version, card, productCache, onEdit, onChanged }) {
           <div className="text-[12px] text-gray-500 mt-0.5">
             {variantNames.length ? variantNames.join(' · ') : 'ללא מיקומים'}
           </div>
-          <span className="inline-block mt-2 text-[11px] rounded-full bg-indigo-50 text-indigo-700 px-2.5 py-0.5 ring-1 ring-indigo-100">
-            {modelName(card.priceModel)}
-          </span>
+          <div className="flex items-center gap-1.5 mt-2">
+            <span className="text-[11px] rounded-full bg-indigo-50 text-indigo-700 px-2.5 py-0.5 ring-1 ring-indigo-100">{modelName(card.priceModel)}</span>
+            <span className="text-[11px] rounded-full bg-gray-100 text-gray-600 px-2.5 py-0.5">{vatLabel(card.vatMode, card.vatRate)}</span>
+          </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
           <button onClick={onEdit} title="עריכה" className="text-amber-500 hover:bg-amber-50 rounded-md p-1.5">✎</button>
@@ -543,7 +430,12 @@ function CardView({ version, card, productCache, onEdit, onChanged }) {
   );
 }
 
-// Read-only summary of the card's numbers (human, not enum/scope).
+function vatLabel(mode, rate) {
+  if (mode === 'exempt') return 'פטור ממע״מ';
+  if (mode === 'excluded') return `מע״מ בתוספת ${rate}%`;
+  return `כולל מע״מ ${rate}%`;
+}
+
 function CardNumbers({ card }) {
   if (card.priceModel === 'fixed') {
     return <div className="text-[13px] text-gray-700">מחיר קבוע כולל: <b>{formatMinor(card.fixedPriceMinor)}</b></div>;
@@ -551,7 +443,6 @@ function CardNumbers({ card }) {
   if (card.priceModel === 'per_head') {
     return <div className="text-[13px] text-gray-700">מחיר למשתתף: <b>{formatMinor(card.adultPriceMinor)}</b></div>;
   }
-  // tiered_group
   const sorted = [...card.tiers].sort((a, b) => a.uptoParticipants - b.uptoParticipants);
   return (
     <div className="text-[13px] text-gray-700 space-y-0.5">
@@ -565,7 +456,7 @@ function CardNumbers({ card }) {
   );
 }
 
-// ─────────────────────────── Per-card preview ──────────────────────────────
+// ─────────────────────── Per-card quote-style preview ──────────────────────
 
 function CardPreview({ version, card }) {
   const [count, setCount] = useState(10);
@@ -580,31 +471,28 @@ function CardPreview({ version, card }) {
         priceModel: card.priceModel,
         adultPriceMinor: card.adultPriceMinor,
         childPriceMinor: card.childPriceMinor,
-        basePriceMinor: card.basePriceMinor,
-        baseParticipants: card.baseParticipants,
         perAdditionalParticipantMinor: card.perAdditionalParticipantMinor,
         fixedPriceMinor: card.fixedPriceMinor,
         tiers: card.tiers,
-        vatMode: version.defaultVatMode,
-        vatRate: version.defaultVatRate,
+        vatMode: card.vatMode,
+        vatRate: card.vatRate,
         participantCount: Number(count) || 0,
-        adultCount: Number(count) || 0, // per_head treats participants as one price
+        adultCount: Number(count) || 0,
         childCount: 0,
         groupCount: Number(groupCount) || 1,
       });
       setRes(r);
     } catch (e) { setRes({ ok: false, error: e.message }); }
     finally { setBusy(false); }
-  }, [card, version, count, groupCount]);
+  }, [card, count, groupCount]);
 
-  // Auto-run on mount + when inputs change (debounced lightly via effect).
   useEffect(() => { run(); }, [run]);
 
   const cur = version.currency;
   return (
     <div className="rounded-lg bg-gray-50 ring-1 ring-gray-100 p-3">
-      <div className="flex items-center gap-2 mb-2">
-        <span className="text-[12px] text-gray-500">תצוגה מקדימה:</span>
+      <div className="flex items-center gap-3 mb-2">
+        <span className="text-[12px] font-medium text-gray-500">הצעת מחיר</span>
         <label className="flex items-center gap-1 text-[12px] text-gray-600">
           משתתפים
           <input dir="ltr" value={count} onChange={(e) => setCount(e.target.value.replace(/\D/g, ''))}
@@ -619,33 +507,71 @@ function CardPreview({ version, card }) {
       </div>
 
       {res && res.ok ? (
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <PreviewStat label="נטו" value={formatMinor(res.netMinor, cur)} />
-          <PreviewStat label='מע״מ' value={formatMinor(res.vatMinor, cur)} />
-          <PreviewStat label="סה״כ" value={formatMinor(res.grossMinor, cur)} strong />
-        </div>
+        <QuoteLines res={res} card={card} count={Number(count) || 0} groupCount={Number(groupCount) || 1} currency={cur} />
       ) : res ? (
         <div className="text-[12px] text-red-600">{previewError(res.error)}</div>
       ) : null}
-      <div className="text-[11px] text-gray-400 mt-1.5">
-        {version.defaultVatMode === 'included' ? 'מחירים כוללים מע״מ' : 'מחירים ללא מע״מ'} · {version.defaultVatRate}%
+    </div>
+  );
+}
+
+// Render the preview as a quote: line items, VAT, total — adapting to VAT mode.
+// All amounts come from the engine response (no re-derivation of pricing).
+function QuoteLines({ res, card, count, groupCount, currency }) {
+  const f = (m) => formatMinor(m, currency);
+  const d = res.debug || {};
+  const g = groupCount || 1;
+  const lines = [];
+
+  if (card.priceModel === 'fixed') {
+    lines.push({ label: g > 1 ? `מחיר קבוע × ${g}` : 'מחיר קבוע', value: res.baseAmountMinor });
+  } else if (card.priceModel === 'per_head') {
+    const unit = Number(card.adultPriceMinor || 0);
+    lines.push({ label: `${count} משתתפים × ${f(unit)}`, value: res.baseAmountMinor });
+  } else {
+    // tiered_group: base tier line + (optional) additional-participants line.
+    const tierTotal = Number(d.tierTotalMinor || 0) * g;
+    const additional = Number(res.baseAmountMinor) - tierTotal;
+    lines.push({ label: `מחיר בסיס (עד ${d.tierUpto} משתתפים)${g > 1 ? ` × ${g}` : ''}`, value: tierTotal });
+    if (d.extraParticipants > 0) {
+      lines.push({ label: `${d.extraParticipants} משתתפים נוספים`, value: additional });
+    }
+  }
+
+  const isExempt = res.vatMode === 'exempt';
+  const isAdded = res.vatMode === 'excluded';
+
+  return (
+    <div className="rounded-md bg-white p-3 shadow-sm space-y-1.5 text-[13px]">
+      {lines.map((ln, i) => (
+        <Row key={i} label={ln.label} value={f(ln.value)} />
+      ))}
+      {isExempt ? (
+        <Row label="מע״מ" value="פטור" muted />
+      ) : isAdded ? (
+        <Row label={`מע״מ ${res.vatRate}%`} value={`+ ${f(res.vatMinor)}`} muted />
+      ) : (
+        <Row label={`כולל מע״מ ${res.vatRate}%`} value={f(res.vatMinor)} muted />
+      )}
+      <div className="border-t border-gray-100 pt-1.5">
+        <Row label="סה״כ לתשלום" value={f(res.grossMinor)} strong />
       </div>
     </div>
   );
 }
 
-function PreviewStat({ label, value, strong }) {
+function Row({ label, value, muted, strong }) {
   return (
-    <div className="rounded-md bg-white p-2 shadow-sm">
-      <div className="text-[10px] text-gray-500">{label}</div>
-      <div className={`mt-0.5 ${strong ? 'text-[15px] font-bold text-gray-900' : 'text-[13px] text-gray-800'}`}>{value}</div>
+    <div className={`flex items-center justify-between ${muted ? 'text-gray-400' : strong ? 'text-gray-900' : 'text-gray-700'}`}>
+      <span className={strong ? 'font-semibold' : ''}>{label}</span>
+      <span dir="ltr" className={strong ? 'font-bold text-[15px]' : ''}>{value}</span>
     </div>
   );
 }
 
 function previewError(code) {
   return {
-    rule_incomplete: 'חסרים שדות מחיר — מלאו את הערכים כדי לראות תצוגה מקדימה.',
+    rule_incomplete: 'חסרים שדות מחיר — מלאו את הערכים כדי לראות הצעת מחיר.',
     unknown_price_model: 'מודל תמחור לא מוכר.',
   }[code] || ('שגיאה: ' + code);
 }
@@ -662,12 +588,13 @@ function CardEditor({ version, segment, products, productCache, setProductCache,
   const [tiers, setTiers] = useState(
     card?.tiers?.length ? card.tiers.map((t) => ({ ...t })) : [{ uptoParticipants: null, totalPriceMinor: null }],
   );
+  const [vatMode, setVatMode] = useState(card?.vatMode || version.defaultVatMode || 'included');
+  const [vatRate, setVatRate] = useState(card?.vatRate ?? version.defaultVatRate ?? DEFAULT_VAT_RATE);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
   const product = productCache[productId];
 
-  // Load the chosen product's variants (locations) if not cached.
   useEffect(() => {
     if (!productId || productCache[productId]) return;
     let alive = true;
@@ -679,15 +606,11 @@ function CardEditor({ version, segment, products, productCache, setProductCache,
 
   const variants = product?.variants || [];
 
-  function toggleVariant(id) {
+  const toggleVariant = (id) =>
     setVariantIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
-  }
-
-  function setTier(i, key, val) {
-    setTiers((cur) => cur.map((t, idx) => (idx === i ? { ...t, [key]: val } : t)));
-  }
-  function addTier() { setTiers((cur) => [...cur, { uptoParticipants: null, totalPriceMinor: null }]); }
-  function removeTier(i) { setTiers((cur) => cur.filter((_, idx) => idx !== i)); }
+  const setTier = (i, key, val) => setTiers((cur) => cur.map((t, idx) => (idx === i ? { ...t, [key]: val } : t)));
+  const addTier = () => setTiers((cur) => [...cur, { uptoParticipants: null, totalPriceMinor: null }]);
+  const removeTier = (i) => setTiers((cur) => cur.filter((_, idx) => idx !== i));
 
   function validate() {
     if (!productId) return 'בחרו מוצר.';
@@ -701,8 +624,6 @@ function CardEditor({ version, segment, products, productCache, setProductCache,
     return null;
   }
 
-  // The fields the engine reads for this model (others nulled so stale values
-  // from a model switch never leak into resolution).
   function modelPayload() {
     if (priceModel === 'fixed') {
       return { fixedPriceMinor, adultPriceMinor: null, childPriceMinor: null, basePriceMinor: null, baseParticipants: null, perAdditionalParticipantMinor: null, tiers: [] };
@@ -710,7 +631,6 @@ function CardEditor({ version, segment, products, productCache, setProductCache,
     if (priceModel === 'per_head') {
       return { adultPriceMinor, childPriceMinor: adultPriceMinor, fixedPriceMinor: null, basePriceMinor: null, baseParticipants: null, perAdditionalParticipantMinor: null, tiers: [] };
     }
-    // tiered_group
     const cleanTiers = tiers
       .filter((t) => t.uptoParticipants != null && t.totalPriceMinor != null)
       .sort((a, b) => a.uptoParticipants - b.uptoParticipants)
@@ -723,7 +643,6 @@ function CardEditor({ version, segment, products, productCache, setProductCache,
     if (v) { setErr(v); return; }
     setErr(null); setBusy(true);
     try {
-      const mp = modelPayload();
       const common = {
         priceListId: version.id,
         pricingSegmentId: segment.id,
@@ -731,13 +650,13 @@ function CardEditor({ version, segment, products, productCache, setProductCache,
         activityTypeId: segment.activityTypeId || null,
         organizationSubtypeId: segment.organizationSubtypeId || null,
         priceModel,
-        vatMode: null, vatRate: null, // inherit the version's VAT
+        vatMode,
+        vatRate: vatMode === 'exempt' ? 0 : (Number(vatRate) || 0),
         active: true,
-        ...mp,
+        ...modelPayload(),
       };
 
       if (card) {
-        // Edit: diff sibling rules by variant — update kept, create added, remove dropped.
         const cardGroupId = card.cardGroupId;
         const existingByVariant = new Map(card.rules.map((r) => [r.productVariantId, r.id]));
         for (const vid of variantIds) {
@@ -751,7 +670,6 @@ function CardEditor({ version, segment, products, productCache, setProductCache,
           if (!variantIds.includes(r.productVariantId)) await api.priceRules.remove(r.id);
         }
       } else {
-        // Create: one rule per selected location, sharing a fresh cardGroupId.
         const cardGroupId = newCardGroupId();
         for (const vid of variantIds) {
           await api.priceRules.create({ ...common, cardGroupId, productVariantId: vid });
@@ -778,7 +696,7 @@ function CardEditor({ version, segment, products, productCache, setProductCache,
       {productId && (
         <Field label="מיקומים (בחרו אחד או יותר)">
           {variants.length === 0 ? (
-            <div className="text-[12px] text-gray-400">למוצר הזה אין עדיין וריאציות/מיקומים. הוסיפו אותם במסך המוצרים.</div>
+            <div className="text-[12px] text-gray-400">למוצר הזה אין עדיין מיקומים. הוסיפו אותם במסך המוצרים.</div>
           ) : (
             <div className="flex flex-wrap gap-1.5">
               {variants.map((vrt) => (
@@ -827,6 +745,18 @@ function CardEditor({ version, segment, products, productCache, setProductCache,
           </Field>
         </div>
       )}
+
+      {/* VAT — business controlled */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 border-t border-blue-100 pt-3">
+        <Field label="מע״מ"><Select value={vatMode} onChange={setVatMode} options={VAT_OPTS} /></Field>
+        {vatMode !== 'exempt' && (
+          <Field label="שיעור מע״מ %">
+            <input dir="ltr" inputMode="numeric" value={vatRate}
+              onChange={(e) => setVatRate(e.target.value === '' ? '' : Math.max(0, Number(e.target.value) || 0))}
+              className={`${INPUT} text-left`} />
+          </Field>
+        )}
+      </div>
 
       {err && <div className="text-[13px] text-red-600">{typeof err === 'string' ? err : 'שגיאה'}</div>}
 

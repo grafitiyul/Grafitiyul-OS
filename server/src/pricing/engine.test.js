@@ -146,6 +146,22 @@ test('VAT excluded: vat added on top', () => {
   assert.equal(vatMinor, 18000);
   assert.equal(grossMinor, 118000);
 });
+test('VAT exempt: no vat, net = gross, rate ignored', () => {
+  const { netMinor, vatMinor, grossMinor } = splitVat(100000, 'exempt', 18);
+  assert.equal(netMinor, 100000);
+  assert.equal(vatMinor, 0);
+  assert.equal(grossMinor, 100000);
+});
+test('exempt via calculate end-to-end (fixed model)', () => {
+  const r = run(
+    [{ id: 'r1', active: true, priceModel: 'fixed', fixedPriceMinor: 250000n, vatMode: 'exempt', vatRate: 18, priority: 0 }],
+    { participantCount: 1 },
+  );
+  assert.equal(r.netMinor, 250000);
+  assert.equal(r.vatMinor, 0);
+  assert.equal(r.grossMinor, 250000);
+  assert.equal(r.vatMode, 'exempt');
+});
 test('rule VAT override beats price-list default', () => {
   const r = run(
     [{ id: 'r1', active: true, priceModel: 'fixed', fixedPriceMinor: 118000n, vatMode: 'included', vatRate: 18, priority: 0 }],

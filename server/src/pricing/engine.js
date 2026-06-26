@@ -170,10 +170,12 @@ export function baseAmountMinor(rule, counts) {
     );
     let perGroup;
     let tierUpto;
+    let tierTotalMinor;
     let extraParticipants = 0;
     if (matchedTier) {
       perGroup = matchedTier.totalPriceMinor;
       tierUpto = matchedTier.uptoParticipants;
+      tierTotalMinor = matchedTier.totalPriceMinor;
     } else {
       // Above the largest tier: that tier's total + per-additional overflow.
       const last = tiers[tiers.length - 1];
@@ -181,12 +183,14 @@ export function baseAmountMinor(rule, counts) {
       extraParticipants = participantCount - last.uptoParticipants;
       perGroup = last.totalPriceMinor + extraParticipants * perAdd;
       tierUpto = last.uptoParticipants;
+      tierTotalMinor = last.totalPriceMinor;
     }
     return {
       amountMinor: Math.round(perGroup * groupCount),
       debug: {
         participantCount,
         tierUpto,
+        tierTotalMinor: Math.round(tierTotalMinor),
         extraParticipants,
         tierCount: tiers.length,
         groupCount,
@@ -210,15 +214,22 @@ function resolveParticipantCount(counts) {
   );
 }
 
-// Split a VAT-inclusive or VAT-exclusive amount into net / vat / gross.
+// Split an amount into net / vat / gross according to the VAT mode:
+//   included — the amount already contains VAT (extract it).
+//   excluded — VAT is added on top of the amount ("VAT added").
+//   exempt   — no VAT at all (net = gross, vat = 0); rate is ignored.
 export function splitVat(amountMinor, vatMode, vatRate) {
   const rate = Number(vatRate) || 0;
+  if (vatMode === 'exempt') {
+    const v = Math.round(amountMinor);
+    return { netMinor: v, vatMinor: 0, grossMinor: v };
+  }
   if (vatMode === 'included') {
     const grossMinor = Math.round(amountMinor);
     const netMinor = Math.round(grossMinor / (1 + rate / 100));
     return { netMinor, vatMinor: grossMinor - netMinor, grossMinor };
   }
-  // 'excluded' (default for anything not 'included')
+  // 'excluded' (default for anything not 'included'/'exempt')
   const netMinor = Math.round(amountMinor);
   const vatMinor = Math.round((netMinor * rate) / 100);
   return { netMinor, vatMinor, grossMinor: netMinor + vatMinor };

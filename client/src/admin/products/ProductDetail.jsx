@@ -162,9 +162,9 @@ function VariantCard({ variant, onChange }) {
         <span className="font-semibold text-gray-900">{variant.location?.nameHe}</span>
         {variant.durationHours != null && <span className="text-[12px] text-gray-500">· {durationDisplay(variant.durationHours)}</span>}
         <div className="flex items-center gap-1">
-          {variant.availablePublic && <Avail>P</Avail>}
-          {variant.availablePrivate && <Avail>Pr</Avail>}
-          {variant.availableBusiness && <Avail>B</Avail>}
+          {variant.availablePublic && <Avail>קבוצתי</Avail>}
+          {variant.availablePrivate && <Avail>פרטי</Avail>}
+          {variant.availableBusiness && <Avail>עסקי</Avail>}
         </div>
         {!variant.active && <span className="text-[11px] text-gray-400">(לא פעיל)</span>}
         <div className="flex-1" />
@@ -273,9 +273,9 @@ function VariantForm({ variant, onChange }) {
       <div>
         <div className="text-[11px] text-gray-500 mb-1.5">זמינות לפי פורמט</div>
         <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-          <Check label="Public" checked={form.availablePublic} onChange={(c) => set('availablePublic', c)} />
-          <Check label="Private" checked={form.availablePrivate} onChange={(c) => set('availablePrivate', c)} />
-          <Check label="Business" checked={form.availableBusiness} onChange={(c) => set('availableBusiness', c)} />
+          <Check label="קבוצתי" checked={form.availablePublic} onChange={(c) => set('availablePublic', c)} />
+          <Check label="פרטי" checked={form.availablePrivate} onChange={(c) => set('availablePrivate', c)} />
+          <Check label="עסקי" checked={form.availableBusiness} onChange={(c) => set('availableBusiness', c)} />
         </div>
       </div>
 

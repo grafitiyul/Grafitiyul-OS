@@ -48,6 +48,11 @@ router.get(
 
 // Update the owner-set bindings (and light label/active edits). Empty string or
 // null clears a binding back to "unmapped".
+//
+// When a binding changes, PROPAGATE it to every PriceRule authored under this tab
+// (matched by pricingSegmentId), so the cards' engine scope stays truthful and an
+// old card never resolves differently from a new one. This is the only place the
+// activity/subtype scope of card rules is rewritten in bulk.
 router.put(
   '/:id',
   handle(async (req, res) => {
@@ -56,13 +61,28 @@ router.put(
     if (b.nameHe !== undefined) data.nameHe = String(b.nameHe);
     if (b.nameEn !== undefined) data.nameEn = b.nameEn || null;
     if (b.active !== undefined) data.active = b.active !== false;
+    const bindingChanged =
+      b.activityTypeId !== undefined || b.organizationSubtypeId !== undefined;
     if (b.activityTypeId !== undefined) data.activityTypeId = b.activityTypeId || null;
     if (b.organizationSubtypeId !== undefined)
       data.organizationSubtypeId = b.organizationSubtypeId || null;
-    const segment = await prisma.pricingSegment.update({
-      where: { id: req.params.id },
-      data,
-      include,
+
+    const segment = await prisma.$transaction(async (tx) => {
+      const updated = await tx.pricingSegment.update({
+        where: { id: req.params.id },
+        data,
+        include,
+      });
+      if (bindingChanged) {
+        await tx.priceRule.updateMany({
+          where: { pricingSegmentId: updated.id },
+          data: {
+            activityTypeId: updated.activityTypeId,
+            organizationSubtypeId: updated.organizationSubtypeId,
+          },
+        });
+      }
+      return updated;
     });
     res.json(segment);
   }),
