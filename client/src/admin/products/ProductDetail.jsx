@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
+import BackButton from '../common/BackButton.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
 import { minorToInput, toMinor, formatMinor } from '../../lib/money.js';
 import { durationDisplay } from '../../lib/duration.js';
@@ -88,7 +89,7 @@ export default function ProductDetail() {
 
   return (
     <div className="mx-auto max-w-3xl px-5 py-8 lg:px-8 lg:py-10 space-y-6">
-      <Link to="/admin/settings/crm/products" className="text-[13px] text-blue-700 hover:underline">← מוצרים</Link>
+      <BackButton to="/admin/settings/crm/products" label="חזרה למוצרים" />
 
       {/* Product fields */}
       <Card title="פרטי המוצר">

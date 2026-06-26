@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import BackButton from '../common/BackButton.jsx';
 import { api } from '../../lib/api.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import {
@@ -75,14 +76,7 @@ export default function PersonProfile() {
 }
 
 function BackLink() {
-  return (
-    <button
-      onClick={() => window.history.back()}
-      className="text-[12px] text-gray-500 hover:text-gray-800"
-    >
-      ← חזרה לרשימה
-    </button>
-  );
+  return <BackButton onClick={() => window.history.back()} label="חזרה לרשימה" />;
 }
 
 // ── Header ──────────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import BackButton from '../common/BackButton.jsx';
 import { CategoryGrid, CategoryCard } from './cards.jsx';
 
 // CRM Settings category page — lists the CRM configuration sub-screens. Only
@@ -8,12 +8,7 @@ export default function CrmSettingsHome() {
   return (
     <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-4xl mx-auto">
       <header className="mb-8">
-        <Link
-          to="/admin/settings"
-          className="text-[13px] text-blue-700 hover:underline"
-        >
-          ← הגדרות
-        </Link>
+        <BackButton to="/admin/settings" label="חזרה להגדרות" />
         <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">
           הגדרות CRM
         </h1>

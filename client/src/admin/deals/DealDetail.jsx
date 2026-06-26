@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
+import BackButton from '../common/BackButton.jsx';
 import { formatMinor, minorToInput, toMinor } from '../../lib/money.js';
 import {
   DEAL_STATUS_LABELS,
@@ -163,9 +164,7 @@ export default function DealDetail() {
 
   return (
     <div className="mx-auto max-w-[1500px] px-5 lg:px-8 py-6">
-      <Link to="/admin/crm/deals" className="text-blue-700 hover:underline text-[13px]">
-        ← דילים
-      </Link>
+      <BackButton to="/admin/crm/deals" label="חזרה לדילים" />
 
       {/* Hero header — the live business object */}
       <div className="mt-2 bg-white border border-gray-200 rounded-2xl shadow-sm p-5 lg:p-6">

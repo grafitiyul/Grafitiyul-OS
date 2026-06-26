@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
+import BackButton from '../../common/BackButton.jsx';
 
 // Contact detail — edit bilingual names, manage phones / emails / organization
 // memberships, and see future communication sections as placeholders.
@@ -80,9 +81,7 @@ export default function ContactDetail() {
   return (
     <div className="p-4 lg:p-6 max-w-4xl mx-auto space-y-6">
       <div className="flex items-center gap-2 text-[13px]">
-        <Link to="/admin/crm/contacts" className="text-blue-700 hover:underline">
-          ← אנשי קשר
-        </Link>
+        <BackButton to="/admin/crm/contacts" label="חזרה לאנשי קשר" />
       </div>
 
       <Section title="פרטי איש קשר">

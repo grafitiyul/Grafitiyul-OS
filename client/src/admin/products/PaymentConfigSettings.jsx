@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { api } from '../../lib/api.js';
+import BackButton from '../common/BackButton.jsx';
 
 // Payment Configuration — Payment Terms and Payment Methods, each able to point
 // at a default of the other type (auto-fills the Deal in Slice 3).
@@ -27,7 +27,7 @@ export default function PaymentConfigSettings() {
   return (
     <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-3xl mx-auto">
       <header className="mb-8">
-        <Link to="/admin/settings/crm" className="text-[13px] text-blue-700 hover:underline">← הגדרות CRM</Link>
+        <BackButton to="/admin/settings/crm" label="חזרה להגדרות CRM" />
         <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">הגדרות תשלום</h1>
         <p className="text-[15px] text-gray-500 mt-1.5">תנאי תשלום ואמצעי תשלום, וברירות מחדל ביניהם.</p>
       </header>

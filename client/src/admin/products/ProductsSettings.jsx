@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
+import BackButton from '../common/BackButton.jsx';
 
 // Products catalog (Settings → CRM → Products). Each product has bilingual name
 // + rich marketing descriptions and one or more variants (Product × Location).
@@ -42,7 +43,7 @@ export default function ProductsSettings() {
   return (
     <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-3xl mx-auto">
       <header className="mb-8">
-        <Link to="/admin/settings/crm" className="text-[13px] text-blue-700 hover:underline">← הגדרות CRM</Link>
+        <BackButton to="/admin/settings/crm" label="חזרה להגדרות CRM" />
         <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">מוצרים</h1>
         <p className="text-[15px] text-gray-500 mt-1.5">קטלוג המוצרים שאנחנו מוכרים. כל מוצר מתקיים בוריאציות לפי מיקום.</p>
       </header>

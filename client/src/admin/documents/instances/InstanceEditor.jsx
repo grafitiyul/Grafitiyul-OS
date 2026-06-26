@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import BackButton from '../../common/BackButton.jsx';
 import { api } from '../../../lib/api.js';
 import { relativeHebrew } from '../../../lib/relativeTime.js';
 import PdfViewer from '../shared/PdfViewer.jsx';
@@ -450,12 +451,7 @@ export default function InstanceEditor() {
       <header className="bg-white border-b border-gray-200 px-5 py-3 shrink-0">
         <div className="flex items-start gap-3">
           <div className="flex-1 min-w-0">
-            <button
-              onClick={() => navigate('/admin/documents')}
-              className="text-[11px] text-blue-700 hover:underline mb-1"
-            >
-              ← חזרה למסמכים
-            </button>
+            <BackButton onClick={() => navigate('/admin/documents')} label="חזרה למסמכים" className="mb-1" />
             <h1 className="text-xl font-semibold text-gray-900 truncate">
               {instance.title}
             </h1>
