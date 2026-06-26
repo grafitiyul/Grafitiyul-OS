@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { api } from '../../lib/api.js';
+import BackButton from '../common/BackButton.jsx';
+import RichEditor from '../../editor/RichEditor.jsx';
+import { SingleImage } from './ImageUploader.jsx';
 
 // Locations catalog (e.g. "תל אביב - פלורנטין"). Hebrew name required, English
 // optional. A location can't be deleted while product variants reference it.
@@ -42,7 +44,7 @@ export default function LocationsSettings() {
   return (
     <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-3xl mx-auto">
       <header className="mb-8">
-        <Link to="/admin/settings/crm" className="text-[13px] text-blue-700 hover:underline">← הגדרות CRM</Link>
+        <BackButton to="/admin/settings/crm" label="חזרה להגדרות CRM" />
         <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">מיקומים</h1>
         <p className="text-[15px] text-gray-500 mt-1.5">קטלוג המיקומים (עיר / אזור). משמש ליצירת וריאציות מוצר.</p>
       </header>
@@ -84,18 +86,38 @@ function LocationRow({ row, onChange }) {
   const [editing, setEditing] = useState(false);
   const [nameHe, setNameHe] = useState(row.nameHe);
   const [nameEn, setNameEn] = useState(row.nameEn || '');
+  const [meetingHe, setMeetingHe] = useState(row.meetingPointHe || '');
+  const [meetingEn, setMeetingEn] = useState(row.meetingPointEn || '');
+  const [image, setImage] = useState(row.meetingPointImage || null);
   const [busy, setBusy] = useState(false);
+
+  // Seed all edit fields from the current row each time edit mode opens, so the
+  // form always reflects the latest saved values (no stale state on re-edit).
+  function startEdit() {
+    setNameHe(row.nameHe);
+    setNameEn(row.nameEn || '');
+    setMeetingHe(row.meetingPointHe || '');
+    setMeetingEn(row.meetingPointEn || '');
+    setImage(row.meetingPointImage || null);
+    setEditing(true);
+  }
 
   async function save(e) {
     e.preventDefault();
     if (!nameHe.trim()) return;
     setBusy(true);
     try {
-      await api.locations.update(row.id, { nameHe: nameHe.trim(), nameEn: nameEn.trim() || null });
+      await api.locations.update(row.id, {
+        nameHe: nameHe.trim(),
+        nameEn: nameEn.trim() || null,
+        meetingPointHe: meetingHe || null,
+        meetingPointEn: meetingEn || null,
+        meetingPointImageId: image?.id || null,
+      });
       setEditing(false);
       await onChange();
     } catch (e) {
-      alert('שגיאה: ' + e.message);
+      alert('שגיאה: ' + (e.payload?.error || e.message));
     } finally {
       setBusy(false);
     }
@@ -112,30 +134,60 @@ function LocationRow({ row, onChange }) {
     }
   }
 
+  // Edit mode (opened by the pencil). Everything — name + meeting-point text
+  // (He/En rich) + R2 image — lives in this one form and saves together. Only
+  // "שמור"/"ביטול" close it, so clicking inside the editors never loses edits.
   if (editing) {
     return (
-      <li className="py-2">
-        <form onSubmit={save} className="flex flex-wrap items-center gap-2 px-1">
-          <input autoFocus value={nameHe} onChange={(e) => setNameHe(e.target.value)}
-            className="flex-1 min-w-[9rem] h-10 rounded-lg border border-gray-300 px-3 text-sm" />
-          <input value={nameEn} onChange={(e) => setNameEn(e.target.value)} dir="ltr" placeholder="Name (EN)"
-            className="flex-1 min-w-[7rem] sm:max-w-[12rem] h-10 rounded-lg border border-gray-300 px-3 text-sm" />
-          <div className="flex gap-1.5 shrink-0 ms-auto">
-            <button type="submit" disabled={busy || !nameHe.trim()} className="h-10 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">{busy ? 'שומר…' : 'שמור'}</button>
-            <button type="button" onClick={() => setEditing(false)} className="h-10 rounded-lg border border-gray-300 px-3 text-sm text-gray-600 hover:bg-gray-50">ביטול</button>
+      <li className="py-3">
+        <form
+          onSubmit={save}
+          dir="rtl"
+          className="rounded-xl border border-gray-200 bg-gray-50/70 p-4 space-y-4"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <input autoFocus value={nameHe} onChange={(e) => setNameHe(e.target.value)} placeholder="שם בעברית"
+              className="flex-1 min-w-[9rem] h-10 rounded-lg border border-gray-300 px-3 text-sm bg-white" />
+            <input value={nameEn} onChange={(e) => setNameEn(e.target.value)} dir="ltr" placeholder="Name (EN)"
+              className="flex-1 min-w-[7rem] sm:max-w-[12rem] h-10 rounded-lg border border-gray-300 px-3 text-sm bg-white" />
+          </div>
+
+          <div>
+            <label className="block text-[13px] font-medium text-gray-700 mb-1.5">נקודת מפגש (עברית)</label>
+            <RichEditor value={meetingHe} onChange={setMeetingHe} ariaLabel="נקודת מפגש בעברית" placeholder="תיאור נקודת המפגש…" minContentHeight={90} />
+          </div>
+
+          <div>
+            <label className="block text-[13px] font-medium text-gray-700 mb-1.5">נקודת מפגש (אנגלית)</label>
+            <RichEditor value={meetingEn} onChange={setMeetingEn} ariaLabel="Meeting point (EN)" placeholder="Meeting point description…" minContentHeight={90} />
+            <p className="text-[11px] text-gray-400 mt-1.5">לפסקה באנגלית השתמשו בכפתור כיוון LTR שבסרגל העריכה.</p>
+          </div>
+
+          <div>
+            <label className="block text-[13px] font-medium text-gray-700 mb-1.5">תמונת נקודת מפגש</label>
+            <SingleImage image={image} onChange={setImage} folder="locations/meeting" />
+            <p className="text-[11px] text-gray-400 mt-1.5">מועלה ישירות ל-Cloudflare R2.</p>
+          </div>
+
+          <div className="flex gap-1.5">
+            <button type="submit" disabled={busy || !nameHe.trim()} className="h-10 rounded-lg bg-blue-600 px-5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">{busy ? 'שומר…' : 'שמור'}</button>
+            <button type="button" onClick={() => setEditing(false)} className="h-10 rounded-lg border border-gray-300 px-3 text-sm text-gray-600 hover:bg-gray-50 bg-white">ביטול</button>
           </div>
         </form>
       </li>
     );
   }
 
+  const hasMeeting = !!(row.meetingPointHe || row.meetingPointEn || row.meetingPointImageId);
+
   return (
     <li className="group flex items-center gap-3 px-2.5 py-2.5 rounded-lg hover:bg-gray-50">
       <span className="font-medium text-gray-900 text-[15px]">{row.nameHe}</span>
       {row.nameEn && <span className="text-[12px] text-gray-400" dir="ltr">{row.nameEn}</span>}
       <span className="text-[11px] text-gray-500">· {row._count?.variants ?? 0} וריאציות</span>
+      {hasMeeting && <span className="text-[11px] text-emerald-600" title="נקודת מפגש מוגדרת">📍</span>}
       <div className="flex-1" />
-      <button onClick={() => setEditing(true)} className="text-amber-500 hover:text-amber-600 hover:bg-amber-50 rounded-md p-1.5" title="עריכה">✎</button>
+      <button onClick={startEdit} className="text-amber-500 hover:text-amber-600 hover:bg-amber-50 rounded-md p-1.5" title="עריכה">✎</button>
       <button onClick={remove} className="text-red-500 hover:text-red-600 hover:bg-red-50 rounded-md p-1.5" title="מחק">🗑</button>
     </li>
   );

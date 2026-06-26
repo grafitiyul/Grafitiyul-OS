@@ -872,20 +872,25 @@ model MediaFile {
   uploadedById String? // loose actor id (no FK)
   createdAt    DateTime @default(now())
 
-  variantMeetingImages ProductVariant[]      @relation("VariantMeetingImage")
-  variantGalleryLinks  ProductVariantImage[]
+  variantMeetingImages  ProductVariant[]      @relation("VariantMeetingImage")
+  variantGalleryLinks   ProductVariantImage[]
+  locationMeetingImages Location[]            @relation("LocationMeetingImage")
 }
 
 // Simple location catalog (e.g. "תל אביב - פלורנטין"). No City/Area split.
 model Location {
-  id        String           @id @default(cuid())
-  nameHe    String
-  nameEn    String?
-  active    Boolean          @default(true)
-  sortOrder Int              @default(0)
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
-  variants  ProductVariant[]
+  id                  String           @id @default(cuid())
+  nameHe              String
+  nameEn              String?
+  meetingPointHe      String? // rich HTML
+  meetingPointEn      String? // rich HTML
+  meetingPointImage   MediaFile?       @relation("LocationMeetingImage", fields: [meetingPointImageId], references: [id], onDelete: SetNull)
+  meetingPointImageId String?
+  active              Boolean          @default(true)
+  sortOrder           Int              @default(0)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  variants            ProductVariant[]
 
   @@index([sortOrder])
 }
