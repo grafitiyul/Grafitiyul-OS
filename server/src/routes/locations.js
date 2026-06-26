@@ -12,10 +12,7 @@ router.get(
   handle(async (_req, res) => {
     const rows = await prisma.location.findMany({
       orderBy: [{ sortOrder: 'asc' }, { nameHe: 'asc' }],
-      include: {
-        meetingPointImage: true,
-        _count: { select: { variants: true } },
-      },
+      include: { _count: { select: { variants: true } } },
     });
     res.json(rows);
   }),
@@ -68,20 +65,8 @@ router.put(
     }
     if (req.body?.nameEn !== undefined)
       data.nameEn = req.body.nameEn ? String(req.body.nameEn).trim() : null;
-    if (req.body?.meetingPointHe !== undefined)
-      data.meetingPointHe = req.body.meetingPointHe || null;
-    if (req.body?.meetingPointEn !== undefined)
-      data.meetingPointEn = req.body.meetingPointEn || null;
-    // meetingPointImageId: string attaches, null detaches (R2 object is left in
-    // place — orphan sweep is deferred).
-    if (req.body?.meetingPointImageId !== undefined)
-      data.meetingPointImageId = req.body.meetingPointImageId || null;
     if (req.body?.active !== undefined) data.active = !!req.body.active;
-    const row = await prisma.location.update({
-      where: { id: req.params.id },
-      data,
-      include: { meetingPointImage: true },
-    });
+    const row = await prisma.location.update({ where: { id: req.params.id }, data });
     res.json(row);
   }),
 );

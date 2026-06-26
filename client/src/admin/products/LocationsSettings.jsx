@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api.js';
-import RichEditor from '../../editor/RichEditor.jsx';
-import { SingleImage } from './ImageUploader.jsx';
 
 // Locations catalog (e.g. "תל אביב - פלורנטין"). Hebrew name required, English
 // optional. A location can't be deleted while product variants reference it.
@@ -84,7 +82,6 @@ export default function LocationsSettings() {
 
 function LocationRow({ row, onChange }) {
   const [editing, setEditing] = useState(false);
-  const [meeting, setMeeting] = useState(false);
   const [nameHe, setNameHe] = useState(row.nameHe);
   const [nameEn, setNameEn] = useState(row.nameEn || '');
   const [busy, setBusy] = useState(false);
@@ -132,80 +129,14 @@ function LocationRow({ row, onChange }) {
     );
   }
 
-  const hasMeeting = !!(row.meetingPointHe || row.meetingPointEn || row.meetingPointImageId);
-
   return (
-    <li className="group rounded-lg hover:bg-gray-50">
-      <div className="flex items-center gap-3 px-2.5 py-2.5">
-        <span className="font-medium text-gray-900 text-[15px]">{row.nameHe}</span>
-        {row.nameEn && <span className="text-[12px] text-gray-400" dir="ltr">{row.nameEn}</span>}
-        <span className="text-[11px] text-gray-500">· {row._count?.variants ?? 0} וריאציות</span>
-        {hasMeeting && <span className="text-[11px] text-emerald-600" title="נקודת מפגש מוגדרת">📍</span>}
-        <div className="flex-1" />
-        <button
-          onClick={() => setMeeting((v) => !v)}
-          className={`rounded-md px-2 py-1 text-[12px] font-medium ${meeting ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:text-blue-700 hover:bg-blue-50'}`}
-          title="נקודת מפגש"
-        >
-          נקודת מפגש
-        </button>
-        <button onClick={() => setEditing(true)} className="text-amber-500 hover:text-amber-600 hover:bg-amber-50 rounded-md p-1.5" title="עריכה">✎</button>
-        <button onClick={remove} className="text-red-500 hover:text-red-600 hover:bg-red-50 rounded-md p-1.5" title="מחק">🗑</button>
-      </div>
-      {meeting && <MeetingPointPanel row={row} onSaved={onChange} />}
+    <li className="group flex items-center gap-3 px-2.5 py-2.5 rounded-lg hover:bg-gray-50">
+      <span className="font-medium text-gray-900 text-[15px]">{row.nameHe}</span>
+      {row.nameEn && <span className="text-[12px] text-gray-400" dir="ltr">{row.nameEn}</span>}
+      <span className="text-[11px] text-gray-500">· {row._count?.variants ?? 0} וריאציות</span>
+      <div className="flex-1" />
+      <button onClick={() => setEditing(true)} className="text-amber-500 hover:text-amber-600 hover:bg-amber-50 rounded-md p-1.5" title="עריכה">✎</button>
+      <button onClick={remove} className="text-red-500 hover:text-red-600 hover:bg-red-50 rounded-md p-1.5" title="מחק">🗑</button>
     </li>
-  );
-}
-
-// Expandable per-location editor for meeting-point text (rich He/En) + a single
-// R2-hosted image. Saves through the same locations PUT endpoint; the image goes
-// through the shared R2 presigned-upload flow (SingleImage → uploadImage).
-function MeetingPointPanel({ row, onSaved }) {
-  const [he, setHe] = useState(row.meetingPointHe || '');
-  const [en, setEn] = useState(row.meetingPointEn || '');
-  const [image, setImage] = useState(row.meetingPointImage || null);
-  const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(false);
-
-  async function save() {
-    setBusy(true);
-    setSaved(false);
-    try {
-      await api.locations.update(row.id, {
-        meetingPointHe: he || null,
-        meetingPointEn: en || null,
-        meetingPointImageId: image?.id || null,
-      });
-      setSaved(true);
-      await onSaved();
-    } catch (e) {
-      alert('שגיאה: ' + (e.payload?.error || e.message));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="mx-2.5 mb-3 rounded-lg border border-gray-200 bg-gray-50/70 p-4 space-y-4">
-      <div>
-        <label className="block text-[13px] font-medium text-gray-700 mb-1.5">נקודת מפגש (עברית)</label>
-        <RichEditor value={he} onChange={setHe} ariaLabel="נקודת מפגש בעברית" placeholder="תיאור נקודת המפגש…" minContentHeight={90} />
-      </div>
-      <div dir="ltr">
-        <label className="block text-[13px] font-medium text-gray-700 mb-1.5 text-right" dir="rtl">נקודת מפגש (אנגלית)</label>
-        <RichEditor value={en} onChange={setEn} ariaLabel="Meeting point (EN)" placeholder="Meeting point description…" minContentHeight={90} />
-      </div>
-      <div>
-        <label className="block text-[13px] font-medium text-gray-700 mb-1.5">תמונת נקודת מפגש</label>
-        <SingleImage image={image} onChange={setImage} folder="locations/meeting" />
-        <p className="text-[11px] text-gray-400 mt-1.5">מועלה ישירות ל-Cloudflare R2. דורש הגדרת R2 בשרת.</p>
-      </div>
-      <div className="flex items-center gap-3">
-        <button onClick={save} disabled={busy} className="h-10 rounded-lg bg-blue-600 px-5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50">
-          {busy ? 'שומר…' : 'שמור נקודת מפגש'}
-        </button>
-        {saved && <span className="text-[13px] text-emerald-600">נשמר ✓</span>}
-      </div>
-    </div>
   );
 }
