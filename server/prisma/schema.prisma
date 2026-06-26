@@ -596,6 +596,10 @@ model OrganizationType {
   key           String                @unique
   label         String // Hebrew display label
   labelEn       String?
+  // Quote content owned by the org classification (rich HTML). Inserted into
+  // future quotes by selected type/subtype. NOT wired to Quotes yet.
+  quoteContentHe String?
+  quoteContentEn String?
   sortOrder     Int                   @default(0)
   isActive      Boolean               @default(true)
   createdAt     DateTime              @default(now())
@@ -618,6 +622,10 @@ model OrganizationSubtype {
   key                String            @unique
   label              String
   labelEn            String?
+  // Quote content owned by the org classification (rich HTML). Overrides the
+  // type's content when set. Inserted into future quotes. NOT wired to Quotes yet.
+  quoteContentHe     String?
+  quoteContentEn     String?
   organizationType   OrganizationType? @relation(fields: [organizationTypeId], references: [id], onDelete: SetNull)
   organizationTypeId String?
   sortOrder          Int               @default(0)

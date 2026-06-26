@@ -88,8 +88,15 @@ router.put(
 router.put(
   '/:id',
   handle(async (req, res) => {
-    const { label, labelEn, sortOrder, isActive, defaultPriceListId } =
-      req.body || {};
+    const {
+      label,
+      labelEn,
+      sortOrder,
+      isActive,
+      defaultPriceListId,
+      quoteContentHe,
+      quoteContentEn,
+    } = req.body || {};
     const data = {};
     if (label !== undefined) data.label = String(label).trim();
     if (labelEn !== undefined)
@@ -99,6 +106,12 @@ router.put(
     // Pricing (Slice 2): default price list for this org type ('' clears it).
     if (defaultPriceListId !== undefined)
       data.defaultPriceListId = defaultPriceListId || null;
+    // Quote content (rich HTML) owned by the org classification. NOT wired to
+    // Quotes yet — stored for future automatic insertion by type/subtype.
+    if (quoteContentHe !== undefined)
+      data.quoteContentHe = quoteContentHe || null;
+    if (quoteContentEn !== undefined)
+      data.quoteContentEn = quoteContentEn || null;
     const type = await prisma.organizationType.update({
       where: { id: req.params.id },
       data,

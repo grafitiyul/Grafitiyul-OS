@@ -9,6 +9,59 @@ import {
   CountChip,
   Pill,
 } from './catalogKit.jsx';
+import RichEditor from '../../../editor/RichEditor.jsx';
+
+const FIELD_LABEL = 'block text-[12px] font-medium text-gray-600 mb-1';
+
+// Quote content owned by the org classification (rich He/En). Shared by both the
+// Types and Subtypes edit forms via catalogKit's editPanel hook. Reuses the
+// shared RichEditor (with its RTL/LTR controls). NOT wired to Quotes yet —
+// stored for future automatic insertion into quotes by type/subtype.
+function QuoteContentEditor({ draft, setDraft }) {
+  return (
+    <div className="w-full space-y-3 pt-1">
+      <div>
+        <span className={FIELD_LABEL}>תוכן להצעת מחיר</span>
+        <RichEditor
+          value={draft.quoteContentHe || ''}
+          onChange={(v) => setDraft((d) => ({ ...d, quoteContentHe: v }))}
+          ariaLabel="תוכן להצעת מחיר בעברית"
+          placeholder="תוכן שיופיע בהצעות מחיר…"
+          minContentHeight={140}
+        />
+        <p className="text-[11px] text-gray-400 mt-1">
+          יופיע בהמשך אוטומטית בהצעות מחיר לפי סוג/תת־סוג הארגון.
+        </p>
+      </div>
+      <div>
+        <span className={FIELD_LABEL}>Quote content</span>
+        <RichEditor
+          value={draft.quoteContentEn || ''}
+          onChange={(v) => setDraft((d) => ({ ...d, quoteContentEn: v }))}
+          ariaLabel="Quote content (EN)"
+          placeholder="Content for quotes…"
+          minContentHeight={140}
+        />
+        <p className="text-[11px] text-gray-400 mt-1" dir="ltr">
+          Will later appear automatically in quotes based on the organization type/subtype.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// catalogKit edit hooks — identical for Types and Subtypes.
+const quoteSeed = (item) => ({
+  quoteContentHe: item.quoteContentHe || '',
+  quoteContentEn: item.quoteContentEn || '',
+});
+const quoteToPatch = (draft) => ({
+  quoteContentHe: draft.quoteContentHe || null,
+  quoteContentEn: draft.quoteContentEn || null,
+});
+const quotePanel = (draft, setDraft) => (
+  <QuoteContentEditor draft={draft} setDraft={setDraft} />
+);
 
 // CRM settings → Organization Types & Subtypes.
 //
@@ -100,6 +153,9 @@ function TypesSection({ types, onChange }) {
         onRemove={remove}
         emptyText="עדיין אין סוגי ארגון. הוסיפו את הראשון למטה."
         renderMeta={(t) => <CountChip n={t._count?.organizations ?? 0} noun="ארגונים" />}
+        editSeed={quoteSeed}
+        editPanel={quotePanel}
+        editToPatch={quoteToPatch}
       />
     </SettingsCard>
   );
@@ -152,6 +208,9 @@ function SubtypesSection({ subtypes, types, onChange }) {
             ))}
           </select>
         )}
+        editSeed={quoteSeed}
+        editPanel={quotePanel}
+        editToPatch={quoteToPatch}
       />
     </SettingsCard>
   );

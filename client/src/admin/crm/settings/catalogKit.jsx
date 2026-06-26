@@ -50,6 +50,13 @@ export function SortableList({
   renderMeta,
   editExtra,
   emptyText,
+  // Optional, additive: a consumer can seed extra draft fields (editSeed),
+  // render a full-width panel inside the edit form (editPanel), and contribute
+  // extra keys to the saved patch (editToPatch). When omitted (e.g. Deal
+  // Stages) the edit form is byte-for-byte unchanged.
+  editSeed,
+  editPanel,
+  editToPatch,
 }) {
   const [local, setLocal] = useState(items);
   useEffect(() => setLocal(items), [items]);
@@ -89,6 +96,9 @@ export function SortableList({
               onSave={onSave}
               onRemove={onRemove}
               editExtra={editExtra}
+              editSeed={editSeed}
+              editPanel={editPanel}
+              editToPatch={editToPatch}
             />
           ))}
         </ul>
@@ -97,7 +107,7 @@ export function SortableList({
   );
 }
 
-function CatalogRow({ item, meta, onSave, onRemove, editExtra }) {
+function CatalogRow({ item, meta, onSave, onRemove, editExtra, editSeed, editPanel, editToPatch }) {
   const s = useSortable({ id: item.id });
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(null);
@@ -113,6 +123,7 @@ function CatalogRow({ item, meta, onSave, onRemove, editExtra }) {
       label: item.label || '',
       labelEn: item.labelEn || '',
       organizationTypeId: item.organizationTypeId || '',
+      ...(editSeed ? editSeed(item) : {}),
     });
     setEditing(true);
   }
@@ -129,6 +140,7 @@ function CatalogRow({ item, meta, onSave, onRemove, editExtra }) {
       // Only subtypes expose the extra control (the linked type). `key` is never
       // sent, so it stays stable on rename.
       if (editExtra) patch.organizationTypeId = draft.organizationTypeId || null;
+      if (editToPatch) Object.assign(patch, editToPatch(draft));
       await onSave(item, patch);
       setEditing(false);
     } catch (err) {
@@ -162,6 +174,9 @@ function CatalogRow({ item, meta, onSave, onRemove, editExtra }) {
             className="flex-1 min-w-[7rem] sm:max-w-[12rem] h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
           />
           {editExtra && editExtra(draft, setDraft)}
+          {editPanel && (
+            <div className="basis-full w-full">{editPanel(draft, setDraft)}</div>
+          )}
           <div className="flex gap-1.5 shrink-0 ms-auto">
             <button
               type="submit"
