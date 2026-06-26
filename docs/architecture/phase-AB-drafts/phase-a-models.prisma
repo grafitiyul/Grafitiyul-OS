@@ -1,0 +1,205 @@
+// =============================================================================
+// PHASE A — DRAFT model additions (REVIEW ONLY)
+// =============================================================================
+//
+// STATUS: DRAFT artifact under docs/. DO NOT paste into
+// server/prisma/schema.prisma yet. DO NOT migrate. Not in the deploy path.
+//
+// This fragment shows the EXACT models/enums that Phase A would add to the LIVE
+// schema, plus the single additive change to the existing PersonRef model.
+// It is the identity+team FOUNDATION SLICE only — none of the other Phase-0
+// models (Contact, Deal, Tour, …) are part of Phase A.
+//
+// Conventions (consistent with GOS-phase0-prisma-schema-draft.prisma):
+//   * id = app-supplied UUID v7 (Prisma 5.22 has no uuid(7) default → the
+//     backfill script supplies ids; new app writes must too).
+//   * DateTime = @db.Timestamptz(6); money = BigInt minor units + currency.
+//   * citext columns need the citext extension (see raw SQL below).
+//   * Soft-delete-aware uniqueness = PARTIAL unique index via raw SQL (Prisma
+//     cannot express it) — listed at the bottom. The `legacyAdminUserId`,
+//     `recruitmentExternalId`, `Role.key`, `Permission.key` uniques ARE plain
+//     Prisma @unique (nullable uniques are already unique-where-not-null).
+// =============================================================================
+
+// ----- ENUMS (new) -----------------------------------------------------------
+enum UserStatus { invited active suspended }
+enum PermissionScope { own team all } // seed own/all; `team` deferred
+enum TeamMemberStatus { active on_leave inactive former }
+
+// ----- IDENTITY & ACCESS (new) ----------------------------------------------
+
+/// Login principal. username = primary login handle (from AdminUser.username);
+/// email optional, NOT the login identity at this stage. legacyAdminUserId is a
+/// migration-aid bridge to AdminUser (nullable, unique, removable post-cutover).
+/// Bootstrap/setup is design-only (see reconciliation plan §2) — no code here.
+model User {
+  id                String     @id // app-supplied UUID v7
+  username          String     @db.Citext
+  email             String?    @db.Citext
+  passwordHash      String? // scrypt "salt:key" carried verbatim from AdminUser
+  displayName       String
+  status            UserStatus @default(invited)
+  lastLoginAt       DateTime?  @db.Timestamptz(6)
+  legacyAdminUserId String?    @unique // bridge to AdminUser.id (migration aid)
+
+  teamMemberId String?     @unique
+  teamMember   TeamMember? @relation(fields: [teamMemberId], references: [id])
+
+  userRoles UserRole[]
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  /// PARTIAL-UNIQUE: (username) WHERE deleted_at IS NULL
+  /// PARTIAL-UNIQUE: (email)    WHERE deleted_at IS NULL AND email IS NOT NULL
+  @@index([status])
+  @@index([teamMemberId])
+}
+
+/// Named bundle of permissions. Reference/config: archived, not soft-deleted.
+model Role {
+  id          String  @id
+  key         String  @unique
+  name        String
+  description String?
+  isSystem    Boolean @default(false)
+  archived    Boolean @default(false)
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+}
+
+/// A single capability = resource + action + scope. Seeded reference set.
+model Permission {
+  id          String          @id
+  key         String          @unique
+  resource    String
+  action      String
+  scope       PermissionScope
+  description String?
+
+  rolePermissions RolePermission[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+}
+
+/// RBAC join: User ↔ Role.
+model UserRole {
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId      String
+  role        Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  grantedAt   DateTime @default(now()) @db.Timestamptz(6)
+  grantedById String?
+
+  @@id([userId, roleId])
+  @@index([roleId])
+}
+
+/// RBAC join: Role ↔ Permission.
+model RolePermission {
+  roleId       String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  grantedAt    DateTime   @default(now()) @db.Timestamptz(6)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+}
+
+// ----- TEAM (new) ------------------------------------------------------------
+
+/// Internal staff identity. GOS-owned source of truth (post-Phase-C). In
+/// Phase A/B it is a READ MIRROR backfilled from PersonRef/PersonProfile;
+/// PersonRef stays the writer for portal/learning until Phase C.
+/// recruitmentExternalId = bridge to PersonRef.externalPersonId (unique).
+/// Relations are trimmed to the Phase-A slice (no Note/Attachment/Assignment/
+/// FormResponse — those models don't exist in the live schema yet).
+model TeamMember {
+  id                    String           @id // GOS-generated UUID v7
+  firstName             String?
+  lastName              String?
+  displayName           String
+  memberTypes           String[]         @default([]) // guide | office | manager | sales
+  status                TeamMemberStatus @default(active)
+  primaryEmail          String?          @db.Citext
+  primaryPhoneE164      String?
+  skills                String[]         @default([])
+  startDate             DateTime?        @db.Timestamptz(6)
+  endDate               DateTime?        @db.Timestamptz(6)
+  defaultPayRateMinor   BigInt?
+  currency              String           @default("ILS") @db.Char(3)
+  recruitmentExternalId String?          @unique // bridge to PersonRef.externalPersonId
+
+  user      User?
+  profile   TeamMemberProfile?
+  personRefs PersonRef[] // back-relation for the PersonRef.teamMemberId link
+
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime? @db.Timestamptz(6)
+  deletedById  String?
+  anonymizedAt DateTime? @db.Timestamptz(6)
+
+  @@index([status])
+}
+
+/// Operational / sensitive guide data (mirrors the live PersonProfile split).
+/// 1:1 with TeamMember. bankDetails is sensitive PII.
+model TeamMemberProfile {
+  teamMemberId String     @id
+  teamMember   TeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
+  imageUrl     String?
+  description  String?
+  notes        String?
+  bankDetails  Json?
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+}
+
+// ----- MODIFY EXISTING LIVE MODEL: PersonRef --------------------------------
+//
+// The ONLY change Phase A makes to an existing table. Additive + nullable.
+// Add these two lines (+ index) to the EXISTING PersonRef model in
+// server/prisma/schema.prisma when Phase A is merged. Shown here for review:
+//
+//   model PersonRef {
+//     ... (all existing fields unchanged) ...
+//     teamMemberId String?
+//     teamMember   TeamMember? @relation(fields: [teamMemberId], references: [id])
+//
+//     @@index([teamMemberId])
+//   }
+//
+// NOT made @unique: tolerates messy data (a duplicate PersonRef for the same
+// person) without blocking the backfill. Conceptually 1:1; revisit at Phase C.
+
+// =============================================================================
+// RAW SQL required AFTER `prisma migrate` generates the Phase A tables
+// =============================================================================
+//
+// 1) Extension (must exist before citext columns are usable). Confirm the
+//    Railway DB role has CREATE privilege:
+//      CREATE EXTENSION IF NOT EXISTS citext;
+//
+// 2) Partial UNIQUE indexes (soft-delete-aware; Prisma cannot express these):
+//      CREATE UNIQUE INDEX user_username_active_uq
+//        ON "User" (username) WHERE "deletedAt" IS NULL;
+//      CREATE UNIQUE INDEX user_email_active_uq
+//        ON "User" (email) WHERE "deletedAt" IS NULL AND email IS NOT NULL;
+//
+//    (Column identifiers are camelCase/quoted because the live schema uses
+//     Prisma's default naming — no @map. Verify exact casing against the
+//     generated migration before running.)
+//
+// 3) No partial indexes are needed for legacyAdminUserId / recruitmentExternalId
+//    / Role.key / Permission.key — plain @unique covers them (nullable uniques
+//    are already unique-where-not-null in Postgres).

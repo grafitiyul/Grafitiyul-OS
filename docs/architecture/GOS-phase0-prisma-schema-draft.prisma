@@ -1,0 +1,1137 @@
+// =============================================================================
+// GOS — Phase-0 Prisma schema DRAFT (proposal only)
+// =============================================================================
+//
+// STATUS: DRAFT. NOT WIRED TO ANY DATABASE. DO NOT MIGRATE / DO NOT APPLY.
+//
+// This file is a design artifact living under docs/. It is intentionally NOT
+// server/prisma/schema.prisma, because:
+//   * server/prisma/schema.prisma is the LIVE schema deployed to Railway, and
+//     the server start command runs `prisma migrate deploy` — merging 30+ new
+//     models there risks the deploy pipeline mutating production.
+//   * The live schema already models the Team concept (PersonRef / TeamRef /
+//     PersonProfile) and an admin login (AdminUser). The Phase-0 `User` and
+//     `TeamMember` below OVERLAP those and MUST be reconciled deliberately,
+//     not duplicated. See the "RECONCILIATION REQUIRED" notes inline and the
+//     accompanying report.
+//
+// CONVENTIONS (see GOS-phase0-schema-design.md):
+//   * IDs: `id String @id` are APP-SUPPLIED UUID v7. Prisma 5.22 has no native
+//     `uuid(7)` default, so NO `@default(uuid())` (that would be v4). The
+//     application layer generates the v7 id. (On upgrade to Prisma 6.x this can
+//     become `@default(uuid(7))`.)
+//   * All DateTime are `@db.Timestamptz(6)` (UTC).
+//   * Money: `BigInt` minor units + a `currency String @db.Char(3)` (ILS now).
+//     Never a float; never an amount without its currency.
+//   * Soft delete: `deletedAt DateTime?` (+ `deletedById String?`, a logical
+//     user id, no FK relation by design — actor ids are loose).
+//   * PII models also carry `anonymizedAt` (anonymize != delete).
+//   * citext (`@db.Citext`) needs `CREATE EXTENSION citext` (see raw-SQL list).
+//   * `/// PARTIAL-UNIQUE:` marks a uniqueness rule that must EXCLUDE
+//     soft-deleted rows. Prisma cannot express partial unique indexes; they are
+//     created via raw SQL (consolidated at the bottom of this file).
+//   * Polymorphic links use EXPLICIT nullable FKs (approved). Only DomainEvent
+//     and AuditLog use loose (entityType,entityId) with no FK.
+// =============================================================================
+
+generator client {
+  // DRAFT generator — do NOT point the live client output here.
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// ENUMS
+// Stable, closed sets → enums. Evolving/config-driven sets → lookup tables
+// (DealStage, Role, Permission). Enums marked "(may become lookup)" should be
+// promoted to a table if they start churning.
+// =============================================================================
+
+enum PermissionScope { own team all } // seed own/all now; `team` deferred until a team hierarchy exists
+enum UserStatus { invited active suspended }
+enum OrgType { school company municipality other } // (may become lookup)
+enum ActivityType { call follow_up send_quote check_payment meeting cs_reminder other }
+enum ActivityStatus { planned done cancelled }
+enum DealStatus { open won lost } // pipeline POSITION is DealStage; this is the coarse outcome
+enum BookingStatus { tentative confirmed cancelled }
+enum TourStatus { draft scheduled confirmed in_progress completed cancelled }
+enum AssignmentRole { lead assistant trainee driver coordinator }
+enum AssignmentStatus { proposed offered confirmed declined cancelled }
+enum AttendanceStatus { unknown present no_show }
+enum TeamMemberStatus { active on_leave inactive former }
+enum ChannelType { whatsapp }
+enum ChannelProvider { cloud_api vendor_other } // (may become lookup)
+enum ConversationStatus { open archived }
+enum MessageDirection { inbound outbound }
+enum MessageStatus { queued sent delivered read failed received }
+enum QuoteStatus { draft sent accepted rejected expired }
+enum PaymentMethod { card bank cash other }
+enum PaymentStatus { pending completed refunded failed }
+enum PaymentLinkStatus { active paid expired cancelled }
+enum FinanceDocType { invoice receipt invoice_receipt credit_note }
+enum FinanceDocStatus { issued voided }
+enum FormBindingType { order strategic guide tour_before tour_after internal other } // (may become lookup)
+enum FormStatus { draft published archived }
+enum FormResponseStatus { draft submitted }
+enum ProcedureStatus { active archived }
+enum LessonImpact { low medium high }
+enum LessonStatus { open applied archived }
+enum DealContactRoleType { coordinator payer decision_maker participant invoice_contact other }
+enum ConsentChannel { whatsapp email sms phone all }
+enum ConsentPurpose { operational marketing }
+enum ConsentStatus { granted denied withdrawn unknown }
+enum ConsentBasis { consent contract legitimate_interest }
+enum ActorType { user system automation }
+enum AuditAction { create update delete anonymize grant revoke }
+
+// =============================================================================
+// IDENTITY & ACCESS
+// RECONCILIATION REQUIRED: existing live `AdminUser` is a coarse precursor of
+// `User`. Decide migration path before any real migration (see report).
+// =============================================================================
+
+/// A login principal. Distinct from TeamMember and Contact. May be a person or
+/// a service account.
+///
+/// LOGIN HANDLE (locked): `username` is the PRIMARY login handle, matching the
+/// legacy AdminUser. `email` is OPTIONAL and is NOT the login identity at this
+/// stage (no username→email migration). See GOS-legacy-reconciliation-plan.md.
+///
+/// BOOTSTRAP/SETUP (design only — do NOT implement here): "/admin setup is
+/// OPEN iff zero active admin-equivalent principals". During the AdminUser→User
+/// transition this is a UNION across BOTH tables and is FAIL-CLOSED:
+///   open  ==  ( COUNT(AdminUser WHERE isActive)
+///            +  COUNT(User WHERE deletedAt IS NULL AND status='active'
+///                      AND has UserRole→Role{key:'admin', archived:false}) ) == 0
+/// Any query error ⇒ treat as locked. See the reconciliation plan §2.
+model User {
+  id           String     @id // app-supplied UUID v7
+  username     String     @db.Citext // PRIMARY login handle (from AdminUser.username)
+  email        String?    @db.Citext // OPTIONAL — not the login identity at this stage
+  passwordHash String? // scrypt "salt:key" (carried verbatim from AdminUser); null when SSO-only
+  displayName  String
+  status       UserStatus @default(invited)
+  lastLoginAt  DateTime?  @db.Timestamptz(6)
+
+  // Optional 1:1 link to the internal staff record (not all users are staff;
+  // not all staff have logins). FK lives here via @unique.
+  teamMemberId String?     @unique
+  teamMember   TeamMember? @relation(fields: [teamMemberId], references: [id])
+
+  userRoles UserRole[]
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  /// PARTIAL-UNIQUE: (username) WHERE deleted_at IS NULL          (login handle; citext)
+  /// PARTIAL-UNIQUE: (email)    WHERE deleted_at IS NULL AND email IS NOT NULL  (citext)
+  @@index([status])
+  @@index([teamMemberId])
+}
+
+/// A named bundle of permissions (RBAC). Reference/config — archived, not
+/// soft-deleted. System roles cannot be deleted.
+model Role {
+  id          String  @id
+  key         String  @unique
+  name        String
+  description String?
+  isSystem    Boolean @default(false)
+  archived    Boolean @default(false)
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+}
+
+/// A single capability = resource + action + scope (e.g. deal.read.all).
+/// Seeded, closed reference set referenced by code keys.
+model Permission {
+  id          String          @id
+  key         String          @unique
+  resource    String
+  action      String
+  scope       PermissionScope
+  description  String?
+
+  rolePermissions RolePermission[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+}
+
+/// RBAC join: User ↔ Role. Revocation = row delete, logged in AuditLog.
+model UserRole {
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId        String
+  role          Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  grantedAt     DateTime @default(now()) @db.Timestamptz(6)
+  grantedById   String? // loose actor id (no FK)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+}
+
+/// RBAC join: Role ↔ Permission.
+model RolePermission {
+  roleId       String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  grantedAt    DateTime   @default(now()) @db.Timestamptz(6)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+}
+
+// =============================================================================
+// CRM
+// =============================================================================
+
+/// External company/account. Optional on Contact/Deal (individuals exist).
+model Organization {
+  id          String  @id
+  name        String
+  legalName   String?
+  type        OrgType @default(other)
+  website     String?
+  address     Json? // structured address
+  pipedriveId String? @unique // migration mirror ref; removable post-cutover
+
+  contacts    Contact[]
+  deals       Deal[]
+  activities  Activity[]
+  notes       Note[]
+  attachments Attachment[]
+  lessons     LessonLearned[]
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  @@index([type])
+  @@index([name]) // consider a trigram/GIN index via raw SQL for search
+}
+
+/// External person. PII → supports anonymization.
+model Contact {
+  id             String   @id
+  firstName      String?
+  lastName       String?
+  displayName    String
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  primaryEmail   String?  @db.Citext // non-unique: dedup is a process, not a constraint
+  title          String?
+  source         String?
+  pipedriveId    String?  @unique // migration mirror ref
+
+  phones        ContactPhone[]
+  dealContacts  DealContact[]
+  consents      ConsentRecord[]
+  conversations Conversation[]
+  activities    Activity[]
+  notes         Note[]
+  attachments   Attachment[]
+  formResponses FormResponse[]
+
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime? @db.Timestamptz(6)
+  deletedById  String?
+  anonymizedAt DateTime? @db.Timestamptz(6)
+
+  @@index([organizationId])
+  @@index([primaryEmail])
+}
+
+/// Phone identity — maps a normalized E.164 number to a Contact. Anchor for
+/// WhatsApp resolution. A number resolves to ≤1 ACTIVE contact; re-assignment
+/// over time = soft-delete the old mapping and create a new one.
+model ContactPhone {
+  id         String  @id
+  contactId  String
+  contact    Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  e164       String // normalized; reject non-E.164 before insert
+  rawInput   String?
+  label      String? // mobile | office | whatsapp
+  isPrimary  Boolean @default(false)
+  verifiedAt DateTime? @db.Timestamptz(6)
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  /// PARTIAL-UNIQUE: (e164) WHERE deleted_at IS NULL
+  /// PARTIAL-UNIQUE: (contact_id) WHERE is_primary AND deleted_at IS NULL
+  @@index([contactId])
+  @@index([e164])
+}
+
+/// The commercial agreement. OWNS MONEY. No tour_id here — linked via Booking.
+model Deal {
+  id              String     @id
+  title           String
+  organizationId  String?
+  organization    Organization? @relation(fields: [organizationId], references: [id])
+  stageId         String
+  stage           DealStage  @relation(fields: [stageId], references: [id])
+  status          DealStatus @default(open)
+  valueMinor      BigInt     @default(0)
+  currency        String     @default("ILS") @db.Char(3)
+  discountMinor   BigInt?
+  paymentTerms    Json? // structured terms
+  expectedCloseDate DateTime? @db.Timestamptz(6)
+  wonAt           DateTime?  @db.Timestamptz(6)
+  lostAt          DateTime?  @db.Timestamptz(6)
+  lostReason      String?
+  ownerUserId     String? // loose actor id (no FK by design)
+
+  // DERIVED CACHE — source of truth is Payment / PaymentLink / Finance Ops
+  // events. Must be recomputed in the SAME transaction as payment changes.
+  // Never written by a second writer. (Decision #8.)
+  collectionStatus String? // e.g. none | partial | paid | overpaid
+
+  pipedriveId String? @unique // migration mirror ref
+
+  dealContacts     DealContact[]
+  bookings         Booking[]
+  quotes           Quote[]
+  payments         Payment[]
+  paymentLinks     PaymentLink[]
+  financeDocuments FinanceDocument[]
+  activities       Activity[]
+  notes            Note[]
+  attachments      Attachment[]
+  formResponses    FormResponse[]
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  @@index([organizationId])
+  @@index([stageId])
+  @@index([status])
+  @@index([ownerUserId])
+  @@index([expectedCloseDate])
+}
+
+/// Deal pipeline stage (CONFIGURATION, not an enum). Stages are admin-editable.
+model DealStage {
+  id        String  @id
+  key       String  @unique
+  name      String
+  pipeline  String  @default("default")
+  sortOrder Int     @default(0)
+  isWon     Boolean @default(false)
+  isLost    Boolean @default(false)
+  active    Boolean @default(true)
+
+  deals   Deal[]
+  lessons LessonLearned[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+}
+
+/// Deal ↔ Contact link. Multiple contacts per deal; per-deal comm preferences.
+/// Roles are a STRUCTURED child set (DealContactRole), not a flattened string.
+model DealContact {
+  id        String  @id
+  dealId    String
+  deal      Deal    @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  contactId String
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  isPrimary Boolean @default(false)
+
+  // Communication preferences (operational routing). GATED by ConsentRecord —
+  // legal consent always overrides these flags.
+  receiveConfirmations      Boolean @default(false)
+  receiveOperationalUpdates Boolean @default(false)
+  receivePaymentLinks       Boolean @default(false)
+  receiveQuotes             Boolean @default(false)
+
+  roles        DealContactRole[]
+  paymentLinks PaymentLink[]
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  /// PARTIAL-UNIQUE: (deal_id, contact_id) WHERE deleted_at IS NULL
+  /// PARTIAL-UNIQUE: (deal_id) WHERE is_primary AND deleted_at IS NULL
+  @@index([contactId])
+  @@index([dealId])
+}
+
+/// One role a contact plays on a deal. Multiple rows = multiple roles.
+model DealContactRole {
+  id            String              @id
+  dealContactId String
+  dealContact   DealContact         @relation(fields: [dealContactId], references: [id], onDelete: Cascade)
+  role          DealContactRoleType
+
+  @@unique([dealContactId, role]) // full unique (child rows deleted with parent)
+}
+
+/// Pipedrive-style CRM touchpoint. NOT a generic task, NOT an ops task, NOT a
+/// procedure checklist item. Targets one or more of deal/contact/organization.
+model Activity {
+  id          String         @id
+  type        ActivityType
+  subject     String
+  notes       String?
+  dueAt       DateTime?      @db.Timestamptz(6)
+  completedAt DateTime?      @db.Timestamptz(6)
+  status      ActivityStatus @default(planned)
+  ownerUserId String? // loose actor id (no FK)
+
+  dealId         String?
+  deal           Deal? @relation(fields: [dealId], references: [id])
+  contactId      String?
+  contact        Contact? @relation(fields: [contactId], references: [id])
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  @@index([dealId])
+  @@index([contactId])
+  @@index([ownerUserId, dueAt])
+  @@index([status])
+}
+
+/// Free-text note. Explicit nullable FK targets (Phase-0 set).
+model Note {
+  id           String  @id
+  body         String
+  authorUserId String? // loose actor id (no FK)
+
+  dealId         String?
+  deal           Deal? @relation(fields: [dealId], references: [id])
+  contactId      String?
+  contact        Contact? @relation(fields: [contactId], references: [id])
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  tourId         String?
+  tour           Tour? @relation(fields: [tourId], references: [id])
+  teamMemberId   String?
+  teamMember     TeamMember? @relation(fields: [teamMemberId], references: [id])
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  @@index([dealId])
+  @@index([contactId])
+  @@index([organizationId])
+  @@index([tourId])
+  @@index([teamMemberId])
+}
+
+/// File METADATA. Bytes live in object storage (storageKey), never in the DB.
+/// (Diverges from the legacy in-DB Bytes pattern — new convention going fwd.)
+model Attachment {
+  id               String  @id
+  fileName         String
+  mimeType         String
+  sizeBytes        Int
+  storageKey       String  @unique // object-store path
+  checksum         String // content hash (immutable / content-addressed)
+  uploadedByUserId String? // loose actor id (no FK)
+
+  dealId         String?
+  deal           Deal? @relation(fields: [dealId], references: [id])
+  contactId      String?
+  contact        Contact? @relation(fields: [contactId], references: [id])
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  tourId         String?
+  tour           Tour? @relation(fields: [tourId], references: [id])
+  teamMemberId   String?
+  teamMember     TeamMember? @relation(fields: [teamMemberId], references: [id])
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  @@index([dealId])
+  @@index([contactId])
+  @@index([organizationId])
+  @@index([tourId])
+  @@index([teamMemberId])
+}
+
+// =============================================================================
+// OPERATIONS
+// =============================================================================
+
+/// Catalog template for a kind of tour. defaultPriceMinor is SUGGESTED only —
+/// it never overrides the Deal's agreed price.
+model TourType {
+  id                String  @id
+  key               String  @unique
+  name              String
+  description       String?
+  defaultDurationMin Int?
+  defaultPriceMinor BigInt?
+  currency          String  @default("ILS") @db.Char(3)
+  requiredSkills    String[] @default([])
+  defaultCapacity   Int?
+  active            Boolean @default(true)
+
+  tours   Tour[]
+  lessons LessonLearned[]
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  @@index([active])
+}
+
+/// Operational execution instance. NO commercial data, NO price, NO deal_id.
+/// Store UTC + explicit timeZone. A tour can exist before/without any Deal.
+model Tour {
+  id            String     @id
+  tourTypeId    String
+  tourType      TourType   @relation(fields: [tourTypeId], references: [id])
+  title         String?
+  scheduledStart DateTime  @db.Timestamptz(6)
+  scheduledEnd  DateTime?  @db.Timestamptz(6)
+  durationMin   Int?
+  timeZone      String     @default("Asia/Jerusalem")
+  locationId    String?
+  location      Location?  @relation(fields: [locationId], references: [id])
+  status        TourStatus @default(draft)
+  capacity      Int?
+  notes         String?
+  airtableId    String?    @unique // migration mirror ref
+
+  bookings      Booking[]
+  assignments   TourAssignment[]
+  notes_rel     Note[]
+  attachments   Attachment[]
+  formResponses FormResponse[]
+  lessons       LessonLearned[]
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  @@index([scheduledStart])
+  @@index([tourTypeId])
+  @@index([status])
+  @@index([locationId])
+}
+
+/// Reusable venue. Tours reference this instead of free-text locations.
+model Location {
+  id        String  @id
+  name      String
+  address   Json?
+  city      String?
+  notes     String?
+  active    Boolean @default(true)
+
+  tours Tour[]
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  @@index([active])
+}
+
+/// The Deal ↔ Tour join. NO uniqueness on (deal_id, tour_id) — per decision #4
+/// multiple booking lines per pair are allowed (e.g. separate seat blocks).
+/// allocatedAmountMinor is OPTIONAL and NEVER replaces the Deal total.
+model Booking {
+  id                  String        @id
+  dealId              String
+  deal                Deal          @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  tourId              String
+  tour                Tour          @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  seats               Int           @default(1)
+  allocatedAmountMinor BigInt?
+  currency            String        @default("ILS") @db.Char(3)
+  status              BookingStatus @default(tentative)
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  @@index([dealId])
+  @@index([tourId])
+}
+
+/// Rich assignment of a TeamMember to a Tour. Operational facts + pay SNAPSHOT.
+/// Payroll READS the pay fields; it is never a second writer of them.
+/// Double-booking (overlapping tours) is application logic, not a constraint.
+model TourAssignment {
+  id                  String           @id
+  tourId              String
+  tour                Tour             @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  teamMemberId        String
+  teamMember          TeamMember       @relation(fields: [teamMemberId], references: [id])
+  role                AssignmentRole
+  status              AssignmentStatus @default(proposed)
+  attendance          AttendanceStatus @default(unknown)
+  checkInAt           DateTime?        @db.Timestamptz(6)
+  agreedAmountMinor   BigInt?
+  currency            String           @default("ILS") @db.Char(3)
+  payrollOverrideMinor BigInt?
+  overrideReason      String?
+  notes               String?
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  /// PARTIAL-UNIQUE: (tour_id, team_member_id) WHERE deleted_at IS NULL
+  @@index([tourId])
+  @@index([teamMemberId])
+}
+
+// =============================================================================
+// TEAM
+// RECONCILIATION (LOCKED — see GOS-legacy-reconciliation-plan.md):
+//   * TeamMember OWNS internal person identity: name, phone, email,
+//     employment/guide status, payroll-relevant data, guide profile.
+//   * The live PersonRef is RETAINED (not retired) and NARROWED: it keeps the
+//     learning/portal runtime only (portalToken, portalEnabled, flow targeting
+//     via FlowTargetPerson, attempt linkage via Attempt.externalPersonId,
+//     lifecycleHint) and gains a nullable `teamMemberId` link to this model.
+//   * Migration is mirror→flip: TeamMember backfilled from PersonRef/
+//     PersonProfile; PersonRef.externalPersonId → TeamMember.recruitmentExternalId.
+//     FlowTargetPerson / Attempt are NOT re-pointed at TeamMember.id (low-risk).
+//   * The live TeamRef is a TEAM-GROUP, NOT this model; it stays and is later
+//     renamed `Team`. PersonRef must NEVER become Contact (Contact = external).
+// NOTE: PersonRef itself lives in server/prisma/schema.prisma; the `teamMemberId`
+// link is added THERE during migration, not in this draft.
+// =============================================================================
+
+/// Internal staff identity. GOS-owned source of truth. recruitmentExternalId is
+/// an EXTERNAL REFERENCE only (never derive the GOS id from it); its uniqueness
+/// makes the candidate→hired handoff idempotent. Availability/scheduling is a
+/// later module — deliberately not modeled here.
+model TeamMember {
+  id                   String           @id // GOS-generated canonical UUID v7
+  firstName            String?
+  lastName             String?
+  displayName          String
+  memberTypes          String[]         @default([]) // guide | office | manager | sales
+  status               TeamMemberStatus @default(active)
+  primaryEmail         String?          @db.Citext
+  primaryPhoneE164     String?
+  skills               String[]         @default([])
+  startDate            DateTime?        @db.Timestamptz(6)
+  endDate              DateTime?        @db.Timestamptz(6)
+  defaultPayRateMinor  BigInt?
+  currency             String           @default("ILS") @db.Char(3)
+  recruitmentExternalId String?         @unique // external ref only
+
+  user        User?
+  assignments TourAssignment[]
+  notes       Note[]
+  attachments Attachment[]
+  formResponses FormResponse[]
+
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime? @db.Timestamptz(6)
+  deletedById  String?
+  anonymizedAt DateTime? @db.Timestamptz(6)
+
+  @@index([status])
+}
+
+// =============================================================================
+// COMMUNICATIONS
+// =============================================================================
+
+/// One external channel identity (one WhatsApp number). credentialsRef points
+/// to a secret manager — NEVER store the token as a column.
+model ChannelAccount {
+  id                String          @id
+  channelType       ChannelType
+  provider          ChannelProvider
+  e164              String
+  displayName       String?
+  providerAccountId String?
+  credentialsRef    String? // reference to secret manager, not the secret
+  status            String          @default("active") // active | inactive
+
+  conversations Conversation[]
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  @@unique([channelType, e164])
+  @@index([status])
+}
+
+/// A thread between one ChannelAccount and one external participant. The
+/// uniqueness rule here is what PREVENTS duplicate conversations. contactId is
+/// nullable — null = the unresolved inbox.
+model Conversation {
+  id               String             @id
+  channelAccountId String
+  channelAccount   ChannelAccount     @relation(fields: [channelAccountId], references: [id])
+  participantE164  String
+  contactId        String?
+  contact          Contact?           @relation(fields: [contactId], references: [id])
+  status           ConversationStatus @default(open)
+  lastMessageAt    DateTime?          @db.Timestamptz(6) // derived cache
+
+  messages Message[]
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  @@unique([channelAccountId, participantE164]) // anti-duplicate rule
+  @@index([contactId])
+  @@index([lastMessageAt])
+  // Unresolved inbox: add `WHERE contact_id IS NULL` partial index via raw SQL.
+}
+
+/// A single message. High-volume, append-mostly. providerMessageId is the
+/// idempotency key (unique-where-not-null handles webhook retries; Postgres
+/// treats NULLs as distinct, so a plain @unique suffices). Privacy = anonymize
+/// strips body. Media bytes go to the Files service (mediaStorageKey).
+model Message {
+  id                String           @id // UUID v7 (time-ordered; aids partitioning)
+  conversationId    String
+  conversation      Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  direction         MessageDirection
+  status            MessageStatus    @default(received)
+  body              String?
+  mediaStorageKey   String?
+  providerMessageId String?          @unique
+  sentByUserId      String? // loose actor id (no FK)
+  occurredAt        DateTime         @db.Timestamptz(6)
+
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  anonymizedAt DateTime? @db.Timestamptz(6)
+
+  @@index([conversationId, occurredAt])
+  @@index([status])
+  @@index([direction])
+}
+
+// =============================================================================
+// FINANCE (operational — GOS owns; iCount owns the legal layer)
+// =============================================================================
+
+/// A priced offer derived from a Deal. `number` is a GOS-internal ref, NOT an
+/// iCount document number. Line items are a structured child (decision #6).
+model Quote {
+  id         String      @id
+  dealId     String
+  deal       Deal        @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  number     String      @unique
+  status     QuoteStatus @default(draft)
+  totalMinor BigInt      @default(0)
+  currency   String      @default("ILS") @db.Char(3)
+  validUntil DateTime?   @db.Timestamptz(6)
+  sentAt     DateTime?   @db.Timestamptz(6)
+  acceptedAt DateTime?   @db.Timestamptz(6)
+
+  lines QuoteLine[]
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  @@index([dealId])
+  @@index([status])
+}
+
+/// Structured quote line (queryable/auditable; not a jsonb blob).
+model QuoteLine {
+  id             String  @id
+  quoteId        String
+  quote          Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  description    String
+  quantity       Int     @default(1)
+  unitAmountMinor BigInt @default(0)
+  lineTotalMinor BigInt  @default(0)
+  currency       String  @default("ILS") @db.Char(3)
+  sortOrder      Int     @default(0)
+
+  @@index([quoteId])
+}
+
+/// A generated link for a customer to pay (operational collection).
+model PaymentLink {
+  id                  String            @id
+  dealId              String
+  deal                Deal              @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  amountMinor         BigInt
+  currency            String            @default("ILS") @db.Char(3)
+  provider            String?
+  providerLinkId      String?           @unique
+  url                 String?
+  status              PaymentLinkStatus @default(active)
+  sentToDealContactId String?
+  sentToDealContact   DealContact?      @relation(fields: [sentToDealContactId], references: [id])
+  expiresAt           DateTime?         @db.Timestamptz(6)
+  paidAt              DateTime?         @db.Timestamptz(6)
+
+  payments Payment[]
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  @@index([dealId])
+  @@index([status])
+  @@index([sentToDealContactId])
+}
+
+/// A recorded collection event (operational record — NOT the legal receipt).
+/// providerTransactionId is the idempotency key. The legal receipt is the
+/// linked FinanceDocument (iCount mirror).
+model Payment {
+  id                    String           @id
+  dealId                String
+  deal                  Deal             @relation(fields: [dealId], references: [id])
+  amountMinor           BigInt
+  currency              String           @default("ILS") @db.Char(3)
+  method                PaymentMethod
+  paidAt                DateTime?         @db.Timestamptz(6)
+  paymentLinkId         String?
+  paymentLink           PaymentLink?      @relation(fields: [paymentLinkId], references: [id])
+  providerTransactionId String?           @unique
+  status                PaymentStatus     @default(pending)
+  financeDocumentId     String?
+  financeDocument       FinanceDocument?  @relation(fields: [financeDocumentId], references: [id])
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  @@index([dealId])
+  @@index([status])
+}
+
+/// READ-ONLY MIRROR of an iCount legal document. iCount is canonical. Never
+/// edited by the app — only the sync process upserts. No soft-delete; voids are
+/// reflected via status. Retained per tax law. icountDocId = idempotency key.
+model FinanceDocument {
+  id           String           @id
+  dealId       String?
+  deal         Deal?            @relation(fields: [dealId], references: [id])
+  type         FinanceDocType
+  icountDocId  String           @unique
+  number       String // iCount legal number
+  totalMinor   BigInt
+  currency     String           @default("ILS") @db.Char(3)
+  issueDate    DateTime         @db.Timestamptz(6)
+  status       FinanceDocStatus @default(issued)
+  pdfStorageKey String?
+  pdfUrl       String?
+  customerRef  String?
+  rawPayload   Json? // snapshot from iCount
+  mirroredAt   DateTime         @db.Timestamptz(6)
+
+  payments Payment[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([dealId])
+  @@index([type])
+  @@index([number])
+}
+
+// =============================================================================
+// FORMS (shared platform capability with domain bindings)
+// =============================================================================
+
+/// A versioned form template. Published versions are IMMUTABLE; editing a
+/// published form creates a new (key, version+1) row so old responses keep
+/// their exact schema.
+model FormDefinition {
+  id          String          @id
+  key         String
+  version     Int             @default(1)
+  title       String
+  description String?
+  schema      Json // field definitions
+  bindingType FormBindingType @default(other)
+  status      FormStatus      @default(draft)
+
+  responses FormResponse[]
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  @@unique([key, version])
+  @@index([status])
+  @@index([bindingType])
+}
+
+/// A submitted set of answers bound to a domain entity. On submit, emit a
+/// DomainEvent (forms.response.submitted). submittedByContactId is a loose ref
+/// (the binding `contactId` is the FK-enforced relation).
+model FormResponse {
+  id                  String             @id
+  formDefinitionId    String
+  formDefinition      FormDefinition     @relation(fields: [formDefinitionId], references: [id])
+  answers             Json
+  submittedByUserId   String? // loose actor id (no FK)
+  submittedByContactId String? // loose ref (no FK; binding contactId is the relation)
+  status              FormResponseStatus @default(submitted)
+  submittedAt         DateTime?          @db.Timestamptz(6)
+
+  tourId       String?
+  tour         Tour? @relation(fields: [tourId], references: [id])
+  dealId       String?
+  deal         Deal? @relation(fields: [dealId], references: [id])
+  teamMemberId String?
+  teamMember   TeamMember? @relation(fields: [teamMemberId], references: [id])
+  contactId    String?
+  contact      Contact? @relation(fields: [contactId], references: [id])
+
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt    DateTime? @db.Timestamptz(6)
+  deletedById  String?
+  anonymizedAt DateTime? @db.Timestamptz(6)
+
+  @@index([formDefinitionId])
+  @@index([tourId])
+  @@index([dealId])
+  @@index([teamMemberId])
+  @@index([contactId])
+  @@index([submittedAt])
+}
+
+// =============================================================================
+// KNOWLEDGE (contextual, not a passive wiki)
+// =============================================================================
+
+/// An SOP's stable identity + binding context (where/when it should surface).
+/// currentVersion points at the active ProcedureVersion.
+model Procedure {
+  id                String          @id
+  key               String          @unique
+  title             String
+  summary           String?
+  category          String?
+  bindingEntityType String? // e.g. "tour"
+  bindingTrigger    String? // e.g. "before"
+  currentVersionId  String?         @unique
+  currentVersion    ProcedureVersion? @relation("CurrentVersion", fields: [currentVersionId], references: [id])
+  status            ProcedureStatus @default(active)
+
+  versions ProcedureVersion[] @relation("ProcedureVersions")
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  @@index([status])
+  @@index([bindingEntityType, bindingTrigger])
+}
+
+/// IMMUTABLE versioned content of a procedure. No update, no delete.
+model ProcedureVersion {
+  id            String   @id
+  procedureId   String
+  procedure     Procedure @relation("ProcedureVersions", fields: [procedureId], references: [id], onDelete: Cascade)
+  version       Int
+  content       Json
+  checklistItems Json?
+  authorUserId  String? // loose actor id (no FK)
+  publishedAt   DateTime? @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+
+  currentForProcedure Procedure? @relation("CurrentVersion")
+
+  @@unique([procedureId, version])
+}
+
+/// A captured lesson linked to the context that produced it.
+model LessonLearned {
+  id           String       @id
+  title        String
+  body         String?
+  impact       LessonImpact @default(medium)
+  authorUserId String? // loose actor id (no FK)
+  status       LessonStatus @default(open)
+
+  tourTypeId     String?
+  tourType       TourType? @relation(fields: [tourTypeId], references: [id])
+  dealStageId    String?
+  dealStage      DealStage? @relation(fields: [dealStageId], references: [id])
+  tourId         String?
+  tour           Tour? @relation(fields: [tourId], references: [id])
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+  deletedById String?
+
+  @@index([status])
+  @@index([tourTypeId])
+  @@index([dealStageId])
+  @@index([tourId])
+  @@index([organizationId])
+}
+
+// =============================================================================
+// PLATFORM
+// =============================================================================
+
+/// Append-only business event log — the backbone for automations, integration,
+/// and read-models. IMMUTABLE: no update, no delete. (entityType,entityId) is a
+/// LOOSE reference by design (polymorphic; no FK). Plan time-partitioning by
+/// occurred_at for scale.
+model DomainEvent {
+  id            String    @id // UUID v7 (time-ordered)
+  type          String // domain.entity.action (past tense)
+  version       Int       @default(1)
+  occurredAt    DateTime  @db.Timestamptz(6)
+  actorType     ActorType @default(system)
+  actorId       String?
+  correlationId String?
+  causationId   String?
+  source        String? // emitting module
+  entityType    String?
+  entityId      String?
+  payload       Json
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([type])
+  @@index([entityType, entityId])
+  @@index([occurredAt])
+  @@index([correlationId])
+}
+
+/// Lets event consumers (automations) be idempotent — tracks how far each
+/// named consumer has processed. Pairs with DomainEvent.
+model EventConsumerOffset {
+  consumer            String   @id // consumer name
+  lastProcessedEventId String?
+  lastProcessedAt     DateTime? @db.Timestamptz(6)
+  updatedAt           DateTime @updatedAt @db.Timestamptz(6)
+}
+
+/// Change log — who changed what field on which record. DISTINCT from
+/// DomainEvent (business facts). IMMUTABLE append-only. Loose (entityType,
+/// entityId, actorUserId) — no FKs.
+model AuditLog {
+  id            String      @id
+  actorUserId   String?
+  action        AuditAction
+  entityType    String
+  entityId      String
+  changedFields Json? // field -> {old, new}
+  reason        String?
+  ip            String?
+  userAgent     String?
+  occurredAt    DateTime    @db.Timestamptz(6)
+  createdAt     DateTime    @default(now()) @db.Timestamptz(6)
+
+  @@index([entityType, entityId])
+  @@index([actorUserId])
+  @@index([occurredAt])
+}
+
+// =============================================================================
+// RAW SQL REQUIRED AFTER `prisma migrate` (Prisma cannot express these)
+// =============================================================================
+//
+// Extensions:
+//   CREATE EXTENSION IF NOT EXISTS citext;
+//   -- optional, for Organization/Contact name search:
+//   CREATE EXTENSION IF NOT EXISTS pg_trgm;
+//
+// Partial UNIQUE indexes (soft-delete-aware uniqueness — the @@unique above is
+// NOT used for these; create them as raw SQL in a follow-up migration):
+//   -- username is the login handle; email is optional. citext columns are
+//   -- already case-insensitive, so no lower() wrapper is needed.
+//   CREATE UNIQUE INDEX user_username_active_uq
+//     ON "User" (username) WHERE deleted_at IS NULL;
+//   CREATE UNIQUE INDEX user_email_active_uq
+//     ON "User" (email) WHERE deleted_at IS NULL AND email IS NOT NULL;
+//   CREATE UNIQUE INDEX contactphone_e164_active_uq
+//     ON "ContactPhone" (e164) WHERE deleted_at IS NULL;
+//   CREATE UNIQUE INDEX contactphone_primary_uq
+//     ON "ContactPhone" (contact_id) WHERE is_primary AND deleted_at IS NULL;
+//   CREATE UNIQUE INDEX dealcontact_pair_active_uq
+//     ON "DealContact" (deal_id, contact_id) WHERE deleted_at IS NULL;
+//   CREATE UNIQUE INDEX dealcontact_primary_uq
+//     ON "DealContact" (deal_id) WHERE is_primary AND deleted_at IS NULL;
+//   CREATE UNIQUE INDEX tourassignment_pair_active_uq
+//     ON "TourAssignment" (tour_id, team_member_id) WHERE deleted_at IS NULL;
+//   CREATE UNIQUE INDEX consent_active_uq
+//     ON "ConsentRecord" (contact_id, channel, purpose) WHERE withdrawn_at IS NULL;
+//
+// Partial (non-unique) helper index:
+//   CREATE INDEX conversation_unresolved_idx
+//     ON "Conversation" (last_message_at) WHERE contact_id IS NULL;
+//
+// (Exact column names follow the @map/snake_case mapping you choose at codegen.)
+
+// =============================================================================
+// PRIVACY
+// =============================================================================
+
+/// Lawful basis + per-channel/purpose consent for a Contact. Gates the
+/// DealContact comm preferences (legal status wins). withdrawnAt drives the
+/// "active consent" partial-unique index.
+model ConsentRecord {
+  id          String        @id
+  contactId   String
+  contact     Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  channel     ConsentChannel
+  purpose     ConsentPurpose
+  status      ConsentStatus @default(unknown)
+  basis       ConsentBasis  @default(consent)
+  source      String?
+  grantedAt   DateTime?     @db.Timestamptz(6)
+  withdrawnAt DateTime?     @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  /// PARTIAL-UNIQUE: (contact_id, channel, purpose) WHERE withdrawn_at IS NULL
+  @@index([contactId])
+}
