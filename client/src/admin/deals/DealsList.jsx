@@ -9,6 +9,22 @@ import { DEAL_STATUS_LABELS, DEAL_STATUS_STYLES } from './config.js';
 // they need action; ALL is last. דילים / OPEN·WON·LOST.
 
 const PAGE_SIZE = 14;
+const FILTERS_KEY = 'deals.filters.v1';
+
+function loadFilters() {
+  try {
+    return JSON.parse(localStorage.getItem(FILTERS_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+function saveFilters(f) {
+  try {
+    localStorage.setItem(FILTERS_KEY, JSON.stringify(f));
+  } catch {
+    /* storage unavailable — non-fatal, filters just won't persist */
+  }
+}
 
 const STAGE_PILL = [
   'bg-blue-50 text-blue-700 ring-blue-100',
@@ -37,13 +53,21 @@ export default function DealsList() {
   const [error, setError] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
 
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('all');
-  const [stageId, setStageId] = useState('all');
-  const [orgId, setOrgId] = useState('all');
-  const [minVal, setMinVal] = useState('');
-  const [maxVal, setMaxVal] = useState('');
+  // Filters persist across refresh / navigation / logout via localStorage, so
+  // the user always returns to the exact same filtered workspace.
+  const [saved] = useState(loadFilters);
+  const [search, setSearch] = useState(saved.search ?? '');
+  const [status, setStatus] = useState(saved.status ?? 'all');
+  const [stageId, setStageId] = useState(saved.stageId ?? 'all');
+  const [orgId, setOrgId] = useState(saved.orgId ?? 'all');
+  const [minVal, setMinVal] = useState(saved.minVal ?? '');
+  const [maxVal, setMaxVal] = useState(saved.maxVal ?? '');
   const [page, setPage] = useState(1);
+
+  // Persist whenever any filter changes.
+  useEffect(() => {
+    saveFilters({ search, status, stageId, orgId, minVal, maxVal });
+  }, [search, status, stageId, orgId, minVal, maxVal]);
 
   async function refresh() {
     setError(null);
@@ -113,9 +137,9 @@ export default function DealsList() {
   }
 
   return (
-    <div className="mx-auto max-w-[1600px] px-5 lg:px-8 py-5">
+    <div className="mx-auto max-w-[1600px] px-5 lg:px-8 py-4">
       {/* Header — compact */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2.5">
           <div className="hidden sm:flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 text-white text-lg shadow-sm">
             💼
@@ -133,15 +157,20 @@ export default function DealsList() {
         </button>
       </div>
 
-      {/* Summary cards — compact, order OPEN · WON · LOST · ALL */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
-        <MetricCard label="OPEN" n={summary.open.n} v={summary.open.v} tone="blue" icon="🕓" />
-        <MetricCard label="WON" n={summary.won.n} v={summary.won.v} tone="emerald" icon="🏆" />
-        <MetricCard label="LOST" n={summary.lost.n} v={summary.lost.v} tone="red" icon="✕" />
-        <MetricCard label="ALL DEALS" n={summary.all.n} v={summary.all.v} tone="indigo" icon="🤝" />
+      {/* Summary cards double as the status filter — click to filter.
+          Order OPEN · WON · LOST · ALL. Compact "dashboard widgets". */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+        <MetricCard label="OPEN" n={summary.open.n} v={summary.open.v} tone="blue" icon="🕓"
+          active={status === 'open'} onClick={() => setStatus('open')} />
+        <MetricCard label="WON" n={summary.won.n} v={summary.won.v} tone="emerald" icon="🏆"
+          active={status === 'won'} onClick={() => setStatus('won')} />
+        <MetricCard label="LOST" n={summary.lost.n} v={summary.lost.v} tone="red" icon="✕"
+          active={status === 'lost'} onClick={() => setStatus('lost')} />
+        <MetricCard label="ALL" n={summary.all.n} v={summary.all.v} tone="indigo" icon="🤝"
+          active={status === 'all'} onClick={() => setStatus('all')} />
       </div>
 
-      {/* Filter bar — search dominant; status handled by the tabs below */}
+      {/* Filter bar — search dominant; status is driven by the cards above */}
       <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-2.5 mb-3">
         <div className="flex flex-wrap items-center gap-2.5">
           <div className="relative flex-[2] min-w-[260px]">
@@ -168,14 +197,6 @@ export default function DealsList() {
             <button onClick={clearFilters} className="text-sm text-blue-700 hover:underline px-1">נקה פילטרים</button>
           )}
         </div>
-      </div>
-
-      {/* Status tabs — order OPEN · WON · LOST · הכל */}
-      <div className="flex flex-wrap gap-2 mb-3">
-        <StatusTab active={status === 'open'} onClick={() => setStatus('open')} label="OPEN" n={summary.open.n} tone="open" />
-        <StatusTab active={status === 'won'} onClick={() => setStatus('won')} label="WON" n={summary.won.n} tone="won" />
-        <StatusTab active={status === 'lost'} onClick={() => setStatus('lost')} label="LOST" n={summary.lost.n} tone="lost" />
-        <StatusTab active={status === 'all'} onClick={() => setStatus('all')} label="הכל" n={summary.all.n} tone="all" />
       </div>
 
       {/* Table */}
@@ -267,18 +288,35 @@ const TONE_TEXT = {
   red: 'text-red-700',
 };
 
-function MetricCard({ label, n, v, tone, icon }) {
+const TONE_ACTIVE = {
+  indigo: 'border-indigo-300 ring-2 ring-indigo-200 bg-indigo-50/50',
+  blue: 'border-blue-300 ring-2 ring-blue-200 bg-blue-50/50',
+  emerald: 'border-emerald-300 ring-2 ring-emerald-200 bg-emerald-50/50',
+  red: 'border-red-300 ring-2 ring-red-200 bg-red-50/50',
+};
+
+// Compact dashboard widget that also acts as the status filter. Count and
+// amount sit on one line to keep the card short — the table is the focus.
+function MetricCard({ label, n, v, tone, icon, active, onClick }) {
   return (
-    <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 flex items-center justify-between">
-      <div>
-        <div className={`text-[11px] font-semibold tracking-wide ${TONE_TEXT[tone]}`}>{label}</div>
-        <div className="text-2xl font-bold text-gray-900 mt-0.5 leading-none">{n}</div>
-        <div className="text-[12px] text-gray-500 mt-1 tabular-nums" dir="ltr">{formatMinor(v, 'ILS')}</div>
+    <button
+      onClick={onClick}
+      aria-pressed={active}
+      className={`flex items-center justify-between gap-2 rounded-lg border bg-white px-3 py-2 text-right shadow-sm transition ${
+        active ? TONE_ACTIVE[tone] : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+      }`}
+    >
+      <div className="min-w-0">
+        <div className={`text-[10px] font-semibold tracking-wide ${TONE_TEXT[tone]}`}>{label}</div>
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-lg font-bold leading-none text-gray-900">{n}</span>
+          <span className="truncate text-[11px] text-gray-500 tabular-nums" dir="ltr">{formatMinor(v, 'ILS')}</span>
+        </div>
       </div>
-      <div className={`h-10 w-10 shrink-0 flex items-center justify-center rounded-full text-lg ring-1 ${TONES[tone]}`}>
+      <span className={`h-7 w-7 shrink-0 flex items-center justify-center rounded-full text-sm ring-1 ${TONES[tone]}`}>
         {icon}
-      </div>
-    </div>
+      </span>
+    </button>
   );
 }
 
@@ -291,28 +329,6 @@ function CompactSelect({ value, onChange, options }) {
     >
       {options.map(([val, lbl]) => (<option key={val} value={val}>{lbl}</option>))}
     </select>
-  );
-}
-
-const TAB_TONE = {
-  all: 'text-blue-700 border-blue-300 bg-blue-50',
-  open: 'text-blue-700 border-blue-300 bg-blue-50',
-  won: 'text-emerald-700 border-emerald-300 bg-emerald-50',
-  lost: 'text-red-700 border-red-300 bg-red-50',
-};
-function StatusTab({ active, onClick, label, n, tone }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
-        active ? TAB_TONE[tone] : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
-      }`}
-    >
-      {label}
-      <span className={`inline-flex min-w-[1.4rem] justify-center rounded-full px-1.5 py-0.5 text-[11px] ${
-        active ? 'bg-white/70' : 'bg-gray-100 text-gray-600'
-      }`}>{n}</span>
-    </button>
   );
 }
 
