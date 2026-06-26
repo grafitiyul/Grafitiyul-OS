@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
@@ -42,8 +43,13 @@ router.post(
       req.body || {};
     const cleanLabel = String(label || '').trim();
     if (!cleanLabel) return res.status(400).json({ error: 'label_required' });
-    const cleanKey = slugifyKey(key || labelEn || cleanLabel);
-    if (!cleanKey) return res.status(400).json({ error: 'key_required' });
+    // `key` is an internal slug (OrganizationSubtype.key), NOT an auth key.
+    // Hebrew-only labels slug to empty, so fall back to a generated unique key.
+    const cleanKey =
+      slugifyKey(key) ||
+      slugifyKey(labelEn) ||
+      slugifyKey(cleanLabel) ||
+      `subtype_${crypto.randomBytes(4).toString('hex')}`;
     try {
       const subtype = await prisma.organizationSubtype.create({
         data: {
