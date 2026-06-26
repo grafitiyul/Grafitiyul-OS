@@ -31,6 +31,18 @@ export default function CrmSettingsHome() {
           description="צינור המכירות — השלבים והסדר שלהם."
         />
         <CategoryCard
+          to="/admin/settings/crm/lost-reasons"
+          icon="🚫"
+          title="סיבות LOST"
+          description="רשימת סיבות לאובדן דיל, לשימוש חוזר."
+        />
+        <CategoryCard
+          to="/admin/settings/crm/quote-sections"
+          icon="📝"
+          title="הצעות מחיר"
+          description="סעיפי תוכן קבועים לשימוש בהצעות מחיר עתידיות."
+        />
+        <CategoryCard
           to="/admin/settings/crm/products"
           icon="📦"
           title="מוצרים"

@@ -472,6 +472,21 @@ export const api = {
   pricing: {
     calculate: (input) => request('/api/pricing/calculate', { method: 'POST', body: JSON.stringify(input) }),
   },
+  // ── CRM Settings — Lost Reasons & Quote Content Sections (catalog only) ──
+  lostReasons: {
+    list: () => request('/api/lost-reasons'),
+    create: (data) => request('/api/lost-reasons', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/api/lost-reasons/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/lost-reasons/${id}`, { method: 'DELETE' }),
+    reorder: (ids) => request('/api/lost-reasons/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
+  },
+  quoteSections: {
+    list: () => request('/api/quote-sections'),
+    create: (data) => request('/api/quote-sections', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/api/quote-sections/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/quote-sections/${id}`, { method: 'DELETE' }),
+    reorder: (ids) => request('/api/quote-sections/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
+  },
   reviews: {
     list: (filters) => request(`/api/reviews/attempts${qs(filters)}`),
     get: (id) => request(`/api/reviews/attempts/${id}`),

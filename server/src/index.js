@@ -35,6 +35,8 @@ import priceRulesRouter from './routes/priceRules.js';
 import addonsRouter from './routes/addons.js';
 import addonPriceRulesRouter from './routes/addonPriceRules.js';
 import pricingCalcRouter from './routes/pricingCalc.js';
+import lostReasonsRouter from './routes/lostReasons.js';
+import quoteSectionsRouter from './routes/quoteSections.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -140,6 +142,11 @@ app.use('/api/price-rules', requireAdminAuth, priceRulesRouter);
 app.use('/api/addons', requireAdminAuth, addonsRouter);
 app.use('/api/addon-price-rules', requireAdminAuth, addonPriceRulesRouter);
 app.use('/api/pricing', requireAdminAuth, pricingCalcRouter);
+
+// CRM settings catalogs — Lost Reasons & Quote Content Sections. Admin only.
+// Content/config only; NOT wired to Deals or quote generation yet.
+app.use('/api/lost-reasons', requireAdminAuth, lostReasonsRouter);
+app.use('/api/quote-sections', requireAdminAuth, quoteSectionsRouter);
 
 // Unknown /api/* paths get a real JSON 404 instead of falling through to
 // the SPA fallback (which would serve HTML for an API request).

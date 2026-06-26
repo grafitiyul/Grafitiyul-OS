@@ -1134,3 +1134,37 @@ model AddonPriceRule {
   @@index([addonId])
   @@index([priceListId])
 }
+
+// ── CRM Settings — Lost Reasons & Quote Content (catalog only) ───────────────
+// Reusable, admin-managed reference data. NOT yet wired to Deals or to quote
+// generation — this is content/config the future deal-loss and quote-template
+// flows will read. Additive only.
+
+// Reasons a Deal was lost. Reusable picklist. Not wired to Deal.status yet.
+model LostReason {
+  id        String   @id @default(cuid())
+  nameHe    String
+  nameEn    String?
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sortOrder])
+}
+
+// Reusable fixed content sections for future quote templates. Rich HTML, He/En.
+// Stored as content only — quote generation is not built yet.
+model QuoteSection {
+  id         String   @id @default(cuid())
+  titleHe    String
+  titleEn    String?
+  richTextHe String? // HTML from the shared RichEditor
+  richTextEn String? // HTML from the shared RichEditor
+  active     Boolean  @default(true)
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([sortOrder])
+}
