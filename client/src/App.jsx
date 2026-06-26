@@ -110,16 +110,16 @@ export default function App() {
           <Route path="teams" element={<TeamsPage />} />
           <Route path=":id" element={<PersonProfile />} />
         </Route>
-        {/* CRM foundation — Organizations + Contacts (reference data). */}
+        {/* CRM hub — Deals (primary) + Contacts + Organizations. */}
         <Route path="crm" element={<CrmLayout />}>
-          <Route index element={<OrganizationsList />} />
-          <Route path="organizations/:id" element={<OrganizationDetail />} />
+          <Route index element={<Navigate to="/admin/crm/deals" replace />} />
+          <Route path="deals" element={<DealsList />} />
+          <Route path="deals/:id" element={<DealDetail />} />
           <Route path="contacts" element={<ContactsList />} />
           <Route path="contacts/:id" element={<ContactDetail />} />
+          <Route path="organizations" element={<OrganizationsList />} />
+          <Route path="organizations/:id" element={<OrganizationDetail />} />
         </Route>
-        {/* Deal module (commercial core) — list + detail. */}
-        <Route path="deals" element={<DealsList />} />
-        <Route path="deals/:id" element={<DealDetail />} />
         {/* Global Settings — category cards. CRM Settings (incl. the
             Organization Types / Subtypes / Deal Stages screen) lives here,
             no longer as a prominent CRM tab. */}

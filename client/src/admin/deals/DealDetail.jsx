@@ -134,7 +134,7 @@ export default function DealDetail() {
     if (!confirm('למחוק את הדיל? אנשי הקשר המקושרים יוסרו מהדיל.')) return;
     try {
       await api.deals.remove(id);
-      navigate('/admin/deals');
+      navigate('/admin/crm/deals');
     } catch (e) {
       alert('שגיאה במחיקה: ' + e.message);
     }
@@ -152,7 +152,7 @@ export default function DealDetail() {
   return (
     <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-3xl mx-auto space-y-6">
       <div className="flex items-center gap-3">
-        <Link to="/admin/deals" className="text-blue-700 hover:underline text-[13px]">
+        <Link to="/admin/crm/deals" className="text-blue-700 hover:underline text-[13px]">
           ← דילים
         </Link>
         <div className="flex-1" />

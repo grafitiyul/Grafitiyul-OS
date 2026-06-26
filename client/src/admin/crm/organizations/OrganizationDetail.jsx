@@ -94,7 +94,7 @@ export default function OrganizationDetail() {
   return (
     <div className="p-4 lg:p-6 max-w-4xl mx-auto space-y-6">
       <div className="flex items-center gap-2 text-[13px]">
-        <Link to="/admin/crm" className="text-blue-700 hover:underline">
+        <Link to="/admin/crm/organizations" className="text-blue-700 hover:underline">
           ← ארגונים
         </Link>
       </div>

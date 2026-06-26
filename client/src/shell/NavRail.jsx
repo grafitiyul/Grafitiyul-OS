@@ -5,8 +5,8 @@ import { NavLink } from 'react-router-dom';
 // stable internal keys — never by the Hebrew label.
 const TOP_MODULES = [
   { key: 'people', to: '/admin/people', label: 'אנשים וגישה', glyph: '👥' },
+  // CRM is the operational hub: Deals (primary tab) + Contacts + Organizations.
   { key: 'crm', to: '/admin/crm', label: 'CRM', glyph: '🏢' },
-  { key: 'deals', to: '/admin/deals', label: 'דילים', glyph: '💼' },
 ];
 
 // Bottom cluster, top→bottom: מסמכים, נהלים, הגדרות, משתמשים.

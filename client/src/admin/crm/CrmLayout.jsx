@@ -7,9 +7,9 @@ export default function CrmLayout() {
   const { pathname } = useLocation();
   const activeKey = pathname.startsWith('/admin/crm/contacts')
     ? 'contacts'
-    : pathname.startsWith('/admin/crm/settings')
-      ? 'settings'
-      : 'organizations';
+    : pathname.startsWith('/admin/crm/organizations')
+      ? 'organizations'
+      : 'deals';
 
   return (
     <div className="h-full flex flex-col">
