@@ -7,8 +7,9 @@
 // Activities/Deals exist, this module is the interim home for the foundation
 // reference data.
 
+// CRM is operational reference data only. Configuration (types, subtypes, deal
+// stages) lives under the global Settings module (/admin/settings/crm), not here.
 export const CRM_TABS = [
   { key: 'organizations', path: '', label: 'ארגונים' },
   { key: 'contacts', path: 'contacts', label: 'אנשי קשר' },
-  { key: 'settings', path: 'settings', label: 'הגדרות' },
 ];

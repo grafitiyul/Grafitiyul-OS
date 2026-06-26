@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   DndContext,
   PointerSensor,
@@ -59,8 +60,14 @@ export default function CrmSettingsPage() {
   return (
     <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-3xl mx-auto">
       <header className="mb-8">
-        <h1 className="text-2xl font-bold tracking-tight text-gray-900">
-          הגדרות CRM
+        <Link
+          to="/admin/settings/crm"
+          className="text-[13px] text-blue-700 hover:underline"
+        >
+          ← הגדרות CRM
+        </Link>
+        <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">
+          סוגי ארגון, תת-סוגים ושלבי עסקה
         </h1>
         <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed">
           הקטלוגים שמזינים את תהליך העבודה. סוגי הארגון יקבעו בהמשך תמחור, נוסח
@@ -185,7 +192,7 @@ function SubtypesSection({ subtypes, types, onChange }) {
             onChange={(e) =>
               setDraft((d) => ({ ...d, organizationTypeId: e.target.value }))
             }
-            className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 sm:w-44"
+            className="h-10 flex-1 min-w-[7rem] sm:max-w-[12rem] rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
           >
             <option value="">כללי</option>
             {types.map((t) => (
@@ -418,7 +425,7 @@ function CatalogRow({ item, meta, onSave, onRemove, editExtra }) {
       <li ref={s.setNodeRef} style={style}>
         <form
           onSubmit={submit}
-          className="rounded-lg bg-blue-50/50 ring-1 ring-blue-100 px-2.5 py-2.5 flex flex-col sm:flex-row gap-2 sm:items-center"
+          className="rounded-lg bg-blue-50/50 ring-1 ring-blue-100 px-2.5 py-2.5 flex flex-wrap items-center gap-2"
         >
           <input
             autoFocus
@@ -428,7 +435,7 @@ function CatalogRow({ item, meta, onSave, onRemove, editExtra }) {
               if (e.key === 'Escape') setEditing(false);
             }}
             placeholder="שם"
-            className="flex-1 h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+            className="flex-1 min-w-[9rem] h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
           />
           <input
             value={draft.labelEn}
@@ -438,10 +445,10 @@ function CatalogRow({ item, meta, onSave, onRemove, editExtra }) {
             }}
             placeholder="Label (EN)"
             dir="ltr"
-            className="sm:w-44 h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+            className="flex-1 min-w-[7rem] sm:max-w-[12rem] h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
           />
           {editExtra && editExtra(draft, setDraft)}
-          <div className="flex gap-1.5 shrink-0">
+          <div className="flex gap-1.5 shrink-0 ms-auto">
             <button
               type="submit"
               disabled={busy || !draft.label.trim()}

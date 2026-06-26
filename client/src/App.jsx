@@ -42,6 +42,9 @@ import CrmSettingsPage from './admin/crm/settings/CrmSettingsPage.jsx';
 // Deal module (commercial core) — deals + pipeline.
 import DealsList from './admin/deals/DealsList.jsx';
 import DealDetail from './admin/deals/DealDetail.jsx';
+// Global Settings module (low-frequency configuration).
+import SettingsHome from './admin/settings/SettingsHome.jsx';
+import CrmSettingsHome from './admin/settings/CrmSettingsHome.jsx';
 // TEMPORARY (Phase 1/2 review scaffolding): mounts the public-website
 // foundation at a NON-root path so it can be reviewed without touching the
 // root "/" route or the Landing/PWA resolver. This route is removed when the
@@ -112,11 +115,19 @@ export default function App() {
           <Route path="organizations/:id" element={<OrganizationDetail />} />
           <Route path="contacts" element={<ContactsList />} />
           <Route path="contacts/:id" element={<ContactDetail />} />
-          <Route path="settings" element={<CrmSettingsPage />} />
         </Route>
         {/* Deal module (commercial core) — list + detail. */}
         <Route path="deals" element={<DealsList />} />
         <Route path="deals/:id" element={<DealDetail />} />
+        {/* Global Settings — category cards. CRM Settings (incl. the
+            Organization Types / Subtypes / Deal Stages screen) lives here,
+            no longer as a prominent CRM tab. */}
+        <Route path="settings" element={<SettingsHome />} />
+        <Route path="settings/crm" element={<CrmSettingsHome />} />
+        <Route
+          path="settings/crm/organization-types"
+          element={<CrmSettingsPage />}
+        />
         <Route path="users" element={<AdminUsersPage />} />
         <Route path="documents" element={<DocumentsLayout />}>
           <Route index element={<DocumentsIndexPage />} />
