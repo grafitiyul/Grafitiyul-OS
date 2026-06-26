@@ -80,8 +80,10 @@ export function selectRule(candidates) {
 }
 
 // Base amount (in the rule's VAT terms) before the VAT split, multiplied by the
-// number of groups.
-function baseAmountMinor(rule, counts) {
+// number of groups. Exported so a draft-rule preview (the business Pricing UI's
+// per-card calculator) can reuse the EXACT same math without going through rule
+// resolution — one engine, no second implementation.
+export function baseAmountMinor(rule, counts) {
   const groupCount = Math.max(1, Number(counts.groupCount) || 1);
 
   if (rule.priceModel === 'per_head') {

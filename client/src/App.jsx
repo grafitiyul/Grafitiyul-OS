@@ -53,6 +53,7 @@ import ProductsSettings from './admin/products/ProductsSettings.jsx';
 import ProductDetail from './admin/products/ProductDetail.jsx';
 import LocationsSettings from './admin/products/LocationsSettings.jsx';
 import PaymentConfigSettings from './admin/products/PaymentConfigSettings.jsx';
+import PricingBoard from './admin/pricing/PricingBoard.jsx';
 import PricingSettings from './admin/pricing/PricingSettings.jsx';
 import AddonsSettings from './admin/pricing/AddonsSettings.jsx';
 // TEMPORARY (Phase 1/2 review scaffolding): mounts the public-website
@@ -154,7 +155,8 @@ export default function App() {
         <Route path="settings/crm/products/:id" element={<ProductDetail />} />
         <Route path="settings/crm/locations" element={<LocationsSettings />} />
         <Route path="settings/crm/payment" element={<PaymentConfigSettings />} />
-        <Route path="settings/crm/pricing" element={<PricingSettings />} />
+        <Route path="settings/crm/pricing" element={<PricingBoard />} />
+        <Route path="settings/crm/pricing/advanced" element={<PricingSettings />} />
         <Route path="settings/crm/addons" element={<AddonsSettings />} />
         <Route path="users" element={<AdminUsersPage />} />
         <Route path="documents" element={<DocumentsLayout />}>

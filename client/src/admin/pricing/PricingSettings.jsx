@@ -91,10 +91,10 @@ export default function PricingSettings() {
   return (
     <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-4xl mx-auto space-y-6">
       <header>
-        <BackButton to="/admin/settings/crm" label="חזרה להגדרות CRM" />
-        <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">תמחור</h1>
+        <BackButton to="/admin/settings/crm/pricing" label="חזרה לתמחור" />
+        <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">תמחור — מצב מתקדם</h1>
         <p className="text-[15px] text-gray-500 mt-1.5">
-          מחירונים, חוקי תמחור וברירות מחדל. מנוע התמחור עוד לא מחובר לדילים — זהו בסיס לבדיקה.
+          תצוגת מנוע גולמית: חוקי תמחור, ברירות מחדל לפי ארגון, ומחשבון בדיקה. למסך העסקי חזרו לתמחור.
         </p>
       </header>
 
@@ -333,10 +333,17 @@ function RuleSummary({ rule, products, activityTypes, orgSubtypes }) {
   if (rule.productVariantId) scopes.push('וריאציה ספציפית');
   if (rule.activityTypeId) scopes.push(`פעילות: ${nameOf(activityTypes, rule.activityTypeId) || '—'}`);
   if (rule.organizationSubtypeId) scopes.push(`תת-סוג: ${nameOf(orgSubtypes, rule.organizationSubtypeId, 'label') || '—'}`);
-  const price =
-    rule.priceModel === 'per_head'
-      ? `לראש — מבוגר ${formatMinor(rule.adultPriceMinor)} / ילד ${formatMinor(rule.childPriceMinor)}`
-      : `מדורג — בסיס ${formatMinor(rule.basePriceMinor)} עד ${rule.baseParticipants ?? 0} משתתפים, +${formatMinor(rule.perAdditionalParticipantMinor)} לכל נוסף`;
+  let price;
+  if (rule.priceModel === 'per_head') {
+    price = `לראש — מבוגר ${formatMinor(rule.adultPriceMinor)} / ילד ${formatMinor(rule.childPriceMinor)}`;
+  } else if (rule.priceModel === 'fixed') {
+    price = `קבוע — ${formatMinor(rule.fixedPriceMinor)}`;
+  } else if (rule.priceModel === 'tiered_group') {
+    const n = rule.tiers?.length ?? 0;
+    price = `מדרגות קבוצה — ${n} מדרגות, +${formatMinor(rule.perAdditionalParticipantMinor)} מעל האחרונה`;
+  } else {
+    price = `מדורג — בסיס ${formatMinor(rule.basePriceMinor)} עד ${rule.baseParticipants ?? 0} משתתפים, +${formatMinor(rule.perAdditionalParticipantMinor)} לכל נוסף`;
+  }
   return (
     <div>
       <div className="text-[14px] text-gray-900">{price}</div>

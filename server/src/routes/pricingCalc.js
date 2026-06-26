@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
-import { calculate, PricingError } from '../pricing/engine.js';
+import { calculate, baseAmountMinor, splitVat, PricingError } from '../pricing/engine.js';
 
 // Pricing calculator (Slice 2). Admin-only TEST endpoint for the pricing engine.
 // It does NOT touch Deals and writes nothing — it resolves a price list + rule
@@ -93,6 +93,55 @@ router.post(
           priceModel: activityType.priceModel,
         });
       }
+      throw e;
+    }
+  }),
+);
+
+// Draft-rule preview (Slice B). Computes ONE rule's price for a participant
+// count using the same engine math (baseAmountMinor + splitVat) — NO resolution,
+// NO DB, NO writes. The business Pricing UI uses this for the per-card quote-style
+// preview, so the numbers always match the real engine. activityType is NOT
+// required here because the rule's own priceModel drives the math.
+router.post(
+  '/preview',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const rule = {
+      priceModel: b.priceModel,
+      adultPriceMinor: b.adultPriceMinor ?? null,
+      childPriceMinor: b.childPriceMinor ?? null,
+      basePriceMinor: b.basePriceMinor ?? null,
+      baseParticipants: b.baseParticipants ?? null,
+      perAdditionalParticipantMinor: b.perAdditionalParticipantMinor ?? null,
+      fixedPriceMinor: b.fixedPriceMinor ?? null,
+      tiers: Array.isArray(b.tiers) ? b.tiers : [],
+    };
+    const counts = {
+      adultCount: b.adultCount,
+      childCount: b.childCount,
+      participantCount: b.participantCount,
+      groupCount: b.groupCount != null ? b.groupCount : 1,
+    };
+    const vatMode = b.vatMode === 'excluded' ? 'excluded' : 'included';
+    const vatRate = b.vatRate != null ? Number(b.vatRate) : 18;
+    try {
+      const { amountMinor, debug } = baseAmountMinor(rule, counts);
+      const vat = splitVat(amountMinor, vatMode, vatRate);
+      return res.json({
+        ok: true,
+        priceModel: rule.priceModel,
+        vatMode,
+        vatRate,
+        baseAmountMinor: amountMinor,
+        netMinor: vat.netMinor,
+        vatMinor: vat.vatMinor,
+        grossMinor: vat.grossMinor,
+        debug,
+      });
+    } catch (e) {
+      if (e instanceof PricingError)
+        return res.json({ ok: false, error: e.code, details: e.details });
       throw e;
     }
   }),
