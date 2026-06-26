@@ -6,7 +6,7 @@ import { NavLink } from 'react-router-dom';
 const TOP_MODULES = [
   { key: 'people', to: '/admin/people', label: 'אנשים וגישה', glyph: '👥' },
   { key: 'crm', to: '/admin/crm', label: 'CRM', glyph: '🏢' },
-  { key: 'deals', to: '/admin/deals', label: 'עסקאות', glyph: '💼' },
+  { key: 'deals', to: '/admin/deals', label: 'דילים', glyph: '💼' },
 ];
 
 // Bottom cluster, top→bottom: מסמכים, נהלים, הגדרות, משתמשים.

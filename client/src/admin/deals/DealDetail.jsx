@@ -120,7 +120,7 @@ export default function DealDetail() {
   async function setStatus(status) {
     let lostReason;
     if (status === 'lost') {
-      lostReason = prompt('סיבת אובדן העסקה (אופציונלי):') || null;
+      lostReason = prompt('סיבת אובדן הדיל (אופציונלי):') || null;
     }
     try {
       await api.deals.update(id, { status, lostReason });
@@ -131,7 +131,7 @@ export default function DealDetail() {
   }
 
   async function removeDeal() {
-    if (!confirm('למחוק את העסקה? אנשי הקשר המקושרים יוסרו מהעסקה.')) return;
+    if (!confirm('למחוק את הדיל? אנשי הקשר המקושרים יוסרו מהדיל.')) return;
     try {
       await api.deals.remove(id);
       navigate('/admin/deals');
@@ -153,7 +153,7 @@ export default function DealDetail() {
     <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-3xl mx-auto space-y-6">
       <div className="flex items-center gap-3">
         <Link to="/admin/deals" className="text-blue-700 hover:underline text-[13px]">
-          ← עסקאות
+          ← דילים
         </Link>
         <div className="flex-1" />
         <span
@@ -181,7 +181,7 @@ export default function DealDetail() {
             onClick={() => setStatus('won')}
             className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
           >
-            סמן כנסגר בהצלחה
+            סמן כ-WON
           </button>
         )}
         {deal.status !== 'lost' && (
@@ -189,7 +189,7 @@ export default function DealDetail() {
             onClick={() => setStatus('lost')}
             className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
           >
-            סמן כאבוד
+            סמן כ-LOST
           </button>
         )}
         {deal.status !== 'open' && (
@@ -197,13 +197,13 @@ export default function DealDetail() {
             onClick={() => setStatus('open')}
             className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
           >
-            החזר לפתוח
+            החזר ל-OPEN
           </button>
         )}
       </div>
 
       {/* Commercial details */}
-      <Section title="פרטי העסקה">
+      <Section title="פרטי הדיל">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <FieldBox label="כותרת">
             <input value={form.title} onChange={(e) => set('title', e.target.value)} className={INPUT} />
@@ -256,7 +256,7 @@ export default function DealDetail() {
               ))}
             </select>
           </FieldBox>
-          <FieldBox label="תת-סוג (של העסקה)">
+          <FieldBox label="תת-סוג (של הדיל)">
             <select value={form.organizationSubtypeId} onChange={(e) => set('organizationSubtypeId', e.target.value)} className={`${INPUT} bg-white`}>
               <option value="">— ללא —</option>
               {subtypes.map((s) => (
@@ -272,7 +272,7 @@ export default function DealDetail() {
           {saving ? 'שומר…' : 'שמור שינויים'}
         </button>
         <button onClick={removeDeal} className="rounded-lg border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50">
-          מחק עסקה
+          מחק דיל
         </button>
       </div>
 
@@ -299,7 +299,7 @@ function DealContactsSection({ deal, allContacts, onChange }) {
   const available = allContacts.filter((c) => !linkedIds.has(c.id));
 
   return (
-    <Section title={`אנשי קשר בעסקה (${deal.contacts.length})`}>
+    <Section title={`אנשי קשר בדיל (${deal.contacts.length})`}>
       {deal.contacts.length ? (
         <ul className="space-y-2 mb-3">
           {deal.contacts.map((dc) => (
@@ -307,7 +307,7 @@ function DealContactsSection({ deal, allContacts, onChange }) {
           ))}
         </ul>
       ) : (
-        <div className="text-sm text-gray-400 mb-3">אין אנשי קשר מקושרים לעסקה.</div>
+        <div className="text-sm text-gray-400 mb-3">אין אנשי קשר מקושרים לדיל.</div>
       )}
 
       {adding ? (
@@ -339,7 +339,7 @@ function DealContactRow({ dc, onChange }) {
   const c = dc.contact;
 
   async function remove() {
-    if (!confirm('להסיר את איש הקשר מהעסקה?')) return;
+    if (!confirm('להסיר את איש הקשר מהדיל?')) return;
     try {
       await api.deals.removeContact(dc.id);
       await onChange();
@@ -439,7 +439,7 @@ function AddContactForm({ available, dealId, onDone, onCancel }) {
       <RolesAndPrefs draft={draft} setDraft={setDraft} />
       <div className="flex gap-2">
         <button type="submit" disabled={busy || !contactId} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
-          {busy ? 'מוסיף…' : 'הוסף לעסקה'}
+          {busy ? 'מוסיף…' : 'הוסף לדיל'}
         </button>
         <button type="button" onClick={onCancel} className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-white">
           ביטול
@@ -544,7 +544,7 @@ function RolesAndPrefs({ draft, setDraft }) {
           onChange={(e) => setDraft((d) => ({ ...d, isPrimary: e.target.checked }))}
           className="rounded border-gray-300"
         />
-        איש קשר ראשי בעסקה
+        איש קשר ראשי בדיל
       </label>
     </div>
   );

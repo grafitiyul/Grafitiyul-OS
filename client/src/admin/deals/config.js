@@ -2,16 +2,17 @@
 
 export const DEAL_STATUSES = ['open', 'won', 'lost'];
 
+// Business terms — kept in English (these are the labels the team uses).
 export const DEAL_STATUS_LABELS = {
-  open: 'פתוח',
-  won: 'נסגר בהצלחה',
-  lost: 'אבוד',
+  open: 'OPEN',
+  won: 'WON',
+  lost: 'LOST',
 };
 
 export const DEAL_STATUS_STYLES = {
-  open: 'bg-blue-100 text-blue-800 border-blue-200',
-  won: 'bg-emerald-100 text-emerald-800 border-emerald-200',
-  lost: 'bg-gray-100 text-gray-600 border-gray-200',
+  open: 'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200',
+  won: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
+  lost: 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200',
 };
 
 // DealContact roles — a contact may hold multiple.

@@ -67,7 +67,7 @@ export default function CrmSettingsPage() {
           ← הגדרות CRM
         </Link>
         <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">
-          סוגי ארגון, תת-סוגים ושלבי עסקה
+          סוגי ארגון, תת-סוגים ושלבי דיל
         </h1>
         <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed">
           הקטלוגים שמזינים את תהליך העבודה. סוגי הארגון יקבעו בהמשך תמחור, נוסח
@@ -169,7 +169,7 @@ function SubtypesSection({ subtypes, types, onChange }) {
   return (
     <SettingsCard
       title="תת-סוגים"
-      description="תת-סוג שייך לעסקה, לא לארגון (לדוגמה: בית ספר → מורים / תלמידים). מוכן כקטלוג — ייכנס לשימוש כשייבנה מודול העסקאות."
+      description="תת-סוג שייך לדיל, לא לארגון (לדוגמה: בית ספר → מורים / תלמידים). מוכן כקטלוג — ייכנס לשימוש כשייבנה מודול הדילים."
       footer={<AddSubtypeForm types={types} onChange={onChange} />}
     >
       <SortableList
@@ -228,7 +228,7 @@ function DealStagesSection({ stages, onChange }) {
       await onChange();
     } catch (e) {
       if (e.payload?.error === 'stage_in_use') {
-        alert('לא ניתן למחוק שלב שמשויכות אליו עסקאות. העבירו אותן לשלב אחר תחילה.');
+        alert('לא ניתן למחוק שלב שמשויכות אליו דילים. העבירו אותן לשלב אחר תחילה.');
       } else {
         alert('שגיאה במחיקה: ' + e.message);
       }
@@ -237,8 +237,8 @@ function DealStagesSection({ stages, onChange }) {
 
   return (
     <SettingsCard
-      title="שלבי עסקה"
-      description="צינור המכירות (Pipeline). הסדר קובע את התקדמות העסקה. נסגר / אבוד הוא סטטוס של העסקה — נפרד מהשלב."
+      title="שלבי דיל"
+      description="צינור המכירות (Pipeline). הסדר קובע את התקדמות הדיל. נסגר / אבוד הוא סטטוס של הדיל — נפרד מהשלב."
       footer={<AddStageForm onChange={onChange} />}
     >
       <SortableList
@@ -247,7 +247,7 @@ function DealStagesSection({ stages, onChange }) {
         onSave={save}
         onRemove={remove}
         emptyText="טוען שלבי ברירת מחדל…"
-        renderMeta={(s) => <CountChip n={s._count?.deals ?? 0} noun="עסקאות" />}
+        renderMeta={(s) => <CountChip n={s._count?.deals ?? 0} noun="דילים" />}
       />
     </SettingsCard>
   );
