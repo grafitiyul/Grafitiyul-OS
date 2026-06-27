@@ -15,8 +15,24 @@ export const DEAL_STATUS_STYLES = {
   lost: 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200',
 };
 
-// DealContact roles — a contact may hold multiple.
+// Activity type — "סוג פעילות". Belongs to the Deal now and to the actual
+// tour/activity later. Keys are stable; logic never reads the Hebrew label.
+export const ACTIVITY_TYPES = ['group', 'private', 'business'];
+export const ACTIVITY_TYPE_LABELS = {
+  group: 'קבוצתי',
+  private: 'פרטי',
+  business: 'עסקי',
+};
+
+// DealContact roles — a contact may hold multiple. The first three are the
+// operational quick-add vocabulary; the rest are the original roles, kept for
+// backward compatibility with existing data. (Single hardcoded catalog for now;
+// a future Settings-driven catalog can replace it — see VALID_ROLES in
+// server/src/routes/deals.js, which must stay in sync.)
 export const ROLE_ORDER = [
+  'ongoingBooking',
+  'fieldRep',
+  'finance',
   'coordinator',
   'payer',
   'decisionMaker',
@@ -26,6 +42,9 @@ export const ROLE_ORDER = [
 ];
 
 export const ROLE_LABELS = {
+  ongoingBooking: 'הזמנה שוטפת',
+  fieldRep: 'נציג בשטח',
+  finance: 'איש כספים',
   coordinator: 'מתאם',
   payer: 'משלם',
   decisionMaker: 'מקבל החלטות',
@@ -33,6 +52,9 @@ export const ROLE_LABELS = {
   invoiceContact: 'איש קשר לחשבונית',
   other: 'אחר',
 };
+
+// The compact role set offered in the Deal-header quick-add contact form.
+export const QUICK_CONTACT_ROLES = ['ongoingBooking', 'fieldRep', 'finance'];
 
 // Per-deal communication preferences (operational routing).
 export const PREF_FIELDS = [

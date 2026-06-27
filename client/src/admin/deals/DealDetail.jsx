@@ -4,12 +4,17 @@ import { api } from '../../lib/api.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import HoverCard from '../common/HoverCard.jsx';
+import SelectChip from '../common/SelectChip.jsx';
 import LostDealDialog from './LostDealDialog.jsx';
 import DealSalesScript from './DealSalesScript.jsx';
+import ContactEditDialog from './ContactEditDialog.jsx';
+import QuickAddContactDialog from './QuickAddContactDialog.jsx';
+import OrganizationEditDialog from './OrganizationEditDialog.jsx';
 import WorkspaceLayout from '../../shell/WorkspaceLayout.jsx';
 import { minorToInput, toMinor } from '../../lib/money.js';
 import {
-  DEAL_STATUS_LABELS,
+  ACTIVITY_TYPES,
+  ACTIVITY_TYPE_LABELS,
   ROLE_ORDER,
   ROLE_LABELS,
   PREF_FIELDS,
@@ -61,6 +66,7 @@ export default function DealDetail() {
   const [stages, setStages] = useState([]);
   const [orgs, setOrgs] = useState([]);
   const [subtypes, setSubtypes] = useState([]);
+  const [types, setTypes] = useState([]);
   const [units, setUnits] = useState([]);
   const [orgType, setOrgType] = useState(null);
   const [allContacts, setAllContacts] = useState([]);
@@ -75,22 +81,29 @@ export default function DealDetail() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuBtnRef = useRef(null);
+  // Header editing surfaces.
+  const [editContactId, setEditContactId] = useState(null);
+  const [addContactOpen, setAddContactOpen] = useState(false);
+  const [orgDialogOpen, setOrgDialogOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      const [d, s, o, st, c] = await Promise.all([
+      const [d, s, o, st, c, ty] = await Promise.all([
         api.deals.get(id),
         api.dealStages.list(),
         api.organizations.list(),
         api.organizationSubtypes.list(),
         api.contacts.list(),
+        api.organizationTypes.list(),
       ]);
       setDeal(d);
       setStages(s);
       setOrgs(o);
       setSubtypes(st);
       setAllContacts(c);
+      setTypes(ty);
       setForm({
         title: d.title || '',
         value: minorToInput(d.valueMinor),
@@ -182,10 +195,23 @@ export default function DealDetail() {
     }
   }
 
+  // Generic single-field deal update used by the header meta chips
+  // (activityType / org type / subtype). One update path, then refresh.
+  async function updateDeal(payload) {
+    try {
+      await api.deals.update(id, payload);
+      await refresh();
+    } catch (e) {
+      alert('שגיאה: ' + (e.payload?.error || e.message));
+    }
+  }
+
   async function copyDealUrl() {
     const url = `${window.location.origin}/admin/crm/deals/${id}`;
     try {
       await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
     } catch {
       // Clipboard API blocked (e.g. insecure context) — fall back to a prompt.
       window.prompt('העתיקו את הקישור לדיל:', url);
@@ -241,6 +267,8 @@ export default function DealDetail() {
       const copy = await api.deals.create({
         title: `${deal.title} (עותק)`,
         dealStageId: deal.dealStageId || undefined,
+        activityType: deal.activityType || null,
+        organizationTypeId: deal.organizationTypeId || null,
         organizationId: deal.organizationId || null,
         organizationUnitId: deal.organizationUnitId || null,
         organizationSubtypeId: deal.organizationSubtypeId || null,
@@ -505,7 +533,7 @@ export default function DealDetail() {
                 onClick={() => { setMenuOpen(false); copyDealUrl(); }}
                 className="block w-full text-right px-3 py-2 text-sm hover:bg-gray-50"
               >
-                העתק קישור לדיל
+                העתק URL של דיל
               </button>
               <button
                 disabled
@@ -526,6 +554,18 @@ export default function DealDetail() {
           </div>
         </div>
 
+        {/* 1b — Activity type ("סוג פעילות") + (for business) org type / subtype.
+            Editable inline via lightweight chips. */}
+        <ActivityMetaRow
+          deal={deal}
+          types={types}
+          subtypes={subtypes}
+          onActivityType={(v) => updateDeal({ activityType: v || null })}
+          onDealOrgType={(v) => updateDeal({ organizationTypeId: v || null })}
+          onSubtype={(v) => updateDeal({ organizationSubtypeId: v || null })}
+          onOpenOrgDialog={() => setOrgDialogOpen(true)}
+        />
+
         {/* 2 — Pipeline (full width). Click a stage to move the deal there. */}
         <div className="mt-6">
           <StagePipeline
@@ -536,12 +576,14 @@ export default function DealDetail() {
           />
         </div>
 
-        {/* 3 — Relationship row: primary contact + organization, with hovercards */}
+        {/* 3 — Relationship row: primary contact + organization, with hovercards.
+            Chips are clickable → open editing dialogs. */}
         <RelationshipRow
-          contact={deal.contacts?.[0]}
-          organization={deal.organization}
+          deal={deal}
           orgType={orgType}
-          subtypeLabel={deal.organizationSubtype?.label}
+          onContactClick={(contactId) => setEditContactId(contactId)}
+          onAddContact={() => setAddContactOpen(true)}
+          onOrgClick={() => setOrgDialogOpen(true)}
         />
       </div>
 
@@ -582,6 +624,37 @@ export default function DealDetail() {
         onCancel={() => setConfirmDelete(false)}
         onConfirm={() => { setConfirmDelete(false); removeDeal(); }}
       />
+
+      {/* Header editing dialogs */}
+      <ContactEditDialog
+        contactId={editContactId}
+        open={!!editContactId}
+        onClose={() => setEditContactId(null)}
+        onSaved={refresh}
+      />
+      <QuickAddContactDialog
+        dealId={deal.id}
+        open={addContactOpen}
+        makePrimary={deal.contacts.length === 0}
+        onClose={() => setAddContactOpen(false)}
+        onAdded={refresh}
+      />
+      <OrganizationEditDialog
+        deal={deal}
+        orgs={orgs}
+        types={types}
+        subtypes={subtypes}
+        open={orgDialogOpen}
+        onClose={() => setOrgDialogOpen(false)}
+        onSaved={refresh}
+      />
+
+      {/* Tiny transient confirmation for "copy URL" (no global toast infra yet). */}
+      {copied && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] rounded-lg bg-gray-900 text-white text-sm px-4 py-2 shadow-lg">
+          הקישור הועתק ✓
+        </div>
+      )}
 
     </WorkspaceLayout>
   );
@@ -915,32 +988,144 @@ function BuildingIcon() {
   );
 }
 
-function RelationshipChip({ icon, label }) {
+// Activity type ("סוג פעילות") meta row. For business deals it also surfaces the
+// EFFECTIVE organization type (the org's own type when linked — read-only here,
+// editing routes to the org dialog; otherwise the Deal's own type) and, when the
+// effective type has subtypes, the deal subtype. No hardcoded types/subtypes —
+// everything comes from the catalogs.
+function ActivityMetaRow({ deal, types, subtypes, onActivityType, onDealOrgType, onSubtype, onOpenOrgDialog }) {
+  const activityOptions = ACTIVITY_TYPES.map((v) => ({ value: v, label: ACTIVITY_TYPE_LABELS[v] }));
+  const isBusiness = deal.activityType === 'business';
+  const hasOrg = !!deal.organization;
+  // Effective org type: the linked org's type, else the deal's own type.
+  const effTypeId = hasOrg
+    ? deal.organization.organizationTypeId || ''
+    : deal.organizationTypeId || '';
+  const effTypeLabel = hasOrg
+    ? deal.organization.organizationType?.label
+    : deal.organizationType?.label;
+  const typeOptions = types.map((t) => ({ value: t.id, label: t.label }));
+  const subtypeOptions = subtypes
+    .filter((s) => !effTypeId || !s.organizationTypeId || s.organizationTypeId === effTypeId)
+    .map((s) => ({ value: s.id, label: s.label }));
+
   return (
-    <span className="inline-flex items-center gap-2 rounded-lg px-2 py-1 text-sm text-gray-700 cursor-default hover:bg-gray-50 transition-colors">
-      {icon}
-      <span className="truncate max-w-[16rem]">{label}</span>
-    </span>
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      <span className="text-[12px] text-gray-400">סוג פעילות</span>
+      <SelectChip
+        value={deal.activityType || ''}
+        options={activityOptions}
+        onSelect={onActivityType}
+        placeholder="בחר סוג פעילות"
+        allowClear
+        tone="accent"
+      />
+      {isBusiness && (
+        <>
+          <span className="text-gray-300">·</span>
+          {hasOrg ? (
+            // Org is the source of truth for its type — editing opens the org dialog.
+            <button
+              type="button"
+              onClick={onOpenOrgDialog}
+              title="סוג הארגון נקבע על הארגון — לחצו לעריכה"
+              className="inline-flex items-center gap-1.5 rounded-full border border-gray-300 bg-white px-3 py-1 text-[13px] font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <span className={effTypeLabel ? '' : 'text-gray-400'}>{effTypeLabel || 'סוג ארגון'}</span>
+            </button>
+          ) : (
+            <SelectChip
+              value={effTypeId}
+              options={typeOptions}
+              onSelect={onDealOrgType}
+              placeholder="סוג ארגון"
+              allowClear
+            />
+          )}
+          {effTypeId && subtypeOptions.length > 0 && (
+            <SelectChip
+              value={deal.organizationSubtypeId || ''}
+              options={subtypeOptions}
+              onSelect={onSubtype}
+              placeholder="תת-סוג"
+              allowClear
+            />
+          )}
+        </>
+      )}
+    </div>
   );
 }
 
-function RelationshipRow({ contact, organization, orgType, subtypeLabel }) {
-  const contactObj = contact?.contact;
-  const hasAny = contactObj || organization;
+function RelationshipRow({ deal, orgType, onContactClick, onAddContact, onOrgClick }) {
+  const contacts = deal.contacts || [];
+  const primary = contacts[0];
+  const primaryContact = primary?.contact;
+  const extra = contacts.length - 1;
+  const org = deal.organization;
+
   return (
     <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2">
-      {contactObj && (
-        <HoverCard trigger={<RelationshipChip icon={<UserIcon />} label={contactNameHe(contactObj) || '—'} />}>
-          <ContactHoverCard contactId={contact.contactId} fallbackName={contactNameHe(contactObj)} />
+      {/* Contact area */}
+      <div className="flex items-center gap-1">
+        {primaryContact ? (
+          <HoverCard
+            trigger={
+              <button
+                type="button"
+                onClick={() => onContactClick(primary.contactId)}
+                className="inline-flex items-center gap-2 rounded-lg px-2 py-1 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                <UserIcon />
+                <span className="truncate max-w-[14rem]">{contactNameHe(primaryContact) || '—'}</span>
+                {extra > 0 && (
+                  <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-500">+{extra}</span>
+                )}
+              </button>
+            }
+          >
+            <ContactHoverCard contactId={primary.contactId} fallbackName={contactNameHe(primaryContact)} />
+          </HoverCard>
+        ) : (
+          <span className="inline-flex items-center gap-2 px-2 py-1 text-sm text-gray-400">
+            <UserIcon />
+            אין איש קשר
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={onAddContact}
+          className="text-[12px] text-blue-700 hover:bg-blue-50 rounded px-2 py-1"
+        >
+          + הוסף איש קשר
+        </button>
+      </div>
+
+      {/* Organization area */}
+      {org ? (
+        <HoverCard
+          trigger={
+            <button
+              type="button"
+              onClick={onOrgClick}
+              className="inline-flex items-center gap-2 rounded-lg px-2 py-1 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              <BuildingIcon />
+              <span className="truncate max-w-[16rem]">{org.name}</span>
+            </button>
+          }
+        >
+          <OrgHoverCard org={org} orgTypeLabel={orgType?.label} subtypeLabel={deal.organizationSubtype?.label} />
         </HoverCard>
-      )}
-      {organization && (
-        <HoverCard trigger={<RelationshipChip icon={<BuildingIcon />} label={organization.name} />}>
-          <OrgHoverCard org={organization} orgTypeLabel={orgType?.label} subtypeLabel={subtypeLabel} />
-        </HoverCard>
-      )}
-      {!hasAny && (
-        <span className="text-[13px] text-gray-400">אין איש קשר או ארגון משויך</span>
+      ) : (
+        <button
+          type="button"
+          onClick={onOrgClick}
+          className="inline-flex items-center gap-2 rounded-lg border border-dashed border-gray-300 px-3 py-1 text-[13px] text-gray-500 hover:bg-gray-50"
+        >
+          <BuildingIcon />
+          הוסף ארגון
+        </button>
       )}
     </div>
   );

@@ -606,6 +606,9 @@ model OrganizationType {
   updatedAt          DateTime              @updatedAt
   organizations      Organization[]
   subtypes           OrganizationSubtype[]
+  // Deals that point directly at this type (used only while a deal has no linked
+  // Organization — see Deal.organizationType).
+  deals              Deal[]
   // Pricing (Slice 2): default price list for deals of this org type. Subtype
   // overrides this. Null → fall back to the system default price list.
   defaultPriceList   PriceList?            @relation("OrgTypeDefaultPriceList", fields: [defaultPriceListId], references: [id], onDelete: SetNull)
@@ -824,6 +827,16 @@ model Deal {
   organizationUnitId    String?
   organizationSubtype   OrganizationSubtype? @relation(fields: [organizationSubtypeId], references: [id], onDelete: SetNull)
   organizationSubtypeId String?
+  // Activity classification (group | private | business). Applies to the Deal
+  // now and later to the actual tour/activity. Nullable for backward compat;
+  // no Postgres enum (project convention is string enums validated at the API).
+  activityType          String?
+  // The Deal's CURRENT organization type — the single source of truth ONLY while
+  // no Organization is linked (e.g. a business deal whose org doesn't exist yet).
+  // Once an Organization IS linked, the Organization's own organizationType is
+  // the effective type and this field is cleared by the API (no duplicate truth).
+  organizationType      OrganizationType?    @relation(fields: [organizationTypeId], references: [id], onDelete: SetNull)
+  organizationTypeId    String?
   dealStage             DealStage            @relation(fields: [dealStageId], references: [id])
   dealStageId           String
   status                String               @default("open") // 'open' | 'won' | 'lost'
@@ -853,6 +866,7 @@ model Deal {
   @@index([organizationId])
   @@index([organizationUnitId])
   @@index([organizationSubtypeId])
+  @@index([organizationTypeId])
   @@index([dealStageId])
   @@index([lostReasonId])
   @@index([status])

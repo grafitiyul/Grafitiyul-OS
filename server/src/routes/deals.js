@@ -14,7 +14,13 @@ import { handle } from '../asyncHandler.js';
 const router = Router();
 
 const VALID_STATUS = ['open', 'won', 'lost'];
+const VALID_ACTIVITY_TYPES = ['group', 'private', 'business'];
 const VALID_ROLES = [
+  // Operational quick-add roles (the day-to-day vocabulary).
+  'ongoingBooking',
+  'fieldRep',
+  'finance',
+  // Original roles (kept for backward compatibility with existing data).
   'coordinator',
   'payer',
   'decisionMaker',
@@ -47,9 +53,13 @@ const CONTACT_SELECT = {
 
 const DEAL_INCLUDE = {
   dealStage: true,
-  organization: { select: { id: true, name: true } },
+  organization: {
+    select: { id: true, name: true, organizationTypeId: true, organizationType: { select: { id: true, label: true } } },
+  },
   organizationUnit: { select: { id: true, name: true } },
-  organizationSubtype: { select: { id: true, label: true } },
+  organizationSubtype: { select: { id: true, label: true, organizationTypeId: true } },
+  // The Deal's own org type — only meaningful while no organization is linked.
+  organizationType: { select: { id: true, label: true } },
   lostReasonRef: { select: { id: true, nameHe: true, nameEn: true } },
   contacts: {
     orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
@@ -132,11 +142,27 @@ router.post(
       dealStageId = first.id;
     }
 
+    // activityType: validate against the catalog (or null).
+    let activityType = null;
+    if (b.activityType) {
+      if (!VALID_ACTIVITY_TYPES.includes(b.activityType)) {
+        return res.status(400).json({ error: 'invalid_activity_type' });
+      }
+      activityType = b.activityType;
+    }
+    // SSOT: a Deal.organizationTypeId is only kept while NO organization is
+    // linked. If an org is provided, the org is the source of truth.
+    const organizationTypeId = b.organizationId
+      ? null
+      : b.organizationTypeId || null;
+
     const deal = await prisma.deal.create({
       data: {
         title,
         dealStageId,
         status: 'open',
+        activityType,
+        organizationTypeId,
         organizationId: b.organizationId || null,
         organizationUnitId: b.organizationUnitId || null,
         organizationSubtypeId: b.organizationSubtypeId || null,
@@ -162,7 +188,7 @@ router.put(
     const b = req.body || {};
     const existing = await prisma.deal.findUnique({
       where: { id: req.params.id },
-      select: { status: true },
+      select: { status: true, organizationId: true },
     });
     if (!existing) return res.status(404).json({ error: 'not_found' });
 
@@ -179,6 +205,24 @@ router.put(
       data.organizationUnitId = b.organizationUnitId || null;
     if (b.organizationSubtypeId !== undefined)
       data.organizationSubtypeId = b.organizationSubtypeId || null;
+    if (b.activityType !== undefined) {
+      if (b.activityType && !VALID_ACTIVITY_TYPES.includes(b.activityType)) {
+        return res.status(400).json({ error: 'invalid_activity_type' });
+      }
+      data.activityType = b.activityType || null;
+    }
+    if (b.organizationTypeId !== undefined)
+      data.organizationTypeId = b.organizationTypeId || null;
+
+    // SSOT reconciliation: Deal.organizationTypeId is only meaningful while NO
+    // organization is linked. Compute the org the deal will have AFTER this
+    // update; if it has one, the organization is the source of truth and we
+    // force-clear the deal's own org type (never two competing truths).
+    const finalOrgId =
+      b.organizationId !== undefined
+        ? b.organizationId || null
+        : existing.organizationId;
+    if (finalOrgId) data.organizationTypeId = null;
     if (b.valueMinor !== undefined) data.valueMinor = toMinor(b.valueMinor) ?? 0n;
     if (b.currency !== undefined) data.currency = String(b.currency).trim() || 'ILS';
     if (b.discountMinor !== undefined) data.discountMinor = toMinor(b.discountMinor);
