@@ -7,7 +7,9 @@ import { handle } from '../asyncHandler.js';
 
 const router = Router();
 
-const VAT_MODES = ['included', 'excluded'];
+// 'exempt' (פטור) is a valid addon VAT mode — splitVat handles it. Matches the
+// Addon catalog route and the engine.
+const VAT_MODES = ['included', 'excluded', 'exempt'];
 const cleanVatMode = (v, fallback = 'included') =>
   VAT_MODES.includes(v) ? v : fallback;
 

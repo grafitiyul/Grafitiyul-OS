@@ -30,11 +30,16 @@ function Money({ minor, onChange, placeholder }) {
       className={`${INPUT} text-left`} />
   );
 }
+// Wording matches the Pricing Cards VAT labels. Values are the engine vatMode
+// strings (DB-stored) — unchanged. 'exempt' (פטור) is fully supported by the
+// engine's splitVat, so the rate is ignored / forced to 0 for it.
 const VAT_MODE_OPTS = [
-  { value: 'included', name: 'מחיר כולל מע"מ' },
-  { value: 'excluded', name: 'מחיר ללא מע"מ' },
+  { value: 'included', name: 'כולל מע״מ' },
+  { value: 'excluded', name: 'לפני מע״מ' },
+  { value: 'exempt', name: 'פטור ממע״מ' },
 ];
-const vatLabel = (m) => (m === 'included' ? 'כולל מע״מ' : 'ללא מע״מ');
+const vatLabel = (m, rate) =>
+  m === 'exempt' ? 'פטור ממע״מ' : m === 'excluded' ? `לפני מע״מ ${rate}%` : `כולל מע״מ ${rate}%`;
 
 export default function AddonsSettings() {
   const [addons, setAddons] = useState([]);
@@ -109,7 +114,7 @@ export default function AddonsSettings() {
                       <span className="font-medium text-gray-900 text-[15px]">{addon.nameHe}</span>
                       {addon.nameEn && <span className="text-[12px] text-gray-400 ms-2" dir="ltr">{addon.nameEn}</span>}
                       <div className="text-[11px] text-gray-500 mt-0.5">
-                        {formatMinor(addon.defaultPriceMinor, addon.currency)} · {vatLabel(addon.vatMode)} {addon.vatRate}% · כמות ברירת מחדל {addon.defaultQuantity}
+                        {formatMinor(addon.defaultPriceMinor, addon.currency)} · {vatLabel(addon.vatMode, addon.vatRate)} · כמות ברירת מחדל {addon.defaultQuantity}
                         {addon.priceRules?.length ? ` · ${addon.priceRules.length} עקיפות` : ''}
                       </div>
                     </div>
@@ -151,7 +156,7 @@ function AddonEdit({ addon, onClose, onChanged }) {
       await api.addons.update(addon.id, {
         nameHe: d.nameHe.trim(), nameEn: d.nameEn.trim() || null,
         defaultPriceMinor: d.defaultPriceMinor ?? 0, currency: d.currency || 'ILS',
-        vatMode: d.vatMode, vatRate: Number(d.vatRate) || 0,
+        vatMode: d.vatMode, vatRate: d.vatMode === 'exempt' ? 0 : (Number(d.vatRate) || 0),
         defaultQuantity: Number(d.defaultQuantity) || 1, active: d.active,
       });
       onClose(); await onChanged();
@@ -165,7 +170,9 @@ function AddonEdit({ addon, onClose, onChanged }) {
       <Field label="מחיר ברירת מחדל"><Money minor={d.defaultPriceMinor} onChange={(v) => set('defaultPriceMinor', v ?? 0)} /></Field>
       <Field label="מטבע"><input value={d.currency} onChange={(e) => set('currency', e.target.value)} dir="ltr" className={INPUT} /></Field>
       <Field label="מע״מ"><Select value={d.vatMode} onChange={(v) => set('vatMode', v)} options={VAT_MODE_OPTS} /></Field>
-      <Field label='שיעור מע״מ %'><input value={d.vatRate} onChange={(e) => set('vatRate', e.target.value)} dir="ltr" className={INPUT} /></Field>
+      {d.vatMode !== 'exempt' && (
+        <Field label='שיעור מע״מ %'><input value={d.vatRate} onChange={(e) => set('vatRate', e.target.value)} dir="ltr" className={INPUT} /></Field>
+      )}
       <Field label="כמות ברירת מחדל"><input value={d.defaultQuantity} onChange={(e) => set('defaultQuantity', e.target.value)} dir="ltr" className={INPUT} /></Field>
       <label className="flex items-center gap-2 mt-6 text-sm text-gray-700">
         <input type="checkbox" checked={d.active} onChange={(e) => set('active', e.target.checked)} /> פעיל
@@ -213,7 +220,7 @@ function OverridesPanel({ addon, lists, onChanged }) {
             <li key={r.id} className="flex items-center gap-2 bg-white rounded-md px-2.5 py-2 text-sm">
               <span className="flex-1 text-gray-800">{listName(r.priceListId)}</span>
               <span className="text-gray-900">{formatMinor(r.priceMinor, r.currency)}</span>
-              <span className="text-[11px] text-gray-500">{vatLabel(r.vatMode)} {r.vatRate}%</span>
+              <span className="text-[11px] text-gray-500">{vatLabel(r.vatMode, r.vatRate)}</span>
               <button onClick={async () => { if (confirm('למחוק עקיפה זו?')) { await api.addonPriceRules.remove(r.id); refresh(); onChanged(); } }}
                 title="מחק" className="text-red-500 hover:bg-red-50 rounded-md p-1">🗑</button>
             </li>
@@ -238,7 +245,7 @@ function OverrideForm({ addon, listOpts, onClose, onSaved }) {
       await api.addonPriceRules.create({
         addonId: addon.id, priceListId: d.priceListId || null,
         priceMinor: d.priceMinor ?? 0, currency: d.currency || 'ILS',
-        vatMode: d.vatMode, vatRate: Number(d.vatRate) || 0,
+        vatMode: d.vatMode, vatRate: d.vatMode === 'exempt' ? 0 : (Number(d.vatRate) || 0),
       });
       onSaved();
     } catch (e) { alert('שגיאה: ' + (e.payload?.error || e.message)); }
@@ -249,7 +256,9 @@ function OverrideForm({ addon, listOpts, onClose, onSaved }) {
       <Field label="מחירון"><Select value={d.priceListId} onChange={(v) => set('priceListId', v)} options={listOpts} /></Field>
       <Field label="מחיר"><Money minor={d.priceMinor} onChange={(v) => set('priceMinor', v ?? 0)} /></Field>
       <Field label="מע״מ"><Select value={d.vatMode} onChange={(v) => set('vatMode', v)} options={VAT_MODE_OPTS} /></Field>
-      <Field label='שיעור %'><input value={d.vatRate} onChange={(e) => set('vatRate', e.target.value)} dir="ltr" className={INPUT} /></Field>
+      {d.vatMode !== 'exempt' && (
+        <Field label='שיעור %'><input value={d.vatRate} onChange={(e) => set('vatRate', e.target.value)} dir="ltr" className={INPUT} /></Field>
+      )}
       <div className="col-span-2 sm:col-span-4 flex gap-1.5">
         <button type="submit" disabled={busy} className="h-9 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">{busy ? 'שומר…' : 'הוסף עקיפה'}</button>
         <button type="button" onClick={onClose} className="h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-600 hover:bg-gray-50">ביטול</button>
