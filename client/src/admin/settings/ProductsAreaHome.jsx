@@ -20,20 +20,20 @@ export default function ProductsAreaHome() {
         <CategoryCard
           to="/admin/settings/crm/products"
           icon="📦"
-          title="מוצרים"
+          title="מוצרים ראשיים"
           description="קטלוג המוצרים והוריאציות לפי מיקום."
-        />
-        <CategoryCard
-          to="/admin/settings/crm/locations"
-          icon="📍"
-          title="מיקומים"
-          description="קטלוג המיקומים (עיר / אזור)."
         />
         <CategoryCard
           to="/admin/settings/crm/addons"
           icon="➕"
           title="תוספות"
           description="פריטים נמכרים שאינם מוצרים, עם עקיפות מחיר."
+        />
+        <CategoryCard
+          to="/admin/settings/crm/locations"
+          icon="📍"
+          title="מיקומים"
+          description="קטלוג המיקומים (עיר / אזור)."
         />
       </CategoryGrid>
     </div>
