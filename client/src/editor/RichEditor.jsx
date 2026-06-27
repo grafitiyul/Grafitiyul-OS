@@ -52,7 +52,16 @@ export default function RichEditor({
   placeholder = 'כתבו כאן תוכן...',
   minContentHeight = 200,
   maxHeight = '60vh',
+  // Presentation tone only (does NOT change capabilities). 'default' = the white
+  // form look used everywhere; 'note' = warm-yellow so the composer/edit surface
+  // feels like the same sticky-note object as a saved note.
+  tone = 'default',
 }) {
+  const noteTone = tone === 'note';
+  const shellTone = noteTone
+    ? 'border-amber-200 bg-amber-50 focus-within:ring-amber-200 focus-within:border-amber-300'
+    : 'border-gray-300 bg-white focus-within:ring-blue-200 focus-within:border-blue-400';
+  const toolbarBorder = noteTone ? 'border-amber-200' : 'border-gray-200';
   const [uploadState, setUploadState] = useState({ phase: 'idle' });
   const editor = useEditor({
     extensions: [
@@ -124,7 +133,7 @@ export default function RichEditor({
 
   return (
     <div
-      className="rt-editor-shell border border-gray-300 rounded-md bg-white focus-within:ring-2 focus-within:ring-blue-200 focus-within:border-blue-400 flex flex-col"
+      className={`rt-editor-shell border rounded-md focus-within:ring-2 ${shellTone} flex flex-col`}
       style={{ maxHeight }}
     >
       {/* Upload feedback — visible only during / after an upload. */}
@@ -142,7 +151,7 @@ export default function RichEditor({
         <EditorContent editor={editor} />
       </div>
       {/* Toolbar pinned at the bottom of the widget, always visible */}
-      <div className="rt-editor-toolbar-wrap shrink-0 border-t border-gray-200">
+      <div className={`rt-editor-toolbar-wrap shrink-0 border-t ${toolbarBorder}`}>
         <Toolbar editor={editor} setUploadState={setUploadState} />
       </div>
     </div>

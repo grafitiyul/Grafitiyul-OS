@@ -113,7 +113,7 @@ export default function NoteCard({
       <div className="px-4 pb-3 pt-1">
         {editing ? (
           <div className="space-y-2">
-            <RichEditor value={draft} onChange={setDraft} minContentHeight={120} ariaLabel="עריכת פתק" />
+            <RichEditor tone="note" value={draft} onChange={setDraft} minContentHeight={80} maxHeight="50vh" ariaLabel="עריכת פתק" />
             <div className="flex gap-2 justify-end">
               <button onClick={() => setEditing(false)} className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">
                 ביטול

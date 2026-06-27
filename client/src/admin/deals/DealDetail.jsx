@@ -15,9 +15,6 @@ import { minorToInput, toMinor } from '../../lib/money.js';
 import {
   ACTIVITY_TYPES,
   ACTIVITY_TYPE_LABELS,
-  ROLE_ORDER,
-  ROLE_LABELS,
-  PREF_FIELDS,
   contactNameHe,
 } from './config.js';
 
@@ -67,9 +64,7 @@ export default function DealDetail() {
   const [orgs, setOrgs] = useState([]);
   const [subtypes, setSubtypes] = useState([]);
   const [types, setTypes] = useState([]);
-  const [units, setUnits] = useState([]);
   const [orgType, setOrgType] = useState(null);
-  const [allContacts, setAllContacts] = useState([]);
   const [form, setForm] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -90,19 +85,17 @@ export default function DealDetail() {
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      const [d, s, o, st, c, ty] = await Promise.all([
+      const [d, s, o, st, ty] = await Promise.all([
         api.deals.get(id),
         api.dealStages.list(),
         api.organizations.list(),
         api.organizationSubtypes.list(),
-        api.contacts.list(),
         api.organizationTypes.list(),
       ]);
       setDeal(d);
       setStages(s);
       setOrgs(o);
       setSubtypes(st);
-      setAllContacts(c);
       setTypes(ty);
       setForm({
         title: d.title || '',
@@ -118,12 +111,11 @@ export default function DealDetail() {
         organizationUnitId: d.organizationUnitId || '',
         organizationSubtypeId: d.organizationSubtypeId || '',
       });
+      // The header's org hover card needs the org's type label.
       if (d.organizationId) {
         const full = await api.organizations.get(d.organizationId);
-        setUnits(full.units || []);
         setOrgType(full.organizationType || null);
       } else {
-        setUnits([]);
         setOrgType(null);
       }
     } catch (e) {
@@ -139,20 +131,6 @@ export default function DealDetail() {
 
   function set(field, v) {
     setForm((f) => ({ ...f, [field]: v }));
-  }
-
-  async function chooseOrg(orgId) {
-    setForm((f) => ({ ...f, organizationId: orgId, organizationUnitId: '' }));
-    if (orgId) {
-      try {
-        const full = await api.organizations.get(orgId);
-        setUnits(full.units || []);
-      } catch {
-        setUnits([]);
-      }
-    } else {
-      setUnits([]);
-    }
   }
 
   // No global header save anymore — each section saves itself with a local
@@ -299,82 +277,6 @@ export default function DealDetail() {
   // the "what the deal is" surfaces; the center holds the working surfaces.
   const dealProperties = (
     <div className="space-y-4">
-      <Card
-        variant="panel"
-        title="סקירת הדיל"
-        action={
-          <SaveBtn
-            busy={savingSection === 'overview'}
-            onClick={() =>
-              saveSection('overview', {
-                dealStageId: form.dealStageId,
-                source: form.source,
-                expectedCloseDate: form.expectedCloseDate || null,
-              })
-            }
-          />
-        }
-      >
-        <div className="space-y-3">
-          <FieldBox label="שלב">
-            <select value={form.dealStageId} onChange={(e) => set('dealStageId', e.target.value)} className={`${INPUT} bg-white`}>
-              {stages.map((s) => (<option key={s.id} value={s.id}>{s.label}</option>))}
-            </select>
-          </FieldBox>
-          <FieldBox label="מקור">
-            <input value={form.source} onChange={(e) => set('source', e.target.value)} placeholder="לדוגמה: הפניה, אתר, תערוכה" className={INPUT} />
-          </FieldBox>
-          <FieldBox label="צפי סגירה">
-            <input type="date" value={form.expectedCloseDate} onChange={(e) => set('expectedCloseDate', e.target.value)} dir="ltr" className={INPUT} />
-          </FieldBox>
-        </div>
-      </Card>
-
-      <Card
-        variant="panel"
-        title="שיוך ארגוני"
-        action={
-          <SaveBtn
-            busy={savingSection === 'org'}
-            onClick={() =>
-              saveSection('org', {
-                organizationId: form.organizationId || null,
-                organizationUnitId: form.organizationUnitId || null,
-                organizationSubtypeId: form.organizationSubtypeId || null,
-              })
-            }
-          />
-        }
-      >
-        <div className="space-y-3">
-          <FieldBox label="ארגון">
-            <select value={form.organizationId} onChange={(e) => chooseOrg(e.target.value)} className={`${INPUT} bg-white`}>
-              <option value="">— ללא —</option>
-              {orgs.map((o) => (<option key={o.id} value={o.id}>{o.name}</option>))}
-            </select>
-          </FieldBox>
-          <FieldBox label="יחידה">
-            <select value={form.organizationUnitId} onChange={(e) => set('organizationUnitId', e.target.value)} disabled={!units.length} className={`${INPUT} bg-white disabled:bg-gray-100`}>
-              <option value="">— ללא —</option>
-              {units.map((u) => (<option key={u.id} value={u.id}>{u.name}</option>))}
-            </select>
-          </FieldBox>
-          <FieldBox label="תת-סוג (של הדיל)">
-            <select value={form.organizationSubtypeId} onChange={(e) => set('organizationSubtypeId', e.target.value)} className={`${INPUT} bg-white`}>
-              <option value="">— ללא —</option>
-              {subtypes.map((s) => (<option key={s.id} value={s.id}>{s.label}</option>))}
-            </select>
-          </FieldBox>
-        </div>
-        {form.organizationId && (
-          <div className="mt-3">
-            <Link to={`/admin/crm/organizations/${form.organizationId}`} className="text-[13px] text-blue-700 hover:underline">
-              פתח את כרטיס הארגון ←
-            </Link>
-          </div>
-        )}
-      </Card>
-
       <Card
         variant="panel"
         title="מסחרי"
@@ -589,11 +491,9 @@ export default function DealDetail() {
         />
       </div>
 
-      {/* Center workspace — the working surfaces */}
-      <DealContactsSection deal={deal} allContacts={allContacts} onChange={refresh} />
-
       {/* Timeline — the reusable Activity Feed (notes V1). Scoped to this deal;
-          the exact same component will later mount on Contact / Organization. */}
+          the exact same component will later mount on Contact / Organization.
+          Contacts live in the header relationship row now (no separate card). */}
       <TimelineFeed subjectType="deal" subjectId={deal.id} />
 
       <LostDealDialog
@@ -643,247 +543,6 @@ export default function DealDetail() {
       )}
 
     </WorkspaceLayout>
-  );
-}
-
-// ── Deal contacts (prominent card) ──────────────────────────────────
-
-function DealContactsSection({ deal, allContacts, onChange }) {
-  const [adding, setAdding] = useState(false);
-  const linkedIds = new Set(deal.contacts.map((dc) => dc.contactId));
-  const available = allContacts.filter((c) => !linkedIds.has(c.id));
-
-  return (
-    <Card
-      title={`אנשי קשר בדיל (${deal.contacts.length})`}
-      action={
-        !adding && (
-          <button
-            onClick={() => setAdding(true)}
-            disabled={available.length === 0}
-            className="rounded-lg bg-blue-600 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-            title={available.length === 0 ? 'כל אנשי הקשר כבר מקושרים' : ''}
-          >
-            + הוסף איש קשר לדיל
-          </button>
-        )
-      }
-    >
-      {adding && (
-        <div className="mb-3">
-          <AddContactForm
-            available={available}
-            dealId={deal.id}
-            onDone={() => { setAdding(false); onChange(); }}
-            onCancel={() => setAdding(false)}
-          />
-        </div>
-      )}
-      {deal.contacts.length ? (
-        <ul className="space-y-2">
-          {deal.contacts.map((dc) => (
-            <DealContactRow key={dc.id} dc={dc} onChange={onChange} />
-          ))}
-        </ul>
-      ) : (
-        !adding && (
-          <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-6 text-center text-sm text-gray-400">
-            אין אנשי קשר מקושרים לדיל. הוסיפו את הראשון עם הכפתור למעלה.
-          </div>
-        )
-      )}
-    </Card>
-  );
-}
-
-function DealContactRow({ dc, onChange }) {
-  const [editing, setEditing] = useState(false);
-  const c = dc.contact;
-  const contactLine = [c?.phones?.[0]?.value, c?.emails?.[0]?.value].filter(Boolean).join(' · ');
-
-  async function remove() {
-    if (!confirm('להסיר את איש הקשר מהדיל?')) return;
-    try {
-      await api.deals.removeContact(dc.id);
-      await onChange();
-    } catch (e) {
-      alert('שגיאה: ' + e.message);
-    }
-  }
-
-  if (editing) {
-    return (
-      <li>
-        <ContactPrefsEditor
-          initial={dc}
-          name={contactNameHe(c)}
-          onCancel={() => setEditing(false)}
-          onSave={async (patch) => {
-            await api.deals.updateContact(dc.id, patch);
-            setEditing(false);
-            await onChange();
-          }}
-        />
-      </li>
-    );
-  }
-
-  return (
-    <li className="rounded-xl border border-gray-200 px-3.5 py-3 hover:bg-gray-50/60 transition-colors">
-      <div className="flex items-center gap-2 flex-wrap">
-        {dc.isPrimary && <span className="text-amber-500" title="ראשי">★</span>}
-        <span className="font-semibold text-gray-900">{contactNameHe(c)}</span>
-        {contactLine && <span className="text-[12px] text-gray-400" dir="ltr">{contactLine}</span>}
-        <div className="flex-1" />
-        <button onClick={() => setEditing(true)} className="text-[12px] text-blue-700 hover:bg-blue-50 rounded px-2 py-1">עריכה</button>
-        <button onClick={remove} className="text-[12px] text-red-600 hover:bg-red-50 rounded px-2 py-1">הסר</button>
-      </div>
-      <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-        {dc.roles?.length ? (
-          dc.roles.map((r) => (
-            <span key={r} className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] text-indigo-700 ring-1 ring-inset ring-indigo-100">
-              {ROLE_LABELS[r] || r}
-            </span>
-          ))
-        ) : (
-          <span className="text-[11px] text-gray-400">ללא תפקיד</span>
-        )}
-        {PREF_FIELDS.some((p) => dc[p.key]) && <span className="text-gray-300">·</span>}
-        {PREF_FIELDS.filter((p) => dc[p.key]).map((p) => (
-          <span key={p.key} className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">
-            {p.label}
-          </span>
-        ))}
-      </div>
-    </li>
-  );
-}
-
-function AddContactForm({ available, dealId, onDone, onCancel }) {
-  const [contactId, setContactId] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [draft, setDraft] = useState({
-    roles: [],
-    isPrimary: false,
-    receiveConfirmations: false,
-    receiveOperationalUpdates: false,
-    receivePaymentLinks: false,
-    receiveQuotes: false,
-  });
-
-  async function submit(e) {
-    e.preventDefault();
-    if (!contactId) return;
-    setBusy(true);
-    try {
-      await api.deals.addContact(dealId, { contactId, ...draft });
-      onDone();
-    } catch (e) {
-      alert('שגיאה: ' + (e.payload?.error || e.message));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <form onSubmit={submit} className="rounded-xl border border-blue-200 bg-blue-50/50 p-3 space-y-3">
-      <select value={contactId} onChange={(e) => setContactId(e.target.value)} className={`${INPUT} bg-white`}>
-        <option value="">בחר איש קשר…</option>
-        {available.map((c) => (<option key={c.id} value={c.id}>{contactNameHe(c)}</option>))}
-      </select>
-      <RolesAndPrefs draft={draft} setDraft={setDraft} />
-      <div className="flex gap-2">
-        <button type="submit" disabled={busy || !contactId} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
-          {busy ? 'מוסיף…' : 'הוסף לדיל'}
-        </button>
-        <button type="button" onClick={onCancel} className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-white">ביטול</button>
-      </div>
-    </form>
-  );
-}
-
-function ContactPrefsEditor({ initial, name, onSave, onCancel }) {
-  const [busy, setBusy] = useState(false);
-  const [draft, setDraft] = useState({
-    roles: initial.roles || [],
-    isPrimary: !!initial.isPrimary,
-    receiveConfirmations: !!initial.receiveConfirmations,
-    receiveOperationalUpdates: !!initial.receiveOperationalUpdates,
-    receivePaymentLinks: !!initial.receivePaymentLinks,
-    receiveQuotes: !!initial.receiveQuotes,
-  });
-
-  async function submit(e) {
-    e.preventDefault();
-    setBusy(true);
-    try {
-      await onSave(draft);
-    } catch (e) {
-      alert('שגיאה: ' + e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <form onSubmit={submit} className="rounded-xl border border-blue-200 bg-blue-50/50 p-3 space-y-3">
-      <div className="font-medium text-gray-900">{name}</div>
-      <RolesAndPrefs draft={draft} setDraft={setDraft} />
-      <div className="flex gap-2">
-        <button type="submit" disabled={busy} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
-          {busy ? 'שומר…' : 'שמור'}
-        </button>
-        <button type="button" onClick={onCancel} className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-white">ביטול</button>
-      </div>
-    </form>
-  );
-}
-
-function RolesAndPrefs({ draft, setDraft }) {
-  function toggleRole(r) {
-    setDraft((d) => ({
-      ...d,
-      roles: d.roles.includes(r) ? d.roles.filter((x) => x !== r) : [...d.roles, r],
-    }));
-  }
-  return (
-    <div className="space-y-2.5">
-      <div>
-        <div className="text-[11px] text-gray-500 mb-1">תפקידים</div>
-        <div className="flex flex-wrap gap-1.5">
-          {ROLE_ORDER.map((r) => {
-            const on = draft.roles.includes(r);
-            return (
-              <button key={r} type="button" onClick={() => toggleRole(r)}
-                className={`rounded-full px-2.5 py-1 text-[12px] border transition ${
-                  on ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                }`}>
-                {ROLE_LABELS[r]}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-      <div>
-        <div className="text-[11px] text-gray-500 mb-1">העדפות תקשורת</div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-          {PREF_FIELDS.map((p) => (
-            <label key={p.key} className="flex items-center gap-1.5 text-[13px] text-gray-700">
-              <input type="checkbox" checked={!!draft[p.key]}
-                onChange={(e) => setDraft((d) => ({ ...d, [p.key]: e.target.checked }))}
-                className="rounded border-gray-300" />
-              {p.label}
-            </label>
-          ))}
-        </div>
-      </div>
-      <label className="flex items-center gap-1.5 text-[13px] text-gray-700">
-        <input type="checkbox" checked={!!draft.isPrimary}
-          onChange={(e) => setDraft((d) => ({ ...d, isPrimary: e.target.checked }))}
-          className="rounded border-gray-300" />
-        איש קשר ראשי בדיל
-      </label>
-    </div>
   );
 }
 

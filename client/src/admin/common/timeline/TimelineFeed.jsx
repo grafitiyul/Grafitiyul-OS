@@ -107,7 +107,7 @@ export default function TimelineFeed({ subjectType, subjectId }) {
   }
 
   return (
-    <div className="space-y-4" dir="rtl">
+    <div className="space-y-3" dir="rtl">
       {/* Composer */}
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
         <div className="flex items-center gap-1 border-b border-gray-100 px-2 pt-2">
@@ -129,10 +129,12 @@ export default function TimelineFeed({ subjectType, subjectId }) {
           {tab === 'note' ? (
             <div className="space-y-2">
               <RichEditor
+                tone="note"
                 value={draft}
                 onChange={setDraft}
                 placeholder="כתבו פתק…"
-                minContentHeight={120}
+                minContentHeight={40}
+                maxHeight="50vh"
                 ariaLabel="פתק חדש"
               />
               <div className="flex justify-end">
