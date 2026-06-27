@@ -5,6 +5,8 @@ import { formatMinor, toMinor } from '../../lib/money.js';
 import { contactNamesFromFull } from '../../lib/nameSplit.js';
 import { DEAL_STATUS_LABELS, DEAL_STATUS_STYLES } from './config.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
+import { useTableColumns, ColumnPicker } from '../common/tableColumns.jsx';
+import { OrgPicker, resolveOrganization } from '../crm/common/OrgPicker.jsx';
 
 const MODAL_INPUT =
   'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
@@ -87,30 +89,6 @@ const COLUMNS = [
   { key: 'owner', label: 'אחראי', def: false, disabled: true,
     render: () => dash, cls: 'text-gray-600' },
 ];
-const COLUMN_KEYS = new Set(COLUMNS.map((c) => c.key));
-const DEFAULT_COLUMNS = COLUMNS.filter((c) => c.def).map((c) => c.key);
-
-function loadColumns() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(COLUMNS_KEY));
-    if (Array.isArray(raw)) {
-      // Drop any keys we no longer recognise (forward/backward safe).
-      const valid = raw.filter((k) => COLUMN_KEYS.has(k));
-      if (valid.length) return valid;
-    }
-  } catch {
-    /* fall through to defaults */
-  }
-  return DEFAULT_COLUMNS;
-}
-function saveColumns(keys) {
-  try {
-    localStorage.setItem(COLUMNS_KEY, JSON.stringify(keys));
-  } catch {
-    /* storage unavailable — non-fatal */
-  }
-}
-
 const STAGE_PILL = [
   'bg-blue-50 text-blue-700 ring-blue-100',
   'bg-violet-50 text-violet-700 ring-violet-100',
@@ -157,24 +135,8 @@ export default function DealsList() {
     saveFilters({ search, status, stageId, orgId, minVal, maxVal });
   }, [search, status, stageId, orgId, minVal, maxVal]);
 
-  // Visible table columns — persisted, never reset unless the user changes them.
-  const [colKeys, setColKeys] = useState(loadColumns);
-  useEffect(() => {
-    saveColumns(colKeys);
-  }, [colKeys]);
-  // Render in the canonical COLUMNS order regardless of toggle order.
-  const visibleCols = useMemo(
-    () => COLUMNS.filter((c) => colKeys.includes(c.key)),
-    [colKeys],
-  );
-  function toggleCol(key) {
-    setColKeys((keys) => {
-      const has = keys.includes(key);
-      // Never allow zero columns — keep at least the deal name.
-      if (has && keys.length === 1) return keys;
-      return has ? keys.filter((k) => k !== key) : [...keys, key];
-    });
-  }
+  // Visible table columns — persisted via the shared table-columns hook.
+  const { colKeys, toggleCol, visibleCols } = useTableColumns(COLUMNS_KEY, COLUMNS);
 
   async function refresh() {
     setError(null);
@@ -310,7 +272,7 @@ export default function DealsList() {
             <button onClick={clearFilters} className="text-sm text-blue-700 hover:underline px-1">נקה פילטרים</button>
           )}
           <div className="ms-auto">
-            <ColumnPicker colKeys={colKeys} onToggle={toggleCol} />
+            <ColumnPicker columns={COLUMNS} colKeys={colKeys} onToggle={toggleCol} />
           </div>
         </div>
       </div>
@@ -493,53 +455,6 @@ function KebabMenu({ onOpen, onDelete }) {
   );
 }
 
-// "עמודות" column picker — toggle which columns the table shows. Uses the same
-// portal-anchored menu so a long list is never clipped.
-function ColumnPicker({ colKeys, onToggle }) {
-  const btnRef = useRef(null);
-  const [open, setOpen] = useState(false);
-  return (
-    <div onClick={(e) => e.stopPropagation()}>
-      <button
-        ref={btnRef}
-        onClick={() => setOpen((o) => !o)}
-        className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-700 hover:bg-gray-50"
-        aria-haspopup="menu"
-        aria-expanded={open}
-      >
-        <span aria-hidden>⚙️</span>
-        עמודות
-      </button>
-      <AnchoredMenu anchorRef={btnRef} open={open} onClose={() => setOpen(false)} width={236} align="end">
-        <div className="px-3 py-1.5 text-[11px] font-semibold text-gray-400">בחירת עמודות</div>
-        <div className="max-h-[60vh] overflow-y-auto py-0.5">
-          {COLUMNS.map((c) => {
-            const checked = colKeys.includes(c.key);
-            return (
-              <label
-                key={c.key}
-                className={`flex items-center gap-2 px-3 py-1.5 text-sm ${
-                  c.disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer hover:bg-gray-50'
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  disabled={c.disabled}
-                  onChange={() => onToggle(c.key)}
-                  className="accent-blue-600"
-                />
-                <span className="text-gray-700">{c.label}</span>
-                {c.disabled && <span className="text-[10px] text-gray-400">(בקרוב)</span>}
-              </label>
-            );
-          })}
-        </div>
-      </AnchoredMenu>
-    </div>
-  );
-}
-
 function EmptyState({ onCreate }) {
   return (
     <div className="py-20 text-center max-w-sm mx-auto">
@@ -566,12 +481,7 @@ function CreateDealModal({ orgs, types, subtypes, sources, onClose, onCreated })
   const [sourceId, setSourceId] = useState('');
   const [sourceFree, setSourceFree] = useState('');
   const [showBiz, setShowBiz] = useState(false);
-  const [orgName, setOrgName] = useState(''); // free-typed organization name (autocomplete)
-  const [selectedOrgId, setSelectedOrgId] = useState(''); // set when an existing suggestion is chosen
-  const [existingOrgType, setExistingOrgType] = useState(null); // matched org's type (read-only)
-  const [orgFocused, setOrgFocused] = useState(false);
-  const [orgTypeId, setOrgTypeId] = useState(''); // type for a NEW org (required)
-  const [subtypeId, setSubtypeId] = useState(''); // deal subtype for a NEW org (optional)
+  const [orgRes, setOrgRes] = useState(null); // resolution from the shared OrgPicker
   const [busy, setBusy] = useState(false);
 
   // Auto-derive the deal title from the full name until the user edits it.
@@ -579,51 +489,11 @@ function CreateDealModal({ orgs, types, subtypes, sources, onClose, onCreated })
     if (!titleTouched) setTitle(fullName.trim());
   }, [fullName, titleTouched]);
 
-  // Resolve the typed organization name against existing orgs. A chosen
-  // suggestion (selectedOrgId) OR an exact name match counts as "existing";
-  // anything else typed is treated as a brand-new organization on save.
-  const typedOrg = orgName.trim();
-  const exactMatch = typedOrg
-    ? orgs.find((o) => (o.name || '').trim().toLowerCase() === typedOrg.toLowerCase())
-    : null;
-  const existingOrgId = selectedOrgId || (exactMatch ? exactMatch.id : '');
-  const isExistingOrg = showBiz && !!existingOrgId;
-  const isNewOrg = showBiz && !!typedOrg && !existingOrgId;
-  const orgSuggestions =
-    typedOrg && !selectedOrgId
-      ? orgs.filter((o) => (o.name || '').toLowerCase().includes(typedOrg.toLowerCase())).slice(0, 6)
-      : [];
-
-  // For the matched/selected existing org, fetch its type for read-only display.
-  // The existing organization stays the single source of truth — never edited here.
-  useEffect(() => {
-    if (!existingOrgId) {
-      setExistingOrgType(null);
-      return;
-    }
-    let live = true;
-    api.organizations
-      .get(existingOrgId)
-      .then((full) => { if (live) setExistingOrgType(full.organizationType || null); })
-      .catch(() => { if (live) setExistingOrgType(null); });
-    return () => { live = false; };
-  }, [existingOrgId]);
-
   const activeSources = sources.filter((s) => s.active);
-  const scopedSubtypes = subtypes.filter(
-    (s) => !orgTypeId || !s.organizationTypeId || s.organizationTypeId === orgTypeId,
-  );
-  // A NEW organization requires its type; an existing org needs nothing extra.
-  const newOrgInvalid = isNewOrg && !orgTypeId;
-  const ready = fullName.trim() && phone.trim() && sourceId && !newOrgInvalid;
-
-  function chooseOrg(o) {
-    setSelectedOrgId(o.id);
-    setOrgName(o.name);
-    setOrgTypeId('');
-    setSubtypeId('');
-    setOrgFocused(false);
-  }
+  // A new organization requires a type (OrgPicker reports `invalid`); gate only
+  // while the org section is open.
+  const orgInvalid = showBiz && orgRes?.invalid;
+  const ready = fullName.trim() && phone.trim() && sourceId && !orgInvalid;
 
   async function submit(e) {
     e.preventDefault();
@@ -637,26 +507,20 @@ function CreateDealModal({ orgs, types, subtypes, sources, onClose, onCreated })
         await api.contacts.addEmail(contact.id, { value: email.trim(), isPrimary: true });
       }
 
-      // 2) Resolve the organization (existing match | new) BEFORE the deal,
-      //    reusing the existing organizations API — no duplicate org logic.
+      // 2) Resolve the organization (existing match | new) BEFORE the deal, via
+      //    the shared OrgPicker helper — no duplicate org logic. A new org owns
+      //    its type; the subtype is the deal-level field; the backend keeps
+      //    Deal.organizationTypeId null while an org is linked (no duplicate truth).
       let orgFields = {};
-      if (showBiz && existingOrgId) {
-        // Existing organization is the source of truth — link only. Its type /
-        // classification is locked and not re-entered here.
-        orgFields = { activityType: 'business', organizationId: existingOrgId };
-      } else if (showBiz && typedOrg) {
-        // Brand-new organization OWNS its type (source of truth); the subtype is
-        // a deal-level field. The backend keeps Deal.organizationTypeId null
-        // while an org is linked, so there is never duplicate truth.
-        const newOrg = await api.organizations.create({
-          name: typedOrg,
-          organizationTypeId: orgTypeId || null,
-        });
-        orgFields = {
-          activityType: 'business',
-          organizationId: newOrg.id,
-          organizationSubtypeId: subtypeId || null,
-        };
+      if (showBiz && orgRes && (orgRes.isExisting || orgRes.isNew)) {
+        const { organizationId } = await resolveOrganization(orgRes);
+        if (organizationId) {
+          orgFields = {
+            activityType: 'business',
+            organizationId,
+            organizationSubtypeId: orgRes.subtypeId || null,
+          };
+        }
       }
 
       // 3) The deal. Inquiry text → notes; source → catalog ref; sourceFree → free text.
@@ -740,76 +604,13 @@ function CreateDealModal({ orgs, types, subtypes, sources, onClose, onCreated })
                 <span className="text-[13px] font-semibold text-gray-700">ארגון</span>
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowBiz(false);
-                    setOrgName('');
-                    setSelectedOrgId('');
-                    setExistingOrgType(null);
-                    setOrgTypeId('');
-                    setSubtypeId('');
-                  }}
+                  onClick={() => { setShowBiz(false); setOrgRes(null); }}
                   className="text-[12px] text-gray-500 hover:text-gray-700"
                 >
                   הסר
                 </button>
               </div>
-
-              <div className="relative">
-                <Field label="ארגון">
-                  <input
-                    value={orgName}
-                    onChange={(e) => { setOrgName(e.target.value); setSelectedOrgId(''); }}
-                    onFocus={() => setOrgFocused(true)}
-                    onBlur={() => setTimeout(() => setOrgFocused(false), 120)}
-                    placeholder="הקלידו שם ארגון…"
-                    autoComplete="off"
-                    className={MODAL_INPUT}
-                  />
-                </Field>
-                {orgFocused && orgSuggestions.length > 0 && (
-                  <ul className="absolute z-10 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg max-h-44 overflow-y-auto">
-                    {orgSuggestions.map((o) => (
-                      <li key={o.id}>
-                        <button
-                          type="button"
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => chooseOrg(o)}
-                          className="block w-full text-right px-3 py-2 text-sm hover:bg-blue-50"
-                        >
-                          {o.name}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-
-              {isExistingOrg ? (
-                <div className="rounded-lg bg-white border border-gray-200 px-3 py-2">
-                  <div className="flex items-center justify-between text-[12px]">
-                    <span className="text-gray-400">סוג ארגון</span>
-                    <span className="font-medium text-gray-700">{existingOrgType?.label || '—'}</span>
-                  </div>
-                  <p className="text-[11px] text-gray-400 mt-1">הארגון הקיים הוא מקור האמת.</p>
-                </div>
-              ) : isNewOrg ? (
-                <>
-                  <Field label="סוג ארגון *">
-                    <select value={orgTypeId} onChange={(e) => { setOrgTypeId(e.target.value); setSubtypeId(''); }} className={`${MODAL_INPUT} bg-white`}>
-                      <option value="">— בחר סוג —</option>
-                      {types.map((t) => (<option key={t.id} value={t.id}>{t.label}</option>))}
-                    </select>
-                  </Field>
-                  {orgTypeId && scopedSubtypes.length > 0 && (
-                    <Field label="תת-סוג">
-                      <select value={subtypeId} onChange={(e) => setSubtypeId(e.target.value)} className={`${MODAL_INPUT} bg-white`}>
-                        <option value="">— ללא —</option>
-                        {scopedSubtypes.map((s) => (<option key={s.id} value={s.id}>{s.label}</option>))}
-                      </select>
-                    </Field>
-                  )}
-                </>
-              ) : null}
+              <OrgPicker orgs={orgs} types={types} subtypes={subtypes} showSubtype onResolve={setOrgRes} />
             </div>
           )}
         </div>

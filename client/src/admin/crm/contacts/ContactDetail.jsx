@@ -3,6 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import BackButton from '../../common/BackButton.jsx';
 import ChannelSection from '../common/ChannelSection.jsx';
+import { formatPhone } from '../../../lib/phone.js';
 
 // Contact detail — edit bilingual names, manage phones / emails / organization
 // memberships, and see future communication sections as placeholders.
@@ -121,8 +122,9 @@ export default function ContactDetail() {
       <ChannelSection
         title="טלפונים"
         items={contact.phones}
-        placeholder="מספר טלפון"
+        placeholder="מספר טלפון (ישראלי או בינלאומי, לדוגמה +44…)"
         ltr
+        formatValue={formatPhone}
         onAdd={(value) => api.contacts.addPhone(id, { value })}
         onSetPrimary={(itemId) => api.contacts.updatePhone(itemId, { isPrimary: true })}
         onRemove={(itemId) => api.contacts.removePhone(itemId)}

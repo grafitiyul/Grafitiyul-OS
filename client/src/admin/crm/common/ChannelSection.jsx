@@ -18,6 +18,7 @@ export default function ChannelSection({
   onSetPrimary,
   onRemove,
   onChange,
+  formatValue = (v) => v, // optional display formatter (e.g. phone formatting)
 }) {
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
@@ -54,7 +55,7 @@ export default function ChannelSection({
         <ul className="divide-y divide-gray-100 mb-3">
           {items.map((it) => (
             <li key={it.id} className="py-2 flex items-center gap-2 text-sm">
-              <span dir={ltr ? 'ltr' : 'rtl'}>{it.value}</span>
+              <span dir={ltr ? 'ltr' : 'rtl'}>{formatValue(it.value)}</span>
               {it.isPrimary ? (
                 <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
                   ראשי

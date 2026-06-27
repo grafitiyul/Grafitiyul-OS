@@ -42,7 +42,12 @@ router.get(
       include: {
         phones: { where: { isPrimary: true }, take: 1 },
         emails: { where: { isPrimary: true }, take: 1 },
-        _count: { select: { orgLinks: true } },
+        // Linked organizations (primary first) for the list column, plus counts.
+        orgLinks: {
+          orderBy: { isPrimary: 'desc' },
+          select: { isPrimary: true, organization: { select: { id: true, name: true } } },
+        },
+        _count: { select: { orgLinks: true, dealContacts: true } },
       },
     });
     res.json(contacts.map(withFullNames));
@@ -72,10 +77,11 @@ router.post(
       firstNameEn: String(firstNameEn || '').trim(),
       lastNameEn: String(lastNameEn || '').trim(),
     };
-    // Only the Hebrew first name is required. This supports the Deal-header quick
-    // add (name + phone), while the full contact editor still lets you fill the
-    // remaining bilingual names later. Stored columns stay non-null (empty '').
-    if (!names.firstNameHe) {
+    // A contact needs at least ONE first name, in EITHER language (Hebrew or
+    // English). Last names and the other-language names are all optional; stored
+    // columns stay non-null (empty ''). This keeps quick capture (name + phone)
+    // fast for both Hebrew and international contacts.
+    if (!names.firstNameHe && !names.firstNameEn) {
       return res.status(400).json({ error: 'first_name_required' });
     }
     const contact = await prisma.contact.create({
