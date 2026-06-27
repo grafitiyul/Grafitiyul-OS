@@ -1148,8 +1148,20 @@ function CardEditor({ version, segment, products, ticketTypes, addons, productCa
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
               <Field label="מחיר">
-                <Money minor={sabbath.priceMinor} onChange={(v) => setSabbath((s) => ({ ...s, priceMinor: v }))}
-                  placeholder={`${minorToInput(systemAddon.defaultPriceMinor)} (ברירת מחדל)`} />
+                {/* While inheriting (priceMinor==null) show the LIVE catalog default
+                    as the field value — not a faint "0" placeholder — but keep it
+                    as inheritance (no override row). Typing sets a per-card override;
+                    clearing returns to inherit. */}
+                <div className="flex items-center gap-1.5">
+                  <input dir="ltr" inputMode="decimal"
+                    value={sabbath.priceMinor != null ? minorToInput(sabbath.priceMinor) : minorToInput(systemAddon.defaultPriceMinor)}
+                    onChange={(e) => setSabbath((s) => ({ ...s, priceMinor: toMinor(e.target.value) }))}
+                    className={`${INPUT} text-left`} />
+                  <span className="text-[12px] text-gray-500 shrink-0">₪</span>
+                  {sabbath.priceMinor == null && (
+                    <span className="text-[11px] text-gray-400 shrink-0 whitespace-nowrap">ברירת מחדל</span>
+                  )}
+                </div>
               </Field>
               <Field label="מע״מ">
                 <Select value={sabbath.vatMode} onChange={(v) => setSabbath((s) => ({ ...s, vatMode: v }))}
