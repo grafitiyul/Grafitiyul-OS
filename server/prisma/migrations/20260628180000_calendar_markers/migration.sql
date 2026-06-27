@@ -48,26 +48,27 @@ BEGIN
   END IF;
 END $$;
 
--- Seed marker types (idempotent by id). chol_hamoed is a SYSTEM type the import
--- depends on; the rest are editable starters.
+-- Seed marker types. chol_hamoed is a SYSTEM type the import depends on; the rest
+-- are editable starters. Every row supplies all 9 columns (createdAt/updatedAt
+-- explicit via NOW()); idempotent via ON CONFLICT on the unique key.
 INSERT INTO "CalendarMarkerType" ("id","key","nameHe","nameEn","color","source","sortOrder","createdAt","updatedAt")
-SELECT * FROM (VALUES
-  ('markertype_chol_hamoed','chol_hamoed','חול המועד','Chol HaMoed','#f59e0b','system',0),
-  ('markertype_school_vacation','school_vacation','חופשת בית ספר','School Vacation','#3b82f6','manual',1),
-  ('markertype_election_day','election_day','יום בחירות','Election Day','#8b5cf6','manual',2),
-  ('markertype_municipal_event','municipal_event','אירוע עירוני','Municipal Event','#10b981','manual',3),
-  ('markertype_high_demand','high_demand','תקופת ביקוש גבוה','High Demand','#ef4444','manual',4)
-) AS v("id","key","nameHe","nameEn","color","source","sortOrder")
-WHERE NOT EXISTS (SELECT 1 FROM "CalendarMarkerType" t WHERE t."key" = v."key");
+VALUES
+  ('markertype_chol_hamoed','chol_hamoed','חול המועד','Chol HaMoed','#f59e0b','system',0, NOW(), NOW()),
+  ('markertype_school_vacation','school_vacation','חופשת בית ספר','School Vacation','#3b82f6','manual',1, NOW(), NOW()),
+  ('markertype_election_day','election_day','יום בחירות','Election Day','#8b5cf6','manual',2, NOW(), NOW()),
+  ('markertype_municipal_event','municipal_event','אירוע עירוני','Municipal Event','#10b981','manual',3, NOW(), NOW()),
+  ('markertype_high_demand','high_demand','תקופת ביקוש גבוה','High Demand','#ef4444','manual',4, NOW(), NOW())
+ON CONFLICT ("key") DO NOTHING;
 
 -- Redirect existing Chol HaMoed: move CH"M holiday rows (still classified 'other')
 -- into markers, then remove them from the pricing HolidayRule. Match the Hebcal
 -- CH"M title shape "(CH…"; deterministic id keeps it idempotent. Manually
 -- reclassified CH"M rows (type <> 'other') are left untouched.
 INSERT INTO "CalendarMarker" ("id","markerTypeId","startDate","endDate","nameHe","source","externalId","active","createdAt","updatedAt")
-SELECT 'cm_' || h."id",'markertype_chol_hamoed', h."date", h."date", h."nameHe", 'imported', h."externalId", true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+SELECT 'cm_' || h."id",'markertype_chol_hamoed', h."date", h."date", h."nameHe", 'imported', h."externalId", true, NOW(), NOW()
 FROM "HolidayRule" h
 WHERE h."sourceName" LIKE '%(CH%' AND h."type" = 'other'
-  AND NOT EXISTS (SELECT 1 FROM "CalendarMarker" m WHERE m."id" = 'cm_' || h."id");
+  AND NOT EXISTS (SELECT 1 FROM "CalendarMarker" m WHERE m."id" = 'cm_' || h."id")
+ON CONFLICT ("source","externalId") DO NOTHING;
 
 DELETE FROM "HolidayRule" WHERE "sourceName" LIKE '%(CH%' AND "type" = 'other';
