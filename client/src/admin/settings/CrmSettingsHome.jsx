@@ -72,6 +72,12 @@ export default function CrmSettingsHome() {
           title="תוספות"
           description="פריטים נמכרים שאינם מוצרים, עם עקיפות מחיר."
         />
+        <CategoryCard
+          to="/admin/settings/crm/ticket-types"
+          icon="🎟️"
+          title="סוגי כרטיסים"
+          description="קטלוג סוגי הכרטיסים לתמחור לפי כרטיס (מבוגר / ילד וכו')."
+        />
       </CategoryGrid>
     </div>
   );

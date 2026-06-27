@@ -122,6 +122,42 @@ test('tiered_group: no tiers → rule_incomplete', () => {
   );
 });
 
+// ── ticket_types (new — model 4) ────────────────────────────────────────────
+const TICKETS = {
+  id: 'r1', active: true, priceModel: 'ticket_types', priority: 0,
+  ticketPrices: [
+    { ticketTypeId: 'adult', priceMinor: 12000n },
+    { ticketTypeId: 'child', priceMinor: 9000n },
+  ],
+};
+
+test('ticket_types: Σ quantity × price, with per-ticket line items', () => {
+  const r = run([TICKETS], { ticketQuantities: { adult: 10, child: 5 } });
+  // 10*12000 + 5*9000 = 165000
+  assert.equal(r.netMinor, 165000);
+  assert.equal(r.priceModel, 'ticket_types');
+  assert.equal(r.debug.lines.length, 2);
+  const adult = r.debug.lines.find((l) => l.ticketTypeId === 'adult');
+  assert.equal(adult.quantity, 10);
+  assert.equal(adult.lineMinor, 120000);
+});
+test('ticket_types: missing quantity counts as 0', () => {
+  const r = run([TICKETS], { ticketQuantities: { adult: 3 } });
+  assert.equal(r.netMinor, 36000);
+});
+test('ticket_types: no prices configured → rule_incomplete', () => {
+  assert.throws(
+    () => run([{ id: 'r1', active: true, priceModel: 'ticket_types', ticketPrices: [], priority: 0 }], { ticketQuantities: { adult: 1 } }),
+    (e) => e instanceof PricingError && e.code === 'rule_incomplete',
+  );
+});
+test('ticket_types respects VAT mode (added)', () => {
+  const r = run([{ ...TICKETS, vatMode: 'excluded', vatRate: 18 }], { ticketQuantities: { adult: 10, child: 5 } });
+  assert.equal(r.netMinor, 165000);
+  assert.equal(r.vatMinor, 29700);
+  assert.equal(r.grossMinor, 194700);
+});
+
 // ── model comes from the WINNING rule, not the activity type ────────────────
 test('model is read from the resolved rule (activityType.priceModel ignored)', () => {
   // A specific tiered_group rule beats a wildcard per_head rule on specificity;

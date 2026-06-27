@@ -1084,7 +1084,7 @@ model PriceRule {
   pricingSegmentId     String?
   cardGroupId          String?
 
-  priceModel String // per_head | tiered | tiered_group | fixed
+  priceModel String // per_head | tiered | tiered_group | fixed | ticket_types
 
   // per_head model fields. (per_person UX reuses per_head with a single price.)
   adultPriceMinor BigInt?
@@ -1101,6 +1101,10 @@ model PriceRule {
 
   // tiered_group model — ordered ladder of (uptoParticipants → totalPriceMinor).
   tiers PriceTier[]
+
+  // ticket_types model — a price per TicketType (e.g. מבוגר/ילד). The set of
+  // ticket categories is the editable TicketType catalog, NOT hard-coded.
+  ticketPrices PriceRuleTicketPrice[]
 
   // VAT override — null inherits the PriceList defaults.
   vatMode String? // included | excluded
@@ -1137,6 +1141,42 @@ model PriceTier {
   updatedAt        DateTime @updatedAt
 
   @@index([priceRuleId])
+}
+
+// Editable catalog of ticket categories (e.g. מבוגר / ילד). The SOURCE OF TRUTH
+// for ticket-based pricing — adult/child are seed examples, never hard-coded in
+// code. A type referenced by any price rule is deactivated, not hard-deleted
+// (enforced in the route).
+model TicketType {
+  id            String   @id @default(cuid())
+  nameHe        String
+  nameEn        String?
+  descriptionHe String?
+  descriptionEn String?
+  active        Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  priceEntries  PriceRuleTicketPrice[]
+
+  @@index([sortOrder])
+}
+
+// Per-rule price for one ticket type (ticket_types model). One row per
+// (priceRule, ticketType). Cascade-deletes with either side.
+model PriceRuleTicketPrice {
+  id           String     @id @default(cuid())
+  priceRule    PriceRule  @relation(fields: [priceRuleId], references: [id], onDelete: Cascade)
+  priceRuleId  String
+  ticketType   TicketType @relation(fields: [ticketTypeId], references: [id], onDelete: Cascade)
+  ticketTypeId String
+  priceMinor   BigInt
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([priceRuleId, ticketTypeId])
+  @@index([priceRuleId])
+  @@index([ticketTypeId])
 }
 
 // The 6 business-facing pricing tabs (קבוצתי / פרטי / עסקי / בית ספר / סוכנים /

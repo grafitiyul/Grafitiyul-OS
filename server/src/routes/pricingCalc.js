@@ -72,7 +72,7 @@ router.post(
       include: {
         rules: {
           where: { active: true },
-          include: { tiers: { orderBy: { sortOrder: 'asc' } } },
+          include: { tiers: { orderBy: { sortOrder: 'asc' } }, ticketPrices: true },
         },
       },
     });
@@ -116,12 +116,14 @@ router.post(
       perAdditionalParticipantMinor: b.perAdditionalParticipantMinor ?? null,
       fixedPriceMinor: b.fixedPriceMinor ?? null,
       tiers: Array.isArray(b.tiers) ? b.tiers : [],
+      ticketPrices: Array.isArray(b.ticketPrices) ? b.ticketPrices : [],
     };
     const counts = {
       adultCount: b.adultCount,
       childCount: b.childCount,
       participantCount: b.participantCount,
       groupCount: b.groupCount != null ? b.groupCount : 1,
+      ticketQuantities: b.ticketQuantities || {},
     };
     const vatMode = b.vatMode === 'excluded' ? 'excluded' : 'included';
     const vatRate = b.vatRate != null ? Number(b.vatRate) : 18;

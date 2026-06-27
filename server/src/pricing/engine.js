@@ -199,6 +199,39 @@ export function baseAmountMinor(rule, counts) {
     };
   }
 
+  // ticket_types — a configured price per ticket category (TicketType catalog).
+  // Total = Σ (quantity[ticketTypeId] × configured priceMinor). Returns per-ticket
+  // line items in debug so the UI can render a quote. No groupCount: ticket
+  // quantities are absolute counts, not per-group.
+  if (rule.priceModel === 'ticket_types') {
+    const entries = rule.ticketPrices || [];
+    if (entries.length === 0) {
+      throw new PricingError('rule_incomplete', {
+        priceModel: 'ticket_types',
+        missing: ['ticketPrices'],
+      });
+    }
+    const qtyMap = counts.ticketQuantities || {};
+    let total = 0;
+    const lines = [];
+    for (const e of entries) {
+      const quantity = Math.max(0, Number(qtyMap[e.ticketTypeId]) || 0);
+      const priceMinor = num(e.priceMinor) || 0;
+      const lineMinor = Math.round(quantity * priceMinor);
+      total += lineMinor;
+      lines.push({
+        ticketTypeId: e.ticketTypeId,
+        quantity,
+        priceMinor: Math.round(priceMinor),
+        lineMinor,
+      });
+    }
+    return {
+      amountMinor: Math.round(total),
+      debug: { lines, ticketTypeCount: entries.length },
+    };
+  }
+
   throw new PricingError('unknown_price_model', { priceModel: rule.priceModel });
 }
 

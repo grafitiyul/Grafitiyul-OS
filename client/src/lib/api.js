@@ -478,6 +478,14 @@ export const api = {
     list: () => request('/api/pricing-segments'),
     update: (id, data) => request(`/api/pricing-segments/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   },
+  // Ticket Types — editable catalog for the ticket_types pricing model.
+  ticketTypes: {
+    list: () => request('/api/ticket-types'),
+    create: (data) => request('/api/ticket-types', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/api/ticket-types/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/ticket-types/${id}`, { method: 'DELETE' }),
+    reorder: (ids) => request('/api/ticket-types/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
+  },
   // ── CRM Settings — Lost Reasons & Quote Content Sections (catalog only) ──
   lostReasons: {
     list: () => request('/api/lost-reasons'),

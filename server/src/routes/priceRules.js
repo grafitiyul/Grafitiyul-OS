@@ -14,7 +14,7 @@ import { handle } from '../asyncHandler.js';
 
 const router = Router();
 
-const PRICE_MODELS = ['per_head', 'tiered', 'tiered_group', 'fixed'];
+const PRICE_MODELS = ['per_head', 'tiered', 'tiered_group', 'fixed', 'ticket_types'];
 const VAT_MODES = ['included', 'excluded'];
 
 // Minor-unit → BigInt | null. Accepts numbers/strings; '' and null → null.
@@ -81,6 +81,21 @@ function buildTierRows(tiers) {
     );
 }
 
+// Ticket-price rows for the ticket_types model. null = caller didn't send any.
+// Drops rows missing a ticketTypeId or price; de-dupes by ticketTypeId (last wins)
+// to satisfy the @@unique(priceRuleId, ticketTypeId) constraint.
+function buildTicketRows(ticketPrices) {
+  if (!Array.isArray(ticketPrices)) return null;
+  const byType = new Map();
+  for (const p of ticketPrices) {
+    const ticketTypeId = p?.ticketTypeId ? String(p.ticketTypeId) : null;
+    const priceMinor = toBig(p?.priceMinor);
+    if (!ticketTypeId || priceMinor == null) continue;
+    byType.set(ticketTypeId, { ticketTypeId, priceMinor });
+  }
+  return [...byType.values()];
+}
+
 router.get(
   '/',
   handle(async (req, res) => {
@@ -90,7 +105,7 @@ router.get(
     const rules = await prisma.priceRule.findMany({
       where,
       orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
-      include: { tiers: { orderBy: { sortOrder: 'asc' } } },
+      include: { tiers: { orderBy: { sortOrder: 'asc' } }, ticketPrices: true },
     });
     res.json(rules);
   }),
@@ -107,13 +122,15 @@ router.post(
     });
     if (!list) return res.status(404).json({ error: 'price_list_not_found' });
     const tierRows = buildTierRows(req.body?.tiers);
+    const ticketRows = buildTicketRows(req.body?.ticketPrices);
     const rule = await prisma.priceRule.create({
       data: {
         priceListId,
         ...buildData(req.body || {}, { partial: false }),
         ...(tierRows ? { tiers: { create: tierRows } } : {}),
+        ...(ticketRows ? { ticketPrices: { create: ticketRows } } : {}),
       },
-      include: { tiers: { orderBy: { sortOrder: 'asc' } } },
+      include: { tiers: { orderBy: { sortOrder: 'asc' } }, ticketPrices: true },
     });
     res.status(201).json(rule);
   }),
@@ -124,8 +141,9 @@ router.put(
   handle(async (req, res) => {
     const id = req.params.id;
     const tierRows = buildTierRows(req.body?.tiers);
-    // When `tiers` is supplied, replace the whole ladder atomically. Absent =
-    // leave existing tiers untouched (partial update).
+    const ticketRows = buildTicketRows(req.body?.ticketPrices);
+    // When `tiers`/`ticketPrices` are supplied, replace that set atomically.
+    // Absent = leave the existing rows untouched (partial update).
     const rule = await prisma.$transaction(async (tx) => {
       const updated = await tx.priceRule.update({
         where: { id },
@@ -138,13 +156,20 @@ router.put(
             data: tierRows.map((t) => ({ ...t, priceRuleId: id })),
           });
       }
+      if (ticketRows) {
+        await tx.priceRuleTicketPrice.deleteMany({ where: { priceRuleId: id } });
+        if (ticketRows.length)
+          await tx.priceRuleTicketPrice.createMany({
+            data: ticketRows.map((t) => ({ ...t, priceRuleId: id })),
+          });
+      }
       return updated;
     });
-    const withTiers = await prisma.priceRule.findUnique({
+    const full = await prisma.priceRule.findUnique({
       where: { id: rule.id },
-      include: { tiers: { orderBy: { sortOrder: 'asc' } } },
+      include: { tiers: { orderBy: { sortOrder: 'asc' } }, ticketPrices: true },
     });
-    res.json(withTiers);
+    res.json(full);
   }),
 );
 

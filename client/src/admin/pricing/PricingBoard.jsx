@@ -28,6 +28,7 @@ const MODELS = [
   { value: 'tiered_group', name: 'מדרגות מחיר + משתתף נוסף' },
   { value: 'per_head', name: 'מחיר לאדם' },
   { value: 'fixed', name: 'מחיר קבוע' },
+  { value: 'ticket_types', name: 'מחיר כרטיס' },
 ];
 const modelName = (m) => MODELS.find((x) => x.value === m)?.name || m;
 
@@ -85,6 +86,7 @@ export default function PricingBoard() {
   const [lists, setLists] = useState([]);
   const [segments, setSegments] = useState([]);
   const [products, setProducts] = useState([]);
+  const [ticketTypes, setTicketTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -105,13 +107,15 @@ export default function PricingBoard() {
   const refreshAll = useCallback(async () => {
     setError(null);
     try {
-      const [seg, p] = await Promise.all([
+      const [seg, p, tt] = await Promise.all([
         api.pricingSegments.list(),
         api.products.list(),
+        api.ticketTypes.list(),
         loadLists(),
       ]);
       setSegments(seg);
       setProducts(p);
+      setTicketTypes(tt);
       setSegmentId((cur) => cur || seg[0]?.id || null);
     } catch (e) {
       setError(e.message);
@@ -158,6 +162,7 @@ export default function PricingBoard() {
                   version={version}
                   segment={segment}
                   products={products}
+                  ticketTypes={ticketTypes}
                 />
               )}
             </>
@@ -242,7 +247,7 @@ function TabBar({ segments, segmentId, onSelect }) {
 
 // ───────────────────────────── Segment panel ───────────────────────────────
 
-function SegmentPanel({ version, segment, products }) {
+function SegmentPanel({ version, segment, products, ticketTypes }) {
   const [rules, setRules] = useState([]);
   const [loading, setLoading] = useState(true);
   const [productCache, setProductCache] = useState({});
@@ -302,12 +307,12 @@ function SegmentPanel({ version, segment, products }) {
           {cards.map((card) =>
             editingCardId === card.cardGroupId ? (
               <CardEditor key={card.cardGroupId} version={version} segment={segment}
-                products={products} productCache={productCache} setProductCache={setProductCache}
+                products={products} ticketTypes={ticketTypes} productCache={productCache} setProductCache={setProductCache}
                 card={card} onClose={() => setEditingCardId(null)}
                 onSaved={() => { setEditingCardId(null); refresh(); }} />
             ) : (
               <CardView key={card.cardGroupId} version={version} card={card}
-                productCache={productCache}
+                productCache={productCache} ticketTypes={ticketTypes}
                 onEdit={() => setEditingCardId(card.cardGroupId)}
                 onChanged={refresh} />
             ),
@@ -315,7 +320,7 @@ function SegmentPanel({ version, segment, products }) {
 
           {adding ? (
             <CardEditor version={version} segment={segment}
-              products={products} productCache={productCache} setProductCache={setProductCache}
+              products={products} ticketTypes={ticketTypes} productCache={productCache} setProductCache={setProductCache}
               onClose={() => setAdding(false)}
               onSaved={() => { setAdding(false); refresh(); }} />
           ) : (
@@ -353,6 +358,10 @@ function groupCards(rules) {
         uptoParticipants: Number(t.uptoParticipants),
         totalPriceMinor: Number(t.totalPriceMinor),
       })),
+      ticketPrices: (rep.ticketPrices || []).map((p) => ({
+        ticketTypeId: p.ticketTypeId,
+        priceMinor: Number(p.priceMinor),
+      })),
       variantIds: siblings.map((s) => s.productVariantId).filter(Boolean),
       rules: siblings.map((s) => ({ id: s.id, productVariantId: s.productVariantId })),
     });
@@ -362,7 +371,7 @@ function groupCards(rules) {
 
 // ──────────────────────────────── Card view ────────────────────────────────
 
-function CardView({ version, card, productCache, onEdit, onChanged }) {
+function CardView({ version, card, productCache, ticketTypes, onEdit, onChanged }) {
   const product = productCache[card.productId];
   const productName = product?.nameHe || '—';
   const variantNames = card.variantIds.map((vid) => {
@@ -391,6 +400,7 @@ function CardView({ version, card, productCache, onEdit, onChanged }) {
           perAdditionalParticipantMinor: card.perAdditionalParticipantMinor,
           fixedPriceMinor: card.fixedPriceMinor,
           tiers: card.tiers,
+          ticketPrices: card.ticketPrices,
           vatMode: card.vatMode,
           vatRate: card.vatRate,
           active: true,
@@ -428,10 +438,16 @@ function CardView({ version, card, productCache, onEdit, onChanged }) {
         </div>
       </div>
 
-      <CardNumbers card={card} />
-      <CardPreview version={version} card={card} />
+      <CardNumbers card={card} ticketTypes={ticketTypes} />
+      <CardPreview version={version} card={card} ticketTypes={ticketTypes} />
     </div>
   );
+}
+
+function ticketNameMap(ticketTypes) {
+  const m = {};
+  (ticketTypes || []).forEach((t) => { m[t.id] = t.nameHe; });
+  return m;
 }
 
 function vatLabel(mode, rate) {
@@ -440,12 +456,22 @@ function vatLabel(mode, rate) {
   return `כולל מע״מ ${rate}%`;
 }
 
-function CardNumbers({ card }) {
+function CardNumbers({ card, ticketTypes }) {
   if (card.priceModel === 'fixed') {
     return <div className="text-[13px] text-gray-700">מחיר קבוע כולל: <b>{formatMinor(card.fixedPriceMinor)}</b></div>;
   }
   if (card.priceModel === 'per_head') {
     return <div className="text-[13px] text-gray-700">מחיר למשתתף: <b>{formatMinor(card.adultPriceMinor)}</b></div>;
+  }
+  if (card.priceModel === 'ticket_types') {
+    const names = ticketNameMap(ticketTypes);
+    return (
+      <div className="text-[13px] text-gray-700 flex flex-wrap gap-x-3 gap-y-0.5">
+        {card.ticketPrices.map((p) => (
+          <span key={p.ticketTypeId}>{names[p.ticketTypeId] || 'כרטיס'}: <b>{formatMinor(p.priceMinor)}</b></span>
+        ))}
+      </div>
+    );
   }
   const sorted = [...card.tiers].sort((a, b) => a.uptoParticipants - b.uptoParticipants);
   return (
@@ -462,56 +488,78 @@ function CardNumbers({ card }) {
 
 // ─────────────────────── Per-card quote-style preview ──────────────────────
 
-function CardPreview({ version, card }) {
+function CardPreview({ version, card, ticketTypes }) {
+  const isTicket = card.priceModel === 'ticket_types';
   const [count, setCount] = useState(10);
   const [groupCount, setGroupCount] = useState(1);
+  const [quantities, setQuantities] = useState(() => {
+    const m = {};
+    (card.ticketPrices || []).forEach((p) => { m[p.ticketTypeId] = 1; });
+    return m;
+  });
   const [res, setRes] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const run = useCallback(async () => {
     setBusy(true);
     try {
-      const r = await api.pricing.preview({
-        priceModel: card.priceModel,
-        adultPriceMinor: card.adultPriceMinor,
-        childPriceMinor: card.childPriceMinor,
-        perAdditionalParticipantMinor: card.perAdditionalParticipantMinor,
-        fixedPriceMinor: card.fixedPriceMinor,
-        tiers: card.tiers,
-        vatMode: card.vatMode,
-        vatRate: card.vatRate,
-        participantCount: Number(count) || 0,
-        adultCount: Number(count) || 0,
-        childCount: 0,
-        groupCount: Number(groupCount) || 1,
-      });
-      setRes(r);
+      const base = { priceModel: card.priceModel, vatMode: card.vatMode, vatRate: card.vatRate };
+      const payload = isTicket
+        ? { ...base, ticketPrices: card.ticketPrices, ticketQuantities: quantities }
+        : {
+            ...base,
+            adultPriceMinor: card.adultPriceMinor,
+            childPriceMinor: card.childPriceMinor,
+            perAdditionalParticipantMinor: card.perAdditionalParticipantMinor,
+            fixedPriceMinor: card.fixedPriceMinor,
+            tiers: card.tiers,
+            participantCount: Number(count) || 0,
+            adultCount: Number(count) || 0,
+            childCount: 0,
+            groupCount: Number(groupCount) || 1,
+          };
+      setRes(await api.pricing.preview(payload));
     } catch (e) { setRes({ ok: false, error: e.message }); }
     finally { setBusy(false); }
-  }, [card, count, groupCount]);
+  }, [card, isTicket, count, groupCount, quantities]);
 
   useEffect(() => { run(); }, [run]);
 
   const cur = version.currency;
+  const names = ticketNameMap(ticketTypes);
   return (
     <div className="rounded-lg bg-gray-50 ring-1 ring-gray-100 p-3">
-      <div className="flex items-center gap-3 mb-2">
+      <div className="flex flex-wrap items-center gap-3 mb-2">
         <span className="text-[12px] font-medium text-gray-500">הצעת מחיר</span>
-        <label className="flex items-center gap-1 text-[12px] text-gray-600">
-          משתתפים
-          <input dir="ltr" value={count} onChange={(e) => setCount(e.target.value.replace(/\D/g, ''))}
-            className="h-8 w-16 rounded border border-gray-300 px-2 text-center text-sm" />
-        </label>
-        <label className="flex items-center gap-1 text-[12px] text-gray-600">
-          קבוצות
-          <input dir="ltr" value={groupCount} onChange={(e) => setGroupCount(e.target.value.replace(/\D/g, ''))}
-            className="h-8 w-14 rounded border border-gray-300 px-2 text-center text-sm" />
-        </label>
+        {isTicket ? (
+          (card.ticketPrices || []).map((p) => (
+            <label key={p.ticketTypeId} className="flex items-center gap-1 text-[12px] text-gray-600">
+              {names[p.ticketTypeId] || 'כרטיס'}
+              <input dir="ltr" value={quantities[p.ticketTypeId] ?? ''}
+                onChange={(e) => setQuantities((q) => ({ ...q, [p.ticketTypeId]: e.target.value.replace(/\D/g, '') }))}
+                className="h-8 w-14 rounded border border-gray-300 px-2 text-center text-sm" />
+            </label>
+          ))
+        ) : (
+          <>
+            <label className="flex items-center gap-1 text-[12px] text-gray-600">
+              משתתפים
+              <input dir="ltr" value={count} onChange={(e) => setCount(e.target.value.replace(/\D/g, ''))}
+                className="h-8 w-16 rounded border border-gray-300 px-2 text-center text-sm" />
+            </label>
+            <label className="flex items-center gap-1 text-[12px] text-gray-600">
+              קבוצות
+              <input dir="ltr" value={groupCount} onChange={(e) => setGroupCount(e.target.value.replace(/\D/g, ''))}
+                className="h-8 w-14 rounded border border-gray-300 px-2 text-center text-sm" />
+            </label>
+          </>
+        )}
         {busy && <span className="text-[11px] text-gray-400">מחשב…</span>}
       </div>
 
       {res && res.ok ? (
-        <QuoteLines res={res} card={card} count={Number(count) || 0} groupCount={Number(groupCount) || 1} currency={cur} />
+        <QuoteLines res={res} card={card} count={Number(count) || 0} groupCount={Number(groupCount) || 1}
+          currency={cur} ticketTypes={ticketTypes} />
       ) : res ? (
         <div className="text-[12px] text-red-600">{previewError(res.error)}</div>
       ) : null}
@@ -521,7 +569,7 @@ function CardPreview({ version, card }) {
 
 // Render the preview as a quote: line items, VAT, total — adapting to VAT mode.
 // All amounts come from the engine response (no re-derivation of pricing).
-function QuoteLines({ res, card, count, groupCount, currency }) {
+function QuoteLines({ res, card, count, groupCount, currency, ticketTypes }) {
   const f = (m) => formatMinor(m, currency);
   const d = res.debug || {};
   const g = groupCount || 1;
@@ -532,6 +580,14 @@ function QuoteLines({ res, card, count, groupCount, currency }) {
   } else if (card.priceModel === 'per_head') {
     const unit = Number(card.adultPriceMinor || 0);
     lines.push({ label: `${count} משתתפים × ${f(unit)}`, value: res.baseAmountMinor });
+  } else if (card.priceModel === 'ticket_types') {
+    const names = ticketNameMap(ticketTypes);
+    (d.lines || []).forEach((ln) => {
+      lines.push({
+        label: `${names[ln.ticketTypeId] || 'כרטיס'}: ${ln.quantity} × ${f(ln.priceMinor)}`,
+        value: ln.lineMinor,
+      });
+    });
   } else {
     // tiered_group: base tier line + (optional) additional-participants line.
     const tierTotal = Number(d.tierTotalMinor || 0) * g;
@@ -582,7 +638,7 @@ function previewError(code) {
 
 // ────────────────────────────── Card editor ────────────────────────────────
 
-function CardEditor({ version, segment, products, productCache, setProductCache, card, onClose, onSaved }) {
+function CardEditor({ version, segment, products, ticketTypes, productCache, setProductCache, card, onClose, onSaved }) {
   const [productId, setProductId] = useState(card?.productId || '');
   const [variantIds, setVariantIds] = useState(card?.variantIds || []);
   const [priceModel, setPriceModel] = useState(card?.priceModel || 'tiered_group');
@@ -592,6 +648,18 @@ function CardEditor({ version, segment, products, productCache, setProductCache,
   const [tiers, setTiers] = useState(
     card?.tiers?.length ? card.tiers.map((t) => ({ ...t })) : [{ uptoParticipants: null, totalPriceMinor: null }],
   );
+  // ticket_types: priceMinor per ticketTypeId. Show active types + any already
+  // priced on this card (so an inactive-but-priced type stays editable).
+  const [ticketPrices, setTicketPrices] = useState(() => {
+    const m = {};
+    (card?.ticketPrices || []).forEach((p) => { m[p.ticketTypeId] = Number(p.priceMinor); });
+    return m;
+  });
+  const editorTicketTypes = useMemo(() => {
+    const priced = new Set((card?.ticketPrices || []).map((p) => p.ticketTypeId));
+    return (ticketTypes || []).filter((t) => t.active || priced.has(t.id));
+  }, [ticketTypes, card]);
+  const setTicketPrice = (id, v) => setTicketPrices((m) => ({ ...m, [id]: v }));
   const [vatMode, setVatMode] = useState(card?.vatMode || version.defaultVatMode || 'included');
   const [vatRate, setVatRate] = useState(card?.vatRate ?? version.defaultVatRate ?? DEFAULT_VAT_RATE);
   const [busy, setBusy] = useState(false);
@@ -625,21 +693,34 @@ function CardEditor({ version, segment, products, productCache, setProductCache,
       const valid = tiers.filter((t) => t.uptoParticipants != null && t.totalPriceMinor != null);
       if (valid.length === 0) return 'הוסיפו לפחות מדרגת מחיר אחת.';
     }
+    if (priceModel === 'ticket_types') {
+      const any = Object.values(ticketPrices).some((v) => v != null);
+      if (!any) return 'הזינו מחיר לפחות לסוג כרטיס אחד.';
+    }
     return null;
   }
 
+  // All non-model fields nulled so a model switch never leaks stale values into
+  // resolution. `tiers: []` / `ticketPrices: []` explicitly clear those join sets.
   function modelPayload() {
+    const empty = { adultPriceMinor: null, childPriceMinor: null, fixedPriceMinor: null, basePriceMinor: null, baseParticipants: null, perAdditionalParticipantMinor: null, tiers: [], ticketPrices: [] };
     if (priceModel === 'fixed') {
-      return { fixedPriceMinor, adultPriceMinor: null, childPriceMinor: null, basePriceMinor: null, baseParticipants: null, perAdditionalParticipantMinor: null, tiers: [] };
+      return { ...empty, fixedPriceMinor };
     }
     if (priceModel === 'per_head') {
-      return { adultPriceMinor, childPriceMinor: adultPriceMinor, fixedPriceMinor: null, basePriceMinor: null, baseParticipants: null, perAdditionalParticipantMinor: null, tiers: [] };
+      return { ...empty, adultPriceMinor, childPriceMinor: adultPriceMinor };
+    }
+    if (priceModel === 'ticket_types') {
+      const rows = Object.entries(ticketPrices)
+        .filter(([, v]) => v != null)
+        .map(([ticketTypeId, priceMinor]) => ({ ticketTypeId, priceMinor }));
+      return { ...empty, ticketPrices: rows };
     }
     const cleanTiers = tiers
       .filter((t) => t.uptoParticipants != null && t.totalPriceMinor != null)
       .sort((a, b) => a.uptoParticipants - b.uptoParticipants)
       .map((t, i) => ({ uptoParticipants: t.uptoParticipants, totalPriceMinor: t.totalPriceMinor, sortOrder: i }));
-    return { perAdditionalParticipantMinor: perAdd, tiers: cleanTiers, adultPriceMinor: null, childPriceMinor: null, fixedPriceMinor: null, basePriceMinor: null, baseParticipants: null };
+    return { ...empty, perAdditionalParticipantMinor: perAdd, tiers: cleanTiers };
   }
 
   async function save() {
@@ -752,6 +833,25 @@ function CardEditor({ version, segment, products, productCache, setProductCache,
               <span className="text-[13px] text-gray-500 shrink-0">₪ לכל משתתף</span>
             </div>
           </Field>
+        </div>
+      )}
+
+      {priceModel === 'ticket_types' && (
+        <div className="space-y-2">
+          <span className={LABEL}>מחיר לכל סוג כרטיס</span>
+          {editorTicketTypes.length === 0 ? (
+            <div className="text-[12px] text-gray-400">אין סוגי כרטיסים פעילים. הוסיפו אותם במסך "סוגי כרטיסים".</div>
+          ) : (
+            editorTicketTypes.map((tt) => (
+              <div key={tt.id} className="flex items-center gap-2">
+                <span className="text-[13px] text-gray-700 w-28 shrink-0">
+                  {tt.nameHe}{!tt.active && <span className="text-gray-400"> (לא פעיל)</span>}
+                </span>
+                <div className="w-36"><Money minor={ticketPrices[tt.id] ?? null} onChange={(v) => setTicketPrice(tt.id, v)} placeholder="0" /></div>
+                <span className="text-[13px] text-gray-500 shrink-0">₪ לכרטיס</span>
+              </div>
+            ))
+          )}
         </div>
       )}
 
