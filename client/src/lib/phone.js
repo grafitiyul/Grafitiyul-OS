@@ -30,7 +30,7 @@ const COUNTRY_NAMES = {
   JP: 'Japan', KR: 'South Korea', CN: 'China', TR: 'Turkey', IN: 'India',
   MA: 'Morocco', PT: 'Portugal', LU: 'Luxembourg', IE: 'Ireland', FI: 'Finland',
   EE: 'Estonia', UA: 'Ukraine', CZ: 'Czechia', SK: 'Slovakia', HK: 'Hong Kong',
-  AE: 'United Arab Emirates', IL: 'Israel', BH: 'Bahrain', SA: 'Saudi Arabia',
+  AE: 'United Arab Emirates', IL: 'ישראל', BH: 'Bahrain', SA: 'Saudi Arabia',
   JO: 'Jordan',
 };
 
@@ -45,6 +45,47 @@ export function flagEmoji(iso) {
   const A = 0x1f1e6;
   const up = iso.toUpperCase();
   return String.fromCodePoint(A + (up.charCodeAt(0) - 65), A + (up.charCodeAt(1) - 65));
+}
+
+// Does this environment paint emoji flags as real flag glyphs? macOS/iOS/Android
+// do; Windows has no flag font, so a flag emoji collapses to its two ISO letters
+// (e.g. "US"). Probed once via a tiny canvas: the Japan flag has a red disc, so a
+// true flag glyph leaves red pixels while the "JP" letter fallback stays black.
+let _flagsSupported;
+export function flagsSupported() {
+  if (_flagsSupported !== undefined) return _flagsSupported;
+  _flagsSupported = false;
+  try {
+    if (typeof document === 'undefined') return _flagsSupported;
+    const canvas = document.createElement('canvas');
+    canvas.width = 24;
+    canvas.height = 16;
+    const ctx = canvas.getContext && canvas.getContext('2d');
+    if (!ctx) return _flagsSupported;
+    ctx.fillStyle = '#000';
+    ctx.textBaseline = 'top';
+    ctx.font = '16px sans-serif';
+    ctx.fillText('🇯🇵', 0, 0);
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    for (let i = 0; i < data.length; i += 4) {
+      // Strong red, weak green/blue, opaque ⇒ the flag's disc was painted.
+      if (data[i] > 90 && data[i + 1] < 80 && data[i + 2] < 80 && data[i + 3] > 0) {
+        _flagsSupported = true;
+        break;
+      }
+    }
+  } catch {
+    _flagsSupported = false;
+  }
+  return _flagsSupported;
+}
+
+// The glyph to render for a detected country: the real flag when the platform
+// supports flag emoji, otherwise a neutral globe — never the bare ISO letters
+// (which is what an unsupported flag emoji silently degrades to). Unknown country
+// ⇒ globe too.
+export function flagGlyph(iso) {
+  return flagsSupported() && iso ? flagEmoji(iso) : '🌐';
 }
 
 // Parse a raw phone string into display parts. Never throws.
@@ -85,15 +126,17 @@ export function parsePhone(raw) {
   return { iso: null, name: '', dialCode: '', national: value, flag: '' };
 }
 
-// A compact one-line display string showing flag + country letters, e.g.
-// "🇮🇱 IL 052-426-4020" (local) or "🇺🇸 US +1 555-…" (international). Falls back
-// to the raw value when the country can't be determined.
+// A compact one-line display string: flag (or globe fallback) + international
+// dial prefix + number, e.g. "🇮🇱 +972 52-426-4020" or "🇺🇸 +1 5551234". The ISO
+// letters are intentionally NOT shown (the flag already conveys the country).
+// Falls back to the raw value when the country can't be determined.
 export function formatPhone(raw) {
   const value = String(raw || '').trim();
   if (!value) return '';
-  const { flag, iso, dialCode, national } = parsePhone(value);
-  // Local (Israeli "0…") numbers read most naturally as-is, after flag + letters.
-  if (value.startsWith('0')) return `${flag} ${iso} ${value}`.trim();
-  if (dialCode) return `${flag} ${iso} +${dialCode} ${national}`.trim();
-  return value;
+  const { iso, dialCode, national } = parsePhone(value);
+  if (!dialCode) return value; // unknown format — show as typed
+  // A local Israeli "0…" number keeps its leading 0 in `national`; drop it so it
+  // reads as a proper international number under the +972 prefix.
+  const rest = value.startsWith('0') ? national.replace(/^0/, '') : national;
+  return `${flagGlyph(iso)} +${dialCode} ${rest}`.trim();
 }

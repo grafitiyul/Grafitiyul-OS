@@ -19,6 +19,7 @@ export default function ContactCreateDialog({ orgs, types, subtypes, open, onClo
   const [lastName, setLastName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
+  const [role, setRole] = useState('');
   const [notes, setNotes] = useState('');
   const [orgRes, setOrgRes] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -26,7 +27,7 @@ export default function ContactCreateDialog({ orgs, types, subtypes, open, onClo
   const ready = firstName.trim() && phone.trim() && !orgRes?.invalid;
 
   function reset() {
-    setFirstName(''); setLastName(''); setPhone(''); setEmail(''); setNotes(''); setOrgRes(null);
+    setFirstName(''); setLastName(''); setPhone(''); setEmail(''); setRole(''); setNotes(''); setOrgRes(null);
   }
 
   async function submit(e) {
@@ -35,10 +36,16 @@ export default function ContactCreateDialog({ orgs, types, subtypes, open, onClo
     setBusy(true);
     try {
       // Contact — route names by script (Hebrew → He fields; Latin → En fields),
-      // never duplicating into the other language.
+      // never duplicating into the other language. Role + internal note both live
+      // on the contact card (the only free-text store): a standalone contact has
+      // no deal to carry an operational role, so the role is captured as text.
+      const composedNotes = [
+        role.trim() && `תפקיד: ${role.trim()}`,
+        notes.trim(),
+      ].filter(Boolean).join('\n');
       const contact = await api.contacts.create({
         ...contactNamesFromParts(firstName, lastName),
-        notes: notes.trim() || undefined,
+        notes: composedNotes || undefined,
       });
       await api.contacts.addPhone(contact.id, { value: phone.trim(), isPrimary: true });
       if (email.trim()) {
@@ -108,13 +115,22 @@ export default function ContactCreateDialog({ orgs, types, subtypes, open, onClo
             <input value={email} onChange={(e) => setEmail(e.target.value)} dir="ltr" className={FIELD} />
           </Field>
         </div>
-        <Field label="הערות / תפקיד (אופציונלי)">
+        <Field label="תפקיד (אופציונלי)">
+          <input
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+            placeholder="לדוגמה: מנהל רכש"
+            className={FIELD}
+          />
+        </Field>
+        <Field label="הערה פנימית (אופציונלי)">
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             rows={2}
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
           />
+          <span className="text-[11px] text-gray-400">הערה זו נשמרת בכרטיס איש הקשר.</span>
         </Field>
 
         <div className="rounded-xl border border-gray-200 bg-gray-50/60 p-3">
