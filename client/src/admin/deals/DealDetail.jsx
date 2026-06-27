@@ -4,6 +4,8 @@ import { api } from '../../lib/api.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import LostDealDialog from './LostDealDialog.jsx';
+import DealSalesScript from './DealSalesScript.jsx';
+import WorkspaceLayout from '../../shell/WorkspaceLayout.jsx';
 import { minorToInput, toMinor } from '../../lib/money.js';
 import {
   DEAL_STATUS_LABELS,
@@ -42,12 +44,15 @@ function fmtDate(iso) {
   }
 }
 
-// Deal detail — a full-width CRM workspace, not a centered form. A hero header
-// (live business object: title, status, stage, value, primary actions) over a
-// two-column layout: main column (overview / organization / contacts / future
-// activity) and a secondary column (commercial / dates / notes / metadata).
-// The title is inline-editable in the hero; every other section saves itself
-// with its own local שמור button (no confusing global header save).
+// Deal detail — a 3-column sales WORKSPACE (WorkspaceLayout), not a big form.
+//   • LEFT panel  : sales script (collapsible/resizable, placeholder for now)
+//   • CENTER      : the working surfaces — hero header (title + actions +
+//                   full-width pipeline), contacts, activity, notes
+//   • RIGHT panel : deal properties (overview / organization / commercial /
+//                   dates / LOST details / metadata)
+// The title is inline-editable in the hero; every property section saves itself
+// with its own local שמור button (no global header save). Side-panel width and
+// open/closed state persist in localStorage via WorkspaceLayout.
 export default function DealDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -238,9 +243,171 @@ export default function DealDetail() {
 
   const theme = STATUS_THEME[deal.status] || STATUS_THEME.open;
 
+  // Right panel — deal properties (config / finance / dates / meta). These are
+  // the "what the deal is" surfaces; the center holds the working surfaces.
+  const dealProperties = (
+    <div className="space-y-4">
+      <Card
+        variant="panel"
+        title="סקירת הדיל"
+        action={
+          <SaveBtn
+            busy={savingSection === 'overview'}
+            onClick={() =>
+              saveSection('overview', {
+                dealStageId: form.dealStageId,
+                source: form.source,
+                expectedCloseDate: form.expectedCloseDate || null,
+              })
+            }
+          />
+        }
+      >
+        <div className="space-y-3">
+          <FieldBox label="שלב">
+            <select value={form.dealStageId} onChange={(e) => set('dealStageId', e.target.value)} className={`${INPUT} bg-white`}>
+              {stages.map((s) => (<option key={s.id} value={s.id}>{s.label}</option>))}
+            </select>
+          </FieldBox>
+          <FieldBox label="מקור">
+            <input value={form.source} onChange={(e) => set('source', e.target.value)} placeholder="לדוגמה: הפניה, אתר, תערוכה" className={INPUT} />
+          </FieldBox>
+          <FieldBox label="צפי סגירה">
+            <input type="date" value={form.expectedCloseDate} onChange={(e) => set('expectedCloseDate', e.target.value)} dir="ltr" className={INPUT} />
+          </FieldBox>
+        </div>
+      </Card>
+
+      <Card
+        variant="panel"
+        title="שיוך ארגוני"
+        action={
+          <SaveBtn
+            busy={savingSection === 'org'}
+            onClick={() =>
+              saveSection('org', {
+                organizationId: form.organizationId || null,
+                organizationUnitId: form.organizationUnitId || null,
+                organizationSubtypeId: form.organizationSubtypeId || null,
+              })
+            }
+          />
+        }
+      >
+        <div className="space-y-3">
+          <FieldBox label="ארגון">
+            <select value={form.organizationId} onChange={(e) => chooseOrg(e.target.value)} className={`${INPUT} bg-white`}>
+              <option value="">— ללא —</option>
+              {orgs.map((o) => (<option key={o.id} value={o.id}>{o.name}</option>))}
+            </select>
+          </FieldBox>
+          <FieldBox label="יחידה">
+            <select value={form.organizationUnitId} onChange={(e) => set('organizationUnitId', e.target.value)} disabled={!units.length} className={`${INPUT} bg-white disabled:bg-gray-100`}>
+              <option value="">— ללא —</option>
+              {units.map((u) => (<option key={u.id} value={u.id}>{u.name}</option>))}
+            </select>
+          </FieldBox>
+          <FieldBox label="תת-סוג (של הדיל)">
+            <select value={form.organizationSubtypeId} onChange={(e) => set('organizationSubtypeId', e.target.value)} className={`${INPUT} bg-white`}>
+              <option value="">— ללא —</option>
+              {subtypes.map((s) => (<option key={s.id} value={s.id}>{s.label}</option>))}
+            </select>
+          </FieldBox>
+        </div>
+        {form.organizationId && (
+          <div className="mt-3">
+            <Link to={`/admin/crm/organizations/${form.organizationId}`} className="text-[13px] text-blue-700 hover:underline">
+              פתח את כרטיס הארגון ←
+            </Link>
+          </div>
+        )}
+      </Card>
+
+      <Card
+        variant="panel"
+        title="מסחרי"
+        action={
+          <SaveBtn
+            busy={savingSection === 'commercial'}
+            onClick={() =>
+              saveSection('commercial', {
+                valueMinor: toMinor(form.value) ?? 0,
+                discountMinor: toMinor(form.discount),
+                paymentTerms: form.paymentTerms,
+                currency: form.currency,
+              })
+            }
+          />
+        }
+      >
+        <div className="space-y-3">
+          <FieldBox label="שווי (₪)">
+            <input value={form.value} onChange={(e) => set('value', e.target.value)} inputMode="decimal" dir="ltr"
+              className={`${INPUT} text-[15px] font-semibold`} />
+          </FieldBox>
+          <FieldBox label="הנחה (₪)">
+            <input value={form.discount} onChange={(e) => set('discount', e.target.value)} inputMode="decimal" dir="ltr" className={INPUT} />
+          </FieldBox>
+          <FieldBox label="תנאי תשלום">
+            <input value={form.paymentTerms} onChange={(e) => set('paymentTerms', e.target.value)} placeholder="שוטף + 30 וכו'" className={INPUT} />
+          </FieldBox>
+          <FieldBox label="מטבע">
+            <select value={form.currency} onChange={(e) => set('currency', e.target.value)} className={`${INPUT} bg-white`}>
+              <option value="ILS">₪ ILS</option>
+              <option value="USD">$ USD</option>
+              <option value="EUR">€ EUR</option>
+            </select>
+          </FieldBox>
+        </div>
+      </Card>
+
+      <Card variant="panel" title="תאריכים">
+        <dl className="space-y-2 text-sm">
+          <Row label="צפי סגירה" value={fmtDate(deal.expectedCloseDate)} />
+          {deal.wonAt && <Row label="נסגר בהצלחה" value={fmtDate(deal.wonAt)} />}
+          {deal.lostAt && <Row label="תאריך LOST" value={fmtDate(deal.lostAt)} />}
+        </dl>
+      </Card>
+
+      {deal.status === 'lost' && (
+        <Card variant="panel" title="פרטי LOST">
+          <dl className="space-y-2 text-sm">
+            <Row
+              label="סיבת LOST"
+              value={deal.lostReasonRef?.nameHe || deal.lostReason || '—'}
+            />
+          </dl>
+          {deal.lostNotes && (
+            <div className="mt-3">
+              <div className="text-[11px] text-gray-500 mb-1">הערות LOST</div>
+              <p className="text-sm text-gray-800 whitespace-pre-wrap">{deal.lostNotes}</p>
+            </div>
+          )}
+          {!deal.lostReasonRef && deal.lostReason && (
+            <div className="mt-2 text-[11px] text-gray-400">
+              טקסט LOST קודם (legacy) — נשמר לתצוגה עד עדכון הסטטוס מחדש.
+            </div>
+          )}
+        </Card>
+      )}
+
+      <Card variant="panel" title="מטא-דאטה">
+        <dl className="space-y-2 text-sm">
+          <Row label="נוצר" value={fmtDate(deal.createdAt)} />
+          <Row label="עודכן" value={fmtDate(deal.updatedAt)} />
+        </dl>
+      </Card>
+    </div>
+  );
+
   return (
-    <div className="mx-auto max-w-[1500px] px-5 lg:px-8 py-6">
-      {/* Hero header — the live business object */}
+    <WorkspaceLayout
+      storageKey="gos.workspace.deal"
+      right={{ title: 'מאפייני הדיל', content: dealProperties, defaultWidth: 380, minWidth: 300, maxWidth: 620 }}
+      left={{ title: 'תסריט מכירה', content: <DealSalesScript />, defaultWidth: 300, minWidth: 220, maxWidth: 460 }}
+    >
+      {/* Hero header — title + actions, then a full-width pipeline bar.
+          Lives in the center stack, so its width matches the cards. */}
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-5 lg:p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
@@ -275,14 +442,9 @@ export default function DealDetail() {
                 {DEAL_STATUS_LABELS[deal.status]}
               </span>
             </div>
-
-            {/* Pipeline bar — RTL connected segments, colored by deal status */}
-            <div className="mt-3">
-              <StagePipeline stages={stages} currentStageId={deal.dealStageId} status={deal.status} />
-              {deal.organization && (
-                <div className="mt-2 text-sm text-gray-500">{deal.organization.name}</div>
-              )}
-            </div>
+            {deal.organization && (
+              <div className="mt-2 text-sm text-gray-500">{deal.organization.name}</div>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -340,7 +502,35 @@ export default function DealDetail() {
             </AnchoredMenu>
           </div>
         </div>
+
+        {/* Pipeline bar — spans the full header width, below title + actions */}
+        <div className="mt-4">
+          <StagePipeline stages={stages} currentStageId={deal.dealStageId} status={deal.status} />
+        </div>
       </div>
+
+      {/* Center workspace — the working surfaces */}
+      <DealContactsSection deal={deal} allContacts={allContacts} onChange={refresh} />
+
+      <Card title="פעילות (בקרוב)">
+        <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center text-sm text-gray-400">
+          ציר זמן של פעילויות, שיחות, וואטסאפ ואימייל — ייפתח עם מודול הפעילויות.
+        </div>
+      </Card>
+
+      <Card
+        title="הערות פנימיות"
+        action={
+          <SaveBtn
+            busy={savingSection === 'notes'}
+            onClick={() => saveSection('notes', { notes: form.notes })}
+          />
+        }
+      >
+        <textarea value={form.notes} onChange={(e) => set('notes', e.target.value)} rows={5}
+          placeholder="הערות פנימיות לדיל…"
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400" />
+      </Card>
 
       <LostDealDialog
         open={lostOpen}
@@ -357,185 +547,7 @@ export default function DealDetail() {
         onConfirm={() => { setConfirmDelete(false); removeDeal(); }}
       />
 
-      {/* Two-column workspace */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mt-5">
-        {/* Main column */}
-        <div className="lg:col-span-2 space-y-5">
-          <Card
-            title="סקירת הדיל"
-            action={
-              <SaveBtn
-                busy={savingSection === 'overview'}
-                onClick={() =>
-                  saveSection('overview', {
-                    dealStageId: form.dealStageId,
-                    source: form.source,
-                    expectedCloseDate: form.expectedCloseDate || null,
-                  })
-                }
-              />
-            }
-          >
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <FieldBox label="שלב">
-                <select value={form.dealStageId} onChange={(e) => set('dealStageId', e.target.value)} className={`${INPUT} bg-white`}>
-                  {stages.map((s) => (<option key={s.id} value={s.id}>{s.label}</option>))}
-                </select>
-              </FieldBox>
-              <FieldBox label="מקור">
-                <input value={form.source} onChange={(e) => set('source', e.target.value)} placeholder="לדוגמה: הפניה, אתר, תערוכה" className={INPUT} />
-              </FieldBox>
-              <FieldBox label="צפי סגירה">
-                <input type="date" value={form.expectedCloseDate} onChange={(e) => set('expectedCloseDate', e.target.value)} dir="ltr" className={INPUT} />
-              </FieldBox>
-            </div>
-          </Card>
-
-          <Card
-            title="שיוך ארגוני"
-            action={
-              <SaveBtn
-                busy={savingSection === 'org'}
-                onClick={() =>
-                  saveSection('org', {
-                    organizationId: form.organizationId || null,
-                    organizationUnitId: form.organizationUnitId || null,
-                    organizationSubtypeId: form.organizationSubtypeId || null,
-                  })
-                }
-              />
-            }
-          >
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <FieldBox label="ארגון">
-                <select value={form.organizationId} onChange={(e) => chooseOrg(e.target.value)} className={`${INPUT} bg-white`}>
-                  <option value="">— ללא —</option>
-                  {orgs.map((o) => (<option key={o.id} value={o.id}>{o.name}</option>))}
-                </select>
-              </FieldBox>
-              <FieldBox label="יחידה">
-                <select value={form.organizationUnitId} onChange={(e) => set('organizationUnitId', e.target.value)} disabled={!units.length} className={`${INPUT} bg-white disabled:bg-gray-100`}>
-                  <option value="">— ללא —</option>
-                  {units.map((u) => (<option key={u.id} value={u.id}>{u.name}</option>))}
-                </select>
-              </FieldBox>
-              <FieldBox label="תת-סוג (של הדיל)">
-                <select value={form.organizationSubtypeId} onChange={(e) => set('organizationSubtypeId', e.target.value)} className={`${INPUT} bg-white`}>
-                  <option value="">— ללא —</option>
-                  {subtypes.map((s) => (<option key={s.id} value={s.id}>{s.label}</option>))}
-                </select>
-              </FieldBox>
-            </div>
-            {form.organizationId && (
-              <div className="mt-3">
-                <Link to={`/admin/crm/organizations/${form.organizationId}`} className="text-[13px] text-blue-700 hover:underline">
-                  פתח את כרטיס הארגון ←
-                </Link>
-              </div>
-            )}
-          </Card>
-
-          <DealContactsSection deal={deal} allContacts={allContacts} onChange={refresh} />
-
-          <Card title="פעילות (בקרוב)">
-            <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center text-sm text-gray-400">
-              ציר זמן של פעילויות, שיחות, וואטסאפ ואימייל — ייפתח עם מודול הפעילויות.
-            </div>
-          </Card>
-        </div>
-
-        {/* Secondary column */}
-        <div className="space-y-5">
-          <Card
-            title="מסחרי"
-            action={
-              <SaveBtn
-                busy={savingSection === 'commercial'}
-                onClick={() =>
-                  saveSection('commercial', {
-                    valueMinor: toMinor(form.value) ?? 0,
-                    discountMinor: toMinor(form.discount),
-                    paymentTerms: form.paymentTerms,
-                    currency: form.currency,
-                  })
-                }
-              />
-            }
-          >
-            <div className="space-y-3">
-              <FieldBox label="שווי (₪)">
-                <input value={form.value} onChange={(e) => set('value', e.target.value)} inputMode="decimal" dir="ltr"
-                  className={`${INPUT} text-[15px] font-semibold`} />
-              </FieldBox>
-              <FieldBox label="הנחה (₪)">
-                <input value={form.discount} onChange={(e) => set('discount', e.target.value)} inputMode="decimal" dir="ltr" className={INPUT} />
-              </FieldBox>
-              <FieldBox label="תנאי תשלום">
-                <input value={form.paymentTerms} onChange={(e) => set('paymentTerms', e.target.value)} placeholder="שוטף + 30 וכו'" className={INPUT} />
-              </FieldBox>
-              <FieldBox label="מטבע">
-                <select value={form.currency} onChange={(e) => set('currency', e.target.value)} className={`${INPUT} bg-white`}>
-                  <option value="ILS">₪ ILS</option>
-                  <option value="USD">$ USD</option>
-                  <option value="EUR">€ EUR</option>
-                </select>
-              </FieldBox>
-            </div>
-          </Card>
-
-          <Card title="תאריכים">
-            <dl className="space-y-2 text-sm">
-              <Row label="צפי סגירה" value={fmtDate(deal.expectedCloseDate)} />
-              {deal.wonAt && <Row label="נסגר בהצלחה" value={fmtDate(deal.wonAt)} />}
-              {deal.lostAt && <Row label="תאריך LOST" value={fmtDate(deal.lostAt)} />}
-            </dl>
-          </Card>
-
-          {deal.status === 'lost' && (
-            <Card title="פרטי LOST">
-              <dl className="space-y-2 text-sm">
-                <Row
-                  label="סיבת LOST"
-                  value={deal.lostReasonRef?.nameHe || deal.lostReason || '—'}
-                />
-              </dl>
-              {deal.lostNotes && (
-                <div className="mt-3">
-                  <div className="text-[11px] text-gray-500 mb-1">הערות LOST</div>
-                  <p className="text-sm text-gray-800 whitespace-pre-wrap">{deal.lostNotes}</p>
-                </div>
-              )}
-              {!deal.lostReasonRef && deal.lostReason && (
-                <div className="mt-2 text-[11px] text-gray-400">
-                  טקסט LOST קודם (legacy) — נשמר לתצוגה עד עדכון הסטטוס מחדש.
-                </div>
-              )}
-            </Card>
-          )}
-
-          <Card
-            title="הערות פנימיות"
-            action={
-              <SaveBtn
-                busy={savingSection === 'notes'}
-                onClick={() => saveSection('notes', { notes: form.notes })}
-              />
-            }
-          >
-            <textarea value={form.notes} onChange={(e) => set('notes', e.target.value)} rows={4}
-              placeholder="הערות פנימיות לדיל…"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400" />
-          </Card>
-
-          <Card title="מטא-דאטה">
-            <dl className="space-y-2 text-sm">
-              <Row label="נוצר" value={fmtDate(deal.createdAt)} />
-              <Row label="עודכן" value={fmtDate(deal.updatedAt)} />
-            </dl>
-          </Card>
-        </div>
-      </div>
-    </div>
+    </WorkspaceLayout>
   );
 }
 
@@ -802,7 +814,10 @@ function StagePipeline({ stages, currentStageId, status }) {
   const fill = PIPE_FILL[status] || PIPE_FILL.open;
   const currentIndex = stages.findIndex((s) => s.id === currentStageId);
   return (
-    <div className="flex items-stretch text-[12px] font-medium leading-none">
+    // Full-width bar: every stage segment flexes to an equal share, so the bar
+    // stretches edge-to-edge and adapts automatically to any number of stages
+    // (no hardcoded widths — stage count will come from Settings later).
+    <div className="flex w-full items-stretch text-[12px] font-medium leading-none">
       {stages.map((s, i) => {
         const isCurrent = i === currentIndex;
         const isDone = currentIndex >= 0 && i < currentIndex;
@@ -811,10 +826,10 @@ function StagePipeline({ stages, currentStageId, status }) {
           <div
             key={s.id}
             title={s.label}
-            className={`${cls} ${i === 0 ? '' : '-ms-3'} flex items-center whitespace-nowrap py-2 ps-5 pe-4`}
+            className={`${cls} ${i === 0 ? '' : '-ms-3'} flex flex-1 min-w-0 items-center justify-center whitespace-nowrap py-2 ps-5 pe-4`}
             style={{ clipPath: i === 0 ? CHEVRON_FIRST : CHEVRON }}
           >
-            {s.label}
+            <span className="truncate">{s.label}</span>
           </div>
         );
       })}
@@ -835,14 +850,25 @@ function SaveBtn({ onClick, busy }) {
   );
 }
 
-function Card({ title, action, children }) {
+// variant: 'default' = elevated card for the center workspace; 'panel' = lighter
+// card that sits calmly inside a side panel (no shadow, tighter padding).
+function Card({ title, action, children, variant = 'default' }) {
+  const panel = variant === 'panel';
   return (
-    <section className="bg-white border border-gray-200 rounded-2xl shadow-sm">
-      <div className="flex items-center justify-between gap-2 px-5 pt-4 pb-3 border-b border-gray-100">
-        <h2 className="text-[15px] font-semibold text-gray-900">{title}</h2>
+    <section
+      className={`bg-white border border-gray-200 ${panel ? 'rounded-xl' : 'rounded-2xl shadow-sm'}`}
+    >
+      <div
+        className={`flex items-center justify-between gap-2 border-b border-gray-100 ${
+          panel ? 'px-4 pt-3 pb-2.5' : 'px-5 pt-4 pb-3'
+        }`}
+      >
+        <h2 className={`font-semibold text-gray-900 ${panel ? 'text-[13px]' : 'text-[15px]'}`}>
+          {title}
+        </h2>
         {action}
       </div>
-      <div className="p-5">{children}</div>
+      <div className={panel ? 'p-4' : 'p-5'}>{children}</div>
     </section>
   );
 }
