@@ -41,6 +41,7 @@ import sabbathHoursRouter from './routes/sabbathHours.js';
 import lostReasonsRouter from './routes/lostReasons.js';
 import dealSourcesRouter from './routes/dealSources.js';
 import quoteSectionsRouter from './routes/quoteSections.js';
+import timelineRouter from './routes/timeline.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -155,6 +156,8 @@ app.use('/api/sabbath-hours', requireAdminAuth, sabbathHoursRouter);
 app.use('/api/lost-reasons', requireAdminAuth, lostReasonsRouter);
 app.use('/api/deal-sources', requireAdminAuth, dealSourcesRouter);
 app.use('/api/quote-sections', requireAdminAuth, quoteSectionsRouter);
+// Reusable Timeline / Activity-Feed (notes V1). Scoped by (subjectType, subjectId).
+app.use('/api/timeline', requireAdminAuth, timelineRouter);
 
 // Unknown /api/* paths get a real JSON 404 instead of falling through to
 // the SPA fallback (which would serve HTML for an API request).

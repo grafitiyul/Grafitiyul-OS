@@ -57,7 +57,7 @@ export const FONT_SIZES = [
 
 // ---- toolbar ----
 
-export default function Toolbar({ editor, setUploadState }) {
+export default function Toolbar({ editor, setUploadState, showDynamicFields = true }) {
   if (!editor) return null;
 
   return (
@@ -193,9 +193,13 @@ export default function Toolbar({ editor, setUploadState }) {
         <ImageUploadButton editor={editor} setUploadState={setUploadState} />
         <VideoMenuButton editor={editor} setUploadState={setUploadState} />
       </Group>
-      <Divider />
 
-      <DynamicFieldMenu editor={editor} />
+      {showDynamicFields && (
+        <>
+          <Divider />
+          <DynamicFieldMenu editor={editor} />
+        </>
+      )}
     </div>
   );
 }

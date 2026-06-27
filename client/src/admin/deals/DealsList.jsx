@@ -523,10 +523,10 @@ function CreateDealModal({ orgs, types, subtypes, sources, onClose, onCreated })
         }
       }
 
-      // 3) The deal. Inquiry text → notes; source → catalog ref; sourceFree → free text.
+      // 3) The deal. Source → catalog ref; sourceFree → free text. The inquiry is
+      //    NOT stored on the deal anymore — it becomes the first timeline note.
       const deal = await api.deals.create({
         title: title.trim() || fullName.trim(),
-        notes: inquiry.trim() || null,
         dealSourceId: sourceId,
         source: sourceFree.trim() || null,
         ...orgFields,
@@ -534,6 +534,23 @@ function CreateDealModal({ orgs, types, subtypes, sources, onClose, onCreated })
 
       // 4) Link the new contact as the deal's primary contact.
       await api.deals.addContact(deal.id, { contactId: contact.id, isPrimary: true });
+
+      // 5) Inquiry content → the deal's FIRST timeline note. A completely normal
+      //    note, only tagged origin:'inquiry' so the feed renders a small
+      //    "תוכן הפנייה" label above it. Best-effort: must not block the new deal.
+      if (inquiry.trim()) {
+        try {
+          await api.timeline.create({
+            subjectType: 'deal',
+            subjectId: deal.id,
+            kind: 'note',
+            body: plainToHtml(inquiry),
+            data: { origin: 'inquiry' },
+          });
+        } catch {
+          /* non-fatal — the deal is already created */
+        }
+      }
 
       onCreated(deal);
     } catch (e) {
@@ -624,6 +641,17 @@ function CreateDealModal({ orgs, types, subtypes, sources, onClose, onCreated })
       </form>
     </div>
   );
+}
+
+// Wrap plain textarea text as simple rich HTML (paragraphs + line breaks) so the
+// imported inquiry reads as a normal rich note in the timeline.
+function plainToHtml(text) {
+  const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(text || '')
+    .trim()
+    .split(/\n{2,}/)
+    .map((block) => `<p>${esc(block).split('\n').join('<br>')}</p>`)
+    .join('');
 }
 
 function Field({ label, children }) {

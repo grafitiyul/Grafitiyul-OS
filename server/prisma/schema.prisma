@@ -1375,6 +1375,52 @@ model DealSource {
   @@index([sortOrder])
 }
 
+// ── Timeline (reusable activity feed) ──────────────────────────────────────
+// A single polymorphic "spine": every timeline item (V1 = note; later activity /
+// email / whatsapp / file / system event) is one TimelineEntry, scoped to ANY
+// subject via (subjectType, subjectId). There is intentionally NO database FK on
+// the subject — integrity is enforced at the API (the same loose-key approach as
+// FlowAnswer.stepId / ownerUserId). This is exactly what lets the SAME timeline
+// component+feed attach to Deals, Contacts, Organizations and future entities
+// with zero schema change. Light/variable payload lives in `data` (JSON); a heavy
+// future type can get a 1:1 companion table keyed by id without touching the feed.
+model TimelineEntry {
+  id           String            @id @default(cuid())
+  subjectType  String // 'deal' | 'contact' | 'organization' | future…
+  subjectId    String
+  kind         String            @default("note") // 'note' (V1) | future kinds
+  body         String? // rich HTML for notes; optional text on other kinds
+  data         Json? // kind-specific light payload, e.g. { origin: 'inquiry' }
+  isPinned     Boolean           @default(false)
+  pinSortOrder Int               @default(0) // manual FOCUS order, scoped to the subject
+  isSystem     Boolean           @default(false) // system events: not user-editable
+  createdBy    String? // loose actor id (no User model yet)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  editedAt     DateTime? // set on CONTENT edits (distinct from pin/reorder)
+  deletedAt    DateTime? // soft delete (keeps history honest)
+  comments     TimelineComment[]
+
+  @@index([subjectType, subjectId, createdAt])
+  @@index([subjectType, subjectId, isPinned, pinSortOrder])
+}
+
+// A comment ALWAYS belongs to exactly one entry (real FK + cascade — not
+// polymorphic). Rendered white, nested under the (yellow) note. Future reactions
+// can hang off this model.
+model TimelineComment {
+  id        String        @id @default(cuid())
+  entry     TimelineEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  entryId   String
+  body      String
+  createdBy String? // loose actor id (no User model yet)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  deletedAt DateTime?
+
+  @@index([entryId, createdAt])
+}
+
 // Reusable fixed content sections for future quote templates. Rich HTML, He/En.
 // Stored as content only — quote generation is not built yet.
 model QuoteSection {

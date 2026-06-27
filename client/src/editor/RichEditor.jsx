@@ -52,7 +52,13 @@ export default function RichEditor({
   placeholder = 'כתבו כאן תוכן...',
   minContentHeight = 200,
   maxHeight = '60vh',
+  // Reusable presets. 'full' (default) keeps the existing procedures/quote
+  // behaviour for all current consumers. 'note' omits dynamic-field chips
+  // ({{…}}), which only make sense in templated content — a CRM timeline note
+  // never resolves against a field registry.
+  preset = 'full',
 }) {
+  const isNote = preset === 'note';
   const [uploadState, setUploadState] = useState({ phase: 'idle' });
   const editor = useEditor({
     extensions: [
@@ -85,7 +91,8 @@ export default function RichEditor({
       MediaImage.configure({ inline: false, allowBase64: false }),
       MediaVideo,
       MediaEmbed,
-      DynamicFieldNode,
+      // Dynamic fields are templated-content only — excluded from the note preset.
+      ...(isNote ? [] : [DynamicFieldNode]),
     ],
     content: normaliseIncoming(value),
     onUpdate: ({ editor }) => {
@@ -143,7 +150,7 @@ export default function RichEditor({
       </div>
       {/* Toolbar pinned at the bottom of the widget, always visible */}
       <div className="rt-editor-toolbar-wrap shrink-0 border-t border-gray-200">
-        <Toolbar editor={editor} setUploadState={setUploadState} />
+        <Toolbar editor={editor} setUploadState={setUploadState} showDynamicFields={!isNote} />
       </div>
     </div>
   );

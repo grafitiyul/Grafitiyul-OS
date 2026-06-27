@@ -519,6 +519,20 @@ export const api = {
     remove: (id) => request(`/api/lost-reasons/${id}`, { method: 'DELETE' }),
     reorder: (ids) => request('/api/lost-reasons/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
   },
+  // ── Timeline / Activity-Feed (reusable; scoped by subjectType + subjectId) ──
+  timeline: {
+    list: (subjectType, subjectId) => request(`/api/timeline${qs({ subjectType, subjectId })}`),
+    create: (data) => request('/api/timeline', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/api/timeline/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/timeline/${id}`, { method: 'DELETE' }),
+    pin: (id, pinned) => request(`/api/timeline/${id}/pin`, { method: 'POST', body: JSON.stringify({ pinned }) }),
+    reorderPins: (subjectType, subjectId, ids) =>
+      request('/api/timeline/pins/reorder', { method: 'PUT', body: JSON.stringify({ subjectType, subjectId, ids }) }),
+    addComment: (id, body) => request(`/api/timeline/${id}/comments`, { method: 'POST', body: JSON.stringify({ body }) }),
+    updateComment: (commentId, body) =>
+      request(`/api/timeline/comments/${commentId}`, { method: 'PUT', body: JSON.stringify({ body }) }),
+    removeComment: (commentId) => request(`/api/timeline/comments/${commentId}`, { method: 'DELETE' }),
+  },
   dealSources: {
     list: () => request('/api/deal-sources'),
     create: (data) => request('/api/deal-sources', { method: 'POST', body: JSON.stringify(data) }),

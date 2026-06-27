@@ -10,6 +10,7 @@ import ContactEditDialog from './ContactEditDialog.jsx';
 import QuickAddContactDialog from './QuickAddContactDialog.jsx';
 import OrganizationEditDialog from './OrganizationEditDialog.jsx';
 import WorkspaceLayout from '../../shell/WorkspaceLayout.jsx';
+import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
 import { minorToInput, toMinor } from '../../lib/money.js';
 import {
   ACTIVITY_TYPES,
@@ -591,25 +592,9 @@ export default function DealDetail() {
       {/* Center workspace — the working surfaces */}
       <DealContactsSection deal={deal} allContacts={allContacts} onChange={refresh} />
 
-      <Card title="פעילות (בקרוב)">
-        <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center text-sm text-gray-400">
-          ציר זמן של פעילויות, שיחות, וואטסאפ ואימייל — ייפתח עם מודול הפעילויות.
-        </div>
-      </Card>
-
-      <Card
-        title="הערות פנימיות"
-        action={
-          <SaveBtn
-            busy={savingSection === 'notes'}
-            onClick={() => saveSection('notes', { notes: form.notes })}
-          />
-        }
-      >
-        <textarea value={form.notes} onChange={(e) => set('notes', e.target.value)} rows={5}
-          placeholder="הערות פנימיות לדיל…"
-          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400" />
-      </Card>
+      {/* Timeline — the reusable Activity Feed (notes V1). Scoped to this deal;
+          the exact same component will later mount on Contact / Organization. */}
+      <TimelineFeed subjectType="deal" subjectId={deal.id} />
 
       <LostDealDialog
         open={lostOpen}
