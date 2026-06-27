@@ -50,6 +50,7 @@ const DEAL_INCLUDE = {
   organization: { select: { id: true, name: true } },
   organizationUnit: { select: { id: true, name: true } },
   organizationSubtype: { select: { id: true, label: true } },
+  lostReasonRef: { select: { id: true, nameHe: true, nameEn: true } },
   contacts: {
     orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
     include: { contact: { select: CONTACT_SELECT } },
@@ -80,6 +81,7 @@ router.get(
         organization: { select: { id: true, name: true } },
         organizationUnit: { select: { id: true, name: true } },
         organizationSubtype: { select: { id: true, label: true } },
+        lostReasonRef: { select: { id: true, nameHe: true } },
         // Only the primary contact is needed for the optional "primary contact"
         // table column — keep the payload lean (don't ship every contact).
         contacts: {
@@ -189,7 +191,10 @@ router.put(
         : null;
     if (b.notes !== undefined) data.notes = b.notes ? String(b.notes).trim() : null;
 
-    // Outcome status transitions stamp/clear wonAt/lostAt.
+    // Outcome status transitions stamp/clear wonAt/lostAt. LOST now stores
+    // STRUCTURED data: a required lostReasonId (FK to the LostReason catalog)
+    // plus optional lostNotes. The legacy free-text `lostReason` is cleared on
+    // any structured save (it only survives as a fallback on un-migrated rows).
     if (b.status !== undefined) {
       if (!VALID_STATUS.includes(b.status)) {
         return res.status(400).json({ error: 'invalid_status' });
@@ -198,18 +203,48 @@ router.put(
       if (b.status === 'won') {
         data.wonAt = new Date();
         data.lostAt = null;
+        data.lostReasonId = null;
+        data.lostNotes = null;
         data.lostReason = null;
       } else if (b.status === 'lost') {
+        const reasonId = b.lostReasonId ? String(b.lostReasonId) : null;
+        if (!reasonId) return res.status(400).json({ error: 'lost_reason_required' });
+        const reason = await prisma.lostReason.findUnique({
+          where: { id: reasonId },
+          select: { id: true },
+        });
+        if (!reason) return res.status(400).json({ error: 'lost_reason_invalid' });
         data.lostAt = new Date();
         data.wonAt = null;
-        data.lostReason = b.lostReason ? String(b.lostReason).trim() : null;
+        data.lostReasonId = reasonId;
+        data.lostNotes = b.lostNotes ? String(b.lostNotes).trim() : null;
+        data.lostReason = null;
       } else {
         data.wonAt = null;
         data.lostAt = null;
+        data.lostReasonId = null;
+        data.lostNotes = null;
         data.lostReason = null;
       }
-    } else if (b.lostReason !== undefined && existing.status === 'lost') {
-      data.lostReason = b.lostReason ? String(b.lostReason).trim() : null;
+    } else if (
+      existing.status === 'lost' &&
+      (b.lostReasonId !== undefined || b.lostNotes !== undefined)
+    ) {
+      // Editing the structured loss data without a status change.
+      if (b.lostReasonId !== undefined) {
+        const reasonId = b.lostReasonId ? String(b.lostReasonId) : null;
+        if (!reasonId) return res.status(400).json({ error: 'lost_reason_required' });
+        const reason = await prisma.lostReason.findUnique({
+          where: { id: reasonId },
+          select: { id: true },
+        });
+        if (!reason) return res.status(400).json({ error: 'lost_reason_invalid' });
+        data.lostReasonId = reasonId;
+        data.lostReason = null;
+      }
+      if (b.lostNotes !== undefined) {
+        data.lostNotes = b.lostNotes ? String(b.lostNotes).trim() : null;
+      }
     }
 
     const deal = await prisma.deal.update({

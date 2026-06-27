@@ -34,7 +34,7 @@ export default function CrmSettingsHome() {
           to="/admin/settings/crm/lost-reasons"
           icon="🚫"
           title="סיבות LOST"
-          description="רשימת סיבות לאובדן דיל, לשימוש חוזר."
+          description="רשימת סיבות LOST של דיל, לשימוש חוזר."
         />
         <CategoryCard
           to="/admin/settings/crm/quote-sections"

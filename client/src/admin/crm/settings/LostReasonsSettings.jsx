@@ -86,8 +86,8 @@ export default function LostReasonsSettings() {
           סיבות LOST
         </h1>
         <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed">
-          רשימה לשימוש חוזר של סיבות לאובדן דיל. כרגע ניהול תוכן בלבד — עדיין לא
-          משויך לדילים.
+          רשימה לשימוש חוזר של סיבות LOST לדיל. סיבות אלו מופיעות בבחירת סיבת
+          ה-LOST בכרטיס הדיל.
         </p>
       </header>
 

@@ -3,12 +3,12 @@ import Dialog from '../common/Dialog.jsx';
 import { api } from '../../lib/api.js';
 
 // In-system LOST flow — replaces the old window.prompt. A required reason is
-// chosen from the shared LostReasons catalog; notes are optional, multi-line
-// and resizable. Save stays disabled until a reason is selected.
+// chosen from the shared LostReason catalog; notes are optional, multi-line and
+// resizable. Save stays disabled until a reason is selected.
 //
-// The Deal data model stores a single freeform `lostReason` string, so we keep
-// it UI-first: the chosen reason label is combined with any notes into that one
-// field (reason — notes). No schema change.
+// onSubmit receives STRUCTURED data: { lostReasonId, lostNotes }. The Deal model
+// stores these as proper columns (lostReasonId FK + lostNotes) — no more
+// "reason — notes" free-text packing.
 export default function LostDealDialog({ open, onClose, onSubmit }) {
   const [reasons, setReasons] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -29,15 +29,11 @@ export default function LostDealDialog({ open, onClose, onSubmit }) {
   }, [open]);
 
   async function submit() {
-    const chosen = reasons.find((r) => r.id === reasonId);
-    if (!chosen) return;
+    if (!reasonId) return;
     const trimmedNotes = notes.trim();
-    const lostReason = trimmedNotes
-      ? `${chosen.nameHe} — ${trimmedNotes}`
-      : chosen.nameHe;
     setSaving(true);
     try {
-      await onSubmit(lostReason);
+      await onSubmit({ lostReasonId: reasonId, lostNotes: trimmedNotes || null });
     } finally {
       setSaving(false);
     }
@@ -47,7 +43,7 @@ export default function LostDealDialog({ open, onClose, onSubmit }) {
     <Dialog
       open={open}
       onClose={saving ? undefined : onClose}
-      title="סימון הדיל כ-LOST"
+      title="סימון הדיל ל-LOST"
       size="md"
       footer={
         <>
@@ -73,7 +69,7 @@ export default function LostDealDialog({ open, onClose, onSubmit }) {
       <div className="space-y-4">
         <div className="space-y-1.5">
           <label className="block text-sm font-medium text-gray-700">
-            סיבת אובדן <span className="text-red-600">*</span>
+            סיבת LOST <span className="text-red-600">*</span>
           </label>
           {loading ? (
             <div className="text-sm text-gray-400">טוען סיבות…</div>
@@ -92,20 +88,20 @@ export default function LostDealDialog({ open, onClose, onSubmit }) {
             </select>
           ) : (
             <div className="text-sm text-gray-500">
-              לא הוגדרו סיבות אובדן. ניתן להגדיר אותן בהגדרות ה-CRM.
+              לא הוגדרו סיבות LOST. ניתן להגדיר אותן בהגדרות ה-CRM.
             </div>
           )}
         </div>
 
         <div className="space-y-1.5">
           <label className="block text-sm font-medium text-gray-700">
-            הערות <span className="text-gray-400 font-normal">(אופציונלי)</span>
+            הערות LOST <span className="text-gray-400 font-normal">(אופציונלי)</span>
           </label>
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             rows={4}
-            placeholder="פרטים נוספים על סיבת האובדן…"
+            placeholder="פרטים נוספים על סיבת ה-LOST…"
             className="w-full min-h-[88px] max-h-[40vh] resize-y overflow-y-auto rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-200 focus:border-red-400"
           />
         </div>

@@ -26,14 +26,14 @@ datasource db {
 // only considers active users so a deactivated admin doesn't
 // re-open bootstrap mode.
 model AdminUser {
-  id           String   @id @default(cuid())
-  username     String   @unique
+  id           String    @id @default(cuid())
+  username     String    @unique
   passwordHash String
-  role         String   @default("admin")
-  isActive     Boolean  @default(true)
+  role         String    @default("admin")
+  isActive     Boolean   @default(true)
   lastLoginAt  DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 }
 
 // Nested organisational folder for the item bank. Folders can contain items
@@ -104,7 +104,7 @@ model QuestionItem {
   id              String          @id @default(cuid())
   title           String
   questionText    String          @default("")
-  answerType      String          // DEPRECATED — see block comment above
+  answerType      String // DEPRECATED — see block comment above
   options         String[]        @default([])
   allowTextAnswer Boolean         @default(false)
   requirement     String          @default("optional")
@@ -156,7 +156,7 @@ model FlowNode {
   parentId        String?
   children        FlowNode[]      @relation("NodeChildren")
   order           Int
-  kind            String          // 'content' | 'question' | 'group' | 'folderRef'
+  kind            String // 'content' | 'question' | 'group' | 'folderRef'
   contentItem     ContentItem?    @relation(fields: [contentItemId], references: [id])
   contentItemId   String?
   questionItem    QuestionItem?   @relation(fields: [questionItemId], references: [id])
@@ -394,7 +394,7 @@ model DocumentField {
   signerAssetMode String?
   staticValue     String?
   // Language selector for business_field resolution. Defaults to Hebrew.
-  language        String  @default("he") // 'he' | 'en'
+  language        String           @default("he") // 'he' | 'en'
 
   @@index([templateId, page])
 }
@@ -403,24 +403,24 @@ model DocumentField {
 // PDF bytes so later template/field/snapshot edits cannot mutate it.
 // status: 'draft' | 'finalized'
 model DocumentInstance {
-  id                String                     @id @default(cuid())
-  template          DocumentTemplate           @relation(fields: [templateId], references: [id])
-  templateId        String
-  title             String
-  status            String                     @default("draft")
-  fieldsSnapshot    Json // frozen DocumentField list at create time
-  snapshotPdfBytes  Bytes // frozen PDF bytes at create time
-  snapshotPageCount Int
-  businessSnapshot  Json // frozen BusinessField map (key → value) at create time
-  signersSnapshot   Json // frozen SignerPerson (+ assets) list at create time
+  id                  String                     @id @default(cuid())
+  template            DocumentTemplate           @relation(fields: [templateId], references: [id])
+  templateId          String
+  title               String
+  status              String                     @default("draft")
+  fieldsSnapshot      Json // frozen DocumentField list at create time
+  snapshotPdfBytes    Bytes // frozen PDF bytes at create time
+  snapshotPageCount   Int
+  businessSnapshot    Json // frozen BusinessField map (key → value) at create time
+  signersSnapshot     Json // frozen SignerPerson (+ assets) list at create time
   // Free-form visual annotations (check/x/highlight/line/note). Separate
   // from fieldsSnapshot so annotations never flow through value resolution.
-  annotationsSnapshot Json                     @default("[]")
-  createdAt         DateTime                   @default(now())
-  updatedAt         DateTime                   @updatedAt
-  finalizedAt       DateTime?
-  overrides         DocumentInstanceOverride[]
-  finalDocuments    FinalDocument[]
+  annotationsSnapshot Json                       @default("[]")
+  createdAt           DateTime                   @default(now())
+  updatedAt           DateTime                   @updatedAt
+  finalizedAt         DateTime?
+  overrides           DocumentInstanceOverride[]
+  finalDocuments      FinalDocument[]
 
   @@index([templateId])
 }
@@ -523,14 +523,14 @@ model PersonRef {
 // the identity-vs-operational authority line is structural, not
 // convention-based. One-to-one with PersonRef.
 model PersonProfile {
-  personRef    PersonRef @relation(fields: [personRefId], references: [id], onDelete: Cascade)
-  personRefId  String    @id
-  imageUrl     String?
-  description  String?
-  notes        String?
-  bankDetails  Json?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  personRef   PersonRef @relation(fields: [personRefId], references: [id], onDelete: Cascade)
+  personRefId String    @id
+  imageUrl    String?
+  description String?
+  notes       String?
+  bankDetails Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 }
 
 // Flow → teams assignment. The WHERE for "flows visible to team T" indexes
@@ -592,23 +592,23 @@ model FlowTargetPerson {
 // Configurable organization type. `key` is the stable internal key (logic never
 // reads the Hebrew label). Will later affect pricing/templates/terms/workflows.
 model OrganizationType {
-  id            String                @id @default(cuid())
-  key           String                @unique
-  label         String // Hebrew display label
-  labelEn       String?
+  id                 String                @id @default(cuid())
+  key                String                @unique
+  label              String // Hebrew display label
+  labelEn            String?
   // Quote content owned by the org classification (rich HTML). Inserted into
   // future quotes by selected type/subtype. NOT wired to Quotes yet.
-  quoteContentHe String?
-  quoteContentEn String?
-  sortOrder     Int                   @default(0)
-  isActive      Boolean               @default(true)
-  createdAt     DateTime              @default(now())
-  updatedAt     DateTime              @updatedAt
-  organizations Organization[]
-  subtypes      OrganizationSubtype[]
+  quoteContentHe     String?
+  quoteContentEn     String?
+  sortOrder          Int                   @default(0)
+  isActive           Boolean               @default(true)
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+  organizations      Organization[]
+  subtypes           OrganizationSubtype[]
   // Pricing (Slice 2): default price list for deals of this org type. Subtype
   // overrides this. Null → fall back to the system default price list.
-  defaultPriceList   PriceList? @relation("OrgTypeDefaultPriceList", fields: [defaultPriceListId], references: [id], onDelete: SetNull)
+  defaultPriceList   PriceList?            @relation("OrgTypeDefaultPriceList", fields: [defaultPriceListId], references: [id], onDelete: SetNull)
   defaultPriceListId String?
 
   // Payment defaults (additive). The terms/methods CATALOG is owned by Payment
@@ -647,7 +647,7 @@ model OrganizationSubtype {
   deals              Deal[]
   // Pricing (Slice 2): default price list for this subtype. Overrides the
   // OrganizationType default. Null → fall back to the type / system default.
-  defaultPriceList   PriceList? @relation("OrgSubtypeDefaultPriceList", fields: [defaultPriceListId], references: [id], onDelete: SetNull)
+  defaultPriceList   PriceList?        @relation("OrgSubtypeDefaultPriceList", fields: [defaultPriceListId], references: [id], onDelete: SetNull)
   defaultPriceListId String?
   priceRules         PriceRule[]
   pricingSegments    PricingSegment[]
@@ -707,14 +707,14 @@ model OrganizationUnit {
 // belong to zero, one, or many organizations (via ContactOrganization), and
 // optionally to a specific unit.
 model Contact {
-  id          String                @id @default(cuid())
-  firstNameHe String
-  lastNameHe  String
-  firstNameEn String
-  lastNameEn  String
-  notes       String?
-  createdAt   DateTime              @default(now())
-  updatedAt   DateTime              @updatedAt
+  id           String                @id @default(cuid())
+  firstNameHe  String
+  lastNameHe   String
+  firstNameEn  String
+  lastNameEn   String
+  notes        String?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
   phones       ContactPhone[]
   emails       ContactEmail[]
   orgLinks     ContactOrganization[]
@@ -836,6 +836,14 @@ model Deal {
   expectedCloseDate     DateTime?
   wonAt                 DateTime?
   lostAt                DateTime?
+  // LOST outcome — structured. lostReasonRef points at the shared LostReason
+  // catalog (required at the API layer when status='lost'); lostNotes is free
+  // optional detail. `lostReason` (legacy free text) is RETAINED only as a
+  // backward-compat display fallback for old rows — new saves leave it null and
+  // write the structured fields instead.
+  lostReasonRef         LostReason?          @relation(fields: [lostReasonId], references: [id], onDelete: SetNull)
+  lostReasonId          String?
+  lostNotes             String?
   lostReason            String?
   notes                 String?
   createdAt             DateTime             @default(now())
@@ -846,6 +854,7 @@ model Deal {
   @@index([organizationUnitId])
   @@index([organizationSubtypeId])
   @@index([dealStageId])
+  @@index([lostReasonId])
   @@index([status])
 }
 
@@ -946,10 +955,10 @@ model Product {
 // Product × Location. Owns all product-location detail incl. operational data,
 // guide-pay defaults, and per-format availability.
 model ProductVariant {
-  id                    String     @id @default(cuid())
-  product               Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  id                    String                @id @default(cuid())
+  product               Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
   productId             String
-  location              Location   @relation(fields: [locationId], references: [id])
+  location              Location              @relation(fields: [locationId], references: [id])
   locationId            String
   marketingDescHe       String? // rich HTML
   marketingDescEn       String?
@@ -960,19 +969,19 @@ model ProductVariant {
   meetingPointEn        String?
   endingPointHe         String?
   endingPointEn         String?
-  meetingPointImage     MediaFile? @relation("VariantMeetingImage", fields: [meetingPointImageId], references: [id], onDelete: SetNull)
+  meetingPointImage     MediaFile?            @relation("VariantMeetingImage", fields: [meetingPointImageId], references: [id], onDelete: SetNull)
   meetingPointImageId   String?
-  baseGuidePaymentMinor BigInt     @default(0)
+  baseGuidePaymentMinor BigInt                @default(0)
   travelPaymentMinor    BigInt?
-  currency              String     @default("ILS")
+  currency              String                @default("ILS")
   // Per-format availability (defaults all true; admin disables manually).
-  availablePublic       Boolean    @default(true)
-  availablePrivate      Boolean    @default(true)
-  availableBusiness     Boolean    @default(true)
-  active                Boolean    @default(true)
-  sortOrder             Int        @default(0)
-  createdAt             DateTime   @default(now())
-  updatedAt             DateTime   @updatedAt
+  availablePublic       Boolean               @default(true)
+  availablePrivate      Boolean               @default(true)
+  availableBusiness     Boolean               @default(true)
+  active                Boolean               @default(true)
+  sortOrder             Int                   @default(0)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
   galleryImages         ProductVariantImage[]
   priceRules            PriceRule[]
 
@@ -996,31 +1005,31 @@ model ProductVariantImage {
 
 // Seeded: public | private | business. priceModel drives Slice-2 pricing.
 model ActivityType {
-  id         String   @id @default(cuid())
-  key        String   @unique // public | private | business
-  nameHe     String
-  nameEn     String?
-  priceModel String // per_head | tiered
-  sortOrder  Int      @default(0)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  priceRules PriceRule[]
+  id              String           @id @default(cuid())
+  key             String           @unique // public | private | business
+  nameHe          String
+  nameEn          String?
+  priceModel      String // per_head | tiered
+  sortOrder       Int              @default(0)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  priceRules      PriceRule[]
   pricingSegments PricingSegment[]
 }
 
 // Payment terms ⇄ methods with bidirectional optional defaults. The auto-fill on
 // the Deal happens in Slice 3.
 model PaymentTerm {
-  id                     String          @id @default(cuid())
+  id                     String             @id @default(cuid())
   nameHe                 String
   nameEn                 String?
-  defaultPaymentMethod   PaymentMethod?  @relation("TermDefaultMethod", fields: [defaultPaymentMethodId], references: [id], onDelete: SetNull)
+  defaultPaymentMethod   PaymentMethod?     @relation("TermDefaultMethod", fields: [defaultPaymentMethodId], references: [id], onDelete: SetNull)
   defaultPaymentMethodId String?
-  active                 Boolean         @default(true)
-  sortOrder              Int             @default(0)
-  createdAt              DateTime        @default(now())
-  updatedAt              DateTime        @updatedAt
-  methodsDefaultingHere  PaymentMethod[] @relation("MethodDefaultTerm")
+  active                 Boolean            @default(true)
+  sortOrder              Int                @default(0)
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+  methodsDefaultingHere  PaymentMethod[]    @relation("MethodDefaultTerm")
   // Org types that point here as their default payment term (back-relation only).
   orgTypeDefaults        OrganizationType[] @relation("OrgTypeDefaultPaymentTerm")
 
@@ -1028,16 +1037,16 @@ model PaymentTerm {
 }
 
 model PaymentMethod {
-  id                   String        @id @default(cuid())
+  id                   String             @id @default(cuid())
   nameHe               String
   nameEn               String?
-  defaultPaymentTerm   PaymentTerm?  @relation("MethodDefaultTerm", fields: [defaultPaymentTermId], references: [id], onDelete: SetNull)
+  defaultPaymentTerm   PaymentTerm?       @relation("MethodDefaultTerm", fields: [defaultPaymentTermId], references: [id], onDelete: SetNull)
   defaultPaymentTermId String?
-  active               Boolean       @default(true)
-  sortOrder            Int           @default(0)
-  createdAt            DateTime      @default(now())
-  updatedAt            DateTime      @updatedAt
-  termsDefaultingHere  PaymentTerm[] @relation("TermDefaultMethod")
+  active               Boolean            @default(true)
+  sortOrder            Int                @default(0)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  termsDefaultingHere  PaymentTerm[]      @relation("TermDefaultMethod")
   // Org types that point here as their override payment method (back-relation).
   orgTypeDefaults      OrganizationType[] @relation("OrgTypeDefaultPaymentMethod")
 
@@ -1064,8 +1073,8 @@ model PriceList {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  rules              PriceRule[]
-  addonPriceRules    AddonPriceRule[]
+  rules                 PriceRule[]
+  addonPriceRules       AddonPriceRule[]
   orgTypesDefaulting    OrganizationType[]    @relation("OrgTypeDefaultPriceList")
   orgSubtypesDefaulting OrganizationSubtype[] @relation("OrgSubtypeDefaultPriceList")
 
@@ -1077,28 +1086,28 @@ model PriceList {
 // non-null scope equals the context. priceModel selects which price fields are
 // used and must match the context ActivityType's priceModel.
 model PriceRule {
-  id         String @id @default(cuid())
+  id          String    @id @default(cuid())
   priceList   PriceList @relation(fields: [priceListId], references: [id], onDelete: Cascade)
   priceListId String
 
   // Scopes — null = wildcard. Cascade-delete the rule when a scoped target is
   // removed, so a specific rule never silently becomes a broader wildcard.
-  product              Product?             @relation(fields: [productId], references: [id], onDelete: Cascade)
-  productId            String?
-  productVariant       ProductVariant?      @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
-  productVariantId     String?
-  activityType         ActivityType?        @relation(fields: [activityTypeId], references: [id], onDelete: Cascade)
-  activityTypeId       String?
-  organizationSubtype  OrganizationSubtype? @relation(fields: [organizationSubtypeId], references: [id], onDelete: Cascade)
+  product               Product?             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId             String?
+  productVariant        ProductVariant?      @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
+  productVariantId      String?
+  activityType          ActivityType?        @relation(fields: [activityTypeId], references: [id], onDelete: Cascade)
+  activityTypeId        String?
+  organizationSubtype   OrganizationSubtype? @relation(fields: [organizationSubtypeId], references: [id], onDelete: Cascade)
   organizationSubtypeId String?
 
   // Authoring layer (Slice A) — NOT used by resolution. `pricingSegment` tags the
   // rule with the business tab it was created under; `cardGroupId` ties sibling
   // rules (one per chosen location) into a single editable UI "card". The engine
   // ignores both and keeps resolving per scope as before.
-  pricingSegment       PricingSegment?      @relation(fields: [pricingSegmentId], references: [id], onDelete: SetNull)
-  pricingSegmentId     String?
-  cardGroupId          String?
+  pricingSegment   PricingSegment? @relation(fields: [pricingSegmentId], references: [id], onDelete: SetNull)
+  pricingSegmentId String?
+  cardGroupId      String?
 
   priceModel String // per_head | tiered | tiered_group | fixed | ticket_types
 
@@ -1107,8 +1116,8 @@ model PriceRule {
   childPriceMinor BigInt?
 
   // tiered (single-tier, legacy) model fields.
-  basePriceMinor               BigInt?
-  baseParticipants             Int?
+  basePriceMinor                BigInt?
+  baseParticipants              Int?
   // Also the "every participant above the last tier" rate for tiered_group.
   perAdditionalParticipantMinor BigInt?
 
@@ -1131,14 +1140,14 @@ model PriceRule {
   vatMode String? // included | excluded
   vatRate Int?
 
-  priority  Int      @default(0)
+  priority      Int      @default(0)
   // Business-facing display order of the CARD within its tab. Shared across all
   // sibling rules of one cardGroupId. NOT used by the engine — resolution uses
   // `priority`; this only orders how cards render on the Pricing board.
-  cardSortOrder Int @default(0)
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  cardSortOrder Int      @default(0)
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@index([priceListId])
   @@index([productId])
@@ -1156,14 +1165,14 @@ model PriceRule {
 // rule's `perAdditionalParticipantMinor` applies per extra participant. No
 // hard-coded count of tiers — the owner adds as many rows as needed.
 model PriceTier {
-  id               String   @id @default(cuid())
+  id               String    @id @default(cuid())
   priceRule        PriceRule @relation(fields: [priceRuleId], references: [id], onDelete: Cascade)
   priceRuleId      String
   uptoParticipants Int
   totalPriceMinor  BigInt
-  sortOrder        Int      @default(0)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  sortOrder        Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   @@index([priceRuleId])
 }
@@ -1173,15 +1182,15 @@ model PriceTier {
 // code. A type referenced by any price rule is deactivated, not hard-deleted
 // (enforced in the route).
 model TicketType {
-  id            String   @id @default(cuid())
+  id            String                 @id @default(cuid())
   nameHe        String
   nameEn        String?
   descriptionHe String?
   descriptionEn String?
-  active        Boolean  @default(true)
-  sortOrder     Int      @default(0)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  active        Boolean                @default(true)
+  sortOrder     Int                    @default(0)
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
   priceEntries  PriceRuleTicketPrice[]
 
   @@index([sortOrder])
@@ -1233,25 +1242,25 @@ model PricingSegment {
 // Carries its own default price + VAT behaviour. Per-price-list overrides live
 // in AddonPriceRule.
 model Addon {
-  id               String   @id @default(cuid())
-  nameHe           String
-  nameEn           String?
+  id                String   @id @default(cuid())
+  nameHe            String
+  nameEn            String?
   // Stable key for SYSTEM add-ons (e.g. 'sabbath_holiday'). Null for ordinary
   // owner-created add-ons. Logic identifies the system surcharge by THIS key,
   // never by name. This Addon row is the global default (price/VAT/active) every
   // card inherits unless it stores a PriceRuleAddon override.
-  systemKey        String?  @unique
-  defaultPriceMinor BigInt  @default(0)
-  currency         String   @default("ILS")
-  vatMode          String   @default("included") // included | excluded | exempt
-  vatRate          Int      @default(18)
-  defaultQuantity  Int      @default(1)
-  active           Boolean  @default(true)
-  sortOrder        Int      @default(0)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  systemKey         String?  @unique
+  defaultPriceMinor BigInt   @default(0)
+  currency          String   @default("ILS")
+  vatMode           String   @default("included") // included | excluded | exempt
+  vatRate           Int      @default(18)
+  defaultQuantity   Int      @default(1)
+  active            Boolean  @default(true)
+  sortOrder         Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
-  priceRules AddonPriceRule[]
+  priceRules  AddonPriceRule[]
   cardEntries PriceRuleAddon[]
 
   @@index([sortOrder])
@@ -1265,23 +1274,23 @@ model Addon {
 //   autoApplyWeekdays → 0=Sun … 6=Sat (matches JS getDay); e.g. [6] = Saturday.
 //                       No weekday is hard-coded — this is owner-entered data.
 model PriceRuleAddon {
-  id          String    @id @default(cuid())
-  priceRule   PriceRule @relation(fields: [priceRuleId], references: [id], onDelete: Cascade)
-  priceRuleId String
-  addon       Addon     @relation(fields: [addonId], references: [id], onDelete: Cascade)
-  addonId     String
-  enabled     Boolean   @default(true)
+  id                String    @id @default(cuid())
+  priceRule         PriceRule @relation(fields: [priceRuleId], references: [id], onDelete: Cascade)
+  priceRuleId       String
+  addon             Addon     @relation(fields: [addonId], references: [id], onDelete: Cascade)
+  addonId           String
+  enabled           Boolean   @default(true)
   // Nullable = INHERIT for that field. For the system add-on, null price/VAT
   // inherits the Addon catalog default (resolved server-side); a concrete value
   // is a per-card override. (For ordinary add-ons the UI always sets a price.)
-  priceMinor  BigInt?
-  vatMode     String?   // null = inherit (catalog default for system; card VAT otherwise)
-  vatRate     Int?
-  autoApply   String    @default("manual") // manual | weekdays
-  autoApplyWeekdays Int[] @default([])
-  sortOrder   Int       @default(0)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  priceMinor        BigInt?
+  vatMode           String? // null = inherit (catalog default for system; card VAT otherwise)
+  vatRate           Int?
+  autoApply         String    @default("manual") // manual | weekdays
+  autoApplyWeekdays Int[]     @default([])
+  sortOrder         Int       @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   @@unique([priceRuleId, addonId])
   @@index([priceRuleId])
@@ -1291,18 +1300,18 @@ model PriceRuleAddon {
 // Per-price-list override of an Addon's price / VAT. priceListId NULL = a global
 // override applied regardless of the resolved price list.
 model AddonPriceRule {
-  id      String @id @default(cuid())
-  addon   Addon  @relation(fields: [addonId], references: [id], onDelete: Cascade)
-  addonId String
+  id          String     @id @default(cuid())
+  addon       Addon      @relation(fields: [addonId], references: [id], onDelete: Cascade)
+  addonId     String
   priceList   PriceList? @relation(fields: [priceListId], references: [id], onDelete: Cascade)
   priceListId String?
-  priceMinor BigInt   @default(0)
-  currency   String   @default("ILS")
-  vatMode    String   @default("included") // included | excluded
-  vatRate    Int      @default(18)
-  active     Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  priceMinor  BigInt     @default(0)
+  currency    String     @default("ILS")
+  vatMode     String     @default("included") // included | excluded
+  vatRate     Int        @default(18)
+  active      Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 
   @@index([addonId])
   @@index([priceListId])
@@ -1322,6 +1331,9 @@ model LostReason {
   sortOrder Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  // Deals that selected this reason. SetNull on delete (see Deal.lostReasonRef)
+  // so removing a catalog reason nulls the link rather than deleting deals.
+  deals     Deal[]
 
   @@index([sortOrder])
 }

@@ -46,7 +46,8 @@ function fmtDate(iso) {
 // (live business object: title, status, stage, value, primary actions) over a
 // two-column layout: main column (overview / organization / contacts / future
 // activity) and a secondary column (commercial / dates / notes / metadata).
-// Inline editing is kept; a single שמור in the hero commits all field edits.
+// The title is inline-editable in the hero; every other section saves itself
+// with its own local שמור button (no confusing global header save).
 export default function DealDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -59,7 +60,7 @@ export default function DealDetail() {
   const [form, setForm] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [saving, setSaving] = useState(false);
+  const [savingSection, setSavingSection] = useState(null);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const [savingTitle, setSavingTitle] = useState(false);
@@ -132,28 +133,17 @@ export default function DealDetail() {
     }
   }
 
-  async function save() {
-    setSaving(true);
+  // No global header save anymore — each section saves itself with a local
+  // button. saveSection sends ONLY that section's fields, then refreshes.
+  async function saveSection(key, payload) {
+    setSavingSection(key);
     try {
-      await api.deals.update(id, {
-        title: form.title,
-        valueMinor: toMinor(form.value) ?? 0,
-        discountMinor: toMinor(form.discount),
-        currency: form.currency,
-        paymentTerms: form.paymentTerms,
-        source: form.source,
-        dealStageId: form.dealStageId,
-        expectedCloseDate: form.expectedCloseDate || null,
-        notes: form.notes,
-        organizationId: form.organizationId || null,
-        organizationUnitId: form.organizationUnitId || null,
-        organizationSubtypeId: form.organizationSubtypeId || null,
-      });
+      await api.deals.update(id, payload);
       await refresh();
     } catch (e) {
       alert('שגיאה בשמירה: ' + (e.payload?.error || e.message));
     } finally {
-      setSaving(false);
+      setSavingSection(null);
     }
   }
 
@@ -171,13 +161,13 @@ export default function DealDetail() {
     }
   }
 
-  async function confirmLost(lostReason) {
+  async function confirmLost({ lostReasonId, lostNotes }) {
     try {
-      await api.deals.update(id, { status: 'lost', lostReason });
+      await api.deals.update(id, { status: 'lost', lostReasonId, lostNotes });
       setLostOpen(false);
       await refresh();
     } catch (e) {
-      alert('שגיאה: ' + e.message);
+      alert('שגיאה: ' + (e.payload?.error || e.message));
     }
   }
 
@@ -286,20 +276,16 @@ export default function DealDetail() {
               </span>
             </div>
 
-            {/* Pipeline stage display — colored by the deal status */}
+            {/* Pipeline bar — RTL connected segments, colored by deal status */}
             <div className="mt-3">
-              <StagePipeline stages={stages} currentStageId={deal.dealStageId} theme={theme} />
+              <StagePipeline stages={stages} currentStageId={deal.dealStageId} status={deal.status} />
               {deal.organization && (
-                <div className="mt-1.5 text-sm text-gray-500">{deal.organization.name}</div>
+                <div className="mt-2 text-sm text-gray-500">{deal.organization.name}</div>
               )}
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button onClick={save} disabled={saving}
-              className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50">
-              {saving ? 'שומר…' : 'שמור'}
-            </button>
             {deal.status !== 'won' && (
               <button onClick={() => setStatus('won')}
                 className={`rounded-lg px-4 py-2 text-sm font-semibold ${STATUS_THEME.won.solid}`}>
@@ -374,11 +360,22 @@ export default function DealDetail() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mt-5">
         {/* Main column */}
         <div className="lg:col-span-2 space-y-5">
-          <Card title="סקירת הדיל">
+          <Card
+            title="סקירת הדיל"
+            action={
+              <SaveBtn
+                busy={savingSection === 'overview'}
+                onClick={() =>
+                  saveSection('overview', {
+                    dealStageId: form.dealStageId,
+                    source: form.source,
+                    expectedCloseDate: form.expectedCloseDate || null,
+                  })
+                }
+              />
+            }
+          >
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <FieldBox label="כותרת">
-                <input value={form.title} onChange={(e) => set('title', e.target.value)} className={INPUT} />
-              </FieldBox>
               <FieldBox label="שלב">
                 <select value={form.dealStageId} onChange={(e) => set('dealStageId', e.target.value)} className={`${INPUT} bg-white`}>
                   {stages.map((s) => (<option key={s.id} value={s.id}>{s.label}</option>))}
@@ -393,7 +390,21 @@ export default function DealDetail() {
             </div>
           </Card>
 
-          <Card title="שיוך ארגוני">
+          <Card
+            title="שיוך ארגוני"
+            action={
+              <SaveBtn
+                busy={savingSection === 'org'}
+                onClick={() =>
+                  saveSection('org', {
+                    organizationId: form.organizationId || null,
+                    organizationUnitId: form.organizationUnitId || null,
+                    organizationSubtypeId: form.organizationSubtypeId || null,
+                  })
+                }
+              />
+            }
+          >
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <FieldBox label="ארגון">
                 <select value={form.organizationId} onChange={(e) => chooseOrg(e.target.value)} className={`${INPUT} bg-white`}>
@@ -434,7 +445,22 @@ export default function DealDetail() {
 
         {/* Secondary column */}
         <div className="space-y-5">
-          <Card title="מסחרי">
+          <Card
+            title="מסחרי"
+            action={
+              <SaveBtn
+                busy={savingSection === 'commercial'}
+                onClick={() =>
+                  saveSection('commercial', {
+                    valueMinor: toMinor(form.value) ?? 0,
+                    discountMinor: toMinor(form.discount),
+                    paymentTerms: form.paymentTerms,
+                    currency: form.currency,
+                  })
+                }
+              />
+            }
+          >
             <div className="space-y-3">
               <FieldBox label="שווי (₪)">
                 <input value={form.value} onChange={(e) => set('value', e.target.value)} inputMode="decimal" dir="ltr"
@@ -460,12 +486,41 @@ export default function DealDetail() {
             <dl className="space-y-2 text-sm">
               <Row label="צפי סגירה" value={fmtDate(deal.expectedCloseDate)} />
               {deal.wonAt && <Row label="נסגר בהצלחה" value={fmtDate(deal.wonAt)} />}
-              {deal.lostAt && <Row label="אבד" value={fmtDate(deal.lostAt)} />}
-              {deal.lostReason && <Row label="סיבת הפסד" value={deal.lostReason} />}
+              {deal.lostAt && <Row label="תאריך LOST" value={fmtDate(deal.lostAt)} />}
             </dl>
           </Card>
 
-          <Card title="הערות פנימיות">
+          {deal.status === 'lost' && (
+            <Card title="פרטי LOST">
+              <dl className="space-y-2 text-sm">
+                <Row
+                  label="סיבת LOST"
+                  value={deal.lostReasonRef?.nameHe || deal.lostReason || '—'}
+                />
+              </dl>
+              {deal.lostNotes && (
+                <div className="mt-3">
+                  <div className="text-[11px] text-gray-500 mb-1">הערות LOST</div>
+                  <p className="text-sm text-gray-800 whitespace-pre-wrap">{deal.lostNotes}</p>
+                </div>
+              )}
+              {!deal.lostReasonRef && deal.lostReason && (
+                <div className="mt-2 text-[11px] text-gray-400">
+                  טקסט LOST קודם (legacy) — נשמר לתצוגה עד עדכון הסטטוס מחדש.
+                </div>
+              )}
+            </Card>
+          )}
+
+          <Card
+            title="הערות פנימיות"
+            action={
+              <SaveBtn
+                busy={savingSection === 'notes'}
+                onClick={() => saveSection('notes', { notes: form.notes })}
+              />
+            }
+          >
             <textarea value={form.notes} onChange={(e) => set('notes', e.target.value)} rows={4}
               placeholder="הערות פנימיות לדיל…"
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400" />
@@ -726,27 +781,56 @@ function RolesAndPrefs({ draft, setDraft }) {
 
 // ── Atoms ───────────────────────────────────────────────────────────
 
-// Compact pipeline display: every stage as a chip, the current one highlighted
-// in the deal's status color (WON green / LOST red / OPEN muted blue), the rest
-// muted. A closed deal still shows where it sat in the pipeline.
-function StagePipeline({ stages, currentStageId, theme }) {
+// Horizontal pipeline bar (Pipedrive-style), RTL: stages read right→left as a
+// row of connected chevron segments. Every stage up to and including the current
+// one is filled in the deal's status color (OPEN muted blue / WON green / LOST
+// red); future stages are gray. A closed deal still shows where it sat.
+const PIPE_FILL = {
+  open: { done: 'bg-blue-100 text-blue-700', current: 'bg-blue-500 text-white' },
+  won: { done: 'bg-emerald-100 text-emerald-700', current: 'bg-emerald-500 text-white' },
+  lost: { done: 'bg-red-100 text-red-700', current: 'bg-red-500 text-white' },
+};
+// Each segment is a left-pointing chevron (progress flows toward the left in
+// RTL): outward point on the left edge, matching notch cut into the right edge.
+const CHEVRON = 'polygon(100% 0, 12px 0, 0 50%, 12px 100%, 100% 100%, calc(100% - 12px) 50%)';
+// The first (rightmost) segment keeps a flat right edge — no notch at the start.
+const CHEVRON_FIRST = 'polygon(100% 0, 12px 0, 0 50%, 12px 100%, 100% 100%)';
+
+function StagePipeline({ stages, currentStageId, status }) {
   if (!stages?.length) return null;
+  const fill = PIPE_FILL[status] || PIPE_FILL.open;
+  const currentIndex = stages.findIndex((s) => s.id === currentStageId);
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {stages.map((s) => {
-        const active = s.id === currentStageId;
+    <div className="flex items-stretch text-[12px] font-medium leading-none">
+      {stages.map((s, i) => {
+        const isCurrent = i === currentIndex;
+        const isDone = currentIndex >= 0 && i < currentIndex;
+        const cls = isCurrent ? fill.current : isDone ? fill.done : 'bg-gray-100 text-gray-400';
         return (
-          <span
+          <div
             key={s.id}
-            className={`inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium ring-1 ring-inset ${
-              active ? theme.soft : 'bg-gray-50 text-gray-400 ring-gray-100'
-            }`}
+            title={s.label}
+            className={`${cls} ${i === 0 ? '' : '-ms-3'} flex items-center whitespace-nowrap py-2 ps-5 pe-4`}
+            style={{ clipPath: i === 0 ? CHEVRON_FIRST : CHEVRON }}
           >
             {s.label}
-          </span>
+          </div>
         );
       })}
     </div>
+  );
+}
+
+// Local section save button (replaces the old global header save).
+function SaveBtn({ onClick, busy }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={busy}
+      className="rounded-lg bg-blue-600 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+    >
+      {busy ? 'שומר…' : 'שמור'}
+    </button>
   );
 }
 
