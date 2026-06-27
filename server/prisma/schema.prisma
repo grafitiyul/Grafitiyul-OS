@@ -1111,6 +1111,10 @@ model PriceRule {
   vatRate Int?
 
   priority  Int      @default(0)
+  // Business-facing display order of the CARD within its tab. Shared across all
+  // sibling rules of one cardGroupId. NOT used by the engine — resolution uses
+  // `priority`; this only orders how cards render on the Pricing board.
+  cardSortOrder Int @default(0)
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

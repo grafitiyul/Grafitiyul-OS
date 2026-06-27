@@ -284,6 +284,18 @@ function SegmentPanel({ version, segment, products, ticketTypes }) {
     return () => { alive = false; };
   }, [cards, productCache]);
 
+  // Reorder a card within this tab: swap with its neighbour, persist the whole
+  // tab's order (only these cardGroupIds), then refresh. Other tabs untouched.
+  async function moveCard(index, dir) {
+    const target = index + dir;
+    if (target < 0 || target >= cards.length) return;
+    const ids = cards.map((c) => c.cardGroupId);
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+    try { await api.priceRules.cardOrder(ids); await refresh(); }
+    catch (e) { alert('שגיאה בעדכון הסדר: ' + (e.payload?.error || e.message)); }
+  }
+  const nextSortOrder = cards.length ? Math.max(...cards.map((c) => c.cardSortOrder)) + 1 : 0;
+
   if (products.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-gray-200 py-10 text-center text-sm text-gray-400">
@@ -304,7 +316,7 @@ function SegmentPanel({ version, segment, products, ticketTypes }) {
             </div>
           )}
 
-          {cards.map((card) =>
+          {cards.map((card, index) =>
             editingCardId === card.cardGroupId ? (
               <CardEditor key={card.cardGroupId} version={version} segment={segment}
                 products={products} ticketTypes={ticketTypes} productCache={productCache} setProductCache={setProductCache}
@@ -313,6 +325,8 @@ function SegmentPanel({ version, segment, products, ticketTypes }) {
             ) : (
               <CardView key={card.cardGroupId} version={version} card={card}
                 productCache={productCache} ticketTypes={ticketTypes}
+                isFirst={index === 0} isLast={index === cards.length - 1}
+                onMoveUp={() => moveCard(index, -1)} onMoveDown={() => moveCard(index, 1)}
                 onEdit={() => setEditingCardId(card.cardGroupId)}
                 onChanged={refresh} />
             ),
@@ -321,6 +335,7 @@ function SegmentPanel({ version, segment, products, ticketTypes }) {
           {adding ? (
             <CardEditor version={version} segment={segment}
               products={products} ticketTypes={ticketTypes} productCache={productCache} setProductCache={setProductCache}
+              nextSortOrder={nextSortOrder}
               onClose={() => setAdding(false)}
               onSaved={() => { setAdding(false); refresh(); }} />
           ) : (
@@ -346,6 +361,8 @@ function groupCards(rules) {
     const rep = siblings[0];
     cards.push({
       cardGroupId,
+      cardSortOrder: rep.cardSortOrder ?? 0,
+      createdAt: rep.createdAt,
       productId: rep.productId,
       priceModel: rep.priceModel,
       adultPriceMinor: rep.adultPriceMinor ?? null,
@@ -366,12 +383,19 @@ function groupCards(rules) {
       rules: siblings.map((s) => ({ id: s.id, productVariantId: s.productVariantId })),
     });
   }
+  // Display order: business cardSortOrder, then creation time as a stable
+  // tiebreak (new cards append, equal-order legacy cards keep insertion order).
+  cards.sort(
+    (a, b) =>
+      (a.cardSortOrder - b.cardSortOrder) ||
+      String(a.createdAt || '').localeCompare(String(b.createdAt || '')),
+  );
   return cards;
 }
 
 // ──────────────────────────────── Card view ────────────────────────────────
 
-function CardView({ version, card, productCache, ticketTypes, onEdit, onChanged }) {
+function CardView({ version, card, productCache, ticketTypes, isFirst, isLast, onMoveUp, onMoveDown, onEdit, onChanged }) {
   const product = productCache[card.productId];
   const productName = product?.nameHe || '—';
   const variantNames = card.variantIds.map((vid) => {
@@ -394,6 +418,7 @@ function CardView({ version, card, productCache, ticketTypes, onEdit, onChanged 
           activityTypeId: src.activityTypeId,
           organizationSubtypeId: src.organizationSubtypeId,
           cardGroupId,
+          cardSortOrder: card.cardSortOrder, // land next to the source (createdAt tiebreak)
           priceModel: card.priceModel,
           adultPriceMinor: card.adultPriceMinor,
           childPriceMinor: card.childPriceMinor,
@@ -432,6 +457,12 @@ function CardView({ version, card, productCache, ticketTypes, onEdit, onChanged 
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          <div className="flex flex-col -my-1 me-1">
+            <button onClick={onMoveUp} disabled={isFirst} title="העבר למעלה"
+              className="text-gray-400 hover:text-gray-700 disabled:opacity-30 disabled:hover:text-gray-400 leading-none px-1">▲</button>
+            <button onClick={onMoveDown} disabled={isLast} title="העבר למטה"
+              className="text-gray-400 hover:text-gray-700 disabled:opacity-30 disabled:hover:text-gray-400 leading-none px-1">▼</button>
+          </div>
           <button onClick={onEdit} title="עריכה" className="text-amber-500 hover:bg-amber-50 rounded-md p-1.5">✎</button>
           <button onClick={duplicate} title="שכפול" className="text-gray-500 hover:bg-gray-100 rounded-md p-1.5">⧉</button>
           <button onClick={remove} title="מחיקה" className="text-red-500 hover:bg-red-50 rounded-md p-1.5">🗑</button>
@@ -638,7 +669,7 @@ function previewError(code) {
 
 // ────────────────────────────── Card editor ────────────────────────────────
 
-function CardEditor({ version, segment, products, ticketTypes, productCache, setProductCache, card, onClose, onSaved }) {
+function CardEditor({ version, segment, products, ticketTypes, productCache, setProductCache, card, nextSortOrder = 0, onClose, onSaved }) {
   const [productId, setProductId] = useState(card?.productId || '');
   const [variantIds, setVariantIds] = useState(card?.variantIds || []);
   const [priceModel, setPriceModel] = useState(card?.priceModel || 'tiered_group');
@@ -757,7 +788,7 @@ function CardEditor({ version, segment, products, ticketTypes, productCache, set
       } else {
         const cardGroupId = newCardGroupId();
         for (const vid of variantIds) {
-          await api.priceRules.create({ ...common, cardGroupId, productVariantId: vid });
+          await api.priceRules.create({ ...common, cardGroupId, productVariantId: vid, cardSortOrder: nextSortOrder });
         }
       }
       onSaved();

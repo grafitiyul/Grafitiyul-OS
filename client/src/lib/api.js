@@ -455,6 +455,8 @@ export const api = {
     create: (data) => request('/api/price-rules', { method: 'POST', body: JSON.stringify(data) }),
     update: (id, data) => request(`/api/price-rules/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     remove: (id) => request(`/api/price-rules/${id}`, { method: 'DELETE' }),
+    // Reorder cards within a tab: cardGroupIds in display order.
+    cardOrder: (cardGroupIds) => request('/api/price-rules/card-order', { method: 'PUT', body: JSON.stringify({ cardGroupIds }) }),
   },
   addons: {
     list: () => request('/api/addons'),

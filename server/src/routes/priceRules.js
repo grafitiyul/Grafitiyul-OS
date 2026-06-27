@@ -61,6 +61,8 @@ function buildData(body, { partial }) {
   set('vatMode', VAT_MODES.includes(body.vatMode) ? body.vatMode : null);
   set('vatRate', toInt(body.vatRate));
   set('priority', toInt(body.priority) ?? 0);
+  // Card display order (business). Engine ignores it.
+  set('cardSortOrder', toInt(body.cardSortOrder) ?? 0);
   if (!partial || body.active !== undefined) data.active = body.active !== false;
   return data;
 }
@@ -133,6 +135,29 @@ router.post(
       include: { tiers: { orderBy: { sortOrder: 'asc' } }, ticketPrices: true },
     });
     res.status(201).json(rule);
+  }),
+);
+
+// Reorder CARDS within a tab. Body: { cardGroupIds: [...] } in the desired
+// order. Sets cardSortOrder = index on EVERY sibling rule of each cardGroupId, so
+// a whole card moves together. Only the supplied cardGroupIds are touched, so
+// other tabs are unaffected. Declared before '/:id' so it isn't read as an id.
+router.put(
+  '/card-order',
+  handle(async (req, res) => {
+    const ids = Array.isArray(req.body?.cardGroupIds)
+      ? req.body.cardGroupIds.filter((x) => typeof x === 'string')
+      : [];
+    if (!ids.length) return res.json({ ok: true });
+    await prisma.$transaction(
+      ids.map((cardGroupId, i) =>
+        prisma.priceRule.updateMany({
+          where: { cardGroupId },
+          data: { cardSortOrder: i },
+        }),
+      ),
+    );
+    res.json({ ok: true });
   }),
 );
 
