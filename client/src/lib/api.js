@@ -519,6 +519,13 @@ export const api = {
     remove: (id) => request(`/api/lost-reasons/${id}`, { method: 'DELETE' }),
     reorder: (ids) => request('/api/lost-reasons/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
   },
+  dealSources: {
+    list: () => request('/api/deal-sources'),
+    create: (data) => request('/api/deal-sources', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/api/deal-sources/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/deal-sources/${id}`, { method: 'DELETE' }),
+    reorder: (ids) => request('/api/deal-sources/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
+  },
   quoteSections: {
     list: () => request('/api/quote-sections'),
     create: (data) => request('/api/quote-sections', { method: 'POST', body: JSON.stringify(data) }),

@@ -39,6 +39,7 @@ import pricingSegmentsRouter from './routes/pricingSegments.js';
 import ticketTypesRouter from './routes/ticketTypes.js';
 import sabbathHoursRouter from './routes/sabbathHours.js';
 import lostReasonsRouter from './routes/lostReasons.js';
+import dealSourcesRouter from './routes/dealSources.js';
 import quoteSectionsRouter from './routes/quoteSections.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -152,6 +153,7 @@ app.use('/api/sabbath-hours', requireAdminAuth, sabbathHoursRouter);
 // CRM settings catalogs — Lost Reasons & Quote Content Sections. Admin only.
 // Content/config only; NOT wired to Deals or quote generation yet.
 app.use('/api/lost-reasons', requireAdminAuth, lostReasonsRouter);
+app.use('/api/deal-sources', requireAdminAuth, dealSourcesRouter);
 app.use('/api/quote-sections', requireAdminAuth, quoteSectionsRouter);
 
 // Unknown /api/* paths get a real JSON 404 instead of falling through to

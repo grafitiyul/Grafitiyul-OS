@@ -48,6 +48,7 @@ import CrmSettingsHome from './admin/settings/CrmSettingsHome.jsx';
 import ProductsAreaHome from './admin/settings/ProductsAreaHome.jsx';
 import DealStagesSettings from './admin/crm/settings/DealStagesSettings.jsx';
 import LostReasonsSettings from './admin/crm/settings/LostReasonsSettings.jsx';
+import DealSourcesSettings from './admin/crm/settings/DealSourcesSettings.jsx';
 import QuoteSectionsSettings from './admin/crm/settings/QuoteSectionsSettings.jsx';
 import TicketTypesSettings from './admin/crm/settings/TicketTypesSettings.jsx';
 import SabbathHoursSettings from './admin/crm/settings/SabbathHoursSettings.jsx';
@@ -149,6 +150,10 @@ export default function App() {
         <Route
           path="settings/crm/lost-reasons"
           element={<LostReasonsSettings />}
+        />
+        <Route
+          path="settings/crm/deal-sources"
+          element={<DealSourcesSettings />}
         />
         <Route
           path="settings/crm/quote-sections"

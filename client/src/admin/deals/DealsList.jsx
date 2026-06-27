@@ -2,8 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { formatMinor, toMinor } from '../../lib/money.js';
+import { contactNamesFromFull } from '../../lib/nameSplit.js';
 import { DEAL_STATUS_LABELS, DEAL_STATUS_STYLES } from './config.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
+
+const MODAL_INPUT =
+  'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
 
 // Deals — the CRM hub's primary tab. Operational list: compact summary +
 // dominant search + a roomy, user-configurable table. OPEN deals come first
@@ -130,6 +134,9 @@ export default function DealsList() {
   const [deals, setDeals] = useState([]);
   const [stages, setStages] = useState([]);
   const [orgs, setOrgs] = useState([]);
+  const [types, setTypes] = useState([]);
+  const [subtypes, setSubtypes] = useState([]);
+  const [sources, setSources] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -172,14 +179,20 @@ export default function DealsList() {
   async function refresh() {
     setError(null);
     try {
-      const [d, s, o] = await Promise.all([
+      const [d, s, o, ty, st, src] = await Promise.all([
         api.deals.list(),
         api.dealStages.list(),
         api.organizations.list(),
+        api.organizationTypes.list(),
+        api.organizationSubtypes.list(),
+        api.dealSources.list(),
       ]);
       setDeals(d);
       setStages(s);
       setOrgs(o);
+      setTypes(ty);
+      setSubtypes(st);
+      setSources(src);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -365,8 +378,10 @@ export default function DealsList() {
 
       {showCreate && (
         <CreateDealModal
-          stages={stages}
           orgs={orgs}
+          types={types}
+          subtypes={subtypes}
+          sources={sources}
           onClose={() => setShowCreate(false)}
           onCreated={(deal) => navigate(`/admin/crm/deals/${deal.id}`)}
         />
@@ -536,24 +551,71 @@ function EmptyState({ onCreate }) {
   );
 }
 
-function CreateDealModal({ stages, orgs, onClose, onCreated }) {
+// Create Deal — optimised around how a lead actually arrives: first the PERSON
+// (full name + phone + source), not stage/value. It creates the contact, the
+// deal, and links them in one flow, reusing the existing contacts/deals APIs.
+// Stage defaults to the first pipeline stage server-side and value defaults to 0
+// — both intentionally out of the lead-capture flow (still backend-compatible).
+function CreateDealModal({ orgs, types, subtypes, sources, onClose, onCreated }) {
+  const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
   const [title, setTitle] = useState('');
+  const [titleTouched, setTitleTouched] = useState(false);
+  const [inquiry, setInquiry] = useState('');
+  const [sourceId, setSourceId] = useState('');
+  const [sourceFree, setSourceFree] = useState('');
+  const [showBiz, setShowBiz] = useState(false);
   const [orgId, setOrgId] = useState('');
-  const [stageId, setStageId] = useState(stages[0]?.id || '');
-  const [value, setValue] = useState('');
+  const [orgTypeId, setOrgTypeId] = useState('');
+  const [subtypeId, setSubtypeId] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // Auto-derive the deal title from the full name until the user edits it.
+  useEffect(() => {
+    if (!titleTouched) setTitle(fullName.trim());
+  }, [fullName, titleTouched]);
+
+  const activeSources = sources.filter((s) => s.active);
+  const scopedSubtypes = subtypes.filter(
+    (s) => !orgTypeId || !s.organizationTypeId || s.organizationTypeId === orgTypeId,
+  );
+  // Org type is required once Business Details are open AND no org is chosen
+  // (when an org IS chosen, the organization's own type is the source of truth).
+  const orgTypeRequired = showBiz && !orgId;
+  const ready = fullName.trim() && phone.trim() && sourceId && !(orgTypeRequired && !orgTypeId);
 
   async function submit(e) {
     e.preventDefault();
-    if (!title.trim()) return;
+    if (!ready || busy) return;
     setBusy(true);
     try {
+      // 1) Contact from the single full-name field (split) + phone (+ email).
+      const contact = await api.contacts.create(contactNamesFromFull(fullName));
+      await api.contacts.addPhone(contact.id, { value: phone.trim(), isPrimary: true });
+      if (email.trim()) {
+        await api.contacts.addEmail(contact.id, { value: email.trim(), isPrimary: true });
+      }
+
+      // 2) The deal. Inquiry text → notes; source → catalog ref; sourceFree → free text.
       const deal = await api.deals.create({
-        title: title.trim(),
-        organizationId: orgId || null,
-        dealStageId: stageId || null,
-        valueMinor: toMinor(value) ?? 0,
+        title: title.trim() || fullName.trim(),
+        notes: inquiry.trim() || null,
+        dealSourceId: sourceId,
+        source: sourceFree.trim() || null,
+        ...(showBiz
+          ? {
+              activityType: 'business',
+              organizationId: orgId || null,
+              organizationTypeId: orgTypeId || null,
+              organizationSubtypeId: subtypeId || null,
+            }
+          : {}),
       });
+
+      // 3) Link the new contact as the deal's primary contact.
+      await api.deals.addContact(deal.id, { contactId: contact.id, isPrimary: true });
+
       onCreated(deal);
     } catch (e) {
       alert('שגיאה ביצירת דיל: ' + (e.payload?.error || e.message));
@@ -565,31 +627,95 @@ function CreateDealModal({ stages, orgs, onClose, onCreated }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" dir="rtl">
       <div className="absolute inset-0 bg-gray-900/40" onClick={onClose} />
-      <form onSubmit={submit} className="relative w-full max-w-md rounded-2xl bg-white shadow-xl p-6 space-y-4">
-        <h2 className="text-lg font-bold text-gray-900">דיל חדש</h2>
-        <Field label="שם הדיל">
-          <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="לדוגמה: סדנאות לבית ספר אליאנס"
-            className="h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400" />
-        </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="ארגון (אופציונלי)">
-            <select value={orgId} onChange={(e) => setOrgId(e.target.value)} className="h-10 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200">
-              <option value="">— ללא —</option>
-              {orgs.map((o) => (<option key={o.id} value={o.id}>{o.name}</option>))}
-            </select>
-          </Field>
-          <Field label="שלב">
-            <select value={stageId} onChange={(e) => setStageId(e.target.value)} className="h-10 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200">
-              {stages.map((s) => (<option key={s.id} value={s.id}>{s.label}</option>))}
-            </select>
-          </Field>
+      <form onSubmit={submit} className="relative w-full max-w-md rounded-2xl bg-white shadow-xl flex flex-col max-h-[90vh]">
+        <div className="px-6 pt-6 pb-3 border-b border-gray-100">
+          <h2 className="text-lg font-bold text-gray-900">דיל חדש</h2>
+          <p className="text-[12px] text-gray-500 mt-0.5">פנייה חדשה — מי פנה, באיזה טלפון ומאיפה הגיע.</p>
         </div>
-        <Field label="שווי (₪)">
-          <input value={value} onChange={(e) => setValue(e.target.value)} inputMode="decimal" dir="ltr" placeholder="0"
-            className="h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400" />
-        </Field>
-        <div className="flex gap-2 pt-2">
-          <button type="submit" disabled={busy || !title.trim()} className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50">
+
+        <div className="px-6 py-4 space-y-4 overflow-y-auto">
+          <Field label="שם מלא *">
+            <input autoFocus value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="לדוגמה: ישראל ישראלי" className={MODAL_INPUT} />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="טלפון *">
+              <input value={phone} onChange={(e) => setPhone(e.target.value)} dir="ltr" className={MODAL_INPUT} />
+            </Field>
+            <Field label="אימייל">
+              <input value={email} onChange={(e) => setEmail(e.target.value)} dir="ltr" className={MODAL_INPUT} />
+            </Field>
+          </div>
+          <Field label="כותרת הדיל">
+            <input
+              value={title}
+              onChange={(e) => { setTitle(e.target.value); setTitleTouched(true); }}
+              placeholder="נוצר אוטומטית מהשם"
+              className={MODAL_INPUT}
+            />
+          </Field>
+          <Field label="תוכן הפנייה">
+            <textarea value={inquiry} onChange={(e) => setInquiry(e.target.value)} rows={3} placeholder="מה הם רוצים? מה נאמר בפנייה הראשונה…"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400" />
+          </Field>
+          <Field label="מקור *">
+            <select value={sourceId} onChange={(e) => setSourceId(e.target.value)} className={`${MODAL_INPUT} bg-white`}>
+              <option value="">— בחר מקור —</option>
+              {activeSources.map((s) => (<option key={s.id} value={s.id}>{s.label}</option>))}
+            </select>
+            {activeSources.length === 0 && (
+              <p className="text-[11px] text-amber-600 mt-1">אין מקורות מוגדרים. הוסיפו ב: הגדרות CRM ← מקורות דיל.</p>
+            )}
+          </Field>
+          <Field label="פירוט מקור (אופציונלי)">
+            <input value={sourceFree} onChange={(e) => setSourceFree(e.target.value)} placeholder="לדוגמה: קמפיין פייסבוק, שם ממליץ, כנס…" className={MODAL_INPUT} />
+          </Field>
+
+          {/* Optional business section — collapsed by default */}
+          {!showBiz ? (
+            <button type="button" onClick={() => setShowBiz(true)} className="text-sm font-medium text-blue-700 hover:bg-blue-50 rounded-lg px-2 py-1.5">
+              + פרטי עסק
+            </button>
+          ) : (
+            <div className="rounded-xl border border-gray-200 bg-gray-50/60 p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[13px] font-semibold text-gray-700">פרטי עסק</span>
+                <button
+                  type="button"
+                  onClick={() => { setShowBiz(false); setOrgId(''); setOrgTypeId(''); setSubtypeId(''); }}
+                  className="text-[12px] text-gray-500 hover:text-gray-700"
+                >
+                  הסר
+                </button>
+              </div>
+              <Field label="ארגון (אופציונלי)">
+                <select value={orgId} onChange={(e) => setOrgId(e.target.value)} className={`${MODAL_INPUT} bg-white`}>
+                  <option value="">— ללא —</option>
+                  {orgs.map((o) => (<option key={o.id} value={o.id}>{o.name}</option>))}
+                </select>
+              </Field>
+              <Field label={orgTypeRequired ? 'סוג ארגון *' : 'סוג ארגון'}>
+                <select value={orgTypeId} onChange={(e) => { setOrgTypeId(e.target.value); setSubtypeId(''); }} className={`${MODAL_INPUT} bg-white`}>
+                  <option value="">— בחר סוג —</option>
+                  {types.map((t) => (<option key={t.id} value={t.id}>{t.label}</option>))}
+                </select>
+                {orgId && (
+                  <p className="text-[11px] text-gray-400 mt-1">נבחר ארגון — סוג הארגון נקבע על הארגון (מקור אמת יחיד).</p>
+                )}
+              </Field>
+              {orgTypeId && scopedSubtypes.length > 0 && (
+                <Field label="תת-סוג">
+                  <select value={subtypeId} onChange={(e) => setSubtypeId(e.target.value)} className={`${MODAL_INPUT} bg-white`}>
+                    <option value="">— ללא —</option>
+                    {scopedSubtypes.map((s) => (<option key={s.id} value={s.id}>{s.label}</option>))}
+                  </select>
+                </Field>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="px-6 py-3 border-t border-gray-100 flex gap-2">
+          <button type="submit" disabled={busy || !ready} className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50">
             {busy ? 'יוצר…' : 'צור דיל'}
           </button>
           <button type="button" onClick={onClose} className="rounded-lg border border-gray-300 px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-50">ביטול</button>

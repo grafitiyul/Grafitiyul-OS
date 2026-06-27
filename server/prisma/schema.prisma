@@ -844,6 +844,11 @@ model Deal {
   currency              String               @default("ILS")
   discountMinor         BigInt?
   paymentTerms          String?
+  // Lead source. `dealSource` references the admin-managed DealSource catalog
+  // (the structured "how did this lead arrive"). `source` is kept as the OPTIONAL
+  // free-text detail (specific campaign / referrer name / conference, …).
+  dealSource            DealSource?          @relation(fields: [dealSourceId], references: [id], onDelete: SetNull)
+  dealSourceId          String?
   source                String?
   ownerUserId           String? // loose actor id (no User model yet)
   expectedCloseDate     DateTime?
@@ -869,6 +874,7 @@ model Deal {
   @@index([organizationTypeId])
   @@index([dealStageId])
   @@index([lostReasonId])
+  @@index([dealSourceId])
   @@index([status])
 }
 
@@ -1349,6 +1355,21 @@ model LostReason {
   updatedAt DateTime @updatedAt
   // Deals that selected this reason. SetNull on delete (see Deal.lostReasonRef)
   // so removing a catalog reason nulls the link rather than deleting deals.
+  deals     Deal[]
+
+  @@index([sortOrder])
+}
+
+// How a lead/deal arrived (admin-managed picklist used by the Create Deal flow):
+// e.g. Facebook, website, referral, conference. Drag-orderable; `active` retires
+// a source without deleting history. SetNull on delete (see Deal.dealSource).
+model DealSource {
+  id        String   @id @default(cuid())
+  label     String
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
   deals     Deal[]
 
   @@index([sortOrder])

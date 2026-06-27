@@ -1057,6 +1057,11 @@ function ActivityMetaRow({ deal, types, subtypes, onActivityType, onDealOrgType,
   );
 }
 
+// Permanent identity slots: a Contact slot and an Organization slot are ALWAYS
+// rendered side-by-side — they're part of every deal's identity. When empty they
+// show an actionable "add" affordance (no generic empty-state text); when filled
+// they show the name (+N for extra contacts) and reveal the existing HoverCard.
+// Clicking always opens the relevant editor/picker.
 function RelationshipRow({ deal, orgType, onContactClick, onAddContact, onOrgClick }) {
   const contacts = deal.contacts || [];
   const primary = contacts[0];
@@ -1065,69 +1070,63 @@ function RelationshipRow({ deal, orgType, onContactClick, onAddContact, onOrgCli
   const org = deal.organization;
 
   return (
-    <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2">
-      {/* Contact area */}
-      <div className="flex items-center gap-1">
-        {primaryContact ? (
-          <HoverCard
-            trigger={
-              <button
-                type="button"
-                onClick={() => onContactClick(primary.contactId)}
-                className="inline-flex items-center gap-2 rounded-lg px-2 py-1 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
-              >
-                <UserIcon />
-                <span className="truncate max-w-[14rem]">{contactNameHe(primaryContact) || '—'}</span>
-                {extra > 0 && (
-                  <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-500">+{extra}</span>
-                )}
-              </button>
-            }
-          >
-            <ContactHoverCard contactId={primary.contactId} fallbackName={contactNameHe(primaryContact)} />
-          </HoverCard>
-        ) : (
-          <span className="inline-flex items-center gap-2 px-2 py-1 text-sm text-gray-400">
-            <UserIcon />
-            אין איש קשר
-          </span>
-        )}
-        <button
-          type="button"
-          onClick={onAddContact}
-          className="text-[12px] text-blue-700 hover:bg-blue-50 rounded px-2 py-1"
+    <div className="mt-5 flex flex-wrap items-center gap-3">
+      {/* Contact slot — always present */}
+      {primaryContact ? (
+        <HoverCard
+          trigger={
+            <IdentitySlot icon={<UserIcon />} onClick={() => onContactClick(primary.contactId)} filled>
+              <span className="truncate max-w-[14rem]">{contactNameHe(primaryContact) || '—'}</span>
+              {extra > 0 && (
+                <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-500">+{extra}</span>
+              )}
+            </IdentitySlot>
+          }
         >
-          + הוסף איש קשר
-        </button>
-      </div>
+          <ContactHoverCard contactId={primary.contactId} fallbackName={contactNameHe(primaryContact)} />
+        </HoverCard>
+      ) : (
+        <IdentitySlot icon={<UserIcon />} onClick={onAddContact}>
+          הוסף איש קשר
+        </IdentitySlot>
+      )}
 
-      {/* Organization area */}
+      {/* Organization slot — always present */}
       {org ? (
         <HoverCard
           trigger={
-            <button
-              type="button"
-              onClick={onOrgClick}
-              className="inline-flex items-center gap-2 rounded-lg px-2 py-1 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
-            >
-              <BuildingIcon />
+            <IdentitySlot icon={<BuildingIcon />} onClick={onOrgClick} filled>
               <span className="truncate max-w-[16rem]">{org.name}</span>
-            </button>
+            </IdentitySlot>
           }
         >
           <OrgHoverCard org={org} orgTypeLabel={orgType?.label} subtypeLabel={deal.organizationSubtype?.label} />
         </HoverCard>
       ) : (
-        <button
-          type="button"
-          onClick={onOrgClick}
-          className="inline-flex items-center gap-2 rounded-lg border border-dashed border-gray-300 px-3 py-1 text-[13px] text-gray-500 hover:bg-gray-50"
-        >
-          <BuildingIcon />
+        <IdentitySlot icon={<BuildingIcon />} onClick={onOrgClick}>
           הוסף ארגון
-        </button>
+        </IdentitySlot>
       )}
     </div>
+  );
+}
+
+// A single header identity slot (contact or organization). `filled` switches
+// between the solid "has a value" look and the dashed "actionable empty" look.
+function IdentitySlot({ icon, children, onClick, filled }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm transition-colors ${
+        filled
+          ? 'border border-gray-200 bg-white text-gray-800 hover:bg-gray-50'
+          : 'border border-dashed border-gray-300 text-gray-500 hover:bg-gray-50 hover:text-gray-700'
+      }`}
+    >
+      {icon}
+      {children}
+    </button>
   );
 }
 

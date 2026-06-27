@@ -60,6 +60,7 @@ const DEAL_INCLUDE = {
   organizationSubtype: { select: { id: true, label: true, organizationTypeId: true } },
   // The Deal's own org type — only meaningful while no organization is linked.
   organizationType: { select: { id: true, label: true } },
+  dealSource: { select: { id: true, label: true } },
   lostReasonRef: { select: { id: true, nameHe: true, nameEn: true } },
   contacts: {
     orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
@@ -163,6 +164,7 @@ router.post(
         status: 'open',
         activityType,
         organizationTypeId,
+        dealSourceId: b.dealSourceId || null,
         organizationId: b.organizationId || null,
         organizationUnitId: b.organizationUnitId || null,
         organizationSubtypeId: b.organizationSubtypeId || null,
@@ -205,6 +207,8 @@ router.put(
       data.organizationUnitId = b.organizationUnitId || null;
     if (b.organizationSubtypeId !== undefined)
       data.organizationSubtypeId = b.organizationSubtypeId || null;
+    if (b.dealSourceId !== undefined)
+      data.dealSourceId = b.dealSourceId || null;
     if (b.activityType !== undefined) {
       if (b.activityType && !VALID_ACTIVITY_TYPES.includes(b.activityType)) {
         return res.status(400).json({ error: 'invalid_activity_type' });

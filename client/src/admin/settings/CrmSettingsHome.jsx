@@ -37,6 +37,12 @@ export default function CrmSettingsHome() {
           description="רשימת סיבות LOST של דיל, לשימוש חוזר."
         />
         <CategoryCard
+          to="/admin/settings/crm/deal-sources"
+          icon="📡"
+          title="מקורות דיל"
+          description="מאיפה הגיעו פניות חדשות — פייסבוק, אתר, הפניה, כנס."
+        />
+        <CategoryCard
           to="/admin/settings/crm/quote-sections"
           icon="📝"
           title="הצעות מחיר"
