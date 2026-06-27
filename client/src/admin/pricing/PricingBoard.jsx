@@ -973,10 +973,19 @@ function CardEditor({ version, segment, products, ticketTypes, addons, productCa
     finally { setBusy(false); }
   }
 
-  const productOpts = [{ value: '', name: '— בחרו מוצר —' }, ...products.map((p) => ({ value: p.id, name: p.nameHe }))];
+  // Only products with at least one variant are sellable; never offer an
+  // unusable (zero-variant) product — it would dead-end with no location to pick.
+  const usableProducts = products.filter((p) => (p._count?.variants ?? 0) > 0);
+  const noUsableProducts = usableProducts.length === 0;
+  const productOpts = [{ value: '', name: '— בחרו מוצר —' }, ...usableProducts.map((p) => ({ value: p.id, name: p.nameHe }))];
 
   return (
     <div className="rounded-xl bg-blue-50/40 ring-1 ring-blue-100 p-4 space-y-4">
+      {noUsableProducts && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800">
+          אין מוצרים מוכנים לתמחור. למוצר חייב להיות לפחות מיקום אחד. הוסיפו מיקום למוצר במסך המוצרים.
+        </div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Field label="מוצר">
           <Select value={productId} onChange={(v) => { setProductId(v); setVariantIds([]); }} options={productOpts} />
@@ -989,7 +998,7 @@ function CardEditor({ version, segment, products, ticketTypes, addons, productCa
       {productId && (
         <Field label="מיקומים (בחרו אחד או יותר)">
           {variants.length === 0 ? (
-            <div className="text-[12px] text-gray-400">למוצר הזה אין עדיין מיקומים. הוסיפו אותם במסך המוצרים.</div>
+            <div className="text-[12px] text-amber-700">המוצר הזה אינו מוכן לשימוש — אין לו אף מיקום. הוסיפו מיקום במסך המוצרים לפני תמחור.</div>
           ) : (
             <div className="flex flex-wrap gap-1.5">
               {variants.map((vrt) => (

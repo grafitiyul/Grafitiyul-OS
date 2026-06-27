@@ -28,6 +28,16 @@ const VARIANT_INCLUDE = {
   },
 };
 
+// Business invariant (permanent architecture rule): a Product is usable/sellable
+// only if it has at least one Variant (Product × Location). This single helper is
+// the source of truth for that check; the create flow, the last-variant delete
+// guard, and the pricing layer all rely on it instead of re-implementing it.
+export async function productHasVariants(productId) {
+  if (!productId) return true; // no product scope (wildcard) — nothing to enforce
+  const n = await prisma.productVariant.count({ where: { productId } });
+  return n > 0;
+}
+
 // ---------- Products ----------
 
 router.get(
@@ -63,20 +73,47 @@ router.post(
   handle(async (req, res) => {
     const nameHe = String(req.body?.nameHe || '').trim();
     if (!nameHe) return res.status(400).json({ error: 'nameHe_required' });
+    // Invariant: a Product must have at least one Variant (Location). We require
+    // an initial location and create the product + its first variant in ONE
+    // transaction, so the API can never produce an unusable (zero-variant)
+    // product. Callers must create a Location first (locationId_required /
+    // location_not_found surface that clearly).
+    const locationId = String(req.body?.locationId || '').trim();
+    if (!locationId) return res.status(400).json({ error: 'locationId_required' });
+    const location = await prisma.location.findUnique({
+      where: { id: locationId },
+      select: { id: true },
+    });
+    if (!location) return res.status(400).json({ error: 'location_not_found' });
+
     const last = await prisma.product.findFirst({
       orderBy: { sortOrder: 'desc' },
       select: { sortOrder: true },
     });
-    const product = await prisma.product.create({
-      data: {
-        nameHe,
-        nameEn: str(req.body?.nameEn),
-        marketingDescHe: str(req.body?.marketingDescHe),
-        marketingDescEn: str(req.body?.marketingDescEn),
-        sortOrder: (last?.sortOrder ?? -1) + 1,
+    const created = await prisma.$transaction(async (tx) => {
+      const product = await tx.product.create({
+        data: {
+          nameHe,
+          nameEn: str(req.body?.nameEn),
+          marketingDescHe: str(req.body?.marketingDescHe),
+          marketingDescEn: str(req.body?.marketingDescEn),
+          sortOrder: (last?.sortOrder ?? -1) + 1,
+        },
+      });
+      await tx.productVariant.create({
+        data: { productId: product.id, locationId, sortOrder: 0 },
+      });
+      return product;
+    });
+    // Return the product WITH its first variant so the client lands on a usable
+    // product (and the list count is correct).
+    const full = await prisma.product.findUnique({
+      where: { id: created.id },
+      include: {
+        variants: { orderBy: { sortOrder: 'asc' }, include: VARIANT_INCLUDE },
       },
     });
-    res.status(201).json(product);
+    res.status(201).json(full);
   }),
 );
 
@@ -180,7 +217,18 @@ router.put(
 router.delete(
   '/variants/:variantId',
   handle(async (req, res) => {
-    await prisma.productVariant.delete({ where: { id: req.params.variantId } });
+    const variant = await prisma.productVariant.findUnique({
+      where: { id: req.params.variantId },
+      select: { id: true, productId: true },
+    });
+    if (!variant) return res.status(404).json({ error: 'not_found' });
+    // Invariant: never leave a product with zero variants. Block deleting the
+    // last one — the product must be deleted instead if it's no longer needed.
+    const count = await prisma.productVariant.count({
+      where: { productId: variant.productId },
+    });
+    if (count <= 1) return res.status(409).json({ error: 'last_variant' });
+    await prisma.productVariant.delete({ where: { id: variant.id } });
     res.status(204).end();
   }),
 );

@@ -4,19 +4,28 @@ import { api } from '../../lib/api.js';
 import BackButton from '../common/BackButton.jsx';
 
 // Products catalog (Settings → CRM → Products). Each product has bilingual name
-// + rich marketing descriptions and one or more variants (Product × Location).
+// + rich marketing descriptions and AT LEAST ONE variant (Product × Location).
+// Business invariant: a product can't exist without a variant, so creation
+// requires picking an initial location (the backend creates both atomically).
 export default function ProductsSettings() {
   const navigate = useNavigate();
   const [rows, setRows] = useState([]);
+  const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [nameHe, setNameHe] = useState('');
+  const [locationId, setLocationId] = useState('');
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      setRows(await api.products.list());
+      const [products, locs] = await Promise.all([
+        api.products.list(),
+        api.locations.list(),
+      ]);
+      setRows(products);
+      setLocations(locs);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -25,13 +34,16 @@ export default function ProductsSettings() {
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
 
+  const hasLocations = locations.length > 0;
+
   async function add(e) {
     e.preventDefault();
-    if (!nameHe.trim()) return;
+    if (!nameHe.trim() || !locationId) return;
     setBusy(true);
     try {
-      const p = await api.products.create({ nameHe: nameHe.trim() });
+      const p = await api.products.create({ nameHe: nameHe.trim(), locationId });
       setNameHe('');
+      setLocationId('');
       navigate(`/admin/settings/crm/products/${p.id}`);
     } catch (e) {
       alert('שגיאה: ' + (e.payload?.error || e.message));
@@ -72,14 +84,34 @@ export default function ProductsSettings() {
           )}
         </div>
         <div className="px-4 sm:px-5 py-4 border-t border-gray-100 bg-gray-50/60">
-          <form onSubmit={add} className="flex flex-col sm:flex-row gap-2">
-            <input value={nameHe} onChange={(e) => setNameHe(e.target.value)} placeholder="שם המוצר (עברית)"
-              className="flex-1 h-10 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400" />
-            <button type="submit" disabled={busy || !nameHe.trim()}
-              className="h-10 rounded-lg bg-blue-600 px-5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50">
-              {busy ? 'יוצר…' : 'מוצר חדש'}
-            </button>
-          </form>
+          {hasLocations ? (
+            <>
+              <form onSubmit={add} className="flex flex-col sm:flex-row gap-2">
+                <input value={nameHe} onChange={(e) => setNameHe(e.target.value)} placeholder="שם המוצר (עברית)"
+                  className="flex-1 h-10 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400" />
+                <select value={locationId} onChange={(e) => setLocationId(e.target.value)}
+                  className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm sm:w-52 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400">
+                  <option value="">בחרו מיקום ראשון…</option>
+                  {locations.map((l) => (<option key={l.id} value={l.id}>{l.nameHe}</option>))}
+                </select>
+                <button type="submit" disabled={busy || !nameHe.trim() || !locationId}
+                  className="h-10 rounded-lg bg-blue-600 px-5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50">
+                  {busy ? 'יוצר…' : 'מוצר חדש'}
+                </button>
+              </form>
+              <p className="text-[11px] text-gray-500 mt-2">
+                מוצר חייב מיקום אחד לפחות כדי להיות שמיש. ניתן להוסיף מיקומים נוספים אחרי היצירה.
+              </p>
+            </>
+          ) : (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800">
+              כדי ליצור מוצר צריך קודם להגדיר לפחות <b>מיקום אחד</b>. מוצר תמיד מתקיים בוריאציה לפי מיקום.
+              {' '}
+              <Link to="/admin/settings/crm/locations" className="font-medium text-amber-900 underline">
+                להגדרת מיקומים
+              </Link>
+            </div>
+          )}
         </div>
       </section>
     </div>

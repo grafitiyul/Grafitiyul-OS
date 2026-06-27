@@ -228,7 +228,12 @@ function VariantForm({ variant, onChange }) {
   async function remove() {
     if (!confirm(`למחוק את הוריאציה של "${variant.location?.nameHe}"?`)) return;
     try { await api.products.removeVariant(variant.id); await onChange(); }
-    catch (e) { alert('שגיאה: ' + e.message); }
+    catch (e) {
+      // The backend blocks removing the LAST variant (a product must keep ≥1).
+      if (e.payload?.error === 'last_variant')
+        alert('לא ניתן למחוק את הוריאציה האחרונה. למוצר חייב להיות לפחות מיקום אחד — הוסיפו מיקום נוסף קודם, או מחקו את המוצר כולו.');
+      else alert('שגיאה: ' + (e.payload?.error || e.message));
+    }
   }
 
   return (

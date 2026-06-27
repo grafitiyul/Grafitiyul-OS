@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
+import { productHasVariants } from './products.js';
 
 // Price Rules (Slice 2 + Slice A). Each rule belongs to a PriceList. Scopes
 // (product, variant, activityType, organizationSubtype) are optional — null =
@@ -165,6 +166,10 @@ router.post(
       where: { id: priceListId },
     });
     if (!list) return res.status(404).json({ error: 'price_list_not_found' });
+    // A sellable product must have at least one variant. Guards legacy/zero-variant
+    // products from being used in a pricing card via the API (UI also filters them).
+    if (req.body?.productId && !(await productHasVariants(String(req.body.productId))))
+      return res.status(400).json({ error: 'product_not_usable' });
     const tierRows = buildTierRows(req.body?.tiers);
     const ticketRows = buildTicketRows(req.body?.ticketPrices);
     const addonRows = buildAddonRows(req.body?.addons);
@@ -209,6 +214,9 @@ router.put(
   '/:id',
   handle(async (req, res) => {
     const id = req.params.id;
+    // Same usability guard on update — only when productId is being (re)assigned.
+    if (req.body?.productId && !(await productHasVariants(String(req.body.productId))))
+      return res.status(400).json({ error: 'product_not_usable' });
     const tierRows = buildTierRows(req.body?.tiers);
     const ticketRows = buildTicketRows(req.body?.ticketPrices);
     const addonRows = buildAddonRows(req.body?.addons);
