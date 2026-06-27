@@ -45,6 +45,7 @@ import DealDetail from './admin/deals/DealDetail.jsx';
 // Global Settings module (low-frequency configuration).
 import SettingsHome from './admin/settings/SettingsHome.jsx';
 import CrmSettingsHome from './admin/settings/CrmSettingsHome.jsx';
+import ProductsAreaHome from './admin/settings/ProductsAreaHome.jsx';
 import DealStagesSettings from './admin/crm/settings/DealStagesSettings.jsx';
 import LostReasonsSettings from './admin/crm/settings/LostReasonsSettings.jsx';
 import QuoteSectionsSettings from './admin/crm/settings/QuoteSectionsSettings.jsx';
@@ -152,6 +153,7 @@ export default function App() {
           path="settings/crm/quote-sections"
           element={<QuoteSectionsSettings />}
         />
+        <Route path="settings/crm/products-area" element={<ProductsAreaHome />} />
         <Route path="settings/crm/products" element={<ProductsSettings />} />
         <Route path="settings/crm/products/:id" element={<ProductDetail />} />
         <Route path="settings/crm/locations" element={<LocationsSettings />} />

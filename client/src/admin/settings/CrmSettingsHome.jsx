@@ -43,16 +43,10 @@ export default function CrmSettingsHome() {
           description="סעיפי תוכן קבועים לשימוש בהצעות מחיר עתידיות."
         />
         <CategoryCard
-          to="/admin/settings/crm/products"
+          to="/admin/settings/crm/products-area"
           icon="📦"
           title="מוצרים"
-          description="קטלוג המוצרים והוריאציות לפי מיקום."
-        />
-        <CategoryCard
-          to="/admin/settings/crm/locations"
-          icon="📍"
-          title="מיקומים"
-          description="קטלוג המיקומים (עיר / אזור)."
+          description="מוצרים, מיקומים ותוספות — כל מה שמגדיר את מה שאנחנו מוכרים."
         />
         <CategoryCard
           to="/admin/settings/crm/payment"
@@ -65,12 +59,6 @@ export default function CrmSettingsHome() {
           icon="🧮"
           title="תמחור"
           description="מחירונים, חוקי תמחור וברירות מחדל לפי ארגון."
-        />
-        <CategoryCard
-          to="/admin/settings/crm/addons"
-          icon="➕"
-          title="תוספות"
-          description="פריטים נמכרים שאינם מוצרים, עם עקיפות מחיר."
         />
         <CategoryCard
           to="/admin/settings/crm/ticket-types"
