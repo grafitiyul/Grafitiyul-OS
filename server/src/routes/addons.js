@@ -9,10 +9,9 @@ import { handle } from '../asyncHandler.js';
 const router = Router();
 
 // 'exempt' (פטור) is a valid addon VAT mode — splitVat handles it (net=gross,
-// vat=0). Matches ADDON_VAT_MODES in priceRules.js and the engine.
+// vat=0). null = "כמו כרטיס התמחור" — the add-on inherits the Pricing Card's VAT.
 const VAT_MODES = ['included', 'excluded', 'exempt'];
-const cleanVatMode = (v, fallback = 'included') =>
-  VAT_MODES.includes(v) ? v : fallback;
+const cleanVatMode = (v) => (VAT_MODES.includes(v) ? v : null);
 
 function toBig(v, fallback = 0n) {
   if (v === '' || v === null || v === undefined) return fallback;

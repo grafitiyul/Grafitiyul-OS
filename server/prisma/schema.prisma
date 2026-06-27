@@ -1252,7 +1252,9 @@ model Addon {
   systemKey         String?  @unique
   defaultPriceMinor BigInt   @default(0)
   currency          String   @default("ILS")
-  vatMode           String   @default("included") // included | excluded | exempt
+  // null = "כמו כרטיס התמחור" — the add-on inherits the Pricing Card's VAT.
+  // included | excluded | exempt = the add-on fixes its own VAT (overrides card).
+  vatMode           String?
   vatRate           Int      @default(18)
   defaultQuantity   Int      @default(1)
   active            Boolean  @default(true)

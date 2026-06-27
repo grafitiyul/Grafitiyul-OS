@@ -38,8 +38,13 @@ const VAT_MODE_OPTS = [
   { value: 'excluded', name: 'לפני מע״מ' },
   { value: 'exempt', name: 'פטור ממע״מ' },
 ];
+// Catalog add-ons may also inherit the Pricing Card's VAT ("" = null on save).
+const CATALOG_VAT_OPTS = [{ value: '', name: 'כמו כרטיס התמחור' }, ...VAT_MODE_OPTS];
 const vatLabel = (m, rate) =>
-  m === 'exempt' ? 'פטור ממע״מ' : m === 'excluded' ? `לפני מע״מ ${rate}%` : `כולל מע״מ ${rate}%`;
+  m == null || m === '' ? 'כמו כרטיס התמחור'
+  : m === 'exempt' ? 'פטור ממע״מ'
+  : m === 'excluded' ? `לפני מע״מ ${rate}%`
+  : `כולל מע״מ ${rate}%`;
 
 export default function AddonsSettings() {
   const [addons, setAddons] = useState([]);
@@ -144,7 +149,7 @@ function AddonEdit({ addon, onClose, onChanged }) {
   const [d, setD] = useState({
     nameHe: addon.nameHe, nameEn: addon.nameEn || '',
     defaultPriceMinor: addon.defaultPriceMinor ?? 0, currency: addon.currency,
-    vatMode: addon.vatMode, vatRate: String(addon.vatRate),
+    vatMode: addon.vatMode ?? '', vatRate: String(addon.vatRate),
     defaultQuantity: String(addon.defaultQuantity), active: addon.active,
   });
   const [busy, setBusy] = useState(false);
@@ -156,7 +161,7 @@ function AddonEdit({ addon, onClose, onChanged }) {
       await api.addons.update(addon.id, {
         nameHe: d.nameHe.trim(), nameEn: d.nameEn.trim() || null,
         defaultPriceMinor: d.defaultPriceMinor ?? 0, currency: d.currency || 'ILS',
-        vatMode: d.vatMode, vatRate: d.vatMode === 'exempt' ? 0 : (Number(d.vatRate) || 0),
+        vatMode: d.vatMode || null, vatRate: !d.vatMode || d.vatMode === 'exempt' ? 0 : (Number(d.vatRate) || 0),
         defaultQuantity: Number(d.defaultQuantity) || 1, active: d.active,
       });
       onClose(); await onChanged();
@@ -169,8 +174,8 @@ function AddonEdit({ addon, onClose, onChanged }) {
       <Field label="Name (EN)"><input value={d.nameEn} onChange={(e) => set('nameEn', e.target.value)} dir="ltr" className={INPUT} /></Field>
       <Field label="מחיר ברירת מחדל"><Money minor={d.defaultPriceMinor} onChange={(v) => set('defaultPriceMinor', v ?? 0)} /></Field>
       <Field label="מטבע"><input value={d.currency} onChange={(e) => set('currency', e.target.value)} dir="ltr" className={INPUT} /></Field>
-      <Field label="מע״מ"><Select value={d.vatMode} onChange={(v) => set('vatMode', v)} options={VAT_MODE_OPTS} /></Field>
-      {d.vatMode !== 'exempt' && (
+      <Field label="מע״מ"><Select value={d.vatMode} onChange={(v) => set('vatMode', v)} options={CATALOG_VAT_OPTS} /></Field>
+      {d.vatMode && d.vatMode !== 'exempt' && (
         <Field label='שיעור מע״מ %'><input value={d.vatRate} onChange={(e) => set('vatRate', e.target.value)} dir="ltr" className={INPUT} /></Field>
       )}
       <Field label="כמות ברירת מחדל"><input value={d.defaultQuantity} onChange={(e) => set('defaultQuantity', e.target.value)} dir="ltr" className={INPUT} /></Field>

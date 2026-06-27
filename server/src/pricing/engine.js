@@ -273,14 +273,20 @@ export function splitVat(amountMinor, vatMode, vatRate) {
 // price + VAT (or inherits the card's), so the quote total is the SUM of per-line
 // VAT splits — these pure helpers reuse splitVat; core resolution is untouched.
 
-// Effective VAT for one add-on: null mode inherits the card's mode+rate; an
-// explicit mode uses its own rate (exempt forces 0).
-function effectiveAddonVat(entry, cardVat) {
-  if (entry.vatMode == null) {
-    return { vatMode: cardVat.vatMode, vatRate: cardVat.vatRate };
-  }
-  if (entry.vatMode === 'exempt') return { vatMode: 'exempt', vatRate: 0 };
-  return { vatMode: entry.vatMode, vatRate: entry.vatRate != null ? entry.vatRate : 18 };
+const isSetVat = (m) => m != null && m !== '';
+const fixVat = (mode, rate) =>
+  mode === 'exempt' ? { vatMode: 'exempt', vatRate: 0 } : { vatMode: mode, vatRate: rate != null ? rate : 18 };
+
+// Effective VAT for one add-on, resolved in priority order:
+//   1. the PER-CARD override (PriceRuleAddon.vatMode) — wins when set;
+//   2. else the Add-on CATALOG vatMode — when set ("fixed VAT");
+//   3. else the Pricing Card's VAT — i.e. catalog says "כמו כרטיס התמחור".
+// catalogVat is optional; when absent the resolution is just entry → card (the
+// pre-catalog behavior), so existing 2-arg callers are unchanged.
+function effectiveAddonVat(entry, cardVat, catalogVat) {
+  if (isSetVat(entry.vatMode)) return fixVat(entry.vatMode, entry.vatRate);
+  if (catalogVat && isSetVat(catalogVat.vatMode)) return fixVat(catalogVat.vatMode, catalogVat.vatRate);
+  return { vatMode: cardVat.vatMode, vatRate: cardVat.vatRate };
 }
 
 // Does an add-on apply in this context?
@@ -321,19 +327,23 @@ export function resolveSystemAddonEntry(systemAddon, override) {
       ? Number(override.priceMinor)
       : Number(systemAddon.defaultPriceMinor) || 0;
   if (!(priceMinor > 0)) return null;
+  // VAT is left to the catalog→card resolution in priceAddon: a per-card VAT
+  // override wins, else the catalog's vatMode, else the card's VAT (when the
+  // catalog says "כמו כרטיס התמחור"). So we only carry the per-card override here.
   return {
     addonId: systemAddon.id,
     enabled: true,
     priceMinor,
-    vatMode: override && override.vatMode ? override.vatMode : systemAddon.vatMode,
-    vatRate: override && override.vatRate != null ? override.vatRate : systemAddon.vatRate,
+    vatMode: override && override.vatMode ? override.vatMode : null,
+    vatRate: override && override.vatMode && override.vatRate != null ? override.vatRate : null,
     autoApply: 'sabbath_holiday',
   };
 }
 
-// Price one add-on line into net/vat/gross using its effective VAT.
-export function priceAddon(entry, cardVat) {
-  const ev = effectiveAddonVat(entry, cardVat);
+// Price one add-on line into net/vat/gross using its effective VAT (entry
+// override → catalog → card). catalogVat is the add-on's catalog {vatMode,vatRate}.
+export function priceAddon(entry, cardVat, catalogVat) {
+  const ev = effectiveAddonVat(entry, cardVat, catalogVat);
   const vat = splitVat(num(entry.priceMinor) || 0, ev.vatMode, ev.vatRate);
   return {
     addonId: entry.addonId,

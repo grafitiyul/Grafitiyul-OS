@@ -40,8 +40,9 @@ const VAT_OPTS = [
 ];
 const DEFAULT_VAT_RATE = 18;
 
-// Add-on controls. VAT adds an "inherit from card" choice ('' → null on save).
-const ADDON_VAT_OPTS = [{ value: '', name: 'כמו הכרטיס' }, ...VAT_OPTS];
+// Add-on VAT. '' (→ null on save) = inherit from the Add-on catalog, which may
+// itself be "כמו כרטיס התמחור" (then the card's VAT applies).
+const ADDON_VAT_OPTS = [{ value: '', name: 'כמו הקטלוג' }, ...VAT_OPTS];
 const AUTO_APPLY_OPTS = [
   { value: 'manual', name: 'ידני' },
   { value: 'weekdays', name: 'לפי ימים בשבוע' },
@@ -559,6 +560,7 @@ function ticketNameMap(ticketTypes) {
 }
 
 function vatLabel(mode, rate) {
+  if (mode == null || mode === '') return 'כמו כרטיס התמחור';
   if (mode === 'exempt') return 'פטור ממע״מ';
   if (mode === 'excluded') return `לפני מע״מ ${rate}%`;
   return `כולל מע״מ ${rate}%`;

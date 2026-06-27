@@ -187,9 +187,15 @@ router.post(
         manualAddonIds: Array.isArray(b.manualAddonIds) ? b.manualAddonIds : [],
         isSabbathHoliday: sabbathHoliday.applies,
       };
-      const addonLines = addonEntries
-        .filter((e) => addonApplies(e, ctx))
-        .map((e) => priceAddon(e, cardVat));
+      // Each add-on's effective VAT resolves entry-override → catalog → card, so
+      // load the catalog vatMode for every referenced add-on (incl. the system one).
+      const appliedEntries = addonEntries.filter((e) => addonApplies(e, ctx));
+      const addonIds = [...new Set(appliedEntries.map((e) => e.addonId).filter(Boolean))];
+      const catalogRows = addonIds.length
+        ? await prisma.addon.findMany({ where: { id: { in: addonIds } }, select: { id: true, vatMode: true, vatRate: true } })
+        : [];
+      const catalogVatById = new Map(catalogRows.map((a) => [a.id, { vatMode: a.vatMode, vatRate: a.vatRate }]));
+      const addonLines = appliedEntries.map((e) => priceAddon(e, cardVat, catalogVatById.get(e.addonId)));
       const sum = (key) => addonLines.reduce((s, l) => s + l[key], 0);
 
       return res.json({

@@ -226,6 +226,33 @@ test('priceAddon exempt forces 0 VAT', () => {
   assert.equal(r.vatMinor, 0);
   assert.equal(r.grossMinor, 25000);
 });
+// ── 3-level VAT: entry override → catalog → card ─────────────────────────────
+test('priceAddon: catalog VAT used when entry inherits', () => {
+  // entry vatMode null (inherit), catalog 'excluded' → uses excluded, not card.
+  const r = priceAddon({ addonId: 'a', priceMinor: 25000, vatMode: null }, { vatMode: 'included', vatRate: 18 }, { vatMode: 'excluded', vatRate: 18 });
+  assert.equal(r.vatMode, 'excluded');
+  assert.equal(r.netMinor, 25000);
+  assert.equal(r.grossMinor, 29500);
+});
+test('priceAddon: catalog "from card" (null) → card VAT (included)', () => {
+  const r = priceAddon({ addonId: 'a', priceMinor: 25000, vatMode: null }, { vatMode: 'included', vatRate: 18 }, { vatMode: null });
+  assert.equal(r.vatMode, 'included');
+  assert.equal(r.grossMinor, 25000);
+});
+test('priceAddon: catalog "from card" follows an excluded card', () => {
+  const r = priceAddon({ addonId: 'a', priceMinor: 25000, vatMode: null }, { vatMode: 'excluded', vatRate: 18 }, { vatMode: null });
+  assert.equal(r.vatMode, 'excluded');
+  assert.equal(r.grossMinor, 29500);
+});
+test('priceAddon: catalog "from card" follows an exempt card', () => {
+  const r = priceAddon({ addonId: 'a', priceMinor: 25000, vatMode: null }, { vatMode: 'exempt', vatRate: 0 }, { vatMode: null });
+  assert.equal(r.vatMode, 'exempt');
+  assert.equal(r.vatMinor, 0);
+});
+test('priceAddon: per-card override beats catalog and card', () => {
+  const r = priceAddon({ addonId: 'a', priceMinor: 25000, vatMode: 'exempt' }, { vatMode: 'included', vatRate: 18 }, { vatMode: 'excluded', vatRate: 18 });
+  assert.equal(r.vatMode, 'exempt'); // entry override wins
+});
 test('addonApplies: manual only when toggled', () => {
   const e = { addonId: 'a', enabled: true, autoApply: 'manual' };
   assert.equal(addonApplies(e, { manualAddonIds: ['a'] }), true);
@@ -261,20 +288,20 @@ test('sabbath_holiday addon does NOT apply outside the window', () => {
 
 // ── system add-on (שבת/חג) inherit ↔ override resolver ───────────────────────
 const SYS = { id: 'sys', active: true, defaultPriceMinor: 25000, vatMode: 'included', vatRate: 18 };
-test('resolveSystemAddonEntry: no override → catalog default', () => {
+test('resolveSystemAddonEntry: no override → catalog default price, VAT deferred', () => {
   const e = resolveSystemAddonEntry(SYS, null);
   assert.equal(e.priceMinor, 25000);
-  assert.equal(e.vatMode, 'included');
+  assert.equal(e.vatMode, null); // VAT resolves later via catalog → card
   assert.equal(e.autoApply, 'sabbath_holiday');
 });
 test('resolveSystemAddonEntry: catalog price change reaches non-overridden cards', () => {
   const e = resolveSystemAddonEntry({ ...SYS, defaultPriceMinor: 40000 }, { priceMinor: null, vatMode: null });
   assert.equal(e.priceMinor, 40000); // inherited, follows the catalog
 });
-test('resolveSystemAddonEntry: per-field override (price overridden, VAT inherited)', () => {
+test('resolveSystemAddonEntry: per-field override (price overridden, VAT deferred)', () => {
   const e = resolveSystemAddonEntry(SYS, { priceMinor: 50000, vatMode: null });
   assert.equal(e.priceMinor, 50000);
-  assert.equal(e.vatMode, 'included'); // still inherited
+  assert.equal(e.vatMode, null); // VAT still resolves via catalog → card
 });
 test('resolveSystemAddonEntry: card-disabled → null', () => {
   assert.equal(resolveSystemAddonEntry(SYS, { enabled: false }), null);
