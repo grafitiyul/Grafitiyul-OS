@@ -709,6 +709,17 @@ function CardEditor({ version, segment, products, ticketTypes, productCache, set
 
   const variants = product?.variants || [];
 
+  // Convenience: if the chosen product has exactly one location, auto-select it
+  // so the owner isn't forced to click the only option. Deps are (product, count
+  // of variants) — NOT variantIds — so this fires once when a product's variants
+  // load, but never re-adds a location the owner just toggled off, and never
+  // overrides a saved card's existing selection (guarded by cur.length === 0).
+  useEffect(() => {
+    if (variants.length === 1) {
+      setVariantIds((cur) => (cur.length === 0 ? [variants[0].id] : cur));
+    }
+  }, [productId, variants.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const toggleVariant = (id) =>
     setVariantIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
   const setTier = (i, key, val) => setTiers((cur) => cur.map((t, idx) => (idx === i ? { ...t, [key]: val } : t)));
