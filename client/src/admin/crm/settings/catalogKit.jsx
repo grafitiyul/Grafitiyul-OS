@@ -57,6 +57,9 @@ export function SortableList({
   editSeed,
   editPanel,
   editToPatch,
+  // Optional, additive: render extra action button(s) for a row, shown before
+  // the edit/delete actions. Omitted everywhere except Organization Types.
+  rowActions,
 }) {
   const [local, setLocal] = useState(items);
   useEffect(() => setLocal(items), [items]);
@@ -99,6 +102,7 @@ export function SortableList({
               editSeed={editSeed}
               editPanel={editPanel}
               editToPatch={editToPatch}
+              rowActions={rowActions}
             />
           ))}
         </ul>
@@ -107,7 +111,7 @@ export function SortableList({
   );
 }
 
-function CatalogRow({ item, meta, onSave, onRemove, editExtra, editSeed, editPanel, editToPatch }) {
+function CatalogRow({ item, meta, onSave, onRemove, editExtra, editSeed, editPanel, editToPatch, rowActions }) {
   const s = useSortable({ id: item.id });
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(null);
@@ -222,6 +226,7 @@ function CatalogRow({ item, meta, onSave, onRemove, editExtra, editSeed, editPan
         </div>
         {meta}
         <div className="flex items-center gap-1 shrink-0">
+          {rowActions && rowActions(item)}
           <button
             onClick={startEdit}
             aria-label="עריכה"

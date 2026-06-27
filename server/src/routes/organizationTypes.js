@@ -25,6 +25,13 @@ router.get(
       orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }],
       include: {
         _count: { select: { organizations: true, subtypes: true } },
+        // Payment defaults. The term carries its OWN configured default method
+        // (defaultPaymentMethodId) so the UI can tell inherited from overridden
+        // without re-querying the catalog. defaultPaymentMethod is the override.
+        defaultPaymentTerm: {
+          select: { id: true, nameHe: true, defaultPaymentMethodId: true },
+        },
+        defaultPaymentMethod: { select: { id: true, nameHe: true } },
       },
     });
     res.json(types);
@@ -96,6 +103,9 @@ router.put(
       defaultPriceListId,
       quoteContentHe,
       quoteContentEn,
+      defaultPaymentTermId,
+      defaultPaymentMethodId,
+      paymentTermsNote,
     } = req.body || {};
     const data = {};
     if (label !== undefined) data.label = String(label).trim();
@@ -112,6 +122,15 @@ router.put(
       data.quoteContentHe = quoteContentHe || null;
     if (quoteContentEn !== undefined)
       data.quoteContentEn = quoteContentEn || null;
+    // Payment defaults. Term/method reference the Payment Configuration catalog
+    // ('' clears → null). A null defaultPaymentMethodId means "inherit the
+    // term's own default method" (handled by the UI / future resolution).
+    if (defaultPaymentTermId !== undefined)
+      data.defaultPaymentTermId = defaultPaymentTermId || null;
+    if (defaultPaymentMethodId !== undefined)
+      data.defaultPaymentMethodId = defaultPaymentMethodId || null;
+    if (paymentTermsNote !== undefined)
+      data.paymentTermsNote = paymentTermsNote?.trim() ? paymentTermsNote.trim() : null;
     const type = await prisma.organizationType.update({
       where: { id: req.params.id },
       data,

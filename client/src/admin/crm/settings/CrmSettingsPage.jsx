@@ -10,6 +10,7 @@ import {
   Pill,
 } from './catalogKit.jsx';
 import RichEditor from '../../../editor/RichEditor.jsx';
+import { PaymentTermsButton } from './OrgTypePaymentTermsModal.jsx';
 
 const FIELD_LABEL = 'block text-[12px] font-medium text-gray-600 mb-1';
 
@@ -153,6 +154,7 @@ function TypesSection({ types, onChange }) {
         onRemove={remove}
         emptyText="עדיין אין סוגי ארגון. הוסיפו את הראשון למטה."
         renderMeta={(t) => <CountChip n={t._count?.organizations ?? 0} noun="ארגונים" />}
+        rowActions={(t) => <PaymentTermsButton type={t} onSaved={onChange} />}
         editSeed={quoteSeed}
         editPanel={quotePanel}
         editToPatch={quoteToPatch}
