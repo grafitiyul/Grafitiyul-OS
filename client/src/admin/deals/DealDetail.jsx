@@ -3,6 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
+import HoverCard from '../common/HoverCard.jsx';
 import LostDealDialog from './LostDealDialog.jsx';
 import DealSalesScript from './DealSalesScript.jsx';
 import WorkspaceLayout from '../../shell/WorkspaceLayout.jsx';
@@ -61,6 +62,7 @@ export default function DealDetail() {
   const [orgs, setOrgs] = useState([]);
   const [subtypes, setSubtypes] = useState([]);
   const [units, setUnits] = useState([]);
+  const [orgType, setOrgType] = useState(null);
   const [allContacts, setAllContacts] = useState([]);
   const [form, setForm] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -106,8 +108,10 @@ export default function DealDetail() {
       if (d.organizationId) {
         const full = await api.organizations.get(d.organizationId);
         setUnits(full.units || []);
+        setOrgType(full.organizationType || null);
       } else {
         setUnits([]);
+        setOrgType(null);
       }
     } catch (e) {
       setError(e.message);
@@ -163,6 +167,28 @@ export default function DealDetail() {
       await refresh();
     } catch (e) {
       alert('שגיאה: ' + e.message);
+    }
+  }
+
+  // Clicking a pipeline stage moves the deal there immediately — same update
+  // path as the Stage dropdown (single source of truth), then refresh.
+  async function setStage(stageId) {
+    if (!stageId || stageId === deal.dealStageId) return;
+    try {
+      await api.deals.update(id, { dealStageId: stageId });
+      await refresh();
+    } catch (e) {
+      alert('שגיאה: ' + (e.payload?.error || e.message));
+    }
+  }
+
+  async function copyDealUrl() {
+    const url = `${window.location.origin}/admin/crm/deals/${id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // Clipboard API blocked (e.g. insecure context) — fall back to a prompt.
+      window.prompt('העתיקו את הקישור לדיל:', url);
     }
   }
 
@@ -240,8 +266,6 @@ export default function DealDetail() {
       </div>
     );
   if (!deal || !form) return null;
-
-  const theme = STATUS_THEME[deal.status] || STATUS_THEME.open;
 
   // Right panel — deal properties (config / finance / dates / meta). These are
   // the "what the deal is" surfaces; the center holds the working surfaces.
@@ -403,47 +427,40 @@ export default function DealDetail() {
   return (
     <WorkspaceLayout
       storageKey="gos.workspace.deal"
-      right={{ title: 'מאפייני הדיל', content: dealProperties, defaultWidth: 380, minWidth: 300, maxWidth: 620 }}
+      right={{ title: 'פרטי הדיל', content: dealProperties, defaultWidth: 380, minWidth: 300, maxWidth: 620 }}
       left={{ title: 'תסריט מכירה', content: <DealSalesScript />, defaultWidth: 300, minWidth: 220, maxWidth: 460 }}
     >
       {/* Hero header — title + actions, then a full-width pipeline bar.
           Lives in the center stack, so its width matches the cards. */}
-      <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-5 lg:p-6">
+      <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 lg:p-8">
+        {/* 1 — Title + status / actions */}
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              {editingTitle ? (
-                <input
-                  autoFocus
-                  value={titleDraft}
-                  onChange={(e) => setTitleDraft(e.target.value)}
-                  onBlur={saveTitle}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      saveTitle();
-                    } else if (e.key === 'Escape') {
-                      setEditingTitle(false);
-                    }
-                  }}
-                  disabled={savingTitle}
-                  className="text-2xl lg:text-3xl font-bold tracking-tight text-gray-900 border-b-2 border-blue-400 focus:outline-none px-0.5 min-w-[12rem] disabled:opacity-60"
-                />
-              ) : (
-                <h1
-                  onClick={startTitleEdit}
-                  title="לחצו לעריכת הכותרת"
-                  className="text-2xl lg:text-3xl font-bold tracking-tight text-gray-900 cursor-text rounded px-1 -mx-1 hover:bg-gray-50"
-                >
-                  {deal.title}
-                </h1>
-              )}
-              <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-semibold ring-1 ring-inset ${theme.soft}`}>
-                {DEAL_STATUS_LABELS[deal.status]}
-              </span>
-            </div>
-            {deal.organization && (
-              <div className="mt-2 text-sm text-gray-500">{deal.organization.name}</div>
+            {editingTitle ? (
+              <input
+                autoFocus
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onBlur={saveTitle}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    saveTitle();
+                  } else if (e.key === 'Escape') {
+                    setEditingTitle(false);
+                  }
+                }}
+                disabled={savingTitle}
+                className="text-2xl lg:text-3xl font-bold tracking-tight text-gray-900 border-b-2 border-blue-400 focus:outline-none px-0.5 min-w-[12rem] disabled:opacity-60"
+              />
+            ) : (
+              <h1
+                onClick={startTitleEdit}
+                title="לחצו לעריכת הכותרת"
+                className="text-2xl lg:text-3xl font-bold tracking-tight text-gray-900 cursor-text rounded px-1 -mx-1 hover:bg-gray-50"
+              >
+                {deal.title}
+              </h1>
             )}
           </div>
 
@@ -485,6 +502,12 @@ export default function DealDetail() {
                 שכפל דיל
               </button>
               <button
+                onClick={() => { setMenuOpen(false); copyDealUrl(); }}
+                className="block w-full text-right px-3 py-2 text-sm hover:bg-gray-50"
+              >
+                העתק קישור לדיל
+              </button>
+              <button
                 disabled
                 title="בקרוב"
                 className="flex w-full items-center justify-between gap-2 px-3 py-2 text-sm text-gray-400 cursor-not-allowed"
@@ -503,10 +526,23 @@ export default function DealDetail() {
           </div>
         </div>
 
-        {/* Pipeline bar — spans the full header width, below title + actions */}
-        <div className="mt-4">
-          <StagePipeline stages={stages} currentStageId={deal.dealStageId} status={deal.status} />
+        {/* 2 — Pipeline (full width). Click a stage to move the deal there. */}
+        <div className="mt-6">
+          <StagePipeline
+            stages={stages}
+            currentStageId={deal.dealStageId}
+            status={deal.status}
+            onSelect={setStage}
+          />
         </div>
+
+        {/* 3 — Relationship row: primary contact + organization, with hovercards */}
+        <RelationshipRow
+          contact={deal.contacts?.[0]}
+          organization={deal.organization}
+          orgType={orgType}
+          subtypeLabel={deal.organizationSubtype?.label}
+        />
       </div>
 
       {/* Center workspace — the working surfaces */}
@@ -809,7 +845,7 @@ const CHEVRON = 'polygon(100% 0, 12px 0, 0 50%, 12px 100%, 100% 100%, calc(100% 
 // The first (rightmost) segment keeps a flat right edge — no notch at the start.
 const CHEVRON_FIRST = 'polygon(100% 0, 12px 0, 0 50%, 12px 100%, 100% 100%)';
 
-function StagePipeline({ stages, currentStageId, status }) {
+function StagePipeline({ stages, currentStageId, status, onSelect }) {
   if (!stages?.length) return null;
   const fill = PIPE_FILL[status] || PIPE_FILL.open;
   const currentIndex = stages.findIndex((s) => s.id === currentStageId);
@@ -817,20 +853,25 @@ function StagePipeline({ stages, currentStageId, status }) {
     // Full-width bar: every stage segment flexes to an equal share, so the bar
     // stretches edge-to-edge and adapts automatically to any number of stages
     // (no hardcoded widths — stage count will come from Settings later).
+    // Clicking a segment moves the deal to that stage immediately.
     <div className="flex w-full items-stretch text-[12px] font-medium leading-none">
       {stages.map((s, i) => {
         const isCurrent = i === currentIndex;
         const isDone = currentIndex >= 0 && i < currentIndex;
         const cls = isCurrent ? fill.current : isDone ? fill.done : 'bg-gray-100 text-gray-400';
         return (
-          <div
+          <button
             key={s.id}
+            type="button"
+            onClick={() => onSelect?.(s.id)}
             title={s.label}
-            className={`${cls} ${i === 0 ? '' : '-ms-3'} flex flex-1 min-w-0 items-center justify-center whitespace-nowrap py-2 ps-5 pe-4`}
+            className={`${cls} ${i === 0 ? '' : '-ms-3'} flex flex-1 min-w-0 items-center justify-center whitespace-nowrap py-2.5 ps-5 pe-4 transition-[filter] hover:brightness-95 ${
+              isCurrent ? 'cursor-default' : 'cursor-pointer'
+            }`}
             style={{ clipPath: i === 0 ? CHEVRON_FIRST : CHEVRON }}
           >
             <span className="truncate">{s.label}</span>
-          </div>
+          </button>
         );
       })}
     </div>
@@ -847,6 +888,141 @@ function SaveBtn({ onClick, busy }) {
     >
       {busy ? 'שומר…' : 'שמור'}
     </button>
+  );
+}
+
+// ── Relationship row (under the pipeline) ───────────────────────────
+// Primary contact + organization, each opening a hover card. Hover never
+// navigates — the card carries an explicit "open" link instead.
+
+function UserIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="text-gray-400">
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  );
+}
+
+function BuildingIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="text-gray-400">
+      <path d="M3 21h18" />
+      <path d="M5 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16" />
+      <path d="M19 21V11a2 2 0 0 0-2-2h-2" />
+      <path d="M9 7h2M9 11h2M9 15h2" />
+    </svg>
+  );
+}
+
+function RelationshipChip({ icon, label }) {
+  return (
+    <span className="inline-flex items-center gap-2 rounded-lg px-2 py-1 text-sm text-gray-700 cursor-default hover:bg-gray-50 transition-colors">
+      {icon}
+      <span className="truncate max-w-[16rem]">{label}</span>
+    </span>
+  );
+}
+
+function RelationshipRow({ contact, organization, orgType, subtypeLabel }) {
+  const contactObj = contact?.contact;
+  const hasAny = contactObj || organization;
+  return (
+    <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2">
+      {contactObj && (
+        <HoverCard trigger={<RelationshipChip icon={<UserIcon />} label={contactNameHe(contactObj) || '—'} />}>
+          <ContactHoverCard contactId={contact.contactId} fallbackName={contactNameHe(contactObj)} />
+        </HoverCard>
+      )}
+      {organization && (
+        <HoverCard trigger={<RelationshipChip icon={<BuildingIcon />} label={organization.name} />}>
+          <OrgHoverCard org={organization} orgTypeLabel={orgType?.label} subtypeLabel={subtypeLabel} />
+        </HoverCard>
+      )}
+      {!hasAny && (
+        <span className="text-[13px] text-gray-400">אין איש קשר או ארגון משויך</span>
+      )}
+    </div>
+  );
+}
+
+function ContactHoverCard({ contactId, fallbackName }) {
+  const [c, setC] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    api.contacts
+      .get(contactId)
+      .then((d) => { if (live) setC(d); })
+      .catch(() => {})
+      .finally(() => { if (live) setLoading(false); });
+    return () => { live = false; };
+  }, [contactId]);
+
+  const name = (c && contactNameHe(c)) || fallbackName || '—';
+  const phones = c?.phones || [];
+  const emails = c?.emails || [];
+
+  return (
+    <div className="space-y-2.5">
+      <div className="text-sm font-semibold text-gray-900">{name}</div>
+      {loading ? (
+        <div className="text-[12px] text-gray-400">טוען…</div>
+      ) : phones.length || emails.length ? (
+        <div className="space-y-1.5">
+          {phones.length > 0 && (
+            <div className="space-y-0.5">
+              {phones.map((p) => (
+                <div key={p.id} dir="ltr" className="text-right text-[12px] text-gray-600">
+                  {p.value}{p.label ? ` · ${p.label}` : ''}
+                </div>
+              ))}
+            </div>
+          )}
+          {emails.length > 0 && (
+            <div className="space-y-0.5">
+              {emails.map((em) => (
+                <div key={em.id} dir="ltr" className="text-right text-[12px] text-gray-600">
+                  {em.value}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="text-[12px] text-gray-400">אין פרטי קשר</div>
+      )}
+      <div className="pt-2 border-t border-gray-100">
+        <Link to={`/admin/crm/contacts/${contactId}`} className="text-[12px] font-medium text-blue-600 hover:underline">
+          פתח איש קשר ←
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function OrgHoverCard({ org, orgTypeLabel, subtypeLabel }) {
+  return (
+    <div className="space-y-2.5">
+      <div className="text-sm font-semibold text-gray-900">{org.name}</div>
+      <dl className="space-y-1 text-[12px]">
+        <div className="flex items-center justify-between gap-3">
+          <dt className="text-gray-400">סוג ארגון</dt>
+          <dd className="text-gray-700">{orgTypeLabel || '—'}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <dt className="text-gray-400">תת-סוג</dt>
+          <dd className="text-gray-700">{subtypeLabel || '—'}</dd>
+        </div>
+      </dl>
+      <div className="pt-2 border-t border-gray-100">
+        <Link to={`/admin/crm/organizations/${org.id}`} className="text-[12px] font-medium text-blue-600 hover:underline">
+          פתח ארגון ←
+        </Link>
+      </div>
+    </div>
   );
 }
 
