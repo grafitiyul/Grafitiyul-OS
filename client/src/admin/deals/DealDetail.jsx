@@ -496,7 +496,10 @@ export default function DealDetail() {
               types={types}
               subtypes={subtypes}
               onActivityType={(v) => updateDeal({ activityType: v || null })}
-              onDealOrgType={(v) => updateDeal({ organizationTypeId: v || null })}
+              // Changing the org type ALWAYS clears the previous subtype — a
+              // subtype must belong to the currently selected type (no stale
+              // "<new type> <old subtype>" badge).
+              onDealOrgType={(v) => updateDeal({ organizationTypeId: v || null, organizationSubtypeId: null })}
               onSubtype={(v) => updateDeal({ organizationSubtypeId: v || null })}
               onOpenOrgDialog={() => setOrgDialogOpen(true)}
             />
@@ -1001,9 +1004,6 @@ const ACTIVITY_OPTION_ON = {
   private: 'bg-rose-600 text-white border-rose-600',
   group: 'bg-amber-500 text-white border-amber-500',
 };
-const POPOVER_SELECT =
-  'mt-0.5 h-9 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
-
 // The single identity badge that sits next to the deal title. It is DISPLAY ONLY
 // — it shows the most specific classification at a glance and never exposes a
 // form. Clicking opens a small popover that holds all the editing controls.
@@ -1061,30 +1061,112 @@ function ActivityBadge({ deal, types, subtypes, onActivityType, onDealOrgType, o
           onActivityType={onActivityType}
           onDealOrgType={onDealOrgType}
           onSubtype={onSubtype}
-          onOpenOrgDialog={() => { setOpen(false); onOpenOrgDialog(); }}
+          onOpenOrgDialog={onOpenOrgDialog}
+          close={() => setOpen(false)}
         />
       </AnchoredMenu>
     </>
   );
 }
 
-// Editing controls for the activity badge — lives entirely inside the popover.
-function ActivityEditor({ deal, types, subtypes, effTypeId, effTypeLabel, hasOrg, onActivityType, onDealOrgType, onSubtype, onOpenOrgDialog }) {
-  const at = deal.activityType;
-  const scopedSubtypes = subtypes.filter(
-    (s) => !effTypeId || !s.organizationTypeId || s.organizationTypeId === effTypeId,
-  );
+// Editing controls for the activity badge — one continuous, progressive flow
+// inside the popover (no reopening, no exposed dropdowns):
+//
+//   activity ─click "עסקי"→ orgType ─click a type→ subtype ─click→ done (close)
+//
+// Group/Private finish in one click. For business, choosing a type that has no
+// subtypes finishes immediately. Changing the type clears any previous subtype
+// (so an invalid "<new type> <old subtype>" can never occur). The popover
+// remounts on open, so we always start at the first step.
+function ActivityEditor({ deal, types, subtypes, effTypeId, effTypeLabel, hasOrg, onActivityType, onDealOrgType, onSubtype, onOpenOrgDialog, close }) {
+  const [step, setStep] = useState('activity'); // 'activity' | 'orgType' | 'subtype' | 'orgLocked'
+  const [typeId, setTypeId] = useState(effTypeId); // type the subtype list is scoped to
+
+  // Subtypes valid for a given type: scoped to that type, plus generic (type-less).
+  const subtypesFor = (tId) =>
+    subtypes.filter((s) => !s.organizationTypeId || s.organizationTypeId === tId);
+
+  function pickActivity(v) {
+    if (v === 'business') {
+      if (deal.activityType !== 'business') onActivityType('business');
+      // Advance immediately to the next step — never reopen.
+      if (hasOrg) {
+        const tId = deal.organization.organizationTypeId || '';
+        if (tId && subtypesFor(tId).length) { setTypeId(tId); setStep('subtype'); }
+        else setStep('orgLocked');
+      } else {
+        setStep('orgType');
+      }
+      return;
+    }
+    // Group / Private — toggle and finish in one click.
+    onActivityType(deal.activityType === v ? '' : v);
+    close();
+  }
+
+  function pickType(t) {
+    if (t.id !== effTypeId) onDealOrgType(t.id); // changing type clears old subtype
+    if (subtypesFor(t.id).length) { setTypeId(t.id); setStep('subtype'); }
+    else close(); // no subtypes for this type → done
+  }
+
+  function pickSubtype(id) {
+    onSubtype(id);
+    close();
+  }
+
+  if (step === 'orgType') {
+    return (
+      <StepShell title="סוג ארגון" onBack={() => setStep('activity')}>
+        {types.length === 0 && <div className="px-2.5 py-2 text-[12px] text-gray-400">אין סוגי ארגון</div>}
+        {types.map((t) => (
+          <RowBtn key={t.id} onClick={() => pickType(t)} selected={t.id === effTypeId}>{t.label}</RowBtn>
+        ))}
+      </StepShell>
+    );
+  }
+
+  if (step === 'subtype') {
+    const list = subtypesFor(typeId);
+    return (
+      <StepShell title="תת-סוג" onBack={() => setStep(hasOrg ? 'activity' : 'orgType')}>
+        <RowBtn onClick={() => pickSubtype('')} muted selected={!deal.organizationSubtypeId}>— ללא תת-סוג —</RowBtn>
+        {list.map((s) => (
+          <RowBtn key={s.id} onClick={() => pickSubtype(s.id)} selected={s.id === deal.organizationSubtypeId}>{s.label}</RowBtn>
+        ))}
+      </StepShell>
+    );
+  }
+
+  if (step === 'orgLocked') {
+    return (
+      <div className="p-3 min-w-[200px]" dir="rtl">
+        <div className="text-[11px] text-gray-400">סוג ארגון</div>
+        <div className="mt-0.5 text-sm font-medium text-gray-800">{effTypeLabel || '—'}</div>
+        <p className="text-[10px] text-gray-400 mt-0.5">נקבע על הארגון (מקור אמת יחיד).</p>
+        <button
+          type="button"
+          onClick={() => { close(); onOpenOrgDialog(); }}
+          className="mt-2 text-[12px] text-blue-700 hover:underline"
+        >
+          ערוך ארגון ←
+        </button>
+      </div>
+    );
+  }
+
+  // step === 'activity'
   return (
-    <div className="p-2 space-y-2" dir="rtl">
-      <div className="px-1 pt-0.5 text-[11px] font-semibold text-gray-400">סוג פעילות</div>
+    <div className="p-2" dir="rtl">
+      <div className="px-1 pt-0.5 pb-1 text-[11px] font-semibold text-gray-400">סוג פעילות</div>
       <div className="flex gap-1.5 px-1">
         {ACTIVITY_TYPES.map((v) => {
-          const on = at === v;
+          const on = deal.activityType === v;
           return (
             <button
               key={v}
               type="button"
-              onClick={() => onActivityType(on ? '' : v)}
+              onClick={() => pickActivity(v)}
               className={`flex-1 rounded-lg px-2 py-1.5 text-[12px] font-medium border transition ${
                 on ? ACTIVITY_OPTION_ON[v] : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
               }`}
@@ -1094,40 +1176,42 @@ function ActivityEditor({ deal, types, subtypes, effTypeId, effTypeLabel, hasOrg
           );
         })}
       </div>
-      {at === 'business' && (
-        <div className="px-1 pt-1.5 space-y-2 border-t border-gray-100">
-          {hasOrg ? (
-            <div>
-              <div className="text-[11px] text-gray-400">סוג ארגון</div>
-              <div className="mt-0.5 flex items-center justify-between gap-2 text-sm text-gray-700">
-                <span>{effTypeLabel || '—'}</span>
-                <button type="button" onClick={onOpenOrgDialog} className="text-[12px] text-blue-700 hover:underline">
-                  ערוך ארגון
-                </button>
-              </div>
-              <p className="text-[10px] text-gray-400 mt-0.5">נקבע על הארגון (מקור אמת יחיד).</p>
-            </div>
-          ) : (
-            <label className="block">
-              <span className="text-[11px] text-gray-400">סוג ארגון</span>
-              <select value={effTypeId} onChange={(e) => onDealOrgType(e.target.value)} className={POPOVER_SELECT}>
-                <option value="">— בחר —</option>
-                {types.map((t) => (<option key={t.id} value={t.id}>{t.label}</option>))}
-              </select>
-            </label>
-          )}
-          {effTypeId && scopedSubtypes.length > 0 && (
-            <label className="block">
-              <span className="text-[11px] text-gray-400">תת-סוג</span>
-              <select value={deal.organizationSubtypeId || ''} onChange={(e) => onSubtype(e.target.value)} className={POPOVER_SELECT}>
-                <option value="">— ללא —</option>
-                {scopedSubtypes.map((s) => (<option key={s.id} value={s.id}>{s.label}</option>))}
-              </select>
-            </label>
-          )}
-        </div>
-      )}
     </div>
+  );
+}
+
+// A step in the progressive activity editor — a back arrow + title, then a
+// scrollable option list.
+function StepShell({ title, onBack, children }) {
+  return (
+    <div className="p-1.5 min-w-[200px]" dir="rtl">
+      <div className="flex items-center gap-1 px-1.5 pt-0.5 pb-1">
+        <button
+          type="button"
+          onClick={onBack}
+          aria-label="חזרה"
+          className="text-gray-400 hover:text-gray-700 text-base leading-none px-1"
+        >
+          ›
+        </button>
+        <span className="text-[11px] font-semibold text-gray-400">{title}</span>
+      </div>
+      <div className="max-h-64 overflow-y-auto">{children}</div>
+    </div>
+  );
+}
+
+function RowBtn({ onClick, selected, muted, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`block w-full text-right rounded-md px-2.5 py-1.5 text-sm transition hover:bg-blue-50 ${
+        selected ? 'font-semibold text-indigo-700 bg-indigo-50/50' : muted ? 'text-gray-500' : 'text-gray-700'
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 

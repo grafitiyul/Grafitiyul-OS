@@ -227,9 +227,11 @@ export default function WorkspaceLayout({ storageKey, right = {}, left = {}, chi
         />
       )}
 
-      {/* CENTER — the workspace. First on mobile, middle on desktop. */}
+      {/* CENTER — the workspace. First on mobile, middle on desktop. The cap is
+          generous so the center soaks up free space (pipeline labels fit, the
+          header breathes) without becoming excessively wide on huge monitors. */}
       <section className="order-first lg:order-none flex-1 min-w-0 lg:overflow-y-auto">
-        <div className="mx-auto w-full max-w-[1100px] px-4 lg:px-8 py-6 space-y-5">
+        <div className="mx-auto w-full max-w-[1320px] px-4 lg:px-8 py-6 space-y-5">
           {children}
         </div>
       </section>
