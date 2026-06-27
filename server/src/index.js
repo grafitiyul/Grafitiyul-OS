@@ -46,6 +46,24 @@ import timelineRouter from './routes/timeline.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
 
+// Running build identity. The client build writes dist/version.json (commit +
+// builtAt); the server reads it ONCE at startup and is the source of truth for
+// "what's deployed". Open tabs poll /version.json and compare it to the build id
+// baked into their bundle — a mismatch means a newer frontend is live. We prefer
+// the file (it matches the client's baked id exactly); fall back to the Railway
+// commit env, then 'unknown' if the build artefact is somehow missing.
+const runningVersion = (() => {
+  try {
+    const raw = fs.readFileSync(path.join(clientDist, 'version.json'), 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.commit) return parsed;
+  } catch {
+    /* artefact missing — fall through to env */
+  }
+  const env = process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT_SHA || '';
+  return { commit: env ? env.slice(0, 12) : 'unknown', builtAt: null };
+})();
+
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
@@ -71,8 +89,19 @@ app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
     service: 'grafitiyul-os-server',
+    commit: runningVersion.commit,
+    builtAt: runningVersion.builtAt,
     timestamp: new Date().toISOString(),
   });
+});
+
+// Deployed-frontend identity, polled by open tabs (see client lib/version.js).
+// Tiny + no-store so the version check always reflects the truly-live build.
+// Declared before the static handlers so it can never be shadowed by the
+// dist/version.json file (which is also served, but without guaranteed headers).
+app.get('/version.json', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(runningVersion);
 });
 
 // Attach auth state to every request (req.adminAuth = { userId } | null).

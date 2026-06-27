@@ -1,4 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
+import VersionGate from './shell/VersionGate.jsx';
 import AppShell from './shell/AppShell.jsx';
 import Landing from './shell/Landing.jsx';
 import AdminGuard from './admin/auth/AdminGuard.jsx';
@@ -72,7 +73,11 @@ import TourDetailPage from './public/pages/tours/TourDetailPage.jsx';
 
 export default function App() {
   return (
-    <Routes>
+    <>
+      {/* Global, route-agnostic: detects a new deployment and updates open tabs
+          at a safe moment (non-blocking toast + auto-reload on navigation). */}
+      <VersionGate />
+      <Routes>
       {/* Root route is "smart" — guides who installed the PWA from
           their portal page need to land back on /p/:token, not on
           /admin. See Landing.jsx for the resolution rules.
@@ -204,6 +209,7 @@ export default function App() {
       <Route path="/__preview/accessibility" element={<AccessibilityPage />} />
       <Route path="/__preview/tours" element={<ToursPage />} />
       <Route path="/__preview/tour" element={<TourDetailPage />} />
-    </Routes>
+      </Routes>
+    </>
   );
 }

@@ -3,7 +3,17 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App.jsx';
 import ErrorBoundary from './shell/ErrorBoundary.jsx';
+import { installChunkReload } from './lib/chunkReload.js';
+import { startVersionWatch } from './lib/version.js';
 import './index.css';
+
+// Frontend delivery resilience (no service worker, no header changes):
+//   • installChunkReload — one-time guarded reload if a future lazy chunk 404s
+//     against a stale tab after a deploy. Installed first, before any import().
+//   • startVersionWatch  — polls /version.json so an open tab learns when a new
+//     frontend is deployed and can update at a safe moment (see VersionGate).
+installChunkReload();
+startVersionWatch();
 
 // ── PRE-MOUNT: persist portal token from URL ─────────────────────
 //
