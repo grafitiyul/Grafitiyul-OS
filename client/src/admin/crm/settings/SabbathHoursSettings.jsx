@@ -180,12 +180,18 @@ function HolidayCalendarCard() {
   const [editingId, setEditingId] = useState(null);
   const [addingManual, setAddingManual] = useState(false);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  // `silent` re-fetches without blanking the list to "טוען…" (avoids a jump).
+  const refresh = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try { setHolidays(await api.sabbathHours.listHolidays(filter || undefined)); }
-    finally { setLoading(false); }
+    finally { if (!silent) setLoading(false); }
   }, [filter]);
   useEffect(() => { refresh(); }, [refresh]);
+
+  // Patch one row in place — keeps its position and does NOT drop it from a
+  // filtered view on a status change (the row stays until the user re-filters).
+  const patchRow = (updated) => setHolidays((cur) => cur.map((h) => (h.id === updated.id ? updated : h)));
+  const dropRow = (id) => setHolidays((cur) => cur.filter((h) => h.id !== id));
 
   async function runImport() {
     setImporting(true);
@@ -200,7 +206,7 @@ function HolidayCalendarCard() {
   }
 
   async function review(id, action) {
-    try { await api.sabbathHours.reviewHoliday(id, action); refresh(); }
+    try { patchRow(await api.sabbathHours.reviewHoliday(id, action)); }
     catch (e) { alert('שגיאה: ' + (e.payload?.error || e.message)); }
   }
 
@@ -237,7 +243,7 @@ function HolidayCalendarCard() {
         ))}
       </div>
 
-      {addingManual && <HolidayForm onClose={() => setAddingManual(false)} onSaved={() => { setAddingManual(false); refresh(); }} />}
+      {addingManual && <HolidayForm onClose={() => setAddingManual(false)} onSaved={() => { setAddingManual(false); refresh(true); }} />}
 
       {loading ? (
         <div className="py-8 text-center text-sm text-gray-400">טוען…</div>
@@ -247,9 +253,9 @@ function HolidayCalendarCard() {
         <ul className="divide-y divide-gray-100">
           {holidays.map((h) =>
             editingId === h.id ? (
-              <li key={h.id} className="py-2"><HolidayForm holiday={h} onClose={() => setEditingId(null)} onSaved={() => { setEditingId(null); refresh(); }} /></li>
+              <li key={h.id} className="py-2"><HolidayForm holiday={h} onClose={() => setEditingId(null)} onSaved={(saved) => { setEditingId(null); if (saved) patchRow(saved); }} /></li>
             ) : (
-              <li key={h.id} className={`flex items-center gap-3 px-2 py-2.5 ${h.status === 'ignored' ? 'opacity-60' : ''}`}>
+              <li key={h.id} className={`flex items-center gap-3 px-2 py-2.5 min-h-[3.25rem] ${h.status === 'ignored' ? 'opacity-60' : ''}`}>
                 <div className="w-24 shrink-0 text-[13px] text-gray-500" dir="ltr">{dateOnly(h.date)}</div>
                 <div className="flex-1 min-w-0">
                   <div className={`text-[14px] ${h.status === 'ignored' ? 'line-through text-gray-400' : 'text-gray-900'}`}>{h.nameHe}</div>
@@ -259,13 +265,15 @@ function HolidayCalendarCard() {
                     {h.manuallyEdited && ' · נערך'}
                   </div>
                 </div>
-                <span className={`text-[11px] rounded-full px-2 py-0.5 ring-1 ${STATUS_STYLE[h.status] || ''}`}>{STATUS_LABEL[h.status] || h.status}</span>
-                <div className="flex items-center gap-1 shrink-0">
+                {/* Fixed-width badge so different status labels don't reflow the row */}
+                <span className={`shrink-0 w-28 text-center whitespace-nowrap text-[11px] rounded-full px-2 py-0.5 ring-1 ${STATUS_STYLE[h.status] || ''}`}>{STATUS_LABEL[h.status] || h.status}</span>
+                {/* Fixed-width action cluster so a 3- vs 4-button row keeps one footprint */}
+                <div className="flex items-center justify-end gap-1 shrink-0 w-[124px]">
                   {h.status !== 'approved' && <button onClick={() => review(h.id, 'approve')} title="אישור" className="text-emerald-600 hover:bg-emerald-50 rounded-md p-1.5">✓</button>}
                   {h.status !== 'ignored' && <button onClick={() => review(h.id, 'ignore')} title="התעלם" className="text-gray-500 hover:bg-gray-100 rounded-md p-1.5">⊘</button>}
                   {h.status === 'ignored' && <button onClick={() => review(h.id, 'pending')} title="החזר" className="text-blue-600 hover:bg-blue-50 rounded-md p-1.5">↺</button>}
                   <button onClick={() => setEditingId(h.id)} title="עריכה" className="text-amber-500 hover:bg-amber-50 rounded-md p-1.5">✎</button>
-                  <button onClick={async () => { if (confirm('למחוק שורה זו?')) { await api.sabbathHours.removeHoliday(h.id); refresh(); } }} title="מחק" className="text-red-500 hover:bg-red-50 rounded-md p-1.5">🗑</button>
+                  <button onClick={async () => { if (confirm('למחוק שורה זו?')) { await api.sabbathHours.removeHoliday(h.id); dropRow(h.id); } }} title="מחק" className="text-red-500 hover:bg-red-50 rounded-md p-1.5">🗑</button>
                 </div>
               </li>
             ),
@@ -297,9 +305,10 @@ function HolidayForm({ holiday, onClose, onSaved }) {
         startMinute: d.allDay ? null : timeToMin(d.startTime),
         endMinute: d.allDay ? null : timeToMin(d.endTime),
       };
-      if (holiday) await api.sabbathHours.updateHoliday(holiday.id, payload);
-      else await api.sabbathHours.createHoliday(payload);
-      onSaved();
+      const saved = holiday
+        ? await api.sabbathHours.updateHoliday(holiday.id, payload)
+        : await api.sabbathHours.createHoliday(payload);
+      onSaved(saved);
     } catch (e) { alert('שגיאה: ' + (e.payload?.error || e.message)); }
     finally { setBusy(false); }
   }
