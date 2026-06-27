@@ -408,7 +408,7 @@ function RuleForm({ list, rule, products, activityTypes, orgSubtypes, onClose, o
         baseParticipants: d.baseParticipants,
         perAdditionalParticipantMinor: d.perAdditionalParticipantMinor,
         vatMode: d.vatMode || null,
-        vatRate: d.vatRate === '' ? null : Number(d.vatRate),
+        vatRate: d.vatMode === 'exempt' ? 0 : (d.vatRate === '' ? null : Number(d.vatRate)),
         priority: Number(d.priority) || 0,
         active: d.active,
       };
@@ -451,9 +451,11 @@ function RuleForm({ list, rule, products, activityTypes, orgSubtypes, onClose, o
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Field label="מע״מ (עוקף מחירון)">
-          <Select value={d.vatMode} onChange={(v) => set('vatMode', v)} options={[{ value: '', name: 'ברירת מחדל של המחירון' }, ...VAT_MODE_OPTS]} />
+          <Select value={d.vatMode} onChange={(v) => set('vatMode', v)} options={[{ value: '', name: 'ברירת מחדל של המחירון' }, ...VAT_MODE_OPTS, { value: 'exempt', name: 'פטור ממע״מ' }]} />
         </Field>
-        <Field label='שיעור מע״מ % (עוקף)'><input dir="ltr" value={d.vatRate} onChange={(e) => set('vatRate', e.target.value)} placeholder="ירושה" className={INPUT} /></Field>
+        {d.vatMode !== 'exempt' && (
+          <Field label='שיעור מע״מ % (עוקף)'><input dir="ltr" value={d.vatRate} onChange={(e) => set('vatRate', e.target.value)} placeholder="ירושה" className={INPUT} /></Field>
+        )}
         <Field label="עדיפות"><input dir="ltr" value={d.priority} onChange={(e) => set('priority', e.target.value)} className={INPUT} /></Field>
         <label className="flex items-center gap-2 mt-6 text-sm text-gray-700">
           <input type="checkbox" checked={d.active} onChange={(e) => set('active', e.target.checked)} /> פעיל
@@ -653,7 +655,7 @@ function CalcResult({ result }) {
       </div>
       <div className="text-[12px] text-gray-600 leading-relaxed">
         מחירון: <b>{result.priceList?.nameHe}</b> ({sourceLabel(result.priceListSource)}) · מודל: <b>{result.priceModel === 'per_head' ? 'לראש' : 'מדורג'}</b> ·
-        מע״מ: <b>{result.vatMode === 'included' ? 'כולל' : 'ללא'} {result.vatRate}%</b> · חוק תואם בעדיפות {result.rule?.priority} (ספציפיות {result.rule?.specificity})
+        מע״מ: <b>{result.vatMode === 'exempt' ? 'פטור' : `${result.vatMode === 'included' ? 'כולל' : 'ללא'} ${result.vatRate}%`}</b> · חוק תואם בעדיפות {result.rule?.priority} (ספציפיות {result.rule?.specificity})
       </div>
       <pre dir="ltr" className="text-[11px] text-gray-500 bg-white/70 rounded p-2 whitespace-pre-wrap">{JSON.stringify(result.debug, null, 2)}</pre>
     </div>
