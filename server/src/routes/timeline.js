@@ -25,14 +25,31 @@ function reloadEntry(id) {
   return prisma.timelineEntry.findUnique({ where: { id }, include: ENTRY_INCLUDE });
 }
 
-// Resolve the current author from the session. `createdBy` is the canonical
-// AdminUser.id; `createdByName` snapshots the username for join-free display.
-// (Only null during first-run bootstrap, before any admin exists.)
-async function currentAuthor(req) {
-  const id = req.adminAuth?.userId || null;
-  if (!id) return { createdBy: null, createdByName: null };
-  const u = await prisma.adminUser.findUnique({ where: { id }, select: { username: true } });
-  return { createdBy: id, createdByName: u?.username || null };
+// Non-human origin types. 'user' is handled separately (it needs an AdminUser).
+const NON_USER_ACTORS = ['api', 'automation', 'system', 'import'];
+
+// Resolve the explicit, NON-anonymous origin of a timeline write and return the
+// actor fields to persist — or an { error } the caller turns into a 400.
+//
+//   • An explicit non-user source in the body (`source: { actorType, actorLabel }`)
+//     is honoured first — this is how future API integrations / automations /
+//     system events / imports attribute themselves (they need not be logged in).
+//   • Otherwise a logged-in admin becomes the 'user' origin (id + username snapshot).
+//   • Neither a source nor a user → rejected. Nothing is ever anonymous.
+async function resolveOrigin(req) {
+  const src = req.body?.source;
+  if (src && typeof src === 'object' && src.actorType && src.actorType !== 'user') {
+    if (!NON_USER_ACTORS.includes(src.actorType)) return { error: 'invalid_actor_type' };
+    const actorLabel = String(src.actorLabel || '').trim();
+    if (!actorLabel) return { error: 'origin_label_required' };
+    return { fields: { actorType: src.actorType, actorLabel, createdBy: null, createdByName: null } };
+  }
+  const userId = req.adminAuth?.userId || null;
+  if (userId) {
+    const u = await prisma.adminUser.findUnique({ where: { id: userId }, select: { username: true } });
+    return { fields: { actorType: 'user', actorLabel: null, createdBy: userId, createdByName: u?.username || null } };
+  }
+  return { error: 'origin_required' };
 }
 
 // ---------- Entries ----------
@@ -70,7 +87,8 @@ router.post(
     if (kind === 'note' && (!body || !body.trim())) {
       return res.status(400).json({ error: 'empty_note' });
     }
-    const author = await currentAuthor(req);
+    const origin = await resolveOrigin(req);
+    if (origin.error) return res.status(400).json({ error: origin.error });
     const entry = await prisma.timelineEntry.create({
       data: {
         subjectType,
@@ -79,7 +97,7 @@ router.post(
         body,
         // Light, kind-specific payload (e.g. { origin: 'inquiry' }). Stored as-is.
         data: b.data ?? undefined,
-        ...author,
+        ...origin.fields,
       },
       include: ENTRY_INCLUDE,
     });
@@ -209,8 +227,9 @@ router.post(
       select: { id: true, deletedAt: true },
     });
     if (!entry || entry.deletedAt) return res.status(404).json({ error: 'not_found' });
-    const author = await currentAuthor(req);
-    await prisma.timelineComment.create({ data: { entryId: entry.id, body, ...author } });
+    const origin = await resolveOrigin(req);
+    if (origin.error) return res.status(400).json({ error: origin.error });
+    await prisma.timelineComment.create({ data: { entryId: entry.id, body, ...origin.fields } });
     res.status(201).json(await reloadEntry(entry.id));
   }),
 );

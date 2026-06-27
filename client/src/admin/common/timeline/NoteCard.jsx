@@ -2,9 +2,11 @@ import { useState } from 'react';
 import RichEditor from '../../../editor/RichEditor.jsx';
 import { normalizeRichHtml } from '../../../editor/htmlNormalize.js';
 import { titleToPlain } from '../../../editor/TitleEditor.jsx';
+import { actorDisplay } from './actor.js';
 
-// Author + absolute date & time stamp shown on every timeline object. The author
-// name is the snapshot persisted at creation (AdminUser.username today).
+// Origin + absolute date & time stamp shown on every timeline object. The origin
+// is never anonymous: a human shows their name; an API/automation/system/import
+// shows its source label + a small typed badge.
 function fmtStamp(iso) {
   if (!iso) return '';
   try {
@@ -14,12 +16,16 @@ function fmtStamp(iso) {
     return '';
   }
 }
-function StampLine({ name, iso, edited, className = 'text-[11px] text-gray-400' }) {
+function StampLine({ item, edited, className = 'text-[11px] text-gray-400' }) {
+  const { name, badge } = actorDisplay(item);
   return (
-    <span className={className}>
-      {name && <span className="font-medium text-gray-500">{name}</span>}
-      {name ? ' · ' : ''}
-      {fmtStamp(iso)}
+    <span className={`inline-flex items-center gap-1 ${className}`}>
+      {badge && (
+        <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${badge.cls}`}>{badge.label}</span>
+      )}
+      <span className="font-medium text-gray-500">{name}</span>
+      {' · '}
+      {fmtStamp(item.createdAt)}
       {edited ? ' · נערך' : ''}
     </span>
   );
@@ -93,7 +99,7 @@ export default function NoteCard({
       <div className="flex items-center gap-2 px-4 pt-3">
         {dragHandle}
         {originLabel && <span className="text-[11px] font-medium text-amber-700/80">{originLabel}</span>}
-        <StampLine name={entry.createdByName} iso={entry.createdAt} edited={!!entry.editedAt} />
+        <StampLine item={entry} edited={!!entry.editedAt} />
         <div className="flex-1" />
         <IconBtn title={entry.isPinned ? 'בטל נעיצה' : 'נעץ ל-FOCUS'} active={entry.isPinned} onClick={() => onTogglePin(entry)}>📌</IconBtn>
         {!editing && (
@@ -195,7 +201,7 @@ function CommentRow({ comment, onEdit, onDelete }) {
       ) : (
         <div className="flex items-start gap-2">
           <div className="flex-1 text-sm text-gray-800 whitespace-pre-wrap">{comment.body}</div>
-          <StampLine name={comment.createdByName} iso={comment.createdAt} className="text-[10px] text-gray-400 shrink-0" />
+          <StampLine item={comment} className="text-[10px] text-gray-400 shrink-0" />
           <button onClick={() => { setDraft(comment.body); setEditing(true); }} className="text-[12px] text-blue-700 shrink-0">ערוך</button>
           <button onClick={remove} className="text-[12px] text-red-600 shrink-0">מחק</button>
         </div>

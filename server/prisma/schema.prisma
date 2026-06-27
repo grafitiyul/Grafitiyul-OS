@@ -1394,10 +1394,19 @@ model TimelineEntry {
   isPinned     Boolean           @default(false)
   pinSortOrder Int               @default(0) // manual FOCUS order, scoped to the subject
   isSystem     Boolean           @default(false) // system events: not user-editable
-  // Author attribution. createdBy = AdminUser.id (canonical identity, ready for a
-  // future User model); createdByName = a snapshot of the author's username at
-  // creation, so the feed renders the author with no join and the name survives
-  // renames / deactivation. Every user-created item carries an author.
+  // Origin — every entry has an explicit, NON-anonymous source:
+  //   'user'       → a logged-in admin (createdBy + createdByName set)
+  //   'api'        → an external integration  (actorLabel, e.g. "API: ייבוא לידים")
+  //   'automation' → a CRM rule / flow        (actorLabel, e.g. "אוטומציה: WhatsApp")
+  //   'system'     → GOS itself               (actorLabel, e.g. "דיל נוצר")
+  //   'import'     → a migration / import      (actorLabel, e.g. "ייבוא נתונים")
+  // For non-'user' origins createdBy/createdByName are null and actorLabel names
+  // the source. The API forbids an entry with neither a user nor an actorLabel.
+  actorType    String            @default("user")
+  actorLabel   String? // human-readable source label for non-'user' origins
+  // Author attribution for the 'user' origin. createdBy = AdminUser.id (canonical
+  // identity, ready for a future User model); createdByName = a username snapshot
+  // so the feed renders the author with no join and survives rename/deactivation.
   createdBy    String?
   createdByName String?
   createdAt    DateTime          @default(now())
@@ -1418,6 +1427,10 @@ model TimelineComment {
   entry     TimelineEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
   entryId   String
   body      String
+  // Same explicit-origin model as TimelineEntry (a comment may also come from a
+  // user, an automation, etc.). Never anonymous.
+  actorType String        @default("user")
+  actorLabel String?
   createdBy String? // AdminUser.id (canonical identity)
   createdByName String? // author username snapshot (see TimelineEntry)
   createdAt DateTime      @default(now())
