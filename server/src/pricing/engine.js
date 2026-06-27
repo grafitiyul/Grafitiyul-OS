@@ -268,6 +268,52 @@ export function splitVat(amountMinor, vatMode, vatRate) {
   return { netMinor, vatMinor, grossMinor: netMinor + vatMinor };
 }
 
+// ── Add-ons (card-level) ────────────────────────────────────────────────────
+// Add-ons are SEPARATE quote lines on top of the model base. Each carries its own
+// price + VAT (or inherits the card's), so the quote total is the SUM of per-line
+// VAT splits — these pure helpers reuse splitVat; core resolution is untouched.
+
+// Effective VAT for one add-on: null mode inherits the card's mode+rate; an
+// explicit mode uses its own rate (exempt forces 0).
+function effectiveAddonVat(entry, cardVat) {
+  if (entry.vatMode == null) {
+    return { vatMode: cardVat.vatMode, vatRate: cardVat.vatRate };
+  }
+  if (entry.vatMode === 'exempt') return { vatMode: 'exempt', vatRate: 0 };
+  return { vatMode: entry.vatMode, vatRate: entry.vatRate != null ? entry.vatRate : 18 };
+}
+
+// Does an add-on apply in this context?
+//   enabled=false  → never
+//   'weekdays'     → ctx.weekday (0=Sun..6=Sat) is in autoApplyWeekdays
+//   'manual'       → ctx.manualAddonIds includes this addonId
+export function addonApplies(entry, ctx = {}) {
+  if (entry.enabled === false) return false;
+  if (entry.autoApply === 'weekdays') {
+    return (
+      Array.isArray(entry.autoApplyWeekdays) &&
+      ctx.weekday != null &&
+      entry.autoApplyWeekdays.map(Number).includes(Number(ctx.weekday))
+    );
+  }
+  return Array.isArray(ctx.manualAddonIds) && ctx.manualAddonIds.includes(entry.addonId);
+}
+
+// Price one add-on line into net/vat/gross using its effective VAT.
+export function priceAddon(entry, cardVat) {
+  const ev = effectiveAddonVat(entry, cardVat);
+  const vat = splitVat(num(entry.priceMinor) || 0, ev.vatMode, ev.vatRate);
+  return {
+    addonId: entry.addonId,
+    priceMinor: Math.round(num(entry.priceMinor) || 0),
+    vatMode: ev.vatMode,
+    vatRate: ev.vatRate,
+    netMinor: vat.netMinor,
+    vatMinor: vat.vatMinor,
+    grossMinor: vat.grossMinor,
+  };
+}
+
 // Full calculation. `priceList` (with `rules`), `activityType`, `context`, and
 // `counts` are supplied by the caller. Returns a structured result or throws a
 // PricingError with a clear `code`.

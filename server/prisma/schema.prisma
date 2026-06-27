@@ -611,6 +611,18 @@ model OrganizationType {
   defaultPriceList   PriceList? @relation("OrgTypeDefaultPriceList", fields: [defaultPriceListId], references: [id], onDelete: SetNull)
   defaultPriceListId String?
 
+  // Payment defaults (additive). The terms/methods CATALOG is owned by Payment
+  // Configuration (PaymentTerm/PaymentMethod) — we only reference it, never copy
+  // it. `defaultPaymentMethod` is an OPTIONAL OVERRIDE: when null, the effective
+  // method is INHERITED from the chosen term's own default
+  // (PaymentTerm.defaultPaymentMethod). When set, it overrides that inherited
+  // value. NOT wired to Quotes/Deals yet.
+  defaultPaymentTerm     PaymentTerm?   @relation("OrgTypeDefaultPaymentTerm", fields: [defaultPaymentTermId], references: [id], onDelete: SetNull)
+  defaultPaymentTermId   String?
+  defaultPaymentMethod   PaymentMethod? @relation("OrgTypeDefaultPaymentMethod", fields: [defaultPaymentMethodId], references: [id], onDelete: SetNull)
+  defaultPaymentMethodId String?
+  paymentTermsNote       String?
+
   @@index([sortOrder])
 }
 
@@ -1009,6 +1021,8 @@ model PaymentTerm {
   createdAt              DateTime        @default(now())
   updatedAt              DateTime        @updatedAt
   methodsDefaultingHere  PaymentMethod[] @relation("MethodDefaultTerm")
+  // Org types that point here as their default payment term (back-relation only).
+  orgTypeDefaults        OrganizationType[] @relation("OrgTypeDefaultPaymentTerm")
 
   @@index([sortOrder])
 }
@@ -1024,6 +1038,8 @@ model PaymentMethod {
   createdAt            DateTime      @default(now())
   updatedAt            DateTime      @updatedAt
   termsDefaultingHere  PaymentTerm[] @relation("TermDefaultMethod")
+  // Org types that point here as their override payment method (back-relation).
+  orgTypeDefaults      OrganizationType[] @relation("OrgTypeDefaultPaymentMethod")
 
   @@index([sortOrder])
 }
@@ -1105,6 +1121,11 @@ model PriceRule {
   // ticket_types model — a price per TicketType (e.g. מבוגר/ילד). The set of
   // ticket categories is the editable TicketType catalog, NOT hard-coded.
   ticketPrices PriceRuleTicketPrice[]
+
+  // Card-level add-ons. The Addon catalog owns the label/active/order; the price,
+  // VAT mode and auto-apply rule live HERE (per card). Duplicated across a card's
+  // sibling rules like tiers/ticketPrices; replace-synced on save.
+  addons PriceRuleAddon[]
 
   // VAT override — null inherits the PriceList defaults.
   vatMode String? // included | excluded
@@ -1226,8 +1247,37 @@ model Addon {
   updatedAt        DateTime @updatedAt
 
   priceRules AddonPriceRule[]
+  cardEntries PriceRuleAddon[]
 
   @@index([sortOrder])
+}
+
+// Per-card add-on configuration (one row per card×addon, duplicated across the
+// card's sibling rules). The Addon catalog is the label/active/order source of
+// truth; price + VAT + auto-apply are owned HERE, per card.
+//   vatMode null  → inherit the card's VAT; else included | excluded | exempt
+//   autoApply     → 'manual' (toggled in Deal/Quote) | 'weekdays'
+//   autoApplyWeekdays → 0=Sun … 6=Sat (matches JS getDay); e.g. [6] = Saturday.
+//                       No weekday is hard-coded — this is owner-entered data.
+model PriceRuleAddon {
+  id          String    @id @default(cuid())
+  priceRule   PriceRule @relation(fields: [priceRuleId], references: [id], onDelete: Cascade)
+  priceRuleId String
+  addon       Addon     @relation(fields: [addonId], references: [id], onDelete: Cascade)
+  addonId     String
+  enabled     Boolean   @default(true)
+  priceMinor  BigInt    @default(0)
+  vatMode     String?   // null = inherit card; included | excluded | exempt
+  vatRate     Int?
+  autoApply   String    @default("manual") // manual | weekdays
+  autoApplyWeekdays Int[] @default([])
+  sortOrder   Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([priceRuleId, addonId])
+  @@index([priceRuleId])
+  @@index([addonId])
 }
 
 // Per-price-list override of an Addon's price / VAT. priceListId NULL = a global

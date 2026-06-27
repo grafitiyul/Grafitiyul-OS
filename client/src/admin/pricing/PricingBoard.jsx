@@ -40,6 +40,24 @@ const VAT_OPTS = [
 ];
 const DEFAULT_VAT_RATE = 18;
 
+// Add-on controls. VAT adds an "inherit from card" choice ('' → null on save).
+const ADDON_VAT_OPTS = [{ value: '', name: 'כמו הכרטיס' }, ...VAT_OPTS];
+const AUTO_APPLY_OPTS = [
+  { value: 'manual', name: 'ידני' },
+  { value: 'weekdays', name: 'לפי ימים בשבוע' },
+];
+// 0=Sun … 6=Sat (matches JS getDay and the server).
+const WEEKDAYS = [
+  { value: 0, name: 'א׳' }, { value: 1, name: 'ב׳' }, { value: 2, name: 'ג׳' },
+  { value: 3, name: 'ד׳' }, { value: 4, name: 'ה׳' }, { value: 5, name: 'ו׳' }, { value: 6, name: 'שבת' },
+];
+const weekdayName = (n) => WEEKDAYS.find((w) => w.value === Number(n))?.name || n;
+function addonNameMap(addons) {
+  const m = {};
+  (addons || []).forEach((a) => { m[a.id] = a.nameHe; });
+  return m;
+}
+
 function newCardGroupId() {
   const rnd =
     (globalThis.crypto && globalThis.crypto.randomUUID && globalThis.crypto.randomUUID()) ||
@@ -87,6 +105,7 @@ export default function PricingBoard() {
   const [segments, setSegments] = useState([]);
   const [products, setProducts] = useState([]);
   const [ticketTypes, setTicketTypes] = useState([]);
+  const [addons, setAddons] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -107,15 +126,17 @@ export default function PricingBoard() {
   const refreshAll = useCallback(async () => {
     setError(null);
     try {
-      const [seg, p, tt] = await Promise.all([
+      const [seg, p, tt, ad] = await Promise.all([
         api.pricingSegments.list(),
         api.products.list(),
         api.ticketTypes.list(),
+        api.addons.list(),
         loadLists(),
       ]);
       setSegments(seg);
       setProducts(p);
       setTicketTypes(tt);
+      setAddons(ad);
       setSegmentId((cur) => cur || seg[0]?.id || null);
     } catch (e) {
       setError(e.message);
@@ -163,6 +184,7 @@ export default function PricingBoard() {
                   segment={segment}
                   products={products}
                   ticketTypes={ticketTypes}
+                  addons={addons}
                 />
               )}
             </>
@@ -247,7 +269,7 @@ function TabBar({ segments, segmentId, onSelect }) {
 
 // ───────────────────────────── Segment panel ───────────────────────────────
 
-function SegmentPanel({ version, segment, products, ticketTypes }) {
+function SegmentPanel({ version, segment, products, ticketTypes, addons }) {
   const [rules, setRules] = useState([]);
   const [loading, setLoading] = useState(true);
   const [productCache, setProductCache] = useState({});
@@ -319,12 +341,12 @@ function SegmentPanel({ version, segment, products, ticketTypes }) {
           {cards.map((card, index) =>
             editingCardId === card.cardGroupId ? (
               <CardEditor key={card.cardGroupId} version={version} segment={segment}
-                products={products} ticketTypes={ticketTypes} productCache={productCache} setProductCache={setProductCache}
+                products={products} ticketTypes={ticketTypes} addons={addons} productCache={productCache} setProductCache={setProductCache}
                 card={card} onClose={() => setEditingCardId(null)}
                 onSaved={() => { setEditingCardId(null); refresh(); }} />
             ) : (
               <CardView key={card.cardGroupId} version={version} card={card}
-                productCache={productCache} ticketTypes={ticketTypes}
+                productCache={productCache} ticketTypes={ticketTypes} addons={addons}
                 isFirst={index === 0} isLast={index === cards.length - 1}
                 onMoveUp={() => moveCard(index, -1)} onMoveDown={() => moveCard(index, 1)}
                 onEdit={() => setEditingCardId(card.cardGroupId)}
@@ -334,7 +356,7 @@ function SegmentPanel({ version, segment, products, ticketTypes }) {
 
           {adding ? (
             <CardEditor version={version} segment={segment}
-              products={products} ticketTypes={ticketTypes} productCache={productCache} setProductCache={setProductCache}
+              products={products} ticketTypes={ticketTypes} addons={addons} productCache={productCache} setProductCache={setProductCache}
               nextSortOrder={nextSortOrder}
               onClose={() => setAdding(false)}
               onSaved={() => { setAdding(false); refresh(); }} />
@@ -379,6 +401,15 @@ function groupCards(rules) {
         ticketTypeId: p.ticketTypeId,
         priceMinor: Number(p.priceMinor),
       })),
+      addons: (rep.addons || []).map((a) => ({
+        addonId: a.addonId,
+        enabled: a.enabled !== false,
+        priceMinor: Number(a.priceMinor),
+        vatMode: a.vatMode || '', // '' = inherit card
+        vatRate: a.vatRate ?? null,
+        autoApply: a.autoApply || 'manual',
+        autoApplyWeekdays: Array.isArray(a.autoApplyWeekdays) ? a.autoApplyWeekdays.map(Number) : [],
+      })),
       variantIds: siblings.map((s) => s.productVariantId).filter(Boolean),
       rules: siblings.map((s) => ({ id: s.id, productVariantId: s.productVariantId })),
     });
@@ -395,7 +426,7 @@ function groupCards(rules) {
 
 // ──────────────────────────────── Card view ────────────────────────────────
 
-function CardView({ version, card, productCache, ticketTypes, isFirst, isLast, onMoveUp, onMoveDown, onEdit, onChanged }) {
+function CardView({ version, card, productCache, ticketTypes, addons, isFirst, isLast, onMoveUp, onMoveDown, onEdit, onChanged }) {
   const product = productCache[card.productId];
   const productName = product?.nameHe || '—';
   const variantNames = card.variantIds.map((vid) => {
@@ -426,6 +457,7 @@ function CardView({ version, card, productCache, ticketTypes, isFirst, isLast, o
           fixedPriceMinor: card.fixedPriceMinor,
           tiers: card.tiers,
           ticketPrices: card.ticketPrices,
+          addons: card.addons,
           vatMode: card.vatMode,
           vatRate: card.vatRate,
           active: true,
@@ -470,7 +502,29 @@ function CardView({ version, card, productCache, ticketTypes, isFirst, isLast, o
       </div>
 
       <CardNumbers card={card} ticketTypes={ticketTypes} />
-      <CardPreview version={version} card={card} ticketTypes={ticketTypes} />
+      <CardAddonsSummary card={card} addons={addons} />
+      <CardPreview version={version} card={card} ticketTypes={ticketTypes} addons={addons} />
+    </div>
+  );
+}
+
+// Compact read-only summary of the card's add-ons.
+function CardAddonsSummary({ card, addons }) {
+  if (!card.addons?.length) return null;
+  const names = addonNameMap(addons);
+  return (
+    <div className="text-[12px] text-gray-600 flex flex-wrap gap-x-3 gap-y-0.5">
+      <span className="text-gray-400">תוספות:</span>
+      {card.addons.map((a) => {
+        const auto = a.autoApply === 'weekdays' && a.autoApplyWeekdays.length
+          ? ` (${a.autoApplyWeekdays.map(weekdayName).join('/')})`
+          : '';
+        return (
+          <span key={a.addonId} className={a.enabled === false ? 'line-through text-gray-300' : ''}>
+            {names[a.addonId] || 'תוספת'}: <b>{formatMinor(a.priceMinor)}</b>{auto}
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -519,7 +573,7 @@ function CardNumbers({ card, ticketTypes }) {
 
 // ─────────────────────── Per-card quote-style preview ──────────────────────
 
-function CardPreview({ version, card, ticketTypes }) {
+function CardPreview({ version, card, ticketTypes, addons }) {
   const isTicket = card.priceModel === 'ticket_types';
   const [count, setCount] = useState(10);
   const [groupCount, setGroupCount] = useState(1);
@@ -528,13 +582,24 @@ function CardPreview({ version, card, ticketTypes }) {
     (card.ticketPrices || []).forEach((p) => { m[p.ticketTypeId] = 1; });
     return m;
   });
+  const [weekday, setWeekday] = useState(''); // '' = unspecified
+  const [manualOn, setManualOn] = useState({}); // addonId -> bool
   const [res, setRes] = useState(null);
   const [busy, setBusy] = useState(false);
+
+  const cardAddons = card.addons || [];
+  const manualAddons = cardAddons.filter((a) => a.enabled !== false && a.autoApply === 'manual');
+  const manualAddonIds = manualAddons.filter((a) => manualOn[a.addonId]).map((a) => a.addonId);
 
   const run = useCallback(async () => {
     setBusy(true);
     try {
-      const base = { priceModel: card.priceModel, vatMode: card.vatMode, vatRate: card.vatRate };
+      const base = {
+        priceModel: card.priceModel, vatMode: card.vatMode, vatRate: card.vatRate,
+        addons: cardAddons,
+        weekday: weekday === '' ? null : Number(weekday),
+        manualAddonIds,
+      };
       const payload = isTicket
         ? { ...base, ticketPrices: card.ticketPrices, ticketQuantities: quantities }
         : {
@@ -552,12 +617,14 @@ function CardPreview({ version, card, ticketTypes }) {
       setRes(await api.pricing.preview(payload));
     } catch (e) { setRes({ ok: false, error: e.message }); }
     finally { setBusy(false); }
-  }, [card, isTicket, count, groupCount, quantities]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card, isTicket, count, groupCount, quantities, weekday, JSON.stringify(manualAddonIds)]);
 
   useEffect(() => { run(); }, [run]);
 
   const cur = version.currency;
   const names = ticketNameMap(ticketTypes);
+  const hasWeekdayAddon = cardAddons.some((a) => a.enabled !== false && a.autoApply === 'weekdays');
   return (
     <div className="rounded-lg bg-gray-50 ring-1 ring-gray-100 p-3">
       <div className="flex flex-wrap items-center gap-3 mb-2">
@@ -588,9 +655,32 @@ function CardPreview({ version, card, ticketTypes }) {
         {busy && <span className="text-[11px] text-gray-400">מחשב…</span>}
       </div>
 
+      {(hasWeekdayAddon || manualAddons.length > 0) && (
+        <div className="flex flex-wrap items-center gap-3 mb-2 text-[12px] text-gray-600">
+          <span className="text-gray-400">תוספות:</span>
+          {hasWeekdayAddon && (
+            <label className="flex items-center gap-1">
+              יום בשבוע
+              <select value={weekday} onChange={(e) => setWeekday(e.target.value)}
+                className="h-8 rounded border border-gray-300 px-2 text-sm">
+                <option value="">—</option>
+                {WEEKDAYS.map((w) => <option key={w.value} value={w.value}>{w.name}</option>)}
+              </select>
+            </label>
+          )}
+          {manualAddons.map((a) => (
+            <label key={a.addonId} className="flex items-center gap-1">
+              <input type="checkbox" checked={!!manualOn[a.addonId]}
+                onChange={(e) => setManualOn((m) => ({ ...m, [a.addonId]: e.target.checked }))} />
+              {addonNameMap(addons)[a.addonId] || 'תוספת'}
+            </label>
+          ))}
+        </div>
+      )}
+
       {res && res.ok ? (
         <QuoteLines res={res} card={card} count={Number(count) || 0} groupCount={Number(groupCount) || 1}
-          currency={cur} ticketTypes={ticketTypes} />
+          currency={cur} ticketTypes={ticketTypes} addons={addons} />
       ) : res ? (
         <div className="text-[12px] text-red-600">{previewError(res.error)}</div>
       ) : null}
@@ -600,11 +690,15 @@ function CardPreview({ version, card, ticketTypes }) {
 
 // Render the preview as a quote: line items, VAT, total — adapting to VAT mode.
 // All amounts come from the engine response (no re-derivation of pricing).
-function QuoteLines({ res, card, count, groupCount, currency, ticketTypes }) {
+function QuoteLines({ res, card, count, groupCount, currency, ticketTypes, addons }) {
   const f = (m) => formatMinor(m, currency);
   const d = res.debug || {};
   const g = groupCount || 1;
   const lines = [];
+  const addonLines = res.addonLines || [];
+  const hasAddons = addonLines.length > 0;
+  const addonNames = addonNameMap(addons);
+  const addonVatHint = (m) => (m === 'exempt' ? 'פטור' : m === 'excluded' ? 'לפני מע״מ' : 'כולל מע״מ');
 
   if (card.priceModel === 'fixed') {
     lines.push({ label: g > 1 ? `מחיר קבוע × ${g}` : 'מחיר קבוע', value: res.baseAmountMinor });
@@ -644,8 +738,22 @@ function QuoteLines({ res, card, count, groupCount, currency, ticketTypes }) {
       ) : (
         <Row label={`כולל מע״מ ${res.vatRate}%`} value={f(res.vatMinor)} muted />
       )}
+
+      {hasAddons && (
+        <>
+          <div className="border-t border-gray-100 pt-1.5">
+            <Row label="סה״כ ביניים" value={f(res.grossMinor)} />
+          </div>
+          {addonLines.map((ln) => (
+            <Row key={ln.addonId}
+              label={`${addonNames[ln.addonId] || 'תוספת'} (${addonVatHint(ln.vatMode)})`}
+              value={f(ln.grossMinor)} />
+          ))}
+        </>
+      )}
+
       <div className="border-t border-gray-100 pt-1.5">
-        <Row label="סה״כ לתשלום" value={f(res.grossMinor)} strong />
+        <Row label="סה״כ לתשלום" value={f(hasAddons ? res.totalGrossMinor : res.grossMinor)} strong />
       </div>
     </div>
   );
@@ -669,7 +777,7 @@ function previewError(code) {
 
 // ────────────────────────────── Card editor ────────────────────────────────
 
-function CardEditor({ version, segment, products, ticketTypes, productCache, setProductCache, card, nextSortOrder = 0, onClose, onSaved }) {
+function CardEditor({ version, segment, products, ticketTypes, addons, productCache, setProductCache, card, nextSortOrder = 0, onClose, onSaved }) {
   const [productId, setProductId] = useState(card?.productId || '');
   const [variantIds, setVariantIds] = useState(card?.variantIds || []);
   const [priceModel, setPriceModel] = useState(card?.priceModel || 'tiered_group');
@@ -691,6 +799,34 @@ function CardEditor({ version, segment, products, ticketTypes, productCache, set
     return (ticketTypes || []).filter((t) => t.active || priced.has(t.id));
   }, [ticketTypes, card]);
   const setTicketPrice = (id, v) => setTicketPrices((m) => ({ ...m, [id]: v }));
+
+  // Add-ons configured on this card (model-independent). Catalog = `addons`.
+  const [addonEntries, setAddonEntries] = useState(() =>
+    (card?.addons || []).map((a) => ({ ...a, autoApplyWeekdays: [...(a.autoApplyWeekdays || [])] })),
+  );
+  const usedAddonIds = new Set(addonEntries.map((e) => e.addonId));
+  const availableAddons = (addons || []).filter((a) => a.active && !usedAddonIds.has(a.id));
+  function addAddon(addonId) {
+    const cat = (addons || []).find((a) => a.id === addonId);
+    setAddonEntries((cur) => [...cur, {
+      addonId,
+      enabled: true,
+      priceMinor: cat?.defaultPriceMinor != null ? Number(cat.defaultPriceMinor) : null,
+      vatMode: '', // inherit from card
+      vatRate: null,
+      autoApply: 'manual',
+      autoApplyWeekdays: [],
+    }]);
+  }
+  const removeAddon = (addonId) => setAddonEntries((cur) => cur.filter((e) => e.addonId !== addonId));
+  const setAddonField = (addonId, key, val) =>
+    setAddonEntries((cur) => cur.map((e) => (e.addonId === addonId ? { ...e, [key]: val } : e)));
+  const toggleAddonWeekday = (addonId, wd) =>
+    setAddonEntries((cur) => cur.map((e) => {
+      if (e.addonId !== addonId) return e;
+      const has = e.autoApplyWeekdays.includes(wd);
+      return { ...e, autoApplyWeekdays: has ? e.autoApplyWeekdays.filter((x) => x !== wd) : [...e.autoApplyWeekdays, wd] };
+    }));
   const [vatMode, setVatMode] = useState(card?.vatMode || version.defaultVatMode || 'included');
   const [vatRate, setVatRate] = useState(card?.vatRate ?? version.defaultVatRate ?? DEFAULT_VAT_RATE);
   const [busy, setBusy] = useState(false);
@@ -770,6 +906,15 @@ function CardEditor({ version, segment, products, ticketTypes, productCache, set
     if (v) { setErr(v); return; }
     setErr(null); setBusy(true);
     try {
+      const addonsPayload = addonEntries.map((e) => ({
+        addonId: e.addonId,
+        enabled: e.enabled !== false,
+        priceMinor: e.priceMinor,
+        vatMode: e.vatMode || null,
+        vatRate: e.vatMode && e.vatMode !== 'exempt' ? (e.vatRate != null ? Number(e.vatRate) : DEFAULT_VAT_RATE) : null,
+        autoApply: e.autoApply,
+        autoApplyWeekdays: e.autoApply === 'weekdays' ? e.autoApplyWeekdays : [],
+      }));
       const common = {
         priceListId: version.id,
         pricingSegmentId: segment.id,
@@ -780,6 +925,7 @@ function CardEditor({ version, segment, products, ticketTypes, productCache, set
         vatMode,
         vatRate: vatMode === 'exempt' ? 0 : (Number(vatRate) || 0),
         active: true,
+        addons: addonsPayload,
         ...modelPayload(),
       };
 
@@ -906,6 +1052,50 @@ function CardEditor({ version, segment, products, ticketTypes, productCache, set
               onChange={(e) => setVatRate(e.target.value === '' ? '' : Math.max(0, Number(e.target.value) || 0))}
               className={`${INPUT} text-left`} />
           </Field>
+        )}
+      </div>
+
+      {/* Add-ons — per card; label from catalog, price/VAT/auto-apply here */}
+      <div className="border-t border-blue-100 pt-3 space-y-2">
+        <span className={LABEL}>תוספות</span>
+        {addonEntries.length === 0 && availableAddons.length === 0 && (
+          <div className="text-[12px] text-gray-400">אין תוספות בקטלוג. הוסיפו אותן במסך "תוספות".</div>
+        )}
+        {addonEntries.map((e) => {
+          const cat = (addons || []).find((a) => a.id === e.addonId);
+          return (
+            <div key={e.addonId} className="rounded-lg bg-white ring-1 ring-gray-200 p-2.5 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[13px] font-medium text-gray-800 flex-1">{cat?.nameHe || 'תוספת'}</span>
+                <label className="flex items-center gap-1 text-[12px] text-gray-500">
+                  <input type="checkbox" checked={e.enabled !== false} onChange={(ev) => setAddonField(e.addonId, 'enabled', ev.target.checked)} /> פעיל
+                </label>
+                <button type="button" onClick={() => removeAddon(e.addonId)} className="text-red-500 hover:bg-red-50 rounded-md p-1.5" title="הסר">🗑</button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <Field label="מחיר"><Money minor={e.priceMinor} onChange={(v) => setAddonField(e.addonId, 'priceMinor', v)} /></Field>
+                <Field label="מע״מ"><Select value={e.vatMode} onChange={(v) => setAddonField(e.addonId, 'vatMode', v)} options={ADDON_VAT_OPTS} /></Field>
+                <Field label="חיוב אוטומטי"><Select value={e.autoApply} onChange={(v) => setAddonField(e.addonId, 'autoApply', v)} options={AUTO_APPLY_OPTS} /></Field>
+              </div>
+              {e.autoApply === 'weekdays' && (
+                <div className="flex flex-wrap gap-1">
+                  {WEEKDAYS.map((w) => (
+                    <button type="button" key={w.value} onClick={() => toggleAddonWeekday(e.addonId, w.value)}
+                      className={`h-8 px-2.5 rounded-lg text-[12px] ring-1 ${
+                        e.autoApplyWeekdays.includes(w.value) ? 'bg-blue-600 text-white ring-blue-600' : 'bg-white text-gray-700 ring-gray-200 hover:bg-gray-50'
+                      }`}>
+                      {w.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {availableAddons.length > 0 && (
+          <Select value="" onChange={(v) => { if (v) addAddon(v); }}
+            options={[{ value: '', name: '+ הוסף תוספת' }, ...availableAddons.map((a) => ({ value: a.id, name: a.nameHe }))]}
+            className="!w-60" />
         )}
       </div>
 

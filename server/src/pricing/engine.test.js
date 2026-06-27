@@ -6,7 +6,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculate, splitVat, selectRule, PricingError } from './engine.js';
+import { calculate, splitVat, selectRule, priceAddon, addonApplies, PricingError } from './engine.js';
 
 // A minimal price list wrapper. VAT default excluded@0 so base math is visible
 // 1:1 in net/gross unless a test overrides it.
@@ -206,6 +206,38 @@ test('rule VAT override beats price-list default', () => {
   assert.equal(r.grossMinor, 118000);
   assert.equal(r.netMinor, 100000);
   assert.equal(r.vatMode, 'included');
+});
+
+// ── add-ons (card-level) ────────────────────────────────────────────────────
+test('priceAddon inherits the card VAT when mode is null', () => {
+  const r = priceAddon({ addonId: 'a', priceMinor: 25000, vatMode: null }, { vatMode: 'included', vatRate: 18 });
+  assert.equal(r.grossMinor, 25000);
+  assert.equal(r.netMinor, 21186);
+  assert.equal(r.vatMode, 'included');
+});
+test('priceAddon overrides VAT (excluded) regardless of card', () => {
+  const r = priceAddon({ addonId: 'a', priceMinor: 25000, vatMode: 'excluded', vatRate: 18 }, { vatMode: 'included', vatRate: 18 });
+  assert.equal(r.netMinor, 25000);
+  assert.equal(r.vatMinor, 4500);
+  assert.equal(r.grossMinor, 29500);
+});
+test('priceAddon exempt forces 0 VAT', () => {
+  const r = priceAddon({ addonId: 'a', priceMinor: 25000, vatMode: 'exempt' }, { vatMode: 'included', vatRate: 18 });
+  assert.equal(r.vatMinor, 0);
+  assert.equal(r.grossMinor, 25000);
+});
+test('addonApplies: manual only when toggled', () => {
+  const e = { addonId: 'a', enabled: true, autoApply: 'manual' };
+  assert.equal(addonApplies(e, { manualAddonIds: ['a'] }), true);
+  assert.equal(addonApplies(e, { manualAddonIds: [] }), false);
+});
+test('addonApplies: weekdays match by getDay number', () => {
+  const e = { addonId: 'a', enabled: true, autoApply: 'weekdays', autoApplyWeekdays: [6] };
+  assert.equal(addonApplies(e, { weekday: 6 }), true);  // Saturday
+  assert.equal(addonApplies(e, { weekday: 3 }), false);
+});
+test('addonApplies: disabled never applies', () => {
+  assert.equal(addonApplies({ addonId: 'a', enabled: false, autoApply: 'manual' }, { manualAddonIds: ['a'] }), false);
 });
 
 // ── resolution guards ───────────────────────────────────────────────────────

@@ -98,6 +98,41 @@ function buildTicketRows(ticketPrices) {
   return [...byType.values()];
 }
 
+const ADDON_VAT_MODES = ['included', 'excluded', 'exempt'];
+
+// Card add-on rows. null = caller didn't send any. De-dupes by addonId; clamps
+// weekdays to 0..6; vatMode null = inherit the card's VAT.
+function buildAddonRows(addons) {
+  if (!Array.isArray(addons)) return null;
+  const seen = new Set();
+  const rows = [];
+  addons.forEach((a, i) => {
+    const addonId = a?.addonId ? String(a.addonId) : null;
+    if (!addonId || seen.has(addonId)) return;
+    seen.add(addonId);
+    const weekdays = Array.isArray(a?.autoApplyWeekdays)
+      ? [...new Set(a.autoApplyWeekdays.map((n) => Math.max(0, Math.min(6, Math.floor(Number(n)) || 0))))]
+      : [];
+    rows.push({
+      addonId,
+      enabled: a?.enabled !== false,
+      priceMinor: toBig(a?.priceMinor) ?? 0n,
+      vatMode: ADDON_VAT_MODES.includes(a?.vatMode) ? a.vatMode : null,
+      vatRate: toInt(a?.vatRate),
+      autoApply: a?.autoApply === 'weekdays' ? 'weekdays' : 'manual',
+      autoApplyWeekdays: weekdays,
+      sortOrder: toInt(a?.sortOrder) ?? i,
+    });
+  });
+  return rows;
+}
+
+const RULE_CHILDREN = {
+  tiers: { orderBy: { sortOrder: 'asc' } },
+  ticketPrices: true,
+  addons: { orderBy: { sortOrder: 'asc' } },
+};
+
 router.get(
   '/',
   handle(async (req, res) => {
@@ -107,7 +142,7 @@ router.get(
     const rules = await prisma.priceRule.findMany({
       where,
       orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
-      include: { tiers: { orderBy: { sortOrder: 'asc' } }, ticketPrices: true },
+      include: RULE_CHILDREN,
     });
     res.json(rules);
   }),
@@ -125,14 +160,16 @@ router.post(
     if (!list) return res.status(404).json({ error: 'price_list_not_found' });
     const tierRows = buildTierRows(req.body?.tiers);
     const ticketRows = buildTicketRows(req.body?.ticketPrices);
+    const addonRows = buildAddonRows(req.body?.addons);
     const rule = await prisma.priceRule.create({
       data: {
         priceListId,
         ...buildData(req.body || {}, { partial: false }),
         ...(tierRows ? { tiers: { create: tierRows } } : {}),
         ...(ticketRows ? { ticketPrices: { create: ticketRows } } : {}),
+        ...(addonRows ? { addons: { create: addonRows } } : {}),
       },
-      include: { tiers: { orderBy: { sortOrder: 'asc' } }, ticketPrices: true },
+      include: RULE_CHILDREN,
     });
     res.status(201).json(rule);
   }),
@@ -167,7 +204,8 @@ router.put(
     const id = req.params.id;
     const tierRows = buildTierRows(req.body?.tiers);
     const ticketRows = buildTicketRows(req.body?.ticketPrices);
-    // When `tiers`/`ticketPrices` are supplied, replace that set atomically.
+    const addonRows = buildAddonRows(req.body?.addons);
+    // When tiers/ticketPrices/addons are supplied, replace that set atomically.
     // Absent = leave the existing rows untouched (partial update).
     const rule = await prisma.$transaction(async (tx) => {
       const updated = await tx.priceRule.update({
@@ -188,11 +226,18 @@ router.put(
             data: ticketRows.map((t) => ({ ...t, priceRuleId: id })),
           });
       }
+      if (addonRows) {
+        await tx.priceRuleAddon.deleteMany({ where: { priceRuleId: id } });
+        if (addonRows.length)
+          await tx.priceRuleAddon.createMany({
+            data: addonRows.map((a) => ({ ...a, priceRuleId: id })),
+          });
+      }
       return updated;
     });
     const full = await prisma.priceRule.findUnique({
       where: { id: rule.id },
-      include: { tiers: { orderBy: { sortOrder: 'asc' } }, ticketPrices: true },
+      include: RULE_CHILDREN,
     });
     res.json(full);
   }),

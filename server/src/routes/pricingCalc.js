@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
-import { calculate, baseAmountMinor, splitVat, PricingError } from '../pricing/engine.js';
+import { calculate, baseAmountMinor, splitVat, priceAddon, addonApplies, PricingError } from '../pricing/engine.js';
 
 // Pricing calculator (Slice 2). Admin-only TEST endpoint for the pricing engine.
 // It does NOT touch Deals and writes nothing — it resolves a price list + rule
@@ -130,6 +130,20 @@ router.post(
     try {
       const { amountMinor, debug } = baseAmountMinor(rule, counts);
       const vat = splitVat(amountMinor, vatMode, vatRate);
+
+      // Add-ons are SEPARATE lines on top of the base. Each is included only if
+      // it applies (manual toggle or weekday match); each splits VAT on its own.
+      const cardVat = { vatMode, vatRate };
+      const ctx = {
+        weekday: b.weekday != null && b.weekday !== '' ? Number(b.weekday) : null,
+        manualAddonIds: Array.isArray(b.manualAddonIds) ? b.manualAddonIds : [],
+      };
+      const addonEntries = Array.isArray(b.addons) ? b.addons : [];
+      const addonLines = addonEntries
+        .filter((e) => addonApplies(e, ctx))
+        .map((e) => priceAddon(e, cardVat));
+      const sum = (key) => addonLines.reduce((s, l) => s + l[key], 0);
+
       return res.json({
         ok: true,
         priceModel: rule.priceModel,
@@ -139,6 +153,10 @@ router.post(
         netMinor: vat.netMinor,
         vatMinor: vat.vatMinor,
         grossMinor: vat.grossMinor,
+        addonLines,
+        totalNetMinor: vat.netMinor + sum('netMinor'),
+        totalVatMinor: vat.vatMinor + sum('vatMinor'),
+        totalGrossMinor: vat.grossMinor + sum('grossMinor'),
         debug,
       });
     } catch (e) {

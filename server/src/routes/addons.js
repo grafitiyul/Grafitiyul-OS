@@ -107,6 +107,14 @@ router.put(
 router.delete(
   '/:id',
   handle(async (req, res) => {
+    // Block hard delete when the add-on is configured on any pricing card —
+    // deleting would silently strip it from those cards. Deactivate instead.
+    const inUse = await prisma.priceRuleAddon.count({
+      where: { addonId: req.params.id },
+    });
+    if (inUse > 0) {
+      return res.status(409).json({ error: 'addon_in_use', usedBy: inUse });
+    }
     // AddonPriceRule rows cascade-delete via FK.
     await prisma.addon.delete({ where: { id: req.params.id } });
     res.status(204).end();
