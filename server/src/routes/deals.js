@@ -220,11 +220,9 @@ router.put(
         data.lostNotes = b.lostNotes ? String(b.lostNotes).trim() : null;
         data.lostReason = null;
       } else {
-        data.wonAt = null;
-        data.lostAt = null;
-        data.lostReasonId = null;
-        data.lostNotes = null;
-        data.lostReason = null;
+        // REOPEN (→ 'open') is ONLY a status change. We intentionally preserve
+        // the WON/LOST history (wonAt, lostAt, lostReasonId, lostNotes,
+        // lostReason) so reopening never destroys historical data.
       }
     } else if (
       existing.status === 'lost' &&

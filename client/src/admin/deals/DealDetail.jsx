@@ -286,22 +286,23 @@ export default function DealDetail() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {deal.status !== 'won' && (
-              <button onClick={() => setStatus('won')}
-                className={`rounded-lg px-4 py-2 text-sm font-semibold ${STATUS_THEME.won.solid}`}>
-                WON
-              </button>
-            )}
-            {deal.status !== 'lost' && (
-              <button onClick={() => setStatus('lost')}
-                className={`rounded-lg px-4 py-2 text-sm font-semibold ${STATUS_THEME.lost.solid}`}>
-                LOST
-              </button>
-            )}
-            {deal.status !== 'open' && (
+            {/* OPEN → offer WON / LOST. WON or LOST → a single white REOPEN.
+                All three route through the one setStatus() flow. */}
+            {deal.status === 'open' ? (
+              <>
+                <button onClick={() => setStatus('won')}
+                  className={`rounded-lg px-4 py-2 text-sm font-semibold ${STATUS_THEME.won.solid}`}>
+                  WON
+                </button>
+                <button onClick={() => setStatus('lost')}
+                  className={`rounded-lg px-4 py-2 text-sm font-semibold ${STATUS_THEME.lost.solid}`}>
+                  LOST
+                </button>
+              </>
+            ) : (
               <button onClick={() => setStatus('open')}
-                className={`rounded-lg px-4 py-2 text-sm font-semibold ${STATUS_THEME.open.solid}`}>
-                החזר ל-OPEN
+                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+                REOPEN
               </button>
             )}
             <button
