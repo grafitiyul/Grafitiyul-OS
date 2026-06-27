@@ -15,8 +15,12 @@ import { formatMinor, toMinor, minorToInput } from '../../lib/money.js';
 // scope is configured once in Advanced and copied onto the card's rules there; the
 // business editor never asks about it. The engine is untouched.
 
-const INPUT =
-  'h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
+// Width-free base so fixed-width fields can size themselves; INPUT keeps w-full
+// for the default full-width inputs. (Appending w-20 to a class that already has
+// w-full does NOT work — Tailwind emits .w-full last, so it wins.)
+const INPUT_BASE =
+  'h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
+const INPUT = `${INPUT_BASE} w-full`;
 const LABEL = 'block text-[12px] font-medium text-gray-600 mb-1';
 
 // Friendly model labels — priceModel enum names are never shown.
@@ -729,19 +733,24 @@ function CardEditor({ version, segment, products, productCache, setProductCache,
         <div className="space-y-2">
           <span className={LABEL}>מדרגות מחיר (מחיר כולל לקבוצה, לא לאדם)</span>
           {tiers.map((t, i) => (
-            <div key={i} className="flex items-center gap-2">
+            <div key={i} className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
               <span className="text-[13px] text-gray-500 shrink-0">עד</span>
               <input dir="ltr" inputMode="numeric" value={t.uptoParticipants ?? ''}
                 onChange={(e) => setTier(i, 'uptoParticipants', e.target.value === '' ? null : Math.max(0, Math.floor(Number(e.target.value) || 0)))}
-                placeholder="משתתפים" className={`${INPUT} w-28 text-left`} />
-              <span className="text-[13px] text-gray-500 shrink-0">משתתפים =</span>
-              <div className="flex-1"><Money minor={t.totalPriceMinor} onChange={(v) => setTier(i, 'totalPriceMinor', v)} placeholder="מחיר קבוצה" /></div>
-              <button type="button" onClick={() => removeTier(i)} className="text-red-500 hover:bg-red-50 rounded-md p-1.5 shrink-0" title="הסר מדרגה">✕</button>
+                placeholder="0" className={`${INPUT_BASE} w-20 text-center`} />
+              <span className="text-[13px] text-gray-500 shrink-0">משתתפים</span>
+              <span className="text-[13px] text-gray-400 shrink-0">=</span>
+              <div className="w-36"><Money minor={t.totalPriceMinor} onChange={(v) => setTier(i, 'totalPriceMinor', v)} placeholder="0" /></div>
+              <span className="text-[13px] text-gray-500 shrink-0">₪</span>
+              <button type="button" onClick={() => removeTier(i)} className="text-red-500 hover:bg-red-50 rounded-md p-1.5 shrink-0" title="הסר מדרגה">🗑</button>
             </div>
           ))}
           <button type="button" onClick={addTier} className="text-[13px] text-blue-600 hover:underline">+ הוסף מדרגה</button>
           <Field label="כל משתתף נוסף מעל המדרגה האחרונה">
-            <div className="max-w-[12rem]"><Money minor={perAdd} onChange={setPerAdd} /></div>
+            <div className="flex items-center gap-2">
+              <div className="w-36"><Money minor={perAdd} onChange={setPerAdd} placeholder="0" /></div>
+              <span className="text-[13px] text-gray-500 shrink-0">₪ לכל משתתף</span>
+            </div>
           </Field>
         </div>
       )}
