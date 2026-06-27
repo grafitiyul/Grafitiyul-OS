@@ -263,15 +263,20 @@ function HolidayCalendarCard() {
                     {TYPE_LABEL[h.type] || h.type} · {h.allDay ? 'כל היום' : `${minToTime(h.startMinute) || ''}${h.endMinute != null ? '–' + minToTime(h.endMinute) : ''}`}
                     {h.source === 'manual' && ' · ידני'}
                     {h.manuallyEdited && ' · נערך'}
+                    {h.reviewedBy === 'system' && ' · אוטומטי'}
                   </div>
                 </div>
                 {/* Fixed-width badge so different status labels don't reflow the row */}
                 <span className={`shrink-0 w-28 text-center whitespace-nowrap text-[11px] rounded-full px-2 py-0.5 ring-1 ${STATUS_STYLE[h.status] || ''}`}>{STATUS_LABEL[h.status] || h.status}</span>
-                {/* Fixed-width action cluster so a 3- vs 4-button row keeps one footprint */}
-                <div className="flex items-center justify-end gap-1 shrink-0 w-[124px]">
-                  {h.status !== 'approved' && <button onClick={() => review(h.id, 'approve')} title="אישור" className="text-emerald-600 hover:bg-emerald-50 rounded-md p-1.5">✓</button>}
-                  {h.status !== 'ignored' && <button onClick={() => review(h.id, 'ignore')} title="התעלם" className="text-gray-500 hover:bg-gray-100 rounded-md p-1.5">⊘</button>}
-                  {h.status === 'ignored' && <button onClick={() => review(h.id, 'pending')} title="החזר" className="text-blue-600 hover:bg-blue-50 rounded-md p-1.5">↺</button>}
+                {/* Fixed-width action cluster (always 5 buttons) so the row never reflows */}
+                <div className="flex items-center justify-end gap-1 shrink-0 w-[150px]">
+                  <button onClick={() => review(h.id, 'mark_chag')} title="סמן כיום חג"
+                    className={`rounded-md p-1.5 text-emerald-600 hover:bg-emerald-50 ${h.status === 'approved' && h.type === 'chag' ? 'bg-emerald-100' : ''}`}>✓</button>
+                  <button onClick={() => review(h.id, 'mark_erev')} title="סמן כערב חג"
+                    className={`rounded-md p-1.5 text-amber-600 hover:bg-amber-50 ${h.status === 'approved' && h.type === 'erev_chag' ? 'bg-amber-100' : ''}`}>🌙</button>
+                  {h.status !== 'ignored'
+                    ? <button onClick={() => review(h.id, 'ignore')} title="התעלם" className="text-gray-500 hover:bg-gray-100 rounded-md p-1.5">⊘</button>
+                    : <button onClick={() => review(h.id, 'pending')} title="החזר" className="text-blue-600 hover:bg-blue-50 rounded-md p-1.5">↺</button>}
                   <button onClick={() => setEditingId(h.id)} title="עריכה" className="text-amber-500 hover:bg-amber-50 rounded-md p-1.5">✎</button>
                   <button onClick={async () => { if (confirm('למחוק שורה זו?')) { await api.sabbathHours.removeHoliday(h.id); dropRow(h.id); } }} title="מחק" className="text-red-500 hover:bg-red-50 rounded-md p-1.5">🗑</button>
                 </div>

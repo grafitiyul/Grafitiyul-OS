@@ -1401,3 +1401,22 @@ model HolidayRule {
   @@index([date])
   @@index([status])
 }
+
+// Reviewed classification for a recurring holiday, applied to FUTURE imports.
+// When the owner marks a holiday as חג/ערב חג (or edits its type/times), we store
+// the decision keyed by the source's stable name (year-independent), so next
+// year's imported instance inherits the same type + times automatically. Pending
+// rows only; approved/manuallyEdited rows are never overwritten.
+model HolidayClassificationRule {
+  id                   String   @id @default(cuid())
+  source               String // matches HolidayRule.source ('imported')
+  normalizedHolidayKey String // stable, year-independent (Hebcal title)
+  defaultType          String // 'chag' | 'erev_chag' | 'other'
+  defaultStartMinute   Int?
+  defaultEndMinute     Int?
+  active               Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@unique([source, normalizedHolidayKey])
+}

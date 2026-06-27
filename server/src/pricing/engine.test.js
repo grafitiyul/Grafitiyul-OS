@@ -311,6 +311,22 @@ test('detector: only APPROVED holidays apply', () => {
 test('detector: nothing matches → does not apply', () => {
   assert.equal(sabbathHolidayWindow({ weekday: 2, minuteOfDay: 600, dateISO: '2026-07-07' }, { weekly: WEEKLY }).applies, false);
 });
+test('detector hierarchy: Saturday (שבת) beats an ערב חג on the same day', () => {
+  const weekly = [{ active: true, dayOfWeek: 6, allDay: true, nameHe: 'שבת' }];
+  const holidays = [{ active: true, status: 'approved', date: '2026-07-04', allDay: true, type: 'erev_chag', nameHe: 'ערב חג' }];
+  // 2026-07-04 is a Saturday (weekday 6)
+  const r = sabbathHolidayWindow({ weekday: 6, minuteOfDay: 1000, dateISO: '2026-07-04' }, { weekly, holidays });
+  assert.equal(r.type, 'shabbat');
+  assert.equal(r.matched.length, 2); // both matched; שבת won
+});
+test('detector hierarchy: חג beats ערב חג on the same day', () => {
+  const holidays = [
+    { active: true, status: 'approved', date: '2026-09-12', allDay: true, type: 'erev_chag', nameHe: 'ערב' },
+    { active: true, status: 'approved', date: '2026-09-12', allDay: true, type: 'chag', nameHe: 'חג' },
+  ];
+  const r = sabbathHolidayWindow({ weekday: 0, minuteOfDay: 600, dateISO: '2026-09-12' }, { holidays });
+  assert.equal(r.type, 'chag');
+});
 
 // ── resolution guards ───────────────────────────────────────────────────────
 test('no matching rule → no_price_rule', () => {

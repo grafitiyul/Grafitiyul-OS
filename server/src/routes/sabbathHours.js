@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { fetchHolidayRows } from '../services/hebcal.js';
+import { markPatch, planImport, ruleFromRow, normalizeHolidayKey } from '../services/holidayClassify.js';
 
 // שעות שבת וחג — the source of truth for when a date/time counts as שבת / חג /
 // ערב חג. Weekly recurring windows + dated holiday rows (imported via Hebcal or
@@ -83,6 +84,19 @@ router.delete(
   }),
 );
 
+// Carry an imported holiday's reviewed classification forward to future years.
+// Keyed by the stable source name; manual rows (no source name) get no rule.
+async function upsertClassification(row) {
+  if (row.source !== 'imported' || !row.sourceName) return;
+  const key = normalizeHolidayKey(row.sourceName);
+  if (!key) return;
+  await prisma.holidayClassificationRule.upsert({
+    where: { source_normalizedHolidayKey: { source: row.source, normalizedHolidayKey: key } },
+    update: ruleFromRow(row),
+    create: { source: row.source, normalizedHolidayKey: key, ...ruleFromRow(row) },
+  });
+}
+
 // ── Holiday rules ───────────────────────────────────────────────────────────
 
 router.get(
@@ -141,21 +155,36 @@ router.put(
       if (b.startMinute !== undefined) data.startMinute = clampMinute(b.startMinute);
       if (b.endMinute !== undefined) data.endMinute = clampMinute(b.endMinute);
     }
-    res.json(await prisma.holidayRule.update({ where: { id: req.params.id }, data }));
+    const updated = await prisma.holidayRule.update({ where: { id: req.params.id }, data });
+    // A manual edit of type/times is also a classification decision → carry it
+    // forward to future years (imported rows only).
+    if (b.type !== undefined || b.allDay !== undefined || b.startMinute !== undefined || b.endMinute !== undefined) {
+      await upsertClassification(updated);
+    }
+    res.json(updated);
   }),
 );
 
-// Review action: approve | ignore | pending.
+// Review action. The two "mark as …" actions both APPROVE and classify, and
+// store a classification rule so future years inherit the same decision:
+//   mark_chag → חג (all-day)        mark_erev → ערב חג (15:00 → end of day)
+// Plus ignore / pending. (Legacy 'approve' = approve without changing type.)
 router.post(
   '/holidays/:id/review',
   handle(async (req, res) => {
     const action = String(req.body?.action || '');
+    const reviewer = { reviewedAt: new Date(), reviewedBy: req.adminAuth?.userId || null };
+    const mark = markPatch(action);
     let data;
-    if (action === 'approve') data = { status: 'approved', active: true, reviewedAt: new Date(), reviewedBy: req.adminAuth?.userId || null };
-    else if (action === 'ignore') data = { status: 'ignored', active: false, reviewedAt: new Date(), reviewedBy: req.adminAuth?.userId || null };
+    if (mark) data = { ...mark, ...reviewer };
+    else if (action === 'approve') data = { status: 'approved', active: true, ...reviewer };
+    else if (action === 'ignore') data = { status: 'ignored', active: false, ...reviewer };
     else if (action === 'pending') data = { status: 'pending', active: true };
     else return res.status(400).json({ error: 'bad_action' });
-    res.json(await prisma.holidayRule.update({ where: { id: req.params.id }, data }));
+
+    const updated = await prisma.holidayRule.update({ where: { id: req.params.id }, data });
+    if (mark) await upsertClassification(updated); // future years inherit חג/ערב חג
+    res.json(updated);
   }),
 );
 
@@ -168,9 +197,11 @@ router.delete(
 );
 
 // Import upcoming holidays from Hebcal (manual trigger). Upserts by externalId.
-// NEVER overwrites an approved or manually-edited row — only refreshes the
-// source mirror on those. Refreshes safe fields on still-pending/unedited rows.
-// Adds new future holidays. Never deletes.
+// NEVER overwrites an approved or manually-edited row — only refreshes the source
+// mirror on those. New / still-pending rows refresh from source AND inherit a
+// stored classification rule (same holiday in future years auto-gets its reviewed
+// type/times and is auto-approved). Idempotent; never deletes. The decision logic
+// is the pure planImport() (unit-tested).
 router.post(
   '/holidays/import',
   handle(async (req, res) => {
@@ -189,40 +220,43 @@ router.post(
       return res.status(502).json({ error: e.code || 'import_failed' });
     }
 
-    let created = 0, refreshed = 0, locked = 0;
+    const ruleRows = await prisma.holidayClassificationRule.findMany({
+      where: { source: 'imported', active: true },
+    });
+    const ruleByKey = new Map(ruleRows.map((r) => [r.normalizedHolidayKey, r]));
+
+    // DB-bound dates; planImport works in ISO strings.
+    const toDbData = (d) => {
+      const out = { ...d };
+      if (out.date) out.date = toDate(out.date);
+      if (out.sourceDate) out.sourceDate = toDate(out.sourceDate);
+      if (out.reviewedBy === 'system' && out.status === 'approved') out.reviewedAt = new Date();
+      return out;
+    };
+
+    let created = 0, refreshed = 0, locked = 0, autoClassified = 0;
     for (const r of rows) {
-      const mirror = { sourceName: r.sourceName, sourceDate: toDate(r.date) };
       const existing = await prisma.holidayRule.findUnique({
         where: { source_externalId: { source: 'imported', externalId: r.externalId } },
       });
-      if (!existing) {
-        await prisma.holidayRule.create({
-          data: {
-            nameHe: r.nameHe, nameEn: r.nameEn, date: toDate(r.date), type: r.type,
-            allDay: r.allDay, startMinute: r.startMinute, endMinute: r.endMinute,
-            source: 'imported', status: 'pending', active: true,
-            externalId: r.externalId, ...mirror,
-          },
-        });
+      const rule = ruleByKey.get(normalizeHolidayKey(r.sourceName)) || null;
+      const plan = planImport({ existing, fetched: r, rule });
+      const data = toDbData(plan.data);
+
+      if (plan.op === 'create') {
+        await prisma.holidayRule.create({ data });
         created++;
-      } else if (existing.status === 'approved' || existing.manuallyEdited) {
-        // Locked: refresh only the source mirror (lets the UI flag drift), never
-        // the owner-facing fields/status.
-        await prisma.holidayRule.update({ where: { id: existing.id }, data: mirror });
+        if (data.status === 'approved') autoClassified++;
+      } else if (plan.op === 'mirror') {
+        await prisma.holidayRule.update({ where: { id: existing.id }, data });
         locked++;
       } else {
-        // Still pending & unedited → safe to refresh from source.
-        await prisma.holidayRule.update({
-          where: { id: existing.id },
-          data: {
-            nameHe: r.nameHe, nameEn: r.nameEn, date: toDate(r.date), type: r.type,
-            allDay: r.allDay, startMinute: r.startMinute, endMinute: r.endMinute, ...mirror,
-          },
-        });
+        await prisma.holidayRule.update({ where: { id: existing.id }, data });
         refreshed++;
+        if (data.status === 'approved') autoClassified++;
       }
     }
-    res.json({ ok: true, range: { startISO, endISO }, fetched: rows.length, created, refreshed, locked });
+    res.json({ ok: true, range: { startISO, endISO }, fetched: rows.length, created, refreshed, locked, autoClassified });
   }),
 );
 

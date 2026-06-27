@@ -359,23 +359,33 @@ function inWindow(minute, startMinute, endMinute) {
   return minute >= s && minute <= e;
 }
 
+// Classification strength: שבת (weekly) is strongest, then חג, then ערב חג, then
+// other. When several windows cover the same moment (e.g. ערב חג that falls on a
+// Saturday), the STRONGEST wins — so a Saturday is treated as שבת, not ערב חג.
+const SABBATH_TYPE_RANK = { shabbat: 4, chag: 3, erev_chag: 2, other: 1 };
+
 export function sabbathHolidayWindow(ctx, rules = {}) {
   const minute = Number(ctx.minuteOfDay) || 0;
+  const matched = [];
   for (const r of rules.weekly || []) {
     if (r.active === false) continue;
     if (Number(r.dayOfWeek) !== Number(ctx.weekday)) continue;
     if (r.allDay || inWindow(minute, r.startMinute, r.endMinute)) {
-      return { applies: true, type: 'shabbat', label: r.nameHe };
+      matched.push({ type: 'shabbat', label: r.nameHe, source: 'weekly' });
     }
   }
   for (const h of rules.holidays || []) {
     if (h.active === false || h.status !== 'approved') continue;
     if (String(h.date).slice(0, 10) !== ctx.dateISO) continue;
     if (h.allDay || inWindow(minute, h.startMinute, h.endMinute)) {
-      return { applies: true, type: h.type, label: h.nameHe };
+      matched.push({ type: h.type, label: h.nameHe, source: 'holiday' });
     }
   }
-  return { applies: false };
+  if (matched.length === 0) return { applies: false, matched: [] };
+  // Strongest classification wins; `matched` is returned for debug/explanation.
+  matched.sort((a, b) => (SABBATH_TYPE_RANK[b.type] || 0) - (SABBATH_TYPE_RANK[a.type] || 0));
+  const top = matched[0];
+  return { applies: true, type: top.type, label: top.label, matched };
 }
 
 // Full calculation. `priceList` (with `rules`), `activityType`, `context`, and
