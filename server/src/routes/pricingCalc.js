@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
-import { calculate, baseAmountMinor, splitVat, priceAddon, addonApplies, sabbathHolidayWindow, PricingError } from '../pricing/engine.js';
+import { calculate, baseAmountMinor, splitVat, priceAddon, addonApplies, sabbathHolidayWindow, resolveSystemAddonEntry, PricingError } from '../pricing/engine.js';
 
 // Pricing calculator (Slice 2). Admin-only TEST endpoint for the pricing engine.
 // It does NOT touch Deals and writes nothing — it resolves a price list + rule
@@ -139,7 +139,23 @@ router.post(
       // weekday from the date; minute-of-day from the time; the שבת/חג decision
       // comes from the ONE detector (sabbathHolidayWindow) fed by the global rules
       // — never re-implemented here.
-      const addonEntries = Array.isArray(b.addons) ? b.addons : [];
+      const addonEntries = Array.isArray(b.addons) ? b.addons.slice() : [];
+
+      // The שבת/חג surcharge is a SYSTEM add-on inherited by EVERY card. Resolve
+      // its effective entry from the catalog default ⊕ this card's optional
+      // override (sent as an entry with the system addonId). The resolver is the
+      // single source of inherit↔override + the global kill-switch. Replacing any
+      // raw override with the resolved entry means a non-overridden card (no row)
+      // still gets the current catalog default.
+      const systemAddon = await prisma.addon.findFirst({ where: { systemKey: 'sabbath_holiday' } });
+      if (systemAddon) {
+        const idx = addonEntries.findIndex((e) => e.addonId === systemAddon.id);
+        const override = idx >= 0 ? addonEntries[idx] : null;
+        if (idx >= 0) addonEntries.splice(idx, 1);
+        const resolved = resolveSystemAddonEntry(systemAddon, override);
+        if (resolved) addonEntries.push(resolved);
+      }
+
       const dateISO = b.date ? String(b.date).slice(0, 10) : null;
       let weekday = b.weekday != null && b.weekday !== '' ? Number(b.weekday) : null;
       let minuteOfDay = null;

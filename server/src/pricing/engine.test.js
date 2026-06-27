@@ -6,7 +6,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculate, splitVat, selectRule, priceAddon, addonApplies, sabbathHolidayWindow, PricingError } from './engine.js';
+import { calculate, splitVat, selectRule, priceAddon, addonApplies, sabbathHolidayWindow, resolveSystemAddonEntry, PricingError } from './engine.js';
 
 // A minimal price list wrapper. VAT default excluded@0 so base math is visible
 // 1:1 in net/gross unless a test overrides it.
@@ -257,6 +257,33 @@ test('sabbath_holiday addon does NOT apply outside the window', () => {
   const win = sabbathHolidayWindow({ weekday: 5, minuteOfDay: 600, dateISO: '2026-07-03' }, { weekly });
   const e = { addonId: 'a', enabled: true, autoApply: 'sabbath_holiday' };
   assert.equal(addonApplies(e, { isSabbathHoliday: win.applies }), false);
+});
+
+// ── system add-on (שבת/חג) inherit ↔ override resolver ───────────────────────
+const SYS = { id: 'sys', active: true, defaultPriceMinor: 25000, vatMode: 'included', vatRate: 18 };
+test('resolveSystemAddonEntry: no override → catalog default', () => {
+  const e = resolveSystemAddonEntry(SYS, null);
+  assert.equal(e.priceMinor, 25000);
+  assert.equal(e.vatMode, 'included');
+  assert.equal(e.autoApply, 'sabbath_holiday');
+});
+test('resolveSystemAddonEntry: catalog price change reaches non-overridden cards', () => {
+  const e = resolveSystemAddonEntry({ ...SYS, defaultPriceMinor: 40000 }, { priceMinor: null, vatMode: null });
+  assert.equal(e.priceMinor, 40000); // inherited, follows the catalog
+});
+test('resolveSystemAddonEntry: per-field override (price overridden, VAT inherited)', () => {
+  const e = resolveSystemAddonEntry(SYS, { priceMinor: 50000, vatMode: null });
+  assert.equal(e.priceMinor, 50000);
+  assert.equal(e.vatMode, 'included'); // still inherited
+});
+test('resolveSystemAddonEntry: card-disabled → null', () => {
+  assert.equal(resolveSystemAddonEntry(SYS, { enabled: false }), null);
+});
+test('resolveSystemAddonEntry: global inactive kill-switch → null even if card overrides', () => {
+  assert.equal(resolveSystemAddonEntry({ ...SYS, active: false }, { enabled: true, priceMinor: 99000 }), null);
+});
+test('resolveSystemAddonEntry: zero effective price → no line', () => {
+  assert.equal(resolveSystemAddonEntry({ ...SYS, defaultPriceMinor: 0 }, null), null);
 });
 
 // ── שעות שבת וחג detector ────────────────────────────────────────────────────

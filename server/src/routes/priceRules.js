@@ -123,7 +123,8 @@ function buildAddonRows(addons) {
     rows.push({
       addonId,
       enabled: a?.enabled !== false,
-      priceMinor: toBig(a?.priceMinor) ?? 0n,
+      // null = inherit (system add-on inherits the catalog default price).
+      priceMinor: toBig(a?.priceMinor),
       vatMode: ADDON_VAT_MODES.includes(a?.vatMode) ? a.vatMode : null,
       vatRate: toInt(a?.vatRate),
       autoApply: ADDON_AUTO_APPLY.includes(a?.autoApply) ? a.autoApply : 'manual',

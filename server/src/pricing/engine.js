@@ -304,6 +304,33 @@ export function addonApplies(entry, ctx = {}) {
   return Array.isArray(ctx.manualAddonIds) && ctx.manualAddonIds.includes(entry.addonId);
 }
 
+// Resolve the effective entry for a SYSTEM add-on (e.g. שבת/חג) on one card from
+// the catalog default ⊕ an optional per-card override. The single source of truth
+// for inherit↔override — reused by the preview route now and Deals/Quotes later.
+//   - Addon.active is a GLOBAL kill-switch (inactive → no surcharge anywhere).
+//   - override null fields inherit the catalog default; concrete fields override.
+//   - override.enabled=false disables for that card (cannot force-enable globally).
+//   - autoApply is always 'sabbath_holiday' (timing comes from שעות שבת וחג).
+// Returns a concrete add-on entry, or null when it should not apply at all
+// (globally inactive, card-disabled, or effective price ≤ 0).
+export function resolveSystemAddonEntry(systemAddon, override) {
+  if (!systemAddon || systemAddon.active === false) return null;
+  if (override && override.enabled === false) return null;
+  const priceMinor =
+    override && override.priceMinor != null
+      ? Number(override.priceMinor)
+      : Number(systemAddon.defaultPriceMinor) || 0;
+  if (!(priceMinor > 0)) return null;
+  return {
+    addonId: systemAddon.id,
+    enabled: true,
+    priceMinor,
+    vatMode: override && override.vatMode ? override.vatMode : systemAddon.vatMode,
+    vatRate: override && override.vatRate != null ? override.vatRate : systemAddon.vatRate,
+    autoApply: 'sabbath_holiday',
+  };
+}
+
 // Price one add-on line into net/vat/gross using its effective VAT.
 export function priceAddon(entry, cardVat) {
   const ev = effectiveAddonVat(entry, cardVat);

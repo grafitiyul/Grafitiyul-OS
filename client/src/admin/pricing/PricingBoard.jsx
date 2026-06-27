@@ -405,7 +405,7 @@ function groupCards(rules) {
       addons: (rep.addons || []).map((a) => ({
         addonId: a.addonId,
         enabled: a.enabled !== false,
-        priceMinor: Number(a.priceMinor),
+        priceMinor: a.priceMinor == null ? null : Number(a.priceMinor), // null = inherit
         vatMode: a.vatMode || '', // '' = inherit card
         vatRate: a.vatRate ?? null,
         autoApply: a.autoApply || 'manual',
@@ -509,14 +509,34 @@ function CardView({ version, card, productCache, ticketTypes, addons, isFirst, i
   );
 }
 
-// Compact read-only summary of the card's add-ons.
+// Compact read-only summary of the card's add-ons. The שבת/חג system surcharge is
+// shown separately (inherited unless overridden); ordinary add-ons follow.
 function CardAddonsSummary({ card, addons }) {
-  if (!card.addons?.length) return null;
   const names = addonNameMap(addons);
+  const systemAddon = (addons || []).find((a) => a.systemKey === 'sabbath_holiday');
+  const sysOverride = systemAddon ? (card.addons || []).find((a) => a.addonId === systemAddon.id) : null;
+  const regular = (card.addons || []).filter((a) => !systemAddon || a.addonId !== systemAddon.id);
+  if (!regular.length && !systemAddon) return null;
+
+  let sysText = null;
+  if (systemAddon) {
+    if (sysOverride && sysOverride.enabled === false) sysText = 'כבוי בכרטיס זה';
+    else {
+      const overridden = !!sysOverride && (sysOverride.priceMinor != null || sysOverride.vatMode);
+      const price = sysOverride && sysOverride.priceMinor != null ? sysOverride.priceMinor : systemAddon.defaultPriceMinor;
+      sysText = `${formatMinor(price)} · ${overridden ? 'מותאם' : 'יורש'}`;
+    }
+  }
+
   return (
     <div className="text-[12px] text-gray-600 flex flex-wrap gap-x-3 gap-y-0.5">
       <span className="text-gray-400">תוספות:</span>
-      {card.addons.map((a) => {
+      {systemAddon && (
+        <span className={sysOverride?.enabled === false ? 'text-gray-400' : ''}>
+          🕯️ שבת/חג: <b>{sysText}</b>
+        </span>
+      )}
+      {regular.map((a) => {
         const auto = a.autoApply === 'sabbath_holiday'
           ? ' (שבת/חג)'
           : a.autoApply === 'weekdays' && a.autoApplyWeekdays.length
@@ -629,8 +649,12 @@ function CardPreview({ version, card, ticketTypes, addons }) {
   const cur = version.currency;
   const names = ticketNameMap(ticketTypes);
   const hasWeekdayAddon = cardAddons.some((a) => a.enabled !== false && a.autoApply === 'weekdays');
-  const hasSabbathAddon = cardAddons.some((a) => a.enabled !== false && a.autoApply === 'sabbath_holiday');
-  const needsDate = hasWeekdayAddon || hasSabbathAddon;
+  // The שבת/חג surcharge applies to every card (the route injects it from the
+  // catalog), so show the date/time + window note whenever it's globally active —
+  // even on cards with no per-card override row.
+  const hasSystemSurcharge = (addons || []).some((a) => a.systemKey === 'sabbath_holiday' && a.active);
+  const showWindow = cardAddons.some((a) => a.enabled !== false && a.autoApply === 'sabbath_holiday') || hasSystemSurcharge;
+  const needsDate = hasWeekdayAddon || showWindow;
   return (
     <div className="rounded-lg bg-gray-50 ring-1 ring-gray-100 p-3">
       <div className="flex flex-wrap items-center gap-3 mb-2">
@@ -671,7 +695,7 @@ function CardPreview({ version, card, ticketTypes, addons }) {
                 className="h-8 rounded border border-gray-300 px-2 text-sm" />
             </label>
           )}
-          {hasSabbathAddon && (
+          {showWindow && (
             <label className="flex items-center gap-1">
               שעה
               <input dir="ltr" type="time" value={time} onChange={(e) => setTime(e.target.value)}
@@ -688,7 +712,7 @@ function CardPreview({ version, card, ticketTypes, addons }) {
         </div>
       )}
 
-      {hasSabbathAddon && res?.ok && (
+      {showWindow && res?.ok && (
         <div className={`mb-2 text-[12px] rounded-md px-2.5 py-1.5 ${
           res.sabbathHoliday?.applies ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-50 text-gray-500'
         }`}>
@@ -820,12 +844,27 @@ function CardEditor({ version, segment, products, ticketTypes, addons, productCa
   }, [ticketTypes, card]);
   const setTicketPrice = (id, v) => setTicketPrices((m) => ({ ...m, [id]: v }));
 
+  // The שבת/חג system surcharge is handled by its own dedicated row, NOT the
+  // generic add-ons list. Split it out and exclude it everywhere below.
+  const systemAddon = (addons || []).find((a) => a.systemKey === 'sabbath_holiday') || null;
+  const sysRow = systemAddon ? (card?.addons || []).find((a) => a.addonId === systemAddon.id) : null;
+  const [sabbath, setSabbath] = useState(() => ({
+    enabled: sysRow ? sysRow.enabled !== false : true,
+    priceMinor: sysRow ? (sysRow.priceMinor ?? null) : null, // null = inherit catalog
+    vatMode: sysRow ? (sysRow.vatMode || '') : '',           // '' = inherit catalog
+    vatRate: sysRow ? (sysRow.vatRate ?? null) : null,
+  }));
+  const sabbathOverridden = sabbath.enabled === false || sabbath.priceMinor != null || sabbath.vatMode !== '';
+  const resetSabbath = () => setSabbath({ enabled: true, priceMinor: null, vatMode: '', vatRate: null });
+
   // Add-ons configured on this card (model-independent). Catalog = `addons`.
   const [addonEntries, setAddonEntries] = useState(() =>
-    (card?.addons || []).map((a) => ({ ...a, autoApplyWeekdays: [...(a.autoApplyWeekdays || [])] })),
+    (card?.addons || [])
+      .filter((a) => !systemAddon || a.addonId !== systemAddon.id)
+      .map((a) => ({ ...a, autoApplyWeekdays: [...(a.autoApplyWeekdays || [])] })),
   );
   const usedAddonIds = new Set(addonEntries.map((e) => e.addonId));
-  const availableAddons = (addons || []).filter((a) => a.active && !usedAddonIds.has(a.id));
+  const availableAddons = (addons || []).filter((a) => a.active && !a.systemKey && !usedAddonIds.has(a.id));
   function addAddon(addonId) {
     const cat = (addons || []).find((a) => a.id === addonId);
     setAddonEntries((cur) => [...cur, {
@@ -935,6 +974,19 @@ function CardEditor({ version, segment, products, ticketTypes, addons, productCa
         autoApply: e.autoApply,
         autoApplyWeekdays: e.autoApply === 'weekdays' ? e.autoApplyWeekdays : [],
       }));
+      // Persist a שבת/חג override row ONLY when the card overrides the default;
+      // otherwise no row → the card inherits the catalog default at read time.
+      if (systemAddon && sabbathOverridden) {
+        addonsPayload.push({
+          addonId: systemAddon.id,
+          enabled: sabbath.enabled !== false,
+          priceMinor: sabbath.priceMinor, // null = inherit catalog price
+          vatMode: sabbath.vatMode || null, // null = inherit catalog VAT
+          vatRate: sabbath.vatMode && sabbath.vatMode !== 'exempt' ? (sabbath.vatRate != null ? Number(sabbath.vatRate) : DEFAULT_VAT_RATE) : null,
+          autoApply: 'sabbath_holiday',
+          autoApplyWeekdays: [],
+        });
+      }
       const common = {
         priceListId: version.id,
         pricingSegmentId: segment.id,
@@ -1084,9 +1136,43 @@ function CardEditor({ version, segment, products, ticketTypes, addons, productCa
         )}
       </div>
 
+      {/* שבת/חג — system surcharge inherited by every card; override per card */}
+      {systemAddon && (
+        <div className="border-t border-blue-100 pt-3">
+          <div className="rounded-lg bg-amber-50/50 ring-1 ring-amber-100 p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[13px] font-medium text-gray-800 flex-1">🕯️ תוספת שבת/חג</span>
+              <span className={`text-[11px] rounded-full px-2 py-0.5 ${sabbathOverridden ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                {sabbathOverridden ? 'מותאם בכרטיס הזה' : 'יורש מברירת המחדל'}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+              <Field label="מחיר">
+                <Money minor={sabbath.priceMinor} onChange={(v) => setSabbath((s) => ({ ...s, priceMinor: v }))}
+                  placeholder={`${minorToInput(systemAddon.defaultPriceMinor)} (ברירת מחדל)`} />
+              </Field>
+              <Field label="מע״מ">
+                <Select value={sabbath.vatMode} onChange={(v) => setSabbath((s) => ({ ...s, vatMode: v }))}
+                  options={[{ value: '', name: `כמו ברירת המחדל (${vatLabel(systemAddon.vatMode, systemAddon.vatRate)})` }, ...VAT_OPTS]} />
+              </Field>
+              <label className="flex items-center gap-2 text-sm text-gray-700 mb-2">
+                <input type="checkbox" checked={sabbath.enabled !== false} onChange={(e) => setSabbath((s) => ({ ...s, enabled: e.target.checked }))} />
+                פעיל בכרטיס זה
+              </label>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-gray-400 flex-1">מופעל אוטומטית לפי הגדרות שעות שבת וחג. מחיר/מע״מ ריקים יורשים מקטלוג התוספות.</span>
+              {sabbathOverridden && (
+                <button type="button" onClick={resetSabbath} className="text-[12px] text-blue-600 hover:underline shrink-0">אפס לברירת המחדל</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Add-ons — per card; label from catalog, price/VAT/auto-apply here */}
       <div className="border-t border-blue-100 pt-3 space-y-2">
-        <span className={LABEL}>תוספות</span>
+        <span className={LABEL}>תוספות נוספות</span>
         {addonEntries.length === 0 && availableAddons.length === 0 && (
           <div className="text-[12px] text-gray-400">אין תוספות בקטלוג. הוסיפו אותן במסך "תוספות".</div>
         )}

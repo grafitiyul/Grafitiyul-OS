@@ -1236,9 +1236,14 @@ model Addon {
   id               String   @id @default(cuid())
   nameHe           String
   nameEn           String?
+  // Stable key for SYSTEM add-ons (e.g. 'sabbath_holiday'). Null for ordinary
+  // owner-created add-ons. Logic identifies the system surcharge by THIS key,
+  // never by name. This Addon row is the global default (price/VAT/active) every
+  // card inherits unless it stores a PriceRuleAddon override.
+  systemKey        String?  @unique
   defaultPriceMinor BigInt  @default(0)
   currency         String   @default("ILS")
-  vatMode          String   @default("included") // included | excluded
+  vatMode          String   @default("included") // included | excluded | exempt
   vatRate          Int      @default(18)
   defaultQuantity  Int      @default(1)
   active           Boolean  @default(true)
@@ -1266,8 +1271,11 @@ model PriceRuleAddon {
   addon       Addon     @relation(fields: [addonId], references: [id], onDelete: Cascade)
   addonId     String
   enabled     Boolean   @default(true)
-  priceMinor  BigInt    @default(0)
-  vatMode     String?   // null = inherit card; included | excluded | exempt
+  // Nullable = INHERIT for that field. For the system add-on, null price/VAT
+  // inherits the Addon catalog default (resolved server-side); a concrete value
+  // is a per-card override. (For ordinary add-ons the UI always sets a price.)
+  priceMinor  BigInt?
+  vatMode     String?   // null = inherit (catalog default for system; card VAT otherwise)
   vatRate     Int?
   autoApply   String    @default("manual") // manual | weekdays
   autoApplyWeekdays Int[] @default([])

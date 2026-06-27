@@ -109,6 +109,10 @@ router.put(
 router.delete(
   '/:id',
   handle(async (req, res) => {
+    // System add-ons (e.g. שבת/חג) are part of the engine wiring — never hard-
+    // deletable. Use the active toggle (global kill-switch) instead.
+    const target = await prisma.addon.findUnique({ where: { id: req.params.id }, select: { systemKey: true } });
+    if (target?.systemKey) return res.status(409).json({ error: 'system_addon' });
     // Block hard delete when the add-on is configured on any pricing card —
     // deleting would silently strip it from those cards. Deactivate instead.
     const inUse = await prisma.priceRuleAddon.count({
