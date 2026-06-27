@@ -212,9 +212,9 @@ router.post(
     const startISO = start.toISOString().slice(0, 10);
     const endISO = end.toISOString().slice(0, 10);
 
-    let rows;
+    let rows, markers;
     try {
-      ({ rows } = await fetchHolidayRows({ startISO, endISO }));
+      ({ rows, markers } = await fetchHolidayRows({ startISO, endISO }));
     } catch (e) {
       // Fail safe — change nothing, report a clear code.
       return res.status(502).json({ error: e.code || 'import_failed' });
@@ -256,7 +256,165 @@ router.post(
         if (data.status === 'approved') autoClassified++;
       }
     }
-    res.json({ ok: true, range: { startISO, endISO }, fetched: rows.length, created, refreshed, locked, autoClassified });
+
+    // Operational markers (Chol HaMoed) — a SEPARATE dimension, never priced.
+    // Upsert by externalId; also remove any legacy CH"M pricing holiday with the
+    // same externalId (redirect). No review workflow — markers don't affect price.
+    let markersUpserted = 0;
+    const cholType = await prisma.calendarMarkerType.findUnique({ where: { key: 'chol_hamoed' } });
+    if (cholType) {
+      for (const m of markers || []) {
+        await prisma.holidayRule.deleteMany({
+          where: { source: 'imported', externalId: m.externalId, type: 'other' },
+        });
+        const data = {
+          markerTypeId: cholType.id,
+          startDate: toDate(m.startDate),
+          endDate: toDate(m.endDate),
+          nameHe: m.nameHe || null,
+          source: 'imported',
+          externalId: m.externalId,
+          active: true,
+        };
+        await prisma.calendarMarker.upsert({
+          where: { source_externalId: { source: 'imported', externalId: m.externalId } },
+          update: { markerTypeId: data.markerTypeId, startDate: data.startDate, endDate: data.endDate, nameHe: data.nameHe },
+          create: data,
+        });
+        markersUpserted++;
+      }
+    }
+
+    res.json({ ok: true, range: { startISO, endISO }, fetched: rows.length, created, refreshed, locked, autoClassified, markersUpserted });
+  }),
+);
+
+// ── Calendar Markers (operational; NOT pricing) ─────────────────────────────
+
+const MARKER_TYPE_DEFAULTS = [
+  { id: 'markertype_chol_hamoed', key: 'chol_hamoed', nameHe: 'חול המועד', nameEn: 'Chol HaMoed', color: '#f59e0b', source: 'system' },
+  { id: 'markertype_school_vacation', key: 'school_vacation', nameHe: 'חופשת בית ספר', nameEn: 'School Vacation', color: '#3b82f6', source: 'manual' },
+  { id: 'markertype_election_day', key: 'election_day', nameHe: 'יום בחירות', nameEn: 'Election Day', color: '#8b5cf6', source: 'manual' },
+  { id: 'markertype_municipal_event', key: 'municipal_event', nameHe: 'אירוע עירוני', nameEn: 'Municipal Event', color: '#10b981', source: 'manual' },
+  { id: 'markertype_high_demand', key: 'high_demand', nameHe: 'תקופת ביקוש גבוה', nameEn: 'High Demand', color: '#ef4444', source: 'manual' },
+];
+
+router.get(
+  '/marker-types',
+  handle(async (_req, res) => {
+    if ((await prisma.calendarMarkerType.count()) === 0) {
+      await prisma.$transaction(
+        MARKER_TYPE_DEFAULTS.map((d, i) => prisma.calendarMarkerType.create({ data: { ...d, sortOrder: i } })),
+      );
+    }
+    res.json(await prisma.calendarMarkerType.findMany({ orderBy: { sortOrder: 'asc' } }));
+  }),
+);
+
+router.put(
+  '/marker-types/reorder',
+  handle(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((x) => typeof x === 'string') : [];
+    if (!ids.length) return res.json({ ok: true });
+    await prisma.$transaction(ids.map((id, i) => prisma.calendarMarkerType.update({ where: { id }, data: { sortOrder: i } })));
+    res.json({ ok: true });
+  }),
+);
+
+router.post(
+  '/marker-types',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const nameHe = String(b.nameHe || '').trim();
+    if (!nameHe) return res.status(400).json({ error: 'name_required' });
+    const key = String(b.key || `marker_${Date.now()}`).trim().toLowerCase().replace(/\s+/g, '_');
+    const last = await prisma.calendarMarkerType.findFirst({ orderBy: { sortOrder: 'desc' }, select: { sortOrder: true } });
+    res.status(201).json(await prisma.calendarMarkerType.create({
+      data: { key, nameHe, nameEn: b.nameEn ? String(b.nameEn).trim() : null, color: b.color || null, source: 'manual', sortOrder: (last?.sortOrder ?? -1) + 1 },
+    }));
+  }),
+);
+
+router.put(
+  '/marker-types/:id',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const data = {};
+    if (b.nameHe !== undefined) data.nameHe = String(b.nameHe).trim();
+    if (b.nameEn !== undefined) data.nameEn = b.nameEn ? String(b.nameEn).trim() : null;
+    if (b.color !== undefined) data.color = b.color || null;
+    if (b.active !== undefined) data.active = !!b.active;
+    res.json(await prisma.calendarMarkerType.update({ where: { id: req.params.id }, data }));
+  }),
+);
+
+router.delete(
+  '/marker-types/:id',
+  handle(async (req, res) => {
+    const t = await prisma.calendarMarkerType.findUnique({ where: { id: req.params.id }, select: { source: true } });
+    if (t?.source === 'system') return res.status(409).json({ error: 'system_marker_type' });
+    await prisma.calendarMarkerType.delete({ where: { id: req.params.id } }); // markers cascade
+    res.status(204).end();
+  }),
+);
+
+router.get(
+  '/markers',
+  handle(async (req, res) => {
+    const where = {};
+    if (req.query.markerTypeId) where.markerTypeId = String(req.query.markerTypeId);
+    res.json(await prisma.calendarMarker.findMany({
+      where,
+      orderBy: [{ startDate: 'asc' }],
+      include: { markerType: { select: { id: true, nameHe: true, color: true, key: true } } },
+    }));
+  }),
+);
+
+router.post(
+  '/markers',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    if (!b.markerTypeId) return res.status(400).json({ error: 'markerTypeId_required' });
+    if (!b.startDate) return res.status(400).json({ error: 'startDate_required' });
+    const startDate = toDate(b.startDate);
+    const endDate = b.endDate ? toDate(b.endDate) : startDate;
+    res.status(201).json(await prisma.calendarMarker.create({
+      data: {
+        markerTypeId: String(b.markerTypeId),
+        startDate, endDate,
+        nameHe: b.nameHe ? String(b.nameHe).trim() : null,
+        note: b.note ? String(b.note).trim() : null,
+        source: 'manual', active: true,
+      },
+      include: { markerType: { select: { id: true, nameHe: true, color: true, key: true } } },
+    }));
+  }),
+);
+
+router.put(
+  '/markers/:id',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const data = {};
+    if (b.markerTypeId !== undefined) data.markerTypeId = String(b.markerTypeId);
+    if (b.startDate !== undefined) data.startDate = toDate(b.startDate);
+    if (b.endDate !== undefined) data.endDate = toDate(b.endDate);
+    if (b.nameHe !== undefined) data.nameHe = b.nameHe ? String(b.nameHe).trim() : null;
+    if (b.note !== undefined) data.note = b.note ? String(b.note).trim() : null;
+    if (b.active !== undefined) data.active = !!b.active;
+    res.json(await prisma.calendarMarker.update({
+      where: { id: req.params.id }, data,
+      include: { markerType: { select: { id: true, nameHe: true, color: true, key: true } } },
+    }));
+  }),
+);
+
+router.delete(
+  '/markers/:id',
+  handle(async (req, res) => {
+    await prisma.calendarMarker.delete({ where: { id: req.params.id } });
+    res.status(204).end();
   }),
 );
 

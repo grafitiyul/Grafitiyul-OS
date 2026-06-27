@@ -493,6 +493,15 @@ export const api = {
     reviewHoliday: (id, action) => request(`/api/sabbath-hours/holidays/${id}/review`, { method: 'POST', body: JSON.stringify({ action }) }),
     removeHoliday: (id) => request(`/api/sabbath-hours/holidays/${id}`, { method: 'DELETE' }),
     importHolidays: (months) => request('/api/sabbath-hours/holidays/import', { method: 'POST', body: JSON.stringify({ months }) }),
+    // Calendar Markers (operational; NOT pricing).
+    listMarkerTypes: () => request('/api/sabbath-hours/marker-types'),
+    createMarkerType: (data) => request('/api/sabbath-hours/marker-types', { method: 'POST', body: JSON.stringify(data) }),
+    updateMarkerType: (id, data) => request(`/api/sabbath-hours/marker-types/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    removeMarkerType: (id) => request(`/api/sabbath-hours/marker-types/${id}`, { method: 'DELETE' }),
+    listMarkers: (markerTypeId) => request(`/api/sabbath-hours/markers${qs({ markerTypeId })}`),
+    createMarker: (data) => request('/api/sabbath-hours/markers', { method: 'POST', body: JSON.stringify(data) }),
+    updateMarker: (id, data) => request(`/api/sabbath-hours/markers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    removeMarker: (id) => request(`/api/sabbath-hours/markers/${id}`, { method: 'DELETE' }),
   },
   // Ticket Types — editable catalog for the ticket_types pricing model.
   ticketTypes: {

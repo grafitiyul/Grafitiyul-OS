@@ -1434,3 +1434,55 @@ model HolidayClassificationRule {
 
   @@unique([source, normalizedHolidayKey])
 }
+
+// ============================================================================
+// Calendar Markers — operational/informational date markers (NOT pricing)
+// ============================================================================
+//
+// A SECOND, independent dimension alongside the pricing classification
+// (SabbathWeeklyRule + HolidayRule.type). Markers are display/operational only
+// (Chol HaMoed, school vacations, election day, municipal events, high-demand
+// periods, …) and are NEVER read by the pricing engine or the preview route.
+// New marker kinds need NO schema change — they are CalendarMarkerType rows.
+
+// The extensible catalog of marker kinds. `source='system'` marks types the
+// import depends on (e.g. chol_hamoed) — not hard-deletable.
+model CalendarMarkerType {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  nameHe    String
+  nameEn    String?
+  color     String? // hex/token for Gantt/calendar display
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+  source    String   @default("manual") // 'system' | 'manual'
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  markers   CalendarMarker[]
+
+  @@index([sortOrder])
+}
+
+// A dated marker instance. A date RANGE (start..end) covers a single day
+// (start==end), a multi-day Chol HaMoed, or a multi-week vacation in one row.
+// `source`/`externalId` make the Hebcal import idempotent. Independent of
+// HolidayRule (markers also apply to non-holiday dates).
+model CalendarMarker {
+  id           String             @id @default(cuid())
+  markerType   CalendarMarkerType @relation(fields: [markerTypeId], references: [id], onDelete: Cascade)
+  markerTypeId String
+  startDate    DateTime           @db.Date
+  endDate      DateTime           @db.Date
+  nameHe       String? // optional label override (else the type name is used)
+  note         String?
+  source       String             @default("manual") // 'imported' | 'manual'
+  externalId   String?
+  active       Boolean            @default(true)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@unique([source, externalId])
+  @@index([startDate])
+  @@index([endDate])
+  @@index([markerTypeId])
+}

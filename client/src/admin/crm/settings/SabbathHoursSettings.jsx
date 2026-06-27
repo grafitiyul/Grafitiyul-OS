@@ -52,6 +52,7 @@ export default function SabbathHoursSettings() {
       </header>
       <WeeklyRulesCard />
       <HolidayCalendarCard />
+      <MarkersSection />
     </div>
   );
 }
@@ -197,7 +198,7 @@ function HolidayCalendarCard() {
     setImporting(true);
     try {
       const r = await api.sabbathHours.importHolidays(Number(months) || 12);
-      alert(`ייבוא הושלם: ${r.created} חדשים, ${r.refreshed} עודכנו, ${r.locked} מוגנים (מאושרים/נערכו).`);
+      alert(`ייבוא הושלם: ${r.created} חדשים, ${r.refreshed} עודכנו, ${r.locked} מוגנים${r.markersUpserted ? ` · ${r.markersUpserted} סמני חול המועד` : ''}.`);
       await refresh();
     } catch (e) {
       const code = e.payload?.error;
@@ -326,6 +327,165 @@ function HolidayForm({ holiday, onClose, onSaved }) {
       <label className="flex items-center gap-2 mt-6 text-sm text-gray-700"><input type="checkbox" checked={d.allDay} onChange={(e) => set('allDay', e.target.checked)} /> כל היום</label>
       {!d.allDay && <Field label="משעה"><input dir="ltr" type="time" value={d.startTime} onChange={(e) => set('startTime', e.target.value)} className={INPUT} /></Field>}
       {!d.allDay && <Field label="עד שעה"><input dir="ltr" type="time" value={d.endTime} onChange={(e) => set('endTime', e.target.value)} className={INPUT} /></Field>}
+      <div className="col-span-2 sm:col-span-4 flex gap-1.5">
+        <button type="submit" disabled={busy} className="h-10 rounded-lg bg-blue-600 px-5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">{busy ? 'שומר…' : 'שמור'}</button>
+        <button type="button" onClick={onClose} className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-600 hover:bg-gray-50">ביטול</button>
+      </div>
+    </form>
+  );
+}
+
+// ─────────────────────── Calendar Markers (operational) ────────────────────
+// A SEPARATE dimension from the pricing classification above — these never
+// affect pricing; they are for planning / Gantt / calendar display later.
+
+function MarkersSection() {
+  const [types, setTypes] = useState([]);
+  const [markers, setMarkers] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [t, m] = await Promise.all([api.sabbathHours.listMarkerTypes(), api.sabbathHours.listMarkers()]);
+      setTypes(t); setMarkers(m);
+    } finally { setLoading(false); }
+  }, []);
+  useEffect(() => { refresh(); }, [refresh]);
+
+  return (
+    <SettingsCard
+      title="סמני לוח (תפעולי — לא משפיע על תמחור)"
+      description="סימונים אינפורמטיביים על תאריכים (חול המועד, חופשות, יום בחירות, אירועים עירוניים…). מיועדים לתצוגת לוח/גאנט עתידית בלבד — אינם משנים מחיר ואינם חג/ערב חג."
+    >
+      {loading ? (
+        <div className="py-8 text-center text-sm text-gray-400">טוען…</div>
+      ) : (
+        <div className="space-y-4 p-1">
+          <MarkerTypes types={types} onChanged={refresh} />
+          <MarkerList markers={markers} types={types} onChanged={refresh} />
+        </div>
+      )}
+    </SettingsCard>
+  );
+}
+
+function MarkerTypes({ types, onChanged }) {
+  const [adding, setAdding] = useState(false);
+  const [nameHe, setNameHe] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function add(e) {
+    e.preventDefault();
+    if (!nameHe.trim()) return;
+    setBusy(true);
+    try { await api.sabbathHours.createMarkerType({ nameHe: nameHe.trim() }); setNameHe(''); setAdding(false); await onChanged(); }
+    catch (e) { alert('שגיאה: ' + (e.payload?.error || e.message)); }
+    finally { setBusy(false); }
+  }
+  async function toggle(t) {
+    try { await api.sabbathHours.updateMarkerType(t.id, { active: !t.active }); onChanged(); }
+    catch (e) { alert('שגיאה: ' + e.message); }
+  }
+  async function remove(t) {
+    if (!confirm(`למחוק את סוג הסמן "${t.nameHe}"? כל הסמנים מסוג זה יימחקו.`)) return;
+    try { await api.sabbathHours.removeMarkerType(t.id); onChanged(); }
+    catch (e) { alert(e.payload?.error === 'system_marker_type' ? 'לא ניתן למחוק סוג מערכת (חול המועד).' : 'שגיאה: ' + e.message); }
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <h4 className="text-[13px] font-semibold text-gray-700">סוגי סמנים</h4>
+        {!adding && <button onClick={() => setAdding(true)} className="text-[12px] text-blue-600 hover:underline">+ סוג חדש</button>}
+      </div>
+      {adding && (
+        <form onSubmit={add} className="flex gap-2 mb-2">
+          <input value={nameHe} onChange={(e) => setNameHe(e.target.value)} placeholder="שם סוג סמן" className={`flex-1 ${INPUT}`} />
+          <button type="submit" disabled={busy || !nameHe.trim()} className="h-10 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">הוסף</button>
+          <button type="button" onClick={() => setAdding(false)} className="h-10 rounded-lg border border-gray-300 px-3 text-sm text-gray-600">ביטול</button>
+        </form>
+      )}
+      <div className="flex flex-wrap gap-1.5">
+        {types.map((t) => (
+          <span key={t.id} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] ring-1 ring-gray-200 ${t.active ? 'bg-white text-gray-700' : 'bg-gray-100 text-gray-400'}`}>
+            <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ backgroundColor: t.color || '#9ca3af' }} />
+            {t.nameHe}
+            <button onClick={() => toggle(t)} title={t.active ? 'כבה' : 'הפעל'} className="text-gray-400 hover:text-gray-700">{t.active ? '◉' : '○'}</button>
+            {t.source !== 'system' && <button onClick={() => remove(t)} title="מחק" className="text-red-400 hover:text-red-600">✕</button>}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MarkerList({ markers, types, onChanged }) {
+  const [adding, setAdding] = useState(false);
+  const typeById = Object.fromEntries(types.map((t) => [t.id, t]));
+
+  async function remove(m) {
+    if (!confirm('למחוק סמן זה?')) return;
+    try { await api.sabbathHours.removeMarker(m.id); onChanged(); }
+    catch (e) { alert('שגיאה: ' + e.message); }
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <h4 className="text-[13px] font-semibold text-gray-700">סמנים על תאריכים</h4>
+        {!adding && <button onClick={() => setAdding(true)} className="text-[12px] text-blue-600 hover:underline">+ סמן ידני</button>}
+      </div>
+      {adding && <MarkerForm types={types} onClose={() => setAdding(false)} onSaved={() => { setAdding(false); onChanged(); }} />}
+      {markers.length === 0 ? (
+        <div className="text-[12px] text-gray-400 py-3">אין סמנים. הוסיפו ידנית או ייבאו חגים (חול המועד נוצר אוטומטית).</div>
+      ) : (
+        <ul className="divide-y divide-gray-100">
+          {markers.map((m) => {
+            const t = m.markerType || typeById[m.markerTypeId];
+            const range = dateOnly(m.startDate) === dateOnly(m.endDate) ? dateOnly(m.startDate) : `${dateOnly(m.startDate)} – ${dateOnly(m.endDate)}`;
+            return (
+              <li key={m.id} className="flex items-center gap-3 px-1 py-2">
+                <span className="inline-block w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: t?.color || '#9ca3af' }} />
+                <span className="w-44 shrink-0 text-[13px] text-gray-500" dir="ltr">{range}</span>
+                <div className="flex-1 min-w-0 text-[14px] text-gray-900 truncate">{m.nameHe || t?.nameHe || 'סמן'}</div>
+                <span className="text-[11px] text-gray-400 shrink-0">{t?.nameHe}{m.source === 'imported' ? ' · יובא' : ''}</span>
+                <button onClick={() => remove(m)} title="מחק" className="text-red-500 hover:bg-red-50 rounded-md p-1.5 shrink-0">🗑</button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function MarkerForm({ types, onClose, onSaved }) {
+  const active = types.filter((t) => t.active);
+  const [d, setD] = useState({ markerTypeId: active[0]?.id || '', startDate: '', endDate: '', nameHe: '', note: '' });
+  const [busy, setBusy] = useState(false);
+  const set = (k, v) => setD((p) => ({ ...p, [k]: v }));
+
+  async function save(e) {
+    e.preventDefault();
+    if (!d.markerTypeId || !d.startDate) return;
+    setBusy(true);
+    try {
+      await api.sabbathHours.createMarker({
+        markerTypeId: d.markerTypeId, startDate: d.startDate, endDate: d.endDate || d.startDate,
+        nameHe: d.nameHe.trim() || null, note: d.note.trim() || null,
+      });
+      onSaved();
+    } catch (e) { alert('שגיאה: ' + (e.payload?.error || e.message)); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <form onSubmit={save} className="rounded-lg bg-blue-50/50 ring-1 ring-blue-100 p-3 mb-2 grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <Field label="סוג"><Select value={d.markerTypeId} onChange={(v) => set('markerTypeId', v)} options={active.map((t) => ({ value: t.id, name: t.nameHe }))} /></Field>
+      <Field label="מתאריך"><input dir="ltr" type="date" value={d.startDate} onChange={(e) => set('startDate', e.target.value)} className={INPUT} /></Field>
+      <Field label="עד תאריך (אופציונלי)"><input dir="ltr" type="date" value={d.endDate} onChange={(e) => set('endDate', e.target.value)} className={INPUT} /></Field>
+      <Field label="כותרת (אופציונלי)"><input value={d.nameHe} onChange={(e) => set('nameHe', e.target.value)} className={INPUT} /></Field>
       <div className="col-span-2 sm:col-span-4 flex gap-1.5">
         <button type="submit" disabled={busy} className="h-10 rounded-lg bg-blue-600 px-5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">{busy ? 'שומר…' : 'שמור'}</button>
         <button type="button" onClick={onClose} className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-600 hover:bg-gray-50">ביטול</button>
