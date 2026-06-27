@@ -239,6 +239,25 @@ test('addonApplies: weekdays match by getDay number', () => {
 test('addonApplies: disabled never applies', () => {
   assert.equal(addonApplies({ addonId: 'a', enabled: false, autoApply: 'manual' }, { manualAddonIds: ['a'] }), false);
 });
+test('addonApplies: sabbath_holiday follows ctx.isSabbathHoliday', () => {
+  const e = { addonId: 'a', enabled: true, autoApply: 'sabbath_holiday' };
+  assert.equal(addonApplies(e, { isSabbathHoliday: true }), true);
+  assert.equal(addonApplies(e, { isSabbathHoliday: false }), false);
+  assert.equal(addonApplies(e, {}), false);
+});
+test('sabbath_holiday addon + detector: applies on a configured Friday-15:00 window', () => {
+  // the ONE detector decides; the addon just reads its result.
+  const weekly = [{ active: true, dayOfWeek: 5, allDay: false, startMinute: 900, nameHe: 'כניסת שבת' }];
+  const win = sabbathHolidayWindow({ weekday: 5, minuteOfDay: 960, dateISO: '2026-07-03' }, { weekly });
+  const e = { addonId: 'a', enabled: true, autoApply: 'sabbath_holiday' };
+  assert.equal(addonApplies(e, { isSabbathHoliday: win.applies }), true);
+});
+test('sabbath_holiday addon does NOT apply outside the window', () => {
+  const weekly = [{ active: true, dayOfWeek: 5, allDay: false, startMinute: 900, nameHe: 'כניסת שבת' }];
+  const win = sabbathHolidayWindow({ weekday: 5, minuteOfDay: 600, dateISO: '2026-07-03' }, { weekly });
+  const e = { addonId: 'a', enabled: true, autoApply: 'sabbath_holiday' };
+  assert.equal(addonApplies(e, { isSabbathHoliday: win.applies }), false);
+});
 
 // ── שעות שבת וחג detector ────────────────────────────────────────────────────
 const WEEKLY = [

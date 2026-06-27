@@ -45,6 +45,7 @@ const ADDON_VAT_OPTS = [{ value: '', name: 'כמו הכרטיס' }, ...VAT_OPTS]
 const AUTO_APPLY_OPTS = [
   { value: 'manual', name: 'ידני' },
   { value: 'weekdays', name: 'לפי ימים בשבוע' },
+  { value: 'sabbath_holiday', name: 'שבת וחג' },
 ];
 // 0=Sun … 6=Sat (matches JS getDay and the server).
 const WEEKDAYS = [
@@ -516,7 +517,9 @@ function CardAddonsSummary({ card, addons }) {
     <div className="text-[12px] text-gray-600 flex flex-wrap gap-x-3 gap-y-0.5">
       <span className="text-gray-400">תוספות:</span>
       {card.addons.map((a) => {
-        const auto = a.autoApply === 'weekdays' && a.autoApplyWeekdays.length
+        const auto = a.autoApply === 'sabbath_holiday'
+          ? ' (שבת/חג)'
+          : a.autoApply === 'weekdays' && a.autoApplyWeekdays.length
           ? ` (${a.autoApplyWeekdays.map(weekdayName).join('/')})`
           : '';
         return (
@@ -582,7 +585,8 @@ function CardPreview({ version, card, ticketTypes, addons }) {
     (card.ticketPrices || []).forEach((p) => { m[p.ticketTypeId] = 1; });
     return m;
   });
-  const [weekday, setWeekday] = useState(''); // '' = unspecified
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [time, setTime] = useState('16:00');
   const [manualOn, setManualOn] = useState({}); // addonId -> bool
   const [res, setRes] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -597,7 +601,7 @@ function CardPreview({ version, card, ticketTypes, addons }) {
       const base = {
         priceModel: card.priceModel, vatMode: card.vatMode, vatRate: card.vatRate,
         addons: cardAddons,
-        weekday: weekday === '' ? null : Number(weekday),
+        date, time, // server derives weekday + runs the שעות שבת וחג detector
         manualAddonIds,
       };
       const payload = isTicket
@@ -618,13 +622,15 @@ function CardPreview({ version, card, ticketTypes, addons }) {
     } catch (e) { setRes({ ok: false, error: e.message }); }
     finally { setBusy(false); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card, isTicket, count, groupCount, quantities, weekday, JSON.stringify(manualAddonIds)]);
+  }, [card, isTicket, count, groupCount, quantities, date, time, JSON.stringify(manualAddonIds)]);
 
   useEffect(() => { run(); }, [run]);
 
   const cur = version.currency;
   const names = ticketNameMap(ticketTypes);
   const hasWeekdayAddon = cardAddons.some((a) => a.enabled !== false && a.autoApply === 'weekdays');
+  const hasSabbathAddon = cardAddons.some((a) => a.enabled !== false && a.autoApply === 'sabbath_holiday');
+  const needsDate = hasWeekdayAddon || hasSabbathAddon;
   return (
     <div className="rounded-lg bg-gray-50 ring-1 ring-gray-100 p-3">
       <div className="flex flex-wrap items-center gap-3 mb-2">
@@ -655,17 +661,21 @@ function CardPreview({ version, card, ticketTypes, addons }) {
         {busy && <span className="text-[11px] text-gray-400">מחשב…</span>}
       </div>
 
-      {(hasWeekdayAddon || manualAddons.length > 0) && (
+      {(needsDate || manualAddons.length > 0) && (
         <div className="flex flex-wrap items-center gap-3 mb-2 text-[12px] text-gray-600">
           <span className="text-gray-400">תוספות:</span>
-          {hasWeekdayAddon && (
+          {needsDate && (
             <label className="flex items-center gap-1">
-              יום בשבוע
-              <select value={weekday} onChange={(e) => setWeekday(e.target.value)}
-                className="h-8 rounded border border-gray-300 px-2 text-sm">
-                <option value="">—</option>
-                {WEEKDAYS.map((w) => <option key={w.value} value={w.value}>{w.name}</option>)}
-              </select>
+              תאריך
+              <input dir="ltr" type="date" value={date} onChange={(e) => setDate(e.target.value)}
+                className="h-8 rounded border border-gray-300 px-2 text-sm" />
+            </label>
+          )}
+          {hasSabbathAddon && (
+            <label className="flex items-center gap-1">
+              שעה
+              <input dir="ltr" type="time" value={time} onChange={(e) => setTime(e.target.value)}
+                className="h-8 rounded border border-gray-300 px-2 text-sm" />
             </label>
           )}
           {manualAddons.map((a) => (
@@ -675,6 +685,16 @@ function CardPreview({ version, card, ticketTypes, addons }) {
               {addonNameMap(addons)[a.addonId] || 'תוספת'}
             </label>
           ))}
+        </div>
+      )}
+
+      {hasSabbathAddon && res?.ok && (
+        <div className={`mb-2 text-[12px] rounded-md px-2.5 py-1.5 ${
+          res.sabbathHoliday?.applies ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-50 text-gray-500'
+        }`}>
+          {res.sabbathHoliday?.applies
+            ? `🕯️ ${res.sabbathHoliday.label || 'שבת/חג'} — תוספת שבת/חג חלה`
+            : 'התאריך/שעה שנבחרו אינם שבת/חג — תוספת שבת/חג לא חלה'}
         </div>
       )}
 
@@ -1087,6 +1107,11 @@ function CardEditor({ version, segment, products, ticketTypes, addons, productCa
                       {w.name}
                     </button>
                   ))}
+                </div>
+              )}
+              {e.autoApply === 'sabbath_holiday' && (
+                <div className="text-[12px] text-gray-500 bg-gray-50 rounded-md px-2.5 py-1.5">
+                  🕯️ מופעל אוטומטית לפי הגדרות <b>שעות שבת וחג</b>. אין צורך להגדיר ימים/שעות בכרטיס.
                 </div>
               )}
             </div>

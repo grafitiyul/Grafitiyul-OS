@@ -284,9 +284,11 @@ function effectiveAddonVat(entry, cardVat) {
 }
 
 // Does an add-on apply in this context?
-//   enabled=false  → never
-//   'weekdays'     → ctx.weekday (0=Sun..6=Sat) is in autoApplyWeekdays
-//   'manual'       → ctx.manualAddonIds includes this addonId
+//   enabled=false      → never
+//   'weekdays'         → ctx.weekday (0=Sun..6=Sat) is in autoApplyWeekdays
+//   'sabbath_holiday'  → ctx.isSabbathHoliday (computed by the caller via
+//                        sabbathHolidayWindow — the ONE detector, never duplicated)
+//   'manual'           → ctx.manualAddonIds includes this addonId
 export function addonApplies(entry, ctx = {}) {
   if (entry.enabled === false) return false;
   if (entry.autoApply === 'weekdays') {
@@ -295,6 +297,9 @@ export function addonApplies(entry, ctx = {}) {
       ctx.weekday != null &&
       entry.autoApplyWeekdays.map(Number).includes(Number(ctx.weekday))
     );
+  }
+  if (entry.autoApply === 'sabbath_holiday') {
+    return ctx.isSabbathHoliday === true;
   }
   return Array.isArray(ctx.manualAddonIds) && ctx.manualAddonIds.includes(entry.addonId);
 }

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
-import { calculate, baseAmountMinor, splitVat, priceAddon, addonApplies, PricingError } from '../pricing/engine.js';
+import { calculate, baseAmountMinor, splitVat, priceAddon, addonApplies, sabbathHolidayWindow, PricingError } from '../pricing/engine.js';
 
 // Pricing calculator (Slice 2). Admin-only TEST endpoint for the pricing engine.
 // It does NOT touch Deals and writes nothing — it resolves a price list + rule
@@ -125,20 +125,52 @@ router.post(
       groupCount: b.groupCount != null ? b.groupCount : 1,
       ticketQuantities: b.ticketQuantities || {},
     };
-    const vatMode = b.vatMode === 'excluded' ? 'excluded' : 'included';
-    const vatRate = b.vatRate != null ? Number(b.vatRate) : 18;
+    // 'exempt' (פטור) must be honored here too, else the preview would extract
+    // VAT as if the price were VAT-inclusive. splitVat handles exempt (vat=0).
+    const vatMode = b.vatMode === 'excluded' || b.vatMode === 'exempt' ? b.vatMode : 'included';
+    const vatRate = vatMode === 'exempt' ? 0 : b.vatRate != null ? Number(b.vatRate) : 18;
     try {
       const { amountMinor, debug } = baseAmountMinor(rule, counts);
       const vat = splitVat(amountMinor, vatMode, vatRate);
 
-      // Add-ons are SEPARATE lines on top of the base. Each is included only if
-      // it applies (manual toggle or weekday match); each splits VAT on its own.
+      // Add-ons are SEPARATE lines on top of the base, included only if they
+      // apply (manual toggle, weekday match, or שבת/חג window). Each splits VAT on
+      // its own. Auto-apply context is derived from an optional date+time:
+      // weekday from the date; minute-of-day from the time; the שבת/חג decision
+      // comes from the ONE detector (sabbathHolidayWindow) fed by the global rules
+      // — never re-implemented here.
+      const addonEntries = Array.isArray(b.addons) ? b.addons : [];
+      const dateISO = b.date ? String(b.date).slice(0, 10) : null;
+      let weekday = b.weekday != null && b.weekday !== '' ? Number(b.weekday) : null;
+      let minuteOfDay = null;
+      if (dateISO) {
+        const dt = new Date(`${dateISO}T00:00:00Z`);
+        if (!Number.isNaN(dt.getTime())) weekday = dt.getUTCDay();
+      }
+      if (b.time) {
+        const [hh, mm] = String(b.time).split(':').map(Number);
+        if (Number.isFinite(hh) && Number.isFinite(mm)) minuteOfDay = hh * 60 + mm;
+      }
+
+      let sabbathHoliday = { applies: false };
+      if (dateISO && addonEntries.some((e) => e.autoApply === 'sabbath_holiday')) {
+        const [weekly, holidays] = await Promise.all([
+          prisma.sabbathWeeklyRule.findMany({ where: { active: true } }),
+          prisma.holidayRule.findMany({ where: { active: true, status: 'approved' } }),
+        ]);
+        sabbathHoliday = sabbathHolidayWindow(
+          { weekday, minuteOfDay: minuteOfDay ?? 0, dateISO },
+          { weekly, holidays },
+        );
+      }
+
       const cardVat = { vatMode, vatRate };
       const ctx = {
-        weekday: b.weekday != null && b.weekday !== '' ? Number(b.weekday) : null,
+        weekday,
+        minuteOfDay,
         manualAddonIds: Array.isArray(b.manualAddonIds) ? b.manualAddonIds : [],
+        isSabbathHoliday: sabbathHoliday.applies,
       };
-      const addonEntries = Array.isArray(b.addons) ? b.addons : [];
       const addonLines = addonEntries
         .filter((e) => addonApplies(e, ctx))
         .map((e) => priceAddon(e, cardVat));
@@ -157,6 +189,7 @@ router.post(
         totalNetMinor: vat.netMinor + sum('netMinor'),
         totalVatMinor: vat.vatMinor + sum('vatMinor'),
         totalGrossMinor: vat.grossMinor + sum('grossMinor'),
+        sabbathHoliday, // { applies, label?, type? } — explains the שבת/חג decision
         debug,
       });
     } catch (e) {

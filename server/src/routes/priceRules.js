@@ -15,7 +15,10 @@ import { handle } from '../asyncHandler.js';
 const router = Router();
 
 const PRICE_MODELS = ['per_head', 'tiered', 'tiered_group', 'fixed', 'ticket_types'];
-const VAT_MODES = ['included', 'excluded'];
+// Card-level VAT. 'exempt' (פטור) is valid — the engine's splitVat handles it
+// (net=gross, vat=0). Without it a card set to exempt would be silently coerced
+// to null and inherit the price-list VAT (e.g. 18%). Matches ADDON_VAT_MODES.
+const VAT_MODES = ['included', 'excluded', 'exempt'];
 
 // Minor-unit → BigInt | null. Accepts numbers/strings; '' and null → null.
 function toBig(v) {
@@ -99,6 +102,9 @@ function buildTicketRows(ticketPrices) {
 }
 
 const ADDON_VAT_MODES = ['included', 'excluded', 'exempt'];
+// 'sabbath_holiday' defers to the שעות שבת וחג module; 'weekdays' uses the per-card
+// weekday set; 'manual' is owner-toggled. Anything else falls back to 'manual'.
+const ADDON_AUTO_APPLY = ['manual', 'weekdays', 'sabbath_holiday'];
 
 // Card add-on rows. null = caller didn't send any. De-dupes by addonId; clamps
 // weekdays to 0..6; vatMode null = inherit the card's VAT.
@@ -119,8 +125,9 @@ function buildAddonRows(addons) {
       priceMinor: toBig(a?.priceMinor) ?? 0n,
       vatMode: ADDON_VAT_MODES.includes(a?.vatMode) ? a.vatMode : null,
       vatRate: toInt(a?.vatRate),
-      autoApply: a?.autoApply === 'weekdays' ? 'weekdays' : 'manual',
-      autoApplyWeekdays: weekdays,
+      autoApply: ADDON_AUTO_APPLY.includes(a?.autoApply) ? a.autoApply : 'manual',
+      // weekdays only meaningful for the 'weekdays' mode; clear otherwise.
+      autoApplyWeekdays: a?.autoApply === 'weekdays' ? weekdays : [],
       sortOrder: toInt(a?.sortOrder) ?? i,
     });
   });
