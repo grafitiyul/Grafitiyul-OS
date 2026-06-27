@@ -4,7 +4,6 @@ import { api } from '../../lib/api.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import HoverCard from '../common/HoverCard.jsx';
-import SelectChip from '../common/SelectChip.jsx';
 import LostDealDialog from './LostDealDialog.jsx';
 import DealSalesScript from './DealSalesScript.jsx';
 import ContactEditDialog from './ContactEditDialog.jsx';
@@ -461,9 +460,9 @@ export default function DealDetail() {
       {/* Hero header — title + actions, then a full-width pipeline bar.
           Lives in the center stack, so its width matches the cards. */}
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 lg:p-8">
-        {/* 1 — Title + status / actions */}
+        {/* 1 — Title + identity badge + status / actions */}
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
+          <div className="min-w-0 flex items-center flex-wrap gap-x-3 gap-y-2">
             {editingTitle ? (
               <input
                 autoFocus
@@ -490,6 +489,17 @@ export default function DealDetail() {
                 {deal.title}
               </h1>
             )}
+            {/* Single identity badge — the activity classification at a glance.
+                Display only; clicking opens the editing popover. */}
+            <ActivityBadge
+              deal={deal}
+              types={types}
+              subtypes={subtypes}
+              onActivityType={(v) => updateDeal({ activityType: v || null })}
+              onDealOrgType={(v) => updateDeal({ organizationTypeId: v || null })}
+              onSubtype={(v) => updateDeal({ organizationSubtypeId: v || null })}
+              onOpenOrgDialog={() => setOrgDialogOpen(true)}
+            />
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -553,18 +563,6 @@ export default function DealDetail() {
             </AnchoredMenu>
           </div>
         </div>
-
-        {/* 1b — Activity type ("סוג פעילות") + (for business) org type / subtype.
-            Editable inline via lightweight chips. */}
-        <ActivityMetaRow
-          deal={deal}
-          types={types}
-          subtypes={subtypes}
-          onActivityType={(v) => updateDeal({ activityType: v || null })}
-          onDealOrgType={(v) => updateDeal({ organizationTypeId: v || null })}
-          onSubtype={(v) => updateDeal({ organizationSubtypeId: v || null })}
-          onOpenOrgDialog={() => setOrgDialogOpen(true)}
-        />
 
         {/* 2 — Pipeline (full width). Click a stage to move the deal there. */}
         <div className="mt-6">
@@ -988,70 +986,146 @@ function BuildingIcon() {
   );
 }
 
-// Activity type ("סוג פעילות") meta row. For business deals it also surfaces the
-// EFFECTIVE organization type (the org's own type when linked — read-only here,
-// editing routes to the org dialog; otherwise the Deal's own type) and, when the
-// effective type has subtypes, the deal subtype. No hardcoded types/subtypes —
-// everything comes from the catalogs.
-function ActivityMetaRow({ deal, types, subtypes, onActivityType, onDealOrgType, onSubtype, onOpenOrgDialog }) {
-  const activityOptions = ACTIVITY_TYPES.map((v) => ({ value: v, label: ACTIVITY_TYPE_LABELS[v] }));
-  const isBusiness = deal.activityType === 'business';
+// Per-activity badge colour. The badge itself carries the colour (no dot):
+// business = green, private = red, group = amber. Soft, modern, tasteful.
+const ACTIVITY_BADGE_TONE = {
+  business: 'bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-200 hover:bg-emerald-200/60',
+  private: 'bg-rose-100 text-rose-800 ring-1 ring-inset ring-rose-200 hover:bg-rose-200/60',
+  group: 'bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-200 hover:bg-amber-200/60',
+};
+const ACTIVITY_BADGE_NEUTRAL =
+  'bg-gray-50 text-gray-500 ring-1 ring-inset ring-gray-200 border border-dashed border-gray-300 hover:bg-gray-100';
+// Selected-option styling inside the editor popover.
+const ACTIVITY_OPTION_ON = {
+  business: 'bg-emerald-600 text-white border-emerald-600',
+  private: 'bg-rose-600 text-white border-rose-600',
+  group: 'bg-amber-500 text-white border-amber-500',
+};
+const POPOVER_SELECT =
+  'mt-0.5 h-9 w-full rounded-lg border border-gray-300 bg-white px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
+
+// The single identity badge that sits next to the deal title. It is DISPLAY ONLY
+// — it shows the most specific classification at a glance and never exposes a
+// form. Clicking opens a small popover that holds all the editing controls.
+//
+//   • no activity type → neutral "+ בחר סוג פעילות"
+//   • private          → red "פרטי"
+//   • group            → amber "קבוצתי"
+//   • business         → green, showing the most specific label available:
+//                        "<org type> <subtype>" (e.g. "בית ספר יסודי"),
+//                        or just the org type, or "עסקי" when none is set yet.
+function ActivityBadge({ deal, types, subtypes, onActivityType, onDealOrgType, onSubtype, onOpenOrgDialog }) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef(null);
+
+  const at = deal.activityType;
   const hasOrg = !!deal.organization;
-  // Effective org type: the linked org's type, else the deal's own type.
   const effTypeId = hasOrg
     ? deal.organization.organizationTypeId || ''
     : deal.organizationTypeId || '';
   const effTypeLabel = hasOrg
     ? deal.organization.organizationType?.label
     : deal.organizationType?.label;
-  const typeOptions = types.map((t) => ({ value: t.id, label: t.label }));
-  const subtypeOptions = subtypes
-    .filter((s) => !effTypeId || !s.organizationTypeId || s.organizationTypeId === effTypeId)
-    .map((s) => ({ value: s.id, label: s.label }));
+  const subtypeLabel = deal.organizationSubtype?.label;
+
+  let label;
+  if (!at) label = '+ בחר סוג פעילות';
+  else if (at === 'private') label = 'פרטי';
+  else if (at === 'group') label = 'קבוצתי';
+  else label = [effTypeLabel, subtypeLabel].filter(Boolean).join(' ') || 'עסקי';
+
+  const tone = at ? ACTIVITY_BADGE_TONE[at] : ACTIVITY_BADGE_NEUTRAL;
 
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-2">
-      <span className="text-[12px] text-gray-400">סוג פעילות</span>
-      <SelectChip
-        value={deal.activityType || ''}
-        options={activityOptions}
-        onSelect={onActivityType}
-        placeholder="בחר סוג פעילות"
-        allowClear
-        tone="accent"
-      />
-      {isBusiness && (
-        <>
-          <span className="text-gray-300">·</span>
-          {hasOrg ? (
-            // Org is the source of truth for its type — editing opens the org dialog.
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title="סוג פעילות"
+        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[13px] font-semibold transition ${tone}`}
+      >
+        <span className="truncate max-w-[16rem]">{label}</span>
+        <span className="text-[10px] opacity-60">▾</span>
+      </button>
+      <AnchoredMenu anchorRef={btnRef} open={open} onClose={() => setOpen(false)} width={252}>
+        <ActivityEditor
+          deal={deal}
+          types={types}
+          subtypes={subtypes}
+          effTypeId={effTypeId}
+          effTypeLabel={effTypeLabel}
+          hasOrg={hasOrg}
+          onActivityType={onActivityType}
+          onDealOrgType={onDealOrgType}
+          onSubtype={onSubtype}
+          onOpenOrgDialog={() => { setOpen(false); onOpenOrgDialog(); }}
+        />
+      </AnchoredMenu>
+    </>
+  );
+}
+
+// Editing controls for the activity badge — lives entirely inside the popover.
+function ActivityEditor({ deal, types, subtypes, effTypeId, effTypeLabel, hasOrg, onActivityType, onDealOrgType, onSubtype, onOpenOrgDialog }) {
+  const at = deal.activityType;
+  const scopedSubtypes = subtypes.filter(
+    (s) => !effTypeId || !s.organizationTypeId || s.organizationTypeId === effTypeId,
+  );
+  return (
+    <div className="p-2 space-y-2" dir="rtl">
+      <div className="px-1 pt-0.5 text-[11px] font-semibold text-gray-400">סוג פעילות</div>
+      <div className="flex gap-1.5 px-1">
+        {ACTIVITY_TYPES.map((v) => {
+          const on = at === v;
+          return (
             <button
+              key={v}
               type="button"
-              onClick={onOpenOrgDialog}
-              title="סוג הארגון נקבע על הארגון — לחצו לעריכה"
-              className="inline-flex items-center gap-1.5 rounded-full border border-gray-300 bg-white px-3 py-1 text-[13px] font-medium text-gray-700 hover:bg-gray-50"
+              onClick={() => onActivityType(on ? '' : v)}
+              className={`flex-1 rounded-lg px-2 py-1.5 text-[12px] font-medium border transition ${
+                on ? ACTIVITY_OPTION_ON[v] : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`}
             >
-              <span className={effTypeLabel ? '' : 'text-gray-400'}>{effTypeLabel || 'סוג ארגון'}</span>
+              {ACTIVITY_TYPE_LABELS[v]}
             </button>
+          );
+        })}
+      </div>
+      {at === 'business' && (
+        <div className="px-1 pt-1.5 space-y-2 border-t border-gray-100">
+          {hasOrg ? (
+            <div>
+              <div className="text-[11px] text-gray-400">סוג ארגון</div>
+              <div className="mt-0.5 flex items-center justify-between gap-2 text-sm text-gray-700">
+                <span>{effTypeLabel || '—'}</span>
+                <button type="button" onClick={onOpenOrgDialog} className="text-[12px] text-blue-700 hover:underline">
+                  ערוך ארגון
+                </button>
+              </div>
+              <p className="text-[10px] text-gray-400 mt-0.5">נקבע על הארגון (מקור אמת יחיד).</p>
+            </div>
           ) : (
-            <SelectChip
-              value={effTypeId}
-              options={typeOptions}
-              onSelect={onDealOrgType}
-              placeholder="סוג ארגון"
-              allowClear
-            />
+            <label className="block">
+              <span className="text-[11px] text-gray-400">סוג ארגון</span>
+              <select value={effTypeId} onChange={(e) => onDealOrgType(e.target.value)} className={POPOVER_SELECT}>
+                <option value="">— בחר —</option>
+                {types.map((t) => (<option key={t.id} value={t.id}>{t.label}</option>))}
+              </select>
+            </label>
           )}
-          {effTypeId && subtypeOptions.length > 0 && (
-            <SelectChip
-              value={deal.organizationSubtypeId || ''}
-              options={subtypeOptions}
-              onSelect={onSubtype}
-              placeholder="תת-סוג"
-              allowClear
-            />
+          {effTypeId && scopedSubtypes.length > 0 && (
+            <label className="block">
+              <span className="text-[11px] text-gray-400">תת-סוג</span>
+              <select value={deal.organizationSubtypeId || ''} onChange={(e) => onSubtype(e.target.value)} className={POPOVER_SELECT}>
+                <option value="">— ללא —</option>
+                {scopedSubtypes.map((s) => (<option key={s.id} value={s.id}>{s.label}</option>))}
+              </select>
+            </label>
           )}
-        </>
+        </div>
       )}
     </div>
   );
