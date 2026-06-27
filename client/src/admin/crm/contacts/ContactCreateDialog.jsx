@@ -4,6 +4,10 @@ import PhoneInput from '../../common/PhoneInput.jsx';
 import { OrgPicker, resolveOrganization } from '../common/OrgPicker.jsx';
 import { api } from '../../../lib/api.js';
 import { contactNamesFromParts } from '../../../lib/nameSplit.js';
+import { useDirtyWhen } from '../../../lib/dirtyForms.js';
+
+// Empty baseline — the dialog is "dirty" only once a field diverges from this.
+const EMPTY = { firstName: '', lastName: '', phone: '', email: '', role: '', notes: '', org: false };
 
 // Create a contact fast, like the Create Deal dialog but simpler: a first name +
 // phone are required; last name, email, notes and an organization are optional.
@@ -25,6 +29,14 @@ export default function ContactCreateDialog({ orgs, types, subtypes, open, onClo
   const [busy, setBusy] = useState(false);
 
   const ready = firstName.trim() && phone.trim() && !orgRes?.invalid;
+
+  // Unsaved-work guard (auto-update): dirty once any field is touched; clears when
+  // reverted to empty, on successful create (reset), or when the dialog closes.
+  useDirtyWhen(
+    { firstName, lastName, phone, email, role, notes, org: !!orgRes },
+    EMPTY,
+    { active: open },
+  );
 
   function reset() {
     setFirstName(''); setLastName(''); setPhone(''); setEmail(''); setRole(''); setNotes(''); setOrgRes(null);

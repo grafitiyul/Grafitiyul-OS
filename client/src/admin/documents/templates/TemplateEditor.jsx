@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
+import { useDirtyForm } from '../../../lib/dirtyForms.js';
 import { relativeHebrew } from '../../../lib/relativeTime.js';
 import PdfViewer from '../shared/PdfViewer.jsx';
 import {
@@ -33,6 +34,7 @@ export default function TemplateEditor() {
   const [template, setTemplate] = useState(null);
   const [fields, setFields] = useState([]);
   const [dirty, setDirty] = useState(false);
+  useDirtyForm(dirty); // unsaved-work guard for the auto-update reload
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);

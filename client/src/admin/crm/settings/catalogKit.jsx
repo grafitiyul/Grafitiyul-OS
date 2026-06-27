@@ -14,6 +14,7 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { useDirtyWhen } from '../../../lib/dirtyForms.js';
 
 // Shared building blocks for the CRM catalog settings screens (Organization
 // Types & Subtypes, Deal Stages). Each row supports inline EDIT of the business
@@ -121,6 +122,19 @@ function CatalogRow({ item, meta, onSave, onRemove, editExtra, editSeed, editPan
     transform: CSS.Transform.toString(s.transform),
     transition: s.transition,
   };
+
+  // Unsaved-work guard (auto-update): while a row is being edited, dirty when the
+  // draft diverges from the row's stored values (same shape startEdit seeds from);
+  // clears on revert, save, or cancel. Covers every CRM settings catalog.
+  const baseline = editing
+    ? {
+        label: item.label || '',
+        labelEn: item.labelEn || '',
+        organizationTypeId: item.organizationTypeId || '',
+        ...(editSeed ? editSeed(item) : {}),
+      }
+    : null;
+  useDirtyWhen(draft, baseline, { active: editing && !!draft });
 
   function startEdit() {
     setDraft({

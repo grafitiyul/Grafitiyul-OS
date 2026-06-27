@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Dialog from '../common/Dialog.jsx';
 import { api } from '../../lib/api.js';
+import { useDirtyWhen } from '../../lib/dirtyForms.js';
 
 // Choose / edit the Deal's organization binding from the header — a focused
 // chooser, NOT a second organization editor. It reuses the existing org + deal
@@ -25,29 +26,46 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
   const [typeId, setTypeId] = useState(''); // effective org type (org's, or deal's when no org)
   const [subtypeId, setSubtypeId] = useState('');
   const [orgFull, setOrgFull] = useState(null); // fetched org (units + current type)
+  const [original, setOriginal] = useState(null); // baseline binding for dirty check
   const [busy, setBusy] = useState(false);
 
-  // Initialise from the deal whenever the dialog opens.
+  // Initialise from the deal whenever the dialog opens. The baseline is captured
+  // together with the (possibly async) effective type, so dirty tracking is
+  // accurate even though the org type loads after a fetch.
   useEffect(() => {
     if (!open) return;
     const initialOrgId = deal.organizationId || '';
+    const baseUnit = deal.organizationUnitId || '';
+    const baseSub = deal.organizationSubtypeId || '';
     setOrgId(initialOrgId);
-    setUnitId(deal.organizationUnitId || '');
-    setSubtypeId(deal.organizationSubtypeId || '');
+    setUnitId(baseUnit);
+    setSubtypeId(baseSub);
     setOrgFull(null);
+    setOriginal(null);
     if (initialOrgId) {
       api.organizations
         .get(initialOrgId)
         .then((full) => {
           setOrgFull(full);
-          setTypeId(full.organizationTypeId || '');
+          const t = full.organizationTypeId || '';
+          setTypeId(t);
+          setOriginal({ orgId: initialOrgId, unitId: baseUnit, subtypeId: baseSub, typeId: t });
         })
-        .catch(() => setTypeId(''));
+        .catch(() => {
+          setTypeId('');
+          setOriginal({ orgId: initialOrgId, unitId: baseUnit, subtypeId: baseSub, typeId: '' });
+        });
     } else {
       // No org → the deal owns the type.
-      setTypeId(deal.organizationType?.id || deal.organizationTypeId || '');
+      const t = deal.organizationType?.id || deal.organizationTypeId || '';
+      setTypeId(t);
+      setOriginal({ orgId: '', unitId: baseUnit, subtypeId: baseSub, typeId: t });
     }
   }, [open, deal]);
+
+  // Unsaved-work guard (auto-update): dirty when the chosen binding diverges from
+  // the baseline; clears on revert, on save (dialog closes), or on close.
+  useDirtyWhen({ orgId, unitId, subtypeId, typeId }, original, { active: open && !!original });
 
   async function chooseOrg(value) {
     setOrgId(value);

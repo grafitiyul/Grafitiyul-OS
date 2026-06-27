@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
+import { useDirtyWhen } from '../../lib/dirtyForms.js';
 import BackButton from '../common/BackButton.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
 import { minorToInput, toMinor, formatMinor } from '../../lib/money.js';
@@ -18,6 +19,7 @@ export default function ProductDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [form, setForm] = useState(null);
+  const [original, setOriginal] = useState(null);
   const [saving, setSaving] = useState(false);
   const [newLocationId, setNewLocationId] = useState('');
   const [addingVariant, setAddingVariant] = useState(false);
@@ -28,13 +30,15 @@ export default function ProductDetail() {
       const [p, locs] = await Promise.all([api.products.get(id), api.locations.list()]);
       setProduct(p);
       setLocations(locs);
-      setForm({
+      const init = {
         nameHe: p.nameHe || '',
         nameEn: p.nameEn || '',
         marketingDescHe: p.marketingDescHe || '',
         marketingDescEn: p.marketingDescEn || '',
         active: p.active,
-      });
+      };
+      setForm(init);
+      setOriginal(init);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -43,6 +47,10 @@ export default function ProductDetail() {
   }, [id]);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // Unsaved-work guard (auto-update): dirty when product details diverge from the
+  // loaded values; clears on revert and after save (refresh resets the baseline).
+  useDirtyWhen(form, original, { active: !!form && !!original });
 
   function set(field, v) { setForm((f) => ({ ...f, [field]: v })); }
 

@@ -3,6 +3,7 @@ import { api } from '../../../lib/api.js';
 import RichEditor from '../../../editor/RichEditor.jsx';
 import ReorderableList from '../ReorderableList.jsx';
 import NoteCard from './NoteCard.jsx';
+import { useDirtyForm } from '../../../lib/dirtyForms.js';
 
 // Reusable Timeline / Activity-Feed. Entity-agnostic: it is scoped ONLY by
 // `subjectType` + `subjectId`, so the exact same component drops into Deal,
@@ -30,6 +31,9 @@ export default function TimelineFeed({ subjectType, subjectId }) {
   // Global expand: default ON. Per-note overrides take precedence over it.
   const [expandAll, setExpandAll] = useState(true);
   const [expandOverrides, setExpandOverrides] = useState({});
+
+  // Unsaved-work guard: a half-written note blocks an auto-update reload.
+  useDirtyForm(!!draft.trim());
 
   const refresh = useCallback(async () => {
     setError(null);

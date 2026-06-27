@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
+import { useDirtyForm } from '../../lib/dirtyForms.js';
 
 // Teams are managed natively in this system. Recruitment does NOT model
 // teams and never will — they live here by design. Admins create,
@@ -93,6 +94,9 @@ function TeamRow({ team, onChanged }) {
     setName(team.displayName);
   }, [team]);
 
+  // Unsaved-work guard (auto-update): dirty while renaming and changed.
+  useDirtyForm(editing && name !== team.displayName);
+
   async function save() {
     setBusy(true);
     try {
@@ -182,6 +186,10 @@ function CreateTeamDialog({ open, onClose, onCreated }) {
       setErr(null);
     }
   }, [open]);
+
+  // Unsaved-work guard (auto-update): dirty once a name is typed; clears on
+  // create/close.
+  useDirtyForm(open && !!displayName.trim());
 
   if (!open) return null;
 

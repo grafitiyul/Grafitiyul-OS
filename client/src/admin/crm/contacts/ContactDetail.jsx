@@ -4,6 +4,7 @@ import { api } from '../../../lib/api.js';
 import BackButton from '../../common/BackButton.jsx';
 import ChannelSection from '../common/ChannelSection.jsx';
 import PhoneDisplay from '../../common/PhoneDisplay.jsx';
+import { useDirtyWhen } from '../../../lib/dirtyForms.js';
 
 // Contact detail — edit bilingual names, manage phones / emails / organization
 // memberships, and see future communication sections as placeholders.
@@ -15,6 +16,7 @@ export default function ContactDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [form, setForm] = useState(null);
+  const [original, setOriginal] = useState(null);
   const [saving, setSaving] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -27,13 +29,15 @@ export default function ContactDetail() {
       ]);
       setContact(c);
       setOrgs(o);
-      setForm({
+      const init = {
         firstNameHe: c.firstNameHe,
         lastNameHe: c.lastNameHe,
         firstNameEn: c.firstNameEn,
         lastNameEn: c.lastNameEn,
         notes: c.notes || '',
-      });
+      };
+      setForm(init);
+      setOriginal(init);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -44,6 +48,10 @@ export default function ContactDetail() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Unsaved-work guard (auto-update): dirty when names/notes diverge from the
+  // loaded values; clears on revert and after save (refresh resets the baseline).
+  useDirtyWhen(form, original, { active: !!form && !!original });
 
   async function save() {
     setSaving(true);

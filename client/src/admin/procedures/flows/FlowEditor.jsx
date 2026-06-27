@@ -10,6 +10,7 @@ import {
 } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { api } from '../../../lib/api.js';
+import { useDirtyForm } from '../../../lib/dirtyForms.js';
 import { ITEM_KINDS, ITEM_KIND_LABELS } from '../bank/config.js';
 import ItemPicker from './ItemPicker.jsx';
 import { setPending as setPendingFlowInsert } from './pendingFlowInsert.js';
@@ -77,6 +78,7 @@ export default function FlowEditor() {
   const [loadError, setLoadError] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [dirty, setDirty] = useState(false);
+  useDirtyForm(dirty); // unsaved-work guard for the auto-update reload
   const [saving, setSaving] = useState(false);
 
   // Collapse state — persisted per flow in localStorage.

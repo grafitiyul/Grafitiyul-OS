@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import BackButton from '../common/BackButton.jsx';
 import { api } from '../../lib/api.js';
+import { useDirtyForm, useDirtyWhen } from '../../lib/dirtyForms.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import {
   IDENTITY_SOURCES,
@@ -345,6 +346,13 @@ function EditableIdentity({ person, onChanged }) {
     });
   }, [person]);
 
+  // Unsaved-work guard (auto-update): dirty while editing identity and changed.
+  useDirtyWhen(
+    form,
+    { displayName: person.displayName, email: person.email || '', phone: person.phone || '' },
+    { active: editing },
+  );
+
   async function save() {
     setSaving(true);
     try {
@@ -521,6 +529,12 @@ function ProfileSection({ person, onChanged }) {
     lastSaved.current = { description: d, notes: n };
   }, [person]);
 
+  // Unsaved-work guard (auto-update): dirty when description/notes diverge from
+  // the last saved values.
+  useDirtyForm(
+    description !== lastSaved.current.description || notes !== lastSaved.current.notes,
+  );
+
   async function saveIfChanged() {
     const patch = {};
     if (description !== lastSaved.current.description)
@@ -586,6 +600,11 @@ function BankSection({ person, onChanged }) {
     setEditing(false);
     setErr(null);
   }, [person]);
+
+  // Unsaved-work guard (auto-update): dirty while editing bank details and changed.
+  useDirtyForm(
+    editing && raw !== JSON.stringify(person.profile?.bankDetails || {}, null, 2),
+  );
 
   async function save() {
     setErr(null);

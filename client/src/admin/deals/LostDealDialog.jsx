@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import Dialog from '../common/Dialog.jsx';
 import { api } from '../../lib/api.js';
+import { useDirtyWhen } from '../../lib/dirtyForms.js';
 
 // In-system LOST flow — replaces the old window.prompt. A required reason is
 // chosen from the shared LostReason catalog; notes are optional, multi-line and
@@ -27,6 +28,10 @@ export default function LostDealDialog({ open, onClose, onSubmit }) {
       .catch(() => setReasons([]))
       .finally(() => setLoading(false));
   }, [open]);
+
+  // Unsaved-work guard (auto-update): dirty once a reason/notes are entered;
+  // clears on revert, submit, or close.
+  useDirtyWhen({ reasonId, notes }, { reasonId: '', notes: '' }, { active: open });
 
   async function submit() {
     if (!reasonId) return;

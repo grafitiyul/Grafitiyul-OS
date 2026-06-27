@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { formatMinor, toMinor } from '../../lib/money.js';
 import { contactNamesFromFull } from '../../lib/nameSplit.js';
+import { useDirtyWhen } from '../../lib/dirtyForms.js';
 import { DEAL_STATUS_LABELS, DEAL_STATUS_STYLES } from './config.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import { useTableColumns, ColumnPicker } from '../common/tableColumns.jsx';
@@ -494,6 +495,14 @@ function CreateDealModal({ orgs, types, subtypes, sources, onClose, onCreated })
   // while the org section is open.
   const orgInvalid = showBiz && orgRes?.invalid;
   const ready = fullName.trim() && phone.trim() && sourceId && !orgInvalid;
+
+  // Unsaved-work guard (auto-update): dirty once real lead data is entered; clears
+  // on revert, and on create/cancel (the modal unmounts). The modal is only ever
+  // mounted while open, so no extra gating is needed.
+  useDirtyWhen(
+    { fullName, phone, email, inquiry, sourceId, sourceFree, org: !!orgRes },
+    { fullName: '', phone: '', email: '', inquiry: '', sourceId: '', sourceFree: '', org: false },
+  );
 
   async function submit(e) {
     e.preventDefault();

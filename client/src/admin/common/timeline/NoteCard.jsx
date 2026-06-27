@@ -3,6 +3,7 @@ import RichEditor from '../../../editor/RichEditor.jsx';
 import { normalizeRichHtml } from '../../../editor/htmlNormalize.js';
 import { titleToPlain } from '../../../editor/TitleEditor.jsx';
 import { actorDisplay } from './actor.js';
+import { useDirtyForm } from '../../../lib/dirtyForms.js';
 
 // Origin + absolute date & time stamp shown on every timeline object. The origin
 // is never anonymous: a human shows their name; an API/automation/system/import
@@ -57,6 +58,10 @@ export default function NoteCard({
 
   const originLabel = ORIGIN_LABELS[entry.data?.origin];
   const comments = entry.comments || [];
+
+  // Unsaved-work guard: an in-progress note edit (changed from the original body)
+  // or a half-typed comment blocks an auto-update reload.
+  useDirtyForm((editing && draft !== (entry.body || '')) || !!commentDraft.trim());
 
   async function saveEdit() {
     const body = draft.trim();
@@ -161,6 +166,9 @@ function CommentRow({ comment, onEdit, onDelete }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(comment.body);
   const [busy, setBusy] = useState(false);
+
+  // Unsaved-work guard: an in-progress comment edit (changed from the original).
+  useDirtyForm(editing && draft !== comment.body);
 
   async function save() {
     const b = draft.trim();

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import BackButton from '../../common/BackButton.jsx';
 import { api } from '../../../lib/api.js';
+import { useDirtyWhen } from '../../../lib/dirtyForms.js';
 
 const FINANCE_FIELDS = [
   ['taxId', 'ח.פ / עוסק'],
@@ -30,6 +31,7 @@ export default function OrganizationDetail() {
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(null);
+  const [original, setOriginal] = useState(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -41,7 +43,7 @@ export default function OrganizationDetail() {
       ]);
       setOrg(o);
       setTypes(t);
-      setForm({
+      const init = {
         name: o.name || '',
         organizationTypeId: o.organizationTypeId || '',
         notes: o.notes || '',
@@ -50,7 +52,9 @@ export default function OrganizationDetail() {
         financeContactName: o.financeContactName || '',
         financePhone: o.financePhone || '',
         financeEmail: o.financeEmail || '',
-      });
+      };
+      setForm(init);
+      setOriginal(init);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -61,6 +65,10 @@ export default function OrganizationDetail() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Unsaved-work guard (auto-update): dirty when the org details diverge from the
+  // loaded values; clears on revert and after save (refresh resets the baseline).
+  useDirtyWhen(form, original, { active: !!form && !!original });
 
   async function save() {
     setSaving(true);

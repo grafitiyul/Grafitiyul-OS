@@ -12,6 +12,7 @@ import OrganizationEditDialog from './OrganizationEditDialog.jsx';
 import WorkspaceLayout from '../../shell/WorkspaceLayout.jsx';
 import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
 import { minorToInput, toMinor } from '../../lib/money.js';
+import { useDirtyForm, useDirtyWhen } from '../../lib/dirtyForms.js';
 import {
   ACTIVITY_TYPES,
   ACTIVITY_TYPE_LABELS,
@@ -66,6 +67,7 @@ export default function DealDetail() {
   const [types, setTypes] = useState([]);
   const [orgType, setOrgType] = useState(null);
   const [form, setForm] = useState(null);
+  const [originalForm, setOriginalForm] = useState(null); // baseline for dirty check
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [savingSection, setSavingSection] = useState(null);
@@ -97,7 +99,7 @@ export default function DealDetail() {
       setOrgs(o);
       setSubtypes(st);
       setTypes(ty);
-      setForm({
+      const init = {
         title: d.title || '',
         value: minorToInput(d.valueMinor),
         discount: minorToInput(d.discountMinor),
@@ -110,7 +112,9 @@ export default function DealDetail() {
         organizationId: d.organizationId || '',
         organizationUnitId: d.organizationUnitId || '',
         organizationSubtypeId: d.organizationSubtypeId || '',
-      });
+      };
+      setForm(init);
+      setOriginalForm(init);
       // The header's org hover card needs the org's type label.
       if (d.organizationId) {
         const full = await api.organizations.get(d.organizationId);
@@ -132,6 +136,14 @@ export default function DealDetail() {
   function set(field, v) {
     setForm((f) => ({ ...f, [field]: v }));
   }
+
+  // Unsaved-work guard (auto-update). Two independent buffers on this page:
+  //   • the right-panel properties form (all section saves share it) vs. its
+  //     loaded baseline — clears on revert and after any section save (refresh
+  //     resets the baseline);
+  //   • the inline title editor while open and changed.
+  useDirtyWhen(form, originalForm, { active: !!form && !!originalForm });
+  useDirtyForm(editingTitle && titleDraft.trim() !== (deal?.title || ''));
 
   // No global header save anymore — each section saves itself with a local
   // button. saveSection sends ONLY that section's fields, then refreshes.

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import BackButton from '../../common/BackButton.jsx';
 import { api } from '../../../lib/api.js';
+import { useDirtyForm } from '../../../lib/dirtyForms.js';
 import { relativeHebrew } from '../../../lib/relativeTime.js';
 import PdfViewer from '../shared/PdfViewer.jsx';
 import SignaturePad from '../shared/SignaturePad.jsx';
@@ -132,6 +133,7 @@ export default function InstanceEditor() {
   // /instances/:id/annotations. Never flows through value resolution.
   const [annotations, setAnnotations] = useState([]);
   const [dirty, setDirty] = useState(false);
+  useDirtyForm(dirty); // unsaved-work guard for the auto-update reload
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState(null);
 

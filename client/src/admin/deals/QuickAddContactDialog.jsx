@@ -2,7 +2,10 @@ import { useState } from 'react';
 import Dialog from '../common/Dialog.jsx';
 import { api } from '../../lib/api.js';
 import { contactNamesFromParts } from '../../lib/nameSplit.js';
+import { useDirtyWhen } from '../../lib/dirtyForms.js';
 import { QUICK_CONTACT_ROLES, ROLE_LABELS } from './config.js';
+
+const EMPTY = { first: '', last: '', phone: '', email: '', role: '' };
 
 // Fast "add contact" from the Deal header: create a new contact (name + phone),
 // then link it to the deal with a single operational role — all via the EXISTING
@@ -26,6 +29,10 @@ export default function QuickAddContactDialog({ dealId, open, onClose, onAdded, 
   }
 
   const ready = f.first.trim() && f.phone.trim();
+
+  // Unsaved-work guard (auto-update): dirty until reverted to empty / submitted /
+  // closed.
+  useDirtyWhen(f, EMPTY, { active: open });
 
   async function submit(e) {
     e.preventDefault();

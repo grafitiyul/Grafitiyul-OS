@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import Dialog from '../common/Dialog.jsx';
 import ChannelSection from '../crm/common/ChannelSection.jsx';
 import { api } from '../../lib/api.js';
+import { useDirtyWhen } from '../../lib/dirtyForms.js';
 
 // Edit an existing contact from the Deal header — reuses the SAME building blocks
 // as the full Contact page (shared ChannelSection for phones/emails; the same
@@ -17,6 +18,7 @@ const FIELD =
 export default function ContactEditDialog({ contactId, open, onClose, onSaved }) {
   const [contact, setContact] = useState(null);
   const [form, setForm] = useState(null);
+  const [original, setOriginal] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -26,13 +28,15 @@ export default function ContactEditDialog({ contactId, open, onClose, onSaved })
     try {
       const c = await api.contacts.get(contactId);
       setContact(c);
-      setForm({
+      const init = {
         firstNameHe: c.firstNameHe || '',
         lastNameHe: c.lastNameHe || '',
         firstNameEn: c.firstNameEn || '',
         lastNameEn: c.lastNameEn || '',
         notes: c.notes || '',
-      });
+      };
+      setForm(init);
+      setOriginal(init);
     } catch (e) {
       alert('שגיאה בטעינת איש הקשר: ' + e.message);
     } finally {
@@ -47,6 +51,11 @@ export default function ContactEditDialog({ contactId, open, onClose, onSaved })
   function set(field, v) {
     setForm((f) => ({ ...f, [field]: v }));
   }
+
+  // Unsaved-work guard (auto-update): dirty when the names/notes diverge from the
+  // loaded values; clears on revert, on save (reload resets the baseline), or
+  // when the dialog closes.
+  useDirtyWhen(form, original, { active: open && !!form });
 
   // Refresh both the dialog's own contact AND the parent deal after a channel
   // mutation, so the header stays in sync.
