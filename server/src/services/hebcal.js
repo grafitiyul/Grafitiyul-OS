@@ -34,11 +34,21 @@ function holidayType(item) {
 // Calendar Markers, never holiday rows.
 export const isCholHamoed = (title) => /\(CH/.test(String(title || ''));
 
+// Hanukkah is OPERATIONAL (8 days), not a pricing class → Calendar Marker.
+// Hebcal titles look like "Chanukah: 1 Candle" … "Chanukah: 8 Candles".
+export const isHanukkah = (title) => /chanukah|hanukk/i.test(String(title || ''));
+const hanukkahDay = (title) => {
+  const m = String(title || '').match(/(\d+)/);
+  return m ? Number(m[1]) : null;
+};
+
 // Should this item become a reviewable PRICING holiday row? Keep major + modern
-// (Israeli national) + their Erev; skip minor/fasts/rosh-chodesh AND Chol HaMoed.
+// (Israeli national) + their Erev; skip minor/fasts/rosh-chodesh, Chol HaMoed,
+// and Hanukkah (those become Calendar Markers, never pricing holidays).
 function isWantedHoliday(item) {
   if (item.category !== 'holiday') return false;
   if (isCholHamoed(item.title)) return false; // → marker instead
+  if (isHanukkah(item.title)) return false; // → marker instead
   if (/^Erev\b/i.test(item.title || '')) return true;
   if (item.yomtov === true) return true;
   return item.subcat === 'major' || item.subcat === 'modern';
@@ -69,6 +79,20 @@ export function parseHebcalItems(items) {
         startDate: date,
         endDate: date,
         nameHe: (it.hebrew && String(it.hebrew).trim()) || title,
+      });
+      continue;
+    }
+
+    // Hanukkah → operational marker, one row per day ("חנוכה — יום N"). Excluded
+    // from pricing. Idempotent via externalId (date|title).
+    if (it.category === 'holiday' && date && isHanukkah(title)) {
+      const day = hanukkahDay(title);
+      markers.push({
+        externalId: `${date}|${title}`,
+        markerKey: 'hanukkah',
+        startDate: date,
+        endDate: date,
+        nameHe: day ? `חנוכה — יום ${day}` : 'חנוכה',
       });
       continue;
     }

@@ -260,29 +260,33 @@ router.post(
     // Operational markers (Chol HaMoed) — a SEPARATE dimension, never priced.
     // Upsert by externalId; also remove any legacy CH"M pricing holiday with the
     // same externalId (redirect). No review workflow — markers don't affect price.
+    // Each marker carries a markerKey (chol_hamoed | hanukkah | …); attach it to
+    // the matching CalendarMarkerType. Also remove any legacy 'other' pricing
+    // holiday with the same externalId (redirect). Unknown keys are skipped.
     let markersUpserted = 0;
-    const cholType = await prisma.calendarMarkerType.findUnique({ where: { key: 'chol_hamoed' } });
-    if (cholType) {
-      for (const m of markers || []) {
-        await prisma.holidayRule.deleteMany({
-          where: { source: 'imported', externalId: m.externalId, type: 'other' },
-        });
-        const data = {
-          markerTypeId: cholType.id,
-          startDate: toDate(m.startDate),
-          endDate: toDate(m.endDate),
-          nameHe: m.nameHe || null,
-          source: 'imported',
-          externalId: m.externalId,
-          active: true,
-        };
-        await prisma.calendarMarker.upsert({
-          where: { source_externalId: { source: 'imported', externalId: m.externalId } },
-          update: { markerTypeId: data.markerTypeId, startDate: data.startDate, endDate: data.endDate, nameHe: data.nameHe },
-          create: data,
-        });
-        markersUpserted++;
-      }
+    const markerTypes = await prisma.calendarMarkerType.findMany();
+    const typeByKey = new Map(markerTypes.map((t) => [t.key, t]));
+    for (const m of markers || []) {
+      const type = typeByKey.get(m.markerKey);
+      if (!type) continue;
+      await prisma.holidayRule.deleteMany({
+        where: { source: 'imported', externalId: m.externalId, type: 'other' },
+      });
+      const data = {
+        markerTypeId: type.id,
+        startDate: toDate(m.startDate),
+        endDate: toDate(m.endDate),
+        nameHe: m.nameHe || null,
+        source: 'imported',
+        externalId: m.externalId,
+        active: true,
+      };
+      await prisma.calendarMarker.upsert({
+        where: { source_externalId: { source: 'imported', externalId: m.externalId } },
+        update: { markerTypeId: data.markerTypeId, startDate: data.startDate, endDate: data.endDate, nameHe: data.nameHe },
+        create: data,
+      });
+      markersUpserted++;
     }
 
     res.json({ ok: true, range: { startISO, endISO }, fetched: rows.length, created, refreshed, locked, autoClassified, markersUpserted });
@@ -293,6 +297,7 @@ router.post(
 
 const MARKER_TYPE_DEFAULTS = [
   { id: 'markertype_chol_hamoed', key: 'chol_hamoed', nameHe: 'חול המועד', nameEn: 'Chol HaMoed', color: '#f59e0b', source: 'system' },
+  { id: 'markertype_hanukkah', key: 'hanukkah', nameHe: 'חנוכה', nameEn: 'Hanukkah', color: '#14b8a6', source: 'system' },
   { id: 'markertype_school_vacation', key: 'school_vacation', nameHe: 'חופשת בית ספר', nameEn: 'School Vacation', color: '#3b82f6', source: 'manual' },
   { id: 'markertype_election_day', key: 'election_day', nameHe: 'יום בחירות', nameEn: 'Election Day', color: '#8b5cf6', source: 'manual' },
   { id: 'markertype_municipal_event', key: 'municipal_event', nameHe: 'אירוע עירוני', nameEn: 'Municipal Event', color: '#10b981', source: 'manual' },
