@@ -480,6 +480,20 @@ export const api = {
     list: () => request('/api/pricing-segments'),
     update: (id, data) => request(`/api/pricing-segments/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   },
+  // שעות שבת וחג — Sabbath & Holiday hours (source of truth for time detection).
+  sabbathHours: {
+    listWeekly: () => request('/api/sabbath-hours/weekly'),
+    createWeekly: (data) => request('/api/sabbath-hours/weekly', { method: 'POST', body: JSON.stringify(data) }),
+    updateWeekly: (id, data) => request(`/api/sabbath-hours/weekly/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    removeWeekly: (id) => request(`/api/sabbath-hours/weekly/${id}`, { method: 'DELETE' }),
+    reorderWeekly: (ids) => request('/api/sabbath-hours/weekly/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
+    listHolidays: (status) => request(`/api/sabbath-hours/holidays${qs({ status })}`),
+    createHoliday: (data) => request('/api/sabbath-hours/holidays', { method: 'POST', body: JSON.stringify(data) }),
+    updateHoliday: (id, data) => request(`/api/sabbath-hours/holidays/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    reviewHoliday: (id, action) => request(`/api/sabbath-hours/holidays/${id}/review`, { method: 'POST', body: JSON.stringify({ action }) }),
+    removeHoliday: (id) => request(`/api/sabbath-hours/holidays/${id}`, { method: 'DELETE' }),
+    importHolidays: (months) => request('/api/sabbath-hours/holidays/import', { method: 'POST', body: JSON.stringify({ months }) }),
+  },
   // Ticket Types — editable catalog for the ticket_types pricing model.
   ticketTypes: {
     list: () => request('/api/ticket-types'),

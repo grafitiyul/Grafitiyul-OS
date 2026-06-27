@@ -6,7 +6,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculate, splitVat, selectRule, priceAddon, addonApplies, PricingError } from './engine.js';
+import { calculate, splitVat, selectRule, priceAddon, addonApplies, sabbathHolidayWindow, PricingError } from './engine.js';
 
 // A minimal price list wrapper. VAT default excluded@0 so base math is visible
 // 1:1 in net/gross unless a test overrides it.
@@ -238,6 +238,32 @@ test('addonApplies: weekdays match by getDay number', () => {
 });
 test('addonApplies: disabled never applies', () => {
   assert.equal(addonApplies({ addonId: 'a', enabled: false, autoApply: 'manual' }, { manualAddonIds: ['a'] }), false);
+});
+
+// ── שעות שבת וחג detector ────────────────────────────────────────────────────
+const WEEKLY = [
+  { active: true, dayOfWeek: 6, allDay: true, nameHe: 'שבת' },              // Saturday all day
+  { active: true, dayOfWeek: 5, allDay: false, startMinute: 900, nameHe: 'כניסת שבת' }, // Fri 15:00+
+];
+test('detector: Saturday all-day window applies', () => {
+  const r = sabbathHolidayWindow({ weekday: 6, minuteOfDay: 600, dateISO: '2026-07-04' }, { weekly: WEEKLY });
+  assert.equal(r.applies, true);
+  assert.equal(r.type, 'shabbat');
+});
+test('detector: Friday before 15:00 does not apply, after does', () => {
+  assert.equal(sabbathHolidayWindow({ weekday: 5, minuteOfDay: 840, dateISO: '2026-07-03' }, { weekly: WEEKLY }).applies, false);
+  assert.equal(sabbathHolidayWindow({ weekday: 5, minuteOfDay: 960, dateISO: '2026-07-03' }, { weekly: WEEKLY }).applies, true);
+});
+test('detector: only APPROVED holidays apply', () => {
+  const holidays = [
+    { active: true, status: 'approved', date: '2026-04-02', allDay: true, type: 'chag', nameHe: 'פסח' },
+    { active: true, status: 'pending', date: '2026-04-03', allDay: true, type: 'chag', nameHe: 'פסח ב' },
+  ];
+  assert.equal(sabbathHolidayWindow({ weekday: 4, minuteOfDay: 600, dateISO: '2026-04-02' }, { holidays }).applies, true);
+  assert.equal(sabbathHolidayWindow({ weekday: 5, minuteOfDay: 600, dateISO: '2026-04-03' }, { holidays }).applies, false);
+});
+test('detector: nothing matches → does not apply', () => {
+  assert.equal(sabbathHolidayWindow({ weekday: 2, minuteOfDay: 600, dateISO: '2026-07-07' }, { weekly: WEEKLY }).applies, false);
 });
 
 // ── resolution guards ───────────────────────────────────────────────────────

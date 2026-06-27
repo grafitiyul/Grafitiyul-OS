@@ -1333,3 +1333,63 @@ model QuoteSection {
 
   @@index([sortOrder])
 }
+
+// ============================================================================
+// שעות שבת וחג — Sabbath & Holiday hours (source of truth for time detection)
+// ============================================================================
+//
+// Defines WHEN a date/time counts as שבת / חג / ערב חג. Two shapes feeding one
+// detector: recurring weekly windows + dated holiday rows (imported or manual,
+// with a review/approval workflow). NOT wired to pricing yet — a later slice
+// switches PriceRuleAddon.autoApply='sabbath_holiday' to read these rules. No
+// holiday date is hard-coded in code; weekly times are owner-entered, holidays
+// come from the import source (Hebcal). Money/Deals/Quotes untouched.
+
+// Recurring weekly window, e.g. "כניסת שבת — שישי מ-15:00", "שבת — כל היום".
+// Times are minutes-from-midnight (Israel local wall-clock); null start = open,
+// null end = until end of day. allDay covers the whole day.
+model SabbathWeeklyRule {
+  id          String   @id @default(cuid())
+  nameHe      String
+  nameEn      String?
+  dayOfWeek   Int // 0=Sun … 6=Sat (matches JS getDay)
+  allDay      Boolean  @default(false)
+  startMinute Int? // 0..1439
+  endMinute   Int?
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([sortOrder])
+}
+
+// One reviewable holiday row per date. `source`/`externalId` dedupe imports;
+// `manuallyEdited` + `status='approved'` LOCK a row from being overwritten by a
+// re-import (only the sourceName/sourceDate mirror refreshes, for change
+// detection). Only `approved` + `active` rows will later affect pricing.
+model HolidayRule {
+  id             String    @id @default(cuid())
+  nameHe         String
+  nameEn         String?
+  date           DateTime  @db.Date
+  allDay         Boolean   @default(true)
+  startMinute    Int? // ערב חג start (minutes from midnight, Israel local)
+  endMinute      Int?
+  type           String    @default("chag") // 'erev_chag' | 'chag' | 'other'
+  source         String    @default("imported") // 'imported' | 'manual'
+  status         String    @default("pending") // 'pending' | 'approved' | 'ignored'
+  active         Boolean   @default(true)
+  externalId     String? // stable key from the import source (dedupe)
+  manuallyEdited Boolean   @default(false)
+  reviewedAt     DateTime?
+  reviewedBy     String? // loose actor id (no User model yet)
+  sourceName     String? // raw source mirror — to flag "source changed since approval"
+  sourceDate     DateTime? @db.Date
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([source, externalId])
+  @@index([date])
+  @@index([status])
+}

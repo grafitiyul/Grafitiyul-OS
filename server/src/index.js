@@ -37,6 +37,7 @@ import addonPriceRulesRouter from './routes/addonPriceRules.js';
 import pricingCalcRouter from './routes/pricingCalc.js';
 import pricingSegmentsRouter from './routes/pricingSegments.js';
 import ticketTypesRouter from './routes/ticketTypes.js';
+import sabbathHoursRouter from './routes/sabbathHours.js';
 import lostReasonsRouter from './routes/lostReasons.js';
 import quoteSectionsRouter from './routes/quoteSections.js';
 
@@ -146,6 +147,7 @@ app.use('/api/addon-price-rules', requireAdminAuth, addonPriceRulesRouter);
 app.use('/api/pricing', requireAdminAuth, pricingCalcRouter);
 app.use('/api/pricing-segments', requireAdminAuth, pricingSegmentsRouter);
 app.use('/api/ticket-types', requireAdminAuth, ticketTypesRouter);
+app.use('/api/sabbath-hours', requireAdminAuth, sabbathHoursRouter);
 
 // CRM settings catalogs — Lost Reasons & Quote Content Sections. Admin only.
 // Content/config only; NOT wired to Deals or quote generation yet.

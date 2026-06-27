@@ -50,6 +50,7 @@ import DealStagesSettings from './admin/crm/settings/DealStagesSettings.jsx';
 import LostReasonsSettings from './admin/crm/settings/LostReasonsSettings.jsx';
 import QuoteSectionsSettings from './admin/crm/settings/QuoteSectionsSettings.jsx';
 import TicketTypesSettings from './admin/crm/settings/TicketTypesSettings.jsx';
+import SabbathHoursSettings from './admin/crm/settings/SabbathHoursSettings.jsx';
 // Products & Pricing — Slice 1 (catalog + files + payment config).
 import ProductsSettings from './admin/products/ProductsSettings.jsx';
 import ProductDetail from './admin/products/ProductDetail.jsx';
@@ -162,6 +163,7 @@ export default function App() {
         <Route path="settings/crm/pricing/advanced" element={<PricingSettings />} />
         <Route path="settings/crm/addons" element={<AddonsSettings />} />
         <Route path="settings/crm/ticket-types" element={<TicketTypesSettings />} />
+        <Route path="settings/crm/sabbath-hours" element={<SabbathHoursSettings />} />
         <Route path="users" element={<AdminUsersPage />} />
         <Route path="documents" element={<DocumentsLayout />}>
           <Route index element={<DocumentsIndexPage />} />

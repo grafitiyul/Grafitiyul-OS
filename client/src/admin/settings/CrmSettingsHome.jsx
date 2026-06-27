@@ -66,6 +66,12 @@ export default function CrmSettingsHome() {
           title="סוגי כרטיסים"
           description="קטלוג סוגי הכרטיסים לתמחור לפי כרטיס (מבוגר / ילד וכו')."
         />
+        <CategoryCard
+          to="/admin/settings/crm/sabbath-hours"
+          icon="🕯️"
+          title="שעות שבת וחג"
+          description="חלונות הזמן שמגדירים מתי תאריך נחשב שבת / חג / ערב חג."
+        />
       </CategoryGrid>
     </div>
   );

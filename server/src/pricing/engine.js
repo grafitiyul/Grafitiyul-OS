@@ -314,6 +314,38 @@ export function priceAddon(entry, cardVat) {
   };
 }
 
+// ── שעות שבת וחג detection ──────────────────────────────────────────────────
+// Pure: given a normalized moment and the active rules, decide whether it falls
+// in a שבת/חג/ערב-חג window. The route normalizes a datetime (Israel local) into
+// { weekday 0-6, minuteOfDay 0-1439, dateISO 'YYYY-MM-DD' } and loads the rules.
+// Only APPROVED + active holidays count — pending/ignored never affect pricing.
+// NOT wired to pricing yet; this is the detector a later slice feeds into
+// addonApplies for autoApply='sabbath_holiday'.
+function inWindow(minute, startMinute, endMinute) {
+  const s = startMinute == null ? 0 : Number(startMinute);
+  const e = endMinute == null ? 1439 : Number(endMinute);
+  return minute >= s && minute <= e;
+}
+
+export function sabbathHolidayWindow(ctx, rules = {}) {
+  const minute = Number(ctx.minuteOfDay) || 0;
+  for (const r of rules.weekly || []) {
+    if (r.active === false) continue;
+    if (Number(r.dayOfWeek) !== Number(ctx.weekday)) continue;
+    if (r.allDay || inWindow(minute, r.startMinute, r.endMinute)) {
+      return { applies: true, type: 'shabbat', label: r.nameHe };
+    }
+  }
+  for (const h of rules.holidays || []) {
+    if (h.active === false || h.status !== 'approved') continue;
+    if (String(h.date).slice(0, 10) !== ctx.dateISO) continue;
+    if (h.allDay || inWindow(minute, h.startMinute, h.endMinute)) {
+      return { applies: true, type: h.type, label: h.nameHe };
+    }
+  }
+  return { applies: false };
+}
+
 // Full calculation. `priceList` (with `rules`), `activityType`, `context`, and
 // `counts` are supplied by the caller. Returns a structured result or throws a
 // PricingError with a clear `code`.
