@@ -1394,7 +1394,12 @@ model TimelineEntry {
   isPinned     Boolean           @default(false)
   pinSortOrder Int               @default(0) // manual FOCUS order, scoped to the subject
   isSystem     Boolean           @default(false) // system events: not user-editable
-  createdBy    String? // loose actor id (no User model yet)
+  // Author attribution. createdBy = AdminUser.id (canonical identity, ready for a
+  // future User model); createdByName = a snapshot of the author's username at
+  // creation, so the feed renders the author with no join and the name survives
+  // renames / deactivation. Every user-created item carries an author.
+  createdBy    String?
+  createdByName String?
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
   editedAt     DateTime? // set on CONTENT edits (distinct from pin/reorder)
@@ -1413,7 +1418,8 @@ model TimelineComment {
   entry     TimelineEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
   entryId   String
   body      String
-  createdBy String? // loose actor id (no User model yet)
+  createdBy String? // AdminUser.id (canonical identity)
+  createdByName String? // author username snapshot (see TimelineEntry)
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
   deletedAt DateTime?

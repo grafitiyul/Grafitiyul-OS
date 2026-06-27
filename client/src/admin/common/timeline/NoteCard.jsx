@@ -2,7 +2,28 @@ import { useState } from 'react';
 import RichEditor from '../../../editor/RichEditor.jsx';
 import { normalizeRichHtml } from '../../../editor/htmlNormalize.js';
 import { titleToPlain } from '../../../editor/TitleEditor.jsx';
-import { relativeHebrew } from '../../../lib/relativeTime.js';
+
+// Author + absolute date & time stamp shown on every timeline object. The author
+// name is the snapshot persisted at creation (AdminUser.username today).
+function fmtStamp(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    return `${d.toLocaleDateString('he-IL')} ${d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`;
+  } catch {
+    return '';
+  }
+}
+function StampLine({ name, iso, edited, className = 'text-[11px] text-gray-400' }) {
+  return (
+    <span className={className}>
+      {name && <span className="font-medium text-gray-500">{name}</span>}
+      {name ? ' · ' : ''}
+      {fmtStamp(iso)}
+      {edited ? ' · נערך' : ''}
+    </span>
+  );
+}
 
 // A single timeline note. Permanent light-yellow card. Supports edit / delete /
 // pin / collapse-expand and nested white comments. The note BODY is rich HTML
@@ -72,10 +93,7 @@ export default function NoteCard({
       <div className="flex items-center gap-2 px-4 pt-3">
         {dragHandle}
         {originLabel && <span className="text-[11px] font-medium text-amber-700/80">{originLabel}</span>}
-        <span className="text-[11px] text-gray-400">
-          {relativeHebrew(entry.createdAt)}
-          {entry.editedAt ? ' · נערך' : ''}
-        </span>
+        <StampLine name={entry.createdByName} iso={entry.createdAt} edited={!!entry.editedAt} />
         <div className="flex-1" />
         <IconBtn title={entry.isPinned ? 'בטל נעיצה' : 'נעץ ל-FOCUS'} active={entry.isPinned} onClick={() => onTogglePin(entry)}>📌</IconBtn>
         {!editing && (
@@ -89,7 +107,7 @@ export default function NoteCard({
       <div className="px-4 pb-3 pt-1">
         {editing ? (
           <div className="space-y-2">
-            <RichEditor preset="note" value={draft} onChange={setDraft} minContentHeight={120} ariaLabel="עריכת פתק" />
+            <RichEditor value={draft} onChange={setDraft} minContentHeight={120} ariaLabel="עריכת פתק" />
             <div className="flex gap-2 justify-end">
               <button onClick={() => setEditing(false)} className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">
                 ביטול
@@ -177,7 +195,7 @@ function CommentRow({ comment, onEdit, onDelete }) {
       ) : (
         <div className="flex items-start gap-2">
           <div className="flex-1 text-sm text-gray-800 whitespace-pre-wrap">{comment.body}</div>
-          <span className="text-[10px] text-gray-400 shrink-0">{relativeHebrew(comment.createdAt)}</span>
+          <StampLine name={comment.createdByName} iso={comment.createdAt} className="text-[10px] text-gray-400 shrink-0" />
           <button onClick={() => { setDraft(comment.body); setEditing(true); }} className="text-[12px] text-blue-700 shrink-0">ערוך</button>
           <button onClick={remove} className="text-[12px] text-red-600 shrink-0">מחק</button>
         </div>

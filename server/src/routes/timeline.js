@@ -25,6 +25,16 @@ function reloadEntry(id) {
   return prisma.timelineEntry.findUnique({ where: { id }, include: ENTRY_INCLUDE });
 }
 
+// Resolve the current author from the session. `createdBy` is the canonical
+// AdminUser.id; `createdByName` snapshots the username for join-free display.
+// (Only null during first-run bootstrap, before any admin exists.)
+async function currentAuthor(req) {
+  const id = req.adminAuth?.userId || null;
+  if (!id) return { createdBy: null, createdByName: null };
+  const u = await prisma.adminUser.findUnique({ where: { id }, select: { username: true } });
+  return { createdBy: id, createdByName: u?.username || null };
+}
+
 // ---------- Entries ----------
 
 // GET /api/timeline?subjectType=&subjectId=  → all live entries, newest first.
@@ -60,6 +70,7 @@ router.post(
     if (kind === 'note' && (!body || !body.trim())) {
       return res.status(400).json({ error: 'empty_note' });
     }
+    const author = await currentAuthor(req);
     const entry = await prisma.timelineEntry.create({
       data: {
         subjectType,
@@ -68,6 +79,7 @@ router.post(
         body,
         // Light, kind-specific payload (e.g. { origin: 'inquiry' }). Stored as-is.
         data: b.data ?? undefined,
+        ...author,
       },
       include: ENTRY_INCLUDE,
     });
@@ -197,7 +209,8 @@ router.post(
       select: { id: true, deletedAt: true },
     });
     if (!entry || entry.deletedAt) return res.status(404).json({ error: 'not_found' });
-    await prisma.timelineComment.create({ data: { entryId: entry.id, body } });
+    const author = await currentAuthor(req);
+    await prisma.timelineComment.create({ data: { entryId: entry.id, body, ...author } });
     res.status(201).json(await reloadEntry(entry.id));
   }),
 );

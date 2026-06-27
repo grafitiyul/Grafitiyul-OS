@@ -129,7 +129,6 @@ export default function TimelineFeed({ subjectType, subjectId }) {
           {tab === 'note' ? (
             <div className="space-y-2">
               <RichEditor
-                preset="note"
                 value={draft}
                 onChange={setDraft}
                 placeholder="כתבו פתק…"
