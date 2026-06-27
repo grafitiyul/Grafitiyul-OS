@@ -1,20 +1,18 @@
-import { parsePhone, flagGlyph } from '../../lib/phone.js';
+import { parsePhone } from '../../lib/phone.js';
+import CountryFlag from './CountryFlag.jsx';
 
 // A light phone input: a normal text field (stores the raw string as typed) with
-// a live country-flag indicator derived from the value. International numbers
-// ("+44…") detect their country; a local "0…" number shows Israel; an
-// unrecognised value (or a platform without flag emoji) shows a neutral globe.
-// Hovering the flag reveals the country name. All country metadata comes from the
-// shared phone utility — no telecom logic here.
+// a live country-flag indicator derived from the value — a real SVG flag (same on
+// every OS). International numbers ("+44…") detect their country; a local "0…"
+// number shows Israel; an unrecognised value shows a neutral globe. Hovering the
+// flag reveals the country name. All country detection comes from the shared
+// phone utility; the flag rendering comes from the shared CountryFlag component.
 export default function PhoneInput({ value, onChange, placeholder, autoFocus, id }) {
   const { iso, name } = parsePhone(value);
   return (
     <div className="relative">
-      <span
-        className="absolute inset-y-0 left-2 flex items-center text-base cursor-default select-none"
-        title={name || undefined}
-      >
-        {flagGlyph(iso)}
+      <span className="absolute inset-y-0 left-2 flex items-center text-sm">
+        <CountryFlag iso={iso} name={name} />
       </span>
       <input
         id={id}
