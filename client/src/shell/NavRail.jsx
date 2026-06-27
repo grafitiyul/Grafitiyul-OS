@@ -1,21 +1,9 @@
 import { NavLink } from 'react-router-dom';
+import { TOP_MODULES, BOTTOM_MODULES } from './modules.js';
 
 // Sidebar modules. Top group = daily/frequent operational work. Bottom group =
-// less-frequent utility/config, pushed to the bottom by a spacer. Keyed by
-// stable internal keys — never by the Hebrew label.
-const TOP_MODULES = [
-  { key: 'people', to: '/admin/people', label: 'אנשים וגישה', glyph: '👥' },
-  // CRM is the operational hub: Deals (primary tab) + Contacts + Organizations.
-  { key: 'crm', to: '/admin/crm', label: 'CRM', glyph: '🏢' },
-];
-
-// Bottom cluster, top→bottom: מסמכים, נהלים, הגדרות, משתמשים.
-const BOTTOM_MODULES = [
-  { key: 'documents', to: '/admin/documents', label: 'מסמכים', glyph: '📄' },
-  { key: 'procedures', to: '/admin/procedures', label: 'נהלים', glyph: '☰' },
-  { key: 'settings', to: '/admin/settings', label: 'הגדרות', glyph: '⚙️' },
-  { key: 'users', to: '/admin/users', label: 'משתמשים', glyph: '🔐' },
-];
+// less-frequent utility/config, pushed to the bottom by a spacer. The module
+// lists live in ./modules.js so the TopBar breadcrumb shares the same source.
 
 function Item({ to, glyph, label }) {
   return (

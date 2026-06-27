@@ -1,8 +1,11 @@
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
+import { moduleForPath } from './modules.js';
 
 export default function TopBar() {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const moduleLabel = moduleForPath(pathname)?.label || 'בית';
   const [busy, setBusy] = useState(false);
 
   async function handleLogout() {
@@ -25,7 +28,7 @@ export default function TopBar() {
       <div className="font-bold text-gray-900 text-[15px]">Grafitiyul OS</div>
       <div className="hidden lg:flex items-center gap-3 ms-6 text-sm">
         <span className="text-gray-300">/</span>
-        <span className="text-gray-700">נהלים</span>
+        <span className="text-gray-700">{moduleLabel}</span>
       </div>
       <div className="flex-1" />
       <button

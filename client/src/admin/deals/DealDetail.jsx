@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
-import BackButton from '../common/BackButton.jsx';
-import { formatMinor, minorToInput, toMinor } from '../../lib/money.js';
+import AnchoredMenu from '../common/AnchoredMenu.jsx';
+import ConfirmDialog from '../common/ConfirmDialog.jsx';
+import LostDealDialog from './LostDealDialog.jsx';
+import { minorToInput, toMinor } from '../../lib/money.js';
 import {
   DEAL_STATUS_LABELS,
-  DEAL_STATUS_STYLES,
   ROLE_ORDER,
   ROLE_LABELS,
   PREF_FIELDS,
@@ -14,6 +15,23 @@ import {
 
 const INPUT =
   'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
+
+// Per-status visual theme. OPEN is intentionally a muted/soft blue (not strong),
+// WON green, LOST red. Used for the status buttons and the header pipeline.
+const STATUS_THEME = {
+  open: {
+    solid: 'bg-blue-500 hover:bg-blue-600 text-white',
+    soft: 'bg-blue-50 text-blue-600 ring-blue-100',
+  },
+  won: {
+    solid: 'bg-emerald-600 hover:bg-emerald-700 text-white',
+    soft: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+  },
+  lost: {
+    solid: 'bg-red-600 hover:bg-red-700 text-white',
+    soft: 'bg-red-50 text-red-700 ring-red-200',
+  },
+};
 
 function fmtDate(iso) {
   if (!iso) return '—';
@@ -42,6 +60,13 @@ export default function DealDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+  const [savingTitle, setSavingTitle] = useState(false);
+  const [lostOpen, setLostOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuBtnRef = useRef(null);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -133,23 +158,82 @@ export default function DealDetail() {
   }
 
   async function setStatus(status) {
-    let lostReason;
-    if (status === 'lost') lostReason = prompt('סיבת אובדן הדיל (אופציונלי):') || null;
+    // LOST goes through the in-system modal (required reason + optional notes).
+    if (status === 'lost') {
+      setLostOpen(true);
+      return;
+    }
     try {
-      await api.deals.update(id, { status, lostReason });
+      await api.deals.update(id, { status });
       await refresh();
     } catch (e) {
       alert('שגיאה: ' + e.message);
     }
   }
 
+  async function confirmLost(lostReason) {
+    try {
+      await api.deals.update(id, { status: 'lost', lostReason });
+      setLostOpen(false);
+      await refresh();
+    } catch (e) {
+      alert('שגיאה: ' + e.message);
+    }
+  }
+
+  // Inline title editing — saves the title field only, preserving all other
+  // saved values. The card field + hero stay in sync via refresh().
+  function startTitleEdit() {
+    setTitleDraft(deal.title || '');
+    setEditingTitle(true);
+  }
+
+  async function saveTitle() {
+    const t = titleDraft.trim();
+    if (!t || t === deal.title) {
+      setEditingTitle(false);
+      return;
+    }
+    setSavingTitle(true);
+    try {
+      await api.deals.update(id, { title: t });
+      await refresh();
+      setEditingTitle(false);
+    } catch (e) {
+      alert('שגיאה בשמירת הכותרת: ' + (e.payload?.error || e.message));
+    } finally {
+      setSavingTitle(false);
+    }
+  }
+
   async function removeDeal() {
-    if (!confirm('למחוק את הדיל? אנשי הקשר המקושרים יוסרו מהדיל.')) return;
     try {
       await api.deals.remove(id);
       navigate('/admin/crm/deals');
     } catch (e) {
       alert('שגיאה במחיקה: ' + e.message);
+    }
+  }
+
+  async function duplicateDeal() {
+    try {
+      const copy = await api.deals.create({
+        title: `${deal.title} (עותק)`,
+        dealStageId: deal.dealStageId || undefined,
+        organizationId: deal.organizationId || null,
+        organizationUnitId: deal.organizationUnitId || null,
+        organizationSubtypeId: deal.organizationSubtypeId || null,
+        valueMinor: minorToInput(deal.valueMinor),
+        discountMinor: minorToInput(deal.discountMinor),
+        currency: deal.currency || 'ILS',
+        paymentTerms: deal.paymentTerms || null,
+        source: deal.source || null,
+        expectedCloseDate: deal.expectedCloseDate || null,
+        notes: deal.notes || null,
+      });
+      navigate(`/admin/crm/deals/${copy.id}`);
+    } catch (e) {
+      alert('שגיאה בשכפול: ' + (e.payload?.error || e.message));
     }
   }
 
@@ -162,67 +246,129 @@ export default function DealDetail() {
     );
   if (!deal || !form) return null;
 
+  const theme = STATUS_THEME[deal.status] || STATUS_THEME.open;
+
   return (
     <div className="mx-auto max-w-[1500px] px-5 lg:px-8 py-6">
-      <BackButton to="/admin/crm/deals" label="חזרה לדילים" />
-
       {/* Hero header — the live business object */}
-      <div className="mt-2 bg-white border border-gray-200 rounded-2xl shadow-sm p-5 lg:p-6">
+      <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-5 lg:p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl lg:text-3xl font-bold tracking-tight text-gray-900">
-                {deal.title}
-              </h1>
-              <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-semibold ${DEAL_STATUS_STYLES[deal.status]}`}>
+              {editingTitle ? (
+                <input
+                  autoFocus
+                  value={titleDraft}
+                  onChange={(e) => setTitleDraft(e.target.value)}
+                  onBlur={saveTitle}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      saveTitle();
+                    } else if (e.key === 'Escape') {
+                      setEditingTitle(false);
+                    }
+                  }}
+                  disabled={savingTitle}
+                  className="text-2xl lg:text-3xl font-bold tracking-tight text-gray-900 border-b-2 border-blue-400 focus:outline-none px-0.5 min-w-[12rem] disabled:opacity-60"
+                />
+              ) : (
+                <h1
+                  onClick={startTitleEdit}
+                  title="לחצו לעריכת הכותרת"
+                  className="text-2xl lg:text-3xl font-bold tracking-tight text-gray-900 cursor-text rounded px-1 -mx-1 hover:bg-gray-50"
+                >
+                  {deal.title}
+                </h1>
+              )}
+              <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-semibold ring-1 ring-inset ${theme.soft}`}>
                 {DEAL_STATUS_LABELS[deal.status]}
               </span>
-              {deal.dealStage && (
-                <span className="inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-1 text-[12px] font-medium text-indigo-700 ring-1 ring-inset ring-indigo-100">
-                  {deal.dealStage.label}
-                </span>
-              )}
             </div>
-            <div className="mt-2 flex items-center gap-3 text-gray-500">
-              <span className="text-2xl font-bold text-gray-900 tabular-nums" dir="ltr">
-                {formatMinor(deal.valueMinor, deal.currency)}
-              </span>
+
+            {/* Pipeline stage display — colored by the deal status */}
+            <div className="mt-3">
+              <StagePipeline stages={stages} currentStageId={deal.dealStageId} theme={theme} />
               {deal.organization && (
-                <span className="text-sm">· {deal.organization.name}</span>
+                <div className="mt-1.5 text-sm text-gray-500">{deal.organization.name}</div>
               )}
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button onClick={save} disabled={saving}
               className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50">
               {saving ? 'שומר…' : 'שמור'}
             </button>
             {deal.status !== 'won' && (
               <button onClick={() => setStatus('won')}
-                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700">
-                סמן כ-WON
+                className={`rounded-lg px-4 py-2 text-sm font-semibold ${STATUS_THEME.won.solid}`}>
+                WON
               </button>
             )}
             {deal.status !== 'lost' && (
               <button onClick={() => setStatus('lost')}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
-                סמן כ-LOST
+                className={`rounded-lg px-4 py-2 text-sm font-semibold ${STATUS_THEME.lost.solid}`}>
+                LOST
               </button>
             )}
             {deal.status !== 'open' && (
               <button onClick={() => setStatus('open')}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                className={`rounded-lg px-4 py-2 text-sm font-semibold ${STATUS_THEME.open.solid}`}>
                 החזר ל-OPEN
               </button>
             )}
-            <button onClick={removeDeal}
-              className="rounded-lg border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50">
-              מחק דיל
+            <button
+              ref={menuBtnRef}
+              onClick={() => setMenuOpen((o) => !o)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-label="פעולות נוספות"
+              className="h-10 w-10 rounded-lg border border-gray-300 text-gray-500 hover:text-gray-800 hover:bg-gray-50 text-lg leading-none"
+            >
+              ⋮
             </button>
+            <AnchoredMenu anchorRef={menuBtnRef} open={menuOpen} onClose={() => setMenuOpen(false)} width={184}>
+              <button
+                onClick={() => { setMenuOpen(false); duplicateDeal(); }}
+                className="block w-full text-right px-3 py-2 text-sm hover:bg-gray-50"
+              >
+                שכפל דיל
+              </button>
+              <button
+                disabled
+                title="בקרוב"
+                className="flex w-full items-center justify-between gap-2 px-3 py-2 text-sm text-gray-400 cursor-not-allowed"
+              >
+                <span>איחוד דילים</span>
+                <span className="text-[10px] rounded bg-gray-100 px-1.5 py-0.5">בקרוב</span>
+              </button>
+              <div className="my-1 border-t border-gray-100" />
+              <button
+                onClick={() => { setMenuOpen(false); setConfirmDelete(true); }}
+                className="block w-full text-right px-3 py-2 text-sm text-red-600 hover:bg-red-50"
+              >
+                מחק דיל
+              </button>
+            </AnchoredMenu>
           </div>
         </div>
       </div>
+
+      <LostDealDialog
+        open={lostOpen}
+        onClose={() => setLostOpen(false)}
+        onSubmit={confirmLost}
+      />
+      <ConfirmDialog
+        open={confirmDelete}
+        title="מחיקת דיל"
+        body="למחוק את הדיל? אנשי הקשר המקושרים יוסרו מהדיל."
+        confirmLabel="מחק"
+        danger
+        onCancel={() => setConfirmDelete(false)}
+        onConfirm={() => { setConfirmDelete(false); removeDeal(); }}
+      />
 
       {/* Two-column workspace */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mt-5">
@@ -579,6 +725,30 @@ function RolesAndPrefs({ draft, setDraft }) {
 }
 
 // ── Atoms ───────────────────────────────────────────────────────────
+
+// Compact pipeline display: every stage as a chip, the current one highlighted
+// in the deal's status color (WON green / LOST red / OPEN muted blue), the rest
+// muted. A closed deal still shows where it sat in the pipeline.
+function StagePipeline({ stages, currentStageId, theme }) {
+  if (!stages?.length) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {stages.map((s) => {
+        const active = s.id === currentStageId;
+        return (
+          <span
+            key={s.id}
+            className={`inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium ring-1 ring-inset ${
+              active ? theme.soft : 'bg-gray-50 text-gray-400 ring-gray-100'
+            }`}
+          >
+            {s.label}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
 
 function Card({ title, action, children }) {
   return (
