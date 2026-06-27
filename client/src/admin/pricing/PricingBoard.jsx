@@ -35,7 +35,7 @@ const modelName = (m) => MODELS.find((x) => x.value === m)?.name || m;
 // Business VAT choices → engine vatMode.
 const VAT_OPTS = [
   { value: 'included', name: 'כולל מע״מ' },
-  { value: 'excluded', name: 'מע״מ בתוספת' },
+  { value: 'excluded', name: 'לפני מע״מ' },
   { value: 'exempt', name: 'פטור ממע״מ' },
 ];
 const DEFAULT_VAT_RATE = 18;
@@ -452,7 +452,7 @@ function ticketNameMap(ticketTypes) {
 
 function vatLabel(mode, rate) {
   if (mode === 'exempt') return 'פטור ממע״מ';
-  if (mode === 'excluded') return `מע״מ בתוספת ${rate}%`;
+  if (mode === 'excluded') return `לפני מע״מ ${rate}%`;
   return `כולל מע״מ ${rate}%`;
 }
 
