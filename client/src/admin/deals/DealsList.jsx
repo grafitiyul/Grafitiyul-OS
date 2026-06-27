@@ -566,12 +566,12 @@ function CreateDealModal({ orgs, types, subtypes, sources, onClose, onCreated })
   const [sourceId, setSourceId] = useState('');
   const [sourceFree, setSourceFree] = useState('');
   const [showBiz, setShowBiz] = useState(false);
-  const [orgMode, setOrgMode] = useState('existing'); // 'existing' | 'new'
-  const [orgId, setOrgId] = useState(''); // selected existing org
-  const [existingOrgType, setExistingOrgType] = useState(null); // selected org's type (read-only)
-  const [newOrgName, setNewOrgName] = useState(''); // free-typed new org name
-  const [orgTypeId, setOrgTypeId] = useState(''); // type for the NEW org (required)
-  const [subtypeId, setSubtypeId] = useState(''); // deal subtype for the NEW org (optional)
+  const [orgName, setOrgName] = useState(''); // free-typed organization name (autocomplete)
+  const [selectedOrgId, setSelectedOrgId] = useState(''); // set when an existing suggestion is chosen
+  const [existingOrgType, setExistingOrgType] = useState(null); // matched org's type (read-only)
+  const [orgFocused, setOrgFocused] = useState(false);
+  const [orgTypeId, setOrgTypeId] = useState(''); // type for a NEW org (required)
+  const [subtypeId, setSubtypeId] = useState(''); // deal subtype for a NEW org (optional)
   const [busy, setBusy] = useState(false);
 
   // Auto-derive the deal title from the full name until the user edits it.
@@ -579,30 +579,51 @@ function CreateDealModal({ orgs, types, subtypes, sources, onClose, onCreated })
     if (!titleTouched) setTitle(fullName.trim());
   }, [fullName, titleTouched]);
 
-  // When an EXISTING organization is selected, fetch its type for read-only
-  // display — the organization is the source of truth, so type/subtype are
-  // locked here and never re-entered.
+  // Resolve the typed organization name against existing orgs. A chosen
+  // suggestion (selectedOrgId) OR an exact name match counts as "existing";
+  // anything else typed is treated as a brand-new organization on save.
+  const typedOrg = orgName.trim();
+  const exactMatch = typedOrg
+    ? orgs.find((o) => (o.name || '').trim().toLowerCase() === typedOrg.toLowerCase())
+    : null;
+  const existingOrgId = selectedOrgId || (exactMatch ? exactMatch.id : '');
+  const isExistingOrg = showBiz && !!existingOrgId;
+  const isNewOrg = showBiz && !!typedOrg && !existingOrgId;
+  const orgSuggestions =
+    typedOrg && !selectedOrgId
+      ? orgs.filter((o) => (o.name || '').toLowerCase().includes(typedOrg.toLowerCase())).slice(0, 6)
+      : [];
+
+  // For the matched/selected existing org, fetch its type for read-only display.
+  // The existing organization stays the single source of truth — never edited here.
   useEffect(() => {
-    if (orgMode !== 'existing' || !orgId) {
+    if (!existingOrgId) {
       setExistingOrgType(null);
       return;
     }
     let live = true;
     api.organizations
-      .get(orgId)
+      .get(existingOrgId)
       .then((full) => { if (live) setExistingOrgType(full.organizationType || null); })
       .catch(() => { if (live) setExistingOrgType(null); });
     return () => { live = false; };
-  }, [orgMode, orgId]);
+  }, [existingOrgId]);
 
   const activeSources = sources.filter((s) => s.active);
   const scopedSubtypes = subtypes.filter(
     (s) => !orgTypeId || !s.organizationTypeId || s.organizationTypeId === orgTypeId,
   );
-  // A NEW organization requires a name + an organization type. An existing org
-  // needs nothing extra (its own classification is the source of truth).
-  const newOrgInvalid = showBiz && orgMode === 'new' && (!newOrgName.trim() || !orgTypeId);
+  // A NEW organization requires its type; an existing org needs nothing extra.
+  const newOrgInvalid = isNewOrg && !orgTypeId;
   const ready = fullName.trim() && phone.trim() && sourceId && !newOrgInvalid;
+
+  function chooseOrg(o) {
+    setSelectedOrgId(o.id);
+    setOrgName(o.name);
+    setOrgTypeId('');
+    setSubtypeId('');
+    setOrgFocused(false);
+  }
 
   async function submit(e) {
     e.preventDefault();
@@ -616,15 +637,19 @@ function CreateDealModal({ orgs, types, subtypes, sources, onClose, onCreated })
         await api.contacts.addEmail(contact.id, { value: email.trim(), isPrimary: true });
       }
 
-      // 2) Resolve the organization binding (existing | new | none) BEFORE the
-      //    deal, reusing the existing organizations API — no duplicate org logic.
+      // 2) Resolve the organization (existing match | new) BEFORE the deal,
+      //    reusing the existing organizations API — no duplicate org logic.
       let orgFields = {};
-      if (showBiz && orgMode === 'new' && newOrgName.trim()) {
-        // New organization OWNS its type (source of truth). The subtype is a
-        // deal-level field. The backend keeps Deal.organizationTypeId null while
-        // an org is linked, so there is never duplicate truth.
+      if (showBiz && existingOrgId) {
+        // Existing organization is the source of truth — link only. Its type /
+        // classification is locked and not re-entered here.
+        orgFields = { activityType: 'business', organizationId: existingOrgId };
+      } else if (showBiz && typedOrg) {
+        // Brand-new organization OWNS its type (source of truth); the subtype is
+        // a deal-level field. The backend keeps Deal.organizationTypeId null
+        // while an org is linked, so there is never duplicate truth.
         const newOrg = await api.organizations.create({
-          name: newOrgName.trim(),
+          name: typedOrg,
           organizationTypeId: orgTypeId || null,
         });
         orgFields = {
@@ -632,10 +657,6 @@ function CreateDealModal({ orgs, types, subtypes, sources, onClose, onCreated })
           organizationId: newOrg.id,
           organizationSubtypeId: subtypeId || null,
         };
-      } else if (showBiz && orgMode === 'existing' && orgId) {
-        // Existing organization is the source of truth — link only. Its type /
-        // classification is locked and not re-entered here.
-        orgFields = { activityType: 'business', organizationId: orgId };
       }
 
       // 3) The deal. Inquiry text → notes; source → catalog ref; sourceFree → free text.
@@ -661,7 +682,7 @@ function CreateDealModal({ orgs, types, subtypes, sources, onClose, onCreated })
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" dir="rtl">
       <div className="absolute inset-0 bg-gray-900/40" onClick={onClose} />
-      <form onSubmit={submit} className="relative w-full max-w-md rounded-2xl bg-white shadow-xl flex flex-col max-h-[90vh]">
+      <form onSubmit={submit} className="relative w-full max-w-lg rounded-2xl bg-white shadow-xl flex flex-col max-h-[90vh]">
         <div className="px-6 pt-6 pb-3 border-b border-gray-100">
           <h2 className="text-lg font-bold text-gray-900">דיל חדש</h2>
           <p className="text-[12px] text-gray-500 mt-0.5">פנייה חדשה — מי פנה, באיזה טלפון ומאיפה הגיע.</p>
@@ -704,9 +725,11 @@ function CreateDealModal({ orgs, types, subtypes, sources, onClose, onCreated })
             <input value={sourceFree} onChange={(e) => setSourceFree(e.target.value)} placeholder="לדוגמה: קמפיין פייסבוק, שם ממליץ, כנס…" className={MODAL_INPUT} />
           </Field>
 
-          {/* Optional organization section — collapsed by default. Lets the user
-              link an EXISTING org (type/subtype locked — the org is the source of
-              truth) OR type a NEW org name (created + linked on save). */}
+          {/* Optional organization — ONE free-typed field with autocomplete.
+              Pick a suggestion (or type an exact existing name) → existing org,
+              type locked (it is the source of truth). Type a fresh name → a new
+              org is created + linked on save. No "existing vs new" decision up
+              front — typing is enough. */}
           {!showBiz ? (
             <button type="button" onClick={() => setShowBiz(true)} className="text-sm font-medium text-blue-700 hover:bg-blue-50 rounded-lg px-2 py-1.5">
               + הוסף ארגון
@@ -719,11 +742,11 @@ function CreateDealModal({ orgs, types, subtypes, sources, onClose, onCreated })
                   type="button"
                   onClick={() => {
                     setShowBiz(false);
-                    setOrgId('');
-                    setNewOrgName('');
+                    setOrgName('');
+                    setSelectedOrgId('');
+                    setExistingOrgType(null);
                     setOrgTypeId('');
                     setSubtypeId('');
-                    setExistingOrgType(null);
                   }}
                   className="text-[12px] text-gray-500 hover:text-gray-700"
                 >
@@ -731,39 +754,46 @@ function CreateDealModal({ orgs, types, subtypes, sources, onClose, onCreated })
                 </button>
               </div>
 
-              {/* Existing vs. new */}
-              <div className="flex gap-1.5">
-                <ModeBtn on={orgMode === 'existing'} onClick={() => { setOrgMode('existing'); setNewOrgName(''); setOrgTypeId(''); setSubtypeId(''); }}>
-                  ארגון קיים
-                </ModeBtn>
-                <ModeBtn on={orgMode === 'new'} onClick={() => { setOrgMode('new'); setOrgId(''); setExistingOrgType(null); }}>
-                  ארגון חדש
-                </ModeBtn>
+              <div className="relative">
+                <Field label="ארגון">
+                  <input
+                    value={orgName}
+                    onChange={(e) => { setOrgName(e.target.value); setSelectedOrgId(''); }}
+                    onFocus={() => setOrgFocused(true)}
+                    onBlur={() => setTimeout(() => setOrgFocused(false), 120)}
+                    placeholder="הקלידו שם ארגון…"
+                    autoComplete="off"
+                    className={MODAL_INPUT}
+                  />
+                </Field>
+                {orgFocused && orgSuggestions.length > 0 && (
+                  <ul className="absolute z-10 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg max-h-44 overflow-y-auto">
+                    {orgSuggestions.map((o) => (
+                      <li key={o.id}>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => chooseOrg(o)}
+                          className="block w-full text-right px-3 py-2 text-sm hover:bg-blue-50"
+                        >
+                          {o.name}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
 
-              {orgMode === 'existing' ? (
+              {isExistingOrg ? (
+                <div className="rounded-lg bg-white border border-gray-200 px-3 py-2">
+                  <div className="flex items-center justify-between text-[12px]">
+                    <span className="text-gray-400">סוג ארגון</span>
+                    <span className="font-medium text-gray-700">{existingOrgType?.label || '—'}</span>
+                  </div>
+                  <p className="text-[11px] text-gray-400 mt-1">הארגון הקיים הוא מקור האמת.</p>
+                </div>
+              ) : isNewOrg ? (
                 <>
-                  <Field label="בחר ארגון">
-                    <select value={orgId} onChange={(e) => setOrgId(e.target.value)} className={`${MODAL_INPUT} bg-white`}>
-                      <option value="">— ללא —</option>
-                      {orgs.map((o) => (<option key={o.id} value={o.id}>{o.name}</option>))}
-                    </select>
-                  </Field>
-                  {orgId && (
-                    <div className="rounded-lg bg-white border border-gray-200 px-3 py-2">
-                      <div className="flex items-center justify-between text-[12px]">
-                        <span className="text-gray-400">סוג ארגון</span>
-                        <span className="font-medium text-gray-700">{existingOrgType?.label || '—'}</span>
-                      </div>
-                      <p className="text-[11px] text-gray-400 mt-1">הארגון הקיים הוא מקור האמת — הסוג נעול ולא נערך כאן.</p>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <>
-                  <Field label="שם ארגון חדש *">
-                    <input value={newOrgName} onChange={(e) => setNewOrgName(e.target.value)} placeholder="הקלידו שם ארגון…" className={MODAL_INPUT} />
-                  </Field>
                   <Field label="סוג ארגון *">
                     <select value={orgTypeId} onChange={(e) => { setOrgTypeId(e.target.value); setSubtypeId(''); }} className={`${MODAL_INPUT} bg-white`}>
                       <option value="">— בחר סוג —</option>
@@ -779,7 +809,7 @@ function CreateDealModal({ orgs, types, subtypes, sources, onClose, onCreated })
                     </Field>
                   )}
                 </>
-              )}
+              ) : null}
             </div>
           )}
         </div>
@@ -801,19 +831,6 @@ function Field({ label, children }) {
       <span className="text-[11px] text-gray-500">{label}</span>
       {children}
     </label>
-  );
-}
-function ModeBtn({ on, onClick, children }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex-1 rounded-lg px-2 py-1.5 text-[12px] font-medium border transition ${
-        on ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-      }`}
-    >
-      {children}
-    </button>
   );
 }
 function Th({ children, className = '' }) {
