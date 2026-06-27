@@ -31,6 +31,8 @@ export default function Dialog({
       ? 'sm:max-w-sm'
       : size === 'lg'
       ? 'sm:max-w-xl'
+      : size === 'md-wide'
+      ? 'sm:max-w-lg'
       : 'sm:max-w-md';
 
   return (

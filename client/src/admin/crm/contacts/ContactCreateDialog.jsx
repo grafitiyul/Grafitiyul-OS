@@ -3,28 +3,30 @@ import Dialog from '../../common/Dialog.jsx';
 import PhoneInput from '../../common/PhoneInput.jsx';
 import { OrgPicker, resolveOrganization } from '../common/OrgPicker.jsx';
 import { api } from '../../../lib/api.js';
-import { contactNamesFromFull } from '../../../lib/nameSplit.js';
+import { contactNamesFromParts } from '../../../lib/nameSplit.js';
 
-// Create a contact fast, like the Create Deal dialog but simpler: a single full
-// name (split via the shared helper) + phone are required; email, notes and an
-// organization are optional. Required at the API too: at least one first name in
-// EITHER language + (client-side) a phone. Reuses the shared OrgPicker so an
+// Create a contact fast, like the Create Deal dialog but simpler: a first name +
+// phone are required; last name, email, notes and an organization are optional.
+// The name fields auto-route by script — Hebrew goes to the Hebrew columns,
+// Latin to the English ones, with no duplication across languages. The API only
+// needs a first name in EITHER language. Reuses the shared OrgPicker so an
 // existing org links and a new org is created — no duplicate organization logic.
 const FIELD =
   'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
 
 export default function ContactCreateDialog({ orgs, types, subtypes, open, onClose, onCreated }) {
-  const [fullName, setFullName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [notes, setNotes] = useState('');
   const [orgRes, setOrgRes] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  const ready = fullName.trim() && phone.trim() && !orgRes?.invalid;
+  const ready = firstName.trim() && phone.trim() && !orgRes?.invalid;
 
   function reset() {
-    setFullName(''); setPhone(''); setEmail(''); setNotes(''); setOrgRes(null);
+    setFirstName(''); setLastName(''); setPhone(''); setEmail(''); setNotes(''); setOrgRes(null);
   }
 
   async function submit(e) {
@@ -32,9 +34,10 @@ export default function ContactCreateDialog({ orgs, types, subtypes, open, onClo
     if (!ready || busy) return;
     setBusy(true);
     try {
-      // Contact — split the single full name (Hebrew → He fields; Latin → En too).
+      // Contact — route names by script (Hebrew → He fields; Latin → En fields),
+      // never duplicating into the other language.
       const contact = await api.contacts.create({
-        ...contactNamesFromFull(fullName),
+        ...contactNamesFromParts(firstName, lastName),
         notes: notes.trim() || undefined,
       });
       await api.contacts.addPhone(contact.id, { value: phone.trim(), isPrimary: true });
@@ -65,7 +68,7 @@ export default function ContactCreateDialog({ orgs, types, subtypes, open, onClo
       open={open}
       onClose={onClose}
       title="איש קשר חדש"
-      size="md"
+      size="md-wide"
       footer={
         <>
           <button type="button" onClick={onClose} className="text-sm text-gray-600 border border-gray-300 rounded-md px-4 py-1.5 hover:bg-gray-50">
@@ -78,15 +81,25 @@ export default function ContactCreateDialog({ orgs, types, subtypes, open, onClo
       }
     >
       <form id="contact-create" onSubmit={submit} className="space-y-3">
-        <Field label="שם מלא *">
-          <input
-            autoFocus
-            value={fullName}
-            onChange={(e) => setFullName(e.target.value)}
-            placeholder="עברית או אנגלית — לדוגמה: ישראל ישראלי / John Smith"
-            className={FIELD}
-          />
-        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="שם פרטי *">
+            <input
+              autoFocus
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+              placeholder="עברית או אנגלית"
+              className={FIELD}
+            />
+          </Field>
+          <Field label="שם משפחה">
+            <input
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
+              placeholder="אופציונלי"
+              className={FIELD}
+            />
+          </Field>
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <Field label="טלפון *">
             <PhoneInput value={phone} onChange={setPhone} />

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Dialog from '../common/Dialog.jsx';
 import { api } from '../../lib/api.js';
+import { contactNamesFromParts } from '../../lib/nameSplit.js';
 import { QUICK_CONTACT_ROLES, ROLE_LABELS } from './config.js';
 
 // Fast "add contact" from the Deal header: create a new contact (name + phone),
@@ -31,12 +32,10 @@ export default function QuickAddContactDialog({ dealId, open, onClose, onAdded, 
     if (!ready || busy) return;
     setBusy(true);
     try {
-      // 1) Create the contact. Only the Hebrew first name is required by the API;
-      //    the remaining bilingual names stay empty until edited later.
-      const contact = await api.contacts.create({
-        firstNameHe: f.first.trim(),
-        lastNameHe: f.last.trim(),
-      });
+      // 1) Create the contact. Names route by script (Hebrew → He fields, Latin
+      //    → En fields) with no cross-language duplication; the API accepts a
+      //    first name in either language. The rest is editable later.
+      const contact = await api.contacts.create(contactNamesFromParts(f.first, f.last));
       // 2) Channels — primary phone (required) + optional email.
       await api.contacts.addPhone(contact.id, { value: f.phone.trim(), isPrimary: true });
       if (f.email.trim()) {

@@ -19,6 +19,26 @@ const DIAL_CODES = [
 // Sort once, longest code first, for greedy prefix matching.
 const SORTED = [...DIAL_CODES].sort((a, b) => b[0].length - a[0].length);
 
+// ISO-2 → human country name (English). Lives here, in the shared utility, so UI
+// components never carry their own country metadata. Used for hover tooltips.
+const COUNTRY_NAMES = {
+  US: 'United States', RU: 'Russia', EG: 'Egypt', ZA: 'South Africa',
+  GR: 'Greece', NL: 'Netherlands', BE: 'Belgium', FR: 'France', ES: 'Spain',
+  HU: 'Hungary', IT: 'Italy', RO: 'Romania', CH: 'Switzerland', AT: 'Austria',
+  GB: 'United Kingdom', DK: 'Denmark', SE: 'Sweden', NO: 'Norway', PL: 'Poland',
+  DE: 'Germany', MX: 'Mexico', BR: 'Brazil', AU: 'Australia', SG: 'Singapore',
+  JP: 'Japan', KR: 'South Korea', CN: 'China', TR: 'Turkey', IN: 'India',
+  MA: 'Morocco', PT: 'Portugal', LU: 'Luxembourg', IE: 'Ireland', FI: 'Finland',
+  EE: 'Estonia', UA: 'Ukraine', CZ: 'Czechia', SK: 'Slovakia', HK: 'Hong Kong',
+  AE: 'United Arab Emirates', IL: 'Israel', BH: 'Bahrain', SA: 'Saudi Arabia',
+  JO: 'Jordan',
+};
+
+// ISO-2 country code → full country name (e.g. "IL" → "Israel"). '' if unknown.
+export function countryName(iso) {
+  return (iso && COUNTRY_NAMES[iso.toUpperCase()]) || '';
+}
+
 // ISO-2 country code → flag emoji (regional indicator letters).
 export function flagEmoji(iso) {
   if (!iso || iso.length !== 2) return '';
@@ -28,10 +48,10 @@ export function flagEmoji(iso) {
 }
 
 // Parse a raw phone string into display parts. Never throws.
-//   { iso, dialCode, national, flag }   (dialCode is '' for local/unknown)
+//   { iso, name, dialCode, national, flag }   (dialCode is '' for local/unknown)
 export function parsePhone(raw) {
   const value = String(raw || '').trim();
-  if (!value) return { iso: null, dialCode: '', national: '', flag: '' };
+  if (!value) return { iso: null, name: '', dialCode: '', national: '', flag: '' };
 
   // International forms: "+972…" or "00972…".
   let intl = null;
@@ -44,6 +64,7 @@ export function parsePhone(raw) {
       if (digits.startsWith(code)) {
         return {
           iso,
+          name: countryName(iso),
           dialCode: code,
           national: digits.slice(code.length),
           flag: flagEmoji(iso),
@@ -51,27 +72,28 @@ export function parsePhone(raw) {
       }
     }
     // Unknown country code — still show it as international.
-    return { iso: null, dialCode: '', national: digits, flag: '' };
+    return { iso: null, name: '', dialCode: '', national: digits, flag: '' };
   }
 
   // Local number starting with 0 → default to Israel (not hardcoded-only: any
   // explicit +code above takes precedence over this fallback).
   if (value.startsWith('0')) {
-    return { iso: 'IL', dialCode: '972', national: value, flag: flagEmoji('IL') };
+    return { iso: 'IL', name: countryName('IL'), dialCode: '972', national: value, flag: flagEmoji('IL') };
   }
 
   // Unknown format — show as-is.
-  return { iso: null, dialCode: '', national: value, flag: '' };
+  return { iso: null, name: '', dialCode: '', national: value, flag: '' };
 }
 
-// A compact one-line display string: "🇮🇱 +972 50-000-0000" style, but kept
-// simple — flag, separated dial code (for true international), then the rest.
+// A compact one-line display string showing flag + country letters, e.g.
+// "🇮🇱 IL 052-426-4020" (local) or "🇺🇸 US +1 555-…" (international). Falls back
+// to the raw value when the country can't be determined.
 export function formatPhone(raw) {
   const value = String(raw || '').trim();
   if (!value) return '';
-  const { flag, dialCode, national } = parsePhone(value);
-  // Local (Israeli "0…") numbers read most naturally as-is with just the flag.
-  if (value.startsWith('0')) return `${flag} ${value}`.trim();
-  if (dialCode) return `${flag} +${dialCode} ${national}`.trim();
+  const { flag, iso, dialCode, national } = parsePhone(value);
+  // Local (Israeli "0…") numbers read most naturally as-is, after flag + letters.
+  if (value.startsWith('0')) return `${flag} ${iso} ${value}`.trim();
+  if (dialCode) return `${flag} ${iso} +${dialCode} ${national}`.trim();
   return value;
 }

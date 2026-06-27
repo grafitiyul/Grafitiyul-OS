@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
-import { formatPhone } from '../../../lib/phone.js';
+import { formatPhone, parsePhone } from '../../../lib/phone.js';
 import { useTableColumns, ColumnPicker } from '../../common/tableColumns.jsx';
 import ContactCreateDialog from './ContactCreateDialog.jsx';
 
@@ -49,7 +49,9 @@ const COLUMNS = [
   { key: 'nameEn', label: 'שם (אנגלית)', def: false,
     render: (c) => (c.fullNameEn ? <span dir="ltr">{c.fullNameEn}</span> : dash), cls: 'text-gray-600' },
   { key: 'phone', label: 'טלפון', def: true,
-    render: (c) => (c.phones?.[0]?.value ? <span dir="ltr">{formatPhone(c.phones[0].value)}</span> : dash),
+    render: (c) => (c.phones?.[0]?.value
+      ? <span dir="ltr" title={parsePhone(c.phones[0].value).name || undefined}>{formatPhone(c.phones[0].value)}</span>
+      : dash),
     cls: 'text-gray-700' },
   { key: 'email', label: 'אימייל', def: true,
     render: (c) => (c.emails?.[0]?.value ? <span dir="ltr">{c.emails[0].value}</span> : dash), cls: 'text-gray-600' },
