@@ -145,7 +145,9 @@ export default function RichEditor({
 
   return (
     <div
-      className={`rt-editor-shell border rounded-md focus-within:ring-2 ${shellTone} flex flex-col`}
+      className={`rt-editor-shell border rounded-md focus-within:ring-2 ${shellTone} flex flex-col ${
+        collapsible ? 'rt-editor-compact' : ''
+      }`}
       style={{ maxHeight }}
     >
       {/* Upload feedback — visible only during / after an upload. */}

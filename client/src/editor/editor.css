@@ -21,6 +21,14 @@
   word-break: break-word;
 }
 
+/* Compact (composer) mode: when the shell carries .rt-editor-compact, the
+   editable's own 180px floor is removed so the wrapper's per-state min-height
+   (set in JS) governs — letting the note composer collapse to a thin strip and
+   expand on focus. Other editors keep the comfortable 180px default. */
+.rt-editor-compact .rt-editor-prose {
+  min-height: 0;
+}
+
 /* Sibling gap between block-level children. With line-height now at
    1.55 (~25px), a 1.25em (~20px) inter-block margin gives a paragraph
    break of ~45px baseline-to-baseline vs ~25px for a soft <br> line
