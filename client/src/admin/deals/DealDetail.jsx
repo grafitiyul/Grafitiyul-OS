@@ -15,6 +15,7 @@ import { useDirtyForm, useDirtyWhen } from '../../lib/dirtyForms.js';
 import {
   ACTIVITY_TYPES,
   ACTIVITY_TYPE_LABELS,
+  ROLE_LABELS,
   contactNameHe,
 } from './config.js';
 
@@ -495,8 +496,7 @@ export default function DealDetail() {
         <RelationshipRow
           deal={deal}
           orgType={orgType}
-          onContactClick={() => setContactsDialogOpen(true)}
-          onAddContact={() => setContactsDialogOpen(true)}
+          onManageContacts={() => setContactsDialogOpen(true)}
           onOrgClick={() => setOrgDialogOpen(true)}
         />
       </div>
@@ -862,43 +862,55 @@ function RowBtn({ onClick, selected, muted, children }) {
   );
 }
 
-// Permanent identity slots: a Contact slot and an Organization slot are ALWAYS
-// rendered side-by-side — they're part of every deal's identity. When empty they
-// show an actionable "add" affordance (no generic empty-state text); when filled
-// they show the name (+N for extra contacts) and reveal the existing HoverCard.
-// Clicking always opens the relevant editor/picker.
-function RelationshipRow({ deal, orgType, onContactClick, onAddContact, onOrgClick }) {
+// Header relationship row. ALL of the deal's contacts are shown as compact chips
+// side-by-side (primary marked, role shown subtly), then the organization slot.
+// Every chip / affordance opens the same in-place dialog — no navigation. The row
+// wraps gracefully and collapses overflow into a "+N" chip past a sane cap so the
+// header never breaks.
+const MAX_CONTACT_CHIPS = 6;
+
+function RelationshipRow({ deal, orgType, onManageContacts, onOrgClick }) {
   const contacts = deal.contacts || [];
-  const primary = contacts[0];
-  const primaryContact = primary?.contact;
-  const extra = contacts.length - 1;
+  const shown = contacts.slice(0, MAX_CONTACT_CHIPS);
+  const overflow = contacts.length - shown.length;
   const org = deal.organization;
 
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-3">
-      {/* Contact slot — always present */}
-      {primaryContact ? (
-        <HoverCard
-          trigger={
-            <IdentitySlot icon={<UserIcon />} onClick={() => onContactClick(primary.contactId)} filled>
-              <span className="truncate max-w-[14rem]">{contactNameHe(primaryContact) || '—'}</span>
-              {extra > 0 && (
-                <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-500">+{extra}</span>
-              )}
-            </IdentitySlot>
-          }
-        >
-          <ContactHoverCard
-            contactId={primary.contactId}
-            fallbackName={contactNameHe(primaryContact)}
-            onEdit={() => onContactClick(primary.contactId)}
-          />
-        </HoverCard>
-      ) : (
-        <IdentitySlot icon={<UserIcon />} onClick={onAddContact}>
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      {/* Contacts — one chip each, or an actionable empty slot */}
+      {contacts.length === 0 ? (
+        <IdentitySlot icon={<UserIcon />} onClick={onManageContacts}>
           הוסף איש קשר
         </IdentitySlot>
+      ) : (
+        <>
+          {shown.map((dc) => (
+            <ContactChip key={dc.id} dc={dc} onClick={onManageContacts} />
+          ))}
+          {overflow > 0 && (
+            <button
+              type="button"
+              onClick={onManageContacts}
+              className="rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-[12px] text-gray-500 hover:bg-gray-100"
+              title="עוד אנשי קשר"
+            >
+              +{overflow}
+            </button>
+          )}
+          {/* Always-visible manage affordance */}
+          <button
+            type="button"
+            onClick={onManageContacts}
+            title="נהל אנשי קשר"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-dashed border-gray-300 text-gray-400 hover:bg-gray-50 hover:text-gray-600"
+          >
+            +
+          </button>
+        </>
       )}
+
+      {/* Subtle separator before the organization slot */}
+      {(org || contacts.length > 0) && <span className="mx-1 h-5 w-px bg-gray-200" aria-hidden />}
 
       {/* Organization slot — always present */}
       {org ? (
@@ -917,6 +929,47 @@ function RelationshipRow({ deal, orgType, onContactClick, onAddContact, onOrgCli
         </IdentitySlot>
       )}
     </div>
+  );
+}
+
+// A single contact chip in the header row. The primary contact is marked with a
+// subtle star + tinted border (not huge); the contact's first deal-role shows
+// subtly inline, with full details (incl. all roles) in the hover card. Clicking
+// opens the deal-contacts management dialog.
+function ContactChip({ dc, onClick }) {
+  const c = dc.contact;
+  const name =
+    contactNameHe(c) || `${c?.firstNameEn || ''} ${c?.lastNameEn || ''}`.trim() || '—';
+  const roleLabel = (dc.roles || []).map((r) => ROLE_LABELS[r] || r)[0];
+  return (
+    <HoverCard
+      trigger={
+        <button
+          type="button"
+          onClick={onClick}
+          className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors ${
+            dc.isPrimary
+              ? 'border border-blue-200 bg-blue-50/60 text-gray-800 hover:bg-blue-50'
+              : 'border border-gray-200 bg-white text-gray-800 hover:bg-gray-50'
+          }`}
+        >
+          {dc.isPrimary ? (
+            <span className="text-amber-500 text-[12px] leading-none" title="איש קשר ראשי">★</span>
+          ) : (
+            <UserIcon />
+          )}
+          <span className="truncate max-w-[12rem]">{name}</span>
+          {roleLabel && <span className="text-[10px] text-gray-400">· {roleLabel}</span>}
+        </button>
+      }
+    >
+      <ContactHoverCard
+        contactId={dc.contactId}
+        fallbackName={name}
+        roles={dc.roles}
+        onEdit={onClick}
+      />
+    </HoverCard>
   );
 }
 
@@ -939,7 +992,7 @@ function IdentitySlot({ icon, children, onClick, filled }) {
   );
 }
 
-function ContactHoverCard({ contactId, fallbackName, onEdit }) {
+function ContactHoverCard({ contactId, fallbackName, roles, onEdit }) {
   const [c, setC] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -958,9 +1011,18 @@ function ContactHoverCard({ contactId, fallbackName, onEdit }) {
   const phones = c?.phones || [];
   const emails = c?.emails || [];
 
+  const roleLabels = (roles || []).map((r) => ROLE_LABELS[r] || r);
+
   return (
     <div className="space-y-2.5">
       <div className="text-sm font-semibold text-gray-900">{name}</div>
+      {roleLabels.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {roleLabels.map((rl) => (
+            <span key={rl} className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">{rl}</span>
+          ))}
+        </div>
+      )}
       {loading ? (
         <div className="text-[12px] text-gray-400">טוען…</div>
       ) : phones.length || emails.length ? (

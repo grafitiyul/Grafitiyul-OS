@@ -103,12 +103,24 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
   }
 
   // Switch into "new organization" mode: no existing binding, name typed fresh.
+  // The new org INHERITS the deal's current classification (the type/subtype
+  // badge) as its default — the deal is often classified before the real org is
+  // created. The effective type is the linked org's type if one is selected, else
+  // the deal's own type; the deal's subtype is kept only if it belongs to that
+  // type. The user can still override before saving.
   function startCreate() {
     setCreatingNew(true);
     setOrgId('');
     setOrgFull(null);
     setUnitId('');
     setName('');
+    const effType = orgFull?.organizationTypeId || deal.organizationType?.id || deal.organizationTypeId || '';
+    const effSub = deal.organizationSubtypeId || '';
+    setTypeId(effType);
+    const subBelongs = subtypes.some(
+      (s) => s.id === effSub && (!s.organizationTypeId || s.organizationTypeId === effType),
+    );
+    setSubtypeId(subBelongs ? effSub : '');
   }
   function cancelCreate() {
     setCreatingNew(false);
