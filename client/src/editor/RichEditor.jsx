@@ -68,8 +68,9 @@ export default function RichEditor({
     ? 'border-amber-200 bg-amber-50 focus-within:ring-amber-200 focus-within:border-amber-300'
     : 'border-gray-300 bg-white focus-within:ring-blue-200 focus-within:border-blue-400';
   const toolbarBorder = noteTone ? 'border-amber-200' : 'border-gray-200';
-  // Collapsible composer heights: ~2 lines collapsed, ~3 lines once focused.
-  const contentMin = collapsible ? (focused ? 76 : 48) : minContentHeight;
+  // Collapsible composer heights: a slim ~2-line collapsed state that almost
+  // disappears, expanding to ~3 lines once focused (then auto-grows with text).
+  const contentMin = collapsible ? (focused ? 72 : 30) : minContentHeight;
   const showToolbar = !collapsible || focused;
   const [uploadState, setUploadState] = useState({ phase: 'idle' });
   const editor = useEditor({
@@ -155,9 +156,9 @@ export default function RichEditor({
       />
       {/* Content area — grows with content, scrolls internally when it exceeds maxHeight */}
       <div
-        className={`rt-editor-scroll flex-1 overflow-y-auto overflow-x-hidden px-3 py-2 ${
-          collapsible ? 'transition-[min-height] duration-150 ease-out' : ''
-        }`}
+        className={`rt-editor-scroll flex-1 overflow-y-auto overflow-x-hidden px-3 ${
+          collapsible && !focused ? 'py-1' : 'py-2'
+        } ${collapsible ? 'transition-[min-height] duration-150 ease-out' : ''}`}
         style={{ minHeight: contentMin }}
         onClick={() => editor.chain().focus().run()}
       >
