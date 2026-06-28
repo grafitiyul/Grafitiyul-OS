@@ -54,6 +54,7 @@ export default function NoteCard({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(entry.body || '');
   const [busy, setBusy] = useState(false);
+  const [replying, setReplying] = useState(false);
   const [commentDraft, setCommentDraft] = useState('');
 
   const originLabel = ORIGIN_LABELS[entry.data?.origin];
@@ -91,6 +92,7 @@ export default function NoteCard({
     try {
       await onAddComment(entry.id, b);
       setCommentDraft('');
+      setReplying(false);
     } catch (e) {
       alert('שגיאה: ' + (e.payload?.error || e.message));
     } finally {
@@ -138,24 +140,42 @@ export default function NoteCard({
         )}
       </div>
 
-      {/* Comments — white, nested under the yellow note */}
+      {/* Comments — white, nested under the yellow note. The reply editor is
+          hidden by default (history stays clean); "תגובה" reveals it per-note. */}
       {!editing && (
-        <div className="border-t border-amber-200/70 bg-amber-100/30 px-3 py-2 rounded-b-2xl space-y-2">
+        <div
+          className={`border-t border-amber-200/70 px-3 py-2 rounded-b-2xl space-y-2 ${
+            comments.length || replying ? 'bg-amber-100/30' : ''
+          }`}
+        >
           {comments.map((c) => (
             <CommentRow key={c.id} comment={c} onEdit={onEditComment} onDelete={onDeleteComment} />
           ))}
-          <div className="flex items-center gap-2">
-            <input
-              value={commentDraft}
-              onChange={(e) => setCommentDraft(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addComment(); } }}
-              placeholder="הוסיפו תגובה…"
-              className="flex-1 h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
-            />
-            <button onClick={addComment} disabled={busy || !commentDraft.trim()} className="rounded-lg bg-gray-800 px-3 py-1.5 text-sm text-white hover:bg-gray-900 disabled:opacity-50">
-              הגב
+          {replying ? (
+            <div className="flex items-center gap-2">
+              <input
+                autoFocus
+                value={commentDraft}
+                onChange={(e) => setCommentDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); addComment(); }
+                  else if (e.key === 'Escape') { setReplying(false); setCommentDraft(''); }
+                }}
+                placeholder="הוסיפו תגובה…"
+                className="flex-1 h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+              />
+              <button onClick={addComment} disabled={busy || !commentDraft.trim()} className="rounded-lg bg-gray-800 px-3 py-1.5 text-sm text-white hover:bg-gray-900 disabled:opacity-50">
+                הגב
+              </button>
+              <button onClick={() => { setReplying(false); setCommentDraft(''); }} className="text-[12px] text-gray-500 hover:text-gray-700">
+                ביטול
+              </button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setReplying(true)} className="text-[12px] text-blue-700 hover:bg-blue-50 rounded px-2 py-1">
+              + תגובה
             </button>
-          </div>
+          )}
         </div>
       )}
     </div>

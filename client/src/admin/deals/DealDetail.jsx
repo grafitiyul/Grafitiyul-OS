@@ -374,7 +374,7 @@ export default function DealDetail() {
     >
       {/* Hero header — title + actions, then a full-width pipeline bar.
           Lives in the center stack, so its width matches the cards. */}
-      <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 lg:p-8">
+      <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 lg:p-5">
         {/* 1 — Title + identity badge + status / actions */}
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0 flex items-center flex-wrap gap-x-3 gap-y-2">
@@ -483,7 +483,7 @@ export default function DealDetail() {
         </div>
 
         {/* 2 — Pipeline (full width). Click a stage to move the deal there. */}
-        <div className="mt-6">
+        <div className="mt-4">
           <StagePipeline
             stages={stages}
             currentStageId={deal.dealStageId}
@@ -884,7 +884,7 @@ function RelationshipRow({ deal, orgType, onContactClick, onAddContact, onOrgCli
   const org = deal.organization;
 
   return (
-    <div className="mt-5 flex flex-wrap items-center gap-3">
+    <div className="mt-3 flex flex-wrap items-center gap-3">
       {/* Contact slot — always present */}
       {primaryContact ? (
         <HoverCard

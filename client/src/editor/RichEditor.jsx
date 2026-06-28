@@ -56,12 +56,21 @@ export default function RichEditor({
   // form look used everywhere; 'note' = warm-yellow so the composer/edit surface
   // feels like the same sticky-note object as a saved note.
   tone = 'default',
+  // Composer mode: start compact (~2 lines) with the toolbar HIDDEN; on focus,
+  // expand (~3 lines) and reveal the toolbar. Content still auto-grows with what
+  // is typed. Editor capabilities are unchanged — only the chrome is progressive.
+  // Off by default, so every existing consumer is unaffected.
+  collapsible = false,
 }) {
+  const [focused, setFocused] = useState(false);
   const noteTone = tone === 'note';
   const shellTone = noteTone
     ? 'border-amber-200 bg-amber-50 focus-within:ring-amber-200 focus-within:border-amber-300'
     : 'border-gray-300 bg-white focus-within:ring-blue-200 focus-within:border-blue-400';
   const toolbarBorder = noteTone ? 'border-amber-200' : 'border-gray-200';
+  // Collapsible composer heights: ~2 lines collapsed, ~3 lines once focused.
+  const contentMin = collapsible ? (focused ? 76 : 48) : minContentHeight;
+  const showToolbar = !collapsible || focused;
   const [uploadState, setUploadState] = useState({ phase: 'idle' });
   const editor = useEditor({
     extensions: [
@@ -101,6 +110,8 @@ export default function RichEditor({
       const html = editor.getHTML();
       onChange?.(isEmptyHtml(html) ? '' : html);
     },
+    onFocus: () => setFocused(true),
+    onBlur: () => setFocused(false),
     editorProps: {
       transformPastedHTML: sanitizePastedHtml,
       attributes: {
@@ -144,16 +155,21 @@ export default function RichEditor({
       />
       {/* Content area — grows with content, scrolls internally when it exceeds maxHeight */}
       <div
-        className="rt-editor-scroll flex-1 overflow-y-auto overflow-x-hidden px-3 py-2"
-        style={{ minHeight: minContentHeight }}
+        className={`rt-editor-scroll flex-1 overflow-y-auto overflow-x-hidden px-3 py-2 ${
+          collapsible ? 'transition-[min-height] duration-150 ease-out' : ''
+        }`}
+        style={{ minHeight: contentMin }}
         onClick={() => editor.chain().focus().run()}
       >
         <EditorContent editor={editor} />
       </div>
-      {/* Toolbar pinned at the bottom of the widget, always visible */}
-      <div className={`rt-editor-toolbar-wrap shrink-0 border-t ${toolbarBorder}`}>
-        <Toolbar editor={editor} setUploadState={setUploadState} />
-      </div>
+      {/* Toolbar pinned at the bottom. In collapsible (composer) mode it appears
+          only while the editor is focused — the full editor is otherwise intact. */}
+      {showToolbar && (
+        <div className={`rt-editor-toolbar-wrap shrink-0 border-t ${toolbarBorder}`}>
+          <Toolbar editor={editor} setUploadState={setUploadState} />
+        </div>
+      )}
     </div>
   );
 }
