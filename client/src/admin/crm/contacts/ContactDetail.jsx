@@ -143,7 +143,9 @@ export default function ContactDetail() {
         formatValue={(v) => <PhoneDisplay value={v} />}
         onAdd={(value) => api.contacts.addPhone(id, { value })}
         onSetPrimary={(itemId) => api.contacts.updatePhone(itemId, { isPrimary: true })}
+        onEditValue={(itemId, value) => api.contacts.updatePhone(itemId, { value })}
         onRemove={(itemId) => api.contacts.removePhone(itemId)}
+        onReorder={(ids) => api.contacts.reorderPhones(id, ids)}
         onChange={refresh}
       />
 
@@ -154,7 +156,9 @@ export default function ContactDetail() {
         ltr
         onAdd={(value) => api.contacts.addEmail(id, { value })}
         onSetPrimary={(itemId) => api.contacts.updateEmail(itemId, { isPrimary: true })}
+        onEditValue={(itemId, value) => api.contacts.updateEmail(itemId, { value })}
         onRemove={(itemId) => api.contacts.removeEmail(itemId)}
+        onReorder={(ids) => api.contacts.reorderEmails(id, ids)}
         onChange={refresh}
       />
 

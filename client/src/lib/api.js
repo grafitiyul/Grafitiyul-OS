@@ -331,6 +331,8 @@ export const api = {
       }),
     removePhone: (phoneId) =>
       request(`/api/contacts/phones/${phoneId}`, { method: 'DELETE' }),
+    reorderPhones: (id, ids) =>
+      request(`/api/contacts/${id}/phones/reorder`, { method: 'PUT', body: JSON.stringify({ ids }) }),
     addEmail: (id, data) =>
       request(`/api/contacts/${id}/emails`, {
         method: 'POST',
@@ -343,6 +345,8 @@ export const api = {
       }),
     removeEmail: (emailId) =>
       request(`/api/contacts/emails/${emailId}`, { method: 'DELETE' }),
+    reorderEmails: (id, ids) =>
+      request(`/api/contacts/${id}/emails/reorder`, { method: 'PUT', body: JSON.stringify({ ids }) }),
     addOrganization: (id, data) =>
       request(`/api/contacts/${id}/organizations`, {
         method: 'POST',

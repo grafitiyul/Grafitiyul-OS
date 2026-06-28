@@ -127,7 +127,9 @@ export default function ContactEditDialog({ contactId, open, onClose, onSaved })
             ltr
             onAdd={(value) => api.contacts.addPhone(contactId, { value })}
             onSetPrimary={(itemId) => api.contacts.updatePhone(itemId, { isPrimary: true })}
+            onEditValue={(itemId, value) => api.contacts.updatePhone(itemId, { value })}
             onRemove={(itemId) => api.contacts.removePhone(itemId)}
+            onReorder={(ids) => api.contacts.reorderPhones(contactId, ids)}
             onChange={refreshAll}
           />
 
@@ -138,7 +140,9 @@ export default function ContactEditDialog({ contactId, open, onClose, onSaved })
             ltr
             onAdd={(value) => api.contacts.addEmail(contactId, { value })}
             onSetPrimary={(itemId) => api.contacts.updateEmail(itemId, { isPrimary: true })}
+            onEditValue={(itemId, value) => api.contacts.updateEmail(itemId, { value })}
             onRemove={(itemId) => api.contacts.removeEmail(itemId)}
+            onReorder={(ids) => api.contacts.reorderEmails(contactId, ids)}
             onChange={refreshAll}
           />
 

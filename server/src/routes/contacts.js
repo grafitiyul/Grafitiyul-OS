@@ -22,8 +22,11 @@ function withFullNames(contact) {
 }
 
 const CONTACT_INCLUDE = {
-  phones: { orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }] },
-  emails: { orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }] },
+  // Pure manual order (sortOrder) so a drag-reorder in the UI is WYSIWYG. The
+  // primary phone/email is marked by a badge, not by position; the deals/list
+  // endpoints still pick the primary via a `where isPrimary` filter, unaffected.
+  phones: { orderBy: { sortOrder: 'asc' } },
+  emails: { orderBy: { sortOrder: 'asc' } },
   orgLinks: {
     include: {
       organization: { select: { id: true, name: true } },
@@ -208,6 +211,28 @@ router.delete(
   }),
 );
 
+// Manual reorder — `ids` is the phone id list in the desired order. Reindexes
+// sortOrder 0..n, scoped to the contact (same pattern as the catalog reorders).
+router.put(
+  '/:id/phones/reorder',
+  handle(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids)
+      ? req.body.ids.filter((x) => typeof x === 'string')
+      : [];
+    if (ids.length) {
+      await prisma.$transaction(
+        ids.map((pid, i) =>
+          prisma.contactPhone.updateMany({
+            where: { id: pid, contactId: req.params.id },
+            data: { sortOrder: i },
+          }),
+        ),
+      );
+    }
+    res.json(await reloadContact(req.params.id));
+  }),
+);
+
 // ---------- Emails (same "one primary" semantics) ----------
 
 router.post(
@@ -278,6 +303,26 @@ router.delete(
     if (!email) return res.status(404).json({ error: 'not_found' });
     await prisma.contactEmail.delete({ where: { id: email.id } });
     res.json(await reloadContact(email.contactId));
+  }),
+);
+
+router.put(
+  '/:id/emails/reorder',
+  handle(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids)
+      ? req.body.ids.filter((x) => typeof x === 'string')
+      : [];
+    if (ids.length) {
+      await prisma.$transaction(
+        ids.map((eid, i) =>
+          prisma.contactEmail.updateMany({
+            where: { id: eid, contactId: req.params.id },
+            data: { sortOrder: i },
+          }),
+        ),
+      );
+    }
+    res.json(await reloadContact(req.params.id));
   }),
 );
 

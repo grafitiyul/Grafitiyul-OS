@@ -22,6 +22,7 @@ const FIELD = 'border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white w-
 
 export default function OrganizationEditDialog({ deal, orgs, types, subtypes, open, onClose, onSaved }) {
   const [orgId, setOrgId] = useState('');
+  const [name, setName] = useState(''); // the linked org's own name (editable when linked)
   const [unitId, setUnitId] = useState('');
   const [typeId, setTypeId] = useState(''); // effective org type (org's, or deal's when no org)
   const [subtypeId, setSubtypeId] = useState('');
@@ -40,6 +41,7 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
     setOrgId(initialOrgId);
     setUnitId(baseUnit);
     setSubtypeId(baseSub);
+    setName('');
     setOrgFull(null);
     setOriginal(null);
     if (initialOrgId) {
@@ -49,33 +51,36 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
           setOrgFull(full);
           const t = full.organizationTypeId || '';
           setTypeId(t);
-          setOriginal({ orgId: initialOrgId, unitId: baseUnit, subtypeId: baseSub, typeId: t });
+          setName(full.name || '');
+          setOriginal({ orgId: initialOrgId, unitId: baseUnit, subtypeId: baseSub, typeId: t, name: full.name || '' });
         })
         .catch(() => {
           setTypeId('');
-          setOriginal({ orgId: initialOrgId, unitId: baseUnit, subtypeId: baseSub, typeId: '' });
+          setOriginal({ orgId: initialOrgId, unitId: baseUnit, subtypeId: baseSub, typeId: '', name: '' });
         });
     } else {
       // No org → the deal owns the type.
       const t = deal.organizationType?.id || deal.organizationTypeId || '';
       setTypeId(t);
-      setOriginal({ orgId: '', unitId: baseUnit, subtypeId: baseSub, typeId: t });
+      setOriginal({ orgId: '', unitId: baseUnit, subtypeId: baseSub, typeId: t, name: '' });
     }
   }, [open, deal]);
 
-  // Unsaved-work guard (auto-update): dirty when the chosen binding diverges from
-  // the baseline; clears on revert, on save (dialog closes), or on close.
-  useDirtyWhen({ orgId, unitId, subtypeId, typeId }, original, { active: open && !!original });
+  // Unsaved-work guard (auto-update): dirty when the chosen binding / org name
+  // diverges from the baseline; clears on revert, on save, or on close.
+  useDirtyWhen({ orgId, unitId, subtypeId, typeId, name }, original, { active: open && !!original });
 
   async function chooseOrg(value) {
     setOrgId(value);
     setUnitId('');
     setOrgFull(null);
+    setName('');
     if (value) {
       try {
         const full = await api.organizations.get(value);
         setOrgFull(full);
         setTypeId(full.organizationTypeId || '');
+        setName(full.name || '');
       } catch {
         setTypeId('');
       }
@@ -102,9 +107,14 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
       if (!finalOrgId) dealPayload.organizationTypeId = typeId || null;
       await api.deals.update(deal.id, dealPayload);
 
-      // When an org is linked, the org is the source of truth for its type.
-      if (finalOrgId && typeId !== (orgFull?.organizationTypeId || '')) {
-        await api.organizations.update(finalOrgId, { organizationTypeId: typeId || null });
+      // When an org is linked, the organization is the source of truth for its
+      // own name + type — written straight to the org (one update), never copied
+      // onto the deal.
+      if (finalOrgId) {
+        const orgPayload = {};
+        if (typeId !== (orgFull?.organizationTypeId || '')) orgPayload.organizationTypeId = typeId || null;
+        if (name.trim() && name.trim() !== (orgFull?.name || '')) orgPayload.name = name.trim();
+        if (Object.keys(orgPayload).length) await api.organizations.update(finalOrgId, orgPayload);
       }
       await onSaved?.();
       onClose?.();
@@ -121,7 +131,7 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
     <Dialog
       open={open}
       onClose={onClose}
-      title="ארגון, סוג ותת-סוג"
+      title="עריכת ארגון"
       size="md"
       footer={
         <>
@@ -151,6 +161,12 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
             ))}
           </select>
         </Field>
+
+        {orgId && (
+          <Field label="שם הארגון">
+            <input value={name} onChange={(e) => setName(e.target.value)} className={FIELD} />
+          </Field>
+        )}
 
         {orgId && (
           <Field label="יחידה (אופציונלי)">

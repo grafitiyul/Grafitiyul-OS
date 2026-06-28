@@ -897,7 +897,11 @@ function RelationshipRow({ deal, orgType, onContactClick, onAddContact, onOrgCli
             </IdentitySlot>
           }
         >
-          <ContactHoverCard contactId={primary.contactId} fallbackName={contactNameHe(primaryContact)} />
+          <ContactHoverCard
+            contactId={primary.contactId}
+            fallbackName={contactNameHe(primaryContact)}
+            onEdit={() => onContactClick(primary.contactId)}
+          />
         </HoverCard>
       ) : (
         <IdentitySlot icon={<UserIcon />} onClick={onAddContact}>
@@ -914,7 +918,7 @@ function RelationshipRow({ deal, orgType, onContactClick, onAddContact, onOrgCli
             </IdentitySlot>
           }
         >
-          <OrgHoverCard org={org} orgTypeLabel={orgType?.label} subtypeLabel={deal.organizationSubtype?.label} />
+          <OrgHoverCard org={org} orgTypeLabel={orgType?.label} subtypeLabel={deal.organizationSubtype?.label} onEdit={onOrgClick} />
         </HoverCard>
       ) : (
         <IdentitySlot icon={<BuildingIcon />} onClick={onOrgClick}>
@@ -944,7 +948,7 @@ function IdentitySlot({ icon, children, onClick, filled }) {
   );
 }
 
-function ContactHoverCard({ contactId, fallbackName }) {
+function ContactHoverCard({ contactId, fallbackName, onEdit }) {
   const [c, setC] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -992,8 +996,17 @@ function ContactHoverCard({ contactId, fallbackName }) {
       ) : (
         <div className="text-[12px] text-gray-400">אין פרטי קשר</div>
       )}
-      <div className="pt-2 border-t border-gray-100">
-        <Link to={`/admin/crm/contacts/${contactId}`} className="text-[12px] font-medium text-blue-600 hover:underline">
+      <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
+        {/* Primary daily action: edit in-place (no navigation). */}
+        <button
+          type="button"
+          onClick={onEdit}
+          className="rounded-lg bg-blue-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-blue-700"
+        >
+          ערוך איש קשר
+        </button>
+        {/* Secondary: open the full contact page. */}
+        <Link to={`/admin/crm/contacts/${contactId}`} className="text-[12px] text-gray-500 hover:text-gray-700 hover:underline">
           פתח איש קשר ←
         </Link>
       </div>
@@ -1001,7 +1014,7 @@ function ContactHoverCard({ contactId, fallbackName }) {
   );
 }
 
-function OrgHoverCard({ org, orgTypeLabel, subtypeLabel }) {
+function OrgHoverCard({ org, orgTypeLabel, subtypeLabel, onEdit }) {
   return (
     <div className="space-y-2.5">
       <div className="text-sm font-semibold text-gray-900">{org.name}</div>
@@ -1015,8 +1028,17 @@ function OrgHoverCard({ org, orgTypeLabel, subtypeLabel }) {
           <dd className="text-gray-700">{subtypeLabel || '—'}</dd>
         </div>
       </dl>
-      <div className="pt-2 border-t border-gray-100">
-        <Link to={`/admin/crm/organizations/${org.id}`} className="text-[12px] font-medium text-blue-600 hover:underline">
+      <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
+        {/* Primary daily action: edit in-place (no navigation). */}
+        <button
+          type="button"
+          onClick={onEdit}
+          className="rounded-lg bg-blue-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-blue-700"
+        >
+          ערוך ארגון
+        </button>
+        {/* Secondary: open the full organization page. */}
+        <Link to={`/admin/crm/organizations/${org.id}`} className="text-[12px] text-gray-500 hover:text-gray-700 hover:underline">
           פתח ארגון ←
         </Link>
       </div>
