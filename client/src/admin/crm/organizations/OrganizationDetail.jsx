@@ -2,7 +2,18 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import BackButton from '../../common/BackButton.jsx';
 import { api } from '../../../lib/api.js';
+import WorkspaceLayout from '../../../shell/WorkspaceLayout.jsx';
+import TimelineFeed from '../../common/timeline/TimelineFeed.jsx';
 import { useDirtyWhen } from '../../../lib/dirtyForms.js';
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleDateString('he-IL');
+  } catch {
+    return '—';
+  }
+}
 
 const FINANCE_FIELDS = [
   ['taxId', 'ח.פ / עוסק'],
@@ -108,15 +119,11 @@ export default function OrganizationDetail() {
     setForm((f) => ({ ...f, [field]: v }));
   }
 
-  return (
-    <div className="p-4 lg:p-6 max-w-4xl mx-auto space-y-6">
-      <div className="flex items-center gap-2 text-[13px]">
-        <BackButton to="/admin/crm/organizations" label="חזרה לארגונים" />
-      </div>
-
-      {/* 1. Organization main details (finance lives in its own lower section) */}
+  // RIGHT panel — the organization's static details, structure & relationships.
+  const detailsPanel = (
+    <div className="space-y-4">
       <Section title="פרטי ארגון">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div className="space-y-3">
           <Input label="שם ארגון" value={form.name} onChange={(v) => set('name', v)} />
           <div className="flex flex-col gap-1">
             <label className="text-[11px] text-gray-500">סוג ארגון</label>
@@ -127,61 +134,70 @@ export default function OrganizationDetail() {
             >
               <option value="">— ללא —</option>
               {types.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.label}
-                </option>
+                <option key={t.id} value={t.id}>{t.label}</option>
               ))}
             </select>
           </div>
         </div>
         <div className="mt-3">
-          <label className="text-[11px] text-gray-500">הערות</label>
+          <label className="text-[11px] text-gray-500">אודות</label>
           <textarea
             value={form.notes}
             onChange={(e) => set('notes', e.target.value)}
-            rows={2}
+            rows={3}
+            placeholder="תיאור קבוע על הארגון (לא היסטוריה — היסטוריה נכתבת בציר הזמן)"
             className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm"
           />
         </div>
         <div className="flex gap-2 mt-4">
-          <button
-            onClick={save}
-            disabled={saving}
-            className="bg-blue-600 text-white text-sm rounded-md px-4 py-1.5 disabled:opacity-50"
-          >
+          <button onClick={save} disabled={saving} className="bg-blue-600 text-white text-sm rounded-md px-4 py-1.5 disabled:opacity-50">
             {saving ? 'שומר…' : 'שמור'}
           </button>
-          <button
-            onClick={removeOrg}
-            className="text-sm text-red-700 border border-red-300 rounded-md px-4 py-1.5 hover:bg-red-50"
-          >
+          <button onClick={removeOrg} className="text-sm text-red-700 border border-red-300 rounded-md px-4 py-1.5 hover:bg-red-50">
             מחק ארגון
           </button>
         </div>
       </Section>
 
-      {/* 2. Units / departments */}
       <UnitsSection org={org} onChange={refresh} />
-
-      {/* 3. Linked contacts — the daily-important section, now actionable */}
       <LinkedContactsSection org={org} onChange={refresh} />
-
-      {/* 4. Finance details — secondary admin/billing data, visually separated */}
       <FinanceSection form={form} set={set} onSave={save} saving={saving} />
 
-      {/* 5. Future business sections — placeholders until Deals exist. */}
-      <Section title="עסקים ופעילות (בקרוב)">
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-          <Placeholder title="היסטוריית עסקאות" />
-          <Placeholder title="עסקאות שנסגרו" />
-          <Placeholder title="עסקאות LOST" />
-          <Placeholder title="הכנסות" />
-          <Placeholder title="פעילות אחרונה" />
-        </div>
-        <div className="text-[12px] text-gray-400 mt-2">
-          ייפתח אחרי בניית מודול העסקאות (Deals).
-        </div>
+      <Section title="מטא-דאטה">
+        <dl className="space-y-1 text-[13px]">
+          <Row label="נוצר" value={fmtDate(org.createdAt)} />
+          <Row label="עודכן" value={fmtDate(org.updatedAt)} />
+        </dl>
       </Section>
+    </div>
+  );
+
+  // CENTER = the reusable Timeline, aggregating this org's items + items from its
+  // deals AND its linked contacts (read-only, source-badged, filterable).
+  return (
+    <WorkspaceLayout
+      storageKey="gos.workspace.organization"
+      right={{ title: 'פרטי ארגון', content: detailsPanel, defaultWidth: 440, minWidth: 320, maxWidth: 680 }}
+    >
+      <div className="flex items-center gap-2 text-[13px]">
+        <BackButton to="/admin/crm/organizations" label="חזרה לארגונים" />
+      </div>
+      <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 lg:p-5">
+        <h1 className="text-xl lg:text-2xl font-bold tracking-tight text-gray-900">{org.name}</h1>
+        {org.organizationType?.label && (
+          <div className="text-sm text-gray-500 mt-0.5">{org.organizationType.label}</div>
+        )}
+      </div>
+      <TimelineFeed subjectType="organization" subjectId={id} aggregate />
+    </WorkspaceLayout>
+  );
+}
+
+function Row({ label, value }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <dt className="text-gray-500">{label}</dt>
+      <dd className="text-gray-900 tabular-nums" dir="ltr">{value}</dd>
     </div>
   );
 }
@@ -675,14 +691,6 @@ function Input({ label, value, onChange }) {
         onChange={(e) => onChange(e.target.value)}
         className="border border-gray-300 rounded-md px-3 py-1.5 text-sm"
       />
-    </div>
-  );
-}
-function Placeholder({ title }) {
-  return (
-    <div className="bg-gray-50 border border-dashed border-gray-300 rounded-lg p-4 text-center">
-      <div className="text-[13px] font-semibold text-gray-500">{title}</div>
-      <div className="text-[11px] text-gray-400 mt-1">בקרוב</div>
     </div>
   );
 }

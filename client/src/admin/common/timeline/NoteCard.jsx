@@ -39,6 +39,10 @@ function StampLine({ item, edited, className = 'text-[11px] text-gray-400' }) {
 // data.origin — otherwise it's a perfectly normal note.
 const ORIGIN_LABELS = { inquiry: 'תוכן הפנייה' };
 
+// Source badge prefix for aggregated items (shown on Contact / Organization
+// pages where the feed mixes in items owned by related deals / contacts).
+const SOURCE_PREFIX = { deal: 'מדיל', contact: 'מאיש קשר', organization: 'מארגון' };
+
 export default function NoteCard({
   entry,
   expanded,
@@ -50,6 +54,10 @@ export default function NoteCard({
   onAddComment,
   onEditComment,
   onDeleteComment,
+  // Aggregated (related-subject) items are read-only here and carry a source
+  // badge. Direct items on the page's own subject are fully interactive.
+  readOnly = false,
+  source = null,
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(entry.body || '');
@@ -107,12 +115,21 @@ export default function NoteCard({
         {dragHandle}
         {originLabel && <span className="text-[11px] font-medium text-amber-700/80">{originLabel}</span>}
         <StampLine item={entry} edited={!!entry.editedAt} />
-        <div className="flex-1" />
-        <IconBtn title={entry.isPinned ? 'בטל נעיצה' : 'נעץ ל-FOCUS'} active={entry.isPinned} onClick={() => onTogglePin(entry)}>📌</IconBtn>
-        {!editing && (
-          <IconBtn title="עריכה" onClick={() => { setDraft(entry.body || ''); setEditing(true); }}>✎</IconBtn>
+        {source && source.label && (
+          <span className="rounded bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-100 px-1.5 py-0.5 text-[10px] font-medium truncate max-w-[12rem]">
+            {SOURCE_PREFIX[source.type] || 'מקור'}: {source.label}
+          </span>
         )}
-        <IconBtn title="מחק" onClick={remove}>🗑</IconBtn>
+        <div className="flex-1" />
+        {!readOnly && (
+          <>
+            <IconBtn title={entry.isPinned ? 'בטל נעיצה' : 'נעץ ל-FOCUS'} active={entry.isPinned} onClick={() => onTogglePin(entry)}>📌</IconBtn>
+            {!editing && (
+              <IconBtn title="עריכה" onClick={() => { setDraft(entry.body || ''); setEditing(true); }}>✎</IconBtn>
+            )}
+            <IconBtn title="מחק" onClick={remove}>🗑</IconBtn>
+          </>
+        )}
         <IconBtn title={expanded ? 'כווץ' : 'הרחב'} onClick={onToggleExpand}>{expanded ? '▾' : '▸'}</IconBtn>
       </div>
 
@@ -131,7 +148,7 @@ export default function NoteCard({
             </div>
           </div>
         ) : expanded ? (
-          <div className="gos-prose text-[15px]" dangerouslySetInnerHTML={{ __html: normalizeRichHtml(entry.body || '') }} />
+          <div className="gos-prose gos-prose-tight text-[15px]" dangerouslySetInnerHTML={{ __html: normalizeRichHtml(entry.body || '') }} />
         ) : (
           // Collapsed → single preview line (click to expand).
           <button type="button" onClick={onToggleExpand} className="block w-full text-right text-sm text-gray-600 truncate">
@@ -142,16 +159,16 @@ export default function NoteCard({
 
       {/* Comments — white, nested under the yellow note. The reply editor is
           hidden by default (history stays clean); "תגובה" reveals it per-note. */}
-      {!editing && (
+      {!editing && (comments.length > 0 || !readOnly) && (
         <div
           className={`border-t border-amber-200/70 px-3 py-2 rounded-b-2xl space-y-2 ${
             comments.length || replying ? 'bg-amber-100/30' : ''
           }`}
         >
           {comments.map((c) => (
-            <CommentRow key={c.id} comment={c} onEdit={onEditComment} onDelete={onDeleteComment} />
+            <CommentRow key={c.id} comment={c} onEdit={onEditComment} onDelete={onDeleteComment} readOnly={readOnly} />
           ))}
-          {replying ? (
+          {readOnly ? null : replying ? (
             <div className="flex items-center gap-2">
               <input
                 autoFocus
@@ -182,7 +199,7 @@ export default function NoteCard({
   );
 }
 
-function CommentRow({ comment, onEdit, onDelete }) {
+function CommentRow({ comment, onEdit, onDelete, readOnly = false }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(comment.body);
   const [busy, setBusy] = useState(false);
@@ -230,8 +247,12 @@ function CommentRow({ comment, onEdit, onDelete }) {
         <div className="flex items-start gap-2">
           <div className="flex-1 text-sm text-gray-800 whitespace-pre-wrap">{comment.body}</div>
           <StampLine item={comment} className="text-[10px] text-gray-400 shrink-0" />
-          <button onClick={() => { setDraft(comment.body); setEditing(true); }} className="text-[12px] text-blue-700 shrink-0">ערוך</button>
-          <button onClick={remove} className="text-[12px] text-red-600 shrink-0">מחק</button>
+          {!readOnly && (
+            <>
+              <button onClick={() => { setDraft(comment.body); setEditing(true); }} className="text-[12px] text-blue-700 shrink-0">ערוך</button>
+              <button onClick={remove} className="text-[12px] text-red-600 shrink-0">מחק</button>
+            </>
+          )}
         </div>
       )}
     </div>

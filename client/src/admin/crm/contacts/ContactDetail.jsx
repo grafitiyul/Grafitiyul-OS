@@ -4,7 +4,18 @@ import { api } from '../../../lib/api.js';
 import BackButton from '../../common/BackButton.jsx';
 import ChannelSection from '../common/ChannelSection.jsx';
 import PhoneDisplay from '../../common/PhoneDisplay.jsx';
+import WorkspaceLayout from '../../../shell/WorkspaceLayout.jsx';
+import TimelineFeed from '../../common/timeline/TimelineFeed.jsx';
 import { useDirtyWhen } from '../../../lib/dirtyForms.js';
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleDateString('he-IL');
+  } catch {
+    return '—';
+  }
+}
 
 // Contact detail — edit bilingual names, manage phones / emails / organization
 // memberships, and see future communication sections as placeholders.
@@ -88,40 +99,37 @@ export default function ContactDetail() {
     setForm((f) => ({ ...f, [field]: v }));
   }
 
-  return (
-    <div className="p-4 lg:p-6 max-w-4xl mx-auto space-y-6">
-      <div className="flex items-center gap-2 text-[13px]">
-        <BackButton to="/admin/crm/contacts" label="חזרה לאנשי קשר" />
-      </div>
+  const fullName =
+    `${contact.firstNameHe || ''} ${contact.lastNameHe || ''}`.trim() ||
+    `${contact.firstNameEn || ''} ${contact.lastNameEn || ''}`.trim() ||
+    'איש קשר';
+  const fullNameEn = `${contact.firstNameEn || ''} ${contact.lastNameEn || ''}`.trim();
 
+  // RIGHT panel — the contact's static identity & relationships.
+  const detailsPanel = (
+    <div className="space-y-4">
       <Section title="פרטי איש קשר">
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           <Input label="שם פרטי (עברית)" value={form.firstNameHe} onChange={(v) => set('firstNameHe', v)} />
           <Input label="שם משפחה (עברית)" value={form.lastNameHe} onChange={(v) => set('lastNameHe', v)} />
           <Input label="First name (EN)" value={form.firstNameEn} onChange={(v) => set('firstNameEn', v)} ltr />
           <Input label="Last name (EN)" value={form.lastNameEn} onChange={(v) => set('lastNameEn', v)} ltr />
         </div>
         <div className="mt-3">
-          <label className="text-[11px] text-gray-500">הערות</label>
+          <label className="text-[11px] text-gray-500">אודות</label>
           <textarea
             value={form.notes}
             onChange={(e) => set('notes', e.target.value)}
-            rows={2}
+            rows={3}
+            placeholder="תיאור קבוע על איש הקשר (לא היסטוריה — היסטוריה נכתבת בציר הזמן)"
             className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm"
           />
         </div>
         <div className="flex gap-2 mt-4">
-          <button
-            onClick={save}
-            disabled={saving}
-            className="bg-blue-600 text-white text-sm rounded-md px-4 py-1.5 disabled:opacity-50"
-          >
+          <button onClick={save} disabled={saving} className="bg-blue-600 text-white text-sm rounded-md px-4 py-1.5 disabled:opacity-50">
             {saving ? 'שומר…' : 'שמור'}
           </button>
-          <button
-            onClick={removeContact}
-            className="text-sm text-red-700 border border-red-300 rounded-md px-4 py-1.5 hover:bg-red-50"
-          >
+          <button onClick={removeContact} className="text-sm text-red-700 border border-red-300 rounded-md px-4 py-1.5 hover:bg-red-50">
             מחק
           </button>
         </div>
@@ -152,20 +160,41 @@ export default function ContactDetail() {
 
       <MembershipsSection contact={contact} orgs={orgs} onChange={refresh} />
 
-      {/* Future communication sections — placeholders until integrations land. */}
-      <Section title="תקשורת ומסמכים (בקרוב)">
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-          <Placeholder title="היסטוריית WhatsApp" />
-          <Placeholder title="היסטוריית Gmail" />
-          <Placeholder title="קבצים" />
-          <Placeholder title="הערות" />
-          <Placeholder title="מסמכים" />
-          <Placeholder title="שליחת WhatsApp / אימייל" />
-        </div>
-        <div className="text-[12px] text-gray-400 mt-2">
-          ייפתח אחרי חיבור WhatsApp / Gmail והמודולים הרלוונטיים.
-        </div>
+      <Section title="מטא-דאטה">
+        <dl className="space-y-1 text-[13px]">
+          <Row label="נוצר" value={fmtDate(contact.createdAt)} />
+          <Row label="עודכן" value={fmtDate(contact.updatedAt)} />
+        </dl>
       </Section>
+    </div>
+  );
+
+  // CENTER = the reusable Timeline, aggregating this contact's items + items from
+  // the deals they're on (read-only, source-badged). RIGHT = details panel.
+  return (
+    <WorkspaceLayout
+      storageKey="gos.workspace.contact"
+      right={{ title: 'פרטי איש קשר', content: detailsPanel, defaultWidth: 420, minWidth: 320, maxWidth: 640 }}
+    >
+      <div className="flex items-center gap-2 text-[13px]">
+        <BackButton to="/admin/crm/contacts" label="חזרה לאנשי קשר" />
+      </div>
+      <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 lg:p-5">
+        <h1 className="text-xl lg:text-2xl font-bold tracking-tight text-gray-900">{fullName}</h1>
+        {fullNameEn && fullNameEn !== fullName && (
+          <div className="text-sm text-gray-500 mt-0.5" dir="ltr">{fullNameEn}</div>
+        )}
+      </div>
+      <TimelineFeed subjectType="contact" subjectId={id} aggregate />
+    </WorkspaceLayout>
+  );
+}
+
+function Row({ label, value }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <dt className="text-gray-500">{label}</dt>
+      <dd className="text-gray-900 tabular-nums" dir="ltr">{value}</dd>
     </div>
   );
 }
@@ -329,14 +358,6 @@ function Input({ label, value, onChange, ltr }) {
         dir={ltr ? 'ltr' : 'rtl'}
         className="border border-gray-300 rounded-md px-3 py-1.5 text-sm"
       />
-    </div>
-  );
-}
-function Placeholder({ title }) {
-  return (
-    <div className="bg-gray-50 border border-dashed border-gray-300 rounded-lg p-4 text-center">
-      <div className="text-[13px] font-semibold text-gray-500">{title}</div>
-      <div className="text-[11px] text-gray-400 mt-1">בקרוב</div>
     </div>
   );
 }

@@ -64,7 +64,7 @@ const COMPOSER_TABS = [
   { key: 'file', label: 'קובץ', enabled: false, icon: <PaperclipIcon /> },
 ];
 
-export default function TimelineFeed({ subjectType, subjectId }) {
+export default function TimelineFeed({ subjectType, subjectId, aggregate = false }) {
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -74,6 +74,8 @@ export default function TimelineFeed({ subjectType, subjectId }) {
   // Global expand: default ON. Per-note overrides take precedence over it.
   const [expandAll, setExpandAll] = useState(true);
   const [expandOverrides, setExpandOverrides] = useState({});
+  // Aggregate-view source filter (Contact/Organization pages): all|direct|deal|contact.
+  const [scope, setScope] = useState('all');
 
   // Unsaved-work guard: a half-written note blocks an auto-update reload.
   useDirtyForm(!!draft.trim());
@@ -81,25 +83,54 @@ export default function TimelineFeed({ subjectType, subjectId }) {
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      setEntries(await api.timeline.list(subjectType, subjectId));
+      setEntries(
+        aggregate
+          ? await api.timeline.aggregate(subjectType, subjectId)
+          : await api.timeline.list(subjectType, subjectId),
+      );
     } catch (e) {
       setError(e.message);
     } finally {
       setLoading(false);
     }
-  }, [subjectType, subjectId]);
+  }, [subjectType, subjectId, aggregate]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
-  // FOCUS = pinned, in manual order (newest pinned is NOT necessarily first).
+  // An item is "direct" when it's owned by THIS page's subject; otherwise it's an
+  // aggregated item from a related deal/contact (read-only, source-badged).
+  const isDirect = (e) => e.subjectType === subjectType && e.subjectId === subjectId;
+
+  // FOCUS = pinned DIRECT items, manual order (aggregated items can't be pinned here).
   const pinned = useMemo(
-    () => entries.filter((e) => e.isPinned).sort((a, b) => a.pinSortOrder - b.pinSortOrder),
-    [entries],
+    () =>
+      entries
+        .filter((e) => e.isPinned && e.subjectType === subjectType && e.subjectId === subjectId)
+        .sort((a, b) => a.pinSortOrder - b.pinSortOrder),
+    [entries, subjectType, subjectId],
   );
-  // HISTORY = all live entries, newest first (server already orders by createdAt desc).
-  const history = entries;
+
+  // Aggregate filter chips — only show a type chip when such items exist.
+  const hasDeal = aggregate && entries.some((e) => e.sourceType === 'deal');
+  const hasContact = aggregate && entries.some((e) => e.sourceType === 'contact');
+  const scopeChips = aggregate
+    ? [
+        { key: 'all', label: 'הכל' },
+        { key: 'direct', label: 'ישיר' },
+        ...(hasDeal ? [{ key: 'deal', label: 'דילים' }] : []),
+        ...(hasContact ? [{ key: 'contact', label: 'אנשי קשר' }] : []),
+      ]
+    : [];
+
+  // HISTORY = all live items, newest first, filtered by the active scope chip.
+  const history = entries.filter((e) => {
+    if (!aggregate || scope === 'all') return true;
+    if (scope === 'direct') return isDirect(e);
+    return e.sourceType === scope; // 'deal' | 'contact'
+  });
+  const showFocus = !aggregate || scope === 'all' || scope === 'direct';
 
   const isExpanded = (id) => (id in expandOverrides ? expandOverrides[id] : expandAll);
   const toggleExpand = (id) => setExpandOverrides((o) => ({ ...o, [id]: !isExpanded(id) }));
@@ -215,8 +246,28 @@ export default function TimelineFeed({ subjectType, subjectId }) {
         </div>
       ) : (
         <>
-          {/* FOCUS — pinned, manually ordered */}
-          {pinned.length > 0 && (
+          {/* Aggregate source filter (Contact / Organization pages) */}
+          {scopeChips.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {scopeChips.map((c) => (
+                <button
+                  key={c.key}
+                  type="button"
+                  onClick={() => setScope(c.key)}
+                  className={`rounded-full px-3 py-1 text-[12px] font-medium border transition ${
+                    scope === c.key
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* FOCUS — pinned DIRECT items, manually ordered */}
+          {showFocus && pinned.length > 0 && (
             <section>
               <SectionTitle>FOCUS</SectionTitle>
               <ReorderableList
@@ -235,7 +286,7 @@ export default function TimelineFeed({ subjectType, subjectId }) {
             </section>
           )}
 
-          {/* HISTORY — everything, newest first */}
+          {/* HISTORY — everything (scope-filtered), newest first */}
           <section>
             <div className="flex items-center justify-between mb-2">
               <SectionTitle>היסטוריה</SectionTitle>
@@ -251,20 +302,25 @@ export default function TimelineFeed({ subjectType, subjectId }) {
             </div>
             {history.length === 0 ? (
               <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-10 text-center text-sm text-gray-400">
-                אין עדיין פתקים. כתבו את הראשון למעלה.
+                {entries.length === 0 ? 'אין עדיין פתקים. כתבו את הראשון למעלה.' : 'אין פריטים בקטגוריה זו.'}
               </div>
             ) : (
               <ul className="space-y-3">
-                {history.map((entry) => (
-                  <li key={entry.id}>
-                    <NoteCard
-                      entry={entry}
-                      expanded={isExpanded(entry.id)}
-                      onToggleExpand={() => toggleExpand(entry.id)}
-                      {...actions}
-                    />
-                  </li>
-                ))}
+                {history.map((entry) => {
+                  const direct = isDirect(entry);
+                  return (
+                    <li key={entry.id}>
+                      <NoteCard
+                        entry={entry}
+                        expanded={isExpanded(entry.id)}
+                        onToggleExpand={() => toggleExpand(entry.id)}
+                        readOnly={aggregate && !direct}
+                        source={aggregate && !direct ? { type: entry.sourceType, label: entry.sourceLabel } : null}
+                        {...actions}
+                      />
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </section>

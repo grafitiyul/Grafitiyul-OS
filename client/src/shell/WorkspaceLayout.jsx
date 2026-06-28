@@ -135,6 +135,10 @@ function SidePanel({ side, title, open, width, onCollapse, children }) {
 }
 
 export default function WorkspaceLayout({ storageKey, right = {}, left = {}, children }) {
+  // Either side panel is optional — a page may show only a right details panel
+  // (Contact / Organization) or none at all; the center always fills the rest.
+  const hasRight = !!(right && right.content);
+  const hasLeft = !!(left && left.content);
   const containerRef = useRef(null);
   const defaults = {
     rightWidth: right.defaultWidth ?? 360,
@@ -206,25 +210,30 @@ export default function WorkspaceLayout({ storageKey, right = {}, left = {}, chi
       dir="rtl"
       className="flex flex-col lg:flex-row min-h-0 lg:h-full bg-gray-50"
     >
-      {/* RIGHT panel — physically on the right (start) in RTL */}
-      <SidePanel
-        side="right"
-        title={right.title}
-        open={rightOpen}
-        width={rightWidth}
-        onCollapse={() => setRightOpen(false)}
-      >
-        {right.content}
-      </SidePanel>
-      {!rightOpen && (
-        <CollapsedRail side="right" title={right.title} onExpand={() => setRightOpen(true)} />
-      )}
-      {rightOpen && (
-        <Handle
-          onMouseDown={() => startDrag('right')}
-          active={dragging === 'right'}
-          ariaLabel={`שינוי רוחב ${right.title}`}
-        />
+      {/* RIGHT panel — physically on the right (start) in RTL. Optional: a page
+          may pass only one side panel (e.g. details-only Contact/Org pages). */}
+      {hasRight && (
+        <>
+          <SidePanel
+            side="right"
+            title={right.title}
+            open={rightOpen}
+            width={rightWidth}
+            onCollapse={() => setRightOpen(false)}
+          >
+            {right.content}
+          </SidePanel>
+          {!rightOpen && (
+            <CollapsedRail side="right" title={right.title} onExpand={() => setRightOpen(true)} />
+          )}
+          {rightOpen && (
+            <Handle
+              onMouseDown={() => startDrag('right')}
+              active={dragging === 'right'}
+              ariaLabel={`שינוי רוחב ${right.title}`}
+            />
+          )}
+        </>
       )}
 
       {/* CENTER — the workspace. First on mobile, middle on desktop. The cap is
@@ -236,26 +245,30 @@ export default function WorkspaceLayout({ storageKey, right = {}, left = {}, chi
         </div>
       </section>
 
-      {leftOpen && (
-        <Handle
-          onMouseDown={() => startDrag('left')}
-          active={dragging === 'left'}
-          ariaLabel={`שינוי רוחב ${left.title}`}
-        />
+      {/* LEFT panel — physically on the left (end) in RTL. Also optional. */}
+      {hasLeft && (
+        <>
+          {leftOpen && (
+            <Handle
+              onMouseDown={() => startDrag('left')}
+              active={dragging === 'left'}
+              ariaLabel={`שינוי רוחב ${left.title}`}
+            />
+          )}
+          {!leftOpen && (
+            <CollapsedRail side="left" title={left.title} onExpand={() => setLeftOpen(true)} />
+          )}
+          <SidePanel
+            side="left"
+            title={left.title}
+            open={leftOpen}
+            width={leftWidth}
+            onCollapse={() => setLeftOpen(false)}
+          >
+            {left.content}
+          </SidePanel>
+        </>
       )}
-      {!leftOpen && (
-        <CollapsedRail side="left" title={left.title} onExpand={() => setLeftOpen(true)} />
-      )}
-      {/* LEFT panel — physically on the left (end) in RTL */}
-      <SidePanel
-        side="left"
-        title={left.title}
-        open={leftOpen}
-        width={leftWidth}
-        onCollapse={() => setLeftOpen(false)}
-      >
-        {left.content}
-      </SidePanel>
     </div>
   );
 }

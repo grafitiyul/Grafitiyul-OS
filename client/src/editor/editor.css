@@ -29,6 +29,17 @@
   min-height: 0;
 }
 
+/* Timeline notes: a normal Enter (new paragraph) should read like a soft line
+   break — compact spacing, not a wide paragraph gap. Scoped to the note composer
+   (.rt-editor-compact) and the note display (.gos-prose.gos-prose-tight) so every
+   other rich-editor / prose surface keeps the standard paragraph rhythm. */
+.rt-editor-compact .rt-editor-prose > * + *,
+.rt-editor-compact .rt-editor-prose * + p,
+.gos-prose.gos-prose-tight > * + *,
+.gos-prose.gos-prose-tight * + p {
+  margin-top: 0;
+}
+
 /* Sibling gap between block-level children. With line-height now at
    1.55 (~25px), a 1.25em (~20px) inter-block margin gives a paragraph
    break of ~45px baseline-to-baseline vs ~25px for a soft <br> line

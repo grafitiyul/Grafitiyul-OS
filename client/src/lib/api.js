@@ -522,6 +522,9 @@ export const api = {
   // ── Timeline / Activity-Feed (reusable; scoped by subjectType + subjectId) ──
   timeline: {
     list: (subjectType, subjectId) => request(`/api/timeline${qs({ subjectType, subjectId })}`),
+    // Read-only aggregated feed for Contact / Organization pages: the subject's
+    // own items + related deal/contact items, each tagged with sourceType/Label.
+    aggregate: (subjectType, subjectId) => request(`/api/timeline/aggregate${qs({ subjectType, subjectId })}`),
     create: (data) => request('/api/timeline', { method: 'POST', body: JSON.stringify(data) }),
     update: (id, data) => request(`/api/timeline/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     remove: (id) => request(`/api/timeline/${id}`, { method: 'DELETE' }),

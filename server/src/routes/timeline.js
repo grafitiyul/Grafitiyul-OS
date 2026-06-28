@@ -72,6 +72,90 @@ router.get(
   }),
 );
 
+function contactName(c) {
+  if (!c) return 'איש קשר';
+  const he = `${c.firstNameHe || ''} ${c.lastNameHe || ''}`.trim();
+  return he || `${c.firstNameEn || ''} ${c.lastNameEn || ''}`.trim() || 'איש קשר';
+}
+
+// GET /api/timeline/aggregate?subjectType=contact|organization&subjectId=…
+// Read-only AGGREGATION for the Contact / Organization pages: the subject's own
+// items PLUS items from related subjects, each tagged with where it came from.
+//   • contact      → direct + its deals
+//   • organization → direct + its deals + its linked contacts
+// One TimelineEntry is never duplicated or copied — it keeps its real owning
+// subject; we only surface it here and attach { sourceType, sourceLabel }.
+// Declared before any '/:id'-style routes (it is a GET, so no real conflict).
+router.get(
+  '/aggregate',
+  handle(async (req, res) => {
+    const subjectType = String(req.query.subjectType || '').trim();
+    const subjectId = String(req.query.subjectId || '').trim();
+    if (!['contact', 'organization'].includes(subjectType) || !subjectId) {
+      return res.status(400).json({ error: 'invalid_subject' });
+    }
+
+    const dealIds = [];
+    const contactIds = [];
+    const labels = {}; // `${type}:${id}` → display label for the source badge
+
+    if (subjectType === 'contact') {
+      const links = await prisma.dealContact.findMany({
+        where: { contactId: subjectId },
+        select: { deal: { select: { id: true, title: true } } },
+      });
+      for (const l of links) {
+        if (!l.deal) continue;
+        dealIds.push(l.deal.id);
+        labels[`deal:${l.deal.id}`] = l.deal.title;
+      }
+    } else {
+      const deals = await prisma.deal.findMany({
+        where: { organizationId: subjectId },
+        select: { id: true, title: true },
+      });
+      for (const d of deals) {
+        dealIds.push(d.id);
+        labels[`deal:${d.id}`] = d.title;
+      }
+      const orgContacts = await prisma.contactOrganization.findMany({
+        where: { organizationId: subjectId },
+        select: {
+          contact: { select: { id: true, firstNameHe: true, lastNameHe: true, firstNameEn: true, lastNameEn: true } },
+        },
+      });
+      for (const oc of orgContacts) {
+        if (!oc.contact) continue;
+        contactIds.push(oc.contact.id);
+        labels[`contact:${oc.contact.id}`] = contactName(oc.contact);
+      }
+    }
+
+    // One OR-clause per subject type, using IN lists (hits the
+    // (subjectType, subjectId, createdAt) index).
+    const or = [{ subjectType, subjectId }];
+    if (dealIds.length) or.push({ subjectType: 'deal', subjectId: { in: dealIds } });
+    if (contactIds.length) or.push({ subjectType: 'contact', subjectId: { in: contactIds } });
+
+    const entries = await prisma.timelineEntry.findMany({
+      where: { deletedAt: null, OR: or },
+      orderBy: { createdAt: 'desc' },
+      include: ENTRY_INCLUDE,
+    });
+
+    // Tag each entry with its source relative to THIS page (direct vs related).
+    const tagged = entries.map((e) => {
+      const direct = e.subjectType === subjectType && e.subjectId === subjectId;
+      return {
+        ...e,
+        sourceType: direct ? 'direct' : e.subjectType, // 'direct' | 'deal' | 'contact'
+        sourceLabel: direct ? null : labels[`${e.subjectType}:${e.subjectId}`] || null,
+      };
+    });
+    res.json(tagged);
+  }),
+);
+
 router.post(
   '/',
   handle(async (req, res) => {
