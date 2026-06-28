@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import RichEditor from '../../../editor/RichEditor.jsx';
+import AnchoredMenu from '../AnchoredMenu.jsx';
 import { normalizeRichHtml } from '../../../editor/htmlNormalize.js';
 import { titleToPlain } from '../../../editor/TitleEditor.jsx';
 import { actorDisplay } from './actor.js';
@@ -64,6 +65,8 @@ export default function NoteCard({
   const [busy, setBusy] = useState(false);
   const [replying, setReplying] = useState(false);
   const [commentDraft, setCommentDraft] = useState('');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
 
   const originLabel = ORIGIN_LABELS[entry.data?.origin];
   const comments = entry.comments || [];
@@ -114,23 +117,62 @@ export default function NoteCard({
       <div className="flex items-center gap-2 px-4 pt-3">
         {dragHandle}
         {originLabel && <span className="text-[11px] font-medium text-amber-700/80">{originLabel}</span>}
-        <StampLine item={entry} edited={!!entry.editedAt} />
         {source && source.label && (
           <span className="rounded bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-100 px-1.5 py-0.5 text-[10px] font-medium truncate max-w-[12rem]">
             {SOURCE_PREFIX[source.type] || 'מקור'}: {source.label}
           </span>
         )}
+        {entry.isPinned && (
+          <span className="text-amber-500 text-[12px] leading-none" title="נעוץ ל-FOCUS" aria-hidden>📌</span>
+        )}
         <div className="flex-1" />
+        {/* Metadata — pushed to the left (end), low-emphasis, out of the reading path. */}
+        <StampLine item={entry} edited={!!entry.editedAt} />
+        <IconBtn title={expanded ? 'כווץ' : 'הרחב'} onClick={onToggleExpand}>{expanded ? '▾' : '▸'}</IconBtn>
+        {/* Actions live in a 3-dot menu so the card stays calm. Read-only
+            (aggregated) items expose no actions at all. */}
         {!readOnly && (
           <>
-            <IconBtn title={entry.isPinned ? 'בטל נעיצה' : 'נעץ ל-FOCUS'} active={entry.isPinned} onClick={() => onTogglePin(entry)}>📌</IconBtn>
-            {!editing && (
-              <IconBtn title="עריכה" onClick={() => { setDraft(entry.body || ''); setEditing(true); }}>✎</IconBtn>
-            )}
-            <IconBtn title="מחק" onClick={remove}>🗑</IconBtn>
+            <button
+              ref={menuRef}
+              type="button"
+              onClick={() => setMenuOpen((o) => !o)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-label="פעולות"
+              className="h-7 w-7 inline-flex items-center justify-center rounded-md text-[15px] leading-none text-gray-400 hover:text-gray-700 hover:bg-amber-100"
+            >
+              ⋮
+            </button>
+            <AnchoredMenu anchorRef={menuRef} open={menuOpen} onClose={() => setMenuOpen(false)} width={160}>
+              <button
+                onClick={() => { setMenuOpen(false); onTogglePin(entry); }}
+                className="block w-full text-right px-3 py-2 text-sm hover:bg-gray-50"
+              >
+                {entry.isPinned ? 'בטל נעיצה' : 'נעץ ל-FOCUS'}
+              </button>
+              <button
+                onClick={() => { setMenuOpen(false); setDraft(entry.body || ''); setEditing(true); }}
+                className="block w-full text-right px-3 py-2 text-sm hover:bg-gray-50"
+              >
+                עריכה
+              </button>
+              <button
+                onClick={() => { setMenuOpen(false); setReplying(true); }}
+                className="block w-full text-right px-3 py-2 text-sm hover:bg-gray-50"
+              >
+                תגובה
+              </button>
+              <div className="my-1 border-t border-gray-100" />
+              <button
+                onClick={() => { setMenuOpen(false); remove(); }}
+                className="block w-full text-right px-3 py-2 text-sm text-red-600 hover:bg-red-50"
+              >
+                מחיקה
+              </button>
+            </AnchoredMenu>
           </>
         )}
-        <IconBtn title={expanded ? 'כווץ' : 'הרחב'} onClick={onToggleExpand}>{expanded ? '▾' : '▸'}</IconBtn>
       </div>
 
       {/* Body */}
@@ -159,16 +201,14 @@ export default function NoteCard({
 
       {/* Comments — white, nested under the yellow note. The reply editor is
           hidden by default (history stays clean); "תגובה" reveals it per-note. */}
-      {!editing && (comments.length > 0 || !readOnly) && (
-        <div
-          className={`border-t border-amber-200/70 px-3 py-2 rounded-b-2xl space-y-2 ${
-            comments.length || replying ? 'bg-amber-100/30' : ''
-          }`}
-        >
+      {/* Comments — white, nested. Existing comments always show; the reply
+          editor opens only from the 3-dot "תגובה" action (never by default). */}
+      {!editing && (comments.length > 0 || replying) && (
+        <div className="border-t border-amber-200/70 bg-amber-100/30 px-3 py-2 rounded-b-2xl space-y-2">
           {comments.map((c) => (
             <CommentRow key={c.id} comment={c} onEdit={onEditComment} onDelete={onDeleteComment} readOnly={readOnly} />
           ))}
-          {readOnly ? null : replying ? (
+          {replying && !readOnly && (
             <div className="flex items-center gap-2">
               <input
                 autoFocus
@@ -188,10 +228,6 @@ export default function NoteCard({
                 ביטול
               </button>
             </div>
-          ) : (
-            <button type="button" onClick={() => setReplying(true)} className="text-[12px] text-blue-700 hover:bg-blue-50 rounded px-2 py-1">
-              + תגובה
-            </button>
           )}
         </div>
       )}
