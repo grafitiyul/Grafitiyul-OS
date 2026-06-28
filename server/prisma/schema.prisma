@@ -864,6 +864,17 @@ model Deal {
   lostNotes             String?
   lostReason            String?
   notes                 String?
+  // "פרטי הסיור" — working fields for the sales-call workspace. Simple Deal
+  // scalars (single source of truth = the Deal). String enums validated at the
+  // API (no Postgres enum). Product/City/pricing remain in the deferred quote
+  // slice and are NOT stored here yet.
+  tourDate              String? // "YYYY-MM-DD"
+  tourTime              String? // "HH:MM"
+  participants          Int?
+  paymentMethod         String? // card | transfer | cash | check | other
+  communicationLanguage String? // he | en
+  tourLanguage          String? // he | en | es | fr | ru
+  customerInfo          String? // internal working note (lightweight rich HTML)
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
   contacts              DealContact[]

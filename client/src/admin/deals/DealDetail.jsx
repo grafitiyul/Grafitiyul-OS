@@ -16,8 +16,12 @@ import {
   ACTIVITY_TYPES,
   ACTIVITY_TYPE_LABELS,
   ROLE_LABELS,
+  PAYMENT_METHODS,
+  COMM_LANGS,
+  TOUR_LANGS,
   contactNameHe,
 } from './config.js';
+import RichEditor from '../../editor/RichEditor.jsx';
 
 const INPUT =
   'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
@@ -111,6 +115,15 @@ export default function DealDetail() {
         organizationId: d.organizationId || '',
         organizationUnitId: d.organizationUnitId || '',
         organizationSubtypeId: d.organizationSubtypeId || '',
+        // "פרטי הסיור" working fields.
+        activityType: d.activityType || '',
+        tourDate: d.tourDate || '',
+        tourTime: d.tourTime || '',
+        participants: d.participants ?? '',
+        paymentMethod: d.paymentMethod || '',
+        communicationLanguage: d.communicationLanguage || '',
+        tourLanguage: d.tourLanguage || '',
+        customerInfo: d.customerInfo || '',
       };
       setForm(init);
       setOriginalForm(init);
@@ -284,54 +297,140 @@ export default function DealDetail() {
     );
   if (!deal || !form) return null;
 
-  // Right panel — deal properties (config / finance / dates / meta). These are
-  // the "what the deal is" surfaces; the center holds the working surfaces.
+  // Right panel — the operational "פרטי הסיור" workspace: everything a
+  // salesperson fills during a call, grouped into rows that are naturally
+  // completed together, plus the two next-step actions. Rare technical
+  // timestamps live in a collapsed "מידע מערכת" section at the bottom.
   const dealProperties = (
     <div className="space-y-4">
       <Card
         variant="panel"
-        title="מסחרי"
+        title="פרטי הסיור"
         action={
           <SaveBtn
-            busy={savingSection === 'commercial'}
+            busy={savingSection === 'tour'}
             onClick={() =>
-              saveSection('commercial', {
+              saveSection('tour', {
                 valueMinor: toMinor(form.value) ?? 0,
-                discountMinor: toMinor(form.discount),
-                paymentTerms: form.paymentTerms,
-                currency: form.currency,
+                paymentTerms: form.paymentTerms || null,
+                paymentMethod: form.paymentMethod || null,
+                activityType: form.activityType || null,
+                tourDate: form.tourDate || null,
+                tourTime: form.tourTime || null,
+                participants: form.participants === '' ? null : Number(form.participants),
+                communicationLanguage: form.communicationLanguage || null,
+                tourLanguage: form.tourLanguage || null,
+                customerInfo: form.customerInfo || null,
               })
             }
           />
         }
       >
         <div className="space-y-3">
-          <FieldBox label="שווי (₪)">
-            <input value={form.value} onChange={(e) => set('value', e.target.value)} inputMode="decimal" dir="ltr"
-              className={`${INPUT} text-[15px] font-semibold`} />
-          </FieldBox>
-          <FieldBox label="הנחה (₪)">
-            <input value={form.discount} onChange={(e) => set('discount', e.target.value)} inputMode="decimal" dir="ltr" className={INPUT} />
-          </FieldBox>
-          <FieldBox label="תנאי תשלום">
-            <input value={form.paymentTerms} onChange={(e) => set('paymentTerms', e.target.value)} placeholder="שוטף + 30 וכו'" className={INPUT} />
-          </FieldBox>
-          <FieldBox label="מטבע">
-            <select value={form.currency} onChange={(e) => set('currency', e.target.value)} className={`${INPUT} bg-white`}>
-              <option value="ILS">₪ ILS</option>
-              <option value="USD">$ USD</option>
-              <option value="EUR">€ EUR</option>
-            </select>
-          </FieldBox>
-        </div>
-      </Card>
+          {/* Row 1 — Product | City | Price. Product/City are placeholders until
+              the pricing/quote slice is wired; Price is the live emphasized field. */}
+          <div className="grid grid-cols-3 gap-2">
+            <FieldBox label="מוצר">
+              <select disabled className={`${INPUT} bg-gray-50 text-gray-400`} title="יחובר לקטלוג/מחירון בהמשך">
+                <option>בקרוב</option>
+              </select>
+            </FieldBox>
+            <FieldBox label="עיר">
+              <select disabled className={`${INPUT} bg-gray-50 text-gray-400`} title="תלוי במוצר — בקרוב">
+                <option>בקרוב</option>
+              </select>
+            </FieldBox>
+            <FieldBox label="מחיר (₪)">
+              <input value={form.value} onChange={(e) => set('value', e.target.value)} inputMode="decimal" dir="ltr"
+                className={`${INPUT} text-[17px] font-bold text-gray-900`} />
+            </FieldBox>
+          </div>
+          {/* Pricing context — placeholder until the pricing engine feeds it. */}
+          <div className="rounded-lg bg-blue-50/60 border border-blue-100 px-3 py-1.5 text-[12px] text-blue-700/80">
+            הסבר תמחור יופיע כאן (מחירון / הנחת לקוח חוזר / תוספת שפה) — יחובר למנוע התמחור.
+          </div>
 
-      <Card variant="panel" title="תאריכים">
-        <dl className="space-y-2 text-sm">
-          <Row label="צפי סגירה" value={fmtDate(deal.expectedCloseDate)} />
-          {deal.wonAt && <Row label="נסגר בהצלחה" value={fmtDate(deal.wonAt)} />}
-          {deal.lostAt && <Row label="תאריך LOST" value={fmtDate(deal.lostAt)} />}
-        </dl>
+          {/* Row 2 — Date | Time | Participants (entered together every call). */}
+          <div className="grid grid-cols-3 gap-2">
+            <FieldBox label="תאריך">
+              <input type="date" value={form.tourDate} onChange={(e) => set('tourDate', e.target.value)} className={`${INPUT} bg-white`} />
+            </FieldBox>
+            <FieldBox label="שעה">
+              <input type="time" value={form.tourTime} onChange={(e) => set('tourTime', e.target.value)} className={`${INPUT} bg-white`} />
+            </FieldBox>
+            <FieldBox label="משתתפים">
+              <input value={form.participants} onChange={(e) => set('participants', e.target.value.replace(/[^0-9]/g, ''))}
+                inputMode="numeric" dir="ltr" className={INPUT} />
+            </FieldBox>
+          </div>
+
+          {/* Row 3 — Activity type | Payment terms | Payment method. */}
+          <div className="grid grid-cols-3 gap-2">
+            <FieldBox label="סוג פעילות">
+              <select value={form.activityType} onChange={(e) => set('activityType', e.target.value)} className={`${INPUT} bg-white`}>
+                <option value="">— ללא —</option>
+                {ACTIVITY_TYPES.map((v) => (<option key={v} value={v}>{ACTIVITY_TYPE_LABELS[v]}</option>))}
+              </select>
+            </FieldBox>
+            <FieldBox label="תנאי תשלום">
+              <input value={form.paymentTerms} onChange={(e) => set('paymentTerms', e.target.value)} placeholder="שוטף+30" className={INPUT} />
+            </FieldBox>
+            <FieldBox label="אמצעי תשלום">
+              <select value={form.paymentMethod} onChange={(e) => set('paymentMethod', e.target.value)} className={`${INPUT} bg-white`}>
+                <option value="">— ללא —</option>
+                {PAYMENT_METHODS.map((m) => (<option key={m.key} value={m.key}>{m.label}</option>))}
+              </select>
+            </FieldBox>
+          </div>
+
+          {/* Row 4 — Communication language | Tour language. */}
+          <div className="grid grid-cols-2 gap-2">
+            <FieldBox label="שפת תקשורת">
+              <select value={form.communicationLanguage} onChange={(e) => set('communicationLanguage', e.target.value)} className={`${INPUT} bg-white`}>
+                <option value="">— ללא —</option>
+                {COMM_LANGS.map((l) => (<option key={l.key} value={l.key}>{l.label}</option>))}
+              </select>
+            </FieldBox>
+            <FieldBox label="שפת הסיור">
+              <select value={form.tourLanguage} onChange={(e) => set('tourLanguage', e.target.value)} className={`${INPUT} bg-white`}>
+                <option value="">— ללא —</option>
+                {TOUR_LANGS.map((l) => (<option key={l.key} value={l.key}>{l.label}</option>))}
+              </select>
+            </FieldBox>
+          </div>
+
+          {/* Row 5 — internal customer note (the lightweight editor). */}
+          <FieldBox label="מידע חשוב על הלקוח">
+            <RichEditor
+              value={form.customerInfo}
+              onChange={(html) => set('customerInfo', html)}
+              toolbar="lite"
+              collapsible
+              ariaLabel="מידע חשוב על הלקוח"
+              placeholder="מידע פנימי חשוב לשיחה…"
+            />
+          </FieldBox>
+
+          {/* Row 6 — next-step actions. UI only; wired in a later slice. */}
+          <div className="grid grid-cols-2 gap-2 pt-1">
+            <button
+              type="button"
+              disabled
+              title="בקרוב"
+              className="rounded-lg bg-blue-600 text-white text-sm font-semibold py-2.5 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              הפק הצעת מחיר
+            </button>
+            <button
+              type="button"
+              disabled
+              title="בקרוב"
+              className="rounded-lg bg-emerald-600 text-white text-sm font-semibold py-2.5 hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              הרשמה לסיור
+            </button>
+          </div>
+        </div>
       </Card>
 
       {deal.status === 'lost' && (
@@ -356,19 +455,14 @@ export default function DealDetail() {
         </Card>
       )}
 
-      <Card variant="panel" title="מטא-דאטה">
-        <dl className="space-y-2 text-sm">
-          <Row label="נוצר" value={fmtDate(deal.createdAt)} />
-          <Row label="עודכן" value={fmtDate(deal.updatedAt)} />
-        </dl>
-      </Card>
+      <SystemInfo deal={deal} />
     </div>
   );
 
   return (
     <WorkspaceLayout
       storageKey="gos.workspace.deal"
-      right={{ title: 'פרטי הדיל', content: dealProperties, defaultWidth: 380, minWidth: 300, maxWidth: 620 }}
+      right={{ title: 'פרטי הסיור', content: dealProperties, defaultWidth: 460, minWidth: 360, maxWidth: 720 }}
       left={{ title: 'תסריט מכירה', content: <DealSalesScript />, defaultWidth: 300, minWidth: 220, maxWidth: 460 }}
     >
       {/* Hero header — title + actions, then a full-width pipeline bar.
@@ -1127,6 +1221,33 @@ function FieldBox({ label, children }) {
       <label className="text-[11px] text-gray-500">{label}</label>
       {children}
     </div>
+  );
+}
+
+// Rarely-needed technical timestamps — collapsed by default so they never take
+// up workspace. Replaces the old always-open "תאריכים" + "מטא-דאטה" cards.
+function SystemInfo({ deal }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="bg-white border border-gray-200 rounded-xl">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between px-4 py-2.5"
+      >
+        <span className="text-[13px] font-semibold text-gray-700">מידע מערכת</span>
+        <span className="text-gray-400 text-xs">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <dl className="px-4 pb-3 space-y-2 text-sm">
+          <Row label="נוצר" value={fmtDate(deal.createdAt)} />
+          <Row label="עודכן" value={fmtDate(deal.updatedAt)} />
+          <Row label="צפי סגירה" value={fmtDate(deal.expectedCloseDate)} />
+          {deal.wonAt && <Row label="נסגר בהצלחה" value={fmtDate(deal.wonAt)} />}
+          {deal.lostAt && <Row label="תאריך LOST" value={fmtDate(deal.lostAt)} />}
+        </dl>
+      )}
+    </section>
   );
 }
 function Row({ label, value }) {

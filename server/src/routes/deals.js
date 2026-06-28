@@ -15,6 +15,10 @@ const router = Router();
 
 const VALID_STATUS = ['open', 'won', 'lost'];
 const VALID_ACTIVITY_TYPES = ['group', 'private', 'business'];
+// "פרטי הסיור" working-field enums (validated here; no Postgres enum).
+const VALID_PAYMENT_METHODS = ['card', 'transfer', 'cash', 'check', 'other'];
+const VALID_COMM_LANGS = ['he', 'en'];
+const VALID_TOUR_LANGS = ['he', 'en', 'es', 'fr', 'ru'];
 const VALID_ROLES = [
   // Operational quick-add roles (the day-to-day vocabulary).
   'ongoingBooking',
@@ -39,6 +43,37 @@ function toMinor(v) {
 function cleanRoles(input) {
   if (!Array.isArray(input)) return [];
   return [...new Set(input.filter((r) => VALID_ROLES.includes(r)))];
+}
+
+// Validate + copy the "פרטי הסיור" working fields from body → data. Only keys
+// PRESENT in the body are touched, so partial (section) updates stay partial.
+// Returns an error code string on invalid input, or null on success.
+function applyTourFields(b, data) {
+  if (b.tourDate !== undefined) data.tourDate = b.tourDate ? String(b.tourDate).trim() : null;
+  if (b.tourTime !== undefined) data.tourTime = b.tourTime ? String(b.tourTime).trim() : null;
+  if (b.participants !== undefined) {
+    if (b.participants === null || b.participants === '') data.participants = null;
+    else {
+      const n = Number(b.participants);
+      if (!Number.isInteger(n) || n < 0) return 'invalid_participants';
+      data.participants = n;
+    }
+  }
+  if (b.paymentMethod !== undefined) {
+    if (b.paymentMethod && !VALID_PAYMENT_METHODS.includes(b.paymentMethod)) return 'invalid_payment_method';
+    data.paymentMethod = b.paymentMethod || null;
+  }
+  if (b.communicationLanguage !== undefined) {
+    if (b.communicationLanguage && !VALID_COMM_LANGS.includes(b.communicationLanguage)) return 'invalid_communication_language';
+    data.communicationLanguage = b.communicationLanguage || null;
+  }
+  if (b.tourLanguage !== undefined) {
+    if (b.tourLanguage && !VALID_TOUR_LANGS.includes(b.tourLanguage)) return 'invalid_tour_language';
+    data.tourLanguage = b.tourLanguage || null;
+  }
+  // customerInfo is rich HTML — stored as-is (empty string normalises to null).
+  if (b.customerInfo !== undefined) data.customerInfo = b.customerInfo ? String(b.customerInfo) : null;
+  return null;
 }
 
 const CONTACT_SELECT = {
@@ -157,29 +192,30 @@ router.post(
       ? null
       : b.organizationTypeId || null;
 
-    const deal = await prisma.deal.create({
-      data: {
-        title,
-        dealStageId,
-        status: 'open',
-        activityType,
-        organizationTypeId,
-        dealSourceId: b.dealSourceId || null,
-        organizationId: b.organizationId || null,
-        organizationUnitId: b.organizationUnitId || null,
-        organizationSubtypeId: b.organizationSubtypeId || null,
-        valueMinor: toMinor(b.valueMinor) ?? 0n,
-        currency: b.currency ? String(b.currency).trim() : 'ILS',
-        discountMinor: toMinor(b.discountMinor),
-        paymentTerms: b.paymentTerms ? String(b.paymentTerms).trim() : null,
-        source: b.source ? String(b.source).trim() : null,
-        expectedCloseDate: b.expectedCloseDate
-          ? new Date(b.expectedCloseDate)
-          : null,
-        notes: b.notes ? String(b.notes).trim() : null,
-      },
-      include: DEAL_INCLUDE,
-    });
+    const data = {
+      title,
+      dealStageId,
+      status: 'open',
+      activityType,
+      organizationTypeId,
+      dealSourceId: b.dealSourceId || null,
+      organizationId: b.organizationId || null,
+      organizationUnitId: b.organizationUnitId || null,
+      organizationSubtypeId: b.organizationSubtypeId || null,
+      valueMinor: toMinor(b.valueMinor) ?? 0n,
+      currency: b.currency ? String(b.currency).trim() : 'ILS',
+      discountMinor: toMinor(b.discountMinor),
+      paymentTerms: b.paymentTerms ? String(b.paymentTerms).trim() : null,
+      source: b.source ? String(b.source).trim() : null,
+      expectedCloseDate: b.expectedCloseDate
+        ? new Date(b.expectedCloseDate)
+        : null,
+      notes: b.notes ? String(b.notes).trim() : null,
+    };
+    const tourErr = applyTourFields(b, data);
+    if (tourErr) return res.status(400).json({ error: tourErr });
+
+    const deal = await prisma.deal.create({ data, include: DEAL_INCLUDE });
     res.status(201).json(deal);
   }),
 );
@@ -238,6 +274,10 @@ router.put(
         ? new Date(b.expectedCloseDate)
         : null;
     if (b.notes !== undefined) data.notes = b.notes ? String(b.notes).trim() : null;
+
+    // "פרטי הסיור" working fields (partial — only present keys are touched).
+    const tourErr = applyTourFields(b, data);
+    if (tourErr) return res.status(400).json({ error: tourErr });
 
     // Outcome status transitions stamp/clear wonAt/lostAt. LOST now stores
     // STRUCTURED data: a required lostReasonId (FK to the LostReason catalog)

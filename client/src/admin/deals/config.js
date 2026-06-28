@@ -64,6 +64,30 @@ export const PREF_FIELDS = [
   { key: 'receiveQuotes', label: 'הצעות מחיר' },
 ];
 
+// "פרטי הסיור" working-field catalogs. Keys are stable; labels are display-only.
+// Mirror the API validators in server/src/routes/deals.js (VALID_PAYMENT_METHODS
+// / VALID_COMM_LANGS / VALID_TOUR_LANGS).
+export const PAYMENT_METHODS = [
+  { key: 'card', label: 'כרטיס אשראי' },
+  { key: 'transfer', label: 'העברה בנקאית' },
+  { key: 'cash', label: 'מזומן' },
+  { key: 'check', label: "צ'ק" },
+  { key: 'other', label: 'אחר' },
+];
+
+export const COMM_LANGS = [
+  { key: 'he', label: 'עברית' },
+  { key: 'en', label: 'אנגלית' },
+];
+
+export const TOUR_LANGS = [
+  { key: 'he', label: 'עברית' },
+  { key: 'en', label: 'אנגלית' },
+  { key: 'es', label: 'ספרדית' },
+  { key: 'fr', label: 'צרפתית' },
+  { key: 'ru', label: 'רוסית' },
+];
+
 export function contactNameHe(c) {
   if (!c) return '';
   return `${c.firstNameHe || ''} ${c.lastNameHe || ''}`.trim();

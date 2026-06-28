@@ -16,6 +16,7 @@ import { MediaImage } from './MediaImage.jsx';
 import { MediaVideo } from './MediaVideo.jsx';
 import { MediaEmbed } from './MediaEmbed.jsx';
 import Toolbar from './Toolbar.jsx';
+import LiteToolbar from './LiteToolbar.jsx';
 import UploadBanner from './UploadBanner.jsx';
 import { sanitizePastedHtml } from './pasteSanitizer.js';
 import './editor.css';
@@ -61,6 +62,10 @@ export default function RichEditor({
   // is typed. Editor capabilities are unchanged — only the chrome is progressive.
   // Off by default, so every existing consumer is unaffected.
   collapsible = false,
+  // Toolbar variant: 'full' (default — every tool) or 'lite' (a deliberately
+  // minimal set: bold · underline · highlight · emoji · font size). The editor
+  // instance is identical; only the chrome differs.
+  toolbar = 'full',
 }) {
   const [focused, setFocused] = useState(false);
   const noteTone = tone === 'note';
@@ -170,7 +175,11 @@ export default function RichEditor({
           only while the editor is focused — the full editor is otherwise intact. */}
       {showToolbar && (
         <div className={`rt-editor-toolbar-wrap shrink-0 border-t ${toolbarBorder}`}>
-          <Toolbar editor={editor} setUploadState={setUploadState} />
+          {toolbar === 'lite' ? (
+            <LiteToolbar editor={editor} />
+          ) : (
+            <Toolbar editor={editor} setUploadState={setUploadState} />
+          )}
         </div>
       )}
     </div>
