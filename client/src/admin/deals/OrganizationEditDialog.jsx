@@ -31,6 +31,7 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
   const [original, setOriginal] = useState(null); // baseline binding for dirty check
   const [busy, setBusy] = useState(false);
   const [showContacts, setShowContacts] = useState(false);
+  const [creatingNew, setCreatingNew] = useState(false); // typing a brand-new org
 
   // Reload the linked org (contacts/units) after the contacts section mutates.
   async function reloadOrgFull() {
@@ -56,6 +57,7 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
     setName('');
     setOrgFull(null);
     setOriginal(null);
+    setCreatingNew(false);
     if (initialOrgId) {
       api.organizations
         .get(initialOrgId)
@@ -100,6 +102,19 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
     // When clearing the org, keep the current typeId as the deal's own type.
   }
 
+  // Switch into "new organization" mode: no existing binding, name typed fresh.
+  function startCreate() {
+    setCreatingNew(true);
+    setOrgId('');
+    setOrgFull(null);
+    setUnitId('');
+    setName('');
+  }
+  function cancelCreate() {
+    setCreatingNew(false);
+    setName('');
+  }
+
   const units = orgFull?.units || [];
   // Subtypes are scoped to the effective type (plus generic, type-less subtypes).
   const scopedSubtypes = subtypes.filter(
@@ -109,24 +124,43 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
   async function save() {
     setBusy(true);
     try {
-      const finalOrgId = orgId || null;
-      const dealPayload = {
-        organizationId: finalOrgId,
-        organizationUnitId: unitId || null,
-        organizationSubtypeId: subtypeId || null,
-      };
-      // Deal owns the type ONLY when there is no organization.
-      if (!finalOrgId) dealPayload.organizationTypeId = typeId || null;
-      await api.deals.update(deal.id, dealPayload);
+      if (creatingNew) {
+        // Create a brand-new organization (the org becomes the source of truth
+        // for its name + type) and link it to the deal. Reuses the org create API.
+        const cleanName = name.trim();
+        if (!cleanName) {
+          alert('יש להזין שם ארגון.');
+          return;
+        }
+        const created = await api.organizations.create({
+          name: cleanName,
+          organizationTypeId: typeId || null,
+        });
+        await api.deals.update(deal.id, {
+          organizationId: created.id,
+          organizationUnitId: null,
+          organizationSubtypeId: subtypeId || null,
+        });
+      } else {
+        const finalOrgId = orgId || null;
+        const dealPayload = {
+          organizationId: finalOrgId,
+          organizationUnitId: unitId || null,
+          organizationSubtypeId: subtypeId || null,
+        };
+        // Deal owns the type ONLY when there is no organization.
+        if (!finalOrgId) dealPayload.organizationTypeId = typeId || null;
+        await api.deals.update(deal.id, dealPayload);
 
-      // When an org is linked, the organization is the source of truth for its
-      // own name + type — written straight to the org (one update), never copied
-      // onto the deal.
-      if (finalOrgId) {
-        const orgPayload = {};
-        if (typeId !== (orgFull?.organizationTypeId || '')) orgPayload.organizationTypeId = typeId || null;
-        if (name.trim() && name.trim() !== (orgFull?.name || '')) orgPayload.name = name.trim();
-        if (Object.keys(orgPayload).length) await api.organizations.update(finalOrgId, orgPayload);
+        // When an org is linked, the organization is the source of truth for its
+        // own name + type — written straight to the org (one update), never copied
+        // onto the deal.
+        if (finalOrgId) {
+          const orgPayload = {};
+          if (typeId !== (orgFull?.organizationTypeId || '')) orgPayload.organizationTypeId = typeId || null;
+          if (name.trim() && name.trim() !== (orgFull?.name || '')) orgPayload.name = name.trim();
+          if (Object.keys(orgPayload).length) await api.organizations.update(finalOrgId, orgPayload);
+        }
       }
       await onSaved?.();
       onClose?.();
@@ -143,7 +177,7 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
     <Dialog
       open={open}
       onClose={onClose}
-      title="עריכת ארגון"
+      title="ארגון בדיל"
       size="md"
       footer={
         <>
@@ -166,15 +200,35 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
     >
       <div className="space-y-3">
         <Field label="ארגון">
-          <select value={orgId} onChange={(e) => chooseOrg(e.target.value)} className={FIELD}>
-            <option value="">— ללא ארגון —</option>
-            {orgs.map((o) => (
-              <option key={o.id} value={o.id}>{o.name}</option>
-            ))}
-          </select>
+          {creatingNew ? (
+            <div className="flex items-center gap-2">
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="שם הארגון החדש"
+                autoFocus
+                className={FIELD}
+              />
+              <button type="button" onClick={cancelCreate} className="text-[12px] text-gray-500 whitespace-nowrap hover:underline">
+                בחר קיים
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <select value={orgId} onChange={(e) => chooseOrg(e.target.value)} className={FIELD}>
+                <option value="">— ללא ארגון —</option>
+                {orgs.map((o) => (
+                  <option key={o.id} value={o.id}>{o.name}</option>
+                ))}
+              </select>
+              <button type="button" onClick={startCreate} className="text-[12px] text-blue-700 whitespace-nowrap hover:underline">
+                + ארגון חדש
+              </button>
+            </div>
+          )}
         </Field>
 
-        {orgId && (
+        {orgId && !creatingNew && (
           <Field label="שם הארגון">
             <input value={name} onChange={(e) => setName(e.target.value)} className={FIELD} />
           </Field>
@@ -204,9 +258,11 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
             ))}
           </select>
           <p className="text-[11px] text-gray-400 mt-1">
-            {orgId
-              ? 'נשמר על הארגון — ישפיע על כל הדילים של אותו ארגון.'
-              : 'נשמר על הדיל עד שיקושר ארגון.'}
+            {creatingNew
+              ? 'ייווצר ארגון חדש עם הסוג שנבחר.'
+              : orgId
+                ? 'נשמר על הארגון — ישפיע על כל הדילים של אותו ארגון.'
+                : 'נשמר על הדיל עד שיקושר ארגון.'}
           </p>
         </Field>
 

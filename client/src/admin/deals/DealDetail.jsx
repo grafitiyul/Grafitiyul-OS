@@ -6,8 +6,7 @@ import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import HoverCard from '../common/HoverCard.jsx';
 import LostDealDialog from './LostDealDialog.jsx';
 import DealSalesScript from './DealSalesScript.jsx';
-import ContactEditDialog from './ContactEditDialog.jsx';
-import QuickAddContactDialog from './QuickAddContactDialog.jsx';
+import DealContactsDialog from './DealContactsDialog.jsx';
 import OrganizationEditDialog from './OrganizationEditDialog.jsx';
 import WorkspaceLayout from '../../shell/WorkspaceLayout.jsx';
 import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
@@ -79,8 +78,7 @@ export default function DealDetail() {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuBtnRef = useRef(null);
   // Header editing surfaces.
-  const [editContactId, setEditContactId] = useState(null);
-  const [addContactOpen, setAddContactOpen] = useState(false);
+  const [contactsDialogOpen, setContactsDialogOpen] = useState(false);
   const [orgDialogOpen, setOrgDialogOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -497,8 +495,8 @@ export default function DealDetail() {
         <RelationshipRow
           deal={deal}
           orgType={orgType}
-          onContactClick={(contactId) => setEditContactId(contactId)}
-          onAddContact={() => setAddContactOpen(true)}
+          onContactClick={() => setContactsDialogOpen(true)}
+          onAddContact={() => setContactsDialogOpen(true)}
           onOrgClick={() => setOrgDialogOpen(true)}
         />
       </div>
@@ -524,18 +522,11 @@ export default function DealDetail() {
       />
 
       {/* Header editing dialogs */}
-      <ContactEditDialog
-        contactId={editContactId}
-        open={!!editContactId}
-        onClose={() => setEditContactId(null)}
-        onSaved={refresh}
-      />
-      <QuickAddContactDialog
-        dealId={deal.id}
-        open={addContactOpen}
-        makePrimary={deal.contacts.length === 0}
-        onClose={() => setAddContactOpen(false)}
-        onAdded={refresh}
+      <DealContactsDialog
+        deal={deal}
+        open={contactsDialogOpen}
+        onClose={() => setContactsDialogOpen(false)}
+        onChanged={refresh}
       />
       <OrganizationEditDialog
         deal={deal}
@@ -997,13 +988,13 @@ function ContactHoverCard({ contactId, fallbackName, onEdit }) {
         <div className="text-[12px] text-gray-400">אין פרטי קשר</div>
       )}
       <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
-        {/* Primary daily action: edit in-place (no navigation). */}
+        {/* Primary daily action: manage the deal's contacts in-place (no navigation). */}
         <button
           type="button"
           onClick={onEdit}
           className="rounded-lg bg-blue-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-blue-700"
         >
-          ערוך איש קשר
+          נהל אנשי קשר
         </button>
         {/* Secondary: open the full contact page. */}
         <Link to={`/admin/crm/contacts/${contactId}`} className="text-[12px] text-gray-500 hover:text-gray-700 hover:underline">
