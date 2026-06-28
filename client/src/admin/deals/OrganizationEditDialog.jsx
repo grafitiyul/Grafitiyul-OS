@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Dialog from '../common/Dialog.jsx';
 import { api } from '../../lib/api.js';
+import OrgContactsSection from '../crm/common/OrgContactsSection.jsx';
 import { useDirtyWhen } from '../../lib/dirtyForms.js';
 
 // Choose / edit the Deal's organization binding from the header — a focused
@@ -26,9 +27,20 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
   const [unitId, setUnitId] = useState('');
   const [typeId, setTypeId] = useState(''); // effective org type (org's, or deal's when no org)
   const [subtypeId, setSubtypeId] = useState('');
-  const [orgFull, setOrgFull] = useState(null); // fetched org (units + current type)
+  const [orgFull, setOrgFull] = useState(null); // fetched org (units + current type + contactLinks)
   const [original, setOriginal] = useState(null); // baseline binding for dirty check
   const [busy, setBusy] = useState(false);
+  const [showContacts, setShowContacts] = useState(false);
+
+  // Reload the linked org (contacts/units) after the contacts section mutates.
+  async function reloadOrgFull() {
+    if (!orgId) return;
+    try {
+      setOrgFull(await api.organizations.get(orgId));
+    } catch {
+      /* keep current */
+    }
+  }
 
   // Initialise from the deal whenever the dialog opens. The baseline is captured
   // together with the (possibly async) effective type, so dirty tracking is
@@ -210,10 +222,35 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
           )}
         </Field>
 
+        {/* Collapsible: manage the org's linked contacts inline (reuses the same
+            shared section as the full Organization page). */}
+        {orgId && orgFull && (
+          <div className="rounded-lg border border-gray-200 bg-gray-50/60 p-3">
+            <button
+              type="button"
+              onClick={() => setShowContacts((o) => !o)}
+              className="w-full flex items-center justify-between"
+            >
+              <span className="text-[13px] font-semibold text-gray-700">
+                אנשי קשר בארגון
+                {orgFull.contactLinks?.length ? (
+                  <span className="ms-1 text-[11px] text-gray-400">({orgFull.contactLinks.length})</span>
+                ) : null}
+              </span>
+              <span className="text-gray-400 text-xs">{showContacts ? '▾' : '▸'}</span>
+            </button>
+            {showContacts && (
+              <div className="mt-3">
+                <OrgContactsSection org={orgFull} onChange={reloadOrgFull} />
+              </div>
+            )}
+          </div>
+        )}
+
         {orgId && (
           <div className="pt-1">
             <Link to={`/admin/crm/organizations/${orgId}`} className="text-[13px] text-blue-700 hover:underline">
-              פתח את כרטיס הארגון המלא (יחידות, כספים, אנשי קשר) ←
+              פתח את כרטיס הארגון המלא (יחידות, כספים) ←
             </Link>
           </div>
         )}

@@ -99,14 +99,26 @@ router.put(
   '/:id',
   handle(async (req, res) => {
     const body = req.body || {};
+    const existing = await prisma.contact.findUnique({
+      where: { id: req.params.id },
+      select: { firstNameHe: true, firstNameEn: true },
+    });
+    if (!existing) return res.status(404).json({ error: 'not_found' });
+
     const data = {};
     for (const f of ['firstNameHe', 'lastNameHe', 'firstNameEn', 'lastNameEn']) {
-      if (body[f] !== undefined) {
-        const v = String(body[f]).trim();
-        if (!v) return res.status(400).json({ error: `${f}_required` });
-        data[f] = v;
-      }
+      if (body[f] !== undefined) data[f] = String(body[f]).trim();
     }
+    // A contact needs at least ONE first name, in EITHER language. Last names and
+    // the other-language name are optional (may be ''). Same rule as create — the
+    // edit path must NOT require the English name when Hebrew exists (or vice
+    // versa).
+    const effFirstHe = data.firstNameHe !== undefined ? data.firstNameHe : existing.firstNameHe;
+    const effFirstEn = data.firstNameEn !== undefined ? data.firstNameEn : existing.firstNameEn;
+    if (!effFirstHe && !effFirstEn) {
+      return res.status(400).json({ error: 'first_name_required' });
+    }
+
     if (body.notes !== undefined)
       data.notes = body.notes ? String(body.notes).trim() : null;
     const contact = await prisma.contact.update({

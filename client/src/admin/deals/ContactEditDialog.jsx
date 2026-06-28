@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Dialog from '../common/Dialog.jsx';
 import ChannelSection from '../crm/common/ChannelSection.jsx';
+import { OrgPicker, resolveOrganization } from '../crm/common/OrgPicker.jsx';
 import { api } from '../../lib/api.js';
 import { useDirtyWhen } from '../../lib/dirtyForms.js';
 
@@ -21,6 +22,13 @@ export default function ContactEditDialog({ contactId, open, onClose, onSaved })
   const [original, setOriginal] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Linked-organizations section (collapsible). Reuses the shared OrgPicker.
+  const [orgs, setOrgs] = useState([]);
+  const [types, setTypes] = useState([]);
+  const [showOrgs, setShowOrgs] = useState(false);
+  const [orgRes, setOrgRes] = useState(null);
+  const [orgPickerKey, setOrgPickerKey] = useState(0);
+  const [linking, setLinking] = useState(false);
 
   const load = useCallback(async () => {
     if (!contactId) return;
@@ -48,6 +56,41 @@ export default function ContactEditDialog({ contactId, open, onClose, onSaved })
     if (open) load();
   }, [open, load]);
 
+  // Orgs + types for the OrgPicker (link/create an organization). Loaded once per open.
+  useEffect(() => {
+    if (!open) return;
+    Promise.all([api.organizations.list(), api.organizationTypes.list()])
+      .then(([o, t]) => { setOrgs(o); setTypes(t); })
+      .catch(() => {});
+  }, [open]);
+
+  async function linkOrg() {
+    if (linking || !orgRes || orgRes.invalid || (!orgRes.isExisting && !orgRes.isNew)) return;
+    setLinking(true);
+    try {
+      const { organizationId } = await resolveOrganization(orgRes);
+      if (organizationId) {
+        await api.contacts.addOrganization(contactId, { organizationId });
+        setOrgPickerKey((k) => k + 1); // reset the picker
+        setOrgRes(null);
+        await refreshAll();
+      }
+    } catch (e) {
+      if (e.status === 409) alert('איש הקשר כבר מקושר לארגון זה.');
+      else alert('שגיאה: ' + (e.payload?.error || e.message));
+    } finally {
+      setLinking(false);
+    }
+  }
+  async function unlinkOrg(linkId) {
+    try {
+      await api.contacts.removeOrganization(linkId);
+      await refreshAll();
+    } catch (e) {
+      alert('שגיאה: ' + e.message);
+    }
+  }
+
   function set(field, v) {
     setForm((f) => ({ ...f, [field]: v }));
   }
@@ -65,8 +108,8 @@ export default function ContactEditDialog({ contactId, open, onClose, onSaved })
   }
 
   async function saveNames() {
-    if (!form.firstNameHe.trim()) {
-      alert('שם פרטי (עברית) הוא שדה חובה.');
+    if (!form.firstNameHe.trim() && !form.firstNameEn.trim()) {
+      alert('יש להזין שם פרטי באחת השפות (עברית או אנגלית).');
       return;
     }
     setSaving(true);
@@ -91,7 +134,7 @@ export default function ContactEditDialog({ contactId, open, onClose, onSaved })
           <section className="bg-white border border-gray-200 rounded-lg p-4">
             <h2 className="text-[14px] font-semibold text-gray-900 mb-3">פרטי איש קשר</h2>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="שם פרטי (עברית) *">
+              <Field label="שם פרטי (עברית)">
                 <input value={form.firstNameHe} onChange={(e) => set('firstNameHe', e.target.value)} className={FIELD} />
               </Field>
               <Field label="שם משפחה (עברית)">
@@ -146,12 +189,60 @@ export default function ContactEditDialog({ contactId, open, onClose, onSaved })
             onChange={refreshAll}
           />
 
+          {/* Collapsible: link/create the contact's organizations inline
+              (reuses the shared OrgPicker — existing or new org). */}
+          <section className="bg-white border border-gray-200 rounded-lg p-4">
+            <button type="button" onClick={() => setShowOrgs((o) => !o)} className="w-full flex items-center justify-between">
+              <h2 className="text-[14px] font-semibold text-gray-900">
+                ארגונים מקושרים
+                {contact.orgLinks?.length ? (
+                  <span className="ms-1 text-[11px] text-gray-400">({contact.orgLinks.length})</span>
+                ) : null}
+              </h2>
+              <span className="text-gray-400 text-xs">{showOrgs ? '▾' : '▸'}</span>
+            </button>
+            {showOrgs && (
+              <div className="mt-3 space-y-3">
+                {contact.orgLinks?.length ? (
+                  <ul className="divide-y divide-gray-100">
+                    {contact.orgLinks.map((l) => (
+                      <li key={l.id} className="py-2 flex items-center gap-2 text-sm">
+                        <Link to={`/admin/crm/organizations/${l.organization.id}`} className="text-blue-700 hover:underline font-medium">
+                          {l.organization.name}
+                        </Link>
+                        {l.organizationUnit && <span className="text-[12px] text-gray-500">· {l.organizationUnit.name}</span>}
+                        {l.role && <span className="text-[12px] text-gray-400">· {l.role}</span>}
+                        <div className="flex-1" />
+                        <button onClick={() => unlinkOrg(l.id)} className="text-[12px] text-red-600 hover:bg-red-50 rounded px-2 py-1">הסר</button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="text-sm text-gray-400">לא משויך לארגון.</div>
+                )}
+                <div className="rounded-lg border border-gray-200 bg-gray-50/60 p-3 space-y-2">
+                  <div className="text-[12px] font-semibold text-gray-700">קשר או צור ארגון</div>
+                  <OrgPicker key={orgPickerKey} orgs={orgs} types={types} onResolve={setOrgRes} />
+                  <div className="flex justify-end">
+                    <button
+                      onClick={linkOrg}
+                      disabled={linking || !orgRes || orgRes.invalid || (!orgRes.isExisting && !orgRes.isNew)}
+                      className="rounded-lg bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {linking ? 'מקשר…' : 'קשר ארגון'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+
           <div className="pt-1">
             <Link
               to={`/admin/crm/contacts/${contactId}`}
-              className="text-[13px] text-blue-700 hover:underline"
+              className="text-[13px] text-gray-500 hover:text-gray-700 hover:underline"
             >
-              פתח כרטיס איש קשר מלא (שיוך לארגונים ועוד) ←
+              פתח כרטיס איש קשר מלא ←
             </Link>
           </div>
         </div>
