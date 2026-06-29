@@ -27,6 +27,9 @@ import RichEditor from '../../editor/RichEditor.jsx';
 import { InlineEditScope } from '../common/inline/InlineEditScope.jsx';
 import InlineField from '../common/inline/InlineField.jsx';
 import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
+import {
+  PackageIcon, ReceiptIcon, CalendarIcon, ClockIcon, UsersIcon, MapPinIcon, GlobeIcon,
+} from '../common/FieldIcons.jsx';
 
 const INPUT =
   'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
@@ -436,6 +439,11 @@ export default function DealDetail() {
   const productOptions = products.map((p) => ({ value: p.id, label: p.nameHe }));
   const tourLangOptions = TOUR_LANGS.map((l) => ({ value: l.key, label: l.label }));
   const locNotConfigured = !!deal.productId && !!deal.locationId && !recLocIds.has(deal.locationId);
+  // Visual-only reminder: a home location is configured AND this deal's city is a
+  // different one. Never blocks/warns/affects pricing — just paints the City red.
+  const homeLocation = allLocations.find((l) => l.isHomeLocation) || null;
+  const cityIsNonHome = !!(homeLocation && deal.locationId && deal.locationId !== homeLocation.id);
+  const cityIconCls = `w-3.5 h-3.5 ${cityIsNonHome ? 'text-red-500' : 'text-gray-400'}`;
 
   // Per-field inline save: persist ONLY that field, then refresh → back to read.
   const saveField = (patch) => api.deals.update(id, patch).then(refresh);
@@ -460,29 +468,59 @@ export default function DealDetail() {
         {/* ── Card 1 — פרטי הסיור (operational). Inline read-first editing. ── */}
         <Card variant="panel" title="פרטי הסיור">
           <div className="space-y-3">
-            {/* Primary band — width follows IMPORTANCE, not symmetry: Product widest,
-                Participants smallest. Flexible proportions (flex-grow) that wrap on a
-                narrow panel instead of a rigid equal-width grid. Activity Type is NOT
-                here — it has a single owner, the header badge. */}
+            {/* Row 1 — Product + Price. Price stays read-only; clicking it opens the
+                relevant builder (regular / group ticket) exactly as before. Widths
+                follow importance (flexible proportions, wrap on a narrow panel).
+                Activity Type is NOT here — its single owner is the header badge. */}
             <div className="flex flex-wrap gap-x-4 gap-y-3">
               <div className="flex-[3] min-w-[11rem]">
-                <InlineField id="f-product" label="מוצר" type="dropdown" value={deal.productId || ''}
+                <InlineField id="f-product" label="מוצר" icon={<PackageIcon />} type="dropdown" value={deal.productId || ''}
                   options={productOptions} editFirst={editFirst} placeholder="בחר מוצר"
                   onSave={(v) => saveProduct(v)} />
               </div>
+              <div className="flex-[2] min-w-[9rem]">
+                <FieldLabel icon={<ReceiptIcon />}>מחיר</FieldLabel>
+                <button
+                  type="button"
+                  onClick={() => setPriceBuilderOpen(true)}
+                  title="פתח בונה מחיר"
+                  className="w-full text-right rounded-md px-2 min-h-[38px] flex items-center gap-2 transition-colors hover:bg-gray-50"
+                >
+                  <span className="text-[15px] font-bold text-gray-900" dir="ltr">{deal.valueMinor ? `₪${minorToInput(deal.valueMinor)}` : '—'}</span>
+                  <span className="ms-auto text-[12px] text-blue-600 shrink-0">בונה מחיר ✎</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Row 2 — Date, Time, Participants. */}
+            <div className="flex flex-wrap gap-x-4 gap-y-3">
               <div className="flex-[2] min-w-[8rem]">
-                <InlineField id="f-city" label="עיר" type="dropdown" value={deal.locationId || ''}
+                <InlineField id="f-date" label="תאריך" icon={<CalendarIcon />} type="date" value={deal.tourDate || ''}
+                  editFirst={editFirst} onSave={(v) => saveField({ tourDate: v || null })} />
+              </div>
+              <div className="flex-[2] min-w-[7rem]">
+                <InlineField id="f-time" label="שעה" icon={<ClockIcon />} type="time" value={deal.tourTime || ''}
+                  editFirst={editFirst} onSave={(v) => saveField({ tourTime: v || null })} />
+              </div>
+              <div className="flex-[1] min-w-[5.5rem]">
+                <InlineField id="f-participants" label="משתתפים" icon={<UsersIcon />} type="number" numeric value={deal.participants ?? ''}
+                  editFirst={editFirst} onSave={(v) => saveField({ participants: v === '' ? null : Number(v) })} />
+              </div>
+            </div>
+
+            {/* Row 3 — City + Tour Language. City turns red (bolder, red pin) as a
+                visual-only reminder when it differs from the Home Location. */}
+            <div className="flex flex-wrap gap-x-4 gap-y-3">
+              <div className="flex-[3] min-w-[9rem]">
+                <InlineField id="f-city" label="עיר" icon={<MapPinIcon className={cityIconCls} />} type="dropdown" value={deal.locationId || ''}
                   options={cityOptions} editFirst={editFirst} placeholder="בחר עיר"
+                  valueClassName={cityIsNonHome ? 'text-[16px] font-semibold text-red-600' : undefined}
                   onSave={(v) => saveLocation(v)} />
               </div>
               <div className="flex-[2] min-w-[8rem]">
-                <InlineField id="f-tourlang" label="שפת הסיור" type="dropdown" value={deal.tourLanguage || ''}
+                <InlineField id="f-tourlang" label="שפת הסיור" icon={<GlobeIcon />} type="dropdown" value={deal.tourLanguage || ''}
                   options={tourLangOptions} editFirst={editFirst} placeholder="ללא"
                   onSave={(v) => saveField({ tourLanguage: v || null })} />
-              </div>
-              <div className="flex-[1] min-w-[5.5rem]">
-                <InlineField id="f-participants" label="משתתפים" type="number" numeric value={deal.participants ?? ''}
-                  editFirst={editFirst} onSave={(v) => saveField({ participants: v === '' ? null : Number(v) })} />
               </div>
             </div>
             {locNotConfigured && (
@@ -490,18 +528,6 @@ export default function DealDetail() {
                 העיר שנבחרה אינה מוגדרת כוריאנט של המוצר. ייתכן שיידרש תיאום מחיר ידני בבונה המחיר.
               </p>
             )}
-
-            {/* When band — date + time share the row proportionally. */}
-            <div className="flex flex-wrap gap-x-4 gap-y-3">
-              <div className="flex-1 min-w-[8rem]">
-                <InlineField id="f-date" label="תאריך" type="date" value={deal.tourDate || ''}
-                  editFirst={editFirst} onSave={(v) => saveField({ tourDate: v || null })} />
-              </div>
-              <div className="flex-1 min-w-[7rem]">
-                <InlineField id="f-time" label="שעה" type="time" value={deal.tourTime || ''}
-                  editFirst={editFirst} onSave={(v) => saveField({ tourTime: v || null })} />
-              </div>
-            </div>
 
             {/* Important customer information — collapsed, expands to the lite editor. */}
             <CollapsibleNote id="f-customerInfo" label="מידע חשוב על הלקוח" value={deal.customerInfo || ''} rich
@@ -511,23 +537,10 @@ export default function DealDetail() {
         </Card>
 
         {/* ── Card 2 — הצעת מחיר (always shown) ──
-            Price / Price Builder entry + email intro + generate. Quote workflow later. */}
+            The price summary now lives in פרטי הסיור (Row 1); this card owns the email
+            intro + generate. Single price entry point — no duplicate. */}
         <Card variant="panel" title="הצעת מחיר">
           <div className="space-y-2">
-            {/* Price = a summary that opens the Price Builder (the source of truth). */}
-            <div>
-              <div className="text-[11px] text-gray-400 mb-0.5">מחיר</div>
-              <button
-                type="button"
-                onClick={() => setPriceBuilderOpen(true)}
-                title="פתח בונה מחיר"
-                className="w-full text-right rounded-md -mx-2 px-2 py-1.5 min-h-[36px] flex items-center gap-2 transition-colors hover:bg-gray-50"
-              >
-                <span className="text-[17px] font-bold text-gray-900" dir="ltr">{deal.valueMinor ? `₪${minorToInput(deal.valueMinor)}` : '—'}</span>
-                <span className="ms-auto text-[12px] text-blue-600 shrink-0">בונה מחיר ✎</span>
-              </button>
-            </div>
-
             {/* Personal email intro — collapsed, expands to a plain editor. */}
             <CollapsibleNote id="f-emailIntro" label="פתיח אישי למייל" value={deal.quoteEmailIntro || ''}
               placeholder="משפט פתיחה אישי שיופיע במייל ההצעה…"
@@ -1366,6 +1379,15 @@ function FieldBox({ label, children }) {
       <label className="text-[11px] text-gray-500">{label}</label>
       {children}
     </div>
+  );
+}
+// Field label matching InlineField's label (light, icon + text) — used for the
+// read-only Price field so it lines up with the inline fields beside it.
+function FieldLabel({ icon, children }) {
+  return (
+    <span className="block text-[11px] text-gray-400 mb-1.5 px-2">
+      <span className="inline-flex items-center gap-1.5">{icon}{children}</span>
+    </span>
   );
 }
 

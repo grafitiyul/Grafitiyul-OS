@@ -77,10 +77,25 @@ router.put(
     if (req.body?.meetingPointImageId !== undefined)
       data.meetingPointImageId = req.body.meetingPointImageId || null;
     if (req.body?.active !== undefined) data.active = !!req.body.active;
-    const row = await prisma.location.update({
-      where: { id: req.params.id },
-      data,
-      include: { meetingPointImage: true },
+    // Home Location is single-owner: setting one true unsets any other. Enforced
+    // here (API), like PriceList.isDefault. No city name is hardcoded.
+    let setHome = false;
+    if (req.body?.isHomeLocation !== undefined) {
+      data.isHomeLocation = !!req.body.isHomeLocation;
+      setHome = data.isHomeLocation;
+    }
+    const row = await prisma.$transaction(async (tx) => {
+      if (setHome) {
+        await tx.location.updateMany({
+          where: { isHomeLocation: true, id: { not: req.params.id } },
+          data: { isHomeLocation: false },
+        });
+      }
+      return tx.location.update({
+        where: { id: req.params.id },
+        data,
+        include: { meetingPointImage: true },
+      });
     });
     res.json(row);
   }),

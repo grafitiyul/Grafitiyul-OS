@@ -1061,6 +1061,11 @@ model Location {
   meetingPointImage   MediaFile?       @relation("LocationMeetingImage", fields: [meetingPointImageId], references: [id], onDelete: SetNull)
   meetingPointImageId String?
   active              Boolean          @default(true)
+  // Business setting: the single "home base" location. At most one row is true —
+  // enforced at the API (setting one unsets the previous), matching the
+  // PriceList.isDefault convention. Drives a visual-only reminder on the Deal panel
+  // when a deal's city differs from home; never affects pricing or any workflow.
+  isHomeLocation      Boolean          @default(false)
   sortOrder           Int              @default(0)
   createdAt           DateTime         @default(now())
   updatedAt           DateTime         @updatedAt

@@ -3,6 +3,7 @@ import { api } from '../../lib/api.js';
 import BackButton from '../common/BackButton.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
 import { SingleImage } from './ImageUploader.jsx';
+import { HomeIcon } from '../common/FieldIcons.jsx';
 
 // Locations catalog (e.g. "תל אביב - פלורנטין"). Hebrew name required, English
 // optional. A location can't be deleted while product variants reference it.
@@ -133,6 +134,15 @@ function LocationRow({ row, onChange }) {
       else alert('שגיאה: ' + e.message);
     }
   }
+  // Toggle the single Home Location. Setting one unsets the previous (server-side).
+  async function toggleHome() {
+    try {
+      await api.locations.update(row.id, { isHomeLocation: !row.isHomeLocation });
+      await onChange();
+    } catch (e) {
+      alert('שגיאה: ' + (e.payload?.error || e.message));
+    }
+  }
 
   // Edit mode (opened by the pencil). Everything — name + meeting-point text
   // (He/En rich) + R2 image — lives in this one form and saves together. Only
@@ -183,10 +193,19 @@ function LocationRow({ row, onChange }) {
   return (
     <li className="group flex items-center gap-3 px-2.5 py-2.5 rounded-lg hover:bg-gray-50">
       <span className="font-medium text-gray-900 text-[15px]">{row.nameHe}</span>
+      {row.isHomeLocation && (
+        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600" title="מיקום הבית">
+          <HomeIcon className="w-3.5 h-3.5 text-emerald-600" /> בית
+        </span>
+      )}
       {row.nameEn && <span className="text-[12px] text-gray-400" dir="ltr">{row.nameEn}</span>}
       <span className="text-[11px] text-gray-500">· {row._count?.variants ?? 0} וריאציות</span>
       {hasMeeting && <span className="text-[11px] text-emerald-600" title="נקודת מפגש מוגדרת">📍</span>}
       <div className="flex-1" />
+      <button onClick={toggleHome} title={row.isHomeLocation ? 'בטל מיקום בית' : 'סמן כמיקום הבית'}
+        className={`rounded-md p-1.5 ${row.isHomeLocation ? 'text-emerald-600 hover:bg-emerald-50' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'}`}>
+        <HomeIcon className="w-4 h-4" />
+      </button>
       <button onClick={startEdit} className="text-amber-500 hover:text-amber-600 hover:bg-amber-50 rounded-md p-1.5" title="עריכה">✎</button>
       <button onClick={remove} className="text-red-500 hover:text-red-600 hover:bg-red-50 rounded-md p-1.5" title="מחק">🗑</button>
     </li>

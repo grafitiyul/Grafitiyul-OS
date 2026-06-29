@@ -39,13 +39,13 @@ const INPUT = 'h-9 w-full rounded-md border border-blue-300 bg-white px-2 text-s
 // the field flips between read and edit). Label is light + roomy; value is strong.
 // This is the platform hierarchy: light label ↓ comfortable gap ↓ strong value.
 const LABEL = 'block text-[11px] text-gray-400 mb-1.5 px-2';
-const VALUE = 'text-[15px] truncate';
+const VALUE = 'truncate';
 // Read and edit share this min-height so the row keeps its size across the flip.
 const BODY = 'min-h-[38px]';
 
 export default function InlineField({
   id, label, type = 'text', value, options, display, placeholder = '—',
-  editFirst = false, onSave, dir, numeric,
+  editFirst = false, onSave, dir, numeric, icon, valueClassName,
 }) {
   const scope = useInlineScope();
   const coordinated = !editFirst;
@@ -91,6 +91,14 @@ export default function InlineField({
     else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
   }
 
+  // Label with an optional leading icon. The icon inherits the label's muted color
+  // via currentColor unless the caller passes its own colored icon (e.g. red alert).
+  const labelNode = (label || icon) ? (
+    <span className={LABEL}>
+      <span className="inline-flex items-center gap-1.5">{icon}{label}</span>
+    </span>
+  ) : null;
+
   // ── READ presentation (coordinated, closed) ──
   // No negative margins: the read value sits at the SAME x as the edit input's text
   // (both px-2), so opening the field transforms it in place — nothing shifts.
@@ -98,13 +106,16 @@ export default function InlineField({
     const empty = value === '' || value === null || value === undefined;
     return (
       <div className="group">
-        {label && <span className={LABEL}>{label}</span>}
+        {labelNode}
         <button
           type="button"
           onClick={() => scope.requestOpen(id)}
           className={`w-full text-right rounded-md px-2 ${BODY} flex items-center gap-2 transition-colors hover:bg-gray-50`}
         >
-          <span className={`${VALUE} ${empty ? 'text-gray-300' : 'font-medium text-gray-900'}`} dir={dir}>
+          <span
+            className={`${VALUE} ${valueClassName || `text-[15px] ${empty ? 'text-gray-300' : 'font-medium text-gray-900'}`}`}
+            dir={dir}
+          >
             {empty ? placeholder : (display ? display(value) : defaultDisplay(type, value, options))}
           </span>
           <span className="ms-auto shrink-0 text-[12px] text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity">✎</span>
@@ -121,7 +132,7 @@ export default function InlineField({
   // moves, and there is no layout jump. A 1px fade-in only; never a slide.
   return (
     <div>
-      {label && <span className={LABEL}>{label}</span>}
+      {labelNode}
       <div className={`relative ${BODY} flex items-center animate-[inlineIn_120ms_ease-out]`}>
         <div className="flex-1 min-w-0">{renderInput()}</div>
         {coordinated && (
