@@ -11,7 +11,7 @@ import OrganizationEditDialog from './OrganizationEditDialog.jsx';
 import WorkspaceLayout from '../../shell/WorkspaceLayout.jsx';
 import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
 import { minorToInput, toMinor } from '../../lib/money.js';
-import { useDirtyForm, useDirtyWhen } from '../../lib/dirtyForms.js';
+import { useDirtyForm, useDirtyWhen, valuesEqual } from '../../lib/dirtyForms.js';
 import {
   ACTIVITY_TYPES,
   ACTIVITY_TYPE_LABELS,
@@ -121,9 +121,14 @@ export default function DealDetail() {
         tourTime: d.tourTime || '',
         participants: d.participants ?? '',
         paymentMethod: d.paymentMethod || '',
-        communicationLanguage: d.communicationLanguage || '',
-        tourLanguage: d.tourLanguage || '',
+        // Auto-fill defaults (suggestion only): empty → Hebrew. Applied at load
+        // when empty; the baseline below is set to the SAME value, so a default is
+        // never flagged as an unsaved change and never silently re-applied after
+        // the user overrides it.
+        communicationLanguage: d.communicationLanguage || 'he',
+        tourLanguage: d.tourLanguage || 'he',
         customerInfo: d.customerInfo || '',
+        quoteEmailIntro: d.quoteEmailIntro || '',
       };
       setForm(init);
       setOriginalForm(init);
@@ -297,28 +302,33 @@ export default function DealDetail() {
     );
   if (!deal || !form) return null;
 
-  // Right panel — the operational "פרטי הסיור" workspace: everything a
-  // salesperson fills during a call, grouped into rows that are naturally
-  // completed together, plus the two next-step actions. Rare technical
-  // timestamps live in a collapsed "מידע מערכת" section at the bottom.
+  // Right panel — TWO cards. Card 1 "פרטי הסיור" (operational, all activity types)
+  // holds how the tour happens INCLUDING its base price. Card 2 "הצעת מחיר"
+  // (commercial preparation) shows ONLY for Business. One form buffer backs both;
+  // each card saves its own fields and shows its own unsaved-changes state. No
+  // quote engine / versions yet — the "הפק הצעת מחיר" button stays a placeholder.
+  const isBusiness = form.activityType === 'business';
+  const TOUR_KEYS = ['value', 'tourDate', 'tourTime', 'participants', 'activityType', 'tourLanguage', 'customerInfo'];
+  const QUOTE_KEYS = ['communicationLanguage', 'paymentTerms', 'paymentMethod', 'quoteEmailIntro'];
+  const dirtyKeys = (keys) => keys.some((k) => !valuesEqual(form[k], originalForm[k]));
+
   const dealProperties = (
     <div className="space-y-4">
+      {/* ── Card 1 — פרטי הסיור (operational, all activity types) ── */}
       <Card
         variant="panel"
         title="פרטי הסיור"
         action={
           <SaveBtn
+            dirty={dirtyKeys(TOUR_KEYS)}
             busy={savingSection === 'tour'}
             onClick={() =>
               saveSection('tour', {
                 valueMinor: toMinor(form.value) ?? 0,
-                paymentTerms: form.paymentTerms || null,
-                paymentMethod: form.paymentMethod || null,
                 activityType: form.activityType || null,
                 tourDate: form.tourDate || null,
                 tourTime: form.tourTime || null,
                 participants: form.participants === '' ? null : Number(form.participants),
-                communicationLanguage: form.communicationLanguage || null,
                 tourLanguage: form.tourLanguage || null,
                 customerInfo: form.customerInfo || null,
               })
@@ -327,8 +337,9 @@ export default function DealDetail() {
         }
       >
         <div className="space-y-3">
-          {/* Row 1 — Product | City | Price. Product/City are placeholders until
-              the pricing/quote slice is wired; Price is the live emphasized field. */}
+          {/* Row 1 — Product | City | Base price. Product/City stay placeholders
+              (persisting a real selection needs a Deal→ProductVariant link — a
+              later step); Base price is the live, emphasized operational price. */}
           <div className="grid grid-cols-3 gap-2">
             <FieldBox label="מוצר">
               <select disabled className={`${INPUT} bg-gray-50 text-gray-400`} title="יחובר לקטלוג/מחירון בהמשך">
@@ -340,7 +351,7 @@ export default function DealDetail() {
                 <option>בקרוב</option>
               </select>
             </FieldBox>
-            <FieldBox label="מחיר (₪)">
+            <FieldBox label="מחיר בסיס (₪)">
               <input value={form.value} onChange={(e) => set('value', e.target.value)} inputMode="decimal" dir="ltr"
                 className={`${INPUT} text-[17px] font-bold text-gray-900`} />
             </FieldBox>
@@ -350,7 +361,7 @@ export default function DealDetail() {
             הסבר תמחור יופיע כאן (מחירון / הנחת לקוח חוזר / תוספת שפה) — יחובר למנוע התמחור.
           </div>
 
-          {/* Row 2 — Date | Time | Participants (entered together every call). */}
+          {/* Row 2 — Date | Time | Participants. */}
           <div className="grid grid-cols-3 gap-2">
             <FieldBox label="תאריך">
               <input type="date" value={form.tourDate} onChange={(e) => set('tourDate', e.target.value)} className={`${INPUT} bg-white`} />
@@ -364,31 +375,12 @@ export default function DealDetail() {
             </FieldBox>
           </div>
 
-          {/* Row 3 — Activity type | Payment terms | Payment method. */}
-          <div className="grid grid-cols-3 gap-2">
+          {/* Row 3 — Activity type (ONE field, shared with the header badge) | Tour language. */}
+          <div className="grid grid-cols-2 gap-2">
             <FieldBox label="סוג פעילות">
               <select value={form.activityType} onChange={(e) => set('activityType', e.target.value)} className={`${INPUT} bg-white`}>
                 <option value="">— ללא —</option>
                 {ACTIVITY_TYPES.map((v) => (<option key={v} value={v}>{ACTIVITY_TYPE_LABELS[v]}</option>))}
-              </select>
-            </FieldBox>
-            <FieldBox label="תנאי תשלום">
-              <input value={form.paymentTerms} onChange={(e) => set('paymentTerms', e.target.value)} placeholder="שוטף+30" className={INPUT} />
-            </FieldBox>
-            <FieldBox label="אמצעי תשלום">
-              <select value={form.paymentMethod} onChange={(e) => set('paymentMethod', e.target.value)} className={`${INPUT} bg-white`}>
-                <option value="">— ללא —</option>
-                {PAYMENT_METHODS.map((m) => (<option key={m.key} value={m.key}>{m.label}</option>))}
-              </select>
-            </FieldBox>
-          </div>
-
-          {/* Row 4 — Communication language | Tour language. */}
-          <div className="grid grid-cols-2 gap-2">
-            <FieldBox label="שפת תקשורת">
-              <select value={form.communicationLanguage} onChange={(e) => set('communicationLanguage', e.target.value)} className={`${INPUT} bg-white`}>
-                <option value="">— ללא —</option>
-                {COMM_LANGS.map((l) => (<option key={l.key} value={l.key}>{l.label}</option>))}
               </select>
             </FieldBox>
             <FieldBox label="שפת הסיור">
@@ -399,44 +391,88 @@ export default function DealDetail() {
             </FieldBox>
           </div>
 
-          {/* Row 5 — internal customer note (the lightweight editor). */}
+          {/* Important customer information — the lightweight editor. */}
           <FieldBox label="מידע חשוב על הלקוח">
             <RichEditor
               value={form.customerInfo}
               onChange={(html) => set('customerInfo', html)}
               toolbar="lite"
               collapsible
-              /* Bounded height: in the height-constrained right panel an
-                 unbounded editor (default 60vh) grows and scroll-jacks the panel,
-                 pushing the upper rows (Activity Type etc.) out of view. Capping it
-                 keeps the editor a stable box with its own internal scroll. */
+              /* Bounded height: in the height-constrained right panel an unbounded
+                 editor (default 60vh) grows and scroll-jacks the panel, pushing the
+                 upper rows out of view. Capping keeps it a stable, self-scrolling box. */
               maxHeight="220px"
               ariaLabel="מידע חשוב על הלקוח"
               placeholder="מידע פנימי חשוב לשיחה…"
             />
           </FieldBox>
-
-          {/* Row 6 — next-step actions. UI only; wired in a later slice. */}
-          <div className="grid grid-cols-2 gap-2 pt-1">
-            <button
-              type="button"
-              disabled
-              title="בקרוב"
-              className="rounded-lg bg-blue-600 text-white text-sm font-semibold py-2.5 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              הפק הצעת מחיר
-            </button>
-            <button
-              type="button"
-              disabled
-              title="בקרוב"
-              className="rounded-lg bg-emerald-600 text-white text-sm font-semibold py-2.5 hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              הרשמה לסיור
-            </button>
-          </div>
         </div>
       </Card>
+
+      {/* ── Card 2 — הצעת מחיר (commercial preparation, BUSINESS only) ──
+          The commercial communication layer on top of the operational base price.
+          No quote engine yet — "הפק הצעת מחיר" is a placeholder. */}
+      {isBusiness && (
+        <Card
+          variant="panel"
+          title="הצעת מחיר"
+          action={
+            <SaveBtn
+              dirty={dirtyKeys(QUOTE_KEYS)}
+              busy={savingSection === 'quote'}
+              onClick={() =>
+                saveSection('quote', {
+                  communicationLanguage: form.communicationLanguage || null,
+                  paymentTerms: form.paymentTerms || null,
+                  paymentMethod: form.paymentMethod || null,
+                  quoteEmailIntro: form.quoteEmailIntro || null,
+                })
+              }
+            />
+          }
+        >
+          <div className="space-y-3">
+            <div className="grid grid-cols-3 gap-2">
+              <FieldBox label="שפת תקשורת">
+                <select value={form.communicationLanguage} onChange={(e) => set('communicationLanguage', e.target.value)} className={`${INPUT} bg-white`}>
+                  <option value="">— ללא —</option>
+                  {COMM_LANGS.map((l) => (<option key={l.key} value={l.key}>{l.label}</option>))}
+                </select>
+              </FieldBox>
+              <FieldBox label="תנאי תשלום">
+                <input value={form.paymentTerms} onChange={(e) => set('paymentTerms', e.target.value)} placeholder="שוטף+30" className={INPUT} />
+              </FieldBox>
+              <FieldBox label="אמצעי תשלום">
+                <select value={form.paymentMethod} onChange={(e) => set('paymentMethod', e.target.value)} className={`${INPUT} bg-white`}>
+                  <option value="">— ללא —</option>
+                  {PAYMENT_METHODS.map((m) => (<option key={m.key} value={m.key}>{m.label}</option>))}
+                </select>
+              </FieldBox>
+            </div>
+
+            <FieldBox label="פתיח אישי למייל">
+              <textarea
+                value={form.quoteEmailIntro}
+                onChange={(e) => set('quoteEmailIntro', e.target.value)}
+                rows={3}
+                placeholder="משפט פתיחה אישי שיופיע במייל ההצעה…"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+              />
+            </FieldBox>
+
+            <div className="pt-1">
+              <button
+                type="button"
+                disabled
+                title="בקרוב — מנוע ההצעות עדיין לא מחובר"
+                className="w-full rounded-lg bg-blue-600 text-white text-sm font-semibold py-2.5 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                הפק הצעת מחיר
+              </button>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {deal.status === 'lost' && (
         <Card variant="panel" title="פרטי LOST">
@@ -699,15 +735,25 @@ function StagePipeline({ stages, currentStageId, status, onSelect }) {
 }
 
 // Local section save button (replaces the old global header save).
-function SaveBtn({ onClick, busy }) {
+// Manual save with a clear unsaved-changes state (no autosave). Disabled + muted
+// when clean; emphasized + an explicit "unsaved changes" hint when dirty.
+function SaveBtn({ onClick, busy, dirty }) {
   return (
-    <button
-      onClick={onClick}
-      disabled={busy}
-      className="rounded-lg bg-blue-600 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-    >
-      {busy ? 'שומר…' : 'שמור'}
-    </button>
+    <div className="flex items-center gap-2">
+      {dirty && !busy && (
+        <span className="text-[11px] font-medium text-amber-600">יש שינויים שלא נשמרו</span>
+      )}
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={busy || !dirty}
+        className={`rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors disabled:cursor-not-allowed ${
+          dirty ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-100 text-gray-400'
+        }`}
+      >
+        {busy ? 'שומר…' : 'שמור'}
+      </button>
+    </div>
   );
 }
 

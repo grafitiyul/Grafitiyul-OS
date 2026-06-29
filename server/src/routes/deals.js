@@ -73,6 +73,8 @@ function applyTourFields(b, data) {
   }
   // customerInfo is rich HTML — stored as-is (empty string normalises to null).
   if (b.customerInfo !== undefined) data.customerInfo = b.customerInfo ? String(b.customerInfo) : null;
+  // quoteEmailIntro — plain text (commercial card). Empty normalises to null.
+  if (b.quoteEmailIntro !== undefined) data.quoteEmailIntro = b.quoteEmailIntro ? String(b.quoteEmailIntro) : null;
   return null;
 }
 

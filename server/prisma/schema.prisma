@@ -875,6 +875,9 @@ model Deal {
   communicationLanguage String? // he | en
   tourLanguage          String? // he | en | es | fr | ru
   customerInfo          String? // internal working note (lightweight rich HTML)
+  // "פתיח אישי למייל" — commercial (Quote) card. Temporary home on Deal until the
+  // QuoteVersion model lands (then it becomes per-quote, this stays as a default).
+  quoteEmailIntro       String?
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
   contacts              DealContact[]
