@@ -175,7 +175,7 @@ export default function GroupTicketBuilderDialog({ open, deal, context, onClose,
     <Dialog
       open={open}
       onClose={onClose}
-      title="בונה כרטיסים קבוצתי"
+      title="כרטיסים לסיור קבוצתי"
       size="xl"
       footer={
         <>

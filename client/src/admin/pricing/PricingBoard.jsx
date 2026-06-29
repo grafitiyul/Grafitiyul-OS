@@ -491,7 +491,7 @@ function CardView({ version, card, productCache, ticketTypes, addons, isFirst, i
             <span className="text-[11px] rounded-full bg-indigo-50 text-indigo-700 px-2.5 py-0.5 ring-1 ring-indigo-100">{modelName(card.priceModel)}</span>
             <span className="text-[11px] rounded-full bg-gray-100 text-gray-600 px-2.5 py-0.5">{vatLabel(card.vatMode, card.vatRate)}</span>
             {card.availableForGroupTickets && (
-              <span className="text-[11px] rounded-full bg-emerald-50 text-emerald-700 px-2.5 py-0.5 ring-1 ring-emerald-100" title="זמין בבונה כרטיסים קבוצתי">🎟️ כרטיסים קבוצתיים</span>
+              <span className="text-[11px] rounded-full bg-emerald-50 text-emerald-700 px-2.5 py-0.5 ring-1 ring-emerald-100" title="זמין בכרטיסים לסיור קבוצתי">🎟️ כרטיסים קבוצתיים</span>
             )}
           </div>
         </div>
@@ -1159,7 +1159,7 @@ function CardEditor({ version, segment, products, ticketTypes, addons, productCa
           <span className="text-[13px] font-medium text-gray-800">🎟️ זמין למכירת כרטיסים קבוצתית</span>
         </label>
         <p className="text-[11px] text-gray-400 mt-1 ps-7">
-          כשהאפשרות פעילה, כרטיס התמחור הזה יופיע אוטומטית בבונה כרטיסים קבוצתי של הדיל.
+          כשהאפשרות פעילה, כרטיס התמחור הזה יופיע אוטומטית בכרטיסים לסיור קבוצתי של הדיל.
         </p>
       </div>
 

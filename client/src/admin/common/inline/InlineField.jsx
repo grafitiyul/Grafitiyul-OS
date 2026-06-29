@@ -30,7 +30,11 @@ function defaultDisplay(type, value, options) {
   if (type === 'date') return fmtDate(value);
   return String(value);
 }
-const INPUT = 'h-9 w-full rounded-md border border-blue-300 bg-white px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200';
+const INPUT_BASE = 'h-9 w-full rounded-md border border-blue-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-200';
+// Inline-end space reserved for the floating ✓/✕ overlay (coordinated edit only) so
+// the value never slides under the controls. Without the overlay (editFirst) the
+// input keeps symmetric padding.
+const INPUT_PAD_OVERLAY = 'ps-2 pe-16';
 // Shared label + value treatment so read and edit modes line up pixel-for-pixel
 // (px-2 matches the input's text inset → the value never shifts horizontally when
 // the field flips between read and edit). Label is light + roomy; value is strong.
@@ -111,27 +115,28 @@ export default function InlineField({
   }
 
   // ── EDIT presentation ──
-  // Same label + min-height as read mode → the field grows the ✓/✕ INSIDE its own
-  // box (flex-1 input shrinks to fit) without moving its neighbours or its own
-  // value origin. A 1px fade-in only; never a slide.
+  // The input spans the FULL field width; the ✓/✕ are a small FLOATING overlay
+  // pinned to the inline-end (absolute → zero layout width). So small fields stay
+  // usable, the value stays readable (reserved inline-end padding), and no
+  // neighbour moves. A 1px fade-in only; never a slide.
   return (
     <div>
       {label && <span className={LABEL}>{label}</span>}
-      <div className={`flex items-center gap-1.5 ${BODY} animate-[inlineIn_120ms_ease-out]`}>
+      <div className={`relative flex items-center ${BODY} animate-[inlineIn_120ms_ease-out]`}>
         <div className="flex-1 min-w-0">{renderInput()}</div>
         {coordinated && (
-          <>
+          <div className="absolute inset-y-0 end-1 flex items-center gap-0.5 pointer-events-none">
             <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={commit} disabled={saving}
               title="שמור (Enter)"
-              className="shrink-0 h-9 w-9 inline-flex items-center justify-center rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
+              className="pointer-events-auto h-7 w-7 inline-flex items-center justify-center rounded-md bg-emerald-600 text-white text-[13px] shadow-sm hover:bg-emerald-700 disabled:opacity-50">
               ✓
             </button>
             <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={cancel} disabled={saving}
               title="ביטול (Esc)"
-              className="shrink-0 h-9 w-9 inline-flex items-center justify-center rounded-md border border-gray-300 text-gray-500 hover:bg-gray-50 disabled:opacity-50">
+              className="pointer-events-auto h-7 w-7 inline-flex items-center justify-center rounded-md border border-gray-300 bg-white text-gray-500 text-[12px] shadow-sm hover:bg-gray-50 disabled:opacity-50">
               ✕
             </button>
-          </>
+          </div>
         )}
       </div>
       {error && <div className="text-[11px] text-red-600 mt-1 px-2">{error}</div>}
@@ -139,17 +144,20 @@ export default function InlineField({
   );
 
   function renderInput() {
+    // Reserve inline-end room ONLY when the floating ✓/✕ overlay is shown
+    // (coordinated). editFirst has no overlay → symmetric padding.
+    const inputCls = `${INPUT_BASE} ${coordinated ? INPUT_PAD_OVERLAY : 'px-2'}`;
     const common = {
       ref,
       value: draft ?? '',
       onKeyDown,
       disabled: saving,
-      className: INPUT,
+      className: inputCls,
       ...(editFirst ? { onBlur: commit } : {}),
     };
     if (type === 'dropdown') {
       return (
-        <select {...common} className={`${INPUT} bg-white`} onChange={(e) => setDraft(e.target.value)}>
+        <select {...common} className={`${inputCls} bg-white`} onChange={(e) => setDraft(e.target.value)}>
           <option value="">— ללא —</option>
           {(options || []).map((o) =>
             o.options ? (
@@ -164,7 +172,7 @@ export default function InlineField({
       );
     }
     if (type === 'textarea') {
-      return <textarea {...common} rows={3} dir={dir} onChange={(e) => setDraft(e.target.value)} className={`${INPUT} h-auto py-1.5 leading-relaxed`} />;
+      return <textarea {...common} rows={3} dir={dir} onChange={(e) => setDraft(e.target.value)} className={`${inputCls} h-auto py-1.5 leading-relaxed`} />;
     }
     const htmlType = type === 'date' ? 'date' : type === 'time' ? 'time' : 'text';
     return (
