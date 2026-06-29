@@ -50,6 +50,11 @@ export function buildGroupCards(rules) {
     cards.push({
       cardGroupId: rep.cardGroupId,
       title,
+      // The product this card prices — used by the Group Ticket Builder to keep the
+      // Deal product as a single source of truth (Deal product = first selected
+      // card's product). Display still uses `title`; ids are never shown.
+      productId: rep.productId || null,
+      productVariantId: rep.productVariantId || null,
       priceModel: rep.priceModel,
       // Card VAT, so each ticket line inherits the card's VAT explicitly.
       vatMode: rep.vatMode || null,

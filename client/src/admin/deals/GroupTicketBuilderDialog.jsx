@@ -156,9 +156,23 @@ export default function GroupTicketBuilderDialog({ open, deal, context, onClose,
       // Persist only rows that carry data (a sold quantity or a manual price). Empty
       // rows aren't stored — they re-appear from the card on reopen at qty 0.
       const toSave = lines.filter((l) => l.quantity > 0 || l.overridden);
+
+      // SSOT summary: the Deal product is DERIVED from the selected tickets. One
+      // product selected → that product; multiple → the first selected (display
+      // order); none selected → leave the Deal product unchanged (send nothing).
+      const productPatch = {};
+      const firstSelectedCard = cards.find((c) =>
+        c.rows.some((row) => (byRow[rowIdFor(c.cardGroupId, row.ticketTypeId)]?.quantity || 0) > 0),
+      );
+      if (firstSelectedCard?.productId) {
+        productPatch.productId = firstSelectedCard.productId;
+        productPatch.productVariantId = firstSelectedCard.productVariantId || null;
+      }
+
       await api.deals.savePriceLines(deal.id, {
         lines: toSave,
         valueMinor: totals ? totals.grossMinor : 0,
+        ...productPatch,
       });
       await onSaved?.();
       onClose?.();

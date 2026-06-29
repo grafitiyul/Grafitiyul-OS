@@ -77,6 +77,19 @@ test('buildGroupCards dedupes siblings and splits sellable vs unconfigured', () 
   assert.deepEqual(unconfigured[0], { cardGroupId: 'cg2', title: 'סדנה' });
 });
 
+test('cards expose productId/productVariantId (Deal-product SSOT source)', () => {
+  const { cards } = buildGroupCards([
+    ticketCard('cg1', [{ id: 'tt_adult', name: 'מבוגר', price: 12000 }], {
+      productId: 'prod_1',
+      productVariantId: 'var_1',
+    }),
+  ]);
+  assert.equal(cards[0].productId, 'prod_1');
+  assert.equal(cards[0].productVariantId, 'var_1');
+  // Identity stays out of display: the human title is shown, never the id.
+  assert.equal(cards[0].title, 'סיור גרפיטי');
+});
+
 test('buildGroupCards ignores rules with no cardGroupId', () => {
   const { cards, unconfigured } = buildGroupCards([
     { cardGroupId: null, priceModel: 'ticket_types', ticketPrices: [{ ticketTypeId: 'x', priceMinor: 1, ticketType: { nameHe: 'X' } }] },

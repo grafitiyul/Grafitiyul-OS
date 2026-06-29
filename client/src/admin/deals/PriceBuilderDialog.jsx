@@ -172,11 +172,30 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
         if (l.kind === 'product' && !l.overridden && c) return { ...l, unitPriceMinor: c.unitPriceMinor };
         return l;
       });
+
+      // SSOT: the Deal product IS the first product line. If the user changed that
+      // line's product here, the Deal product follows — using the SAME resolution as
+      // the Tour Details card (product → first variant → its city). When the product
+      // is unchanged (or there is no product line) we keep the Deal's current values.
+      let productId = context?.productId || null;
+      let productVariantId = context?.productVariantId || null;
+      let locationId; // sent only when the product actually changed
+      const firstProduct = lines.find((l) => l.kind === 'product');
+      const picked = firstProduct ? products.find((p) => p.nameHe === firstProduct.label) : null;
+      if (picked && picked.id !== context?.productId) {
+        productId = picked.id;
+        const full = await api.products.get(picked.id).catch(() => null);
+        const firstVariant = (full?.variants || [])[0];
+        productVariantId = firstVariant ? firstVariant.id : null;
+        locationId = firstVariant ? firstVariant.location?.id || firstVariant.locationId || null : null;
+      }
+
       await api.deals.savePriceLines(deal.id, {
         lines: toSave,
         valueMinor: totals ? totals.grossMinor : 0,
-        productId: context?.productId || null,
-        productVariantId: context?.productVariantId || null,
+        productId,
+        productVariantId,
+        ...(locationId !== undefined ? { locationId } : {}),
       });
       await api.deals.update(deal.id, {
         paymentTermId: paymentTermId || null,

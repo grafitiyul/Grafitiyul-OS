@@ -515,6 +515,9 @@ router.put(
       if (b.valueMinor !== undefined) dealPatch.valueMinor = BigInt(Math.round(Number(b.valueMinor) || 0));
       if (b.productId !== undefined) dealPatch.productId = b.productId || null;
       if (b.productVariantId !== undefined) dealPatch.productVariantId = b.productVariantId || null;
+      // A product change inside the builder carries its city too, so the Deal stays
+      // coherent (same product → variant → city resolution as the Tour Details card).
+      if (b.locationId !== undefined) dealPatch.locationId = b.locationId || null;
       if (Object.keys(dealPatch).length) await tx.deal.update({ where: { id: req.params.id }, data: dealPatch });
       return version.id;
     });
