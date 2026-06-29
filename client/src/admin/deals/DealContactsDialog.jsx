@@ -3,6 +3,7 @@ import Dialog from '../common/Dialog.jsx';
 import ContactEditDialog from './ContactEditDialog.jsx';
 import QuickAddContactDialog from './QuickAddContactDialog.jsx';
 import { api } from '../../lib/api.js';
+import ContactPicker from '../crm/common/ContactPicker.jsx';
 import { QUICK_CONTACT_ROLES, ROLE_LABELS, contactNameHe } from './config.js';
 
 // "אנשי קשר בדיל" — compact manager for a Deal's contacts. The DealContact link
@@ -154,13 +155,8 @@ export default function DealContactsDialog({ deal, open, onClose, onChanged }) {
           <div className="rounded-lg border border-gray-200 bg-gray-50/60 p-3 space-y-2">
             <div className="text-[12px] font-semibold text-gray-700">הוסף איש קשר לדיל</div>
             <div className="flex items-center gap-2">
-              <select value={addId} onChange={(e) => setAddId(e.target.value)} className="flex-1 h-9 rounded-md border border-gray-300 bg-white px-2 text-sm">
-                <option value="">בחר איש קשר קיים…</option>
-                {available.map((c) => (
-                  <option key={c.id} value={c.id}>{c.fullNameHe || c.fullNameEn || c.id}</option>
-                ))}
-              </select>
-              <button onClick={addExisting} disabled={!addId || adding} className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
+              <ContactPicker contacts={available} value={addId} onChange={setAddId} />
+              <button onClick={addExisting} disabled={!addId || adding} className="shrink-0 rounded-lg bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
                 {adding ? 'מוסיף…' : 'הוסף'}
               </button>
             </div>

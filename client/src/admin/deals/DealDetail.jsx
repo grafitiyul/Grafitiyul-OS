@@ -18,7 +18,6 @@ import {
   ACTIVITY_TYPE_LABELS,
   ROLE_LABELS,
   PAYMENT_METHODS,
-  COMM_LANGS,
   TOUR_LANGS,
   contactNameHe,
 } from './config.js';
@@ -135,7 +134,6 @@ export default function DealDetail() {
         // when empty; the baseline below is set to the SAME value, so a default is
         // never flagged as an unsaved change and never silently re-applied after
         // the user overrides it.
-        communicationLanguage: d.communicationLanguage || 'he',
         tourLanguage: d.tourLanguage || 'he',
         customerInfo: d.customerInfo || '',
         quoteEmailIntro: d.quoteEmailIntro || '',
@@ -430,7 +428,7 @@ export default function DealDetail() {
   const otherLocs = allLocations.filter((l) => !recLocIds.has(l.id));
   const locNotConfigured = !!form.productId && !!form.locationId && !recLocIds.has(form.locationId);
   const TOUR_KEYS = ['productId', 'productVariantId', 'locationId', 'tourDate', 'tourTime', 'participants', 'activityType', 'tourLanguage', 'customerInfo'];
-  const QUOTE_KEYS = ['communicationLanguage', 'paymentTerms', 'paymentMethod', 'quoteEmailIntro'];
+  const QUOTE_KEYS = ['paymentTerms', 'paymentMethod', 'quoteEmailIntro'];
   const dirtyKeys = (keys) => keys.some((k) => !valuesEqual(form[k], originalForm[k]));
 
   const dealProperties = (
@@ -572,7 +570,6 @@ export default function DealDetail() {
               busy={savingSection === 'quote'}
               onClick={() =>
                 saveSection('quote', {
-                  communicationLanguage: form.communicationLanguage || null,
                   paymentTerms: form.paymentTerms || null,
                   paymentMethod: form.paymentMethod || null,
                   quoteEmailIntro: form.quoteEmailIntro || null,
@@ -582,13 +579,7 @@ export default function DealDetail() {
           }
         >
           <div className="space-y-3">
-            <div className="grid grid-cols-3 gap-2">
-              <FieldBox label="שפת תקשורת">
-                <select value={form.communicationLanguage} onChange={(e) => set('communicationLanguage', e.target.value)} className={`${INPUT} bg-white`}>
-                  <option value="">— ללא —</option>
-                  {COMM_LANGS.map((l) => (<option key={l.key} value={l.key}>{l.label}</option>))}
-                </select>
-              </FieldBox>
+            <div className="grid grid-cols-2 gap-2">
               <FieldBox label="תנאי תשלום">
                 <input value={form.paymentTerms} onChange={(e) => set('paymentTerms', e.target.value)} placeholder="שוטף+30" className={INPUT} />
               </FieldBox>

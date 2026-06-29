@@ -121,6 +121,11 @@ router.put(
 
     if (body.notes !== undefined)
       data.notes = body.notes ? String(body.notes).trim() : null;
+    if (body.communicationLanguage !== undefined) {
+      const v = body.communicationLanguage ? String(body.communicationLanguage).trim() : null;
+      if (v && !['he', 'en'].includes(v)) return res.status(400).json({ error: 'invalid_communication_language' });
+      data.communicationLanguage = v;
+    }
     const contact = await prisma.contact.update({
       where: { id: req.params.id },
       data,

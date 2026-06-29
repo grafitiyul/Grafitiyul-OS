@@ -24,6 +24,7 @@ const VALID_ROLES = [
   'ongoingBooking',
   'fieldRep',
   'finance',
+  'endClient',
   // Original roles (kept for backward compatibility with existing data).
   'coordinator',
   'payer',

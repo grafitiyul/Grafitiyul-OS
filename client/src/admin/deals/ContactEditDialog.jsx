@@ -4,6 +4,7 @@ import Dialog from '../common/Dialog.jsx';
 import ChannelSection from '../crm/common/ChannelSection.jsx';
 import { OrgPicker, resolveOrganization } from '../crm/common/OrgPicker.jsx';
 import { api } from '../../lib/api.js';
+import { COMM_LANGS } from './config.js';
 import { useDirtyWhen } from '../../lib/dirtyForms.js';
 
 // Edit an existing contact from the Deal header — reuses the SAME building blocks
@@ -42,6 +43,7 @@ export default function ContactEditDialog({ contactId, open, onClose, onSaved })
         firstNameEn: c.firstNameEn || '',
         lastNameEn: c.lastNameEn || '',
         notes: c.notes || '',
+        communicationLanguage: c.communicationLanguage || '',
       };
       setForm(init);
       setOriginal(init);
@@ -145,6 +147,14 @@ export default function ContactEditDialog({ contactId, open, onClose, onSaved })
               </Field>
               <Field label="Last name (EN)">
                 <input value={form.lastNameEn} onChange={(e) => set('lastNameEn', e.target.value)} dir="ltr" className={FIELD} />
+              </Field>
+            </div>
+            <div className="mt-3">
+              <Field label="שפת תקשורת">
+                <select value={form.communicationLanguage} onChange={(e) => set('communicationLanguage', e.target.value)} className={`${FIELD} bg-white`}>
+                  <option value="">— ללא —</option>
+                  {COMM_LANGS.map((l) => (<option key={l.key} value={l.key}>{l.label}</option>))}
+                </select>
               </Field>
             </div>
             <div className="mt-3">

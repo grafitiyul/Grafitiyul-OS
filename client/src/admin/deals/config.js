@@ -33,6 +33,7 @@ export const ROLE_ORDER = [
   'ongoingBooking',
   'fieldRep',
   'finance',
+  'endClient',
   'coordinator',
   'payer',
   'decisionMaker',
@@ -45,6 +46,7 @@ export const ROLE_LABELS = {
   ongoingBooking: 'הזמנה שוטפת',
   fieldRep: 'נציג בשטח',
   finance: 'איש כספים',
+  endClient: 'לקוח הקצה',
   coordinator: 'מתאם',
   payer: 'משלם',
   decisionMaker: 'מקבל החלטות',
@@ -54,7 +56,7 @@ export const ROLE_LABELS = {
 };
 
 // The compact role set offered in the Deal-header quick-add contact form.
-export const QUICK_CONTACT_ROLES = ['ongoingBooking', 'fieldRep', 'finance'];
+export const QUICK_CONTACT_ROLES = ['ongoingBooking', 'fieldRep', 'finance', 'endClient'];
 
 // Per-deal communication preferences (operational routing).
 export const PREF_FIELDS = [
