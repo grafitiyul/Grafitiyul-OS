@@ -844,6 +844,11 @@ model Deal {
   productId             String?
   productVariant        ProductVariant?      @relation(fields: [productVariantId], references: [id], onDelete: SetNull)
   productVariantId      String?
+  // Operational tour CITY. Usually the location of the chosen productVariant, but
+  // may be ANY CRM location (manual override) even if no variant exists for it —
+  // pricing still resolves via productVariantId (null → manual). SetNull on delete.
+  location              Location?            @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  locationId            String?
   dealStage             DealStage            @relation(fields: [dealStageId], references: [id])
   dealStageId           String
   status                String               @default("open") // 'open' | 'won' | 'lost'
@@ -899,6 +904,7 @@ model Deal {
   @@index([organizationTypeId])
   @@index([productId])
   @@index([productVariantId])
+  @@index([locationId])
   @@index([dealStageId])
   @@index([lostReasonId])
   @@index([dealSourceId])
@@ -1027,6 +1033,7 @@ model Location {
   createdAt           DateTime         @default(now())
   updatedAt           DateTime         @updatedAt
   variants            ProductVariant[]
+  deals               Deal[]
 
   @@index([sortOrder])
 }

@@ -203,6 +203,7 @@ router.post(
       dealSourceId: b.dealSourceId || null,
       productId: b.productId || null,
       productVariantId: b.productVariantId || null,
+      locationId: b.locationId || null,
       basePriceOverridden: !!b.basePriceOverridden,
       organizationId: b.organizationId || null,
       organizationUnitId: b.organizationUnitId || null,
@@ -255,6 +256,7 @@ router.put(
     if (b.productId !== undefined) data.productId = b.productId || null;
     if (b.productVariantId !== undefined)
       data.productVariantId = b.productVariantId || null;
+    if (b.locationId !== undefined) data.locationId = b.locationId || null;
     if (b.basePriceOverridden !== undefined)
       data.basePriceOverridden = !!b.basePriceOverridden;
     if (b.activityType !== undefined) {

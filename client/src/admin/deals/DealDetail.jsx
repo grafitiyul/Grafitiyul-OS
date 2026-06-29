@@ -94,6 +94,7 @@ export default function DealDetail() {
   const [products, setProducts] = useState([]);
   const [activityTypes, setActivityTypes] = useState([]);
   const [variants, setVariants] = useState([]);
+  const [allLocations, setAllLocations] = useState([]);
   const [priceBuilderOpen, setPriceBuilderOpen] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -142,6 +143,7 @@ export default function DealDetail() {
         // Price Builder (Deal.priceLines); the field here is a read-only summary.
         productId: d.productId || '',
         productVariantId: d.productVariantId || '',
+        locationId: d.locationId || '',
       };
       setForm(init);
       setOriginalForm(init);
@@ -150,6 +152,16 @@ export default function DealDetail() {
         try {
           const p = await api.products.get(d.productId);
           setVariants(p.variants || []);
+          // Legacy deals saved before Deal.locationId existed: derive the city from
+          // the saved variant so the selector isn't blank (patch baseline too → not dirty).
+          if (!d.locationId && d.productVariantId) {
+            const v = (p.variants || []).find((x) => x.id === d.productVariantId);
+            const locId = v ? v.location?.id || v.locationId : '';
+            if (locId) {
+              setForm((f) => ({ ...f, locationId: locId }));
+              setOriginalForm((o) => (o ? { ...o, locationId: locId } : o));
+            }
+          }
         } catch {
           setVariants([]);
         }
@@ -190,6 +202,7 @@ export default function DealDetail() {
   useEffect(() => {
     api.products.list().then(setProducts).catch(() => {});
     api.activityTypes.list().then(setActivityTypes).catch(() => {});
+    api.locations.list().then(setAllLocations).catch(() => {});
   }, []);
 
   // Map the Deal's activityType (group|private|business) to the pricing
@@ -207,7 +220,7 @@ export default function DealDetail() {
   async function chooseProduct(productId) {
     if (!productId) {
       setVariants([]);
-      setForm((f) => ({ ...f, productId: '', productVariantId: '' }));
+      setForm((f) => ({ ...f, productId: '', productVariantId: '', locationId: '' }));
       return;
     }
     setForm((f) => ({ ...f, productId }));
@@ -215,11 +228,25 @@ export default function DealDetail() {
       const p = await api.products.get(productId);
       const vs = p.variants || [];
       setVariants(vs);
-      setForm((f) => ({ ...f, productVariantId: vs[0] ? vs[0].id : '' }));
+      // Auto-fill the city to the first/default variant's location (recommended).
+      const first = vs[0];
+      setForm((f) => ({
+        ...f,
+        productVariantId: first ? first.id : '',
+        locationId: first ? first.location?.id || first.locationId || '' : '',
+      }));
     } catch {
       setVariants([]);
-      setForm((f) => ({ ...f, productVariantId: '' }));
+      setForm((f) => ({ ...f, productVariantId: '', locationId: '' }));
     }
+  }
+
+  // Choose a location (city). Resolve the matching ProductVariant for the current
+  // product when one exists; otherwise leave productVariantId empty (a non-variant
+  // "other" location — pricing resolves without a variant, see the inline hint).
+  function chooseLocation(locationId) {
+    const v = variants.find((x) => (x.location?.id || x.locationId) === locationId);
+    setForm((f) => ({ ...f, locationId, productVariantId: v ? v.id : '' }));
   }
 
   // Pricing context handed to the Price Builder (it owns the calculation now).
@@ -394,7 +421,15 @@ export default function DealDetail() {
   // each card saves its own fields and shows its own unsaved-changes state. No
   // quote engine / versions yet — the "הפק הצעת מחיר" button stays a placeholder.
   const isBusiness = form.activityType === 'business';
-  const TOUR_KEYS = ['productId', 'productVariantId', 'tourDate', 'tourTime', 'participants', 'activityType', 'tourLanguage', 'customerInfo'];
+  // Location selector sections: recommended = the product's variant locations;
+  // other = every remaining CRM location (never hidden). Reuses variant + Location data.
+  const recLocIds = new Set(variants.map((v) => v.location?.id || v.locationId).filter(Boolean));
+  const recommendedLocs = variants
+    .map((v) => ({ id: v.location?.id || v.locationId, name: v.location?.nameHe || '—' }))
+    .filter((l) => l.id);
+  const otherLocs = allLocations.filter((l) => !recLocIds.has(l.id));
+  const locNotConfigured = !!form.productId && !!form.locationId && !recLocIds.has(form.locationId);
+  const TOUR_KEYS = ['productId', 'productVariantId', 'locationId', 'tourDate', 'tourTime', 'participants', 'activityType', 'tourLanguage', 'customerInfo'];
   const QUOTE_KEYS = ['communicationLanguage', 'paymentTerms', 'paymentMethod', 'quoteEmailIntro'];
   const dirtyKeys = (keys) => keys.some((k) => !valuesEqual(form[k], originalForm[k]));
 
@@ -412,6 +447,7 @@ export default function DealDetail() {
               saveSection('tour', {
                 productId: form.productId || null,
                 productVariantId: form.productVariantId || null,
+                locationId: form.locationId || null,
                 activityType: form.activityType || null,
                 tourDate: form.tourDate || null,
                 tourTime: form.tourTime || null,
@@ -436,13 +472,21 @@ export default function DealDetail() {
             </FieldBox>
             <FieldBox label="עיר">
               <select
-                value={form.productVariantId}
-                onChange={(e) => set('productVariantId', e.target.value)}
-                disabled={!form.productId || !variants.length}
-                className={`${INPUT} bg-white disabled:bg-gray-100 disabled:text-gray-400`}
+                value={form.locationId}
+                onChange={(e) => chooseLocation(e.target.value)}
+                className={`${INPUT} bg-white`}
               >
-                <option value="">{form.productId ? '— בחר עיר —' : '—'}</option>
-                {variants.map((v) => (<option key={v.id} value={v.id}>{v.location?.nameHe || '—'}</option>))}
+                <option value="">— בחר עיר —</option>
+                {recommendedLocs.length > 0 && (
+                  <optgroup label="מומלץ למוצר זה">
+                    {recommendedLocs.map((l) => (<option key={l.id} value={l.id}>{l.name}</option>))}
+                  </optgroup>
+                )}
+                {otherLocs.length > 0 && (
+                  <optgroup label={recommendedLocs.length > 0 ? 'מיקומים נוספים' : 'מיקומים'}>
+                    {otherLocs.map((l) => (<option key={l.id} value={l.id}>{l.nameHe}</option>))}
+                  </optgroup>
+                )}
               </select>
             </FieldBox>
             <FieldBox label="מחיר בסיס (₪)">
@@ -457,6 +501,12 @@ export default function DealDetail() {
               </button>
             </FieldBox>
           </div>
+          {/* Non-blocking hint: chosen city isn't a configured variant for the product. */}
+          {locNotConfigured && (
+            <p className="text-[12px] text-amber-600 -mt-1">
+              העיר שנבחרה אינה מוגדרת כוריאנט של המוצר. ייתכן שיידרש תיאום מחיר ידני בבונה המחיר.
+            </p>
+          )}
 
           {/* Row 2 — Date | Time | Participants. */}
           <div className="grid grid-cols-3 gap-2">
