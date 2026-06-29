@@ -275,7 +275,7 @@ function CardSection({ card, byRow, onQty, onPrice, onRevert }) {
         <div className="flex items-center gap-3 pb-1.5 text-[11px] font-medium text-gray-400">
           <span className="flex-1 min-w-[8rem]">סוג כרטיס</span>
           <span className="w-36 shrink-0 text-center">מחיר</span>
-          <span className="w-20 shrink-0 text-center">כמות</span>
+          <span className="w-32 shrink-0 text-center">כמות</span>
           <span className="w-36 shrink-0 text-left">סה״כ שורה</span>
         </div>
         <div className="divide-y divide-gray-100">
@@ -311,16 +311,39 @@ function CardSection({ card, byRow, onQty, onPrice, onRevert }) {
                   )}
                 </div>
 
-                {/* Quantity — direct entry. */}
-                <input
-                  value={st.quantity || ''}
-                  onChange={(e) => onQty(id, e.target.value)}
-                  inputMode="numeric"
-                  dir="ltr"
-                  placeholder="0"
-                  title="כמות"
-                  className="w-20 shrink-0 h-9 text-center rounded-md border border-gray-200 px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
-                />
+                {/* Quantity — steppers on the sides + manual typing in the middle.
+                    − / + step by 1; onQty clamps at 0 (never negative). The local
+                    row total and the engine totals both follow immediately. */}
+                <div className="w-32 shrink-0 flex items-center justify-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => onQty(id, String(Math.max(0, (st.quantity || 0) - 1)))}
+                    disabled={(st.quantity || 0) <= 0}
+                    title="הפחת כמות"
+                    aria-label="הפחת כמות"
+                    className="shrink-0 h-7 w-7 inline-flex items-center justify-center rounded-md border border-gray-200 text-gray-600 leading-none hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    −
+                  </button>
+                  <input
+                    value={st.quantity || ''}
+                    onChange={(e) => onQty(id, e.target.value)}
+                    inputMode="numeric"
+                    dir="ltr"
+                    placeholder="0"
+                    title="כמות"
+                    className="w-12 h-9 text-center rounded-md border border-gray-200 px-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => onQty(id, String((st.quantity || 0) + 1))}
+                    title="הוסף כמות"
+                    aria-label="הוסף כמות"
+                    className="shrink-0 h-7 w-7 inline-flex items-center justify-center rounded-md border border-gray-200 text-gray-600 leading-none hover:bg-gray-50"
+                  >
+                    +
+                  </button>
+                </div>
 
                 {/* Row total — local price × qty (matches the Price Builder row display). */}
                 <div className="w-36 shrink-0 text-[13px] text-gray-700 text-left tabular-nums" dir="ltr">

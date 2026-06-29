@@ -60,6 +60,10 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   const [paymentMethodId, setPaymentMethodId] = useState('');
   const [methodOverridden, setMethodOverridden] = useState(false);
   const calcTimer = useRef(null);
+  // Effective pricing context: starts from the Deal's context, then FOLLOWS the
+  // product chosen on the first product line so the engine reprices live and the
+  // saved Deal product matches it. One product value — the line drives the Deal.
+  const [ctx, setCtx] = useState(context);
 
   // Catalogs (product+addon item dropdown, payment terms/methods dropdowns).
   useEffect(() => {
@@ -69,6 +73,40 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     api.payment.listTerms().then(setTerms).catch(() => {});
     api.payment.listMethods().then(setMethods).catch(() => {});
   }, [open]);
+
+  // Re-seed the effective context from the Deal each time the dialog opens.
+  useEffect(() => {
+    setCtx(context);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, deal?.id]);
+
+  // Follow the first product line's product → effective context (productId + its
+  // first variant + city). The engine then reprices through the SAME /builder
+  // endpoint; no pricing logic is duplicated here. Manual overrides are untouched
+  // (the engine only reprices a product line that is NOT overridden).
+  useEffect(() => {
+    if (!open) return undefined;
+    const picked = lines.map((l) => products.find((p) => p.nameHe === l.label)).find(Boolean);
+    if (!picked || picked.id === ctx?.productId) return undefined;
+    let live = true;
+    api.products
+      .get(picked.id)
+      .then((full) => {
+        if (!live) return;
+        const v = (full?.variants || [])[0];
+        setCtx((c) => ({
+          ...(c || {}),
+          productId: picked.id,
+          productVariantId: v ? v.id : null,
+          locationId: v ? v.location?.id || v.locationId || null : null,
+        }));
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, lines, products, ctx?.productId]);
 
   // Load working-version lines + payment fields on open.
   useEffect(() => {
@@ -112,12 +150,12 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     if (calcTimer.current) clearTimeout(calcTimer.current);
     calcTimer.current = setTimeout(() => {
       api.pricing
-        .builder({ context, lines })
+        .builder({ context: ctx, lines })
         .then((r) => setComputed(r))
         .catch((e) => setComputed({ ok: false, error: e.message }));
     }, 300);
     return () => calcTimer.current && clearTimeout(calcTimer.current);
-  }, [open, lines, context]);
+  }, [open, lines, ctx]);
 
   const computedById = new Map((computed?.lines || []).map((l) => [l.id, l]));
   const totals = computed?.totals;
@@ -173,29 +211,17 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
         return l;
       });
 
-      // SSOT: the Deal product IS the first product line. If the user changed that
-      // line's product here, the Deal product follows — using the SAME resolution as
-      // the Tour Details card (product → first variant → its city). When the product
-      // is unchanged (or there is no product line) we keep the Deal's current values.
-      let productId = context?.productId || null;
-      let productVariantId = context?.productVariantId || null;
-      let locationId; // sent only when the product actually changed
-      const firstProduct = lines.find((l) => l.kind === 'product');
-      const picked = firstProduct ? products.find((p) => p.nameHe === firstProduct.label) : null;
-      if (picked && picked.id !== context?.productId) {
-        productId = picked.id;
-        const full = await api.products.get(picked.id).catch(() => null);
-        const firstVariant = (full?.variants || [])[0];
-        productVariantId = firstVariant ? firstVariant.id : null;
-        locationId = firstVariant ? firstVariant.location?.id || firstVariant.locationId || null : null;
-      }
-
+      // SSOT: the effective context already followed the first product line's
+      // product (incl. its variant + city). Persist that as the Deal product and the
+      // builder TOTAL as the Deal value — one product value, one price. locationId is
+      // sent only when a product change set it, so an unchanged product never churns
+      // the Deal's city.
       await api.deals.savePriceLines(deal.id, {
         lines: toSave,
         valueMinor: totals ? totals.grossMinor : 0,
-        productId,
-        productVariantId,
-        ...(locationId !== undefined ? { locationId } : {}),
+        productId: ctx?.productId || null,
+        productVariantId: ctx?.productVariantId || null,
+        ...(ctx && 'locationId' in ctx ? { locationId: ctx.locationId } : {}),
       });
       await api.deals.update(deal.id, {
         paymentTermId: paymentTermId || null,
@@ -275,7 +301,7 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
                   computed={computedById.get(line.id)}
                   products={products}
                   addons={addons}
-                  defaultProductId={context?.productId || null}
+                  defaultProductId={ctx?.productId || null}
                   noteOpen={openNotes.has(line.id)}
                   free={freeRows.has(line.id)}
                   handle={handle}
