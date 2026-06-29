@@ -837,6 +837,13 @@ model Deal {
   // the effective type and this field is cleared by the API (no duplicate truth).
   organizationType      OrganizationType?    @relation(fields: [organizationTypeId], references: [id], onDelete: SetNull)
   organizationTypeId    String?
+  // Operational tour selection: the chosen Product and its Product×Location
+  // variant ("city"). Pricing reads these as engine context; nullable so a deal
+  // can exist before a product is picked. SetNull so catalog edits never delete deals.
+  product               Product?             @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productId             String?
+  productVariant        ProductVariant?      @relation(fields: [productVariantId], references: [id], onDelete: SetNull)
+  productVariantId      String?
   dealStage             DealStage            @relation(fields: [dealStageId], references: [id])
   dealStageId           String
   status                String               @default("open") // 'open' | 'won' | 'lost'
@@ -878,6 +885,9 @@ model Deal {
   // "פתיח אישי למייל" — commercial (Quote) card. Temporary home on Deal until the
   // QuoteVersion model lands (then it becomes per-quote, this stays as a default).
   quoteEmailIntro       String?
+  // The base tour price (valueMinor) is engine-calculated by default; this flags a
+  // manual override so auto-recalc never silently overwrites a hand-set price.
+  basePriceOverridden   Boolean              @default(false)
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
   contacts              DealContact[]
@@ -886,6 +896,8 @@ model Deal {
   @@index([organizationUnitId])
   @@index([organizationSubtypeId])
   @@index([organizationTypeId])
+  @@index([productId])
+  @@index([productVariantId])
   @@index([dealStageId])
   @@index([lostReasonId])
   @@index([dealSourceId])
@@ -982,6 +994,7 @@ model Product {
   updatedAt       DateTime         @updatedAt
   variants        ProductVariant[]
   priceRules      PriceRule[]
+  deals           Deal[]
 
   @@index([sortOrder])
 }
@@ -1018,6 +1031,7 @@ model ProductVariant {
   updatedAt             DateTime              @updatedAt
   galleryImages         ProductVariantImage[]
   priceRules            PriceRule[]
+  deals                 Deal[]
 
   @@unique([productId, locationId])
   @@index([productId])

@@ -52,6 +52,27 @@ function fmtDate(iso) {
   }
 }
 
+// Pricing-explanation helpers — labels only; all numbers come from the engine.
+const PRICE_MODEL_LABELS = {
+  per_head: 'לפי משתתף',
+  tiered: 'מדורג',
+  tiered_group: 'מדורג קבוצתי',
+  fixed: 'מחיר קבוע',
+  ticket_types: 'כרטיסים',
+};
+const PRICE_ERROR_LABELS = {
+  activity_type_required: 'בחרו סוג פעילות לחישוב מחיר',
+  no_price_rule: 'אין כלל תמחור מתאים — אפשר להזין מחיר ידני',
+  ambiguous_price_rule: 'נמצאו כללי תמחור סותרים — נדרש סדר עדיפויות',
+  no_price_list: 'לא הוגדר מחירון — אפשר להזין מחיר ידני',
+  rule_incomplete: 'כלל התמחור חסר נתונים',
+};
+function vatNote(mode, rate) {
+  if (mode === 'exempt') return 'פטור ממע״מ';
+  const r = rate ? ` ${rate}%` : '';
+  return mode === 'excluded' ? `לפני מע״מ${r}` : `כולל מע״מ${r}`;
+}
+
 // Deal detail — a 3-column sales WORKSPACE (WorkspaceLayout), not a big form.
 //   • LEFT panel  : sales script (collapsible/resizable, placeholder for now)
 //   • CENTER      : the working surfaces — hero header (title + actions +
@@ -86,6 +107,18 @@ export default function DealDetail() {
   const [contactsDialogOpen, setContactsDialogOpen] = useState(false);
   const [orgDialogOpen, setOrgDialogOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Product/pricing (Tour Details). Catalog lists load once; `variants` holds the
+  // selected product's Product×Location options ("cities"); `priceInfo` is the
+  // latest engine result (explanation + source price). No price math on the client.
+  const [products, setProducts] = useState([]);
+  const [activityTypes, setActivityTypes] = useState([]);
+  const [variants, setVariants] = useState([]);
+  const [priceInfo, setPriceInfo] = useState(null);
+  const [pricing, setPricing] = useState(false);
+  // True when a USER input change (product/city/participants/activity) should
+  // auto-apply the engine price. Stays false on load so an existing deal's saved
+  // price is never silently re-priced.
+  const autoApplyRef = useRef(false);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -129,9 +162,24 @@ export default function DealDetail() {
         tourLanguage: d.tourLanguage || 'he',
         customerInfo: d.customerInfo || '',
         quoteEmailIntro: d.quoteEmailIntro || '',
+        // Operational product/location selection + base-price override flag.
+        productId: d.productId || '',
+        productVariantId: d.productVariantId || '',
+        basePriceOverridden: !!d.basePriceOverridden,
       };
       setForm(init);
       setOriginalForm(init);
+      // City options for the already-selected product (no auto-fill on load).
+      if (d.productId) {
+        try {
+          const p = await api.products.get(d.productId);
+          setVariants(p.variants || []);
+        } catch {
+          setVariants([]);
+        }
+      } else {
+        setVariants([]);
+      }
       // The header's org hover card needs the org's type label.
       if (d.organizationId) {
         const full = await api.organizations.get(d.organizationId);
@@ -161,6 +209,97 @@ export default function DealDetail() {
   //   • the inline title editor while open and changed.
   useDirtyWhen(form, originalForm, { active: !!form && !!originalForm });
   useDirtyForm(editingTitle && titleDraft.trim() !== (deal?.title || ''));
+
+  // Catalogs for the Product selector + activity-type mapping. Loaded once.
+  useEffect(() => {
+    api.products.list().then(setProducts).catch(() => {});
+    api.activityTypes.list().then(setActivityTypes).catch(() => {});
+  }, []);
+
+  // Map the Deal's activityType (group|private|business) to the pricing
+  // ActivityType catalog (public|private|business). 'group' → 'public' — the
+  // catalog's public row is labelled "קבוצתי". One mapping, no forked logic.
+  function resolveActivityTypeId(actKey) {
+    if (!actKey) return null;
+    const mapped = actKey === 'group' ? 'public' : actKey;
+    return activityTypes.find((a) => a.key === mapped)?.id || null;
+  }
+
+  // Pick a product → load its city/location options and auto-fill the city
+  // (one → it; many → the first/default). A user action, so it auto-applies price.
+  async function chooseProduct(productId) {
+    autoApplyRef.current = true;
+    if (!productId) {
+      setVariants([]);
+      setForm((f) => ({ ...f, productId: '', productVariantId: '' }));
+      return;
+    }
+    setForm((f) => ({ ...f, productId }));
+    try {
+      const p = await api.products.get(productId);
+      const vs = p.variants || [];
+      setVariants(vs);
+      setForm((f) => ({ ...f, productVariantId: vs[0] ? vs[0].id : '' }));
+    } catch {
+      setVariants([]);
+      setForm((f) => ({ ...f, productVariantId: '' }));
+    }
+  }
+
+  // Base-price calculation via the EXISTING pricing engine (/api/pricing/calculate).
+  // Debounced. Always refreshes the explanation/source; only AUTO-APPLIES the price
+  // to the field on a user-initiated input change AND when not manually overridden —
+  // so loading a deal (or a settings change elsewhere) never silently re-prices it.
+  useEffect(() => {
+    if (!form?.productVariantId) {
+      setPriceInfo(null);
+      return undefined;
+    }
+    const activityTypeId = resolveActivityTypeId(form.activityType);
+    if (!activityTypeId) {
+      setPriceInfo({ ok: false, error: 'activity_type_required' });
+      return undefined;
+    }
+    const apply = autoApplyRef.current;
+    const overridden = form.basePriceOverridden;
+    const n = form.participants === '' ? 0 : Number(form.participants);
+    const ctx = {
+      productId: form.productId || null,
+      productVariantId: form.productVariantId,
+      activityTypeId,
+      organizationTypeId: orgType?.id || deal?.organizationTypeId || null,
+      organizationSubtypeId: deal?.organizationSubtypeId || null,
+      participantCount: n,
+      adultCount: n, // per_head base estimate (all-adult) until the group ticket flow lands
+      groupCount: 1,
+    };
+    const t = setTimeout(async () => {
+      setPricing(true);
+      try {
+        const r = await api.pricing.calculate(ctx);
+        setPriceInfo(r);
+        if (apply && r.ok && !overridden) {
+          setForm((f) => ({ ...f, value: minorToInput(r.grossMinor) }));
+        }
+      } catch (e) {
+        setPriceInfo({ ok: false, error: e.message });
+      } finally {
+        setPricing(false);
+        autoApplyRef.current = false;
+      }
+    }, 350);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    form?.productVariantId,
+    form?.participants,
+    form?.activityType,
+    form?.basePriceOverridden,
+    orgType?.id,
+    deal?.organizationTypeId,
+    deal?.organizationSubtypeId,
+    activityTypes,
+  ]);
 
   // No global header save anymore — each section saves itself with a local
   // button. saveSection sends ONLY that section's fields, then refreshes.
@@ -308,7 +447,7 @@ export default function DealDetail() {
   // each card saves its own fields and shows its own unsaved-changes state. No
   // quote engine / versions yet — the "הפק הצעת מחיר" button stays a placeholder.
   const isBusiness = form.activityType === 'business';
-  const TOUR_KEYS = ['value', 'tourDate', 'tourTime', 'participants', 'activityType', 'tourLanguage', 'customerInfo'];
+  const TOUR_KEYS = ['value', 'productId', 'productVariantId', 'basePriceOverridden', 'tourDate', 'tourTime', 'participants', 'activityType', 'tourLanguage', 'customerInfo'];
   const QUOTE_KEYS = ['communicationLanguage', 'paymentTerms', 'paymentMethod', 'quoteEmailIntro'];
   const dirtyKeys = (keys) => keys.some((k) => !valuesEqual(form[k], originalForm[k]));
 
@@ -325,6 +464,9 @@ export default function DealDetail() {
             onClick={() =>
               saveSection('tour', {
                 valueMinor: toMinor(form.value) ?? 0,
+                productId: form.productId || null,
+                productVariantId: form.productVariantId || null,
+                basePriceOverridden: !!form.basePriceOverridden,
                 activityType: form.activityType || null,
                 tourDate: form.tourDate || null,
                 tourTime: form.tourTime || null,
@@ -337,28 +479,60 @@ export default function DealDetail() {
         }
       >
         <div className="space-y-3">
-          {/* Row 1 — Product | City | Base price. Product/City stay placeholders
-              (persisting a real selection needs a Deal→ProductVariant link — a
-              later step); Base price is the live, emphasized operational price. */}
+          {/* Row 1 — Product | City | Base price. Product drives the City options
+              (Product×Location variants); Base price is engine-calculated and stays
+              manually overridable. */}
           <div className="grid grid-cols-3 gap-2">
             <FieldBox label="מוצר">
-              <select disabled className={`${INPUT} bg-gray-50 text-gray-400`} title="יחובר לקטלוג/מחירון בהמשך">
-                <option>בקרוב</option>
+              <select value={form.productId} onChange={(e) => chooseProduct(e.target.value)} className={`${INPUT} bg-white`}>
+                <option value="">— בחר מוצר —</option>
+                {products.map((p) => (<option key={p.id} value={p.id}>{p.nameHe}</option>))}
               </select>
             </FieldBox>
             <FieldBox label="עיר">
-              <select disabled className={`${INPUT} bg-gray-50 text-gray-400`} title="תלוי במוצר — בקרוב">
-                <option>בקרוב</option>
+              <select
+                value={form.productVariantId}
+                onChange={(e) => { autoApplyRef.current = true; set('productVariantId', e.target.value); }}
+                disabled={!form.productId || !variants.length}
+                className={`${INPUT} bg-white disabled:bg-gray-100 disabled:text-gray-400`}
+              >
+                <option value="">{form.productId ? '— בחר עיר —' : '—'}</option>
+                {variants.map((v) => (<option key={v.id} value={v.id}>{v.location?.nameHe || '—'}</option>))}
               </select>
             </FieldBox>
             <FieldBox label="מחיר בסיס (₪)">
-              <input value={form.value} onChange={(e) => set('value', e.target.value)} inputMode="decimal" dir="ltr"
-                className={`${INPUT} text-[17px] font-bold text-gray-900`} />
+              <input
+                value={form.value}
+                onChange={(e) => setForm((f) => ({ ...f, value: e.target.value, basePriceOverridden: true }))}
+                inputMode="decimal"
+                dir="ltr"
+                className={`${INPUT} text-[17px] font-bold text-gray-900`}
+              />
             </FieldBox>
           </div>
-          {/* Pricing context — placeholder until the pricing engine feeds it. */}
-          <div className="rounded-lg bg-blue-50/60 border border-blue-100 px-3 py-1.5 text-[12px] text-blue-700/80">
-            הסבר תמחור יופיע כאן (מחירון / הנחת לקוח חוזר / תוספת שפה) — יחובר למנוע התמחור.
+          {/* Pricing explanation — fed by the engine; never client-computed. */}
+          <div className="rounded-lg bg-blue-50/60 border border-blue-100 px-3 py-1.5 text-[12px] flex flex-wrap items-center gap-x-2">
+            {!form.productVariantId ? (
+              <span className="text-gray-400">בחרו מוצר ועיר לחישוב מחיר בסיס.</span>
+            ) : pricing ? (
+              <span className="text-gray-400">מחשב מחיר…</span>
+            ) : priceInfo?.ok ? (
+              <span className="text-blue-700/80">
+                מחירון: {priceInfo.priceList?.nameHe || '—'} · {PRICE_MODEL_LABELS[priceInfo.priceModel] || priceInfo.priceModel} · {vatNote(priceInfo.vatMode, priceInfo.vatRate)}
+              </span>
+            ) : priceInfo ? (
+              <span className="text-amber-600">{PRICE_ERROR_LABELS[priceInfo.error] || 'לא נמצא מחיר אוטומטי — אפשר להזין מחיר ידני'}</span>
+            ) : null}
+            {form.basePriceOverridden && priceInfo?.ok && (
+              <button
+                type="button"
+                onClick={() => setForm((f) => ({ ...f, value: minorToInput(priceInfo.grossMinor), basePriceOverridden: false }))}
+                className="text-gray-500 hover:text-gray-700 hover:underline"
+                title="חזרה למחיר שחושב מהמחירון"
+              >
+                מחיר ידני · מקור ₪{minorToInput(priceInfo.grossMinor)} ↺
+              </button>
+            )}
           </div>
 
           {/* Row 2 — Date | Time | Participants. */}
@@ -370,7 +544,8 @@ export default function DealDetail() {
               <input type="time" value={form.tourTime} onChange={(e) => set('tourTime', e.target.value)} className={`${INPUT} bg-white`} />
             </FieldBox>
             <FieldBox label="משתתפים">
-              <input value={form.participants} onChange={(e) => set('participants', e.target.value.replace(/[^0-9]/g, ''))}
+              <input value={form.participants}
+                onChange={(e) => { autoApplyRef.current = true; set('participants', e.target.value.replace(/[^0-9]/g, '')); }}
                 inputMode="numeric" dir="ltr" className={INPUT} />
             </FieldBox>
           </div>
@@ -378,7 +553,9 @@ export default function DealDetail() {
           {/* Row 3 — Activity type (ONE field, shared with the header badge) | Tour language. */}
           <div className="grid grid-cols-2 gap-2">
             <FieldBox label="סוג פעילות">
-              <select value={form.activityType} onChange={(e) => set('activityType', e.target.value)} className={`${INPUT} bg-white`}>
+              <select value={form.activityType}
+                onChange={(e) => { autoApplyRef.current = true; set('activityType', e.target.value); }}
+                className={`${INPUT} bg-white`}>
                 <option value="">— ללא —</option>
                 {ACTIVITY_TYPES.map((v) => (<option key={v} value={v}>{ACTIVITY_TYPE_LABELS[v]}</option>))}
               </select>

@@ -201,6 +201,9 @@ router.post(
       activityType,
       organizationTypeId,
       dealSourceId: b.dealSourceId || null,
+      productId: b.productId || null,
+      productVariantId: b.productVariantId || null,
+      basePriceOverridden: !!b.basePriceOverridden,
       organizationId: b.organizationId || null,
       organizationUnitId: b.organizationUnitId || null,
       organizationSubtypeId: b.organizationSubtypeId || null,
@@ -247,6 +250,13 @@ router.put(
       data.organizationSubtypeId = b.organizationSubtypeId || null;
     if (b.dealSourceId !== undefined)
       data.dealSourceId = b.dealSourceId || null;
+    // Operational product/location selection + base-price override flag. FKs are
+    // validated by Prisma; SetNull on the relation keeps deletes safe.
+    if (b.productId !== undefined) data.productId = b.productId || null;
+    if (b.productVariantId !== undefined)
+      data.productVariantId = b.productVariantId || null;
+    if (b.basePriceOverridden !== undefined)
+      data.basePriceOverridden = !!b.basePriceOverridden;
     if (b.activityType !== undefined) {
       if (b.activityType && !VALID_ACTIVITY_TYPES.includes(b.activityType)) {
         return res.status(400).json({ error: 'invalid_activity_type' });
