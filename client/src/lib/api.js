@@ -486,6 +486,9 @@ export const api = {
     // Multi-line Price Builder calc (product line via the engine + per-line VAT
     // splits + totals + explanation/conflict). All math server-side.
     builder: (input) => request('/api/pricing/builder', { method: 'POST', body: JSON.stringify(input) }),
+    // Group Ticket Builder — the Pricing Cards opted into Group Ticket Sales. The
+    // flag is the SOLE authority; no product/city/activity filtering, server-side.
+    groupCards: () => request('/api/pricing/group-cards'),
   },
   // Pricing Segments (Slice A) — the 6 business tabs + owner-set bindings.
   pricingSegments: {

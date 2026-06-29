@@ -65,6 +65,9 @@ function buildData(body, { partial }) {
   set('vatMode', VAT_MODES.includes(body.vatMode) ? body.vatMode : null);
   set('vatRate', toInt(body.vatRate));
   set('priority', toInt(body.priority) ?? 0);
+  // Card-level business capability — "Available for Group Ticket Sales". The card
+  // is the sole authority for the Group Ticket Builder. Duplicated across siblings.
+  set('availableForGroupTickets', body.availableForGroupTickets === true);
   // Card display order (business). Engine ignores it.
   set('cardSortOrder', toInt(body.cardSortOrder) ?? 0);
   if (!partial || body.active !== undefined) data.active = body.active !== false;

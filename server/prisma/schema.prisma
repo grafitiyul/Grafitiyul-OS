@@ -1267,6 +1267,13 @@ model PriceRule {
   vatRate Int?
 
   priority      Int      @default(0)
+  // Business capability (card-level, business-driven): when true, this Pricing
+  // Card is offered in the Group Ticket Builder. The Pricing Card itself is the
+  // SOLE authority for what appears there — the builder NEVER filters by product,
+  // city, activity type, segment, or any hardcoded rule. Default false so existing
+  // cards stay out until the owner opts a card in. Duplicated across a card's
+  // sibling rules (one per location) like cardSortOrder; replace-synced on save.
+  availableForGroupTickets Boolean @default(false)
   // Business-facing display order of the CARD within its tab. Shared across all
   // sibling rules of one cardGroupId. NOT used by the engine — resolution uses
   // `priority`; this only orders how cards render on the Pricing board.

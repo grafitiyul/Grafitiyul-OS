@@ -9,6 +9,7 @@ import DealSalesScript from './DealSalesScript.jsx';
 import DealContactsDialog from './DealContactsDialog.jsx';
 import OrganizationEditDialog from './OrganizationEditDialog.jsx';
 import PriceBuilderDialog from './PriceBuilderDialog.jsx';
+import GroupTicketBuilderDialog from './GroupTicketBuilderDialog.jsx';
 import WorkspaceLayout from '../../shell/WorkspaceLayout.jsx';
 import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
 import { minorToInput } from '../../lib/money.js';
@@ -736,13 +737,27 @@ export default function DealDetail() {
         onClose={() => setOrgDialogOpen(false)}
         onSaved={refresh}
       />
-      <PriceBuilderDialog
-        deal={deal}
-        context={priceContext}
-        open={priceBuilderOpen}
-        onClose={() => setPriceBuilderOpen(false)}
-        onSaved={refresh}
-      />
+      {/* Group deals get a dedicated Group Ticket Builder; everyone else gets the
+          Business Price Builder. The activityType only ROUTES to the right
+          workspace — it never filters which Pricing Cards appear (the card's own
+          "Available for Group Ticket Sales" flag is the sole authority for that). */}
+      {deal.activityType === 'group' ? (
+        <GroupTicketBuilderDialog
+          deal={deal}
+          context={priceContext}
+          open={priceBuilderOpen}
+          onClose={() => setPriceBuilderOpen(false)}
+          onSaved={refresh}
+        />
+      ) : (
+        <PriceBuilderDialog
+          deal={deal}
+          context={priceContext}
+          open={priceBuilderOpen}
+          onClose={() => setPriceBuilderOpen(false)}
+          onSaved={refresh}
+        />
+      )}
 
       {/* Tiny transient confirmation for "copy URL" (no global toast infra yet). */}
       {copied && (

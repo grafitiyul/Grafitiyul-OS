@@ -395,6 +395,7 @@ function groupCards(rules) {
       perAdditionalParticipantMinor: rep.perAdditionalParticipantMinor ?? null,
       vatMode: rep.vatMode || 'included',
       vatRate: rep.vatRate ?? DEFAULT_VAT_RATE,
+      availableForGroupTickets: rep.availableForGroupTickets === true,
       tiers: (rep.tiers || []).map((t) => ({
         uptoParticipants: Number(t.uptoParticipants),
         totalPriceMinor: Number(t.totalPriceMinor),
@@ -462,6 +463,7 @@ function CardView({ version, card, productCache, ticketTypes, addons, isFirst, i
           addons: card.addons,
           vatMode: card.vatMode,
           vatRate: card.vatRate,
+          availableForGroupTickets: card.availableForGroupTickets === true,
           active: true,
         });
       }
@@ -488,6 +490,9 @@ function CardView({ version, card, productCache, ticketTypes, addons, isFirst, i
           <div className="flex items-center gap-1.5 mt-2">
             <span className="text-[11px] rounded-full bg-indigo-50 text-indigo-700 px-2.5 py-0.5 ring-1 ring-indigo-100">{modelName(card.priceModel)}</span>
             <span className="text-[11px] rounded-full bg-gray-100 text-gray-600 px-2.5 py-0.5">{vatLabel(card.vatMode, card.vatRate)}</span>
+            {card.availableForGroupTickets && (
+              <span className="text-[11px] rounded-full bg-emerald-50 text-emerald-700 px-2.5 py-0.5 ring-1 ring-emerald-100" title="זמין בבונה כרטיסים קבוצתי">🎟️ כרטיסים קבוצתיים</span>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
@@ -890,6 +895,8 @@ function CardEditor({ version, segment, products, ticketTypes, addons, productCa
     }));
   const [vatMode, setVatMode] = useState(card?.vatMode || version.defaultVatMode || 'included');
   const [vatRate, setVatRate] = useState(card?.vatRate ?? version.defaultVatRate ?? DEFAULT_VAT_RATE);
+  // Business capability — offer this card in the Group Ticket Builder. Default OFF.
+  const [availableForGroupTickets, setAvailGroup] = useState(card?.availableForGroupTickets === true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
@@ -999,6 +1006,7 @@ function CardEditor({ version, segment, products, ticketTypes, addons, productCa
         vatMode,
         vatRate: vatMode === 'exempt' ? 0 : (Number(vatRate) || 0),
         active: true,
+        availableForGroupTickets,
         addons: addonsPayload,
         ...modelPayload(),
       };
@@ -1136,6 +1144,23 @@ function CardEditor({ version, segment, products, ticketTypes, addons, productCa
               className={`${INPUT} text-left`} />
           </Field>
         )}
+      </div>
+
+      {/* Group Ticket Sales — business capability. The flag alone decides whether
+          this card appears in the Group Ticket Builder (no hardcoded filtering). */}
+      <div className="border-t border-blue-100 pt-3">
+        <label className="flex items-center gap-2.5 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={availableForGroupTickets}
+            onChange={(e) => setAvailGroup(e.target.checked)}
+            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-200"
+          />
+          <span className="text-[13px] font-medium text-gray-800">🎟️ זמין למכירת כרטיסים קבוצתית</span>
+        </label>
+        <p className="text-[11px] text-gray-400 mt-1 ps-7">
+          כשהאפשרות פעילה, כרטיס התמחור הזה יופיע אוטומטית בבונה כרטיסים קבוצתי של הדיל.
+        </p>
       </div>
 
       {/* שבת/חג — system surcharge inherited by every card; override per card */}
