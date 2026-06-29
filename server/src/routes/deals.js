@@ -84,6 +84,9 @@ const CONTACT_SELECT = {
   lastNameHe: true,
   firstNameEn: true,
   lastNameEn: true,
+  // Contact-owned preference, surfaced (and editable) in the Deal contacts popup.
+  // It lives on the Contact — the Deal never copies it.
+  communicationLanguage: true,
   phones: { where: { isPrimary: true }, take: 1 },
   emails: { where: { isPrimary: true }, take: 1 },
 };
