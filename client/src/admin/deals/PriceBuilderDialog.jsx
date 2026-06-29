@@ -4,11 +4,10 @@ import ReorderableList from '../common/ReorderableList.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
 import { api } from '../../lib/api.js';
 import { formatMinor, minorToInput, toMinor } from '../../lib/money.js';
-import { PAYMENT_METHODS } from './config.js';
 
-// Price Builder — a clean, document-style editor for a Deal's base pricing. It
-// edits the working QuoteVersion's lines (canonical storage). UI/UX layer only:
-// money math runs in the engine via /api/pricing/builder; load/save go through
+// Price Builder — a roomy, document-style editor for a Deal's base pricing. Edits
+// the working QuoteVersion's lines (canonical storage). UI/UX layer only: money
+// math runs in the engine via /api/pricing/builder; load/save go through
 // /api/deals/:id/price-lines. No schema/calculation/quote-workflow changes here.
 
 const VAT_OPTIONS = [
@@ -44,54 +43,56 @@ function isRichEmpty(html) {
   if (!html) return true;
   return html.replace(/<[^>]*>/g, '').replace(/&nbsp;|\s/g, '') === '';
 }
-const CELL = 'h-9 rounded-md border border-gray-200 px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-gray-50 disabled:text-gray-400';
+const CELL = 'h-10 rounded-md border border-gray-200 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-gray-50 disabled:text-gray-400';
 
 export default function PriceBuilderDialog({ open, deal, context, onClose, onSaved }) {
   const [lines, setLines] = useState([]);
   const [openNotes, setOpenNotes] = useState(() => new Set());
-  const [freeRows, setFreeRows] = useState(() => new Set()); // rows in free-text (non-catalog) mode
+  const [freeRows, setFreeRows] = useState(() => new Set());
   const [computed, setComputed] = useState(null);
   const [saving, setSaving] = useState(false);
   const [products, setProducts] = useState([]);
+  const [addons, setAddons] = useState([]);
   const [terms, setTerms] = useState([]);
+  const [methods, setMethods] = useState([]);
   const [paymentTerms, setPaymentTerms] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('');
+  const [methodOverridden, setMethodOverridden] = useState(false);
   const calcTimer = useRef(null);
 
-  // Catalogs (product dropdown + payment-terms dropdown).
+  // Catalogs (product+addon item dropdown, payment terms/methods dropdowns).
   useEffect(() => {
     if (!open) return;
     api.products.list().then(setProducts).catch(() => {});
+    api.addons.list().then(setAddons).catch(() => {});
     api.payment.listTerms().then(setTerms).catch(() => {});
+    api.payment.listMethods().then(setMethods).catch(() => {});
   }, [open]);
 
-  // Load the working version's lines + the deal's payment fields on open.
+  // Load working-version lines + payment fields on open.
   useEffect(() => {
     if (!open) return;
     let live = true;
     setPaymentTerms(deal?.paymentTerms || '');
     setPaymentMethod(deal?.paymentMethod || '');
+    setMethodOverridden(false);
     api.deals
       .getPriceLines(deal.id)
       .then((r) => {
         if (!live) return;
         const saved = Array.isArray(r?.lines) ? r.lines.map(normalize) : [];
-        const next = saved.length
-          ? saved.some((l) => l.kind === 'product')
-            ? saved
-            : [seedProductLine(context), ...saved]
-          : [seedProductLine(context)];
+        // Seed a default line ONLY for a brand-new working version. An existing
+        // deal may legitimately have zero lines.
+        const next = saved.length ? saved : r?.created ? [seedProductLine(context)] : [];
         setLines(next);
-        // First row's note opens by default; notes with content also open.
         const noteOpen = new Set(next.filter((l) => !isRichEmpty(l.note)).map((l) => l.id));
         if (next[0]) noteOpen.add(next[0].id);
         setOpenNotes(noteOpen);
       })
       .catch(() => {
         if (live) {
-          const seed = [seedProductLine(context)];
-          setLines(seed);
-          setOpenNotes(new Set([seed[0].id]));
+          setLines([]);
+          setOpenNotes(new Set());
         }
       });
     return () => {
@@ -130,8 +131,7 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     setFreeRows((s) => { const n = new Set(s); n.delete(id); return n; });
   }
   function addLine() {
-    const l = normalize({ kind: 'manual', label: '' });
-    setLines((ls) => [...ls, l]);
+    setLines((ls) => [...ls, normalize({ kind: 'manual', label: '' })]);
   }
   function toggleNote(id) {
     setOpenNotes((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -144,6 +144,21 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   }
   function setFree(id, on) {
     setFreeRows((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n; });
+  }
+
+  // Payment Terms → auto-fill Payment Method from the catalog relationship, unless
+  // the method was manually changed this session.
+  function pickTerm(name) {
+    setPaymentTerms(name);
+    if (!methodOverridden) {
+      const t = terms.find((x) => x.nameHe === name);
+      const def = t?.defaultPaymentMethod?.nameHe;
+      if (def) setPaymentMethod(def);
+    }
+  }
+  function pickMethod(name) {
+    setMethodOverridden(true);
+    setPaymentMethod(name);
   }
 
   async function save() {
@@ -180,27 +195,27 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
       open={open}
       onClose={onClose}
       title="עריכת מחיר"
-      size="xl"
+      size="2xl"
       footer={
         <>
-          <button type="button" onClick={onClose} className="text-sm text-gray-600 border border-gray-300 rounded-md px-4 py-1.5 hover:bg-gray-50">
+          <button type="button" onClick={onClose} className="text-sm text-gray-600 border border-gray-300 rounded-md px-4 py-2 hover:bg-gray-50">
             ביטול
           </button>
-          <button onClick={save} disabled={saving} className="bg-emerald-600 text-white text-sm font-semibold rounded-md px-5 py-2 hover:bg-emerald-700 disabled:opacity-50">
+          <button onClick={save} disabled={saving} className="bg-emerald-600 text-white text-sm font-semibold rounded-md px-6 py-2 hover:bg-emerald-700 disabled:opacity-50">
             {saving ? 'שומר…' : 'שמור וסגור'}
           </button>
         </>
       }
     >
-      <div className="space-y-6 px-1 py-1">
-        {/* Toolbar — VAT button then "⋯" (swapped), pushed to the left in RTL. */}
+      <div className="space-y-7 px-2 py-2 min-h-[60vh] flex flex-col">
+        {/* Toolbar — VAT button then "⋯", pushed to the left in RTL. */}
         <div className="flex">
           <div className="flex items-center gap-2 ms-auto">
             <VatButton mode={orderVatMode} rate={vatDefault?.rate} onPick={setOrderVat} />
             <button
               type="button"
               title="הגדרות בונה המחיר — בקרוב"
-              className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-gray-200 text-gray-400 hover:bg-gray-50 text-lg leading-none"
+              className="h-10 w-10 inline-flex items-center justify-center rounded-lg border border-gray-200 text-gray-400 hover:bg-gray-50 text-lg leading-none"
             >
               ⋯
             </button>
@@ -209,19 +224,19 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
 
         {/* Column labels */}
         <div>
-          <div className="flex items-center gap-2 px-2 pb-1.5 text-[11px] font-medium text-gray-400">
+          <div className="flex items-center gap-3 px-3 pb-2 text-[12px] font-medium text-gray-400">
             <span className="w-5 shrink-0" aria-hidden />
+            <span className="w-10 shrink-0" aria-hidden />
+            <span className="flex-1 min-w-[12rem]">מוצר</span>
+            <span className="w-32 shrink-0 text-center">מחיר</span>
+            <span className="w-20 shrink-0 text-center">כמות</span>
+            <span className="w-44 shrink-0">סה״כ שורה</span>
             <span className="w-9 shrink-0" aria-hidden />
-            <span className="flex-1 min-w-[10rem]">מוצר</span>
-            <span className="w-28 shrink-0 text-center">מחיר</span>
-            <span className="w-16 shrink-0 text-center">כמות</span>
-            <span className="w-40 shrink-0">סה״כ שורה</span>
-            <span className="w-8 shrink-0" aria-hidden />
-            <span className="w-8 shrink-0" aria-hidden />
+            <span className="w-9 shrink-0" aria-hidden />
           </div>
 
-          {/* Lines */}
-          <div className="rounded-xl border border-gray-200 p-2">
+          {/* Lines — generous working canvas. */}
+          <div className="rounded-xl border border-gray-200 p-3 min-h-[200px]">
             <ReorderableList
               items={lines}
               onReorder={onReorder}
@@ -231,6 +246,7 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
                   line={line}
                   computed={computedById.get(line.id)}
                   products={products}
+                  addons={addons}
                   defaultProductId={context?.productId || null}
                   noteOpen={openNotes.has(line.id)}
                   free={freeRows.has(line.id)}
@@ -250,23 +266,19 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
           <button
             type="button"
             onClick={addLine}
-            className="text-[13px] font-medium text-blue-700 border border-blue-200 bg-blue-50 rounded-lg px-3 py-1.5 hover:bg-blue-100"
+            className="text-sm font-medium text-blue-700 border border-blue-200 bg-blue-50 rounded-lg px-4 py-2 hover:bg-blue-100"
           >
             + הוסף שורה
           </button>
         </div>
 
-        {/* Bottom — payment (right) and totals (left) — swapped. */}
-        <div className="flex flex-wrap items-start justify-between gap-6 pt-2 border-t border-gray-100">
-          <div className="w-64 space-y-3 pt-3">
-            <Field label="אמצעי תשלום">
-              <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={FIELD}>
-                <option value="">— ללא —</option>
-                {PAYMENT_METHODS.map((m) => (<option key={m.key} value={m.key}>{m.label}</option>))}
-              </select>
-            </Field>
+        <div className="flex-1" />
+
+        {/* Bottom — payment (right) and totals (left). */}
+        <div className="flex flex-wrap items-start justify-between gap-8 pt-4 border-t border-gray-100">
+          <div className="w-72 space-y-3 pt-2">
             <Field label="תנאי תשלום">
-              <select value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} className={FIELD}>
+              <select value={paymentTerms} onChange={(e) => pickTerm(e.target.value)} className={FIELD}>
                 <option value="">— ללא —</option>
                 {terms.map((t) => (<option key={t.id} value={t.nameHe}>{t.nameHe}</option>))}
                 {paymentTerms && !terms.some((t) => t.nameHe === paymentTerms) && (
@@ -274,12 +286,21 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
                 )}
               </select>
             </Field>
+            <Field label="אמצעי תשלום">
+              <select value={paymentMethod} onChange={(e) => pickMethod(e.target.value)} className={FIELD}>
+                <option value="">— ללא —</option>
+                {methods.map((m) => (<option key={m.id} value={m.nameHe}>{m.nameHe}</option>))}
+                {paymentMethod && !methods.some((m) => m.nameHe === paymentMethod) && (
+                  <option value={paymentMethod}>{paymentMethod}</option>
+                )}
+              </select>
+            </Field>
           </div>
 
-          <div className="min-w-[16rem] space-y-1.5 text-sm pt-3">
+          <div className="min-w-[18rem] space-y-2 text-[15px] pt-2">
             <TotalRow label="סכום ביניים" minor={totals?.netMinor} />
             <TotalRow label={`מע״מ${vatDefault?.rate ? ` (${vatDefault.rate}%)` : ''}`} minor={totals?.vatMinor} />
-            <div className="border-t border-gray-100 pt-1.5">
+            <div className="border-t border-gray-100 pt-2">
               <TotalRow label='סה"כ' minor={totals?.grossMinor} strong />
             </div>
           </div>
@@ -289,10 +310,11 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   );
 }
 
-const FIELD = 'w-full h-9 rounded-md border border-gray-300 px-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200';
+const FIELD = 'w-full h-10 rounded-md border border-gray-300 px-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200';
 
-function LineRow({ line, computed, products, defaultProductId, noteOpen, free, handle, onChange, onToggleNote, onRemove, onSetFree }) {
+function LineRow({ line, computed, products, addons, defaultProductId, noteOpen, free, handle, onChange, onToggleNote, onRemove, onSetFree }) {
   const isProduct = line.kind === 'product';
+  const isAddon = line.kind === 'addon';
   const disabled = !line.active;
   // Product price comes from the engine (per-unit base) until manually overridden.
   const unitMinor = isProduct && !line.overridden && computed ? computed.unitPriceMinor : line.unitPriceMinor;
@@ -300,36 +322,58 @@ function LineRow({ line, computed, products, defaultProductId, noteOpen, free, h
   const lineTotalMinor = (Number(unitMinor) || 0) * (qty || 0);
   const negative = lineTotalMinor < 0;
 
-  // Product dropdown state. The product line preselects the deal's product even
-  // before it has been labelled.
-  const matched = products.find((p) => p.nameHe === line.label);
-  const freeMode = free || (!matched && !!line.label);
-  const preselect = isProduct && defaultProductId && products.some((p) => p.id === defaultProductId) ? defaultProductId : '';
-  const selectValue = matched ? matched.id : freeMode ? '__free__' : preselect;
+  // Item dropdown value: addon → a:<id>, product (by label or product-line default)
+  // → p:<id>, free-text → __free__, else empty.
+  const matchedProduct = products.find((p) => p.nameHe === line.label);
+  const freeMode = free || (!isAddon && !matchedProduct && !!line.label && !(isProduct && !line.label));
+  let selectValue = '';
+  if (isAddon && line.refId) selectValue = `a:${line.refId}`;
+  else if (freeMode) selectValue = '__free__';
+  else if (matchedProduct) selectValue = `p:${matchedProduct.id}`;
+  else if (isProduct && defaultProductId && products.some((p) => p.id === defaultProductId)) selectValue = `p:${defaultProductId}`;
 
-  function onPickProduct(v) {
-    if (v === '__free__') { onSetFree(true); }
-    else if (v === '') { onSetFree(false); onChange({ label: '' }); }
-    else { onSetFree(false); const p = products.find((x) => x.id === v); onChange({ label: p?.nameHe || '' }); }
+  function onPickItem(v) {
+    if (v === '') {
+      onSetFree(false);
+      onChange({ label: '', refId: null, kind: isProduct ? 'product' : 'manual' });
+    } else if (v === '__free__') {
+      onSetFree(true);
+      if (isAddon) onChange({ kind: 'manual', refId: null });
+    } else if (v.startsWith('p:')) {
+      onSetFree(false);
+      const p = products.find((x) => x.id === v.slice(2));
+      onChange({ label: p?.nameHe || '', kind: isProduct ? 'product' : 'manual', refId: isProduct ? line.refId : null });
+    } else if (v.startsWith('a:')) {
+      onSetFree(false);
+      const a = addons.find((x) => x.id === v.slice(2));
+      onChange({ kind: 'addon', refId: a?.id || null, label: a?.nameHe || '', unitPriceMinor: a ? Number(a.defaultPriceMinor) || 0 : 0, overridden: false });
+    }
   }
 
+  const showRevert = isProduct && line.overridden;
+
   return (
-    <div className={`px-2 py-2 ${disabled ? 'opacity-60' : ''}`}>
-      <div className="flex items-center gap-2">
+    <div className={`px-3 py-2.5 ${disabled ? 'opacity-60' : ''}`}>
+      <div className="flex items-center gap-3">
         {/* Right: drag handle + active toggle */}
         <span className="w-5 shrink-0 flex justify-center">{handle}</span>
         <Toggle checked={line.active} onChange={(v) => onChange({ active: v })} />
 
-        {/* Center: product (dropdown), price, quantity */}
-        <div className="flex-1 min-w-[10rem] flex items-center gap-2">
+        {/* Center: item (product/addon dropdown), price, quantity */}
+        <div className="flex-1 min-w-[12rem] flex items-center gap-2">
           <select
             value={selectValue}
             disabled={disabled}
-            onChange={(e) => onPickProduct(e.target.value)}
-            className={`${CELL} ${freeMode ? 'w-40' : 'flex-1'}`}
+            onChange={(e) => onPickItem(e.target.value)}
+            className={`${CELL} ${freeMode ? 'w-44' : 'flex-1'}`}
           >
-            <option value="">— בחר מוצר —</option>
-            {products.map((p) => (<option key={p.id} value={p.id}>{p.nameHe}</option>))}
+            <option value="">— בחר פריט —</option>
+            <optgroup label="מוצרים">
+              {products.map((p) => (<option key={p.id} value={`p:${p.id}`}>{p.nameHe}</option>))}
+            </optgroup>
+            <optgroup label="תוספות">
+              {addons.map((a) => (<option key={a.id} value={`a:${a.id}`}>{a.nameHe}</option>))}
+            </optgroup>
             <option value="__free__">— טקסט חופשי —</option>
           </select>
           {freeMode && (
@@ -343,16 +387,26 @@ function LineRow({ line, computed, products, defaultProductId, noteOpen, free, h
           )}
         </div>
 
-        <div className="relative w-28 shrink-0">
-          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[12px] text-gray-400">₪</span>
+        <div className="relative w-32 shrink-0">
+          <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[12px] text-gray-400">₪</span>
           <input
             value={minorToInput(unitMinor)}
             disabled={disabled}
             onChange={(e) => onChange({ unitPriceMinor: toMinor(e.target.value) ?? 0, ...(isProduct ? { overridden: true } : {}) })}
             inputMode="decimal"
             dir="ltr"
-            className={`w-full pr-6 text-left ${CELL} ${(Number(unitMinor) || 0) < 0 ? 'text-red-600' : ''}`}
+            className={`w-full pr-6 text-left ${showRevert ? 'pl-6' : ''} ${CELL} ${(Number(unitMinor) || 0) < 0 ? 'text-red-600' : ''}`}
           />
+          {showRevert && (
+            <button
+              type="button"
+              onClick={() => onChange({ overridden: false })}
+              title="חזרה למחיר מהמחירון"
+              className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[12px] text-gray-400 hover:text-gray-700"
+            >
+              ↺
+            </button>
+          )}
         </div>
         <input
           value={line.quantity}
@@ -361,39 +415,31 @@ function LineRow({ line, computed, products, defaultProductId, noteOpen, free, h
           inputMode="numeric"
           dir="ltr"
           title="כמות"
-          className={`w-16 shrink-0 text-center ${CELL}`}
+          className={`w-20 shrink-0 text-center ${CELL}`}
         />
 
         {/* Line total */}
-        <div className={`w-40 shrink-0 text-[12px] ${negative ? 'text-red-600' : 'text-gray-600'}`} dir="ltr">
+        <div className={`w-44 shrink-0 text-[13px] ${negative ? 'text-red-600' : 'text-gray-600'}`} dir="ltr">
           <span className="text-gray-400">{minorToInput(unitMinor) || 0} × {qty || 0} = </span>
           <span className="font-semibold">{formatMinor(lineTotalMinor)}</span>
         </div>
 
-        {/* Left: note toggle + delete (or restore-source for the product line) */}
+        {/* Left: note toggle + delete (every row is deletable) */}
         <NoteIcon open={noteOpen} onClick={onToggleNote} />
-        {isProduct && !line.overridden ? (
-          <span className="w-8 shrink-0" aria-hidden />
-        ) : isProduct ? (
-          <button type="button" onClick={() => onChange({ overridden: false })} title="חזרה למחיר מהמחירון" className="w-8 shrink-0 text-gray-400 hover:text-gray-600 text-sm">
-            ↺
-          </button>
-        ) : (
-          <button type="button" onClick={onRemove} title="מחק שורה" className="w-8 shrink-0 flex justify-center text-gray-300 hover:text-red-600">
-            <TrashIcon />
-          </button>
-        )}
+        <button type="button" onClick={onRemove} title="מחק שורה" className="w-9 shrink-0 flex justify-center text-gray-300 hover:text-red-600">
+          <TrashIcon />
+        </button>
       </div>
 
       {noteOpen && (
-        <div className="mt-2 ps-9 pe-2">
+        <div className="mt-2.5 ps-11 pe-2">
           <RichEditor
             value={line.note}
             onChange={(html) => onChange({ note: html })}
             toolbar="lite"
             tone="note"
             collapsible
-            maxHeight="180px"
+            maxHeight="200px"
             ariaLabel="הערה לשורה"
             placeholder="הערה לשורה…"
           />
@@ -417,7 +463,7 @@ function VatButton({ mode, rate, onPick }) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="h-9 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 text-[13px] text-gray-700 hover:bg-gray-50"
+        className="h-10 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3.5 text-sm text-gray-700 hover:bg-gray-50"
       >
         {vatLabel(mode)}{rate && mode !== 'exempt' ? <span className="text-gray-400">({rate}%)</span> : null}
         <span className="text-[9px] text-gray-400">▼</span>
@@ -449,9 +495,9 @@ function Toggle({ checked, onChange }) {
       dir="ltr"
       onClick={() => onChange(!checked)}
       title={checked ? 'פעיל' : 'מוחרג מהסכום'}
-      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${checked ? 'bg-blue-600' : 'bg-gray-300'}`}
+      className={`relative inline-flex h-5 w-10 shrink-0 items-center rounded-full transition-colors ${checked ? 'bg-blue-600' : 'bg-gray-300'}`}
     >
-      <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-4' : 'translate-x-0.5'}`} />
+      <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-5' : 'translate-x-0.5'}`} />
     </button>
   );
 }
@@ -462,9 +508,9 @@ function NoteIcon({ open, onClick }) {
       type="button"
       onClick={onClick}
       title={open ? 'הסתר הערה' : 'הערה'}
-      className={`shrink-0 w-8 flex justify-center p-1 rounded ${open ? 'text-amber-500' : 'text-gray-300 hover:text-gray-500'}`}
+      className={`shrink-0 w-9 flex justify-center p-1 rounded ${open ? 'text-amber-500' : 'text-gray-300 hover:text-gray-500'}`}
     >
-      <svg width="18" height="18" viewBox="0 0 24 24" fill={open ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill={open ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
       </svg>
     </button>
@@ -473,7 +519,7 @@ function NoteIcon({ open, onClick }) {
 
 function TrashIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
       <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
     </svg>
@@ -483,7 +529,7 @@ function TrashIcon() {
 function Field({ label, children }) {
   return (
     <label className="block">
-      <span className="block text-[11px] text-gray-500 mb-1">{label}</span>
+      <span className="block text-[12px] text-gray-500 mb-1">{label}</span>
       {children}
     </label>
   );
@@ -491,9 +537,9 @@ function Field({ label, children }) {
 
 function TotalRow({ label, minor, strong }) {
   return (
-    <div className="flex items-center justify-between gap-6">
+    <div className="flex items-center justify-between gap-8">
       <span className={strong ? 'font-semibold text-gray-900' : 'text-gray-500'}>{label}</span>
-      <span className={`tabular-nums ${strong ? 'text-[18px] font-bold text-blue-700' : 'text-gray-700'}`} dir="ltr">
+      <span className={`tabular-nums ${strong ? 'text-[20px] font-bold text-blue-700' : 'text-gray-700'}`} dir="ltr">
         {minor == null ? '—' : formatMinor(minor)}
       </span>
     </div>

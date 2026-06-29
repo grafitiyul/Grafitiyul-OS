@@ -512,12 +512,19 @@ router.get(
   handle(async (req, res) => {
     const deal = await prisma.deal.findUnique({ where: { id: req.params.id }, select: { id: true } });
     if (!deal) return res.status(404).json({ error: 'not_found' });
-    const version = await ensureWorkingVersion(prisma, req.params.id);
+    // `created` lets the client seed a default line for a brand-new deal while
+    // letting an existing deal legitimately have zero lines (user deleted them).
+    let version = await prisma.quoteVersion.findFirst({ where: { dealId: req.params.id, isWorking: true } });
+    let created = false;
+    if (!version) {
+      version = await prisma.quoteVersion.create({ data: { dealId: req.params.id, isWorking: true, status: 'draft' } });
+      created = true;
+    }
     const lines = await prisma.quoteLine.findMany({
       where: { quoteVersionId: version.id },
       orderBy: { sortOrder: 'asc' },
     });
-    res.json({ versionId: version.id, lines: lines.map(toClientLine) });
+    res.json({ versionId: version.id, created, lines: lines.map(toClientLine) });
   }),
 );
 

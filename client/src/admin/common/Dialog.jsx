@@ -29,6 +29,8 @@ export default function Dialog({
   const maxW =
     size === 'sm'
       ? 'sm:max-w-sm'
+      : size === '2xl'
+      ? 'sm:max-w-7xl'
       : size === 'xl'
       ? 'sm:max-w-6xl'
       : size === 'lg'
