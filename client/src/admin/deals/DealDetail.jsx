@@ -432,7 +432,6 @@ export default function DealDetail() {
   if (recommendedLocs.length) cityOptions.push({ label: 'מומלץ למוצר זה', options: recommendedLocs });
   cityOptions.push({ label: recommendedLocs.length ? 'מיקומים נוספים' : 'מיקומים', options: otherLocs });
   const productOptions = products.map((p) => ({ value: p.id, label: p.nameHe }));
-  const activityOptions = ACTIVITY_TYPES.map((v) => ({ value: v, label: ACTIVITY_TYPE_LABELS[v] }));
   const tourLangOptions = TOUR_LANGS.map((l) => ({ value: l.key, label: l.label }));
   const locNotConfigured = !!deal.productId && !!deal.locationId && !recLocIds.has(deal.locationId);
 
@@ -458,19 +457,31 @@ export default function DealDetail() {
       <div className="space-y-4">
         {/* ── Card 1 — פרטי הסיור (operational). Inline read-first editing. ── */}
         <Card variant="panel" title="פרטי הסיור">
-          <div className="space-y-2">
-            {/* Row 1 — Product | City | Activity Type. Product drives the City
-                options (Product×Location variants); price lives in הצעת מחיר. */}
-            <div className="grid grid-cols-3 gap-3">
-              <InlineField id="f-product" label="מוצר" type="dropdown" value={deal.productId || ''}
-                options={productOptions} editFirst={editFirst} placeholder="בחר מוצר"
-                onSave={(v) => saveProduct(v)} />
-              <InlineField id="f-city" label="עיר" type="dropdown" value={deal.locationId || ''}
-                options={cityOptions} editFirst={editFirst} placeholder="בחר עיר"
-                onSave={(v) => saveLocation(v)} />
-              <InlineField id="f-activity" label="סוג פעילות" type="dropdown" value={deal.activityType || ''}
-                options={activityOptions} editFirst={editFirst} placeholder="ללא"
-                onSave={(v) => saveField({ activityType: v || null })} />
+          <div className="space-y-3">
+            {/* Primary band — width follows IMPORTANCE, not symmetry: Product widest,
+                Participants smallest. Flexible proportions (flex-grow) that wrap on a
+                narrow panel instead of a rigid equal-width grid. Activity Type is NOT
+                here — it has a single owner, the header badge. */}
+            <div className="flex flex-wrap gap-x-4 gap-y-3">
+              <div className="flex-[3] min-w-[11rem]">
+                <InlineField id="f-product" label="מוצר" type="dropdown" value={deal.productId || ''}
+                  options={productOptions} editFirst={editFirst} placeholder="בחר מוצר"
+                  onSave={(v) => saveProduct(v)} />
+              </div>
+              <div className="flex-[2] min-w-[8rem]">
+                <InlineField id="f-city" label="עיר" type="dropdown" value={deal.locationId || ''}
+                  options={cityOptions} editFirst={editFirst} placeholder="בחר עיר"
+                  onSave={(v) => saveLocation(v)} />
+              </div>
+              <div className="flex-[2] min-w-[8rem]">
+                <InlineField id="f-tourlang" label="שפת הסיור" type="dropdown" value={deal.tourLanguage || ''}
+                  options={tourLangOptions} editFirst={editFirst} placeholder="ללא"
+                  onSave={(v) => saveField({ tourLanguage: v || null })} />
+              </div>
+              <div className="flex-[1] min-w-[5.5rem]">
+                <InlineField id="f-participants" label="משתתפים" type="number" numeric value={deal.participants ?? ''}
+                  editFirst={editFirst} onSave={(v) => saveField({ participants: v === '' ? null : Number(v) })} />
+              </div>
             </div>
             {locNotConfigured && (
               <p className="text-[12px] text-amber-600">
@@ -478,21 +489,16 @@ export default function DealDetail() {
               </p>
             )}
 
-            {/* Row 2 — Date | Time | Participants. */}
-            <div className="grid grid-cols-3 gap-3">
-              <InlineField id="f-date" label="תאריך" type="date" value={deal.tourDate || ''}
-                editFirst={editFirst} onSave={(v) => saveField({ tourDate: v || null })} />
-              <InlineField id="f-time" label="שעה" type="time" value={deal.tourTime || ''}
-                editFirst={editFirst} onSave={(v) => saveField({ tourTime: v || null })} />
-              <InlineField id="f-participants" label="משתתפים" type="number" numeric value={deal.participants ?? ''}
-                editFirst={editFirst} onSave={(v) => saveField({ participants: v === '' ? null : Number(v) })} />
-            </div>
-
-            {/* Row 3 — Tour language. */}
-            <div className="grid grid-cols-2 gap-3">
-              <InlineField id="f-tourlang" label="שפת הסיור" type="dropdown" value={deal.tourLanguage || ''}
-                options={tourLangOptions} editFirst={editFirst} placeholder="ללא"
-                onSave={(v) => saveField({ tourLanguage: v || null })} />
+            {/* When band — date + time share the row proportionally. */}
+            <div className="flex flex-wrap gap-x-4 gap-y-3">
+              <div className="flex-1 min-w-[8rem]">
+                <InlineField id="f-date" label="תאריך" type="date" value={deal.tourDate || ''}
+                  editFirst={editFirst} onSave={(v) => saveField({ tourDate: v || null })} />
+              </div>
+              <div className="flex-1 min-w-[7rem]">
+                <InlineField id="f-time" label="שעה" type="time" value={deal.tourTime || ''}
+                  editFirst={editFirst} onSave={(v) => saveField({ tourTime: v || null })} />
+              </div>
             </div>
 
             {/* Important customer information — collapsed, expands to the lite editor. */}

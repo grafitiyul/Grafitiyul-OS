@@ -31,6 +31,14 @@ function defaultDisplay(type, value, options) {
   return String(value);
 }
 const INPUT = 'h-9 w-full rounded-md border border-blue-300 bg-white px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200';
+// Shared label + value treatment so read and edit modes line up pixel-for-pixel
+// (px-2 matches the input's text inset → the value never shifts horizontally when
+// the field flips between read and edit). Label is light + roomy; value is strong.
+// This is the platform hierarchy: light label ↓ comfortable gap ↓ strong value.
+const LABEL = 'block text-[11px] text-gray-400 mb-1.5 px-2';
+const VALUE = 'text-[15px] truncate';
+// Read and edit share this min-height so the row keeps its size across the flip.
+const BODY = 'min-h-[38px]';
 
 export default function InlineField({
   id, label, type = 'text', value, options, display, placeholder = '—',
@@ -81,17 +89,19 @@ export default function InlineField({
   }
 
   // ── READ presentation (coordinated, closed) ──
+  // No negative margins: the read value sits at the SAME x as the edit input's text
+  // (both px-2), so opening the field transforms it in place — nothing shifts.
   if (coordinated && !open) {
     const empty = value === '' || value === null || value === undefined;
     return (
       <div className="group">
-        {label && <div className="text-[11px] text-gray-400 mb-0.5">{label}</div>}
+        {label && <span className={LABEL}>{label}</span>}
         <button
           type="button"
           onClick={() => scope.requestOpen(id)}
-          className="w-full text-right rounded-md -mx-2 px-2 py-1.5 min-h-[36px] flex items-center gap-2 transition-colors hover:bg-gray-50"
+          className={`w-full text-right rounded-md px-2 ${BODY} flex items-center gap-2 transition-colors hover:bg-gray-50`}
         >
-          <span className={`text-sm ${empty ? 'text-gray-300' : 'text-gray-900'} truncate`} dir={dir}>
+          <span className={`${VALUE} ${empty ? 'text-gray-300' : 'font-medium text-gray-900'}`} dir={dir}>
             {empty ? placeholder : (display ? display(value) : defaultDisplay(type, value, options))}
           </span>
           <span className="ms-auto shrink-0 text-[12px] text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity">✎</span>
@@ -101,10 +111,13 @@ export default function InlineField({
   }
 
   // ── EDIT presentation ──
+  // Same label + min-height as read mode → the field grows the ✓/✕ INSIDE its own
+  // box (flex-1 input shrinks to fit) without moving its neighbours or its own
+  // value origin. A 1px fade-in only; never a slide.
   return (
     <div>
-      {label && <div className="text-[11px] text-gray-400 mb-0.5">{label}</div>}
-      <div className="flex items-center gap-1.5 animate-[inlineIn_120ms_ease-out]">
+      {label && <span className={LABEL}>{label}</span>}
+      <div className={`flex items-center gap-1.5 ${BODY} animate-[inlineIn_120ms_ease-out]`}>
         <div className="flex-1 min-w-0">{renderInput()}</div>
         {coordinated && (
           <>
@@ -121,7 +134,7 @@ export default function InlineField({
           </>
         )}
       </div>
-      {error && <div className="text-[11px] text-red-600 mt-0.5">{error}</div>}
+      {error && <div className="text-[11px] text-red-600 mt-1 px-2">{error}</div>}
     </div>
   );
 
