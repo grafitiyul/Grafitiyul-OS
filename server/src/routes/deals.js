@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
+import { toClientLine, lineToData } from '../quote/quoteLineMapping.js';
 
 // Deal CRUD + DealContact management. The Deal is the commercial object: it
 // owns agreed value (integer minor units + currency), discount, payment terms,
@@ -459,58 +460,12 @@ router.delete(
 // addon → addon). The total comes from the engine (/api/pricing/builder) and is
 // passed through to Deal.valueMinor — the headline summary cache.
 
-const VALID_LINE_KINDS = ['product', 'addon', 'discount', 'credit', 'manual'];
-const VALID_LINE_VAT_MODES = ['inherit', 'included', 'excluded', 'exempt'];
-
 async function ensureWorkingVersion(client, dealId) {
   const existing = await client.quoteVersion.findFirst({
     where: { dealId, isWorking: true },
   });
   if (existing) return existing;
   return client.quoteVersion.create({ data: { dealId, isWorking: true, status: 'draft' } });
-}
-
-// QuoteLine row → the client's builder line shape (generic refId).
-function toClientLine(l) {
-  return {
-    id: l.id,
-    kind: l.kind,
-    label: l.label || '',
-    refId: l.kind === 'product' ? l.productVariantId : l.kind === 'addon' ? l.addonId : null,
-    quantity: l.quantity,
-    unitPriceMinor: l.unitPriceMinor, // BigInt → Number via the app json replacer
-    vatMode: l.vatMode || 'inherit',
-    vatRate: l.vatRate ?? null,
-    active: l.active,
-    note: l.note || '',
-    overridden: l.overridden,
-  };
-}
-
-// Client builder line → QuoteLine create data (validated; refId → typed FK).
-function lineToData(ln, i) {
-  const kind = VALID_LINE_KINDS.includes(ln.kind) ? ln.kind : 'manual';
-  const vatMode = VALID_LINE_VAT_MODES.includes(ln.vatMode) ? ln.vatMode : 'inherit';
-  // Quantity applies to every line, the product line included. Default 1.
-  let qty = parseInt(ln.quantity, 10);
-  if (!Number.isFinite(qty) || qty < 0) qty = 1;
-  const vatRateRaw = ln.vatRate;
-  const vatRate =
-    vatRateRaw === null || vatRateRaw === undefined || vatRateRaw === '' ? null : parseInt(vatRateRaw, 10);
-  return {
-    kind,
-    label: ln.label ? String(ln.label) : '',
-    productVariantId: kind === 'product' ? ln.refId || null : null,
-    addonId: kind === 'addon' ? ln.refId || null : null,
-    quantity: qty,
-    unitPriceMinor: BigInt(Math.round(Number(ln.unitPriceMinor) || 0)),
-    vatMode,
-    vatRate: Number.isFinite(vatRate) ? vatRate : null,
-    active: ln.active !== false,
-    note: ln.note ? String(ln.note) : null,
-    overridden: !!ln.overridden,
-    sortOrder: i,
-  };
 }
 
 router.get(

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { calculate, baseAmountMinor, splitVat, priceAddon, addonApplies, sabbathHolidayWindow, resolveSystemAddonEntry, PricingError } from '../pricing/engine.js';
+import { buildGroupCards } from '../pricing/groupTicketCards.js';
 
 // Pricing calculator (Slice 2). Admin-only TEST endpoint for the pricing engine.
 // It does NOT touch Deals and writes nothing — it resolves a price list + rule
@@ -410,51 +411,11 @@ router.post(
 );
 
 // ── Group Ticket Builder — the enabled Pricing Cards (business authority) ────
-// Returns every Pricing Card the OWNER opted into Group Ticket Sales — and ONLY
-// the flag decides. There is intentionally NO filter by product, city, activity
-// type, segment, or any hardcoded rule: tomorrow flipping the flag on any card
-// makes it appear here with zero code change. A "card" is sibling PriceRules
-// sharing a cardGroupId; we dedupe to one card and derive its sellable ticket
-// rows from the card's OWN price data (so the row set follows the card, never a
-// hardcoded product shape). Money math stays in /builder — this only supplies the
-// card structure + initial prices.
-function num(v) {
-  return v == null ? null : Number(v);
-}
-
-// Derive a card's sellable rows from its own pricing data. Order of preference
-// matches how the card was authored — ticket types first (the natural group-sales
-// shape), then per-head, then a single flat/base row. Each row is { key, label,
-// unitPriceMinor }; `key` is stable per card so saved quantities re-hydrate.
-function deriveRows(rep) {
-  const tickets = (rep.ticketPrices || [])
-    .slice()
-    .sort((a, b) => (a.ticketType?.sortOrder ?? 0) - (b.ticketType?.sortOrder ?? 0));
-  if (tickets.length) {
-    return tickets.map((p) => ({
-      key: `tt:${p.ticketTypeId}`,
-      label: p.ticketType?.nameHe || 'כרטיס',
-      unitPriceMinor: num(p.priceMinor) ?? 0,
-    }));
-  }
-  if (rep.adultPriceMinor != null || rep.childPriceMinor != null) {
-    const rows = [];
-    if (rep.adultPriceMinor != null)
-      rows.push({ key: 'head:adult', label: 'מחיר למשתתף', unitPriceMinor: num(rep.adultPriceMinor) });
-    if (rep.childPriceMinor != null)
-      rows.push({ key: 'head:child', label: 'ילד', unitPriceMinor: num(rep.childPriceMinor) });
-    return rows;
-  }
-  if (rep.fixedPriceMinor != null)
-    return [{ key: 'fixed', label: 'מחיר קבוצה', unitPriceMinor: num(rep.fixedPriceMinor) }];
-  const firstTier = (rep.tiers || [])[0];
-  if (firstTier)
-    return [{ key: 'base', label: 'מחיר בסיס', unitPriceMinor: num(firstTier.totalPriceMinor) ?? 0 }];
-  if (rep.basePriceMinor != null)
-    return [{ key: 'base', label: 'מחיר', unitPriceMinor: num(rep.basePriceMinor) }];
-  return [{ key: 'base', label: 'מחיר', unitPriceMinor: 0 }];
-}
-
+// The OWNER opts a Pricing Card into Group Ticket Sales and ONLY the flag decides
+// which cards arrive here — no filter by product, city, activity, segment, or any
+// hardcoded rule. The pure transform (buildGroupCards) enforces the rest: only
+// ticket-structured cards become sellable rows, with NO fabricated fallbacks, and
+// unconfigured cards are surfaced separately for an explicit admin warning.
 router.get(
   '/group-cards',
   handle(async (req, res) => {
@@ -464,28 +425,9 @@ router.get(
       include: {
         product: { select: { nameHe: true } },
         ticketPrices: { include: { ticketType: { select: { nameHe: true, sortOrder: true } } } },
-        tiers: { orderBy: { sortOrder: 'asc' } },
       },
     });
-
-    // Dedupe sibling rules → one card per cardGroupId (first rep keeps board order).
-    const seen = new Set();
-    const cards = [];
-    for (const rep of rules) {
-      if (!rep.cardGroupId || seen.has(rep.cardGroupId)) continue;
-      seen.add(rep.cardGroupId);
-      cards.push({
-        cardGroupId: rep.cardGroupId,
-        // Display only — NOT a filter. The flag is the only authority.
-        title: rep.product?.nameHe || 'כרטיס תמחור',
-        priceModel: rep.priceModel,
-        // Card VAT, so each ticket line inherits the card's VAT explicitly.
-        vatMode: rep.vatMode || null,
-        vatRate: rep.vatRate ?? null,
-        rows: deriveRows(rep),
-      });
-    }
-    res.json(cards);
+    res.json(buildGroupCards(rules));
   }),
 );
 

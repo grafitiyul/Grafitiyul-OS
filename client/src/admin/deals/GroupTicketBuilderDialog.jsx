@@ -8,63 +8,71 @@ import { formatMinor, minorToInput, toMinor } from '../../lib/money.js';
 // Group Ticket Builder — a dedicated ticket-sales workspace for Group deals. It is
 // NOT the Business Price Builder: instead of free rows, each Pricing Card the owner
 // opted into Group Ticket Sales (the flag is the SOLE authority) becomes one
-// section, with one row per ticket type. No product/city/activity filtering — the
-// card list is whatever the server returns from /api/pricing/group-cards.
+// section, with one row per priced ticket type. No product/city/activity filtering;
+// no fabricated rows — only cards with explicit ticket-type pricing are sellable
+// (cards without it are surfaced as a config warning, never invented into a row).
 //
 // It REUSES the platform: the same Dialog shell + totals area, the same calculation
 // engine (/api/pricing/builder) and the same canonical storage (QuoteVersion /
-// QuoteLine via /api/deals/:id/price-lines). Each ticket row is one manual
-// QuoteLine; its stable identity lives in the line's `note` (gt:<cardGroupId>:<rowKey>)
-// so saved quantities/overrides re-hydrate on reopen. Payment Terms / Payment Method
-// are intentionally absent — they belong to the Deal's financial area, not here.
+// QuoteLine via /api/deals/:id/price-lines).
+//
+// Row identity is STRUCTURED, never note-encoded: each line persists
+// sourceKind='group_ticket' + sourceCardGroupId + ticketTypeId, so reopening
+// re-hydrates the exact card/ticket-type. The user `note` is left untouched and is
+// safe to edit/clear/translate without affecting identity. Payment Terms / Payment
+// Method are intentionally absent — they belong to the Deal's financial area.
 
-// Stable per-row identity persisted in QuoteLine.note. cardGroupId is a cuid (no
-// colon); rowKey may contain colons (e.g. "tt:<id>"), so parse only the prefix.
-function noteKeyFor(cardGroupId, rowKey) {
-  return `gt:${cardGroupId}:${rowKey}`;
+const SOURCE_KIND = 'group_ticket';
+
+// In-dialog row key (also the engine line id) — distinct per card × ticket type.
+function rowIdFor(cardGroupId, ticketTypeId) {
+  return `${cardGroupId}::${ticketTypeId}`;
 }
-function parseNoteKey(note) {
-  const m = /^gt:([^:]+):(.+)$/.exec(note || '');
-  return m ? { cardGroupId: m[1], rowKey: m[2] } : null;
-}
-function rowIdFor(cardGroupId, rowKey) {
-  return `${cardGroupId}::${rowKey}`;
+// Identity key used to match a SAVED line back to a current card row. Only
+// group-ticket lines carrying both structured ids participate.
+function savedKeyOf(line) {
+  if (line?.sourceKind !== SOURCE_KIND) return null;
+  if (!line.sourceCardGroupId || !line.ticketTypeId) return null;
+  return rowIdFor(line.sourceCardGroupId, line.ticketTypeId);
 }
 
 export default function GroupTicketBuilderDialog({ open, deal, context, onClose, onSaved }) {
   const [loading, setLoading] = useState(true);
   const [cards, setCards] = useState([]);
-  // rowId → { quantity, unitPriceMinor, overridden }. cardPrice stays on the card
-  // (source of truth) so a non-overridden row always reflects the latest card price.
+  const [unconfigured, setUnconfigured] = useState([]);
+  // rowId → { quantity, unitPriceMinor, overridden }. The card's own price stays on
+  // the card (source of truth); a non-overridden row always reflects the latest.
   const [byRow, setByRow] = useState({});
   const [computed, setComputed] = useState(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const calcTimer = useRef(null);
 
-  // Load the enabled cards + the deal's existing lines, then merge them. Saved
-  // quantities/overrides win for rows that still exist; new cards default to qty 0.
+  // Load the enabled cards + the deal's existing lines, then merge by STRUCTURED
+  // identity (sourceCardGroupId + ticketTypeId). Saved quantities/overrides win for
+  // rows that still exist; new rows default to qty 0.
   useEffect(() => {
     if (!open) return;
     let live = true;
     setLoading(true);
     setSaveError(null);
     Promise.all([
-      api.pricing.groupCards().catch(() => []),
+      api.pricing.groupCards().catch(() => ({ cards: [], unconfigured: [] })),
       api.deals.getPriceLines(deal.id).then((r) => r?.lines || []).catch(() => []),
     ])
-      .then(([cardList, savedLines]) => {
+      .then(([cardData, savedLines]) => {
         if (!live) return;
+        const cardList = cardData?.cards || [];
         const savedByKey = new Map();
         for (const ln of savedLines) {
-          const parsed = parseNoteKey(ln.note);
-          if (parsed) savedByKey.set(noteKeyFor(parsed.cardGroupId, parsed.rowKey), ln);
+          const key = savedKeyOf(ln);
+          if (key) savedByKey.set(key, ln);
         }
         const next = {};
         for (const card of cardList) {
           for (const row of card.rows) {
-            const id = rowIdFor(card.cardGroupId, row.key);
-            const saved = savedByKey.get(noteKeyFor(card.cardGroupId, row.key));
+            const id = rowIdFor(card.cardGroupId, row.ticketTypeId);
+            const saved = savedByKey.get(id);
             next[id] = {
               quantity: saved ? Number(saved.quantity) || 0 : 0,
               unitPriceMinor: saved?.overridden ? Number(saved.unitPriceMinor) || 0 : row.unitPriceMinor,
@@ -73,6 +81,7 @@ export default function GroupTicketBuilderDialog({ open, deal, context, onClose,
           }
         }
         setCards(cardList);
+        setUnconfigured(cardData?.unconfigured || []);
         setByRow(next);
         setLoading(false);
       });
@@ -83,11 +92,12 @@ export default function GroupTicketBuilderDialog({ open, deal, context, onClose,
   }, [open, deal?.id]);
 
   // Flatten cards + per-row state into builder lines (engine input + save payload).
+  // Each line carries its structured identity; `note` is intentionally never set.
   const lines = useMemo(() => {
     const out = [];
     for (const card of cards) {
       for (const row of card.rows) {
-        const id = rowIdFor(card.cardGroupId, row.key);
+        const id = rowIdFor(card.cardGroupId, row.ticketTypeId);
         const st = byRow[id] || { quantity: 0, unitPriceMinor: row.unitPriceMinor, overridden: false };
         out.push({
           id,
@@ -99,8 +109,10 @@ export default function GroupTicketBuilderDialog({ open, deal, context, onClose,
           vatMode: card.vatMode || 'inherit',
           vatRate: card.vatRate ?? null,
           active: true,
-          note: noteKeyFor(card.cardGroupId, row.key),
           overridden: st.overridden,
+          sourceKind: SOURCE_KIND,
+          sourceCardGroupId: card.cardGroupId,
+          ticketTypeId: row.ticketTypeId,
         });
       }
     }
@@ -184,13 +196,24 @@ export default function GroupTicketBuilderDialog({ open, deal, context, onClose,
             </div>
           )}
 
+          {/* Explicit config warning — flagged cards WITHOUT ticket-type pricing.
+              We never invent rows for them; the admin must add ticket pricing. */}
+          {!loading && unconfigured.length > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12px] text-amber-800">
+              כרטיסי התמחור הבאים מסומנים למכירת כרטיסים קבוצתית אך אין להם תמחור לפי סוג כרטיס,
+              ולכן אינם מוצגים כאן:
+              <span className="font-medium"> {unconfigured.map((c) => c.title).join(' · ')}</span>.
+              הגדירו עבורם מודל "סוגי כרטיסים" במסך התמחור.
+            </div>
+          )}
+
           {loading ? (
             <div className="text-sm text-gray-400 py-10 text-center">טוען כרטיסים…</div>
           ) : cards.length === 0 ? (
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-6 text-[13px] text-amber-800 text-center">
-              אין כרטיסי תמחור שזמינים למכירת כרטיסים קבוצתית.
+              אין כרטיסי תמחור עם תמחור לפי סוג כרטיס שזמינים למכירת כרטיסים קבוצתית.
               <div className="text-[12px] text-amber-700 mt-1">
-                סמנו כרטיס תמחור כ"זמין למכירת כרטיסים קבוצתית" במסך התמחור כדי שיופיע כאן.
+                סמנו כרטיס תמחור (מסוג "סוגי כרטיסים") כ"זמין למכירת כרטיסים קבוצתית" במסך התמחור.
               </div>
             </div>
           ) : (
@@ -241,7 +264,7 @@ function CardSection({ card, byRow, onQty, onPrice, onRevert }) {
         </div>
         <div className="divide-y divide-gray-100">
           {card.rows.map((row) => {
-            const id = rowIdFor(card.cardGroupId, row.key);
+            const id = rowIdFor(card.cardGroupId, row.ticketTypeId);
             const st = byRow[id] || { quantity: 0, unitPriceMinor: row.unitPriceMinor, overridden: false };
             const lineTotal = (Number(st.unitPriceMinor) || 0) * (st.quantity || 0);
             return (

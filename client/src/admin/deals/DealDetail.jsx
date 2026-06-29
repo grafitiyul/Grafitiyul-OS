@@ -20,6 +20,8 @@ import {
   ROLE_LABELS,
   TOUR_LANGS,
   contactNameHe,
+  FINANCE_WORKSPACE,
+  resolveFinanceWorkspace,
 } from './config.js';
 import RichEditor from '../../editor/RichEditor.jsx';
 import { InlineEditScope } from '../common/inline/InlineEditScope.jsx';
@@ -743,11 +745,11 @@ export default function DealDetail() {
         onClose={() => setOrgDialogOpen(false)}
         onSaved={refresh}
       />
-      {/* Group deals get a dedicated Group Ticket Builder; everyone else gets the
-          Business Price Builder. The activityType only ROUTES to the right
-          workspace — it never filters which Pricing Cards appear (the card's own
-          "Available for Group Ticket Sales" flag is the sole authority for that). */}
-      {deal.activityType === 'group' ? (
+      {/* Which finance workspace opens is resolved in ONE place (config.js) so the
+          rule is swappable for the future "Activity Type → Finance Workspace" CRM
+          setting — no scattered activityType checks. Routing only: it never filters
+          which Pricing Cards appear (the card's flag is the sole authority). */}
+      {resolveFinanceWorkspace(deal) === FINANCE_WORKSPACE.TICKET_BUILDER ? (
         <GroupTicketBuilderDialog
           deal={deal}
           context={priceContext}

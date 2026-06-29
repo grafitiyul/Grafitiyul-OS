@@ -992,8 +992,22 @@ model QuoteLine {
   vatMode          String          @default("inherit") // inherit | included | excluded | exempt
   vatRate          Int?
   active           Boolean         @default(true)
+  // `note` is USER content only — never a system identifier. Safe to edit, clear or
+  // translate without affecting what the line represents (see structured identity).
   note             String?
   overridden       Boolean         @default(false)
+  // Structured identity for Group Ticket Builder lines. A group-ticket line is ONE
+  // ticket type sold from ONE Pricing Card, so it persists exactly that — never
+  // encoded into `note`. All additive/nullable; regular builder lines leave them
+  // null. `sourceKind` names the originating workspace (e.g. 'group_ticket').
+  // `sourceCardGroupId` is a LOOSE key (cardGroupId is shared across a card's
+  // sibling PriceRules; there is no CardGroup table — same loose-key approach as
+  // FlowAnswer.stepId / ownerUserId). `ticketType` is a real FK (SetNull) so a
+  // catalog delete degrades gracefully like productVariant/addon.
+  sourceKind        String?
+  sourceCardGroupId String?
+  ticketType        TicketType?     @relation(fields: [ticketTypeId], references: [id], onDelete: SetNull)
+  ticketTypeId      String?
   sortOrder        Int             @default(0)
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
@@ -1001,6 +1015,7 @@ model QuoteLine {
   @@index([quoteVersionId])
   @@index([productVariantId])
   @@index([addonId])
+  @@index([ticketTypeId])
 }
 
 // ============================================================================
@@ -1325,6 +1340,9 @@ model TicketType {
   createdAt     DateTime               @default(now())
   updatedAt     DateTime               @updatedAt
   priceEntries  PriceRuleTicketPrice[]
+  // Group-ticket quote lines that froze this ticket type as their structured
+  // identity. SetNull on delete (see QuoteLine.ticketType).
+  quoteLines    QuoteLine[]
 
   @@index([sortOrder])
 }

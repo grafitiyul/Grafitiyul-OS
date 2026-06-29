@@ -24,6 +24,25 @@ export const ACTIVITY_TYPE_LABELS = {
   business: 'עסקי',
 };
 
+// Finance workspace routing — which pricing workspace a Deal opens when the user
+// clicks "מחיר". Kept in ONE place so the rule is swappable: today it maps from
+// activityType, but the intended future model is a CRM setting
+// (ActivityType → Finance Workspace). Consumers must call resolveFinanceWorkspace()
+// and NEVER scatter `activityType === 'group'` checks across components.
+export const FINANCE_WORKSPACE = {
+  PRICE_BUILDER: 'price_builder', // Business Price Builder (free rows)
+  TICKET_BUILDER: 'ticket_builder', // Group Ticket Builder (ticket-type sales)
+};
+
+// TEMP mapping (the only place that reads activityType for routing). Replace the
+// body with a CRM-setting lookup when "Activity Type → Finance Workspace" ships;
+// the call sites stay unchanged.
+export function resolveFinanceWorkspace(deal) {
+  return deal?.activityType === 'group'
+    ? FINANCE_WORKSPACE.TICKET_BUILDER
+    : FINANCE_WORKSPACE.PRICE_BUILDER;
+}
+
 // DealContact roles — a contact may hold multiple. The first three are the
 // operational quick-add vocabulary; the rest are the original roles, kept for
 // backward compatibility with existing data. (Single hardcoded catalog for now;
