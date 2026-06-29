@@ -475,7 +475,7 @@ export default function DealDetail() {
                   Row 1: Product (cols 1-2) · Price (col 3)
                   Row 2: Date · Time · Participants
                   Row 3: City · Tour Language · (empty) */}
-            <div className="grid grid-cols-3 gap-x-3 gap-y-3">
+            <div className="grid grid-cols-[1.9fr_1fr_1fr] gap-x-2 gap-y-3">
               {/* Row 1 */}
               <div className="col-span-2">
                 <InlineField id="f-product" iconInline icon={<span className={FIELD_EMOJI}>📦</span>} label="מוצר"
@@ -522,14 +522,15 @@ export default function DealDetail() {
               </p>
             )}
 
-            {/* Important customer information — collapsed, expands to the lite editor. */}
-            <CollapsibleNote id="f-customerInfo" label="מידע חשוב על הלקוח" value={deal.customerInfo || ''} rich
-              placeholder="הוסיפו מידע פנימי חשוב לשיחה…"
-              onSave={(v) => saveField({ customerInfo: v || null })} />
-
             {/* Operational action bar — primary action varies by Activity Type. UI
                 only for now (no handlers wired yet). */}
             <DealActionRow activityType={deal.activityType} />
+
+            {/* Important customer information — sits BELOW the action bar. Collapsed to
+                ~3 formatted lines by default, with a "show more" control. */}
+            <CollapsibleNote id="f-customerInfo" label="מידע חשוב על הלקוח" value={deal.customerInfo || ''} rich
+              placeholder="הוסיפו מידע פנימי חשוב לשיחה…"
+              onSave={(v) => saveField({ customerInfo: v || null })} />
           </div>
         </Card>
 
