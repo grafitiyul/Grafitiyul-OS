@@ -7,16 +7,17 @@ import { formatMinor, minorToInput, toMinor } from '../../lib/money.js';
 import { PAYMENT_METHODS } from './config.js';
 
 // Price Builder — a clean, document-style editor for a Deal's base pricing. It
-// edits the working QuoteVersion's lines (canonical storage). This file is the
-// UI/UX layer only: all money math runs in the engine via /api/pricing/builder,
-// load/save go through /api/deals/:id/price-lines, and nothing here changes the
-// schema, calculations, or quote workflow.
+// edits the working QuoteVersion's lines (canonical storage). UI/UX layer only:
+// money math runs in the engine via /api/pricing/builder; load/save go through
+// /api/deals/:id/price-lines. No schema/calculation/quote-workflow changes here.
 
+const VAT_OPTIONS = [
+  { mode: 'included', label: 'מחירים כולל מע״מ' },
+  { mode: 'excluded', label: 'מחירים לפני מע״מ' },
+  { mode: 'exempt', label: 'פטור ממע״מ' },
+];
 function vatLabel(mode) {
-  if (mode === 'exempt') return 'פטור ממע״מ';
-  if (mode === 'excluded') return 'מחירים לפני מע״מ';
-  if (mode === 'included') return 'מחירים כולל מע״מ';
-  return 'מע״מ';
+  return VAT_OPTIONS.find((o) => o.mode === mode)?.label || 'מע״מ';
 }
 function nid() {
   return globalThis.crypto?.randomUUID ? crypto.randomUUID() : `l${Math.random().toString(36).slice(2, 10)}`;
@@ -37,21 +38,32 @@ function normalize(l) {
   };
 }
 function seedProductLine(context) {
-  return normalize({ kind: 'product', label: 'מחיר בסיס', refId: context?.productVariantId || null });
+  return normalize({ kind: 'product', label: '', refId: context?.productVariantId || null });
 }
 function isRichEmpty(html) {
   if (!html) return true;
   return html.replace(/<[^>]*>/g, '').replace(/&nbsp;|\s/g, '') === '';
 }
+const CELL = 'h-9 rounded-md border border-gray-200 px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-gray-50 disabled:text-gray-400';
 
 export default function PriceBuilderDialog({ open, deal, context, onClose, onSaved }) {
   const [lines, setLines] = useState([]);
   const [openNotes, setOpenNotes] = useState(() => new Set());
+  const [freeRows, setFreeRows] = useState(() => new Set()); // rows in free-text (non-catalog) mode
   const [computed, setComputed] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [products, setProducts] = useState([]);
+  const [terms, setTerms] = useState([]);
   const [paymentTerms, setPaymentTerms] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('');
   const calcTimer = useRef(null);
+
+  // Catalogs (product dropdown + payment-terms dropdown).
+  useEffect(() => {
+    if (!open) return;
+    api.products.list().then(setProducts).catch(() => {});
+    api.payment.listTerms().then(setTerms).catch(() => {});
+  }, [open]);
 
   // Load the working version's lines + the deal's payment fields on open.
   useEffect(() => {
@@ -70,13 +82,16 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
             : [seedProductLine(context), ...saved]
           : [seedProductLine(context)];
         setLines(next);
-        // Notes that already have content start open so they're not hidden.
-        setOpenNotes(new Set(next.filter((l) => !isRichEmpty(l.note)).map((l) => l.id)));
+        // First row's note opens by default; notes with content also open.
+        const noteOpen = new Set(next.filter((l) => !isRichEmpty(l.note)).map((l) => l.id));
+        if (next[0]) noteOpen.add(next[0].id);
+        setOpenNotes(noteOpen);
       })
       .catch(() => {
         if (live) {
-          setLines([seedProductLine(context)]);
-          setOpenNotes(new Set());
+          const seed = [seedProductLine(context)];
+          setLines(seed);
+          setOpenNotes(new Set([seed[0].id]));
         }
       });
     return () => {
@@ -96,8 +111,7 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
       api.pricing
         .builder({ context, lines })
         .then((r) => setComputed(r))
-        .catch((e) => setComputed({ ok: false, error: e.message }))
-        .finally(() => {});
+        .catch((e) => setComputed({ ok: false, error: e.message }));
     }, 300);
     return () => calcTimer.current && clearTimeout(calcTimer.current);
   }, [open, lines, context]);
@@ -105,32 +119,31 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   const computedById = new Map((computed?.lines || []).map((l) => [l.id, l]));
   const totals = computed?.totals;
   const vatDefault = computed?.vatDefault;
-  const res = computed?.productResolution;
+  const orderVatMode = lines.find((l) => l.vatMode && l.vatMode !== 'inherit')?.vatMode || vatDefault?.mode;
 
   function updateLine(id, patch) {
     setLines((ls) => ls.map((l) => (l.id === id ? { ...l, ...patch } : l)));
   }
   function removeLine(id) {
     setLines((ls) => ls.filter((l) => l.id !== id));
-    setOpenNotes((s) => {
-      const n = new Set(s);
-      n.delete(id);
-      return n;
-    });
+    setOpenNotes((s) => { const n = new Set(s); n.delete(id); return n; });
+    setFreeRows((s) => { const n = new Set(s); n.delete(id); return n; });
   }
   function addLine() {
-    setLines((ls) => [...ls, normalize({ kind: 'manual', label: '' })]);
+    const l = normalize({ kind: 'manual', label: '' });
+    setLines((ls) => [...ls, l]);
   }
   function toggleNote(id) {
-    setOpenNotes((s) => {
-      const n = new Set(s);
-      if (n.has(id)) n.delete(id);
-      else n.add(id);
-      return n;
-    });
+    setOpenNotes((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   }
   function onReorder(ids) {
     setLines((ls) => ids.map((id) => ls.find((l) => l.id === id)).filter(Boolean));
+  }
+  function setOrderVat(mode) {
+    setLines((ls) => ls.map((l) => ({ ...l, vatMode: mode })));
+  }
+  function setFree(id, on) {
+    setFreeRows((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n; });
   }
 
   async function save() {
@@ -147,7 +160,6 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
         productId: context?.productId || null,
         productVariantId: context?.productVariantId || null,
       });
-      // Payment fields live on the Deal — persist via the existing update API.
       await api.deals.update(deal.id, {
         paymentTerms: paymentTerms || null,
         paymentMethod: paymentMethod || null,
@@ -174,16 +186,17 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
           <button type="button" onClick={onClose} className="text-sm text-gray-600 border border-gray-300 rounded-md px-4 py-1.5 hover:bg-gray-50">
             ביטול
           </button>
-          <button onClick={save} disabled={saving} className="bg-emerald-600 text-white text-sm font-semibold rounded-md px-4 py-1.5 hover:bg-emerald-700 disabled:opacity-50">
+          <button onClick={save} disabled={saving} className="bg-emerald-600 text-white text-sm font-semibold rounded-md px-5 py-2 hover:bg-emerald-700 disabled:opacity-50">
             {saving ? 'שומר…' : 'שמור וסגור'}
           </button>
         </>
       }
     >
-      <div className="space-y-5">
-        {/* Toolbar — pushed to the left in RTL. */}
+      <div className="space-y-6 px-1 py-1">
+        {/* Toolbar — VAT button then "⋯" (swapped), pushed to the left in RTL. */}
         <div className="flex">
           <div className="flex items-center gap-2 ms-auto">
+            <VatButton mode={orderVatMode} rate={vatDefault?.rate} onPick={setOrderVat} />
             <button
               type="button"
               title="הגדרות בונה המחיר — בקרוב"
@@ -191,43 +204,45 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
             >
               ⋯
             </button>
-            <VatButton mode={vatDefault?.mode} rate={vatDefault?.rate} />
           </div>
         </div>
 
-        {/* Conflict surfacing — only when the engine can't resolve a single rule.
-            Keeps the user from a dead end without cluttering the clean layout. */}
-        {res && !res.ok && res.error === 'ambiguous_price_rule' && res.conflictRules?.length > 0 && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
-            <div className="font-medium">נמצאו כללי תמחור סותרים — אפשר להזין מחיר ידני בינתיים:</div>
-            <ul className="mt-1 space-y-0.5">
-              {res.conflictRules.map((r) => (
-                <li key={r.id}>
-                  • {[r.scope.product, r.scope.location, r.scope.activityType, r.scope.organizationSubtype].filter(Boolean).join(' · ') || 'כלל כללי'} (עדיפות {r.priority})
-                </li>
-              ))}
-            </ul>
+        {/* Column labels */}
+        <div>
+          <div className="flex items-center gap-2 px-2 pb-1.5 text-[11px] font-medium text-gray-400">
+            <span className="w-5 shrink-0" aria-hidden />
+            <span className="w-9 shrink-0" aria-hidden />
+            <span className="flex-1 min-w-[10rem]">מוצר</span>
+            <span className="w-28 shrink-0 text-center">מחיר</span>
+            <span className="w-16 shrink-0 text-center">כמות</span>
+            <span className="w-40 shrink-0">סה״כ שורה</span>
+            <span className="w-8 shrink-0" aria-hidden />
+            <span className="w-8 shrink-0" aria-hidden />
           </div>
-        )}
 
-        {/* Lines */}
-        <div className="rounded-xl border border-gray-200 p-1.5">
-          <ReorderableList
-            items={lines}
-            onReorder={onReorder}
-            emptyText="אין שורות. הוסיפו שורה כדי לבנות את המחיר."
-            renderRow={(line, { handle }) => (
-              <LineRow
-                line={line}
-                computed={computedById.get(line.id)}
-                noteOpen={openNotes.has(line.id)}
-                handle={handle}
-                onChange={(patch) => updateLine(line.id, patch)}
-                onToggleNote={() => toggleNote(line.id)}
-                onRemove={() => removeLine(line.id)}
-              />
-            )}
-          />
+          {/* Lines */}
+          <div className="rounded-xl border border-gray-200 p-2">
+            <ReorderableList
+              items={lines}
+              onReorder={onReorder}
+              emptyText="אין שורות. הוסיפו שורה כדי לבנות את המחיר."
+              renderRow={(line, { handle }) => (
+                <LineRow
+                  line={line}
+                  computed={computedById.get(line.id)}
+                  products={products}
+                  defaultProductId={context?.productId || null}
+                  noteOpen={openNotes.has(line.id)}
+                  free={freeRows.has(line.id)}
+                  handle={handle}
+                  onChange={(patch) => updateLine(line.id, patch)}
+                  onToggleNote={() => toggleNote(line.id)}
+                  onRemove={() => removeLine(line.id)}
+                  onSetFree={(on) => setFree(line.id, on)}
+                />
+              )}
+            />
+          </div>
         </div>
 
         {/* Add row — right side. */}
@@ -241,17 +256,9 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
           </button>
         </div>
 
-        {/* Bottom — totals (right) and commercial fields (left), not stretched. */}
-        <div className="flex flex-wrap items-start justify-between gap-6 pt-2">
-          <div className="min-w-[16rem] space-y-1.5 text-sm">
-            <TotalRow label="סכום ביניים" minor={totals?.netMinor} />
-            <TotalRow label={`מע״מ${vatDefault?.rate ? ` (${vatDefault.rate}%)` : ''}`} minor={totals?.vatMinor} />
-            <div className="border-t border-gray-100 pt-1.5">
-              <TotalRow label='סה"כ' minor={totals?.grossMinor} strong />
-            </div>
-          </div>
-
-          <div className="w-64 space-y-3">
+        {/* Bottom — payment (right) and totals (left) — swapped. */}
+        <div className="flex flex-wrap items-start justify-between gap-6 pt-2 border-t border-gray-100">
+          <div className="w-64 space-y-3 pt-3">
             <Field label="אמצעי תשלום">
               <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={FIELD}>
                 <option value="">— ללא —</option>
@@ -259,8 +266,22 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
               </select>
             </Field>
             <Field label="תנאי תשלום">
-              <input value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} placeholder="שוטף + 30" className={FIELD} />
+              <select value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} className={FIELD}>
+                <option value="">— ללא —</option>
+                {terms.map((t) => (<option key={t.id} value={t.nameHe}>{t.nameHe}</option>))}
+                {paymentTerms && !terms.some((t) => t.nameHe === paymentTerms) && (
+                  <option value={paymentTerms}>{paymentTerms}</option>
+                )}
+              </select>
             </Field>
+          </div>
+
+          <div className="min-w-[16rem] space-y-1.5 text-sm pt-3">
+            <TotalRow label="סכום ביניים" minor={totals?.netMinor} />
+            <TotalRow label={`מע״מ${vatDefault?.rate ? ` (${vatDefault.rate}%)` : ''}`} minor={totals?.vatMinor} />
+            <div className="border-t border-gray-100 pt-1.5">
+              <TotalRow label='סה"כ' minor={totals?.grossMinor} strong />
+            </div>
           </div>
         </div>
       </div>
@@ -270,38 +291,67 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
 
 const FIELD = 'w-full h-9 rounded-md border border-gray-300 px-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200';
 
-function LineRow({ line, computed, noteOpen, handle, onChange, onToggleNote, onRemove }) {
+function LineRow({ line, computed, products, defaultProductId, noteOpen, free, handle, onChange, onToggleNote, onRemove, onSetFree }) {
   const isProduct = line.kind === 'product';
   const disabled = !line.active;
-  // Product price comes from the engine until manually overridden.
-  const shownMinor = isProduct && !line.overridden ? (computed ? computed.unitPriceMinor : line.unitPriceMinor) : line.unitPriceMinor;
-  const negative = Number(shownMinor) < 0;
-  const cellBase = 'h-9 rounded-md border border-gray-200 px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-gray-50 disabled:text-gray-400';
+  // Product price comes from the engine (per-unit base) until manually overridden.
+  const unitMinor = isProduct && !line.overridden && computed ? computed.unitPriceMinor : line.unitPriceMinor;
+  const qty = Number.isFinite(parseInt(line.quantity, 10)) ? parseInt(line.quantity, 10) : 1;
+  const lineTotalMinor = (Number(unitMinor) || 0) * (qty || 0);
+  const negative = lineTotalMinor < 0;
+
+  // Product dropdown state. The product line preselects the deal's product even
+  // before it has been labelled.
+  const matched = products.find((p) => p.nameHe === line.label);
+  const freeMode = free || (!matched && !!line.label);
+  const preselect = isProduct && defaultProductId && products.some((p) => p.id === defaultProductId) ? defaultProductId : '';
+  const selectValue = matched ? matched.id : freeMode ? '__free__' : preselect;
+
+  function onPickProduct(v) {
+    if (v === '__free__') { onSetFree(true); }
+    else if (v === '') { onSetFree(false); onChange({ label: '' }); }
+    else { onSetFree(false); const p = products.find((x) => x.id === v); onChange({ label: p?.nameHe || '' }); }
+  }
 
   return (
-    <div className={`px-1.5 py-2 ${disabled ? 'opacity-60' : ''}`}>
+    <div className={`px-2 py-2 ${disabled ? 'opacity-60' : ''}`}>
       <div className="flex items-center gap-2">
         {/* Right: drag handle + active toggle */}
-        {handle}
+        <span className="w-5 shrink-0 flex justify-center">{handle}</span>
         <Toggle checked={line.active} onChange={(v) => onChange({ active: v })} />
 
-        {/* Center: description, unit price, quantity */}
-        <input
-          value={line.label}
-          disabled={disabled}
-          onChange={(e) => onChange({ label: e.target.value })}
-          placeholder="תיאור"
-          className={`flex-1 min-w-[8rem] ${cellBase}`}
-        />
-        <div className="relative shrink-0">
+        {/* Center: product (dropdown), price, quantity */}
+        <div className="flex-1 min-w-[10rem] flex items-center gap-2">
+          <select
+            value={selectValue}
+            disabled={disabled}
+            onChange={(e) => onPickProduct(e.target.value)}
+            className={`${CELL} ${freeMode ? 'w-40' : 'flex-1'}`}
+          >
+            <option value="">— בחר מוצר —</option>
+            {products.map((p) => (<option key={p.id} value={p.id}>{p.nameHe}</option>))}
+            <option value="__free__">— טקסט חופשי —</option>
+          </select>
+          {freeMode && (
+            <input
+              value={line.label}
+              disabled={disabled}
+              onChange={(e) => onChange({ label: e.target.value })}
+              placeholder="תיאור"
+              className={`${CELL} flex-1`}
+            />
+          )}
+        </div>
+
+        <div className="relative w-28 shrink-0">
           <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[12px] text-gray-400">₪</span>
           <input
-            value={isProduct && !line.overridden ? minorToInput(shownMinor) : minorToInput(line.unitPriceMinor)}
+            value={minorToInput(unitMinor)}
             disabled={disabled}
             onChange={(e) => onChange({ unitPriceMinor: toMinor(e.target.value) ?? 0, ...(isProduct ? { overridden: true } : {}) })}
             inputMode="decimal"
             dir="ltr"
-            className={`w-32 pr-6 text-left ${cellBase} ${negative ? 'text-red-600' : ''}`}
+            className={`w-full pr-6 text-left ${CELL} ${(Number(unitMinor) || 0) < 0 ? 'text-red-600' : ''}`}
           />
         </div>
         <input
@@ -311,19 +361,25 @@ function LineRow({ line, computed, noteOpen, handle, onChange, onToggleNote, onR
           inputMode="numeric"
           dir="ltr"
           title="כמות"
-          className={`w-16 text-center ${cellBase}`}
+          className={`w-16 shrink-0 text-center ${CELL}`}
         />
 
-        {/* Left: note toggle + delete */}
+        {/* Line total */}
+        <div className={`w-40 shrink-0 text-[12px] ${negative ? 'text-red-600' : 'text-gray-600'}`} dir="ltr">
+          <span className="text-gray-400">{minorToInput(unitMinor) || 0} × {qty || 0} = </span>
+          <span className="font-semibold">{formatMinor(lineTotalMinor)}</span>
+        </div>
+
+        {/* Left: note toggle + delete (or restore-source for the product line) */}
         <NoteIcon open={noteOpen} onClick={onToggleNote} />
         {isProduct && !line.overridden ? (
-          <span className="w-8" aria-hidden />
+          <span className="w-8 shrink-0" aria-hidden />
         ) : isProduct ? (
-          <button type="button" onClick={() => onChange({ overridden: false })} title="חזרה למחיר מהמחירון" className="text-gray-400 hover:text-gray-600 text-sm px-1">
+          <button type="button" onClick={() => onChange({ overridden: false })} title="חזרה למחיר מהמחירון" className="w-8 shrink-0 text-gray-400 hover:text-gray-600 text-sm">
             ↺
           </button>
         ) : (
-          <button type="button" onClick={onRemove} title="מחק שורה" className="text-gray-300 hover:text-red-600 p-1">
+          <button type="button" onClick={onRemove} title="מחק שורה" className="w-8 shrink-0 flex justify-center text-gray-300 hover:text-red-600">
             <TrashIcon />
           </button>
         )}
@@ -335,6 +391,7 @@ function LineRow({ line, computed, noteOpen, handle, onChange, onToggleNote, onR
             value={line.note}
             onChange={(html) => onChange({ note: html })}
             toolbar="lite"
+            tone="note"
             collapsible
             maxHeight="180px"
             ariaLabel="הערה לשורה"
@@ -346,38 +403,37 @@ function LineRow({ line, computed, noteOpen, handle, onChange, onToggleNote, onR
   );
 }
 
-function VatButton({ mode, rate }) {
+function VatButton({ mode, rate, onPick }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
     if (!open) return undefined;
-    function onDoc(e) {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    }
+    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
-  const detail =
-    mode === 'exempt'
-      ? 'העסקה פטורה ממע״מ.'
-      : mode === 'excluded'
-        ? `המחירים הם לפני מע״מ${rate ? ` (${rate}%)` : ''}; המע״מ מתווסף בסה"כ.`
-        : mode === 'included'
-          ? `המחירים כוללים מע״מ${rate ? ` (${rate}%)` : ''}.`
-          : 'מצב המע״מ נקבע לפי המחירון.';
   return (
     <div className="relative" ref={ref}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="h-9 inline-flex items-center rounded-lg border border-gray-200 px-3 text-[13px] text-gray-700 hover:bg-gray-50"
+        className="h-9 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 text-[13px] text-gray-700 hover:bg-gray-50"
       >
-        {vatLabel(mode)}
+        {vatLabel(mode)}{rate && mode !== 'exempt' ? <span className="text-gray-400">({rate}%)</span> : null}
+        <span className="text-[9px] text-gray-400">▼</span>
       </button>
       {open && (
-        <div className="absolute z-20 mt-1 w-64 rounded-lg border border-gray-200 bg-white p-3 text-[12px] text-gray-600 shadow-lg">
-          {detail}
-          <div className="mt-1 text-[11px] text-gray-400">נקבע לפי המחירון (לקריאה בלבד).</div>
+        <div className="absolute z-20 mt-1 w-56 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+          {VAT_OPTIONS.map((o) => (
+            <button
+              key={o.mode}
+              type="button"
+              onClick={() => { onPick(o.mode); setOpen(false); }}
+              className={`w-full text-right px-3 py-2 text-sm hover:bg-gray-50 ${mode === o.mode ? 'text-blue-700 font-medium' : 'text-gray-700'}`}
+            >
+              {o.label}
+            </button>
+          ))}
         </div>
       )}
     </div>
@@ -406,7 +462,7 @@ function NoteIcon({ open, onClick }) {
       type="button"
       onClick={onClick}
       title={open ? 'הסתר הערה' : 'הערה'}
-      className={`shrink-0 p-1 rounded ${open ? 'text-blue-600' : 'text-gray-300 hover:text-gray-500'}`}
+      className={`shrink-0 w-8 flex justify-center p-1 rounded ${open ? 'text-amber-500' : 'text-gray-300 hover:text-gray-500'}`}
     >
       <svg width="18" height="18" viewBox="0 0 24 24" fill={open ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
@@ -437,7 +493,7 @@ function TotalRow({ label, minor, strong }) {
   return (
     <div className="flex items-center justify-between gap-6">
       <span className={strong ? 'font-semibold text-gray-900' : 'text-gray-500'}>{label}</span>
-      <span className={`tabular-nums ${strong ? 'text-[17px] font-bold text-blue-700' : 'text-gray-700'}`} dir="ltr">
+      <span className={`tabular-nums ${strong ? 'text-[18px] font-bold text-blue-700' : 'text-gray-700'}`} dir="ltr">
         {minor == null ? '—' : formatMinor(minor)}
       </span>
     </div>

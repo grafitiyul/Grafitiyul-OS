@@ -485,7 +485,9 @@ function toClientLine(l) {
 function lineToData(ln, i) {
   const kind = VALID_LINE_KINDS.includes(ln.kind) ? ln.kind : 'manual';
   const vatMode = VALID_LINE_VAT_MODES.includes(ln.vatMode) ? ln.vatMode : 'inherit';
-  const qty = kind === 'product' ? 1 : Math.max(0, parseInt(ln.quantity, 10) || 0);
+  // Quantity applies to every line, the product line included. Default 1.
+  let qty = parseInt(ln.quantity, 10);
+  if (!Number.isFinite(qty) || qty < 0) qty = 1;
   const vatRateRaw = ln.vatRate;
   const vatRate =
     vatRateRaw === null || vatRateRaw === undefined || vatRateRaw === '' ? null : parseInt(vatRateRaw, 10);

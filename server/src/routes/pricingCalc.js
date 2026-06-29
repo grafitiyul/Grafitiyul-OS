@@ -294,6 +294,10 @@ router.post(
             priceModel: r.priceModel,
             vatMode: r.vatMode,
             vatRate: r.vatRate,
+            // Per-unit base in the rule's VAT terms (qty 1) — the product line's
+            // unit price. Multiplying by quantity + splitVat reproduces the engine
+            // result for qty 1 and scales linearly for more.
+            baseAmountMinor: r.debug?.baseAmountMinor ?? r.grossMinor,
             netMinor: r.netMinor,
             vatMinor: r.vatMinor,
             grossMinor: r.grossMinor,
@@ -339,35 +343,37 @@ router.post(
       const isProduct = kind === 'product';
       const active = ln.active !== false;
       const engineProduct = isProduct && !ln.overridden && productResolution.ok;
-      const quantity = isProduct ? 1 : Number(ln.quantity) || 0;
-      let unitPriceMinor = Number(ln.unitPriceMinor) || 0;
+      // Quantity applies to EVERY line (the product line included — this was the
+      // qty×price bug). Default 1 when unset.
+      let quantity = parseInt(ln.quantity, 10);
+      if (!Number.isFinite(quantity) || quantity < 0) quantity = 1;
+
+      // Per-unit price + effective VAT. The product line's unit is the engine's
+      // per-unit base (rule VAT terms) unless overridden; an explicit (non-inherit)
+      // VAT mode on the line wins so the toolbar VAT choice applies to it too.
+      let unitPriceMinor;
       let effMode;
       let effRate;
+      if (engineProduct) {
+        unitPriceMinor = Number(productResolution.baseAmountMinor) || 0;
+        effMode = ln.vatMode && ln.vatMode !== 'inherit' ? ln.vatMode : productResolution.vatMode;
+        effRate = effMode === 'exempt' ? 0 : productResolution.vatRate != null ? productResolution.vatRate : vatDefault.rate;
+      } else {
+        unitPriceMinor = Number(ln.unitPriceMinor) || 0;
+        effMode = !ln.vatMode || ln.vatMode === 'inherit' ? vatDefault.mode : ln.vatMode;
+        effRate = effMode === 'exempt' ? 0 : ln.vatRate != null ? Number(ln.vatRate) : vatDefault.rate;
+      }
+
+      // Single, uniform calc for all lines: amount = sign × unit × quantity → VAT split.
       let net = 0;
       let vat = 0;
       let gross = 0;
-
-      if (engineProduct) {
-        unitPriceMinor = productResolution.grossMinor;
-        effMode = productResolution.vatMode;
-        effRate = productResolution.vatRate;
-        if (active) {
-          net = productResolution.netMinor;
-          vat = productResolution.vatMinor;
-          gross = productResolution.grossMinor;
-        }
-      } else {
-        const mode = !ln.vatMode || ln.vatMode === 'inherit' ? vatDefault.mode : ln.vatMode;
-        const rate = mode === 'exempt' ? 0 : ln.vatRate != null ? Number(ln.vatRate) : vatDefault.rate;
-        effMode = mode;
-        effRate = rate;
-        if (active) {
-          const amount = SIGN(kind) * unitPriceMinor * quantity;
-          const s = splitVat(amount, mode, rate);
-          net = s.netMinor;
-          vat = s.vatMinor;
-          gross = s.grossMinor;
-        }
+      if (active) {
+        const amount = SIGN(kind) * unitPriceMinor * quantity;
+        const s = splitVat(amount, effMode, effRate);
+        net = s.netMinor;
+        vat = s.vatMinor;
+        gross = s.grossMinor;
       }
 
       return {

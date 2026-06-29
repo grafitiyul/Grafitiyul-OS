@@ -30,7 +30,7 @@ export default function Dialog({
     size === 'sm'
       ? 'sm:max-w-sm'
       : size === 'xl'
-      ? 'sm:max-w-5xl'
+      ? 'sm:max-w-6xl'
       : size === 'lg'
       ? 'sm:max-w-xl'
       : size === 'md-wide'
