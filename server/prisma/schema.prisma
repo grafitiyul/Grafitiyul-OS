@@ -885,18 +885,13 @@ model Deal {
   // "פתיח אישי למייל" — commercial (Quote) card. Temporary home on Deal until the
   // QuoteVersion model lands (then it becomes per-quote, this stays as a default).
   quoteEmailIntro       String?
-  // The base tour price (valueMinor) is engine-calculated by default; this flags a
-  // manual override so auto-recalc never silently overwrites a hand-set price.
+  // Legacy flag from the inline base-price input (now unused — per-line override
+  // lives on QuoteLine.overridden). Kept to avoid a destructive drop; removable later.
   basePriceOverridden   Boolean              @default(false)
-  // Price Builder lines (JSON) — the source of truth for the deal's base pricing.
-  // Array of { id, kind, label, refId, quantity, unitPriceMinor, vatMode, vatRate,
-  // active, note, overridden }. valueMinor stores the computed total (the summary
-  // shown in Tour Details). This is the SAME line shape a future QuoteLine will use
-  // — when QuoteVersion lands, these rows move under a version (no builder rewrite).
-  priceLines            Json?
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
   contacts              DealContact[]
+  quoteVersions         QuoteVersion[]
 
   @@index([organizationId])
   @@index([organizationUnitId])
@@ -933,6 +928,56 @@ model DealContact {
   @@unique([dealId, contactId])
   @@index([contactId])
   @@index([dealId])
+}
+
+// ── Quote model (canonical line storage) ────────────────────────────────────
+// QuoteVersion + QuoteLine are the SINGLE source of truth for a deal's pricing
+// lines. For now each deal has exactly ONE working version (isWorking=true) that
+// the Price Builder edits — no quote workflow yet (no alternatives, sending,
+// acceptance, or WON). Those are added later as fields/rows ON TOP of this model,
+// with no storage migration. Deal.valueMinor caches the working version's gross.
+model QuoteVersion {
+  id         String      @id @default(cuid())
+  deal       Deal        @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  dealId     String
+  status     String      @default("draft") // draft | produced | accepted | rejected (only 'draft' used now)
+  isWorking  Boolean     @default(true) // the version the builder/panel edits (exactly one per deal for now)
+  isSelected Boolean     @default(false) // the accepted/main version (unused until the quote workflow)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  lines      QuoteLine[]
+
+  @@index([dealId])
+}
+
+// One priced line on a quote version. Same shape the Price Builder UI uses; refs
+// are typed (productVariant for the product line, addon for add-on lines) with
+// SetNull so catalog edits never break a saved quote line (the price is frozen on
+// the line). kind: product | addon | discount | credit | manual.
+model QuoteLine {
+  id               String          @id @default(cuid())
+  quoteVersion     QuoteVersion    @relation(fields: [quoteVersionId], references: [id], onDelete: Cascade)
+  quoteVersionId   String
+  kind             String
+  label            String          @default("")
+  productVariant   ProductVariant? @relation(fields: [productVariantId], references: [id], onDelete: SetNull)
+  productVariantId String?
+  addon            Addon?          @relation(fields: [addonId], references: [id], onDelete: SetNull)
+  addonId          String?
+  quantity         Int             @default(1)
+  unitPriceMinor   BigInt          @default(0)
+  vatMode          String          @default("inherit") // inherit | included | excluded | exempt
+  vatRate          Int?
+  active           Boolean         @default(true)
+  note             String?
+  overridden       Boolean         @default(false)
+  sortOrder        Int             @default(0)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@index([quoteVersionId])
+  @@index([productVariantId])
+  @@index([addonId])
 }
 
 // ============================================================================
@@ -1038,6 +1083,7 @@ model ProductVariant {
   galleryImages         ProductVariantImage[]
   priceRules            PriceRule[]
   deals                 Deal[]
+  quoteLines            QuoteLine[]
 
   @@unique([productId, locationId])
   @@index([productId])
@@ -1318,6 +1364,7 @@ model Addon {
 
   priceRules  AddonPriceRule[]
   cardEntries PriceRuleAddon[]
+  quoteLines  QuoteLine[]
 
   @@index([sortOrder])
 }

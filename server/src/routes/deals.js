@@ -446,4 +446,112 @@ router.delete(
   }),
 );
 
+// ── Price Builder lines (canonical QuoteVersion + QuoteLine storage) ─────────
+// Each deal has exactly ONE working QuoteVersion for now (no quote workflow yet).
+// The builder reads/writes that version's lines. The client line shape uses a
+// generic `refId`; we translate it to the typed FK by kind (product → variant,
+// addon → addon). The total comes from the engine (/api/pricing/builder) and is
+// passed through to Deal.valueMinor — the headline summary cache.
+
+const VALID_LINE_KINDS = ['product', 'addon', 'discount', 'credit', 'manual'];
+const VALID_LINE_VAT_MODES = ['inherit', 'included', 'excluded', 'exempt'];
+
+async function ensureWorkingVersion(client, dealId) {
+  const existing = await client.quoteVersion.findFirst({
+    where: { dealId, isWorking: true },
+  });
+  if (existing) return existing;
+  return client.quoteVersion.create({ data: { dealId, isWorking: true, status: 'draft' } });
+}
+
+// QuoteLine row → the client's builder line shape (generic refId).
+function toClientLine(l) {
+  return {
+    id: l.id,
+    kind: l.kind,
+    label: l.label || '',
+    refId: l.kind === 'product' ? l.productVariantId : l.kind === 'addon' ? l.addonId : null,
+    quantity: l.quantity,
+    unitPriceMinor: l.unitPriceMinor, // BigInt → Number via the app json replacer
+    vatMode: l.vatMode || 'inherit',
+    vatRate: l.vatRate ?? null,
+    active: l.active,
+    note: l.note || '',
+    overridden: l.overridden,
+  };
+}
+
+// Client builder line → QuoteLine create data (validated; refId → typed FK).
+function lineToData(ln, i) {
+  const kind = VALID_LINE_KINDS.includes(ln.kind) ? ln.kind : 'manual';
+  const vatMode = VALID_LINE_VAT_MODES.includes(ln.vatMode) ? ln.vatMode : 'inherit';
+  const qty = kind === 'product' ? 1 : Math.max(0, parseInt(ln.quantity, 10) || 0);
+  const vatRateRaw = ln.vatRate;
+  const vatRate =
+    vatRateRaw === null || vatRateRaw === undefined || vatRateRaw === '' ? null : parseInt(vatRateRaw, 10);
+  return {
+    kind,
+    label: ln.label ? String(ln.label) : '',
+    productVariantId: kind === 'product' ? ln.refId || null : null,
+    addonId: kind === 'addon' ? ln.refId || null : null,
+    quantity: qty,
+    unitPriceMinor: BigInt(Math.round(Number(ln.unitPriceMinor) || 0)),
+    vatMode,
+    vatRate: Number.isFinite(vatRate) ? vatRate : null,
+    active: ln.active !== false,
+    note: ln.note ? String(ln.note) : null,
+    overridden: !!ln.overridden,
+    sortOrder: i,
+  };
+}
+
+router.get(
+  '/:id/price-lines',
+  handle(async (req, res) => {
+    const deal = await prisma.deal.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!deal) return res.status(404).json({ error: 'not_found' });
+    const version = await ensureWorkingVersion(prisma, req.params.id);
+    const lines = await prisma.quoteLine.findMany({
+      where: { quoteVersionId: version.id },
+      orderBy: { sortOrder: 'asc' },
+    });
+    res.json({ versionId: version.id, lines: lines.map(toClientLine) });
+  }),
+);
+
+router.put(
+  '/:id/price-lines',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const deal = await prisma.deal.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!deal) return res.status(404).json({ error: 'not_found' });
+    const inputLines = Array.isArray(b.lines) ? b.lines : [];
+    const rows = inputLines.map((ln, i) => lineToData(ln, i));
+
+    const versionId = await prisma.$transaction(async (tx) => {
+      const version = await ensureWorkingVersion(tx, req.params.id);
+      // Replace-sync: the working version's lines are fully owned by the builder.
+      await tx.quoteLine.deleteMany({ where: { quoteVersionId: version.id } });
+      if (rows.length) {
+        await tx.quoteLine.createMany({
+          data: rows.map((r) => ({ ...r, quoteVersionId: version.id })),
+        });
+      }
+      // Deal headline cache + the operational product/city this was priced against.
+      const dealPatch = {};
+      if (b.valueMinor !== undefined) dealPatch.valueMinor = BigInt(Math.round(Number(b.valueMinor) || 0));
+      if (b.productId !== undefined) dealPatch.productId = b.productId || null;
+      if (b.productVariantId !== undefined) dealPatch.productVariantId = b.productVariantId || null;
+      if (Object.keys(dealPatch).length) await tx.deal.update({ where: { id: req.params.id }, data: dealPatch });
+      return version.id;
+    });
+
+    const lines = await prisma.quoteLine.findMany({
+      where: { quoteVersionId: versionId },
+      orderBy: { sortOrder: 'asc' },
+    });
+    res.json({ versionId, lines: lines.map(toClientLine) });
+  }),
+);
+
 export default router;

@@ -65,16 +65,30 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   const [addons, setAddons] = useState([]);
   const calcTimer = useRef(null);
 
+  // Load the working version's lines from the canonical store (QuoteVersion /
+  // QuoteLine). The server ensures the working version exists.
   useEffect(() => {
     if (!open) return;
-    const saved = Array.isArray(deal?.priceLines) ? deal.priceLines.map(normalize) : null;
-    if (saved && saved.length) {
-      setLines(saved.some((l) => l.kind === 'product') ? saved : [seedProductLine(context), ...saved]);
-    } else {
-      setLines([seedProductLine(context)]);
-    }
+    let live = true;
+    api.deals
+      .getPriceLines(deal.id)
+      .then((r) => {
+        if (!live) return;
+        const saved = Array.isArray(r?.lines) ? r.lines.map(normalize) : [];
+        if (saved.length) {
+          setLines(saved.some((l) => l.kind === 'product') ? saved : [seedProductLine(context), ...saved]);
+        } else {
+          setLines([seedProductLine(context)]);
+        }
+      })
+      .catch(() => {
+        if (live) setLines([seedProductLine(context)]);
+      });
+    return () => {
+      live = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, deal?.id]);
 
   useEffect(() => {
     if (open) api.addons.list().then(setAddons).catch(() => {});
@@ -122,8 +136,8 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
         if (l.kind === 'product' && !l.overridden && c) return { ...l, unitPriceMinor: c.unitPriceMinor };
         return l;
       });
-      await api.deals.update(deal.id, {
-        priceLines: toSave,
+      await api.deals.savePriceLines(deal.id, {
+        lines: toSave,
         valueMinor: totals ? totals.grossMinor : 0,
         productId: context?.productId || null,
         productVariantId: context?.productVariantId || null,

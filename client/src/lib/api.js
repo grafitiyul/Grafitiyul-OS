@@ -403,6 +403,11 @@ export const api = {
       }),
     removeContact: (linkId) =>
       request(`/api/deals/contacts/${linkId}`, { method: 'DELETE' }),
+    // Price Builder lines — canonical QuoteVersion/QuoteLine storage (one working
+    // version per deal). get ensures the version exists and returns its lines.
+    getPriceLines: (id) => request(`/api/deals/${id}/price-lines`),
+    savePriceLines: (id, data) =>
+      request(`/api/deals/${id}/price-lines`, { method: 'PUT', body: JSON.stringify(data) }),
   },
   // ── Products & Pricing — Slice 1 (catalog + files + payment config) ──
   mediaFiles: {
