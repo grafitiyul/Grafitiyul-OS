@@ -27,9 +27,6 @@ import RichEditor from '../../editor/RichEditor.jsx';
 import { InlineEditScope } from '../common/inline/InlineEditScope.jsx';
 import InlineField from '../common/inline/InlineField.jsx';
 import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
-import {
-  PackageIcon, ReceiptIcon, CalendarIcon, ClockIcon, UsersIcon, MapPinIcon, GlobeIcon,
-} from '../common/FieldIcons.jsx';
 
 const INPUT =
   'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
@@ -443,10 +440,9 @@ export default function DealDetail() {
   // different one. Never blocks/warns/affects pricing — just paints the City red.
   const homeLocation = allLocations.find((l) => l.isHomeLocation) || null;
   const cityIsNonHome = !!(homeLocation && deal.locationId && deal.locationId !== homeLocation.id);
-  // Field icons are the visual identifiers now (labels removed), so they use a
-  // clearly-visible neutral gray. The city pin turns red on the non-home reminder.
-  const FIELD_ICON = 'w-4 h-4 text-gray-600';
-  const cityIconCls = `w-4 h-4 ${cityIsNonHome ? 'text-red-500' : 'text-gray-600'}`;
+  // Full-color emoji field icons — secondary to the values, small but clearly
+  // recognisable. The value remains the strongest visual element.
+  const FIELD_EMOJI = 'text-[14px] leading-none';
 
   // Per-field inline save: persist ONLY that field, then refresh → back to read.
   const saveField = (patch) => api.deals.update(id, patch).then(refresh);
@@ -471,68 +467,57 @@ export default function DealDetail() {
         {/* ── Card 1 — פרטי הסיור (operational). Inline read-first editing. ── */}
         <Card variant="panel" title="פרטי הסיור">
           <div className="space-y-3.5">
-            {/* A compact, label-less dashboard: each field is just an ICON (its
-                visual identifier; hover = field name) + its clickable value. Clicking
-                the value edits inline exactly as before; the icon is not clickable. */}
-
-            {/* Row 1 — Product (start) + Price (left/end). Price opens the relevant
-                builder on click (no "בונה מחיר" link). */}
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex-1 min-w-0">
-                <InlineField id="f-product" iconInline icon={<PackageIcon className={FIELD_ICON} />} label="מוצר"
+            {/* Strict 3-column grid: every field has a FIXED position — the layout
+                never floats with content. Each field is an emoji ICON (its visual
+                identifier; hover = field name) tightly attached to its clickable
+                value. Clicking the value edits inline exactly as before; the icon is
+                not clickable.
+                  Row 1: Product (cols 1-2) · Price (col 3)
+                  Row 2: Date · Time · Participants
+                  Row 3: City · Tour Language · (empty) */}
+            <div className="grid grid-cols-3 gap-x-3 gap-y-3">
+              {/* Row 1 */}
+              <div className="col-span-2">
+                <InlineField id="f-product" iconInline icon={<span className={FIELD_EMOJI}>📦</span>} label="מוצר"
                   type="dropdown" value={deal.productId || ''} options={productOptions} editFirst={editFirst}
                   placeholder="בחר מוצר" onSave={(v) => saveProduct(v)} />
               </div>
-              <div className="shrink-0 flex items-center gap-2">
-                <span title="מחיר" className="shrink-0 inline-flex cursor-default"><ReceiptIcon className={FIELD_ICON} /></span>
+              <div className="flex items-center gap-1 min-w-0">
+                <span title="מחיר" className={`shrink-0 inline-flex cursor-default ${FIELD_EMOJI}`}>💰</span>
                 <button
                   type="button"
                   onClick={() => setPriceBuilderOpen(true)}
                   title="פתח בונה מחיר"
-                  className="rounded-md px-1.5 min-h-[34px] flex items-center transition-colors hover:bg-gray-50"
+                  className="flex-1 min-w-0 text-right rounded-md px-1 min-h-[34px] flex items-center transition-colors hover:bg-gray-50"
                 >
                   <span className="text-[15px] font-bold text-gray-900" dir="ltr">{deal.valueMinor ? `₪${minorToInput(deal.valueMinor)}` : '—'}</span>
                 </button>
               </div>
-            </div>
 
-            {/* Row 2 — Date, Time, Participants (centered). */}
-            <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
-              <div className="w-[9.5rem]">
-                <InlineField id="f-date" iconInline icon={<CalendarIcon className={FIELD_ICON} />} label="תאריך"
-                  type="date" value={deal.tourDate || ''} editFirst={editFirst}
-                  onSave={(v) => saveField({ tourDate: v || null })} />
-              </div>
-              <div className="w-[7rem]">
-                <InlineField id="f-time" iconInline icon={<ClockIcon className={FIELD_ICON} />} label="שעה"
-                  type="time" value={deal.tourTime || ''} editFirst={editFirst}
-                  onSave={(v) => saveField({ tourTime: v || null })} />
-              </div>
-              <div className="w-[6rem]">
-                <InlineField id="f-participants" iconInline icon={<UsersIcon className={FIELD_ICON} />} label="משתתפים"
-                  type="number" numeric value={deal.participants ?? ''} editFirst={editFirst}
-                  onSave={(v) => saveField({ participants: v === '' ? null : Number(v) })} />
-              </div>
-            </div>
+              {/* Row 2 */}
+              <InlineField id="f-date" iconInline icon={<span className={FIELD_EMOJI}>📅</span>} label="תאריך"
+                type="date" value={deal.tourDate || ''} editFirst={editFirst}
+                onSave={(v) => saveField({ tourDate: v || null })} />
+              <InlineField id="f-time" iconInline icon={<span className={FIELD_EMOJI}>🕒</span>} label="שעה"
+                type="time" value={deal.tourTime || ''} editFirst={editFirst}
+                onSave={(v) => saveField({ tourTime: v || null })} />
+              <InlineField id="f-participants" iconInline icon={<span className={FIELD_EMOJI}>👥</span>} label="משתתפים"
+                type="number" numeric value={deal.participants ?? ''} editFirst={editFirst}
+                onSave={(v) => saveField({ participants: v === '' ? null : Number(v) })} />
 
-            {/* Row 3 — City + Tour Language (centered). The city pin + value turn red
-                as a visual-only reminder when the city differs from the Home Location. */}
-            <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
-              <div className="w-[13rem] max-w-full">
-                <InlineField id="f-city" iconInline icon={<MapPinIcon className={cityIconCls} />} label="עיר"
-                  type="dropdown" value={deal.locationId || ''} options={cityOptions} editFirst={editFirst}
-                  placeholder="בחר עיר"
-                  valueClassName={cityIsNonHome ? 'text-[15px] font-semibold text-red-600' : undefined}
-                  onSave={(v) => saveLocation(v)} />
-              </div>
-              <div className="w-[9rem]">
-                <InlineField id="f-tourlang" iconInline icon={<GlobeIcon className={FIELD_ICON} />} label="שפת הסיור"
-                  type="dropdown" value={deal.tourLanguage || ''} options={tourLangOptions} editFirst={editFirst}
-                  placeholder="ללא" onSave={(v) => saveField({ tourLanguage: v || null })} />
-              </div>
+              {/* Row 3 — col 3 intentionally empty. City value turns red as a
+                  visual-only reminder when the city differs from the Home Location. */}
+              <InlineField id="f-city" iconInline icon={<span className={FIELD_EMOJI}>📍</span>} label="עיר"
+                type="dropdown" value={deal.locationId || ''} options={cityOptions} editFirst={editFirst}
+                placeholder="בחר עיר"
+                valueClassName={cityIsNonHome ? 'text-[15px] font-semibold text-red-600' : undefined}
+                onSave={(v) => saveLocation(v)} />
+              <InlineField id="f-tourlang" iconInline icon={<span className={FIELD_EMOJI}>🌍</span>} label="שפת הסיור"
+                type="dropdown" value={deal.tourLanguage || ''} options={tourLangOptions} editFirst={editFirst}
+                placeholder="ללא" onSave={(v) => saveField({ tourLanguage: v || null })} />
             </div>
             {locNotConfigured && (
-              <p className="text-[12px] text-amber-600 text-center">
+              <p className="text-[12px] text-amber-600">
                 העיר שנבחרה אינה מוגדרת כוריאנט של המוצר. ייתכן שיידרש תיאום מחיר ידני בבונה המחיר.
               </p>
             )}
@@ -548,28 +533,8 @@ export default function DealDetail() {
           </div>
         </Card>
 
-        {/* ── Card 2 — הצעת מחיר (always shown) ──
-            The price summary now lives in פרטי הסיור (Row 1); this card owns the email
-            intro + generate. Single price entry point — no duplicate. */}
-        <Card variant="panel" title="הצעת מחיר">
-          <div className="space-y-2">
-            {/* Personal email intro — collapsed, expands to a plain editor. */}
-            <CollapsibleNote id="f-emailIntro" label="פתיח אישי למייל" value={deal.quoteEmailIntro || ''}
-              placeholder="משפט פתיחה אישי שיופיע במייל ההצעה…"
-              onSave={(v) => saveField({ quoteEmailIntro: v || null })} />
-
-            <div className="pt-1">
-              <button
-                type="button"
-                disabled
-                title="בקרוב — מנוע ההצעות עדיין לא מחובר"
-                className="w-full rounded-lg bg-blue-600 text-white text-sm font-semibold py-2.5 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                הפק הצעת מחיר
-              </button>
-            </div>
-          </div>
-        </Card>
+        {/* The "הצעת מחיר" (Quote) card was removed — that area will be redesigned
+            later. The operational action bar lives under פרטי הסיור (above). */}
 
       {deal.status === 'lost' && (
         <Card variant="panel" title="פרטי LOST">

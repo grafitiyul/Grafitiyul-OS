@@ -120,13 +120,14 @@ export default function InlineField({
       </span>
     );
     if (iconInline) {
+      // Tight icon→value gap: the icon feels attached to its value (one unit).
       return (
-        <div className="group flex items-center gap-2 w-full">
+        <div className="group flex items-center gap-1 w-full">
           {inlineIcon}
           <button
             type="button"
             onClick={() => scope.requestOpen(id)}
-            className={`flex-1 min-w-0 text-right rounded-md px-1.5 ${BODY} flex items-center gap-1.5 transition-colors hover:bg-gray-50`}
+            className={`flex-1 min-w-0 text-right rounded-md px-1 ${BODY} flex items-center gap-1.5 transition-colors hover:bg-gray-50`}
           >
             {valueSpan}
             <span className="ms-auto shrink-0 text-[12px] text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity">✎</span>
@@ -158,7 +159,7 @@ export default function InlineField({
   return (
     <div>
       {!iconInline && labelNode}
-      <div className={`relative ${BODY} flex items-center ${iconInline ? 'gap-2' : ''} animate-[inlineIn_120ms_ease-out]`}>
+      <div className={`relative ${BODY} flex items-center ${iconInline ? 'gap-1' : ''} animate-[inlineIn_120ms_ease-out]`}>
         {inlineIcon}
         <div className="flex-1 min-w-0">{renderInput()}</div>
         {coordinated && (
