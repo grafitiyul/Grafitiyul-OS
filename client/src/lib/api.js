@@ -478,6 +478,9 @@ export const api = {
   pricing: {
     calculate: (input) => request('/api/pricing/calculate', { method: 'POST', body: JSON.stringify(input) }),
     preview: (input) => request('/api/pricing/preview', { method: 'POST', body: JSON.stringify(input) }),
+    // Multi-line Price Builder calc (product line via the engine + per-line VAT
+    // splits + totals + explanation/conflict). All math server-side.
+    builder: (input) => request('/api/pricing/builder', { method: 'POST', body: JSON.stringify(input) }),
   },
   // Pricing Segments (Slice A) — the 6 business tabs + owner-set bindings.
   pricingSegments: {

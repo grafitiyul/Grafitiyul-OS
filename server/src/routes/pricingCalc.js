@@ -222,4 +222,185 @@ router.post(
   }),
 );
 
+// ── Price Builder (Deal base-price editor) ──────────────────────────────────
+// Computes a multi-line price for ONE deal, reusing the engine end to end:
+//   • the product line is resolved via calculate() (price list + rule + VAT);
+//   • every line's net/vat/gross uses splitVat — the ONE VAT implementation;
+//   • an ambiguous rule returns the conflicting rules (scopes/model) so the UI can
+//     EXPLAIN the conflict instead of dead-ending (the user can override meanwhile).
+// No quote/version storage — the caller persists the lines JSON on the Deal.
+
+const SIGN = (kind) => (kind === 'discount' || kind === 'credit' ? -1 : 1);
+
+router.post(
+  '/builder',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const c = b.context || {};
+    const context = {
+      productId: c.productId || null,
+      productVariantId: c.productVariantId || null,
+      activityTypeId: c.activityTypeId || null,
+      organizationTypeId: c.organizationTypeId || null,
+      organizationSubtypeId: c.organizationSubtypeId || null,
+    };
+    const counts = {
+      participantCount: c.participantCount,
+      adultCount: c.adultCount != null ? c.adultCount : c.participantCount,
+      childCount: c.childCount,
+      groupCount: c.groupCount != null ? c.groupCount : 1,
+    };
+    const inputLines = Array.isArray(b.lines) ? b.lines : [];
+
+    // Applicable price list (subtype → type → system default) for the VAT default
+    // and the product-line resolution.
+    const resolvedList = await resolvePriceListId(context);
+    const priceList = resolvedList
+      ? await prisma.priceList.findUnique({
+          where: { id: resolvedList.id },
+          include: {
+            rules: {
+              where: { active: true },
+              include: { tiers: { orderBy: { sortOrder: 'asc' } }, ticketPrices: true },
+            },
+          },
+        })
+      : null;
+    const vatDefault = {
+      mode: priceList?.defaultVatMode || 'included',
+      rate: priceList?.defaultVatRate != null ? priceList.defaultVatRate : 18,
+    };
+
+    // Product-line resolution (explanation + conflict details).
+    let productResolution = { ok: false, error: 'no_product' };
+    if (!context.productVariantId) {
+      productResolution = { ok: false, error: 'no_product' };
+    } else if (!context.activityTypeId) {
+      productResolution = { ok: false, error: 'activity_type_required' };
+    } else if (!priceList) {
+      productResolution = { ok: false, error: 'no_price_list' };
+    } else {
+      const activityType = await prisma.activityType.findUnique({
+        where: { id: context.activityTypeId },
+      });
+      if (!activityType) productResolution = { ok: false, error: 'activity_type_not_found' };
+      else {
+        try {
+          const r = calculate({ priceList, activityType, context, counts });
+          productResolution = {
+            ok: true,
+            priceList: { id: priceList.id, nameHe: priceList.nameHe },
+            priceListSource: resolvedList.source,
+            priceModel: r.priceModel,
+            vatMode: r.vatMode,
+            vatRate: r.vatRate,
+            netMinor: r.netMinor,
+            vatMinor: r.vatMinor,
+            grossMinor: r.grossMinor,
+          };
+        } catch (e) {
+          if (!(e instanceof PricingError)) throw e;
+          productResolution = {
+            ok: false,
+            error: e.code,
+            details: e.details || {},
+            priceList: { id: priceList.id, nameHe: priceList.nameHe },
+          };
+          if (e.code === 'ambiguous_price_rule' && Array.isArray(e.details?.ruleIds)) {
+            const rules = await prisma.priceRule.findMany({
+              where: { id: { in: e.details.ruleIds } },
+              include: {
+                product: { select: { nameHe: true } },
+                productVariant: { select: { location: { select: { nameHe: true } } } },
+                activityType: { select: { nameHe: true } },
+                organizationSubtype: { select: { label: true } },
+              },
+            });
+            productResolution.conflictRules = rules.map((r) => ({
+              id: r.id,
+              priceModel: r.priceModel,
+              priority: r.priority,
+              scope: {
+                product: r.product?.nameHe || null,
+                location: r.productVariant?.location?.nameHe || null,
+                activityType: r.activityType?.nameHe || null,
+                organizationSubtype: r.organizationSubtype?.label || null,
+              },
+            }));
+          }
+        }
+      }
+    }
+
+    // Compose every line into net/vat/gross. The product line uses the engine's
+    // own split when resolved & not overridden; otherwise splitVat the line amount.
+    const lines = inputLines.map((ln) => {
+      const kind = ln.kind || 'manual';
+      const isProduct = kind === 'product';
+      const active = ln.active !== false;
+      const engineProduct = isProduct && !ln.overridden && productResolution.ok;
+      const quantity = isProduct ? 1 : Number(ln.quantity) || 0;
+      let unitPriceMinor = Number(ln.unitPriceMinor) || 0;
+      let effMode;
+      let effRate;
+      let net = 0;
+      let vat = 0;
+      let gross = 0;
+
+      if (engineProduct) {
+        unitPriceMinor = productResolution.grossMinor;
+        effMode = productResolution.vatMode;
+        effRate = productResolution.vatRate;
+        if (active) {
+          net = productResolution.netMinor;
+          vat = productResolution.vatMinor;
+          gross = productResolution.grossMinor;
+        }
+      } else {
+        const mode = !ln.vatMode || ln.vatMode === 'inherit' ? vatDefault.mode : ln.vatMode;
+        const rate = mode === 'exempt' ? 0 : ln.vatRate != null ? Number(ln.vatRate) : vatDefault.rate;
+        effMode = mode;
+        effRate = rate;
+        if (active) {
+          const amount = SIGN(kind) * unitPriceMinor * quantity;
+          const s = splitVat(amount, mode, rate);
+          net = s.netMinor;
+          vat = s.vatMinor;
+          gross = s.grossMinor;
+        }
+      }
+
+      return {
+        id: ln.id,
+        kind,
+        label: ln.label || '',
+        refId: ln.refId || null,
+        note: ln.note || '',
+        active,
+        overridden: !!ln.overridden,
+        quantity,
+        unitPriceMinor,
+        vatMode: ln.vatMode || 'inherit',
+        vatRate: ln.vatRate != null ? ln.vatRate : null,
+        effectiveVatMode: effMode,
+        effectiveVatRate: effRate,
+        netMinor: net,
+        vatMinor: vat,
+        grossMinor: gross,
+      };
+    });
+
+    const totals = lines.reduce(
+      (t, l) => ({
+        netMinor: t.netMinor + l.netMinor,
+        vatMinor: t.vatMinor + l.vatMinor,
+        grossMinor: t.grossMinor + l.grossMinor,
+      }),
+      { netMinor: 0, vatMinor: 0, grossMinor: 0 },
+    );
+
+    res.json({ ok: true, vatDefault, productResolution, lines, totals });
+  }),
+);
+
 export default router;

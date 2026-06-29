@@ -888,6 +888,12 @@ model Deal {
   // The base tour price (valueMinor) is engine-calculated by default; this flags a
   // manual override so auto-recalc never silently overwrites a hand-set price.
   basePriceOverridden   Boolean              @default(false)
+  // Price Builder lines (JSON) — the source of truth for the deal's base pricing.
+  // Array of { id, kind, label, refId, quantity, unitPriceMinor, vatMode, vatRate,
+  // active, note, overridden }. valueMinor stores the computed total (the summary
+  // shown in Tour Details). This is the SAME line shape a future QuoteLine will use
+  // — when QuoteVersion lands, these rows move under a version (no builder rewrite).
+  priceLines            Json?
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
   contacts              DealContact[]
