@@ -314,16 +314,16 @@ function CardSection({ card, byRow, onQty, onPrice, onRevert }) {
                 {/* Quantity — steppers on the sides + manual typing in the middle.
                     − / + step by 1; onQty clamps at 0 (never negative). The local
                     row total and the engine totals both follow immediately. */}
+                {/* RTL: + sits on the right (leading), − on the left. */}
                 <div className="w-32 shrink-0 flex items-center justify-center gap-1">
                   <button
                     type="button"
-                    onClick={() => onQty(id, String(Math.max(0, (st.quantity || 0) - 1)))}
-                    disabled={(st.quantity || 0) <= 0}
-                    title="הפחת כמות"
-                    aria-label="הפחת כמות"
-                    className="shrink-0 h-7 w-7 inline-flex items-center justify-center rounded-md border border-gray-200 text-gray-600 leading-none hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                    onClick={() => onQty(id, String((st.quantity || 0) + 1))}
+                    title="הוסף כמות"
+                    aria-label="הוסף כמות"
+                    className="shrink-0 h-7 w-7 inline-flex items-center justify-center rounded-md border border-gray-200 text-gray-600 leading-none hover:bg-gray-50"
                   >
-                    −
+                    +
                   </button>
                   <input
                     value={st.quantity || ''}
@@ -336,12 +336,13 @@ function CardSection({ card, byRow, onQty, onPrice, onRevert }) {
                   />
                   <button
                     type="button"
-                    onClick={() => onQty(id, String((st.quantity || 0) + 1))}
-                    title="הוסף כמות"
-                    aria-label="הוסף כמות"
-                    className="shrink-0 h-7 w-7 inline-flex items-center justify-center rounded-md border border-gray-200 text-gray-600 leading-none hover:bg-gray-50"
+                    onClick={() => onQty(id, String(Math.max(0, (st.quantity || 0) - 1)))}
+                    disabled={(st.quantity || 0) <= 0}
+                    title="הפחת כמות"
+                    aria-label="הפחת כמות"
+                    className="shrink-0 h-7 w-7 inline-flex items-center justify-center rounded-md border border-gray-200 text-gray-600 leading-none hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    +
+                    −
                   </button>
                 </div>
 

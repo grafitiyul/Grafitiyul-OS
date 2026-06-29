@@ -117,12 +117,44 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     setMethodOverridden(false);
     api.deals
       .getPriceLines(deal.id)
-      .then((r) => {
+      .then(async (r) => {
         if (!live) return;
         const saved = Array.isArray(r?.lines) ? r.lines.map(normalize) : [];
         // Seed a default line ONLY for a brand-new working version. An existing
         // deal may legitimately have zero lines.
-        const next = saved.length ? saved : r?.created ? [seedProductLine(context)] : [];
+        let next = saved.length ? saved : r?.created ? [seedProductLine(context)] : [];
+
+        // SSOT on open: the DEAL product is the source. The first product line must
+        // reflect the CURRENT Deal product — it may have changed in the Tour Details
+        // card since this version was last saved. We refresh that line's product
+        // (label + variant) from the Deal; no duplicate product state is created and
+        // the engine is untouched (it already prices via the effective context).
+        if (context?.productId) {
+          const dp = await api.products.get(context.productId).catch(() => null);
+          if (live && dp) {
+            const idx = next.findIndex((l) => l.kind === 'product');
+            const name = dp.nameHe || '';
+            if (idx === -1) {
+              next = [normalize({ kind: 'product', label: name, refId: context.productVariantId || null }), ...next];
+            } else {
+              next = next.map((l, i) => {
+                if (i !== idx) return l;
+                const productChanged = l.label !== name;
+                return {
+                  ...l,
+                  label: name,
+                  refId: context.productVariantId || null,
+                  // If the product actually changed (e.g. via Tour Details), drop any
+                  // stale manual price so the engine reprices the NEW product. An
+                  // unchanged product keeps the user's override.
+                  ...(productChanged ? { overridden: false } : {}),
+                };
+              });
+            }
+          }
+        }
+
+        if (!live) return;
         setLines(next);
         // Open only notes that actually have content. Never auto-open an empty
         // note (no large blank note area should pop open on load).
