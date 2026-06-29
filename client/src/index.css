@@ -12,3 +12,12 @@ body {
   background: rgb(249 250 251);
   color: rgb(17 24 39);
 }
+
+/* Subtle entrance for inline-edit fields (platform pattern). */
+@keyframes inlineIn {
+  from { opacity: 0; transform: translateY(-1px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-\[inlineIn_120ms_ease-out\] { animation: none; }
+}

@@ -1,0 +1,167 @@
+import { useEffect, useRef, useState } from 'react';
+import { useInlineScope } from './InlineEditScope.jsx';
+
+// Platform inline-edit field. The standard GOS editing experience:
+//   Read First → Click to Edit → Save Immediately → Back to Read.
+// One field edits at a time (via InlineEditScope). Enter = save, Esc = cancel,
+// ✓/✕ buttons mirror them. Saving persists ONLY this field (the caller's onSave).
+//
+// `editFirst` flips the resting presentation to an always-open input (form-like,
+// for "Edit First" pipeline stages); it saves on blur + Enter and isn't governed by
+// the one-at-a-time scope.
+//
+// Types: text | number | dropdown | date | time | textarea. (Rich text is handled
+// by the collapsible note component, not here — for now.)
+
+function flatten(options) {
+  const out = [];
+  (options || []).forEach((o) => (o.options ? out.push(...o.options) : out.push(o)));
+  return out;
+}
+function fmtDate(v) {
+  if (!v) return '';
+  // v is "YYYY-MM-DD"
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v));
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(v);
+}
+function defaultDisplay(type, value, options) {
+  if (value === '' || value === null || value === undefined) return '';
+  if (type === 'dropdown') return flatten(options).find((o) => o.value === value)?.label ?? String(value);
+  if (type === 'date') return fmtDate(value);
+  return String(value);
+}
+const INPUT = 'h-9 w-full rounded-md border border-blue-300 bg-white px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200';
+
+export default function InlineField({
+  id, label, type = 'text', value, options, display, placeholder = '—',
+  editFirst = false, onSave, dir, numeric,
+}) {
+  const scope = useInlineScope();
+  const coordinated = !editFirst;
+  const open = coordinated ? scope.openId === id : true;
+  const [draft, setDraft] = useState(value ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const ref = useRef(null);
+
+  // Keep the draft in sync with the stored value while not actively editing.
+  useEffect(() => {
+    if (!open) { setDraft(value ?? ''); setError(null); }
+  }, [value, open]);
+  // On open (coordinated): seed + focus.
+  useEffect(() => {
+    if (open && coordinated) { setDraft(value ?? ''); setError(null); }
+    if (open) { const t = setTimeout(() => ref.current?.focus?.(), 0); return () => clearTimeout(t); }
+    return undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  async function commit() {
+    const v = draft === '' ? '' : draft;
+    if ((v ?? '') === (value ?? '')) { if (coordinated) scope.close(); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave?.(v);
+      if (coordinated) scope.close();
+    } catch (e) {
+      setError(e.payload?.error || e.message || 'שמירה נכשלה');
+    } finally {
+      setSaving(false);
+    }
+  }
+  function cancel() {
+    setDraft(value ?? '');
+    setError(null);
+    if (coordinated) scope.close();
+  }
+  function onKeyDown(e) {
+    if (e.key === 'Enter' && type !== 'textarea') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  }
+
+  // ── READ presentation (coordinated, closed) ──
+  if (coordinated && !open) {
+    const empty = value === '' || value === null || value === undefined;
+    return (
+      <div className="group">
+        {label && <div className="text-[11px] text-gray-400 mb-0.5">{label}</div>}
+        <button
+          type="button"
+          onClick={() => scope.requestOpen(id)}
+          className="w-full text-right rounded-md -mx-2 px-2 py-1.5 min-h-[36px] flex items-center gap-2 transition-colors hover:bg-gray-50"
+        >
+          <span className={`text-sm ${empty ? 'text-gray-300' : 'text-gray-900'} truncate`} dir={dir}>
+            {empty ? placeholder : (display ? display(value) : defaultDisplay(type, value, options))}
+          </span>
+          <span className="ms-auto shrink-0 text-[12px] text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity">✎</span>
+        </button>
+      </div>
+    );
+  }
+
+  // ── EDIT presentation ──
+  return (
+    <div>
+      {label && <div className="text-[11px] text-gray-400 mb-0.5">{label}</div>}
+      <div className="flex items-center gap-1.5 animate-[inlineIn_120ms_ease-out]">
+        <div className="flex-1 min-w-0">{renderInput()}</div>
+        {coordinated && (
+          <>
+            <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={commit} disabled={saving}
+              title="שמור (Enter)"
+              className="shrink-0 h-9 w-9 inline-flex items-center justify-center rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
+              ✓
+            </button>
+            <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={cancel} disabled={saving}
+              title="ביטול (Esc)"
+              className="shrink-0 h-9 w-9 inline-flex items-center justify-center rounded-md border border-gray-300 text-gray-500 hover:bg-gray-50 disabled:opacity-50">
+              ✕
+            </button>
+          </>
+        )}
+      </div>
+      {error && <div className="text-[11px] text-red-600 mt-0.5">{error}</div>}
+    </div>
+  );
+
+  function renderInput() {
+    const common = {
+      ref,
+      value: draft ?? '',
+      onKeyDown,
+      disabled: saving,
+      className: INPUT,
+      ...(editFirst ? { onBlur: commit } : {}),
+    };
+    if (type === 'dropdown') {
+      return (
+        <select {...common} className={`${INPUT} bg-white`} onChange={(e) => setDraft(e.target.value)}>
+          <option value="">— ללא —</option>
+          {(options || []).map((o) =>
+            o.options ? (
+              <optgroup key={o.label} label={o.label}>
+                {o.options.map((x) => (<option key={x.value} value={x.value}>{x.label}</option>))}
+              </optgroup>
+            ) : (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ),
+          )}
+        </select>
+      );
+    }
+    if (type === 'textarea') {
+      return <textarea {...common} rows={3} dir={dir} onChange={(e) => setDraft(e.target.value)} className={`${INPUT} h-auto py-1.5 leading-relaxed`} />;
+    }
+    const htmlType = type === 'date' ? 'date' : type === 'time' ? 'time' : 'text';
+    return (
+      <input
+        {...common}
+        type={htmlType}
+        dir={dir || (type === 'number' || type === 'date' || type === 'time' ? 'ltr' : undefined)}
+        inputMode={numeric || type === 'number' ? 'numeric' : undefined}
+        onChange={(e) => setDraft(numeric ? e.target.value.replace(/[^0-9]/g, '') : e.target.value)}
+      />
+    );
+  }
+}

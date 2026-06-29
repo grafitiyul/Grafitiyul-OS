@@ -104,13 +104,17 @@ router.post(
 router.put(
   '/:id',
   handle(async (req, res) => {
-    const { label, labelEn, sortOrder, isActive } = req.body || {};
+    const { label, labelEn, sortOrder, isActive, displayMode } = req.body || {};
     const data = {};
     if (label !== undefined) data.label = String(label).trim();
     if (labelEn !== undefined)
       data.labelEn = labelEn ? String(labelEn).trim() : null;
     if (sortOrder !== undefined) data.sortOrder = Number(sortOrder) || 0;
     if (isActive !== undefined) data.isActive = !!isActive;
+    if (displayMode !== undefined) {
+      if (!['read', 'edit'].includes(displayMode)) return res.status(400).json({ error: 'invalid_display_mode' });
+      data.displayMode = displayMode;
+    }
     const stage = await prisma.dealStage.update({
       where: { id: req.params.id },
       data,

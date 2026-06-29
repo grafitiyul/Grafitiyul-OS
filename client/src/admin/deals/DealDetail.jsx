@@ -21,6 +21,9 @@ import {
   contactNameHe,
 } from './config.js';
 import RichEditor from '../../editor/RichEditor.jsx';
+import { InlineEditScope } from '../common/inline/InlineEditScope.jsx';
+import InlineField from '../common/inline/InlineField.jsx';
+import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
 
 const INPUT =
   'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
@@ -413,188 +416,126 @@ export default function DealDetail() {
 
   // Right panel — TWO cards. Card 1 "פרטי הסיור" (operational, all activity types)
   // holds how the tour happens INCLUDING its base price. Card 2 "הצעת מחיר"
-  // Both cards always render. Tour Details = operational fields; הצעת מחיר holds the
-  // price / Price Builder entry + email intro + generate (quote workflow later).
-  // One form buffer backs both; each card saves its own fields with its own
-  // unsaved-changes state.
-  // Location selector sections: recommended = the product's variant locations;
-  // other = every remaining CRM location (never hidden). Reuses variant + Location data.
+  // Pipeline-stage Display Mode → Read First (click to edit) vs Edit First (open).
+  const stage = stages.find((s) => s.id === deal.dealStageId);
+  const editFirst = stage?.displayMode === 'edit';
+
+  // Location options: recommended = the product's variant locations; other = every
+  // remaining CRM location (never hidden). Reuses variant + Location data.
   const recLocIds = new Set(variants.map((v) => v.location?.id || v.locationId).filter(Boolean));
   const recommendedLocs = variants
-    .map((v) => ({ id: v.location?.id || v.locationId, name: v.location?.nameHe || '—' }))
-    .filter((l) => l.id);
-  const otherLocs = allLocations.filter((l) => !recLocIds.has(l.id));
-  const locNotConfigured = !!form.productId && !!form.locationId && !recLocIds.has(form.locationId);
-  const TOUR_KEYS = ['productId', 'productVariantId', 'locationId', 'tourDate', 'tourTime', 'participants', 'activityType', 'tourLanguage', 'customerInfo'];
-  const QUOTE_KEYS = ['quoteEmailIntro'];
-  const dirtyKeys = (keys) => keys.some((k) => !valuesEqual(form[k], originalForm[k]));
+    .map((v) => ({ value: v.location?.id || v.locationId, label: v.location?.nameHe || '—' }))
+    .filter((o) => o.value);
+  const otherLocs = allLocations.filter((l) => !recLocIds.has(l.id)).map((l) => ({ value: l.id, label: l.nameHe }));
+  const cityOptions = [];
+  if (recommendedLocs.length) cityOptions.push({ label: 'מומלץ למוצר זה', options: recommendedLocs });
+  cityOptions.push({ label: recommendedLocs.length ? 'מיקומים נוספים' : 'מיקומים', options: otherLocs });
+  const productOptions = products.map((p) => ({ value: p.id, label: p.nameHe }));
+  const activityOptions = ACTIVITY_TYPES.map((v) => ({ value: v, label: ACTIVITY_TYPE_LABELS[v] }));
+  const tourLangOptions = TOUR_LANGS.map((l) => ({ value: l.key, label: l.label }));
+  const locNotConfigured = !!deal.productId && !!deal.locationId && !recLocIds.has(deal.locationId);
+
+  // Per-field inline save: persist ONLY that field, then refresh → back to read.
+  const saveField = (patch) => api.deals.update(id, patch).then(refresh);
+  async function saveProduct(productId) {
+    if (!productId) return saveField({ productId: null, productVariantId: null, locationId: null });
+    const p = await api.products.get(productId);
+    const first = (p.variants || [])[0];
+    return saveField({
+      productId,
+      productVariantId: first ? first.id : null,
+      locationId: first ? first.location?.id || first.locationId : null,
+    });
+  }
+  function saveLocation(locationId) {
+    const v = variants.find((x) => (x.location?.id || x.locationId) === locationId);
+    return saveField({ locationId: locationId || null, productVariantId: v ? v.id : null });
+  }
 
   const dealProperties = (
-    <div className="space-y-4">
-      {/* ── Card 1 — פרטי הסיור (operational, all activity types) ── */}
-      <Card
-        variant="panel"
-        title="פרטי הסיור"
-        action={
-          <SaveBtn
-            dirty={dirtyKeys(TOUR_KEYS)}
-            busy={savingSection === 'tour'}
-            onClick={() =>
-              saveSection('tour', {
-                productId: form.productId || null,
-                productVariantId: form.productVariantId || null,
-                locationId: form.locationId || null,
-                activityType: form.activityType || null,
-                tourDate: form.tourDate || null,
-                tourTime: form.tourTime || null,
-                participants: form.participants === '' ? null : Number(form.participants),
-                tourLanguage: form.tourLanguage || null,
-                customerInfo: form.customerInfo || null,
-              })
-            }
-          />
-        }
-      >
-        <div className="space-y-3">
-          {/* Row 1 — Product | City | Activity Type (operational). Product drives the
-              City options (Product×Location variants); the price lives in הצעת מחיר. */}
-          <div className="grid grid-cols-3 gap-2">
-            <FieldBox label="מוצר">
-              <select value={form.productId} onChange={(e) => chooseProduct(e.target.value)} className={`${INPUT} bg-white`}>
-                <option value="">— בחר מוצר —</option>
-                {products.map((p) => (<option key={p.id} value={p.id}>{p.nameHe}</option>))}
-              </select>
-            </FieldBox>
-            <FieldBox label="עיר">
-              <select
-                value={form.locationId}
-                onChange={(e) => chooseLocation(e.target.value)}
-                className={`${INPUT} bg-white`}
+    <InlineEditScope>
+      <div className="space-y-4">
+        {/* ── Card 1 — פרטי הסיור (operational). Inline read-first editing. ── */}
+        <Card variant="panel" title="פרטי הסיור">
+          <div className="space-y-2">
+            {/* Row 1 — Product | City | Activity Type. Product drives the City
+                options (Product×Location variants); price lives in הצעת מחיר. */}
+            <div className="grid grid-cols-3 gap-3">
+              <InlineField id="f-product" label="מוצר" type="dropdown" value={deal.productId || ''}
+                options={productOptions} editFirst={editFirst} placeholder="בחר מוצר"
+                onSave={(v) => saveProduct(v)} />
+              <InlineField id="f-city" label="עיר" type="dropdown" value={deal.locationId || ''}
+                options={cityOptions} editFirst={editFirst} placeholder="בחר עיר"
+                onSave={(v) => saveLocation(v)} />
+              <InlineField id="f-activity" label="סוג פעילות" type="dropdown" value={deal.activityType || ''}
+                options={activityOptions} editFirst={editFirst} placeholder="ללא"
+                onSave={(v) => saveField({ activityType: v || null })} />
+            </div>
+            {locNotConfigured && (
+              <p className="text-[12px] text-amber-600">
+                העיר שנבחרה אינה מוגדרת כוריאנט של המוצר. ייתכן שיידרש תיאום מחיר ידני בבונה המחיר.
+              </p>
+            )}
+
+            {/* Row 2 — Date | Time | Participants. */}
+            <div className="grid grid-cols-3 gap-3">
+              <InlineField id="f-date" label="תאריך" type="date" value={deal.tourDate || ''}
+                editFirst={editFirst} onSave={(v) => saveField({ tourDate: v || null })} />
+              <InlineField id="f-time" label="שעה" type="time" value={deal.tourTime || ''}
+                editFirst={editFirst} onSave={(v) => saveField({ tourTime: v || null })} />
+              <InlineField id="f-participants" label="משתתפים" type="number" numeric value={deal.participants ?? ''}
+                editFirst={editFirst} onSave={(v) => saveField({ participants: v === '' ? null : Number(v) })} />
+            </div>
+
+            {/* Row 3 — Tour language. */}
+            <div className="grid grid-cols-2 gap-3">
+              <InlineField id="f-tourlang" label="שפת הסיור" type="dropdown" value={deal.tourLanguage || ''}
+                options={tourLangOptions} editFirst={editFirst} placeholder="ללא"
+                onSave={(v) => saveField({ tourLanguage: v || null })} />
+            </div>
+
+            {/* Important customer information — collapsed, expands to the lite editor. */}
+            <CollapsibleNote id="f-customerInfo" label="מידע חשוב על הלקוח" value={deal.customerInfo || ''} rich
+              placeholder="הוסיפו מידע פנימי חשוב לשיחה…"
+              onSave={(v) => saveField({ customerInfo: v || null })} />
+          </div>
+        </Card>
+
+        {/* ── Card 2 — הצעת מחיר (always shown) ──
+            Price / Price Builder entry + email intro + generate. Quote workflow later. */}
+        <Card variant="panel" title="הצעת מחיר">
+          <div className="space-y-2">
+            {/* Price = a summary that opens the Price Builder (the source of truth). */}
+            <div>
+              <div className="text-[11px] text-gray-400 mb-0.5">מחיר</div>
+              <button
+                type="button"
+                onClick={() => setPriceBuilderOpen(true)}
+                title="פתח בונה מחיר"
+                className="w-full text-right rounded-md -mx-2 px-2 py-1.5 min-h-[36px] flex items-center gap-2 transition-colors hover:bg-gray-50"
               >
-                <option value="">— בחר עיר —</option>
-                {recommendedLocs.length > 0 && (
-                  <optgroup label="מומלץ למוצר זה">
-                    {recommendedLocs.map((l) => (<option key={l.id} value={l.id}>{l.name}</option>))}
-                  </optgroup>
-                )}
-                {otherLocs.length > 0 && (
-                  <optgroup label={recommendedLocs.length > 0 ? 'מיקומים נוספים' : 'מיקומים'}>
-                    {otherLocs.map((l) => (<option key={l.id} value={l.id}>{l.nameHe}</option>))}
-                  </optgroup>
-                )}
-              </select>
-            </FieldBox>
-            <FieldBox label="סוג פעילות">
-              <select value={form.activityType} onChange={(e) => set('activityType', e.target.value)} className={`${INPUT} bg-white`}>
-                <option value="">— ללא —</option>
-                {ACTIVITY_TYPES.map((v) => (<option key={v} value={v}>{ACTIVITY_TYPE_LABELS[v]}</option>))}
-              </select>
-            </FieldBox>
-          </div>
-          {/* Non-blocking hint: chosen city isn't a configured variant for the product. */}
-          {locNotConfigured && (
-            <p className="text-[12px] text-amber-600 -mt-1">
-              העיר שנבחרה אינה מוגדרת כוריאנט של המוצר. ייתכן שיידרש תיאום מחיר ידני בבונה המחיר.
-            </p>
-          )}
+                <span className="text-[17px] font-bold text-gray-900" dir="ltr">{deal.valueMinor ? `₪${minorToInput(deal.valueMinor)}` : '—'}</span>
+                <span className="ms-auto text-[12px] text-blue-600 shrink-0">בונה מחיר ✎</span>
+              </button>
+            </div>
 
-          {/* Row 2 — Date | Time | Participants. */}
-          <div className="grid grid-cols-3 gap-2">
-            <FieldBox label="תאריך">
-              <input type="date" value={form.tourDate} onChange={(e) => set('tourDate', e.target.value)} className={`${INPUT} bg-white`} />
-            </FieldBox>
-            <FieldBox label="שעה">
-              <input type="time" value={form.tourTime} onChange={(e) => set('tourTime', e.target.value)} className={`${INPUT} bg-white`} />
-            </FieldBox>
-            <FieldBox label="משתתפים">
-              <input value={form.participants}
-                onChange={(e) => set('participants', e.target.value.replace(/[^0-9]/g, ''))}
-                inputMode="numeric" dir="ltr" className={INPUT} />
-            </FieldBox>
-          </div>
-
-          {/* Row 3 — Tour language (operational). Activity Type moved up to Row 1. */}
-          <div className="grid grid-cols-2 gap-2">
-            <FieldBox label="שפת הסיור">
-              <select value={form.tourLanguage} onChange={(e) => set('tourLanguage', e.target.value)} className={`${INPUT} bg-white`}>
-                <option value="">— ללא —</option>
-                {TOUR_LANGS.map((l) => (<option key={l.key} value={l.key}>{l.label}</option>))}
-              </select>
-            </FieldBox>
-          </div>
-
-          {/* Important customer information — the lightweight editor. */}
-          <FieldBox label="מידע חשוב על הלקוח">
-            <RichEditor
-              value={form.customerInfo}
-              onChange={(html) => set('customerInfo', html)}
-              toolbar="lite"
-              collapsible
-              /* Bounded height: in the height-constrained right panel an unbounded
-                 editor (default 60vh) grows and scroll-jacks the panel, pushing the
-                 upper rows out of view. Capping keeps it a stable, self-scrolling box. */
-              maxHeight="220px"
-              ariaLabel="מידע חשוב על הלקוח"
-              placeholder="מידע פנימי חשוב לשיחה…"
-            />
-          </FieldBox>
-        </div>
-      </Card>
-
-      {/* ── Card 2 — הצעת מחיר (always shown) ──
-          Price / Price Builder entry + email intro + generate. Payment terms/method
-          live inside the Price Builder now. Quote workflow (versions/actions) later. */}
-      <Card
-        variant="panel"
-        title="הצעת מחיר"
-        action={
-          <SaveBtn
-            dirty={dirtyKeys(QUOTE_KEYS)}
-            busy={savingSection === 'quote'}
-            onClick={() =>
-              saveSection('quote', {
-                quoteEmailIntro: form.quoteEmailIntro || null,
-              })
-            }
-          />
-        }
-      >
-        <div className="space-y-3">
-          {/* Price = a summary that opens the Price Builder (the source of truth). */}
-          <FieldBox label="מחיר">
-            <button
-              type="button"
-              onClick={() => setPriceBuilderOpen(true)}
-              title="פתח בונה מחיר"
-              className={`${INPUT} bg-white text-right flex items-center justify-between gap-2 hover:bg-gray-50`}
-            >
-              <span className="text-[17px] font-bold text-gray-900" dir="ltr">{form.value ? `₪${form.value}` : '—'}</span>
-              <span className="text-[12px] text-blue-600 shrink-0">בונה מחיר ✎</span>
-            </button>
-          </FieldBox>
-
-          <FieldBox label="פתיח אישי למייל">
-            <textarea
-              value={form.quoteEmailIntro}
-              onChange={(e) => set('quoteEmailIntro', e.target.value)}
-              rows={3}
+            {/* Personal email intro — collapsed, expands to a plain editor. */}
+            <CollapsibleNote id="f-emailIntro" label="פתיח אישי למייל" value={deal.quoteEmailIntro || ''}
               placeholder="משפט פתיחה אישי שיופיע במייל ההצעה…"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
-            />
-          </FieldBox>
+              onSave={(v) => saveField({ quoteEmailIntro: v || null })} />
 
-          <div className="pt-1">
-            <button
-              type="button"
-              disabled
-              title="בקרוב — מנוע ההצעות עדיין לא מחובר"
-              className="w-full rounded-lg bg-blue-600 text-white text-sm font-semibold py-2.5 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              הפק הצעת מחיר
-            </button>
+            <div className="pt-1">
+              <button
+                type="button"
+                disabled
+                title="בקרוב — מנוע ההצעות עדיין לא מחובר"
+                className="w-full rounded-lg bg-blue-600 text-white text-sm font-semibold py-2.5 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                הפק הצעת מחיר
+              </button>
+            </div>
           </div>
-        </div>
-      </Card>
+        </Card>
 
       {deal.status === 'lost' && (
         <Card variant="panel" title="פרטי LOST">
@@ -618,8 +559,9 @@ export default function DealDetail() {
         </Card>
       )}
 
-      <SystemInfo deal={deal} />
-    </div>
+        <SystemInfo deal={deal} />
+      </div>
+    </InlineEditScope>
   );
 
   return (

@@ -811,6 +811,10 @@ model DealStage {
   labelEn   String?
   sortOrder Int      @default(0)
   isActive  Boolean  @default(true)
+  // Platform inline-edit Display Mode for deals in this stage: 'read' (Read First —
+  // fields shown as read-only, click to edit) or 'edit' (Edit First — fields open
+  // as inputs for data entry). Configurable in CRM settings; not hardcoded.
+  displayMode String @default("read")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   deals     Deal[]

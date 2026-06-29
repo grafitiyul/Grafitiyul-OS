@@ -77,7 +77,7 @@ export default function DealStagesSettings() {
       ) : (
         <SettingsCard
           title="שלבי הצינור"
-          description="גררו לשינוי הסדר. ניתן לערוך שם, להוסיף ולהסיר שלבים."
+          description="גררו לשינוי הסדר. ניתן לערוך שם, להוסיף ולהסיר שלבים. מצב תצוגה קובע אם דיל בשלב זה נפתח לקריאה (לחיצה לעריכה) או לעריכה (שדות פתוחים)."
           footer={<AddStageForm onChange={refresh} />}
         >
           <SortableList
@@ -86,10 +86,33 @@ export default function DealStagesSettings() {
             onSave={save}
             onRemove={remove}
             emptyText="טוען שלבי ברירת מחדל…"
-            renderMeta={(s) => <CountChip n={s._count?.deals ?? 0} noun="דילים" />}
+            renderMeta={(s) => (
+              <div className="flex items-center gap-2">
+                <DisplayModeToggle value={s.displayMode || 'read'} onChange={(m) => save(s, { displayMode: m })} />
+                <CountChip n={s._count?.deals ?? 0} noun="דילים" />
+              </div>
+            )}
           />
         </SettingsCard>
       )}
+    </div>
+  );
+}
+
+function DisplayModeToggle({ value, onChange }) {
+  const opts = [['read', 'קריאה'], ['edit', 'עריכה']];
+  return (
+    <div className="inline-flex rounded-md border border-gray-200 overflow-hidden text-[11px]" title="מצב תצוגה: קריאה תחילה / עריכה תחילה">
+      {opts.map(([k, l]) => (
+        <button
+          key={k}
+          type="button"
+          onClick={(e) => { e.stopPropagation(); if (value !== k) onChange(k); }}
+          className={`px-2 py-1 ${value === k ? 'bg-blue-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'}`}
+        >
+          {l}
+        </button>
+      ))}
     </div>
   );
 }
