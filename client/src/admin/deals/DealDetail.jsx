@@ -443,7 +443,10 @@ export default function DealDetail() {
   // different one. Never blocks/warns/affects pricing — just paints the City red.
   const homeLocation = allLocations.find((l) => l.isHomeLocation) || null;
   const cityIsNonHome = !!(homeLocation && deal.locationId && deal.locationId !== homeLocation.id);
-  const cityIconCls = `w-3.5 h-3.5 ${cityIsNonHome ? 'text-red-500' : 'text-gray-400'}`;
+  // Field icons are the visual identifiers now (labels removed), so they use a
+  // clearly-visible neutral gray. The city pin turns red on the non-home reminder.
+  const FIELD_ICON = 'w-4 h-4 text-gray-600';
+  const cityIconCls = `w-4 h-4 ${cityIsNonHome ? 'text-red-500' : 'text-gray-600'}`;
 
   // Per-field inline save: persist ONLY that field, then refresh → back to read.
   const saveField = (patch) => api.deals.update(id, patch).then(refresh);
@@ -467,64 +470,69 @@ export default function DealDetail() {
       <div className="space-y-4">
         {/* ── Card 1 — פרטי הסיור (operational). Inline read-first editing. ── */}
         <Card variant="panel" title="פרטי הסיור">
-          <div className="space-y-3">
-            {/* Row 1 — Product + Price. Price stays read-only; clicking it opens the
-                relevant builder (regular / group ticket) exactly as before. Widths
-                follow importance (flexible proportions, wrap on a narrow panel).
-                Activity Type is NOT here — its single owner is the header badge. */}
-            <div className="flex flex-wrap gap-x-4 gap-y-3">
-              <div className="flex-[3] min-w-[11rem]">
-                <InlineField id="f-product" label="מוצר" icon={<PackageIcon />} type="dropdown" value={deal.productId || ''}
-                  options={productOptions} editFirst={editFirst} placeholder="בחר מוצר"
-                  onSave={(v) => saveProduct(v)} />
+          <div className="space-y-3.5">
+            {/* A compact, label-less dashboard: each field is just an ICON (its
+                visual identifier; hover = field name) + its clickable value. Clicking
+                the value edits inline exactly as before; the icon is not clickable. */}
+
+            {/* Row 1 — Product (start) + Price (left/end). Price opens the relevant
+                builder on click (no "בונה מחיר" link). */}
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex-1 min-w-0">
+                <InlineField id="f-product" iconInline icon={<PackageIcon className={FIELD_ICON} />} label="מוצר"
+                  type="dropdown" value={deal.productId || ''} options={productOptions} editFirst={editFirst}
+                  placeholder="בחר מוצר" onSave={(v) => saveProduct(v)} />
               </div>
-              <div className="flex-[2] min-w-[9rem]">
-                <FieldLabel icon={<ReceiptIcon />}>מחיר</FieldLabel>
+              <div className="shrink-0 flex items-center gap-2">
+                <span title="מחיר" className="shrink-0 inline-flex cursor-default"><ReceiptIcon className={FIELD_ICON} /></span>
                 <button
                   type="button"
                   onClick={() => setPriceBuilderOpen(true)}
                   title="פתח בונה מחיר"
-                  className="w-full text-right rounded-md px-2 min-h-[38px] flex items-center gap-2 transition-colors hover:bg-gray-50"
+                  className="rounded-md px-1.5 min-h-[34px] flex items-center transition-colors hover:bg-gray-50"
                 >
                   <span className="text-[15px] font-bold text-gray-900" dir="ltr">{deal.valueMinor ? `₪${minorToInput(deal.valueMinor)}` : '—'}</span>
-                  <span className="ms-auto text-[12px] text-blue-600 shrink-0">בונה מחיר ✎</span>
                 </button>
               </div>
             </div>
 
-            {/* Row 2 — Date, Time, Participants. */}
-            <div className="flex flex-wrap gap-x-4 gap-y-3">
-              <div className="flex-[2] min-w-[8rem]">
-                <InlineField id="f-date" label="תאריך" icon={<CalendarIcon />} type="date" value={deal.tourDate || ''}
-                  editFirst={editFirst} onSave={(v) => saveField({ tourDate: v || null })} />
+            {/* Row 2 — Date, Time, Participants (centered). */}
+            <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
+              <div className="w-[9.5rem]">
+                <InlineField id="f-date" iconInline icon={<CalendarIcon className={FIELD_ICON} />} label="תאריך"
+                  type="date" value={deal.tourDate || ''} editFirst={editFirst}
+                  onSave={(v) => saveField({ tourDate: v || null })} />
               </div>
-              <div className="flex-[2] min-w-[7rem]">
-                <InlineField id="f-time" label="שעה" icon={<ClockIcon />} type="time" value={deal.tourTime || ''}
-                  editFirst={editFirst} onSave={(v) => saveField({ tourTime: v || null })} />
+              <div className="w-[7rem]">
+                <InlineField id="f-time" iconInline icon={<ClockIcon className={FIELD_ICON} />} label="שעה"
+                  type="time" value={deal.tourTime || ''} editFirst={editFirst}
+                  onSave={(v) => saveField({ tourTime: v || null })} />
               </div>
-              <div className="flex-[1] min-w-[5.5rem]">
-                <InlineField id="f-participants" label="משתתפים" icon={<UsersIcon />} type="number" numeric value={deal.participants ?? ''}
-                  editFirst={editFirst} onSave={(v) => saveField({ participants: v === '' ? null : Number(v) })} />
+              <div className="w-[6rem]">
+                <InlineField id="f-participants" iconInline icon={<UsersIcon className={FIELD_ICON} />} label="משתתפים"
+                  type="number" numeric value={deal.participants ?? ''} editFirst={editFirst}
+                  onSave={(v) => saveField({ participants: v === '' ? null : Number(v) })} />
               </div>
             </div>
 
-            {/* Row 3 — City + Tour Language. City turns red (bolder, red pin) as a
-                visual-only reminder when it differs from the Home Location. */}
-            <div className="flex flex-wrap gap-x-4 gap-y-3">
-              <div className="flex-[3] min-w-[9rem]">
-                <InlineField id="f-city" label="עיר" icon={<MapPinIcon className={cityIconCls} />} type="dropdown" value={deal.locationId || ''}
-                  options={cityOptions} editFirst={editFirst} placeholder="בחר עיר"
-                  valueClassName={cityIsNonHome ? 'text-[16px] font-semibold text-red-600' : undefined}
+            {/* Row 3 — City + Tour Language (centered). The city pin + value turn red
+                as a visual-only reminder when the city differs from the Home Location. */}
+            <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
+              <div className="w-[13rem] max-w-full">
+                <InlineField id="f-city" iconInline icon={<MapPinIcon className={cityIconCls} />} label="עיר"
+                  type="dropdown" value={deal.locationId || ''} options={cityOptions} editFirst={editFirst}
+                  placeholder="בחר עיר"
+                  valueClassName={cityIsNonHome ? 'text-[15px] font-semibold text-red-600' : undefined}
                   onSave={(v) => saveLocation(v)} />
               </div>
-              <div className="flex-[2] min-w-[8rem]">
-                <InlineField id="f-tourlang" label="שפת הסיור" icon={<GlobeIcon />} type="dropdown" value={deal.tourLanguage || ''}
-                  options={tourLangOptions} editFirst={editFirst} placeholder="ללא"
-                  onSave={(v) => saveField({ tourLanguage: v || null })} />
+              <div className="w-[9rem]">
+                <InlineField id="f-tourlang" iconInline icon={<GlobeIcon className={FIELD_ICON} />} label="שפת הסיור"
+                  type="dropdown" value={deal.tourLanguage || ''} options={tourLangOptions} editFirst={editFirst}
+                  placeholder="ללא" onSave={(v) => saveField({ tourLanguage: v || null })} />
               </div>
             </div>
             {locNotConfigured && (
-              <p className="text-[12px] text-amber-600">
+              <p className="text-[12px] text-amber-600 text-center">
                 העיר שנבחרה אינה מוגדרת כוריאנט של המוצר. ייתכן שיידרש תיאום מחיר ידני בבונה המחיר.
               </p>
             )}
@@ -533,6 +541,10 @@ export default function DealDetail() {
             <CollapsibleNote id="f-customerInfo" label="מידע חשוב על הלקוח" value={deal.customerInfo || ''} rich
               placeholder="הוסיפו מידע פנימי חשוב לשיחה…"
               onSave={(v) => saveField({ customerInfo: v || null })} />
+
+            {/* Operational action bar — primary action varies by Activity Type. UI
+                only for now (no handlers wired yet). */}
+            <DealActionRow activityType={deal.activityType} />
           </div>
         </Card>
 
@@ -1381,13 +1393,57 @@ function FieldBox({ label, children }) {
     </div>
   );
 }
-// Field label matching InlineField's label (light, icon + text) — used for the
-// read-only Price field so it lines up with the inline fields beside it.
-function FieldLabel({ icon, children }) {
+// Operational action bar under the Tour Details fields. The PRIMARY action varies
+// by Activity Type; "תשלום" and "פעולות" are shared. UI ONLY for now — no handlers
+// are wired (the menu items are placeholders). When tour bookings exist, a Group
+// deal's primary will switch from "שבץ לסיור" to "החלף סיור" based on assignment.
+const DEAL_ACTIONS_MENU = [
+  { label: 'העתק קישור לתשלום' },
+  { label: 'הסר הרשמה מסיור' },
+  { label: 'הפק מסמך' },
+  { label: 'שליחת מייל אישור' },
+  { sep: true },
+  { label: 'פעולה נוספת...' },
+];
+function dealPrimaryAction(activityType, groupAssigned) {
+  if (activityType === 'private') return 'צור סיור';
+  if (activityType === 'group') return groupAssigned ? 'החלף סיור' : 'שבץ לסיור';
+  return 'הפק הצעת מחיר'; // business + default
+}
+function DealActionRow({ activityType }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+  // No tour-assignment model yet → a Group deal is always "before assignment".
+  const groupAssigned = false;
+  const soon = 'בקרוב';
   return (
-    <span className="block text-[11px] text-gray-400 mb-1.5 px-2">
-      <span className="inline-flex items-center gap-1.5">{icon}{children}</span>
-    </span>
+    <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-gray-100">
+      <button type="button" title={soon}
+        className="rounded-lg bg-blue-600 text-white text-sm font-semibold px-4 py-2 hover:bg-blue-700">
+        {dealPrimaryAction(activityType, groupAssigned)}
+      </button>
+      <button type="button" title={soon}
+        className="rounded-lg border border-gray-300 text-gray-700 text-sm font-medium px-4 py-2 hover:bg-gray-50">
+        תשלום
+      </button>
+      <button ref={menuRef} type="button" onClick={() => setMenuOpen((o) => !o)}
+        aria-haspopup="menu" aria-expanded={menuOpen}
+        className="rounded-lg border border-gray-300 text-gray-700 text-sm font-medium px-3 py-2 hover:bg-gray-50 inline-flex items-center gap-1">
+        פעולות <span className="text-[9px] text-gray-400">▼</span>
+      </button>
+      <AnchoredMenu anchorRef={menuRef} open={menuOpen} onClose={() => setMenuOpen(false)} width={216} align="start">
+        {DEAL_ACTIONS_MENU.map((it, i) =>
+          it.sep ? (
+            <div key={i} className="my-1 border-t border-gray-100" />
+          ) : (
+            <button key={i} type="button" onClick={() => setMenuOpen(false)} title={soon}
+              className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+              {it.label}
+            </button>
+          ),
+        )}
+      </AnchoredMenu>
+    </div>
   );
 }
 

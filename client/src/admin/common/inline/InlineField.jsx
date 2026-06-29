@@ -45,7 +45,7 @@ const BODY = 'min-h-[38px]';
 
 export default function InlineField({
   id, label, type = 'text', value, options, display, placeholder = '—',
-  editFirst = false, onSave, dir, numeric, icon, valueClassName,
+  editFirst = false, onSave, dir, numeric, icon, valueClassName, iconInline = false,
 }) {
   const scope = useInlineScope();
   const coordinated = !editFirst;
@@ -99,11 +99,41 @@ export default function InlineField({
     </span>
   ) : null;
 
+  // Icon-inline mode: NO label text. The icon sits beside the value as the field's
+  // visual identifier, NOT clickable, and carries the field name as a hover tooltip.
+  // Only the value is clickable (opens edit), exactly as in label mode.
+  const inlineIcon = iconInline && icon ? (
+    <span title={label} className="shrink-0 inline-flex cursor-default">{icon}</span>
+  ) : null;
+
   // ── READ presentation (coordinated, closed) ──
   // No negative margins: the read value sits at the SAME x as the edit input's text
   // (both px-2), so opening the field transforms it in place — nothing shifts.
   if (coordinated && !open) {
     const empty = value === '' || value === null || value === undefined;
+    const valueSpan = (
+      <span
+        className={`${VALUE} ${valueClassName || `text-[15px] ${empty ? 'text-gray-300' : 'font-medium text-gray-900'}`}`}
+        dir={dir}
+      >
+        {empty ? placeholder : (display ? display(value) : defaultDisplay(type, value, options))}
+      </span>
+    );
+    if (iconInline) {
+      return (
+        <div className="group flex items-center gap-2 w-full">
+          {inlineIcon}
+          <button
+            type="button"
+            onClick={() => scope.requestOpen(id)}
+            className={`flex-1 min-w-0 text-right rounded-md px-1.5 ${BODY} flex items-center gap-1.5 transition-colors hover:bg-gray-50`}
+          >
+            {valueSpan}
+            <span className="ms-auto shrink-0 text-[12px] text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity">✎</span>
+          </button>
+        </div>
+      );
+    }
     return (
       <div className="group">
         {labelNode}
@@ -112,12 +142,7 @@ export default function InlineField({
           onClick={() => scope.requestOpen(id)}
           className={`w-full text-right rounded-md px-2 ${BODY} flex items-center gap-2 transition-colors hover:bg-gray-50`}
         >
-          <span
-            className={`${VALUE} ${valueClassName || `text-[15px] ${empty ? 'text-gray-300' : 'font-medium text-gray-900'}`}`}
-            dir={dir}
-          >
-            {empty ? placeholder : (display ? display(value) : defaultDisplay(type, value, options))}
-          </span>
+          {valueSpan}
           <span className="ms-auto shrink-0 text-[12px] text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity">✎</span>
         </button>
       </div>
@@ -132,8 +157,9 @@ export default function InlineField({
   // moves, and there is no layout jump. A 1px fade-in only; never a slide.
   return (
     <div>
-      {labelNode}
-      <div className={`relative ${BODY} flex items-center animate-[inlineIn_120ms_ease-out]`}>
+      {!iconInline && labelNode}
+      <div className={`relative ${BODY} flex items-center ${iconInline ? 'gap-2' : ''} animate-[inlineIn_120ms_ease-out]`}>
+        {inlineIcon}
         <div className="flex-1 min-w-0">{renderInput()}</div>
         {coordinated && (
           <div className="absolute top-full end-0 z-30 mt-1 inline-flex items-center rounded-lg border border-gray-200 bg-white shadow-md overflow-hidden">
