@@ -30,11 +30,10 @@ function defaultDisplay(type, value, options) {
   if (type === 'date') return fmtDate(value);
   return String(value);
 }
-const INPUT_BASE = 'h-9 w-full rounded-md border border-blue-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-200';
-// Inline-end space reserved for the floating ✓/✕ overlay (coordinated edit only) so
-// the value never slides under the controls. Without the overlay (editFirst) the
-// input keeps symmetric padding.
-const INPUT_PAD_OVERLAY = 'ps-2 pe-16';
+// Symmetric padding so the edit input occupies EXACTLY the read value's box (same
+// width + text origin). The ✓/✕ never live inside the input — they float below as a
+// mini-toolbar (see edit presentation), so the input is never reserved/cramped.
+const INPUT = 'h-9 w-full rounded-md border border-blue-300 bg-white px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200';
 // Shared label + value treatment so read and edit modes line up pixel-for-pixel
 // (px-2 matches the input's text inset → the value never shifts horizontally when
 // the field flips between read and edit). Label is light + roomy; value is strong.
@@ -115,25 +114,27 @@ export default function InlineField({
   }
 
   // ── EDIT presentation ──
-  // The input spans the FULL field width; the ✓/✕ are a small FLOATING overlay
-  // pinned to the inline-end (absolute → zero layout width). So small fields stay
-  // usable, the value stays readable (reserved inline-end padding), and no
-  // neighbour moves. A 1px fade-in only; never a slide.
+  // The input occupies EXACTLY the read value's box (full width, symmetric padding)
+  // — the same information field simply became editable. The ✓/✕ are a small,
+  // Notion-style FLOATING mini-toolbar pinned just below the field's inline-end
+  // (absolute → consumes ZERO row/grid space). So nothing is cramped, no neighbour
+  // moves, and there is no layout jump. A 1px fade-in only; never a slide.
   return (
     <div>
       {label && <span className={LABEL}>{label}</span>}
-      <div className={`relative flex items-center ${BODY} animate-[inlineIn_120ms_ease-out]`}>
+      <div className={`relative ${BODY} flex items-center animate-[inlineIn_120ms_ease-out]`}>
         <div className="flex-1 min-w-0">{renderInput()}</div>
         {coordinated && (
-          <div className="absolute inset-y-0 end-1 flex items-center gap-0.5 pointer-events-none">
+          <div className="absolute top-full end-0 z-30 mt-1 inline-flex items-center rounded-lg border border-gray-200 bg-white shadow-md overflow-hidden">
             <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={commit} disabled={saving}
-              title="שמור (Enter)"
-              className="pointer-events-auto h-7 w-7 inline-flex items-center justify-center rounded-md bg-emerald-600 text-white text-[13px] shadow-sm hover:bg-emerald-700 disabled:opacity-50">
+              title="שמור (Enter)" aria-label="שמור"
+              className="h-7 w-7 inline-flex items-center justify-center text-[13px] text-emerald-600 hover:bg-emerald-50 disabled:opacity-50">
               ✓
             </button>
+            <span className="w-px h-4 bg-gray-200" aria-hidden />
             <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={cancel} disabled={saving}
-              title="ביטול (Esc)"
-              className="pointer-events-auto h-7 w-7 inline-flex items-center justify-center rounded-md border border-gray-300 bg-white text-gray-500 text-[12px] shadow-sm hover:bg-gray-50 disabled:opacity-50">
+              title="ביטול (Esc)" aria-label="ביטול"
+              className="h-7 w-7 inline-flex items-center justify-center text-[12px] text-gray-400 hover:bg-gray-50 hover:text-gray-600 disabled:opacity-50">
               ✕
             </button>
           </div>
@@ -144,20 +145,17 @@ export default function InlineField({
   );
 
   function renderInput() {
-    // Reserve inline-end room ONLY when the floating ✓/✕ overlay is shown
-    // (coordinated). editFirst has no overlay → symmetric padding.
-    const inputCls = `${INPUT_BASE} ${coordinated ? INPUT_PAD_OVERLAY : 'px-2'}`;
     const common = {
       ref,
       value: draft ?? '',
       onKeyDown,
       disabled: saving,
-      className: inputCls,
+      className: INPUT,
       ...(editFirst ? { onBlur: commit } : {}),
     };
     if (type === 'dropdown') {
       return (
-        <select {...common} className={`${inputCls} bg-white`} onChange={(e) => setDraft(e.target.value)}>
+        <select {...common} className={`${INPUT} bg-white`} onChange={(e) => setDraft(e.target.value)}>
           <option value="">— ללא —</option>
           {(options || []).map((o) =>
             o.options ? (
@@ -172,7 +170,7 @@ export default function InlineField({
       );
     }
     if (type === 'textarea') {
-      return <textarea {...common} rows={3} dir={dir} onChange={(e) => setDraft(e.target.value)} className={`${inputCls} h-auto py-1.5 leading-relaxed`} />;
+      return <textarea {...common} rows={3} dir={dir} onChange={(e) => setDraft(e.target.value)} className={`${INPUT} h-auto py-1.5 leading-relaxed`} />;
     }
     const htmlType = type === 'date' ? 'date' : type === 'time' ? 'time' : 'text';
     return (

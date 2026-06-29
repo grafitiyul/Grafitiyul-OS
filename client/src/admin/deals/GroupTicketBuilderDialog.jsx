@@ -250,9 +250,11 @@ export default function GroupTicketBuilderDialog({ open, deal, context, onClose,
 }
 
 function CardSection({ card, byRow, onQty, onPrice, onRevert }) {
+  // No overflow-hidden on the card: the inline-edit mini-toolbar floats just below a
+  // row and must not be clipped at the card edge. The header rounds its own corners.
   return (
-    <div className="rounded-xl border border-gray-200 overflow-hidden">
-      <div className="bg-gray-50 px-4 py-2.5 border-b border-gray-200">
+    <div className="rounded-xl border border-gray-200">
+      <div className="bg-gray-50 px-4 py-2.5 border-b border-gray-200 rounded-t-xl">
         <span className="text-[15px] font-semibold text-gray-900">{card.title}</span>
       </div>
       <div className="px-4 pt-2 pb-1">
