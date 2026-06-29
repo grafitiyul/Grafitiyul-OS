@@ -858,6 +858,13 @@ model Deal {
   valueMinor            BigInt               @default(0)
   currency              String               @default("ILS")
   discountMinor         BigInt?
+  // Payment — FK to the CRM catalog (the source of truth). The Deal stores only
+  // IDs, never names, so renaming a term/method in settings never affects deals.
+  paymentTerm           PaymentTerm?         @relation(fields: [paymentTermId], references: [id], onDelete: SetNull)
+  paymentTermId         String?
+  paymentMethodRef      PaymentMethod?       @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  paymentMethodId       String?
+  // DEPRECATED back-compat only — no longer written. Superseded by the FK fields.
   paymentTerms          String?
   // Lead source. `dealSource` references the admin-managed DealSource catalog
   // (the structured "how did this lead arrive"). `source` is kept as the OPTIONAL
@@ -886,7 +893,8 @@ model Deal {
   tourDate              String? // "YYYY-MM-DD"
   tourTime              String? // "HH:MM"
   participants          Int?
-  paymentMethod         String? // card | transfer | cash | check | other
+  // DEPRECATED back-compat only — no longer written. Superseded by paymentMethodId.
+  paymentMethod         String?
   communicationLanguage String? // he | en
   tourLanguage          String? // he | en | es | fr | ru
   customerInfo          String? // internal working note (lightweight rich HTML)
@@ -908,6 +916,8 @@ model Deal {
   @@index([productId])
   @@index([productVariantId])
   @@index([locationId])
+  @@index([paymentTermId])
+  @@index([paymentMethodId])
   @@index([dealStageId])
   @@index([lostReasonId])
   @@index([dealSourceId])
@@ -1142,6 +1152,7 @@ model PaymentTerm {
   methodsDefaultingHere  PaymentMethod[]    @relation("MethodDefaultTerm")
   // Org types that point here as their default payment term (back-relation only).
   orgTypeDefaults        OrganizationType[] @relation("OrgTypeDefaultPaymentTerm")
+  deals                  Deal[]
 
   @@index([sortOrder])
 }
@@ -1159,6 +1170,7 @@ model PaymentMethod {
   termsDefaultingHere  PaymentTerm[]      @relation("TermDefaultMethod")
   // Org types that point here as their override payment method (back-relation).
   orgTypeDefaults      OrganizationType[] @relation("OrgTypeDefaultPaymentMethod")
+  deals                Deal[]
 
   @@index([sortOrder])
 }

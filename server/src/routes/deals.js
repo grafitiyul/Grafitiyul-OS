@@ -60,13 +60,8 @@ function applyTourFields(b, data) {
       data.participants = n;
     }
   }
-  // paymentMethod is a free-text value chosen from the PaymentMethod CRM catalog in
-  // the Price Builder (the dropdown only offers real catalog entries). No fixed enum
-  // here — the obsolete config-key list caused invalid_payment_method. (The long-term
-  // FK model is the separately-audited payment SSOT change.)
-  if (b.paymentMethod !== undefined) {
-    data.paymentMethod = b.paymentMethod ? String(b.paymentMethod).trim() : null;
-  }
+  // (Payment method is handled as an FK — paymentMethodId — in the PUT handler;
+  // the deprecated free-text paymentMethod is no longer written here.)
   if (b.communicationLanguage !== undefined) {
     if (b.communicationLanguage && !VALID_COMM_LANGS.includes(b.communicationLanguage)) return 'invalid_communication_language';
     data.communicationLanguage = b.communicationLanguage || null;
@@ -208,6 +203,8 @@ router.post(
       productId: b.productId || null,
       productVariantId: b.productVariantId || null,
       locationId: b.locationId || null,
+      paymentTermId: b.paymentTermId || null,
+      paymentMethodId: b.paymentMethodId || null,
       basePriceOverridden: !!b.basePriceOverridden,
       organizationId: b.organizationId || null,
       organizationUnitId: b.organizationUnitId || null,
@@ -215,7 +212,6 @@ router.post(
       valueMinor: toMinor(b.valueMinor) ?? 0n,
       currency: b.currency ? String(b.currency).trim() : 'ILS',
       discountMinor: toMinor(b.discountMinor),
-      paymentTerms: b.paymentTerms ? String(b.paymentTerms).trim() : null,
       source: b.source ? String(b.source).trim() : null,
       expectedCloseDate: b.expectedCloseDate
         ? new Date(b.expectedCloseDate)
@@ -261,6 +257,10 @@ router.put(
     if (b.productVariantId !== undefined)
       data.productVariantId = b.productVariantId || null;
     if (b.locationId !== undefined) data.locationId = b.locationId || null;
+    // Payment — FK to the CRM catalog (IDs only; the deprecated string fields are
+    // never written). Prisma validates the FK (must exist or be null).
+    if (b.paymentTermId !== undefined) data.paymentTermId = b.paymentTermId || null;
+    if (b.paymentMethodId !== undefined) data.paymentMethodId = b.paymentMethodId || null;
     if (b.basePriceOverridden !== undefined)
       data.basePriceOverridden = !!b.basePriceOverridden;
     if (b.activityType !== undefined) {
@@ -284,8 +284,8 @@ router.put(
     if (b.valueMinor !== undefined) data.valueMinor = toMinor(b.valueMinor) ?? 0n;
     if (b.currency !== undefined) data.currency = String(b.currency).trim() || 'ILS';
     if (b.discountMinor !== undefined) data.discountMinor = toMinor(b.discountMinor);
-    if (b.paymentTerms !== undefined)
-      data.paymentTerms = b.paymentTerms ? String(b.paymentTerms).trim() : null;
+    // NOTE: the deprecated free-text paymentTerms/paymentMethod are intentionally
+    // no longer written — payment is stored via paymentTermId/paymentMethodId above.
     if (b.source !== undefined) data.source = b.source ? String(b.source).trim() : null;
     if (b.expectedCloseDate !== undefined)
       data.expectedCloseDate = b.expectedCloseDate

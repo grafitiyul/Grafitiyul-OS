@@ -56,8 +56,8 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   const [addons, setAddons] = useState([]);
   const [terms, setTerms] = useState([]);
   const [methods, setMethods] = useState([]);
-  const [paymentTerms, setPaymentTerms] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState('');
+  const [paymentTermId, setPaymentTermId] = useState('');
+  const [paymentMethodId, setPaymentMethodId] = useState('');
   const [methodOverridden, setMethodOverridden] = useState(false);
   const calcTimer = useRef(null);
 
@@ -74,8 +74,8 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   useEffect(() => {
     if (!open) return;
     let live = true;
-    setPaymentTerms(deal?.paymentTerms || '');
-    setPaymentMethod(deal?.paymentMethod || '');
+    setPaymentTermId(deal?.paymentTermId || '');
+    setPaymentMethodId(deal?.paymentMethodId || '');
     setMethodOverridden(false);
     api.deals
       .getPriceLines(deal.id)
@@ -147,19 +147,19 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     setFreeRows((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n; });
   }
 
-  // Payment Terms → auto-fill Payment Method from the catalog relationship, unless
-  // the method was manually changed this session.
-  function pickTerm(name) {
-    setPaymentTerms(name);
+  // Payment Term → auto-fill Payment Method via the catalog relationship BY ID,
+  // unless the method was manually changed this session.
+  function pickTerm(termId) {
+    setPaymentTermId(termId);
     if (!methodOverridden) {
-      const t = terms.find((x) => x.nameHe === name);
-      const def = t?.defaultPaymentMethod?.nameHe;
-      if (def) setPaymentMethod(def);
+      const t = terms.find((x) => x.id === termId);
+      const defId = t?.defaultPaymentMethod?.id;
+      if (defId) setPaymentMethodId(defId);
     }
   }
-  function pickMethod(name) {
+  function pickMethod(methodId) {
     setMethodOverridden(true);
-    setPaymentMethod(name);
+    setPaymentMethodId(methodId);
   }
 
   async function save() {
@@ -178,8 +178,8 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
         productVariantId: context?.productVariantId || null,
       });
       await api.deals.update(deal.id, {
-        paymentTerms: paymentTerms || null,
-        paymentMethod: paymentMethod || null,
+        paymentTermId: paymentTermId || null,
+        paymentMethodId: paymentMethodId || null,
       });
       await onSaved?.();
       onClose?.();
@@ -286,21 +286,15 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
         <div className="flex flex-wrap items-start justify-between gap-8 pt-4 border-t border-gray-100">
           <div className="w-72 space-y-3 pt-2">
             <Field label="תנאי תשלום">
-              <select value={paymentTerms} onChange={(e) => pickTerm(e.target.value)} className={FIELD}>
+              <select value={paymentTermId} onChange={(e) => pickTerm(e.target.value)} className={FIELD}>
                 <option value="">— ללא —</option>
-                {terms.map((t) => (<option key={t.id} value={t.nameHe}>{t.nameHe}</option>))}
-                {paymentTerms && !terms.some((t) => t.nameHe === paymentTerms) && (
-                  <option value={paymentTerms}>{paymentTerms}</option>
-                )}
+                {terms.map((t) => (<option key={t.id} value={t.id}>{t.nameHe}</option>))}
               </select>
             </Field>
             <Field label="אמצעי תשלום">
-              <select value={paymentMethod} onChange={(e) => pickMethod(e.target.value)} className={FIELD}>
+              <select value={paymentMethodId} onChange={(e) => pickMethod(e.target.value)} className={FIELD}>
                 <option value="">— ללא —</option>
-                {methods.map((m) => (<option key={m.id} value={m.nameHe}>{m.nameHe}</option>))}
-                {paymentMethod && !methods.some((m) => m.nameHe === paymentMethod) && (
-                  <option value={paymentMethod}>{paymentMethod}</option>
-                )}
+                {methods.map((m) => (<option key={m.id} value={m.id}>{m.nameHe}</option>))}
               </select>
             </Field>
           </div>

@@ -115,7 +115,6 @@ export default function DealDetail() {
         value: minorToInput(d.valueMinor),
         discount: minorToInput(d.discountMinor),
         currency: d.currency || 'ILS',
-        paymentTerms: d.paymentTerms || '',
         source: d.source || '',
         dealStageId: d.dealStageId || '',
         expectedCloseDate: d.expectedCloseDate ? d.expectedCloseDate.slice(0, 10) : '',
@@ -128,7 +127,6 @@ export default function DealDetail() {
         tourDate: d.tourDate || '',
         tourTime: d.tourTime || '',
         participants: d.participants ?? '',
-        paymentMethod: d.paymentMethod || '',
         // Auto-fill defaults (suggestion only): empty → Hebrew. Applied at load
         // when empty; the baseline below is set to the SAME value, so a default is
         // never flagged as an unsaved change and never silently re-applied after
@@ -392,7 +390,8 @@ export default function DealDetail() {
         valueMinor: minorToInput(deal.valueMinor),
         discountMinor: minorToInput(deal.discountMinor),
         currency: deal.currency || 'ILS',
-        paymentTerms: deal.paymentTerms || null,
+        paymentTermId: deal.paymentTermId || null,
+        paymentMethodId: deal.paymentMethodId || null,
         source: deal.source || null,
         expectedCloseDate: deal.expectedCloseDate || null,
         notes: deal.notes || null,
