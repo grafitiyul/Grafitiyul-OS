@@ -17,7 +17,6 @@ import {
   ACTIVITY_TYPES,
   ACTIVITY_TYPE_LABELS,
   ROLE_LABELS,
-  PAYMENT_METHODS,
   TOUR_LANGS,
   contactNameHe,
 } from './config.js';
@@ -415,10 +414,10 @@ export default function DealDetail() {
 
   // Right panel — TWO cards. Card 1 "פרטי הסיור" (operational, all activity types)
   // holds how the tour happens INCLUDING its base price. Card 2 "הצעת מחיר"
-  // (commercial preparation) shows ONLY for Business. One form buffer backs both;
-  // each card saves its own fields and shows its own unsaved-changes state. No
-  // quote engine / versions yet — the "הפק הצעת מחיר" button stays a placeholder.
-  const isBusiness = form.activityType === 'business';
+  // Both cards always render. Tour Details = operational fields; הצעת מחיר holds the
+  // price / Price Builder entry + email intro + generate (quote workflow later).
+  // One form buffer backs both; each card saves its own fields with its own
+  // unsaved-changes state.
   // Location selector sections: recommended = the product's variant locations;
   // other = every remaining CRM location (never hidden). Reuses variant + Location data.
   const recLocIds = new Set(variants.map((v) => v.location?.id || v.locationId).filter(Boolean));
@@ -428,7 +427,7 @@ export default function DealDetail() {
   const otherLocs = allLocations.filter((l) => !recLocIds.has(l.id));
   const locNotConfigured = !!form.productId && !!form.locationId && !recLocIds.has(form.locationId);
   const TOUR_KEYS = ['productId', 'productVariantId', 'locationId', 'tourDate', 'tourTime', 'participants', 'activityType', 'tourLanguage', 'customerInfo'];
-  const QUOTE_KEYS = ['paymentTerms', 'paymentMethod', 'quoteEmailIntro'];
+  const QUOTE_KEYS = ['quoteEmailIntro'];
   const dirtyKeys = (keys) => keys.some((k) => !valuesEqual(form[k], originalForm[k]));
 
   const dealProperties = (
@@ -458,9 +457,8 @@ export default function DealDetail() {
         }
       >
         <div className="space-y-3">
-          {/* Row 1 — Product | City | Base price. Product drives the City options
-              (Product×Location variants). Base price is a SUMMARY of the Price
-              Builder — clicking it opens the builder (the source of truth). */}
+          {/* Row 1 — Product | City | Activity Type (operational). Product drives the
+              City options (Product×Location variants); the price lives in הצעת מחיר. */}
           <div className="grid grid-cols-3 gap-2">
             <FieldBox label="מוצר">
               <select value={form.productId} onChange={(e) => chooseProduct(e.target.value)} className={`${INPUT} bg-white`}>
@@ -487,16 +485,11 @@ export default function DealDetail() {
                 )}
               </select>
             </FieldBox>
-            <FieldBox label="מחיר בסיס (₪)">
-              <button
-                type="button"
-                onClick={() => setPriceBuilderOpen(true)}
-                title="פתח בונה מחיר"
-                className={`${INPUT} bg-white text-right flex items-center justify-between gap-2 hover:bg-gray-50`}
-              >
-                <span className="text-[17px] font-bold text-gray-900" dir="ltr">{form.value ? `₪${form.value}` : '—'}</span>
-                <span className="text-[11px] text-blue-600 shrink-0">בונה מחיר ✎</span>
-              </button>
+            <FieldBox label="סוג פעילות">
+              <select value={form.activityType} onChange={(e) => set('activityType', e.target.value)} className={`${INPUT} bg-white`}>
+                <option value="">— ללא —</option>
+                {ACTIVITY_TYPES.map((v) => (<option key={v} value={v}>{ACTIVITY_TYPE_LABELS[v]}</option>))}
+              </select>
             </FieldBox>
           </div>
           {/* Non-blocking hint: chosen city isn't a configured variant for the product. */}
@@ -521,16 +514,8 @@ export default function DealDetail() {
             </FieldBox>
           </div>
 
-          {/* Row 3 — Activity type (ONE field, shared with the header badge) | Tour language. */}
+          {/* Row 3 — Tour language (operational). Activity Type moved up to Row 1. */}
           <div className="grid grid-cols-2 gap-2">
-            <FieldBox label="סוג פעילות">
-              <select value={form.activityType}
-                onChange={(e) => set('activityType', e.target.value)}
-                className={`${INPUT} bg-white`}>
-                <option value="">— ללא —</option>
-                {ACTIVITY_TYPES.map((v) => (<option key={v} value={v}>{ACTIVITY_TYPE_LABELS[v]}</option>))}
-              </select>
-            </FieldBox>
             <FieldBox label="שפת הסיור">
               <select value={form.tourLanguage} onChange={(e) => set('tourLanguage', e.target.value)} className={`${INPUT} bg-white`}>
                 <option value="">— ללא —</option>
@@ -557,63 +542,60 @@ export default function DealDetail() {
         </div>
       </Card>
 
-      {/* ── Card 2 — הצעת מחיר (commercial preparation, BUSINESS only) ──
-          The commercial communication layer on top of the operational base price.
-          No quote engine yet — "הפק הצעת מחיר" is a placeholder. */}
-      {isBusiness && (
-        <Card
-          variant="panel"
-          title="הצעת מחיר"
-          action={
-            <SaveBtn
-              dirty={dirtyKeys(QUOTE_KEYS)}
-              busy={savingSection === 'quote'}
-              onClick={() =>
-                saveSection('quote', {
-                  paymentTerms: form.paymentTerms || null,
-                  paymentMethod: form.paymentMethod || null,
-                  quoteEmailIntro: form.quoteEmailIntro || null,
-                })
-              }
+      {/* ── Card 2 — הצעת מחיר (always shown) ──
+          Price / Price Builder entry + email intro + generate. Payment terms/method
+          live inside the Price Builder now. Quote workflow (versions/actions) later. */}
+      <Card
+        variant="panel"
+        title="הצעת מחיר"
+        action={
+          <SaveBtn
+            dirty={dirtyKeys(QUOTE_KEYS)}
+            busy={savingSection === 'quote'}
+            onClick={() =>
+              saveSection('quote', {
+                quoteEmailIntro: form.quoteEmailIntro || null,
+              })
+            }
+          />
+        }
+      >
+        <div className="space-y-3">
+          {/* Price = a summary that opens the Price Builder (the source of truth). */}
+          <FieldBox label="מחיר">
+            <button
+              type="button"
+              onClick={() => setPriceBuilderOpen(true)}
+              title="פתח בונה מחיר"
+              className={`${INPUT} bg-white text-right flex items-center justify-between gap-2 hover:bg-gray-50`}
+            >
+              <span className="text-[17px] font-bold text-gray-900" dir="ltr">{form.value ? `₪${form.value}` : '—'}</span>
+              <span className="text-[12px] text-blue-600 shrink-0">בונה מחיר ✎</span>
+            </button>
+          </FieldBox>
+
+          <FieldBox label="פתיח אישי למייל">
+            <textarea
+              value={form.quoteEmailIntro}
+              onChange={(e) => set('quoteEmailIntro', e.target.value)}
+              rows={3}
+              placeholder="משפט פתיחה אישי שיופיע במייל ההצעה…"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
             />
-          }
-        >
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-2">
-              <FieldBox label="תנאי תשלום">
-                <input value={form.paymentTerms} onChange={(e) => set('paymentTerms', e.target.value)} placeholder="שוטף+30" className={INPUT} />
-              </FieldBox>
-              <FieldBox label="אמצעי תשלום">
-                <select value={form.paymentMethod} onChange={(e) => set('paymentMethod', e.target.value)} className={`${INPUT} bg-white`}>
-                  <option value="">— ללא —</option>
-                  {PAYMENT_METHODS.map((m) => (<option key={m.key} value={m.key}>{m.label}</option>))}
-                </select>
-              </FieldBox>
-            </div>
+          </FieldBox>
 
-            <FieldBox label="פתיח אישי למייל">
-              <textarea
-                value={form.quoteEmailIntro}
-                onChange={(e) => set('quoteEmailIntro', e.target.value)}
-                rows={3}
-                placeholder="משפט פתיחה אישי שיופיע במייל ההצעה…"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
-              />
-            </FieldBox>
-
-            <div className="pt-1">
-              <button
-                type="button"
-                disabled
-                title="בקרוב — מנוע ההצעות עדיין לא מחובר"
-                className="w-full rounded-lg bg-blue-600 text-white text-sm font-semibold py-2.5 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                הפק הצעת מחיר
-              </button>
-            </div>
+          <div className="pt-1">
+            <button
+              type="button"
+              disabled
+              title="בקרוב — מנוע ההצעות עדיין לא מחובר"
+              className="w-full rounded-lg bg-blue-600 text-white text-sm font-semibold py-2.5 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              הפק הצעת מחיר
+            </button>
           </div>
-        </Card>
-      )}
+        </div>
+      </Card>
 
       {deal.status === 'lost' && (
         <Card variant="panel" title="פרטי LOST">

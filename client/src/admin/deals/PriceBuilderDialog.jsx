@@ -51,6 +51,7 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   const [freeRows, setFreeRows] = useState(() => new Set());
   const [computed, setComputed] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
   const [products, setProducts] = useState([]);
   const [addons, setAddons] = useState([]);
   const [terms, setTerms] = useState([]);
@@ -163,6 +164,7 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
 
   async function save() {
     setSaving(true);
+    setSaveError(null);
     try {
       const toSave = lines.map((l) => {
         const c = computedById.get(l.id);
@@ -182,7 +184,7 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
       await onSaved?.();
       onClose?.();
     } catch (e) {
-      alert('שגיאה בשמירה: ' + (e.payload?.error || e.message));
+      setSaveError(e.payload?.error || e.message || 'שמירה נכשלה');
     } finally {
       setSaving(false);
     }
@@ -208,6 +210,12 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
       }
     >
       <div className="space-y-7 px-2 py-2 min-h-[60vh] flex flex-col">
+        {/* In-app save error (no native alert). */}
+        {saveError && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">
+            שמירה נכשלה: {saveError}
+          </div>
+        )}
         {/* Toolbar — VAT button then "⋯", pushed to the left in RTL. */}
         <div className="flex">
           <div className="flex items-center gap-2 ms-auto">

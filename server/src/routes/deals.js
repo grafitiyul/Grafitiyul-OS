@@ -15,8 +15,8 @@ const router = Router();
 
 const VALID_STATUS = ['open', 'won', 'lost'];
 const VALID_ACTIVITY_TYPES = ['group', 'private', 'business'];
-// "פרטי הסיור" working-field enums (validated here; no Postgres enum).
-const VALID_PAYMENT_METHODS = ['card', 'transfer', 'cash', 'check', 'other'];
+// "פרטי הסיור" working-field enums (validated here; no Postgres enum). Payment
+// method/term are NOT enum-validated — they hold values chosen from the CRM catalog.
 const VALID_COMM_LANGS = ['he', 'en'];
 const VALID_TOUR_LANGS = ['he', 'en', 'es', 'fr', 'ru'];
 const VALID_ROLES = [
@@ -60,9 +60,12 @@ function applyTourFields(b, data) {
       data.participants = n;
     }
   }
+  // paymentMethod is a free-text value chosen from the PaymentMethod CRM catalog in
+  // the Price Builder (the dropdown only offers real catalog entries). No fixed enum
+  // here — the obsolete config-key list caused invalid_payment_method. (The long-term
+  // FK model is the separately-audited payment SSOT change.)
   if (b.paymentMethod !== undefined) {
-    if (b.paymentMethod && !VALID_PAYMENT_METHODS.includes(b.paymentMethod)) return 'invalid_payment_method';
-    data.paymentMethod = b.paymentMethod || null;
+    data.paymentMethod = b.paymentMethod ? String(b.paymentMethod).trim() : null;
   }
   if (b.communicationLanguage !== undefined) {
     if (b.communicationLanguage && !VALID_COMM_LANGS.includes(b.communicationLanguage)) return 'invalid_communication_language';
