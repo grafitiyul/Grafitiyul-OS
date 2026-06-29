@@ -626,7 +626,7 @@ export default function DealDetail() {
   return (
     <WorkspaceLayout
       storageKey="gos.workspace.deal"
-      right={{ title: 'פרטי הסיור', content: dealProperties, defaultWidth: 460, minWidth: 360, maxWidth: 720 }}
+      right={{ title: 'פרטי הדיל', content: dealProperties, defaultWidth: 460, minWidth: 360, maxWidth: 720 }}
       left={{ title: 'תסריט מכירה', content: <DealSalesScript />, defaultWidth: 300, minWidth: 220, maxWidth: 460 }}
     >
       {/* Hero header — title + actions, then a full-width pipeline bar.
