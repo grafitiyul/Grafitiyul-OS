@@ -406,6 +406,11 @@ export default function DealDetail() {
               onChange={(html) => set('customerInfo', html)}
               toolbar="lite"
               collapsible
+              /* Bounded height: in the height-constrained right panel an
+                 unbounded editor (default 60vh) grows and scroll-jacks the panel,
+                 pushing the upper rows (Activity Type etc.) out of view. Capping it
+                 keeps the editor a stable box with its own internal scroll. */
+              maxHeight="220px"
               ariaLabel="מידע חשוב על הלקוח"
               placeholder="מידע פנימי חשוב לשיחה…"
             />
