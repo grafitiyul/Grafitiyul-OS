@@ -169,9 +169,15 @@ export default function GroupTicketBuilderDialog({ open, deal, context, onClose,
         productPatch.productVariantId = firstSelectedCard.productVariantId || null;
       }
 
+      // Participants for a Group deal are DERIVED from the tickets: the total quantity
+      // of all selected tickets. The Deal panel shows this read-only — to change the
+      // headcount the user changes ticket quantities here.
+      const participants = lines.reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
+
       await api.deals.savePriceLines(deal.id, {
         lines: toSave,
         valueMinor: totals ? totals.grossMinor : 0,
+        participants,
         ...productPatch,
       });
       await onSaved?.();

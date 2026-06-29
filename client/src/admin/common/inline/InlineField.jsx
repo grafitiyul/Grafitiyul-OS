@@ -46,6 +46,7 @@ const BODY = 'min-h-[38px]';
 export default function InlineField({
   id, label, type = 'text', value, options, display, placeholder = '—',
   editFirst = false, onSave, dir, numeric, icon, valueClassName, iconInline = false,
+  readOnly = false, readOnlyHint,
 }) {
   const scope = useInlineScope();
   const coordinated = !editFirst;
@@ -105,6 +106,45 @@ export default function InlineField({
   const inlineIcon = iconInline && icon ? (
     <span title={label} className="shrink-0 inline-flex cursor-default">{icon}</span>
   ) : null;
+
+  // ── READ-ONLY presentation ──
+  // A locked field: the value is shown but NOT editable (no click-to-edit, no
+  // scope). A small lock marks it; the hover hint says why. Used e.g. for a Group
+  // deal's participants, which are derived from the Group Ticket Builder.
+  if (readOnly) {
+    const empty = value === '' || value === null || value === undefined;
+    const valueSpan = (
+      <span
+        className={`${VALUE} ${valueClassName || `text-[15px] ${empty ? 'text-gray-300' : 'font-medium text-gray-700'}`}`}
+        dir={dir}
+      >
+        {empty ? placeholder : display ? display(value) : defaultDisplay(type, value, options)}
+      </span>
+    );
+    const lock = (
+      <span className="ms-auto shrink-0 text-[11px] text-gray-300" aria-hidden title={readOnlyHint}>🔒</span>
+    );
+    if (iconInline) {
+      return (
+        <div className="flex items-center gap-1 w-full" title={readOnlyHint || label}>
+          {inlineIcon}
+          <div className={`flex-1 min-w-0 px-1 ${BODY} flex items-center gap-1.5`}>
+            {valueSpan}
+            {lock}
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div title={readOnlyHint}>
+        {labelNode}
+        <div className={`px-2 ${BODY} flex items-center gap-2`}>
+          {valueSpan}
+          {lock}
+        </div>
+      </div>
+    );
+  }
 
   // ── READ presentation (coordinated, closed) ──
   // No negative margins: the read value sits at the SAME x as the edit input's text

@@ -518,6 +518,13 @@ router.put(
       // A product change inside the builder carries its city too, so the Deal stays
       // coherent (same product → variant → city resolution as the Tour Details card).
       if (b.locationId !== undefined) dealPatch.locationId = b.locationId || null;
+      // Group Ticket Builder derives the headcount from ticket quantities — the Deal
+      // participants follow the tickets (one source of truth) and are read-only in
+      // the panel. Only the Group builder sends this; other callers leave it alone.
+      if (b.participants !== undefined) {
+        const n = parseInt(b.participants, 10);
+        dealPatch.participants = Number.isFinite(n) && n >= 0 ? n : null;
+      }
       if (Object.keys(dealPatch).length) await tx.deal.update({ where: { id: req.params.id }, data: dealPatch });
       return version.id;
     });

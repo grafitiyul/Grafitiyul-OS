@@ -440,6 +440,10 @@ export default function DealDetail() {
   // different one. Never blocks/warns/affects pricing — just paints the City red.
   const homeLocation = allLocations.find((l) => l.isHomeLocation) || null;
   const cityIsNonHome = !!(homeLocation && deal.locationId && deal.locationId !== homeLocation.id);
+  // Group deals derive participants from the Group Ticket Builder ticket quantities,
+  // so the panel field is locked (read-only). Business/Private stay editable. Uses
+  // the single routing source of truth (no scattered activityType checks).
+  const isGroup = resolveFinanceWorkspace(deal) === FINANCE_WORKSPACE.TICKET_BUILDER;
   // Full-color emoji field icons — secondary to the values, small but clearly
   // recognisable. The value remains the strongest visual element.
   const FIELD_EMOJI = 'text-[14px] leading-none';
@@ -503,6 +507,8 @@ export default function DealDetail() {
                 onSave={(v) => saveField({ tourTime: v || null })} />
               <InlineField id="f-participants" iconInline icon={<span className={FIELD_EMOJI}>👥</span>} label="משתתפים"
                 type="number" numeric value={deal.participants ?? ''} editFirst={editFirst}
+                readOnly={isGroup}
+                readOnlyHint="מספר המשתתפים בדיל קבוצתי נגזר מכמות הכרטיסים בבונה הכרטיסים הקבוצתי"
                 onSave={(v) => saveField({ participants: v === '' ? null : Number(v) })} />
 
               {/* Row 3 — col 3 intentionally empty. City value turns red as a
