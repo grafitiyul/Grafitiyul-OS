@@ -210,6 +210,19 @@ test('composer: every block carries source metadata; displayProductName override
   assert.equal(blockByKey(model, 'tour_details').overridden, true);
 });
 
+// ── edit-at-source targets (v2 redesign) ─────────────────────────────────────
+test('composer: each block carries a contextual editTarget (route to source)', () => {
+  const model = compose({ deal: baseDeal({ productId: 'p1', locationId: 'loc1', organizationTypeId: 'ot1' }) });
+  assert.deepEqual(blockByKey(model, 'pricing').editTarget, { kind: 'builder', label: 'ערוך תמחור', dialog: true });
+  assert.equal(blockByKey(model, 'tour_details').editTarget.kind, 'deal');
+  assert.equal(blockByKey(model, 'tour_details').editTarget.label, 'ערוך פרטי הסיור');
+  assert.equal(blockByKey(model, 'product_marketing').editTarget.kind, 'product');
+  assert.equal(blockByKey(model, 'product_marketing').editTarget.id, 'p1');
+  assert.equal(blockByKey(model, 'faq').editTarget.kind, 'quoteSections');
+  assert.equal(blockByKey(model, 'faq').editTarget.category, 'faq');
+  assert.equal(blockByKey(model, 'personal_intro').editTarget.inline, true);
+});
+
 // ── pickLang unit ─────────────────────────────────────────────────────────────
 test('pickLang: selects by language, returns null on empty, never cross-falls back', () => {
   assert.equal(pickLang('שלום', 'hello', 'en'), 'hello');

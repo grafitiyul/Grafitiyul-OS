@@ -77,6 +77,46 @@ export function resolveDisplayProductName(document, deal, lang) {
   return (isFilled(document?.displayProductName) ? document.displayProductName : productName(deal, lang)) || null;
 }
 
+// Primary contact's display name (full name in the quote language) for the cover.
+function contactDisplayName(deal, lang) {
+  const cs = Array.isArray(deal?.contacts) ? deal.contacts : [];
+  const c = (cs.find((x) => x.isPrimary) || cs[0])?.contact;
+  if (!c) return null;
+  const first = lang === 'en' ? c.firstNameEn : c.firstNameHe;
+  const last = lang === 'en' ? c.lastNameEn : c.lastNameHe;
+  return [first, last].filter(Boolean).join(' ') || null;
+}
+
+// Cover hero image: product-variant gallery first, then meeting-point images.
+function heroImageUrl(deal) {
+  const v = deal?.productVariant;
+  return v?.galleryImages?.[0]?.mediaFile?.url || v?.meetingPointImage?.url || deal?.location?.meetingPointImage?.url || null;
+}
+
+// "Edit at source" target per section — the Quote orchestrates the existing GOS
+// editors instead of duplicating them. Routing lives HERE (one place), so the UI
+// just follows it. `dialog:true` → open as an overlay (the Builder); otherwise the
+// UI opens the source editor (temporarily a side tab) and refreshes on return.
+// `inline:true` → quote-owned presentation, edited in the document itself.
+export function editTargetFor(type, deal) {
+  switch (type) {
+    case 'hero': return { kind: 'deal', label: 'ערוך פרטי לקוח' };
+    case 'personal_intro': return { kind: 'quote', label: 'ערוך פתיח אישי', inline: true };
+    case 'tour_details': return { kind: 'deal', label: 'ערוך פרטי הסיור' };
+    case 'pricing': return { kind: 'builder', label: 'ערוך תמחור', dialog: true };
+    case 'payment_terms': return { kind: 'deal', label: 'ערוך תנאי תשלום' };
+    case 'product_marketing': return { kind: 'product', label: 'ערוך מוצר', id: deal?.productId || null };
+    case 'classification': return { kind: 'orgType', label: 'ערוך תוכן סוג ארגון', id: deal?.organizationTypeId || deal?.organization?.organizationTypeId || null };
+    case 'why_us': return { kind: 'quoteSections', label: 'ערוך תוכן שיווקי', category: 'why_us' };
+    case 'faq': return { kind: 'quoteSections', label: 'ערוך שאלות נפוצות', category: 'faq' };
+    case 'cancellation': return { kind: 'quoteSections', label: 'ערוך מדיניות ביטול', category: 'cancellation' };
+    case 'participant_policy': return { kind: 'quoteSections', label: 'ערוך מדיניות משתתפים', category: 'participant_policy' };
+    case 'city_content': return { kind: 'location', label: 'ערוך מיקום', id: deal?.locationId || null };
+    case 'signature': return { kind: 'signers', label: 'חתימה' };
+    default: return null;
+  }
+}
+
 // ── Dynamic block builders (pure) ────────────────────────────────────────────
 
 function buildHero({ deal, document, displayName, lang }) {
@@ -85,8 +125,11 @@ function buildHero({ deal, document, displayName, lang }) {
   return {
     data: {
       productName: displayName,
+      customerName: contactDisplayName(deal, lang),
       organizationName: deal?.organization?.name || null,
       tourDate: deal?.tourDate || null,
+      heroImageUrl: heroImageUrl(deal),
+      by: 'Grafitiyul',
       quoteDocumentId: document.id,
       language: lang,
     },
@@ -299,6 +342,7 @@ export function assembleComposition({ document, deal, version, lines, quoteSecti
       sortOrder: i,
       hidden: !!b.hidden,
       source: SOURCE_LABELS[b.type] || null,
+      editTarget: editTargetFor(b.type, deal),
       overridden,
       data,
     };
@@ -319,13 +363,19 @@ export function assembleComposition({ document, deal, version, lines, quoteSecti
 // fixtures agree on shape.
 const DEAL_INCLUDE = {
   product: true,
-  productVariant: true,
-  location: true,
+  productVariant: {
+    include: {
+      meetingPointImage: true,
+      galleryImages: { include: { mediaFile: true }, orderBy: { sortOrder: 'asc' } },
+    },
+  },
+  location: { include: { meetingPointImage: true } },
   organization: { include: { organizationType: true } },
   organizationType: true,
   organizationSubtype: true,
   paymentTerm: true,
   paymentMethodRef: true,
+  contacts: { include: { contact: true } },
 };
 
 // Client-injected loader: read everything and assemble. Read-only — no produce,
