@@ -1,0 +1,189 @@
+// Quote Module — Slice 1 unit tests. Pure: no DB. DB-touching functions are
+// exercised against a tiny in-memory fake `client` (same injection style the
+// engine + ensureWorkingVersion use). Run with `npm test` (node:test).
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  newPublicToken,
+  resolveQuoteLanguage,
+  buildInitialDraftData,
+  ensureDraftQuoteDocument,
+  updateQuoteDocumentMeta,
+} from './quoteDocument.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// ── Fake Prisma client ───────────────────────────────────────────────────────
+// Implements only the methods the service uses, over in-memory arrays.
+function fakeClient({ deals = {}, versions = [], docs = [] } = {}) {
+  let vSeq = 0;
+  let dSeq = 0;
+  const state = { versions: [...versions], docs: [...docs] };
+  return {
+    state,
+    deal: {
+      findUnique: async ({ where }) => deals[where.id] || null,
+    },
+    quoteVersion: {
+      findFirst: async ({ where }) =>
+        state.versions.find(
+          (v) => v.dealId === where.dealId && (where.isWorking === undefined || v.isWorking === where.isWorking),
+        ) || null,
+      create: async ({ data }) => {
+        const v = { id: `ver_${++vSeq}`, ...data };
+        state.versions.push(v);
+        return v;
+      },
+    },
+    quoteDocument: {
+      findFirst: async ({ where }) =>
+        state.docs.find(
+          (d) => d.dealId === where.dealId && d.quoteVersionId === where.quoteVersionId && d.status === where.status,
+        ) || null,
+      findUnique: async ({ where }) => state.docs.find((d) => d.id === where.id) || null,
+      create: async ({ data }) => {
+        const d = { id: `qd_${++dSeq}`, createdAt: new Date(), updatedAt: new Date(), ...data };
+        state.docs.push(d);
+        return d;
+      },
+      update: async ({ where, data }) => {
+        const d = state.docs.find((x) => x.id === where.id);
+        Object.assign(d, data, { updatedAt: new Date() });
+        return d;
+      },
+    },
+  };
+}
+
+const deal = (over = {}) => ({ id: 'deal_1', communicationLanguage: null, quoteEmailIntro: null, contacts: [], ...over });
+const dc = (lang, { roles = [], isPrimary = false } = {}) => ({ roles, isPrimary, contact: { communicationLanguage: lang } });
+
+// ── publicToken ──────────────────────────────────────────────────────────────
+test('publicToken: present, URL-safe, and unique across many generations', () => {
+  const tokens = Array.from({ length: 500 }, () => newPublicToken());
+  for (const t of tokens) {
+    assert.ok(typeof t === 'string' && t.length >= 32, 'token long enough');
+    assert.match(t, /^[A-Za-z0-9_-]+$/, 'token is URL-safe (base64url)');
+  }
+  assert.equal(new Set(tokens).size, tokens.length, 'all tokens unique');
+});
+
+// ── language resolution ──────────────────────────────────────────────────────
+test('language: defaults from the payer contact communicationLanguage', () => {
+  const d = deal({ communicationLanguage: 'he', contacts: [dc('en', { roles: ['payer'] })] });
+  assert.equal(resolveQuoteLanguage(d), 'en');
+});
+
+test('language: role priority — payer beats coordinator', () => {
+  const d = deal({ contacts: [dc('he', { roles: ['coordinator'] }), dc('en', { roles: ['payer'] })] });
+  assert.equal(resolveQuoteLanguage(d), 'en');
+});
+
+test('language: isPrimary used when no priority role carries a language', () => {
+  const d = deal({ contacts: [dc(null, { roles: ['participant'] }), dc('en', { isPrimary: true })] });
+  assert.equal(resolveQuoteLanguage(d), 'en');
+});
+
+test('language: falls back to the deal working language when no contact language', () => {
+  const d = deal({ communicationLanguage: 'en', contacts: [dc(null, { roles: ['payer'] })] });
+  assert.equal(resolveQuoteLanguage(d), 'en');
+});
+
+test('language: falls back to Hebrew when nothing is set', () => {
+  assert.equal(resolveQuoteLanguage(deal()), 'he');
+  assert.equal(resolveQuoteLanguage(deal({ communicationLanguage: 'xx' })), 'he'); // invalid ignored
+});
+
+test('buildInitialDraftData: seeds intro, sane defaults, valid token', () => {
+  const data = buildInitialDraftData({ dealId: 'd', quoteVersionId: 'v', language: 'en', personalIntro: 'hi' });
+  assert.equal(data.status, 'draft');
+  assert.equal(data.language, 'en');
+  assert.equal(data.personalIntro, 'hi');
+  assert.equal(data.displayProductName, null);
+  assert.equal(data.renderModelSnapshot, null);
+  assert.match(data.publicToken, /^[A-Za-z0-9_-]+$/);
+});
+
+// ── ensureDraftQuoteDocument ─────────────────────────────────────────────────
+test('ensureDraft: creates exactly one draft + a working version for a fresh deal', async () => {
+  const client = fakeClient({ deals: { deal_1: deal({ contacts: [dc('en', { roles: ['payer'] })], quoteEmailIntro: 'שלום' }) } });
+  const r = await ensureDraftQuoteDocument(client, 'deal_1');
+  assert.equal(r.created, true);
+  assert.equal(r.doc.status, 'draft');
+  assert.equal(r.doc.language, 'en');
+  assert.equal(r.doc.personalIntro, 'שלום');
+  assert.ok(r.doc.publicToken);
+  assert.equal(client.state.docs.length, 1, 'one document');
+  assert.equal(client.state.versions.length, 1, 'one working version created');
+});
+
+test('ensureDraft: reuses the existing draft instead of creating a duplicate', async () => {
+  const client = fakeClient({ deals: { deal_1: deal() } });
+  const first = await ensureDraftQuoteDocument(client, 'deal_1');
+  const second = await ensureDraftQuoteDocument(client, 'deal_1');
+  assert.equal(first.created, true);
+  assert.equal(second.created, false);
+  assert.equal(second.doc.id, first.doc.id, 'same document returned');
+  assert.equal(client.state.docs.length, 1, 'no duplicate created');
+  assert.equal(client.state.versions.length, 1, 'no duplicate working version');
+});
+
+test('ensureDraft: returns not_found for a missing deal', async () => {
+  const client = fakeClient();
+  const r = await ensureDraftQuoteDocument(client, 'nope');
+  assert.equal(r.error, 'not_found');
+  assert.equal(client.state.docs.length, 0);
+});
+
+// ── updateQuoteDocumentMeta ──────────────────────────────────────────────────
+test('updateMeta: edits draft displayProductName + personalIntro', async () => {
+  const client = fakeClient({ deals: { deal_1: deal() } });
+  const { doc } = await ensureDraftQuoteDocument(client, 'deal_1');
+  const r = await updateQuoteDocumentMeta(client, doc.id, {
+    displayProductName: 'השתלמות מקצועית באומנות אורבנית',
+    personalIntro: 'intro',
+  });
+  assert.equal(r.doc.displayProductName, 'השתלמות מקצועית באומנות אורבנית');
+  assert.equal(r.doc.personalIntro, 'intro');
+});
+
+test('updateMeta: rejects a non-draft (produced) document — frozen', async () => {
+  const client = fakeClient({ deals: { deal_1: deal() } });
+  const { doc } = await ensureDraftQuoteDocument(client, 'deal_1');
+  doc.status = 'produced';
+  const r = await updateQuoteDocumentMeta(client, doc.id, { displayProductName: 'x' });
+  assert.equal(r.error, 'not_editable');
+});
+
+test('updateMeta: rejects an invalid language', async () => {
+  const client = fakeClient({ deals: { deal_1: deal() } });
+  const { doc } = await ensureDraftQuoteDocument(client, 'deal_1');
+  const r = await updateQuoteDocumentMeta(client, doc.id, { language: 'fr' });
+  assert.equal(r.error, 'invalid_language');
+});
+
+test('updateMeta: not_found for a missing document', async () => {
+  const client = fakeClient();
+  const r = await updateQuoteDocumentMeta(client, 'nope', { personalIntro: 'x' });
+  assert.equal(r.error, 'not_found');
+});
+
+// ── additive-migration guard (constraint #10: no destructive drops) ──────────
+test('Slice 1 migrations are additive — no destructive drops', () => {
+  const migDir = path.resolve(__dirname, '../../prisma/migrations');
+  const slice1 = [
+    '20260630300000_location_marketing_desc',
+    '20260630320000_quotesection_category',
+    '20260630340000_quote_documents',
+  ];
+  const forbidden = /\b(DROP\s+TABLE|DROP\s+COLUMN|DROP\s+CONSTRAINT|ALTER\s+TABLE\s+"[^"]+"\s+DROP|TRUNCATE)\b/i;
+  for (const name of slice1) {
+    const sql = fs.readFileSync(path.join(migDir, name, 'migration.sql'), 'utf-8');
+    assert.doesNotMatch(sql, forbidden, `${name} must contain no destructive statements`);
+    assert.match(sql, /CREATE TABLE IF NOT EXISTS|ADD COLUMN IF NOT EXISTS/i, `${name} must be additive`);
+  }
+});

@@ -912,6 +912,7 @@ model Deal {
   updatedAt             DateTime             @updatedAt
   contacts              DealContact[]
   quoteVersions         QuoteVersion[]
+  quoteDocuments        QuoteDocument[]
 
   @@index([organizationId])
   @@index([organizationUnitId])
@@ -969,6 +970,7 @@ model QuoteVersion {
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
   lines      QuoteLine[]
+  quoteDocuments QuoteDocument[]
 
   @@index([dealId])
 }
@@ -1049,6 +1051,7 @@ model MediaFile {
   variantMeetingImages  ProductVariant[]      @relation("VariantMeetingImage")
   variantGalleryLinks   ProductVariantImage[]
   locationMeetingImages Location[]            @relation("LocationMeetingImage")
+  quoteDocumentRenders  QuoteDocumentRender[]
 }
 
 // Simple location catalog (e.g. "תל אביב - פלורנטין"). No City/Area split.
@@ -1058,6 +1061,10 @@ model Location {
   nameEn              String?
   meetingPointHe      String? // rich HTML
   meetingPointEn      String? // rich HTML
+  // City marketing content for quotes — owned by the Location (NOT a generic
+  // QuoteSection). Bilingual rich HTML. Referenced by the City content block.
+  marketingDescHe     String? // rich HTML
+  marketingDescEn     String? // rich HTML
   meetingPointImage   MediaFile?       @relation("LocationMeetingImage", fields: [meetingPointImageId], references: [id], onDelete: SetNull)
   meetingPointImageId String?
   active              Boolean          @default(true)
@@ -1585,6 +1592,10 @@ model QuoteSection {
   titleEn    String?
   richTextHe String? // HTML from the shared RichEditor
   richTextEn String? // HTML from the shared RichEditor
+  // Library classification so content is structured, not an unstructured pile.
+  // Validated at the API (no Postgres enum): faq | cancellation |
+  // participant_policy | why_us | marketing | terms | custom.
+  category   String?
   active     Boolean  @default(true)
   sortOrder  Int      @default(0)
   createdAt  DateTime @default(now())
@@ -1722,4 +1733,76 @@ model CalendarMarker {
   @@index([startDate])
   @@index([endDate])
   @@index([markerTypeId])
+}
+
+// ============================================================================
+// Quote Module — Slice 1 (Quote document foundation)
+// ============================================================================
+//
+// QuoteDocument is the DRAFT/PRODUCED composed proposal (Architecture B; see
+// docs/architecture/GOS-quote-module-architecture.md §7B). It belongs to a Deal
+// and references the priced QuoteVersion it renders. The renderer, public page,
+// signature, PDF and delivery are NOT built in this slice — only the storage
+// shape + a minimal draft service. No prices live here: the Pricing block reads
+// QuoteVersion/QuoteLine (the Builder is the single source of commercial data).
+//
+// Three JSON shapes (renderer not built yet):
+//   * compositionDraft     — ordered block list (structure: order, hidden, ad-hoc)
+//   * overrideState        — per-block/field presentation overrides + overridden flags
+//   * renderModelSnapshot  — frozen, fully-resolved render-model (null until produced)
+// displayProductName is the ONE quote-level product-name override (display-only;
+// never mutates Deal/product/Builder). personalIntro is the per-quote intro
+// (seeded from Deal.quoteEmailIntro, which becomes a default source only).
+model QuoteDocument {
+  id                  String                @id @default(cuid())
+  deal                Deal                  @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  dealId              String
+  // The priced version this document renders. Cascade with the deal; a produced
+  // document's content survives independently inside renderModelSnapshot.
+  quoteVersion        QuoteVersion          @relation(fields: [quoteVersionId], references: [id], onDelete: Cascade)
+  quoteVersionId      String
+  status              String                @default("draft") // draft | produced | accepted | rejected | expired
+  // Resolved automatically from the relevant Contact.communicationLanguage at
+  // create time (role priority: payer -> decisionMaker -> coordinator -> isPrimary),
+  // falling back to the Deal's working language, then Hebrew. Admin-overridable.
+  language            String                @default("he") // he | en
+  // High-entropy capability token for the (future) public quote page. Present
+  // now; no public route consumes it yet.
+  publicToken         String                @unique
+  expiresAt           DateTime?
+  producedAt          DateTime?
+  // Preview / Override layer (presentation-only; never writes back to source).
+  displayProductName  String?
+  personalIntro       String?
+  // Draft + snapshot storage (renderer NOT built yet).
+  compositionDraft    Json?
+  overrideState       Json?
+  renderModelSnapshot Json?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  renders             QuoteDocumentRender[]
+
+  @@index([dealId])
+  @@index([quoteVersionId])
+  @@index([status])
+}
+
+// Append-only record of each rendered artifact (HTML/PDF) for a QuoteDocument.
+// The artifact bytes live in R2 via MediaFile (no duplicate r2Key/url here — the
+// file platform is the single source for object storage). No renders are created
+// in this slice; this is storage shape only.
+model QuoteDocumentRender {
+  id              String        @id @default(cuid())
+  quoteDocument   QuoteDocument @relation(fields: [quoteDocumentId], references: [id], onDelete: Cascade)
+  quoteDocumentId String
+  format          String // html | pdf
+  contentHash     String?
+  rendererVersion String        @default("v1")
+  mediaFile       MediaFile?    @relation(fields: [mediaFileId], references: [id], onDelete: SetNull)
+  mediaFileId     String?
+  byteSize        Int?
+  generatedAt     DateTime      @default(now())
+
+  @@index([quoteDocumentId])
+  @@index([mediaFileId])
 }

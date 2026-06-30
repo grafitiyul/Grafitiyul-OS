@@ -24,6 +24,7 @@ import organizationTypesRouter from './routes/organizationTypes.js';
 import organizationSubtypesRouter from './routes/organizationSubtypes.js';
 import contactsRouter from './routes/contacts.js';
 import dealsRouter from './routes/deals.js';
+import quoteDocumentsRouter from './routes/quoteDocuments.js';
 import dealStagesRouter from './routes/dealStages.js';
 import mediaFilesRouter from './routes/mediaFiles.js';
 import locationsRouter from './routes/locations.js';
@@ -159,6 +160,9 @@ app.use('/api/contacts', requireAdminAuth, contactsRouter);
 // payments / tours / activities are NOT built yet.
 app.use('/api/deals', requireAdminAuth, dealsRouter);
 app.use('/api/deal-stages', requireAdminAuth, dealStagesRouter);
+// Quote Module — Slice 1 (quote document foundation). Admin-only. Draft
+// metadata only; no produce/render/public page/signature/PDF/delivery yet.
+app.use('/api/quote-documents', requireAdminAuth, quoteDocumentsRouter);
 
 // Products & Pricing — Slice 1 (catalog + R2 files + payment config). Admin
 // only. Pricing engine, add-ons, and Deal integration are NOT built yet.

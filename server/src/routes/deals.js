@@ -2,6 +2,11 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { toClientLine, lineToData } from '../quote/quoteLineMapping.js';
+import {
+  ensureWorkingVersion,
+  ensureDraftQuoteDocument,
+  toClientQuoteDocument,
+} from '../quote/quoteDocument.js';
 
 // Deal CRUD + DealContact management. The Deal is the commercial object: it
 // owns agreed value (integer minor units + currency), discount, payment terms,
@@ -463,13 +468,7 @@ router.delete(
 // addon → addon). The total comes from the engine (/api/pricing/builder) and is
 // passed through to Deal.valueMinor — the headline summary cache.
 
-async function ensureWorkingVersion(client, dealId) {
-  const existing = await client.quoteVersion.findFirst({
-    where: { dealId, isWorking: true },
-  });
-  if (existing) return existing;
-  return client.quoteVersion.create({ data: { dealId, isWorking: true, status: 'draft' } });
-}
+// ensureWorkingVersion is shared with the Quote module (../quote/quoteDocument.js).
 
 router.get(
   '/:id/price-lines',
@@ -534,6 +533,19 @@ router.put(
       orderBy: { sortOrder: 'asc' },
     });
     res.json({ versionId, lines: lines.map(toClientLine) });
+  }),
+);
+
+// ── Quote document (Slice 1) ─────────────────────────────────────────────────
+// Ensure a single DRAFT QuoteDocument exists for this deal's working QuoteVersion
+// and return it (creating it if missing — like /:id/price-lines auto-creates the
+// working version). No produce/render/public page yet.
+router.get(
+  '/:id/quote-document',
+  handle(async (req, res) => {
+    const result = await ensureDraftQuoteDocument(prisma, req.params.id);
+    if (result.error === 'not_found') return res.status(404).json({ error: 'not_found' });
+    res.json({ quoteDocument: toClientQuoteDocument(result.doc), created: result.created });
   }),
 );
 
