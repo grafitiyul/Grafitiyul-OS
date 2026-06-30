@@ -26,6 +26,7 @@ import {
 import RichEditor from '../../editor/RichEditor.jsx';
 import { InlineEditScope } from '../common/inline/InlineEditScope.jsx';
 import InlineField from '../common/inline/InlineField.jsx';
+import { InlineDatePicker, InlineTimePicker } from '../common/inline/InlinePickers.jsx';
 import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
 
 const INPUT =
@@ -499,11 +500,11 @@ export default function DealDetail() {
               </div>
 
               {/* Row 2 */}
-              <InlineField id="f-date" iconInline icon={<span className={FIELD_EMOJI}>📅</span>} label="תאריך"
-                type="date" value={deal.tourDate || ''} editFirst={editFirst}
+              <InlineDatePicker id="f-date" icon={<span className={FIELD_EMOJI}>📅</span>} label="תאריך"
+                value={deal.tourDate || ''} placeholder="בחר תאריך"
                 onSave={(v) => saveField({ tourDate: v || null })} />
-              <InlineField id="f-time" iconInline icon={<span className={FIELD_EMOJI}>🕒</span>} label="שעה"
-                type="time" value={deal.tourTime || ''} editFirst={editFirst}
+              <InlineTimePicker id="f-time" icon={<span className={FIELD_EMOJI}>🕒</span>} label="שעה"
+                value={deal.tourTime || ''} placeholder="בחר שעה"
                 onSave={(v) => saveField({ tourTime: v || null })} />
               <InlineField id="f-participants" iconInline icon={<span className={FIELD_EMOJI}>👥</span>} label="משתתפים"
                 type="number" numeric value={deal.participants ?? ''} editFirst={editFirst}
