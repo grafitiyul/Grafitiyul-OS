@@ -23,6 +23,29 @@ const LABELS = {
   cancellation: 'מדיניות ביטול', participant_policy: 'מדיניות משתתפים', signature: 'חתימה',
 };
 
+// Structural sections always render; content sections render only when populated,
+// so the document tells a story instead of showing "title → empty area". Empty
+// sections stay in the sections panel + ⚠ warnings, and reappear once filled at
+// source. Presentation only — no composition change.
+function hasContent(block) {
+  const d = block.data || {};
+  switch (block.type) {
+    case 'hero':
+    case 'personal_intro':
+    case 'tour_details':
+    case 'pricing':
+    case 'payment_terms':
+    case 'signature':
+      return true;
+    case 'product_marketing':
+    case 'classification':
+    case 'city_content':
+      return !!(d.html && String(d.html).trim());
+    default:
+      return d.customHtml ? !!String(d.customHtml).trim() : Array.isArray(d.items) && d.items.length > 0;
+  }
+}
+
 function PillBtn({ onClick, children }) {
   return (
     <button type="button" onClick={onClick}
@@ -189,7 +212,7 @@ export default function QuotePreviewCanvas() {
   const hero = model.blocks.find((b) => b.type === 'hero' && !b.hidden);
   const heroData = hero?.data || {};
   const customer = [heroData.customerName, heroData.organizationName].filter(Boolean).join(' · ');
-  const body = model.blocks.filter((b) => !b.hidden && b.type !== 'hero');
+  const body = model.blocks.filter((b) => !b.hidden && b.type !== 'hero' && hasContent(b));
 
   // Hover affordance shared by hero + body sections.
   function Controls({ block, onLight }) {
@@ -269,8 +292,8 @@ export default function QuotePreviewCanvas() {
             </div>
           )}
 
-          {/* padded body */}
-          <div className="space-y-16 px-6 py-12 lg:px-16 lg:py-16">
+          {/* padded body — generous whitespace, RTL-first */}
+          <div className="space-y-20 px-8 py-16 lg:px-24 lg:py-20">
             {body.map((block) => {
               const isIntroEdit = editing?.key === block.key && editing.mode === 'intro';
               return (
