@@ -1,0 +1,306 @@
+// Quote Module — Slice 2: Composer Engine (backend foundation).
+//
+// Assembles a DRAFT QuoteDocument structure (an ordered block list + per-block
+// preview data) from the Deal, the priced QuoteVersion/QuoteLine, CRM content
+// blocks, the resolved language, and any stored overrides. It does NOT
+// produce/freeze, render HTML/PDF, or persist — `composeQuoteDraftPreview` is a
+// read-only preview for verification and the future Preview UI.
+//
+// Design: the heavy lifting (`assembleComposition` + block builders) is PURE — it
+// takes plain data and returns a model, so it is unit-tested without a database.
+// `composeQuoteDraftPreview` is the thin client-injected loader on top.
+//
+// Pricing rule (locked): the Pricing block NEVER recalculates. It renders frozen
+// QuoteLine data (label, qty, unit price, line total = qty×unit, VAT mode/rate,
+// override flag, row note) and uses Deal.valueMinor as the Builder's frozen gross
+// total. No pricing engine, no price-list resolution, no duplicated VAT math here.
+
+// ── Default block sequence (the approved content model order) ────────────────
+// `type` selects the builder; `kind` is dynamic|content; `removable:false` marks
+// the never-removable blocks. Order here is the DEFAULT seed only — the stored
+// compositionDraft (when present) controls order + hidden, so nothing is hardcoded.
+export const DEFAULT_QUOTE_BLOCKS = [
+  { key: 'hero', type: 'hero', kind: 'dynamic', optional: false, removable: false },
+  { key: 'personal_intro', type: 'personal_intro', kind: 'dynamic', optional: true, removable: true },
+  { key: 'tour_details', type: 'tour_details', kind: 'dynamic', optional: false, removable: false },
+  { key: 'product_marketing', type: 'product_marketing', kind: 'content', optional: true, removable: true },
+  { key: 'why_grafitiyul', type: 'why_us', kind: 'content', optional: true, removable: true },
+  { key: 'classification', type: 'classification', kind: 'content', optional: true, removable: true },
+  { key: 'pricing', type: 'pricing', kind: 'dynamic', optional: false, removable: false },
+  { key: 'payment_terms', type: 'payment_terms', kind: 'dynamic', optional: true, removable: true },
+  { key: 'faq', type: 'faq', kind: 'content', optional: true, removable: true },
+  { key: 'cancellation', type: 'cancellation', kind: 'content', optional: true, removable: true },
+  { key: 'participant_policy', type: 'participant_policy', kind: 'content', optional: true, removable: true },
+  { key: 'signature', type: 'signature', kind: 'dynamic', optional: true, removable: true },
+];
+
+const isFilled = (v) => typeof v === 'string' && v.trim() !== '';
+
+// Language-aware pick: returns the selected-language value, or null if it is
+// missing/empty. NEVER falls back to the other language (no silent fallback, no
+// auto-translate). Callers turn a null into a structured warning.
+export function pickLang(he, en, lang) {
+  const v = lang === 'en' ? en : he;
+  return isFilled(v) ? v : null;
+}
+
+function warn(blockKey, type, field, language) {
+  return { code: 'missing_content', blockKey, type, field, language };
+}
+
+function productName(deal, lang) {
+  return pickLang(deal?.product?.nameHe, deal?.product?.nameEn, lang);
+}
+
+// The ONE quote-level display product name: the override when set, else the
+// product's name in the quote language. Used everywhere the product name shows
+// (hero, tour details, and the pricing product line) — never mutates source.
+export function resolveDisplayProductName(document, deal, lang) {
+  return (isFilled(document?.displayProductName) ? document.displayProductName : productName(deal, lang)) || null;
+}
+
+// ── Dynamic block builders (pure) ────────────────────────────────────────────
+
+function buildHero({ deal, document, displayName, lang }) {
+  const warnings = [];
+  if (!displayName) warnings.push(warn('hero', 'hero', 'productName', lang));
+  return {
+    data: {
+      productName: displayName,
+      organizationName: deal?.organization?.name || null,
+      tourDate: deal?.tourDate || null,
+      quoteDocumentId: document.id,
+      language: lang,
+    },
+    warnings,
+  };
+}
+
+function buildPersonalIntro({ document }) {
+  // Instance-authored, single language; seeded from Deal.quoteEmailIntro at
+  // create. Empty is allowed (optional block) → no warning.
+  return { data: { text: isFilled(document?.personalIntro) ? document.personalIntro : null }, warnings: [] };
+}
+
+function buildTourDetails({ deal, displayName, lang }) {
+  const warnings = [];
+  if (!displayName) warnings.push(warn('tour_details', 'tour_details', 'productName', lang));
+  const variant = deal?.productVariant;
+  const location = deal?.location;
+  const meetingPoint =
+    pickLang(variant?.meetingPointHe, variant?.meetingPointEn, lang) ||
+    pickLang(location?.meetingPointHe, location?.meetingPointEn, lang) ||
+    null;
+  // City is a proper-noun label, not translated rich content: use the selected
+  // language, falling back to the Hebrew name (never a warning).
+  const city = pickLang(location?.nameHe, location?.nameEn, lang) || location?.nameHe || null;
+  return {
+    data: {
+      productName: displayName,
+      city,
+      tourDate: deal?.tourDate || null,
+      tourTime: deal?.tourTime || null,
+      participants: deal?.participants ?? null,
+      durationHours: variant?.durationHours ?? null,
+      meetingPoint,
+    },
+    warnings,
+  };
+}
+
+function buildPricing({ deal, lines, displayName }) {
+  // Inactive lines are excluded from the customer-facing offer (matching the
+  // Builder, which excludes them from totals). They are counted, not silent.
+  const active = (lines || []).filter((l) => l.active !== false);
+  const excludedInactive = (lines || []).length - active.length;
+  const outLines = active.map((l) => {
+    const isProduct = l.kind === 'product';
+    const unit = Number(l.unitPriceMinor ?? 0);
+    const qty = l.quantity ?? 1;
+    return {
+      // The product line's DISPLAYED name follows the quote-level override
+      // (display-only); all other line labels render verbatim from the Builder.
+      label: isProduct && displayName ? displayName : l.label || null,
+      kind: l.kind,
+      quantity: qty,
+      unitPriceMinor: unit,
+      lineTotalMinor: unit * qty, // qty × frozen unit price — not a price calculation
+      vatMode: l.vatMode || 'inherit',
+      vatRate: l.vatRate ?? null,
+      overridden: !!l.overridden,
+      note: isFilled(l.note) ? l.note : null, // yellow row note — frozen commercial content
+      ticketTypeId: l.ticketTypeId || null,
+      sourceKind: l.sourceKind || null,
+    };
+  });
+  return {
+    data: {
+      currency: deal?.currency || 'ILS',
+      lines: outLines,
+      excludedInactive,
+      // Frozen Builder headline gross. The quote does NOT recompute totals/VAT.
+      totals: { grossMinor: Number(deal?.valueMinor ?? 0) },
+    },
+    warnings: [],
+  };
+}
+
+function buildPaymentTerms({ deal, lang }) {
+  return {
+    data: {
+      term: deal?.paymentTerm ? pickLang(deal.paymentTerm.nameHe, deal.paymentTerm.nameEn, lang) : null,
+      method: deal?.paymentMethodRef ? pickLang(deal.paymentMethodRef.nameHe, deal.paymentMethodRef.nameEn, lang) : null,
+    },
+    warnings: [],
+  };
+}
+
+function buildSignature() {
+  // No signer infrastructure wired in this slice — placeholder slot shape only.
+  return { data: { signerSlots: [] }, warnings: [] };
+}
+
+// ── Content block builders (pure, language-aware) ────────────────────────────
+
+function buildProductMarketing({ deal, lang }) {
+  const v = deal?.productVariant;
+  const p = deal?.product;
+  // Source preference variant → product (same language); NOT a language fallback.
+  const html = pickLang(v?.marketingDescHe, v?.marketingDescEn, lang) || pickLang(p?.marketingDescHe, p?.marketingDescEn, lang);
+  const warnings = [];
+  if ((v || p) && !html) warnings.push(warn('product_marketing', 'product_marketing', 'marketingDesc', lang));
+  return { data: { html }, warnings };
+}
+
+function buildCityContent({ deal, lang }) {
+  const loc = deal?.location;
+  const html = pickLang(loc?.marketingDescHe, loc?.marketingDescEn, lang);
+  const warnings = [];
+  if (loc && !html) warnings.push(warn('city_content', 'city_content', 'marketingDesc', lang));
+  return { data: { html }, warnings };
+}
+
+function buildClassification({ deal, lang }) {
+  const sub = deal?.organizationSubtype;
+  const type = deal?.organizationType || deal?.organization?.organizationType;
+  const html = pickLang(sub?.quoteContentHe, sub?.quoteContentEn, lang) || pickLang(type?.quoteContentHe, type?.quoteContentEn, lang);
+  const warnings = [];
+  if ((sub || type) && !html) warnings.push(warn('classification', 'classification', 'quoteContent', lang));
+  return { data: { html }, warnings };
+}
+
+// Reusable QuoteSection content, selected by category. Deterministic order:
+// sortOrder, then id as a stable tiebreak. Each item warns if its rich text is
+// missing in the quote language (title is a label → Hebrew fallback, no warning).
+function buildSectionContent({ quoteSections, category, blockKey, lang }) {
+  const rows = (quoteSections || [])
+    .filter((s) => s.active !== false && s.category === category)
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || String(a.id).localeCompare(String(b.id)));
+  const warnings = [];
+  const items = rows.map((s) => {
+    const html = pickLang(s.richTextHe, s.richTextEn, lang);
+    if (!html) warnings.push(warn(blockKey, category, `richText:${s.id}`, lang));
+    return { id: s.id, title: pickLang(s.titleHe, s.titleEn, lang) || s.titleHe || null, html };
+  });
+  return { data: { items }, warnings };
+}
+
+// ── Dispatch ─────────────────────────────────────────────────────────────────
+
+function assembleBlock(type, ctx) {
+  switch (type) {
+    case 'hero': return buildHero(ctx);
+    case 'personal_intro': return buildPersonalIntro(ctx);
+    case 'tour_details': return buildTourDetails(ctx);
+    case 'pricing': return buildPricing(ctx);
+    case 'payment_terms': return buildPaymentTerms(ctx);
+    case 'signature': return buildSignature(ctx);
+    case 'product_marketing': return buildProductMarketing(ctx);
+    case 'city_content': return buildCityContent(ctx);
+    case 'classification': return buildClassification(ctx);
+    case 'why_us': return buildSectionContent({ ...ctx, category: 'why_us', blockKey: 'why_grafitiyul' });
+    case 'faq': return buildSectionContent({ ...ctx, category: 'faq', blockKey: 'faq' });
+    case 'cancellation': return buildSectionContent({ ...ctx, category: 'cancellation', blockKey: 'cancellation' });
+    case 'participant_policy': return buildSectionContent({ ...ctx, category: 'participant_policy', blockKey: 'participant_policy' });
+    case 'terms': return buildSectionContent({ ...ctx, category: 'terms', blockKey: 'terms' });
+    default: return { data: null, warnings: [] };
+  }
+}
+
+// Block order/hidden come from the stored compositionDraft when present (admin
+// reordered/hid), else the default sequence. Default metadata is merged in by key.
+function getOrderedBlocks(compositionDraft) {
+  const stored = Array.isArray(compositionDraft?.blocks) ? compositionDraft.blocks : null;
+  if (!stored || stored.length === 0) return DEFAULT_QUOTE_BLOCKS.map((b) => ({ ...b, hidden: false }));
+  const byKey = Object.fromEntries(DEFAULT_QUOTE_BLOCKS.map((b) => [b.key, b]));
+  return stored.map((s) => ({
+    ...(byKey[s.key] || { key: s.key, type: s.type || s.key, kind: s.kind || 'content', optional: true, removable: true }),
+    hidden: !!s.hidden,
+  }));
+}
+
+// PURE: assemble the full preview model from plain data. No DB, no I/O.
+export function assembleComposition({ document, deal, version, lines, quoteSections, lang }) {
+  const language = lang;
+  const displayName = resolveDisplayProductName(document, deal, language);
+  const ctx = { document, deal, version, lines, quoteSections, lang: language, displayName };
+
+  const warnings = [];
+  const blocks = getOrderedBlocks(document?.compositionDraft).map((b, i) => {
+    const assembled = b.hidden ? { data: null, warnings: [] } : assembleBlock(b.type, ctx);
+    // Hidden blocks never raise warnings (a hidden missing-content block is fine).
+    for (const wn of assembled.warnings) warnings.push({ ...wn, blockKey: b.key });
+    return {
+      key: b.key,
+      type: b.type,
+      kind: b.kind,
+      optional: !!b.optional,
+      removable: b.removable !== false,
+      sortOrder: i,
+      hidden: !!b.hidden,
+      data: assembled.data,
+    };
+  });
+
+  return {
+    quoteDocumentId: document.id,
+    language,
+    displayProductName: displayName,
+    quoteVersionId: version?.id ?? document.quoteVersionId ?? null,
+    blocks,
+    warnings,
+  };
+}
+
+// What the composer needs from the Deal. Kept here so the loader and any test
+// fixtures agree on shape.
+const DEAL_INCLUDE = {
+  product: true,
+  productVariant: true,
+  location: true,
+  organization: { include: { organizationType: true } },
+  organizationType: true,
+  organizationSubtype: true,
+  paymentTerm: true,
+  paymentMethodRef: true,
+};
+
+// Client-injected loader: read everything and assemble. Read-only — no produce,
+// no persist. Returns { model } or { error }.
+export async function composeQuoteDraftPreview(client, id) {
+  const document = await client.quoteDocument.findUnique({ where: { id } });
+  if (!document) return { error: 'not_found' };
+
+  const deal = await client.deal.findUnique({ where: { id: document.dealId }, include: DEAL_INCLUDE });
+  if (!deal) return { error: 'deal_not_found' };
+
+  const version = await client.quoteVersion.findUnique({ where: { id: document.quoteVersionId } });
+  const lines = await client.quoteLine.findMany({
+    where: { quoteVersionId: document.quoteVersionId },
+    orderBy: { sortOrder: 'asc' },
+  });
+  const quoteSections = await client.quoteSection.findMany({ where: { active: true }, orderBy: { sortOrder: 'asc' } });
+
+  const model = assembleComposition({ document, deal, version, lines, quoteSections, lang: document.language });
+  return { model };
+}
