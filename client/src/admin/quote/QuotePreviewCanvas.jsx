@@ -8,18 +8,16 @@ import PriceBuilderDialog from '../deals/PriceBuilderDialog.jsx';
 import GroupTicketBuilderDialog from '../deals/GroupTicketBuilderDialog.jsx';
 import { resolveFinanceWorkspace, FINANCE_WORKSPACE } from '../deals/config.js';
 
-// Quote Preview Canvas — v2 (document-first workspace).
+// Quote Preview Canvas — Phase 1 (premium document-first workspace).
 //
-// The Quote is the user's home: they read a polished proposal and only summon
-// controls on hover. Editing routes to the EXISTING source editor (the Quote
-// orchestrates GOS, never duplicates it): the Builder opens as an OVERLAY; other
-// editors open in a side tab temporarily and the canvas refreshes on return.
-// Only quote-owned presentation (display product name, personal intro, section
-// show/hide/order) is edited inside the document. No produce/freeze, public page,
-// PDF, or signature here.
+// The Quote is the user's home: a wide, premium proposal they read, with controls
+// summoned on hover. Editing routes to the EXISTING source editor (Builder as an
+// overlay; other editors in a side tab + focus-refresh). Only quote-owned
+// presentation (display name, personal intro, section show/hide/order) is edited
+// inside the document. No produce/freeze, public page, PDF, or signature here.
 
 const LABELS = {
-  hero: 'כותרת', personal_intro: 'פתיח אישי', tour_details: 'פרטי הסיור',
+  hero: 'כותרת', personal_intro: 'פתיח אישי', tour_details: 'פרטים טכניים',
   product_marketing: 'שיווק מוצר', why_grafitiyul: 'למה גרפיתיול', classification: 'תוכן לפי סוג ארגון',
   pricing: 'תמחור', payment_terms: 'תנאי תשלום', faq: 'שאלות נפוצות',
   cancellation: 'מדיניות ביטול', participant_policy: 'מדיניות משתתפים', signature: 'חתימה',
@@ -44,7 +42,6 @@ function SaveCancel({ onSave, onCancel, busy }) {
   );
 }
 
-// Source info — shown only on demand (small ⓘ), never a permanent label.
 function InfoBtn({ block }) {
   const [open, setOpen] = useState(false);
   return (
@@ -88,8 +85,7 @@ export default function QuotePreviewCanvas() {
   useEffect(() => {
     let alive = true;
     (async () => {
-      setLoading(true);
-      setError(null);
+      setLoading(true); setError(null);
       try {
         const [ens, dealRes, ats] = await Promise.all([
           api.deals.quoteDocument(dealId),
@@ -111,12 +107,8 @@ export default function QuotePreviewCanvas() {
     return () => { alive = false; };
   }, [dealId, loadModel]);
 
-  // Live document: when the admin returns from a source editor (side tab),
-  // reflect the change. Skip while inline-editing or the Builder overlay is open.
   useEffect(() => {
-    function onFocus() {
-      if (!editing && !builderOpen && docId) loadModel(docId).catch(() => {});
-    }
+    function onFocus() { if (!editing && !builderOpen && docId) loadModel(docId).catch(() => {}); }
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, [editing, builderOpen, docId, loadModel]);
@@ -124,23 +116,16 @@ export default function QuotePreviewCanvas() {
   const patchDoc = useCallback(async (patch) => {
     if (!docId) return;
     setBusy(true);
-    try {
-      await api.quoteDocuments.update(docId, patch);
-      await loadModel(docId);
-    } catch (e) {
-      setError(e?.payload?.error || e?.message || 'save_failed');
-    } finally {
-      setBusy(false);
-    }
+    try { await api.quoteDocuments.update(docId, patch); await loadModel(docId); }
+    catch (e) { setError(e?.payload?.error || e?.message || 'save_failed'); }
+    finally { setBusy(false); }
   }, [docId, loadModel]);
 
   const refresh = useCallback(async () => {
     if (!docId) return;
     setBusy(true);
-    try {
-      const [, dealRes] = await Promise.all([loadModel(docId), api.deals.get(dealId)]);
-      setDeal(dealRes);
-    } finally { setBusy(false); }
+    try { const [, dealRes] = await Promise.all([loadModel(docId), api.deals.get(dealId)]); setDeal(dealRes); }
+    finally { setBusy(false); }
   }, [docId, dealId, loadModel]);
 
   const resetAll = useCallback(async () => {
@@ -174,15 +159,13 @@ export default function QuotePreviewCanvas() {
       default: return null;
     }
   }
-
   function onEdit(block) {
     const t = block.editTarget;
     if (block.type === 'personal_intro') return setEditing({ key: block.key, mode: 'intro', value: doc.personalIntro || '' });
-    if (t?.dialog) return setBuilderOpen(true); // Builder opens as an overlay on the quote
+    if (t?.dialog) return setBuilderOpen(true);
     const route = routeFor(t);
-    if (route) window.open(route, '_blank', 'noopener'); // temporary: side tab + focus-refresh
+    if (route) window.open(route, '_blank', 'noopener');
   }
-
   function persistComposition(nextBlocks) {
     return patchDoc({ compositionDraft: { blocks: nextBlocks.map((b) => ({ key: b.key, hidden: !!b.hidden })) } });
   }
@@ -202,88 +185,97 @@ export default function QuotePreviewCanvas() {
   if (error) return <div className="p-16 text-center text-red-600">שגיאה: {error}</div>;
   if (!model) return null;
 
-  const hero = model.blocks.find((b) => b.type === 'hero')?.data || {};
-  const customer = [hero.customerName, hero.organizationName].filter(Boolean).join(' · ');
-  const visible = model.blocks.filter((b) => !b.hidden);
+  const lang = model.language;
+  const hero = model.blocks.find((b) => b.type === 'hero' && !b.hidden);
+  const heroData = hero?.data || {};
+  const customer = [heroData.customerName, heroData.organizationName].filter(Boolean).join(' · ');
+  const body = model.blocks.filter((b) => !b.hidden && b.type !== 'hero');
+
+  // Hover affordance shared by hero + body sections.
+  function Controls({ block, onLight }) {
+    if (previewMode) return null;
+    const t = block.editTarget;
+    return (
+      <div className={`absolute -top-3 left-2 z-10 flex items-center gap-1 transition-opacity ${onLight ? 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+        {block.type === 'hero' && (
+          <PillBtn onClick={() => setEditing({ key: block.key, mode: 'name', value: doc.displayProductName || '' })}>✎ שם לתצוגה</PillBtn>
+        )}
+        {t && (block.type === 'personal_intro' || t.kind !== 'quote') && <PillBtn onClick={() => onEdit(block)}>✎ {t.label}</PillBtn>}
+        <InfoBtn block={block} />
+      </div>
+    );
+  }
+
+  function NameEditor({ block }) {
+    return (
+      <div className="absolute left-2 top-6 z-20 w-80 rounded-xl border border-gray-200 bg-white p-3 shadow-xl">
+        <label className="mb-1 block text-[12px] text-gray-500">שם מוצר לתצוגה בהצעה</label>
+        <input autoFocus value={editing.value} onChange={(e) => setEditing((s) => ({ ...s, value: e.target.value }))}
+          placeholder={block.data?.productName || 'שם המוצר'} className="mb-2 w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm" />
+        <div className="flex items-center justify-between">
+          <SaveCancel busy={busy}
+            onSave={async () => { await patchDoc({ displayProductName: editing.value || null }); setEditing(null); }}
+            onCancel={() => setEditing(null)} />
+          {model.displayProductNameOverridden && (
+            <button type="button" onClick={async () => { await patchDoc({ displayProductName: null }); setEditing(null); }}
+              className="text-[12px] hover:underline" style={{ color: TEAL }}>↺ למקור</button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div dir="rtl" className="min-h-screen bg-gray-100">
-      {/* ── slim top bar ─────────────────────────────────────────── */}
-      <div className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-gray-200 bg-white/85 px-4 py-2.5 backdrop-blur">
+      {/* slim top bar */}
+      <div className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-gray-200 bg-white/85 px-4 py-2.5 backdrop-blur">
         <div className="flex min-w-0 items-center gap-3">
           <Link to={`/admin/crm/deals/${dealId}`} className="text-sm text-gray-500 hover:text-gray-900">← חזרה לעסקה</Link>
           <span className="truncate text-sm font-semibold text-gray-800">הצעת מחיר{customer ? ` · ${customer}` : ''}</span>
         </div>
         <div className="flex items-center gap-2">
           {busy && <span className="text-[12px] text-gray-400">שומר…</span>}
-          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[12px] text-gray-500">{model.language === 'en' ? 'EN' : 'עברית'}</span>
+          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[12px] text-gray-500">{lang === 'en' ? 'EN' : 'עברית'}</span>
           {model.warnings.length > 0 && (
             <div className="relative">
               <button type="button" onClick={() => setWarnOpen((o) => !o)}
                 className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[13px] text-amber-700 hover:bg-amber-100">⚠ {model.warnings.length}</button>
               {warnOpen && (
-                <div className="absolute left-0 top-10 z-30 w-72 rounded-xl border border-gray-200 bg-white p-3 text-right shadow-xl">
+                <div className="absolute left-0 top-10 z-40 w-72 rounded-xl border border-gray-200 bg-white p-3 text-right shadow-xl">
                   <div className="mb-1 text-sm font-semibold text-amber-700">תוכן חסר בשפת ההצעה</div>
                   <ul className="space-y-1 text-[13px]">
                     {model.warnings.map((w, i) => (
-                      <li key={i}>
-                        <button onClick={() => jumpTo(w.blockKey)} className="text-gray-600 hover:text-gray-900 hover:underline">
-                          {LABELS[w.blockKey] || w.blockKey} — חסר תוכן
-                        </button>
-                      </li>
+                      <li key={i}><button onClick={() => jumpTo(w.blockKey)} className="text-gray-600 hover:text-gray-900 hover:underline">{LABELS[w.blockKey] || w.blockKey} — חסר תוכן</button></li>
                     ))}
                   </ul>
                 </div>
               )}
             </div>
           )}
-          <button type="button" onClick={() => setPreviewMode((p) => !p)}
-            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">
-            {previewMode ? 'יציאה מתצוגה' : '👁 תצוגה'}
-          </button>
-          {!previewMode && (
-            <button type="button" onClick={() => setPanelOpen(true)}
-              className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">⋯ מקטעים</button>
-          )}
+          <button type="button" onClick={() => setPreviewMode((p) => !p)} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">{previewMode ? 'יציאה מתצוגה' : '👁 תצוגה'}</button>
+          {!previewMode && <button type="button" onClick={() => setPanelOpen(true)} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">⋯ מקטעים</button>}
         </div>
       </div>
 
-      {/* ── the document (the experience) ────────────────────────── */}
-      <div className="mx-auto max-w-3xl px-4 py-8">
-        <article className="overflow-hidden rounded-2xl bg-white px-10 py-12 shadow-sm ring-1 ring-gray-100">
-          <div className="space-y-12">
-            {visible.map((block) => {
-              const t = block.editTarget;
+      {/* the document — wide, premium */}
+      <div className="mx-auto w-full max-w-[1400px] px-3 py-6 lg:px-6 lg:py-8">
+        <article className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200/70">
+          {/* full-bleed hero (no margin/rounding gap above the image) */}
+          {hero && (
+            <div id={`sec-${hero.key}`} className="group relative">
+              <Controls block={hero} onLight />
+              {editing?.key === hero.key && editing.mode === 'name' && <NameEditor block={hero} />}
+              <QuoteBlock block={hero} lang={lang} />
+            </div>
+          )}
+
+          {/* padded body */}
+          <div className="space-y-16 px-6 py-12 lg:px-16 lg:py-16">
+            {body.map((block) => {
               const isIntroEdit = editing?.key === block.key && editing.mode === 'intro';
-              const isNameEdit = editing?.key === block.key && editing.mode === 'name';
               return (
                 <section key={block.key} id={`sec-${block.key}`} className="group relative">
-                  {!previewMode && (
-                    <div className="absolute -top-3 left-0 z-10 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                      {block.type === 'hero' && (
-                        <PillBtn onClick={() => setEditing({ key: block.key, mode: 'name', value: doc.displayProductName || '' })}>✎ שם לתצוגה</PillBtn>
-                      )}
-                      {t && (block.type === 'personal_intro' || t.kind !== 'quote') && (
-                        <PillBtn onClick={() => onEdit(block)}>✎ {t.label}</PillBtn>
-                      )}
-                      <InfoBtn block={block} />
-                    </div>
-                  )}
-
-                  {isNameEdit ? (
-                    <div className="mb-3 flex flex-wrap items-center gap-2">
-                      <input autoFocus value={editing.value} onChange={(e) => setEditing((s) => ({ ...s, value: e.target.value }))}
-                        placeholder={block.data?.productName || 'שם המוצר'} className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm" />
-                      <SaveCancel busy={busy}
-                        onSave={async () => { await patchDoc({ displayProductName: editing.value || null }); setEditing(null); }}
-                        onCancel={() => setEditing(null)} />
-                      {model.displayProductNameOverridden && (
-                        <button type="button" onClick={async () => { await patchDoc({ displayProductName: null }); setEditing(null); }}
-                          className="text-[12px] hover:underline" style={{ color: TEAL }}>↺ למקור</button>
-                      )}
-                    </div>
-                  ) : null}
-
+                  <Controls block={block} />
                   {isIntroEdit ? (
                     <div>
                       <RichEditor value={editing.value} onChange={(html) => setEditing((s) => ({ ...s, value: html }))} ariaLabel="פתיח אישי" />
@@ -292,7 +284,7 @@ export default function QuotePreviewCanvas() {
                         onCancel={() => setEditing(null)} /></div>
                     </div>
                   ) : (
-                    <QuoteBlock block={block} />
+                    <QuoteBlock block={block} lang={lang} />
                   )}
                 </section>
               );
@@ -302,9 +294,9 @@ export default function QuotePreviewCanvas() {
         <p className="mt-6 text-center text-[12px] text-gray-400">טיוטה — התוכן נשאב מ-GOS. הפקה, עמוד ציבורי, חתימה ו-PDF בשלבים הבאים.</p>
       </div>
 
-      {/* ── sections panel (structural editing, out of the document) ── */}
+      {/* sections panel */}
       {panelOpen && (
-        <div className="fixed inset-0 z-30" onClick={() => setPanelOpen(false)}>
+        <div className="fixed inset-0 z-40" onClick={() => setPanelOpen(false)}>
           <div className="absolute inset-0 bg-black/20" />
           <div className="absolute inset-y-0 left-0 flex w-80 flex-col bg-white p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="mb-3 flex items-center justify-between">
@@ -312,25 +304,20 @@ export default function QuotePreviewCanvas() {
               <button type="button" onClick={() => setPanelOpen(false)} className="text-gray-400 hover:text-gray-700">✕</button>
             </div>
             <div className="mb-3 flex gap-2">
-              <button type="button" onClick={refresh} disabled={busy}
-                className="flex-1 rounded-lg border border-gray-300 px-2 py-1.5 text-[13px] text-gray-700 hover:bg-gray-50 disabled:opacity-50">רענן מהמקור</button>
-              <button type="button" onClick={resetAll} disabled={busy}
-                className="flex-1 rounded-lg border border-red-200 px-2 py-1.5 text-[13px] text-red-600 hover:bg-red-50 disabled:opacity-50">אפס הכל</button>
+              <button type="button" onClick={refresh} disabled={busy} className="flex-1 rounded-lg border border-gray-300 px-2 py-1.5 text-[13px] text-gray-700 hover:bg-gray-50 disabled:opacity-50">רענן מהמקור</button>
+              <button type="button" onClick={resetAll} disabled={busy} className="flex-1 rounded-lg border border-red-200 px-2 py-1.5 text-[13px] text-red-600 hover:bg-red-50 disabled:opacity-50">אפס הכל</button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto">
               <ReorderableList
                 items={model.blocks.map((b) => ({ id: b.key, block: b }))}
-                onReorder={onReorder}
-                emptyText="אין מקטעים"
+                onReorder={onReorder} emptyText="אין מקטעים"
                 renderRow={({ block }, { handle }) => (
                   <div className={`flex items-center gap-2 rounded-lg border border-gray-200 px-2 py-1.5 ${block.hidden ? 'opacity-50' : ''}`}>
                     {handle}
                     <span className="flex-1 truncate text-[13px] text-gray-800">{LABELS[block.type] || block.key}</span>
                     {block.overridden && <span className="h-2 w-2 rounded-full" style={{ background: TEAL }} title="מותאם" />}
                     <button type="button" onClick={() => toggleHidden(block.key)} disabled={!block.removable}
-                      className="rounded px-1.5 py-0.5 text-[12px] text-gray-600 hover:bg-gray-100 disabled:opacity-30">
-                      {block.hidden ? 'הצג' : 'הסתר'}
-                    </button>
+                      className="rounded px-1.5 py-0.5 text-[12px] text-gray-600 hover:bg-gray-100 disabled:opacity-30">{block.hidden ? 'הצג' : 'הסתר'}</button>
                   </div>
                 )}
               />
@@ -339,14 +326,12 @@ export default function QuotePreviewCanvas() {
         </div>
       )}
 
-      {/* ── Builder overlay (commercial data — single source) ───────── */}
+      {/* Builder overlay */}
       {builderOpen && deal && (
         resolveFinanceWorkspace(deal) === FINANCE_WORKSPACE.TICKET_BUILDER ? (
-          <GroupTicketBuilderDialog deal={deal} context={priceContext} open
-            onClose={() => setBuilderOpen(false)} onSaved={() => { setBuilderOpen(false); refresh(); }} />
+          <GroupTicketBuilderDialog deal={deal} context={priceContext} open onClose={() => setBuilderOpen(false)} onSaved={() => { setBuilderOpen(false); refresh(); }} />
         ) : (
-          <PriceBuilderDialog deal={deal} context={priceContext} open
-            onClose={() => setBuilderOpen(false)} onSaved={() => { setBuilderOpen(false); refresh(); }} />
+          <PriceBuilderDialog deal={deal} context={priceContext} open onClose={() => setBuilderOpen(false)} onSaved={() => { setBuilderOpen(false); refresh(); }} />
         )
       )}
     </div>

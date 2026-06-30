@@ -128,6 +128,8 @@ function buildHero({ deal, document, displayName, lang }) {
       customerName: contactDisplayName(deal, lang),
       organizationName: deal?.organization?.name || null,
       tourDate: deal?.tourDate || null,
+      // Proposal creation date (תאריך הפקה) — the hero shows this, NOT the tour date.
+      createdAt: document?.createdAt || null,
       heroImageUrl: heroImageUrl(deal),
       by: 'Grafitiyul',
       quoteDocumentId: document.id,
@@ -163,6 +165,9 @@ function buildTourDetails({ deal, displayName, lang }) {
       tourTime: deal?.tourTime || null,
       participants: deal?.participants ?? null,
       durationHours: variant?.durationHours ?? null,
+      tourLanguage: deal?.tourLanguage || null,
+      // Retained in the model but no longer rendered inside Technical Details;
+      // becomes its own optional section in Phase 2.
       meetingPoint,
     },
     warnings,
