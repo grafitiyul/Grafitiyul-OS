@@ -226,6 +226,95 @@ schema migration, no template rewrite. `optional` and `condition` are **data**, 
 
 ---
 
+## 7B. Preview & Override Layer (Source → Preview → Produced)
+
+**Approved 2026-06-30.** Between auto-composition and freezing there is an **editable Preview
+stage**. The system auto-composes the quote from Deal / Builder / Content, but the admin polishes it
+**like a document** before producing. Editing the Preview **never mutates the Source.**
+
+### Three states
+
+| State | What it is | Writer | Mutable? |
+|---|---|---|---|
+| **Source (Business Truth)** | Deal · QuoteVersion/QuoteLine (Builder) · Content catalogs | Deal/Builder/Settings screens — **never the quote** | Yes, in its own screens |
+| **Preview (Presentation Layer)** | Auto-composed quote + the admin's per-quote edits, edited as a stable document | The Quote preview editor | Yes — polished freely |
+| **Produced Quote (Frozen)** | The immortal customer-facing snapshot | `produce()`, once | No — revise = clone |
+
+### Two override layers (sparse, non-destructive)
+
+The `QuoteDocument` in `draft` status holds two layers on top of the Source — both sparse:
+
+1. **Composition draft** (structure): ordered block list `{ blockId, type, kind, sourceRef, order,
+   hidden, config }` + ad-hoc blocks. → reorder · hide · remove · add ad-hoc · (later) add media.
+2. **Content overrides** (presentation): per-block `{ fieldKey → value }` or whole-body
+   `overrideHtml`. → edit text · change titles · add/remove paragraphs.
+
+Neither layer ever writes back to the Source. This is the proven `DocumentInstance` +
+`DocumentInstanceOverride` pattern ("per-field override scoped to one instance; never mutates global
+values") applied to the composed quote.
+
+### Draft model — materialized working copy (LOCKED)
+
+The draft is a **materialized working copy** (a stable WYSIWYG editing surface), with each
+field/block flagged `overridden` or not. This matches the project's existing **"sticky value +
+explicit recalc"** convention (e.g. the base tour price is sticky and recomputes only on explicit
+"חשב מחדש"). **Produce freezes the draft exactly as shown — no silent refresh at produce time.**
+
+### Quote Display Product Name (LOCKED)
+
+**One** quote-level override field — `QuoteDocument.displayProductName` (single-language, in the
+resolved quote language; null → falls back to the Deal product's name).
+
+- It is a **render-time substitution**: wherever the document renders the *product identity name*
+  — **Cover/Hero, Tour Details, section headers, and the product line's displayed name in the
+  Pricing table** — the renderer uses `displayProductName ?? productName(language)`.
+- **One override, whole document.** No independent per-block product-name overrides.
+- It is **display-only**: it never changes `Deal.product`, the Product catalog, or any Builder
+  commercial data. In the Pricing block, quantities/prices/VAT/totals/notes render **verbatim** from
+  the frozen Builder result; only the displayed product name is substituted.
+- Addon / discount / credit / manual line labels are **not** product names → unaffected.
+
+### Pricing block — Builder-owned, one editing place (LOCKED)
+
+The Pricing block is **read-only in the Preview.** The Preview may NEVER edit quantities, prices,
+VAT, totals, or pricing-line notes — those belong to the Builder only.
+
+- **Click anywhere in the Pricing block (or an Edit button) → opens the correct Builder directly**
+  (`PriceBuilderDialog` or `GroupTicketBuilderDialog`, resolved by the existing
+  `resolveFinanceWorkspace()` by activity type).
+- **After saving the Builder, the Preview refreshes automatically.**
+- **There is never a second place to edit commercial data.** The pricing block is frozen into the
+  snapshot at produce time (§6, §C of the content model).
+
+### Two refresh actions (LOCKED — not one destructive discard)
+
+- **A. Refresh non-overridden content** — re-pull current Source into every field the admin never
+  edited; **keep all manual overrides and all structural edits** (reorder/hide/added blocks).
+- **B. Reset to Source** — remove every override and structural edit; **fully re-compose** the quote
+  from template + Source.
+
+### Override transparency (LOCKED)
+
+Every overridden field or block shows a clear indicator ("ערוך ידנית / שונה מהמקור" — *edited
+manually / modified from source*) and a per-field/block **"↺ Reset to Source"** action (clearing an
+override returns that field to live Source resolution — the same UX as the Builder's "↺ מקור").
+
+### Produce & revise
+
+`produce()` freezes `effective(draft)` → `renderModelSnapshot` (immutable). Deal changes never reach
+a produced quote. To revise → **clone** a fresh `QuoteDocument` (re-inherits current Source; the
+admin may keep, drop, or re-apply overrides).
+
+### SSOT guardrails (binding)
+
+1. Overrides **never** write back to Deal / product / Builder / content catalogs — one-directional.
+2. **One place** for commercial data: the Builder. The Pricing block is read-only everywhere else.
+3. Produced quotes **never** live-update from the Source.
+4. `displayProductName` is **presentation-only** and quote-scoped.
+5. Every override is **visibly marked** and **one-click resettable** to Source.
+
+---
+
 ## 8. Dynamic vs content blocks
 
 | | **Dynamic blocks** | **Content blocks** |
@@ -422,7 +511,13 @@ and generalization must be chosen **over** building a parallel document system.
 
 ---
 
-## 19. Open decisions to confirm before implementation planning
+## 19. Open decisions to confirm before implementation
+
+**Locked 2026-06-30 (see §7B):** Preview & Override Layer; one quote-level **Display Product Name**;
+Pricing block **Builder-owned** with click-to-open + auto-refresh; **two** refresh actions (Refresh
+non-overridden / Reset to Source); override indicators + per-field Reset to Source; draft is a
+**materialized working copy** (resolves the earlier sparse-vs-materialized question in favor of
+materialized). Remaining open items below. planning
 
 1. **Composition ownership** — confirmed: admins reorder blocks **per deal** (instance override on a
    template default), not template-only.
