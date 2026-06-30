@@ -143,9 +143,33 @@ export async function updateQuoteDocumentMeta(client, id, body = {}) {
     if (!isLang(body.language)) return { error: 'invalid_language' };
     data.language = body.language;
   }
+  // Draft structure + presentation overrides (Slice 3). Plain JSON objects or
+  // null. compositionDraft = { blocks:[{key,hidden}] } (order + hidden);
+  // overrideState = { blocks:{ [key]:{ html?, title? } } } (content overrides).
+  if (body.compositionDraft !== undefined) {
+    if (body.compositionDraft !== null && typeof body.compositionDraft !== 'object') return { error: 'invalid_composition_draft' };
+    data.compositionDraft = body.compositionDraft ?? null;
+  }
+  if (body.overrideState !== undefined) {
+    if (body.overrideState !== null && typeof body.overrideState !== 'object') return { error: 'invalid_override_state' };
+    data.overrideState = body.overrideState ?? null;
+  }
   if (Object.keys(data).length === 0) return { doc };
 
   const updated = await client.quoteDocument.update({ where: { id }, data });
+  return { doc: updated };
+}
+
+// "Reset all to source": clear every override + structural edit and let the
+// composer recompose from source on the next preview. Draft only.
+export async function resetQuoteDocumentToSource(client, id) {
+  const doc = await client.quoteDocument.findUnique({ where: { id } });
+  if (!doc) return { error: 'not_found' };
+  if (doc.status !== 'draft') return { error: 'not_editable' };
+  const updated = await client.quoteDocument.update({
+    where: { id },
+    data: { compositionDraft: null, overrideState: null, displayProductName: null, personalIntro: null },
+  });
   return { doc: updated };
 }
 

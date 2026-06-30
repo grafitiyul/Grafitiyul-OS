@@ -541,8 +541,18 @@ export default function DealDetail() {
           </div>
         </Card>
 
-        {/* The "הצעת מחיר" (Quote) card was removed — that area will be redesigned
-            later. The operational action bar lives under פרטי הסיור (above). */}
+        {/* Quote Module (Slice 3) — entry point to the Quote Preview Canvas
+            (internal admin draft workspace). Ensures a draft QuoteDocument and
+            opens the canvas. Public page / PDF / signature are built later. */}
+        <Card variant="panel" title="הצעת מחיר">
+          <p className="mb-3 text-[12px] text-gray-500">בנייה ועיצוב של מסמך הצעת המחיר ללקוח.</p>
+          <Link
+            to={`/admin/quote/${deal.id}`}
+            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+          >
+            📄 הצעת מחיר (בטא)
+          </Link>
+        </Card>
 
       {deal.status === 'lost' && (
         <Card variant="panel" title="פרטי LOST">

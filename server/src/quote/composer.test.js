@@ -176,6 +176,40 @@ test('composer: stored compositionDraft controls order and hides blocks (no warn
   assert.ok(!model.warnings.some((w) => w.blockKey === 'cancellation'), 'hidden block raises no warning');
 });
 
+// ── override layer: content overrides applied + source metadata (Slice 3) ────
+test('composer: HTML override replaces section content and clears its warning', () => {
+  const document = doc({ language: 'en', overrideState: { blocks: { faq: { html: '<p>custom FAQ</p>' } } } });
+  const model = compose({ document, lang: 'en' });
+  const faq = blockByKey(model, 'faq');
+  assert.equal(faq.data.customHtml, '<p>custom FAQ</p>', 'section block shows custom override html');
+  assert.equal(faq.overridden, true);
+  assert.ok(!model.warnings.some((w) => w.blockKey === 'faq'), 'override supplies content → no warning');
+});
+
+test('composer: HTML override replaces a single-html content block', () => {
+  const document = doc({ overrideState: { blocks: { classification: { html: '<p>נוסח מותאם</p>' } } } });
+  const model = compose({ document });
+  const cls = blockByKey(model, 'classification');
+  assert.equal(cls.data.html, '<p>נוסח מותאם</p>');
+  assert.equal(cls.overridden, true);
+});
+
+test('composer: title override is applied to a content block', () => {
+  const document = doc({ overrideState: { blocks: { why_grafitiyul: { title: 'כותרת מותאמת' } } } });
+  const model = compose({ document });
+  assert.equal(blockByKey(model, 'why_grafitiyul').data.title, 'כותרת מותאמת');
+  assert.equal(blockByKey(model, 'why_grafitiyul').overridden, true);
+});
+
+test('composer: every block carries source metadata; displayProductName override marks blocks', () => {
+  const model = compose({ document: doc({ displayProductName: 'X' }) });
+  assert.equal(blockByKey(model, 'pricing').source, 'QuoteVersion (Builder)');
+  assert.equal(blockByKey(model, 'tour_details').source, 'Deal · Product · Location');
+  assert.equal(model.displayProductNameOverridden, true);
+  assert.equal(blockByKey(model, 'hero').overridden, true);
+  assert.equal(blockByKey(model, 'tour_details').overridden, true);
+});
+
 // ── pickLang unit ─────────────────────────────────────────────────────────────
 test('pickLang: selects by language, returns null on empty, never cross-falls back', () => {
   assert.equal(pickLang('שלום', 'hello', 'en'), 'hello');

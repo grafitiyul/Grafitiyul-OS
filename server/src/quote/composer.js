@@ -48,6 +48,24 @@ function warn(blockKey, type, field, language) {
   return { code: 'missing_content', blockKey, type, field, language };
 }
 
+// Human-facing source metadata per block type (admin "where does this come from").
+const SOURCE_LABELS = {
+  hero: 'Deal',
+  personal_intro: 'Quote',
+  tour_details: 'Deal · Product · Location',
+  pricing: 'QuoteVersion (Builder)',
+  payment_terms: 'Deal · Payment',
+  signature: 'Signers',
+  product_marketing: 'Product',
+  city_content: 'Location',
+  classification: 'OrganizationType / Subtype',
+  why_us: 'QuoteSection',
+  faq: 'QuoteSection',
+  cancellation: 'QuoteSection',
+  participant_policy: 'QuoteSection',
+  terms: 'QuoteSection',
+};
+
 function productName(deal, lang) {
   return pickLang(deal?.product?.nameHe, deal?.product?.nameEn, lang);
 }
@@ -245,11 +263,33 @@ export function assembleComposition({ document, deal, version, lines, quoteSecti
   const displayName = resolveDisplayProductName(document, deal, language);
   const ctx = { document, deal, version, lines, quoteSections, lang: language, displayName };
 
+  const overrides = document?.overrideState?.blocks || {};
   const warnings = [];
   const blocks = getOrderedBlocks(document?.compositionDraft).map((b, i) => {
     const assembled = b.hidden ? { data: null, warnings: [] } : assembleBlock(b.type, ctx);
-    // Hidden blocks never raise warnings (a hidden missing-content block is fine).
-    for (const wn of assembled.warnings) warnings.push({ ...wn, blockKey: b.key });
+    const ov = overrides[b.key] || null;
+    let data = assembled.data;
+    let overridden = false;
+
+    if (!b.hidden && data) {
+      // Title override (content blocks) and whole-body HTML override. A section
+      // block (items[]) gets a `customHtml` that the renderer shows instead of the
+      // items; a single-HTML content block gets its `html` replaced.
+      if (isFilled(ov?.title)) { data = { ...data, title: ov.title }; overridden = true; }
+      if (isFilled(ov?.html)) {
+        data = data.items !== undefined ? { ...data, customHtml: ov.html } : { ...data, html: ov.html };
+        overridden = true;
+      }
+    }
+    // Column-backed overrides count as "edited" for their blocks.
+    if (b.type === 'personal_intro' && isFilled(document?.personalIntro)) overridden = true;
+    if ((b.type === 'hero' || b.type === 'tour_details') && isFilled(document?.displayProductName)) overridden = true;
+
+    // Hidden blocks never warn; an HTML override supplies content, so it clears
+    // that block's missing-content warnings.
+    const blockWarnings = b.hidden || isFilled(ov?.html) ? [] : assembled.warnings;
+    for (const wn of blockWarnings) warnings.push({ ...wn, blockKey: b.key });
+
     return {
       key: b.key,
       type: b.type,
@@ -258,7 +298,9 @@ export function assembleComposition({ document, deal, version, lines, quoteSecti
       removable: b.removable !== false,
       sortOrder: i,
       hidden: !!b.hidden,
-      data: assembled.data,
+      source: SOURCE_LABELS[b.type] || null,
+      overridden,
+      data,
     };
   });
 
@@ -266,6 +308,7 @@ export function assembleComposition({ document, deal, version, lines, quoteSecti
     quoteDocumentId: document.id,
     language,
     displayProductName: displayName,
+    displayProductNameOverridden: isFilled(document?.displayProductName),
     quoteVersionId: version?.id ?? document.quoteVersionId ?? null,
     blocks,
     warnings,

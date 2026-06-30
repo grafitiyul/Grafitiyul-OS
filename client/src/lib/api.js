@@ -408,6 +408,17 @@ export const api = {
     getPriceLines: (id) => request(`/api/deals/${id}/price-lines`),
     savePriceLines: (id, data) =>
       request(`/api/deals/${id}/price-lines`, { method: 'PUT', body: JSON.stringify(data) }),
+    // Quote Module — ensure + return the draft QuoteDocument for this deal.
+    quoteDocument: (id) => request(`/api/deals/${id}/quote-document`),
+  },
+  // ── Quote Module (quote documents + composer preview) ───────────
+  quoteDocuments: {
+    get: (id) => request(`/api/quote-documents/${id}`),
+    update: (id, data) =>
+      request(`/api/quote-documents/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    composePreview: (id) => request(`/api/quote-documents/${id}/compose-preview`),
+    resetToSource: (id) =>
+      request(`/api/quote-documents/${id}/reset-to-source`, { method: 'POST' }),
   },
   // ── Products & Pricing — Slice 1 (catalog + files + payment config) ──
   mediaFiles: {

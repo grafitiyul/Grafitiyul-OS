@@ -13,6 +13,7 @@ import {
   buildInitialDraftData,
   ensureDraftQuoteDocument,
   updateQuoteDocumentMeta,
+  resetQuoteDocumentToSource,
 } from './quoteDocument.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -170,6 +171,48 @@ test('updateMeta: not_found for a missing document', async () => {
   const client = fakeClient();
   const r = await updateQuoteDocumentMeta(client, 'nope', { personalIntro: 'x' });
   assert.equal(r.error, 'not_found');
+});
+
+// ── draft structure + override persistence (Slice 3) ─────────────────────────
+test('updateMeta: persists compositionDraft and overrideState', async () => {
+  const client = fakeClient({ deals: { deal_1: deal() } });
+  const { doc } = await ensureDraftQuoteDocument(client, 'deal_1');
+  const composition = { blocks: [{ key: 'pricing' }, { key: 'hero', hidden: true }] };
+  const overrides = { blocks: { faq: { html: '<p>custom</p>' } } };
+  const r = await updateQuoteDocumentMeta(client, doc.id, { compositionDraft: composition, overrideState: overrides });
+  assert.deepEqual(r.doc.compositionDraft, composition);
+  assert.deepEqual(r.doc.overrideState, overrides);
+});
+
+test('updateMeta: rejects a non-object compositionDraft', async () => {
+  const client = fakeClient({ deals: { deal_1: deal() } });
+  const { doc } = await ensureDraftQuoteDocument(client, 'deal_1');
+  const r = await updateQuoteDocumentMeta(client, doc.id, { compositionDraft: 'nope' });
+  assert.equal(r.error, 'invalid_composition_draft');
+});
+
+test('resetToSource: clears overrides + structural edits', async () => {
+  const client = fakeClient({ deals: { deal_1: deal() } });
+  const { doc } = await ensureDraftQuoteDocument(client, 'deal_1');
+  await updateQuoteDocumentMeta(client, doc.id, {
+    displayProductName: 'X',
+    personalIntro: 'hi',
+    compositionDraft: { blocks: [{ key: 'hero' }] },
+    overrideState: { blocks: { faq: { html: '<p>c</p>' } } },
+  });
+  const r = await resetQuoteDocumentToSource(client, doc.id);
+  assert.equal(r.doc.displayProductName, null);
+  assert.equal(r.doc.personalIntro, null);
+  assert.equal(r.doc.compositionDraft, null);
+  assert.equal(r.doc.overrideState, null);
+});
+
+test('resetToSource: rejected on a produced document', async () => {
+  const client = fakeClient({ deals: { deal_1: deal() } });
+  const { doc } = await ensureDraftQuoteDocument(client, 'deal_1');
+  doc.status = 'produced';
+  const r = await resetQuoteDocumentToSource(client, doc.id);
+  assert.equal(r.error, 'not_editable');
 });
 
 // ── additive-migration guard (constraint #10: no destructive drops) ──────────

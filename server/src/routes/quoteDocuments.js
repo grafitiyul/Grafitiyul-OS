@@ -4,6 +4,7 @@ import { handle } from '../asyncHandler.js';
 import {
   getQuoteDocument,
   updateQuoteDocumentMeta,
+  resetQuoteDocumentToSource,
   toClientQuoteDocument,
 } from '../quote/quoteDocument.js';
 import { composeQuoteDraftPreview } from '../quote/composer.js';
@@ -31,6 +32,19 @@ router.put(
   '/:id',
   handle(async (req, res) => {
     const r = await updateQuoteDocumentMeta(prisma, req.params.id, req.body || {});
+    if (r.error === 'not_found') return res.status(404).json({ error: 'not_found' });
+    if (r.error === 'not_editable') return res.status(409).json({ error: 'not_editable' });
+    if (r.error) return res.status(400).json({ error: r.error });
+    res.json({ quoteDocument: toClientQuoteDocument(r.doc) });
+  }),
+);
+
+// "Reset all to source" (Slice 3): clear every override + structural edit, then
+// the next compose-preview recomposes from source. Draft only.
+router.post(
+  '/:id/reset-to-source',
+  handle(async (req, res) => {
+    const r = await resetQuoteDocumentToSource(prisma, req.params.id);
     if (r.error === 'not_found') return res.status(404).json({ error: 'not_found' });
     if (r.error === 'not_editable') return res.status(409).json({ error: 'not_editable' });
     if (r.error) return res.status(400).json({ error: r.error });

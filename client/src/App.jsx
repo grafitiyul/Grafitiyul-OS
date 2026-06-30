@@ -43,6 +43,7 @@ import CrmSettingsPage from './admin/crm/settings/CrmSettingsPage.jsx';
 // Deal module (commercial core) — deals + pipeline.
 import DealsList from './admin/deals/DealsList.jsx';
 import DealDetail from './admin/deals/DealDetail.jsx';
+import QuotePreviewCanvas from './admin/quote/QuotePreviewCanvas.jsx';
 // Global Settings module (low-frequency configuration).
 import SettingsHome from './admin/settings/SettingsHome.jsx';
 import CrmSettingsHome from './admin/settings/CrmSettingsHome.jsx';
@@ -139,6 +140,9 @@ export default function App() {
           <Route path="organizations" element={<OrganizationsList />} />
           <Route path="organizations/:id" element={<OrganizationDetail />} />
         </Route>
+        {/* Quote Preview Canvas (Slice 3) — internal admin draft workspace,
+            opened from a Deal. NOT the public quote page. */}
+        <Route path="quote/:dealId" element={<QuotePreviewCanvas />} />
         {/* Global Settings — category cards. CRM Settings (incl. the
             Organization Types / Subtypes / Deal Stages screen) lives here,
             no longer as a prominent CRM tab. */}
