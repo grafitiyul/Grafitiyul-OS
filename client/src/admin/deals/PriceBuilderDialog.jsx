@@ -516,8 +516,8 @@ function LineRow({ line, computed, products, addons, defaultProductId, noteOpen,
           <RichEditor
             value={line.note}
             onChange={(html) => onChange({ note: html })}
+            preset="note"
             toolbar="lite"
-            tone="note"
             collapsible
             maxHeight="200px"
             ariaLabel="הערה לשורה"

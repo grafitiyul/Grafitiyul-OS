@@ -123,7 +123,7 @@ export default function CollapsibleNote({ id, label, value, rich = false, placeh
     <div className="animate-[inlineIn_120ms_ease-out]">
       <span className={LABEL}>{label}</span>
       {rich ? (
-        <RichEditor value={draft} onChange={setDraft} toolbar="lite" collapsible maxHeight="220px" ariaLabel={label} placeholder={placeholder} />
+        <RichEditor value={draft} onChange={setDraft} preset="lite" collapsible maxHeight="220px" ariaLabel={label} placeholder={placeholder} />
       ) : (
         <textarea
           value={draft}

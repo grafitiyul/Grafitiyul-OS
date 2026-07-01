@@ -208,7 +208,7 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
           {tab === 'note' ? (
             <div className="space-y-2">
               <RichEditor
-                tone="note"
+                preset="note"
                 collapsible
                 value={draft}
                 onChange={setDraft}

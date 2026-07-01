@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { DYNAMIC_FIELDS } from '../lib/dynamicFields.js';
 import LinkPopover from './LinkPopover.jsx';
 import ColorPicker from './ColorPicker.jsx';
@@ -55,147 +55,137 @@ export const FONT_SIZES = [
   { value: '32px', name: '32' },
 ];
 
-// ---- toolbar ----
+// ---- toolbar as data ----
+//
+// Each toolbar button/control is a keyed item in ITEMS. A preset (TOOLBAR_PRESETS)
+// is just an ordered list of GROUPS, each group an ordered list of item keys.
+// The single Toolbar renderer below turns that config into buttons + dividers.
+// This is the ONE place that defines what any editor's toolbar contains — so
+// RTL/LTR, list, and every other control behave identically everywhere, and a
+// future change is a one-line edit to a preset, not duplicated JSX per toolbar.
+//
+// An item is `(ctx) => ReactElement`, where ctx = { editor, setUploadState }.
+// Simple toggles are inlined; stateful controls (popovers, menus, selects) are
+// rendered as their own components so their hooks live in real components.
+const ITEMS = {
+  undo: ({ editor }) => (
+    <IconBtn label="בטל" shortcut="Ctrl+Z" onClick={() => editor.chain().focus().undo().run()} disabled={!editor.can().undo()}>
+      <UndoSVG />
+    </IconBtn>
+  ),
+  redo: ({ editor }) => (
+    <IconBtn label="חזור" shortcut="Ctrl+Shift+Z" onClick={() => editor.chain().focus().redo().run()} disabled={!editor.can().redo()}>
+      <RedoSVG />
+    </IconBtn>
+  ),
+  heading: ({ editor }) => <HeadingSelect editor={editor} />,
+  fontFamily: ({ editor }) => <FontFamilySelect editor={editor} />,
+  fontSize: ({ editor }) => <FontSizeSelect editor={editor} />,
+  bold: ({ editor }) => (
+    <IconBtn label="מודגש" shortcut="Ctrl+B" active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()}>
+      <span className="font-extrabold">B</span>
+    </IconBtn>
+  ),
+  italic: ({ editor }) => (
+    <IconBtn label="נטוי" shortcut="Ctrl+I" active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}>
+      <span className="italic font-semibold">I</span>
+    </IconBtn>
+  ),
+  underline: ({ editor }) => (
+    <IconBtn label="קו תחתון" shortcut="Ctrl+U" active={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()}>
+      <span className="underline font-semibold">U</span>
+    </IconBtn>
+  ),
+  textColor: ({ editor }) => <TextColorButton editor={editor} />,
+  highlight: ({ editor }) => <HighlightButton editor={editor} />,
+  bulletList: ({ editor }) => (
+    <IconBtn label="רשימת תבליטים" active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}>
+      <BulletSVG />
+    </IconBtn>
+  ),
+  orderedList: ({ editor }) => (
+    <IconBtn label="רשימה ממוספרת" active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()}>
+      <OrderedSVG />
+    </IconBtn>
+  ),
+  alignRight: ({ editor }) => (
+    <IconBtn label="יישור לימין" active={editor.isActive({ textAlign: 'right' })} onClick={() => editor.chain().focus().setTextAlign('right').run()}>
+      <AlignSVG side="right" />
+    </IconBtn>
+  ),
+  alignCenter: ({ editor }) => (
+    <IconBtn label="יישור למרכז" active={editor.isActive({ textAlign: 'center' })} onClick={() => editor.chain().focus().setTextAlign('center').run()}>
+      <AlignSVG side="center" />
+    </IconBtn>
+  ),
+  alignLeft: ({ editor }) => (
+    <IconBtn label="יישור לשמאל" active={editor.isActive({ textAlign: 'left' })} onClick={() => editor.chain().focus().setTextAlign('left').run()}>
+      <AlignSVG side="left" />
+    </IconBtn>
+  ),
+  // Writing direction — separate from alignment. Fixes bidi + list markers for
+  // mixed Hebrew/English content. Same control in every toolbar that includes it.
+  dirRtl: ({ editor }) => (
+    <IconBtn label="כיוון כתיבה: מימין לשמאל (RTL)" active={editor.isActive({ dir: 'rtl' })} onClick={() => editor.chain().focus().setTextDirection('rtl').run()}>
+      <DirSVG dir="rtl" />
+    </IconBtn>
+  ),
+  dirLtr: ({ editor }) => (
+    <IconBtn label="כיוון כתיבה: משמאל לימין (LTR)" active={editor.isActive({ dir: 'ltr' })} onClick={() => editor.chain().focus().setTextDirection('ltr').run()}>
+      <DirSVG dir="ltr" />
+    </IconBtn>
+  ),
+  link: ({ editor }) => <LinkButton editor={editor} />,
+  image: ({ editor, setUploadState }) => <ImageUploadButton editor={editor} setUploadState={setUploadState} />,
+  video: ({ editor, setUploadState }) => <VideoMenuButton editor={editor} setUploadState={setUploadState} />,
+  emoji: ({ editor }) => <EmojiButton editor={editor} />,
+  dynamicField: ({ editor }) => <DynamicFieldMenu editor={editor} />,
+};
 
-export default function Toolbar({ editor, setUploadState }) {
+// Toolbar presets — ordered groups of item keys. Dividers are drawn between
+// groups automatically. These are the single source of truth for editor chrome.
+export const TOOLBAR_PRESETS = {
+  full: [
+    ['undo', 'redo'],
+    ['heading', 'fontFamily', 'fontSize'],
+    ['bold', 'italic', 'underline'],
+    ['textColor', 'highlight'],
+    ['bulletList', 'orderedList'],
+    ['alignRight', 'alignCenter', 'alignLeft'],
+    ['dirRtl', 'dirLtr'],
+    ['link'],
+    ['image', 'video'],
+    ['dynamicField'],
+  ],
+  // Deliberately minimal set for lightweight notes: no headings/colors/lists/
+  // alignment/links/media. Bold · underline · highlight · emoji · font size.
+  lite: [
+    ['bold', 'underline'],
+    ['highlight', 'emoji'],
+    ['fontSize'],
+  ],
+};
+
+export default function Toolbar({ editor, setUploadState, preset = 'full' }) {
   if (!editor) return null;
-
+  const groups = TOOLBAR_PRESETS[preset] || TOOLBAR_PRESETS.full;
+  const ctx = { editor, setUploadState };
   return (
     <div
       className="flex flex-wrap items-center gap-1 p-1.5 bg-gray-50 rounded-b-md"
       role="toolbar"
       aria-label="סרגל עיצוב"
     >
-      <Group>
-        <IconBtn
-          label="בטל"
-          shortcut="Ctrl+Z"
-          onClick={() => editor.chain().focus().undo().run()}
-          disabled={!editor.can().undo()}
-        >
-          <UndoSVG />
-        </IconBtn>
-        <IconBtn
-          label="חזור"
-          shortcut="Ctrl+Shift+Z"
-          onClick={() => editor.chain().focus().redo().run()}
-          disabled={!editor.can().redo()}
-        >
-          <RedoSVG />
-        </IconBtn>
-      </Group>
-      <Divider />
-
-      <HeadingSelect editor={editor} />
-      <FontFamilySelect editor={editor} />
-      <FontSizeSelect editor={editor} />
-      <Divider />
-
-      <Group>
-        <IconBtn
-          label="מודגש"
-          shortcut="Ctrl+B"
-          active={editor.isActive('bold')}
-          onClick={() => editor.chain().focus().toggleBold().run()}
-        >
-          <span className="font-extrabold">B</span>
-        </IconBtn>
-        <IconBtn
-          label="נטוי"
-          shortcut="Ctrl+I"
-          active={editor.isActive('italic')}
-          onClick={() => editor.chain().focus().toggleItalic().run()}
-        >
-          <span className="italic font-semibold">I</span>
-        </IconBtn>
-        <IconBtn
-          label="קו תחתון"
-          shortcut="Ctrl+U"
-          active={editor.isActive('underline')}
-          onClick={() => editor.chain().focus().toggleUnderline().run()}
-        >
-          <span className="underline font-semibold">U</span>
-        </IconBtn>
-      </Group>
-      <Divider />
-
-      <TextColorButton editor={editor} />
-      <HighlightButton editor={editor} />
-      <Divider />
-
-      <Group>
-        <IconBtn
-          label="רשימת תבליטים"
-          active={editor.isActive('bulletList')}
-          onClick={() => editor.chain().focus().toggleBulletList().run()}
-        >
-          <BulletSVG />
-        </IconBtn>
-        <IconBtn
-          label="רשימה ממוספרת"
-          active={editor.isActive('orderedList')}
-          onClick={() => editor.chain().focus().toggleOrderedList().run()}
-        >
-          <OrderedSVG />
-        </IconBtn>
-      </Group>
-      <Divider />
-
-      <Group>
-        <IconBtn
-          label="יישור לימין"
-          active={editor.isActive({ textAlign: 'right' })}
-          onClick={() => editor.chain().focus().setTextAlign('right').run()}
-        >
-          <AlignSVG side="right" />
-        </IconBtn>
-        <IconBtn
-          label="יישור למרכז"
-          active={editor.isActive({ textAlign: 'center' })}
-          onClick={() => editor.chain().focus().setTextAlign('center').run()}
-        >
-          <AlignSVG side="center" />
-        </IconBtn>
-        <IconBtn
-          label="יישור לשמאל"
-          active={editor.isActive({ textAlign: 'left' })}
-          onClick={() => editor.chain().focus().setTextAlign('left').run()}
-        >
-          <AlignSVG side="left" />
-        </IconBtn>
-      </Group>
-      <Divider />
-
-      {/* Writing direction — separate from alignment. Fixes bidi for mixed
-          Hebrew/English paragraphs (English text, URLs, code, etc.). */}
-      <Group>
-        <IconBtn
-          label="כיוון כתיבה: מימין לשמאל (RTL)"
-          active={editor.isActive({ dir: 'rtl' })}
-          onClick={() => editor.chain().focus().setTextDirection('rtl').run()}
-        >
-          <DirSVG dir="rtl" />
-        </IconBtn>
-        <IconBtn
-          label="כיוון כתיבה: משמאל לימין (LTR)"
-          active={editor.isActive({ dir: 'ltr' })}
-          onClick={() => editor.chain().focus().setTextDirection('ltr').run()}
-        >
-          <DirSVG dir="ltr" />
-        </IconBtn>
-      </Group>
-      <Divider />
-
-      <LinkButton editor={editor} />
-      <Divider />
-
-      <Group>
-        <ImageUploadButton editor={editor} setUploadState={setUploadState} />
-        <VideoMenuButton editor={editor} setUploadState={setUploadState} />
-      </Group>
-      <Divider />
-
-      <DynamicFieldMenu editor={editor} />
+      {groups.map((group, gi) => (
+        <Fragment key={gi}>
+          {gi > 0 && <Divider />}
+          <Group>
+            {group.map((key) => (
+              <Fragment key={key}>{ITEMS[key](ctx)}</Fragment>
+            ))}
+          </Group>
+        </Fragment>
+      ))}
     </div>
   );
 }
@@ -641,6 +631,74 @@ function LinkButton({ editor }) {
         onClose={() => setOpen(false)}
       />
     </>
+  );
+}
+
+// Emoji picker — used by the lite preset (working notes). Inserts a character
+// at the caret. Kept here so both presets draw from one item registry.
+const EMOJIS = [
+  '😀', '🙂', '😅', '😎', '🤝', '👍', '👌', '🙏',
+  '🎉', '✅', '✔️', '❗', '❓', '⚠️', '⭐', '🔥',
+  '❤️', '💡', '📌', '📞', '✉️', '📅', '🕒', '💰',
+];
+
+function EmojiButton({ editor }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    function onEsc(e) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [open]);
+
+  function insert(emoji) {
+    editor.chain().focus().insertContent(emoji).run();
+    setOpen(false);
+  }
+
+  return (
+    <div className="relative shrink-0" ref={ref}>
+      <button
+        type="button"
+        aria-label="אימוג'י"
+        title="אימוג'י"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpen((v) => !v)}
+        className="w-9 h-9 flex items-center justify-center rounded-md text-[15px] text-gray-700 hover:bg-gray-200 transition"
+      >
+        🙂
+      </button>
+      {open && (
+        <div
+          role="menu"
+          dir="ltr"
+          className="absolute bottom-full left-0 mb-1 bg-white border border-gray-200 rounded-md shadow-lg z-30 p-2 grid grid-cols-8 gap-0.5 w-[18rem]"
+        >
+          {EMOJIS.map((em) => (
+            <button
+              key={em}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => insert(em)}
+              className="w-8 h-8 flex items-center justify-center rounded hover:bg-gray-100 text-[18px]"
+            >
+              {em}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

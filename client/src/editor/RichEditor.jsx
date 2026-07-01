@@ -16,7 +16,7 @@ import { MediaImage } from './MediaImage.jsx';
 import { MediaVideo } from './MediaVideo.jsx';
 import { MediaEmbed } from './MediaEmbed.jsx';
 import Toolbar from './Toolbar.jsx';
-import LiteToolbar from './LiteToolbar.jsx';
+import { EDITOR_PRESETS } from './editorPresets.js';
 import UploadBanner from './UploadBanner.jsx';
 import { sanitizePastedHtml } from './pasteSanitizer.js';
 import './editor.css';
@@ -53,22 +53,30 @@ export default function RichEditor({
   placeholder = 'כתבו כאן תוכן...',
   minContentHeight = 200,
   maxHeight = '60vh',
+  // Standardized editor role — resolves default chrome from EDITOR_PRESETS
+  // ('full' | 'lite' | 'note'). The explicit props below still override, so a
+  // screen can tweak one default without forking behavior. Default 'full'.
+  preset = 'full',
   // Presentation tone only (does NOT change capabilities). 'default' = the white
   // form look used everywhere; 'note' = warm-yellow so the composer/edit surface
-  // feels like the same sticky-note object as a saved note.
-  tone = 'default',
+  // feels like the same sticky-note object as a saved note. Overrides the preset.
+  tone,
   // Composer mode: start compact (~2 lines) with the toolbar HIDDEN; on focus,
   // expand (~3 lines) and reveal the toolbar. Content still auto-grows with what
   // is typed. Editor capabilities are unchanged — only the chrome is progressive.
   // Off by default, so every existing consumer is unaffected.
   collapsible = false,
-  // Toolbar variant: 'full' (default — every tool) or 'lite' (a deliberately
-  // minimal set: bold · underline · highlight · emoji · font size). The editor
-  // instance is identical; only the chrome differs.
-  toolbar = 'full',
+  // Toolbar variant: 'full' (every tool) or 'lite' (a deliberately minimal set:
+  // bold · underline · highlight · emoji · font size). Overrides the preset. The
+  // editor instance is identical; only the chrome differs.
+  toolbar,
 }) {
   const [focused, setFocused] = useState(false);
-  const noteTone = tone === 'note';
+  // Resolve preset defaults, letting any explicit prop win.
+  const presetCfg = EDITOR_PRESETS[preset] || EDITOR_PRESETS.full;
+  const effTone = tone ?? presetCfg.tone ?? 'default';
+  const effToolbar = toolbar ?? presetCfg.toolbar ?? 'full';
+  const noteTone = effTone === 'note';
   const shellTone = noteTone
     ? 'border-amber-200 bg-amber-50 focus-within:ring-amber-200 focus-within:border-amber-300'
     : 'border-gray-300 bg-white focus-within:ring-blue-200 focus-within:border-blue-400';
@@ -191,11 +199,7 @@ export default function RichEditor({
           only while the editor is focused — the full editor is otherwise intact. */}
       {showToolbar && (
         <div className={`rt-editor-toolbar-wrap shrink-0 border-t ${toolbarBorder}`}>
-          {toolbar === 'lite' ? (
-            <LiteToolbar editor={editor} />
-          ) : (
-            <Toolbar editor={editor} setUploadState={setUploadState} />
-          )}
+          <Toolbar editor={editor} setUploadState={setUploadState} preset={effToolbar} />
         </div>
       )}
     </div>
