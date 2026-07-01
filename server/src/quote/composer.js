@@ -20,6 +20,7 @@
 // so existing importers (tests, callers) keep `import { DEFAULT_QUOTE_BLOCKS } from './composer.js'`.
 import { DEFAULT_QUOTE_BLOCKS } from './quoteBlocks.js';
 import { getQuoteTemplate } from './quoteTemplate.js';
+import { resolveVariantSharedContent } from '../shared-content/sharedContent.js';
 export { DEFAULT_QUOTE_BLOCKS };
 
 const isFilled = (v) => typeof v === 'string' && v.trim() !== '';
@@ -141,15 +142,23 @@ function buildPersonalIntro({ document }) {
   return { data: { text: isFilled(document?.personalIntro) ? document.personalIntro : null }, warnings: [] };
 }
 
-function buildTourDetails({ deal, displayName, lang, template }) {
+function buildTourDetails({ deal, displayName, lang, template, sharedContent }) {
   const warnings = [];
   if (!displayName) warnings.push(warn('tour_details', 'tour_details', 'productName', lang));
   const variant = deal?.productVariant;
   const location = deal?.location;
-  const meetingPoint =
-    pickLang(variant?.meetingPointHe, variant?.meetingPointEn, lang) ||
-    pickLang(location?.meetingPointHe, location?.meetingPointEn, lang) ||
-    null;
+  // Dual-read (Shared Content Slice 2): a resolved Shared Content block
+  // (variant link → location default, resolved in the loader) is the source of
+  // truth for the meeting point. ONLY when no Shared Content exists at all do we
+  // fall back to the legacy variant/location columns — identical to pre-Slice-2
+  // behaviour, so a deploy before the backfill runs is safe. Produced quotes are
+  // unaffected (they read renderModelSnapshot, never this composer).
+  const scMeeting = sharedContent?.meetingPoint || null;
+  const meetingPoint = scMeeting
+    ? pickLang(scMeeting.bodyHe, scMeeting.bodyEn, lang)
+    : pickLang(variant?.meetingPointHe, variant?.meetingPointEn, lang) ||
+      pickLang(location?.meetingPointHe, location?.meetingPointEn, lang) ||
+      null;
   // City is a proper-noun label, not translated rich content: use the selected
   // language, falling back to the Hebrew name (never a warning).
   const city = pickLang(location?.nameHe, location?.nameEn, lang) || location?.nameHe || null;
@@ -332,10 +341,10 @@ function heroFirst(blocks) {
 // PURE: assemble the full preview model from plain data. No DB, no I/O. The
 // optional `template` is the global default layout (hero copy/image, section
 // order, technical fields); omitting it reproduces the pre-template behaviour.
-export function assembleComposition({ document, deal, version, lines, quoteSections, lang, template }) {
+export function assembleComposition({ document, deal, version, lines, quoteSections, lang, template, sharedContent }) {
   const language = lang;
   const displayName = resolveDisplayProductName(document, deal, language);
-  const ctx = { document, deal, version, lines, quoteSections, lang: language, displayName, template };
+  const ctx = { document, deal, version, lines, quoteSections, lang: language, displayName, template, sharedContent };
 
   const overrides = document?.overrideState?.blocks || {};
   const warnings = [];
@@ -428,6 +437,14 @@ export async function composeQuoteDraftPreview(client, id) {
   // absent row → DEFAULT_LAYOUT, which reproduces pre-template output.
   const template = await getQuoteTemplate(client);
 
-  const model = assembleComposition({ document, deal, version, lines, quoteSections, lang: document.language, template });
+  // Dual-read (Slice 2): resolve the variant's meeting-point Shared Content
+  // (variant link → location default). null when the variant has none, in which
+  // case buildTourDetails falls back to the legacy columns.
+  const meetingPoint = deal.productVariantId
+    ? (await resolveVariantSharedContent(client, deal.productVariantId, 'meeting_point')).block
+    : null;
+  const sharedContent = { meetingPoint };
+
+  const model = assembleComposition({ document, deal, version, lines, quoteSections, lang: document.language, template, sharedContent });
   return { model };
 }

@@ -50,6 +50,7 @@ const compose = (over = {}) =>
     lines: over.lines || lines(),
     quoteSections: over.quoteSections || sections(),
     lang: over.lang || (over.document || doc()).language,
+    sharedContent: over.sharedContent,
   });
 
 const blockByKey = (model, key) => model.blocks.find((b) => b.key === key);
@@ -224,6 +225,48 @@ test('composer: each block carries a contextual editTarget (route to source)', (
   assert.equal(blockByKey(model, 'faq').editTarget.kind, 'quoteSections');
   assert.equal(blockByKey(model, 'faq').editTarget.category, 'faq');
   assert.equal(blockByKey(model, 'personal_intro').editTarget.inline, true);
+});
+
+// ── Shared Content dual-read (Slice 2) ───────────────────────────────────────
+const tour = (model) => blockByKey(model, 'tour_details').data;
+
+test('dual-read: a resolved Shared Content meeting point wins over the legacy variant column', () => {
+  const sc = { meetingPoint: { bodyHe: '<p>מפגש משותף</p>', bodyEn: '<p>shared</p>' } };
+  const model = compose({ sharedContent: sc });
+  assert.equal(tour(model).meetingPoint, '<p>מפגש משותף</p>', 'shared content is the source of truth');
+});
+
+test('dual-read: falls back to the legacy variant column when no Shared Content exists', () => {
+  const model = compose({ sharedContent: { meetingPoint: null } });
+  assert.equal(tour(model).meetingPoint, '<p>נקודת מפגש</p>', 'legacy variant meetingPointHe');
+});
+
+test('dual-read: undefined sharedContent reproduces pre-Slice-2 behaviour (legacy columns)', () => {
+  const model = compose(); // no sharedContent key at all
+  assert.equal(tour(model).meetingPoint, '<p>נקודת מפגש</p>');
+});
+
+test('dual-read: legacy fallback prefers variant, then location column', () => {
+  const deal = baseDeal({
+    productVariant: { meetingPointHe: '', meetingPointEn: '', durationHours: 2 },
+    location: { nameHe: 'תל אביב', meetingPointHe: '<p>מפגש עירוני</p>', meetingPointEn: '' },
+  });
+  const model = compose({ deal, sharedContent: { meetingPoint: null } });
+  assert.equal(tour(model).meetingPoint, '<p>מפגש עירוני</p>', 'location column used when variant empty');
+});
+
+test('dual-read: Shared Content HTML is passed through verbatim (renderer sanitizes, not the composer)', () => {
+  const html = '<p>קו 1</p><ul><li>פריט</li></ul>';
+  const model = compose({ sharedContent: { meetingPoint: { bodyHe: html, bodyEn: '' } } });
+  assert.equal(tour(model).meetingPoint, html, 'no escaping / mangling of stored HTML');
+});
+
+test('dual-read: English quote picks the En side of the Shared Content block', () => {
+  const model = compose({
+    document: doc({ language: 'en' }),
+    sharedContent: { meetingPoint: { bodyHe: '<p>עברית</p>', bodyEn: '<p>English MP</p>' } },
+  });
+  assert.equal(tour(model).meetingPoint, '<p>English MP</p>');
 });
 
 // ── pickLang unit ─────────────────────────────────────────────────────────────
