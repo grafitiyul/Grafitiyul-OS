@@ -10,12 +10,17 @@
 -- Additive + idempotent: each INSERT guards against a row it already created, so
 -- a re-run is a no-op. Ids use gen_random_uuid()::text (core Postgres ≥13); app
 -- rows use cuid, but a text PK is format-agnostic.
+--
+-- NOTE: the `active` column is intentionally omitted from the INSERT column lists
+-- below — it relies on the table default (true). Do NOT re-add it without also
+-- adding a matching value, or the column/expression counts diverge (the original
+-- 42601 failure this migration is recovering from).
 
 -- 1) Location meeting point → the location's DEFAULT meeting_point block. This
 --    makes today's silent "variant → location" fallback an explicit, editable,
 --    reference-counted default.
 INSERT INTO "SharedContent"
-  (id, type, "internalName", "bodyHe", "bodyEn", "imageId", "locationId", "isLocationDefault", active, "sortOrder", "createdAt", "updatedAt")
+  (id, type, "internalName", "bodyHe", "bodyEn", "imageId", "locationId", "isLocationDefault", "sortOrder", "createdAt", "updatedAt")
 SELECT
   gen_random_uuid()::text,
   'meeting_point',
@@ -74,7 +79,7 @@ WITH src AS MATERIALIZED (
 ),
 ins_sc AS (
   INSERT INTO "SharedContent"
-    (id, type, "internalName", "bodyHe", "bodyEn", "imageId", "locationId", "isLocationDefault", active, "sortOrder", "createdAt", "updatedAt")
+    (id, type, "internalName", "bodyHe", "bodyEn", "imageId", "locationId", "isLocationDefault", "sortOrder", "createdAt", "updatedAt")
   SELECT
     sc_id,
     'meeting_point',
@@ -114,7 +119,7 @@ WITH src AS MATERIALIZED (
 ),
 ins_sc AS (
   INSERT INTO "SharedContent"
-    (id, type, "internalName", "bodyHe", "bodyEn", "locationId", "isLocationDefault", active, "sortOrder", "createdAt", "updatedAt")
+    (id, type, "internalName", "bodyHe", "bodyEn", "locationId", "isLocationDefault", "sortOrder", "createdAt", "updatedAt")
   SELECT
     sc_id,
     'ending_point',
