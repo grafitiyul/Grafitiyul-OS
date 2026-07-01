@@ -15,24 +15,12 @@
 // override flag, row note) and uses Deal.valueMinor as the Builder's frozen gross
 // total. No pricing engine, no price-list resolution, no duplicated VAT math here.
 
-// ── Default block sequence (the approved content model order) ────────────────
-// `type` selects the builder; `kind` is dynamic|content; `removable:false` marks
-// the never-removable blocks. Order here is the DEFAULT seed only — the stored
-// compositionDraft (when present) controls order + hidden, so nothing is hardcoded.
-export const DEFAULT_QUOTE_BLOCKS = [
-  { key: 'hero', type: 'hero', kind: 'dynamic', optional: false, removable: false },
-  { key: 'personal_intro', type: 'personal_intro', kind: 'dynamic', optional: true, removable: true },
-  { key: 'tour_details', type: 'tour_details', kind: 'dynamic', optional: false, removable: false },
-  { key: 'product_marketing', type: 'product_marketing', kind: 'content', optional: true, removable: true },
-  { key: 'why_grafitiyul', type: 'why_us', kind: 'content', optional: true, removable: true },
-  { key: 'classification', type: 'classification', kind: 'content', optional: true, removable: true },
-  { key: 'pricing', type: 'pricing', kind: 'dynamic', optional: false, removable: false },
-  { key: 'payment_terms', type: 'payment_terms', kind: 'dynamic', optional: true, removable: true },
-  { key: 'faq', type: 'faq', kind: 'content', optional: true, removable: true },
-  { key: 'cancellation', type: 'cancellation', kind: 'content', optional: true, removable: true },
-  { key: 'participant_policy', type: 'participant_policy', kind: 'content', optional: true, removable: true },
-  { key: 'signature', type: 'signature', kind: 'dynamic', optional: true, removable: true },
-];
+// The default block sequence lives in its own tiny module (quoteBlocks.js) so the
+// quote-template service can share it without a circular import. Re-exported here
+// so existing importers (tests, callers) keep `import { DEFAULT_QUOTE_BLOCKS } from './composer.js'`.
+import { DEFAULT_QUOTE_BLOCKS } from './quoteBlocks.js';
+import { getQuoteTemplate } from './quoteTemplate.js';
+export { DEFAULT_QUOTE_BLOCKS };
 
 const isFilled = (v) => typeof v === 'string' && v.trim() !== '';
 
@@ -119,9 +107,10 @@ export function editTargetFor(type, deal) {
 
 // ── Dynamic block builders (pure) ────────────────────────────────────────────
 
-function buildHero({ deal, document, displayName, lang }) {
+function buildHero({ deal, document, displayName, lang, template }) {
   const warnings = [];
   if (!displayName) warnings.push(warn('hero', 'hero', 'productName', lang));
+  const hero = template?.hero || null;
   return {
     data: {
       productName: displayName,
@@ -130,7 +119,14 @@ function buildHero({ deal, document, displayName, lang }) {
       tourDate: deal?.tourDate || null,
       // Proposal creation date (תאריך הפקה) — the hero shows this, NOT the tour date.
       createdAt: document?.createdAt || null,
-      heroImageUrl: heroImageUrl(deal),
+      // Hero image: the Deal's own imagery wins; the global template's default
+      // proposal hero is the fallback; renderer draws a gradient if both null.
+      heroImageUrl: heroImageUrl(deal) || hero?.image?.url || null,
+      // Global-template hero copy/style. null title/subtitle → renderer falls
+      // back to its built-in "הצעת מחיר" + product name. Overlay: light|medium|dark.
+      heroTitle: pickLang(hero?.titleHe, hero?.titleEn, lang),
+      heroSubtitle: pickLang(hero?.subtitleHe, hero?.subtitleEn, lang),
+      heroOverlay: hero?.overlay || 'dark',
       by: 'Grafitiyul',
       quoteDocumentId: document.id,
       language: lang,
@@ -145,7 +141,7 @@ function buildPersonalIntro({ document }) {
   return { data: { text: isFilled(document?.personalIntro) ? document.personalIntro : null }, warnings: [] };
 }
 
-function buildTourDetails({ deal, displayName, lang }) {
+function buildTourDetails({ deal, displayName, lang, template }) {
   const warnings = [];
   if (!displayName) warnings.push(warn('tour_details', 'tour_details', 'productName', lang));
   const variant = deal?.productVariant;
@@ -169,9 +165,21 @@ function buildTourDetails({ deal, displayName, lang }) {
       // Retained in the model but no longer rendered inside Technical Details;
       // becomes its own optional section in Phase 2.
       meetingPoint,
+      // Global-template control over which facts show and in what order. Array of
+      // stable field keys (city|date|time|participants|duration|language), already
+      // filtered to visible+ordered. null → renderer uses its built-in default set.
+      fieldOrder: techFieldOrder(template),
     },
     warnings,
   };
+}
+
+// Visible technical-detail field keys in configured order, or null when there is
+// no template (renderer then falls back to its built-in default set = today).
+function techFieldOrder(template) {
+  const fields = template?.technical?.fields;
+  if (!Array.isArray(fields)) return null;
+  return fields.filter((f) => f && f.visible).map((f) => f.key);
 }
 
 function buildPricing({ deal, lines, displayName }) {
@@ -293,27 +301,45 @@ function assembleBlock(type, ctx) {
   }
 }
 
-// Block order/hidden come from the stored compositionDraft when present (admin
-// reordered/hid), else the default sequence. Default metadata is merged in by key.
-function getOrderedBlocks(compositionDraft) {
-  const stored = Array.isArray(compositionDraft?.blocks) ? compositionDraft.blocks : null;
-  if (!stored || stored.length === 0) return DEFAULT_QUOTE_BLOCKS.map((b) => ({ ...b, hidden: false }));
+// Block order/hidden precedence (SSOT for a quote's composition):
+//   1. per-quote compositionDraft  — this admin reordered/hid THIS quote
+//   2. global template sections    — the CRM default (default SEED only)
+//   3. DEFAULT_QUOTE_BLOCKS        — the code fallback (unchanged behaviour)
+// Both stored shapes are [{ key, hidden }]; code default metadata is merged by key.
+function getOrderedBlocks(compositionDraft, templateSections) {
+  const stored = Array.isArray(compositionDraft?.blocks) && compositionDraft.blocks.length ? compositionDraft.blocks : null;
+  const template = Array.isArray(templateSections) && templateSections.length ? templateSections : null;
+  const source = stored || template;
+  if (!source) return DEFAULT_QUOTE_BLOCKS.map((b) => ({ ...b, hidden: false }));
   const byKey = Object.fromEntries(DEFAULT_QUOTE_BLOCKS.map((b) => [b.key, b]));
-  return stored.map((s) => ({
+  const blocks = source.map((s) => ({
     ...(byKey[s.key] || { key: s.key, type: s.type || s.key, kind: s.kind || 'content', optional: true, removable: true }),
     hidden: !!s.hidden,
   }));
+  // Hero is the document HEADER, not a content block: it is always present, never
+  // hidden, and always first — regardless of any stored order. Enforced here (the
+  // one place order is resolved) so no template or per-quote draft can move it.
+  return heroFirst(blocks);
 }
 
-// PURE: assemble the full preview model from plain data. No DB, no I/O.
-export function assembleComposition({ document, deal, version, lines, quoteSections, lang }) {
+// Guarantee exactly one hero block, un-hidden, at index 0.
+function heroFirst(blocks) {
+  const hero = blocks.find((b) => b.key === 'hero') || { ...DEFAULT_QUOTE_BLOCKS[0], hidden: false };
+  const rest = blocks.filter((b) => b.key !== 'hero');
+  return [{ ...hero, hidden: false }, ...rest];
+}
+
+// PURE: assemble the full preview model from plain data. No DB, no I/O. The
+// optional `template` is the global default layout (hero copy/image, section
+// order, technical fields); omitting it reproduces the pre-template behaviour.
+export function assembleComposition({ document, deal, version, lines, quoteSections, lang, template }) {
   const language = lang;
   const displayName = resolveDisplayProductName(document, deal, language);
-  const ctx = { document, deal, version, lines, quoteSections, lang: language, displayName };
+  const ctx = { document, deal, version, lines, quoteSections, lang: language, displayName, template };
 
   const overrides = document?.overrideState?.blocks || {};
   const warnings = [];
-  const blocks = getOrderedBlocks(document?.compositionDraft).map((b, i) => {
+  const blocks = getOrderedBlocks(document?.compositionDraft, template?.sections).map((b, i) => {
     const assembled = b.hidden ? { data: null, warnings: [] } : assembleBlock(b.type, ctx);
     const ov = overrides[b.key] || null;
     let data = assembled.data;
@@ -398,7 +424,10 @@ export async function composeQuoteDraftPreview(client, id) {
     orderBy: { sortOrder: 'asc' },
   });
   const quoteSections = await client.quoteSection.findMany({ where: { active: true }, orderBy: { sortOrder: 'asc' } });
+  // Global default layout (hero, section order, technical fields). Normalised;
+  // absent row → DEFAULT_LAYOUT, which reproduces pre-template output.
+  const template = await getQuoteTemplate(client);
 
-  const model = assembleComposition({ document, deal, version, lines, quoteSections, lang: document.language });
+  const model = assembleComposition({ document, deal, version, lines, quoteSections, lang: document.language, template });
   return { model };
 }

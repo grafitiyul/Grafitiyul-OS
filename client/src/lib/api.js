@@ -576,6 +576,11 @@ export const api = {
     remove: (id) => request(`/api/quote-sections/${id}`, { method: 'DELETE' }),
     reorder: (ids) => request('/api/quote-sections/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
   },
+  // Global default quote layout (CRM → Quote Layout & Sections). Single record.
+  quoteTemplate: {
+    get: () => request('/api/quote-template'),
+    update: (layout) => request('/api/quote-template', { method: 'PUT', body: JSON.stringify(layout) }),
+  },
   reviews: {
     list: (filters) => request(`/api/reviews/attempts${qs(filters)}`),
     get: (id) => request(`/api/reviews/attempts/${id}`),

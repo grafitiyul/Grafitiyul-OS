@@ -85,14 +85,27 @@ function Meta({ icon, label, value }) {
   );
 }
 
+// Hero overlay strength (from the global template). 'dark' reproduces the
+// original hard-coded look; medium/light lift the top gradient so the image
+// reads brighter. Only the top stop changes — bottom keeps text legibility.
+const HERO_OVERLAY = {
+  dark: 'linear-gradient(to top, rgba(0,0,0,.6), rgba(0,0,0,.05) 48%, rgba(0,0,0,.18))',
+  medium: 'linear-gradient(to top, rgba(0,0,0,.42), rgba(0,0,0,.03) 48%, rgba(0,0,0,.12))',
+  light: 'linear-gradient(to top, rgba(0,0,0,.25), rgba(0,0,0,0) 48%, rgba(0,0,0,.06))',
+};
+
 function Cover({ d, lang }) {
   const t = tt(lang);
   const bg = d.heroImageUrl
     ? { backgroundImage: `url(${d.heroImageUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' }
     : { backgroundImage: `linear-gradient(135deg, ${TEAL}, #0b6f69)` };
+  // Title/subtitle come from the global template; fall back to the built-in copy
+  // so an unconfigured system looks exactly as before.
+  const title = d.heroTitle || (lang === 'en' ? 'Proposal' : 'הצעת מחיר');
+  const overlay = HERO_OVERLAY[d.heroOverlay] || HERO_OVERLAY.dark;
   return (
     <div className="relative w-full overflow-hidden" style={bg}>
-      <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(0,0,0,.6), rgba(0,0,0,.05) 48%, rgba(0,0,0,.18))' }} />
+      <div className="absolute inset-0" style={{ background: overlay }} />
       <div className="relative flex min-h-[560px] flex-col justify-between p-8 sm:p-12">
         {/* top: logo (leading/right) + light glass metadata (left) */}
         <div className="flex items-start justify-between gap-6">
@@ -107,8 +120,9 @@ function Cover({ d, lang }) {
         {/* bottom: title — the primary element */}
         <div className="text-right text-white">
           <div className="mb-5 h-1.5 w-16 rounded-full" style={{ background: TEAL }} />
-          <h1 className="text-[56px] font-black leading-[1.02] drop-shadow-lg sm:text-[72px]">הצעת מחיר</h1>
+          <h1 className="text-[56px] font-black leading-[1.02] drop-shadow-lg sm:text-[72px]">{title}</h1>
           {d.productName && <p className="mt-4 text-[24px] font-medium text-white/90 drop-shadow sm:text-[28px]">{d.productName}</p>}
+          {d.heroSubtitle && <p className="mt-2 text-[17px] font-normal text-white/80 drop-shadow sm:text-[19px]">{d.heroSubtitle}</p>}
         </div>
       </div>
     </div>
@@ -116,16 +130,27 @@ function Cover({ d, lang }) {
 }
 
 // ── Technical Details — value-dominant tiles (no table feel) ─────────────────
+// Which facts show, and in what order, is driven by the global template's
+// `fieldOrder` (stable keys). When absent (no template configured) the built-in
+// default key order is used — identical to before. Icon + label stay here.
+const TECH_FIELD_DEFS = {
+  city: (t, d) => ['📍', t.city, d.city],
+  date: (t, d, lang) => ['📅', t.tourDate, fmtDate(d.tourDate, lang)],
+  time: (t, d) => ['🕒', t.time, d.tourTime],
+  participants: (t, d) => ['👥', t.participants, d.participants],
+  duration: (t, d) => ['⏳', t.duration, d.durationHours ? `~${d.durationHours} שעות` : null],
+  language: (t, d, lang) => ['🌍', t.language, d.tourLanguage ? LANG_NAMES[lang]?.[d.tourLanguage] || d.tourLanguage : null],
+};
+const TECH_DEFAULT_ORDER = ['city', 'date', 'time', 'participants', 'duration', 'language'];
+
 function FactCard({ d, lang }) {
   const t = tt(lang);
-  const facts = [
-    ['📍', t.city, d.city],
-    ['📅', t.tourDate, fmtDate(d.tourDate, lang)],
-    ['🕒', t.time, d.tourTime],
-    ['👥', t.participants, d.participants],
-    ['⏳', t.duration, d.durationHours ? `~${d.durationHours} שעות` : null],
-    ['🌍', t.language, d.tourLanguage ? LANG_NAMES[lang]?.[d.tourLanguage] || d.tourLanguage : null],
-  ].filter(([, , v]) => v !== null && v !== undefined && v !== '');
+  const order = Array.isArray(d.fieldOrder) ? d.fieldOrder : TECH_DEFAULT_ORDER;
+  const facts = order
+    .map((key) => TECH_FIELD_DEFS[key])
+    .filter(Boolean)
+    .map((def) => def(t, d, lang))
+    .filter(([, , v]) => v !== null && v !== undefined && v !== '');
   return (
     <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
       {facts.map(([icon, label, value]) => (

@@ -84,6 +84,8 @@ test('composer: language reflects the contact-derived document language', async 
     },
     quoteLine: { findMany: async () => lines() },
     quoteSection: { findMany: async () => sections() },
+    // No saved global layout → composer uses DEFAULT_LAYOUT (behaviour unchanged).
+    quoteTemplate: { findUnique: async () => null },
   };
   const ensured = await ensureDraftQuoteDocument(client, 'deal_1');
   assert.equal(ensured.doc.language, 'en', 'language resolved from payer contact');
@@ -170,7 +172,8 @@ test('composer: stored compositionDraft controls order and hides blocks (no warn
     compositionDraft: { blocks: [{ key: 'pricing' }, { key: 'cancellation', hidden: true }, { key: 'hero' }] },
   });
   const model = compose({ document, lang: 'en' });
-  assert.deepEqual(model.blocks.map((b) => b.key), ['pricing', 'cancellation', 'hero']);
+  // Hero is the document header — always forced first regardless of stored order.
+  assert.deepEqual(model.blocks.map((b) => b.key), ['hero', 'pricing', 'cancellation']);
   assert.equal(blockByKey(model, 'cancellation').hidden, true);
   // cancellation En content is missing, but it is hidden → must NOT warn.
   assert.ok(!model.warnings.some((w) => w.blockKey === 'cancellation'), 'hidden block raises no warning');

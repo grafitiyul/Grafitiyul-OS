@@ -1605,6 +1605,25 @@ model QuoteSection {
 }
 
 // ============================================================================
+// Quote Layout Template — the GLOBAL default quote composition (control center)
+// ============================================================================
+//
+// Single-row settings record (enforced by the unique `singleton`). Holds the
+// default quote LAYOUT as one flexible JSON blob so the screen can grow (hero,
+// sections order/visibility, technical-detail fields today; colors, fonts, PDF
+// later) without a migration per option. This is the DEFAULT SEED only: a
+// per-quote QuoteDocument.compositionDraft still overrides section order/hidden
+// for that one quote. Code (DEFAULT_QUOTE_BLOCKS) is the final fallback when no
+// row exists, so behaviour is unchanged until an admin saves here.
+model QuoteTemplate {
+  id        String   @id @default(cuid())
+  singleton String   @unique @default("global") // exactly one row
+  layout    Json? // { hero, sections:[{key,hidden}], technical:{fields:[{key,visible}]} }
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============================================================================
 // שעות שבת וחג — Sabbath & Holiday hours (source of truth for time detection)
 // ============================================================================
 //

@@ -52,6 +52,7 @@ import DealStagesSettings from './admin/crm/settings/DealStagesSettings.jsx';
 import LostReasonsSettings from './admin/crm/settings/LostReasonsSettings.jsx';
 import DealSourcesSettings from './admin/crm/settings/DealSourcesSettings.jsx';
 import QuoteSectionsSettings from './admin/crm/settings/QuoteSectionsSettings.jsx';
+import QuoteLayoutSettings from './admin/crm/settings/QuoteLayoutSettings.jsx';
 import TicketTypesSettings from './admin/crm/settings/TicketTypesSettings.jsx';
 import SabbathHoursSettings from './admin/crm/settings/SabbathHoursSettings.jsx';
 // Products & Pricing — Slice 1 (catalog + files + payment config).
@@ -167,6 +168,10 @@ export default function App() {
         <Route
           path="settings/crm/quote-sections"
           element={<QuoteSectionsSettings />}
+        />
+        <Route
+          path="settings/crm/quote-layout"
+          element={<QuoteLayoutSettings />}
         />
         <Route path="settings/crm/products-area" element={<ProductsAreaHome />} />
         <Route path="settings/crm/products" element={<ProductsSettings />} />

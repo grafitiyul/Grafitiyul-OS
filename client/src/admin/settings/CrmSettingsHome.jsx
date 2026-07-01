@@ -49,6 +49,12 @@ export default function CrmSettingsHome() {
           description="סעיפי תוכן קבועים לשימוש בהצעות מחיר עתידיות."
         />
         <CategoryCard
+          to="/admin/settings/crm/quote-layout"
+          icon="🎨"
+          title="מבנה הצעת מחיר"
+          description="מרכז השליטה בהרכב ברירת המחדל — כותרת ראשית, סדר וגלוי סעיפים, ושדות טכניים."
+        />
+        <CategoryCard
           to="/admin/settings/crm/products-area"
           icon="📦"
           title="מוצרים"
