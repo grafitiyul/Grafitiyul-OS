@@ -27,7 +27,6 @@ export default function SharedContentEditorDialog({
   fixedType,
   locations = [],
   usedByCount = 0,
-  showLocationDefault = false,
   onSubmit,
   submitting = false,
   onLinksChanged,
@@ -40,7 +39,6 @@ export default function SharedContentEditorDialog({
   const [bodyHe, setBodyHe] = useState(initial?.bodyHe || '');
   const [bodyEn, setBodyEn] = useState(initial?.bodyEn || '');
   const [image, setImage] = useState(initial?.image || null);
-  const [isLocationDefault, setIsLocationDefault] = useState(!!initial?.isLocationDefault);
   const [err, setErr] = useState(null);
 
   function submit() {
@@ -54,7 +52,6 @@ export default function SharedContentEditorDialog({
       bodyHe,
       bodyEn,
       imageId: image?.id || null,
-      ...(showLocationDefault ? { isLocationDefault } : {}),
     });
   }
 
@@ -105,13 +102,6 @@ export default function SharedContentEditorDialog({
             <input value={description} onChange={(e) => setDescription(e.target.value)} className={INPUT} />
           </Field>
         </div>
-
-        {showLocationDefault && (
-          <label className="flex items-center gap-2 text-[13px] text-gray-700">
-            <input type="checkbox" checked={isLocationDefault} onChange={(e) => setIsLocationDefault(e.target.checked)} className="rounded border-gray-300" />
-            ברירת המחדל של המיקום לסוג זה (משמש כאשר לוריאציה אין קישור משלה)
-          </label>
-        )}
 
         <Field label="תוכן (עברית)">
           <RichEditor value={bodyHe} onChange={setBodyHe} ariaLabel="shared content he" minContentHeight={120} placeholder="תוכן, הוראות, קישורים…" />

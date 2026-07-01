@@ -144,6 +144,11 @@ export default function VariantSharedContent({ variant, locations = [] }) {
 function TypePanel({ type, info, busy, onCreate, onEdit, onLink, onConvert, onFork, onDetach }) {
   const meta = STATE_META[info.state] || STATE_META.empty;
   const block = info.block;
+  const isOverride = info.state === 'override' || info.state === 'redundant';
+  // Detaching an override means the variant falls back to the location default
+  // (if one exists) — that's exactly "use location default".
+  const detachLabel = info.locationDefault ? 'השתמש בברירת מחדל של המיקום' : 'הסר קישור';
+
   return (
     <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-3">
       <div className="flex items-center gap-2 mb-2">
@@ -151,8 +156,8 @@ function TypePanel({ type, info, busy, onCreate, onEdit, onLink, onConvert, onFo
         <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${TONE[meta.tone]}`}>
           {meta.label}
         </span>
-        {info.state !== 'inherited' && info.usedByCount > 0 && (
-          <span className="text-[11px] text-gray-500">· בשימוש ב־{info.usedByCount} וריאציות</span>
+        {info.state === 'override' && info.usedByCount > 1 && (
+          <span className="text-[11px] text-gray-500">· משותף עם {info.usedByCount - 1} וריאציות נוספות</span>
         )}
       </div>
 
@@ -170,23 +175,41 @@ function TypePanel({ type, info, busy, onCreate, onEdit, onLink, onConvert, onFo
         <div className="text-[12px] text-gray-400">אין תוכן.</div>
       )}
 
+      {info.state === 'redundant' && (
+        <div className="mt-2 text-[11px] text-amber-700">קישור זהה לברירת המחדל של המיקום — הקישור מיותר.</div>
+      )}
+      {info.state === 'inherited' && (
+        <div className="mt-2 text-[11px] text-violet-700">יורש מברירת המחדל של המיקום. עקיפה תשפיע רק על וריאציה זו.</div>
+      )}
+
       <div className="flex flex-wrap gap-1.5 mt-2.5">
-        {(info.state === 'empty' || info.state === 'inherited') && (
+        {info.state === 'empty' && (<>
           <Btn onClick={onCreate} disabled={busy}>צור חדש</Btn>
-        )}
-        {info.state === 'legacy' && (
+          <Btn onClick={onLink} disabled={busy}>קשר לקיים</Btn>
+        </>)}
+
+        {info.state === 'inherited' && (<>
+          <Btn onClick={onCreate} disabled={busy}>צור עקיפה</Btn>
+          <Btn onClick={onLink} disabled={busy}>קשר עקיפה</Btn>
+        </>)}
+
+        {info.state === 'legacy' && (<>
           <Btn onClick={onConvert} disabled={busy} primary>המר לתוכן משותף</Btn>
-        )}
-        {(info.state === 'shared' || info.state === 'standalone') && (
-          <Btn onClick={() => onEdit(block)} disabled={busy}>{info.state === 'shared' ? 'ערוך (משותף)' : 'ערוך'}</Btn>
-        )}
-        {info.state === 'shared' && (
-          <Btn onClick={() => onFork(block)} disabled={busy}>פצל לוריאציה זו</Btn>
-        )}
-        <Btn onClick={onLink} disabled={busy}>קשר לקיים</Btn>
-        {(info.state === 'shared' || info.state === 'standalone') && (
-          <Btn onClick={onDetach} disabled={busy} danger>נתק</Btn>
-        )}
+          <Btn onClick={onLink} disabled={busy}>קשר לקיים</Btn>
+        </>)}
+
+        {info.state === 'redundant' && (<>
+          <Btn onClick={onDetach} disabled={busy} primary>{detachLabel}</Btn>
+          <Btn onClick={() => onEdit(block)} disabled={busy}>ערוך</Btn>
+          <Btn onClick={onLink} disabled={busy}>קשר אחר</Btn>
+        </>)}
+
+        {info.state === 'override' && (<>
+          <Btn onClick={() => onEdit(block)} disabled={busy}>{info.usedByCount > 1 ? 'ערוך (משותף)' : 'ערוך'}</Btn>
+          {info.usedByCount > 1 && <Btn onClick={() => onFork(block)} disabled={busy}>פצל לוריאציה זו</Btn>}
+          <Btn onClick={onLink} disabled={busy}>קשר אחר</Btn>
+          <Btn onClick={onDetach} disabled={busy} danger>{detachLabel}</Btn>
+        </>)}
       </div>
     </div>
   );

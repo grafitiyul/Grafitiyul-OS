@@ -164,7 +164,6 @@ export default function SharedContentLibrary() {
           initial={editing === 'new' ? null : editing}
           locations={locations}
           usedByCount={editing !== 'new' ? editing.usedByCount || 0 : 0}
-          showLocationDefault
           onSubmit={submitEditor}
           submitting={busy}
           onLinksChanged={refresh}
@@ -185,46 +184,87 @@ function RowBtn({ children, onClick, danger }) {
   );
 }
 
-// Where-Used panel — the safety view. Lists every linked variant (Product /
-// Location / active status). "Variant" identity = its Product × Location.
+// Where-Used panel — the safety view. Three categories: used as a Location
+// default, directly linked by variants (override), and inherited via a Location.
+const TYPE_HE = { meeting_point: 'נקודת מפגש', ending_point: 'נקודת סיום' };
 function WhereUsedDialog({ block, onClose }) {
   const [data, setData] = useState(null);
   useEffect(() => {
     let alive = true;
-    api.sharedContent.whereUsed(block.id).then((d) => { if (alive) setData(d); }).catch(() => { if (alive) setData({ count: 0, consumers: [] }); });
+    api.sharedContent.whereUsed(block.id).then((d) => { if (alive) setData(d); }).catch(() => { if (alive) setData({ count: 0, consumers: [], asLocationDefault: [], inheritedCount: 0 }); });
     return () => { alive = false; };
   }, [block.id]);
 
   const items = data?.consumers?.find((c) => c.kind === 'product_variant')?.items || [];
+  const asDefault = data?.asLocationDefault || [];
 
   return (
     <Dialog open onClose={onClose} title={`בשימוש — ${block.internalName}`} size="lg">
       {data === null ? (
         <div className="py-8 text-center text-sm text-gray-400">טוען…</div>
       ) : (
-        <>
-          <p className="text-[13px] text-gray-600 mb-3">
-            תוכן זה בשימוש ב־<b>{data.count}</b> וריאציות. עריכת התוכן תשפיע על כל הטיוטות המקושרות (הצעות מחיר שהופקו נשארות קפואות).
+        <div className="space-y-4">
+          <p className="text-[13px] text-gray-600">
+            עריכת התוכן תשפיע על כל הטיוטות המשתמשות בו (הצעות מחיר שהופקו נשארות קפואות).
           </p>
-          {items.length === 0 ? (
-            <div className="py-6 text-center text-sm text-gray-400">אין וריאציות מקושרות.</div>
-          ) : (
-            <ul className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
-              {items.map((it) => (
-                <li key={it.productVariantId} className="flex items-center gap-2 px-1 py-2.5">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[13px] font-medium text-gray-800 truncate">{it.productName || '(מוצר)'}</div>
-                    <div className="text-[12px] text-gray-500 truncate">{it.locationName || '(מיקום)'}</div>
-                  </div>
-                  <span className={`text-[11px] font-medium shrink-0 ${it.active ? 'text-emerald-600' : 'text-gray-400'}`}>
-                    {it.active ? 'פעיל' : 'לא פעיל'}
-                  </span>
-                </li>
-              ))}
-            </ul>
+
+          {/* As Location default */}
+          <Section title={`ברירת מחדל של מיקומים (${asDefault.length})`}>
+            {asDefault.length === 0 ? (
+              <Empty>לא מוגדר כברירת מחדל באף מיקום.</Empty>
+            ) : (
+              <ul className="divide-y divide-gray-100">
+                {asDefault.map((d) => (
+                  <li key={`${d.locationId}-${d.type}`} className="flex items-center gap-2 px-1 py-2 text-[13px]">
+                    <span className="flex-1 truncate">📍 {d.locationName} <span className="text-gray-400">· {TYPE_HE[d.type] || d.type}</span></span>
+                    <span className="text-[11px] text-gray-500 shrink-0">{d.inheritedVariantCount} יורשות</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Section>
+
+          {/* Inherited through location */}
+          {data.inheritedCount > 0 && (
+            <div className="rounded-lg border border-violet-100 bg-violet-50/50 px-3 py-2 text-[12px] text-violet-700">
+              <b>{data.inheritedCount}</b> וריאציות יורשות תוכן זה דרך ברירת המחדל של המיקום (ללא קישור משלהן).
+            </div>
           )}
-        </>
+
+          {/* Direct variant overrides */}
+          <Section title={`מקושר ישירות לוריאציות (${data.count})`}>
+            {items.length === 0 ? (
+              <Empty>אין וריאציות עם קישור ישיר.</Empty>
+            ) : (
+              <ul className="divide-y divide-gray-100 max-h-72 overflow-y-auto">
+                {items.map((it) => (
+                  <li key={it.productVariantId} className="flex items-center gap-2 px-1 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[13px] font-medium text-gray-800 truncate">{it.productName || '(מוצר)'}</div>
+                      <div className="text-[12px] text-gray-500 truncate">{it.locationName || '(מיקום)'}</div>
+                    </div>
+                    <span className={`text-[11px] font-medium shrink-0 ${it.active ? 'text-emerald-600' : 'text-gray-400'}`}>
+                      {it.active ? 'פעיל' : 'לא פעיל'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Section>
+        </div>
       )}
     </Dialog>
   );
+}
+
+function Section({ title, children }) {
+  return (
+    <div>
+      <div className="text-[12px] font-semibold text-gray-700 mb-1.5">{title}</div>
+      {children}
+    </div>
+  );
+}
+function Empty({ children }) {
+  return <div className="text-[12px] text-gray-400 py-1">{children}</div>;
 }

@@ -10,6 +10,7 @@ import {
   classifyVariantType,
   linkDecision,
   buildLinkCandidates,
+  buildConsolidationSuggestions,
 } from './sharedContent.js';
 import {
   isValidSharedContentType,
@@ -27,47 +28,46 @@ const block = (over = {}) => ({
   ...over,
 });
 
-// ── resolveForVariant: precedence ────────────────────────────────────────────
+// ── resolveForVariant: precedence (variant override → location default → null) ─
 
-test('variant link wins over location default', () => {
+test('variant link (override) wins over location default', () => {
   const linked = block({ id: 'sc_variant' });
-  const def = block({ id: 'sc_loc', isLocationDefault: true });
-  const r = resolveForVariant({ linkedRows: [linked], locationDefaults: [def] }, 'meeting_point');
+  const def = block({ id: 'sc_loc' });
+  const r = resolveForVariant({ linkedRows: [linked], locationDefault: def }, 'meeting_point');
   assert.equal(r.block.id, 'sc_variant');
   assert.equal(r.via, 'variant');
 });
 
 test('falls back to the location default when the variant has no link', () => {
-  const def = block({ id: 'sc_loc', isLocationDefault: true });
-  const r = resolveForVariant({ linkedRows: [], locationDefaults: [def] }, 'meeting_point');
+  const def = block({ id: 'sc_loc' });
+  const r = resolveForVariant({ linkedRows: [], locationDefault: def }, 'meeting_point');
   assert.equal(r.block.id, 'sc_loc');
   assert.equal(r.via, 'location_default');
 });
 
-test('a location row that is NOT the default is ignored', () => {
-  const def = block({ id: 'sc_loc', isLocationDefault: false });
-  const r = resolveForVariant({ linkedRows: [], locationDefaults: [def] }, 'meeting_point');
-  assert.equal(r.block, null);
-  assert.equal(r.via, null);
-});
-
-test('returns null when nothing matches (caller warns)', () => {
-  const r = resolveForVariant({ linkedRows: [], locationDefaults: [] }, 'ending_point');
+test('returns null when nothing matches (caller falls back to legacy)', () => {
+  const r = resolveForVariant({ linkedRows: [], locationDefault: null }, 'ending_point');
   assert.deepEqual(r, { block: null, via: null });
 });
 
 test('matches strictly by type', () => {
   const ending = block({ id: 'sc_end', type: 'ending_point' });
-  const r = resolveForVariant({ linkedRows: [ending], locationDefaults: [] }, 'meeting_point');
+  const r = resolveForVariant({ linkedRows: [ending], locationDefault: null }, 'meeting_point');
   assert.equal(r.block, null);
 });
 
-test('an archived (inactive) linked row is skipped', () => {
+test('an archived (inactive) linked row is skipped; falls to location default', () => {
   const inactive = block({ id: 'sc_off', active: false });
-  const def = block({ id: 'sc_loc', isLocationDefault: true });
-  const r = resolveForVariant({ linkedRows: [inactive], locationDefaults: [def] }, 'meeting_point');
+  const def = block({ id: 'sc_loc' });
+  const r = resolveForVariant({ linkedRows: [inactive], locationDefault: def }, 'meeting_point');
   assert.equal(r.block.id, 'sc_loc');
   assert.equal(r.via, 'location_default');
+});
+
+test('an archived location default is ignored', () => {
+  const def = block({ id: 'sc_loc', active: false });
+  const r = resolveForVariant({ linkedRows: [], locationDefault: def }, 'meeting_point');
+  assert.equal(r.block, null);
 });
 
 // ── buildWhereUsed: safety report ────────────────────────────────────────────
@@ -111,28 +111,28 @@ test('empty where-used is a valid zero report', () => {
 
 // ── variant state classification (Slice 3) ───────────────────────────────────
 
-test('classify: linked block used by >1 variant → shared', () => {
-  assert.equal(classifyVariantType({ link: { usedByCount: 3 }, locationDefault: null, legacyFilled: false }), 'shared');
+test('classify: link differing from the location default → override', () => {
+  assert.equal(classifyVariantType({ link: { usedByCount: 3 }, linkMatchesDefault: false, hasLocationDefault: true, legacyFilled: false }), 'override');
 });
 
-test('classify: linked block used by exactly one → standalone', () => {
-  assert.equal(classifyVariantType({ link: { usedByCount: 1 }, locationDefault: null, legacyFilled: false }), 'standalone');
+test('classify: link equal to the location default → redundant', () => {
+  assert.equal(classifyVariantType({ link: { usedByCount: 2 }, linkMatchesDefault: true, hasLocationDefault: true, legacyFilled: false }), 'redundant');
 });
 
 test('classify: no link but a location default → inherited', () => {
-  assert.equal(classifyVariantType({ link: null, locationDefault: { id: 'd' }, legacyFilled: true }), 'inherited');
+  assert.equal(classifyVariantType({ link: null, linkMatchesDefault: false, hasLocationDefault: true, legacyFilled: true }), 'inherited');
 });
 
 test('classify: no link/default but legacy columns filled → legacy', () => {
-  assert.equal(classifyVariantType({ link: null, locationDefault: null, legacyFilled: true }), 'legacy');
+  assert.equal(classifyVariantType({ link: null, linkMatchesDefault: false, hasLocationDefault: false, legacyFilled: true }), 'legacy');
 });
 
 test('classify: nothing anywhere → empty', () => {
-  assert.equal(classifyVariantType({ link: null, locationDefault: null, legacyFilled: false }), 'empty');
+  assert.equal(classifyVariantType({ link: null, linkMatchesDefault: false, hasLocationDefault: false, legacyFilled: false }), 'empty');
 });
 
-test('classify: a link always wins over a location default', () => {
-  assert.equal(classifyVariantType({ link: { usedByCount: 1 }, locationDefault: { id: 'd' }, legacyFilled: true }), 'standalone');
+test('classify: a link with no location default is an override', () => {
+  assert.equal(classifyVariantType({ link: { usedByCount: 1 }, linkMatchesDefault: false, hasLocationDefault: false, legacyFilled: true }), 'override');
 });
 
 // ── linkDecision (no silent overwrite) ───────────────────────────────────────
@@ -199,6 +199,30 @@ test('buildLinkCandidates: ending_point ignores meeting legacy columns', () => {
   const variants = [cand({ meetingPointHe: '<p>x</p>', endingPointHe: '' })];
   const out = buildLinkCandidates({ variants, links: [], sharedContentId: 'SC', type: 'ending_point' });
   assert.equal(out[0].legacyFilled, false);
+});
+
+// ── buildConsolidationSuggestions ────────────────────────────────────────────
+
+const lk = (variantId, scId, name) => ({ productVariantId: variantId, sharedContentId: scId, sharedContent: { id: scId, internalName: name } });
+
+test('consolidation: suggests a block linked by ≥2 variants (not already default)', () => {
+  const links = [lk('v1', 'A', 'מפגש A'), lk('v2', 'A', 'מפגש A'), lk('v3', 'B', 'מפגש B')];
+  const out = buildConsolidationSuggestions({ links, currentDefaultId: null });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].sharedContentId, 'A');
+  assert.equal(out[0].variantCount, 2);
+});
+
+test('consolidation: excludes the current default and single-variant blocks', () => {
+  const links = [lk('v1', 'A', 'A'), lk('v2', 'A', 'A'), lk('v3', 'B', 'B')];
+  const out = buildConsolidationSuggestions({ links, currentDefaultId: 'A' });
+  assert.deepEqual(out, []); // A is already default; B has only one variant
+});
+
+test('consolidation: multiple candidates sorted by variant count desc', () => {
+  const links = [lk('v1', 'A', 'A'), lk('v2', 'A', 'A'), lk('v3', 'B', 'B'), lk('v4', 'B', 'B'), lk('v5', 'B', 'B')];
+  const out = buildConsolidationSuggestions({ links, currentDefaultId: null });
+  assert.deepEqual(out.map((s) => s.sharedContentId), ['B', 'A']);
 });
 
 // ── Type vocabulary ──────────────────────────────────────────────────────────

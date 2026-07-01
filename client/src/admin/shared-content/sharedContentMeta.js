@@ -13,10 +13,11 @@ export const SHARED_CONTENT_TYPES = [
 
 export const TYPE_LABEL = Object.fromEntries(SHARED_CONTENT_TYPES.map((t) => [t.key, t.label]));
 
-// Per-variant state → { label, tone } for the status chip.
+// Per-variant state → { label, tone } for the status chip. Location default is the
+// source of truth; a variant link is an override.
 export const STATE_META = {
-  shared: { label: 'משותף', tone: 'blue' },
-  standalone: { label: 'עצמאי', tone: 'gray' },
+  override: { label: 'עקיפה לוריאציה', tone: 'blue' },
+  redundant: { label: 'זהה לברירת המחדל', tone: 'amber' },
   inherited: { label: 'ברירת מחדל של המיקום', tone: 'violet' },
   legacy: { label: 'תוכן ישן (לא משותף)', tone: 'amber' },
   empty: { label: 'ריק', tone: 'gray' },

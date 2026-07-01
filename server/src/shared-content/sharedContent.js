@@ -28,21 +28,41 @@ function err(code, extra = {}) {
 //   2. the location default for that (location, type)        → via: 'location_default'
 //   3. nothing                                               → via: null (caller warns)
 //
-// Inputs are plain arrays of SharedContent rows so this is trivially testable:
-//   linkedRows        — SharedContent rows the variant links (from its join rows)
-//   locationDefaults  — SharedContent rows anchored to the variant's location
-// For a single-cardinality type the first match wins; callers pass rows already
-// scoped to the variant / its location.
-export function resolveForVariant({ linkedRows = [], locationDefaults = [] }, type) {
+// Inputs are plain data so this is trivially testable:
+//   linkedRows      — SharedContent rows the variant links (its override, if any)
+//   locationDefault — the Location's default SharedContent for this type (or null)
+// A variant link (override) wins; otherwise the Location default; otherwise null
+// (the caller falls back to legacy columns / warns).
+export function resolveForVariant({ linkedRows = [], locationDefault = null }, type) {
   const active = (r) => r && r.active !== false && r.type === type;
 
   const linked = linkedRows.find(active);
   if (linked) return { block: linked, via: 'variant' };
 
-  const def = locationDefaults.find((r) => active(r) && r.isLocationDefault);
-  if (def) return { block: def, via: 'location_default' };
+  if (active(locationDefault)) return { block: locationDefault, via: 'location_default' };
 
   return { block: null, via: null };
+}
+
+// Which Location column holds the default for a type.
+const LOCATION_DEFAULT_FIELD = {
+  meeting_point: 'defaultMeetingPointId',
+  ending_point: 'defaultEndingPointId',
+};
+
+// The Location's default SharedContent block for a type (or null). `withInclude`
+// returns the block with image/location/_count for display.
+export async function getLocationDefaultBlock(client, locationId, type, withInclude = false) {
+  const field = LOCATION_DEFAULT_FIELD[type];
+  if (!field || !locationId) return null;
+  const loc = await client.location.findUnique({ where: { id: locationId }, select: { [field]: true } });
+  const scId = loc?.[field];
+  if (!scId) return null;
+  const sc = await client.sharedContent.findUnique({
+    where: { id: scId },
+    ...(withInclude ? { include: BLOCK_INCLUDE } : {}),
+  });
+  return sc && sc.active !== false ? sc : null;
 }
 
 // ── PURE: "where used" ───────────────────────────────────────────────────────
@@ -89,13 +109,144 @@ const VARIANT_LINK_INCLUDE = {
   productVariant: { include: { product: true, location: true } },
 };
 
-// "Where used" for one SharedContent id. Read-only.
+// "Where used" for one SharedContent id — categorized (Location Defaults slice):
+//   consumers/count       — variants DIRECTLY linked (override)
+//   asLocationDefault[]   — locations that use it as their default (per type) +
+//                           how many variants INHERIT it there (no own override)
+//   inheritedCount        — total inherited variants across those locations
+// Read-only.
 export async function getWhereUsed(client, sharedContentId, lang = 'he') {
   const rows = await client.productVariantSharedContent.findMany({
     where: { sharedContentId },
     include: VARIANT_LINK_INCLUDE,
   });
-  return buildWhereUsed(rows, lang);
+  const direct = buildWhereUsed(rows, lang);
+  const pick = (he, en) => (lang === 'en' ? en || he : he) || null;
+
+  const locs = await client.location.findMany({
+    where: { OR: [{ defaultMeetingPointId: sharedContentId }, { defaultEndingPointId: sharedContentId }] },
+    select: { id: true, nameHe: true, nameEn: true, defaultMeetingPointId: true, defaultEndingPointId: true },
+  });
+
+  const asLocationDefault = [];
+  let inheritedCount = 0;
+  for (const l of locs) {
+    // A block could (rarely) be a default for both types in one location — record each.
+    const typesHere = [];
+    if (l.defaultMeetingPointId === sharedContentId) typesHere.push('meeting_point');
+    if (l.defaultEndingPointId === sharedContentId) typesHere.push('ending_point');
+    for (const type of typesHere) {
+      const variantsInLoc = await client.productVariant.findMany({ where: { locationId: l.id }, select: { id: true } });
+      const ids = variantsInLoc.map((v) => v.id);
+      let inherited = 0;
+      if (ids.length) {
+        const linked = await client.productVariantSharedContent.findMany({
+          where: { productVariantId: { in: ids }, sharedContent: { type } },
+          select: { productVariantId: true },
+        });
+        const linkedSet = new Set(linked.map((x) => x.productVariantId));
+        inherited = ids.filter((id) => !linkedSet.has(id)).length;
+      }
+      inheritedCount += inherited;
+      asLocationDefault.push({ locationId: l.id, locationName: pick(l.nameHe, l.nameEn), type, inheritedVariantCount: inherited });
+    }
+  }
+
+  return { ...direct, asLocationDefault, inheritedCount };
+}
+
+// ── Location Defaults management ──────────────────────────────────────────────
+
+// The Location's current defaults (resolved blocks) per type.
+export async function getLocationDefaults(client, locationId) {
+  const loc = await client.location.findUnique({
+    where: { id: locationId },
+    select: { id: true, defaultMeetingPointId: true, defaultEndingPointId: true },
+  });
+  if (!loc) return null;
+  const load = (id) => (id ? client.sharedContent.findUnique({ where: { id }, include: BLOCK_INCLUDE }) : null);
+  const [mp, ep] = await Promise.all([load(loc.defaultMeetingPointId), load(loc.defaultEndingPointId)]);
+  return { locationId, meeting_point: publicBlock(mp), ending_point: publicBlock(ep) };
+}
+
+// Set (or clear, sharedContentId=null) the Location default for a type. Choosing
+// an existing block is a pure reference — the block is NOT mutated.
+export async function setLocationDefault(client, locationId, type, sharedContentId) {
+  const field = LOCATION_DEFAULT_FIELD[type];
+  if (!field) throw err('invalid_type');
+  if (sharedContentId) {
+    const sc = await client.sharedContent.findUnique({ where: { id: sharedContentId }, select: { id: true, type: true } });
+    if (!sc) throw err('shared_content_not_found');
+    if (sc.type !== type) throw err('type_mismatch');
+  }
+  await client.location.update({ where: { id: locationId }, data: { [field]: sharedContentId || null } });
+  return getLocationDefaults(client, locationId);
+}
+
+// PURE: from the location's variant links (of one type), the blocks used by ≥2
+// variants that are NOT already the current default — the safe consolidation
+// candidates ("make this the location default").
+export function buildConsolidationSuggestions({ links, currentDefaultId }) {
+  const byBlock = new Map();
+  for (const l of links) {
+    const k = l.sharedContentId;
+    if (!byBlock.has(k)) byBlock.set(k, { sharedContentId: k, internalName: l.sharedContent?.internalName || null, variantCount: 0 });
+    byBlock.get(k).variantCount += 1;
+  }
+  return [...byBlock.values()]
+    .filter((s) => s.variantCount >= 2 && s.sharedContentId !== currentDefaultId)
+    .sort((a, b) => b.variantCount - a.variantCount);
+}
+
+export async function getConsolidationSuggestions(client, locationId, type) {
+  const field = LOCATION_DEFAULT_FIELD[type];
+  if (!field) return { locationId, type, currentDefaultId: null, suggestions: [] };
+  const loc = await client.location.findUnique({ where: { id: locationId }, select: { [field]: true } });
+  const currentDefaultId = loc?.[field] || null;
+  const variantsInLoc = await client.productVariant.findMany({ where: { locationId }, select: { id: true } });
+  const ids = variantsInLoc.map((v) => v.id);
+  const links = ids.length
+    ? await client.productVariantSharedContent.findMany({
+        where: { productVariantId: { in: ids }, sharedContent: { type } },
+        include: { sharedContent: { select: { id: true, internalName: true } } },
+      })
+    : [];
+  return { locationId, type, currentDefaultId, suggestions: buildConsolidationSuggestions({ links, currentDefaultId }) };
+}
+
+// Safe consolidation: make `sharedContentId` the location default for `type`, and
+// remove the now-redundant variant overrides in THIS location that point at the
+// SAME block. Variants with DIFFERENT content are left untouched. Returns a
+// report of exactly what was removed. Non-destructive to content (only links).
+export async function consolidateToLocationDefault(client, locationId, type, sharedContentId) {
+  const field = LOCATION_DEFAULT_FIELD[type];
+  if (!field) throw err('invalid_type');
+  const sc = await client.sharedContent.findUnique({ where: { id: sharedContentId }, select: { id: true, type: true } });
+  if (!sc) throw err('shared_content_not_found');
+  if (sc.type !== type) throw err('type_mismatch');
+
+  const variantsInLoc = await client.productVariant.findMany({ where: { locationId }, select: { id: true } });
+  const ids = variantsInLoc.map((v) => v.id);
+  const redundant = ids.length
+    ? await client.productVariantSharedContent.findMany({
+        where: { productVariantId: { in: ids }, sharedContentId },
+        include: { productVariant: { include: { product: true, location: true } } },
+      })
+    : [];
+
+  await client.$transaction(async (tx) => {
+    await tx.location.update({ where: { id: locationId }, data: { [field]: sharedContentId } });
+    if (redundant.length) {
+      await tx.productVariantSharedContent.deleteMany({ where: { id: { in: redundant.map((r) => r.id) } } });
+    }
+  });
+
+  const removed = redundant.map((r) => ({
+    productVariantId: r.productVariant.id,
+    productName: r.productVariant.product?.nameHe || null,
+    locationName: r.productVariant.location?.nameHe || null,
+  }));
+  return { locationId, type, sharedContentId, removedCount: removed.length, removed };
 }
 
 // Resolve one variant's Shared Content for a given type (variant link → location
@@ -115,26 +266,23 @@ export async function resolveVariantSharedContent(client, variantId, type) {
   });
   const linkedRows = links.map((l) => l.sharedContent);
 
-  const locationDefaults = variant.locationId
-    ? await client.sharedContent.findMany({
-        where: { locationId: variant.locationId, type, active: true, isLocationDefault: true },
-      })
-    : [];
+  const locationDefault = variant.locationId ? await getLocationDefaultBlock(client, variant.locationId, type) : null;
 
-  return resolveForVariant({ linkedRows, locationDefaults }, type);
+  return resolveForVariant({ linkedRows, locationDefault }, type);
 }
 
-// ── PURE: per-variant state classification (Slice 3) ─────────────────────────
-// The state a variant is in for one content type, driving which actions the UI
-// offers. Precedence mirrors resolveForVariant (link → location default → legacy):
-//   'shared'     — linked to a block used by >1 variant (edit warns; fork detaches)
-//   'standalone' — linked to a block used by exactly this variant
-//   'inherited'  — no link; resolves to the location default (meeting_point)
+// ── PURE: per-variant state classification ───────────────────────────────────
+// The state a variant is in for one content type (Location default = source of
+// truth; a variant link = override):
+//   'override'   — variant links its own block, different from the location default
+//   'redundant'  — variant links the SAME block as the location default (→ offer
+//                  "use location default" to drop the pointless override)
+//   'inherited'  — no link; uses the location default
 //   'legacy'     — no link/default; only the pre-Slice-2 columns hold content
 //   'empty'      — nothing anywhere
-export function classifyVariantType({ link, locationDefault, legacyFilled }) {
-  if (link) return link.usedByCount > 1 ? 'shared' : 'standalone';
-  if (locationDefault) return 'inherited';
+export function classifyVariantType({ link, linkMatchesDefault, hasLocationDefault, legacyFilled }) {
+  if (link) return linkMatchesDefault ? 'redundant' : 'override';
+  if (hasLocationDefault) return 'inherited';
   if (legacyFilled) return 'legacy';
   return 'empty';
 }
@@ -366,31 +514,37 @@ export async function getVariantSharedContentState(client, variantId, types = ['
       where: { productVariantId: variantId, sharedContent: { type } },
       include: { sharedContent: { include: BLOCK_INCLUDE } },
     });
-    let block = null;
+    let linkBlock = null;
     let usedByCount = 0;
     let linkId = null;
     if (linkRow) {
-      block = linkRow.sharedContent;
+      linkBlock = linkRow.sharedContent;
       linkId = linkRow.id;
-      usedByCount = block._count?.variantLinks ?? 0;
+      usedByCount = linkBlock._count?.variantLinks ?? 0;
     }
-    const locationDefault = !linkRow && isMeeting && variant.locationId
-      ? await client.sharedContent.findFirst({
-          where: { locationId: variant.locationId, type, isLocationDefault: true, active: true },
-          include: BLOCK_INCLUDE,
-        })
-      : null;
+    // Location default for this type (source of truth). Always loaded so we can
+    // tell inherited vs override vs redundant, and offer "use location default".
+    const locDefault = variant.locationId ? await getLocationDefaultBlock(client, variant.locationId, type, true) : null;
+
     const legacy = isMeeting
       ? { he: variant.meetingPointHe, en: variant.meetingPointEn, imageId: variant.meetingPointImageId }
       : { he: variant.endingPointHe, en: variant.endingPointEn, imageId: null };
     const legacyFilled = filled(legacy.he) || filled(legacy.en) || !!legacy.imageId;
 
-    const state = classifyVariantType({ link: linkRow ? { usedByCount } : null, locationDefault, legacyFilled });
+    const linkMatchesDefault = !!(linkRow && locDefault && linkRow.sharedContentId === locDefault.id);
+    const state = classifyVariantType({
+      link: linkRow ? { usedByCount } : null,
+      linkMatchesDefault,
+      hasLocationDefault: !!locDefault,
+      legacyFilled,
+    });
     out[type] = {
       state,
       linkId,
-      block: publicBlock(block || locationDefault),
-      usedByCount, // explicit links to the linked block (0 for inherited/legacy/empty)
+      usedByCount, // explicit links to the linked (override) block
+      // Shown block: the override block for override/redundant, else the location default.
+      block: publicBlock(linkRow ? linkBlock : locDefault),
+      locationDefault: locDefault ? { id: locDefault.id, internalName: locDefault.internalName } : null,
       legacy: legacyFilled ? { he: legacy.he || null, en: legacy.en || null, imageId: legacy.imageId || null } : null,
     };
   }

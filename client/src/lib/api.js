@@ -434,6 +434,13 @@ export const api = {
     create: (data) => request('/api/locations', { method: 'POST', body: JSON.stringify(data) }),
     update: (id, data) => request(`/api/locations/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     remove: (id) => request(`/api/locations/${id}`, { method: 'DELETE' }),
+    // Shared Content defaults (Location Defaults slice).
+    sharedDefaults: (id) => request(`/api/locations/${id}/shared-defaults`),
+    setSharedDefault: (id, type, sharedContentId) =>
+      request(`/api/locations/${id}/shared-defaults`, { method: 'PUT', body: JSON.stringify({ type, sharedContentId }) }),
+    consolidationSuggestions: (id, type) => request(`/api/locations/${id}/consolidation-suggestions?type=${type}`),
+    consolidate: (id, type, sharedContentId) =>
+      request(`/api/locations/${id}/consolidate`, { method: 'POST', body: JSON.stringify({ type, sharedContentId }) }),
   },
   activityTypes: {
     list: () => request('/api/activity-types'),

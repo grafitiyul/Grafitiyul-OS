@@ -4,6 +4,7 @@ import SettingsChrome from '../settings/SettingsChrome.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
 import { SingleImage } from './ImageUploader.jsx';
 import { HomeIcon } from '../common/FieldIcons.jsx';
+import LocationDefaultsDialog from './LocationDefaultsDialog.jsx';
 
 // Locations catalog (e.g. "תל אביב - פלורנטין"). Hebrew name required, English
 // optional. A location can't be deleted while product variants reference it.
@@ -61,7 +62,7 @@ export default function LocationsSettings() {
           ) : (
             <ul className="divide-y divide-gray-100">
               {rows.map((row) => (
-                <LocationRow key={row.id} row={row} onChange={refresh} />
+                <LocationRow key={row.id} row={row} locations={rows} onChange={refresh} />
               ))}
             </ul>
           )}
@@ -83,8 +84,9 @@ export default function LocationsSettings() {
   );
 }
 
-function LocationRow({ row, onChange }) {
+function LocationRow({ row, locations, onChange }) {
   const [editing, setEditing] = useState(false);
+  const [showDefaults, setShowDefaults] = useState(false);
   const [nameHe, setNameHe] = useState(row.nameHe);
   const [nameEn, setNameEn] = useState(row.nameEn || '');
   const [meetingHe, setMeetingHe] = useState(row.meetingPointHe || '');
@@ -223,8 +225,12 @@ function LocationRow({ row, onChange }) {
         className={`rounded-md p-1.5 ${row.isHomeLocation ? 'text-emerald-600 hover:bg-emerald-50' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'}`}>
         <HomeIcon className="w-4 h-4" />
       </button>
+      <button onClick={() => setShowDefaults(true)} className="text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md p-1.5" title="ברירות מחדל לתוכן משותף">🧩</button>
       <button onClick={startEdit} className="text-amber-500 hover:text-amber-600 hover:bg-amber-50 rounded-md p-1.5" title="עריכה">✎</button>
       <button onClick={remove} className="text-red-500 hover:text-red-600 hover:bg-red-50 rounded-md p-1.5" title="מחק">🗑</button>
+      {showDefaults && (
+        <LocationDefaultsDialog location={row} locations={locations} onClose={() => setShowDefaults(false)} onChanged={onChange} />
+      )}
     </li>
   );
 }

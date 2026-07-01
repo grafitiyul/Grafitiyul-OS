@@ -1,6 +1,20 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
+import {
+  getLocationDefaults,
+  setLocationDefault,
+  getConsolidationSuggestions,
+  consolidateToLocationDefault,
+} from '../shared-content/sharedContent.js';
+
+// Map known service error codes → HTTP status.
+const SC_STATUS = { invalid_type: 400, type_mismatch: 400, shared_content_not_found: 404 };
+function scFail(res, e) {
+  const s = SC_STATUS[e?.code];
+  if (s) return res.status(s).json({ error: e.code });
+  throw e;
+}
 
 // Location catalog (e.g. "תל אביב - פלורנטין"). Simple sortable list. Hebrew
 // name required; English optional.
@@ -118,6 +132,55 @@ router.delete(
         return res.status(409).json({ error: 'location_in_use' });
       }
       throw e;
+    }
+  }),
+);
+
+// ── Location Shared-Content defaults ─────────────────────────────────────────
+
+// Current defaults (resolved blocks) for this location.
+router.get(
+  '/:id/shared-defaults',
+  handle(async (req, res) => {
+    const data = await getLocationDefaults(prisma, req.params.id);
+    if (!data) return res.status(404).json({ error: 'not_found' });
+    res.json(data);
+  }),
+);
+
+// Set / clear (sharedContentId=null) the default for a type. Choosing an existing
+// block is a pure reference — the block is not mutated.
+router.put(
+  '/:id/shared-defaults',
+  handle(async (req, res) => {
+    try {
+      const out = await setLocationDefault(prisma, req.params.id, String(req.body?.type || ''), req.body?.sharedContentId || null);
+      res.json(out);
+    } catch (e) {
+      scFail(res, e);
+    }
+  }),
+);
+
+// Consolidation candidates: blocks used by ≥2 variants in this location (of the
+// type) that are not already the default.
+router.get(
+  '/:id/consolidation-suggestions',
+  handle(async (req, res) => {
+    res.json(await getConsolidationSuggestions(prisma, req.params.id, String(req.query.type || '')));
+  }),
+);
+
+// Make a block the location default + remove redundant variant overrides that
+// point at the SAME block. Returns a report of what was removed.
+router.post(
+  '/:id/consolidate',
+  handle(async (req, res) => {
+    try {
+      const report = await consolidateToLocationDefault(prisma, req.params.id, String(req.body?.type || ''), String(req.body?.sharedContentId || ''));
+      res.json(report);
+    } catch (e) {
+      scFail(res, e);
     }
   }),
 );

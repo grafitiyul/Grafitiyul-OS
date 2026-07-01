@@ -1081,11 +1081,20 @@ model Location {
   updatedAt           DateTime         @updatedAt
   variants            ProductVariant[]
   deals               Deal[]
-  // Shared Content Library items anchored to this location (e.g. the location's
-  // default meeting point). Back-relation only; see SharedContent.location.
-  sharedContent       SharedContent[]
+  // Shared Content Library items anchored to this location. Back-relation only.
+  sharedContent       SharedContent[]  @relation("SharedContentAnchor")
+  // Location Defaults (source of truth per type; a variant link is an override).
+  // Explicit references to Shared Content — no block mutation when chosen. SetNull
+  // so deleting the block clears the default. Resolution: variant link → these →
+  // legacy columns. Arrival/safety/etc. can be added the same way later.
+  defaultMeetingPoint   SharedContent? @relation("LocationDefaultMeeting", fields: [defaultMeetingPointId], references: [id], onDelete: SetNull)
+  defaultMeetingPointId String?
+  defaultEndingPoint    SharedContent? @relation("LocationDefaultEnding", fields: [defaultEndingPointId], references: [id], onDelete: SetNull)
+  defaultEndingPointId  String?
 
   @@index([sortOrder])
+  @@index([defaultMeetingPointId])
+  @@index([defaultEndingPointId])
 }
 
 // What we sell. Bilingual name + rich marketing descriptions. No pricing, no
@@ -1873,8 +1882,11 @@ model SharedContent {
   image             MediaFile?                    @relation(fields: [imageId], references: [id], onDelete: SetNull)
   imageId           String?
   mapUrl            String? // reserved (embedded map); not rendered in V1
-  location          Location?                     @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  location          Location?                     @relation("SharedContentAnchor", fields: [locationId], references: [id], onDelete: SetNull)
   locationId        String?
+  // DEPRECATED (kept, not removed): the Slice-2 location-default flag. Location
+  // defaults now live as explicit FKs on Location (defaultMeetingPointId / …),
+  // migrated from this flag. Resolution no longer reads it.
   isLocationDefault Boolean                       @default(false)
   active            Boolean                       @default(true)
   sortOrder         Int                           @default(0)
@@ -1882,6 +1894,9 @@ model SharedContent {
   createdAt         DateTime                      @default(now())
   updatedAt         DateTime                      @updatedAt
   variantLinks      ProductVariantSharedContent[]
+  // Locations that reference this block as their default (back-relations).
+  locationDefaultMeeting Location[]               @relation("LocationDefaultMeeting")
+  locationDefaultEnding  Location[]               @relation("LocationDefaultEnding")
 
   @@index([type])
   @@index([locationId])
