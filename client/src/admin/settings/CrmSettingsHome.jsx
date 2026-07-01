@@ -61,6 +61,12 @@ export default function CrmSettingsHome() {
           description="מוצרים, מיקומים ותוספות — כל מה שמגדיר את מה שאנחנו מוכרים."
         />
         <CategoryCard
+          to="/admin/settings/crm/shared-content"
+          icon="🧩"
+          title="ספריית תוכן משותף"
+          description="תוכן תפעולי לשימוש חוזר — נקודות מפגש/סיום ועוד — מקור אמת אחד, בהפניה."
+        />
+        <CategoryCard
           to="/admin/settings/crm/payment"
           icon="💳"
           title="הגדרות תשלום"

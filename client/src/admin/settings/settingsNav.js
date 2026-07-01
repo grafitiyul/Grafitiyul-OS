@@ -30,6 +30,7 @@ export const SETTINGS_TREE = {
   '/admin/settings/crm/pricing/advanced': { label: 'תמחור מתקדם', parent: '/admin/settings/crm/pricing' },
   '/admin/settings/crm/ticket-types': { label: 'סוגי כרטיסים', parent: '/admin/settings/crm' },
   '/admin/settings/crm/sabbath-hours': { label: 'שעות שבת וחג', parent: '/admin/settings/crm' },
+  '/admin/settings/crm/shared-content': { label: 'ספריית תוכן משותף', parent: '/admin/settings/crm' },
 };
 
 // Resolve a node for a pathname. Static paths come from the tree; the dynamic

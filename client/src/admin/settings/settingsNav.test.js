@@ -39,6 +39,14 @@ test('unknown path falls back to settings root', () => {
   assert.equal(parentOf('/admin/settings/crm/nope'), '/admin/settings');
 });
 
+test('Shared Content Library sits under CRM settings', () => {
+  assert.equal(parentOf('/admin/settings/crm/shared-content'), '/admin/settings/crm');
+  assert.deepEqual(
+    getTrail('/admin/settings/crm/shared-content').map((c) => c.label),
+    ['הגדרות', 'הגדרות CRM', 'ספריית תוכן משותף'],
+  );
+});
+
 test('resolveNode returns null for unknown, node for known', () => {
   assert.equal(resolveNode('/admin/settings/crm/nope'), null);
   assert.equal(resolveNode('/admin/settings/crm').label, 'הגדרות CRM');

@@ -57,6 +57,7 @@ import TicketTypesSettings from './admin/crm/settings/TicketTypesSettings.jsx';
 import SabbathHoursSettings from './admin/crm/settings/SabbathHoursSettings.jsx';
 // Products & Pricing — Slice 1 (catalog + files + payment config).
 import ProductsSettings from './admin/products/ProductsSettings.jsx';
+import SharedContentLibrary from './admin/shared-content/SharedContentLibrary.jsx';
 import ProductDetail from './admin/products/ProductDetail.jsx';
 import LocationsSettings from './admin/products/LocationsSettings.jsx';
 import PaymentConfigSettings from './admin/products/PaymentConfigSettings.jsx';
@@ -183,6 +184,7 @@ export default function App() {
         <Route path="settings/crm/addons" element={<AddonsSettings />} />
         <Route path="settings/crm/ticket-types" element={<TicketTypesSettings />} />
         <Route path="settings/crm/sabbath-hours" element={<SabbathHoursSettings />} />
+        <Route path="settings/crm/shared-content" element={<SharedContentLibrary />} />
         <Route path="users" element={<AdminUsersPage />} />
         <Route path="documents" element={<DocumentsLayout />}>
           <Route index element={<DocumentsIndexPage />} />
