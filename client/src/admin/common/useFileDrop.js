@@ -1,19 +1,29 @@
 import { useCallback, useRef, useState } from 'react';
+import { pickAcceptedFiles } from './fileAccept.js';
 
 // Shared "click OR drag-and-drop" file-input behavior for every upload field in
-// GOS. This is intentionally headless: it does NOT upload anything and holds no
-// storage logic — the caller passes `onFiles(files)` and keeps using the
-// existing upload API (uploadImage / api.*.uploadImage). One place owns picking,
-// drag-over state, and validation; each field keeps its own visuals.
+// GOS. Headless: it does NOT upload and holds no storage logic — the caller
+// passes `onFiles(files)` and keeps using the existing upload API
+// (uploadImage / api.*.uploadImage). One place owns picking, drag-over state,
+// and validation; each field keeps its own visuals.
 //
-// Why validation lives here: the native file picker already filters by `accept`,
-// but a DROPPED file does not go through the picker, so the browser won't filter
-// it. We re-check the dropped file's type against `accept` (and an optional
-// `maxBytes`) so drop behaves exactly like choosing from the picker — same
-// validation as today, no looser.
+// This mirrors the proven native-drop pattern already used by PdfViewer:
+//   - onDragOver MUST call preventDefault (or the browser rejects the drop and
+//     just navigates to the file) AND set dataTransfer.dropEffect = 'copy' so
+//     the OS shows a copy cursor and allows the drop.
+//   - dragleave fires when the pointer moves onto CHILD elements too, so we only
+//     clear the drag-over state when the pointer truly leaves the container
+//     (relatedTarget is outside currentTarget). This avoids the flicker that a
+//     naive boolean/among-children counter produces — flicker that can drop
+//     preventDefault on a frame and make the whole drop fail.
+//   - drop-zone overlays must be pointer-events-none (enforced by callers) so
+//     they never sit between the pointer and the drop handlers.
+//
+// Validation of DROPPED files is delegated to the same pure pickAcceptedFiles
+// used conceptually for the picker, so drop enforces the same accept/size rules.
 //
 // Returns:
-//   dragOver   – boolean, true while a file is dragged over the area (for styling)
+//   dragOver   – boolean, true while a file is dragged over the area (styling)
 //   open()     – trigger the file picker (wire to a button / click handler)
 //   dropProps  – spread onto the drop area element (drag/drop handlers)
 //   inputProps – spread onto a hidden <input type="file"> element
@@ -27,83 +37,45 @@ export function useFileDrop({
 } = {}) {
   const inputRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
-  // Depth counter: dragenter/dragleave fire for child elements too, so a plain
-  // boolean would flicker. Counting enters minus leaves tracks the real state.
-  const dragDepth = useRef(0);
-
-  const accepts = useCallback(
-    (file) => {
-      if (!accept || accept === '*' || accept === '*/*') return true;
-      const type = (file.type || '').toLowerCase();
-      const name = (file.name || '').toLowerCase();
-      return accept
-        .split(',')
-        .map((s) => s.trim().toLowerCase())
-        .filter(Boolean)
-        .some((rule) => {
-          if (rule.startsWith('.')) return name.endsWith(rule); // .pdf
-          if (rule.endsWith('/*')) return type.startsWith(rule.slice(0, -1)); // image/*
-          return type === rule; // exact mime, e.g. application/pdf
-        });
-    },
-    [accept],
-  );
 
   const handleFiles = useCallback(
     (fileList) => {
-      let files = Array.from(fileList || []);
-      if (!files.length) return;
-      if (!multiple) files = files.slice(0, 1);
-      const valid = [];
-      for (const f of files) {
-        if (!accepts(f)) {
-          onReject?.({ file: f, reason: 'type' });
-          continue;
-        }
-        if (maxBytes && f.size > maxBytes) {
-          onReject?.({ file: f, reason: 'size' });
-          continue;
-        }
-        valid.push(f);
-      }
-      if (valid.length) onFiles?.(valid);
+      const { accepted, rejected } = pickAcceptedFiles(fileList, { accept, multiple, maxBytes });
+      if (rejected.length) onReject?.(rejected);
+      if (accepted.length) onFiles?.(accepted);
     },
-    [accepts, maxBytes, multiple, onFiles, onReject],
+    [accept, multiple, maxBytes, onFiles, onReject],
   );
 
   const onDragOver = useCallback(
     (e) => {
       if (disabled) return;
-      e.preventDefault(); // required so the browser allows a drop
-    },
-    [disabled],
-  );
-  const onDragEnter = useCallback(
-    (e) => {
-      if (disabled) return;
+      // Both are required for a native file drop to be accepted.
       e.preventDefault();
-      dragDepth.current += 1;
-      setDragOver(true);
+      try {
+        e.dataTransfer.dropEffect = 'copy';
+      } catch {
+        /* some browsers lock dataTransfer during dragover — safe to ignore */
+      }
+      setDragOver(true); // React no-ops if already true
     },
     [disabled],
   );
+
   const onDragLeave = useCallback(
     (e) => {
       if (disabled) return;
-      e.preventDefault();
-      dragDepth.current -= 1;
-      if (dragDepth.current <= 0) {
-        dragDepth.current = 0;
-        setDragOver(false);
-      }
+      // Ignore leaves onto descendant elements — only clear on a real exit.
+      if (e.currentTarget.contains(e.relatedTarget)) return;
+      setDragOver(false);
     },
     [disabled],
   );
+
   const onDrop = useCallback(
     (e) => {
       if (disabled) return;
       e.preventDefault();
-      dragDepth.current = 0;
       setDragOver(false);
       handleFiles(e.dataTransfer?.files);
     },
@@ -125,7 +97,7 @@ export function useFileDrop({
   return {
     dragOver,
     open,
-    dropProps: { onDragOver, onDragEnter, onDragLeave, onDrop },
+    dropProps: { onDragOver, onDragLeave, onDrop },
     inputProps: {
       ref: inputRef,
       type: 'file',

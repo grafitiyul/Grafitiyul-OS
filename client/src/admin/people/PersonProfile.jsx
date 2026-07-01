@@ -253,7 +253,7 @@ function ProfileImage({ person, onChanged }) {
         )}
       </div>
       {dragOver && (
-        <span className="absolute inset-0 flex items-center justify-center rounded-full bg-blue-500/10 text-[10px] font-medium text-blue-700">
+        <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full bg-blue-500/10 text-[10px] font-medium text-blue-700">
           שחררו כאן
         </span>
       )}

@@ -49,7 +49,7 @@ export function SingleImage({ image, onChange, folder = 'products/meeting' }) {
             ×
           </button>
           {dragOver && (
-            <span className="absolute inset-0 flex items-center justify-center rounded-lg bg-blue-500/10 text-[11px] font-medium text-blue-700">
+            <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg bg-blue-500/10 text-[11px] font-medium text-blue-700">
               שחררו להחלפה
             </span>
           )}
