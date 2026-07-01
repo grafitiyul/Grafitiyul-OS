@@ -104,7 +104,9 @@ export default function ProductsSettings() {
         </button>
       </header>
 
-      {/* Filter bar */}
+      {/* Filter bar — a flexible horizontal row. A Location filter <select> can be
+          dropped in here (e.g. right after the search) with no layout changes once
+          the products API exposes per-product locations; nothing else needs to move. */}
       <div className="mt-6 flex flex-wrap items-center gap-2.5">
         <div className="relative flex-1 min-w-[200px]">
           <span className="absolute inset-y-0 right-3 flex items-center text-gray-400 pointer-events-none"><SearchIcon /></span>
@@ -115,6 +117,7 @@ export default function ProductsSettings() {
             className="h-10 w-full rounded-xl border border-gray-200 bg-white pr-9 pl-3 text-sm text-gray-800 shadow-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
           />
         </div>
+        {/* Location filter placeholder — future: <LocationFilter /> goes here. */}
         <button
           onClick={() => setShowArchived((s) => !s)}
           className={`h-10 inline-flex items-center gap-2 rounded-xl border px-3.5 text-[13px] font-medium shadow-sm transition ${
@@ -132,12 +135,14 @@ export default function ProductsSettings() {
       </div>
 
       {/* Summary strip */}
-      <div className="mt-4 flex items-center gap-6 rounded-xl border border-gray-100 bg-gray-50/50 px-5 py-3">
+      <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl border border-gray-100 bg-gray-50/50 px-5 py-3">
         <Stat icon="📦" label="סה״כ מוצרים" value={rows.length} />
         <Divider />
         <Stat icon="📍" label="סה״כ מיקומים" value={locations.length} />
         <Divider />
         <Stat icon="✅" label="מוצרים פעילים" value={activeCount} />
+        <Divider />
+        <Stat icon="🗂️" label="בארכיון" value={archivedCount} />
       </div>
 
       {/* Table */}
@@ -145,9 +150,9 @@ export default function ProductsSettings() {
         {/* column header */}
         <div className="flex items-center gap-4 px-5 py-2.5 border-b border-gray-100 text-[11px] font-medium uppercase tracking-wide text-gray-400">
           <div className="flex-1">מוצר</div>
-          <div className="w-24 text-center">מיקומים</div>
+          <div className="w-32 text-center">מיקומים</div>
           <div className="w-24 text-center">סטטוס</div>
-          <div className="w-20" />
+          <div className="w-12" />
         </div>
 
         {loading ? (
@@ -161,15 +166,17 @@ export default function ProductsSettings() {
             {shown.map((p) => (
               <li
                 key={p.id}
-                className={`group flex items-center gap-4 px-5 py-4 border-b border-gray-50 last:border-b-0 last:rounded-b-2xl transition-colors hover:bg-gray-50/70 ${
+                onClick={() => navigate(`/admin/settings/crm/products/${p.id}`)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/admin/settings/crm/products/${p.id}`); } }}
+                role="button"
+                tabIndex={0}
+                aria-label={`פתיחת ${p.nameHe}`}
+                className={`group flex items-center gap-4 px-5 py-4 border-b border-gray-50 last:border-b-0 last:rounded-b-2xl cursor-pointer transition-colors hover:bg-gray-50/70 focus:outline-none focus-visible:bg-gray-50 ${
                   !p.active ? 'opacity-60' : ''
                 }`}
               >
                 {/* Identity */}
-                <Link
-                  to={`/admin/settings/crm/products/${p.id}`}
-                  className="flex items-center gap-3.5 min-w-0 flex-1"
-                >
+                <div className="flex items-center gap-3.5 min-w-0 flex-1">
                   <Avatar name={p.nameHe} />
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
@@ -182,15 +189,15 @@ export default function ProductsSettings() {
                         </span>
                       )}
                     </div>
-                    <div className="text-[14px] text-gray-400 truncate" dir="ltr">
+                    <div className={`text-[14px] truncate ${p.nameEn ? 'text-gray-400' : 'text-gray-300'}`} dir="ltr">
                       {p.nameEn || '—'}
                     </div>
                   </div>
-                </Link>
+                </div>
 
                 {/* Locations */}
-                <div className="w-24 text-center text-[14px] text-gray-600" title="מיקומים">
-                  <span className="inline-flex items-center gap-1">📍 {p._count?.variants ?? 0}</span>
+                <div className="w-32 text-center text-[14px] text-gray-600">
+                  <span className="inline-flex items-center gap-1">📍 {p._count?.variants ?? 0} מיקומים</span>
                 </div>
 
                 {/* Status */}
@@ -206,15 +213,8 @@ export default function ProductsSettings() {
                   )}
                 </div>
 
-                {/* Actions */}
-                <div className="w-20 flex items-center justify-end gap-1">
-                  <Link
-                    to={`/admin/settings/crm/products/${p.id}`}
-                    aria-label="פתיחה"
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition"
-                  >
-                    <OpenIcon />
-                  </Link>
+                {/* Actions — only the three-dot menu; stop row navigation on click */}
+                <div className="w-12 flex items-center justify-end" onClick={(e) => e.stopPropagation()}>
                   <ActionsMenu
                     items={
                       p.active
@@ -368,5 +368,3 @@ function PlusIcon() { return (<svg {...ic} aria-hidden="true"><line x1="12" y1="
 function SearchIcon() { return (<svg {...ic} aria-hidden="true"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>); }
 function ArchiveIcon() { return (<svg {...ic} width="15" height="15" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" /><line x1="10" y1="12" x2="14" y2="12" /></svg>); }
 function DotsIcon() { return (<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="12" cy="19" r="1.6" /></svg>); }
-// RTL "open": chevron pointing left (deeper).
-function OpenIcon() { return (<svg {...ic} aria-hidden="true"><polyline points="15 18 9 12 15 6" /></svg>); }
