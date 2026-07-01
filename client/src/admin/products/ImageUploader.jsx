@@ -1,6 +1,7 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { uploadImage } from '../../lib/upload.js';
 import { api } from '../../lib/api.js';
+import { useFileDrop } from '../common/useFileDrop.js';
 
 function errText(err) {
   if (err?.payload?.error === 'r2_not_configured')
@@ -10,30 +11,34 @@ function errText(err) {
 
 // Single image (e.g. meeting-point image). `image` is a MediaFile | null.
 // onChange(mediaFile | null) updates the parent; detaching does not delete the
-// underlying R2 object (orphan sweep is deferred).
+// underlying R2 object (orphan sweep is deferred). Supports click-to-pick AND
+// drag-and-drop via the shared useFileDrop hook (same upload path either way).
 export function SingleImage({ image, onChange, folder = 'products/meeting' }) {
-  const inputRef = useRef(null);
   const [busy, setBusy] = useState(false);
 
-  async function pick(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  async function upload(files) {
     setBusy(true);
     try {
-      const mf = await uploadImage(file, folder);
+      const mf = await uploadImage(files[0], folder);
       onChange(mf);
     } catch (err) {
       alert('שגיאה בהעלאה: ' + errText(err));
     } finally {
       setBusy(false);
-      if (inputRef.current) inputRef.current.value = '';
     }
   }
 
+  const { dragOver, open, dropProps, inputProps } = useFileDrop({
+    accept: 'image/*',
+    onFiles: upload,
+    disabled: busy,
+    onReject: () => alert('קובץ לא נתמך — יש לבחור קובץ תמונה.'),
+  });
+
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center gap-3" {...dropProps}>
       {image ? (
-        <div className="relative">
+        <div className={`relative rounded-lg transition ${dragOver ? 'ring-2 ring-blue-400' : ''}`}>
           <img src={image.url} alt="" className="h-20 w-20 object-cover rounded-lg border border-gray-200" />
           <button
             type="button"
@@ -43,18 +48,28 @@ export function SingleImage({ image, onChange, folder = 'products/meeting' }) {
           >
             ×
           </button>
+          {dragOver && (
+            <span className="absolute inset-0 flex items-center justify-center rounded-lg bg-blue-500/10 text-[11px] font-medium text-blue-700">
+              שחררו להחלפה
+            </span>
+          )}
         </div>
       ) : (
         <button
           type="button"
-          onClick={() => inputRef.current?.click()}
+          onClick={open}
           disabled={busy}
-          className="h-20 w-20 rounded-lg border border-dashed border-gray-300 text-[12px] text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+          className={`h-20 w-20 rounded-lg border border-dashed text-[12px] disabled:opacity-50 transition ${
+            dragOver ? 'border-blue-400 bg-blue-50 text-blue-600' : 'border-gray-300 text-gray-500 hover:bg-gray-50'
+          }`}
         >
-          {busy ? 'מעלה…' : '+ תמונה'}
+          {busy ? 'מעלה…' : dragOver ? 'שחררו כאן' : '+ תמונה'}
         </button>
       )}
-      <input ref={inputRef} type="file" accept="image/*" onChange={pick} className="hidden" />
+      {!image && !busy && (
+        <span className="text-[11px] text-gray-400">לחצו לבחירה או גררו קובץ לכאן</span>
+      )}
+      <input {...inputProps} />
     </div>
   );
 }
@@ -62,12 +77,9 @@ export function SingleImage({ image, onChange, folder = 'products/meeting' }) {
 // Gallery for a saved variant. `images` = [{ id, mediaFile }]. Requires a
 // variantId (so the variant must exist before adding images).
 export function Gallery({ variantId, images, onChanged, folder = 'products/gallery' }) {
-  const inputRef = useRef(null);
   const [busy, setBusy] = useState(false);
 
-  async function pick(e) {
-    const files = Array.from(e.target.files || []);
-    if (!files.length) return;
+  async function upload(files) {
     setBusy(true);
     try {
       for (const f of files) {
@@ -79,9 +91,16 @@ export function Gallery({ variantId, images, onChanged, folder = 'products/galle
       alert('שגיאה בהעלאה: ' + errText(err));
     } finally {
       setBusy(false);
-      if (inputRef.current) inputRef.current.value = '';
     }
   }
+
+  const { dragOver, open, dropProps, inputProps } = useFileDrop({
+    accept: 'image/*',
+    multiple: true,
+    onFiles: upload,
+    disabled: busy,
+    onReject: () => alert('חלק מהקבצים אינם תמונות ולכן דולגו.'),
+  });
 
   async function remove(imgId) {
     try {
@@ -93,7 +112,10 @@ export function Gallery({ variantId, images, onChanged, folder = 'products/galle
   }
 
   return (
-    <div className="flex flex-wrap gap-2">
+    <div
+      className={`flex flex-wrap gap-2 rounded-lg transition ${dragOver ? 'ring-2 ring-blue-400 bg-blue-50/40 p-1' : ''}`}
+      {...dropProps}
+    >
       {(images || []).map((img) => (
         <div key={img.id} className="relative">
           <img src={img.mediaFile?.url} alt="" className="h-20 w-20 object-cover rounded-lg border border-gray-200" />
@@ -109,13 +131,15 @@ export function Gallery({ variantId, images, onChanged, folder = 'products/galle
       ))}
       <button
         type="button"
-        onClick={() => inputRef.current?.click()}
+        onClick={open}
         disabled={busy}
-        className="h-20 w-20 rounded-lg border border-dashed border-gray-300 text-[12px] text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+        className={`h-20 w-20 rounded-lg border border-dashed text-[12px] disabled:opacity-50 transition ${
+          dragOver ? 'border-blue-400 bg-blue-50 text-blue-600' : 'border-gray-300 text-gray-500 hover:bg-gray-50'
+        }`}
       >
-        {busy ? 'מעלה…' : '+ תמונות'}
+        {busy ? 'מעלה…' : dragOver ? 'שחררו כאן' : '+ תמונות'}
       </button>
-      <input ref={inputRef} type="file" accept="image/*" multiple onChange={pick} className="hidden" />
+      <input {...inputProps} />
     </div>
   );
 }

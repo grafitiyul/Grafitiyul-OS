@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import BackButton from '../common/BackButton.jsx';
+import { useFileDrop } from '../common/useFileDrop.js';
 import { api } from '../../lib/api.js';
 import { useDirtyForm, useDirtyWhen } from '../../lib/dirtyForms.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
@@ -211,28 +212,36 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
 }
 
 function ProfileImage({ person, onChanged }) {
-  const fileRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const src = person.profile?.imageUrl || null;
 
-  async function onFile(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  async function upload(files) {
     setBusy(true);
     try {
-      await api.people.uploadImage(person.id, file);
+      await api.people.uploadImage(person.id, files[0]);
       await onChanged();
     } catch (err) {
       window.alert('העלאת תמונה נכשלה: ' + err.message);
     } finally {
       setBusy(false);
-      if (fileRef.current) fileRef.current.value = '';
     }
   }
 
+  // Click the ✎ button OR drag a photo onto the avatar — same upload path.
+  const { dragOver, open, dropProps, inputProps } = useFileDrop({
+    accept: 'image/jpeg,image/png,image/webp',
+    onFiles: upload,
+    disabled: busy,
+    onReject: () => window.alert('קובץ לא נתמך — יש לבחור תמונה (JPG/PNG/WebP).'),
+  });
+
   return (
-    <div className="relative shrink-0">
-      <div className="w-20 h-20 rounded-full bg-gray-100 border border-gray-200 overflow-hidden flex items-center justify-center text-gray-400 text-2xl">
+    <div className="relative shrink-0" {...dropProps} title="לחצו או גררו תמונה">
+      <div
+        className={`w-20 h-20 rounded-full bg-gray-100 border overflow-hidden flex items-center justify-center text-gray-400 text-2xl transition ${
+          dragOver ? 'border-blue-400 ring-2 ring-blue-300' : 'border-gray-200'
+        }`}
+      >
         {src ? (
           <img
             src={src}
@@ -243,22 +252,21 @@ function ProfileImage({ person, onChanged }) {
           initials(person.displayName)
         )}
       </div>
+      {dragOver && (
+        <span className="absolute inset-0 flex items-center justify-center rounded-full bg-blue-500/10 text-[10px] font-medium text-blue-700">
+          שחררו כאן
+        </span>
+      )}
       <button
         type="button"
-        onClick={() => fileRef.current?.click()}
+        onClick={open}
         disabled={busy}
         className="absolute -bottom-1 -left-1 bg-white border border-gray-300 rounded-full shadow-sm text-[11px] px-2 py-0.5 hover:bg-gray-50 disabled:opacity-50"
         title="העלאת תמונה"
       >
         {busy ? '…' : '✎'}
       </button>
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/jpeg,image/png,image/webp"
-        className="hidden"
-        onChange={onFile}
-      />
+      <input {...inputProps} />
     </div>
   );
 }
