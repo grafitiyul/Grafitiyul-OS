@@ -10,6 +10,13 @@
 
 const PRESERVED_DATA_ATTRS = new Set(['data-type', 'data-field-key']);
 
+// Attributes kept on ANY element (not tag-specific). `dir` carries writing
+// direction (RTL/LTR) — preserving it on paste lets the TextDirection extension
+// re-read it, so a pasted mixed-language document keeps its paragraph direction
+// AND its list-marker/indent side instead of being flattened to the editor
+// default. Only valid ltr/rtl values are kept (see cleanAttributes).
+const GLOBAL_KEEP_ATTRS = new Set(['dir']);
+
 // Style-preservation policy — two scopes:
 //
 //   GLOBAL: styles that are kept on any element (text-align applies to
@@ -143,6 +150,9 @@ const KEEP_ATTRS_BY_TAG = {
     'data-align',
   ]),
   SOURCE: new Set(['src', 'type']),
+  // Ordered lists: keep `start`/`type` so a pasted numbered list that begins at
+  // 3, or uses letters/roman numerals, survives instead of resetting to "1.".
+  OL: new Set(['start', 'type']),
   FIGURE: new Set(['data-type', 'data-width', 'data-align']),
   FIGCAPTION: new Set(['class']),
   // Embed wrapper. The actual iframe src is reconstructed from
@@ -181,6 +191,10 @@ export function sanitizePastedHtml(html) {
     // TextStyle picks them up. The whitelist below then preserves the
     // styles on the span and strips them from every other element.
     promoteColorAndSizeToSpans(doc, doc.body);
+    // StarterKit only supports h1–h3. Map pasted h4–h6 down to h3 so deep
+    // headings stay headings ("reasonable headings") instead of being dropped
+    // to plain paragraphs by the schema parser.
+    downgradeHeadings(doc, doc.body);
     cleanSubtree(doc.body);
     return doc.body.innerHTML;
   } catch {
@@ -347,6 +361,18 @@ function promoteColorAndSizeToSpans(doc, root) {
   }
 }
 
+// Rename pasted h4/h5/h6 to h3, preserving attributes (dir, etc.) and children.
+// Runs before the whitelist stripper so the moved attributes are then filtered
+// normally. Deepest-first isn't needed — these tags don't nest in practice.
+function downgradeHeadings(doc, root) {
+  for (const el of Array.from(root.querySelectorAll('h4, h5, h6'))) {
+    const h3 = doc.createElement('h3');
+    for (const a of Array.from(el.attributes)) h3.setAttribute(a.name, a.value);
+    while (el.firstChild) h3.appendChild(el.firstChild);
+    el.parentNode?.replaceChild(h3, el);
+  }
+}
+
 function cleanSubtree(root) {
   // Depth-first, using a snapshot of children so removing from the tree is safe.
   for (const child of Array.from(root.children)) {
@@ -367,6 +393,15 @@ function cleanAttributes(el) {
 
     if (keepForTag && keepForTag.has(name)) continue;
     if (PRESERVED_DATA_ATTRS.has(name)) continue;
+    if (GLOBAL_KEEP_ATTRS.has(name)) {
+      // Keep only well-formed direction values; drop anything else.
+      if (name === 'dir') {
+        const v = (attr.value || '').toLowerCase();
+        if (v === 'ltr' || v === 'rtl') continue;
+      } else {
+        continue;
+      }
+    }
 
     if (name === 'style') {
       const kept = [];
