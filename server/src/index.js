@@ -44,6 +44,7 @@ import dealSourcesRouter from './routes/dealSources.js';
 import quoteSectionsRouter from './routes/quoteSections.js';
 import quoteTemplateRouter from './routes/quoteTemplate.js';
 import timelineRouter from './routes/timeline.js';
+import sharedContentRouter from './routes/sharedContent.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -194,6 +195,8 @@ app.use('/api/quote-sections', requireAdminAuth, quoteSectionsRouter);
 app.use('/api/quote-template', requireAdminAuth, quoteTemplateRouter);
 // Reusable Timeline / Activity-Feed (notes V1). Scoped by (subjectType, subjectId).
 app.use('/api/timeline', requireAdminAuth, timelineRouter);
+// Shared Content Library — platform-wide reusable content (meeting/ending point…).
+app.use('/api/shared-content', requireAdminAuth, sharedContentRouter);
 
 // Unknown /api/* paths get a real JSON 404 instead of falling through to
 // the SPA fallback (which would serve HTML for an API request).

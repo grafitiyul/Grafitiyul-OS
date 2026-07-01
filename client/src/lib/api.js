@@ -453,6 +453,30 @@ export const api = {
       request(`/api/products/variants/${variantId}/images`, { method: 'POST', body: JSON.stringify({ mediaFileId }) }),
     removeVariantImage: (imageId) => request(`/api/products/variants/images/${imageId}`, { method: 'DELETE' }),
   },
+  // Shared Content Library — reusable content referenced by variants (and, later,
+  // other consumers). Everything is by reference; only `fork` copies.
+  sharedContent: {
+    list: (params = {}) => {
+      const q = new URLSearchParams();
+      if (params.type) q.set('type', params.type);
+      if (params.locationId) q.set('locationId', params.locationId);
+      if (params.active != null) q.set('active', String(params.active));
+      if (params.q) q.set('q', params.q);
+      const s = q.toString();
+      return request('/api/shared-content' + (s ? `?${s}` : ''));
+    },
+    get: (id) => request(`/api/shared-content/${id}`),
+    create: (data) => request('/api/shared-content', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/api/shared-content/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/shared-content/${id}`, { method: 'DELETE' }),
+    whereUsed: (id, lang = 'he') => request(`/api/shared-content/${id}/where-used?lang=${lang}`),
+    link: (id, variantId) => request(`/api/shared-content/${id}/link`, { method: 'POST', body: JSON.stringify({ variantId }) }),
+    fork: (id, variantId) => request(`/api/shared-content/${id}/fork`, { method: 'POST', body: JSON.stringify({ variantId }) }),
+    variantState: (variantId) => request(`/api/shared-content/variant/${variantId}`),
+    createForVariant: (variantId, data) => request(`/api/shared-content/variant/${variantId}`, { method: 'POST', body: JSON.stringify(data) }),
+    convert: (variantId, type) => request(`/api/shared-content/variant/${variantId}/convert`, { method: 'POST', body: JSON.stringify({ type }) }),
+    detach: (variantId, type) => request(`/api/shared-content/variant/${variantId}/${type}`, { method: 'DELETE' }),
+  },
   payment: {
     listTerms: () => request('/api/payment-config/terms'),
     createTerm: (data) => request('/api/payment-config/terms', { method: 'POST', body: JSON.stringify(data) }),

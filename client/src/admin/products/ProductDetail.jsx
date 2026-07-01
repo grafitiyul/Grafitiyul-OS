@@ -6,7 +6,8 @@ import SettingsChrome from '../settings/SettingsChrome.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
 import { minorToInput, toMinor, formatMinor } from '../../lib/money.js';
 import { durationDisplay } from '../../lib/duration.js';
-import { SingleImage, Gallery } from './ImageUploader.jsx';
+import { Gallery } from './ImageUploader.jsx';
+import VariantSharedContent from './VariantSharedContent.jsx';
 
 const INPUT =
   'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
@@ -153,7 +154,7 @@ export default function ProductDetail() {
         ) : (
           <ul className="space-y-3">
             {product.variants.map((v) => (
-              <VariantCard key={v.id} variant={v} onChange={refresh} />
+              <VariantCard key={v.id} variant={v} locations={locations} onChange={refresh} />
             ))}
           </ul>
         )}
@@ -162,7 +163,7 @@ export default function ProductDetail() {
   );
 }
 
-function VariantCard({ variant, onChange }) {
+function VariantCard({ variant, locations, onChange }) {
   const [open, setOpen] = useState(false);
   return (
     <li className="rounded-xl border border-gray-200">
@@ -178,23 +179,18 @@ function VariantCard({ variant, onChange }) {
         <div className="flex-1" />
         <span className="text-gray-400 text-sm">{open ? '▲' : '▼'}</span>
       </button>
-      {open && <VariantForm variant={variant} onChange={onChange} />}
+      {open && <VariantForm variant={variant} locations={locations} onChange={onChange} />}
     </li>
   );
 }
 
-function VariantForm({ variant, onChange }) {
+function VariantForm({ variant, locations, onChange }) {
   const [form, setForm] = useState(() => ({
     marketingDescHe: variant.marketingDescHe || '',
     marketingDescEn: variant.marketingDescEn || '',
     guideDescHe: variant.guideDescHe || '',
     guideDescEn: variant.guideDescEn || '',
     durationHours: variant.durationHours ?? '',
-    meetingPointHe: variant.meetingPointHe || '',
-    meetingPointEn: variant.meetingPointEn || '',
-    endingPointHe: variant.endingPointHe || '',
-    endingPointEn: variant.endingPointEn || '',
-    meetingPointImage: variant.meetingPointImage || null,
     baseGuidePayment: minorToInput(variant.baseGuidePaymentMinor),
     travelPayment: minorToInput(variant.travelPaymentMinor),
     availablePublic: variant.availablePublic,
@@ -214,11 +210,6 @@ function VariantForm({ variant, onChange }) {
         guideDescHe: form.guideDescHe,
         guideDescEn: form.guideDescEn,
         durationHours: form.durationHours === '' ? null : Number(form.durationHours),
-        meetingPointHe: form.meetingPointHe,
-        meetingPointEn: form.meetingPointEn,
-        endingPointHe: form.endingPointHe,
-        endingPointEn: form.endingPointEn,
-        meetingPointImageId: form.meetingPointImage?.id || null,
         baseGuidePaymentMinor: toMinor(form.baseGuidePayment) ?? 0,
         travelPaymentMinor: toMinor(form.travelPayment),
         availablePublic: form.availablePublic,
@@ -268,27 +259,13 @@ function VariantForm({ variant, onChange }) {
         </Field>
       </div>
 
-      {/* Meeting / ending points hold long instructions, links and lists — the
-          standardized rich editor, He/En parity. English uses the LTR direction
-          button in the toolbar so bullets/markers sit on the correct side. */}
-      <div className="grid grid-cols-1 gap-4">
-        <Field label="נקודת מפגש (עברית)">
-          <RichEditor value={form.meetingPointHe} onChange={(h) => set('meetingPointHe', h)} ariaLabel="variant meeting point he" minContentHeight={100} placeholder="תיאור נקודת המפגש, הוראות הגעה, קישורים…" />
-        </Field>
-        <Field label="Meeting point (EN)">
-          <RichEditor value={form.meetingPointEn} onChange={(h) => set('meetingPointEn', h)} ariaLabel="variant meeting point en" minContentHeight={100} placeholder="Meeting point, directions, links…" />
-        </Field>
-        <Field label="נקודת סיום (עברית)">
-          <RichEditor value={form.endingPointHe} onChange={(h) => set('endingPointHe', h)} ariaLabel="variant ending point he" minContentHeight={100} placeholder="תיאור נקודת הסיום…" />
-        </Field>
-        <Field label="Ending point (EN)">
-          <RichEditor value={form.endingPointEn} onChange={(h) => set('endingPointEn', h)} ariaLabel="variant ending point en" minContentHeight={100} placeholder="Ending point description…" />
-        </Field>
+      {/* Operational content (meeting / ending point) now lives in the Shared
+          Content Library — managed by reference, not duplicated per variant. The
+          legacy columns remain in the DB as a dual-read fallback until Slice 5. */}
+      <div>
+        <div className="text-[11px] text-gray-500 mb-1.5">תוכן תפעולי משותף</div>
+        <VariantSharedContent variant={variant} locations={locations} />
       </div>
-
-      <Field label="תמונת נקודת מפגש">
-        <SingleImage image={form.meetingPointImage} onChange={(mf) => set('meetingPointImage', mf)} folder="products/meeting" />
-      </Field>
 
       <Field label="גלריית תמונות להצעת מחיר">
         <Gallery variantId={variant.id} images={variant.galleryImages} onChanged={onChange} folder="products/gallery" />

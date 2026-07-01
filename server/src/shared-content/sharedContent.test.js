@@ -4,7 +4,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveForVariant, buildWhereUsed } from './sharedContent.js';
+import { resolveForVariant, buildWhereUsed, classifyVariantType } from './sharedContent.js';
 import {
   isValidSharedContentType,
   isSingleType,
@@ -101,6 +101,32 @@ test('empty where-used is a valid zero report', () => {
   const out = buildWhereUsed([], 'he');
   assert.equal(out.count, 0);
   assert.equal(out.consumers[0].items.length, 0);
+});
+
+// ── variant state classification (Slice 3) ───────────────────────────────────
+
+test('classify: linked block used by >1 variant → shared', () => {
+  assert.equal(classifyVariantType({ link: { usedByCount: 3 }, locationDefault: null, legacyFilled: false }), 'shared');
+});
+
+test('classify: linked block used by exactly one → standalone', () => {
+  assert.equal(classifyVariantType({ link: { usedByCount: 1 }, locationDefault: null, legacyFilled: false }), 'standalone');
+});
+
+test('classify: no link but a location default → inherited', () => {
+  assert.equal(classifyVariantType({ link: null, locationDefault: { id: 'd' }, legacyFilled: true }), 'inherited');
+});
+
+test('classify: no link/default but legacy columns filled → legacy', () => {
+  assert.equal(classifyVariantType({ link: null, locationDefault: null, legacyFilled: true }), 'legacy');
+});
+
+test('classify: nothing anywhere → empty', () => {
+  assert.equal(classifyVariantType({ link: null, locationDefault: null, legacyFilled: false }), 'empty');
+});
+
+test('classify: a link always wins over a location default', () => {
+  assert.equal(classifyVariantType({ link: { usedByCount: 1 }, locationDefault: { id: 'd' }, legacyFilled: true }), 'standalone');
 });
 
 // ── Type vocabulary ──────────────────────────────────────────────────────────
