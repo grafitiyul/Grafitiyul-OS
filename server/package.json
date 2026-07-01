@@ -10,7 +10,8 @@
   },
   "scripts": {
     "dev": "node --watch src/index.js",
-    "test": "node --test src/**/*.test.js",
+    "test": "node --test \"src/**/*.test.js\" \"scripts/**/*.test.js\"",
+    "validate:migrations": "node scripts/validate-migrations.mjs",
     "start": "prisma migrate deploy && node src/index.js",
     "build": "prisma generate",
     "postinstall": "prisma generate",
@@ -30,5 +31,8 @@
     "express": "^4.21.2",
     "pdf-lib": "^1.17.1",
     "prisma": "^5.22.0"
+  },
+  "devDependencies": {
+    "pg-query-emscripten": "^5.1.0"
   }
 }

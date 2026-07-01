@@ -1,0 +1,19 @@
+#!/bin/sh
+# Pre-commit gate for Prisma migrations. Runs ONLY when a migration.sql is staged
+# (normal commits stay fast). Validates:
+#   - INSERT column count == value count (the P3009 / 42601 class)
+#   - obvious SQL syntax issues (real PostgreSQL grammar via libpg-query)
+#   - prisma validate
+#   - prisma generate
+# Activated via `git config core.hooksPath .githooks` (set by the root `prepare`
+# script on npm install). Bypass in a true emergency with: git commit --no-verify
+
+staged=$(git diff --cached --name-only --diff-filter=ACM | grep -E 'prisma/migrations/.*/migration\.sql$' || true)
+if [ -n "$staged" ]; then
+  echo "→ Validating staged Prisma migration(s) before commit…"
+  node server/scripts/validate-migrations.mjs $staged || {
+    echo "✗ Commit blocked by migration validation (fix above, or --no-verify if truly necessary)."
+    exit 1
+  }
+fi
+exit 0
