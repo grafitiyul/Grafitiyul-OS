@@ -72,6 +72,12 @@ router.put(
       data.meetingPointHe = req.body.meetingPointHe || null;
     if (req.body?.meetingPointEn !== undefined)
       data.meetingPointEn = req.body.meetingPointEn || null;
+    // City marketing content (rich HTML) — consumed by the quote composer's
+    // city_content block. Empty string → null so "no content" is consistent.
+    if (req.body?.marketingDescHe !== undefined)
+      data.marketingDescHe = req.body.marketingDescHe || null;
+    if (req.body?.marketingDescEn !== undefined)
+      data.marketingDescEn = req.body.marketingDescEn || null;
     // meetingPointImageId: string attaches, null detaches (R2 object is left in
     // place — orphan sweep is deferred).
     if (req.body?.meetingPointImageId !== undefined)

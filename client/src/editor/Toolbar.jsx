@@ -170,14 +170,14 @@ export default function Toolbar({ editor, setUploadState }) {
           Hebrew/English paragraphs (English text, URLs, code, etc.). */}
       <Group>
         <IconBtn
-          label="כיוון פסקה: מימין לשמאל"
+          label="כיוון כתיבה: מימין לשמאל (RTL)"
           active={editor.isActive({ dir: 'rtl' })}
           onClick={() => editor.chain().focus().setTextDirection('rtl').run()}
         >
           <DirSVG dir="rtl" />
         </IconBtn>
         <IconBtn
-          label="כיוון פסקה: משמאל לימין"
+          label="כיוון כתיבה: משמאל לימין (LTR)"
           active={editor.isActive({ dir: 'ltr' })}
           onClick={() => editor.chain().focus().setTextDirection('ltr').run()}
         >
@@ -777,24 +777,38 @@ function AlignSVG({ side }) {
     </svg>
   );
 }
-// Writing-direction icon: paragraph lines + a baseline arrow showing the
-// direction text flows. rtl → arrow points left, ltr → arrow points right.
+// Writing-direction icon — Word-style: a paragraph mark (¶) that anchors to the
+// starting edge, plus a prominent baseline arrow showing the direction text
+// flows. rtl → ¶ on the right, arrow points left; ltr → ¶ on the left, arrow
+// points right. The pilcrow + arrow reads clearly as "text direction" and is
+// visually distinct from the alignment buttons (which are plain lines).
 function DirSVG({ dir }) {
   const rtl = dir === 'rtl';
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="4" y1="6" x2="20" y2="6" />
-      <line x1="4" y1="11" x2="20" y2="11" />
-      <line x1={rtl ? 10 : 4} y1="16" x2={rtl ? 20 : 14} y2="16" />
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      {/* Paragraph mark (¶) rendered as text — the universal direction glyph. */}
+      <text
+        x={rtl ? 17 : 3}
+        y="13"
+        fontSize="14"
+        fontWeight="700"
+        fontFamily="Georgia, 'Times New Roman', serif"
+        fill="currentColor"
+        stroke="none"
+        textAnchor={rtl ? 'end' : 'start'}
+      >
+        ¶
+      </text>
+      {/* Baseline direction arrow — the dominant, unmistakable cue. */}
       {rtl ? (
         <>
-          <line x1="4" y1="21" x2="10" y2="21" />
-          <polyline points="6.5 19 4 21 6.5 23" />
+          <line x1="4" y1="19" x2="16" y2="19" />
+          <polyline points="7 16 4 19 7 22" />
         </>
       ) : (
         <>
-          <line x1="14" y1="21" x2="20" y2="21" />
-          <polyline points="17.5 19 20 21 17.5 23" />
+          <line x1="8" y1="19" x2="20" y2="19" />
+          <polyline points="17 16 20 19 17 22" />
         </>
       )}
     </svg>

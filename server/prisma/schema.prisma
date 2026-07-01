@@ -1112,12 +1112,12 @@ model ProductVariant {
   marketingDescHe       String? // rich HTML
   marketingDescEn       String?
   guideDescHe           String? // internal, rich HTML
-  guideDescEn           String?
+  guideDescEn           String? // internal, rich HTML
   durationHours         Float? // numeric source of truth; display derived
-  meetingPointHe        String?
-  meetingPointEn        String?
-  endingPointHe         String?
-  endingPointEn         String?
+  meetingPointHe        String? // rich HTML (long instructions, links, lists)
+  meetingPointEn        String? // rich HTML
+  endingPointHe         String? // rich HTML
+  endingPointEn         String? // rich HTML
   meetingPointImage     MediaFile?            @relation("VariantMeetingImage", fields: [meetingPointImageId], references: [id], onDelete: SetNull)
   meetingPointImageId   String?
   baseGuidePaymentMinor BigInt                @default(0)

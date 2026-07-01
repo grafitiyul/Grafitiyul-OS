@@ -101,6 +101,30 @@
 .rt-editor-prose li > p {
   margin: 0;
 }
+/* Writing direction on list nodes (set by the TextDirection extension) drives
+   marker side + indentation. Browsers already map the `dir` attribute to the
+   `direction` CSS property; these explicit rules make the intent obvious and
+   guarantee it in both the editor and the read-only render surface. Because
+   padding uses the logical `padding-inline-start`, the indent flips with the
+   direction automatically, and the list marker follows suit — Word-like. */
+.rt-editor-prose ul[dir='ltr'],
+.rt-editor-prose ol[dir='ltr'],
+.rt-editor-prose li[dir='ltr'],
+.gos-prose ul[dir='ltr'],
+.gos-prose ol[dir='ltr'],
+.gos-prose li[dir='ltr'] {
+  direction: ltr;
+  text-align: left;
+}
+.rt-editor-prose ul[dir='rtl'],
+.rt-editor-prose ol[dir='rtl'],
+.rt-editor-prose li[dir='rtl'],
+.gos-prose ul[dir='rtl'],
+.gos-prose ol[dir='rtl'],
+.gos-prose li[dir='rtl'] {
+  direction: rtl;
+  text-align: right;
+}
 
 .rt-editor-prose a {
   color: rgb(37 99 235);

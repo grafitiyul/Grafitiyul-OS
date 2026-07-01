@@ -117,7 +117,15 @@ export default function RichEditor({
       onChange?.(isEmptyHtml(html) ? '' : html);
     },
     onFocus: () => setFocused(true),
-    onBlur: () => setFocused(false),
+    // Flush-on-blur: emit the live editor HTML one last time when focus leaves.
+    // onUpdate already fires per keystroke, but a Save button click blurs the
+    // editor first — this guarantees the parent's saved value reflects the very
+    // latest content before any save handler that runs after the blur reads it.
+    onBlur: ({ editor }) => {
+      setFocused(false);
+      const html = editor.getHTML();
+      onChange?.(isEmptyHtml(html) ? '' : html);
+    },
     editorProps: {
       transformPastedHTML: sanitizePastedHtml,
       attributes: {
@@ -130,6 +138,14 @@ export default function RichEditor({
 
   useEffect(() => {
     if (!editor) return;
+    // Never overwrite the document while the user is typing. Under React 18
+    // automatic batching the `value` prop can transiently lag the live editor
+    // by one update; without this guard the effect would "resync" the editor
+    // back to the stale prop with emitUpdate:false — silently dropping the last
+    // keystrokes and, because no onChange fires, never telling the parent. Only
+    // sync from props when focus is elsewhere (external change: reload, revert,
+    // draft restore). Mirrors the proven guard in TitleEditor.
+    if (editor.isFocused) return;
     const incoming = normaliseIncoming(value);
     const current = editor.getHTML();
     if (incoming === current) return;

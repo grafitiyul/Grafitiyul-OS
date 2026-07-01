@@ -89,6 +89,8 @@ function LocationRow({ row, onChange }) {
   const [nameEn, setNameEn] = useState(row.nameEn || '');
   const [meetingHe, setMeetingHe] = useState(row.meetingPointHe || '');
   const [meetingEn, setMeetingEn] = useState(row.meetingPointEn || '');
+  const [marketingHe, setMarketingHe] = useState(row.marketingDescHe || '');
+  const [marketingEn, setMarketingEn] = useState(row.marketingDescEn || '');
   const [image, setImage] = useState(row.meetingPointImage || null);
   const [busy, setBusy] = useState(false);
 
@@ -99,6 +101,8 @@ function LocationRow({ row, onChange }) {
     setNameEn(row.nameEn || '');
     setMeetingHe(row.meetingPointHe || '');
     setMeetingEn(row.meetingPointEn || '');
+    setMarketingHe(row.marketingDescHe || '');
+    setMarketingEn(row.marketingDescEn || '');
     setImage(row.meetingPointImage || null);
     setEditing(true);
   }
@@ -113,6 +117,8 @@ function LocationRow({ row, onChange }) {
         nameEn: nameEn.trim() || null,
         meetingPointHe: meetingHe || null,
         meetingPointEn: meetingEn || null,
+        marketingDescHe: marketingHe || null,
+        marketingDescEn: marketingEn || null,
         meetingPointImageId: image?.id || null,
       });
       setEditing(false);
@@ -171,6 +177,17 @@ function LocationRow({ row, onChange }) {
             <label className="block text-[13px] font-medium text-gray-700 mb-1.5">נקודת מפגש (אנגלית)</label>
             <RichEditor value={meetingEn} onChange={setMeetingEn} ariaLabel="Meeting point (EN)" placeholder="Meeting point description…" minContentHeight={90} />
             <p className="text-[11px] text-gray-400 mt-1.5">לפסקה באנגלית השתמשו בכפתור כיוון LTR שבסרגל העריכה.</p>
+          </div>
+
+          {/* City marketing content — bilingual rich HTML, consumed by the quote
+              composer's city_content block. He/En parity. */}
+          <div>
+            <label className="block text-[13px] font-medium text-gray-700 mb-1.5">תוכן שיווקי לעיר (עברית)</label>
+            <RichEditor value={marketingHe} onChange={setMarketingHe} ariaLabel="תוכן שיווקי לעיר בעברית" placeholder="תוכן שיווקי שיופיע בהצעות מחיר…" minContentHeight={120} />
+          </div>
+          <div>
+            <label className="block text-[13px] font-medium text-gray-700 mb-1.5">City marketing content (EN)</label>
+            <RichEditor value={marketingEn} onChange={setMarketingEn} ariaLabel="City marketing content (EN)" placeholder="Marketing content for quotes…" minContentHeight={120} />
           </div>
 
           <div>

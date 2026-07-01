@@ -256,6 +256,9 @@ function VariantForm({ variant, onChange }) {
         <Field label="תיאור למדריך (עברית, פנימי)">
           <RichEditor value={form.guideDescHe} onChange={(h) => set('guideDescHe', h)} ariaLabel="variant guide he" minContentHeight={100} />
         </Field>
+        <Field label="Guide description (EN, internal)">
+          <RichEditor value={form.guideDescEn} onChange={(h) => set('guideDescEn', h)} ariaLabel="variant guide en" minContentHeight={100} placeholder="Write here..." />
+        </Field>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -263,11 +266,24 @@ function VariantForm({ variant, onChange }) {
           <input value={form.durationHours} onChange={(e) => set('durationHours', e.target.value)} inputMode="decimal" dir="ltr" placeholder="2.5" className={INPUT} />
           {form.durationHours !== '' && <div className="text-[12px] text-gray-500 mt-1">{durationDisplay(form.durationHours)}</div>}
         </Field>
-        <div />
-        <Field label="נקודת מפגש (עברית)"><input value={form.meetingPointHe} onChange={(e) => set('meetingPointHe', e.target.value)} className={INPUT} /></Field>
-        <Field label="Meeting point (EN)"><input value={form.meetingPointEn} onChange={(e) => set('meetingPointEn', e.target.value)} dir="ltr" className={INPUT} /></Field>
-        <Field label="נקודת סיום (עברית)"><input value={form.endingPointHe} onChange={(e) => set('endingPointHe', e.target.value)} className={INPUT} /></Field>
-        <Field label="Ending point (EN)"><input value={form.endingPointEn} onChange={(e) => set('endingPointEn', e.target.value)} dir="ltr" className={INPUT} /></Field>
+      </div>
+
+      {/* Meeting / ending points hold long instructions, links and lists — the
+          standardized rich editor, He/En parity. English uses the LTR direction
+          button in the toolbar so bullets/markers sit on the correct side. */}
+      <div className="grid grid-cols-1 gap-4">
+        <Field label="נקודת מפגש (עברית)">
+          <RichEditor value={form.meetingPointHe} onChange={(h) => set('meetingPointHe', h)} ariaLabel="variant meeting point he" minContentHeight={100} placeholder="תיאור נקודת המפגש, הוראות הגעה, קישורים…" />
+        </Field>
+        <Field label="Meeting point (EN)">
+          <RichEditor value={form.meetingPointEn} onChange={(h) => set('meetingPointEn', h)} ariaLabel="variant meeting point en" minContentHeight={100} placeholder="Meeting point, directions, links…" />
+        </Field>
+        <Field label="נקודת סיום (עברית)">
+          <RichEditor value={form.endingPointHe} onChange={(h) => set('endingPointHe', h)} ariaLabel="variant ending point he" minContentHeight={100} placeholder="תיאור נקודת הסיום…" />
+        </Field>
+        <Field label="Ending point (EN)">
+          <RichEditor value={form.endingPointEn} onChange={(h) => set('endingPointEn', h)} ariaLabel="variant ending point en" minContentHeight={100} placeholder="Ending point description…" />
+        </Field>
       </div>
 
       <Field label="תמונת נקודת מפגש">
