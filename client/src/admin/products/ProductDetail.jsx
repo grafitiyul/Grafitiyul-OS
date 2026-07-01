@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { useDirtyWhen } from '../../lib/dirtyForms.js';
 import SettingsChrome from '../settings/SettingsChrome.jsx';
@@ -14,7 +14,6 @@ const INPUT =
 
 export default function ProductDetail() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const [product, setProduct] = useState(null);
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -66,13 +65,13 @@ export default function ProductDetail() {
       setSaving(false);
     }
   }
-  async function removeProduct() {
-    if (!confirm('למחוק את המוצר? כל הוריאציות שלו יימחקו.')) return;
+  // Reversible archive only — the CRM UI never hard-deletes a product.
+  async function setProductActive(active) {
     try {
-      await api.products.remove(id);
-      navigate('/admin/settings/crm/products');
+      await api.products.update(id, { active });
+      await refresh();
     } catch (e) {
-      alert('שגיאה: ' + e.message);
+      alert('שגיאה: ' + (e.payload?.error || e.message));
     }
   }
   async function addVariant() {
@@ -124,7 +123,19 @@ export default function ProductDetail() {
         </label>
         <div className="flex gap-2 mt-4">
           <button onClick={save} disabled={saving} className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50">{saving ? 'שומר…' : 'שמור'}</button>
-          <button onClick={removeProduct} className="rounded-lg border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50">מחק מוצר</button>
+          {product.active ? (
+            <button
+              onClick={() => { if (confirm('להעביר את המוצר לארכיון? המוצר יישמר במלואו וניתן לשחזר בכל עת.')) setProductActive(false); }}
+              className="rounded-lg border border-amber-300 px-4 py-2 text-sm text-amber-700 hover:bg-amber-50">
+              העברה לארכיון
+            </button>
+          ) : (
+            <button
+              onClick={() => setProductActive(true)}
+              className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+              שחזור מארכיון
+            </button>
+          )}
         </div>
       </Card>
 
