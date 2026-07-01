@@ -13,6 +13,7 @@ import {
   convertLegacyToShared,
   detachVariant,
   getVariantSharedContentState,
+  getLinkCandidates,
 } from '../shared-content/sharedContent.js';
 
 // Shared Content Library HTTP surface (Slices 3 + 4). Thin routes over the
@@ -31,11 +32,17 @@ const STATUS = {
   shared_content_not_found: 404,
   variant_not_found: 404,
   has_references: 409,
+  type_conflict: 409,
 };
 function fail(res, e) {
   if (e?.code === 'P2025') return res.status(404).json({ error: 'not_found' });
   const s = STATUS[e?.code];
-  if (s) return res.status(s).json({ error: e.code, ...(e.count != null ? { count: e.count } : {}) });
+  if (s)
+    return res.status(s).json({
+      error: e.code,
+      ...(e.count != null ? { count: e.count } : {}),
+      ...(e.current ? { current: e.current } : {}),
+    });
   throw e;
 }
 
@@ -153,14 +160,27 @@ router.delete(
   }),
 );
 
-// Link an existing block to a variant (single-type link is replaced).
+// Candidate variants for linking this item (+ each variant's status for the
+// item's type). Powers the library "use in additional variants" panel.
+router.get(
+  '/:id/link-candidates',
+  handle(async (req, res) => {
+    const data = await getLinkCandidates(prisma, req.params.id, req.query.lang === 'en' ? 'en' : 'he');
+    if (!data) return res.status(404).json({ error: 'not_found' });
+    res.json(data);
+  }),
+);
+
+// Link an existing block to a variant. For a single-cardinality type that already
+// links a DIFFERENT block, this returns 409 type_conflict unless { replace:true }
+// — the UI must confirm first (never a silent overwrite).
 router.post(
   '/:id/link',
   handle(async (req, res) => {
     const variantId = String(req.body?.variantId || '');
     if (!variantId) return res.status(400).json({ error: 'variantId_required' });
     try {
-      await linkVariant(prisma, req.params.id, variantId);
+      await linkVariant(prisma, req.params.id, variantId, { replace: !!req.body?.replace });
       res.json(await getVariantSharedContentState(prisma, variantId));
     } catch (e) {
       fail(res, e);

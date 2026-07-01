@@ -160,13 +160,14 @@ export default function SharedContentLibrary() {
       {editing && (
         <SharedContentEditorDialog
           open
-          onClose={() => setEditing(null)}
+          onClose={() => { setEditing(null); refresh(); }}
           initial={editing === 'new' ? null : editing}
           locations={locations}
           usedByCount={editing !== 'new' ? editing.usedByCount || 0 : 0}
           showLocationDefault
           onSubmit={submitEditor}
           submitting={busy}
+          onLinksChanged={refresh}
         />
       )}
 

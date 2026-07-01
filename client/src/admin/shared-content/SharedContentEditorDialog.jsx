@@ -3,6 +3,7 @@ import Dialog from '../common/Dialog.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
 import { SingleImage } from '../products/ImageUploader.jsx';
 import { SHARED_CONTENT_TYPES, TYPE_LABEL } from './sharedContentMeta.js';
+import SharedContentVariantLinker from './SharedContentVariantLinker.jsx';
 
 const INPUT =
   'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
@@ -29,6 +30,7 @@ export default function SharedContentEditorDialog({
   showLocationDefault = false,
   onSubmit,
   submitting = false,
+  onLinksChanged,
 }) {
   const isEdit = !!initial?.id;
   const [type, setType] = useState(initial?.type || fixedType || 'meeting_point');
@@ -123,6 +125,14 @@ export default function SharedContentEditorDialog({
         </Field>
 
         {err && <div className="text-[13px] text-red-600">{err}</div>}
+
+        {isEdit && (
+          <SharedContentVariantLinker
+            sharedContentId={initial.id}
+            type={initial.type}
+            onChanged={onLinksChanged}
+          />
+        )}
       </div>
     </Dialog>
   );

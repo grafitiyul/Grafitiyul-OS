@@ -242,17 +242,40 @@ export async function deleteSharedContent(client, id) {
 
 // ── Variant linking / fork / detach (Slice 3) ────────────────────────────────
 
-// Link an existing block to a variant. For single-cardinality types the variant's
-// existing link of that type is replaced (one meeting/ending point per variant).
-export async function linkVariant(client, sharedContentId, variantId) {
+// PURE: decide what linking should do. 'noop' = already linked to this block;
+// 'conflict' = a single-cardinality type already links a DIFFERENT block and the
+// caller did not confirm replace (→ never overwrite silently); 'link' otherwise.
+export function linkDecision({ single, currentBlockId, targetId, replace }) {
+  if (currentBlockId === targetId) return 'noop';
+  if (single && currentBlockId && !replace) return 'conflict';
+  return 'link';
+}
+
+// Link an existing block to a variant. For single-cardinality types the variant
+// may hold only one block of that type: linking a DIFFERENT one requires an
+// explicit `replace` (else a `type_conflict` is thrown, carrying the current
+// block so the UI can confirm). Content is never copied — only a reference row.
+export async function linkVariant(client, sharedContentId, variantId, { replace = false } = {}) {
   const sc = await client.sharedContent.findUnique({ where: { id: sharedContentId }, select: { id: true, type: true } });
   if (!sc) throw err('shared_content_not_found');
-  await client.$transaction(async (tx) => {
-    if (isSingleType(sc.type)) {
-      const existing = await tx.productVariantSharedContent.findMany({
+  const single = isSingleType(sc.type);
+
+  const existing = single
+    ? await client.productVariantSharedContent.findMany({
         where: { productVariantId: variantId, sharedContent: { type: sc.type } },
-        select: { id: true, sharedContentId: true },
-      });
+        include: { sharedContent: { select: { id: true, internalName: true } } },
+      })
+    : [];
+  const current = existing.find((e) => e.sharedContentId !== sharedContentId);
+  const decision = linkDecision({ single, currentBlockId: current?.sharedContentId || null, targetId: sharedContentId, replace });
+  if (decision === 'conflict') {
+    throw err('type_conflict', {
+      current: { id: current.sharedContent.id, internalName: current.sharedContent.internalName },
+    });
+  }
+
+  await client.$transaction(async (tx) => {
+    if (single) {
       const toRemove = existing.filter((e) => e.sharedContentId !== sharedContentId).map((e) => e.id);
       if (toRemove.length) await tx.productVariantSharedContent.deleteMany({ where: { id: { in: toRemove } } });
     }
@@ -284,7 +307,8 @@ export async function forkForVariant(client, sharedContentId, variantId) {
       active: true,
     },
   });
-  await linkVariant(client, clone.id, variantId);
+  // Fork intentionally repoints THIS variant from the original to the clone.
+  await linkVariant(client, clone.id, variantId, { replace: true });
   return getSharedContent(client, clone.id);
 }
 
@@ -371,4 +395,64 @@ export async function getVariantSharedContentState(client, variantId, types = ['
     };
   }
   return { variantId, locationId: variant.locationId, types: out };
+}
+
+// ── Link candidates (Library → "use in additional variants") ─────────────────
+
+// PURE: shape the candidate list for one shared item + type. Each variant reports
+// its current status for THAT type so the UI can warn before overwriting:
+//   linkedToThis  — already references this exact item (shown as "linked")
+//   currentBlockId/Name — a DIFFERENT block it currently uses (→ replace warning)
+//   legacyFilled  — still has legacy columns for this type (→ "will now use shared")
+export function buildLinkCandidates({ variants, links, sharedContentId, type, lang = 'he' }) {
+  const pick = (he, en) => (lang === 'en' ? en || he : he) || null;
+  const isMeeting = type === 'meeting_point';
+  const isEnding = type === 'ending_point';
+  const byVariant = new Map();
+  for (const l of links) byVariant.set(l.productVariantId, l);
+
+  return variants
+    .map((v) => {
+      const l = byVariant.get(v.id);
+      const legacyFilled = isMeeting
+        ? !!(filled(v.meetingPointHe) || filled(v.meetingPointEn) || v.meetingPointImageId)
+        : isEnding
+          ? !!(filled(v.endingPointHe) || filled(v.endingPointEn))
+          : false;
+      const currentBlockId = l?.sharedContentId || null;
+      return {
+        productVariantId: v.id,
+        productId: v.productId ?? v.product?.id ?? null,
+        productName: pick(v.product?.nameHe, v.product?.nameEn),
+        locationId: v.locationId ?? v.location?.id ?? null,
+        locationName: pick(v.location?.nameHe, v.location?.nameEn),
+        variantActive: v.active !== false,
+        currentBlockId,
+        currentBlockName: l?.sharedContent?.internalName || null,
+        linkedToThis: currentBlockId === sharedContentId,
+        legacyFilled,
+      };
+    })
+    .sort(
+      (a, b) =>
+        String(a.productName || '').localeCompare(String(b.productName || '')) ||
+        String(a.locationName || '').localeCompare(String(b.locationName || '')),
+    );
+}
+
+// Loader: all variants + their status for this item's type. Read-only.
+export async function getLinkCandidates(client, sharedContentId, lang = 'he') {
+  const sc = await client.sharedContent.findUnique({ where: { id: sharedContentId }, select: { id: true, type: true } });
+  if (!sc) return null;
+  const variants = await client.productVariant.findMany({
+    include: {
+      product: { select: { id: true, nameHe: true, nameEn: true } },
+      location: { select: { id: true, nameHe: true, nameEn: true } },
+    },
+  });
+  const links = await client.productVariantSharedContent.findMany({
+    where: { sharedContent: { type: sc.type } },
+    include: { sharedContent: { select: { id: true, internalName: true } } },
+  });
+  return { sharedContentId, type: sc.type, variants: buildLinkCandidates({ variants, links, sharedContentId, type: sc.type, lang }) };
 }

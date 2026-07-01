@@ -470,7 +470,10 @@ export const api = {
     update: (id, data) => request(`/api/shared-content/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     remove: (id) => request(`/api/shared-content/${id}`, { method: 'DELETE' }),
     whereUsed: (id, lang = 'he') => request(`/api/shared-content/${id}/where-used?lang=${lang}`),
-    link: (id, variantId) => request(`/api/shared-content/${id}/link`, { method: 'POST', body: JSON.stringify({ variantId }) }),
+    linkCandidates: (id, lang = 'he') => request(`/api/shared-content/${id}/link-candidates?lang=${lang}`),
+    // replace=true is required to overwrite a variant's existing single-type link.
+    link: (id, variantId, replace = false) =>
+      request(`/api/shared-content/${id}/link`, { method: 'POST', body: JSON.stringify({ variantId, replace }) }),
     fork: (id, variantId) => request(`/api/shared-content/${id}/fork`, { method: 'POST', body: JSON.stringify({ variantId }) }),
     variantState: (variantId) => request(`/api/shared-content/variant/${variantId}`),
     createForVariant: (variantId, data) => request(`/api/shared-content/variant/${variantId}`, { method: 'POST', body: JSON.stringify(data) }),

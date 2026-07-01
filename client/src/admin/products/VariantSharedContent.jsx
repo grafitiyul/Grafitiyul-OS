@@ -62,8 +62,29 @@ export default function VariantSharedContent({ variant, locations = [] }) {
   }
 
   async function pickExisting(id) {
-    await run(() => api.sharedContent.link(id, variant.id));
-    setDialog(null);
+    setBusy(true);
+    try {
+      await api.sharedContent.link(id, variant.id);
+      await refresh();
+      setDialog(null);
+    } catch (e) {
+      if (e.payload?.error === 'type_conflict') {
+        // Never overwrite silently — confirm the replace, then retry.
+        if (confirm(`הוריאציה כבר משתמשת ב"${e.payload.current?.internalName}" עבור סוג זה. להחליף?`)) {
+          try {
+            await api.sharedContent.link(id, variant.id, true);
+            await refresh();
+            setDialog(null);
+          } catch (e2) {
+            alert('שגיאה: ' + (e2.payload?.error || e2.message));
+          }
+        }
+      } else {
+        alert('שגיאה: ' + (e.payload?.error || e.message));
+      }
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (loading) return <div className="text-[12px] text-gray-400">טוען תוכן משותף…</div>;
@@ -97,13 +118,14 @@ export default function VariantSharedContent({ variant, locations = [] }) {
       {dialog && dialog.kind !== 'link' && (
         <SharedContentEditorDialog
           open
-          onClose={() => setDialog(null)}
+          onClose={() => { setDialog(null); refresh(); }}
           fixedType={dialog.type}
           initial={dialog.kind === 'edit' ? dialog.block : null}
           locations={locations}
           usedByCount={dialog.kind === 'edit' ? state.types[dialog.type]?.usedByCount || 0 : 0}
           onSubmit={submitEditor}
           submitting={busy}
+          onLinksChanged={refresh}
         />
       )}
 
