@@ -38,6 +38,50 @@ export async function productHasVariants(productId) {
   return n > 0;
 }
 
+// PURE deletion verdict (no DB) so the safety rule is unit-testable. A Product is
+// blocked from HARD delete when it carries COMMERCIAL history — deals or quote
+// lines referencing it (or its variants). Those relations are onDelete:SetNull,
+// so a hard delete would silently detach real deals/quotes from their product;
+// we refuse and steer the user to Archive instead. Catalog-only relations
+// (variants, price rules) cascade and are surfaced as `cascades`, not blockers.
+export function productDeletionVerdict({ deals = 0, quoteLines = 0 } = {}) {
+  const blockers = [];
+  if (deals > 0) blockers.push({ kind: 'deals', count: deals });
+  if (quoteLines > 0) blockers.push({ kind: 'quoteLines', count: quoteLines });
+  return { blockers, canHardDelete: blockers.length === 0 };
+}
+
+// Full relations audit for one product: counts + the pure verdict. Returns null
+// when the product doesn't exist.
+async function productDeletionAudit(id) {
+  const product = await prisma.product.findUnique({
+    where: { id },
+    select: { id: true, nameHe: true, active: true, variants: { select: { id: true } } },
+  });
+  if (!product) return null;
+  const variantIds = product.variants.map((v) => v.id);
+  const inVariants = variantIds.length ? { in: variantIds } : undefined;
+  const [productPriceRules, variantPriceRules, deals, quoteLines] = await Promise.all([
+    prisma.priceRule.count({ where: { productId: id } }),
+    inVariants ? prisma.priceRule.count({ where: { productVariantId: inVariants } }) : 0,
+    prisma.deal.count({
+      where: { OR: [{ productId: id }, ...(inVariants ? [{ productVariantId: inVariants }] : [])] },
+    }),
+    inVariants ? prisma.quoteLine.count({ where: { productVariantId: inVariants } }) : 0,
+  ]);
+  const priceRules = productPriceRules + variantPriceRules;
+  const verdict = productDeletionVerdict({ deals, quoteLines });
+  return {
+    productId: id,
+    nameHe: product.nameHe,
+    active: product.active,
+    counts: { variants: variantIds.length, priceRules, deals, quoteLines },
+    // What a hard delete would permanently remove (cascade), for the confirmation UI.
+    cascades: { variants: variantIds.length, priceRules },
+    ...verdict,
+  };
+}
+
 // ---------- Products ----------
 
 router.get(
@@ -136,11 +180,32 @@ router.put(
   }),
 );
 
+// Preflight: what references this product, and can it be hard-deleted? The UI
+// reads this BEFORE showing the delete/archive choice, so nothing is destroyed
+// blindly.
+router.get(
+  '/:id/relations',
+  handle(async (req, res) => {
+    const audit = await productDeletionAudit(req.params.id);
+    if (!audit) return res.status(404).json({ error: 'not_found' });
+    res.json(audit);
+  }),
+);
+
 router.delete(
   '/:id',
   handle(async (req, res) => {
-    // Variants cascade. MediaFiles are NOT deleted here (shared metadata; R2
-    // cleanup happens via the media-files route / a future sweep).
+    // Never delete blindly: re-run the audit server-side (the client preflight is
+    // convenience, not trust). A product with commercial history (deals / quote
+    // lines) is refused — the caller must Archive (PUT active:false) instead.
+    const audit = await productDeletionAudit(req.params.id);
+    if (!audit) return res.status(404).json({ error: 'not_found' });
+    if (!audit.canHardDelete) {
+      return res.status(409).json({ error: 'has_commercial_references', audit });
+    }
+    // Safe path: no commercial history. Variants + price rules cascade (surfaced
+    // as `audit.cascades` and confirmed in the UI). MediaFiles are NOT deleted
+    // here (shared metadata; R2 cleanup happens via the media-files route).
     await prisma.product.delete({ where: { id: req.params.id } });
     res.status(204).end();
   }),

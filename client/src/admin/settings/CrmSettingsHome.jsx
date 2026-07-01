@@ -1,4 +1,4 @@
-import BackButton from '../common/BackButton.jsx';
+import SettingsChrome from './SettingsChrome.jsx';
 import { CategoryGrid, CategoryCard } from './cards.jsx';
 
 // CRM Settings category page — lists the CRM configuration sub-screens. Only
@@ -8,7 +8,7 @@ export default function CrmSettingsHome() {
   return (
     <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-4xl mx-auto">
       <header className="mb-8">
-        <BackButton to="/admin/settings" label="חזרה להגדרות" />
+        <SettingsChrome />
         <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">
           הגדרות CRM
         </h1>

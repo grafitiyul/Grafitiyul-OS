@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api.js';
-import BackButton from '../common/BackButton.jsx';
+import SettingsChrome from '../settings/SettingsChrome.jsx';
 import { formatMinor, toMinor, minorToInput } from '../../lib/money.js';
 
 // Business-facing Pricing editor (Slice C). The PRIMARY pricing experience is
@@ -156,7 +156,7 @@ export default function PricingBoard() {
     <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-4xl mx-auto space-y-5">
       <header className="flex items-start justify-between gap-3">
         <div>
-          <BackButton to="/admin/settings/crm" label="חזרה להגדרות CRM" />
+          <SettingsChrome />
           <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">תמחור</h1>
           <p className="text-[15px] text-gray-500 mt-1.5">
             נהלו מחירים למוצרים. בחרו גרסה, עברו בין הלשוניות, והוסיפו כרטיסי תמחור.

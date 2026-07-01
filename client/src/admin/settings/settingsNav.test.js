@@ -1,0 +1,77 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  getTrail,
+  parentOf,
+  resolveNode,
+  recordSettingsVisit,
+  previousSettingsPath,
+  __resetSettingsHistory,
+} from './settingsNav.js';
+
+// ── breadcrumb trail ─────────────────────────────────────────────────────────
+
+test('trail for Main Products is root → CRM → Products → Main Products', () => {
+  const trail = getTrail('/admin/settings/crm/products').map((c) => c.label);
+  assert.deepEqual(trail, ['הגדרות', 'הגדרות CRM', 'מוצרים', 'מוצרים ראשיים']);
+});
+
+test('dynamic product page uses the supplied label as the last crumb', () => {
+  const trail = getTrail('/admin/settings/crm/products/abc123', 'סיור גרפיטי').map((c) => c.label);
+  assert.deepEqual(trail, ['הגדרות', 'הגדרות CRM', 'מוצרים', 'מוצרים ראשיים', 'סיור גרפיטי']);
+});
+
+test('unknown settings path yields no multi-crumb trail', () => {
+  assert.equal(getTrail('/admin/settings/crm/does-not-exist').length, 0);
+});
+
+// ── parent fallback ──────────────────────────────────────────────────────────
+
+test('Main Products parent is the Products area (the reported bug)', () => {
+  assert.equal(parentOf('/admin/settings/crm/products'), '/admin/settings/crm/products-area');
+});
+
+test('product detail parent is the products list', () => {
+  assert.equal(parentOf('/admin/settings/crm/products/abc'), '/admin/settings/crm/products');
+});
+
+test('unknown path falls back to settings root', () => {
+  assert.equal(parentOf('/admin/settings/crm/nope'), '/admin/settings');
+});
+
+test('resolveNode returns null for unknown, node for known', () => {
+  assert.equal(resolveNode('/admin/settings/crm/nope'), null);
+  assert.equal(resolveNode('/admin/settings/crm').label, 'הגדרות CRM');
+});
+
+// ── in-session history ───────────────────────────────────────────────────────
+
+test('back returns to the actual previous settings location when available', () => {
+  __resetSettingsHistory();
+  recordSettingsVisit('/admin/settings/crm');
+  recordSettingsVisit('/admin/settings/crm/products-area');
+  recordSettingsVisit('/admin/settings/crm/products');
+  assert.equal(previousSettingsPath('/admin/settings/crm/products'), '/admin/settings/crm/products-area');
+});
+
+test('no previous visit → null (caller uses the parent fallback)', () => {
+  __resetSettingsHistory();
+  recordSettingsVisit('/admin/settings/crm/products'); // deep link
+  assert.equal(previousSettingsPath('/admin/settings/crm/products'), null);
+});
+
+test('returning to an earlier page trims the stack (no forward loop)', () => {
+  __resetSettingsHistory();
+  recordSettingsVisit('/admin/settings/crm');
+  recordSettingsVisit('/admin/settings/crm/products-area');
+  recordSettingsVisit('/admin/settings/crm/products');
+  recordSettingsVisit('/admin/settings/crm/products-area'); // went back
+  assert.equal(previousSettingsPath('/admin/settings/crm/products-area'), '/admin/settings/crm');
+});
+
+test('consecutive duplicate visits are ignored', () => {
+  __resetSettingsHistory();
+  recordSettingsVisit('/admin/settings/crm');
+  recordSettingsVisit('/admin/settings/crm');
+  assert.equal(previousSettingsPath('/admin/settings/crm'), null);
+});

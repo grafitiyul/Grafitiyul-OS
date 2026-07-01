@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { useDirtyWhen } from '../../lib/dirtyForms.js';
-import BackButton from '../common/BackButton.jsx';
+import SettingsChrome from '../settings/SettingsChrome.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
 import { minorToInput, toMinor, formatMinor } from '../../lib/money.js';
 import { durationDisplay } from '../../lib/duration.js';
@@ -97,7 +97,7 @@ export default function ProductDetail() {
 
   return (
     <div className="mx-auto max-w-3xl px-5 py-8 lg:px-8 lg:py-10 space-y-6">
-      <BackButton to="/admin/settings/crm/products" label="חזרה למוצרים" />
+      <SettingsChrome currentLabel={product?.nameHe} />
 
       {/* Product fields */}
       <Card title="פרטי המוצר">

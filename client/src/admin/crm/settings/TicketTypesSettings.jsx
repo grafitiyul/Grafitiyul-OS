@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../../lib/api.js';
-import BackButton from '../../common/BackButton.jsx';
+import SettingsChrome from '../../settings/SettingsChrome.jsx';
 import ReorderableList from '../../common/ReorderableList.jsx';
 import { SettingsCard } from './catalogKit.jsx';
 
@@ -72,7 +72,7 @@ export default function TicketTypesSettings() {
   return (
     <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-3xl mx-auto">
       <header className="mb-8">
-        <BackButton to="/admin/settings/crm" label="חזרה להגדרות CRM" />
+        <SettingsChrome />
         <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">סוגי כרטיסים</h1>
         <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed">
           קטלוג סוגי הכרטיסים לתמחור לפי כרטיס (למשל מבוגר / ילד). נתון לעריכה מלאה — אלה אינם קבועים בקוד.

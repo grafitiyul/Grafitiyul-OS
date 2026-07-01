@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
-import BackButton from '../common/BackButton.jsx';
+import SettingsChrome from '../settings/SettingsChrome.jsx';
 import ReorderableList from '../common/ReorderableList.jsx';
 import { SettingsCard } from '../crm/settings/catalogKit.jsx';
 import { formatMinor, toMinor, minorToInput } from '../../lib/money.js';
@@ -94,7 +94,7 @@ export default function PricingSettings() {
   return (
     <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-4xl mx-auto space-y-6">
       <header>
-        <BackButton to="/admin/settings/crm/pricing" label="חזרה לתמחור" />
+        <SettingsChrome />
         <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">תמחור — מצב מתקדם</h1>
         <p className="text-[15px] text-gray-500 mt-1.5">
           תצוגת מנוע גולמית: חוקי תמחור, ברירות מחדל לפי ארגון, ומחשבון בדיקה. למסך העסקי חזרו לתמחור.

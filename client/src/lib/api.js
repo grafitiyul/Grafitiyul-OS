@@ -443,6 +443,8 @@ export const api = {
     get: (id) => request(`/api/products/${id}`),
     create: (data) => request('/api/products', { method: 'POST', body: JSON.stringify(data) }),
     update: (id, data) => request(`/api/products/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    // Deletion preflight: relation counts + { blockers, canHardDelete, cascades }.
+    relations: (id) => request(`/api/products/${id}/relations`),
     remove: (id) => request(`/api/products/${id}`, { method: 'DELETE' }),
     addVariant: (id, data) => request(`/api/products/${id}/variants`, { method: 'POST', body: JSON.stringify(data) }),
     updateVariant: (variantId, data) => request(`/api/products/variants/${variantId}`, { method: 'PUT', body: JSON.stringify(data) }),

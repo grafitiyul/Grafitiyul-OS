@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../../lib/api.js';
-import BackButton from '../../common/BackButton.jsx';
+import SettingsChrome from '../../settings/SettingsChrome.jsx';
 import ReorderableList from '../../common/ReorderableList.jsx';
 import { SettingsCard } from './catalogKit.jsx';
 import { SingleImage } from '../../products/ImageUploader.jsx';
@@ -109,7 +109,7 @@ export default function QuoteLayoutSettings() {
   return (
     <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-3xl mx-auto">
       <header className="mb-6">
-        <BackButton to="/admin/settings/crm" label="חזרה להגדרות CRM" />
+        <SettingsChrome />
         <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">
           מבנה הצעת מחיר
         </h1>

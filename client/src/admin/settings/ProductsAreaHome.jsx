@@ -1,4 +1,4 @@
-import BackButton from '../common/BackButton.jsx';
+import SettingsChrome from './SettingsChrome.jsx';
 import { CategoryGrid, CategoryCard } from './cards.jsx';
 
 // Products area — the "what we sell" workspace hub. Groups the catalog-facing
@@ -9,7 +9,7 @@ export default function ProductsAreaHome() {
   return (
     <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-4xl mx-auto">
       <header className="mb-8">
-        <BackButton to="/admin/settings/crm" label="חזרה להגדרות CRM" />
+        <SettingsChrome />
         <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">מוצרים</h1>
         <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed">
           כל מה שמגדיר את מה שאנחנו מוכרים: מוצרים, מיקומים ותוספות.

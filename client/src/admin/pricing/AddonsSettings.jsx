@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
-import BackButton from '../common/BackButton.jsx';
+import SettingsChrome from '../settings/SettingsChrome.jsx';
 import ReorderableList from '../common/ReorderableList.jsx';
 import { SettingsCard } from '../crm/settings/catalogKit.jsx';
 import { formatMinor, toMinor, minorToInput } from '../../lib/money.js';
@@ -80,7 +80,7 @@ export default function AddonsSettings() {
   return (
     <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-3xl mx-auto">
       <header className="mb-6">
-        <BackButton to="/admin/settings/crm" label="חזרה להגדרות CRM" />
+        <SettingsChrome />
         <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">תוספות</h1>
         <p className="text-[15px] text-gray-500 mt-1.5">
           תוספות הן פריטים נמכרים שאינם מוצרים (הסעה, ביטוח, חומרים…). לכל תוספת מחיר ברירת מחדל ואפשר להוסיף עקיפות לפי מחירון.

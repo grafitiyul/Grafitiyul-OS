@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../../lib/api.js';
-import BackButton from '../../common/BackButton.jsx';
+import SettingsChrome from '../../settings/SettingsChrome.jsx';
 import ReorderableList from '../../common/ReorderableList.jsx';
 import { SettingsCard } from './catalogKit.jsx';
 
@@ -44,7 +44,7 @@ export default function SabbathHoursSettings() {
   return (
     <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-4xl mx-auto space-y-6">
       <header>
-        <BackButton to="/admin/settings/crm" label="חזרה להגדרות CRM" />
+        <SettingsChrome />
         <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">שעות שבת וחג</h1>
         <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed">
           הגדרת חלונות הזמן שמגדירים מתי תאריך/שעה נחשבים שבת / חג / ערב חג. בהמשך, תוספת שבת/חג בכרטיסי התמחור תחול אוטומטית לפי ההגדרות כאן.
