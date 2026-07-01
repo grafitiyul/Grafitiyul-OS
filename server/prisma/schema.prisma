@@ -1052,6 +1052,9 @@ model MediaFile {
   variantGalleryLinks   ProductVariantImage[]
   locationMeetingImages Location[]            @relation("LocationMeetingImage")
   quoteDocumentRenders  QuoteDocumentRender[]
+  // Shared Content Library items that use this file as their image (by reference;
+  // no byte copy — a MediaFile is already reusable-by-reference).
+  sharedContentImages   SharedContent[]
 }
 
 // Simple location catalog (e.g. "תל אביב - פלורנטין"). No City/Area split.
@@ -1078,6 +1081,9 @@ model Location {
   updatedAt           DateTime         @updatedAt
   variants            ProductVariant[]
   deals               Deal[]
+  // Shared Content Library items anchored to this location (e.g. the location's
+  // default meeting point). Back-relation only; see SharedContent.location.
+  sharedContent       SharedContent[]
 
   @@index([sortOrder])
 }
@@ -1135,6 +1141,9 @@ model ProductVariant {
   priceRules            PriceRule[]
   deals                 Deal[]
   quoteLines            QuoteLine[]
+  // Explicit references to Shared Content Library items (meeting point, ending
+  // point, …). Content is never copied onto the variant — see ProductVariantSharedContent.
+  sharedContentLinks    ProductVariantSharedContent[]
 
   @@unique([productId, locationId])
   @@index([productId])
@@ -1824,4 +1833,78 @@ model QuoteDocumentRender {
 
   @@index([quoteDocumentId])
   @@index([mediaFileId])
+}
+
+// ============================================================================
+// Shared Content Library — platform-wide reusable content (Slice 1: foundation)
+// ============================================================================
+//
+// SINGLE SOURCE OF TRUTH for reusable content that many consumers reference
+// instead of duplicating. First consumer = Product Variants (meeting point,
+// ending point, …); designed to grow into a platform-wide library (any future
+// entity can reference the same rows through its own explicit join table).
+//
+// Design mirrors patterns ALREADY proven in this project:
+//   * QuoteSection  — bilingual rich HTML classified by a validated string
+//   * ContentItem   — reusable content referenced by many consumers by id
+//   * ProductVariantImage — explicit per-owner join (NOT polymorphic)
+//
+// Locked principles (see docs/architecture/GOS-quote-content-model.md + audit):
+//   * Explicit references, never copying. Editing a row updates every linked
+//     DRAFT consumer automatically (they read it by reference).
+//   * Produced quotes stay frozen forever via QuoteDocument.renderModelSnapshot —
+//     they never re-read SharedContent.
+//   * "Update only this variant" = FORK (clone into a new row + repoint the link),
+//     never a silent copy. There is NO background synchronization.
+//
+// `type` is validated at the API against src/shared-content/sharedContentTypes.js
+// (no Postgres enum — project convention). `isLocationDefault` marks the row a
+// location's default for its (location, type): the fallback used when a variant
+// has no explicit link (making today's silent meeting-point fallback EXPLICIT and
+// reference-counted). `updatedById` is a loose actor id (no User model yet, same
+// as MediaFile.uploadedById / HolidayRule.reviewedBy). `active=false` = archived.
+model SharedContent {
+  id                String                        @id @default(cuid())
+  type              String // meeting_point | ending_point | arrival_instructions | walking_notes | safety | map | custom
+  internalName      String // admin-facing library name (never shown to customers)
+  description       String? // optional internal note
+  bodyHe            String? // rich HTML (shared RichEditor)
+  bodyEn            String? // rich HTML
+  image             MediaFile?                    @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  imageId           String?
+  mapUrl            String? // reserved (embedded map); not rendered in V1
+  location          Location?                     @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  locationId        String?
+  isLocationDefault Boolean                       @default(false)
+  active            Boolean                       @default(true)
+  sortOrder         Int                           @default(0)
+  updatedById       String? // loose actor id (no User model yet)
+  createdAt         DateTime                      @default(now())
+  updatedAt         DateTime                      @updatedAt
+  variantLinks      ProductVariantSharedContent[]
+
+  @@index([type])
+  @@index([locationId])
+  @@index([locationId, type])
+  @@index([active, sortOrder])
+}
+
+// Explicit reference: a Product Variant uses a Shared Content row. Mirrors
+// ProductVariantImage. The block's `type` lives on SharedContent, not here, so
+// resolution is "the linked row whose type = X". onDelete:
+//   * productVariant → Cascade (deleting a variant drops its links)
+//   * sharedContent  → Restrict (a referenced row is NOT silently deletable;
+//     deletion is a deliberate library operation guarded by "where used")
+// V1 enforces at-most-one link per single-cardinality type at the API layer.
+model ProductVariantSharedContent {
+  id               String         @id @default(cuid())
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
+  productVariantId String
+  sharedContent    SharedContent  @relation(fields: [sharedContentId], references: [id], onDelete: Restrict)
+  sharedContentId  String
+  sortOrder        Int            @default(0)
+
+  @@unique([productVariantId, sharedContentId])
+  @@index([productVariantId])
+  @@index([sharedContentId])
 }
