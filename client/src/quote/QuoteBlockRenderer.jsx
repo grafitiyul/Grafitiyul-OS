@@ -8,8 +8,10 @@ import { formatMinor } from '../lib/money.js';
 
 export const TEAL = '#10a99b';
 
+// Rich text: logical alignment/padding (text-start, ps-*) so it follows the
+// document direction (RTL → right, LTR → left) instead of being hard-right.
 const RICH =
-  'text-[16.5px] leading-[2] text-gray-700 text-right [&_p]:mb-4 [&_ul]:list-disc [&_ul]:pr-6 [&_ul]:mb-4 [&_ol]:list-decimal [&_ol]:pr-6 [&_li]:mb-1.5 [&_a]:text-teal-700 [&_a]:underline [&_h2]:text-lg [&_h3]:text-[17px] [&_h3]:font-semibold [&_strong]:font-semibold';
+  'text-[16.5px] leading-[2] text-gray-700 text-start [&_p]:mb-4 [&_ul]:list-disc [&_ul]:ps-6 [&_ul]:mb-4 [&_ol]:list-decimal [&_ol]:ps-6 [&_li]:mb-1.5 [&_a]:text-teal-700 [&_a]:underline [&_h2]:text-lg [&_h3]:text-[17px] [&_h3]:font-semibold [&_strong]:font-semibold';
 
 const T = {
   he: {
@@ -18,6 +20,7 @@ const T = {
     paymentTerm: 'תנאי תשלום', paymentMethod: 'אמצעי תשלום', total: 'סה״כ',
     vat: { included: 'כולל מע״מ', excluded: 'לפני מע״מ', exempt: 'פטור', inherit: '' },
     introPlaceholder: '— הוסיפו פתיח אישי ללקוח —',
+    hours: 'שעות', noContent: '— אין תוכן —', signaturePlaceholder: 'אזור חתימה / אישור — ייבנה בשלב הבא',
   },
   en: {
     contact: 'Contact', org: 'Organization', by: 'By', date: 'Date',
@@ -25,6 +28,7 @@ const T = {
     paymentTerm: 'Payment terms', paymentMethod: 'Payment method', total: 'Total',
     vat: { included: 'incl. VAT', excluded: 'excl. VAT', exempt: 'VAT exempt', inherit: '' },
     introPlaceholder: '— add a personal introduction —',
+    hours: 'hours', noContent: '— no content —', signaturePlaceholder: 'Signature / approval area — coming soon',
   },
 };
 
@@ -54,19 +58,19 @@ function fmtDate(v, lang) {
   try { return d.toLocaleDateString(lang === 'en' ? 'en-GB' : 'he-IL'); } catch { return String(v); }
 }
 
-function Empty() {
-  return <p className="text-right text-sm italic text-gray-300">— אין תוכן —</p>;
+function Empty({ lang }) {
+  return <p className="text-start text-sm italic text-gray-300">{tt(lang).noContent}</p>;
 }
-function Html({ html }) {
-  if (!html || !String(html).trim()) return <Empty />;
+function Html({ html, lang }) {
+  if (!html || !String(html).trim()) return <Empty lang={lang} />;
   return <div className={RICH} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-// Right-aligned, RTL-first section heading.
+// Section heading — aligned to the reading start (right in RTL, left in LTR).
 function Heading({ children }) {
   if (!children) return null;
   return (
-    <h2 className="mb-7 text-right text-[30px] font-extrabold leading-tight tracking-tight" style={{ color: TEAL }}>
+    <h2 className="mb-7 text-start text-[30px] font-extrabold leading-tight tracking-tight" style={{ color: TEAL }}>
       {children}
     </h2>
   );
@@ -117,8 +121,8 @@ function Cover({ d, lang }) {
             <Meta icon="🎨" label={t.by} value={d.by} />
           </div>
         </div>
-        {/* bottom: title — the primary element */}
-        <div className="text-right text-white">
+        {/* bottom: title — the primary element (aligned to reading start) */}
+        <div className="text-start text-white">
           <div className="mb-5 h-1.5 w-16 rounded-full" style={{ background: TEAL }} />
           <h1 className="text-[56px] font-black leading-[1.02] drop-shadow-lg sm:text-[72px]">{title}</h1>
           {d.productName && <p className="mt-4 text-[24px] font-medium text-white/90 drop-shadow sm:text-[28px]">{d.productName}</p>}
@@ -138,7 +142,7 @@ const TECH_FIELD_DEFS = {
   date: (t, d, lang) => ['📅', t.tourDate, fmtDate(d.tourDate, lang)],
   time: (t, d) => ['🕒', t.time, d.tourTime],
   participants: (t, d) => ['👥', t.participants, d.participants],
-  duration: (t, d) => ['⏳', t.duration, d.durationHours ? `~${d.durationHours} שעות` : null],
+  duration: (t, d) => ['⏳', t.duration, d.durationHours ? `~${d.durationHours} ${t.hours}` : null],
   language: (t, d, lang) => ['🌍', t.language, d.tourLanguage ? LANG_NAMES[lang]?.[d.tourLanguage] || d.tourLanguage : null],
 };
 const TECH_DEFAULT_ORDER = ['city', 'date', 'time', 'participants', 'duration', 'language'];
@@ -177,7 +181,7 @@ function PricingCard({ d, lang }) {
             {l.quantity > 1 && <div className="mt-0.5 text-[13px] text-gray-400" dir="ltr">{l.quantity} × {formatMinor(l.unitPriceMinor, d.currency)}</div>}
             {l.note && <div className="mt-2 text-[14px] leading-relaxed text-gray-500">{l.note}</div>}
           </div>
-          <div className="shrink-0 text-left">
+          <div className="shrink-0 text-end">
             <div className="text-[17px] font-bold text-gray-900" dir="ltr">{formatMinor(l.lineTotalMinor, d.currency)}</div>
             {vat[l.vatMode] ? <div className="text-[11px] text-gray-400">{vat[l.vatMode]}</div> : null}
           </div>
@@ -191,16 +195,16 @@ function PricingCard({ d, lang }) {
   );
 }
 
-function SectionItems({ d }) {
-  if (d.customHtml != null) return <Html html={d.customHtml} />;
+function SectionItems({ d, lang }) {
+  if (d.customHtml != null) return <Html html={d.customHtml} lang={lang} />;
   const items = d.items || [];
-  if (items.length === 0) return <Empty />;
+  if (items.length === 0) return <Empty lang={lang} />;
   return (
     <div className="space-y-6">
       {items.map((it) => (
         <div key={it.id}>
-          {it.title && <h3 className="mb-2 text-right text-[18px] font-bold text-gray-900">{it.title}</h3>}
-          <Html html={it.html} />
+          {it.title && <h3 className="mb-2 text-start text-[18px] font-bold text-gray-900">{it.title}</h3>}
+          <Html html={it.html} lang={lang} />
         </div>
       ))}
     </div>
@@ -218,7 +222,7 @@ export function QuoteBlock({ block, lang = 'he' }) {
       return d.text ? (
         <div className={`${RICH} whitespace-pre-line text-[20px] leading-[2.1] text-gray-700`} dangerouslySetInnerHTML={{ __html: d.text }} />
       ) : (
-        <p className="text-right text-[19px] italic text-gray-300">{t.introPlaceholder}</p>
+        <p className="text-start text-[19px] italic text-gray-300">{t.introPlaceholder}</p>
       );
     case 'tour_details':
       return <><Heading>{title}</Heading><FactCard d={d} lang={lang} /></>;
@@ -226,7 +230,7 @@ export function QuoteBlock({ block, lang = 'he' }) {
       return <><Heading>{title}</Heading><PricingCard d={d} lang={lang} /></>;
     case 'payment_terms':
       return (
-        <div className="flex flex-wrap justify-end gap-x-10 gap-y-1 text-right text-[15px]">
+        <div className="flex flex-wrap justify-start gap-x-10 gap-y-1 text-start text-[15px]">
           {d.term && <div><span className="text-gray-400">{t.paymentTerm} · </span><span className="font-semibold text-gray-900">{d.term}</span></div>}
           {d.method && <div><span className="text-gray-400">{t.paymentMethod} · </span><span className="font-semibold text-gray-900">{d.method}</span></div>}
         </div>
@@ -235,21 +239,21 @@ export function QuoteBlock({ block, lang = 'he' }) {
       return (
         <>
           <Heading>{title}</Heading>
-          <div className="rounded-2xl border border-dashed border-gray-300 p-10 text-center text-sm text-gray-400">אזור חתימה / אישור — ייבנה בשלב הבא</div>
+          <div className="rounded-2xl border border-dashed border-gray-300 p-10 text-center text-sm text-gray-400">{t.signaturePlaceholder}</div>
         </>
       );
     case 'product_marketing':
     case 'classification':
     case 'city_content':
-      return <>{title && <Heading>{title}</Heading>}<Html html={d.html} /></>;
+      return <>{title && <Heading>{title}</Heading>}<Html html={d.html} lang={lang} /></>;
     case 'why_us':
     case 'faq':
     case 'cancellation':
     case 'participant_policy':
     case 'terms':
-      return <><Heading>{title}</Heading><SectionItems d={d} /></>;
+      return <><Heading>{title}</Heading><SectionItems d={d} lang={lang} /></>;
     default:
-      return <Empty />;
+      return <Empty lang={lang} />;
   }
 }
 
@@ -259,7 +263,7 @@ export default function QuoteDocumentRenderer({ model }) {
   const hero = blocks.find((b) => b.type === 'hero');
   const body = blocks.filter((b) => b.type !== 'hero');
   return (
-    <article dir="rtl" className="overflow-hidden bg-white">
+    <article dir={lang === 'en' ? 'ltr' : 'rtl'} className="overflow-hidden bg-white">
       {hero && <QuoteBlock block={hero} lang={lang} />}
       <div className="space-y-20 px-8 py-16 sm:px-16 sm:py-20">
         {body.map((b) => (<section key={b.key}><QuoteBlock block={b} lang={lang} /></section>))}

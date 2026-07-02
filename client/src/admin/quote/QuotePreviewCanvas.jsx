@@ -93,6 +93,10 @@ export default function QuotePreviewCanvas() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Configured Hero image from Quote Structure (global template). Source of truth
+  // for the hero background — overrides the composer's deal/product fallback in
+  // the preview. Presentation-only; no composer/model change.
+  const [heroImageUrl, setHeroImageUrl] = useState(null);
   const [editing, setEditing] = useState(null); // { key, mode:'intro'|'name', value }
   const [builderOpen, setBuilderOpen] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
@@ -110,14 +114,16 @@ export default function QuotePreviewCanvas() {
     (async () => {
       setLoading(true); setError(null);
       try {
-        const [ens, dealRes, ats] = await Promise.all([
+        const [ens, dealRes, ats, tpl] = await Promise.all([
           api.deals.quoteDocument(dealId),
           api.deals.get(dealId),
           api.activityTypes.list().catch(() => []),
+          api.quoteTemplate.get().catch(() => null),
         ]);
         if (!alive) return;
         setDeal(dealRes);
         setActivityTypes(Array.isArray(ats) ? ats : ats?.activityTypes || []);
+        setHeroImageUrl(tpl?.hero?.image?.url || null);
         const id = ens.quoteDocument.id;
         setDocId(id);
         await loadModel(id);
@@ -209,8 +215,14 @@ export default function QuotePreviewCanvas() {
   if (!model) return null;
 
   const lang = model.language;
+  const docDir = lang === 'en' ? 'ltr' : 'rtl';
   const hero = model.blocks.find((b) => b.type === 'hero' && !b.hidden);
   const heroData = hero?.data || {};
+  // Configured Hero image (Quote Structure) is the source of truth — override the
+  // composer's deal/product fallback for rendering. Presentation-only.
+  const heroForRender = hero
+    ? { ...hero, data: { ...hero.data, heroImageUrl: heroImageUrl || hero.data.heroImageUrl } }
+    : null;
   const customer = [heroData.customerName, heroData.organizationName].filter(Boolean).join(' · ');
   const body = model.blocks.filter((b) => !b.hidden && b.type !== 'hero' && hasContent(b));
 
@@ -258,7 +270,24 @@ export default function QuotePreviewCanvas() {
         </div>
         <div className="flex items-center gap-2">
           {busy && <span className="text-[12px] text-gray-400">שומר…</span>}
-          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[12px] text-gray-500">{lang === 'en' ? 'EN' : 'עברית'}</span>
+          {/* Language switch — sets the quote's real language (draft PUT) and
+              re-composes, so the whole preview flips localization + direction and
+              stays identical to what the customer receives (parity). No reload. */}
+          <div className="inline-flex overflow-hidden rounded-full border border-gray-200">
+            {[['he', 'עברית'], ['en', 'EN']].map(([code, label]) => (
+              <button
+                key={code}
+                type="button"
+                disabled={busy}
+                onClick={() => { if (lang !== code) patchDoc({ language: code }); }}
+                className={`px-3 py-1 text-[12px] font-medium transition disabled:opacity-50 ${
+                  lang === code ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           {model.warnings.length > 0 && (
             <div className="relative">
               <button type="button" onClick={() => setWarnOpen((o) => !o)}
@@ -282,13 +311,13 @@ export default function QuotePreviewCanvas() {
 
       {/* the document — wide, premium */}
       <div className="mx-auto w-full max-w-[1400px] px-3 py-6 lg:px-6 lg:py-8">
-        <article className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200/70">
+        <article dir={docDir} className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200/70">
           {/* full-bleed hero (no margin/rounding gap above the image) */}
           {hero && (
             <div id={`sec-${hero.key}`} className="group relative">
               <Controls block={hero} onLight />
               {editing?.key === hero.key && editing.mode === 'name' && <NameEditor block={hero} />}
-              <QuoteBlock block={hero} lang={lang} />
+              <QuoteBlock block={heroForRender} lang={lang} />
             </div>
           )}
 
