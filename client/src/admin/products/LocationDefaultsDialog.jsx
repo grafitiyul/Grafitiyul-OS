@@ -17,7 +17,7 @@ export default function LocationDefaultsDialog({ location, locations = [], onClo
   const [suggs, setSuggs] = useState({ meeting_point: [], ending_point: [] });
   const [busy, setBusy] = useState(false);
   const [picker, setPicker] = useState(null); // type to pick for
-  const [editor, setEditor] = useState(null); // type to create for
+  const [editor, setEditor] = useState(null); // { type, block } — block=null → create new
   const [report, setReport] = useState(null);
 
   const reload = useCallback(async () => {
@@ -55,11 +55,19 @@ export default function LocationDefaultsDialog({ location, locations = [], onClo
     }
   }
 
-  async function createAndSet(type, data) {
+  // Save the editor. Editing updates the SAME SharedContent record (no copy) so
+  // every inherited variant reflects it immediately by reference. Creating makes a
+  // new item and sets it as this location's default.
+  async function submitEditor(data) {
+    const { type, block } = editor;
     setBusy(true);
     try {
-      const b = await api.sharedContent.create({ ...data, type });
-      await api.locations.setSharedDefault(location.id, type, b.id);
+      if (block) {
+        await api.sharedContent.update(block.id, data);
+      } else {
+        const b = await api.sharedContent.create({ ...data, type });
+        await api.locations.setSharedDefault(location.id, type, b.id);
+      }
       await reload();
       onChanged?.();
       setEditor(null);
@@ -86,8 +94,9 @@ export default function LocationDefaultsDialog({ location, locations = [], onClo
               current={defaults[type]}
               suggestions={suggs[type]}
               busy={busy}
+              onEdit={() => setEditor({ type, block: defaults[type] })}
               onChoose={() => setPicker(type)}
-              onCreate={() => setEditor(type)}
+              onCreate={() => setEditor({ type, block: null })}
               onClear={() => setDefault(type, null)}
               onConsolidate={(s) => consolidate(type, s.sharedContentId, s.internalName)}
             />
@@ -108,10 +117,13 @@ export default function LocationDefaultsDialog({ location, locations = [], onClo
         <SharedContentEditorDialog
           open
           onClose={() => setEditor(null)}
-          fixedType={editor}
+          fixedType={editor.type}
+          initial={editor.block}
           locations={locations}
-          onSubmit={(data) => createAndSet(editor, data)}
+          usedByCount={editor.block?.usedByCount || 0}
+          onSubmit={submitEditor}
           submitting={busy}
+          onLinksChanged={reload}
         />
       )}
 
@@ -140,7 +152,7 @@ export default function LocationDefaultsDialog({ location, locations = [], onClo
   );
 }
 
-function TypeSection({ type, current, suggestions, busy, onChoose, onCreate, onClear, onConsolidate }) {
+function TypeSection({ type, current, suggestions, busy, onEdit, onChoose, onCreate, onClear, onConsolidate }) {
   return (
     <div className="rounded-xl border border-gray-200 p-3">
       <div className="text-[13px] font-semibold text-gray-800 mb-2">{TYPE_LABEL[type]}</div>
@@ -158,10 +170,16 @@ function TypeSection({ type, current, suggestions, busy, onChoose, onCreate, onC
       )}
 
       <div className="flex flex-wrap gap-1.5 mt-2.5">
+        {current && <Btn onClick={onEdit} disabled={busy} primary>ערוך תוכן</Btn>}
         <Btn onClick={onChoose} disabled={busy}>בחר קיים</Btn>
         <Btn onClick={onCreate} disabled={busy}>צור חדש</Btn>
         {current && <Btn onClick={onClear} disabled={busy} danger>הסר ברירת מחדל</Btn>}
       </div>
+      {current && (
+        <p className="text-[11px] text-gray-400 mt-2">
+          עריכה כאן מעדכנת את אותו פריט תוכן — כל הוריאציות שיורשות ברירת מחדל זו יתעדכנו מיד.
+        </p>
+      )}
 
       {suggestions.length > 0 && (
         <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50/60 p-2.5 space-y-1.5">
@@ -183,10 +201,15 @@ function TypeSection({ type, current, suggestions, busy, onChoose, onCreate, onC
   );
 }
 
-function Btn({ children, onClick, disabled, danger }) {
+function Btn({ children, onClick, disabled, danger, primary }) {
+  const cls = primary
+    ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
+    : danger
+      ? 'bg-white text-red-600 border-red-200 hover:bg-red-50'
+      : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50';
   return (
     <button type="button" onClick={onClick} disabled={disabled}
-      className={`h-8 px-3 rounded-lg border text-[12px] font-medium disabled:opacity-50 ${danger ? 'bg-white text-red-600 border-red-200 hover:bg-red-50' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}>
+      className={`h-8 px-3 rounded-lg border text-[12px] font-medium disabled:opacity-50 ${cls}`}>
       {children}
     </button>
   );

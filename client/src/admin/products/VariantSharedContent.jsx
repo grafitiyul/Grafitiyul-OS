@@ -179,7 +179,9 @@ function TypePanel({ type, info, busy, onCreate, onEdit, onLink, onConvert, onFo
         <div className="mt-2 text-[11px] text-amber-700">קישור זהה לברירת המחדל של המיקום — הקישור מיותר.</div>
       )}
       {info.state === 'inherited' && (
-        <div className="mt-2 text-[11px] text-violet-700">יורש מברירת המחדל של המיקום. עקיפה תשפיע רק על וריאציה זו.</div>
+        <div className="mt-2 text-[11px] text-violet-700">
+          משתמש בברירת מחדל של המיקום (קריאה בלבד) — לעריכת התוכן עברו להגדרות המיקום. יצירת עקיפה תשפיע רק על וריאציה זו.
+        </div>
       )}
 
       <div className="flex flex-wrap gap-1.5 mt-2.5">
