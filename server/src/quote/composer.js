@@ -120,9 +120,13 @@ function buildHero({ deal, document, displayName, lang, template }) {
       tourDate: deal?.tourDate || null,
       // Proposal creation date (תאריך הפקה) — the hero shows this, NOT the tour date.
       createdAt: document?.createdAt || null,
-      // Hero image: the Deal's own imagery wins; the global template's default
-      // proposal hero is the fallback; renderer draws a gradient if both null.
-      heroImageUrl: heroImageUrl(deal) || hero?.image?.url || null,
+      // Hero image: the Quote Structure (global template) hero is the SOURCE OF
+      // TRUTH and wins; the Deal's own product/location imagery is only a fallback
+      // when no hero is configured; renderer draws a gradient if both are null.
+      // This rule lives HERE (shared composition) so preview and produced/frozen
+      // snapshots cannot diverge. Existing frozen quotes are unaffected — they
+      // read renderModelSnapshot, never this composer.
+      heroImageUrl: hero?.image?.url || heroImageUrl(deal) || null,
       // Global-template hero copy/style. null title/subtitle → renderer falls
       // back to its built-in "הצעת מחיר" + product name. Overlay: light|medium|dark.
       heroTitle: pickLang(hero?.titleHe, hero?.titleEn, lang),

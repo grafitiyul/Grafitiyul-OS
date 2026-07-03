@@ -93,10 +93,6 @@ export default function QuotePreviewCanvas() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
-  // Configured Hero image from Quote Structure (global template). Source of truth
-  // for the hero background — overrides the composer's deal/product fallback in
-  // the preview. Presentation-only; no composer/model change.
-  const [heroImageUrl, setHeroImageUrl] = useState(null);
   const [editing, setEditing] = useState(null); // { key, mode:'intro'|'name', value }
   const [builderOpen, setBuilderOpen] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
@@ -114,16 +110,14 @@ export default function QuotePreviewCanvas() {
     (async () => {
       setLoading(true); setError(null);
       try {
-        const [ens, dealRes, ats, tpl] = await Promise.all([
+        const [ens, dealRes, ats] = await Promise.all([
           api.deals.quoteDocument(dealId),
           api.deals.get(dealId),
           api.activityTypes.list().catch(() => []),
-          api.quoteTemplate.get().catch(() => null),
         ]);
         if (!alive) return;
         setDeal(dealRes);
         setActivityTypes(Array.isArray(ats) ? ats : ats?.activityTypes || []);
-        setHeroImageUrl(tpl?.hero?.image?.url || null);
         const id = ens.quoteDocument.id;
         setDocId(id);
         await loadModel(id);
@@ -218,11 +212,8 @@ export default function QuotePreviewCanvas() {
   const docDir = lang === 'en' ? 'ltr' : 'rtl';
   const hero = model.blocks.find((b) => b.type === 'hero' && !b.hidden);
   const heroData = hero?.data || {};
-  // Configured Hero image (Quote Structure) is the source of truth — override the
-  // composer's deal/product fallback for rendering. Presentation-only.
-  const heroForRender = hero
-    ? { ...hero, data: { ...hero.data, heroImageUrl: heroImageUrl || hero.data.heroImageUrl } }
-    : null;
+  // Hero image (incl. the Quote Structure source-of-truth priority) is resolved
+  // in the shared composer, so preview and produced output cannot diverge.
   const customer = [heroData.customerName, heroData.organizationName].filter(Boolean).join(' · ');
   const body = model.blocks.filter((b) => !b.hidden && b.type !== 'hero' && hasContent(b));
 
@@ -317,7 +308,7 @@ export default function QuotePreviewCanvas() {
             <div id={`sec-${hero.key}`} className="group relative">
               <Controls block={hero} onLight />
               {editing?.key === hero.key && editing.mode === 'name' && <NameEditor block={hero} />}
-              <QuoteBlock block={heroForRender} lang={lang} />
+              <QuoteBlock block={hero} lang={lang} />
             </div>
           )}
 

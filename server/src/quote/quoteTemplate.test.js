@@ -109,12 +109,31 @@ test('composer: template hides an optional section by default', () => {
   assert.equal(model.blocks.find((b) => b.key === 'faq').hidden, true);
 });
 
-test('composer: hero uses template title/overlay and falls back to the template image', () => {
+test('composer: hero uses template title/overlay and the configured image', () => {
   const template = normalizeLayout({ hero: { titleHe: 'הצעה מיוחדת', overlay: 'light', image: { id: 'm', url: 'https://cdn/hero.jpg' } } });
   const hero = compose(template).blocks.find((b) => b.key === 'hero').data;
   assert.equal(hero.heroTitle, 'הצעה מיוחדת');
   assert.equal(hero.heroOverlay, 'light');
-  assert.equal(hero.heroImageUrl, 'https://cdn/hero.jpg'); // deal has no image → template default
+  assert.equal(hero.heroImageUrl, 'https://cdn/hero.jpg');
+});
+
+// Hero image priority — the shared rule that keeps preview == produced output.
+const dealWithImage = () => ({
+  ...deal(),
+  productVariant: { durationHours: 2, galleryImages: [{ mediaFile: { url: 'https://cdn/deal.jpg' } }] },
+});
+const composeHero = (template, dealObj) =>
+  assembleComposition({ document: doc(), deal: dealObj, version: { id: 'v' }, lines: [], quoteSections: [], lang: 'he', template })
+    .blocks.find((b) => b.key === 'hero').data;
+
+test('composer: configured Hero image (Quote Structure) wins over the deal/product image', () => {
+  const template = normalizeLayout({ hero: { image: { id: 'm', url: 'https://cdn/hero.jpg' } } });
+  assert.equal(composeHero(template, dealWithImage()).heroImageUrl, 'https://cdn/hero.jpg');
+});
+
+test('composer: with no configured Hero image, the deal/product image is the fallback', () => {
+  const template = normalizeLayout({ hero: {} }); // no image configured
+  assert.equal(composeHero(template, dealWithImage()).heroImageUrl, 'https://cdn/deal.jpg');
 });
 
 test('composer: technical fieldOrder reflects visible fields in configured order', () => {
