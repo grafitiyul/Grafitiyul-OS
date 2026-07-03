@@ -8,8 +8,9 @@ export const TOP_MODULES = [
   { key: 'crm', to: '/admin/crm', label: 'CRM', glyph: '🏢' },
 ];
 
-// Bottom cluster, top→bottom: מסמכים, נהלים, הגדרות, משתמשים.
+// Bottom cluster, top→bottom: תוכן סיורים, מסמכים, נהלים, הגדרות, משתמשים.
 export const BOTTOM_MODULES = [
+  { key: 'tour-content', to: '/admin/tour-content', label: 'תוכן סיורים', glyph: '🗺️' },
   { key: 'documents', to: '/admin/documents', label: 'מסמכים', glyph: '📄' },
   { key: 'procedures', to: '/admin/procedures', label: 'נהלים', glyph: '☰' },
   { key: 'settings', to: '/admin/settings', label: 'הגדרות', glyph: '⚙️' },

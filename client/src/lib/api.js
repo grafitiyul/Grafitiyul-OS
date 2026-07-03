@@ -807,4 +807,66 @@ export const api = {
     finalize: (id) =>
       request(`/api/documents/instances/${id}/finalize`, { method: 'POST' }),
   },
+
+  // Tour Content (GOS source of truth). Tour → Station → ordered Step →
+  // (reference) → ContentBlock → BlockAsset, plus admin-only StationNotes.
+  // Media is R2/MediaFile only. Reorder endpoints take { order: [ids] }.
+  tourContent: {
+    // Tours
+    listTours: (params = {}) => request('/api/tour-content/tours' + qs(params)),
+    getTour: (id) => request(`/api/tour-content/tours/${id}`),
+    createTour: (data) =>
+      request('/api/tour-content/tours', { method: 'POST', body: JSON.stringify(data) }),
+    updateTour: (id, data) =>
+      request(`/api/tour-content/tours/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    removeTour: (id) => request(`/api/tour-content/tours/${id}`, { method: 'DELETE' }),
+    reorderTours: (order) =>
+      request('/api/tour-content/tours/reorder', { method: 'PUT', body: JSON.stringify({ order }) }),
+    // Stations
+    listStations: (tourId) => request(`/api/tour-content/tours/${tourId}/stations`),
+    getStation: (id) => request(`/api/tour-content/stations/${id}`),
+    createStation: (tourId, data) =>
+      request(`/api/tour-content/tours/${tourId}/stations`, { method: 'POST', body: JSON.stringify(data) }),
+    updateStation: (id, data) =>
+      request(`/api/tour-content/stations/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    removeStation: (id) => request(`/api/tour-content/stations/${id}`, { method: 'DELETE' }),
+    reorderStations: (tourId, order) =>
+      request(`/api/tour-content/tours/${tourId}/stations/reorder`, { method: 'PUT', body: JSON.stringify({ order }) }),
+    // Content blocks (reusable library)
+    listBlocks: (params = {}) => request('/api/tour-content/blocks' + qs(params)),
+    getBlock: (id) => request(`/api/tour-content/blocks/${id}`),
+    createBlock: (data) =>
+      request('/api/tour-content/blocks', { method: 'POST', body: JSON.stringify(data) }),
+    updateBlock: (id, data) =>
+      request(`/api/tour-content/blocks/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    removeBlock: (id) => request(`/api/tour-content/blocks/${id}`, { method: 'DELETE' }),
+    blockWhereUsed: (id) => request(`/api/tour-content/blocks/${id}/where-used`),
+    // Steps (ordered placement of a block into a station)
+    listSteps: (stationId) => request(`/api/tour-content/stations/${stationId}/steps`),
+    createStep: (stationId, data) =>
+      request(`/api/tour-content/stations/${stationId}/steps`, { method: 'POST', body: JSON.stringify(data) }),
+    updateStep: (id, data) =>
+      request(`/api/tour-content/steps/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    removeStep: (id) => request(`/api/tour-content/steps/${id}`, { method: 'DELETE' }),
+    reorderSteps: (stationId, order) =>
+      request(`/api/tour-content/stations/${stationId}/steps/reorder`, { method: 'PUT', body: JSON.stringify({ order }) }),
+    // Block assets
+    listAssets: (blockId) => request(`/api/tour-content/blocks/${blockId}/assets`),
+    createAsset: (blockId, data) =>
+      request(`/api/tour-content/blocks/${blockId}/assets`, { method: 'POST', body: JSON.stringify(data) }),
+    updateAsset: (id, data) =>
+      request(`/api/tour-content/assets/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    removeAsset: (id) => request(`/api/tour-content/assets/${id}`, { method: 'DELETE' }),
+    reorderAssets: (blockId, order) =>
+      request(`/api/tour-content/blocks/${blockId}/assets/reorder`, { method: 'PUT', body: JSON.stringify({ order }) }),
+    // Station notes (admin-only)
+    listNotes: (stationId) => request(`/api/tour-content/stations/${stationId}/notes`),
+    createNote: (stationId, data) =>
+      request(`/api/tour-content/stations/${stationId}/notes`, { method: 'POST', body: JSON.stringify(data) }),
+    updateNote: (id, data) =>
+      request(`/api/tour-content/notes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    removeNote: (id) => request(`/api/tour-content/notes/${id}`, { method: 'DELETE' }),
+    reorderNotes: (stationId, order) =>
+      request(`/api/tour-content/stations/${stationId}/notes/reorder`, { method: 'PUT', body: JSON.stringify({ order }) }),
+  },
 };

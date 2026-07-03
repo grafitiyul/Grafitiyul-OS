@@ -58,6 +58,15 @@ import SabbathHoursSettings from './admin/crm/settings/SabbathHoursSettings.jsx'
 // Products & Pricing — Slice 1 (catalog + files + payment config).
 import ProductsSettings from './admin/products/ProductsSettings.jsx';
 import SharedContentLibrary from './admin/shared-content/SharedContentLibrary.jsx';
+// Tour Content module — GOS-owned internal tour content (Tour → Station → Steps
+// → reusable ContentBlocks). Admin authoring surface. Aliased to avoid a name
+// clash with the public-site ToursPage import above.
+import TourContentLayout from './admin/tour-content/TourContentLayout.jsx';
+import TcToursPage from './admin/tour-content/ToursPage.jsx';
+import TcTourDetail from './admin/tour-content/TourDetail.jsx';
+import TcStationDetail from './admin/tour-content/StationDetail.jsx';
+import TcContentBlocksPage from './admin/tour-content/ContentBlocksPage.jsx';
+import TcContentBlockDetail from './admin/tour-content/ContentBlockDetail.jsx';
 import ProductDetail from './admin/products/ProductDetail.jsx';
 import LocationsSettings from './admin/products/LocationsSettings.jsx';
 import PaymentConfigSettings from './admin/products/PaymentConfigSettings.jsx';
@@ -185,6 +194,15 @@ export default function App() {
         <Route path="settings/crm/ticket-types" element={<TicketTypesSettings />} />
         <Route path="settings/crm/sabbath-hours" element={<SabbathHoursSettings />} />
         <Route path="settings/crm/shared-content" element={<SharedContentLibrary />} />
+        {/* Tour Content — GOS-owned. Tours → Stations → Steps → ContentBlocks. */}
+        <Route path="tour-content" element={<TourContentLayout />}>
+          <Route index element={<Navigate to="tours" replace />} />
+          <Route path="tours" element={<TcToursPage />} />
+          <Route path="tours/:tourId" element={<TcTourDetail />} />
+          <Route path="stations/:stationId" element={<TcStationDetail />} />
+          <Route path="blocks" element={<TcContentBlocksPage />} />
+          <Route path="blocks/:blockId" element={<TcContentBlockDetail />} />
+        </Route>
         <Route path="users" element={<AdminUsersPage />} />
         <Route path="documents" element={<DocumentsLayout />}>
           <Route index element={<DocumentsIndexPage />} />

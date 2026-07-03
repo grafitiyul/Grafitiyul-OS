@@ -167,6 +167,7 @@ export async function getStation(prisma, id) {
   return prisma.tourStation.findUnique({
     where: { id },
     include: {
+      heroImage: true,
       steps: { orderBy: { sortOrder: 'asc' }, include: { contentBlock: true } },
       notes: { orderBy: { sortOrder: 'asc' } },
     },
