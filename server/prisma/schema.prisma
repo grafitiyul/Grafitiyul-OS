@@ -1055,6 +1055,10 @@ model MediaFile {
   // Shared Content Library items that use this file as their image (by reference;
   // no byte copy — a MediaFile is already reusable-by-reference).
   sharedContentImages   SharedContent[]
+  // Tour Content (Phase 1a) — hero images on stations and re-hosted block assets
+  // reference R2/MediaFile (never DB binary). By reference; no byte copy.
+  tourStationHeroes     TourStation[]        @relation("TourStationHero")
+  tourBlockAssets       TourBlockAsset[]     @relation("TourBlockAssetMedia")
 }
 
 // Simple location catalog (e.g. "תל אביב - פלורנטין"). No City/Area split.
@@ -1922,4 +1926,127 @@ model ProductVariantSharedContent {
   @@unique([productVariantId, sharedContentId])
   @@index([productVariantId])
   @@index([sharedContentId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tour Content domain (Phase 1a — foundation)
+//
+// GOS is the source of truth for internal tour content (trainees + guides).
+// Shape: Tour → Station → ordered Step → (reference) → ContentBlock → BlockAsset.
+// Media lives in R2 via MediaFile (never DB binary). See
+// docs/architecture/phase1-tour-content-domain.md for the full design.
+//
+// Deferred to later phases (NOT in this migration): station-level access
+// (TourStationAccess, Phase 2) and quiet block versioning
+// (TourContentBlockVersion). No recruitment data is migrated here.
+//
+// `sourceRef` (unique) preserves the recruitment source id for the future,
+// idempotent, re-runnable ETL — unused at runtime in Phase 1a.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Tour {
+  id            String        @id @default(cuid())
+  sourceRef     String?       @unique // "tour:<recruitment.id>" (migration only)
+  titleHe       String
+  descriptionHe String?
+  active        Boolean       @default(true)
+  sortOrder     Int           @default(0)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  stations      TourStation[]
+}
+
+model TourStation {
+  id            String     @id @default(cuid())
+  sourceRef     String?    @unique // "station:<recruitment.id>" (migration only)
+  tour          Tour       @relation(fields: [tourId], references: [id], onDelete: Cascade)
+  tourId        String
+  titleHe       String
+  descriptionHe String?
+  // A stop is not always physical: location | artwork | printed_material | content_stop.
+  kind          String     @default("location")
+  // Hero image → R2/MediaFile (never DB binary). SetNull so removing a file
+  // never deletes the station.
+  heroImage     MediaFile? @relation("TourStationHero", fields: [heroImageId], references: [id], onDelete: SetNull)
+  heroImageId   String?
+  heroImageTitle String?
+  // Optional future link to a GOS Location (decision 18) — unused in V1, no FK yet.
+  locationId    String?
+  active        Boolean    @default(true)
+  sortOrder     Int        @default(0)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  steps TourStep[]
+  notes TourStationNote[]
+
+  @@index([tourId, sortOrder])
+}
+
+// The reusable unit. Stored once; referenced by many steps across stations/tours.
+// Editing it updates every placement (by reference, never copied). `shared=false`
+// = one-off/inline block (hidden from the reuse picker); `shared=true` = library.
+model TourContentBlock {
+  id           String   @id @default(cuid())
+  sourceRef    String?  @unique
+  titleHe      String?
+  bodyHe       String   @default("") // rich HTML; inline images via R2 public URLs
+  internalNote String?
+  shared       Boolean  @default(false)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  assets     TourBlockAsset[]
+  placements TourStep[]
+}
+
+// The ordered placement of a content block into a station. The step order IS the
+// presentation order (no separate ordering table). Restrict on the block relation
+// prevents deleting a block that is still placed somewhere.
+model TourStep {
+  id             String           @id @default(cuid())
+  station        TourStation      @relation(fields: [stationId], references: [id], onDelete: Cascade)
+  stationId      String
+  contentBlock   TourContentBlock @relation(fields: [contentBlockId], references: [id], onDelete: Restrict)
+  contentBlockId String
+  sortOrder      Int              @default(0)
+  isVisible      Boolean          @default(true)
+  // Optional label carried from recruitment parts (build_up etc.). Not a constraint.
+  roleHint       String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([stationId, sortOrder])
+}
+
+// Media/attachments on a content block. Stable external links (YouTube/Vimeo/Drive)
+// stay as `url`; re-hosted binaries reference R2/MediaFile via `mediaId`.
+// API invariant: exactly one of `url` / `mediaId` is present.
+model TourBlockAsset {
+  id             String           @id @default(cuid())
+  sourceRef      String?          @unique
+  contentBlock   TourContentBlock @relation(fields: [contentBlockId], references: [id], onDelete: Cascade)
+  contentBlockId String
+  assetType      String // video | image | file | link
+  language       String? // he | en | null (he-only in V1; field kept for future)
+  titleHe        String
+  url            String?
+  media          MediaFile?       @relation("TourBlockAssetMedia", fields: [mediaId], references: [id], onDelete: SetNull)
+  mediaId        String?
+  sortOrder      Int              @default(0)
+  active         Boolean          @default(true)
+
+  @@index([contentBlockId, sortOrder])
+}
+
+// Admin/curator annotations on a station. Never shown to the learner.
+model TourStationNote {
+  id        String      @id @default(cuid())
+  station   TourStation @relation(fields: [stationId], references: [id], onDelete: Cascade)
+  stationId String
+  contentHe String      @default("")
+  sortOrder Int         @default(0)
+
+  @@index([stationId, sortOrder])
 }

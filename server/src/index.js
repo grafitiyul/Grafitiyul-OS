@@ -45,6 +45,7 @@ import quoteSectionsRouter from './routes/quoteSections.js';
 import quoteTemplateRouter from './routes/quoteTemplate.js';
 import timelineRouter from './routes/timeline.js';
 import sharedContentRouter from './routes/sharedContent.js';
+import tourContentRouter from './routes/tourContent.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -197,6 +198,10 @@ app.use('/api/quote-template', requireAdminAuth, quoteTemplateRouter);
 app.use('/api/timeline', requireAdminAuth, timelineRouter);
 // Shared Content Library — platform-wide reusable content (meeting/ending point…).
 app.use('/api/shared-content', requireAdminAuth, sharedContentRouter);
+// Tour Content (Phase 1a foundation) — GOS-owned internal tour content
+// (Tour → Station → ordered Steps → reusable ContentBlocks). Admin-only. No
+// recruitment migration, no permissions/access, no R2 uploads yet.
+app.use('/api/tour-content', requireAdminAuth, tourContentRouter);
 
 // Unknown /api/* paths get a real JSON 404 instead of falling through to
 // the SPA fallback (which would serve HTML for an API request).
