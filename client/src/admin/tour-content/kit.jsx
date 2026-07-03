@@ -20,6 +20,36 @@ export const stationKindLabel = (v) =>
 export const assetTypeLabel = (v) =>
   ASSET_TYPES.find((t) => t.value === v)?.label || v || '—';
 
+// Optional, soft role label for a part (from the imported roleHint). NOT a
+// structural taxonomy — purely a friendly display chip when a hint exists.
+const ROLE_LABELS = {
+  build_up: 'בילד־אפ',
+  curiosity_hook: 'סקרנות',
+  content: 'תוכן',
+  punchline: 'פואנטה',
+  media: 'מדיה',
+};
+export const roleLabel = (v) => (v ? ROLE_LABELS[v] || v : null);
+export const MEDIA_ROLE = 'media';
+
+// Strip HTML → short plain-text preview for a part row.
+export function textPreview(html, max = 90) {
+  if (!html) return '';
+  const t = String(html).replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+  return t.length > max ? t.slice(0, max) + '…' : t;
+}
+
+// Detect the source of an asset for a small label (R2 / YouTube / Vimeo / …).
+export function assetSourceLabel(a) {
+  if (a?.mediaId || a?.media) return 'R2';
+  const u = String(a?.url || '');
+  if (/youtube\.com|youtu\.be/i.test(u)) return 'YouTube';
+  if (/vimeo\.com/i.test(u)) return 'Vimeo';
+  if (/drive\.google\.com|docs\.google\.com/i.test(u)) return 'Drive';
+  if (/^https?:\/\//i.test(u)) return 'קישור';
+  return null;
+}
+
 // Active / archived pill — matches the Products/CRM convention.
 export function ActiveBadge({ active }) {
   return active ? (

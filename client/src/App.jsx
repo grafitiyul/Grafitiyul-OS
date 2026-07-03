@@ -58,15 +58,13 @@ import SabbathHoursSettings from './admin/crm/settings/SabbathHoursSettings.jsx'
 // Products & Pricing — Slice 1 (catalog + files + payment config).
 import ProductsSettings from './admin/products/ProductsSettings.jsx';
 import SharedContentLibrary from './admin/shared-content/SharedContentLibrary.jsx';
-// Tour Content module — GOS-owned internal tour content (Tour → Station → Steps
-// → reusable ContentBlocks). Admin authoring surface. Aliased to avoid a name
-// clash with the public-site ToursPage import above.
-import TourContentLayout from './admin/tour-content/TourContentLayout.jsx';
-import TcToursPage from './admin/tour-content/ToursPage.jsx';
-import TcTourDetail from './admin/tour-content/TourDetail.jsx';
-import TcStationDetail from './admin/tour-content/StationDetail.jsx';
-import TcContentBlocksPage from './admin/tour-content/ContentBlocksPage.jsx';
-import TcContentBlockDetail from './admin/tour-content/ContentBlockDetail.jsx';
+// Tour Content module — GOS-owned internal tour content. 3-pane master-detail:
+// Tours → Stations → Station editor (workflow-first; the content library is
+// contextual, not a nav tab).
+import TourContentShell from './admin/tour-content/TourContentShell.jsx';
+import TcEmptyEditor from './admin/tour-content/EmptyEditor.jsx';
+import TcStationEditor from './admin/tour-content/StationEditor.jsx';
+import TcStationPreview from './admin/tour-content/StationPreview.jsx';
 import ProductDetail from './admin/products/ProductDetail.jsx';
 import LocationsSettings from './admin/products/LocationsSettings.jsx';
 import PaymentConfigSettings from './admin/products/PaymentConfigSettings.jsx';
@@ -194,14 +192,12 @@ export default function App() {
         <Route path="settings/crm/ticket-types" element={<TicketTypesSettings />} />
         <Route path="settings/crm/sabbath-hours" element={<SabbathHoursSettings />} />
         <Route path="settings/crm/shared-content" element={<SharedContentLibrary />} />
-        {/* Tour Content — GOS-owned. Tours → Stations → Steps → ContentBlocks. */}
-        <Route path="tour-content" element={<TourContentLayout />}>
-          <Route index element={<Navigate to="tours" replace />} />
-          <Route path="tours" element={<TcToursPage />} />
-          <Route path="tours/:tourId" element={<TcTourDetail />} />
-          <Route path="stations/:stationId" element={<TcStationDetail />} />
-          <Route path="blocks" element={<TcContentBlocksPage />} />
-          <Route path="blocks/:blockId" element={<TcContentBlockDetail />} />
+        {/* Tour Content — 3-pane master-detail. Tours → Stations → Station editor.
+            The two list panes persist (in the shell); the editor is the Outlet. */}
+        <Route path="tour-content" element={<TourContentShell />}>
+          <Route index element={<TcEmptyEditor hint="בחרו סיור מהרשימה כדי להתחיל" />} />
+          <Route path="tours/:tourId" element={<TcEmptyEditor hint="בחרו תחנה לעריכה" />} />
+          <Route path="tours/:tourId/stations/:stationId" element={<TcStationEditor />} />
         </Route>
         <Route path="users" element={<AdminUsersPage />} />
         <Route path="documents" element={<DocumentsLayout />}>
@@ -231,6 +227,9 @@ export default function App() {
       <Route path="/preview/content/:id" element={<ItemPreviewPage kind="content" />} />
       <Route path="/preview/question/:id" element={<ItemPreviewPage kind="question" />} />
       <Route path="/preview/group/:flowId/:groupId" element={<GroupPreviewPage />} />
+      {/* Read-only station preview (Tour Content) — opened in a new tab from the
+          station editor. Uses the admin session; renders visible parts + media. */}
+      <Route path="/preview/tour-station/:stationId" element={<TcStationPreview />} />
       {/* TEMPORARY public-website foundation preview (Phase 1/2). Removed at
           Step 4 when the public site takes over root "/". */}
       <Route path="/__preview/public" element={<PublicApp />} />
