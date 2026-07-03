@@ -106,6 +106,16 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
     await api.people.setLifecycle(person.id, value);
     onChanged();
   }
+  // Reject in training: recruitment records it (sole writer); GOS then deletes.
+  async function rejectTraining() {
+    if (!window.confirm('לסמן ככישלון/דחייה בהכשרה? הפעולה תירשם במערכת הגיוס והאדם יוסר מ-GOS. לא ניתן לבטל מ-GOS.')) return;
+    try {
+      await api.people.rejectTraining(person.id);
+      onDeleted();
+    } catch (e) {
+      window.alert('שגיאה: ' + (e.payload?.error || e.message));
+    }
+  }
   async function rotateToken() {
     if (!window.confirm('להחליף את הטוקן? הקישור הנוכחי יפסיק לעבוד מיידית.'))
       return;
@@ -189,9 +199,19 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
               >
                 <option value="trainee">מתלמד</option>
                 <option value="staff">צוות</option>
+                <option value="former">עזב</option>
                 <option value="none">ללא שיוך</option>
               </select>
             </label>
+            {person.lifecycleHint === 'trainee' && (
+              <button
+                onClick={rejectTraining}
+                className="text-[12px] rounded px-3 py-1 border border-red-200 text-red-700 hover:bg-red-50"
+                title="נכשל/נדחה במהלך ההכשרה — המערכת תרשום זאת בגיוס והאדם יוסר מ-GOS"
+              >
+                נכשל בהכשרה
+              </button>
+            )}
             <button
               onClick={rotateToken}
               disabled={rotating}
@@ -328,6 +348,7 @@ function LifecycleChip({ lifecycle }) {
   const map = {
     staff: ['צוות', 'bg-blue-100 text-blue-800'],
     trainee: ['מתלמד', 'bg-amber-100 text-amber-800'],
+    former: ['עזב', 'bg-gray-200 text-gray-700'],
   };
   const [label, cls] = map[lifecycle] || ['ללא שיוך', 'bg-gray-100 text-gray-600'];
   return <span className={`inline-flex items-center text-[11px] px-2 py-0.5 rounded ${cls}`}>{label}</span>;

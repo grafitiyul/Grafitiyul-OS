@@ -184,12 +184,16 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify({ enabled }),
       }),
-    // Lifecycle status is GOS-owned (Slice B): explicit 'trainee'|'staff'|'none'.
+    // Lifecycle status is GOS-owned: explicit 'trainee'|'staff'|'former'|'none'.
     setLifecycle: (id, lifecycle) =>
       request(`/api/people/${id}/lifecycle`, {
         method: 'PUT',
         body: JSON.stringify({ lifecycle }),
       }),
+    // Reject a trainee during training. GOS triggers recruitment (sole recorder);
+    // on success GOS revokes access + deletes the PersonRef.
+    rejectTraining: (id) =>
+      request(`/api/people/${id}/reject-training`, { method: 'POST' }),
     uploadImage: async (id, file) => {
       const q = qs({ filename: file.name });
       const res = await fetch(`/api/people/${id}/image${q}`, {

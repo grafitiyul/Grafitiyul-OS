@@ -106,7 +106,30 @@ async function syncFromUpstream() {
     }
   }
 
-  return { created, updated, total: snap.people.length };
+  // Reconcile safety net (Slice D): a GOS 'trainee' no longer in the recruitment
+  // active roster was rejected/dropped upstream and its direct event push may have
+  // been missed → remove it (revoke + HARD DELETE). ONLY trainees — staff / former
+  // / none are GOS-owned and never auto-removed. Skipped when the snapshot is empty
+  // (guards against wiping everyone on a bad/empty fetch).
+  let removed = 0;
+  if (snap.people.length > 0) {
+    const roster = new Set(
+      snap.people.map((p) => String(p.externalPersonId || '').trim()).filter(Boolean),
+    );
+    const trainees = await prisma.personRef.findMany({
+      where: { lifecycleHint: 'trainee' },
+      select: { id: true, externalPersonId: true },
+    });
+    for (const t of trainees) {
+      if (!roster.has(t.externalPersonId)) {
+        await prisma.personRef.update({ where: { id: t.id }, data: { portalEnabled: false, accessRevokedAt: new Date() } });
+        await prisma.personRef.delete({ where: { id: t.id } });
+        removed += 1;
+      }
+    }
+  }
+
+  return { created, updated, removed, total: snap.people.length };
 }
 
 // ---------- List ----------
@@ -134,6 +157,7 @@ router.get(
         syncedAt: new Date().toISOString(),
         created: r.created,
         updated: r.updated,
+        removed: r.removed,
         total: r.total,
       };
     } catch (e) {
@@ -301,7 +325,11 @@ router.put(
 //   'none'    → lifecycleHint = null   (ללא שיוך / אחר)
 // Uses the existing `lifecycleHint` field — no schema change. syncFromUpstream no
 // longer overwrites this on existing rows, so a value set here is authoritative.
-const LIFECYCLE_MAP = { trainee: 'trainee', staff: 'staff', none: null };
+// Values: 'trainee' | 'staff' | 'former' | 'none'. There is intentionally NO
+// 'rejected' — a rejected trainee is deleted (see /:id/reject-training + the
+// staff-events ingest), not stored as a GOS status. 'former' (עזב) is only for a
+// real staff member who left; it also closes access.
+const LIFECYCLE_MAP = { trainee: 'trainee', staff: 'staff', former: 'former', none: null };
 router.put(
   '/:id/lifecycle',
   handle(async (req, res) => {
@@ -309,14 +337,66 @@ router.put(
     if (!Object.prototype.hasOwnProperty.call(LIFECYCLE_MAP, raw)) {
       return res
         .status(400)
-        .json({ error: 'invalid_lifecycle', allowed: ['trainee', 'staff', 'none'] });
+        .json({ error: 'invalid_lifecycle', allowed: ['trainee', 'staff', 'former', 'none'] });
+    }
+    const data = { lifecycleHint: LIFECYCLE_MAP[raw] };
+    // 'former' = veteran staff who left → close access as well.
+    if (raw === 'former') {
+      data.portalEnabled = false;
+      data.accessRevokedAt = new Date();
     }
     const person = await prisma.personRef.update({
       where: { id: req.params.id },
-      data: { lifecycleHint: LIFECYCLE_MAP[raw] },
+      data,
       include: PERSON_INCLUDE,
     });
     res.json(person);
+  }),
+);
+
+// ---------- Reject in training (GOS-initiated trigger) ----------
+// The GOS admin can start a "reject in training". Recruitment is the ONLY system
+// that RECORDS the rejection outcome, so GOS calls recruitment first; only on
+// recruitment success does GOS apply its effect (revoke access + HARD DELETE the
+// PersonRef). GOS never records a rejection status. On recruitment failure we fail
+// visibly and change nothing (no false rejection).
+router.post(
+  '/:id/reject-training',
+  handle(async (req, res) => {
+    const person = await prisma.personRef.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, externalPersonId: true, lifecycleHint: true },
+    });
+    if (!person) return res.status(404).json({ error: 'not_found' });
+    if (person.lifecycleHint !== 'trainee') {
+      return res.status(400).json({ error: 'not_a_trainee' });
+    }
+    const base = process.env.RECRUITMENT_API_BASE_URL;
+    const secret = process.env.STAFF_EVENT_SECRET;
+    if (!base || !secret) return res.status(500).json({ error: 'recruitment_trigger_not_configured' });
+
+    let r;
+    try {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 8000);
+      r = await fetch(`${String(base).replace(/\/+$/, '')}/api/staff/reject-training`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-staff-event-secret': secret },
+        body: JSON.stringify({ externalPersonId: person.externalPersonId }),
+        signal: ctl.signal,
+      });
+      clearTimeout(t);
+    } catch (e) {
+      return res.status(502).json({ error: 'recruitment_unavailable', detail: e?.message || 'network error' });
+    }
+    if (!r.ok) {
+      const txt = await r.text().catch(() => '');
+      return res.status(502).json({ error: 'recruitment_reject_failed', status: r.status, detail: txt.slice(0, 300) });
+    }
+    // Recruitment recorded the outcome → apply GOS effect (revoke + delete).
+    await prisma.personRef.update({ where: { id: person.id }, data: { portalEnabled: false, accessRevokedAt: new Date() } });
+    await prisma.personRef.delete({ where: { id: person.id } });
+    res.json({ ok: true, deleted: true });
   }),
 );
 

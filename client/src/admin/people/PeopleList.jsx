@@ -23,20 +23,24 @@ import { PERSON_STATUS_LABELS, PERSON_STATUSES } from './config.js';
 const LIFECYCLE_LABEL = {
   trainee: 'מתלמד',
   staff: 'צוות',
+  former: 'עזב', // GOS-owned: veteran staff who left. Hidden from the default view.
   // No 'evaluator' here — recruitment doesn't currently expose
   // "evaluator" as a stable lifecycle distinct from staff/guide.
   // Treat evaluators as a role/permission concept (Phase 2), not a
-  // separate identity type.
+  // separate identity type. There is intentionally NO 'rejected' —
+  // rejected trainees are deleted, not stored.
 };
 const LIFECYCLE_PILL_CLS = {
   trainee: 'bg-blue-100 text-blue-800 border-blue-200',
   staff: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+  former: 'bg-gray-200 text-gray-700 border-gray-300',
 };
 
 const LIFECYCLE_FILTERS = [
-  { key: 'all', label: 'כולם' },
+  { key: 'all', label: 'פעילים' }, // active roster (trainee + staff); former hidden
   { key: 'trainee', label: 'מתלמדים' },
   { key: 'staff', label: 'צוות' },
+  { key: 'former', label: 'עזבו' },
   { key: 'unknown', label: 'ללא סיווג' },
 ];
 
@@ -109,9 +113,12 @@ export default function PeopleList() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return people.filter((p) => {
-      if (lifecycleFilter === 'unknown') {
+      if (lifecycleFilter === 'all') {
+        // Default "active roster" view hides former staff (עזב).
+        if (p.lifecycleHint === 'former') return false;
+      } else if (lifecycleFilter === 'unknown') {
         if (p.lifecycleHint) return false;
-      } else if (lifecycleFilter !== 'all') {
+      } else {
         if (p.lifecycleHint !== lifecycleFilter) return false;
       }
       if (accessFilter === 'granted' && !p.portalEnabled) return false;
