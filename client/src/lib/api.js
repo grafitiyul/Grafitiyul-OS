@@ -184,6 +184,12 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify({ enabled }),
       }),
+    // Staff status is GOS-owned (Slice B): mark/unmark active staff.
+    setStaff: (id, isStaff) =>
+      request(`/api/people/${id}/staff`, {
+        method: 'PUT',
+        body: JSON.stringify({ isStaff }),
+      }),
     uploadImage: async (id, file) => {
       const q = qs({ filename: file.name });
       const res = await fetch(`/api/people/${id}/image${q}`, {

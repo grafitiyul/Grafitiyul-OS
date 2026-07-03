@@ -99,6 +99,11 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
     await api.people.setPortalEnabled(person.id, !person.portalEnabled);
     onChanged();
   }
+  // Staff status is GOS-owned (Slice B). Mark/unmark this person as active staff.
+  async function toggleStaff() {
+    await api.people.setStaff(person.id, person.lifecycleHint !== 'staff');
+    onChanged();
+  }
   async function rotateToken() {
     if (!window.confirm('להחליף את הטוקן? הקישור הנוכחי יפסיק לעבוד מיידית.'))
       return;
@@ -133,6 +138,9 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
               {person.displayName}
             </h1>
             <StatusChip status={person.status} />
+            {person.lifecycleHint === 'staff' && (
+              <span className="text-[11px] bg-blue-100 text-blue-800 rounded px-2 py-0.5">צוות</span>
+            )}
             {person.team && (
               <span className="text-[11px] bg-gray-100 text-gray-700 rounded px-2 py-0.5">
                 {person.team.displayName}
@@ -165,6 +173,14 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
                 onChange={togglePortal}
               />
               פורטל פעיל
+            </label>
+            <label className="flex items-center gap-2 text-[12px] text-gray-700">
+              <input
+                type="checkbox"
+                checked={person.lifecycleHint === 'staff'}
+                onChange={toggleStaff}
+              />
+              צוות פעיל
             </label>
             <button
               onClick={rotateToken}

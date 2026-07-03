@@ -64,19 +64,19 @@ async function syncFromUpstream() {
       phone: p.phone || null,
       identitySyncedAt: new Date(),
     };
-    // lifecycleHint is mirrored from upstream and overwrites the
-    // local value on every sync — recruitment owns it. Null when
-    // upstream hasn't yet shipped the field, which leaves the column
-    // null and the admin UI shows "—". We DO NOT touch portalEnabled
-    // / accessGrantedAt / accessRevokedAt on existing rows; those are
-    // local-only access state.
-    const lifecycleHint = p.lifecycleHint || null;
+    // Staff status (lifecycleHint) is now GOS-OWNED (Slice B). We SEED it from
+    // upstream only when first CREATING a person; we NEVER overwrite it on an
+    // existing row — the sync no longer clobbers a GOS-set staff status.
+    // Identity (name/email/phone) is still mirrored from upstream. portalEnabled
+    // / accessGrantedAt / accessRevokedAt / profile / teamRef remain local-only.
+    const seedLifecycleHint = p.lifecycleHint || null;
 
     const existing = await prisma.personRef.findUnique({
       where: { externalPersonId },
     });
     if (existing) {
-      const data = { ...identity, lifecycleHint };
+      // lifecycleHint intentionally omitted — GOS owns staff status now.
+      const data = { ...identity };
       if (p.portalToken) data.portalToken = p.portalToken;
       await prisma.personRef.update({
         where: { externalPersonId },
@@ -89,7 +89,7 @@ async function syncFromUpstream() {
           externalPersonId,
           identitySource: 'recruitment',
           portalToken: p.portalToken || newPortalToken(),
-          lifecycleHint,
+          lifecycleHint: seedLifecycleHint,
           // Existing infra defaults `portalEnabled=true` so newcomers
           // arrive with access. We keep that default for now to avoid
           // breaking the current "guide imported → link works"
@@ -287,6 +287,27 @@ router.put(
     const person = await prisma.personRef.update({
       where: { id: req.params.id },
       data,
+      include: PERSON_INCLUDE,
+    });
+    res.json(person);
+  }),
+);
+
+// ---------- Staff status (GOS-owned, Slice B) ----------
+// Staff status is now owned by GOS, not mirrored from recruitment. Mark/unmark a
+// person as active staff. Uses the existing `lifecycleHint` field ('staff' | null)
+// — no schema change. syncFromUpstream no longer overwrites this on existing rows,
+// so a value set here is authoritative.
+router.put(
+  '/:id/staff',
+  handle(async (req, res) => {
+    const { isStaff } = req.body || {};
+    if (typeof isStaff !== 'boolean') {
+      return res.status(400).json({ error: 'isStaff_boolean_required' });
+    }
+    const person = await prisma.personRef.update({
+      where: { id: req.params.id },
+      data: { lifecycleHint: isStaff ? 'staff' : null },
       include: PERSON_INCLUDE,
     });
     res.json(person);
