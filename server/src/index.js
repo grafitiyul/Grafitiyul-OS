@@ -48,6 +48,7 @@ import sharedContentRouter from './routes/sharedContent.js';
 import tourContentRouter from './routes/tourContent.js';
 import tourContentExportRouter from './routes/tourContentExport.js';
 import staffEventsRouter from './routes/staffEvents.js';
+import staffExportRouter from './routes/staffExport.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -141,6 +142,8 @@ app.use('/api/tour-content-export', tourContentExportRouter);
 // (x-staff-event-secret), not cookie-gated. training_started/accepted_to_team
 // upsert; training_rejected revokes access + hard-deletes the PersonRef.
 app.use('/api/staff-events', staffEventsRouter);
+// Staff roster export (GOS → recruitment READ). Secret-gated. GOS owns the roster.
+app.use('/api/staff-export', staffExportRouter);
 
 // ── Admin-only routes ──────────────────────────────────────────
 //

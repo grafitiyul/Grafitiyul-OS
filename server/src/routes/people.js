@@ -50,59 +50,37 @@ const PERSON_INCLUDE = {
 //   * POST /import (retained for admin-triggered force refresh).
 async function syncFromUpstream() {
   const snap = await getRecruitmentSnapshot();
-  let created = 0;
   let updated = 0;
+  let missingFromGos = 0;
 
   for (const p of snap.people) {
     const externalPersonId = String(p.externalPersonId || '').trim();
     const displayName = String(p.displayName || '').trim();
     if (!externalPersonId || !displayName) continue;
 
-    const identity = {
-      displayName,
-      email: p.email || null,
-      phone: p.phone || null,
-      identitySyncedAt: new Date(),
-    };
-    // Staff status (lifecycleHint) is now GOS-OWNED (Slice B). We SEED it from
-    // upstream only when first CREATING a person; we NEVER overwrite it on an
-    // existing row — the sync no longer clobbers a GOS-set staff status.
-    // Identity (name/email/phone) is still mirrored from upstream. portalEnabled
-    // / accessGrantedAt / accessRevokedAt / profile / teamRef remain local-only.
-    const seedLifecycleHint = p.lifecycleHint || null;
-
     const existing = await prisma.personRef.findUnique({
       where: { externalPersonId },
     });
     if (existing) {
-      // lifecycleHint intentionally omitted — GOS owns staff status now.
-      const data = { ...identity };
+      // GOS OWNS the roster + lifecycle (Slices B–E). The pull is now ONLY an
+      // identity mirror for EXISTING people (name/email/phone — identity
+      // ownership is intentionally deferred). lifecycleHint is never touched;
+      // portalEnabled / access / profile / teamRef are local-only.
+      const data = {
+        displayName,
+        email: p.email || null,
+        phone: p.phone || null,
+        identitySyncedAt: new Date(),
+      };
       if (p.portalToken) data.portalToken = p.portalToken;
-      await prisma.personRef.update({
-        where: { externalPersonId },
-        data,
-      });
+      await prisma.personRef.update({ where: { externalPersonId }, data });
       updated += 1;
     } else {
-      await prisma.personRef.create({
-        data: {
-          externalPersonId,
-          identitySource: 'recruitment',
-          portalToken: p.portalToken || newPortalToken(),
-          lifecycleHint: seedLifecycleHint,
-          // Existing infra defaults `portalEnabled=true` so newcomers
-          // arrive with access. We keep that default for now to avoid
-          // breaking the current "guide imported → link works"
-          // expectation; admins use the Access UI to revoke
-          // explicitly. A future config flag can flip this to
-          // default-off if the team wants explicit-grant semantics
-          // for new imports.
-          accessGrantedAt: new Date(),
-          ...identity,
-          profile: { create: {} },
-        },
-      });
-      created += 1;
+      // Slice E: GOS no longer DERIVES the roster from recruitment. People enter
+      // GOS via staff-events (training_started / accepted_to_team), not this pull.
+      // We do NOT create here — surface the gap instead (visible, no hidden
+      // re-derivation of the roster).
+      missingFromGos += 1;
     }
   }
 
@@ -129,7 +107,7 @@ async function syncFromUpstream() {
     }
   }
 
-  return { created, updated, removed, total: snap.people.length };
+  return { updated, missingFromGos, removed, total: snap.people.length };
 }
 
 // ---------- List ----------
@@ -155,8 +133,8 @@ router.get(
       upstream = {
         ok: true,
         syncedAt: new Date().toISOString(),
-        created: r.created,
         updated: r.updated,
+        missingFromGos: r.missingFromGos,
         removed: r.removed,
         total: r.total,
       };
