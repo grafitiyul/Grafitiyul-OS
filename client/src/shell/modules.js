@@ -3,13 +3,15 @@
 // the Hebrew label, so navigation and the header label can never drift apart.
 
 export const TOP_MODULES = [
-  { key: 'people', to: '/admin/people', label: 'אנשים וגישה', glyph: '👥' },
   // CRM is the operational hub: Deals (primary tab) + Contacts + Organizations.
   { key: 'crm', to: '/admin/crm', label: 'CRM', glyph: '🏢' },
 ];
 
-// Bottom cluster, top→bottom: תוכן סיורים, מסמכים, נהלים, הגדרות, משתמשים.
+// Bottom cluster, top→bottom: צוות, תוכן סיורים, מסמכים, נהלים, הגדרות, משתמשים.
+// "צוות" (the people/access module) moved here — it reflects its real purpose as
+// the staff/team surface; route (/admin/people) unchanged.
 export const BOTTOM_MODULES = [
+  { key: 'people', to: '/admin/people', label: 'צוות', glyph: '👥' },
   { key: 'tour-content', to: '/admin/tour-content', label: 'תוכן סיורים', glyph: '🗺️' },
   { key: 'documents', to: '/admin/documents', label: 'מסמכים', glyph: '📄' },
   { key: 'procedures', to: '/admin/procedures', label: 'נהלים', glyph: '☰' },
