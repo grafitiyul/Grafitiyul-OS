@@ -99,9 +99,11 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
     await api.people.setPortalEnabled(person.id, !person.portalEnabled);
     onChanged();
   }
-  // Staff status is GOS-owned (Slice B). Mark/unmark this person as active staff.
-  async function toggleStaff() {
-    await api.people.setStaff(person.id, person.lifecycleHint !== 'staff');
+  // Lifecycle is GOS-owned (Slice B). Explicit control — 'trainee'|'staff'|'none' —
+  // so changing one status never silently loses another (e.g. staff-off no longer
+  // wipes a trainee).
+  async function changeLifecycle(value) {
+    await api.people.setLifecycle(person.id, value);
     onChanged();
   }
   async function rotateToken() {
@@ -138,9 +140,7 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
               {person.displayName}
             </h1>
             <StatusChip status={person.status} />
-            {person.lifecycleHint === 'staff' && (
-              <span className="text-[11px] bg-blue-100 text-blue-800 rounded px-2 py-0.5">צוות</span>
-            )}
+            <LifecycleChip lifecycle={person.lifecycleHint} />
             {person.team && (
               <span className="text-[11px] bg-gray-100 text-gray-700 rounded px-2 py-0.5">
                 {person.team.displayName}
@@ -174,13 +174,23 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
               />
               פורטל פעיל
             </label>
-            <label className="flex items-center gap-2 text-[12px] text-gray-700">
-              <input
-                type="checkbox"
-                checked={person.lifecycleHint === 'staff'}
-                onChange={toggleStaff}
-              />
-              צוות פעיל
+            <label className="flex items-center gap-1.5 text-[12px] text-gray-700">
+              סטטוס:
+              <select
+                value={
+                  person.lifecycleHint === 'staff'
+                    ? 'staff'
+                    : person.lifecycleHint === 'trainee'
+                    ? 'trainee'
+                    : 'none'
+                }
+                onChange={(e) => changeLifecycle(e.target.value)}
+                className="border border-gray-300 rounded px-2 py-1 text-[12px] bg-white"
+              >
+                <option value="trainee">מתלמד</option>
+                <option value="staff">צוות</option>
+                <option value="none">ללא שיוך</option>
+              </select>
             </label>
             <button
               onClick={rotateToken}
@@ -310,6 +320,17 @@ function StatusChip({ status }) {
       {PERSON_STATUS_LABELS[status] || status}
     </span>
   );
+}
+
+// Current lifecycle at a glance — GOS-owned. Always rendered so the person's
+// status is explicit (including "ללא שיוך" when unset).
+function LifecycleChip({ lifecycle }) {
+  const map = {
+    staff: ['צוות', 'bg-blue-100 text-blue-800'],
+    trainee: ['מתלמד', 'bg-amber-100 text-amber-800'],
+  };
+  const [label, cls] = map[lifecycle] || ['ללא שיוך', 'bg-gray-100 text-gray-600'];
+  return <span className={`inline-flex items-center text-[11px] px-2 py-0.5 rounded ${cls}`}>{label}</span>;
 }
 
 // ── Identity section ────────────────────────────────────────────────────────

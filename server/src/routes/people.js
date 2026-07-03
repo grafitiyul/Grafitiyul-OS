@@ -293,21 +293,27 @@ router.put(
   }),
 );
 
-// ---------- Staff status (GOS-owned, Slice B) ----------
-// Staff status is now owned by GOS, not mirrored from recruitment. Mark/unmark a
-// person as active staff. Uses the existing `lifecycleHint` field ('staff' | null)
-// — no schema change. syncFromUpstream no longer overwrites this on existing rows,
-// so a value set here is authoritative.
+// ---------- Lifecycle status (GOS-owned, Slice B) ----------
+// The person's lifecycle is now owned by GOS, not mirrored from recruitment.
+// Explicit control (not a lossy binary toggle): set the exact status.
+//   'trainee' → lifecycleHint = 'trainee'
+//   'staff'   → lifecycleHint = 'staff'
+//   'none'    → lifecycleHint = null   (ללא שיוך / אחר)
+// Uses the existing `lifecycleHint` field — no schema change. syncFromUpstream no
+// longer overwrites this on existing rows, so a value set here is authoritative.
+const LIFECYCLE_MAP = { trainee: 'trainee', staff: 'staff', none: null };
 router.put(
-  '/:id/staff',
+  '/:id/lifecycle',
   handle(async (req, res) => {
-    const { isStaff } = req.body || {};
-    if (typeof isStaff !== 'boolean') {
-      return res.status(400).json({ error: 'isStaff_boolean_required' });
+    const raw = req.body?.lifecycle;
+    if (!Object.prototype.hasOwnProperty.call(LIFECYCLE_MAP, raw)) {
+      return res
+        .status(400)
+        .json({ error: 'invalid_lifecycle', allowed: ['trainee', 'staff', 'none'] });
     }
     const person = await prisma.personRef.update({
       where: { id: req.params.id },
-      data: { lifecycleHint: isStaff ? 'staff' : null },
+      data: { lifecycleHint: LIFECYCLE_MAP[raw] },
       include: PERSON_INCLUDE,
     });
     res.json(person);

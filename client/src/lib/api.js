@@ -184,11 +184,11 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify({ enabled }),
       }),
-    // Staff status is GOS-owned (Slice B): mark/unmark active staff.
-    setStaff: (id, isStaff) =>
-      request(`/api/people/${id}/staff`, {
+    // Lifecycle status is GOS-owned (Slice B): explicit 'trainee'|'staff'|'none'.
+    setLifecycle: (id, lifecycle) =>
+      request(`/api/people/${id}/lifecycle`, {
         method: 'PUT',
-        body: JSON.stringify({ isStaff }),
+        body: JSON.stringify({ lifecycle }),
       }),
     uploadImage: async (id, file) => {
       const q = qs({ filename: file.name });
