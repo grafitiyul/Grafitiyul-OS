@@ -53,6 +53,33 @@ const PUNCT_ONLY_RE = /^[\s\-:.,;–—|()[\]]*$/;
 
 const INLINE_HEADING_MAX_LEN = 100;
 
+// Convert stored content to display HTML, mirroring the editor's own incoming
+// normalisation (RichEditor.normaliseIncoming). Imported recruitment bodies are
+// PLAIN TEXT with newlines (no HTML), so rendering them straight to innerHTML
+// collapses every line/paragraph break. This restores them: HTML passes through
+// untouched; plain text becomes <p> blocks (\n\n) with <br> soft breaks (\n).
+// Read-only surfaces (preview/portal) call richHtmlForDisplay so they match the
+// editor exactly.
+function plainTextToHtml(raw) {
+  if (!raw) return '';
+  // Already HTML? leave it (edited-in-GOS content, or pasted rich HTML).
+  if (/<[a-z][a-z0-9]*[\s>/]/i.test(raw)) return raw;
+  const esc = raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  return esc
+    .split(/\n{2,}/)
+    .map((block) => `<p>${block.split('\n').join('<br>')}</p>`)
+    .join('');
+}
+
+// The authoritative read-only renderer input: plain-text→HTML, then the same
+// paragraph/heading normalisation used everywhere else.
+export function richHtmlForDisplay(raw) {
+  return normalizeRichHtml(plainTextToHtml(raw));
+}
+
 export function normalizeRichHtml(html) {
   if (typeof html !== 'string' || html.length === 0) return '';
 

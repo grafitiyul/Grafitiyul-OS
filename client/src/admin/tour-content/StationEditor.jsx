@@ -94,11 +94,12 @@ export default function StationEditor() {
             </div>
           </div>
           <div className="flex-1" />
-          {/* RTL: next (הבאה) advances leftward → left chevron on the left;
-              previous (הקודמת) is rightward → right chevron on the right. */}
+          {/* RTL: first flex child renders on the RIGHT. Previous (הקודמת) sits
+              on the right pointing right (back); next (הבאה) on the left pointing
+              left (forward). Handlers: הקודמת→prev station, הבאה→next station. */}
           <div className="flex items-center gap-1.5">
-            <button disabled={!next} onClick={() => goto(next)} className="h-8 pr-2 pl-2.5 rounded-lg border border-gray-200 text-[12.5px] font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center gap-1" title="לתחנה הבאה"><span>‹</span> הבאה</button>
-            <button disabled={!prev} onClick={() => goto(prev)} className="h-8 pl-2 pr-2.5 rounded-lg border border-gray-200 text-[12.5px] font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center gap-1" title="לתחנה הקודמת">הקודמת <span>›</span></button>
+            <button disabled={!prev} onClick={() => goto(prev)} className="h-8 pl-2 pr-2.5 rounded-lg border border-gray-200 text-[12.5px] font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center gap-1" title="לתחנה הקודמת">הקודמת <span aria-hidden>›</span></button>
+            <button disabled={!next} onClick={() => goto(next)} className="h-8 pr-2 pl-2.5 rounded-lg border border-gray-200 text-[12.5px] font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center gap-1" title="לתחנה הבאה"><span aria-hidden>‹</span> הבאה</button>
           </div>
           <button className={ghostBtn + ' !py-1.5 !text-[12px]'} onClick={() => window.open(`/preview/tour-station/${stationId}`, '_blank', 'noopener')}>👁 תצוגה מקדימה</button>
         </div>

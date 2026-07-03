@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
-import { normalizeRichHtml } from '../../editor/htmlNormalize.js';
+import { richHtmlForDisplay } from '../../editor/htmlNormalize.js';
 import '../../editor/editor.css';
 import { MEDIA_ROLE, assetTypeLabel, assetSourceLabel } from './kit.jsx';
 
@@ -50,7 +50,7 @@ export default function StationPreview() {
                 <span className="w-6 h-6 rounded-lg bg-blue-600 text-white grid place-items-center text-[12px] font-bold tabular-nums shrink-0">{i + 1}</span>
                 <h2 className="text-[16px] font-semibold">{s.contentBlock?.titleHe || ''}</h2>
               </div>
-              <div className="gos-prose text-gray-800" dangerouslySetInnerHTML={{ __html: normalizeRichHtml(s.contentBlock?.bodyHe || '') || '<p style="color:#9ca3af">— ללא תוכן —</p>' }} />
+              <div className="gos-prose text-gray-800" dangerouslySetInnerHTML={{ __html: richHtmlForDisplay(s.contentBlock?.bodyHe || '') || '<p style="color:#9ca3af">— ללא תוכן —</p>' }} />
             </section>
           ))}
         </div>
