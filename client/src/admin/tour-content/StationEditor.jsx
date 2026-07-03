@@ -7,9 +7,9 @@ import Dialog from '../common/Dialog.jsx';
 import ReorderableList from '../common/ReorderableList.jsx';
 import { SingleImage } from '../products/ImageUploader.jsx';
 import {
-  Loading, ErrorBox, alertError, Field, TextInput, STATION_KINDS,
+  Loading, ErrorBox, alertError, Field, TextInput,
   roleLabel, textPreview, assetTypeLabel, assetSourceLabel, ASSET_TYPES,
-  MEDIA_ROLE, primaryBtn, ghostBtn,
+  MEDIA_ROLE, youtubeThumb, vimeoId, vimeoThumb, primaryBtn, ghostBtn,
 } from './kit.jsx';
 
 export default function StationEditor() {
@@ -33,7 +33,7 @@ export default function StationEditor() {
     try {
       const [s, sibs] = await Promise.all([api.tourContent.getStation(stationId), api.tourContent.listStations(tourId)]);
       setStation(s); setSiblings(sibs); setHeroImage(s.heroImage || null);
-      const init = { titleHe: s.titleHe || '', descriptionHe: s.descriptionHe || '', kind: s.kind || 'location', heroImageId: s.heroImageId || null, active: s.active };
+      const init = { titleHe: s.titleHe || '', descriptionHe: s.descriptionHe || '', heroImageId: s.heroImageId || null, active: s.active };
       setForm(init); setOriginal(init);
       const media = s.steps.find((x) => x.roleHint === MEDIA_ROLE);
       setMediaAssets(media ? await api.tourContent.listAssets(media.contentBlockId) : []);
@@ -71,10 +71,6 @@ export default function StationEditor() {
     try { await api.tourContent.removeStep(id); await refresh(); }
     catch (e) { alertError('שגיאה', e); }
   }
-  async function toggleVisible(step) {
-    try { await api.tourContent.updateStep(step.id, { isVisible: !step.isVisible }); await refresh(); }
-    catch (e) { alertError('שגיאה', e); }
-  }
 
   if (loading) return <div className="p-8"><Loading /></div>;
   if (error) return <div className="p-8"><ErrorBox message={error} /></div>;
@@ -98,9 +94,11 @@ export default function StationEditor() {
             </div>
           </div>
           <div className="flex-1" />
-          <div className="flex items-center gap-1">
-            <button disabled={!prev} onClick={() => goto(prev)} className="h-8 px-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30" title="התחנה הקודמת">›</button>
-            <button disabled={!next} onClick={() => goto(next)} className="h-8 px-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30" title="התחנה הבאה">‹</button>
+          {/* RTL: next (הבאה) advances leftward → left chevron on the left;
+              previous (הקודמת) is rightward → right chevron on the right. */}
+          <div className="flex items-center gap-1.5">
+            <button disabled={!next} onClick={() => goto(next)} className="h-8 pr-2 pl-2.5 rounded-lg border border-gray-200 text-[12.5px] font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center gap-1" title="לתחנה הבאה"><span>‹</span> הבאה</button>
+            <button disabled={!prev} onClick={() => goto(prev)} className="h-8 pl-2 pr-2.5 rounded-lg border border-gray-200 text-[12.5px] font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center gap-1" title="לתחנה הקודמת">הקודמת <span>›</span></button>
           </div>
           <button className={ghostBtn + ' !py-1.5 !text-[12px]'} onClick={() => window.open(`/preview/tour-station/${stationId}`, '_blank', 'noopener')}>👁 תצוגה מקדימה</button>
         </div>
@@ -115,11 +113,6 @@ export default function StationEditor() {
               <Field label="תיאור קצר">
                 <textarea rows={2} value={form.descriptionHe} onChange={(e) => set('descriptionHe', e.target.value)} placeholder="אופציונלי"
                   className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
-              </Field>
-              <Field label="סוג התחנה">
-                <select value={form.kind} onChange={(e) => set('kind', e.target.value)} className="h-10 w-full rounded-xl border border-gray-300 px-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200">
-                  {STATION_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
-                </select>
               </Field>
             </div>
             <Field label="תמונה ראשית (R2)">
@@ -142,7 +135,6 @@ export default function StationEditor() {
           parts={contentSteps}
           onReorder={reorderParts}
           onRemove={removePart}
-          onToggleVisible={toggleVisible}
           onChanged={refresh}
           ensureMediaLast={ensureMediaLast}
         />
@@ -179,7 +171,7 @@ function Section({ icon, title, count, action, children, tone }) {
 }
 
 // ── Section B: parts ─────────────────────────────────────────────────────────────
-function PartsSection({ stationId, parts, onReorder, onRemove, onToggleVisible, onChanged, ensureMediaLast }) {
+function PartsSection({ stationId, parts, onReorder, onRemove, onChanged, ensureMediaLast }) {
   const [adding, setAdding] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
 
@@ -212,7 +204,6 @@ function PartsSection({ stationId, parts, onReorder, onRemove, onToggleVisible, 
               handle={handle}
               expanded={expandedId === step.id}
               onExpand={() => setExpandedId(expandedId === step.id ? null : step.id)}
-              onToggleVisible={() => onToggleVisible(step)}
               onRemove={() => onRemove(step.id)}
               onSaved={onChanged}
             />
@@ -225,7 +216,7 @@ function PartsSection({ stationId, parts, onReorder, onRemove, onToggleVisible, 
   );
 }
 
-function PartRow({ step, handle, expanded, onExpand, onToggleVisible, onRemove, onSaved }) {
+function PartRow({ step, handle, expanded, onExpand, onRemove, onSaved }) {
   const block = step.contentBlock || {};
   const [titleHe, setTitleHe] = useState(block.titleHe || '');
   const [bodyHe, setBodyHe] = useState(block.bodyHe || '');
@@ -239,11 +230,11 @@ function PartRow({ step, handle, expanded, onExpand, onToggleVisible, onRemove, 
   }
 
   return (
-    <div className={`rounded-xl border ${expanded ? 'border-blue-300 bg-blue-50/20' : step.isVisible ? 'border-gray-200 bg-white' : 'border-dashed border-gray-200 bg-gray-50'}`}>
+    <div className={`rounded-xl border ${expanded ? 'border-blue-300 bg-blue-50/20' : 'border-gray-200 bg-white'}`}>
       <div className="flex items-center gap-3 px-3.5 py-2.5">
         <span className="opacity-50">{handle}</span>
         <div className="flex-1 min-w-0 cursor-pointer" onClick={onExpand}>
-          <div className={`text-[14px] font-semibold truncate ${step.isVisible ? 'text-gray-900' : 'text-gray-400'}`}>
+          <div className="text-[14px] font-semibold truncate text-gray-900">
             {block.titleHe || '(חלק ללא כותרת)'}
             {roleLabel(step.roleHint) && <span className="text-[11px] font-medium text-slate-500 bg-slate-100 rounded px-1.5 py-0.5 mr-2">{roleLabel(step.roleHint)}</span>}
             {block.shared && <span className="text-[11px] text-amber-700 bg-amber-50 rounded px-1.5 py-0.5 mr-1">משותף</span>}
@@ -252,7 +243,6 @@ function PartRow({ step, handle, expanded, onExpand, onToggleVisible, onRemove, 
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
           <button onClick={onExpand} title="עריכת תוכן" className="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700">✎</button>
-          <button onClick={onToggleVisible} title={step.isVisible ? 'הסתר מהחניך' : 'הצג לחניך'} className={`w-8 h-8 rounded-lg hover:bg-gray-100 ${step.isVisible ? 'text-gray-400 hover:text-gray-700' : 'text-blue-600'}`}>{step.isVisible ? '👁' : '🚫'}</button>
           <button onClick={onRemove} title="הסר חלק" className="w-8 h-8 rounded-lg text-gray-300 hover:bg-red-50 hover:text-red-600">×</button>
         </div>
       </div>
@@ -315,9 +305,10 @@ function AddPartDialog({ onClose, onNew, onExisting }) {
   );
 }
 
-// ── Section C: media & links ─────────────────────────────────────────────────────
+// ── Section C: media & links (lightweight media manager) ─────────────────────────
 function MediaSection({ stationId, mediaStep, assets, onChanged }) {
   const [adding, setAdding] = useState(false);
+  const [replacing, setReplacing] = useState(null); // asset being replaced
 
   async function ensureMediaBlock() {
     if (mediaStep) return mediaStep.contentBlockId;
@@ -325,12 +316,14 @@ function MediaSection({ stationId, mediaStep, assets, onChanged }) {
     return step.contentBlockId;
   }
   async function add(data) {
-    try {
-      const blockId = await ensureMediaBlock();
-      await api.tourContent.createAsset(blockId, data);
-      setAdding(false);
-      await onChanged();
-    } catch (e) { alertError('שגיאה בהוספת מדיה', e); }
+    try { const blockId = await ensureMediaBlock(); await api.tourContent.createAsset(blockId, data); setAdding(false); await onChanged(); }
+    catch (e) { alertError('שגיאה בהוספת מדיה', e); }
+  }
+  async function rename(id, titleHe) {
+    try { await api.tourContent.updateAsset(id, { titleHe }); await onChanged(); } catch (e) { alertError('שגיאה בשינוי השם', e); }
+  }
+  async function replace(id, data) {
+    try { await api.tourContent.updateAsset(id, data); setReplacing(null); await onChanged(); } catch (e) { alertError('שגיאה בהחלפה', e); }
   }
   async function remove(id) {
     if (!confirm('למחוק את הפריט?')) return;
@@ -343,24 +336,115 @@ function MediaSection({ stationId, mediaStep, assets, onChanged }) {
       {assets.length === 0 ? (
         <div className="py-8 text-center text-[13px] text-gray-400">אין מדיה או קישורים לתחנה זו.</div>
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-3">
           {assets.map((a) => (
-            <div key={a.id} className="rounded-xl border border-gray-200 overflow-hidden bg-white group relative">
-              <div className="aspect-video grid place-items-center relative" style={{ background: a.media?.url ? undefined : (a.assetType === 'image' ? 'linear-gradient(135deg,#fca5a5,#fdba74)' : '#0f172a') }}>
-                {a.media?.url ? <img src={a.media.url} alt="" className="w-full h-full object-cover" /> : <span className="text-slate-200 text-2xl">{a.assetType === 'image' ? '🖼' : a.assetType === 'link' ? '🔗' : a.assetType === 'file' ? '📄' : '▶'}</span>}
-                {assetSourceLabel(a) && <span className="absolute bottom-1.5 left-1.5 bg-white/90 text-slate-700 text-[10px] px-1.5 py-0.5 rounded font-semibold">{assetSourceLabel(a)}</span>}
-                <button onClick={() => remove(a.id)} className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-white/90 text-gray-600 hover:text-red-600 opacity-0 group-hover:opacity-100 shadow" aria-label="מחק">×</button>
-              </div>
-              <div className="px-2.5 py-2">
-                <div className="text-[12.5px] font-semibold truncate">{a.titleHe}</div>
-                <div className="text-[11px] text-gray-400">{assetTypeLabel(a.assetType)}</div>
-              </div>
-            </div>
+            <AssetCard key={a.id} asset={a} onRename={(t) => rename(a.id, t)} onReplace={() => setReplacing(a)} onRemove={() => remove(a.id)} />
           ))}
         </div>
       )}
       {adding && <AddMediaDialog onClose={() => setAdding(false)} onAdd={add} />}
+      {replacing && <ReplaceMediaDialog asset={replacing} onClose={() => setReplacing(null)} onReplace={(data) => replace(replacing.id, data)} />}
     </Section>
+  );
+}
+
+// Resolve the best thumbnail for a media asset. R2 image → its url. YouTube →
+// direct thumb (sync). Vimeo → oEmbed lookup (async). Otherwise null (placeholder).
+function useAssetThumb(asset) {
+  const direct = asset.media?.url || (asset.assetType === 'image' && asset.url) || youtubeThumb(asset.url);
+  const [thumb, setThumb] = useState(direct || null);
+  useEffect(() => {
+    setThumb(direct || null);
+    if (!direct && vimeoId(asset.url)) {
+      let live = true;
+      vimeoThumb(asset.url).then((u) => { if (live && u) setThumb(u); });
+      return () => { live = false; };
+    }
+  }, [asset.url, asset.media?.url, asset.assetType, direct]);
+  return thumb;
+}
+
+function AssetCard({ asset, onRename, onReplace, onRemove }) {
+  const [menu, setMenu] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [title, setTitle] = useState(asset.titleHe || '');
+  const thumb = useAssetThumb(asset);
+  const link = asset.media?.url || asset.url || '';
+  const isVideo = asset.assetType === 'video';
+  const src = assetSourceLabel(asset);
+  useEffect(() => setTitle(asset.titleHe || ''), [asset.titleHe]);
+
+  function saveRename() { const t = title.trim(); setRenaming(false); if (t && t !== asset.titleHe) onRename(t); else setTitle(asset.titleHe || ''); }
+  const act = (fn) => { setMenu(false); fn(); };
+
+  return (
+    <div className="rounded-xl border border-gray-200 overflow-hidden bg-white relative group">
+      <div className="aspect-video relative bg-slate-900 grid place-items-center overflow-hidden">
+        {thumb ? <img src={thumb} alt="" loading="lazy" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+          : <span className="text-slate-300 text-2xl">{asset.assetType === 'image' ? '🖼' : asset.assetType === 'link' ? '🔗' : asset.assetType === 'file' ? '📄' : '▶'}</span>}
+        {isVideo && thumb && (
+          <span className="absolute inset-0 grid place-items-center pointer-events-none">
+            <span className="w-10 h-10 rounded-full bg-black/55 text-white grid place-items-center text-[15px] backdrop-blur-sm">▶</span>
+          </span>
+        )}
+        {src && <span className="absolute bottom-1.5 left-1.5 bg-white/90 text-slate-700 text-[10px] px-1.5 py-0.5 rounded font-semibold">{src}</span>}
+        <button onClick={() => setMenu((m) => !m)} className="absolute top-1.5 right-1.5 w-7 h-7 rounded-lg bg-white/90 text-gray-600 hover:text-gray-900 shadow grid place-items-center" aria-label="פעולות">⋮</button>
+        {menu && (
+          <>
+            <div className="fixed inset-0 z-10" onClick={() => setMenu(false)} />
+            <div className="absolute top-9 right-1.5 z-20 w-36 bg-white rounded-lg shadow-lg border border-gray-200 py-1 text-[13px]">
+              <MenuItem onClick={() => act(() => setRenaming(true))}>שינוי שם</MenuItem>
+              <MenuItem onClick={() => act(onReplace)}>החלפה</MenuItem>
+              {link && <MenuItem onClick={() => act(() => window.open(link, '_blank', 'noopener'))}>פתח</MenuItem>}
+              {link && <MenuItem onClick={() => act(() => navigator.clipboard?.writeText(link))}>העתק קישור</MenuItem>}
+              <MenuItem danger onClick={() => act(onRemove)}>מחיקה</MenuItem>
+            </div>
+          </>
+        )}
+      </div>
+      <div className="px-2.5 py-2">
+        {renaming ? (
+          <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onBlur={saveRename}
+            onKeyDown={(e) => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') { setTitle(asset.titleHe || ''); setRenaming(false); } }}
+            className="w-full text-[12.5px] font-semibold rounded border border-blue-300 px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-200" />
+        ) : (
+          <div className="text-[12.5px] font-semibold text-gray-900 leading-snug line-clamp-2 cursor-text" title={asset.titleHe} onClick={() => setRenaming(true)}>{asset.titleHe}</div>
+        )}
+        <div className="text-[11px] text-gray-400 mt-0.5">{assetTypeLabel(asset.assetType)}</div>
+      </div>
+    </div>
+  );
+}
+
+function MenuItem({ children, onClick, danger }) {
+  return <button onClick={onClick} className={`block w-full text-right px-3 py-1.5 hover:bg-gray-50 ${danger ? 'text-red-600' : 'text-gray-700'}`}>{children}</button>;
+}
+
+function ReplaceMediaDialog({ asset, onClose, onReplace }) {
+  const isImage = asset.assetType === 'image' && (asset.media || !asset.url);
+  const [url, setUrl] = useState(asset.url || '');
+  const [media, setMedia] = useState(asset.media || null);
+  const [busy, setBusy] = useState(false);
+  const canSave = isImage ? !!media : !!url.trim();
+
+  async function save() {
+    if (!canSave) return;
+    setBusy(true);
+    await onReplace(isImage ? { mediaId: media.id } : { url: url.trim() });
+    setBusy(false);
+  }
+  return (
+    <Dialog open onClose={onClose} title="החלפת מדיה"
+      footer={<>
+        <button className={ghostBtn} onClick={onClose} disabled={busy}>ביטול</button>
+        <button className={primaryBtn} onClick={save} disabled={busy || !canSave}>{busy ? 'שומר…' : 'החלף'}</button>
+      </>}>
+      {isImage ? (
+        <Field label="תמונה חדשה (R2)"><SingleImage image={media} onChange={setMedia} folder="tour-content/asset" /></Field>
+      ) : (
+        <Field label="קישור חדש (URL)"><TextInput value={url} onChange={(e) => setUrl(e.target.value)} dir="ltr" placeholder="https://…" /></Field>
+      )}
+    </Dialog>
   );
 }
 

@@ -6,7 +6,7 @@ import ReorderableList from '../common/ReorderableList.jsx';
 import { alertError, Field, TextInput, primaryBtn, ghostBtn } from './kit.jsx';
 
 // Right pane: the list of tours. Selecting a tour reveals its stations pane.
-export default function ToursPane({ activeTourId }) {
+export default function ToursPane({ activeTourId, width }) {
   const nav = useNavigate();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -39,7 +39,7 @@ export default function ToursPane({ activeTourId }) {
   }
 
   return (
-    <aside className="w-64 shrink-0 flex flex-col bg-white border-l border-gray-200">
+    <aside style={{ width }} className="shrink-0 flex flex-col bg-white border-l border-gray-200">
       <div className="px-3.5 pt-4 pb-2.5 border-b border-gray-100">
         <div className="flex items-center gap-2">
           <h2 className="text-[15px] font-bold text-gray-900">סיורים</h2>

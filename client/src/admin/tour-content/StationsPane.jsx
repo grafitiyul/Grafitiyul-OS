@@ -3,10 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import Dialog from '../common/Dialog.jsx';
 import ReorderableList from '../common/ReorderableList.jsx';
-import { alertError, Field, TextInput, stationKindLabel, primaryBtn, ghostBtn } from './kit.jsx';
+import { alertError, Field, TextInput, primaryBtn, ghostBtn } from './kit.jsx';
 
 // Middle pane: stations of the selected tour + inline tour-meta editing.
-export default function StationsPane({ tourId, activeStationId }) {
+export default function StationsPane({ tourId, activeStationId, width }) {
   const nav = useNavigate();
   const [tour, setTour] = useState(null);
   const [rows, setRows] = useState([]);
@@ -40,7 +40,7 @@ export default function StationsPane({ tourId, activeStationId }) {
   }
 
   return (
-    <aside className="w-72 shrink-0 flex flex-col bg-[#fcfcfd] border-l border-gray-200">
+    <aside style={{ width }} className="shrink-0 flex flex-col bg-[#fcfcfd] border-l border-gray-200">
       <div className="px-3.5 pt-4 pb-2.5 border-b border-gray-100">
         <div className="flex items-center gap-1.5 text-[11px] text-gray-400 font-semibold tracking-wide">
           <span className="truncate">{tour?.titleHe || '…'}</span>
@@ -73,7 +73,7 @@ export default function StationsPane({ tourId, activeStationId }) {
                   <span className={`w-6 h-6 rounded-md grid place-items-center text-[12px] font-bold tabular-nums ${sel ? 'bg-blue-600 text-white' : 'bg-indigo-50 text-indigo-600'}`}>{n}</span>
                   <button className="flex-1 text-right min-w-0" onClick={() => nav(`/admin/tour-content/tours/${tourId}/stations/${s.id}`)}>
                     <div className="text-[13px] font-semibold text-gray-900 truncate">{s.titleHe}</div>
-                    <div className="text-[11px] text-gray-400">{stationKindLabel(s.kind)}{!s.active ? ' · בארכיון' : ''}</div>
+                    {!s.active && <div className="text-[11px] text-gray-400">בארכיון</div>}
                   </button>
                 </div>
               );

@@ -50,6 +50,31 @@ export function assetSourceLabel(a) {
   return null;
 }
 
+// ── Video thumbnails ───────────────────────────────────────────────────────────
+// YouTube gives a direct thumbnail URL from the video id (no API). Vimeo needs an
+// oEmbed lookup (see vimeoThumb) — resolved lazily by the card.
+export function youtubeId(url) {
+  const m = String(url || '').match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+export function youtubeThumb(url) {
+  const id = youtubeId(url);
+  return id ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : null;
+}
+export function vimeoId(url) {
+  const m = String(url || '').match(/vimeo\.com\/(?:video\/)?(\d+)/);
+  return m ? m[1] : null;
+}
+// Vimeo oEmbed → thumbnail URL (CORS-enabled). Returns null on any failure.
+export async function vimeoThumb(url) {
+  try {
+    const r = await fetch(`https://vimeo.com/api/oembed.json?url=${encodeURIComponent(url)}`);
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j.thumbnail_url || null;
+  } catch { return null; }
+}
+
 // Active / archived pill — matches the Products/CRM convention.
 export function ActiveBadge({ active }) {
   return active ? (
