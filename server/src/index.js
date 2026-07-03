@@ -46,6 +46,7 @@ import quoteTemplateRouter from './routes/quoteTemplate.js';
 import timelineRouter from './routes/timeline.js';
 import sharedContentRouter from './routes/sharedContent.js';
 import tourContentRouter from './routes/tourContent.js';
+import tourContentExportRouter from './routes/tourContentExport.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -131,6 +132,10 @@ app.use('/api/attempts', attemptsRouter);
 app.use('/api/flows', flowsRouter);
 app.use('/api/items', itemsRouter);
 app.use('/api/media', mediaRouter);
+// Tour Content export — server-to-server READ API for the recruitment system to
+// consume GOS-owned tour content. NOT cookie-gated: it carries its own shared-
+// secret middleware (x-internal-export-secret). GOS is the source of truth.
+app.use('/api/tour-content-export', tourContentExportRouter);
 
 // ── Admin-only routes ──────────────────────────────────────────
 //

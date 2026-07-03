@@ -98,8 +98,8 @@ export default function StationEditor() {
               on the right pointing right (back); next (הבאה) on the left pointing
               left (forward). Handlers: הקודמת→prev station, הבאה→next station. */}
           <div className="flex items-center gap-1.5">
-            <button disabled={!prev} onClick={() => goto(prev)} className="h-8 pl-2 pr-2.5 rounded-lg border border-gray-200 text-[12.5px] font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center gap-1" title="לתחנה הקודמת">הקודמת <span aria-hidden>›</span></button>
-            <button disabled={!next} onClick={() => goto(next)} className="h-8 pr-2 pl-2.5 rounded-lg border border-gray-200 text-[12.5px] font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center gap-1" title="לתחנה הבאה"><span aria-hidden>‹</span> הבאה</button>
+            <button disabled={!prev} onClick={() => goto(prev)} className="h-8 pl-2.5 pr-2 rounded-lg border border-gray-200 text-[12.5px] font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center gap-1" title="לתחנה הקודמת"><span aria-hidden>‹</span> הקודמת</button>
+            <button disabled={!next} onClick={() => goto(next)} className="h-8 pl-2 pr-2.5 rounded-lg border border-gray-200 text-[12.5px] font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-30 flex items-center gap-1" title="לתחנה הבאה">הבאה <span aria-hidden>›</span></button>
           </div>
           <button className={ghostBtn + ' !py-1.5 !text-[12px]'} onClick={() => window.open(`/preview/tour-station/${stationId}`, '_blank', 'noopener')}>👁 תצוגה מקדימה</button>
         </div>
