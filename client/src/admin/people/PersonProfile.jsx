@@ -68,7 +68,12 @@ export default function PersonProfile() {
     <div className="max-w-4xl mx-auto p-4 lg:p-6 space-y-6">
       <BackLink />
       <ProfileHeader person={person} onChanged={refresh} onDeleted={() => navigate('/admin/people')} />
-      <IdentitySection person={person} onChanged={refresh} />
+      {/* Staff (management) edit identity INLINE in the header above — it is the
+          single primary identity editor. Only trainees (recruitment-mirrored)
+          get the read-only identity card here. */}
+      {person.identitySource !== IDENTITY_SOURCES.MANAGEMENT && (
+        <IdentitySection person={person} onChanged={refresh} />
+      )}
       <TeamSection person={person} teams={teams} onChanged={refresh} />
       <ProfileSection person={person} onChanged={refresh} />
       <BankSection person={person} onChanged={refresh} />
@@ -88,6 +93,52 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
   const [copied, setCopied] = useState(false);
   const [rotating, setRotating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Staff identity is GOS-owned and edited RIGHT HERE, inline in the header —
+  // this is the single primary identity editor for staff. Trainees
+  // (identitySource='recruitment') keep a read-only name (their identity is
+  // mirrored from recruitment).
+  const isManagement = person.identitySource === IDENTITY_SOURCES.MANAGEMENT;
+  const idBaseline = {
+    displayName: person.displayName || '',
+    email: person.email || '',
+    phone: person.phone || '',
+  };
+  const [idForm, setIdForm] = useState(idBaseline);
+  const [idSaving, setIdSaving] = useState(false);
+  useEffect(() => {
+    setIdForm({
+      displayName: person.displayName || '',
+      email: person.email || '',
+      phone: person.phone || '',
+    });
+  }, [person]);
+  const idDirty =
+    isManagement &&
+    (idForm.displayName !== idBaseline.displayName ||
+      idForm.email !== idBaseline.email ||
+      idForm.phone !== idBaseline.phone);
+  // Unsaved-work guard so a version-gate reload / navigation can't silently drop
+  // an in-progress identity edit.
+  useDirtyForm(idDirty);
+
+  async function saveIdentity() {
+    if (!idForm.displayName.trim()) {
+      window.alert('שם מלא הוא שדה חובה.');
+      return;
+    }
+    setIdSaving(true);
+    try {
+      await api.people.update(person.id, {
+        displayName: idForm.displayName.trim(),
+        email: idForm.email.trim() || null,
+        phone: idForm.phone.trim() || null,
+      });
+      await onChanged();
+    } finally {
+      setIdSaving(false);
+    }
+  }
 
   function copyLink() {
     navigator.clipboard.writeText(portalUrl).then(() => {
@@ -146,9 +197,20 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
         <ProfileImage person={person} onChanged={onChanged} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-xl font-semibold text-gray-900 truncate">
-              {person.displayName}
-            </h1>
+            {isManagement ? (
+              <input
+                type="text"
+                value={idForm.displayName}
+                onChange={(e) => setIdForm({ ...idForm, displayName: e.target.value })}
+                placeholder="שם מלא"
+                aria-label="שם מלא"
+                className="text-xl font-semibold text-gray-900 bg-transparent border-b border-dashed border-gray-300 hover:border-gray-400 focus:border-emerald-500 focus:outline-none px-0.5 min-w-[8rem] flex-1"
+              />
+            ) : (
+              <h1 className="text-xl font-semibold text-gray-900 truncate">
+                {person.displayName}
+              </h1>
+            )}
             <StatusChip status={person.status} />
             <LifecycleChip lifecycle={person.lifecycleHint} />
             {person.team && (
@@ -160,6 +222,52 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
           <div className="mt-1 text-[12px] text-gray-500 font-mono" dir="ltr">
             {person.externalPersonId}
           </div>
+
+          {isManagement && (
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <label className="text-[12px] text-gray-600">
+                אימייל
+                <input
+                  type="email"
+                  dir="ltr"
+                  value={idForm.email}
+                  onChange={(e) => setIdForm({ ...idForm, email: e.target.value })}
+                  className="mt-0.5 w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-right focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-400"
+                />
+              </label>
+              <label className="text-[12px] text-gray-600">
+                טלפון
+                <input
+                  type="tel"
+                  dir="ltr"
+                  value={idForm.phone}
+                  onChange={(e) => setIdForm({ ...idForm, phone: e.target.value })}
+                  className="mt-0.5 w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-right focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-400"
+                />
+              </label>
+              <div className="sm:col-span-2 flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={saveIdentity}
+                  disabled={idSaving || !idDirty}
+                  className="px-4 py-1.5 text-sm bg-emerald-600 text-white rounded-md font-medium disabled:opacity-50"
+                >
+                  {idSaving ? 'שומר…' : 'שמור זהות'}
+                </button>
+                {idDirty && (
+                  <button
+                    onClick={() => setIdForm(idBaseline)}
+                    disabled={idSaving}
+                    className="px-3 py-1.5 text-sm border border-gray-300 rounded-md"
+                  >
+                    בטל שינויים
+                  </button>
+                )}
+                <span className="text-[11px] text-emerald-700">
+                  פרטי הזהות מנוהלים כאן (GOS) ומשתקפים מיד במערכת הגיוס
+                </span>
+              </div>
+            </div>
+          )}
 
           <div className="mt-3 flex items-center gap-2 flex-wrap">
             <button
