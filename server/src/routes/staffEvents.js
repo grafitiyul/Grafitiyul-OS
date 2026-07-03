@@ -55,7 +55,12 @@ router.post('/', handle(async (req, res) => {
   }
 
   // ── training_started → trainee | accepted_to_team → staff (upsert) ─────────────
-  const lifecycleHint = event === 'accepted_to_team' ? 'staff' : 'trainee';
+  // Phase G: becoming staff (accepted_to_team) transfers IDENTITY ownership to GOS
+  // (identitySource='management'). The event payload provides the initial identity
+  // captured at promotion time; afterwards GOS owns edits and the upstream pull no
+  // longer overwrites it. A trainee (training_started) stays 'recruitment'-mirrored.
+  const isStaff = event === 'accepted_to_team';
+  const lifecycleHint = isStaff ? 'staff' : 'trainee';
   const identity = { identitySyncedAt: new Date() };
   if (displayName !== undefined) identity.displayName = String(displayName).trim();
   if (email !== undefined) identity.email = email || null;
@@ -63,9 +68,12 @@ router.post('/', handle(async (req, res) => {
 
   const existing = await prisma.personRef.findUnique({ where: { externalPersonId: ext } });
   if (existing) {
+    const data = { ...identity, lifecycleHint };
+    // Promotion to staff → GOS now owns this person's identity.
+    if (isStaff) data.identitySource = 'management';
     const person = await prisma.personRef.update({
       where: { externalPersonId: ext },
-      data: { ...identity, lifecycleHint },
+      data,
       select: { id: true, lifecycleHint: true },
     });
     return res.json({ ok: true, event, created: false, lifecycleHint: person.lifecycleHint });
@@ -75,7 +83,9 @@ router.post('/', handle(async (req, res) => {
   const person = await prisma.personRef.create({
     data: {
       externalPersonId: ext,
-      identitySource: 'recruitment',
+      // Staff identity is GOS-owned from the moment of acceptance; a trainee is
+      // still mirrored from recruitment until (and if) they become staff.
+      identitySource: isStaff ? 'management' : 'recruitment',
       portalToken: newPortalToken(),
       portalEnabled: true,
       accessGrantedAt: new Date(),

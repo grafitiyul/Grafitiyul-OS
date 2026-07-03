@@ -52,6 +52,7 @@ async function syncFromUpstream() {
   const snap = await getRecruitmentSnapshot();
   let updated = 0;
   let missingFromGos = 0;
+  let skippedManagement = 0;
 
   for (const p of snap.people) {
     const externalPersonId = String(p.externalPersonId || '').trim();
@@ -60,12 +61,20 @@ async function syncFromUpstream() {
 
     const existing = await prisma.personRef.findUnique({
       where: { externalPersonId },
+      select: { id: true, identitySource: true },
     });
     if (existing) {
-      // GOS OWNS the roster + lifecycle (Slices B–E). The pull is now ONLY an
-      // identity mirror for EXISTING people (name/email/phone — identity
-      // ownership is intentionally deferred). lifecycleHint is never touched;
-      // portalEnabled / access / profile / teamRef are local-only.
+      // Phase G: GOS OWNS identity for identitySource='management' rows (staff /
+      // guides / evaluators). The upstream pull must NOT overwrite their
+      // name/email/phone — those are edited in GOS now. Skip them entirely.
+      if (existing.identitySource === 'management') {
+        skippedManagement += 1;
+        continue;
+      }
+      // Otherwise (identitySource='recruitment' — e.g. active trainees) the pull
+      // is still an identity mirror for EXISTING people (name/email/phone).
+      // lifecycleHint is never touched; portalEnabled / access / profile /
+      // teamRef are local-only.
       const data = {
         displayName,
         email: p.email || null,
@@ -107,7 +116,7 @@ async function syncFromUpstream() {
     }
   }
 
-  return { updated, missingFromGos, removed, total: snap.people.length };
+  return { updated, missingFromGos, skippedManagement, removed, total: snap.people.length };
 }
 
 // ---------- List ----------
@@ -135,6 +144,7 @@ router.get(
         syncedAt: new Date().toISOString(),
         updated: r.updated,
         missingFromGos: r.missingFromGos,
+        skippedManagement: r.skippedManagement,
         removed: r.removed,
         total: r.total,
       };
@@ -186,10 +196,11 @@ router.post(
 );
 
 // ---------- Update identity fields ----------
-// When identitySource='recruitment', only the fields we cache locally
-// (displayName / email / phone) are writable — the admin can still correct
-// a stale mirror. When identitySource='management' (future), the same
-// fields become authoritative. Either way, the same endpoint.
+// identitySource='recruitment' → these fields are a cache of the upstream
+// mirror (the admin can correct a stale value; the pull may re-sync it).
+// identitySource='management' (Phase G, live for staff/guides) → GOS OWNS
+// identity: edits here are authoritative and the upstream pull no longer
+// overwrites them. Same endpoint for both.
 
 router.put(
   '/:id',
