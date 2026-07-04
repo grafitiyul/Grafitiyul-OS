@@ -60,13 +60,16 @@ function formatDate(iso) {
   return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
 }
 
-// ── Navigation groups (LEFT) ────────────────────────────────────────────────
+// ── Navigation groups (LEFT) — Hebrew-first workspace chrome ──────────────────
+// NOTE: the "Marketing" group was removed. Its only field (marketingDescHe/En)
+// actually DOES appear in the customer proposal as "פרטים על המוצר", so it now
+// lives under Quote Content. A Marketing group returns only if a field is added
+// that genuinely does NOT appear in the quote.
 const GROUPS = [
-  { key: 'quote', en: 'Quote Content', he: 'תוכן להצעת מחיר', icon: IconDoc },
-  { key: 'marketing', en: 'Marketing Content', he: 'תוכן שיווקי (לא מופיע בהצעה)', icon: IconMega },
-  { key: 'guide', en: 'Guide Content', he: 'תוכן למדריך (פנימי)', icon: IconUser },
-  { key: 'operational', en: 'Operational Details', he: 'פרטים תפעוליים', icon: IconGear },
-  { key: 'advanced', en: 'Advanced', he: 'הגדרות מתקדמות', icon: IconSliders },
+  { key: 'quote', title: 'תוכן להצעת מחיר', desc: 'כל התוכן שמופיע בהצעת המחיר ללקוח.', icon: IconDoc },
+  { key: 'guide', title: 'תוכן למדריך', desc: 'מידע פנימי בלבד שאינו מוצג ללקוח.', icon: IconUser },
+  { key: 'operational', title: 'פרטים תפעוליים', desc: 'הגדרות המשפיעות על ביצוע הפעילות.', icon: IconGear },
+  { key: 'advanced', title: 'הגדרות מתקדמות', desc: 'הגדרות שנדיר לערוך.', icon: IconSliders },
 ];
 
 // ── Accordions (CENTER), grouped. `track` = counts toward completion. ─────────
@@ -74,8 +77,8 @@ const GROUPS = [
 //  Structure title — one source of truth for that label.)
 const SECTIONS = [
   { group: 'quote', key: 'program', title: 'אז מה בתוכנית?', sub: 'הטקסט שמופיע בראש ההצעה ללקוח', track: true },
+  { group: 'quote', key: 'productDetails', title: 'פרטים על המוצר', sub: 'מופיע בהצעת המחיר', track: true },
   { group: 'quote', key: 'gallery', title: 'גלריית תמונות להצעת מחיר', sub: 'תמונות שמלוות את ההצעה', track: true },
-  { group: 'marketing', key: 'marketingDesc', title: 'תיאור שיווקי', sub: 'לאתר / דף נחיתה — לא מופיע בהצעת המחיר', track: true },
   { group: 'guide', key: 'guideDesc', title: 'תיאור למדריך', sub: 'פנימי בלבד — לא נחשף ללקוח', track: true },
   { group: 'operational', key: 'duration', title: 'משך הסיור', sub: 'זמן משוער בשעות', track: true },
   { group: 'operational', key: 'shared', title: 'נקודת מפגש וסיום', sub: 'תוכן תפעולי מתוך הספרייה המשותפת', track: false },
@@ -206,8 +209,9 @@ export default function VariantEditor() {
   // ── Section completion (drives nav dots + right checklist) ──
   const done = {
     program: htmlHasText(form.programHe) || htmlHasText(form.programEn),
+    // "פרטים על המוצר" — the marketingDesc* columns, which DO appear in the quote.
+    productDetails: htmlHasText(form.marketingDescHe) || htmlHasText(form.marketingDescEn),
     gallery: (variant.galleryImages?.length || 0) > 0,
-    marketingDesc: htmlHasText(form.marketingDescHe) || htmlHasText(form.marketingDescEn),
     guideDesc: htmlHasText(form.guideDescHe) || htmlHasText(form.guideDescEn),
     duration: form.durationHours !== '' && Number(form.durationHours) > 0,
     guidePay: (toMinor(form.baseGuidePayment) ?? 0) > 0,
@@ -365,14 +369,13 @@ export default function VariantEditor() {
 function SectionBody({ k, form, set, variant, locations, programTitle, onRelationChange, onRemove }) {
   switch (k) {
     case 'program':
-      return <BiEditor he={form.programHe} en={form.programEn} onHe={(h) => set('programHe', h)} onEn={(h) => set('programEn', h)}
-        enLabel={`${programTitle.en || "What's in the program?"} (EN)`} minH={150} />;
+      return <BiEditor he={form.programHe} en={form.programEn} onHe={(h) => set('programHe', h)} onEn={(h) => set('programEn', h)} minH={150} />;
+    case 'productDetails':
+      return <BiEditor he={form.marketingDescHe} en={form.marketingDescEn} onHe={(h) => set('marketingDescHe', h)} onEn={(h) => set('marketingDescEn', h)} minH={150} />;
     case 'gallery':
       return <Gallery variantId={variant.id} images={variant.galleryImages} onChanged={onRelationChange} folder="products/gallery" />;
-    case 'marketingDesc':
-      return <BiEditor he={form.marketingDescHe} en={form.marketingDescEn} onHe={(h) => set('marketingDescHe', h)} onEn={(h) => set('marketingDescEn', h)} enLabel="Marketing (EN)" minH={150} />;
     case 'guideDesc':
-      return <BiEditor he={form.guideDescHe} en={form.guideDescEn} onHe={(h) => set('guideDescHe', h)} onEn={(h) => set('guideDescEn', h)} enLabel="Guide description (EN, internal)" minH={130} />;
+      return <BiEditor he={form.guideDescHe} en={form.guideDescEn} onHe={(h) => set('guideDescHe', h)} onEn={(h) => set('guideDescEn', h)} minH={130} />;
     case 'duration':
       return (
         <div className="max-w-xs">
@@ -436,8 +439,8 @@ function GroupHeading({ group }) {
     <div className="mb-1 flex items-center gap-3">
       <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600"><Icon /></span>
       <div>
-        <div className="text-[17px] font-bold text-gray-900">{group.en}</div>
-        <div className="text-[12.5px] text-gray-500">{group.he}</div>
+        <div className="text-[17px] font-bold text-gray-900">{group.title}</div>
+        <div className="text-[12.5px] text-gray-500">{group.desc}</div>
       </div>
     </div>
   );
@@ -459,8 +462,8 @@ function NavItem({ group, selected, status, onClick }) {
           <Icon />
         </span>
         <span className="min-w-0 flex-1">
-          <span className={'block truncate text-[14px] font-semibold ' + (selected ? 'text-slate-900' : 'text-slate-100')}>{group.en}</span>
-          <span className={'block truncate text-[11.5px] ' + (selected ? 'text-emerald-700/70' : 'text-slate-400')}>{group.he}</span>
+          <span className={'block truncate text-[14px] font-semibold ' + (selected ? 'text-slate-900' : 'text-slate-100')}>{group.title}</span>
+          <span className={'block truncate text-[11.5px] ' + (selected ? 'text-emerald-700/70' : 'text-slate-400')}>{group.desc}</span>
         </span>
         <StatusDot status={status} dark={!selected} />
       </button>
@@ -566,9 +569,6 @@ function IconSave() {
 }
 function IconDoc() {
   return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /></svg>;
-}
-function IconMega() {
-  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m3 11 18-5v12L3 14v-3z" /><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6" /></svg>;
 }
 function IconUser() {
   return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>;
