@@ -29,42 +29,76 @@ const SECTION_KEYS = DEFAULT_QUOTE_BLOCKS.map((b) => b.key);
 // icon/label in the renderer. All visible by default → identical to today.
 export const TECH_FIELD_KEYS = ['city', 'date', 'time', 'participants', 'duration', 'language'];
 
-// Overlay presets for the hero (strength of the darkening gradient). 'dark' is
-// the current hard-coded look, so it is the default.
+// Legacy overlay presets (kept for backward compatibility with older saved
+// layouts; the premium hero now uses an explicit color + opacity instead).
 const OVERLAY_PRESETS = ['light', 'medium', 'dark'];
 
-// The default layout REPRODUCES today's output exactly: every section visible in
-// code order, every tech field visible, hero title empty (renderer falls back to
-// "הצעת מחיר"), no default hero image, dark overlay.
+// Presentation enums for the premium hero cover.
+const LOGO_POSITIONS = ['start', 'end']; // reading-start / reading-end corner (RTL-aware)
+const LOGO_SIZES = ['sm', 'md', 'lg'];
+const CARD_POSITIONS = ['top-start', 'top-end', 'bottom-start', 'bottom-end'];
+const TITLE_ALIGNS = ['start', 'center'];
+
+const isStr = (v) => typeof v === 'string' && v.trim() !== '';
+const cleanText = (v) => (isStr(v) ? String(v).trim().slice(0, 300) : null);
+const oneOf = (v, allowed, def) => (allowed.includes(v) ? v : def);
+const hexOr = (v, def) => (isStr(v) && /^#[0-9a-fA-F]{6}$/.test(v.trim()) ? v.trim().toLowerCase() : def);
+const pct = (v, def) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(100, Math.max(0, Math.round(n))) : def;
+};
+
+// The default layout REPRODUCES a calm, premium cover: dark overlay ~40%, logo
+// top reading-start, dark-glass info card top reading-end. Older saved layouts
+// missing the new keys simply pick up these defaults (no migration).
 export const DEFAULT_LAYOUT = {
   hero: {
     titleHe: null,
     titleEn: null,
     subtitleHe: null,
     subtitleEn: null,
-    overlay: 'dark',
     image: null, // { id, url } | null — global default proposal hero image
+    logo: null, // { id, url } | null — white brand logo (Quote Structure); null → bundled default
+    overlay: 'dark', // legacy preset, retained for back-compat
+    overlayEnabled: true,
+    overlayColor: '#0b1220',
+    overlayOpacity: 40, // 0–100
+    logoPosition: 'start',
+    logoSize: 'md',
+    cardPosition: 'top-end',
+    cardOpacity: 82, // 0–100 (darkness of the glass info card)
+    titleAlign: 'start',
   },
   sections: SECTION_KEYS.map((key) => ({ key, hidden: false })),
   technical: { fields: TECH_FIELD_KEYS.map((key) => ({ key, visible: true })) },
 };
 
-const isStr = (v) => typeof v === 'string' && v.trim() !== '';
-const cleanText = (v) => (isStr(v) ? String(v).trim().slice(0, 300) : null);
+function normalizeImageRef(ref) {
+  if (ref && typeof ref === 'object' && isStr(ref.url)) {
+    return { id: isStr(ref.id) ? String(ref.id) : null, url: String(ref.url) };
+  }
+  return null;
+}
 
 function normalizeHero(raw) {
   const h = raw && typeof raw === 'object' ? raw : {};
-  let image = null;
-  if (h.image && typeof h.image === 'object' && isStr(h.image.url)) {
-    image = { id: isStr(h.image.id) ? String(h.image.id) : null, url: String(h.image.url) };
-  }
+  const D = DEFAULT_LAYOUT.hero;
   return {
     titleHe: cleanText(h.titleHe),
     titleEn: cleanText(h.titleEn),
     subtitleHe: cleanText(h.subtitleHe),
     subtitleEn: cleanText(h.subtitleEn),
+    image: normalizeImageRef(h.image),
+    logo: normalizeImageRef(h.logo),
     overlay: OVERLAY_PRESETS.includes(h.overlay) ? h.overlay : 'dark',
-    image,
+    overlayEnabled: typeof h.overlayEnabled === 'boolean' ? h.overlayEnabled : D.overlayEnabled,
+    overlayColor: hexOr(h.overlayColor, D.overlayColor),
+    overlayOpacity: pct(h.overlayOpacity, D.overlayOpacity),
+    logoPosition: oneOf(h.logoPosition, LOGO_POSITIONS, D.logoPosition),
+    logoSize: oneOf(h.logoSize, LOGO_SIZES, D.logoSize),
+    cardPosition: oneOf(h.cardPosition, CARD_POSITIONS, D.cardPosition),
+    cardOpacity: pct(h.cardOpacity, D.cardOpacity),
+    titleAlign: oneOf(h.titleAlign, TITLE_ALIGNS, D.titleAlign),
   };
 }
 

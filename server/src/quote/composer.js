@@ -128,10 +128,22 @@ function buildHero({ deal, document, displayName, lang, template }) {
       // read renderModelSnapshot, never this composer.
       heroImageUrl: hero?.image?.url || heroImageUrl(deal) || null,
       // Global-template hero copy/style. null title/subtitle → renderer falls
-      // back to its built-in "הצעת מחיר" + product name. Overlay: light|medium|dark.
+      // back to its built-in "הצעת מחיר" + product name.
       heroTitle: pickLang(hero?.titleHe, hero?.titleEn, lang),
       heroSubtitle: pickLang(hero?.subtitleHe, hero?.subtitleEn, lang),
+      // Premium cover presentation config (Quote Structure). The renderer applies
+      // sensible fallbacks so an unconfigured system still looks polished. heroOverlay
+      // preset kept for back-compat; heroOverlay* is the explicit color+opacity.
+      heroLogoUrl: hero?.logo?.url || null, // null → renderer's bundled default logo
       heroOverlay: hero?.overlay || 'dark',
+      heroOverlayEnabled: hero?.overlayEnabled !== false,
+      heroOverlayColor: hero?.overlayColor || '#0b1220',
+      heroOverlayOpacity: typeof hero?.overlayOpacity === 'number' ? hero.overlayOpacity : 40,
+      heroLogoPosition: hero?.logoPosition || 'start',
+      heroLogoSize: hero?.logoSize || 'md',
+      heroCardPosition: hero?.cardPosition || 'top-end',
+      heroCardOpacity: typeof hero?.cardOpacity === 'number' ? hero.cardOpacity : 82,
+      heroTitleAlign: hero?.titleAlign || 'start',
       by: 'Grafitiyul',
       quoteDocumentId: document.id,
       language: lang,

@@ -48,12 +48,6 @@ const TECH_LABELS = {
   language: 'שפת הסיור',
 };
 
-const OVERLAY_OPTIONS = [
-  { value: 'dark', label: 'כהה (ברירת מחדל)' },
-  { value: 'medium', label: 'בינוני' },
-  { value: 'light', label: 'בהיר' },
-];
-
 const TABS = [
   { key: 'hero', label: 'כותרת ראשית' },
   { key: 'sections', label: 'סעיפים' },
@@ -171,88 +165,153 @@ export default function QuoteLayoutSettings() {
   );
 }
 
-function HeroTab({ hero, onChange }) {
+// ── Small, reliable controls (direction-agnostic) ────────────────────────────
+function Segmented({ value, onChange, options }) {
   return (
-    <SettingsCard
-      title="כותרת ראשית (Hero)"
-      description="התמונה, הכותרת והסגנון שמופיעים בראש כל הצעת מחיר כברירת מחדל."
+    <div className="inline-flex flex-wrap gap-1 rounded-lg bg-gray-100 p-1">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          onClick={() => onChange(o.value)}
+          className={`rounded-md px-3 py-1.5 text-[12.5px] font-medium transition ${
+            value === o.value ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Toggle({ checked, onChange }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${checked ? 'bg-blue-600' : 'bg-gray-300'}`}
     >
-      <div className="space-y-5 p-2 sm:p-3">
-        <div>
-          <span className={LABEL}>תמונת ברירת מחדל</span>
-          <SingleImage
-            image={hero.image ? { url: hero.image.url } : null}
-            onChange={(mf) => onChange({ image: mf ? { id: mf.id, url: mf.url } : null })}
-            folder="quote/hero"
-          />
-          <p className="text-[11px] text-gray-400 mt-1.5">
-            תמונות של המוצר/המיקום שבדיל גוברות על תמונה זו. תמונה זו היא ברירת
-            המחדל כשאין לדיל תמונה משלו.
-          </p>
+      <span className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all" style={{ insetInlineStart: checked ? '1.375rem' : '0.125rem' }} />
+    </button>
+  );
+}
+
+function ColorField({ value, onChange }) {
+  return (
+    <div className="flex items-center gap-2">
+      <input type="color" value={value} onChange={(e) => onChange(e.target.value)} className="h-9 w-10 cursor-pointer rounded-md border border-gray-300 bg-white p-0.5" />
+      <input value={value} onChange={(e) => onChange(e.target.value)} dir="ltr" className="h-9 w-28 rounded-lg border border-gray-300 px-2 text-[13px] font-mono text-gray-700" />
+    </div>
+  );
+}
+
+function SliderField({ value, onChange, min = 0, max = 100 }) {
+  return (
+    <div className="flex items-center gap-3">
+      <input type="range" min={min} max={max} value={value} onChange={(e) => onChange(Number(e.target.value))} className="h-1.5 flex-1 cursor-pointer accent-blue-600" />
+      <span className="w-12 shrink-0 text-end text-[13px] tabular-nums text-gray-600">{value}%</span>
+    </div>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <div>
+      <span className={LABEL}>{label}</span>
+      {children}
+    </div>
+  );
+}
+
+function HeroTab({ hero, onChange }) {
+  const overlayEnabled = hero.overlayEnabled !== false;
+  return (
+    <div className="space-y-4">
+      <SettingsCard title="תמונה ולוגו" description="הרקע והלוגו של שער ההצעה.">
+        <div className="space-y-5 p-2 sm:p-3">
+          <div>
+            <span className={LABEL}>תמונת רקע (ברירת מחדל)</span>
+            <SingleImage
+              image={hero.image ? { url: hero.image.url } : null}
+              onChange={(mf) => onChange({ image: mf ? { id: mf.id, url: mf.url } : null })}
+              folder="quote/hero"
+            />
+            <p className="mt-1.5 text-[11px] text-gray-400">תמונות המוצר/המיקום שבדיל גוברות על תמונה זו. זו ברירת המחדל כשאין לדיל תמונה משלו.</p>
+          </div>
+          <div>
+            <span className={LABEL}>לוגו (מוצג על התמונה)</span>
+            <SingleImage
+              image={hero.logo ? { url: hero.logo.url } : null}
+              onChange={(mf) => onChange({ logo: mf ? { id: mf.id, url: mf.url } : null })}
+              folder="quote/logo"
+            />
+            <p className="mt-1.5 text-[11px] text-gray-400">מומלץ לוגו לבן עם רקע שקוף. אם לא הועלה לוגו, מוצג סמל גרפיתיול המובנה.</p>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="מיקום הלוגו">
+              <Segmented value={hero.logoPosition || 'start'} onChange={(v) => onChange({ logoPosition: v })}
+                options={[{ value: 'start', label: 'צד ההתחלה' }, { value: 'end', label: 'צד הסיום' }]} />
+            </Field>
+            <Field label="גודל הלוגו">
+              <Segmented value={hero.logoSize || 'md'} onChange={(v) => onChange({ logoSize: v })}
+                options={[{ value: 'sm', label: 'קטן' }, { value: 'md', label: 'בינוני' }, { value: 'lg', label: 'גדול' }]} />
+            </Field>
+          </div>
         </div>
+      </SettingsCard>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <label className="block">
-            <span className={LABEL}>כותרת (עברית)</span>
-            <input
-              value={hero.titleHe || ''}
-              onChange={(e) => onChange({ titleHe: e.target.value })}
-              placeholder="הצעת מחיר"
-              className={INPUT}
-            />
-          </label>
-          <label className="block">
-            <span className={LABEL}>Title (EN)</span>
-            <input
-              value={hero.titleEn || ''}
-              onChange={(e) => onChange({ titleEn: e.target.value })}
-              placeholder="Proposal"
-              dir="ltr"
-              className={INPUT}
-            />
-          </label>
-          <label className="block">
-            <span className={LABEL}>כותרת משנה (עברית)</span>
-            <input
-              value={hero.subtitleHe || ''}
-              onChange={(e) => onChange({ subtitleHe: e.target.value })}
-              placeholder="אופציונלי"
-              className={INPUT}
-            />
-          </label>
-          <label className="block">
-            <span className={LABEL}>Subtitle (EN)</span>
-            <input
-              value={hero.subtitleEn || ''}
-              onChange={(e) => onChange({ subtitleEn: e.target.value })}
-              placeholder="Optional"
-              dir="ltr"
-              className={INPUT}
-            />
-          </label>
+      <SettingsCard title="שכבת הצללה" description="שכבת צבע מעל התמונה לשיפור הקריאוּת. מומלץ 35%–45%.">
+        <div className="space-y-5 p-2 sm:p-3">
+          <div className="flex items-center justify-between">
+            <span className="text-[13.5px] font-medium text-gray-700">הצללה פעילה</span>
+            <Toggle checked={overlayEnabled} onChange={(v) => onChange({ overlayEnabled: v })} />
+          </div>
+          {overlayEnabled && (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="צבע ההצללה"><ColorField value={hero.overlayColor || '#0b1220'} onChange={(v) => onChange({ overlayColor: v })} /></Field>
+              <Field label="עוצמת ההצללה"><SliderField value={typeof hero.overlayOpacity === 'number' ? hero.overlayOpacity : 40} onChange={(v) => onChange({ overlayOpacity: v })} /></Field>
+            </div>
+          )}
         </div>
+      </SettingsCard>
 
-        <label className="block max-w-xs">
-          <span className={LABEL}>כהות שכבת ההצללה על התמונה</span>
-          <select
-            value={hero.overlay || 'dark'}
-            onChange={(e) => onChange({ overlay: e.target.value })}
-            className={INPUT}
-          >
-            {OVERLAY_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
+      <SettingsCard title="כרטיס פרטי מזמין" description="כרטיס צף עם פרטי הלקוח. ‘הוכן עבור’, ארגון, תאריך הפקה ומי הכין.">
+        <div className="grid grid-cols-1 gap-4 p-2 sm:grid-cols-2 sm:p-3">
+          <Field label="מיקום הכרטיס">
+            <Segmented value={hero.cardPosition || 'top-end'} onChange={(v) => onChange({ cardPosition: v })}
+              options={[
+                { value: 'top-start', label: 'למעלה · התחלה' },
+                { value: 'top-end', label: 'למעלה · סיום' },
+                { value: 'bottom-start', label: 'למטה · התחלה' },
+                { value: 'bottom-end', label: 'למטה · סיום' },
+              ]} />
+          </Field>
+          <Field label="אטימות הכרטיס"><SliderField value={typeof hero.cardOpacity === 'number' ? hero.cardOpacity : 82} onChange={(v) => onChange({ cardOpacity: v })} /></Field>
+        </div>
+      </SettingsCard>
 
-        <p className="text-[11px] text-gray-400">
-          הכותרת הראשית היא סעיף חובה ומוצגת תמיד. אם לא תמלאו כותרת, תוצג ברירת
-          המחדל “הצעת מחיר”.
-        </p>
-      </div>
-    </SettingsCard>
+      <SettingsCard title="כותרות" description="הכותרת הראשית של השער. אם ריקה — מוצג “הצעת מחיר”.">
+        <div className="space-y-4 p-2 sm:p-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="block"><span className={LABEL}>כותרת ראשית (עברית)</span>
+              <input value={hero.titleHe || ''} onChange={(e) => onChange({ titleHe: e.target.value })} placeholder="הצעת מחיר" className={INPUT} /></label>
+            <label className="block"><span className={LABEL}>Main title (EN)</span>
+              <input value={hero.titleEn || ''} onChange={(e) => onChange({ titleEn: e.target.value })} placeholder="Proposal" dir="ltr" className={INPUT} /></label>
+            <label className="block"><span className={LABEL}>כותרת משנה (עברית)</span>
+              <input value={hero.subtitleHe || ''} onChange={(e) => onChange({ subtitleHe: e.target.value })} placeholder="אופציונלי" className={INPUT} /></label>
+            <label className="block"><span className={LABEL}>Subtitle (EN)</span>
+              <input value={hero.subtitleEn || ''} onChange={(e) => onChange({ subtitleEn: e.target.value })} placeholder="Optional" dir="ltr" className={INPUT} /></label>
+          </div>
+          <Field label="יישור הכותרת">
+            <Segmented value={hero.titleAlign || 'start'} onChange={(v) => onChange({ titleAlign: v })}
+              options={[{ value: 'start', label: 'לצד ההתחלה' }, { value: 'center', label: 'למרכז' }]} />
+          </Field>
+        </div>
+      </SettingsCard>
+    </div>
   );
 }
 

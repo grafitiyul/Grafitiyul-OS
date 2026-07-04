@@ -1,4 +1,5 @@
 import { formatMinor } from '../lib/money.js';
+import defaultHeroLogo from '../public/assets/home/photos/footer-logo.png';
 
 // Quote document renderer — visual polish pass (Hebrew-first, premium).
 //
@@ -76,57 +77,100 @@ function Heading({ children }) {
   );
 }
 
-// ── Hero — calm composition: big title primary, light glass metadata ─────────
-function Meta({ icon, label, value }) {
+// ── Hero — a premium proposal cover ──────────────────────────────────────────
+// The image is the ground; a configurable overlay + permanent legibility scrims
+// keep every element readable. Logo (corner), a bold title/product thesis, and a
+// single dark-glass metadata card — no dashboard, no duplicated facts.
+
+const HERO_LABELS = {
+  he: { preparedFor: 'הוכן עבור', org: 'ארגון', generatedOn: 'הופק בתאריך', preparedBy: 'הוכן על ידי' },
+  en: { preparedFor: 'Prepared for', org: 'Organization', generatedOn: 'Generated on', preparedBy: 'Prepared by' },
+};
+const LOGO_SIZE_PX = { sm: 46, md: 62, lg: 82 };
+
+const svgProps = { width: 15, height: 15, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' };
+const HERO_ICONS = {
+  preparedFor: (<svg {...svgProps}><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>),
+  org: (<svg {...svgProps}><path d="M3 21h18" /><path d="M5 21V7l7-4 7 4v14" /><path d="M9 9h.01M15 9h.01M9 13h.01M15 13h.01M9 17h.01M15 17h.01" /></svg>),
+  generatedOn: (<svg {...svgProps}><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>),
+  preparedBy: (<svg {...svgProps}><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>),
+};
+
+function hexToRgba(hex, alpha) {
+  const h = String(hex || '#0b1220').replace('#', '');
+  const n = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const r = parseInt(n.slice(0, 2), 16) || 0;
+  const g = parseInt(n.slice(2, 4), 16) || 0;
+  const b = parseInt(n.slice(4, 6), 16) || 0;
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function CoverMetaRow({ icon, label, value }) {
   return (
-    <div className="flex items-center gap-3.5 py-3">
-      <span className="text-xl leading-none" style={{ color: TEAL }}>{icon}</span>
+    <div className="flex items-center gap-3 py-2.5">
+      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-white/[.07] text-teal-300">{icon}</span>
       <div className="min-w-0">
-        <div className="text-[12px] text-gray-400">{label}</div>
-        <div className="text-[18px] font-bold leading-tight text-gray-900">{value || '—'}</div>
+        <div className="text-[10px] font-medium uppercase tracking-[.14em] text-white/45">{label}</div>
+        <div className="truncate text-[14.5px] font-semibold leading-snug text-white">{value || '—'}</div>
       </div>
     </div>
   );
 }
 
-// Hero overlay strength (from the global template). 'dark' reproduces the
-// original hard-coded look; medium/light lift the top gradient so the image
-// reads brighter. Only the top stop changes — bottom keeps text legibility.
-const HERO_OVERLAY = {
-  dark: 'linear-gradient(to top, rgba(0,0,0,.6), rgba(0,0,0,.05) 48%, rgba(0,0,0,.18))',
-  medium: 'linear-gradient(to top, rgba(0,0,0,.42), rgba(0,0,0,.03) 48%, rgba(0,0,0,.12))',
-  light: 'linear-gradient(to top, rgba(0,0,0,.25), rgba(0,0,0,0) 48%, rgba(0,0,0,.06))',
-};
-
 function Cover({ d, lang }) {
-  const t = tt(lang);
+  const en = lang === 'en';
+  const L = HERO_LABELS[en ? 'en' : 'he'];
   const bg = d.heroImageUrl
     ? { backgroundImage: `url(${d.heroImageUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' }
     : { backgroundImage: `linear-gradient(135deg, ${TEAL}, #0b6f69)` };
-  // Title/subtitle come from the global template; fall back to the built-in copy
-  // so an unconfigured system looks exactly as before.
-  const title = d.heroTitle || (lang === 'en' ? 'Proposal' : 'הצעת מחיר');
-  const overlay = HERO_OVERLAY[d.heroOverlay] || HERO_OVERLAY.dark;
+  const title = d.heroTitle || (en ? 'Proposal' : 'הצעת מחיר');
+
+  const overlayOn = d.heroOverlayEnabled !== false;
+  const overlayColor = d.heroOverlayColor || '#0b1220';
+  const overlayOpacity = (typeof d.heroOverlayOpacity === 'number' ? d.heroOverlayOpacity : 40) / 100;
+  const logoUrl = d.heroLogoUrl || defaultHeroLogo;
+  const logoPx = LOGO_SIZE_PX[d.heroLogoSize] || LOGO_SIZE_PX.md;
+  const logoAtStart = (d.heroLogoPosition || 'start') === 'start';
+  const titleCenter = d.heroTitleAlign === 'center';
+
+  // Card position resolved to PHYSICAL sides so RTL/LTR both place it natively.
+  const [cardV, cardH] = (d.heroCardPosition || 'top-end').split('-');
+  const cardSide = cardH === 'start' ? (en ? 'left' : 'right') : en ? 'right' : 'left';
+  const cardAlpha = (typeof d.heroCardOpacity === 'number' ? d.heroCardOpacity : 82) / 100;
+
   return (
     <div className="relative w-full overflow-hidden" style={bg}>
-      <div className="absolute inset-0" style={{ background: overlay }} />
-      <div className="relative flex min-h-[560px] flex-col justify-between p-8 sm:p-12">
-        {/* top: logo (leading/right) + light glass metadata (left) */}
-        <div className="flex items-start justify-between gap-6">
-          <div className="text-4xl font-extrabold tracking-tight text-white drop-shadow-md sm:text-[40px]">Grafitiyul</div>
-          <div className="w-full max-w-[300px] rounded-2xl bg-white/90 px-6 py-3 shadow-xl ring-1 ring-white/40 backdrop-blur-md">
-            <Meta icon="👤" label={t.contact} value={d.customerName} />
-            <Meta icon="🏢" label={t.org} value={d.organizationName} />
-            <Meta icon="📅" label={t.date} value={fmtDate(d.createdAt, lang)} />
-            <Meta icon="🎨" label={t.by} value={d.by} />
-          </div>
+      {/* configurable overlay — above the image, below all content */}
+      {overlayOn && <div className="absolute inset-0" style={{ background: overlayColor, opacity: overlayOpacity }} />}
+      {/* permanent legibility scrims — guarantee contrast whatever the overlay is */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-2/3" style={{ background: 'linear-gradient(to top, rgba(0,0,0,.6), rgba(0,0,0,0))' }} />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-24" style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,.28), rgba(0,0,0,0))' }} />
+
+      {/* floating info card — one metadata panel, generous margin so it never
+          covers the subject or the title. */}
+      <div className="absolute z-20" style={{ [cardV]: '1.75rem', [cardSide]: '1.75rem', width: 250, maxWidth: '68%' }}>
+        <div className="rounded-2xl px-5 py-3 shadow-2xl ring-1 ring-white/10 backdrop-blur-md" style={{ background: hexToRgba('#090d16', cardAlpha) }}>
+          <CoverMetaRow icon={HERO_ICONS.preparedFor} label={L.preparedFor} value={d.customerName} />
+          <div className="border-t border-white/10" />
+          <CoverMetaRow icon={HERO_ICONS.org} label={L.org} value={d.organizationName} />
+          <div className="border-t border-white/10" />
+          <CoverMetaRow icon={HERO_ICONS.generatedOn} label={L.generatedOn} value={fmtDate(d.createdAt, lang)} />
+          <div className="border-t border-white/10" />
+          <CoverMetaRow icon={HERO_ICONS.preparedBy} label={L.preparedBy} value={d.by} />
         </div>
-        {/* bottom: title — the primary element (aligned to reading start) */}
-        <div className="text-start text-white">
-          <div className="mb-5 h-1.5 w-16 rounded-full" style={{ background: TEAL }} />
-          <h1 className="text-[56px] font-black leading-[1.02] drop-shadow-lg sm:text-[72px]">{title}</h1>
-          {d.productName && <p className="mt-4 text-[24px] font-medium text-white/90 drop-shadow sm:text-[28px]">{d.productName}</p>}
-          {d.heroSubtitle && <p className="mt-2 text-[17px] font-normal text-white/80 drop-shadow sm:text-[19px]">{d.heroSubtitle}</p>}
+      </div>
+
+      <div className="relative z-10 flex min-h-[600px] flex-col justify-between p-8 sm:p-12">
+        {/* logo — corner (reading start/end) */}
+        <div className={`flex ${logoAtStart ? 'justify-start' : 'justify-end'}`}>
+          <img src={logoUrl} alt="Grafitiyul" style={{ height: logoPx }} className="w-auto drop-shadow-[0_2px_10px_rgba(0,0,0,.45)]" />
+        </div>
+        {/* title thesis — proposal title + product */}
+        <div className={`max-w-[82%] ${titleCenter ? 'mx-auto text-center' : 'text-start'}`}>
+          <div className={`mb-5 h-1.5 w-14 rounded-full ${titleCenter ? 'mx-auto' : ''}`} style={{ background: TEAL }} />
+          <h1 className="text-[50px] font-black leading-[1.03] text-white [text-wrap:balance] drop-shadow-[0_2px_16px_rgba(0,0,0,.5)] sm:text-[66px]">{title}</h1>
+          {d.productName && <p className="mt-4 text-[22px] font-medium text-white/90 drop-shadow-[0_1px_10px_rgba(0,0,0,.5)] sm:text-[26px]">{d.productName}</p>}
+          {d.heroSubtitle && <p className="mt-2 text-[16px] text-white/75 drop-shadow-[0_1px_8px_rgba(0,0,0,.5)] sm:text-[18px]">{d.heroSubtitle}</p>}
         </div>
       </div>
     </div>
