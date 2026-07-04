@@ -154,7 +154,7 @@ export const TOOLBAR_PRESETS = {
     ['alignRight', 'alignCenter', 'alignLeft'],
     ['dirRtl', 'dirLtr'],
     ['link'],
-    ['image', 'video'],
+    ['image', 'video', 'emoji'],
     ['dynamicField'],
   ],
   // Deliberately minimal set for lightweight notes: no headings/colors/lists/
