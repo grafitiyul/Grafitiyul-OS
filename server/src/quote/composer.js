@@ -190,17 +190,21 @@ function buildProgram({ deal, lang, template }) {
   return { data: { title: sectionTitle(template, 'program', lang), html }, warnings };
 }
 
-// Video (YouTube) — shown ONLY when the deal's Product Variant is in the template's
-// selected variantIds AND a URL is configured. Otherwise data.url is null and the
-// renderer skips the block. Independent of Shared Content. The renderer parses the
-// URL into a safe embed at render time (reusing the shared embed parser).
+// Video (YouTube) — the Video Library holds many videos, each assigned to specific
+// Product Variants (a variant belongs to at most one video). Renders the video
+// whose variantIds includes the deal's variant AND has a URL; otherwise data.url
+// is null and the renderer skips the block. Output shape is unchanged from the
+// single-video model. Independent of Shared Content. The renderer parses the URL
+// into a safe embed at render time (reusing the shared embed parser).
 function buildVideo({ deal, lang, template }) {
-  const v = template?.video || null;
   const variantId = deal?.productVariantId || deal?.productVariant?.id || null;
-  const selected = !!(v?.url && variantId && Array.isArray(v.variantIds) && v.variantIds.includes(variantId));
-  if (!selected) return { data: { url: null }, warnings: [] };
-  const title = pickLang(v.titleHe, v.titleEn, lang) || (lang === 'en' ? 'Video' : 'סרטון');
-  return { data: { title, url: v.url }, warnings: [] };
+  const videos = Array.isArray(template?.videos) ? template.videos : [];
+  const match = variantId
+    ? videos.find((v) => v?.url && Array.isArray(v.variantIds) && v.variantIds.includes(variantId))
+    : null;
+  if (!match) return { data: { url: null }, warnings: [] };
+  const title = pickLang(match.titleHe, match.titleEn, lang) || (lang === 'en' ? 'Video' : 'סרטון');
+  return { data: { title, url: match.url }, warnings: [] };
 }
 
 function buildTourDetails({ deal, displayName, lang, template, sharedContent }) {

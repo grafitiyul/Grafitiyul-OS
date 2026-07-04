@@ -202,24 +202,56 @@ test('composer: program/product-details/pricing titles come from the template', 
   assert.equal(blocks.find((b) => b.key === 'pricing').data.title, 'כמה זה עולה?');
 });
 
-// ── video section (variant-gated) ────────────────────────────────────────────
-test('composer: video renders only when the deal variant is selected', () => {
-  const url = 'https://youtu.be/dQw4w9WgXcQ';
-  const on = normalizeLayout({ video: { url, variantIds: ['v1'] } }); // deal.productVariantId === 'v1'
-  const off = normalizeLayout({ video: { url, variantIds: ['other'] } });
-  assert.equal(compose(on).blocks.find((b) => b.key === 'video').data.url, url, 'selected → url present');
-  assert.equal(compose(off).blocks.find((b) => b.key === 'video').data.url, null, 'not selected → skipped');
+// ── Video Library (variant-gated; one variant → one video) ───────────────────
+const videoBlock = (template) => compose(template).blocks.find((b) => b.key === 'video').data;
+const A = 'https://youtu.be/aaaaaaaaaaa';
+const B = 'https://youtu.be/bbbbbbbbbbb';
+
+test('composer: renders the library video whose variant matches the deal (v1)', () => {
+  const t = normalizeLayout({ videos: [
+    { id: '1', url: A, variantIds: ['other'] },
+    { id: '2', url: B, variantIds: ['v1'], titleHe: 'צפו בסיור' }, // deal.productVariantId === 'v1'
+  ] });
+  const d = videoBlock(t);
+  assert.equal(d.url, B, 'the video assigned to v1 wins');
+  assert.equal(d.title, 'צפו בסיור');
 });
 
-test('composer: video with no URL never renders even if the variant matches', () => {
-  const t = normalizeLayout({ video: { url: '', variantIds: ['v1'] } });
-  assert.equal(compose(t).blocks.find((b) => b.key === 'video').data.url, null);
+test('composer: no video matches the deal variant → section skipped', () => {
+  const t = normalizeLayout({ videos: [{ id: '1', url: A, variantIds: ['other'] }] });
+  assert.equal(videoBlock(t).url, null);
 });
 
-test('composer: video title comes from the template, defaulting to "סרטון"/"Video"', () => {
-  const url = 'https://youtu.be/dQw4w9WgXcQ';
-  const titled = normalizeLayout({ video: { url, variantIds: ['v1'], titleHe: 'צפו בסיור' } });
-  assert.equal(compose(titled).blocks.find((b) => b.key === 'video').data.title, 'צפו בסיור');
-  const untitled = normalizeLayout({ video: { url, variantIds: ['v1'] } });
-  assert.equal(compose(untitled).blocks.find((b) => b.key === 'video').data.title, 'סרטון');
+test('composer: a video with no URL never renders even if the variant matches', () => {
+  const t = normalizeLayout({ videos: [{ id: '1', url: '', variantIds: ['v1'] }] });
+  assert.equal(videoBlock(t).url, null);
+});
+
+test('composer: video title defaults to "סרטון"/"Video" when none is set', () => {
+  const t = normalizeLayout({ videos: [{ id: '1', url: A, variantIds: ['v1'] }] });
+  assert.equal(videoBlock(t).title, 'סרטון');
+});
+
+test('normalizeVideos: a variant belongs to ONE video (first occurrence wins)', () => {
+  const { videos } = normalizeLayout({ videos: [
+    { id: '1', url: A, variantIds: ['v1', 'v2'] },
+    { id: '2', url: B, variantIds: ['v2', 'v3'] }, // v2 already claimed by video 1
+  ] });
+  assert.deepEqual(videos[0].variantIds, ['v1', 'v2']);
+  assert.deepEqual(videos[1].variantIds, ['v3'], 'v2 dropped from the second video');
+});
+
+test('normalizeVideos: every video gets a stable id; empty default', () => {
+  assert.deepEqual(normalizeLayout(null).videos, []);
+  const { videos } = normalizeLayout({ videos: [{ url: A, variantIds: [] }] });
+  assert.equal(videos.length, 1);
+  assert.ok(typeof videos[0].id === 'string' && videos[0].id.length > 0, 'id backfilled');
+});
+
+test('normalizeVideos: legacy single `video` object migrates into a one-item library', () => {
+  const { videos } = normalizeLayout({ video: { url: A, variantIds: ['v1'], titleHe: 'ישן' } });
+  assert.equal(videos.length, 1);
+  assert.equal(videos[0].url, A);
+  assert.deepEqual(videos[0].variantIds, ['v1']);
+  assert.equal(videos[0].titleHe, 'ישן');
 });

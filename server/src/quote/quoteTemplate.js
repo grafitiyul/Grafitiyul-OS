@@ -112,10 +112,10 @@ export const DEFAULT_LAYOUT = {
     product_marketing: { ...SECTION_TITLE_DEFAULTS.product_marketing },
     pricing: { ...SECTION_TITLE_DEFAULTS.pricing },
   },
-  // Video section — a single YouTube video shown only in quotes for the selected
-  // Product Variants. Independent of Shared Content. url/titles optional; empty
-  // url or no matching variant → the section does not render.
-  video: { url: null, titleHe: null, titleEn: null, variantIds: [] },
+  // Video Library — zero or more videos, each shown only in quotes whose Product
+  // Variant is assigned to it. A variant belongs to AT MOST ONE video (enforced on
+  // normalize). Independent of Shared Content. Empty by default.
+  videos: [],
 };
 
 function normalizeImageRef(ref) {
@@ -195,18 +195,38 @@ function normalizeSectionTitles(raw, legacyProgram) {
   return out;
 }
 
-// Video section config. url/titles are optional (empty → null); variantIds is a
-// de-duped list of Product Variant ids the video is shown for. No content copied
-// from anywhere — this is self-contained (no Shared Content).
-function normalizeVideo(raw) {
-  const v = raw && typeof raw === 'object' ? raw : {};
-  const ids = Array.isArray(v.variantIds) ? v.variantIds.filter(isStr).map((s) => String(s)) : [];
-  return {
-    url: cleanText(v.url),
-    titleHe: cleanText(v.titleHe),
-    titleEn: cleanText(v.titleEn),
-    variantIds: [...new Set(ids)],
-  };
+// Video Library. Each item is its own entity { id, url, titleHe, titleEn,
+// variantIds }; url/titles optional (empty → null). Two invariants are enforced
+// HERE (the single source of truth), regardless of what the client sends:
+//   • every video has a stable id;
+//   • a Product Variant belongs to AT MOST ONE video — a variant claimed by an
+//     earlier video is dropped from any later one (first occurrence wins).
+// Back-compat: an older layout stored a single `video` object; it is migrated
+// into a one-item library. No content copied from anywhere (no Shared Content).
+let __videoIdSeq = 0;
+function normalizeVideos(raw, legacyVideo) {
+  let list = Array.isArray(raw) ? raw : [];
+  if (!Array.isArray(raw) && legacyVideo && typeof legacyVideo === 'object' && isStr(legacyVideo.url)) {
+    list = [legacyVideo];
+  }
+  const claimed = new Set();
+  const out = [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const ids = Array.isArray(item.variantIds) ? item.variantIds.filter(isStr).map((s) => String(s)) : [];
+    const variantIds = [];
+    for (const vid of ids) {
+      if (!claimed.has(vid)) { claimed.add(vid); variantIds.push(vid); }
+    }
+    out.push({
+      id: isStr(item.id) ? String(item.id) : `vid_${Date.now().toString(36)}_${__videoIdSeq++}`,
+      url: cleanText(item.url),
+      titleHe: cleanText(item.titleHe),
+      titleEn: cleanText(item.titleEn),
+      variantIds,
+    });
+  }
+  return out;
 }
 
 // Normalise ANY input (saved row, API body, or null) into a complete, safe
@@ -216,7 +236,7 @@ export function normalizeLayout(raw) {
   return {
     hero: normalizeHero(l.hero),
     sectionTitles: normalizeSectionTitles(l.sectionTitles, l.program),
-    video: normalizeVideo(l.video),
+    videos: normalizeVideos(l.videos, l.video),
     // Hero is the document header: always first and never hidden, so the stored
     // template stays consistent with the UI (which shows it pinned, not in the
     // reorderable list). The composer enforces the same invariant at render.

@@ -100,7 +100,7 @@ export default function QuoteLayoutSettings() {
   const setSections = (sections) => setLayout((l) => ({ ...l, sections }));
   const patchSectionTitle = (key, patch) =>
     setLayout((l) => ({ ...l, sectionTitles: { ...l.sectionTitles, [key]: { ...l.sectionTitles?.[key], ...patch } } }));
-  const patchVideo = (patch) => setLayout((l) => ({ ...l, video: { ...l.video, ...patch } }));
+  const setVideos = (videos) => setLayout((l) => ({ ...l, videos }));
   const setTechFields = (fields) => setLayout((l) => ({ ...l, technical: { ...l.technical, fields } }));
 
   async function save() {
@@ -176,7 +176,7 @@ export default function QuoteLayoutSettings() {
             <div className="max-w-3xl"><TechnicalTab fields={layout.technical.fields} onChange={setTechFields} /></div>
           )}
           {tab === 'video' && (
-            <div className="max-w-3xl"><VideoTab video={layout.video} onChange={patchVideo} /></div>
+            <div className="max-w-3xl"><VideoTab videos={layout.videos} onChange={setVideos} /></div>
           )}
         </>
       )}
@@ -509,11 +509,15 @@ function SectionTitlesCard({ sectionTitles, onChange }) {
   );
 }
 
-// Video tab — one YouTube video shown only in quotes for the selected Product
-// Variants. Self-contained (no Shared Content). URL is validated live via the same
-// embed parser the renderer uses, with a preview.
-function VideoTab({ video, onChange }) {
-  const v = video || {};
+// Video tab — a small Video Library. Each video is its own entity (URL, optional
+// He/En titles, assigned variants). A Product Variant belongs to at most ONE video:
+// a variant already assigned elsewhere is simply EXCLUDED from a video's picker
+// (not disabled, not warned). Self-contained (no Shared Content).
+const newVideoId = () =>
+  (typeof crypto !== 'undefined' && crypto.randomUUID ? `vid_${crypto.randomUUID()}` : `vid_${Date.now().toString(36)}`);
+
+function VideoTab({ videos, onChange }) {
+  const list = Array.isArray(videos) ? videos : [];
   const [options, setOptions] = useState(null);
   useEffect(() => {
     let alive = true;
@@ -521,20 +525,65 @@ function VideoTab({ video, onChange }) {
     return () => { alive = false; };
   }, []);
 
+  const updateVideo = (id, patch) => onChange(list.map((v) => (v.id === id ? { ...v, ...patch } : v)));
+  const removeVideo = (id) => onChange(list.filter((v) => v.id !== id));
+  const addVideo = () => onChange([...list, { id: newVideoId(), url: '', titleHe: '', titleEn: '', variantIds: [] }]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-[13px] text-gray-500">ספריית סרטונים — כל סרטון מוצג רק בהצעות של הווריאציות שהוקצו לו. וריאציה שייכת לסרטון אחד בלבד.</p>
+        <button type="button" onClick={addVideo} className="shrink-0 rounded-lg bg-teal-600 px-3 py-2 text-[13px] font-semibold text-white shadow-sm hover:bg-teal-700">+ סרטון</button>
+      </div>
+
+      {list.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 px-4 py-10 text-center text-sm text-gray-400">
+          אין עדיין סרטונים. לחצו “+ סרטון” כדי להוסיף.
+        </div>
+      ) : (
+        list.map((video, i) => {
+          // A variant assigned to ANOTHER video is excluded from this one's picker.
+          const takenElsewhere = new Set(list.filter((x) => x.id !== video.id).flatMap((x) => x.variantIds || []));
+          return (
+            <VideoCard
+              key={video.id}
+              index={i}
+              video={video}
+              options={options}
+              takenElsewhere={takenElsewhere}
+              onPatch={(patch) => updateVideo(video.id, patch)}
+              onRemove={() => removeVideo(video.id)}
+            />
+          );
+        })
+      )}
+    </div>
+  );
+}
+
+function VideoCard({ index, video, options, takenElsewhere, onPatch, onRemove }) {
+  const v = video || {};
   const selected = Array.isArray(v.variantIds) ? v.variantIds : [];
-  function toggleVariant(id) {
-    const next = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
-    onChange({ variantIds: next });
-  }
   const embed = parseEmbedUrl(v.url || '');
   const urlInvalid = !!(v.url && !embed);
 
+  function toggleVariant(id) {
+    const next = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
+    onPatch({ variantIds: next });
+  }
+  // Available = variants not claimed by another video (this video's own stay visible).
+  const available = (options || []).filter((o) => !takenElsewhere.has(o.id));
+
   return (
-    <SettingsCard title="וידאו" description="סרטון יוטיוב שיוצג בהצעה — רק עבור הווריאציות שנבחרו. עצמאי לחלוטין (ללא תוכן משותף).">
-      <div className="space-y-5 p-2 sm:p-3">
+    <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+      <div className="flex items-center justify-between border-b border-gray-100 px-5 pt-4 pb-3">
+        <h3 className="text-[15px] font-semibold text-gray-900">סרטון {index + 1}</h3>
+        <button type="button" onClick={onRemove} className="rounded-md px-2 py-1 text-[12px] font-medium text-red-600 hover:bg-red-50">מחק</button>
+      </div>
+      <div className="space-y-5 p-4">
         <div>
           <span className={LABEL}>קישור YouTube</span>
-          <input value={v.url || ''} onChange={(e) => onChange({ url: e.target.value })} dir="ltr" placeholder="https://www.youtube.com/watch?v=…"
+          <input value={v.url || ''} onChange={(e) => onPatch({ url: e.target.value })} dir="ltr" placeholder="https://www.youtube.com/watch?v=…"
             className={`${INPUT} ${urlInvalid ? 'border-red-300 focus:ring-red-200 focus:border-red-400' : ''}`} />
           {urlInvalid && <p className="mt-1 text-[11px] text-red-500">הקישור אינו קישור YouTube תקין.</p>}
           {embed && (
@@ -546,20 +595,20 @@ function VideoTab({ video, onChange }) {
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="block"><span className={LABEL}>כותרת (עברית, אופציונלי)</span>
-            <input value={v.titleHe || ''} onChange={(e) => onChange({ titleHe: e.target.value })} placeholder="סרטון" className={INPUT} /></label>
+            <input value={v.titleHe || ''} onChange={(e) => onPatch({ titleHe: e.target.value })} placeholder="סרטון" className={INPUT} /></label>
           <label className="block"><span className={LABEL}>Title (EN, optional)</span>
-            <input value={v.titleEn || ''} onChange={(e) => onChange({ titleEn: e.target.value })} placeholder="Video" dir="ltr" className={INPUT} /></label>
+            <input value={v.titleEn || ''} onChange={(e) => onPatch({ titleEn: e.target.value })} placeholder="Video" dir="ltr" className={INPUT} /></label>
         </div>
 
         <div>
           <span className={LABEL}>הצג בווריאציות</span>
           {options === null ? (
             <p className="text-[13px] text-gray-400">טוען…</p>
-          ) : options.length === 0 ? (
-            <p className="text-[13px] text-gray-400">אין וריאציות מוצר עדיין.</p>
+          ) : available.length === 0 ? (
+            <p className="text-[13px] text-gray-400">אין וריאציות פנויות — כל הווריאציות כבר מוקצות לסרטונים אחרים.</p>
           ) : (
             <div className="flex flex-wrap gap-2">
-              {options.map((o) => {
+              {available.map((o) => {
                 const on = selected.includes(o.id);
                 const label = `${o.productNameHe || o.productNameEn} · ${o.locationNameHe || o.locationNameEn}`;
                 return (
@@ -573,10 +622,10 @@ function VideoTab({ video, onChange }) {
               })}
             </div>
           )}
-          {selected.length > 0 && <p className="mt-2 text-[11px] text-gray-400">נבחרו {selected.length} וריאציות. הסרטון יופיע רק בהצעות של וריאציות אלו.</p>}
+          {selected.length > 0 && <p className="mt-2 text-[11px] text-gray-400">מוקצה ל-{selected.length} וריאציות.</p>}
         </div>
       </div>
-    </SettingsCard>
+    </section>
   );
 }
 
