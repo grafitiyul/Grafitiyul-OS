@@ -17,7 +17,7 @@ import { resolveFinanceWorkspace, FINANCE_WORKSPACE } from '../deals/config.js';
 
 const LABELS = {
   hero: 'כותרת', program: 'אז מה בתוכנית?', tour_details: 'פרטים טכניים',
-  product_marketing: 'שיווק מוצר', why_grafitiyul: 'למה גרפיתיול', classification: 'תוכן לפי סוג ארגון',
+  product_marketing: 'תיאור המוצר', video: 'וידאו', why_grafitiyul: 'למה גרפיתיול', classification: 'תוכן לפי סוג ארגון',
   pricing: 'תמחור', payment_terms: 'תנאי תשלום', faq: 'שאלות נפוצות',
   cancellation: 'מדיניות ביטול', participant_policy: 'מדיניות משתתפים', signature: 'חתימה',
 };
@@ -35,9 +35,12 @@ function hasContent(block) {
     case 'hero':
     case 'tour_details':
     case 'pricing':
-    case 'payment_terms':
     case 'signature':
       return true;
+    case 'payment_terms':
+      return !!(d.term || d.method);
+    case 'video':
+      return !!d.url;
     case 'program':
     case 'product_marketing':
     case 'classification':
@@ -180,6 +183,7 @@ export default function QuotePreviewCanvas() {
       case 'location': return '/admin/settings/crm/locations';
       case 'orgType': return '/admin/settings/crm/organization-types';
       case 'quoteSections': return '/admin/settings/crm/quote-sections';
+      case 'quoteStructure': return '/admin/settings/crm/quote-layout';
       case 'signers': return '/admin/documents/signers';
       default: return null;
     }

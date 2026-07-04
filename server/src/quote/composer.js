@@ -19,7 +19,7 @@
 // quote-template service can share it without a circular import. Re-exported here
 // so existing importers (tests, callers) keep `import { DEFAULT_QUOTE_BLOCKS } from './composer.js'`.
 import { DEFAULT_QUOTE_BLOCKS } from './quoteBlocks.js';
-import { getQuoteTemplate, PROGRAM_TITLE_DEFAULT } from './quoteTemplate.js';
+import { getQuoteTemplate, SECTION_TITLE_DEFAULTS } from './quoteTemplate.js';
 import { resolveVariantSharedContent } from '../shared-content/sharedContent.js';
 export { DEFAULT_QUOTE_BLOCKS };
 
@@ -41,6 +41,7 @@ function warn(blockKey, type, field, language) {
 const SOURCE_LABELS = {
   hero: 'Deal',
   program: 'Product Variant',
+  video: 'Quote Structure · Video',
   tour_details: 'Deal · Product · Location',
   pricing: 'QuoteVersion (Builder)',
   payment_terms: 'Deal · Payment',
@@ -96,6 +97,7 @@ export function editTargetFor(type, deal) {
   switch (type) {
     case 'hero': return { kind: 'deal', label: 'ערוך פרטי לקוח' };
     case 'program': return { kind: 'product', label: 'ערוך תוכן התוכנית (וריאציה)', id: deal?.productId || null };
+    case 'video': return { kind: 'quoteStructure', label: 'ערוך וידאו', tab: 'video' };
     case 'tour_details': return { kind: 'deal', label: 'ערוך פרטי הסיור' };
     case 'pricing': return { kind: 'builder', label: 'ערוך תמחור', dialog: true };
     case 'payment_terms': return { kind: 'deal', label: 'ערוך תנאי תשלום' };
@@ -164,6 +166,16 @@ function buildHero({ deal, document, displayName, lang, template }) {
   };
 }
 
+// Localized title for a configurable section — the Quote Template is the ONE source
+// of truth (with a built-in default when no template is passed, e.g. pure tests).
+function sectionTitle(template, key, lang) {
+  const t = template?.sectionTitles?.[key];
+  const picked = pickLang(t?.titleHe, t?.titleEn, lang);
+  if (picked) return picked;
+  const def = SECTION_TITLE_DEFAULTS[key];
+  return def ? (lang === 'en' ? def.titleEn : def.titleHe) : null;
+}
+
 // "אז מה בתוכנית?" — TITLE from the Quote Template (one source of truth; localized
 // + admin-editable), CONTENT from the selected Product Variant (variant-specific
 // marketing copy, NOT Shared Content / Location Defaults). Optional: an empty
@@ -173,11 +185,22 @@ function buildHero({ deal, document, displayName, lang, template }) {
 function buildProgram({ deal, lang, template }) {
   const v = deal?.productVariant;
   const html = pickLang(v?.programHe, v?.programEn, lang);
-  const title = pickLang(template?.program?.titleHe, template?.program?.titleEn, lang)
-    || PROGRAM_TITLE_DEFAULT[lang === 'en' ? 'en' : 'he'];
   const warnings = [];
   if (v && !html) warnings.push(warn('program', 'program', 'program', lang));
-  return { data: { title, html }, warnings };
+  return { data: { title: sectionTitle(template, 'program', lang), html }, warnings };
+}
+
+// Video (YouTube) — shown ONLY when the deal's Product Variant is in the template's
+// selected variantIds AND a URL is configured. Otherwise data.url is null and the
+// renderer skips the block. Independent of Shared Content. The renderer parses the
+// URL into a safe embed at render time (reusing the shared embed parser).
+function buildVideo({ deal, lang, template }) {
+  const v = template?.video || null;
+  const variantId = deal?.productVariantId || deal?.productVariant?.id || null;
+  const selected = !!(v?.url && variantId && Array.isArray(v.variantIds) && v.variantIds.includes(variantId));
+  if (!selected) return { data: { url: null }, warnings: [] };
+  const title = pickLang(v.titleHe, v.titleEn, lang) || (lang === 'en' ? 'Video' : 'סרטון');
+  return { data: { title, url: v.url }, warnings: [] };
 }
 
 function buildTourDetails({ deal, displayName, lang, template, sharedContent }) {
@@ -229,7 +252,7 @@ function techFieldOrder(template) {
   return fields.filter((f) => f && f.visible).map((f) => f.key);
 }
 
-function buildPricing({ deal, lines, displayName }) {
+function buildPricing({ deal, lines, displayName, lang, template }) {
   // Inactive lines are excluded from the customer-facing offer (matching the
   // Builder, which excludes them from totals). They are counted, not silent.
   const active = (lines || []).filter((l) => l.active !== false);
@@ -256,6 +279,7 @@ function buildPricing({ deal, lines, displayName }) {
   });
   return {
     data: {
+      title: sectionTitle(template, 'pricing', lang),
       currency: deal?.currency || 'ILS',
       lines: outLines,
       excludedInactive,
@@ -283,14 +307,15 @@ function buildSignature() {
 
 // ── Content block builders (pure, language-aware) ────────────────────────────
 
-function buildProductMarketing({ deal, lang }) {
+// Product Details — CONTENT from the selected Product Variant (variant → product,
+// same language; not a language fallback). TITLE from the Quote Template.
+function buildProductMarketing({ deal, lang, template }) {
   const v = deal?.productVariant;
   const p = deal?.product;
-  // Source preference variant → product (same language); NOT a language fallback.
   const html = pickLang(v?.marketingDescHe, v?.marketingDescEn, lang) || pickLang(p?.marketingDescHe, p?.marketingDescEn, lang);
   const warnings = [];
   if ((v || p) && !html) warnings.push(warn('product_marketing', 'product_marketing', 'marketingDesc', lang));
-  return { data: { html }, warnings };
+  return { data: { title: sectionTitle(template, 'product_marketing', lang), html }, warnings };
 }
 
 function buildCityContent({ deal, lang }) {
@@ -332,6 +357,7 @@ function assembleBlock(type, ctx) {
   switch (type) {
     case 'hero': return buildHero(ctx);
     case 'program': return buildProgram(ctx);
+    case 'video': return buildVideo(ctx);
     case 'tour_details': return buildTourDetails(ctx);
     case 'pricing': return buildPricing(ctx);
     case 'payment_terms': return buildPaymentTerms(ctx);

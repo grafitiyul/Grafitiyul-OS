@@ -37,7 +37,8 @@ export default function ProductDetail() {
       ]);
       setProduct(p);
       setLocations(locs);
-      if (template?.program) setProgramTitle({ he: template.program.titleHe, en: template.program.titleEn });
+      const pt = template?.sectionTitles?.program;
+      if (pt) setProgramTitle({ he: pt.titleHe, en: pt.titleEn });
       const init = {
         nameHe: p.nameHe || '',
         nameEn: p.nameEn || '',

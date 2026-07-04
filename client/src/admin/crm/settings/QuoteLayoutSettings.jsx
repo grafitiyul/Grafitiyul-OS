@@ -6,6 +6,7 @@ import { SettingsCard } from './catalogKit.jsx';
 import { SingleImage } from '../../products/ImageUploader.jsx';
 import { useDirtyWhen } from '../../../lib/dirtyForms.js';
 import { HeroCover, previewHeroData } from '../../../quote/QuoteBlockRenderer.jsx';
+import { parseEmbedUrl } from '../../../editor/embedProviders.js';
 
 // CRM settings → Quote Layout & Sections. The GLOBAL default quote composition
 // control center. The Hero tab is a real two-column WYSIWYG editor: controls on
@@ -25,6 +26,7 @@ const SECTION_LABELS = {
   program: 'אז מה בתוכנית?',
   tour_details: 'פרטים טכניים',
   product_marketing: 'תיאור המוצר',
+  video: 'וידאו',
   why_grafitiyul: 'למה גרפיטיול',
   classification: 'תוכן לפי סוג ארגון',
   pricing: 'תמחור',
@@ -46,7 +48,16 @@ const TECH_LABELS = {
 const TABS = [
   { key: 'hero', label: 'כותרת ראשית' },
   { key: 'sections', label: 'סעיפים' },
+  { key: 'video', label: 'וידאו' },
   { key: 'technical', label: 'פרטים טכניים' },
+];
+
+// Sections whose localized title is configurable from Quote Structure. The label
+// is the row/menu name; the actual title lives in layout.sectionTitles[key].
+const TITLE_SECTIONS = [
+  { key: 'program', label: 'אז מה בתוכנית?' },
+  { key: 'product_marketing', label: 'תיאור המוצר' },
+  { key: 'pricing', label: 'תמחור' },
 ];
 
 // Quick design presets — each is a partial hero patch. "פרימיום כהה" is the
@@ -87,7 +98,9 @@ export default function QuoteLayoutSettings() {
   const patchCardFields = (patch) =>
     setLayout((l) => ({ ...l, hero: { ...l.hero, cardFields: { ...(l.hero.cardFields || {}), ...patch } } }));
   const setSections = (sections) => setLayout((l) => ({ ...l, sections }));
-  const patchProgram = (patch) => setLayout((l) => ({ ...l, program: { ...l.program, ...patch } }));
+  const patchSectionTitle = (key, patch) =>
+    setLayout((l) => ({ ...l, sectionTitles: { ...l.sectionTitles, [key]: { ...l.sectionTitles?.[key], ...patch } } }));
+  const patchVideo = (patch) => setLayout((l) => ({ ...l, video: { ...l.video, ...patch } }));
   const setTechFields = (fields) => setLayout((l) => ({ ...l, technical: { ...l.technical, fields } }));
 
   async function save() {
@@ -155,12 +168,15 @@ export default function QuoteLayoutSettings() {
           )}
           {tab === 'sections' && (
             <div className="max-w-3xl space-y-4">
-              <SectionsTab sections={layout.sections} program={layout.program} onChange={setSections} />
-              <ProgramTitleCard program={layout.program} onChange={patchProgram} />
+              <SectionsTab sections={layout.sections} sectionTitles={layout.sectionTitles} onChange={setSections} />
+              <SectionTitlesCard sectionTitles={layout.sectionTitles} onChange={patchSectionTitle} />
             </div>
           )}
           {tab === 'technical' && (
             <div className="max-w-3xl"><TechnicalTab fields={layout.technical.fields} onChange={setTechFields} /></div>
+          )}
+          {tab === 'video' && (
+            <div className="max-w-3xl"><VideoTab video={layout.video} onChange={patchVideo} /></div>
           )}
         </>
       )}
@@ -409,15 +425,16 @@ function Field({ label, children }) {
   );
 }
 
-// The 'program' section row shows its LIVE localized title (one source of truth),
-// so a rename in the title card below is reflected here immediately.
-function sectionLabel(key, program) {
-  if (key === 'program') return program?.titleHe || SECTION_LABELS.program;
+// Configurable-title sections show their LIVE localized title (one source of
+// truth), so a rename in the title card below is reflected in the list immediately.
+function sectionLabel(key, sectionTitles) {
+  const t = sectionTitles?.[key];
+  if (t?.titleHe) return t.titleHe;
   return SECTION_LABELS[key] || key;
 }
 
 // ── Sections tab ─────────────────────────────────────────────────────────────
-function SectionsTab({ sections, program, onChange }) {
+function SectionsTab({ sections, sectionTitles, onChange }) {
   const hero = sections.find((s) => s.key === 'hero');
   const rest = useMemo(() => sections.filter((s) => s.key !== 'hero'), [sections]);
   const items = useMemo(() => rest.map((s) => ({ ...s, id: s.key })), [rest]);
@@ -447,7 +464,7 @@ function SectionsTab({ sections, program, onChange }) {
             <div className="flex items-center gap-3 rounded-lg px-2.5 py-2.5 hover:bg-gray-50">
               {handle}
               <span className={`flex-1 min-w-0 font-medium text-[15px] ${item.hidden ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
-                {sectionLabel(item.key, program)}
+                {sectionLabel(item.key, sectionTitles)}
               </span>
               {required ? (
                 <span className="shrink-0 text-[11px] rounded-full bg-gray-100 text-gray-500 px-2 py-0.5">חובה</span>
@@ -464,18 +481,100 @@ function SectionsTab({ sections, program, onChange }) {
   );
 }
 
-// Editable title for the 'program' section — THE one source of truth. The quote
-// renderer and the Product Variant editor group both read this title, so a rename
-// here applies everywhere. Content itself lives per Product Variant, not here.
-function ProgramTitleCard({ program, onChange }) {
-  const p = program || {};
+// Editable localized titles for the configurable sections — THE one source of
+// truth. The quote renderer (and, for "אז מה בתוכנית?", the Product Variant editor
+// group) read these titles, so a rename here applies everywhere. Content itself
+// lives with each section's owner (Product Variant / Pricing Builder), not here.
+function SectionTitlesCard({ sectionTitles, onChange }) {
+  const st = sectionTitles || {};
   return (
-    <SettingsCard title="כותרת הסקשן “אז מה בתוכנית?”" description="מקור אמת יחיד לכותרת. התוכן עצמו נכתב לכל וריאציה במסך המוצרים.">
-      <div className="grid grid-cols-1 gap-3 p-2 sm:grid-cols-2 sm:p-3">
-        <label className="block"><span className={LABEL}>כותרת (עברית)</span>
-          <input value={p.titleHe || ''} onChange={(e) => onChange({ titleHe: e.target.value })} placeholder="אז מה בתוכנית?" className={INPUT} /></label>
-        <label className="block"><span className={LABEL}>Title (EN)</span>
-          <input value={p.titleEn || ''} onChange={(e) => onChange({ titleEn: e.target.value })} placeholder="What's in the program?" dir="ltr" className={INPUT} /></label>
+    <SettingsCard title="כותרות הסעיפים" description="מקור אמת יחיד לכותרות. התוכן עצמו נשאר במקומו (וריאציית מוצר / בונה התמחור).">
+      <div className="space-y-3 p-2 sm:p-3">
+        {TITLE_SECTIONS.map(({ key, label }) => {
+          const t = st[key] || {};
+          return (
+            <div key={key} className="rounded-xl border border-gray-100 bg-gray-50/60 p-3">
+              <div className="mb-2 text-[12px] font-semibold text-gray-500">{label}</div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label className="block"><span className={LABEL}>כותרת (עברית)</span>
+                  <input value={t.titleHe || ''} onChange={(e) => onChange(key, { titleHe: e.target.value })} className={INPUT} /></label>
+                <label className="block"><span className={LABEL}>Title (EN)</span>
+                  <input value={t.titleEn || ''} onChange={(e) => onChange(key, { titleEn: e.target.value })} dir="ltr" className={INPUT} /></label>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </SettingsCard>
+  );
+}
+
+// Video tab — one YouTube video shown only in quotes for the selected Product
+// Variants. Self-contained (no Shared Content). URL is validated live via the same
+// embed parser the renderer uses, with a preview.
+function VideoTab({ video, onChange }) {
+  const v = video || {};
+  const [options, setOptions] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    api.products.variantOptions().then((o) => { if (alive) setOptions(Array.isArray(o) ? o : []); }).catch(() => { if (alive) setOptions([]); });
+    return () => { alive = false; };
+  }, []);
+
+  const selected = Array.isArray(v.variantIds) ? v.variantIds : [];
+  function toggleVariant(id) {
+    const next = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
+    onChange({ variantIds: next });
+  }
+  const embed = parseEmbedUrl(v.url || '');
+  const urlInvalid = !!(v.url && !embed);
+
+  return (
+    <SettingsCard title="וידאו" description="סרטון יוטיוב שיוצג בהצעה — רק עבור הווריאציות שנבחרו. עצמאי לחלוטין (ללא תוכן משותף).">
+      <div className="space-y-5 p-2 sm:p-3">
+        <div>
+          <span className={LABEL}>קישור YouTube</span>
+          <input value={v.url || ''} onChange={(e) => onChange({ url: e.target.value })} dir="ltr" placeholder="https://www.youtube.com/watch?v=…"
+            className={`${INPUT} ${urlInvalid ? 'border-red-300 focus:ring-red-200 focus:border-red-400' : ''}`} />
+          {urlInvalid && <p className="mt-1 text-[11px] text-red-500">הקישור אינו קישור YouTube תקין.</p>}
+          {embed && (
+            <div className="mt-3 max-w-md overflow-hidden rounded-xl bg-black ring-1 ring-gray-200" style={{ aspectRatio: '16 / 9' }}>
+              <iframe src={embed.embedUrl} title="preview" className="h-full w-full" allowFullScreen loading="lazy" referrerPolicy="strict-origin-when-cross-origin" />
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <label className="block"><span className={LABEL}>כותרת (עברית, אופציונלי)</span>
+            <input value={v.titleHe || ''} onChange={(e) => onChange({ titleHe: e.target.value })} placeholder="סרטון" className={INPUT} /></label>
+          <label className="block"><span className={LABEL}>Title (EN, optional)</span>
+            <input value={v.titleEn || ''} onChange={(e) => onChange({ titleEn: e.target.value })} placeholder="Video" dir="ltr" className={INPUT} /></label>
+        </div>
+
+        <div>
+          <span className={LABEL}>הצג בווריאציות</span>
+          {options === null ? (
+            <p className="text-[13px] text-gray-400">טוען…</p>
+          ) : options.length === 0 ? (
+            <p className="text-[13px] text-gray-400">אין וריאציות מוצר עדיין.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {options.map((o) => {
+                const on = selected.includes(o.id);
+                const label = `${o.productNameHe || o.productNameEn} · ${o.locationNameHe || o.locationNameEn}`;
+                return (
+                  <button key={o.id} type="button" onClick={() => toggleVariant(o.id)}
+                    className={`rounded-full px-3 py-1.5 text-[13px] font-medium transition ${
+                      on ? 'bg-teal-600 text-white shadow-sm' : 'border border-gray-200 bg-white text-gray-600 hover:border-teal-300'
+                    }`}>
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {selected.length > 0 && <p className="mt-2 text-[11px] text-gray-400">נבחרו {selected.length} וריאציות. הסרטון יופיע רק בהצעות של וריאציות אלו.</p>}
+        </div>
       </div>
     </SettingsCard>
   );

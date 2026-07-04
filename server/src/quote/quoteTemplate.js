@@ -29,11 +29,18 @@ const SECTION_KEYS = DEFAULT_QUOTE_BLOCKS.map((b) => b.key);
 // icon/label in the renderer. All visible by default → identical to today.
 export const TECH_FIELD_KEYS = ['city', 'date', 'time', 'participants', 'duration', 'language'];
 
-// "אז מה בתוכנית?" — the ONE source of truth for this section's localized title.
-// Order/visibility live in `sections` (key: 'program'); the content is per Product
-// Variant. Everything that shows the title (the quote renderer + the Product
-// Variant editor group) reads it from here, so a rename applies everywhere.
-export const PROGRAM_TITLE_DEFAULT = { he: 'אז מה בתוכנית?', en: "What's in the program?" };
+// Configurable section titles — the ONE source of truth for these sections' localized
+// headings. Order/visibility live in `sections`; the CONTENT lives with its owner
+// (Product Variant for program/product details, the Pricing Builder for pricing).
+// Everything that shows a title (the quote renderer + the Product Variant editor
+// group) reads it from here, so a rename applies everywhere. Defaults match the
+// renderer's previous built-in titles, so existing output is unchanged.
+export const CONFIGURABLE_TITLE_KEYS = ['program', 'product_marketing', 'pricing'];
+export const SECTION_TITLE_DEFAULTS = {
+  program: { titleHe: 'אז מה בתוכנית?', titleEn: "What's in the program?" },
+  product_marketing: { titleHe: 'מה כולל הסיור?', titleEn: "What's Included?" },
+  pricing: { titleHe: 'כמה עולה?', titleEn: 'Pricing' },
+};
 
 // Legacy overlay presets (kept for backward compatibility with older saved
 // layouts; the premium hero now uses an explicit color + opacity instead).
@@ -98,9 +105,17 @@ export const DEFAULT_LAYOUT = {
   },
   sections: SECTION_KEYS.map((key) => ({ key, hidden: false })),
   technical: { fields: TECH_FIELD_KEYS.map((key) => ({ key, visible: true })) },
-  // Localized title for the 'program' section (source of truth). Content is per
-  // Product Variant, not stored here.
-  program: { titleHe: PROGRAM_TITLE_DEFAULT.he, titleEn: PROGRAM_TITLE_DEFAULT.en },
+  // Localized titles for the configurable sections (source of truth). Content
+  // itself is owned elsewhere (Product Variant / Pricing Builder), not here.
+  sectionTitles: {
+    program: { ...SECTION_TITLE_DEFAULTS.program },
+    product_marketing: { ...SECTION_TITLE_DEFAULTS.product_marketing },
+    pricing: { ...SECTION_TITLE_DEFAULTS.pricing },
+  },
+  // Video section — a single YouTube video shown only in quotes for the selected
+  // Product Variants. Independent of Shared Content. url/titles optional; empty
+  // url or no matching variant → the section does not render.
+  video: { url: null, titleHe: null, titleEn: null, variantIds: [] },
 };
 
 function normalizeImageRef(ref) {
@@ -158,23 +173,50 @@ function mergeOrdered(saved, canonicalKeys, flagName, defaultFlag) {
   return out;
 }
 
-// Normalise ANY input (saved row, API body, or null) into a complete, safe
-// layout. Always returns every section and tech field exactly once.
-// 'program' section title. Always resolves to a non-empty localized title so the
-// section header never renders blank (empty input → the built-in default).
-function normalizeProgram(raw) {
-  const p = raw && typeof raw === 'object' ? raw : {};
+// Configurable section titles. Each entry always resolves to a non-empty localized
+// title (empty input → the built-in default), so a header never renders blank.
+// Back-compat: an older layout stored the program title under `l.program`; it is
+// read as the seed for sectionTitles.program when the new shape is absent.
+function normalizeSectionTitles(raw, legacyProgram) {
+  const r = raw && typeof raw === 'object' ? raw : {};
+  const out = {};
+  for (const key of CONFIGURABLE_TITLE_KEYS) {
+    let src = r[key];
+    if (key === 'program' && !(src && typeof src === 'object') && legacyProgram && typeof legacyProgram === 'object') {
+      src = legacyProgram;
+    }
+    const s = src && typeof src === 'object' ? src : {};
+    const def = SECTION_TITLE_DEFAULTS[key];
+    out[key] = {
+      titleHe: cleanText(s.titleHe) || def.titleHe,
+      titleEn: cleanText(s.titleEn) || def.titleEn,
+    };
+  }
+  return out;
+}
+
+// Video section config. url/titles are optional (empty → null); variantIds is a
+// de-duped list of Product Variant ids the video is shown for. No content copied
+// from anywhere — this is self-contained (no Shared Content).
+function normalizeVideo(raw) {
+  const v = raw && typeof raw === 'object' ? raw : {};
+  const ids = Array.isArray(v.variantIds) ? v.variantIds.filter(isStr).map((s) => String(s)) : [];
   return {
-    titleHe: cleanText(p.titleHe) || PROGRAM_TITLE_DEFAULT.he,
-    titleEn: cleanText(p.titleEn) || PROGRAM_TITLE_DEFAULT.en,
+    url: cleanText(v.url),
+    titleHe: cleanText(v.titleHe),
+    titleEn: cleanText(v.titleEn),
+    variantIds: [...new Set(ids)],
   };
 }
 
+// Normalise ANY input (saved row, API body, or null) into a complete, safe
+// layout. Always returns every section and tech field exactly once.
 export function normalizeLayout(raw) {
   const l = raw && typeof raw === 'object' ? raw : {};
   return {
     hero: normalizeHero(l.hero),
-    program: normalizeProgram(l.program),
+    sectionTitles: normalizeSectionTitles(l.sectionTitles, l.program),
+    video: normalizeVideo(l.video),
     // Hero is the document header: always first and never hidden, so the stored
     // template stays consistent with the UI (which shows it pinned, not in the
     // reorderable list). The composer enforces the same invariant at render.

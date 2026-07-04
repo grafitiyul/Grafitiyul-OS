@@ -320,3 +320,28 @@ test('composer: program appears immediately before Technical Details by default'
   const keys = compose().blocks.map((b) => b.key);
   assert.equal(keys.indexOf('program') + 1, keys.indexOf('tour_details'), 'program directly precedes tour_details');
 });
+
+// ── configurable titles + video (no-template path uses built-in defaults) ─────
+test('composer: product-details + pricing titles default to the built-in section titles', () => {
+  const model = compose();
+  assert.equal(blockByKey(model, 'product_marketing').data.title, 'מה כולל הסיור?');
+  assert.equal(blockByKey(model, 'pricing').data.title, 'כמה עולה?');
+});
+
+test('composer: product-details content still comes from the Product Variant', () => {
+  const deal = baseDeal({ productVariant: { marketingDescHe: '<p>וריאציה</p>', marketingDescEn: '', durationHours: 2 } });
+  assert.equal(blockByKey(compose({ deal }), 'product_marketing').data.html, '<p>וריאציה</p>');
+});
+
+test('composer: video is present in order (after product details) but inert without config', () => {
+  const keys = compose().blocks.map((b) => b.key);
+  assert.equal(keys.indexOf('video'), keys.indexOf('product_marketing') + 1, 'video directly follows product details');
+  assert.ok(keys.indexOf('video') < keys.indexOf('pricing'), 'video is before pricing');
+  assert.equal(blockByKey(compose(), 'video').data.url, null, 'no template video config → inert');
+});
+
+test('composer: video editTarget routes to the Quote Structure video tab', () => {
+  const et = blockByKey(compose(), 'video').editTarget;
+  assert.equal(et.kind, 'quoteStructure');
+  assert.equal(et.tab, 'video');
+});

@@ -12,6 +12,9 @@ export const DEFAULT_QUOTE_BLOCKS = [
   { key: 'program', type: 'program', kind: 'content', optional: true, removable: true },
   { key: 'tour_details', type: 'tour_details', kind: 'dynamic', optional: false, removable: false },
   { key: 'product_marketing', type: 'product_marketing', kind: 'content', optional: true, removable: true },
+  // Video (YouTube) — shown only in quotes whose Product Variant is selected in the
+  // Quote Structure → Video tab. Config lives in the template; content is the URL.
+  { key: 'video', type: 'video', kind: 'content', optional: true, removable: true },
   { key: 'why_grafitiyul', type: 'why_us', kind: 'content', optional: true, removable: true },
   { key: 'classification', type: 'classification', kind: 'content', optional: true, removable: true },
   { key: 'pricing', type: 'pricing', kind: 'dynamic', optional: false, removable: false },

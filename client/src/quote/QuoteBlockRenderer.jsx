@@ -1,5 +1,6 @@
 import { formatMinor } from '../lib/money.js';
 import GrafitiyulHeroLogo from './GrafitiyulHeroLogo.jsx';
+import { parseEmbedUrl } from '../editor/embedProviders.js';
 
 // Quote document renderer — visual polish pass (Hebrew-first, premium).
 //
@@ -320,6 +321,53 @@ function SectionItems({ d, lang }) {
   );
 }
 
+// Video — a safe embed built from (provider, id), never the raw pasted URL. Only
+// renders when a parseable URL is present (the composer already gates on the
+// selected variant); otherwise nothing shows.
+function VideoEmbed({ d, lang }) {
+  const embed = parseEmbedUrl(d.url);
+  if (!embed?.embedUrl) return null;
+  const title = d.title || (lang === 'en' ? 'Video' : 'סרטון');
+  return (
+    <>
+      <Heading>{title}</Heading>
+      <div className="relative w-full overflow-hidden rounded-2xl bg-black ring-1 ring-gray-100" style={{ aspectRatio: '16 / 9' }}>
+        <iframe
+          src={embed.embedUrl}
+          title={title}
+          className="absolute inset-0 h-full w-full"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+          loading="lazy"
+          referrerPolicy="strict-origin-when-cross-origin"
+        />
+      </div>
+    </>
+  );
+}
+
+// Payment information — real information under the pricing table, not footer text:
+// larger values, label above value, generous spacing. Still visually secondary to
+// the pricing card (muted surface, no teal). Renders nothing when both are empty.
+function PaymentInfo({ d, lang }) {
+  const t = tt(lang);
+  const rows = [
+    d.term && { label: t.paymentTerm, value: d.term },
+    d.method && { label: t.paymentMethod, value: d.method },
+  ].filter(Boolean);
+  if (rows.length === 0) return null;
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      {rows.map((r) => (
+        <div key={r.label} className="rounded-2xl bg-gray-50 px-6 py-5 text-start">
+          <div className="text-[12px] font-semibold uppercase tracking-wide text-gray-400">{r.label}</div>
+          <div className="mt-1.5 text-[20px] font-bold leading-snug text-gray-900">{r.value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function QuoteBlock({ block, lang = 'he' }) {
   const d = block?.data || {};
   const t = tt(lang);
@@ -331,13 +379,10 @@ export function QuoteBlock({ block, lang = 'he' }) {
       return <><Heading>{title}</Heading><FactCard d={d} lang={lang} /></>;
     case 'pricing':
       return <><Heading>{title}</Heading><PricingCard d={d} lang={lang} /></>;
+    case 'video':
+      return <VideoEmbed d={d} lang={lang} />;
     case 'payment_terms':
-      return (
-        <div className="flex flex-wrap justify-start gap-x-10 gap-y-1 text-start text-[15px]">
-          {d.term && <div><span className="text-gray-400">{t.paymentTerm} · </span><span className="font-semibold text-gray-900">{d.term}</span></div>}
-          {d.method && <div><span className="text-gray-400">{t.paymentMethod} · </span><span className="font-semibold text-gray-900">{d.method}</span></div>}
-        </div>
-      );
+      return <PaymentInfo d={d} lang={lang} />;
     case 'signature':
       return (
         <>

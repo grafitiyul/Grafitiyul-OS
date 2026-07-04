@@ -462,6 +462,8 @@ export const api = {
   },
   products: {
     list: () => request('/api/products'),
+    // Flat variant list (id + product/location labels) for the video variant picker.
+    variantOptions: () => request('/api/products/variant-options'),
     get: (id) => request(`/api/products/${id}`),
     create: (data) => request('/api/products', { method: 'POST', body: JSON.stringify(data) }),
     update: (id, data) => request(`/api/products/${id}`, { method: 'PUT', body: JSON.stringify(data) }),

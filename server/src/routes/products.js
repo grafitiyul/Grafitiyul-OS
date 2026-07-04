@@ -95,6 +95,32 @@ router.get(
   }),
 );
 
+// Flat list of every Product Variant with product + location labels — used by the
+// Quote Structure → Video tab to pick which variants a video is shown for.
+// Registered BEFORE '/:id' so the literal path is not swallowed as a product id.
+router.get(
+  '/variant-options',
+  handle(async (_req, res) => {
+    const variants = await prisma.productVariant.findMany({
+      orderBy: [{ productId: 'asc' }, { sortOrder: 'asc' }],
+      select: {
+        id: true,
+        product: { select: { nameHe: true, nameEn: true } },
+        location: { select: { nameHe: true, nameEn: true } },
+      },
+    });
+    res.json(
+      variants.map((v) => ({
+        id: v.id,
+        productNameHe: v.product?.nameHe || '',
+        productNameEn: v.product?.nameEn || '',
+        locationNameHe: v.location?.nameHe || '',
+        locationNameEn: v.location?.nameEn || '',
+      })),
+    );
+  }),
+);
+
 router.get(
   '/:id',
   handle(async (req, res) => {

@@ -95,7 +95,8 @@ test('normalizeLayout: cardFields — missing keys default visible, explicit fal
 const deal = () => ({
   id: 'd',
   product: { nameHe: 'סיור', nameEn: 'Tour' },
-  productVariant: { durationHours: 2 },
+  productVariantId: 'v1',
+  productVariant: { id: 'v1', durationHours: 2 },
   location: { nameHe: 'תל אביב', nameEn: 'Tel Aviv' },
   organization: { name: 'ארגון' },
   tourDate: '2026-07-10',
@@ -173,15 +174,52 @@ test('composer: technical fieldOrder reflects visible fields in configured order
   assert.ok(!td.fieldOrder.includes('date'));
 });
 
-// ── program section title (source of truth) ──────────────────────────────────
-test('normalizeLayout: program title defaults, trims, and never goes blank', () => {
-  assert.deepEqual(normalizeLayout(null).program, { titleHe: 'אז מה בתוכנית?', titleEn: "What's in the program?" });
-  assert.equal(normalizeLayout({ program: { titleHe: '  שלב הסיור  ' } }).program.titleHe, 'שלב הסיור');
-  assert.equal(normalizeLayout({ program: { titleHe: '   ' } }).program.titleHe, 'אז מה בתוכנית?', 'blank → default');
+// ── configurable section titles (source of truth) ────────────────────────────
+test('normalizeLayout: sectionTitles default, trim, and never go blank', () => {
+  const st = normalizeLayout(null).sectionTitles;
+  assert.deepEqual(st.program, { titleHe: 'אז מה בתוכנית?', titleEn: "What's in the program?" });
+  assert.deepEqual(st.product_marketing, { titleHe: 'מה כולל הסיור?', titleEn: "What's Included?" });
+  assert.deepEqual(st.pricing, { titleHe: 'כמה עולה?', titleEn: 'Pricing' });
+  assert.equal(normalizeLayout({ sectionTitles: { program: { titleHe: '  שלב הסיור  ' } } }).sectionTitles.program.titleHe, 'שלב הסיור');
+  assert.equal(normalizeLayout({ sectionTitles: { pricing: { titleHe: '   ' } } }).sectionTitles.pricing.titleHe, 'כמה עולה?', 'blank → default');
 });
 
-test('composer: program block title comes from the template (one source of truth)', () => {
-  const template = normalizeLayout({ program: { titleHe: 'מה חווים?', titleEn: 'What will you experience?' } });
-  const he = compose(template).blocks.find((b) => b.key === 'program').data;
-  assert.equal(he.title, 'מה חווים?');
+test('normalizeLayout: legacy `program` title is migrated into sectionTitles.program', () => {
+  const st = normalizeLayout({ program: { titleHe: 'ישן', titleEn: 'Old' } }).sectionTitles;
+  assert.equal(st.program.titleHe, 'ישן');
+  assert.equal(st.program.titleEn, 'Old');
+});
+
+test('composer: program/product-details/pricing titles come from the template', () => {
+  const template = normalizeLayout({ sectionTitles: {
+    program: { titleHe: 'מה חווים?' },
+    product_marketing: { titleHe: 'על הסיור' },
+    pricing: { titleHe: 'כמה זה עולה?' },
+  } });
+  const blocks = compose(template).blocks;
+  assert.equal(blocks.find((b) => b.key === 'program').data.title, 'מה חווים?');
+  assert.equal(blocks.find((b) => b.key === 'product_marketing').data.title, 'על הסיור');
+  assert.equal(blocks.find((b) => b.key === 'pricing').data.title, 'כמה זה עולה?');
+});
+
+// ── video section (variant-gated) ────────────────────────────────────────────
+test('composer: video renders only when the deal variant is selected', () => {
+  const url = 'https://youtu.be/dQw4w9WgXcQ';
+  const on = normalizeLayout({ video: { url, variantIds: ['v1'] } }); // deal.productVariantId === 'v1'
+  const off = normalizeLayout({ video: { url, variantIds: ['other'] } });
+  assert.equal(compose(on).blocks.find((b) => b.key === 'video').data.url, url, 'selected → url present');
+  assert.equal(compose(off).blocks.find((b) => b.key === 'video').data.url, null, 'not selected → skipped');
+});
+
+test('composer: video with no URL never renders even if the variant matches', () => {
+  const t = normalizeLayout({ video: { url: '', variantIds: ['v1'] } });
+  assert.equal(compose(t).blocks.find((b) => b.key === 'video').data.url, null);
+});
+
+test('composer: video title comes from the template, defaulting to "סרטון"/"Video"', () => {
+  const url = 'https://youtu.be/dQw4w9WgXcQ';
+  const titled = normalizeLayout({ video: { url, variantIds: ['v1'], titleHe: 'צפו בסיור' } });
+  assert.equal(compose(titled).blocks.find((b) => b.key === 'video').data.title, 'צפו בסיור');
+  const untitled = normalizeLayout({ video: { url, variantIds: ['v1'] } });
+  assert.equal(compose(untitled).blocks.find((b) => b.key === 'video').data.title, 'סרטון');
 });
