@@ -19,6 +19,15 @@ import { DEFAULT_QUOTE_BLOCKS, reconcileKeyOrder } from './quoteBlocks.js';
 
 const SINGLETON = 'global';
 
+// Stored-layout version. Bump when a normalization changes the MEANING of a stored
+// value (here: the section order). A legacy layout (version < this) is migrated
+// ONCE — its section order is re-canonicalised — because older code appended
+// newly-added blocks (program, video) at the END instead of at their canonical
+// position, leaving the Sections list out of sync with the actual quote. After the
+// migration the version is stamped, so any deliberate drag-reorder made afterwards
+// is preserved verbatim.
+const LAYOUT_VERSION = 2;
+
 // Canonical section keys, in the approved default order. Derived from the code
 // default so the two never drift.
 const SECTION_KEYS = DEFAULT_QUOTE_BLOCKS.map((b) => b.key);
@@ -79,6 +88,7 @@ function normalizeCardFields(raw) {
 // top reading-start, dark-glass info card top reading-end. Older saved layouts
 // missing the new keys simply pick up these defaults (no migration).
 export const DEFAULT_LAYOUT = {
+  v: LAYOUT_VERSION,
   hero: {
     titleHe: null,
     titleEn: null,
@@ -154,16 +164,18 @@ function normalizeHero(raw) {
   };
 }
 
-// Merge a saved ordered list against a canonical key set: keep the saved order for
-// known keys, drop unknowns, and add any canonical key the save is missing.
-//
-// `canonicalInsert` decides WHERE a missing key lands:
-//   • true  (sections): at its canonical POSITION, so a newly-added block shows up
-//     where it belongs — e.g. program before Technical Details, video after Product
-//     Details — instead of at the very end.
-//   • false (technical fields): appended after the saved order, preserving a custom
-//     field arrangement exactly (a permuted order is never re-interleaved).
-function mergeOrdered(saved, canonicalKeys, flagName, defaultFlag, canonicalInsert = false) {
+// Merge a saved ordered list against a canonical key set: drop unknown/stale keys,
+// keep every canonical key exactly once, and preserve each key's flag by KEY (never
+// by position). `mode` decides the ORDER:
+//   • 'canonical' — ignore the saved order entirely; emit canonical order. Used to
+//     MIGRATE a legacy sections list whose order is untrusted (older code appended
+//     new blocks at the end).
+//   • 'preserve'  — keep the saved order for known keys and INSERT any missing
+//     canonical key at its canonical position (reconcileKeyOrder). Used for a
+//     versioned sections list, so a deliberate drag-reorder survives.
+//   • 'append'    — keep the saved order and append missing keys at the END. Used
+//     for technical fields, so a custom field arrangement is never re-interleaved.
+function mergeOrdered(saved, canonicalKeys, flagName, defaultFlag, mode = 'append') {
   const list = Array.isArray(saved) ? saved : [];
   const flags = new Map();
   const savedKeys = [];
@@ -173,9 +185,10 @@ function mergeOrdered(saved, canonicalKeys, flagName, defaultFlag, canonicalInse
     flags.set(key, !!item[flagName]);
     savedKeys.push(key);
   }
-  const order = canonicalInsert
-    ? reconcileKeyOrder(savedKeys, canonicalKeys)
-    : [...savedKeys, ...canonicalKeys.filter((k) => !flags.has(k))];
+  let order;
+  if (mode === 'canonical') order = [...canonicalKeys];
+  else if (mode === 'preserve') order = reconcileKeyOrder(savedKeys, canonicalKeys);
+  else order = [...savedKeys, ...canonicalKeys.filter((k) => !flags.has(k))];
   return order.map((key) => ({ key, [flagName]: flags.has(key) ? flags.get(key) : defaultFlag }));
 }
 
@@ -239,16 +252,21 @@ function normalizeVideos(raw, legacyVideo) {
 // layout. Always returns every section and tech field exactly once.
 export function normalizeLayout(raw) {
   const l = raw && typeof raw === 'object' ? raw : {};
+  // A legacy layout (no/old version) has an untrusted section order — older code
+  // appended new blocks at the end. Migrate it ONCE to canonical order; a versioned
+  // layout keeps its deliberate order (drag-reorder) and only slots in new blocks.
+  const migrated = Number(l.v) >= LAYOUT_VERSION;
   return {
+    v: LAYOUT_VERSION,
     hero: normalizeHero(l.hero),
     sectionTitles: normalizeSectionTitles(l.sectionTitles, l.program),
     videos: normalizeVideos(l.videos, l.video),
     // Hero is the document header: always first and never hidden, so the stored
     // template stays consistent with the UI (which shows it pinned, not in the
     // reorderable list). The composer enforces the same invariant at render.
-    sections: pinHeroFirst(mergeOrdered(l.sections, SECTION_KEYS, 'hidden', false, true)),
+    sections: pinHeroFirst(mergeOrdered(l.sections, SECTION_KEYS, 'hidden', false, migrated ? 'preserve' : 'canonical')),
     technical: {
-      fields: mergeOrdered(l.technical?.fields, TECH_FIELD_KEYS, 'visible', true),
+      fields: mergeOrdered(l.technical?.fields, TECH_FIELD_KEYS, 'visible', true, 'append'),
     },
   };
 }

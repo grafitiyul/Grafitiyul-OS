@@ -27,17 +27,25 @@ test('normalizeLayout: DEFAULT_LAYOUT is already normalised (idempotent)', () =>
   assert.deepEqual(normalizeLayout(DEFAULT_LAYOUT), DEFAULT_LAYOUT);
 });
 
-test('normalizeLayout: keeps saved order, drops unknowns, appends missing canonical keys', () => {
+test('normalizeLayout: LEGACY layout (no version) is migrated to canonical order, hidden preserved, unknowns dropped', () => {
+  // No `v` → the saved order is untrusted (old code appended new blocks at the end);
+  // it is re-canonicalised. Hidden flags are preserved by KEY; unknowns are dropped.
   const l = normalizeLayout({ sections: [{ key: 'pricing', hidden: true }, { key: 'bogus' }, { key: 'hero' }] });
-  // hero is pinned first (header); other saved keys keep their order; unknown
-  // dropped; missing canonical keys appended.
-  assert.equal(l.sections[0].key, 'hero');
-  assert.equal(l.sections[1].key, 'pricing');
-  assert.equal(l.sections[1].hidden, true);
+  assert.equal(l.v, 2, 'version is stamped after migration');
+  assert.deepEqual(l.sections.map((s) => s.key), SECTION_KEYS, 'canonical order');
+  assert.equal(l.sections.find((s) => s.key === 'pricing').hidden, true, 'hidden preserved by key');
   assert.equal(l.sections.length, SECTION_KEYS.length);
-  assert.ok(!l.sections.some((s) => s.key === 'bogus'));
-  // every canonical key present exactly once
-  assert.deepEqual([...new Set(l.sections.map((s) => s.key))].sort(), [...SECTION_KEYS].sort());
+  assert.ok(!l.sections.some((s) => s.key === 'bogus'), 'unknown dropped');
+});
+
+test('normalizeLayout: VERSIONED layout preserves a deliberate reorder + inserts new blocks canonically', () => {
+  // A versioned layout keeps its drag-reorder verbatim (faq moved before pricing)…
+  const reordered = ['hero', 'program', 'tour_details', 'product_marketing', 'why_grafitiyul', 'classification', 'faq', 'pricing', 'payment_terms', 'cancellation', 'participant_policy', 'signature'];
+  const l = normalizeLayout({ v: 2, sections: reordered.map((key) => ({ key })) });
+  assert.ok(l.sections.findIndex((s) => s.key === 'faq') < l.sections.findIndex((s) => s.key === 'pricing'), 'reorder preserved');
+  // …and a canonical block missing from the saved order (video) is inserted at its
+  // canonical position (right after product_marketing), never appended at the end.
+  assert.equal(l.sections.findIndex((s) => s.key === 'video'), l.sections.findIndex((s) => s.key === 'product_marketing') + 1);
 });
 
 test('normalizeLayout: hero is pinned first and never hidden', () => {
