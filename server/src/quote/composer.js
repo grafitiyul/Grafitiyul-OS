@@ -225,8 +225,13 @@ function buildTourDetails({ deal, displayName, lang, template, sharedContent }) 
       pickLang(location?.meetingPointHe, location?.meetingPointEn, lang) ||
       null;
   // City is a proper-noun label, not translated rich content: use the selected
-  // language, falling back to the Hebrew name (never a warning).
-  const city = pickLang(location?.nameHe, location?.nameEn, lang) || location?.nameHe || null;
+  // language, falling back to the Hebrew name (never a warning). Source is the
+  // Deal's location; when the Deal has no explicit location it falls back to the
+  // chosen Product Variant's location, so the "city" tile still shows (a deal that
+  // picks a variant always has a resolvable city). This is ONLY for the city label
+  // — the meeting point keeps reading the Deal's own location above.
+  const cityLocation = location || variant?.location || null;
+  const city = pickLang(cityLocation?.nameHe, cityLocation?.nameEn, lang) || cityLocation?.nameHe || null;
   return {
     data: {
       productName: displayName,
@@ -485,6 +490,9 @@ const DEAL_INCLUDE = {
   product: true,
   productVariant: {
     include: {
+      // The variant's own location — a fallback source for the "city" tile when the
+      // Deal has no explicit location set.
+      location: true,
       meetingPointImage: true,
       galleryImages: { include: { mediaFile: true }, orderBy: { sortOrder: 'asc' } },
     },

@@ -361,3 +361,15 @@ test('composer: an old compositionDraft gains program (before Tech Details) + vi
   assert.equal(keys.indexOf('program') + 1, keys.indexOf('tour_details'), 'program directly before Technical Details');
   assert.equal(keys.indexOf('video'), keys.indexOf('product_marketing') + 1, 'video directly after Product Details');
 });
+
+// ── tour details: city falls back to the variant's location ──────────────────
+test('composer: city tile resolves from the variant location when the deal has none', () => {
+  const deal = baseDeal({ location: null, productVariant: { durationHours: 2, location: { nameHe: 'ירושלים', nameEn: 'Jerusalem' } } });
+  const td = blockByKey(compose({ deal }), 'tour_details').data;
+  assert.equal(td.city, 'ירושלים', 'city comes from the variant location fallback');
+});
+
+test('composer: deal location still wins for the city tile when present', () => {
+  const deal = baseDeal({ location: { nameHe: 'תל אביב', nameEn: 'Tel Aviv' }, productVariant: { durationHours: 2, location: { nameHe: 'ירושלים' } } });
+  assert.equal(blockByKey(compose({ deal }), 'tour_details').data.city, 'תל אביב');
+});

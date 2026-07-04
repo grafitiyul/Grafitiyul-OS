@@ -66,6 +66,48 @@ function Html({ html, lang }) {
   return <div className={RICH} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
+// Normalise a user-authored value (pricing row note, etc.) to safe display HTML.
+// The rich editor stores HTML, but a value may also be plain text (preserve line
+// breaks) or — defensively — legacy TipTap/ProseMirror JSON (extract its text).
+// Never surface raw markup/JSON to the customer.
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function proseMirrorText(node) {
+  if (!node || typeof node !== 'object') return '';
+  if (node.type === 'text') return typeof node.text === 'string' ? node.text : '';
+  const inner = Array.isArray(node.content) ? node.content.map(proseMirrorText).join('') : '';
+  if (node.type === 'hardBreak') return '\n';
+  if (['paragraph', 'heading', 'listItem', 'blockquote'].includes(node.type)) return `${inner}\n`;
+  return inner;
+}
+function toDisplayHtml(value) {
+  const s = typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value);
+  const trimmed = s.trim();
+  if (!trimmed) return null;
+  // Already HTML (the rich editor's output) — render as-is.
+  if (/<[a-z!/][\s\S]*>/i.test(trimmed)) return trimmed;
+  // Legacy ProseMirror/TipTap JSON — extract text with line breaks, never show JSON.
+  if (trimmed[0] === '{' || trimmed[0] === '[') {
+    try {
+      const text = proseMirrorText(JSON.parse(trimmed)).trim();
+      if (text) return escapeHtml(text).replace(/\n/g, '<br>');
+    } catch { /* not JSON → fall through to plain text */ }
+  }
+  // Plain text — preserve line breaks.
+  return escapeHtml(trimmed).replace(/\n/g, '<br>');
+}
+
+// Small rich-text note (pricing row note) — formatted, line-breaks preserved,
+// muted + secondary. Renders nothing when empty.
+const NOTE_RICH =
+  'mt-2 text-[14px] leading-relaxed text-gray-500 text-start [&_p]:mb-1 [&_ul]:list-disc [&_ul]:ps-5 [&_ol]:list-decimal [&_ol]:ps-5 [&_li]:mb-0.5 [&_a]:text-teal-700 [&_a]:underline [&_strong]:font-semibold';
+function RichNote({ value }) {
+  const html = toDisplayHtml(value);
+  if (!html) return null;
+  return <div className={NOTE_RICH} dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
 // Section heading — aligned to the reading start (right in RTL, left in LTR).
 function Heading({ children }) {
   if (!children) return null;
@@ -289,7 +331,7 @@ function PricingCard({ d, lang }) {
           <div className="min-w-0">
             <div className="text-[17px] font-semibold text-gray-900">{l.label || '—'}</div>
             {l.quantity > 1 && <div className="mt-0.5 text-[13px] text-gray-400" dir="ltr">{l.quantity} × {formatMinor(l.unitPriceMinor, d.currency)}</div>}
-            {l.note && <div className="mt-2 text-[14px] leading-relaxed text-gray-500">{l.note}</div>}
+            <RichNote value={l.note} />
           </div>
           <div className="shrink-0 text-end">
             <div className="text-[17px] font-bold text-gray-900" dir="ltr">{formatMinor(l.lineTotalMinor, d.currency)}</div>
