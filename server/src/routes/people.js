@@ -54,10 +54,23 @@ async function syncFromUpstream() {
   let missingFromGos = 0;
   let skippedManagement = 0;
 
+  // Evaluator ("פורטל ממשב") portal tokens, surfaced from recruitment. For a
+  // GUIDE, the recruitment export's portalToken IS that guide's active evaluator
+  // portal token (evaluator_portal_tokens via guide_id). GOS reads it here and the
+  // list endpoint turns it into a full recruitment /e/<token> URL — GOS is the
+  // user-facing place, the token still physically lives in recruitment. We do NOT
+  // store it (no duplicate ownership); it's a live read-through.
+  const evaluatorTokens = new Map();
+
   for (const p of snap.people) {
     const externalPersonId = String(p.externalPersonId || '').trim();
     const displayName = String(p.displayName || '').trim();
     if (!externalPersonId || !displayName) continue;
+
+    // Only guides have an evaluator/mentor portal (evaluators are guide-linked).
+    if (externalPersonId.startsWith('guide:') && p.portalToken) {
+      evaluatorTokens.set(externalPersonId, String(p.portalToken));
+    }
 
     const existing = await prisma.personRef.findUnique({
       where: { externalPersonId },
@@ -121,7 +134,15 @@ async function syncFromUpstream() {
     }
   }
 
-  return { updated, missingFromGos, skippedManagement, revoked, total: snap.people.length };
+  return { updated, missingFromGos, skippedManagement, revoked, total: snap.people.length, evaluatorTokens };
+}
+
+// Build the full evaluator ("פורטל ממשב") portal URL from a recruitment token.
+// The /e/<token> page is served by the recruitment SPA at its own origin.
+function evaluatorPortalUrl(token) {
+  const base = String(process.env.RECRUITMENT_API_BASE_URL || '').trim().replace(/\/+$/, '');
+  if (!base || !token) return null;
+  return `${base}/e/${token}`;
 }
 
 // ---------- List ----------
@@ -142,8 +163,10 @@ router.get(
   '/',
   handle(async (_req, res) => {
     let upstream;
+    let evaluatorTokens = new Map();
     try {
       const r = await syncFromUpstream();
+      evaluatorTokens = r.evaluatorTokens || new Map();
       upstream = {
         ok: true,
         syncedAt: new Date().toISOString(),
@@ -170,7 +193,14 @@ router.get(
       orderBy: [{ status: 'asc' }, { displayName: 'asc' }],
     });
 
-    res.json({ people, upstream });
+    // Attach the evaluator ("פורטל ממשב") portal URL read-through (guides only;
+    // null when the guide has no active evaluator link or upstream is down).
+    const withLinks = people.map((p) => ({
+      ...p,
+      evaluatorPortalUrl: evaluatorPortalUrl(evaluatorTokens.get(p.externalPersonId)),
+    }));
+
+    res.json({ people: withLinks, upstream });
   }),
 );
 

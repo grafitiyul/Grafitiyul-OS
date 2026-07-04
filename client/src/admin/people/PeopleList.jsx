@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { PERSON_STATUS_LABELS, PERSON_STATUSES } from './config.js';
 
@@ -60,7 +60,6 @@ export default function PeopleList() {
 
   const [lifecycleFilter, setLifecycleFilter] = useState('all');
   const [accessFilter, setAccessFilter] = useState('all');
-  const [pendingAccessId, setPendingAccessId] = useState(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -90,23 +89,6 @@ export default function PeopleList() {
       await refresh();
     } finally {
       setRefreshing(false);
-    }
-  }
-
-  async function toggleAccess(person, nextEnabled) {
-    setPendingAccessId(person.id);
-    try {
-      const updated = await api.people.setAccess(person.id, nextEnabled);
-      setPeople((rows) =>
-        rows.map((p) => (p.id === updated.id ? updated : p)),
-      );
-    } catch (e) {
-      console.warn('access toggle failed:', e.message);
-      // Refresh to recover from server-side state surprises (e.g.
-      // person was deleted in another tab).
-      refresh();
-    } finally {
-      setPendingAccessId(null);
     }
   }
 
@@ -227,12 +209,7 @@ export default function PeopleList() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filtered.map((p) => (
-                <PersonRow
-                  key={p.id}
-                  person={p}
-                  pendingAccess={pendingAccessId === p.id}
-                  onToggleAccess={toggleAccess}
-                />
+                <PersonRow key={p.id} person={p} onChanged={refresh} />
               ))}
             </tbody>
           </table>
@@ -293,18 +270,7 @@ function UpstreamStatus({ upstream }) {
   );
 }
 
-function PersonRow({ person, pendingAccess, onToggleAccess }) {
-  const portalUrl = `${window.location.origin}/p/${person.portalToken}`;
-  const [copied, setCopied] = useState(false);
-
-  function onCopy(e) {
-    e.stopPropagation();
-    navigator.clipboard.writeText(portalUrl).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  }
-
+function PersonRow({ person, onChanged }) {
   return (
     <tr className="hover:bg-gray-50">
       <Td>
@@ -326,47 +292,202 @@ function PersonRow({ person, pendingAccess, onToggleAccess }) {
         <StatusChip status={person.status} />
       </Td>
       <Td className="text-left">
-        <div className="flex gap-1 justify-end items-center flex-wrap">
-          <button
-            type="button"
-            onClick={() => onToggleAccess(person, !person.portalEnabled)}
-            disabled={pendingAccess}
-            className={`text-[12px] rounded px-2 py-1 border disabled:opacity-50 ${
-              person.portalEnabled
-                ? 'border-red-300 text-red-700 hover:bg-red-50'
-                : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'
-            }`}
-            title={
-              person.portalEnabled
-                ? 'בטל את הגישה של האדם לפורטל GOS'
-                : 'תן לאדם גישה לפורטל GOS'
-            }
-          >
-            {pendingAccess
-              ? '…'
-              : person.portalEnabled
-              ? 'בטל גישה'
-              : 'תן גישה'}
-          </button>
-          <button
-            onClick={onCopy}
-            className="text-[12px] text-gray-600 hover:bg-gray-100 rounded px-2 py-1"
-            title="העתק קישור פורטל"
-          >
-            {copied ? 'הועתק ✓' : 'העתק קישור'}
-          </button>
-          <a
-            href={portalUrl}
-            target="_blank"
-            rel="noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="text-[12px] text-blue-700 hover:bg-blue-50 rounded px-2 py-1"
-          >
-            פתח פורטל ↗
-          </a>
-        </div>
+        <ActionsMenu person={person} onChanged={onChanged} />
       </Td>
     </tr>
+  );
+}
+
+// Compact per-row actions. One 3-dot button opens a menu grouped into clear
+// sections so the table stays clean: the guide portal (GOS-native), the
+// evaluator/mentor portal (link read-through from recruitment — GOS is the
+// user-facing place), and management. No technical terminology.
+const LIFECYCLE_MENU = [
+  { key: 'trainee', label: 'מתלמד' },
+  { key: 'staff', label: 'צוות' },
+  { key: 'former', label: 'עזב' },
+  { key: 'none', label: 'ללא שיוך' },
+];
+
+function ActionsMenu({ person, onChanged }) {
+  const navigate = useNavigate();
+  const btnRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(null); // 'guide' | 'eval' | null
+
+  const guideUrl = `${window.location.origin}/p/${person.portalToken}`;
+  const evalUrl = person.evaluatorPortalUrl || null;
+  const currentLifecycle = person.lifecycleHint || 'none';
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => {
+      if (btnRef.current && btnRef.current.contains(e.target)) return;
+      if (e.target.closest && e.target.closest('[data-actions-menu]')) return;
+      setOpen(false);
+    };
+    const onKey = (e) => e.key === 'Escape' && setOpen(false);
+    const onScroll = () => setOpen(false);
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onScroll);
+    };
+  }, [open]);
+
+  function toggle() {
+    if (!open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      const width = 236;
+      setPos({ top: r.bottom + 4, left: Math.max(8, r.right - width) });
+    }
+    setOpen((o) => !o);
+  }
+
+  function copy(url, which) {
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(which);
+      setTimeout(() => setCopied(null), 1500);
+    });
+  }
+
+  async function run(fn) {
+    setBusy(true);
+    try {
+      await fn();
+      await onChanged();
+    } catch (e) {
+      window.alert('שגיאה: ' + (e.payload?.error || e.message));
+    } finally {
+      setBusy(false);
+      setOpen(false);
+    }
+  }
+
+  async function regenGuide() {
+    if (!window.confirm('ליצור קישור פורטל מדריך חדש? הקישור הנוכחי יפסיק לעבוד מיידית.')) return;
+    await run(() => api.people.rotateToken(person.id));
+  }
+
+  async function setLifecycle(value) {
+    if (value === currentLifecycle) { setOpen(false); return; }
+    // trainee → צוות is the official acceptance business event (with confirm).
+    if (person.lifecycleHint === 'trainee' && value === 'staff') {
+      if (!window.confirm('המתלמד יתקבל באופן רשמי לצוות. הפעולה תירשם במערכת הגיוס ותהפוך אותו לחבר צוות. להמשיך?')) return;
+      await run(() => api.people.acceptToTeam(person.id));
+      return;
+    }
+    await run(() => api.people.setLifecycle(person.id, value));
+  }
+
+  async function toggleAccess() {
+    await run(() => api.people.setAccess(person.id, !person.portalEnabled));
+  }
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={toggle}
+        className={`inline-flex h-7 w-7 items-center justify-center rounded-md border text-gray-600 hover:bg-gray-50 ${
+          open ? 'bg-gray-100 border-gray-300' : 'border-gray-200'
+        }`}
+        title="פעולות"
+        aria-haspopup="true"
+        aria-expanded={open}
+      >
+        <span className="text-lg leading-none">⋮</span>
+      </button>
+
+      {open && (
+        <div
+          data-actions-menu
+          dir="rtl"
+          className="fixed z-50 w-[236px] rounded-lg border border-gray-200 bg-white py-1 shadow-xl text-[13px]"
+          style={{ top: pos.top, left: pos.left }}
+        >
+          <MenuHeader>פורטל מדריך</MenuHeader>
+          <MenuItem onClick={() => { window.open(guideUrl, '_blank', 'noopener'); setOpen(false); }}>
+            פתיחת פורטל ↗
+          </MenuItem>
+          <MenuItem onClick={() => copy(guideUrl, 'guide')}>
+            {copied === 'guide' ? 'הקישור הועתק ✓' : 'העתקת קישור'}
+          </MenuItem>
+          <MenuItem onClick={regenGuide} disabled={busy}>
+            יצירת קישור חדש
+          </MenuItem>
+
+          <MenuDivider />
+          <MenuHeader>פורטל ממשב</MenuHeader>
+          {evalUrl ? (
+            <>
+              <MenuItem onClick={() => { window.open(evalUrl, '_blank', 'noopener'); setOpen(false); }}>
+                פתיחת פורטל ↗
+              </MenuItem>
+              <MenuItem onClick={() => copy(evalUrl, 'eval')}>
+                {copied === 'eval' ? 'הקישור הועתק ✓' : 'העתקת קישור'}
+              </MenuItem>
+            </>
+          ) : (
+            <div className="px-3 py-1.5 text-[12px] text-gray-400">אין קישור ממשב פעיל</div>
+          )}
+
+          <MenuDivider />
+          <MenuHeader>ניהול</MenuHeader>
+          <MenuItem onClick={() => { setOpen(false); navigate(`/admin/people/${person.id}`); }}>
+            פתיחת כרטיס
+          </MenuItem>
+          <div className="px-3 pt-1 pb-0.5 text-[11px] text-gray-400">שינוי סטטוס</div>
+          <div className="px-2 pb-1 flex flex-wrap gap-1">
+            {LIFECYCLE_MENU.map((o) => (
+              <button
+                key={o.key}
+                type="button"
+                disabled={busy}
+                onClick={() => setLifecycle(o.key)}
+                className={`text-[12px] rounded px-2 py-0.5 border disabled:opacity-50 ${
+                  o.key === currentLifecycle
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+          <MenuItem onClick={toggleAccess} disabled={busy}>
+            {person.portalEnabled ? 'ביטול גישה' : 'מתן גישה'}
+          </MenuItem>
+        </div>
+      )}
+    </>
+  );
+}
+
+function MenuHeader({ children }) {
+  return <div className="px-3 pt-1 pb-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">{children}</div>;
+}
+function MenuDivider() {
+  return <div className="my-1 border-t border-gray-100" />;
+}
+function MenuItem({ children, onClick, disabled }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="block w-full text-right px-3 py-1.5 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+    >
+      {children}
+    </button>
   );
 }
 
