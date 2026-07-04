@@ -3,11 +3,10 @@ import { useNavigate, useParams } from 'react-router-dom';
 import BackButton from '../common/BackButton.jsx';
 import { useFileDrop } from '../common/useFileDrop.js';
 import { api } from '../../lib/api.js';
-import { useDirtyForm, useDirtyWhen } from '../../lib/dirtyForms.js';
+import { useDirtyForm } from '../../lib/dirtyForms.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import {
   IDENTITY_SOURCES,
-  IDENTITY_SOURCE_LABELS,
   PERSON_STATUS_LABELS,
   PERSON_STATUSES,
   PROCEDURE_STATE_COLORS,
@@ -251,7 +250,7 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
                   disabled={idSaving || !idDirty}
                   className="px-4 py-1.5 text-sm bg-emerald-600 text-white rounded-md font-medium disabled:opacity-50"
                 >
-                  {idSaving ? 'שומר…' : 'שמור זהות'}
+                  {idSaving ? 'שומר…' : 'שמור'}
                 </button>
                 {idDirty && (
                   <button
@@ -263,7 +262,7 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
                   </button>
                 )}
                 <span className="text-[11px] text-emerald-700">
-                  פרטי הזהות מנוהלים כאן (GOS) ומשתקפים מיד במערכת הגיוס
+                  השינויים נשמרים ומשתקפים מיד במערכת הגיוס
                 </span>
               </div>
             </div>
@@ -462,154 +461,22 @@ function LifecycleChip({ lifecycle }) {
   return <span className={`inline-flex items-center text-[11px] px-2 py-0.5 rounded ${cls}`}>{label}</span>;
 }
 
-// ── Identity section ────────────────────────────────────────────────────────
-// Identity = displayName, email, phone. Source of truth is controlled by
-// `identitySource`:
-//   * 'recruitment' — these fields mirror the recruitment export and are
-//     strictly read-only here. To correct a value, fix it in recruitment
-//     and re-import. No local-edit override: it would drift from the
-//     upstream truth and get overwritten on next import anyway.
-//   * 'management' — management owns identity. Edit here directly.
-//
-// The team field is NOT identity — it's management-owned relationship
-// data. See <TeamSection> below, which is rendered as a separate section.
+// ── Details section (read-only, trainees only) ──────────────────────────────
+// Staff (identitySource='management') edit name/email/phone inline in the
+// header — this section is not rendered for them. Trainees
+// (identitySource='recruitment') see their details read-only here (mirrored
+// from recruitment). Presentation only avoids the word "זהות"/"identity".
 
-function IdentitySection({ person, onChanged }) {
-  const isRecruitment = person.identitySource === IDENTITY_SOURCES.RECRUITMENT;
-  if (isRecruitment) {
-    return <ReadOnlyIdentity person={person} />;
-  }
-  return <EditableIdentity person={person} onChanged={onChanged} />;
-}
-
-function ReadOnlyIdentity({ person }) {
+function IdentitySection({ person }) {
   return (
-    <Section
-      title="זהות"
-      headerRight={
-        <span className="text-[11px] text-gray-500">
-          {IDENTITY_SOURCE_LABELS[person.identitySource]}
-        </span>
-      }
-    >
+    <Section title="פרטים">
       <div className="text-[12px] bg-gray-50 border border-gray-200 text-gray-700 rounded px-3 py-2 mb-3">
-        שדות הזהות מגיעים ממערכת הגיוס ואינם ניתנים לעריכה כאן. תיקון
-        ערך מתבצע במערכת הגיוס ונטען בייבוא הבא.
+        הפרטים מגיעים ממערכת הגיוס ואינם ניתנים לעריכה כאן. תיקון ערך מתבצע
+        במערכת הגיוס ונטען בייבוא הבא.
       </div>
       <ReadOnlyField label="שם מלא" value={person.displayName} />
       <ReadOnlyField label="אימייל" value={person.email || '—'} />
       <ReadOnlyField label="טלפון" value={person.phone || '—'} />
-    </Section>
-  );
-}
-
-// Management-owned identity. GOS is the source of truth, so the fields are
-// DIRECTLY editable here — no hidden "edit" toggle. The user opens a staff
-// person and immediately sees editable name / email / phone with a שמור button.
-function EditableIdentity({ person, onChanged }) {
-  const [saving, setSaving] = useState(false);
-  const baseline = {
-    displayName: person.displayName || '',
-    email: person.email || '',
-    phone: person.phone || '',
-  };
-  const [form, setForm] = useState(baseline);
-
-  useEffect(() => {
-    setForm({
-      displayName: person.displayName || '',
-      email: person.email || '',
-      phone: person.phone || '',
-    });
-  }, [person]);
-
-  const dirty =
-    form.displayName !== baseline.displayName ||
-    form.email !== baseline.email ||
-    form.phone !== baseline.phone;
-
-  // Unsaved-work guard (auto-update): dirty whenever the form diverges from saved.
-  useDirtyWhen(form, baseline, { active: true });
-
-  async function save() {
-    if (!form.displayName.trim()) {
-      window.alert('שם מלא הוא שדה חובה.');
-      return;
-    }
-    setSaving(true);
-    try {
-      await api.people.update(person.id, {
-        displayName: form.displayName.trim(),
-        email: form.email.trim() || null,
-        phone: form.phone.trim() || null,
-      });
-      await onChanged();
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function reset() {
-    setForm(baseline);
-  }
-
-  return (
-    <Section
-      title="זהות"
-      headerRight={
-        <span className="text-[11px] text-emerald-700">
-          {IDENTITY_SOURCE_LABELS[person.identitySource]} · ניתן לעריכה
-        </span>
-      }
-    >
-      <div className="text-[12px] bg-emerald-50 border border-emerald-200 text-emerald-800 rounded px-3 py-2 mb-3">
-        שדות הזהות מנוהלים כאן (GOS) והם מקור האמת. עריכה נשמרת מיד ומשתקפת
-        גם במערכת הגיוס. אין צורך לעדכן במערכת הגיוס.
-      </div>
-      <Field label="שם מלא">
-        <input
-          type="text"
-          value={form.displayName}
-          onChange={(e) => setForm({ ...form, displayName: e.target.value })}
-          className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-400"
-        />
-      </Field>
-      <Field label="אימייל">
-        <input
-          type="email"
-          dir="ltr"
-          value={form.email}
-          onChange={(e) => setForm({ ...form, email: e.target.value })}
-          className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-right focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-400"
-        />
-      </Field>
-      <Field label="טלפון">
-        <input
-          type="tel"
-          dir="ltr"
-          value={form.phone}
-          onChange={(e) => setForm({ ...form, phone: e.target.value })}
-          className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-right focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-400"
-        />
-      </Field>
-      <div className="flex justify-end gap-2 pt-2">
-        {dirty && (
-          <button
-            onClick={reset}
-            disabled={saving}
-            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md"
-          >
-            בטל שינויים
-          </button>
-        )}
-        <button
-          onClick={save}
-          disabled={saving || !dirty}
-          className="px-4 py-1.5 text-sm bg-emerald-600 text-white rounded-md font-medium disabled:opacity-50"
-        >
-          {saving ? 'שומר…' : 'שמור'}
-        </button>
-      </div>
     </Section>
   );
 }
