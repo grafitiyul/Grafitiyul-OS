@@ -92,6 +92,8 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
   const [copied, setCopied] = useState(false);
   const [rotating, setRotating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [acceptConfirm, setAcceptConfirm] = useState(false);
+  const [acceptBusy, setAcceptBusy] = useState(false);
 
   // Staff identity is GOS-owned and edited RIGHT HERE, inline in the header —
   // this is the single primary identity editor for staff. Trainees
@@ -149,12 +151,29 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
     await api.people.setPortalEnabled(person.id, !person.portalEnabled);
     onChanged();
   }
-  // Lifecycle is GOS-owned (Slice B). Explicit control — 'trainee'|'staff'|'none' —
-  // so changing one status never silently loses another (e.g. staff-off no longer
-  // wipes a trainee).
+  // Lifecycle is GOS-owned. Explicit control — 'trainee'|'staff'|'former'|'none'.
+  // EXCEPTION: trainee → staff is the official "accepted to team" BUSINESS EVENT,
+  // not a plain edit. It must be confirmed and routed through recruitment so
+  // exactly one accepted_to_team event fires. All other transitions are direct.
   async function changeLifecycle(value) {
+    if (person.lifecycleHint === 'trainee' && value === 'staff') {
+      setAcceptConfirm(true);
+      return;
+    }
     await api.people.setLifecycle(person.id, value);
     onChanged();
+  }
+  async function confirmAcceptToTeam() {
+    setAcceptBusy(true);
+    try {
+      await api.people.acceptToTeam(person.id);
+      setAcceptConfirm(false);
+      await onChanged();
+    } catch (e) {
+      window.alert('שגיאה בקבלה לצוות: ' + (e.payload?.error || e.message));
+    } finally {
+      setAcceptBusy(false);
+    }
   }
   // Reject in training: recruitment records it (sole writer); GOS then deletes.
   async function rejectTraining() {
@@ -358,6 +377,18 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
           confirmLabel="מחק"
           onCancel={() => setConfirmDelete(false)}
           onConfirm={doDelete}
+        />
+      )}
+
+      {acceptConfirm && (
+        <ConfirmModal
+          title="קבלה לצוות"
+          body={`המתלמד "${person.displayName}" יתקבל באופן רשמי לצוות. הפעולה תירשם במערכת הגיוס ותהפוך אותו לחבר צוות. האם אתה בטוח?`}
+          confirmLabel={acceptBusy ? 'מקבל…' : 'קבל לצוות'}
+          danger={false}
+          busy={acceptBusy}
+          onCancel={() => setAcceptConfirm(false)}
+          onConfirm={confirmAcceptToTeam}
         />
       )}
     </section>
@@ -989,11 +1020,11 @@ function Field({ label, children }) {
   );
 }
 
-function ConfirmModal({ title, body, confirmLabel, onCancel, onConfirm }) {
+function ConfirmModal({ title, body, confirmLabel, onCancel, onConfirm, danger = true, busy = false }) {
   return (
     <div
       className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
-      onClick={onCancel}
+      onClick={busy ? undefined : onCancel}
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -1004,13 +1035,17 @@ function ConfirmModal({ title, body, confirmLabel, onCancel, onConfirm }) {
         <div className="flex justify-end gap-2">
           <button
             onClick={onCancel}
-            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md"
+            disabled={busy}
+            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md disabled:opacity-50"
           >
             ביטול
           </button>
           <button
             onClick={onConfirm}
-            className="px-4 py-1.5 text-sm bg-red-600 text-white rounded-md font-medium"
+            disabled={busy}
+            className={`px-4 py-1.5 text-sm text-white rounded-md font-medium disabled:opacity-50 ${
+              danger ? 'bg-red-600' : 'bg-emerald-600'
+            }`}
           >
             {confirmLabel}
           </button>

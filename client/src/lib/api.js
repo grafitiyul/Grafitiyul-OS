@@ -194,6 +194,11 @@ export const api = {
     // on success GOS revokes access + deletes the PersonRef.
     rejectTraining: (id) =>
       request(`/api/people/${id}/reject-training`, { method: 'POST' }),
+    // Accept a trainee to team (official business event). GOS triggers recruitment
+    // (recorder); recruitment emits the single accepted_to_team event, which flips
+    // this person to staff. NOT a plain lifecycle edit.
+    acceptToTeam: (id) =>
+      request(`/api/people/${id}/accept-to-team`, { method: 'POST' }),
     uploadImage: async (id, file) => {
       const q = qs({ filename: file.name });
       const res = await fetch(`/api/people/${id}/image${q}`, {

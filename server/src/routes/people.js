@@ -93,30 +93,35 @@ async function syncFromUpstream() {
     }
   }
 
-  // Reconcile safety net (Slice D): a GOS 'trainee' no longer in the recruitment
-  // active roster was rejected/dropped upstream and its direct event push may have
-  // been missed → remove it (revoke + HARD DELETE). ONLY trainees — staff / former
-  // / none are GOS-owned and never auto-removed. Skipped when the snapshot is empty
-  // (guards against wiping everyone on a bad/empty fetch).
-  let removed = 0;
+  // Reconcile safety net: a GOS 'trainee' no longer in the recruitment active
+  // roster MAY have been rejected/dropped upstream with a missed event push.
+  //
+  // SAFETY (post-incident): this net is a HEURISTIC and must NEVER destroy data.
+  // "Missing from roster" is ambiguous — it also matches a trainee who was
+  // promoted via a path that didn't (yet) emit accepted_to_team, or a transient
+  // export glitch. So we only REVOKE ACCESS here; we do NOT delete. Actual
+  // deletion happens only on the explicit training_rejected event / reject-training
+  // trigger (a real, recorded rejection). ONLY trainees are touched. Skipped when
+  // the snapshot is empty (guards against wiping access on a bad/empty fetch).
+  let revoked = 0;
   if (snap.people.length > 0) {
     const roster = new Set(
       snap.people.map((p) => String(p.externalPersonId || '').trim()).filter(Boolean),
     );
     const trainees = await prisma.personRef.findMany({
       where: { lifecycleHint: 'trainee' },
-      select: { id: true, externalPersonId: true },
+      select: { id: true, externalPersonId: true, portalEnabled: true },
     });
     for (const t of trainees) {
-      if (!roster.has(t.externalPersonId)) {
+      if (!roster.has(t.externalPersonId) && t.portalEnabled) {
+        // Revoke access only — never delete. The person is preserved for review.
         await prisma.personRef.update({ where: { id: t.id }, data: { portalEnabled: false, accessRevokedAt: new Date() } });
-        await prisma.personRef.delete({ where: { id: t.id } });
-        removed += 1;
+        revoked += 1;
       }
     }
   }
 
-  return { updated, missingFromGos, skippedManagement, removed, total: snap.people.length };
+  return { updated, missingFromGos, skippedManagement, revoked, total: snap.people.length };
 }
 
 // ---------- List ----------
@@ -145,7 +150,7 @@ router.get(
         updated: r.updated,
         missingFromGos: r.missingFromGos,
         skippedManagement: r.skippedManagement,
-        removed: r.removed,
+        revoked: r.revoked,
         total: r.total,
       };
     } catch (e) {
@@ -340,6 +345,57 @@ router.put(
       include: PERSON_INCLUDE,
     });
     res.json(person);
+  }),
+);
+
+// ---------- Accept to team (GOS-initiated trigger) ----------
+// The GOS admin promotes a trainee → staff. This is NOT a plain lifecycle edit:
+// it is the official "accepted to team" business event. Recruitment is the
+// recorder — GOS calls it; recruitment creates the team_members row and emits the
+// SINGLE accepted_to_team event back to GOS (awaited), which flips THIS PersonRef
+// to staff (lifecycleHint='staff', identitySource='management'). GOS does not flip
+// locally, so there is exactly one acceptance path and one event. On recruitment
+// failure we fail visibly and change nothing.
+router.post(
+  '/:id/accept-to-team',
+  handle(async (req, res) => {
+    const person = await prisma.personRef.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, externalPersonId: true, lifecycleHint: true },
+    });
+    if (!person) return res.status(404).json({ error: 'not_found' });
+    if (person.lifecycleHint !== 'trainee') {
+      return res.status(400).json({ error: 'not_a_trainee' });
+    }
+    const base = process.env.RECRUITMENT_API_BASE_URL;
+    const secret = process.env.STAFF_EVENT_SECRET;
+    if (!base || !secret) return res.status(500).json({ error: 'recruitment_trigger_not_configured' });
+
+    let r;
+    try {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 8000);
+      r = await fetch(`${String(base).replace(/\/+$/, '')}/api/staff/accept-to-team`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-staff-event-secret': secret },
+        body: JSON.stringify({ externalPersonId: person.externalPersonId }),
+        signal: ctl.signal,
+      });
+      clearTimeout(t);
+    } catch (e) {
+      return res.status(502).json({ error: 'recruitment_unavailable', detail: e?.message || 'network error' });
+    }
+    if (!r.ok) {
+      const txt = await r.text().catch(() => '');
+      return res.status(502).json({ error: 'recruitment_accept_failed', status: r.status, detail: txt.slice(0, 300) });
+    }
+    // Recruitment recorded acceptance + emitted accepted_to_team, which GOS ingested
+    // synchronously (staffEvents) → this PersonRef is now staff. Return the fresh row.
+    const updated = await prisma.personRef.findUnique({
+      where: { id: person.id },
+      include: PERSON_INCLUDE,
+    });
+    res.json({ ok: true, person: updated });
   }),
 );
 
