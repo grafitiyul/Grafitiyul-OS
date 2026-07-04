@@ -66,13 +66,18 @@ export function resolveDisplayProductName(document, deal, lang) {
   return (isFilled(document?.displayProductName) ? document.displayProductName : productName(deal, lang)) || null;
 }
 
-// Primary contact's display name (full name in the quote language) for the cover.
+// Primary contact's display name for the cover. Prefers the quote-language name,
+// but falls back PER PART to the other language when a part is empty. A contact's
+// other-language names are optional and stored as '' (see routes/contacts.js), so
+// a Hebrew-only (or English-only) contact must still show a name in EITHER preview
+// language — the "Prepared for" VALUE is the same person; only its LABEL localizes.
 function contactDisplayName(deal, lang) {
   const cs = Array.isArray(deal?.contacts) ? deal.contacts : [];
   const c = (cs.find((x) => x.isPrimary) || cs[0])?.contact;
   if (!c) return null;
-  const first = lang === 'en' ? c.firstNameEn : c.firstNameHe;
-  const last = lang === 'en' ? c.lastNameEn : c.lastNameHe;
+  const en = lang === 'en';
+  const first = (en ? c.firstNameEn : c.firstNameHe) || (en ? c.firstNameHe : c.firstNameEn);
+  const last = (en ? c.lastNameEn : c.lastNameHe) || (en ? c.lastNameHe : c.lastNameEn);
   return [first, last].filter(Boolean).join(' ') || null;
 }
 

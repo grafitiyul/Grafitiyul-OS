@@ -276,3 +276,21 @@ test('pickLang: selects by language, returns null on empty, never cross-falls ba
   assert.equal(pickLang('שלום', '', 'en'), null, 'empty En → null (no He fallback)');
   assert.equal(pickLang('  ', 'hello', 'he'), null, 'whitespace-only → null');
 });
+
+// ── Hero "Prepared for": contact name resolves in EITHER preview language ──────
+// Other-language contact names are optional and stored as '' (routes/contacts.js).
+// The cover's "Prepared for" VALUE must not disappear when the quote language is
+// the one the contact lacks — the value is the same person; only the LABEL localizes.
+test('composer: hero customerName falls back across languages (Hebrew-only contact)', () => {
+  const contacts = [{ isPrimary: true, roles: [], contact: { firstNameHe: 'אלינור', lastNameHe: 'קיסלוב', firstNameEn: '', lastNameEn: '' } }];
+  const he = blockByKey(compose({ deal: baseDeal({ contacts }), lang: 'he' }), 'hero').data;
+  const en = blockByKey(compose({ deal: baseDeal({ contacts }), lang: 'en' }), 'hero').data;
+  assert.equal(he.customerName, 'אלינור קיסלוב');
+  assert.equal(en.customerName, 'אלינור קיסלוב', 'English preview still shows the (Hebrew) contact name');
+});
+
+test('composer: hero customerName prefers the quote-language name when both exist', () => {
+  const contacts = [{ isPrimary: true, roles: [], contact: { firstNameHe: 'דנה', lastNameHe: 'לוי', firstNameEn: 'Dana', lastNameEn: 'Levi' } }];
+  assert.equal(blockByKey(compose({ deal: baseDeal({ contacts }), lang: 'en' }), 'hero').data.customerName, 'Dana Levi');
+  assert.equal(blockByKey(compose({ deal: baseDeal({ contacts }), lang: 'he' }), 'hero').data.customerName, 'דנה לוי');
+});
