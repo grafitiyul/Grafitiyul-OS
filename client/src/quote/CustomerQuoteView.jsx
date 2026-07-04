@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import QuoteDocumentRenderer, { blockHasContent, QuoteViewContext } from './QuoteBlockRenderer.jsx';
 import SignaturePopup from './SignaturePopup.jsx';
+import SignedStatusPanel from './SignedStatusPanel.jsx';
 
 // ── Public customer-facing quote page ────────────────────────────────────────
 // Wraps the SHARED proposal renderer (unchanged) with the customer chrome:
@@ -178,10 +179,23 @@ export default function CustomerQuoteView() {
         </button>
       </div>
 
+      {/* Signed audit panel — permanent, floating on the LEFT (desktop). */}
+      {signature && (
+        <div className="cq-no-print fixed bottom-6 left-5 z-30 hidden lg:block">
+          <SignedStatusPanel signature={signature} header={header} lang={lang} />
+        </div>
+      )}
+
       {/* The proposal — centered premium sheet; the print target. The signing
           context is supplied ONLY here, so the Signature section's button opens the
           popup (and once signed, renders the captured signature). */}
       <main className="cq-page mx-auto max-w-3xl px-3 py-6 sm:py-10">
+        {/* On mobile the audit panel sits inline above the proposal. */}
+        {signature && (
+          <div className="cq-no-print mb-4 lg:hidden">
+            <SignedStatusPanel signature={signature} header={header} lang={lang} className="w-full" />
+          </div>
+        )}
         <div className="cq-paper overflow-hidden rounded-2xl bg-white shadow-xl">
           <QuoteViewContext.Provider
             value={{ signature, onSignClick: locked ? undefined : () => setPopupOpen(true) }}
