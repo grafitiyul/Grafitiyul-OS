@@ -319,7 +319,10 @@ function ActionsMenu({ person, onChanged }) {
 
   const guideUrl = `${window.location.origin}/p/${person.portalToken}`;
   const evalUrl = person.evaluatorPortalUrl || null;
-  const isGuide = String(person.externalPersonId || '').startsWith('guide:');
+  // A mentor/evaluator ("פורטל ממשב") can belong to ANY staff member — whether they
+  // came from a guide (guide:<id>) or a candidate who became staff (candidate:<id>).
+  // Trainees / former / unassigned truly cannot have one.
+  const canHaveEvaluator = person.lifecycleHint === 'staff';
   const currentLifecycle = person.lifecycleHint || 'none';
 
   useEffect(() => {
@@ -442,20 +445,18 @@ function ActionsMenu({ person, onChanged }) {
           </MenuSection>
 
           <MenuSection title="פורטל ממשב">
-            {isGuide ? (
+            {evalUrl ? (
               <>
                 <ActionRow icon={<IconNew />} onClick={regenEval} disabled={busy}>יצירת קישור חדש</ActionRow>
-                {evalUrl && (
-                  <>
-                    <ActionRow icon={<IconCopy />} onClick={() => copy(evalUrl, 'eval')}>
-                      {copied === 'eval' ? 'הקישור הועתק' : 'העתקת קישור'}
-                    </ActionRow>
-                    <ActionRow icon={<IconOpen />} onClick={() => { window.open(evalUrl, '_blank', 'noopener'); setOpen(false); }}>
-                      פתיחת פורטל ממשב
-                    </ActionRow>
-                  </>
-                )}
+                <ActionRow icon={<IconCopy />} onClick={() => copy(evalUrl, 'eval')}>
+                  {copied === 'eval' ? 'הקישור הועתק' : 'העתקת קישור'}
+                </ActionRow>
+                <ActionRow icon={<IconOpen />} onClick={() => { window.open(evalUrl, '_blank', 'noopener'); setOpen(false); }}>
+                  פתיחת פורטל ממשב
+                </ActionRow>
               </>
+            ) : canHaveEvaluator ? (
+              <ActionRow icon={<IconNew />} onClick={regenEval} disabled={busy}>יצירת קישור ממשב</ActionRow>
             ) : (
               <div className="flex items-center gap-3 px-2.5 py-2 text-[13px] text-gray-400">
                 <span className="flex-1 text-right">אין פורטל ממשב</span>

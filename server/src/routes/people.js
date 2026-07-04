@@ -54,12 +54,13 @@ async function syncFromUpstream() {
   let missingFromGos = 0;
   let skippedManagement = 0;
 
-  // Evaluator ("פורטל ממשב") portal tokens, surfaced from recruitment. For a
-  // GUIDE, the recruitment export's portalToken IS that guide's active evaluator
-  // portal token (evaluator_portal_tokens via guide_id). GOS reads it here and the
-  // list endpoint turns it into a full recruitment /e/<token> URL — GOS is the
-  // user-facing place, the token still physically lives in recruitment. We do NOT
-  // store it (no duplicate ownership); it's a live read-through.
+  // Evaluator ("פורטל ממשב") portal tokens, surfaced from recruitment. The export
+  // returns portalToken = the person's active evaluator portal token for anyone who
+  // HAS one — a guide (evaluator via guide_id) OR a candidate-sourced staff member
+  // (evaluator via candidate_id, migration 129). GOS reads it here and the list
+  // endpoint turns it into a full recruitment /e/<token> URL — GOS is the user-
+  // facing place, the token still physically lives in recruitment. We do NOT store
+  // it (no duplicate ownership); it's a live read-through.
   const evaluatorTokens = new Map();
 
   for (const p of snap.people) {
@@ -67,8 +68,7 @@ async function syncFromUpstream() {
     const displayName = String(p.displayName || '').trim();
     if (!externalPersonId || !displayName) continue;
 
-    // Only guides have an evaluator/mentor portal (evaluators are guide-linked).
-    if (externalPersonId.startsWith('guide:') && p.portalToken) {
+    if (p.portalToken) {
       evaluatorTokens.set(externalPersonId, String(p.portalToken));
     }
 
@@ -440,11 +440,15 @@ router.post(
   handle(async (req, res) => {
     const person = await prisma.personRef.findUnique({
       where: { id: req.params.id },
-      select: { externalPersonId: true },
+      select: { externalPersonId: true, lifecycleHint: true },
     });
     if (!person) return res.status(404).json({ error: 'not_found' });
-    if (!String(person.externalPersonId).startsWith('guide:')) {
-      return res.status(400).json({ error: 'not_a_guide', message: 'פורטל ממשב קיים רק למדריכים' });
+    // Eligible = a staff member sourced from a guide OR a candidate (both can be a
+    // mentor/evaluator). Recruitment resolves the evaluator by guide_id / candidate_id.
+    const ext = String(person.externalPersonId || '');
+    const eligible = person.lifecycleHint === 'staff' && (ext.startsWith('guide:') || ext.startsWith('candidate:'));
+    if (!eligible) {
+      return res.status(400).json({ error: 'not_eligible', message: 'פורטל ממשב זמין לאנשי צוות בלבד' });
     }
     const base = process.env.RECRUITMENT_API_BASE_URL;
     const secret = process.env.STAFF_EVENT_SECRET;
