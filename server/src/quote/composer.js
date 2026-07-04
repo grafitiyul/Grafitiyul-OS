@@ -44,7 +44,6 @@ const SOURCE_LABELS = {
   video: 'Quote Structure · Video',
   tour_details: 'Deal · Product · Location',
   pricing: 'QuoteVersion (Builder)',
-  payment_terms: 'Deal · Payment',
   signature: 'Signers',
   product_marketing: 'Product',
   city_content: 'Location',
@@ -100,7 +99,6 @@ export function editTargetFor(type, deal) {
     case 'video': return { kind: 'quoteStructure', label: 'ערוך וידאו', tab: 'video' };
     case 'tour_details': return { kind: 'deal', label: 'ערוך פרטי הסיור' };
     case 'pricing': return { kind: 'builder', label: 'ערוך תמחור', dialog: true };
-    case 'payment_terms': return { kind: 'deal', label: 'ערוך תנאי תשלום' };
     case 'product_marketing': return { kind: 'product', label: 'ערוך מוצר', id: deal?.productId || null };
     case 'classification': return { kind: 'orgType', label: 'ערוך תוכן סוג ארגון', id: deal?.organizationTypeId || deal?.organization?.organizationTypeId || null };
     case 'why_us': return { kind: 'quoteSections', label: 'ערוך תוכן שיווקי', category: 'why_us' };
@@ -239,7 +237,10 @@ function buildTourDetails({ deal, displayName, lang, template, sharedContent }) 
       tourDate: deal?.tourDate || null,
       tourTime: deal?.tourTime || null,
       participants: deal?.participants ?? null,
-      durationHours: variant?.durationHours ?? null,
+      // Tour duration: the Deal has none of its own today, so it comes from the
+      // selected Product Variant. Structured as a deal→variant fallback so the tile
+      // shows whenever EITHER has a value (deal override is future-proofing).
+      durationHours: (typeof deal?.durationHours === 'number' ? deal.durationHours : variant?.durationHours) ?? null,
       tourLanguage: deal?.tourLanguage || null,
       // Retained in the model but no longer rendered inside Technical Details;
       // becomes its own optional section in Phase 2.
@@ -294,8 +295,8 @@ function buildPricing({ deal, lines, displayName, lang, template }) {
       excludedInactive,
       // Frozen Builder headline gross. The quote does NOT recompute totals/VAT.
       totals: { grossMinor: Number(deal?.valueMinor ?? 0) },
-      // Payment terms/method shown INSIDE the pricing section (presentation only —
-      // same source as the payment_terms block; no engine/calculation change).
+      // Payment terms/method shown INSIDE the pricing section (presentation only;
+      // no engine/calculation change).
       paymentTerm: deal?.paymentTerm ? pickLang(deal.paymentTerm.nameHe, deal.paymentTerm.nameEn, lang) : null,
       paymentMethod: deal?.paymentMethodRef ? pickLang(deal.paymentMethodRef.nameHe, deal.paymentMethodRef.nameEn, lang) : null,
     },
@@ -303,15 +304,6 @@ function buildPricing({ deal, lines, displayName, lang, template }) {
   };
 }
 
-function buildPaymentTerms({ deal, lang }) {
-  return {
-    data: {
-      term: deal?.paymentTerm ? pickLang(deal.paymentTerm.nameHe, deal.paymentTerm.nameEn, lang) : null,
-      method: deal?.paymentMethodRef ? pickLang(deal.paymentMethodRef.nameHe, deal.paymentMethodRef.nameEn, lang) : null,
-    },
-    warnings: [],
-  };
-}
 
 function buildSignature() {
   // No signer infrastructure wired in this slice — placeholder slot shape only.
@@ -373,7 +365,6 @@ function assembleBlock(type, ctx) {
     case 'video': return buildVideo(ctx);
     case 'tour_details': return buildTourDetails(ctx);
     case 'pricing': return buildPricing(ctx);
-    case 'payment_terms': return buildPaymentTerms(ctx);
     case 'signature': return buildSignature(ctx);
     case 'product_marketing': return buildProductMarketing(ctx);
     case 'city_content': return buildCityContent(ctx);
@@ -387,21 +378,16 @@ function assembleBlock(type, ctx) {
   }
 }
 
-// Block order/hidden precedence (SSOT for a quote's composition):
-//   1. per-quote compositionDraft  — this admin reordered/hid THIS quote
-//   2. global template sections    — the CRM default (default SEED only)
-//   3. DEFAULT_QUOTE_BLOCKS        — the code fallback (unchanged behaviour)
-// Both stored shapes are [{ key, hidden }]; code default metadata is merged by key.
-function getOrderedBlocks(compositionDraft, templateSections) {
-  const stored = Array.isArray(compositionDraft?.blocks) && compositionDraft.blocks.length ? compositionDraft.blocks : null;
-  const template = Array.isArray(templateSections) && templateSections.length ? templateSections : null;
-  const source = stored || template;
+// Block order + visibility — SINGLE SOURCE OF TRUTH: the global Quote Structure
+// template (`template.sections`). There is NO per-quote order override any more;
+// every quote follows Quote Structure, so the settings list and the produced quote
+// can never diverge. `template.sections` is already normalised (canonical for
+// legacy layouts, drag-order preserved for versioned ones); here we just reconcile
+// against the canonical set as a safety net (insert any missing canonical block at
+// its position, drop stale keys, preserve hidden-by-key) and pin Hero first.
+function getOrderedBlocks(templateSections) {
+  const source = Array.isArray(templateSections) && templateSections.length ? templateSections : null;
   if (!source) return DEFAULT_QUOTE_BLOCKS.map((b) => ({ ...b, hidden: false }));
-  // Preserve the stored hidden flags + order, but RECONCILE against the canonical
-  // block set: any canonical block missing from an older saved composition (e.g.
-  // program, video) is inserted at its canonical position and shown by default,
-  // and stale keys are dropped. Without this, a per-quote draft (or template)
-  // saved before a block existed would never show that block.
   const canonicalKeys = DEFAULT_QUOTE_BLOCKS.map((b) => b.key);
   const flags = new Map();
   const savedKeys = [];
@@ -415,9 +401,8 @@ function getOrderedBlocks(compositionDraft, templateSections) {
     ...byKey[key],
     hidden: flags.has(key) ? flags.get(key) : false,
   }));
-  // Hero is the document HEADER, not a content block: it is always present, never
-  // hidden, and always first — regardless of any stored order. Enforced here (the
-  // one place order is resolved) so no template or per-quote draft can move it.
+  // Hero is the document HEADER, not a content block: always present, never hidden,
+  // always first — the one explicit exception to the block order.
   return heroFirst(blocks);
 }
 
@@ -438,7 +423,7 @@ export function assembleComposition({ document, deal, version, lines, quoteSecti
 
   const overrides = document?.overrideState?.blocks || {};
   const warnings = [];
-  const blocks = getOrderedBlocks(document?.compositionDraft, template?.sections).map((b, i) => {
+  const blocks = getOrderedBlocks(template?.sections).map((b, i) => {
     const assembled = b.hidden ? { data: null, warnings: [] } : assembleBlock(b.type, ctx);
     const ov = overrides[b.key] || null;
     let data = assembled.data;

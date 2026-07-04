@@ -5,20 +5,23 @@
 // This is the DEFAULT seed only — a stored composition (per-quote draft or the
 // global template) controls order + hidden, so nothing is hardcoded downstream.
 export const DEFAULT_QUOTE_BLOCKS = [
+  // Hero is the ONLY non-removable block (the document header — see composer heroFirst).
+  // Every other section is fully controlled by Quote Structure → Sections (order +
+  // show/hide). `removable` just means "can be hidden from the sections list".
   { key: 'hero', type: 'hero', kind: 'dynamic', optional: false, removable: false },
   // "אז מה בתוכנית?" — variant-specific programme copy. TITLE comes from the Quote
   // Template (one source of truth); CONTENT comes from the selected Product Variant.
   // Sits immediately before Technical Details in the default order.
   { key: 'program', type: 'program', kind: 'content', optional: true, removable: true },
-  { key: 'tour_details', type: 'tour_details', kind: 'dynamic', optional: false, removable: false },
+  { key: 'tour_details', type: 'tour_details', kind: 'dynamic', optional: true, removable: true },
   { key: 'product_marketing', type: 'product_marketing', kind: 'content', optional: true, removable: true },
   // Video (YouTube) — shown only in quotes whose Product Variant is selected in the
   // Quote Structure → Video tab. Config lives in the template; content is the URL.
   { key: 'video', type: 'video', kind: 'content', optional: true, removable: true },
   { key: 'why_grafitiyul', type: 'why_us', kind: 'content', optional: true, removable: true },
   { key: 'classification', type: 'classification', kind: 'content', optional: true, removable: true },
-  { key: 'pricing', type: 'pricing', kind: 'dynamic', optional: false, removable: false },
-  { key: 'payment_terms', type: 'payment_terms', kind: 'dynamic', optional: true, removable: true },
+  // Pricing owns the payment terms/method too (rendered inside the pricing section).
+  { key: 'pricing', type: 'pricing', kind: 'dynamic', optional: true, removable: true },
   { key: 'faq', type: 'faq', kind: 'content', optional: true, removable: true },
   { key: 'cancellation', type: 'cancellation', kind: 'content', optional: true, removable: true },
   { key: 'participant_policy', type: 'participant_policy', kind: 'content', optional: true, removable: true },

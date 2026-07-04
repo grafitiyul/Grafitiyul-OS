@@ -456,10 +456,6 @@ export function QuoteBlock({ block, lang = 'he' }) {
       return <><Heading>{title}</Heading><PricingCard d={d} lang={lang} /></>;
     case 'video':
       return <VideoEmbed d={d} lang={lang} />;
-    // Payment terms/method now render INSIDE the pricing section (below the VAT
-    // status, above the total), so the standalone block renders nothing.
-    case 'payment_terms':
-      return null;
     case 'signature':
       return (
         <>

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
-import ReorderableList from '../common/ReorderableList.jsx';
 import { QuoteBlock, TEAL } from '../../quote/QuoteBlockRenderer.jsx';
 import PriceBuilderDialog from '../deals/PriceBuilderDialog.jsx';
 import GroupTicketBuilderDialog from '../deals/GroupTicketBuilderDialog.jsx';
@@ -18,7 +17,7 @@ import { resolveFinanceWorkspace, FINANCE_WORKSPACE } from '../deals/config.js';
 const LABELS = {
   hero: 'כותרת', program: 'אז מה בתוכנית?', tour_details: 'פרטים טכניים',
   product_marketing: 'תיאור המוצר', video: 'וידאו', why_grafitiyul: 'למה גרפיתיול', classification: 'תוכן לפי סוג ארגון',
-  pricing: 'תמחור', payment_terms: 'תנאי תשלום', faq: 'שאלות נפוצות',
+  pricing: 'תמחור', faq: 'שאלות נפוצות',
   cancellation: 'מדיניות ביטול', participant_policy: 'מדיניות משתתפים', signature: 'חתימה',
 };
 // The section list/warnings prefer the composed (live) title when the block has
@@ -37,10 +36,6 @@ function hasContent(block) {
     case 'pricing':
     case 'signature':
       return true;
-    // Payment terms/method render inside the pricing section now, so the
-    // standalone block is never shown on its own.
-    case 'payment_terms':
-      return false;
     case 'video':
       return !!d.url;
     case 'program':
@@ -196,16 +191,9 @@ export default function QuotePreviewCanvas() {
     const route = routeFor(t);
     if (route) window.open(route, '_blank', 'noopener');
   }
-  function persistComposition(nextBlocks) {
-    return patchDoc({ compositionDraft: { blocks: nextBlocks.map((b) => ({ key: b.key, hidden: !!b.hidden })) } });
-  }
-  function onReorder(ids) {
-    const byKey = Object.fromEntries(model.blocks.map((b) => [b.key, b]));
-    persistComposition(ids.map((k) => byKey[k]));
-  }
-  function toggleHidden(key) {
-    persistComposition(model.blocks.map((b) => (b.key === key ? { ...b, hidden: !b.hidden } : b)));
-  }
+  // Section order + visibility are controlled ONLY in Quote Structure → Sections
+  // (the single source of truth). This screen shows the resolved order read-only;
+  // there is no per-quote reorder/hide here any more.
   function jumpTo(key) {
     setWarnOpen(false);
     document.getElementById(`sec-${key}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -346,20 +334,22 @@ export default function QuotePreviewCanvas() {
               <button type="button" onClick={resetAll} disabled={busy} className="flex-1 rounded-lg border border-red-200 px-2 py-1.5 text-[13px] text-red-600 hover:bg-red-50 disabled:opacity-50">אפס הכל</button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto">
-              <ReorderableList
-                items={model.blocks.map((b) => ({ id: b.key, block: b }))}
-                onReorder={onReorder} emptyText="אין מקטעים"
-                renderRow={({ block }, { handle }) => (
-                  <div className={`flex items-center gap-2 rounded-lg border border-gray-200 px-2 py-1.5 ${block.hidden ? 'opacity-50' : ''}`}>
-                    {handle}
+              {/* Read-only: the resolved section order + visibility (controlled in
+                  Quote Structure → Sections). Hidden sections are dimmed. */}
+              <ul className="space-y-1.5">
+                {model.blocks.map((block) => (
+                  <li key={block.key}
+                    className={`flex items-center gap-2 rounded-lg border border-gray-200 px-2 py-1.5 ${block.hidden ? 'opacity-40' : ''}`}>
                     <span className="flex-1 truncate text-[13px] text-gray-800">{labelOf(block)}</span>
                     {block.overridden && <span className="h-2 w-2 rounded-full" style={{ background: TEAL }} title="מותאם" />}
-                    <button type="button" onClick={() => toggleHidden(block.key)} disabled={!block.removable}
-                      className="rounded px-1.5 py-0.5 text-[12px] text-gray-600 hover:bg-gray-100 disabled:opacity-30">{block.hidden ? 'הצג' : 'הסתר'}</button>
-                  </div>
-                )}
-              />
+                    {block.hidden && <span className="shrink-0 text-[11px] text-gray-400">מוסתר</span>}
+                  </li>
+                ))}
+              </ul>
             </div>
+            <p className="mt-3 shrink-0 text-[11px] leading-relaxed text-gray-400">
+              הסדר והתצוגה של המקטעים נשלטים ב<span className="font-medium text-gray-500">מבנה הצעת מחיר → סעיפים</span>. כאן מוצג הסדר הסופי בלבד.
+            </p>
           </div>
         </div>
       )}

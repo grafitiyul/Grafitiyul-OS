@@ -40,7 +40,7 @@ test('normalizeLayout: LEGACY layout (no version) is migrated to canonical order
 
 test('normalizeLayout: VERSIONED layout preserves a deliberate reorder + inserts new blocks canonically', () => {
   // A versioned layout keeps its drag-reorder verbatim (faq moved before pricing)…
-  const reordered = ['hero', 'program', 'tour_details', 'product_marketing', 'why_grafitiyul', 'classification', 'faq', 'pricing', 'payment_terms', 'cancellation', 'participant_policy', 'signature'];
+  const reordered = ['hero', 'program', 'tour_details', 'product_marketing', 'why_grafitiyul', 'classification', 'faq', 'pricing', 'cancellation', 'participant_policy', 'signature'];
   const l = normalizeLayout({ v: 2, sections: reordered.map((key) => ({ key })) });
   assert.ok(l.sections.findIndex((s) => s.key === 'faq') < l.sections.findIndex((s) => s.key === 'pricing'), 'reorder preserved');
   // …and a canonical block missing from the saved order (video) is inserted at its
@@ -125,15 +125,19 @@ test('composer: template.sections drive order when the quote has no compositionD
   assert.ok(keys.indexOf('pricing') < keys.indexOf('faq'));
 });
 
-test('composer: per-quote compositionDraft overrides the template (seed-only rule)', () => {
-  const template = normalizeLayout({ sections: [{ key: 'pricing' }, { key: 'faq' }] });
-  const model = compose(template, { document: doc({ compositionDraft: { blocks: [{ key: 'faq' }, { key: 'pricing' }] } }) });
-  const keys = model.blocks.map((b) => b.key);
-  assert.ok(keys.indexOf('faq') < keys.indexOf('pricing'), 'per-doc order wins');
+test('composer: the template is the SINGLE source — a per-quote compositionDraft is ignored', () => {
+  // Template says pricing→faq; the (legacy) per-quote draft says faq→pricing. The
+  // draft must NOT win: the quote follows Quote Structure (the template) only.
+  const template = normalizeLayout({ v: 2, sections: [{ key: 'pricing' }, { key: 'faq' }] });
+  const withDraft = compose(template, { document: doc({ compositionDraft: { blocks: [{ key: 'faq' }, { key: 'pricing' }] } }) }).blocks.map((b) => b.key);
+  const withoutDraft = compose(template).blocks.map((b) => b.key);
+  assert.deepEqual(withDraft, withoutDraft, 'draft has no effect');
+  assert.ok(withDraft.indexOf('pricing') < withDraft.indexOf('faq'), 'template order wins');
 });
 
-test('composer: hero is forced first and never hidden, even if a stored order moves/hides it', () => {
-  const model = compose(undefined, { document: doc({ compositionDraft: { blocks: [{ key: 'pricing' }, { key: 'hero', hidden: true }] } }) });
+test('composer: hero is forced first and never hidden, regardless of any stored order', () => {
+  const template = normalizeLayout({ v: 2, sections: [{ key: 'pricing' }, { key: 'hero', hidden: true }] });
+  const model = compose(template);
   assert.equal(model.blocks[0].key, 'hero');
   assert.equal(model.blocks[0].hidden, false);
 });
@@ -268,6 +272,19 @@ test('normalizeVideos: legacy single `video` object migrates into a one-item lib
 test('normalizeLayout: an old sections list gains program/video at their canonical positions', () => {
   const oldOrder = ['hero','tour_details','product_marketing','why_grafitiyul','classification','pricing','payment_terms','faq','cancellation','participant_policy','signature'];
   const keys = normalizeLayout({ sections: oldOrder.map((key) => ({ key })) }).sections.map((s) => s.key);
+  assert.ok(!keys.includes('payment_terms'), 'stale/removed block (payment_terms) is dropped');
   assert.equal(keys.indexOf('program') + 1, keys.indexOf('tour_details'), 'program before Technical Details');
   assert.equal(keys.indexOf('video'), keys.indexOf('product_marketing') + 1, 'video after Product Details');
+});
+
+// ── Sections as the single control: hidden + drag order flow to the quote ─────
+test('composer: a hidden section in the template is marked hidden (and pricing is hideable)', () => {
+  assert.equal(compose(normalizeLayout({ v: 2, sections: [{ key: 'faq', hidden: true }] })).blocks.find((b) => b.key === 'faq').hidden, true);
+  assert.equal(compose(normalizeLayout({ v: 2, sections: [{ key: 'pricing', hidden: true }] })).blocks.find((b) => b.key === 'pricing').hidden, true, 'pricing can be hidden');
+});
+
+test('composer: the template drag order is followed by the quote', () => {
+  const template = normalizeLayout({ v: 2, sections: [{ key: 'faq' }, { key: 'pricing' }] }); // faq dragged before pricing
+  const keys = compose(template).blocks.map((b) => b.key);
+  assert.ok(keys.indexOf('faq') < keys.indexOf('pricing'), 'quote follows the template order');
 });

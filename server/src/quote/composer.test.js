@@ -166,23 +166,16 @@ test('composer: section content is deterministically ordered (sortOrder, stable)
   assert.deepEqual(a, b, 'stable across runs');
 });
 
-// ── override layer: stored compositionDraft order + hidden are respected ──────
-test('composer: stored compositionDraft controls order and hides blocks (no warnings for hidden)', () => {
-  const document = doc({
-    language: 'en',
-    compositionDraft: { blocks: [{ key: 'pricing' }, { key: 'cancellation', hidden: true }, { key: 'hero' }] },
-  });
-  const model = compose({ document, lang: 'en' });
-  const keys = model.blocks.map((b) => b.key);
-  // Hero is the document header — always forced first regardless of stored order.
-  assert.equal(keys[0], 'hero');
-  // The saved keys keep their RELATIVE order (pricing before cancellation)…
-  assert.ok(keys.indexOf('pricing') < keys.indexOf('cancellation'), 'stored relative order preserved');
-  // …and canonical blocks missing from an older draft are reconciled back in.
-  assert.ok(keys.includes('program') && keys.includes('video'), 'missing canonical blocks reconciled in');
-  assert.equal(blockByKey(model, 'cancellation').hidden, true);
-  // cancellation En content is missing, but it is hidden → must NOT warn.
-  assert.ok(!model.warnings.some((w) => w.blockKey === 'cancellation'), 'hidden block raises no warning');
+// ── single source of truth: a per-quote compositionDraft NO LONGER controls order/
+// visibility. Quote Structure (the template) is the only source. ──────────────
+test('composer: a per-quote compositionDraft is ignored — order/visibility come from the template', () => {
+  const withDraft = doc({ language: 'en', compositionDraft: { blocks: [{ key: 'pricing' }, { key: 'cancellation', hidden: true }, { key: 'hero' }] } });
+  const withoutDraft = doc({ language: 'en' });
+  const a = compose({ document: withDraft, lang: 'en' }).blocks.map((b) => `${b.key}${b.hidden ? '*' : ''}`);
+  const b = compose({ document: withoutDraft, lang: 'en' }).blocks.map((b) => `${b.key}${b.hidden ? '*' : ''}`);
+  assert.deepEqual(a, b, 'the draft has no effect on order or visibility');
+  assert.equal(a[0], 'hero');
+  assert.ok(!a.includes('cancellation*'), 'the draft cannot hide a block');
 });
 
 // ── override layer: content overrides applied + source metadata (Slice 3) ────
@@ -351,15 +344,13 @@ test('composer: video editTarget routes to the Quote Structure video tab', () =>
   assert.equal(et.tab, 'video');
 });
 
-// ── reconciliation: newly-added blocks appear in old per-quote compositions ────
-test('composer: an old compositionDraft gains program (before Tech Details) + video (after Product Details)', () => {
-  // A draft saved before program/video existed — the canonical order minus them.
-  const oldOrder = ['hero','tour_details','product_marketing','why_grafitiyul','classification','pricing','payment_terms','faq','cancellation','participant_policy','signature'];
-  const document = doc({ compositionDraft: { blocks: oldOrder.map((key) => ({ key })) } });
-  const keys = compose({ document }).blocks.map((b) => b.key);
-  assert.ok(keys.includes('program') && keys.includes('video'), 'both reconciled in');
+// ── canonical default order (no template) puts program/video in place ─────────
+test('composer: default order has program before Tech Details + video after Product Details', () => {
+  const keys = compose().blocks.map((b) => b.key);
+  assert.ok(keys.includes('program') && keys.includes('video'));
   assert.equal(keys.indexOf('program') + 1, keys.indexOf('tour_details'), 'program directly before Technical Details');
   assert.equal(keys.indexOf('video'), keys.indexOf('product_marketing') + 1, 'video directly after Product Details');
+  assert.ok(!keys.includes('payment_terms'), 'payment_terms is no longer a standalone section');
 });
 
 // ── tour details: city falls back to the variant's location ──────────────────
@@ -390,4 +381,13 @@ test('composer: pricing payment fields are null when the deal has no term/method
   const p = blockByKey(compose({ deal }), 'pricing').data;
   assert.equal(p.paymentTerm, null);
   assert.equal(p.paymentMethod, null);
+});
+
+// ── Technical Details: duration (deal→variant fallback) ───────────────────────
+test('composer: duration resolves from the variant; deal override wins; absent when neither has it', () => {
+  assert.equal(blockByKey(compose(), 'tour_details').data.durationHours, 2.5, 'from the variant');
+  const noDur = baseDeal({ productVariant: { marketingDescHe: '', marketingDescEn: '', durationHours: null } });
+  assert.equal(blockByKey(compose({ deal: noDur }), 'tour_details').data.durationHours, null, 'legitimately absent');
+  const dealDur = baseDeal({ durationHours: 3 });
+  assert.equal(blockByKey(compose({ deal: dealDur }), 'tour_details').data.durationHours, 3, 'deal override wins');
 });

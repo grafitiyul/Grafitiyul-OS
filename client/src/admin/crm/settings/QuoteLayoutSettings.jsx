@@ -30,15 +30,15 @@ const SECTION_LABELS = {
   why_grafitiyul: 'למה גרפיטיול',
   classification: 'תוכן לפי סוג ארגון',
   pricing: 'תמחור',
-  payment_terms: 'תנאי תשלום',
   faq: 'שאלות נפוצות',
   cancellation: 'מדיניות ביטול',
   participant_policy: 'מדיניות משתתפים',
   signature: 'חתימה',
 };
-// Structurally required blocks — always shown, cannot be hidden (hiding pricing
-// would break the quote). Hero is handled separately (the document header).
-const REQUIRED_SECTIONS = new Set(['tour_details', 'pricing']);
+// Hero is the only fixed block (the document header, pinned first + never hidden).
+// Every other section — including Technical Details and Pricing — is fully
+// controlled here: it can be reordered and hidden/shown, and the quote follows.
+const REQUIRED_SECTIONS = new Set();
 
 const TECH_LABELS = {
   city: 'עיר', date: 'תאריך', time: 'שעה',
