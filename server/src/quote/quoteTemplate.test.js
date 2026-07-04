@@ -255,3 +255,11 @@ test('normalizeVideos: legacy single `video` object migrates into a one-item lib
   assert.deepEqual(videos[0].variantIds, ['v1']);
   assert.equal(videos[0].titleHe, 'ישן');
 });
+
+// ── reconciliation: template section list slots new blocks into canonical spots ─
+test('normalizeLayout: an old sections list gains program/video at their canonical positions', () => {
+  const oldOrder = ['hero','tour_details','product_marketing','why_grafitiyul','classification','pricing','payment_terms','faq','cancellation','participant_policy','signature'];
+  const keys = normalizeLayout({ sections: oldOrder.map((key) => ({ key })) }).sections.map((s) => s.key);
+  assert.equal(keys.indexOf('program') + 1, keys.indexOf('tour_details'), 'program before Technical Details');
+  assert.equal(keys.indexOf('video'), keys.indexOf('product_marketing') + 1, 'video after Product Details');
+});

@@ -15,7 +15,7 @@
 // in canonical order). That keeps a future new block/field from vanishing just
 // because an older saved layout predates it.
 
-import { DEFAULT_QUOTE_BLOCKS } from './quoteBlocks.js';
+import { DEFAULT_QUOTE_BLOCKS, reconcileKeyOrder } from './quoteBlocks.js';
 
 const SINGLETON = 'global';
 
@@ -154,23 +154,29 @@ function normalizeHero(raw) {
   };
 }
 
-// Merge a saved ordered list against a canonical key set: keep the saved order
-// for known keys, drop unknowns, append any canonical key the save is missing
-// (in canonical order) so new blocks/fields never silently disappear.
-function mergeOrdered(saved, canonicalKeys, flagName, defaultFlag) {
+// Merge a saved ordered list against a canonical key set: keep the saved order for
+// known keys, drop unknowns, and add any canonical key the save is missing.
+//
+// `canonicalInsert` decides WHERE a missing key lands:
+//   • true  (sections): at its canonical POSITION, so a newly-added block shows up
+//     where it belongs — e.g. program before Technical Details, video after Product
+//     Details — instead of at the very end.
+//   • false (technical fields): appended after the saved order, preserving a custom
+//     field arrangement exactly (a permuted order is never re-interleaved).
+function mergeOrdered(saved, canonicalKeys, flagName, defaultFlag, canonicalInsert = false) {
   const list = Array.isArray(saved) ? saved : [];
-  const seen = new Set();
-  const out = [];
+  const flags = new Map();
+  const savedKeys = [];
   for (const item of list) {
     const key = item && typeof item === 'object' ? item.key : null;
-    if (!canonicalKeys.includes(key) || seen.has(key)) continue;
-    seen.add(key);
-    out.push({ key, [flagName]: !!item[flagName] });
+    if (!canonicalKeys.includes(key) || flags.has(key)) continue;
+    flags.set(key, !!item[flagName]);
+    savedKeys.push(key);
   }
-  for (const key of canonicalKeys) {
-    if (!seen.has(key)) out.push({ key, [flagName]: defaultFlag });
-  }
-  return out;
+  const order = canonicalInsert
+    ? reconcileKeyOrder(savedKeys, canonicalKeys)
+    : [...savedKeys, ...canonicalKeys.filter((k) => !flags.has(k))];
+  return order.map((key) => ({ key, [flagName]: flags.has(key) ? flags.get(key) : defaultFlag }));
 }
 
 // Configurable section titles. Each entry always resolves to a non-empty localized
@@ -240,7 +246,7 @@ export function normalizeLayout(raw) {
     // Hero is the document header: always first and never hidden, so the stored
     // template stays consistent with the UI (which shows it pinned, not in the
     // reorderable list). The composer enforces the same invariant at render.
-    sections: pinHeroFirst(mergeOrdered(l.sections, SECTION_KEYS, 'hidden', false)),
+    sections: pinHeroFirst(mergeOrdered(l.sections, SECTION_KEYS, 'hidden', false, true)),
     technical: {
       fields: mergeOrdered(l.technical?.fields, TECH_FIELD_KEYS, 'visible', true),
     },

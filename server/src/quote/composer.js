@@ -18,7 +18,7 @@
 // The default block sequence lives in its own tiny module (quoteBlocks.js) so the
 // quote-template service can share it without a circular import. Re-exported here
 // so existing importers (tests, callers) keep `import { DEFAULT_QUOTE_BLOCKS } from './composer.js'`.
-import { DEFAULT_QUOTE_BLOCKS } from './quoteBlocks.js';
+import { DEFAULT_QUOTE_BLOCKS, reconcileKeyOrder } from './quoteBlocks.js';
 import { getQuoteTemplate, SECTION_TITLE_DEFAULTS } from './quoteTemplate.js';
 import { resolveVariantSharedContent } from '../shared-content/sharedContent.js';
 export { DEFAULT_QUOTE_BLOCKS };
@@ -388,10 +388,23 @@ function getOrderedBlocks(compositionDraft, templateSections) {
   const template = Array.isArray(templateSections) && templateSections.length ? templateSections : null;
   const source = stored || template;
   if (!source) return DEFAULT_QUOTE_BLOCKS.map((b) => ({ ...b, hidden: false }));
+  // Preserve the stored hidden flags + order, but RECONCILE against the canonical
+  // block set: any canonical block missing from an older saved composition (e.g.
+  // program, video) is inserted at its canonical position and shown by default,
+  // and stale keys are dropped. Without this, a per-quote draft (or template)
+  // saved before a block existed would never show that block.
+  const canonicalKeys = DEFAULT_QUOTE_BLOCKS.map((b) => b.key);
+  const flags = new Map();
+  const savedKeys = [];
+  for (const s of source) {
+    if (!s || flags.has(s.key)) continue;
+    savedKeys.push(s.key);
+    flags.set(s.key, !!s.hidden);
+  }
   const byKey = Object.fromEntries(DEFAULT_QUOTE_BLOCKS.map((b) => [b.key, b]));
-  const blocks = source.map((s) => ({
-    ...(byKey[s.key] || { key: s.key, type: s.type || s.key, kind: s.kind || 'content', optional: true, removable: true }),
-    hidden: !!s.hidden,
+  const blocks = reconcileKeyOrder(savedKeys, canonicalKeys).map((key) => ({
+    ...byKey[key],
+    hidden: flags.has(key) ? flags.get(key) : false,
   }));
   // Hero is the document HEADER, not a content block: it is always present, never
   // hidden, and always first — regardless of any stored order. Enforced here (the

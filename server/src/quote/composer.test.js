@@ -173,8 +173,13 @@ test('composer: stored compositionDraft controls order and hides blocks (no warn
     compositionDraft: { blocks: [{ key: 'pricing' }, { key: 'cancellation', hidden: true }, { key: 'hero' }] },
   });
   const model = compose({ document, lang: 'en' });
+  const keys = model.blocks.map((b) => b.key);
   // Hero is the document header — always forced first regardless of stored order.
-  assert.deepEqual(model.blocks.map((b) => b.key), ['hero', 'pricing', 'cancellation']);
+  assert.equal(keys[0], 'hero');
+  // The saved keys keep their RELATIVE order (pricing before cancellation)…
+  assert.ok(keys.indexOf('pricing') < keys.indexOf('cancellation'), 'stored relative order preserved');
+  // …and canonical blocks missing from an older draft are reconciled back in.
+  assert.ok(keys.includes('program') && keys.includes('video'), 'missing canonical blocks reconciled in');
   assert.equal(blockByKey(model, 'cancellation').hidden, true);
   // cancellation En content is missing, but it is hidden → must NOT warn.
   assert.ok(!model.warnings.some((w) => w.blockKey === 'cancellation'), 'hidden block raises no warning');
@@ -344,4 +349,15 @@ test('composer: video editTarget routes to the Quote Structure video tab', () =>
   const et = blockByKey(compose(), 'video').editTarget;
   assert.equal(et.kind, 'quoteStructure');
   assert.equal(et.tab, 'video');
+});
+
+// ── reconciliation: newly-added blocks appear in old per-quote compositions ────
+test('composer: an old compositionDraft gains program (before Tech Details) + video (after Product Details)', () => {
+  // A draft saved before program/video existed — the canonical order minus them.
+  const oldOrder = ['hero','tour_details','product_marketing','why_grafitiyul','classification','pricing','payment_terms','faq','cancellation','participant_policy','signature'];
+  const document = doc({ compositionDraft: { blocks: oldOrder.map((key) => ({ key })) } });
+  const keys = compose({ document }).blocks.map((b) => b.key);
+  assert.ok(keys.includes('program') && keys.includes('video'), 'both reconciled in');
+  assert.equal(keys.indexOf('program') + 1, keys.indexOf('tour_details'), 'program directly before Technical Details');
+  assert.equal(keys.indexOf('video'), keys.indexOf('product_marketing') + 1, 'video directly after Product Details');
 });

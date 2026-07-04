@@ -24,3 +24,32 @@ export const DEFAULT_QUOTE_BLOCKS = [
   { key: 'participant_policy', type: 'participant_policy', kind: 'content', optional: true, removable: true },
   { key: 'signature', type: 'signature', kind: 'dynamic', optional: true, removable: true },
 ];
+
+// Reconcile a saved ordered key list against the canonical order. Keeps the saved
+// order for known keys, drops unknown/stale keys, and INSERTS any missing canonical
+// key at its canonical position — right after its nearest canonical predecessor
+// that is present (or at the front if none is). This is the ONE place a newly-added
+// block (e.g. program, video) is slotted into an existing composition, so it lands
+// in the right spot for BOTH the global template (section list) and an existing
+// per-quote draft — instead of being dropped or appended at the very end.
+export function reconcileKeyOrder(savedKeys, canonicalKeys) {
+  const canonical = canonicalKeys;
+  const canonicalSet = new Set(canonical);
+  const result = [];
+  const seen = new Set();
+  for (const k of savedKeys) {
+    if (canonicalSet.has(k) && !seen.has(k)) { seen.add(k); result.push(k); }
+  }
+  for (let i = 0; i < canonical.length; i++) {
+    const key = canonical[i];
+    if (seen.has(key)) continue;
+    let insertAt = 0;
+    for (let j = i - 1; j >= 0; j--) {
+      const idx = result.indexOf(canonical[j]);
+      if (idx !== -1) { insertAt = idx + 1; break; }
+    }
+    result.splice(insertAt, 0, key);
+    seen.add(key);
+  }
+  return result;
+}
