@@ -630,7 +630,16 @@ export default function DealDetail() {
               // subtype must belong to the currently selected type (no stale
               // "<new type> <old subtype>" badge).
               onDealOrgType={(v) => updateDeal({ organizationTypeId: v || null, organizationSubtypeId: null })}
-              onSubtype={(v) => updateDeal({ organizationSubtypeId: v || null })}
+              // Selecting a subtype also stamps its parent Organization Type, so the
+              // deal's type/subtype can never diverge. For an org-linked deal the
+              // server is the SSOT and force-nulls Deal.organizationTypeId, so this
+              // parent write is safely ignored there — no duplicate source of truth.
+              onSubtype={(v, parentTypeId) =>
+                updateDeal({
+                  organizationSubtypeId: v || null,
+                  ...(parentTypeId ? { organizationTypeId: parentTypeId } : {}),
+                })
+              }
               onOpenOrgDialog={() => setOrgDialogOpen(true)}
             />
           </div>
@@ -966,14 +975,18 @@ function ActivityBadge({ deal, types, subtypes, onActivityType, onDealOrgType, o
 // Editing controls for the activity badge — one continuous, progressive flow
 // inside the popover (no reopening, no exposed dropdowns):
 //
-//   activity ─click "עסקי"→ orgType ─click a type→ subtype ─click→ done (close)
+//   activity ─click "עסקי"→ orgType ⇄ subtype   (back always returns to orgType)
 //
-// Group/Private finish in one click. For business, choosing a type that has no
-// subtypes finishes immediately. Changing the type clears any previous subtype
-// (so an invalid "<new type> <old subtype>" can never occur). The popover
-// remounts on open, so we always start at the first step.
+// Group/Private finish in one click. For business it always lands on the type step:
+//   • deal-level (no org) → the deal owns the type, so the full type list is
+//     selectable; picking a type clears the old subtype, then goes to its subtypes.
+//   • org-linked → the ORGANIZATION owns the type (SSOT): the step shows it
+//     read-only with an edit-org link, plus a shortcut into the deal-owned subtype.
+// Because back from 'subtype' returns to 'orgType' (never to 'activity'), a subtype
+// never traps the user — the parent type is always reachable. The popover remounts
+// on open, so we always start at the first step.
 function ActivityEditor({ deal, types, subtypes, effTypeId, effTypeLabel, hasOrg, onActivityType, onDealOrgType, onSubtype, onOpenOrgDialog, close }) {
-  const [step, setStep] = useState('activity'); // 'activity' | 'orgType' | 'subtype' | 'orgLocked'
+  const [step, setStep] = useState('activity'); // 'activity' | 'orgType' | 'subtype'
   const [typeId, setTypeId] = useState(effTypeId); // type the subtype list is scoped to
 
   // Subtypes valid for a given type: scoped to that type, plus generic (type-less).
@@ -983,14 +996,10 @@ function ActivityEditor({ deal, types, subtypes, effTypeId, effTypeLabel, hasOrg
   function pickActivity(v) {
     if (v === 'business') {
       if (deal.activityType !== 'business') onActivityType('business');
-      // Advance immediately to the next step — never reopen.
-      if (hasOrg) {
-        const tId = deal.organization.organizationTypeId || '';
-        if (tId && subtypesFor(tId).length) { setTypeId(tId); setStep('subtype'); }
-        else setStep('orgLocked');
-      } else {
-        setStep('orgType');
-      }
+      // Advance to the type step immediately. The 'orgType' step handles BOTH the
+      // deal-owned (editable) and the org-owned (locked) cases, so the parent type
+      // is always reachable — a subtype can never trap the user in subtype-only.
+      setStep('orgType');
       return;
     }
     // Group / Private — toggle and finish in one click.
@@ -1004,12 +1013,40 @@ function ActivityEditor({ deal, types, subtypes, effTypeId, effTypeLabel, hasOrg
     else close(); // no subtypes for this type → done
   }
 
-  function pickSubtype(id) {
-    onSubtype(id);
+  function pickSubtype(id, subtype) {
+    // Stamp the subtype's parent type too, so type + subtype never diverge.
+    onSubtype(id, subtype?.organizationTypeId || null);
     close();
   }
 
   if (step === 'orgType') {
+    // Org-linked → the ORGANIZATION owns the type (single source of truth): show it
+    // read-only with an edit-org link, plus a way through to the (deal-owned)
+    // subtype when the org type has any. Deal-level → the deal owns the type, so the
+    // full list is selectable and the trap can't occur.
+    if (hasOrg) {
+      const orgTypeId = deal.organization.organizationTypeId || '';
+      const canSubtype = orgTypeId && subtypesFor(orgTypeId).length > 0;
+      return (
+        <StepShell title="סוג ארגון" onBack={() => setStep('activity')}>
+          <div className="px-2.5 py-1.5">
+            <div className="text-[11px] text-gray-400">סוג הארגון</div>
+            <div className="mt-0.5 text-sm font-medium text-gray-800">{effTypeLabel || '—'}</div>
+            <p className="text-[10px] text-gray-400 mt-0.5">נקבע על הארגון (מקור אמת יחיד).</p>
+            <button
+              type="button"
+              onClick={() => { close(); onOpenOrgDialog(); }}
+              className="mt-1 text-[12px] text-blue-700 hover:underline"
+            >
+              ערוך ארגון ←
+            </button>
+          </div>
+          {canSubtype && (
+            <RowBtn onClick={() => { setTypeId(orgTypeId); setStep('subtype'); }}>בחר תת-סוג ←</RowBtn>
+          )}
+        </StepShell>
+      );
+    }
     return (
       <StepShell title="סוג ארגון" onBack={() => setStep('activity')}>
         {types.length === 0 && <div className="px-2.5 py-2 text-[12px] text-gray-400">אין סוגי ארגון</div>}
@@ -1022,30 +1059,15 @@ function ActivityEditor({ deal, types, subtypes, effTypeId, effTypeLabel, hasOrg
 
   if (step === 'subtype') {
     const list = subtypesFor(typeId);
+    // Back ALWAYS returns to the type step (never straight to 'activity'), so from a
+    // subtype the user can always reach — and change — the parent type.
     return (
-      <StepShell title="תת-סוג" onBack={() => setStep(hasOrg ? 'activity' : 'orgType')}>
+      <StepShell title="תת-סוג" onBack={() => setStep('orgType')}>
         <RowBtn onClick={() => pickSubtype('')} muted selected={!deal.organizationSubtypeId}>— ללא תת-סוג —</RowBtn>
         {list.map((s) => (
-          <RowBtn key={s.id} onClick={() => pickSubtype(s.id)} selected={s.id === deal.organizationSubtypeId}>{s.label}</RowBtn>
+          <RowBtn key={s.id} onClick={() => pickSubtype(s.id, s)} selected={s.id === deal.organizationSubtypeId}>{s.label}</RowBtn>
         ))}
       </StepShell>
-    );
-  }
-
-  if (step === 'orgLocked') {
-    return (
-      <div className="p-3 min-w-[200px]" dir="rtl">
-        <div className="text-[11px] text-gray-400">סוג ארגון</div>
-        <div className="mt-0.5 text-sm font-medium text-gray-800">{effTypeLabel || '—'}</div>
-        <p className="text-[10px] text-gray-400 mt-0.5">נקבע על הארגון (מקור אמת יחיד).</p>
-        <button
-          type="button"
-          onClick={() => { close(); onOpenOrgDialog(); }}
-          className="mt-2 text-[12px] text-blue-700 hover:underline"
-        >
-          ערוך ארגון ←
-        </button>
-      </div>
     );
   }
 
