@@ -93,3 +93,73 @@ test('empty / falsy input is passed through safely', () => {
   assert.equal(sanitizePastedHtml(''), '');
   assert.equal(sanitizePastedHtml(null), null);
 });
+
+// ---- div-based paragraphs → real paragraphs (preserve spacing) ----
+
+test('sibling <div> blocks become separate <p> paragraphs', () => {
+  const out = sanitizePastedHtml('<div>first</div><div>second</div>');
+  assert.match(out, /<p>first<\/p>/);
+  assert.match(out, /<p>second<\/p>/);
+  assert.doesNotMatch(out, /<div/);
+});
+
+test('nested/structural <div> is unwrapped, inner leaf becomes <p>', () => {
+  const out = sanitizePastedHtml('<div><div>inner</div></div>');
+  assert.match(out, /<p>inner<\/p>/);
+  assert.doesNotMatch(out, /<div/);
+});
+
+test('div carrying a list keeps the list (wrapper unwrapped, not flattened)', () => {
+  const out = sanitizePastedHtml('<div><ul><li>x</li></ul></div>');
+  assert.match(out, /<ul><li>x<\/li><\/ul>/);
+});
+
+test('leaf div preserves dir and text-align', () => {
+  const out = sanitizePastedHtml('<div dir="ltr" style="text-align:center">hi</div>');
+  assert.match(out, /<p[^>]*dir="ltr"/);
+  assert.match(out, /text-align: center/);
+});
+
+test('our media-embed div wrapper is left intact (not turned into <p>)', () => {
+  const out = sanitizePastedHtml(
+    '<div data-type="media-embed" data-provider="youtube" data-video-id="abc"></div>',
+  );
+  assert.match(out, /<div[^>]*data-type="media-embed"/);
+  assert.match(out, /data-video-id="abc"/);
+});
+
+// ---- Word list paragraphs → real <ul>/<ol> ----
+
+test('Word bulleted list paragraphs become a <ul>', () => {
+  const html =
+    '<p class="MsoListParagraphCxSpFirst" style="mso-list:l0 level1 lfo1">' +
+    '<span style="mso-list:Ignore">·<span>&nbsp;&nbsp;</span></span>Apple</p>' +
+    '<p class="MsoListParagraphCxSpLast" style="mso-list:l0 level1 lfo1">' +
+    '<span style="mso-list:Ignore">·<span>&nbsp;&nbsp;</span></span>Banana</p>';
+  const out = sanitizePastedHtml(html);
+  assert.match(out, /<ul>/);
+  assert.match(out, /<li[^>]*>Apple<\/li>/);
+  assert.match(out, /<li[^>]*>Banana<\/li>/);
+  assert.doesNotMatch(out, /mso-list/i);
+  assert.doesNotMatch(out, /·/);
+});
+
+test('Word numbered list paragraphs become an <ol>', () => {
+  const html =
+    '<p class="MsoListParagraph" style="mso-list:l0 level1 lfo1">' +
+    '<span style="mso-list:Ignore">1.<span>&nbsp;</span></span>One</p>' +
+    '<p class="MsoListParagraph" style="mso-list:l0 level1 lfo1">' +
+    '<span style="mso-list:Ignore">2.<span>&nbsp;</span></span>Two</p>';
+  const out = sanitizePastedHtml(html);
+  assert.match(out, /<ol>/);
+  assert.match(out, /<li[^>]*>One<\/li>/);
+  assert.match(out, /<li[^>]*>Two<\/li>/);
+});
+
+test('a lone mso-list style on ordinary text is NOT turned into a list', () => {
+  // Regression guard: detection needs the MsoListParagraph class or an Ignore
+  // marker span — a bare mso-list attribute stays a normal paragraph.
+  const out = sanitizePastedHtml('<p class="MsoNormal" style="mso-list:l0 level1">real text</p>');
+  assert.match(out, /<p[^>]*>real text<\/p>/);
+  assert.doesNotMatch(out, /<li/);
+});

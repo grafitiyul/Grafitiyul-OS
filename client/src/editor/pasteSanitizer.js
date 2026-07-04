@@ -175,7 +175,15 @@ export function sanitizePastedHtml(html) {
   if (!html) return html;
   try {
     const doc = new DOMParser().parseFromString(html, 'text/html');
+    // Word/Docs leave conditional-comment nodes (<!--[if !supportLists]-->,
+    // <o:p> markers). Drop comment nodes up front so they can't wedge between
+    // list markers and their text.
+    stripComments(doc.body);
     unwrapSpuriousBold(doc.body);
+    // Word does not emit <ul>/<ol>. It emits <p class="MsoListParagraph"> with
+    // the bullet/number in a leading marker span. Rebuild real lists BEFORE the
+    // rest of the pipeline runs, while the mso markers are still present.
+    reconstructWordLists(doc, doc.body);
     // IMPORTANT: semantic-style → tag conversion must run BEFORE the
     // generic attribute/style stripper. Google Docs, Word and many web
     // sources express bold/italic/underline as inline styles on
@@ -195,10 +203,174 @@ export function sanitizePastedHtml(html) {
     // headings stay headings ("reasonable headings") instead of being dropped
     // to plain paragraphs by the schema parser.
     downgradeHeadings(doc, doc.body);
+    // Web pages (and some Word/Docs fragments) express paragraphs and line
+    // blocks as <div>, which StarterKit has no node for — runs of <div>s would
+    // otherwise collapse and lose paragraph separation. Normalise leaf <div>s to
+    // <p> and unwrap structural (block-containing) <div>s. Runs last, after list
+    // and heading normalisation, so only genuine paragraph divs remain.
+    convertDivsToParagraphs(doc, doc.body);
     cleanSubtree(doc.body);
     return doc.body.innerHTML;
   } catch {
     return html;
+  }
+}
+
+// Remove all comment nodes (Word conditional comments, Docs markers) from the
+// subtree. Comments are ignored by ProseMirror anyway, but stripping them keeps
+// the tree clean and prevents them from splitting adjacent text runs.
+function stripComments(root) {
+  const doc = root.ownerDocument;
+  // SHOW_COMMENT = 128
+  const walker = doc.createTreeWalker(root, 128);
+  const comments = [];
+  while (walker.nextNode()) comments.push(walker.currentNode);
+  for (const c of comments) c.remove();
+}
+
+// Block-level tags used to decide whether a <div> is a structural wrapper
+// (contains other blocks → unwrap) or a leaf paragraph (inline content → <p>).
+const BLOCK_TAGS = new Set([
+  'DIV', 'P', 'UL', 'OL', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+  'BLOCKQUOTE', 'PRE', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH',
+  'FIGURE', 'SECTION', 'ARTICLE', 'HEADER', 'FOOTER', 'ASIDE', 'NAV', 'MAIN', 'HR',
+]);
+
+function convertDivsToParagraphs(doc, root) {
+  // Reverse document order = deepest-first: inner divs resolve before the
+  // outer divs that contain them, so unwrapping never orphans a converted child.
+  const divs = Array.from(root.querySelectorAll('div')).reverse();
+  for (const div of divs) {
+    // Our own structural wrappers (media embeds) carry data-type and rebuild
+    // themselves on parse — never touch them or their inner divs.
+    if (div.closest('[data-type]')) continue;
+
+    const hasBlockChild = Array.from(div.children).some((c) =>
+      BLOCK_TAGS.has(c.tagName),
+    );
+    const parent = div.parentNode;
+    if (!parent) continue;
+
+    if (hasBlockChild) {
+      // Structural wrapper → unwrap: splice its children up into the parent.
+      while (div.firstChild) parent.insertBefore(div.firstChild, div);
+      parent.removeChild(div);
+    } else {
+      // Leaf block of inline content → a real paragraph, carrying dir and any
+      // text-align so alignment/direction survive.
+      const p = doc.createElement('p');
+      const dir = (div.getAttribute('dir') || '').toLowerCase();
+      if (dir === 'ltr' || dir === 'rtl') p.setAttribute('dir', dir);
+      const ta = parseInlineStyles(div.getAttribute('style') || '')['text-align'];
+      if (ta && /^(left|right|center|justify)$/i.test(ta)) {
+        p.setAttribute('style', `text-align: ${ta.toLowerCase()}`);
+      }
+      while (div.firstChild) p.appendChild(div.firstChild);
+      parent.replaceChild(p, div);
+    }
+  }
+}
+
+// Rebuild Word "list paragraphs" into real <ul>/<ol>. Word exports each list
+// item as <p class="MsoListParagraph…"> containing a leading marker span
+// (<span style="mso-list:Ignore">1.</span> or a bullet glyph). We: detect such
+// paragraphs, read the marker to decide ordered vs unordered, drop the marker,
+// turn the <p> into an <li>, then wrap consecutive items into one list.
+//
+// Detection deliberately requires the MsoListParagraph class OR an explicit
+// Ignore-marker span — NOT the paragraph's own mso-list style alone — so a
+// stray mso-list attribute on ordinary text doesn't get mistaken for a list.
+//
+// Scope: flat (single-level) lists. Nested Word sub-levels are flattened into
+// the same list rather than nested — a readable, safe simplification.
+function reconstructWordLists(doc, root) {
+  for (const p of Array.from(root.querySelectorAll('p'))) {
+    const cls = p.getAttribute('class') || '';
+    const isListClass = /\bMsoListParagraph/i.test(cls);
+    const marker = findWordListMarker(p);
+    if (!isListClass && !marker) continue;
+
+    let ordered = false;
+    if (marker) {
+      const t = (marker.textContent || '').trim();
+      ordered =
+        /^\(?\d+[.)]/.test(t) ||
+        /^\(?[a-z][.)]/i.test(t) ||
+        /^\(?[ivxlcdm]+[.)]/i.test(t);
+      marker.remove();
+    }
+
+    const li = doc.createElement('li');
+    li.setAttribute('data-wl', ordered ? 'ol' : 'ul');
+    const dir = (p.getAttribute('dir') || '').toLowerCase();
+    if (dir === 'ltr' || dir === 'rtl') li.setAttribute('dir', dir);
+    while (p.firstChild) li.appendChild(p.firstChild);
+    trimLeadingWhitespace(li);
+    p.parentNode?.replaceChild(li, p);
+  }
+  groupWordListItems(doc, root);
+}
+
+// The Word bullet/number marker: a descendant span whose inline style contains
+// `mso-list: Ignore`. Returns the span element, or null if none.
+function findWordListMarker(p) {
+  for (const span of p.querySelectorAll('span')) {
+    const st = (span.getAttribute('style') || '').toLowerCase();
+    if (st.includes('mso-list') && st.includes('ignore')) return span;
+  }
+  return null;
+}
+
+// Drop leading whitespace/nbsp-only text nodes and left-trim the first real
+// text node — removes the gap the marker span left behind.
+function trimLeadingWhitespace(el) {
+  while (el.firstChild && el.firstChild.nodeType === 3) {
+    const text = el.firstChild.textContent.replace(/ /g, ' ');
+    if (!text.trim()) {
+      el.removeChild(el.firstChild);
+      continue;
+    }
+    el.firstChild.textContent = text.replace(/^\s+/, '');
+    break;
+  }
+}
+
+// Wrap runs of adjacent <li data-wl> siblings (produced above) into a single
+// <ul>/<ol>. A run breaks on any non-li element; whitespace text between items
+// is dropped so it can't split a run. The list type comes from each item's
+// data-wl flag — a switch from ul to ol starts a new list.
+function groupWordListItems(doc, root) {
+  const parents = new Set();
+  for (const li of root.querySelectorAll('li[data-wl]')) {
+    const parent = li.parentNode;
+    if (parent && parent.tagName !== 'UL' && parent.tagName !== 'OL') {
+      parents.add(parent);
+    }
+  }
+  for (const parent of parents) {
+    let run = null;
+    let runType = null;
+    for (const node of Array.from(parent.childNodes)) {
+      const isWlLi =
+        node.nodeType === 1 &&
+        node.tagName === 'LI' &&
+        node.hasAttribute('data-wl');
+      if (isWlLi) {
+        const type = node.getAttribute('data-wl') === 'ol' ? 'ol' : 'ul';
+        node.removeAttribute('data-wl');
+        if (!run || runType !== type) {
+          run = doc.createElement(type);
+          runType = type;
+          parent.insertBefore(run, node);
+        }
+        run.appendChild(node);
+      } else if (node.nodeType === 3 && !node.textContent.trim()) {
+        node.remove();
+      } else {
+        run = null;
+        runType = null;
+      }
+    }
   }
 }
 
