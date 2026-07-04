@@ -562,24 +562,18 @@ export async function composeQuoteDraftPreview(client, id) {
   return { model };
 }
 
-// Public customer-facing compose: look up the QuoteDocument by its capability
-// token, compose the live model, and return ONLY what the customer page needs —
-// sanitised blocks (no admin metadata: no editTarget / source / warnings), the
-// business contact (WhatsApp/Email for "צור קשר"), a small header (customer / org /
-// product), and the doc's lifecycle status. Signature data is added in Phase 2.
-export async function composeQuoteByPublicToken(client, token) {
-  if (!token || typeof token !== 'string') return { error: 'not_found' };
-  const document = await client.quoteDocument.findUnique({ where: { publicToken: token } });
-  if (!document) return { error: 'not_found' };
+// A signed/finalised document is LOCKED: it renders the frozen snapshot, not a
+// live recompose, and cannot be signed again.
+const LOCKED_STATUSES = ['accepted', 'produced', 'rejected', 'expired'];
+export function isLockedStatus(status) {
+  return LOCKED_STATUSES.includes(status);
+}
 
-  const composed = await composeQuoteDraftPreview(client, document.id);
-  if (composed.error) return composed;
-
-  const template = await getQuoteTemplate(client);
-  const hero = composed.model.blocks.find((b) => b.type === 'hero')?.data || {};
-
-  // Strip per-block admin fields; keep only what the renderer consumes.
-  const blocks = composed.model.blocks.map((b) => ({
+// Strip per-block admin fields (editTarget / source / warnings / overridden); keep
+// only what the renderer consumes. This is also the exact shape frozen into
+// renderModelSnapshot at sign time, so "what was signed" is what re-renders.
+export function toPublicModel(model) {
+  const blocks = (model?.blocks || []).map((b) => ({
     key: b.key,
     type: b.type,
     kind: b.kind,
@@ -587,22 +581,70 @@ export async function composeQuoteByPublicToken(client, token) {
     hidden: b.hidden,
     data: b.data,
   }));
+  return { language: model?.language || 'he', blocks };
+}
+
+// Customer-safe view of the audit record (never leaks createdBy internals).
+export function toPublicSignature(sig) {
+  if (!sig) return null;
+  return {
+    method: sig.method, // typed | uploaded | drawn
+    signerName: sig.signerName,
+    signatureImage: sig.signatureImage || null,
+    signedAt: sig.signedAt,
+    ipAddress: sig.ipAddress || null,
+    userAgent: sig.userAgent || null,
+    language: sig.language,
+    timezone: sig.timezone || null,
+  };
+}
+
+function headerFromModel(model) {
+  const hero = (model?.blocks || []).find((b) => b.type === 'hero')?.data || {};
+  return {
+    customerName: hero.customerName || null,
+    organizationName: hero.organizationName || null,
+    productName: hero.productName || null,
+  };
+}
+
+// Public customer-facing compose: look up the QuoteDocument by its capability
+// token and return ONLY what the customer page needs — a sanitised render model,
+// the business contact, a small header, the lock state, and (once signed) the
+// signature audit record. A locked document renders its FROZEN snapshot so what
+// the customer signed can never silently change under them.
+export async function composeQuoteByPublicToken(client, token) {
+  if (!token || typeof token !== 'string') return { error: 'not_found' };
+  const document = await client.quoteDocument.findUnique({
+    where: { publicToken: token },
+    include: { signature: true },
+  });
+  if (!document) return { error: 'not_found' };
+
+  const locked = isLockedStatus(document.status) || !!document.signature;
+  const template = await getQuoteTemplate(client);
+
+  let model;
+  if (locked && document.renderModelSnapshot) {
+    model = document.renderModelSnapshot; // already a sanitised public model
+  } else {
+    const composed = await composeQuoteDraftPreview(client, document.id);
+    if (composed.error) return composed;
+    model = toPublicModel(composed.model);
+  }
 
   return {
     result: {
-      model: { language: composed.model.language, blocks },
+      model,
       doc: {
         status: document.status, // draft | produced | accepted | rejected | expired
         language: document.language,
         publicToken: document.publicToken,
+        locked,
       },
       contact: template.contact || { whatsapp: '', email: '' },
-      header: {
-        customerName: hero.customerName || null,
-        organizationName: hero.organizationName || null,
-        productName: hero.productName || null,
-      },
-      signature: null, // Phase 2: populated from the QuoteSignature audit record
+      header: headerFromModel(model),
+      signature: toPublicSignature(document.signature),
     },
   };
 }

@@ -4,7 +4,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assembleComposition, composeQuoteDraftPreview, DEFAULT_QUOTE_BLOCKS, pickLang } from './composer.js';
+import { assembleComposition, composeQuoteDraftPreview, DEFAULT_QUOTE_BLOCKS, pickLang, toPublicModel, toPublicSignature, isLockedStatus } from './composer.js';
 import { ensureDraftQuoteDocument } from './quoteDocument.js';
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
@@ -439,4 +439,39 @@ test('composer: FAQ / Cancellation / Participant-policy render categorised conte
   assert.ok(blockByKey(m, 'participant_policy').data.items.length >= 1, 'participant_policy items present');
   const uncategorised = compose({ quoteSections: [{ id: 'x', category: null, active: true, titleHe: 'x', richTextHe: '<p>x</p>' }] });
   assert.equal(blockByKey(uncategorised, 'faq').data.items.length, 0, 'unassigned content appears in no section');
+});
+
+// ── Public quote helpers (Phase 1/2 signature) ───────────────────────────────
+test('toPublicModel: strips admin metadata, keeps render fields', () => {
+  const pub = toPublicModel({
+    language: 'he',
+    warnings: [{ block: 'x' }],
+    displayProductNameOverridden: true,
+    blocks: [
+      { key: 'hero', type: 'hero', kind: 'dynamic', sortOrder: 0, hidden: false, data: { a: 1 }, editTarget: { kind: 'deal' }, source: 'Deal', overridden: true, warnings: ['w'] },
+    ],
+  });
+  assert.deepEqual(Object.keys(pub).sort(), ['blocks', 'language']);
+  assert.equal(pub.language, 'he');
+  assert.deepEqual(Object.keys(pub.blocks[0]).sort(), ['data', 'hidden', 'key', 'kind', 'sortOrder', 'type']);
+  assert.deepEqual(pub.blocks[0].data, { a: 1 }); // block data preserved verbatim
+});
+
+test('toPublicSignature: customer-safe shape; null passthrough; never leaks createdBy', () => {
+  assert.equal(toPublicSignature(null), null);
+  const pub = toPublicSignature({
+    id: 's1', quoteDocumentId: 'd1', quoteVersionId: 'v1', createdBy: 'admin-9',
+    method: 'typed', signerName: 'דנה', signatureImage: null, signedAt: new Date(0),
+    ipAddress: '1.2.3.4', userAgent: 'UA', language: 'he', timezone: 'Asia/Jerusalem',
+  });
+  assert.ok(!('createdBy' in pub) && !('id' in pub) && !('quoteDocumentId' in pub));
+  assert.equal(pub.method, 'typed');
+  assert.equal(pub.signerName, 'דנה');
+  assert.equal(pub.timezone, 'Asia/Jerusalem');
+});
+
+test('isLockedStatus: finalised statuses lock; draft does not', () => {
+  for (const s of ['accepted', 'produced', 'rejected', 'expired']) assert.equal(isLockedStatus(s), true, s);
+  assert.equal(isLockedStatus('draft'), false);
+  assert.equal(isLockedStatus(undefined), false);
 });

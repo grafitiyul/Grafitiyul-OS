@@ -1825,10 +1825,37 @@ model QuoteDocument {
   createdAt           DateTime              @default(now())
   updatedAt           DateTime              @updatedAt
   renders             QuoteDocumentRender[]
+  signature           QuoteSignature?
 
   @@index([dealId])
   @@index([quoteVersionId])
   @@index([status])
+}
+
+// The permanent audit record of a customer signing a proposal. Exactly ONE per
+// QuoteDocument (the unique quoteDocumentId is the lock — a signed document can
+// never be signed again; a change requires a NEW QuoteDocument revision). The
+// signature is NEVER stored inside the quote HTML. `method` is the single source
+// of truth for how it was signed (typed | uploaded | drawn) — no parallel boolean
+// columns. For typed, signerName renders the signature; for uploaded/drawn,
+// signatureImage holds the PNG as a data URL (public signing has no admin R2 path).
+model QuoteSignature {
+  id              String        @id @default(cuid())
+  quoteDocument   QuoteDocument @relation(fields: [quoteDocumentId], references: [id], onDelete: Cascade)
+  quoteDocumentId String        @unique
+  quoteVersionId  String // the priced QuoteVersion that was signed (audit)
+  method          String // typed | uploaded | drawn
+  signerName      String
+  signatureImage  String? // data URL (image/png) for uploaded/drawn; null for typed
+  signedAt        DateTime      @default(now())
+  ipAddress       String?
+  userAgent       String?
+  language        String        @default("he") // he | en (the language the customer saw)
+  timezone        String? // IANA tz reported by the browser
+  createdBy       String? // actor id if an admin signed on behalf; null for the customer
+  createdAt       DateTime      @default(now())
+
+  @@index([quoteDocumentId])
 }
 
 // Append-only record of each rendered artifact (HTML/PDF) for a QuoteDocument.

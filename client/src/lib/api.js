@@ -438,6 +438,11 @@ export const api = {
   // ── Public customer quote page (token-gated, no auth) ────────────
   publicQuote: {
     get: (token) => request(`/api/public/quote/${encodeURIComponent(token)}`),
+    sign: (token, body) =>
+      request(`/api/public/quote/${encodeURIComponent(token)}/sign`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
   },
   // ── Products & Pricing — Slice 1 (catalog + files + payment config) ──
   mediaFiles: {

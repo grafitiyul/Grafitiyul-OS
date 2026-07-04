@@ -1,6 +1,15 @@
+import { createContext, useContext } from 'react';
 import { formatMinor } from '../lib/money.js';
 import GrafitiyulHeroLogo from './GrafitiyulHeroLogo.jsx';
 import { parseEmbedUrl } from '../editor/embedProviders.js';
+
+// Signing context — supplied ONLY by the public customer page. It carries the
+// current signature (once signed) and the handler that opens the signature popup.
+// The admin preview renders WITHOUT a provider, so the Signature section shows an
+// inert (disabled) button and never signs. Presentation stays in the renderer;
+// the signing behaviour lives on the customer page.
+export const QuoteViewContext = createContext(null);
+const SIGN_BLUE = '#2563eb';
 
 // Quote document renderer — visual polish pass (Hebrew-first, premium).
 //
@@ -529,6 +538,78 @@ function ImageSlot({ d }) {
   );
 }
 
+// Signed date + time, localised.
+function fmtDateTime(v, lang) {
+  if (!v) return { date: null, time: null };
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return { date: String(v), time: null };
+  const loc = lang === 'en' ? 'en-GB' : 'he-IL';
+  try {
+    return { date: d.toLocaleDateString(loc), time: d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit' }) };
+  } catch { return { date: String(v), time: null }; }
+}
+
+// The Signature section — the mandatory final step, kept minimal by design: the
+// section title, one clean signature area, and a single primary button. Once
+// signed, the area shows the captured signature. NO thank-you / marketing /
+// warnings. The button opens the popup only on the customer page (context
+// provided); in the admin preview it is inert.
+function SignatureSection({ title, lang }) {
+  const ctx = useContext(QuoteViewContext);
+  const sig = ctx?.signature || null;
+  const en = lang === 'en';
+  return (
+    <>
+      <Heading>{title}</Heading>
+      <div className="mx-auto max-w-xl">
+        <div className="flex min-h-[150px] flex-col items-center justify-center rounded-2xl border border-gray-200 bg-gray-50/60 px-6 py-8">
+          {sig ? (
+            <SignedSignature sig={sig} en={en} />
+          ) : (
+            <div className="w-full">
+              <div className="h-16" />
+              <div className="border-t border-dashed border-gray-300" />
+              <div className="mt-2 text-center text-[12px] text-gray-300">{en ? 'Signature' : 'חתימה'}</div>
+            </div>
+          )}
+        </div>
+        {!sig && (
+          <div className="mt-6 flex justify-center">
+            <button
+              type="button"
+              onClick={ctx?.onSignClick || undefined}
+              disabled={!ctx?.onSignClick}
+              className="rounded-xl px-8 py-3 text-[15px] font-semibold text-white shadow-sm transition enabled:hover:brightness-105 disabled:opacity-40"
+              style={{ backgroundColor: SIGN_BLUE }}
+            >
+              {en ? 'Sign the proposal' : 'חתימה על ההצעה'}
+            </button>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function SignedSignature({ sig, en }) {
+  const { date, time } = fmtDateTime(sig.signedAt, en ? 'en' : 'he');
+  return (
+    <div className="w-full text-center">
+      {sig.method === 'typed' ? (
+        <div className="text-[34px] leading-tight text-gray-800" style={{ fontFamily: '"Segoe Script","Brush Script MT",cursive' }}>
+          {sig.signerName}
+        </div>
+      ) : (
+        sig.signatureImage && <img src={sig.signatureImage} alt={sig.signerName} className="mx-auto max-h-24 object-contain" />
+      )}
+      <div className="mt-3 border-t border-gray-200 pt-2 text-[12px] text-gray-400">
+        {sig.signerName}
+        {date ? ` · ${date}${time ? ` ${time}` : ''}` : ''}
+      </div>
+    </div>
+  );
+}
+
 export function QuoteBlock({ block, lang = 'he' }) {
   const d = block?.data || {};
   const t = tt(lang);
@@ -546,12 +627,7 @@ export function QuoteBlock({ block, lang = 'he' }) {
     case 'image_slot_2':
       return <ImageSlot d={d} />;
     case 'signature':
-      return (
-        <>
-          <Heading>{title}</Heading>
-          <div className="rounded-2xl border border-dashed border-gray-300 p-10 text-center text-sm text-gray-400">{t.signaturePlaceholder}</div>
-        </>
-      );
+      return <SignatureSection title={title} lang={lang} />;
     case 'program':
     case 'product_marketing':
     case 'why_us':

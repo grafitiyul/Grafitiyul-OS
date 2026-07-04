@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../lib/api.js';
-import QuoteDocumentRenderer, { blockHasContent } from './QuoteBlockRenderer.jsx';
+import QuoteDocumentRenderer, { blockHasContent, QuoteViewContext } from './QuoteBlockRenderer.jsx';
+import SignaturePopup from './SignaturePopup.jsx';
 
 // ── Public customer-facing quote page ────────────────────────────────────────
 // Wraps the SHARED proposal renderer (unchanged) with the customer chrome:
@@ -10,17 +11,17 @@ import QuoteDocumentRenderer, { blockHasContent } from './QuoteBlockRenderer.jsx
 // the proposal itself is not redesigned. Signing (Phase 2) plugs into the
 // primary action + the Signature section.
 
-const TEAL = '#10a99b';
+const SIGN_BLUE = '#2563eb';
 
 const L = {
   he: {
     sign: 'חתימה על ההצעה', contact: 'צור קשר', pdf: 'הורדת PDF', toc: 'תוכן עניינים',
-    whatsapp: 'וואטסאפ', email: 'אימייל', close: 'סגירה',
+    whatsapp: 'וואטסאפ', email: 'אימייל', close: 'סגירה', signed: 'נחתם',
     loading: 'טוען הצעה…', notFound: 'ההצעה לא נמצאה', notFoundHint: 'ייתכן שהקישור אינו תקין או שפג תוקפו.',
   },
   en: {
     sign: 'Sign the proposal', contact: 'Contact', pdf: 'Download PDF', toc: 'Contents',
-    whatsapp: 'WhatsApp', email: 'Email', close: 'Close',
+    whatsapp: 'WhatsApp', email: 'Email', close: 'Close', signed: 'Signed',
     loading: 'Loading proposal…', notFound: 'Proposal not found', notFoundHint: 'The link may be invalid or expired.',
   },
 };
@@ -34,6 +35,7 @@ const Icon = {
   whatsapp: (p) => (<svg viewBox="0 0 24 24" fill="currentColor" {...p}><path d="M17.5 14.4c-.3-.2-1.7-.8-2-.9-.3-.1-.5-.2-.7.1-.2.3-.7.9-.9 1.1-.2.2-.3.2-.6.1-1.7-.9-2.9-1.6-4-3.5-.3-.5.3-.5.8-1.6.1-.2 0-.4 0-.5 0-.1-.7-1.7-1-2.3-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.5s1 2.9 1.2 3.1c.2.2 2.1 3.2 5 4.5 1.8.8 2.5.9 3.4.7.5-.1 1.7-.7 1.9-1.4.2-.6.2-1.2.2-1.3-.1-.2-.3-.2-.6-.4Z" /><path d="M12 2a10 10 0 0 0-8.5 15.3L2 22l4.8-1.5A10 10 0 1 0 12 2Zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-2.9.9.9-2.8-.2-.3A8.2 8.2 0 1 1 12 20.2Z" /></svg>),
   mail: (p) => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></svg>),
   x: (p) => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="m6 6 12 12M18 6 6 18" /></svg>),
+  check: (p) => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M20 6 9 17l-5-5" /></svg>),
 };
 
 function scrollToKey(key) {
@@ -48,6 +50,8 @@ export default function CustomerQuoteView() {
   const [tocOpen, setTocOpen] = useState(false);
   const [contactOpen, setContactOpen] = useState(false);
   const [activeKey, setActiveKey] = useState(null);
+  const [popupOpen, setPopupOpen] = useState(false);
+  const [signing, setSigning] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -79,7 +83,9 @@ export default function CustomerQuoteView() {
     () => bodyBlocks.map((b) => ({ key: b.key, title: b.data?.title || b.key })),
     [bodyBlocks],
   );
-  const hasSignature = bodyBlocks.some((b) => b.type === 'signature');
+  const hasSignatureSection = bodyBlocks.some((b) => b.type === 'signature');
+  const signature = data?.signature || null; // the audit record once signed
+  const locked = !!data?.doc?.locked || !!signature;
   const contact = data?.contact || { whatsapp: '', email: '' };
   const header = data?.header || {};
 
@@ -102,7 +108,32 @@ export default function CustomerQuoteView() {
   }, [phase, toc]);
 
   const downloadPdf = () => window.print();
-  const goSign = () => (hasSignature ? scrollToKey('signature') : null);
+  // Sticky "sign" scrolls to the section (Prospero flow) — it never opens the popup.
+  const goSign = () => (hasSignatureSection ? scrollToKey('signature') : null);
+
+  async function handleSign(payload) {
+    setSigning(true);
+    try {
+      const timezone = (() => {
+        try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return null; }
+      })();
+      await api.publicQuote.sign(token, { ...payload, timezone });
+      const fresh = await api.publicQuote.get(token); // authoritative locked state + frozen snapshot
+      setData(fresh);
+      setPopupOpen(false);
+    } catch (e) {
+      if (e?.status === 409) {
+        // Someone already signed — reload into the locked state instead of erroring.
+        const fresh = await api.publicQuote.get(token);
+        setData(fresh);
+        setPopupOpen(false);
+        return;
+      }
+      throw e; // surfaced inside the popup
+    } finally {
+      setSigning(false);
+    }
+  }
 
   if (phase === 'loading') {
     return <div className="flex min-h-screen items-center justify-center bg-gray-100 text-gray-400">{L.he.loading}</div>;
@@ -147,10 +178,16 @@ export default function CustomerQuoteView() {
         </button>
       </div>
 
-      {/* The proposal — centered premium sheet; the print target. */}
+      {/* The proposal — centered premium sheet; the print target. The signing
+          context is supplied ONLY here, so the Signature section's button opens the
+          popup (and once signed, renders the captured signature). */}
       <main className="cq-page mx-auto max-w-3xl px-3 py-6 sm:py-10">
         <div className="cq-paper overflow-hidden rounded-2xl bg-white shadow-xl">
-          <QuoteDocumentRenderer model={renderModel} />
+          <QuoteViewContext.Provider
+            value={{ signature, onSignClick: locked ? undefined : () => setPopupOpen(true) }}
+          >
+            <QuoteDocumentRenderer model={renderModel} />
+          </QuoteViewContext.Provider>
         </div>
         <div className="h-28" aria-hidden />
       </main>
@@ -249,20 +286,36 @@ export default function CustomerQuoteView() {
                 )}
               </div>
 
-              {hasSignature && (
+              {hasSignatureSection && !locked && (
                 <button
                   type="button"
                   onClick={goSign}
                   className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-[14px] font-semibold text-white shadow-sm transition hover:brightness-105"
-                  style={{ backgroundColor: TEAL }}
+                  style={{ backgroundColor: SIGN_BLUE }}
                 >
                   <Icon.pen className="h-4 w-4" /> {t.sign}
                 </button>
+              )}
+              {locked && (
+                <span className="flex items-center gap-1.5 rounded-xl bg-emerald-50 px-4 py-2 text-[14px] font-semibold text-emerald-700">
+                  <Icon.check className="h-4 w-4" /> {t.signed}
+                </span>
               )}
             </div>
           </div>
         </div>
       </div>
+
+      {/* Signature popup — opened from the Signature section's blue button. */}
+      {popupOpen && !locked && (
+        <SignaturePopup
+          company={header.organizationName || header.customerName || ''}
+          lang={lang}
+          busy={signing}
+          onSubmit={handleSign}
+          onClose={() => setPopupOpen(false)}
+        />
+      )}
     </div>
   );
 }
