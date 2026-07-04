@@ -10,10 +10,48 @@ import { parseEmbedUrl } from '../editor/embedProviders.js';
 
 export const TEAL = '#10a99b';
 
-// Rich text: logical alignment/padding (text-start, ps-*) so it follows the
-// document direction (RTL → right, LTR → left) instead of being hard-right.
-const RICH =
-  'text-[16.5px] leading-[2] text-gray-700 text-start [&_p]:mb-4 [&_ul]:list-disc [&_ul]:ps-6 [&_ul]:mb-4 [&_ol]:list-decimal [&_ol]:ps-6 [&_li]:mb-1.5 [&_a]:text-teal-700 [&_a]:underline [&_h2]:text-lg [&_h3]:text-[17px] [&_h3]:font-semibold [&_strong]:font-semibold';
+// ── Proposal rich-text rendering ─────────────────────────────────────────────
+// One reading rhythm for author-written HTML across the quote, in three densities.
+// The editor STORES the HTML; here we only STYLE it — the stored content is never
+// mutated. Logical properties (text-start, ps-*, border-s) keep Hebrew RTL and
+// English LTR both correct.
+//
+// The old style used leading-[2] with a small [&_p]:mb-4: the line spacing INSIDE a
+// paragraph was as large as the gap BETWEEN paragraphs, so consecutive paragraphs
+// read as one block. The fix is a tighter line-height with a clearly larger
+// inter-paragraph margin, so paragraph boundaries are unambiguous. Empty paragraphs
+// are collapsed so a stray blank line can't open a huge gap; real <br> soft line
+// breaks inside a paragraph are preserved.
+//
+// RICH_BASE holds ONLY the modifiers shared by every density (never conflicting);
+// each variant sets its own size, line-height, colour and spacing.
+const RICH_BASE =
+  'text-start ' +
+  '[&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_p:empty]:hidden ' +
+  '[&_ul]:list-disc [&_ol]:list-decimal [&_li>ul]:mt-2 [&_li>ol]:mt-2 ' +
+  '[&_a]:text-teal-700 [&_a]:underline [&_em]:italic ' +
+  '[&_blockquote]:border-s-4 [&_blockquote]:border-gray-200 [&_blockquote]:ps-4';
+
+// 1. Comfortable — main content sections (marketing, program, why-us, city).
+const PROPOSAL_RICH = `${RICH_BASE} ` +
+  'text-[16.5px] leading-[1.8] text-gray-700 ' +
+  '[&_p]:mb-5 [&_ul]:my-5 [&_ul]:ps-6 [&_ol]:my-5 [&_ol]:ps-6 [&_li]:mb-2 ' +
+  '[&_strong]:font-semibold [&_strong]:text-gray-900 ' +
+  '[&_h2]:mt-7 [&_h2]:mb-3 [&_h2]:text-[20px] [&_h2]:font-bold [&_h2]:text-gray-900 ' +
+  '[&_h3]:mt-6 [&_h3]:mb-2 [&_h3]:text-[17px] [&_h3]:font-semibold [&_h3]:text-gray-900';
+
+// 2. Readable — FAQ / cancellation / participant policy. Same rhythm, a touch tighter.
+const PROPOSAL_RICH_READABLE = `${RICH_BASE} ` +
+  'text-[15.5px] leading-[1.7] text-gray-700 ' +
+  '[&_p]:mb-3.5 [&_ul]:my-3.5 [&_ul]:ps-5 [&_ol]:my-3.5 [&_ol]:ps-5 [&_li]:mb-1.5 ' +
+  '[&_strong]:font-semibold [&_strong]:text-gray-900 ' +
+  '[&_h3]:mt-4 [&_h3]:mb-2 [&_h3]:text-[16.5px] [&_h3]:font-semibold [&_h3]:text-gray-900';
+
+// 3. Compact — pricing-row notes. Muted + tight; must never compete with the row title.
+const PROPOSAL_RICH_COMPACT = `${RICH_BASE} ` +
+  'mt-1.5 text-[14.5px] leading-[1.6] text-gray-500 ' +
+  '[&_p]:mb-1 [&_ul]:my-1.5 [&_ul]:ps-5 [&_ol]:my-1.5 [&_ol]:ps-5 [&_li]:mb-0.5 ' +
+  '[&_strong]:font-semibold [&_strong]:text-gray-600';
 
 const T = {
   he: {
@@ -63,9 +101,13 @@ function fmtDate(v, lang) {
 function Empty({ lang }) {
   return <p className="text-start text-sm italic text-gray-300">{tt(lang).noContent}</p>;
 }
-function Html({ html, lang }) {
-  if (!html || !String(html).trim()) return <Empty lang={lang} />;
-  return <div className={RICH} dangerouslySetInnerHTML={{ __html: html }} />;
+// Author-written rich content. `className` picks the density (defaults to the
+// comfortable main-content rhythm). Everything is normalised through toDisplayHtml
+// so legacy JSON / plain text can never leak to the customer as raw markup.
+function Html({ html, lang, className = PROPOSAL_RICH }) {
+  const safe = toDisplayHtml(html);
+  if (!safe) return <Empty lang={lang} />;
+  return <div className={className} dangerouslySetInnerHTML={{ __html: safe }} />;
 }
 
 // Normalise a user-authored value (pricing row note, etc.) to safe display HTML.
@@ -100,14 +142,12 @@ function toDisplayHtml(value) {
   return escapeHtml(trimmed).replace(/\n/g, '<br>');
 }
 
-// Supporting information under a pricing row's title — formatted, line-breaks
-// preserved, muted + secondary so it never competes with the title. Nothing when empty.
-const NOTE_RICH =
-  'mt-1.5 text-[14.5px] leading-[1.6] text-gray-500 text-start [&_p]:mb-0.5 [&_p:last-child]:mb-0 [&_ul]:list-disc [&_ul]:ps-5 [&_ol]:list-decimal [&_ol]:ps-5 [&_li]:mb-0.5 [&_a]:text-teal-700 [&_a]:underline [&_strong]:font-semibold [&_strong]:text-gray-600';
+// Supporting information under a pricing row's title — muted + secondary so it never
+// competes with the title. Uses the COMPACT density. Nothing when empty.
 function RichNote({ value }) {
   const html = toDisplayHtml(value);
   if (!html) return null;
-  return <div className={NOTE_RICH} dangerouslySetInnerHTML={{ __html: html }} />;
+  return <div className={PROPOSAL_RICH_COMPACT} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 // Section heading — aligned to the reading start (right in RTL, left in LTR).
@@ -431,14 +471,15 @@ function PricingCard({ d, lang }) {
 // customer quote — only the body — so a per-item title that repeats the section
 // name no longer shows up twice.
 function SectionItems({ d, lang }) {
-  if (d.customHtml != null) return <Html html={d.customHtml} lang={lang} />;
+  // FAQ / cancellation / participant policy → the readable (medium) density.
+  if (d.customHtml != null) return <Html html={d.customHtml} lang={lang} className={PROPOSAL_RICH_READABLE} />;
   const items = d.items || [];
   if (items.length === 0) return <Empty lang={lang} />;
   return (
     <div className="space-y-6">
       {items.map((it) => (
         <div key={it.id}>
-          <Html html={it.html} lang={lang} />
+          <Html html={it.html} lang={lang} className={PROPOSAL_RICH_READABLE} />
         </div>
       ))}
     </div>
