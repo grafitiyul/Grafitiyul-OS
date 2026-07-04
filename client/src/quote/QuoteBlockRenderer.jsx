@@ -426,6 +426,10 @@ function PricingCard({ d, lang }) {
   );
 }
 
+// The ONLY visible heading is the section heading (from Quote Structure). Each
+// content item's own title is an admin/management label and is NOT rendered in the
+// customer quote — only the body — so a per-item title that repeats the section
+// name no longer shows up twice.
 function SectionItems({ d, lang }) {
   if (d.customHtml != null) return <Html html={d.customHtml} lang={lang} />;
   const items = d.items || [];
@@ -434,7 +438,6 @@ function SectionItems({ d, lang }) {
     <div className="space-y-6">
       {items.map((it) => (
         <div key={it.id}>
-          {it.title && <h3 className="mb-2 text-start text-[18px] font-bold text-gray-900">{it.title}</h3>}
           <Html html={it.html} lang={lang} />
         </div>
       ))}
@@ -467,6 +470,24 @@ function VideoEmbed({ d, lang }) {
   );
 }
 
+// Quote Image Library slot — a premium image card with an optional caption. Only
+// renders when the composer resolved an image for this slot + the quote's variant;
+// otherwise nothing shows (no placeholder). No heading (the image IS the section).
+function ImageSlot({ d }) {
+  if (!d.imageUrl) return null;
+  return (
+    <figure className="m-0">
+      <img
+        src={d.imageUrl}
+        alt={d.caption || ''}
+        loading="lazy"
+        className="w-full rounded-2xl border border-gray-200 object-cover shadow-sm"
+      />
+      {d.caption && <figcaption className="mt-3 text-center text-[14px] leading-relaxed text-gray-500">{d.caption}</figcaption>}
+    </figure>
+  );
+}
+
 export function QuoteBlock({ block, lang = 'he' }) {
   const d = block?.data || {};
   const t = tt(lang);
@@ -480,6 +501,9 @@ export function QuoteBlock({ block, lang = 'he' }) {
       return <><Heading>{title}</Heading><PricingCard d={d} lang={lang} /></>;
     case 'video':
       return <VideoEmbed d={d} lang={lang} />;
+    case 'image_slot_1':
+    case 'image_slot_2':
+      return <ImageSlot d={d} />;
     case 'signature':
       return (
         <>

@@ -45,20 +45,26 @@ export const TECH_FIELD_KEYS = ['city', 'date', 'time', 'participants', 'duratio
 // group) reads it from here, so a rename applies everywhere. Defaults match the
 // renderer's previous built-in titles, so existing output is unchanged.
 export const CONFIGURABLE_TITLE_KEYS = [
-  'program', 'tour_details', 'product_marketing', 'why_grafitiyul', 'pricing',
-  'faq', 'cancellation', 'participant_policy', 'signature',
+  'program', 'tour_details', 'product_marketing', 'why_grafitiyul', 'image_slot_1', 'pricing',
+  'faq', 'cancellation', 'participant_policy', 'image_slot_2', 'signature',
 ];
 export const SECTION_TITLE_DEFAULTS = {
   program: { titleHe: 'אז מה בתוכנית?', titleEn: "What's in the program?" },
   tour_details: { titleHe: 'פרטים טכניים', titleEn: 'Technical Details' },
   product_marketing: { titleHe: 'מה כולל הסיור?', titleEn: "What's Included?" },
   why_grafitiyul: { titleHe: 'למה גרפיטיול?', titleEn: 'Why Grafitiyul?' },
+  image_slot_1: { titleHe: 'תמונה — מיקום 1', titleEn: 'Image — Slot 1' },
   pricing: { titleHe: 'כמה עולה?', titleEn: 'Pricing' },
   faq: { titleHe: 'שאלות נפוצות', titleEn: 'FAQ' },
   cancellation: { titleHe: 'מדיניות ביטול / דחייה', titleEn: 'Cancellation / Postponement' },
   participant_policy: { titleHe: 'מדיניות שינוי כמות המשתתפים', titleEn: 'Participant Quantity Change Policy' },
+  image_slot_2: { titleHe: 'תמונה — מיקום 2', titleEn: 'Image — Slot 2' },
   signature: { titleHe: 'חתימה', titleEn: 'Signature' },
 };
+
+// Quote Image Library slots. Keys mirror the block keys so title/order/visibility
+// use the same section mechanism as every other section.
+export const IMAGE_SLOTS = ['slot1', 'slot2'];
 
 // Legacy overlay presets (kept for backward compatibility with older saved
 // layouts; the premium hero now uses an explicit color + opacity instead).
@@ -131,6 +137,10 @@ export const DEFAULT_LAYOUT = {
   // Variant is assigned to it. A variant belongs to AT MOST ONE video (enforced on
   // normalize). Independent of Shared Content. Empty by default.
   videos: [],
+  // Quote Image Library — zero or more images, each with a slot (slot1|slot2),
+  // captions, and assigned variants. A variant belongs to AT MOST ONE image PER
+  // SLOT (enforced on normalize), but may be assigned in both slots. Empty by default.
+  images: [],
 };
 
 function normalizeImageRef(ref) {
@@ -253,6 +263,38 @@ function normalizeVideos(raw, legacyVideo) {
   return out;
 }
 
+// Quote Image Library. Each item is { id, image:{id,url}, slot, captionHe, captionEn,
+// variantIds }. Same architecture as the video library, but the one-variant-one-item
+// rule is enforced PER SLOT: a variant claimed by an earlier image IN THE SAME SLOT
+// is dropped from later images of that slot — yet the same variant may be assigned in
+// both slots (they are different places in the quote). image/captions optional; every
+// item gets a stable id and a valid slot. Nothing is copied from anywhere else.
+let __imageIdSeq = 0;
+function normalizeImages(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const claimedBySlot = { slot1: new Set(), slot2: new Set() };
+  const out = [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const slot = IMAGE_SLOTS.includes(item.slot) ? item.slot : 'slot1';
+    const claimed = claimedBySlot[slot];
+    const ids = Array.isArray(item.variantIds) ? item.variantIds.filter(isStr).map((s) => String(s)) : [];
+    const variantIds = [];
+    for (const vid of ids) {
+      if (!claimed.has(vid)) { claimed.add(vid); variantIds.push(vid); }
+    }
+    out.push({
+      id: isStr(item.id) ? String(item.id) : `img_${Date.now().toString(36)}_${__imageIdSeq++}`,
+      image: normalizeImageRef(item.image),
+      slot,
+      captionHe: cleanText(item.captionHe),
+      captionEn: cleanText(item.captionEn),
+      variantIds,
+    });
+  }
+  return out;
+}
+
 // Normalise ANY input (saved row, API body, or null) into a complete, safe
 // layout. Always returns every section and tech field exactly once.
 export function normalizeLayout(raw) {
@@ -266,6 +308,7 @@ export function normalizeLayout(raw) {
     hero: normalizeHero(l.hero),
     sectionTitles: normalizeSectionTitles(l.sectionTitles, l.program),
     videos: normalizeVideos(l.videos, l.video),
+    images: normalizeImages(l.images),
     // Hero is the document header: always first and never hidden, so the stored
     // template stays consistent with the UI (which shows it pinned, not in the
     // reorderable list). The composer enforces the same invariant at render.

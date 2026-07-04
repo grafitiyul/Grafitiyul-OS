@@ -42,6 +42,8 @@ const SOURCE_LABELS = {
   hero: 'Deal',
   program: 'Product Variant',
   video: 'Quote Structure · Video',
+  image_slot_1: 'Quote Structure · Images',
+  image_slot_2: 'Quote Structure · Images',
   tour_details: 'Deal · Product · Location',
   pricing: 'QuoteVersion (Builder)',
   signature: 'Signers',
@@ -96,6 +98,8 @@ export function editTargetFor(type, deal, lang) {
     case 'hero': return { kind: 'deal', label: 'ערוך פרטי לקוח' };
     case 'program': return { kind: 'product', label: 'ערוך תוכן התוכנית (וריאציה)', id: deal?.productId || null };
     case 'video': return { kind: 'quoteStructure', label: 'ערוך וידאו', tab: 'video' };
+    case 'image_slot_1':
+    case 'image_slot_2': return { kind: 'quoteStructure', label: 'ערוך תמונות', tab: 'images' };
     case 'tour_details': return { kind: 'deal', label: 'ערוך פרטי הסיור' };
     case 'pricing': return { kind: 'builder', label: 'ערוך תמחור', dialog: true };
     case 'product_marketing': return { kind: 'product', label: 'ערוך מוצר', id: deal?.productId || null };
@@ -211,6 +215,23 @@ function buildVideo({ deal, lang, template }) {
   if (!match) return { data: { url: null }, warnings: [] };
   const title = pickLang(match.titleHe, match.titleEn, lang) || (lang === 'en' ? 'Video' : 'סרטון');
   return { data: { title, url: match.url }, warnings: [] };
+}
+
+// Quote Image Library — one slot (slot1|slot2). Renders the image whose slot matches
+// AND whose variantIds includes the quote's Product Variant AND that has an uploaded
+// image; otherwise imageUrl is null and the renderer skips the slot. Caption is
+// language-picked. Same shape/gating idea as the video block. The section title
+// (Quote Structure) is carried for the sections list; the renderer shows the image,
+// not a heading. Image media is template-owned — NOT the variant/Shared Content.
+function buildImageSlot({ deal, lang, template, slot, blockKey }) {
+  const variantId = deal?.productVariantId || deal?.productVariant?.id || null;
+  const images = Array.isArray(template?.images) ? template.images : [];
+  const match = variantId
+    ? images.find((im) => im?.slot === slot && im?.image?.url && Array.isArray(im.variantIds) && im.variantIds.includes(variantId))
+    : null;
+  const title = sectionTitle(template, blockKey, lang);
+  if (!match) return { data: { title, imageUrl: null }, warnings: [] };
+  return { data: { title, imageUrl: match.image.url, caption: pickLang(match.captionHe, match.captionEn, lang) }, warnings: [] };
 }
 
 function buildTourDetails({ deal, displayName, lang, template, sharedContent }) {
@@ -377,6 +398,8 @@ function assembleBlock(type, ctx) {
     case 'hero': return buildHero(ctx);
     case 'program': return buildProgram(ctx);
     case 'video': return buildVideo(ctx);
+    case 'image_slot_1': return buildImageSlot({ ...ctx, slot: 'slot1', blockKey: 'image_slot_1' });
+    case 'image_slot_2': return buildImageSlot({ ...ctx, slot: 'slot2', blockKey: 'image_slot_2' });
     case 'tour_details': return buildTourDetails(ctx);
     case 'pricing': return buildPricing(ctx);
     case 'signature': return buildSignature(ctx);

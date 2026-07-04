@@ -22,11 +22,16 @@ export const DEFAULT_QUOTE_BLOCKS = [
   // Organization Type. (This absorbed the old duplicate "Content by Organization
   // Type" section, which is removed.)
   { key: 'why_grafitiyul', type: 'why_us', kind: 'content', optional: true, removable: true },
+  // Quote Image Library — Slot 1. Shown only when an image in the library targets the
+  // quote's Product Variant for this slot. Default placement: after "Why Grafitiyul".
+  { key: 'image_slot_1', type: 'image_slot_1', kind: 'content', optional: true, removable: true },
   // Pricing owns the payment terms/method too (rendered inside the pricing section).
   { key: 'pricing', type: 'pricing', kind: 'dynamic', optional: true, removable: true },
   { key: 'faq', type: 'faq', kind: 'content', optional: true, removable: true },
   { key: 'cancellation', type: 'cancellation', kind: 'content', optional: true, removable: true },
   { key: 'participant_policy', type: 'participant_policy', kind: 'content', optional: true, removable: true },
+  // Quote Image Library — Slot 2. Default placement: after policies, before Signature.
+  { key: 'image_slot_2', type: 'image_slot_2', kind: 'content', optional: true, removable: true },
   { key: 'signature', type: 'signature', kind: 'dynamic', optional: true, removable: true },
 ];
 

@@ -300,3 +300,38 @@ test('composer: renamed section titles flow to the quote (why_grafitiyul, faq, s
   assert.equal(title('faq'), 'שו״ת');
   assert.equal(title('signature'), 'אישור');
 });
+
+// ── Quote Image Library (per-slot one-variant-one-image) ─────────────────────
+test('normalizeImages: a variant belongs to ONE image PER SLOT; allowed across slots', () => {
+  const url = 'https://cdn/a.jpg';
+  const { images } = normalizeLayout({ images: [
+    { id: 'a', slot: 'slot1', image: { url }, variantIds: ['v1', 'v2'] },
+    { id: 'b', slot: 'slot1', image: { url }, variantIds: ['v2', 'v3'] }, // v2 already claimed in slot1
+    { id: 'c', slot: 'slot2', image: { url }, variantIds: ['v1'] },       // v1 in the OTHER slot is allowed
+  ] });
+  assert.deepEqual(images[0].variantIds, ['v1', 'v2']);
+  assert.deepEqual(images[1].variantIds, ['v3'], 'v2 dropped within slot1');
+  assert.deepEqual(images[2].variantIds, ['v1'], 'v1 allowed in slot2');
+});
+
+test('normalizeImages: stable id, valid slot, url required, empty default', () => {
+  assert.deepEqual(normalizeLayout(null).images, []);
+  const { images } = normalizeLayout({ images: [{ slot: 'bogus', image: { id: 'm' }, variantIds: [] }] });
+  assert.equal(images.length, 1);
+  assert.ok(typeof images[0].id === 'string' && images[0].id.length > 0);
+  assert.equal(images[0].slot, 'slot1', 'invalid slot → slot1');
+  assert.equal(images[0].image, null, 'image needs a url');
+});
+
+test('composer: image slot renders the matching image for the deal variant, skips otherwise', () => {
+  const url = 'https://cdn/pic.jpg';
+  const t = normalizeLayout({ images: [
+    { id: '1', slot: 'slot1', image: { url }, variantIds: ['v1'], captionHe: 'כיתוב' },
+    { id: '2', slot: 'slot2', image: { url }, variantIds: ['other'] },
+  ] }); // deal().productVariantId === 'v1'
+  const s1 = compose(t).blocks.find((b) => b.key === 'image_slot_1').data;
+  const s2 = compose(t).blocks.find((b) => b.key === 'image_slot_2').data;
+  assert.equal(s1.imageUrl, url);
+  assert.equal(s1.caption, 'כיתוב');
+  assert.equal(s2.imageUrl, null, 'no slot2 image targets v1 → skipped');
+});

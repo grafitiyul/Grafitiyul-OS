@@ -28,10 +28,12 @@ const SECTION_LABELS = {
   product_marketing: 'תיאור המוצר',
   video: 'וידאו',
   why_grafitiyul: 'למה גרפיטיול',
+  image_slot_1: 'תמונה — מיקום 1',
   pricing: 'תמחור',
   faq: 'שאלות נפוצות',
   cancellation: 'מדיניות ביטול / דחייה',
   participant_policy: 'מדיניות שינוי כמות המשתתפים',
+  image_slot_2: 'תמונה — מיקום 2',
   signature: 'חתימה',
 };
 // Hero is the only fixed block (the document header, pinned first + never hidden).
@@ -48,6 +50,7 @@ const TABS = [
   { key: 'hero', label: 'כותרת ראשית' },
   { key: 'sections', label: 'סעיפים' },
   { key: 'video', label: 'וידאו' },
+  { key: 'images', label: 'תמונות' },
   { key: 'technical', label: 'פרטים טכניים' },
 ];
 
@@ -72,10 +75,12 @@ const TITLE_SECTIONS = [
   { key: 'tour_details', label: 'פרטים טכניים' },
   { key: 'product_marketing', label: 'תיאור המוצר' },
   { key: 'why_grafitiyul', label: 'למה גרפיטיול' },
+  { key: 'image_slot_1', label: 'תמונה — מיקום 1' },
   { key: 'pricing', label: 'תמחור' },
   { key: 'faq', label: 'שאלות נפוצות' },
   { key: 'cancellation', label: 'מדיניות ביטול / דחייה' },
   { key: 'participant_policy', label: 'מדיניות שינוי כמות המשתתפים' },
+  { key: 'image_slot_2', label: 'תמונה — מיקום 2' },
   { key: 'signature', label: 'חתימה' },
 ];
 
@@ -120,6 +125,7 @@ export default function QuoteLayoutSettings() {
   const patchSectionTitle = (key, patch) =>
     setLayout((l) => ({ ...l, sectionTitles: { ...l.sectionTitles, [key]: { ...l.sectionTitles?.[key], ...patch } } }));
   const setVideos = (videos) => setLayout((l) => ({ ...l, videos }));
+  const setImages = (images) => setLayout((l) => ({ ...l, images }));
   const setTechFields = (fields) => setLayout((l) => ({ ...l, technical: { ...l.technical, fields } }));
 
   async function save() {
@@ -196,6 +202,9 @@ export default function QuoteLayoutSettings() {
           )}
           {tab === 'video' && (
             <div className="max-w-3xl"><VideoTab videos={layout.videos} onChange={setVideos} /></div>
+          )}
+          {tab === 'images' && (
+            <div className="max-w-3xl"><ImagesTab images={layout.images} onChange={setImages} /></div>
           )}
         </>
       )}
@@ -642,6 +651,133 @@ function VideoCard({ index, video, options, takenElsewhere, onPatch, onRemove })
             </div>
           )}
           {selected.length > 0 && <p className="mt-2 text-[11px] text-gray-400">מוקצה ל-{selected.length} וריאציות.</p>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// Images tab — a small Quote Image Library, same architecture as videos. Each image
+// has a slot (מיקום 1 / מיקום 2), optional He/En captions and assigned variants. A
+// variant belongs to at most ONE image PER SLOT: within a slot, a variant claimed by
+// another image is EXCLUDED from this image's picker (not disabled, not warned) — but
+// the same variant may be assigned in the other slot too. Media is template-owned.
+const IMAGE_SLOT_OPTIONS = [
+  { value: 'slot1', label: 'מיקום 1' },
+  { value: 'slot2', label: 'מיקום 2' },
+];
+const newImageId = () =>
+  (typeof crypto !== 'undefined' && crypto.randomUUID ? `img_${crypto.randomUUID()}` : `img_${Date.now().toString(36)}`);
+
+function ImagesTab({ images, onChange }) {
+  const list = Array.isArray(images) ? images : [];
+  const [options, setOptions] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    api.products.variantOptions().then((o) => { if (alive) setOptions(Array.isArray(o) ? o : []); }).catch(() => { if (alive) setOptions([]); });
+    return () => { alive = false; };
+  }, []);
+
+  const updateImage = (id, patch) => onChange(list.map((im) => (im.id === id ? { ...im, ...patch } : im)));
+  const removeImage = (id) => onChange(list.filter((im) => im.id !== id));
+  const addImage = () => onChange([...list, { id: newImageId(), image: null, slot: 'slot1', captionHe: '', captionEn: '', variantIds: [] }]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[13px] text-gray-500">ספריית תמונות — כל תמונה מוצגת רק בהצעות של הווריאציות שהוקצו לה, במיקום שנבחר. באותו מיקום, וריאציה שייכת לתמונה אחת בלבד.</p>
+        <button type="button" onClick={addImage} className="shrink-0 rounded-lg bg-teal-600 px-3 py-2 text-[13px] font-semibold text-white shadow-sm hover:bg-teal-700">+ תמונה</button>
+      </div>
+
+      {list.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 px-4 py-10 text-center text-sm text-gray-400">
+          אין עדיין תמונות. לחצו “+ תמונה” כדי להוסיף.
+        </div>
+      ) : (
+        list.map((image, i) => {
+          // Excluded from THIS image's picker: variants claimed by ANOTHER image in
+          // the SAME slot (different slots don't conflict).
+          const takenElsewhere = new Set(
+            list.filter((x) => x.id !== image.id && x.slot === image.slot).flatMap((x) => x.variantIds || []),
+          );
+          return (
+            <ImageCard
+              key={image.id}
+              index={i}
+              image={image}
+              options={options}
+              takenElsewhere={takenElsewhere}
+              onPatch={(patch) => updateImage(image.id, patch)}
+              onRemove={() => removeImage(image.id)}
+            />
+          );
+        })
+      )}
+    </div>
+  );
+}
+
+function ImageCard({ index, image, options, takenElsewhere, onPatch, onRemove }) {
+  const im = image || {};
+  const slot = im.slot || 'slot1';
+  const selected = Array.isArray(im.variantIds) ? im.variantIds : [];
+
+  function toggleVariant(id) {
+    const next = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
+    onPatch({ variantIds: next });
+  }
+  const available = (options || []).filter((o) => !takenElsewhere.has(o.id));
+  const slotLabel = IMAGE_SLOT_OPTIONS.find((s) => s.value === slot)?.label || '';
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+      <div className="flex items-center justify-between border-b border-gray-100 px-5 pt-4 pb-3">
+        <h3 className="text-[15px] font-semibold text-gray-900">תמונה {index + 1} · {slotLabel}{selected.length > 0 ? ` · ${selected.length} וריאציות` : ''}</h3>
+        <button type="button" onClick={onRemove} className="rounded-md px-2 py-1 text-[12px] font-medium text-red-600 hover:bg-red-50">מחק</button>
+      </div>
+      <div className="space-y-5 p-4">
+        <div>
+          <span className={LABEL}>תמונה</span>
+          <SingleImage
+            image={im.image ? { url: im.image.url } : null}
+            onChange={(mf) => onPatch({ image: mf ? { id: mf.id, url: mf.url } : null })}
+            folder="quote/images"
+          />
+        </div>
+
+        <Field label="מיקום בהצעה">
+          <Segmented value={slot} onChange={(v) => onPatch({ slot: v })} options={IMAGE_SLOT_OPTIONS} />
+        </Field>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <label className="block"><span className={LABEL}>כיתוב (עברית, אופציונלי)</span>
+            <input value={im.captionHe || ''} onChange={(e) => onPatch({ captionHe: e.target.value })} className={INPUT} /></label>
+          <label className="block"><span className={LABEL}>Caption (EN, optional)</span>
+            <input value={im.captionEn || ''} onChange={(e) => onPatch({ captionEn: e.target.value })} dir="ltr" className={INPUT} /></label>
+        </div>
+
+        <div>
+          <span className={LABEL}>הצג בווריאציות (במיקום {slotLabel})</span>
+          {options === null ? (
+            <p className="text-[13px] text-gray-400">טוען…</p>
+          ) : available.length === 0 ? (
+            <p className="text-[13px] text-gray-400">אין וריאציות פנויות במיקום זה — כולן כבר מוקצות לתמונות אחרות באותו מיקום.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {available.map((o) => {
+                const on = selected.includes(o.id);
+                const label = `${o.productNameHe || o.productNameEn} · ${o.locationNameHe || o.locationNameEn}`;
+                return (
+                  <button key={o.id} type="button" onClick={() => toggleVariant(o.id)}
+                    className={`rounded-full px-3 py-1.5 text-[13px] font-medium transition ${
+                      on ? 'bg-teal-600 text-white shadow-sm' : 'border border-gray-200 bg-white text-gray-600 hover:border-teal-300'
+                    }`}>
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </section>

@@ -17,6 +17,7 @@ import { resolveFinanceWorkspace, FINANCE_WORKSPACE } from '../deals/config.js';
 const LABELS = {
   hero: 'כותרת', program: 'אז מה בתוכנית?', tour_details: 'פרטים טכניים',
   product_marketing: 'תיאור המוצר', video: 'וידאו', why_grafitiyul: 'למה גרפיטיול',
+  image_slot_1: 'תמונה — מיקום 1', image_slot_2: 'תמונה — מיקום 2',
   pricing: 'תמחור', faq: 'שאלות נפוצות',
   cancellation: 'מדיניות ביטול / דחייה', participant_policy: 'מדיניות שינוי כמות המשתתפים', signature: 'חתימה',
 };
@@ -38,6 +39,9 @@ function hasContent(block) {
       return true;
     case 'video':
       return !!d.url;
+    case 'image_slot_1':
+    case 'image_slot_2':
+      return !!d.imageUrl;
     case 'program':
     case 'product_marketing':
     case 'why_us':
