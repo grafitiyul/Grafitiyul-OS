@@ -1,13 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { useDirtyWhen } from '../../lib/dirtyForms.js';
 import SettingsChrome from '../settings/SettingsChrome.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
-import { minorToInput, toMinor, formatMinor } from '../../lib/money.js';
 import { durationDisplay } from '../../lib/duration.js';
-import { Gallery } from './ImageUploader.jsx';
-import VariantSharedContent from './VariantSharedContent.jsx';
 
 const INPUT =
   'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
@@ -23,22 +20,16 @@ export default function ProductDetail() {
   const [saving, setSaving] = useState(false);
   const [newLocationId, setNewLocationId] = useState('');
   const [addingVariant, setAddingVariant] = useState(false);
-  // "אז מה בתוכנית?" section title — read LIVE from Quote Structure (one source of
-  // truth), so the variant's programme group is labelled by whatever the admin set.
-  const [programTitle, setProgramTitle] = useState({ he: 'אז מה בתוכנית?', en: "What's in the program?" });
 
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      const [p, locs, template] = await Promise.all([
+      const [p, locs] = await Promise.all([
         api.products.get(id),
         api.locations.list(),
-        api.quoteTemplate.get().catch(() => null),
       ]);
       setProduct(p);
       setLocations(locs);
-      const pt = template?.sectionTitles?.program;
-      if (pt) setProgramTitle({ he: pt.titleHe, en: pt.titleEn });
       const init = {
         nameHe: p.nameHe || '',
         nameEn: p.nameEn || '',
@@ -174,7 +165,7 @@ export default function ProductDetail() {
         ) : (
           <ul className="space-y-3">
             {product.variants.map((v) => (
-              <VariantCard key={v.id} variant={v} locations={locations} programTitle={programTitle} onChange={refresh} />
+              <VariantCard key={v.id} productId={id} variant={v} />
             ))}
           </ul>
         )}
@@ -183,11 +174,17 @@ export default function ProductDetail() {
   );
 }
 
-function VariantCard({ variant, locations, programTitle, onChange }) {
-  const [open, setOpen] = useState(false);
+// A variant row now NAVIGATES to the dedicated full-page editor
+// (…/products/:id/variant/:variantId) instead of expanding inline. All variant
+// fields live in that CMS-style workspace (see VariantEditor.jsx).
+function VariantCard({ productId, variant }) {
+  const navigate = useNavigate();
   return (
-    <li className="rounded-xl border border-gray-200">
-      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-2 px-4 py-3 text-right">
+    <li>
+      <button
+        onClick={() => navigate(`/admin/settings/crm/products/${productId}/variant/${variant.id}`)}
+        className="w-full flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-3 text-right transition hover:border-gray-300 hover:bg-gray-50"
+      >
         <span className="font-semibold text-gray-900">{variant.location?.nameHe}</span>
         {variant.durationHours != null && <span className="text-[12px] text-gray-500">· {durationDisplay(variant.durationHours)}</span>}
         <div className="flex items-center gap-1">
@@ -197,142 +194,9 @@ function VariantCard({ variant, locations, programTitle, onChange }) {
         </div>
         {!variant.active && <span className="text-[11px] text-gray-400">(לא פעיל)</span>}
         <div className="flex-1" />
-        <span className="text-gray-400 text-sm">{open ? '▲' : '▼'}</span>
+        <span className="text-[12px] font-medium text-blue-600">עריכה ←</span>
       </button>
-      {open && <VariantForm variant={variant} locations={locations} programTitle={programTitle} onChange={onChange} />}
     </li>
-  );
-}
-
-function VariantForm({ variant, locations, programTitle, onChange }) {
-  const [form, setForm] = useState(() => ({
-    marketingDescHe: variant.marketingDescHe || '',
-    marketingDescEn: variant.marketingDescEn || '',
-    guideDescHe: variant.guideDescHe || '',
-    guideDescEn: variant.guideDescEn || '',
-    programHe: variant.programHe || '',
-    programEn: variant.programEn || '',
-    durationHours: variant.durationHours ?? '',
-    baseGuidePayment: minorToInput(variant.baseGuidePaymentMinor),
-    travelPayment: minorToInput(variant.travelPaymentMinor),
-    availablePublic: variant.availablePublic,
-    availablePrivate: variant.availablePrivate,
-    availableBusiness: variant.availableBusiness,
-    active: variant.active,
-  }));
-  const [saving, setSaving] = useState(false);
-  function set(field, v) { setForm((f) => ({ ...f, [field]: v })); }
-
-  async function save() {
-    setSaving(true);
-    try {
-      await api.products.updateVariant(variant.id, {
-        marketingDescHe: form.marketingDescHe,
-        marketingDescEn: form.marketingDescEn,
-        guideDescHe: form.guideDescHe,
-        guideDescEn: form.guideDescEn,
-        programHe: form.programHe,
-        programEn: form.programEn,
-        durationHours: form.durationHours === '' ? null : Number(form.durationHours),
-        baseGuidePaymentMinor: toMinor(form.baseGuidePayment) ?? 0,
-        travelPaymentMinor: toMinor(form.travelPayment),
-        availablePublic: form.availablePublic,
-        availablePrivate: form.availablePrivate,
-        availableBusiness: form.availableBusiness,
-        active: form.active,
-      });
-      await onChange();
-    } catch (e) {
-      alert('שגיאה בשמירה: ' + (e.payload?.error || e.message));
-    } finally {
-      setSaving(false);
-    }
-  }
-  async function remove() {
-    if (!confirm(`למחוק את הוריאציה של "${variant.location?.nameHe}"?`)) return;
-    try { await api.products.removeVariant(variant.id); await onChange(); }
-    catch (e) {
-      // The backend blocks removing the LAST variant (a product must keep ≥1).
-      if (e.payload?.error === 'last_variant')
-        alert('לא ניתן למחוק את הוריאציה האחרונה. למוצר חייב להיות לפחות מיקום אחד — הוסיפו מיקום נוסף קודם, או מחקו את המוצר כולו.');
-      else alert('שגיאה: ' + (e.payload?.error || e.message));
-    }
-  }
-
-  return (
-    <div className="border-t border-gray-100 p-4 space-y-4">
-      <div className="grid grid-cols-1 gap-4">
-        <Field label="תיאור שיווקי (עברית)">
-          <RichEditor value={form.marketingDescHe} onChange={(h) => set('marketingDescHe', h)} ariaLabel="variant marketing he" minContentHeight={120} />
-        </Field>
-        <Field label="Marketing (EN)">
-          <RichEditor value={form.marketingDescEn} onChange={(h) => set('marketingDescEn', h)} ariaLabel="variant marketing en" minContentHeight={120} placeholder="Write here..." />
-        </Field>
-        <Field label="תיאור למדריך (עברית, פנימי)">
-          <RichEditor value={form.guideDescHe} onChange={(h) => set('guideDescHe', h)} ariaLabel="variant guide he" minContentHeight={100} />
-        </Field>
-        <Field label="Guide description (EN, internal)">
-          <RichEditor value={form.guideDescEn} onChange={(h) => set('guideDescEn', h)} ariaLabel="variant guide en" minContentHeight={100} placeholder="Write here..." />
-        </Field>
-      </div>
-
-      {/* "אז מה בתוכנית?" — the group title comes LIVE from Quote Structure (one
-          source of truth); this is the variant-specific CONTENT for that section. */}
-      <div className="rounded-xl border border-gray-200 bg-gray-50/60 p-4">
-        <div className="mb-2 flex items-baseline gap-2">
-          <span className="text-[13px] font-semibold text-gray-900">{programTitle?.he || 'אז מה בתוכנית?'}</span>
-          <span className="text-[11px] text-gray-400">· תוכן ההצעה לוריאציה זו</span>
-        </div>
-        <div className="grid grid-cols-1 gap-4">
-          <Field label="פסקה (עברית)">
-            <RichEditor value={form.programHe} onChange={(h) => set('programHe', h)} ariaLabel="variant program he" minContentHeight={110} />
-          </Field>
-          <Field label={`${programTitle?.en || "What's in the program?"} (EN)`}>
-            <RichEditor value={form.programEn} onChange={(h) => set('programEn', h)} ariaLabel="variant program en" minContentHeight={110} placeholder="Write here..." />
-          </Field>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <Field label="משך (שעות)">
-          <input value={form.durationHours} onChange={(e) => set('durationHours', e.target.value)} inputMode="decimal" dir="ltr" placeholder="2.5" className={INPUT} />
-          {form.durationHours !== '' && <div className="text-[12px] text-gray-500 mt-1">{durationDisplay(form.durationHours)}</div>}
-        </Field>
-      </div>
-
-      {/* Operational content (meeting / ending point) now lives in the Shared
-          Content Library — managed by reference, not duplicated per variant. The
-          legacy columns remain in the DB as a dual-read fallback until Slice 5. */}
-      <div>
-        <div className="text-[11px] text-gray-500 mb-1.5">תוכן תפעולי משותף</div>
-        <VariantSharedContent variant={variant} locations={locations} />
-      </div>
-
-      <Field label="גלריית תמונות להצעת מחיר">
-        <Gallery variantId={variant.id} images={variant.galleryImages} onChanged={onChange} folder="products/gallery" />
-      </Field>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <Field label="תשלום בסיס למדריך (₪)"><input value={form.baseGuidePayment} onChange={(e) => set('baseGuidePayment', e.target.value)} inputMode="decimal" dir="ltr" className={INPUT} /></Field>
-        <Field label="תשלום נסיעות (₪, אופציונלי)"><input value={form.travelPayment} onChange={(e) => set('travelPayment', e.target.value)} inputMode="decimal" dir="ltr" className={INPUT} /></Field>
-      </div>
-
-      <div>
-        <div className="text-[11px] text-gray-500 mb-1.5">זמינות לפי פורמט</div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-          <Check label="קבוצתי" checked={form.availablePublic} onChange={(c) => set('availablePublic', c)} />
-          <Check label="פרטי" checked={form.availablePrivate} onChange={(c) => set('availablePrivate', c)} />
-          <Check label="עסקי" checked={form.availableBusiness} onChange={(c) => set('availableBusiness', c)} />
-        </div>
-      </div>
-
-      <Check label="וריאציה פעילה" checked={form.active} onChange={(c) => set('active', c)} />
-
-      <div className="flex gap-2 pt-1">
-        <button onClick={save} disabled={saving} className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50">{saving ? 'שומר…' : 'שמור וריאציה'}</button>
-        <button onClick={remove} className="rounded-lg border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50">מחק וריאציה</button>
-      </div>
-    </div>
   );
 }
 
@@ -354,14 +218,6 @@ function Field({ label, children }) {
       <label className="text-[11px] text-gray-500">{label}</label>
       {children}
     </div>
-  );
-}
-function Check({ label, checked, onChange }) {
-  return (
-    <label className="flex items-center gap-1.5 text-[13px] text-gray-700">
-      <input type="checkbox" checked={!!checked} onChange={(e) => onChange(e.target.checked)} className="rounded border-gray-300" />
-      {label}
-    </label>
   );
 }
 function Avail({ children }) {

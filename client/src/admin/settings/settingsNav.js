@@ -41,6 +41,13 @@ export function resolveNode(pathname, dynamicLabel) {
   if (/^\/admin\/settings\/crm\/products\/[^/]+$/.test(pathname)) {
     return { path: pathname, label: dynamicLabel || 'מוצר', parent: '/admin/settings/crm/products' };
   }
+  // Variant editor (…/products/:id/variant/:variantId): its "back" falls to the
+  // parent product page. The dedicated editor renders its own header, so the
+  // breadcrumb here matters only for the back-fallback.
+  const variantMatch = pathname.match(/^(\/admin\/settings\/crm\/products\/[^/]+)\/variant\/[^/]+$/);
+  if (variantMatch) {
+    return { path: pathname, label: dynamicLabel || 'וריאציה', parent: variantMatch[1] };
+  }
   return null;
 }
 

@@ -66,6 +66,7 @@ import TcEmptyEditor from './admin/tour-content/EmptyEditor.jsx';
 import TcStationEditor from './admin/tour-content/StationEditor.jsx';
 import TcStationPreview from './admin/tour-content/StationPreview.jsx';
 import ProductDetail from './admin/products/ProductDetail.jsx';
+import VariantEditor from './admin/products/VariantEditor.jsx';
 import LocationsSettings from './admin/products/LocationsSettings.jsx';
 import PaymentConfigSettings from './admin/products/PaymentConfigSettings.jsx';
 import PricingBoard from './admin/pricing/PricingBoard.jsx';
@@ -184,6 +185,7 @@ export default function App() {
         <Route path="settings/crm/products-area" element={<ProductsAreaHome />} />
         <Route path="settings/crm/products" element={<ProductsSettings />} />
         <Route path="settings/crm/products/:id" element={<ProductDetail />} />
+        <Route path="settings/crm/products/:id/variant/:variantId" element={<VariantEditor />} />
         <Route path="settings/crm/locations" element={<LocationsSettings />} />
         <Route path="settings/crm/payment" element={<PaymentConfigSettings />} />
         <Route path="settings/crm/pricing" element={<PricingBoard />} />
