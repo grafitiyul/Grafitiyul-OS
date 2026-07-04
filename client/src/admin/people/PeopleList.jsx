@@ -346,8 +346,17 @@ function ActionsMenu({ person, onChanged }) {
   function toggle() {
     if (!open && btnRef.current) {
       const r = btnRef.current.getBoundingClientRect();
-      const width = 236;
-      setPos({ top: r.bottom + 4, left: Math.max(8, r.right - width) });
+      const width = 288;
+      const left = Math.max(8, r.right - width);
+      const spaceBelow = window.innerHeight - r.bottom;
+      const spaceAbove = r.top;
+      const openUp = spaceBelow < 380 && spaceAbove > spaceBelow;
+      setPos({
+        left,
+        top: openUp ? undefined : r.bottom + 6,
+        bottom: openUp ? window.innerHeight - r.top + 6 : undefined,
+        maxHeight: (openUp ? spaceAbove : spaceBelow) - 16,
+      });
     }
     setOpen((o) => !o);
   }
@@ -405,8 +414,8 @@ function ActionsMenu({ person, onChanged }) {
         ref={btnRef}
         type="button"
         onClick={toggle}
-        className={`inline-flex h-7 w-7 items-center justify-center rounded-md border text-gray-600 hover:bg-gray-50 ${
-          open ? 'bg-gray-100 border-gray-300' : 'border-gray-200'
+        className={`inline-flex h-7 w-7 items-center justify-center rounded-md border text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700 ${
+          open ? 'bg-gray-100 border-gray-300 text-gray-700' : 'border-gray-200'
         }`}
         title="פעולות"
         aria-haspopup="true"
@@ -419,91 +428,143 @@ function ActionsMenu({ person, onChanged }) {
         <div
           data-actions-menu
           dir="rtl"
-          className="fixed z-50 w-[236px] rounded-lg border border-gray-200 bg-white py-1 shadow-xl text-[13px]"
-          style={{ top: pos.top, left: pos.left }}
+          className="fixed z-50 w-72 overflow-y-auto rounded-2xl border border-gray-200 bg-white p-1.5 shadow-2xl ring-1 ring-black/5"
+          style={{ top: pos.top, bottom: pos.bottom, left: pos.left, maxHeight: pos.maxHeight }}
         >
-          <MenuHeader>פורטל מדריך</MenuHeader>
-          <MenuItem onClick={() => { window.open(guideUrl, '_blank', 'noopener'); setOpen(false); }}>
-            פתיחת פורטל ↗
-          </MenuItem>
-          <MenuItem onClick={() => copy(guideUrl, 'guide')}>
-            {copied === 'guide' ? 'הקישור הועתק ✓' : 'העתקת קישור'}
-          </MenuItem>
-          <MenuItem onClick={regenGuide} disabled={busy}>
-            יצירת קישור חדש
-          </MenuItem>
+          <MenuSection title="פורטל מדריך">
+            <ActionRow icon={<IconNew />} onClick={regenGuide} disabled={busy}>יצירת קישור חדש</ActionRow>
+            <ActionRow icon={<IconCopy />} onClick={() => copy(guideUrl, 'guide')}>
+              {copied === 'guide' ? 'הקישור הועתק' : 'העתקת קישור'}
+            </ActionRow>
+            <ActionRow icon={<IconOpen />} onClick={() => { window.open(guideUrl, '_blank', 'noopener'); setOpen(false); }}>
+              פתיחת פורטל
+            </ActionRow>
+          </MenuSection>
 
-          <MenuDivider />
-          <MenuHeader>פורטל ממשב</MenuHeader>
-          {evalUrl ? (
-            <>
-              <MenuItem onClick={() => { window.open(evalUrl, '_blank', 'noopener'); setOpen(false); }}>
-                פתיחת פורטל ↗
-              </MenuItem>
-              <MenuItem onClick={() => copy(evalUrl, 'eval')}>
-                {copied === 'eval' ? 'הקישור הועתק ✓' : 'העתקת קישור'}
-              </MenuItem>
-              <MenuItem onClick={regenEval} disabled={busy}>
-                יצירת קישור חדש
-              </MenuItem>
-            </>
-          ) : isGuide ? (
-            <MenuItem onClick={regenEval} disabled={busy}>
-              יצירת קישור ממשב
-            </MenuItem>
-          ) : (
-            <div className="px-3 py-1.5 text-[12px] text-gray-400">אין פורטל ממשב</div>
-          )}
+          <MenuSection title="פורטל ממשב">
+            {isGuide ? (
+              <>
+                <ActionRow icon={<IconNew />} onClick={regenEval} disabled={busy}>יצירת קישור חדש</ActionRow>
+                {evalUrl && (
+                  <>
+                    <ActionRow icon={<IconCopy />} onClick={() => copy(evalUrl, 'eval')}>
+                      {copied === 'eval' ? 'הקישור הועתק' : 'העתקת קישור'}
+                    </ActionRow>
+                    <ActionRow icon={<IconOpen />} onClick={() => { window.open(evalUrl, '_blank', 'noopener'); setOpen(false); }}>
+                      פתיחת פורטל ממשב
+                    </ActionRow>
+                  </>
+                )}
+              </>
+            ) : (
+              <div className="flex items-center gap-3 px-2.5 py-2 text-[13px] text-gray-400">
+                <span className="flex-1 text-right">אין פורטל ממשב</span>
+                <span className="shrink-0 text-gray-300"><IconOpen /></span>
+              </div>
+            )}
+          </MenuSection>
 
-          <MenuDivider />
-          <MenuHeader>ניהול</MenuHeader>
-          <MenuItem onClick={() => { setOpen(false); navigate(`/admin/people/${person.id}`); }}>
-            פתיחת כרטיס
-          </MenuItem>
-          <div className="px-3 pt-1 pb-0.5 text-[11px] text-gray-400">שינוי סטטוס</div>
-          <div className="px-2 pb-1 flex flex-wrap gap-1">
-            {LIFECYCLE_MENU.map((o) => (
-              <button
-                key={o.key}
-                type="button"
-                disabled={busy}
-                onClick={() => setLifecycle(o.key)}
-                className={`text-[12px] rounded px-2 py-0.5 border disabled:opacity-50 ${
-                  o.key === currentLifecycle
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                }`}
-              >
-                {o.label}
-              </button>
-            ))}
+          <MenuSection title="ניהול">
+            <ActionRow icon={<IconCard />} variant="link" onClick={() => { setOpen(false); navigate(`/admin/people/${person.id}`); }}>
+              פתיחת כרטיס ניהול
+            </ActionRow>
+          </MenuSection>
+
+          <MenuSection title="שינוי סטטוס">
+            <div className="flex flex-wrap gap-1.5 px-2 py-1">
+              {LIFECYCLE_MENU.map((o) => (
+                <button
+                  key={o.key}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setLifecycle(o.key)}
+                  className={`rounded-lg px-3 py-1 text-[12.5px] font-medium transition-colors disabled:opacity-50 ${
+                    o.key === currentLifecycle
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          </MenuSection>
+
+          <div className="mt-1.5 border-t border-gray-100 pt-1.5">
+            {person.portalEnabled ? (
+              <ActionRow icon={<IconRevoke />} variant="danger" onClick={toggleAccess} disabled={busy}>
+                ביטול גישה
+              </ActionRow>
+            ) : (
+              <ActionRow icon={<IconGrant />} variant="success" onClick={toggleAccess} disabled={busy}>
+                מתן גישה
+              </ActionRow>
+            )}
           </div>
-          <MenuItem onClick={toggleAccess} disabled={busy}>
-            {person.portalEnabled ? 'ביטול גישה' : 'מתן גישה'}
-          </MenuItem>
         </div>
       )}
     </>
   );
 }
 
-function MenuHeader({ children }) {
-  return <div className="px-3 pt-1 pb-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">{children}</div>;
+// ── Menu presentation ───────────────────────────────────────────────────────
+// A calm, scannable command menu. Section titles read like chapter headings
+// (GOS blue, semibold, underlined); rows are quiet with a muted icon on the
+// leading (left, RTL) edge and a soft hover. One consistent line-icon family.
+
+function MenuSection({ title, children }) {
+  return (
+    <div className="pt-2.5 first:pt-1">
+      <div className="mb-1 border-b border-gray-100 px-2.5 pb-1.5 text-right text-[13px] font-semibold text-blue-700">
+        {title}
+      </div>
+      {children}
+    </div>
+  );
 }
-function MenuDivider() {
-  return <div className="my-1 border-t border-gray-100" />;
-}
-function MenuItem({ children, onClick, disabled }) {
+
+const ROW_VARIANTS = {
+  default: { row: 'text-gray-700 hover:bg-gray-50', icon: 'text-gray-400' },
+  link: { row: 'text-blue-700 hover:bg-blue-50', icon: 'text-blue-500' },
+  danger: { row: 'text-red-600 hover:bg-red-50', icon: 'text-red-500' },
+  success: { row: 'text-emerald-700 hover:bg-emerald-50', icon: 'text-emerald-500' },
+};
+
+function ActionRow({ icon, children, onClick, disabled, variant = 'default' }) {
+  const v = ROW_VARIANTS[variant] || ROW_VARIANTS.default;
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="block w-full text-right px-3 py-1.5 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+      className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-[14px] transition-colors disabled:opacity-40 disabled:hover:bg-transparent ${v.row}`}
     >
-      {children}
+      <span className="flex-1 text-right">{children}</span>
+      <span className={`shrink-0 ${v.icon}`}>{icon}</span>
     </button>
   );
+}
+
+// One consistent 17px line-icon family (stroke = currentColor, so each row's
+// variant colours its own icon).
+const SVG = { width: 17, height: 17, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' };
+function IconNew() {
+  return <svg {...SVG}><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>;
+}
+function IconCopy() {
+  return <svg {...SVG}><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></svg>;
+}
+function IconOpen() {
+  return <svg {...SVG}><path d="M15 3h6v6" /><path d="M10 14 21 3" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6" /></svg>;
+}
+function IconCard() {
+  return <svg {...SVG}><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8.5" cy="10" r="2" /><path d="M6 16c.4-1.2 1.4-2 2.5-2s2.1.8 2.5 2" /><line x1="14" y1="9.5" x2="18" y2="9.5" /><line x1="14" y1="13.5" x2="18" y2="13.5" /></svg>;
+}
+function IconRevoke() {
+  return <svg {...SVG}><circle cx="12" cy="12" r="9" /><path d="m5.6 5.6 12.8 12.8" /></svg>;
+}
+function IconGrant() {
+  return <svg {...SVG}><circle cx="12" cy="12" r="9" /><path d="m8.5 12 2.4 2.4 4.6-4.8" /></svg>;
 }
 
 function LifecyclePill({ hint }) {
