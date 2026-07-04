@@ -199,6 +199,10 @@ export const api = {
     // this person to staff. NOT a plain lifecycle edit.
     acceptToTeam: (id) =>
       request(`/api/people/${id}/accept-to-team`, { method: 'POST' }),
+    // (Re)generate the evaluator ("פורטל ממשב") portal link for a guide. GOS
+    // triggers recruitment (token store); returns { ok, url } with the fresh link.
+    rotateEvaluatorToken: (id) =>
+      request(`/api/people/${id}/evaluator-portal/rotate`, { method: 'POST' }),
     uploadImage: async (id, file) => {
       const q = qs({ filename: file.name });
       const res = await fetch(`/api/people/${id}/image${q}`, {

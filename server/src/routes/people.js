@@ -429,6 +429,50 @@ router.post(
   }),
 );
 
+// ---------- Evaluator portal link (GOS-initiated regenerate) ----------
+// GOS is the user-facing place to (re)generate the evaluator ("פורטל ממשב") link.
+// The token still physically lives in recruitment (temporary), so GOS triggers
+// recruitment's secret-gated rotate, which get-or-creates the guide's evaluator
+// and issues one fresh token. GOS builds and returns the /e/<token> URL. Only
+// guides have an evaluator portal. Visible error on failure (no hidden fallback).
+router.post(
+  '/:id/evaluator-portal/rotate',
+  handle(async (req, res) => {
+    const person = await prisma.personRef.findUnique({
+      where: { id: req.params.id },
+      select: { externalPersonId: true },
+    });
+    if (!person) return res.status(404).json({ error: 'not_found' });
+    if (!String(person.externalPersonId).startsWith('guide:')) {
+      return res.status(400).json({ error: 'not_a_guide', message: 'פורטל ממשב קיים רק למדריכים' });
+    }
+    const base = process.env.RECRUITMENT_API_BASE_URL;
+    const secret = process.env.STAFF_EVENT_SECRET;
+    if (!base || !secret) return res.status(500).json({ error: 'recruitment_trigger_not_configured' });
+
+    let r;
+    try {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 8000);
+      r = await fetch(`${String(base).replace(/\/+$/, '')}/api/staff/evaluator-portal/rotate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-staff-event-secret': secret },
+        body: JSON.stringify({ externalPersonId: person.externalPersonId }),
+        signal: ctl.signal,
+      });
+      clearTimeout(t);
+    } catch (e) {
+      return res.status(502).json({ error: 'recruitment_unavailable', detail: e?.message || 'network error' });
+    }
+    if (!r.ok) {
+      const txt = await r.text().catch(() => '');
+      return res.status(502).json({ error: 'evaluator_portal_rotate_failed', status: r.status, detail: txt.slice(0, 300) });
+    }
+    const body = await r.json().catch(() => ({}));
+    res.json({ ok: true, url: evaluatorPortalUrl(body.token) });
+  }),
+);
+
 // ---------- Reject in training (GOS-initiated trigger) ----------
 // The GOS admin can start a "reject in training". Recruitment is the ONLY system
 // that RECORDS the rejection outcome, so GOS calls recruitment first; only on

@@ -319,6 +319,7 @@ function ActionsMenu({ person, onChanged }) {
 
   const guideUrl = `${window.location.origin}/p/${person.portalToken}`;
   const evalUrl = person.evaluatorPortalUrl || null;
+  const isGuide = String(person.externalPersonId || '').startsWith('guide:');
   const currentLifecycle = person.lifecycleHint || 'none';
 
   useEffect(() => {
@@ -374,6 +375,13 @@ function ActionsMenu({ person, onChanged }) {
   async function regenGuide() {
     if (!window.confirm('ליצור קישור פורטל מדריך חדש? הקישור הנוכחי יפסיק לעבוד מיידית.')) return;
     await run(() => api.people.rotateToken(person.id));
+  }
+
+  async function regenEval() {
+    // Regenerate replaces an existing link (needs a heads-up); creating a first
+    // link does not. Both use the same GOS→recruitment rotate endpoint.
+    if (evalUrl && !window.confirm('ליצור קישור פורטל ממשב חדש? הקישור הנוכחי יפסיק לעבוד מיידית.')) return;
+    await run(() => api.people.rotateEvaluatorToken(person.id));
   }
 
   async function setLifecycle(value) {
@@ -435,9 +443,16 @@ function ActionsMenu({ person, onChanged }) {
               <MenuItem onClick={() => copy(evalUrl, 'eval')}>
                 {copied === 'eval' ? 'הקישור הועתק ✓' : 'העתקת קישור'}
               </MenuItem>
+              <MenuItem onClick={regenEval} disabled={busy}>
+                יצירת קישור חדש
+              </MenuItem>
             </>
+          ) : isGuide ? (
+            <MenuItem onClick={regenEval} disabled={busy}>
+              יצירת קישור ממשב
+            </MenuItem>
           ) : (
-            <div className="px-3 py-1.5 text-[12px] text-gray-400">אין קישור ממשב פעיל</div>
+            <div className="px-3 py-1.5 text-[12px] text-gray-400">אין פורטל ממשב</div>
           )}
 
           <MenuDivider />
