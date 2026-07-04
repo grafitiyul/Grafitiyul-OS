@@ -64,6 +64,32 @@ test('normalizeLayout: hero image requires a url; text is trimmed', () => {
   assert.equal(normalizeLayout({ hero: { titleHe: '   ' } }).hero.titleHe, null);
 });
 
+test('normalizeLayout: new premium-cover hero defaults are present', () => {
+  const h = normalizeLayout(null).hero;
+  assert.equal(h.logoSizePx, 56);
+  assert.equal(h.logoMargin, 24);
+  assert.equal(h.contentV, 'center');
+  assert.equal(h.cardEnabled, true);
+  assert.equal(h.cardOpacity, 70);
+  assert.equal(h.cardBlur, 'md');
+  assert.equal(h.cardColor, '#081220');
+  assert.deepEqual(h.cardFields, { preparedFor: true, org: true, generatedOn: true, preparedBy: true });
+});
+
+test('normalizeLayout: logo px + margin are clamped; invalid enums fall back', () => {
+  const h = normalizeLayout({ hero: { logoSizePx: 9999, logoMargin: -5, contentV: 'sideways', cardBlur: 'blurry' } }).hero;
+  assert.equal(h.logoSizePx, 220); // clamped to max
+  assert.equal(h.logoMargin, 0); // clamped to min
+  assert.equal(h.contentV, 'center'); // invalid → default
+  assert.equal(h.cardBlur, 'md'); // invalid → default
+});
+
+test('normalizeLayout: cardFields — missing keys default visible, explicit false respected', () => {
+  const h = normalizeLayout({ hero: { cardEnabled: false, cardFields: { org: false } } }).hero;
+  assert.equal(h.cardEnabled, false);
+  assert.deepEqual(h.cardFields, { preparedFor: true, org: false, generatedOn: true, preparedBy: true });
+});
+
 // ── assembleComposition with a template ──────────────────────────────────────
 
 const deal = () => ({

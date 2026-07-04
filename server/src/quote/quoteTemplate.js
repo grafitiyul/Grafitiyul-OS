@@ -35,9 +35,12 @@ const OVERLAY_PRESETS = ['light', 'medium', 'dark'];
 
 // Presentation enums for the premium hero cover.
 const LOGO_POSITIONS = ['start', 'end']; // reading-start / reading-end corner (RTL-aware)
-const LOGO_SIZES = ['sm', 'md', 'lg'];
+const LOGO_SIZES = ['sm', 'md', 'lg']; // legacy, kept for back-compat; logoSizePx is the source of truth
 const CARD_POSITIONS = ['top-start', 'top-end', 'bottom-start', 'bottom-end'];
 const TITLE_ALIGNS = ['start', 'center'];
+const CONTENT_V = ['top', 'center', 'bottom']; // vertical anchor of the hero content column
+const CARD_BLURS = ['none', 'sm', 'md', 'lg']; // glass blur strength
+const CARD_FIELD_KEYS = ['preparedFor', 'org', 'generatedOn', 'preparedBy'];
 
 const isStr = (v) => typeof v === 'string' && v.trim() !== '';
 const cleanText = (v) => (isStr(v) ? String(v).trim().slice(0, 300) : null);
@@ -47,6 +50,17 @@ const pct = (v, def) => {
   const n = Number(v);
   return Number.isFinite(n) ? Math.min(100, Math.max(0, Math.round(n))) : def;
 };
+const intOr = (v, def, min, max) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : def;
+};
+// Per-field visibility for the info card. Object of booleans; missing → visible.
+function normalizeCardFields(raw) {
+  const r = raw && typeof raw === 'object' ? raw : {};
+  const out = {};
+  for (const k of CARD_FIELD_KEYS) out[k] = r[k] !== false;
+  return out;
+}
 
 // The default layout REPRODUCES a calm, premium cover: dark overlay ~40%, logo
 // top reading-start, dark-glass info card top reading-end. Older saved layouts
@@ -61,12 +75,19 @@ export const DEFAULT_LAYOUT = {
     logo: null, // { id, url } | null — white brand logo (Quote Structure); null → bundled default
     overlay: 'dark', // legacy preset, retained for back-compat
     overlayEnabled: true,
-    overlayColor: '#0b1220',
-    overlayOpacity: 40, // 0–100
-    logoPosition: 'start',
-    logoSize: 'md',
-    cardPosition: 'top-end',
-    cardOpacity: 82, // 0–100 (darkness of the glass info card)
+    overlayColor: '#081220',
+    overlayOpacity: 42, // 0–100
+    logoPosition: 'start', // reading-start corner (top-right in RTL) — the reference default
+    logoSize: 'md', // legacy enum, retained for back-compat
+    logoSizePx: 56, // explicit logo height in px (source of truth); ~176px wide at the 660×210 lockup ratio
+    logoMargin: 24, // logo inset from the hero corner, px
+    contentV: 'center', // vertical anchor of the title + card column
+    cardPosition: 'top-end', // legacy, retained for back-compat
+    cardEnabled: true,
+    cardOpacity: 70, // 0–100 (darkness of the glass info card)
+    cardBlur: 'md',
+    cardColor: '#081220',
+    cardFields: { preparedFor: true, org: true, generatedOn: true, preparedBy: true },
     titleAlign: 'start',
   },
   sections: SECTION_KEYS.map((key) => ({ key, hidden: false })),
@@ -96,8 +117,15 @@ function normalizeHero(raw) {
     overlayOpacity: pct(h.overlayOpacity, D.overlayOpacity),
     logoPosition: oneOf(h.logoPosition, LOGO_POSITIONS, D.logoPosition),
     logoSize: oneOf(h.logoSize, LOGO_SIZES, D.logoSize),
+    logoSizePx: intOr(h.logoSizePx, D.logoSizePx, 28, 220),
+    logoMargin: intOr(h.logoMargin, D.logoMargin, 0, 96),
+    contentV: oneOf(h.contentV, CONTENT_V, D.contentV),
     cardPosition: oneOf(h.cardPosition, CARD_POSITIONS, D.cardPosition),
+    cardEnabled: typeof h.cardEnabled === 'boolean' ? h.cardEnabled : D.cardEnabled,
     cardOpacity: pct(h.cardOpacity, D.cardOpacity),
+    cardBlur: oneOf(h.cardBlur, CARD_BLURS, D.cardBlur),
+    cardColor: hexOr(h.cardColor, D.cardColor),
+    cardFields: normalizeCardFields(h.cardFields),
     titleAlign: oneOf(h.titleAlign, TITLE_ALIGNS, D.titleAlign),
   };
 }

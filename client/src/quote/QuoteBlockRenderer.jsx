@@ -1,5 +1,5 @@
 import { formatMinor } from '../lib/money.js';
-import defaultHeroLogo from '../public/assets/home/photos/footer-logo.png';
+import GrafitiyulHeroLogo from './GrafitiyulHeroLogo.jsx';
 
 // Quote document renderer — visual polish pass (Hebrew-first, premium).
 //
@@ -78,15 +78,20 @@ function Heading({ children }) {
 }
 
 // ── Hero — a premium proposal cover ──────────────────────────────────────────
-// The image is the ground; a configurable overlay + permanent legibility scrims
-// keep every element readable. Logo (corner), a bold title/product thesis, and a
-// single dark-glass metadata card — no dashboard, no duplicated facts.
+// The image is the ground; a configurable overlay + a directional scrim (darker
+// on the reading-start side, where the text lives) keep every element readable.
+// One reading-start column holds the logo, a bold title/product thesis, and a
+// single dark-glass metadata card — no dashboard, no duplicated facts. The layout
+// is direction-aware: RTL anchors to the right, LTR mirrors to the left.
 
 const HERO_LABELS = {
   he: { preparedFor: 'הוכן עבור', org: 'ארגון', generatedOn: 'הופק בתאריך', preparedBy: 'הוכן על ידי' },
   en: { preparedFor: 'Prepared for', org: 'Organization', generatedOn: 'Generated on', preparedBy: 'Prepared by' },
 };
-const LOGO_SIZE_PX = { sm: 46, md: 62, lg: 82 };
+// Legacy enum → px fallback (only used when a saved layout predates logoSizePx).
+const LOGO_SIZE_PX = { sm: 44, md: 56, lg: 76 };
+const CONTENT_V_CLASS = { top: 'justify-start pt-24', center: 'justify-center', bottom: 'justify-end pb-4' };
+const CARD_BLUR_CLASS = { none: '', sm: 'backdrop-blur-sm', md: 'backdrop-blur-md', lg: 'backdrop-blur-xl' };
 
 const svgProps = { width: 15, height: 15, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' };
 const HERO_ICONS = {
@@ -97,7 +102,7 @@ const HERO_ICONS = {
 };
 
 function hexToRgba(hex, alpha) {
-  const h = String(hex || '#0b1220').replace('#', '');
+  const h = String(hex || '#081220').replace('#', '');
   const n = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
   const r = parseInt(n.slice(0, 2), 16) || 0;
   const g = parseInt(n.slice(2, 4), 16) || 0;
@@ -108,11 +113,38 @@ function hexToRgba(hex, alpha) {
 function CoverMetaRow({ icon, label, value }) {
   return (
     <div className="flex items-center gap-3 py-2.5">
-      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-white/[.07] text-teal-300">{icon}</span>
+      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/[.08] text-teal-300">{icon}</span>
       <div className="min-w-0">
         <div className="text-[10px] font-medium uppercase tracking-[.14em] text-white/45">{label}</div>
         <div className="truncate text-[14.5px] font-semibold leading-snug text-white">{value || '—'}</div>
       </div>
+    </div>
+  );
+}
+
+// Dark-glass info card — inline under the title, on the reading-start side. Rows
+// are driven by heroCardFields (per-field show/hide); dividers appear only
+// between visible rows so a hidden field never leaves a gap.
+function InfoCard({ d, lang, L }) {
+  const f = d.heroCardFields || {};
+  const rows = [
+    f.preparedFor !== false && { key: 'preparedFor', icon: HERO_ICONS.preparedFor, label: L.preparedFor, value: d.customerName },
+    f.org !== false && { key: 'org', icon: HERO_ICONS.org, label: L.org, value: d.organizationName },
+    f.generatedOn !== false && { key: 'generatedOn', icon: HERO_ICONS.generatedOn, label: L.generatedOn, value: fmtDate(d.createdAt, lang) },
+    f.preparedBy !== false && { key: 'preparedBy', icon: HERO_ICONS.preparedBy, label: L.preparedBy, value: d.by },
+  ].filter(Boolean);
+  if (rows.length === 0) return null;
+  const alpha = (typeof d.heroCardOpacity === 'number' ? d.heroCardOpacity : 70) / 100;
+  const blur = CARD_BLUR_CLASS[d.heroCardBlur] ?? CARD_BLUR_CLASS.md;
+  return (
+    <div className={`mt-9 w-full max-w-[360px] rounded-2xl px-5 py-1.5 shadow-2xl ring-1 ring-white/10 ${blur}`}
+      style={{ background: hexToRgba(d.heroCardColor || '#081220', alpha) }}>
+      {rows.map((r, i) => (
+        <div key={r.key}>
+          {i > 0 && <div className="border-t border-white/10" />}
+          <CoverMetaRow icon={r.icon} label={r.label} value={r.value} />
+        </div>
+      ))}
     </div>
   );
 }
@@ -123,58 +155,93 @@ function Cover({ d, lang }) {
   const bg = d.heroImageUrl
     ? { backgroundImage: `url(${d.heroImageUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' }
     : { backgroundImage: `linear-gradient(135deg, ${TEAL}, #0b6f69)` };
-  const title = d.heroTitle || (en ? 'Proposal' : 'הצעת מחיר');
+  const title = d.heroTitle || (en ? 'Price Quote' : 'הצעת מחיר');
 
   const overlayOn = d.heroOverlayEnabled !== false;
-  const overlayColor = d.heroOverlayColor || '#0b1220';
-  const overlayOpacity = (typeof d.heroOverlayOpacity === 'number' ? d.heroOverlayOpacity : 40) / 100;
-  const logoUrl = d.heroLogoUrl || defaultHeroLogo;
-  const logoPx = LOGO_SIZE_PX[d.heroLogoSize] || LOGO_SIZE_PX.md;
+  const overlayColor = d.heroOverlayColor || '#081220';
+  const overlayOpacity = (typeof d.heroOverlayOpacity === 'number' ? d.heroOverlayOpacity : 42) / 100;
+  const logoUrl = d.heroLogoUrl || null; // null → built-in GrafitiyulHeroLogo
+  const logoPx = typeof d.heroLogoSizePx === 'number' ? d.heroLogoSizePx : (LOGO_SIZE_PX[d.heroLogoSize] || LOGO_SIZE_PX.md);
+  const logoMargin = typeof d.heroLogoMargin === 'number' ? d.heroLogoMargin : 24;
   const logoAtStart = (d.heroLogoPosition || 'start') === 'start';
   const titleCenter = d.heroTitleAlign === 'center';
+  const contentV = CONTENT_V_CLASS[d.heroContentV] || CONTENT_V_CLASS.center;
+  const cardOn = d.heroCardEnabled !== false;
 
-  // Card position resolved to PHYSICAL sides so RTL/LTR both place it natively.
-  const [cardV, cardH] = (d.heroCardPosition || 'top-end').split('-');
-  const cardSide = cardH === 'start' ? (en ? 'left' : 'right') : en ? 'right' : 'left';
-  const cardAlpha = (typeof d.heroCardOpacity === 'number' ? d.heroCardOpacity : 82) / 100;
+  // Physical sides for the current direction (reading-start = right in RTL).
+  const startSide = en ? 'left' : 'right';
+  const logoSide = logoAtStart ? startSide : (en ? 'right' : 'left');
+  // Directional scrim: darkest on the reading-start side (behind the text),
+  // fading to reveal the photo on the reading-end side.
+  const gradDir = en ? 'to right' : 'to left';
 
   return (
     <div className="relative w-full overflow-hidden" style={bg}>
-      {/* configurable overlay — above the image, below all content */}
+      {/* configurable flat overlay — above the image, below all content */}
       {overlayOn && <div className="absolute inset-0" style={{ background: overlayColor, opacity: overlayOpacity }} />}
-      {/* permanent legibility scrims — guarantee contrast whatever the overlay is */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-2/3" style={{ background: 'linear-gradient(to top, rgba(0,0,0,.6), rgba(0,0,0,0))' }} />
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-24" style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,.28), rgba(0,0,0,0))' }} />
+      {/* directional legibility scrim — darker behind the text column */}
+      <div className="pointer-events-none absolute inset-0" style={{ background: `linear-gradient(${gradDir}, ${hexToRgba(overlayColor, 0.78)}, ${hexToRgba(overlayColor, 0.32)} 44%, rgba(0,0,0,0) 74%)` }} />
+      {/* soft bottom scrim for the product line + card */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2" style={{ background: 'linear-gradient(to top, rgba(0,0,0,.45), rgba(0,0,0,0))' }} />
 
-      {/* floating info card — one metadata panel, generous margin so it never
-          covers the subject or the title. */}
-      <div className="absolute z-20" style={{ [cardV]: '1.75rem', [cardSide]: '1.75rem', width: 250, maxWidth: '68%' }}>
-        <div className="rounded-2xl px-5 py-3 shadow-2xl ring-1 ring-white/10 backdrop-blur-md" style={{ background: hexToRgba('#090d16', cardAlpha) }}>
-          <CoverMetaRow icon={HERO_ICONS.preparedFor} label={L.preparedFor} value={d.customerName} />
-          <div className="border-t border-white/10" />
-          <CoverMetaRow icon={HERO_ICONS.org} label={L.org} value={d.organizationName} />
-          <div className="border-t border-white/10" />
-          <CoverMetaRow icon={HERO_ICONS.generatedOn} label={L.generatedOn} value={fmtDate(d.createdAt, lang)} />
-          <div className="border-t border-white/10" />
-          <CoverMetaRow icon={HERO_ICONS.preparedBy} label={L.preparedBy} value={d.by} />
-        </div>
+      {/* logo — corner (reading start/end), configurable size + margin */}
+      <div className="absolute z-20" style={{ top: logoMargin, [logoSide]: logoMargin }}>
+        {logoUrl ? (
+          <img src={logoUrl} alt="Grafitiyul" style={{ height: logoPx }} className="w-auto drop-shadow-[0_2px_12px_rgba(0,0,0,.5)]" />
+        ) : (
+          <GrafitiyulHeroLogo height={logoPx} className="drop-shadow-[0_2px_12px_rgba(0,0,0,.5)]" />
+        )}
       </div>
 
-      <div className="relative z-10 flex min-h-[600px] flex-col justify-between p-8 sm:p-12">
-        {/* logo — corner (reading start/end) */}
-        <div className={`flex ${logoAtStart ? 'justify-start' : 'justify-end'}`}>
-          <img src={logoUrl} alt="Grafitiyul" style={{ height: logoPx }} className="w-auto drop-shadow-[0_2px_10px_rgba(0,0,0,.45)]" />
-        </div>
-        {/* title thesis — proposal title + product */}
-        <div className={`max-w-[82%] ${titleCenter ? 'mx-auto text-center' : 'text-start'}`}>
+      {/* content column — one reading-start stack: title → product → card */}
+      <div className={`relative z-10 flex min-h-[620px] flex-col ${contentV} p-8 sm:p-14`}>
+        <div className={`w-full max-w-[420px] ${titleCenter ? 'mx-auto text-center' : 'text-start me-auto'}`}>
           <div className={`mb-5 h-1.5 w-14 rounded-full ${titleCenter ? 'mx-auto' : ''}`} style={{ background: TEAL }} />
-          <h1 className="text-[50px] font-black leading-[1.03] text-white [text-wrap:balance] drop-shadow-[0_2px_16px_rgba(0,0,0,.5)] sm:text-[66px]">{title}</h1>
-          {d.productName && <p className="mt-4 text-[22px] font-medium text-white/90 drop-shadow-[0_1px_10px_rgba(0,0,0,.5)] sm:text-[26px]">{d.productName}</p>}
-          {d.heroSubtitle && <p className="mt-2 text-[16px] text-white/75 drop-shadow-[0_1px_8px_rgba(0,0,0,.5)] sm:text-[18px]">{d.heroSubtitle}</p>}
+          <h1 className="text-[46px] font-black leading-[1.03] text-white [text-wrap:balance] drop-shadow-[0_2px_16px_rgba(0,0,0,.55)] sm:text-[60px]">{title}</h1>
+          {d.productName && <p className="mt-4 text-[21px] font-medium text-white/90 drop-shadow-[0_1px_10px_rgba(0,0,0,.55)] sm:text-[25px]">{d.productName}</p>}
+          {d.heroSubtitle && <p className="mt-2 text-[16px] text-white/75 drop-shadow-[0_1px_8px_rgba(0,0,0,.55)] sm:text-[18px]">{d.heroSubtitle}</p>}
+          {cardOn && <InfoCard d={d} lang={lang} L={L} />}
         </div>
       </div>
     </div>
   );
+}
+
+// Map global-template hero SETTINGS → the Cover's data shape, for previews that
+// have no live deal (e.g. the Quote Structure editor). Mirrors composer.buildHero
+// field-for-field, filling runtime facts (customer/org/date/product) with the
+// provided sample so the editor preview looks exactly like a produced cover.
+export function previewHeroData(hero = {}, lang = 'he', sample = {}) {
+  const en = lang === 'en';
+  return {
+    productName: en ? (sample.productNameEn || 'Urban Graffiti Tour') : (sample.productNameHe || 'סיור גרפיטי אורבני'),
+    customerName: sample.customerName || (en ? 'Elinor Kisilov' : 'אלינור קיסלוב'),
+    organizationName: sample.organizationName || (en ? 'Action' : 'אקשן'),
+    createdAt: sample.createdAt || null,
+    heroImageUrl: hero.image?.url || sample.heroImageUrl || null,
+    heroTitle: (en ? hero.titleEn : hero.titleHe) || null,
+    heroSubtitle: (en ? hero.subtitleEn : hero.subtitleHe) || null,
+    heroLogoUrl: hero.logo?.url || null,
+    heroOverlayEnabled: hero.overlayEnabled !== false,
+    heroOverlayColor: hero.overlayColor || '#081220',
+    heroOverlayOpacity: typeof hero.overlayOpacity === 'number' ? hero.overlayOpacity : 42,
+    heroLogoPosition: hero.logoPosition || 'start',
+    heroLogoSizePx: typeof hero.logoSizePx === 'number' ? hero.logoSizePx : 56,
+    heroLogoMargin: typeof hero.logoMargin === 'number' ? hero.logoMargin : 24,
+    heroContentV: hero.contentV || 'center',
+    heroCardEnabled: hero.cardEnabled !== false,
+    heroCardOpacity: typeof hero.cardOpacity === 'number' ? hero.cardOpacity : 70,
+    heroCardBlur: hero.cardBlur || 'md',
+    heroCardColor: hero.cardColor || '#081220',
+    heroCardFields: hero.cardFields || null,
+    heroTitleAlign: hero.titleAlign || 'start',
+    by: 'Grafitiyul',
+  };
+}
+
+// The cover, exported for the Quote Structure live editor preview.
+export function HeroCover({ d, lang = 'he' }) {
+  return <Cover d={d} lang={lang} />;
 }
 
 // ── Technical Details — value-dominant tiles (no table feel) ─────────────────
