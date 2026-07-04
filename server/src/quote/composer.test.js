@@ -373,3 +373,21 @@ test('composer: deal location still wins for the city tile when present', () => 
   const deal = baseDeal({ location: { nameHe: 'תל אביב', nameEn: 'Tel Aviv' }, productVariant: { durationHours: 2, location: { nameHe: 'ירושלים' } } });
   assert.equal(blockByKey(compose({ deal }), 'tour_details').data.city, 'תל אביב');
 });
+
+// ── pricing carries payment term/method for the merged pricing section ────────
+test('composer: pricing block includes the selected payment term + method', () => {
+  const p = blockByKey(compose(), 'pricing').data;
+  assert.equal(p.paymentTerm, 'שוטף+30');
+  assert.equal(p.paymentMethod, 'העברה');
+  // English uses the En names.
+  const pen = blockByKey(compose({ lang: 'en', document: { id:'qd_1', dealId:'deal_1', quoteVersionId:'ver_1', language:'en', displayProductName:null, compositionDraft:null } }), 'pricing').data;
+  assert.equal(pen.paymentTerm, 'Net 30');
+  assert.equal(pen.paymentMethod, 'Transfer');
+});
+
+test('composer: pricing payment fields are null when the deal has no term/method', () => {
+  const deal = baseDeal({ paymentTerm: null, paymentMethodRef: null });
+  const p = blockByKey(compose({ deal }), 'pricing').data;
+  assert.equal(p.paymentTerm, null);
+  assert.equal(p.paymentMethod, null);
+});

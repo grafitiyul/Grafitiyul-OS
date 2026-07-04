@@ -294,6 +294,10 @@ function buildPricing({ deal, lines, displayName, lang, template }) {
       excludedInactive,
       // Frozen Builder headline gross. The quote does NOT recompute totals/VAT.
       totals: { grossMinor: Number(deal?.valueMinor ?? 0) },
+      // Payment terms/method shown INSIDE the pricing section (presentation only —
+      // same source as the payment_terms block; no engine/calculation change).
+      paymentTerm: deal?.paymentTerm ? pickLang(deal.paymentTerm.nameHe, deal.paymentTerm.nameEn, lang) : null,
+      paymentMethod: deal?.paymentMethodRef ? pickLang(deal.paymentMethodRef.nameHe, deal.paymentMethodRef.nameEn, lang) : null,
     },
     warnings: [],
   };

@@ -19,15 +19,17 @@ const T = {
   he: {
     contact: 'מוזמינה', org: 'ארגון', by: 'הוכן ע"י', date: 'הופק בתאריך',
     city: 'איפה', tourDate: 'תאריך', time: 'שעה', participants: 'משתתפים', language: 'שפה', duration: 'משך',
-    paymentTerm: 'תנאי תשלום', paymentMethod: 'אמצעי תשלום', total: 'סה״כ',
+    paymentTerm: 'תנאי תשלום', paymentMethod: 'אמצעי תשלום', total: 'סה״כ', totalToPay: 'סה״כ לתשלום',
     vat: { included: 'כולל מע״מ', excluded: 'לפני מע״מ', exempt: 'פטור', inherit: '' },
+    vatStatus: { included: 'המחירים כוללים מע״מ כחוק', excluded: 'המחירים לפני מע״מ', exempt: 'פטור ממע״מ' },
     hours: 'שעות', noContent: '— אין תוכן —', signaturePlaceholder: 'אזור חתימה / אישור — ייבנה בשלב הבא',
   },
   en: {
     contact: 'Contact', org: 'Organization', by: 'By', date: 'Date',
     city: 'Location', tourDate: 'Date', time: 'Time', participants: 'Participants', language: 'Language', duration: 'Duration',
-    paymentTerm: 'Payment terms', paymentMethod: 'Payment method', total: 'Total',
+    paymentTerm: 'Payment terms', paymentMethod: 'Payment method', total: 'Total', totalToPay: 'Total to pay',
     vat: { included: 'incl. VAT', excluded: 'excl. VAT', exempt: 'VAT exempt', inherit: '' },
+    vatStatus: { included: 'Prices include VAT as required by law', excluded: 'Prices before VAT', exempt: 'VAT exempt' },
     hours: 'hours', noContent: '— no content —', signaturePlaceholder: 'Signature / approval area — coming soon',
   },
 };
@@ -320,28 +322,81 @@ function FactCard({ d, lang }) {
   );
 }
 
+// One VAT status for the whole quote (never per row). Prefer the product line's
+// mode, else the first explicit mode, else "included" (VAT-inclusive is the norm).
+function resolveVatStatus(lines) {
+  const explicit = (m) => m === 'included' || m === 'excluded' || m === 'exempt';
+  const product = (lines || []).find((l) => l.kind === 'product' && explicit(l.vatMode));
+  if (product) return product.vatMode;
+  const any = (lines || []).find((l) => explicit(l.vatMode));
+  return any ? any.vatMode : 'included';
+}
+
+// Small label / large value pair (payment info).
+function PayPair({ label, value }) {
+  return (
+    <div className="text-start">
+      <div className="text-[12px] font-medium tracking-wide text-gray-400">{label}</div>
+      <div className="mt-1 text-[18px] font-semibold leading-snug text-gray-900">{value}</div>
+    </div>
+  );
+}
+
+// Premium price section — read the price in under 5 seconds. Each line is its own
+// generously-spaced row: bold name, lighter supporting info / calculation, and a
+// visually dominant amount. One VAT status + payment info sit below, and the grand
+// total is the unmistakable finale. Typography + spacing, not table chrome.
 function PricingCard({ d, lang }) {
   const t = tt(lang);
-  const vat = t.vat;
   const lines = d.lines || [];
+  const vatStatus = t.vatStatus[resolveVatStatus(lines)];
+  const hasPayment = !!(d.paymentTerm || d.paymentMethod);
+
   return (
-    <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-gray-100">
-      {lines.map((l, i) => (
-        <div key={i} className="flex items-start justify-between gap-4 border-b border-gray-100 px-7 py-6">
-          <div className="min-w-0">
-            <div className="text-[17px] font-semibold text-gray-900">{l.label || '—'}</div>
-            {l.quantity > 1 && <div className="mt-0.5 text-[13px] text-gray-400" dir="ltr">{l.quantity} × {formatMinor(l.unitPriceMinor, d.currency)}</div>}
-            <RichNote value={l.note} />
+    <div className="text-start">
+      {/* line rows */}
+      <div className="divide-y divide-gray-100">
+        {lines.map((l, i) => (
+          <div key={i} className="flex items-start justify-between gap-6 py-6 first:pt-0">
+            <div className="min-w-0 flex-1">
+              <div className="text-[18px] font-semibold leading-snug text-gray-900">{l.label || '—'}</div>
+              {/* calculation — shown as "qty × unit", not a quantity column */}
+              {l.quantity > 1 && (
+                <div className="mt-1.5 text-[14px] text-gray-400" dir="ltr">{l.quantity} × {formatMinor(l.unitPriceMinor, d.currency)}</div>
+              )}
+              {/* supporting information (descriptive), lighter */}
+              <RichNote value={l.note} />
+            </div>
+            {/* amount — dominant */}
+            <div className="shrink-0 pt-0.5 text-end text-[21px] font-bold tabular-nums text-gray-900" dir="ltr">
+              {formatMinor(l.lineTotalMinor, d.currency)}
+            </div>
           </div>
-          <div className="shrink-0 text-end">
-            <div className="text-[17px] font-bold text-gray-900" dir="ltr">{formatMinor(l.lineTotalMinor, d.currency)}</div>
-            {vat[l.vatMode] ? <div className="text-[11px] text-gray-400">{vat[l.vatMode]}</div> : null}
-          </div>
+        ))}
+      </div>
+
+      {/* one VAT status for the whole quote */}
+      {vatStatus && (
+        <div className="mt-6 flex items-center gap-2 text-[14px] text-gray-500">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={TEAL} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6 9 17l-5-5" /></svg>
+          {vatStatus}
         </div>
-      ))}
-      <div className="flex items-center justify-between bg-gray-50/60 px-7 py-6">
-        <span className="text-[16px] font-semibold text-gray-500">{t.total}</span>
-        <span className="text-[26px] font-extrabold" style={{ color: TEAL }} dir="ltr">{formatMinor(d.totals?.grossMinor, d.currency)}</span>
+      )}
+
+      {/* payment information — selected values only */}
+      {hasPayment && (
+        <div className="mt-8 grid grid-cols-1 gap-x-10 gap-y-6 border-t border-gray-100 pt-7 sm:grid-cols-2">
+          {d.paymentTerm && <PayPair label={t.paymentTerm} value={d.paymentTerm} />}
+          {d.paymentMethod && <PayPair label={t.paymentMethod} value={d.paymentMethod} />}
+        </div>
+      )}
+
+      {/* grand total — impossible to miss */}
+      <div className="mt-8 flex items-end justify-between gap-6 border-t-2 border-gray-900/10 pt-6">
+        <span className="pb-1.5 text-[15px] font-medium text-gray-500">{t.totalToPay}</span>
+        <span className="text-[36px] font-extrabold leading-none tracking-tight tabular-nums text-gray-900 sm:text-[40px]" dir="ltr">
+          {formatMinor(d.totals?.grossMinor, d.currency)}
+        </span>
       </div>
     </div>
   );
@@ -388,28 +443,6 @@ function VideoEmbed({ d, lang }) {
   );
 }
 
-// Payment information — real information under the pricing table, not footer text:
-// larger values, label above value, generous spacing. Still visually secondary to
-// the pricing card (muted surface, no teal). Renders nothing when both are empty.
-function PaymentInfo({ d, lang }) {
-  const t = tt(lang);
-  const rows = [
-    d.term && { label: t.paymentTerm, value: d.term },
-    d.method && { label: t.paymentMethod, value: d.method },
-  ].filter(Boolean);
-  if (rows.length === 0) return null;
-  return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-      {rows.map((r) => (
-        <div key={r.label} className="rounded-2xl bg-gray-50 px-6 py-5 text-start">
-          <div className="text-[12px] font-semibold uppercase tracking-wide text-gray-400">{r.label}</div>
-          <div className="mt-1.5 text-[20px] font-bold leading-snug text-gray-900">{r.value}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export function QuoteBlock({ block, lang = 'he' }) {
   const d = block?.data || {};
   const t = tt(lang);
@@ -423,8 +456,10 @@ export function QuoteBlock({ block, lang = 'he' }) {
       return <><Heading>{title}</Heading><PricingCard d={d} lang={lang} /></>;
     case 'video':
       return <VideoEmbed d={d} lang={lang} />;
+    // Payment terms/method now render INSIDE the pricing section (below the VAT
+    // status, above the total), so the standalone block renders nothing.
     case 'payment_terms':
-      return <PaymentInfo d={d} lang={lang} />;
+      return null;
     case 'signature':
       return (
         <>

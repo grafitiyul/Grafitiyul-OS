@@ -37,8 +37,10 @@ function hasContent(block) {
     case 'pricing':
     case 'signature':
       return true;
+    // Payment terms/method render inside the pricing section now, so the
+    // standalone block is never shown on its own.
     case 'payment_terms':
-      return !!(d.term || d.method);
+      return false;
     case 'video':
       return !!d.url;
     case 'program':
