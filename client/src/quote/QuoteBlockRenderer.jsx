@@ -100,10 +100,10 @@ function toDisplayHtml(value) {
   return escapeHtml(trimmed).replace(/\n/g, '<br>');
 }
 
-// Small rich-text note (pricing row note) — formatted, line-breaks preserved,
-// muted + secondary. Renders nothing when empty.
+// Supporting information under a pricing row's title — formatted, line-breaks
+// preserved, muted + secondary so it never competes with the title. Nothing when empty.
 const NOTE_RICH =
-  'mt-2 text-[14px] leading-relaxed text-gray-500 text-start [&_p]:mb-1 [&_ul]:list-disc [&_ul]:ps-5 [&_ol]:list-decimal [&_ol]:ps-5 [&_li]:mb-0.5 [&_a]:text-teal-700 [&_a]:underline [&_strong]:font-semibold';
+  'mt-1.5 text-[14.5px] leading-[1.6] text-gray-500 text-start [&_p]:mb-0.5 [&_p:last-child]:mb-0 [&_ul]:list-disc [&_ul]:ps-5 [&_ol]:list-decimal [&_ol]:ps-5 [&_li]:mb-0.5 [&_a]:text-teal-700 [&_a]:underline [&_strong]:font-semibold [&_strong]:text-gray-600';
 function RichNote({ value }) {
   const html = toDisplayHtml(value);
   if (!html) return null;
@@ -332,20 +332,39 @@ function resolveVatStatus(lines) {
   return any ? any.vatMode : 'included';
 }
 
-// Small label / large value pair (payment info).
+// Payment card — one label/value pair. Presentation, not a form field: soft-bordered
+// white card, small muted label, large semibold value. Two of these sit side by side.
 function PayPair({ label, value }) {
   return (
-    <div className="text-start">
-      <div className="text-[12px] font-medium tracking-wide text-gray-400">{label}</div>
-      <div className="mt-1 text-[18px] font-semibold leading-snug text-gray-900">{value}</div>
+    <div className="rounded-2xl border bg-white px-6 py-5 text-start" style={{ borderColor: '#ECEEF2' }}>
+      <div className="text-[14px] font-medium text-gray-400">{label}</div>
+      <div className="mt-1.5 text-[18px] font-semibold leading-snug text-gray-900">{value}</div>
     </div>
   );
 }
 
-// Premium price section — read the price in under 5 seconds. Each line is its own
-// generously-spaced row: bold name, lighter supporting info / calculation, and a
-// visually dominant amount. One VAT status + payment info sit below, and the grand
-// total is the unmistakable finale. Typography + spacing, not table chrome.
+// Subtle "included / verified" check for the VAT line.
+function VatCheck() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <circle cx="12" cy="12" r="9.25" stroke={TEAL} strokeWidth="1.5" opacity="0.35" />
+      <path d="M8.4 12.3l2.4 2.4 4.8-5.2" stroke={TEAL} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// Premium pricing section — four calm parts read in under 5 seconds:
+//   1. Pricing card (rows only): bold title, muted supporting info, dominant amount,
+//      and a "qty × unit" calculation under the amount when relevant.
+//   2. VAT status — a single elegant line.
+//   3. Payment information — two equal cards.
+//   4. Grand total — the teal conclusion, outside the card.
+// Typography + spacing do the work; direction-aware (RTL details/amounts mirror in LTR).
+const PRICING_CARD_STYLE = {
+  borderColor: '#ECEEF2',
+  boxShadow: '0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.06)',
+};
+
 function PricingCard({ d, lang }) {
   const t = tt(lang);
   const lines = d.lines || [];
@@ -354,47 +373,52 @@ function PricingCard({ d, lang }) {
 
   return (
     <div className="text-start">
-      {/* line rows */}
-      <div className="divide-y divide-gray-100">
-        {lines.map((l, i) => (
-          <div key={i} className="flex items-start justify-between gap-6 py-6 first:pt-0">
-            <div className="min-w-0 flex-1">
-              <div className="text-[18px] font-semibold leading-snug text-gray-900">{l.label || '—'}</div>
-              {/* calculation — shown as "qty × unit", not a quantity column */}
-              {l.quantity > 1 && (
-                <div className="mt-1.5 text-[14px] text-gray-400" dir="ltr">{l.quantity} × {formatMinor(l.unitPriceMinor, d.currency)}</div>
-              )}
-              {/* supporting information (descriptive), lighter */}
-              <RichNote value={l.note} />
+      {/* 1 — Pricing card: rows only */}
+      <div className="rounded-[20px] border bg-white p-6 sm:p-7" style={PRICING_CARD_STYLE}>
+        <div className="divide-y divide-[#F2F4F6]">
+          {lines.map((l, i) => (
+            <div key={i} className="flex items-start justify-between gap-8 py-[22px] first:pt-0 last:pb-0">
+              {/* details (reading start) */}
+              <div className="min-w-0 flex-1">
+                <div className="text-[19px] font-semibold leading-snug text-gray-900">{l.label || '—'}</div>
+                <RichNote value={l.note} />
+              </div>
+              {/* amount (reading end) — dominant, with the calc beneath it */}
+              <div className="shrink-0 text-end">
+                <div className="text-[22px] font-bold leading-none tabular-nums text-gray-900" dir="ltr">
+                  {formatMinor(l.lineTotalMinor, d.currency)}
+                </div>
+                {l.quantity > 1 && (
+                  <div className="mt-2 text-[13px] tabular-nums text-gray-400" dir="ltr">
+                    {l.quantity} × {formatMinor(l.unitPriceMinor, d.currency)}
+                  </div>
+                )}
+              </div>
             </div>
-            {/* amount — dominant */}
-            <div className="shrink-0 pt-0.5 text-end text-[21px] font-bold tabular-nums text-gray-900" dir="ltr">
-              {formatMinor(l.lineTotalMinor, d.currency)}
-            </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
 
-      {/* one VAT status for the whole quote */}
+      {/* 2 — VAT status: a single line */}
       {vatStatus && (
-        <div className="mt-6 flex items-center gap-2 text-[14px] text-gray-500">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={TEAL} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6 9 17l-5-5" /></svg>
+        <div className="mt-6 flex items-center gap-2.5 text-[15px] font-medium text-teal-700">
+          <VatCheck />
           {vatStatus}
         </div>
       )}
 
-      {/* payment information — selected values only */}
+      {/* 3 — Payment information: two equal cards */}
       {hasPayment && (
-        <div className="mt-8 grid grid-cols-1 gap-x-10 gap-y-6 border-t border-gray-100 pt-7 sm:grid-cols-2">
+        <div className="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2">
           {d.paymentTerm && <PayPair label={t.paymentTerm} value={d.paymentTerm} />}
           {d.paymentMethod && <PayPair label={t.paymentMethod} value={d.paymentMethod} />}
         </div>
       )}
 
-      {/* grand total — impossible to miss */}
-      <div className="mt-8 flex items-end justify-between gap-6 border-t-2 border-gray-900/10 pt-6">
-        <span className="pb-1.5 text-[15px] font-medium text-gray-500">{t.totalToPay}</span>
-        <span className="text-[36px] font-extrabold leading-none tracking-tight tabular-nums text-gray-900 sm:text-[40px]" dir="ltr">
+      {/* 4 — Grand total: the conclusion (outside the card, teal) */}
+      <div className="mt-8 flex flex-col items-end">
+        <span className="text-[14px] font-medium tracking-wide text-gray-400">{t.totalToPay}</span>
+        <span className="mt-1.5 text-[38px] font-extrabold leading-none tracking-tight tabular-nums sm:text-[42px]" style={{ color: TEAL }} dir="ltr">
           {formatMinor(d.totals?.grossMinor, d.currency)}
         </span>
       </div>
