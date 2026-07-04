@@ -26,7 +26,7 @@ const baseDeal = (over = {}) => ({
   ...over,
 });
 
-const doc = (over = {}) => ({ id: 'qd_1', dealId: 'deal_1', quoteVersionId: 'ver_1', language: 'he', displayProductName: null, personalIntro: null, compositionDraft: null, ...over });
+const doc = (over = {}) => ({ id: 'qd_1', dealId: 'deal_1', quoteVersionId: 'ver_1', language: 'he', displayProductName: null, compositionDraft: null, ...over });
 
 const lines = () => [
   { kind: 'product', label: 'סיור', quantity: 25, unitPriceMinor: 20000, vatMode: 'included', vatRate: 18, overridden: false, note: 'כולל מדריך וחומרים', active: true, sortOrder: 0 },
@@ -224,7 +224,8 @@ test('composer: each block carries a contextual editTarget (route to source)', (
   assert.equal(blockByKey(model, 'product_marketing').editTarget.id, 'p1');
   assert.equal(blockByKey(model, 'faq').editTarget.kind, 'quoteSections');
   assert.equal(blockByKey(model, 'faq').editTarget.category, 'faq');
-  assert.equal(blockByKey(model, 'personal_intro').editTarget.inline, true);
+  assert.equal(blockByKey(model, 'program').editTarget.kind, 'product');
+  assert.equal(blockByKey(model, 'program').editTarget.id, 'p1');
 });
 
 // ── Shared Content dual-read (Slice 2) ───────────────────────────────────────
@@ -293,4 +294,29 @@ test('composer: hero customerName prefers the quote-language name when both exis
   const contacts = [{ isPrimary: true, roles: [], contact: { firstNameHe: 'דנה', lastNameHe: 'לוי', firstNameEn: 'Dana', lastNameEn: 'Levi' } }];
   assert.equal(blockByKey(compose({ deal: baseDeal({ contacts }), lang: 'en' }), 'hero').data.customerName, 'Dana Levi');
   assert.equal(blockByKey(compose({ deal: baseDeal({ contacts }), lang: 'he' }), 'hero').data.customerName, 'דנה לוי');
+});
+
+// ── program section ("אז מה בתוכנית?") ────────────────────────────────────────
+// TITLE from the Quote Template (default when no template passed); CONTENT from
+// the selected Product Variant; language-aware; empty content → null (renderer skips).
+test('composer: program block uses variant copy + the section title, language-aware', () => {
+  const v = { marketingDescHe: '', marketingDescEn: '', durationHours: 2, programHe: '<p>תוכנית</p>', programEn: '<p>program</p>' };
+  const he = blockByKey(compose({ deal: baseDeal({ productVariant: v }), lang: 'he' }), 'program').data;
+  const en = blockByKey(compose({ deal: baseDeal({ productVariant: v }), lang: 'en' }), 'program').data;
+  assert.equal(he.title, 'אז מה בתוכנית?');
+  assert.equal(he.html, '<p>תוכנית</p>');
+  assert.equal(en.title, "What's in the program?");
+  assert.equal(en.html, '<p>program</p>');
+});
+
+test('composer: empty variant program → null html (renderer skips) + a warning', () => {
+  const v = { marketingDescHe: '', marketingDescEn: '', durationHours: 2, programHe: '', programEn: '' };
+  const model = compose({ deal: baseDeal({ productVariant: v }), lang: 'he' });
+  assert.equal(blockByKey(model, 'program').data.html, null);
+  assert.ok(model.warnings.some((w) => w.blockKey === 'program'), 'variant present but no copy → warns');
+});
+
+test('composer: program appears immediately before Technical Details by default', () => {
+  const keys = compose().blocks.map((b) => b.key);
+  assert.equal(keys.indexOf('program') + 1, keys.indexOf('tour_details'), 'program directly precedes tour_details');
 });

@@ -20,7 +20,6 @@ const T = {
     city: 'איפה', tourDate: 'תאריך', time: 'שעה', participants: 'משתתפים', language: 'שפה', duration: 'משך',
     paymentTerm: 'תנאי תשלום', paymentMethod: 'אמצעי תשלום', total: 'סה״כ',
     vat: { included: 'כולל מע״מ', excluded: 'לפני מע״מ', exempt: 'פטור', inherit: '' },
-    introPlaceholder: '— הוסיפו פתיח אישי ללקוח —',
     hours: 'שעות', noContent: '— אין תוכן —', signaturePlaceholder: 'אזור חתימה / אישור — ייבנה בשלב הבא',
   },
   en: {
@@ -28,7 +27,6 @@ const T = {
     city: 'Location', tourDate: 'Date', time: 'Time', participants: 'Participants', language: 'Language', duration: 'Duration',
     paymentTerm: 'Payment terms', paymentMethod: 'Payment method', total: 'Total',
     vat: { included: 'incl. VAT', excluded: 'excl. VAT', exempt: 'VAT exempt', inherit: '' },
-    introPlaceholder: '— add a personal introduction —',
     hours: 'hours', noContent: '— no content —', signaturePlaceholder: 'Signature / approval area — coming soon',
   },
 };
@@ -329,12 +327,6 @@ export function QuoteBlock({ block, lang = 'he' }) {
   switch (block?.type) {
     case 'hero':
       return <Cover d={d} lang={lang} />;
-    case 'personal_intro':
-      return d.text ? (
-        <div className={`${RICH} whitespace-pre-line text-[20px] leading-[2.1] text-gray-700`} dangerouslySetInnerHTML={{ __html: d.text }} />
-      ) : (
-        <p className="text-start text-[19px] italic text-gray-300">{t.introPlaceholder}</p>
-      );
     case 'tour_details':
       return <><Heading>{title}</Heading><FactCard d={d} lang={lang} /></>;
     case 'pricing':
@@ -353,6 +345,7 @@ export function QuoteBlock({ block, lang = 'he' }) {
           <div className="rounded-2xl border border-dashed border-gray-300 p-10 text-center text-sm text-gray-400">{t.signaturePlaceholder}</div>
         </>
       );
+    case 'program':
     case 'product_marketing':
     case 'classification':
     case 'city_content':

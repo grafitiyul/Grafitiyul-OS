@@ -54,9 +54,8 @@ export function resolveQuoteLanguage(deal) {
 }
 
 // Pure: the `data` for a brand-new draft QuoteDocument. The renderer is not built,
-// so the three JSON shapes start empty/null; displayProductName starts null;
-// personalIntro is seeded from the Deal's (now default-only) quoteEmailIntro.
-export function buildInitialDraftData({ dealId, quoteVersionId, language, personalIntro }) {
+// so the three JSON shapes start empty/null; displayProductName starts null.
+export function buildInitialDraftData({ dealId, quoteVersionId, language }) {
   return {
     dealId,
     quoteVersionId,
@@ -64,7 +63,6 @@ export function buildInitialDraftData({ dealId, quoteVersionId, language, person
     language: isLang(language) ? language : 'he',
     publicToken: newPublicToken(),
     displayProductName: null,
-    personalIntro: personalIntro ? String(personalIntro) : null,
     compositionDraft: null,
     overrideState: null,
     renderModelSnapshot: null,
@@ -82,7 +80,6 @@ export async function ensureWorkingVersion(client, dealId) {
 const DEAL_SELECT_FOR_QUOTE = {
   id: true,
   communicationLanguage: true,
-  quoteEmailIntro: true,
   contacts: {
     select: {
       roles: true,
@@ -112,7 +109,6 @@ export async function ensureDraftQuoteDocument(client, dealId) {
       dealId,
       quoteVersionId: version.id,
       language: resolveQuoteLanguage(deal),
-      personalIntro: deal.quoteEmailIntro,
     }),
   });
   return { doc, created: true };
@@ -135,9 +131,6 @@ export async function updateQuoteDocumentMeta(client, id, body = {}) {
   const data = {};
   if (body.displayProductName !== undefined) {
     data.displayProductName = body.displayProductName ? String(body.displayProductName) : null;
-  }
-  if (body.personalIntro !== undefined) {
-    data.personalIntro = body.personalIntro ? String(body.personalIntro) : null;
   }
   if (body.language !== undefined) {
     if (!isLang(body.language)) return { error: 'invalid_language' };
@@ -168,7 +161,7 @@ export async function resetQuoteDocumentToSource(client, id) {
   if (doc.status !== 'draft') return { error: 'not_editable' };
   const updated = await client.quoteDocument.update({
     where: { id },
-    data: { compositionDraft: null, overrideState: null, displayProductName: null, personalIntro: null },
+    data: { compositionDraft: null, overrideState: null, displayProductName: null },
   });
   return { doc: updated };
 }
@@ -185,7 +178,6 @@ export function toClientQuoteDocument(doc) {
     expiresAt: doc.expiresAt ?? null,
     producedAt: doc.producedAt ?? null,
     displayProductName: doc.displayProductName ?? null,
-    personalIntro: doc.personalIntro ?? null,
     compositionDraft: doc.compositionDraft ?? null,
     overrideState: doc.overrideState ?? null,
     renderModelSnapshot: doc.renderModelSnapshot ?? null,

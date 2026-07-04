@@ -29,6 +29,12 @@ const SECTION_KEYS = DEFAULT_QUOTE_BLOCKS.map((b) => b.key);
 // icon/label in the renderer. All visible by default → identical to today.
 export const TECH_FIELD_KEYS = ['city', 'date', 'time', 'participants', 'duration', 'language'];
 
+// "אז מה בתוכנית?" — the ONE source of truth for this section's localized title.
+// Order/visibility live in `sections` (key: 'program'); the content is per Product
+// Variant. Everything that shows the title (the quote renderer + the Product
+// Variant editor group) reads it from here, so a rename applies everywhere.
+export const PROGRAM_TITLE_DEFAULT = { he: 'אז מה בתוכנית?', en: "What's in the program?" };
+
 // Legacy overlay presets (kept for backward compatibility with older saved
 // layouts; the premium hero now uses an explicit color + opacity instead).
 const OVERLAY_PRESETS = ['light', 'medium', 'dark'];
@@ -92,6 +98,9 @@ export const DEFAULT_LAYOUT = {
   },
   sections: SECTION_KEYS.map((key) => ({ key, hidden: false })),
   technical: { fields: TECH_FIELD_KEYS.map((key) => ({ key, visible: true })) },
+  // Localized title for the 'program' section (source of truth). Content is per
+  // Product Variant, not stored here.
+  program: { titleHe: PROGRAM_TITLE_DEFAULT.he, titleEn: PROGRAM_TITLE_DEFAULT.en },
 };
 
 function normalizeImageRef(ref) {
@@ -151,10 +160,21 @@ function mergeOrdered(saved, canonicalKeys, flagName, defaultFlag) {
 
 // Normalise ANY input (saved row, API body, or null) into a complete, safe
 // layout. Always returns every section and tech field exactly once.
+// 'program' section title. Always resolves to a non-empty localized title so the
+// section header never renders blank (empty input → the built-in default).
+function normalizeProgram(raw) {
+  const p = raw && typeof raw === 'object' ? raw : {};
+  return {
+    titleHe: cleanText(p.titleHe) || PROGRAM_TITLE_DEFAULT.he,
+    titleEn: cleanText(p.titleEn) || PROGRAM_TITLE_DEFAULT.en,
+  };
+}
+
 export function normalizeLayout(raw) {
   const l = raw && typeof raw === 'object' ? raw : {};
   return {
     hero: normalizeHero(l.hero),
+    program: normalizeProgram(l.program),
     // Hero is the document header: always first and never hidden, so the stored
     // template stays consistent with the UI (which shows it pinned, not in the
     // reorderable list). The composer enforces the same invariant at render.

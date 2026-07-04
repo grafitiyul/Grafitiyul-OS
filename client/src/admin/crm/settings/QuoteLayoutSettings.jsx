@@ -22,7 +22,7 @@ const LABEL = 'block text-[12px] font-medium text-gray-600 mb-1';
 // Display metadata (server owns the stable keys; labels live here).
 const SECTION_LABELS = {
   hero: 'כותרת ראשית (Hero)',
-  personal_intro: 'פתיח אישי',
+  program: 'אז מה בתוכנית?',
   tour_details: 'פרטים טכניים',
   product_marketing: 'תיאור המוצר',
   why_grafitiyul: 'למה גרפיטיול',
@@ -87,6 +87,7 @@ export default function QuoteLayoutSettings() {
   const patchCardFields = (patch) =>
     setLayout((l) => ({ ...l, hero: { ...l.hero, cardFields: { ...(l.hero.cardFields || {}), ...patch } } }));
   const setSections = (sections) => setLayout((l) => ({ ...l, sections }));
+  const patchProgram = (patch) => setLayout((l) => ({ ...l, program: { ...l.program, ...patch } }));
   const setTechFields = (fields) => setLayout((l) => ({ ...l, technical: { ...l.technical, fields } }));
 
   async function save() {
@@ -153,7 +154,10 @@ export default function QuoteLayoutSettings() {
             <HeroEditor hero={layout.hero} onChange={patchHero} onCardFields={patchCardFields} />
           )}
           {tab === 'sections' && (
-            <div className="max-w-3xl"><SectionsTab sections={layout.sections} onChange={setSections} /></div>
+            <div className="max-w-3xl space-y-4">
+              <SectionsTab sections={layout.sections} program={layout.program} onChange={setSections} />
+              <ProgramTitleCard program={layout.program} onChange={patchProgram} />
+            </div>
           )}
           {tab === 'technical' && (
             <div className="max-w-3xl"><TechnicalTab fields={layout.technical.fields} onChange={setTechFields} /></div>
@@ -405,8 +409,15 @@ function Field({ label, children }) {
   );
 }
 
-// ── Sections tab (unchanged behaviour) ───────────────────────────────────────
-function SectionsTab({ sections, onChange }) {
+// The 'program' section row shows its LIVE localized title (one source of truth),
+// so a rename in the title card below is reflected here immediately.
+function sectionLabel(key, program) {
+  if (key === 'program') return program?.titleHe || SECTION_LABELS.program;
+  return SECTION_LABELS[key] || key;
+}
+
+// ── Sections tab ─────────────────────────────────────────────────────────────
+function SectionsTab({ sections, program, onChange }) {
   const hero = sections.find((s) => s.key === 'hero');
   const rest = useMemo(() => sections.filter((s) => s.key !== 'hero'), [sections]);
   const items = useMemo(() => rest.map((s) => ({ ...s, id: s.key })), [rest]);
@@ -436,7 +447,7 @@ function SectionsTab({ sections, onChange }) {
             <div className="flex items-center gap-3 rounded-lg px-2.5 py-2.5 hover:bg-gray-50">
               {handle}
               <span className={`flex-1 min-w-0 font-medium text-[15px] ${item.hidden ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
-                {SECTION_LABELS[item.key] || item.key}
+                {sectionLabel(item.key, program)}
               </span>
               {required ? (
                 <span className="shrink-0 text-[11px] rounded-full bg-gray-100 text-gray-500 px-2 py-0.5">חובה</span>
@@ -449,6 +460,23 @@ function SectionsTab({ sections, onChange }) {
           );
         }}
       />
+    </SettingsCard>
+  );
+}
+
+// Editable title for the 'program' section — THE one source of truth. The quote
+// renderer and the Product Variant editor group both read this title, so a rename
+// here applies everywhere. Content itself lives per Product Variant, not here.
+function ProgramTitleCard({ program, onChange }) {
+  const p = program || {};
+  return (
+    <SettingsCard title="כותרת הסקשן “אז מה בתוכנית?”" description="מקור אמת יחיד לכותרת. התוכן עצמו נכתב לכל וריאציה במסך המוצרים.">
+      <div className="grid grid-cols-1 gap-3 p-2 sm:grid-cols-2 sm:p-3">
+        <label className="block"><span className={LABEL}>כותרת (עברית)</span>
+          <input value={p.titleHe || ''} onChange={(e) => onChange({ titleHe: e.target.value })} placeholder="אז מה בתוכנית?" className={INPUT} /></label>
+        <label className="block"><span className={LABEL}>Title (EN)</span>
+          <input value={p.titleEn || ''} onChange={(e) => onChange({ titleEn: e.target.value })} placeholder="What's in the program?" dir="ltr" className={INPUT} /></label>
+      </div>
     </SettingsCard>
   );
 }

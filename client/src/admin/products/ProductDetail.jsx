@@ -23,13 +23,21 @@ export default function ProductDetail() {
   const [saving, setSaving] = useState(false);
   const [newLocationId, setNewLocationId] = useState('');
   const [addingVariant, setAddingVariant] = useState(false);
+  // "אז מה בתוכנית?" section title — read LIVE from Quote Structure (one source of
+  // truth), so the variant's programme group is labelled by whatever the admin set.
+  const [programTitle, setProgramTitle] = useState({ he: 'אז מה בתוכנית?', en: "What's in the program?" });
 
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      const [p, locs] = await Promise.all([api.products.get(id), api.locations.list()]);
+      const [p, locs, template] = await Promise.all([
+        api.products.get(id),
+        api.locations.list(),
+        api.quoteTemplate.get().catch(() => null),
+      ]);
       setProduct(p);
       setLocations(locs);
+      if (template?.program) setProgramTitle({ he: template.program.titleHe, en: template.program.titleEn });
       const init = {
         nameHe: p.nameHe || '',
         nameEn: p.nameEn || '',
@@ -165,7 +173,7 @@ export default function ProductDetail() {
         ) : (
           <ul className="space-y-3">
             {product.variants.map((v) => (
-              <VariantCard key={v.id} variant={v} locations={locations} onChange={refresh} />
+              <VariantCard key={v.id} variant={v} locations={locations} programTitle={programTitle} onChange={refresh} />
             ))}
           </ul>
         )}
@@ -174,7 +182,7 @@ export default function ProductDetail() {
   );
 }
 
-function VariantCard({ variant, locations, onChange }) {
+function VariantCard({ variant, locations, programTitle, onChange }) {
   const [open, setOpen] = useState(false);
   return (
     <li className="rounded-xl border border-gray-200">
@@ -190,17 +198,19 @@ function VariantCard({ variant, locations, onChange }) {
         <div className="flex-1" />
         <span className="text-gray-400 text-sm">{open ? '▲' : '▼'}</span>
       </button>
-      {open && <VariantForm variant={variant} locations={locations} onChange={onChange} />}
+      {open && <VariantForm variant={variant} locations={locations} programTitle={programTitle} onChange={onChange} />}
     </li>
   );
 }
 
-function VariantForm({ variant, locations, onChange }) {
+function VariantForm({ variant, locations, programTitle, onChange }) {
   const [form, setForm] = useState(() => ({
     marketingDescHe: variant.marketingDescHe || '',
     marketingDescEn: variant.marketingDescEn || '',
     guideDescHe: variant.guideDescHe || '',
     guideDescEn: variant.guideDescEn || '',
+    programHe: variant.programHe || '',
+    programEn: variant.programEn || '',
     durationHours: variant.durationHours ?? '',
     baseGuidePayment: minorToInput(variant.baseGuidePaymentMinor),
     travelPayment: minorToInput(variant.travelPaymentMinor),
@@ -220,6 +230,8 @@ function VariantForm({ variant, locations, onChange }) {
         marketingDescEn: form.marketingDescEn,
         guideDescHe: form.guideDescHe,
         guideDescEn: form.guideDescEn,
+        programHe: form.programHe,
+        programEn: form.programEn,
         durationHours: form.durationHours === '' ? null : Number(form.durationHours),
         baseGuidePaymentMinor: toMinor(form.baseGuidePayment) ?? 0,
         travelPaymentMinor: toMinor(form.travelPayment),
@@ -261,6 +273,23 @@ function VariantForm({ variant, locations, onChange }) {
         <Field label="Guide description (EN, internal)">
           <RichEditor value={form.guideDescEn} onChange={(h) => set('guideDescEn', h)} ariaLabel="variant guide en" minContentHeight={100} placeholder="Write here..." />
         </Field>
+      </div>
+
+      {/* "אז מה בתוכנית?" — the group title comes LIVE from Quote Structure (one
+          source of truth); this is the variant-specific CONTENT for that section. */}
+      <div className="rounded-xl border border-gray-200 bg-gray-50/60 p-4">
+        <div className="mb-2 flex items-baseline gap-2">
+          <span className="text-[13px] font-semibold text-gray-900">{programTitle?.he || 'אז מה בתוכנית?'}</span>
+          <span className="text-[11px] text-gray-400">· תוכן ההצעה לוריאציה זו</span>
+        </div>
+        <div className="grid grid-cols-1 gap-4">
+          <Field label="פסקה (עברית)">
+            <RichEditor value={form.programHe} onChange={(h) => set('programHe', h)} ariaLabel="variant program he" minContentHeight={110} />
+          </Field>
+          <Field label={`${programTitle?.en || "What's in the program?"} (EN)`}>
+            <RichEditor value={form.programEn} onChange={(h) => set('programEn', h)} ariaLabel="variant program en" minContentHeight={110} placeholder="Write here..." />
+          </Field>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

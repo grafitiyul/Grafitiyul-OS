@@ -19,7 +19,7 @@
 // quote-template service can share it without a circular import. Re-exported here
 // so existing importers (tests, callers) keep `import { DEFAULT_QUOTE_BLOCKS } from './composer.js'`.
 import { DEFAULT_QUOTE_BLOCKS } from './quoteBlocks.js';
-import { getQuoteTemplate } from './quoteTemplate.js';
+import { getQuoteTemplate, PROGRAM_TITLE_DEFAULT } from './quoteTemplate.js';
 import { resolveVariantSharedContent } from '../shared-content/sharedContent.js';
 export { DEFAULT_QUOTE_BLOCKS };
 
@@ -40,7 +40,7 @@ function warn(blockKey, type, field, language) {
 // Human-facing source metadata per block type (admin "where does this come from").
 const SOURCE_LABELS = {
   hero: 'Deal',
-  personal_intro: 'Quote',
+  program: 'Product Variant',
   tour_details: 'Deal · Product · Location',
   pricing: 'QuoteVersion (Builder)',
   payment_terms: 'Deal · Payment',
@@ -95,7 +95,7 @@ function heroImageUrl(deal) {
 export function editTargetFor(type, deal) {
   switch (type) {
     case 'hero': return { kind: 'deal', label: 'ערוך פרטי לקוח' };
-    case 'personal_intro': return { kind: 'quote', label: 'ערוך פתיח אישי', inline: true };
+    case 'program': return { kind: 'product', label: 'ערוך תוכן התוכנית (וריאציה)', id: deal?.productId || null };
     case 'tour_details': return { kind: 'deal', label: 'ערוך פרטי הסיור' };
     case 'pricing': return { kind: 'builder', label: 'ערוך תמחור', dialog: true };
     case 'payment_terms': return { kind: 'deal', label: 'ערוך תנאי תשלום' };
@@ -164,10 +164,20 @@ function buildHero({ deal, document, displayName, lang, template }) {
   };
 }
 
-function buildPersonalIntro({ document }) {
-  // Instance-authored, single language; seeded from Deal.quoteEmailIntro at
-  // create. Empty is allowed (optional block) → no warning.
-  return { data: { text: isFilled(document?.personalIntro) ? document.personalIntro : null }, warnings: [] };
+// "אז מה בתוכנית?" — TITLE from the Quote Template (one source of truth; localized
+// + admin-editable), CONTENT from the selected Product Variant (variant-specific
+// marketing copy, NOT Shared Content / Location Defaults). Optional: an empty
+// variant paragraph yields null html → the renderer skips the block (no warning
+// when there is no variant at all; a warning only when a variant exists but has no
+// copy in the quote language, matching the other content builders).
+function buildProgram({ deal, lang, template }) {
+  const v = deal?.productVariant;
+  const html = pickLang(v?.programHe, v?.programEn, lang);
+  const title = pickLang(template?.program?.titleHe, template?.program?.titleEn, lang)
+    || PROGRAM_TITLE_DEFAULT[lang === 'en' ? 'en' : 'he'];
+  const warnings = [];
+  if (v && !html) warnings.push(warn('program', 'program', 'program', lang));
+  return { data: { title, html }, warnings };
 }
 
 function buildTourDetails({ deal, displayName, lang, template, sharedContent }) {
@@ -321,7 +331,7 @@ function buildSectionContent({ quoteSections, category, blockKey, lang }) {
 function assembleBlock(type, ctx) {
   switch (type) {
     case 'hero': return buildHero(ctx);
-    case 'personal_intro': return buildPersonalIntro(ctx);
+    case 'program': return buildProgram(ctx);
     case 'tour_details': return buildTourDetails(ctx);
     case 'pricing': return buildPricing(ctx);
     case 'payment_terms': return buildPaymentTerms(ctx);
@@ -393,7 +403,6 @@ export function assembleComposition({ document, deal, version, lines, quoteSecti
       }
     }
     // Column-backed overrides count as "edited" for their blocks.
-    if (b.type === 'personal_intro' && isFilled(document?.personalIntro)) overridden = true;
     if ((b.type === 'hero' || b.type === 'tour_details') && isFilled(document?.displayProductName)) overridden = true;
 
     // Hidden blocks never warn; an HTML override supplies content, so it clears

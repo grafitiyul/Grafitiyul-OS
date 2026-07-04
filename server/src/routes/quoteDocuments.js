@@ -12,7 +12,7 @@ import { composeQuoteDraftPreview } from '../quote/composer.js';
 // Quote Module — Slice 1 admin endpoints (foundation only).
 //   GET  /api/quote-documents/:id  — read one document
 //   PUT  /api/quote-documents/:id  — update editable DRAFT metadata
-//                                    (displayProductName, personalIntro, language)
+//                                    (displayProductName, language)
 // The deal-scoped "ensure a draft exists" endpoint lives on the deals router
 // (GET /api/deals/:id/quote-document), mirroring /:id/price-lines. No produce /
 // render / public page / signature in this slice.

@@ -104,23 +104,23 @@ const deal = () => ({
   tourLanguage: 'he',
   contacts: [],
 });
-const doc = (over = {}) => ({ id: 'qd', dealId: 'd', quoteVersionId: 'v', language: 'he', displayProductName: null, personalIntro: null, compositionDraft: null, ...over });
+const doc = (over = {}) => ({ id: 'qd', dealId: 'd', quoteVersionId: 'v', language: 'he', displayProductName: null, compositionDraft: null, ...over });
 const compose = (template, over = {}) =>
   assembleComposition({ document: over.document || doc(), deal: deal(), version: { id: 'v' }, lines: [], quoteSections: [], lang: 'he', template });
 
 test('composer: template.sections drive order when the quote has no compositionDraft', () => {
-  // pricing before personal_intro (both non-hero) shows the template order is honoured.
-  const template = normalizeLayout({ sections: [{ key: 'pricing' }, { key: 'personal_intro' }] });
+  // pricing before faq (both non-hero) shows the template order is honoured.
+  const template = normalizeLayout({ sections: [{ key: 'pricing' }, { key: 'faq' }] });
   const keys = compose(template).blocks.map((b) => b.key);
   assert.equal(keys[0], 'hero'); // header is always first
-  assert.ok(keys.indexOf('pricing') < keys.indexOf('personal_intro'));
+  assert.ok(keys.indexOf('pricing') < keys.indexOf('faq'));
 });
 
 test('composer: per-quote compositionDraft overrides the template (seed-only rule)', () => {
-  const template = normalizeLayout({ sections: [{ key: 'pricing' }, { key: 'personal_intro' }] });
-  const model = compose(template, { document: doc({ compositionDraft: { blocks: [{ key: 'personal_intro' }, { key: 'pricing' }] } }) });
+  const template = normalizeLayout({ sections: [{ key: 'pricing' }, { key: 'faq' }] });
+  const model = compose(template, { document: doc({ compositionDraft: { blocks: [{ key: 'faq' }, { key: 'pricing' }] } }) });
   const keys = model.blocks.map((b) => b.key);
-  assert.ok(keys.indexOf('personal_intro') < keys.indexOf('pricing'), 'per-doc order wins');
+  assert.ok(keys.indexOf('faq') < keys.indexOf('pricing'), 'per-doc order wins');
 });
 
 test('composer: hero is forced first and never hidden, even if a stored order moves/hides it', () => {
@@ -171,4 +171,17 @@ test('composer: technical fieldOrder reflects visible fields in configured order
   // duration, language) appended by normalizeLayout stay visible after them.
   assert.deepEqual(td.fieldOrder.slice(0, 2), ['participants', 'city']);
   assert.ok(!td.fieldOrder.includes('date'));
+});
+
+// ── program section title (source of truth) ──────────────────────────────────
+test('normalizeLayout: program title defaults, trims, and never goes blank', () => {
+  assert.deepEqual(normalizeLayout(null).program, { titleHe: 'אז מה בתוכנית?', titleEn: "What's in the program?" });
+  assert.equal(normalizeLayout({ program: { titleHe: '  שלב הסיור  ' } }).program.titleHe, 'שלב הסיור');
+  assert.equal(normalizeLayout({ program: { titleHe: '   ' } }).program.titleHe, 'אז מה בתוכנית?', 'blank → default');
+});
+
+test('composer: program block title comes from the template (one source of truth)', () => {
+  const template = normalizeLayout({ program: { titleHe: 'מה חווים?', titleEn: 'What will you experience?' } });
+  const he = compose(template).blocks.find((b) => b.key === 'program').data;
+  assert.equal(he.title, 'מה חווים?');
 });

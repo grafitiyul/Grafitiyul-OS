@@ -1137,6 +1137,11 @@ model ProductVariant {
   meetingPointEn        String? // rich HTML
   endingPointHe         String? // rich HTML
   endingPointEn         String? // rich HTML
+  // "אז מה בתוכנית?" — variant-specific programme copy for the quote section of the
+  // same name. Title lives in the Quote Template (one source of truth); this is the
+  // CONTENT only. NOT Shared Content / Location Defaults / meeting-ending points.
+  programHe             String? // rich HTML
+  programEn             String? // rich HTML
   meetingPointImage     MediaFile?            @relation("VariantMeetingImage", fields: [meetingPointImageId], references: [id], onDelete: SetNull)
   meetingPointImageId   String?
   baseGuidePaymentMinor BigInt                @default(0)
@@ -1792,8 +1797,7 @@ model CalendarMarker {
 //   * overrideState        — per-block/field presentation overrides + overridden flags
 //   * renderModelSnapshot  — frozen, fully-resolved render-model (null until produced)
 // displayProductName is the ONE quote-level product-name override (display-only;
-// never mutates Deal/product/Builder). personalIntro is the per-quote intro
-// (seeded from Deal.quoteEmailIntro, which becomes a default source only).
+// never mutates Deal/product/Builder).
 model QuoteDocument {
   id                  String                @id @default(cuid())
   deal                Deal                  @relation(fields: [dealId], references: [id], onDelete: Cascade)
@@ -1814,7 +1818,6 @@ model QuoteDocument {
   producedAt          DateTime?
   // Preview / Override layer (presentation-only; never writes back to source).
   displayProductName  String?
-  personalIntro       String?
   // Draft + snapshot storage (renderer NOT built yet).
   compositionDraft    Json?
   overrideState       Json?

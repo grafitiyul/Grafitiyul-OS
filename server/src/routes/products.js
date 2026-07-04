@@ -217,7 +217,8 @@ function variantData(b) {
   const data = {};
   const setStr = (k) => { if (b[k] !== undefined) data[k] = str(b[k]); };
   ['marketingDescHe','marketingDescEn','guideDescHe','guideDescEn',
-   'meetingPointHe','meetingPointEn','endingPointHe','endingPointEn'].forEach(setStr);
+   'meetingPointHe','meetingPointEn','endingPointHe','endingPointEn',
+   'programHe','programEn'].forEach(setStr);
   if (b.durationHours !== undefined)
     data.durationHours = b.durationHours === '' || b.durationHours == null ? null : Number(b.durationHours);
   if (b.meetingPointImageId !== undefined)

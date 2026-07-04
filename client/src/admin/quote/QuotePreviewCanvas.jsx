@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import ReorderableList from '../common/ReorderableList.jsx';
-import RichEditor from '../../editor/RichEditor.jsx';
 import { QuoteBlock, TEAL } from '../../quote/QuoteBlockRenderer.jsx';
 import PriceBuilderDialog from '../deals/PriceBuilderDialog.jsx';
 import GroupTicketBuilderDialog from '../deals/GroupTicketBuilderDialog.jsx';
@@ -17,11 +16,14 @@ import { resolveFinanceWorkspace, FINANCE_WORKSPACE } from '../deals/config.js';
 // inside the document. No produce/freeze, public page, PDF, or signature here.
 
 const LABELS = {
-  hero: 'כותרת', personal_intro: 'פתיח אישי', tour_details: 'פרטים טכניים',
+  hero: 'כותרת', program: 'אז מה בתוכנית?', tour_details: 'פרטים טכניים',
   product_marketing: 'שיווק מוצר', why_grafitiyul: 'למה גרפיתיול', classification: 'תוכן לפי סוג ארגון',
   pricing: 'תמחור', payment_terms: 'תנאי תשלום', faq: 'שאלות נפוצות',
   cancellation: 'מדיניות ביטול', participant_policy: 'מדיניות משתתפים', signature: 'חתימה',
 };
+// The section list/warnings prefer the composed (live) title when the block has
+// one — so a Quote-Structure rename of "אז מה בתוכנית?" shows here immediately.
+const labelOf = (block) => block?.data?.title || LABELS[block?.type] || block?.key;
 
 // Structural sections always render; content sections render only when populated,
 // so the document tells a story instead of showing "title → empty area". Empty
@@ -31,12 +33,12 @@ function hasContent(block) {
   const d = block.data || {};
   switch (block.type) {
     case 'hero':
-    case 'personal_intro':
     case 'tour_details':
     case 'pricing':
     case 'payment_terms':
     case 'signature':
       return true;
+    case 'program':
     case 'product_marketing':
     case 'classification':
     case 'city_content':
@@ -93,7 +95,7 @@ export default function QuotePreviewCanvas() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [editing, setEditing] = useState(null); // { key, mode:'intro'|'name', value }
+  const [editing, setEditing] = useState(null); // { key, mode:'name', value } — hero display name
   const [builderOpen, setBuilderOpen] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
@@ -184,7 +186,6 @@ export default function QuotePreviewCanvas() {
   }
   function onEdit(block) {
     const t = block.editTarget;
-    if (block.type === 'personal_intro') return setEditing({ key: block.key, mode: 'intro', value: doc.personalIntro || '' });
     if (t?.dialog) return setBuilderOpen(true);
     const route = routeFor(t);
     if (route) window.open(route, '_blank', 'noopener');
@@ -226,7 +227,7 @@ export default function QuotePreviewCanvas() {
         {block.type === 'hero' && (
           <PillBtn onClick={() => setEditing({ key: block.key, mode: 'name', value: doc.displayProductName || '' })}>✎ שם לתצוגה</PillBtn>
         )}
-        {t && (block.type === 'personal_intro' || t.kind !== 'quote') && <PillBtn onClick={() => onEdit(block)}>✎ {t.label}</PillBtn>}
+        {t && t.kind !== 'quote' && <PillBtn onClick={() => onEdit(block)}>✎ {t.label}</PillBtn>}
         <InfoBtn block={block} />
       </div>
     );
@@ -314,24 +315,12 @@ export default function QuotePreviewCanvas() {
 
           {/* padded body — generous whitespace, RTL-first */}
           <div className="space-y-20 px-8 py-16 lg:px-24 lg:py-20">
-            {body.map((block) => {
-              const isIntroEdit = editing?.key === block.key && editing.mode === 'intro';
-              return (
-                <section key={block.key} id={`sec-${block.key}`} className="group relative">
-                  <Controls block={block} />
-                  {isIntroEdit ? (
-                    <div>
-                      <RichEditor value={editing.value} onChange={(html) => setEditing((s) => ({ ...s, value: html }))} ariaLabel="פתיח אישי" />
-                      <div className="mt-2"><SaveCancel busy={busy}
-                        onSave={async () => { await patchDoc({ personalIntro: editing.value || null }); setEditing(null); }}
-                        onCancel={() => setEditing(null)} /></div>
-                    </div>
-                  ) : (
-                    <QuoteBlock block={block} lang={lang} />
-                  )}
-                </section>
-              );
-            })}
+            {body.map((block) => (
+              <section key={block.key} id={`sec-${block.key}`} className="group relative">
+                <Controls block={block} />
+                <QuoteBlock block={block} lang={lang} />
+              </section>
+            ))}
           </div>
         </article>
         <p className="mt-6 text-center text-[12px] text-gray-400">טיוטה — התוכן נשאב מ-GOS. הפקה, עמוד ציבורי, חתימה ו-PDF בשלבים הבאים.</p>
@@ -357,7 +346,7 @@ export default function QuotePreviewCanvas() {
                 renderRow={({ block }, { handle }) => (
                   <div className={`flex items-center gap-2 rounded-lg border border-gray-200 px-2 py-1.5 ${block.hidden ? 'opacity-50' : ''}`}>
                     {handle}
-                    <span className="flex-1 truncate text-[13px] text-gray-800">{LABELS[block.type] || block.key}</span>
+                    <span className="flex-1 truncate text-[13px] text-gray-800">{labelOf(block)}</span>
                     {block.overridden && <span className="h-2 w-2 rounded-full" style={{ background: TEAL }} title="מותאם" />}
                     <button type="button" onClick={() => toggleHidden(block.key)} disabled={!block.removable}
                       className="rounded px-1.5 py-0.5 text-[12px] text-gray-600 hover:bg-gray-100 disabled:opacity-30">{block.hidden ? 'הצג' : 'הסתר'}</button>

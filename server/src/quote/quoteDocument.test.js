@@ -99,11 +99,10 @@ test('language: falls back to Hebrew when nothing is set', () => {
   assert.equal(resolveQuoteLanguage(deal({ communicationLanguage: 'xx' })), 'he'); // invalid ignored
 });
 
-test('buildInitialDraftData: seeds intro, sane defaults, valid token', () => {
-  const data = buildInitialDraftData({ dealId: 'd', quoteVersionId: 'v', language: 'en', personalIntro: 'hi' });
+test('buildInitialDraftData: sane defaults, valid token', () => {
+  const data = buildInitialDraftData({ dealId: 'd', quoteVersionId: 'v', language: 'en' });
   assert.equal(data.status, 'draft');
   assert.equal(data.language, 'en');
-  assert.equal(data.personalIntro, 'hi');
   assert.equal(data.displayProductName, null);
   assert.equal(data.renderModelSnapshot, null);
   assert.match(data.publicToken, /^[A-Za-z0-9_-]+$/);
@@ -111,12 +110,11 @@ test('buildInitialDraftData: seeds intro, sane defaults, valid token', () => {
 
 // ── ensureDraftQuoteDocument ─────────────────────────────────────────────────
 test('ensureDraft: creates exactly one draft + a working version for a fresh deal', async () => {
-  const client = fakeClient({ deals: { deal_1: deal({ contacts: [dc('en', { roles: ['payer'] })], quoteEmailIntro: 'שלום' }) } });
+  const client = fakeClient({ deals: { deal_1: deal({ contacts: [dc('en', { roles: ['payer'] })] }) } });
   const r = await ensureDraftQuoteDocument(client, 'deal_1');
   assert.equal(r.created, true);
   assert.equal(r.doc.status, 'draft');
   assert.equal(r.doc.language, 'en');
-  assert.equal(r.doc.personalIntro, 'שלום');
   assert.ok(r.doc.publicToken);
   assert.equal(client.state.docs.length, 1, 'one document');
   assert.equal(client.state.versions.length, 1, 'one working version created');
@@ -141,15 +139,13 @@ test('ensureDraft: returns not_found for a missing deal', async () => {
 });
 
 // ── updateQuoteDocumentMeta ──────────────────────────────────────────────────
-test('updateMeta: edits draft displayProductName + personalIntro', async () => {
+test('updateMeta: edits draft displayProductName', async () => {
   const client = fakeClient({ deals: { deal_1: deal() } });
   const { doc } = await ensureDraftQuoteDocument(client, 'deal_1');
   const r = await updateQuoteDocumentMeta(client, doc.id, {
     displayProductName: 'השתלמות מקצועית באומנות אורבנית',
-    personalIntro: 'intro',
   });
   assert.equal(r.doc.displayProductName, 'השתלמות מקצועית באומנות אורבנית');
-  assert.equal(r.doc.personalIntro, 'intro');
 });
 
 test('updateMeta: rejects a non-draft (produced) document — frozen', async () => {
@@ -169,7 +165,7 @@ test('updateMeta: rejects an invalid language', async () => {
 
 test('updateMeta: not_found for a missing document', async () => {
   const client = fakeClient();
-  const r = await updateQuoteDocumentMeta(client, 'nope', { personalIntro: 'x' });
+  const r = await updateQuoteDocumentMeta(client, 'nope', { displayProductName: 'x' });
   assert.equal(r.error, 'not_found');
 });
 
@@ -196,13 +192,11 @@ test('resetToSource: clears overrides + structural edits', async () => {
   const { doc } = await ensureDraftQuoteDocument(client, 'deal_1');
   await updateQuoteDocumentMeta(client, doc.id, {
     displayProductName: 'X',
-    personalIntro: 'hi',
     compositionDraft: { blocks: [{ key: 'hero' }] },
     overrideState: { blocks: { faq: { html: '<p>c</p>' } } },
   });
   const r = await resetQuoteDocumentToSource(client, doc.id);
   assert.equal(r.doc.displayProductName, null);
-  assert.equal(r.doc.personalIntro, null);
   assert.equal(r.doc.compositionDraft, null);
   assert.equal(r.doc.overrideState, null);
 });
