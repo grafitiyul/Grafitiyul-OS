@@ -435,6 +435,10 @@ export const api = {
     resetToSource: (id) =>
       request(`/api/quote-documents/${id}/reset-to-source`, { method: 'POST' }),
   },
+  // ── Public customer quote page (token-gated, no auth) ────────────
+  publicQuote: {
+    get: (token) => request(`/api/public/quote/${encodeURIComponent(token)}`),
+  },
   // ── Products & Pricing — Slice 1 (catalog + files + payment config) ──
   mediaFiles: {
     presign: (data) =>

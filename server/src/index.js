@@ -24,6 +24,7 @@ import organizationSubtypesRouter from './routes/organizationSubtypes.js';
 import contactsRouter from './routes/contacts.js';
 import dealsRouter from './routes/deals.js';
 import quoteDocumentsRouter from './routes/quoteDocuments.js';
+import publicQuoteRouter from './routes/publicQuote.js';
 import dealStagesRouter from './routes/dealStages.js';
 import mediaFilesRouter from './routes/mediaFiles.js';
 import locationsRouter from './routes/locations.js';
@@ -129,6 +130,8 @@ app.use('/api/auth', buildAuthRoutes(express));
 // existing public guide link, which is exactly what the spec calls
 // out as forbidden.
 app.use('/api/portal', portalRouter);
+// Public customer quote page — token-gated (QuoteDocument.publicToken), no auth.
+app.use('/api/public', publicQuoteRouter);
 app.use('/api/attempts', attemptsRouter);
 app.use('/api/flows', flowsRouter);
 app.use('/api/items', itemsRouter);

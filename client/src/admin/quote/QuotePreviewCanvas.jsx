@@ -298,6 +298,17 @@ export default function QuotePreviewCanvas() {
               )}
             </div>
           )}
+          {doc?.publicToken && (
+            <a
+              href={`/quote/${doc.publicToken}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="פתח את עמוד הלקוח (קישור ציבורי)"
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+            >
+              ↗ צפייה כלקוח
+            </a>
+          )}
           <button type="button" onClick={() => setPreviewMode((p) => !p)} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">{previewMode ? 'יציאה מתצוגה' : '👁 תצוגה'}</button>
           {!previewMode && <button type="button" onClick={() => setPanelOpen(true)} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">⋯ מקטעים</button>}
         </div>

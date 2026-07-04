@@ -51,6 +51,7 @@ const TABS = [
   { key: 'sections', label: 'סעיפים' },
   { key: 'video', label: 'וידאו' },
   { key: 'images', label: 'תמונות' },
+  { key: 'contact', label: 'צור קשר' },
   { key: 'technical', label: 'פרטים טכניים' },
 ];
 
@@ -127,6 +128,7 @@ export default function QuoteLayoutSettings() {
   const setVideos = (videos) => setLayout((l) => ({ ...l, videos }));
   const setImages = (images) => setLayout((l) => ({ ...l, images }));
   const setTechFields = (fields) => setLayout((l) => ({ ...l, technical: { ...l.technical, fields } }));
+  const patchContact = (patch) => setLayout((l) => ({ ...l, contact: { ...(l.contact || {}), ...patch } }));
 
   async function save() {
     if (!dirty) return;
@@ -205,6 +207,9 @@ export default function QuoteLayoutSettings() {
           )}
           {tab === 'images' && (
             <div className="max-w-3xl"><ImagesTab images={layout.images} onChange={setImages} /></div>
+          )}
+          {tab === 'contact' && (
+            <div className="max-w-3xl"><ContactTab contact={layout.contact} onChange={patchContact} /></div>
           )}
         </>
       )}
@@ -781,6 +786,39 @@ function ImageCard({ index, image, options, takenElsewhere, onPatch, onRemove })
         </div>
       </div>
     </section>
+  );
+}
+
+// Business contact for the customer-facing "צור קשר" action on the public quote
+// page. Global (no per-deal owner yet). Empty = that action is hidden.
+function ContactTab({ contact, onChange }) {
+  const c = contact || { whatsapp: '', email: '' };
+  return (
+    <div className="space-y-4">
+      <p className="text-[13px] leading-relaxed text-gray-500">
+        אלו פרטי הקשר שהלקוח רואה בכפתור <b>״צור קשר״</b> בתחתית ההצעה. השאירו ריק כדי
+        להסתיר את האפשרות. מספר וואטסאפ בפורמט בינלאומי (למשל 972501234567).
+      </p>
+      <Field label="וואטסאפ (מספר בלבד)">
+        <input
+          dir="ltr"
+          className={INPUT}
+          value={c.whatsapp || ''}
+          onChange={(e) => onChange({ whatsapp: e.target.value })}
+          placeholder="972501234567"
+        />
+      </Field>
+      <Field label="אימייל">
+        <input
+          dir="ltr"
+          type="email"
+          className={INPUT}
+          value={c.email || ''}
+          onChange={(e) => onChange({ email: e.target.value })}
+          placeholder="hello@grafitiyul.co.il"
+        />
+      </Field>
+    </div>
   );
 }
 

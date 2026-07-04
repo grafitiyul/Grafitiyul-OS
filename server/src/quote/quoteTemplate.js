@@ -141,7 +141,22 @@ export const DEFAULT_LAYOUT = {
   // captions, and assigned variants. A variant belongs to AT MOST ONE image PER
   // SLOT (enforced on normalize), but may be assigned in both slots. Empty by default.
   images: [],
+  // Business contact for the customer-facing "צור קשר" action on the public quote
+  // page (WhatsApp + Email). Global (no per-deal owner / User model yet). Empty
+  // strings hide the corresponding action. Never a source of customer data.
+  contact: { whatsapp: '', email: '' },
 };
+
+// Digits-only phone for wa.me links (strips +, spaces, dashes); empty when unusable.
+function normalizeWhatsapp(v) {
+  const digits = String(v == null ? '' : v).replace(/[^\d]/g, '');
+  return digits.length >= 6 ? digits : '';
+}
+function normalizeContact(raw) {
+  const c = raw && typeof raw === 'object' ? raw : {};
+  const email = cleanText(c.email) || '';
+  return { whatsapp: normalizeWhatsapp(c.whatsapp), email };
+}
 
 function normalizeImageRef(ref) {
   if (ref && typeof ref === 'object' && isStr(ref.url)) {
@@ -309,6 +324,7 @@ export function normalizeLayout(raw) {
     sectionTitles: normalizeSectionTitles(l.sectionTitles, l.program),
     videos: normalizeVideos(l.videos, l.video),
     images: normalizeImages(l.images),
+    contact: normalizeContact(l.contact),
     // Hero is the document header: always first and never hidden, so the stored
     // template stays consistent with the UI (which shows it pinned, not in the
     // reorderable list). The composer enforces the same invariant at render.

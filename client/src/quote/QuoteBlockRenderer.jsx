@@ -567,6 +567,32 @@ export function QuoteBlock({ block, lang = 'he' }) {
   }
 }
 
+// Whether a composed block has anything worth showing. SINGLE source of "is this
+// section visible" for both the admin canvas and the public customer page, so the
+// two never disagree about which sections render (and appear in the ToC).
+export function blockHasContent(block) {
+  const d = block?.data || {};
+  switch (block?.type) {
+    case 'hero':
+    case 'tour_details':
+    case 'pricing':
+    case 'signature':
+      return true;
+    case 'video':
+      return !!d.url;
+    case 'image_slot_1':
+    case 'image_slot_2':
+      return !!d.imageUrl;
+    case 'program':
+    case 'product_marketing':
+    case 'why_us':
+    case 'city_content':
+      return !!(d.html && String(d.html).trim());
+    default:
+      return d.customHtml ? !!String(d.customHtml).trim() : Array.isArray(d.items) && d.items.length > 0;
+  }
+}
+
 export default function QuoteDocumentRenderer({ model }) {
   const blocks = (model?.blocks || []).filter((b) => !b.hidden);
   const lang = model?.language || 'he';
@@ -576,7 +602,12 @@ export default function QuoteDocumentRenderer({ model }) {
     <article dir={lang === 'en' ? 'ltr' : 'rtl'} className="overflow-hidden bg-white">
       {hero && <QuoteBlock block={hero} lang={lang} />}
       <div className="space-y-20 px-8 py-16 sm:px-16 sm:py-20">
-        {body.map((b) => (<section key={b.key}><QuoteBlock block={b} lang={lang} /></section>))}
+        {/* Stable per-section anchor (id="qs-<key>") + scroll offset, so the public
+            page's Table of Contents and "scroll to signature" can target sections.
+            Purely additive — no layout/behaviour change for the admin preview. */}
+        {body.map((b) => (
+          <section key={b.key} id={`qs-${b.key}`} className="scroll-mt-24"><QuoteBlock block={b} lang={lang} /></section>
+        ))}
       </div>
     </article>
   );

@@ -561,3 +561,48 @@ export async function composeQuoteDraftPreview(client, id) {
   const model = assembleComposition({ document, deal, version, lines, quoteSections, lang: document.language, template, sharedContent });
   return { model };
 }
+
+// Public customer-facing compose: look up the QuoteDocument by its capability
+// token, compose the live model, and return ONLY what the customer page needs —
+// sanitised blocks (no admin metadata: no editTarget / source / warnings), the
+// business contact (WhatsApp/Email for "צור קשר"), a small header (customer / org /
+// product), and the doc's lifecycle status. Signature data is added in Phase 2.
+export async function composeQuoteByPublicToken(client, token) {
+  if (!token || typeof token !== 'string') return { error: 'not_found' };
+  const document = await client.quoteDocument.findUnique({ where: { publicToken: token } });
+  if (!document) return { error: 'not_found' };
+
+  const composed = await composeQuoteDraftPreview(client, document.id);
+  if (composed.error) return composed;
+
+  const template = await getQuoteTemplate(client);
+  const hero = composed.model.blocks.find((b) => b.type === 'hero')?.data || {};
+
+  // Strip per-block admin fields; keep only what the renderer consumes.
+  const blocks = composed.model.blocks.map((b) => ({
+    key: b.key,
+    type: b.type,
+    kind: b.kind,
+    sortOrder: b.sortOrder,
+    hidden: b.hidden,
+    data: b.data,
+  }));
+
+  return {
+    result: {
+      model: { language: composed.model.language, blocks },
+      doc: {
+        status: document.status, // draft | produced | accepted | rejected | expired
+        language: document.language,
+        publicToken: document.publicToken,
+      },
+      contact: template.contact || { whatsapp: '', email: '' },
+      header: {
+        customerName: hero.customerName || null,
+        organizationName: hero.organizationName || null,
+        productName: hero.productName || null,
+      },
+      signature: null, // Phase 2: populated from the QuoteSignature audit record
+    },
+  };
+}

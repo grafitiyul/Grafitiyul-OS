@@ -335,3 +335,19 @@ test('composer: image slot renders the matching image for the deal variant, skip
   assert.equal(s1.caption, 'כיתוב');
   assert.equal(s2.imageUrl, null, 'no slot2 image targets v1 → skipped');
 });
+
+// ── Business contact (public-page "צור קשר") ─────────────────────────────────
+test('normalizeLayout: contact defaults to empty strings', () => {
+  assert.deepEqual(normalizeLayout(null).contact, { whatsapp: '', email: '' });
+});
+
+test('normalizeLayout: whatsapp is reduced to digits; too-short → empty', () => {
+  assert.equal(normalizeLayout({ contact: { whatsapp: '+972 50-123-4567' } }).contact.whatsapp, '972501234567');
+  assert.equal(normalizeLayout({ contact: { whatsapp: '12345' } }).contact.whatsapp, '', 'under 6 digits → empty');
+  assert.equal(normalizeLayout({ contact: { whatsapp: 'abc' } }).contact.whatsapp, '');
+});
+
+test('normalizeLayout: contact email is trimmed; non-string → empty', () => {
+  assert.equal(normalizeLayout({ contact: { email: '  hi@x.co  ' } }).contact.email, 'hi@x.co');
+  assert.equal(normalizeLayout({ contact: { email: 123 } }).contact.email, '');
+});

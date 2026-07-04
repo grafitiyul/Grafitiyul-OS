@@ -44,6 +44,7 @@ import CrmSettingsPage from './admin/crm/settings/CrmSettingsPage.jsx';
 import DealsList from './admin/deals/DealsList.jsx';
 import DealDetail from './admin/deals/DealDetail.jsx';
 import QuotePreviewCanvas from './admin/quote/QuotePreviewCanvas.jsx';
+import CustomerQuoteView from './quote/CustomerQuoteView.jsx';
 // Global Settings module (low-frequency configuration).
 import SettingsHome from './admin/settings/SettingsHome.jsx';
 import CrmSettingsHome from './admin/settings/CrmSettingsHome.jsx';
@@ -217,6 +218,9 @@ export default function App() {
       <Route path="/attempt/:attemptId" element={<AttemptRuntime />} />
       {/* Guide portal — token-gated, mobile-first task feed. */}
       <Route path="/p/:token" element={<GuidePortal />} />
+      {/* Public customer quote page — token-gated (QuoteDocument.publicToken),
+          no admin auth. The customer-facing proposal viewer + signature flow. */}
+      <Route path="/quote/:token" element={<CustomerQuoteView />} />
       {/* Dedicated install entry — public, token-bearing URL that
           iOS Safari captures verbatim on Add to Home Screen, and
           that Android Chrome resolves through a per-token manifest
