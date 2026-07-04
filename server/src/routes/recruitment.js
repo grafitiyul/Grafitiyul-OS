@@ -1,12 +1,11 @@
-import { Router } from 'express';
-import { handle } from '../asyncHandler.js';
-
 // Live recruitment-export integration.
 //
 // The recruitment system (grafitiyul-recruitment) exposes read-only export
-// endpoints. This router proxies them into the management system's
-// /api/recruitment/* namespace and is the ONLY source of truth for
-// imported guide identity.
+// endpoints. This module fetches them and exposes getRecruitmentSnapshot(),
+// consumed by people.js syncFromUpstream() to (a) mirror TRAINEE identity and
+// (b) reconcile the trainee roster. The old /api/recruitment/* admin proxy
+// endpoints were removed in Step 7 (dead — never called by any client); the
+// snapshot fetch below is the only remaining, load-bearing surface.
 //
 // Contract with upstream (per Slice 8 integration spec):
 //   GET  ${RECRUITMENT_API_BASE_URL}/api/export/guides
@@ -194,45 +193,3 @@ export async function getRecruitmentSnapshot() {
   const legacy = await getGuides();
   return { people: legacy, trainingMaterials: [] };
 }
-
-const router = Router();
-
-router.get(
-  '/people',
-  handle(async (_req, res) => {
-    res.json(await getGuides());
-  }),
-);
-
-// Training-materials export is not yet wired on the upstream side. When
-// it lands, swap the empty array for a fetchUpstream('/api/export/...')
-// call following the same pattern as /people above.
-router.get(
-  '/training-materials',
-  handle(async (_req, res) => {
-    res.json([]);
-  }),
-);
-
-router.get(
-  '/',
-  handle(async (_req, res) => {
-    res.json(await getRecruitmentSnapshot());
-  }),
-);
-
-// Local error handler — converts our structured errors (with statusCode +
-// detail) into proper HTTP responses so the client sees 502/503 instead
-// of a generic 500 when upstream is down or misconfigured.
-router.use((err, _req, res, _next) => {
-  console.error('[recruitment]', err);
-  const status = err?.statusCode && Number.isInteger(err.statusCode)
-    ? err.statusCode
-    : 500;
-  res.status(status).json({
-    error: err?.message || 'internal_error',
-    detail: err?.detail || null,
-  });
-});
-
-export default router;

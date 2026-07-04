@@ -15,7 +15,6 @@ import signersRouter from './routes/signers.js';
 import documentsRouter from './routes/documents.js';
 import teamsRouter from './routes/teams.js';
 import peopleRouter from './routes/people.js';
-import recruitmentRouter from './routes/recruitment.js';
 import exportsRouter from './routes/exports.js';
 import portalRouter from './routes/portal.js';
 import adminUsersRouter from './routes/adminUsers.js';
@@ -157,7 +156,6 @@ app.use('/api/signers', requireAdminAuth, signersRouter);
 app.use('/api/documents', requireAdminAuth, documentsRouter);
 app.use('/api/teams', requireAdminAuth, teamsRouter);
 app.use('/api/people', requireAdminAuth, peopleRouter);
-app.use('/api/recruitment', requireAdminAuth, recruitmentRouter);
 app.use('/api/exports', requireAdminAuth, exportsRouter);
 app.use('/api/admin-users', requireAdminAuth, adminUsersRouter);
 

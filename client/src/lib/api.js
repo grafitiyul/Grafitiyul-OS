@@ -143,10 +143,6 @@ export const api = {
       request(`/api/teams/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     remove: (id) => request(`/api/teams/${id}`, { method: 'DELETE' }),
   },
-  recruitment: {
-    snapshot: () => request('/api/recruitment'),
-    people: () => request('/api/recruitment/people'),
-  },
   people: {
     // Returns { people, upstream }. Sync-on-read: the server refreshes from
     // recruitment before responding. `upstream.ok=false` means the refresh
