@@ -418,3 +418,25 @@ test('composer: every heading section gets a default title (no template → buil
   assert.equal(b('participant_policy'), 'מדיניות שינוי כמות המשתתפים');
   assert.equal(b('signature'), 'חתימה');
 });
+
+// ── "Edit at source" targets the ACTIVE Why-Grafitiyul source ─────────────────
+test('composer: Why-Grafitiyul edit target follows the active source (subtype vs type)', () => {
+  const subActive = baseDeal({ organization: {}, organizationSubtypeId: 'sub1', organizationSubtype: { quoteContentHe: '<p>x</p>' }, organizationTypeId: 'ot1', organizationType: { quoteContentHe: '<p>y</p>' } });
+  const et1 = blockByKey(compose({ deal: subActive }), 'why_grafitiyul').editTarget;
+  assert.equal(et1.kind, 'orgSubtype', 'subtype provides content → edit subtype');
+  assert.equal(et1.id, 'sub1');
+  const typeActive = baseDeal({ organization: {}, organizationSubtypeId: 'sub1', organizationSubtype: { quoteContentHe: '' }, organizationTypeId: 'ot1', organizationType: { quoteContentHe: '<p>y</p>' } });
+  const et2 = blockByKey(compose({ deal: typeActive }), 'why_grafitiyul').editTarget;
+  assert.equal(et2.kind, 'orgType', 'subtype empty → edit type');
+  assert.equal(et2.id, 'ot1');
+});
+
+// ── FAQ / policies render from their CATEGORISED content; unassigned appears nowhere ─
+test('composer: FAQ / Cancellation / Participant-policy render categorised content', () => {
+  const m = compose();
+  assert.ok(blockByKey(m, 'faq').data.items.length >= 1, 'faq items present');
+  assert.ok(blockByKey(m, 'cancellation').data.items.length >= 1, 'cancellation items present');
+  assert.ok(blockByKey(m, 'participant_policy').data.items.length >= 1, 'participant_policy items present');
+  const uncategorised = compose({ quoteSections: [{ id: 'x', category: null, active: true, titleHe: 'x', richTextHe: '<p>x</p>' }] });
+  assert.equal(blockByKey(uncategorised, 'faq').data.items.length, 0, 'unassigned content appears in no section');
+});

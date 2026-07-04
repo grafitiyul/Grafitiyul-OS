@@ -19,6 +19,16 @@ function cleanRich(v) {
   return String(v).slice(0, MAX_RICH);
 }
 
+// Which quote SECTION a content row belongs to. This is the link the composer uses
+// to render FAQ / Cancellation / Participant-policy blocks. null = unassigned (the
+// row exists but appears in no quote section). Unknown values are coerced to null.
+const QUOTE_SECTION_CATEGORIES = new Set(['faq', 'cancellation', 'participant_policy']);
+function cleanCategory(v) {
+  if (v === undefined) return undefined;
+  if (!v) return null;
+  return QUOTE_SECTION_CATEGORIES.has(String(v)) ? String(v) : null;
+}
+
 router.get(
   '/',
   handle(async (_req, res) => {
@@ -49,7 +59,7 @@ router.put(
 router.post(
   '/',
   handle(async (req, res) => {
-    const { titleHe, titleEn, richTextHe, richTextEn } = req.body || {};
+    const { titleHe, titleEn, richTextHe, richTextEn, category } = req.body || {};
     const cleanHe = String(titleHe || '').trim();
     if (!cleanHe) return res.status(400).json({ error: 'title_required' });
     const last = await prisma.quoteSection.findFirst({
@@ -62,6 +72,7 @@ router.post(
         titleEn: titleEn ? String(titleEn).trim() : null,
         richTextHe: cleanRich(richTextHe) ?? null,
         richTextEn: cleanRich(richTextEn) ?? null,
+        category: cleanCategory(category) ?? null,
         sortOrder: (last?.sortOrder ?? -1) + 1,
       },
     });
@@ -72,7 +83,7 @@ router.post(
 router.put(
   '/:id',
   handle(async (req, res) => {
-    const { titleHe, titleEn, richTextHe, richTextEn, active, sortOrder } =
+    const { titleHe, titleEn, richTextHe, richTextEn, active, sortOrder, category } =
       req.body || {};
     const data = {};
     if (titleHe !== undefined) data.titleHe = String(titleHe).trim();
@@ -82,6 +93,7 @@ router.put(
     if (rhe !== undefined) data.richTextHe = rhe;
     const ren = cleanRich(richTextEn);
     if (ren !== undefined) data.richTextEn = ren;
+    if (category !== undefined) data.category = cleanCategory(category);
     if (active !== undefined) data.active = !!active;
     if (sortOrder !== undefined) data.sortOrder = Number(sortOrder) || 0;
     const section = await prisma.quoteSection.update({

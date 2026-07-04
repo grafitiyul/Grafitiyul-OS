@@ -51,6 +51,20 @@ const TABS = [
   { key: 'technical', label: 'פרטים טכניים' },
 ];
 
+// Remember the last-opened tab across refreshes (local, per user/browser).
+const TAB_STORAGE_KEY = 'gos.quoteStructure.tab';
+function usePersistedTab() {
+  const valid = (v) => TABS.some((t) => t.key === v);
+  const [tab, setTabState] = useState(() => {
+    try { const v = localStorage.getItem(TAB_STORAGE_KEY); return valid(v) ? v : 'hero'; } catch { return 'hero'; }
+  });
+  const setTab = useCallback((t) => {
+    setTabState(t);
+    try { localStorage.setItem(TAB_STORAGE_KEY, t); } catch { /* ignore quota */ }
+  }, []);
+  return [tab, setTab];
+}
+
 // Sections whose localized title is configurable from Quote Structure. The label
 // is the row/menu name; the actual title lives in layout.sectionTitles[key].
 const TITLE_SECTIONS = [
@@ -79,7 +93,7 @@ export default function QuoteLayoutSettings() {
   const [baseline, setBaseline] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [tab, setTab] = useState('hero');
+  const [tab, setTab] = usePersistedTab();
   const [saving, setSaving] = useState(false);
 
   const refresh = useCallback(async () => {

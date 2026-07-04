@@ -178,7 +178,11 @@ export default function QuotePreviewCanvas() {
       case 'deal': return `/admin/crm/deals/${dealId}`;
       case 'product': return t.id ? `/admin/settings/crm/products/${t.id}` : '/admin/settings/crm/products';
       case 'location': return '/admin/settings/crm/locations';
-      case 'orgType': return '/admin/settings/crm/organization-types';
+      // Organization Types AND Subtypes are edited on the same screen. The
+      // editTarget already resolved which one is the active source (label + kind);
+      // both route here so the admin lands on the source feeding the quote.
+      case 'orgType':
+      case 'orgSubtype': return '/admin/settings/crm/organization-types';
       case 'quoteSections': return '/admin/settings/crm/quote-sections';
       case 'quoteStructure': return '/admin/settings/crm/quote-layout';
       case 'signers': return '/admin/documents/signers';

@@ -14,6 +14,17 @@ const INPUT =
   'h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
 const LABEL = 'block text-[12px] font-medium text-gray-600 mb-1';
 
+// Which quote section a content row feeds. The composer renders FAQ / Cancellation
+// / Participant-policy blocks from rows tagged with the matching category; an
+// unassigned row appears in no quote section. Values mirror the composer + server.
+const CATEGORY_OPTIONS = [
+  { value: '', label: 'ללא שיוך (לא יופיע בהצעה)' },
+  { value: 'faq', label: 'שאלות נפוצות' },
+  { value: 'cancellation', label: 'מדיניות ביטול / דחייה' },
+  { value: 'participant_policy', label: 'מדיניות שינוי כמות המשתתפים' },
+];
+const CATEGORY_LABEL = Object.fromEntries(CATEGORY_OPTIONS.map((o) => [o.value, o.label]));
+
 function hasText(html) {
   return !!html && html.replace(/<[^>]*>/g, '').replace(/&nbsp;|\s/g, '') !== '';
 }
@@ -150,6 +161,10 @@ export default function QuoteSectionsSettings() {
                       </span>
                     )}
                     <span className="block text-[11px] text-gray-400 mt-0.5">
+                      <span className={item.category ? 'text-teal-700' : 'text-amber-600'}>
+                        {CATEGORY_LABEL[item.category || ''] || 'ללא שיוך'}
+                      </span>
+                      {' · '}
                       {[
                         hasText(item.richTextHe) ? 'תוכן עברית' : null,
                         hasText(item.richTextEn) ? 'תוכן אנגלית' : null,
@@ -205,6 +220,7 @@ export default function QuoteSectionsSettings() {
 function SectionEditor({ item, onClose, onSaved }) {
   const [titleHe, setTitleHe] = useState(item.titleHe || '');
   const [titleEn, setTitleEn] = useState(item.titleEn || '');
+  const [category, setCategory] = useState(item.category || '');
   const [richTextHe, setRichTextHe] = useState(item.richTextHe || '');
   const [richTextEn, setRichTextEn] = useState(item.richTextEn || '');
   const [busy, setBusy] = useState(false);
@@ -216,6 +232,7 @@ function SectionEditor({ item, onClose, onSaved }) {
       await api.quoteSections.update(item.id, {
         titleHe: titleHe.trim(),
         titleEn: titleEn.trim() || null,
+        category: category || null,
         richTextHe: richTextHe || null,
         richTextEn: richTextEn || null,
       });
@@ -249,6 +266,20 @@ function SectionEditor({ item, onClose, onSaved }) {
           />
         </label>
       </div>
+
+      <label className="block">
+        <span className={LABEL}>סעיף בהצעה — היכן יופיע התוכן</span>
+        <select value={category} onChange={(e) => setCategory(e.target.value)} className={INPUT}>
+          {CATEGORY_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+        {!category && (
+          <span className="mt-1 block text-[11px] text-amber-600">
+            ללא שיוך התוכן לא יופיע בהצעה. בחרו סעיף כדי שהוא יוצג.
+          </span>
+        )}
+      </label>
 
       <div>
         <span className={LABEL}>תוכן עשיר (עברית)</span>

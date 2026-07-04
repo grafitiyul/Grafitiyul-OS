@@ -7,6 +7,7 @@ import Placeholder from '@tiptap/extension-placeholder';
 import { useEffect, useRef, useState } from 'react';
 import { DynamicFieldNode } from './DynamicFieldNode.jsx';
 import { sanitizePastedHtml } from './pasteSanitizer.js';
+import EmojiButton from './EmojiButton.jsx';
 import { DYNAMIC_FIELDS } from '../lib/dynamicFields.js';
 import './editor.css';
 
@@ -115,6 +116,11 @@ export default function TitleEditor({
       <div className="flex-1 min-w-0">
         <EditorContent editor={editor} />
       </div>
+      {/* Same shared emoji picker as the body editor — inserts a plain emoji
+          character at the caret. The title stays plain text (an emoji is just
+          a character); it does NOT become a rich-text field. Opens downward
+          since the title sits at the top of the form. */}
+      <EmojiButton editor={editor} placement="down" />
       <FieldPickerButton onPick={insertField} />
     </div>
   );

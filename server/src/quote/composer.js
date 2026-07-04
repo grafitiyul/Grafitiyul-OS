@@ -91,7 +91,7 @@ function heroImageUrl(deal) {
 // just follows it. `dialog:true` → open as an overlay (the Builder); otherwise the
 // UI opens the source editor (temporarily a side tab) and refreshes on return.
 // `inline:true` → quote-owned presentation, edited in the document itself.
-export function editTargetFor(type, deal) {
+export function editTargetFor(type, deal, lang) {
   switch (type) {
     case 'hero': return { kind: 'deal', label: 'ערוך פרטי לקוח' };
     case 'program': return { kind: 'product', label: 'ערוך תוכן התוכנית (וריאציה)', id: deal?.productId || null };
@@ -99,7 +99,17 @@ export function editTargetFor(type, deal) {
     case 'tour_details': return { kind: 'deal', label: 'ערוך פרטי הסיור' };
     case 'pricing': return { kind: 'builder', label: 'ערוך תמחור', dialog: true };
     case 'product_marketing': return { kind: 'product', label: 'ערוך מוצר', id: deal?.productId || null };
-    case 'why_us': return { kind: 'orgType', label: 'ערוך תוכן “למה גרפיטיול” (סוג ארגון)', id: deal?.organizationTypeId || deal?.organization?.organizationTypeId || null };
+    // "למה גרפיטיול" — edit the ACTIVE source: the Organization Subtype when it
+    // currently provides the content (in the quote language), otherwise the
+    // Organization Type. Mirrors the content resolution in buildWhyGrafitiyul, so
+    // the admin always lands on the source actually feeding the quote.
+    case 'why_us': {
+      const sub = deal?.organizationSubtype;
+      const subActive = !!(sub && isFilled(pickLang(sub.quoteContentHe, sub.quoteContentEn, lang)));
+      return subActive
+        ? { kind: 'orgSubtype', label: 'ערוך תוכן “למה גרפיטיול” (תת-סוג הארגון)', id: deal?.organizationSubtypeId || sub?.id || null }
+        : { kind: 'orgType', label: 'ערוך תוכן “למה גרפיטיול” (סוג הארגון)', id: deal?.organizationTypeId || deal?.organization?.organizationTypeId || null };
+    }
     case 'faq': return { kind: 'quoteSections', label: 'ערוך שאלות נפוצות', category: 'faq' };
     case 'cancellation': return { kind: 'quoteSections', label: 'ערוך מדיניות ביטול', category: 'cancellation' };
     case 'participant_policy': return { kind: 'quoteSections', label: 'ערוך מדיניות משתתפים', category: 'participant_policy' };
@@ -459,7 +469,7 @@ export function assembleComposition({ document, deal, version, lines, quoteSecti
       sortOrder: i,
       hidden: !!b.hidden,
       source: SOURCE_LABELS[b.type] || null,
-      editTarget: editTargetFor(b.type, deal),
+      editTarget: editTargetFor(b.type, deal, language),
       overridden,
       data,
     };

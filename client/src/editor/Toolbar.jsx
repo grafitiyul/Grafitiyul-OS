@@ -3,6 +3,7 @@ import { DYNAMIC_FIELDS } from '../lib/dynamicFields.js';
 import LinkPopover from './LinkPopover.jsx';
 import ColorPicker from './ColorPicker.jsx';
 import VideoUrlDialog from './VideoUrlDialog.jsx';
+import EmojiButton from './EmojiButton.jsx';
 import { uploadMediaWithProgress } from './mediaUpload.js';
 
 // ---- palette / option tables (stable values, never reference labels) ----
@@ -631,74 +632,6 @@ function LinkButton({ editor }) {
         onClose={() => setOpen(false)}
       />
     </>
-  );
-}
-
-// Emoji picker — used by the lite preset (working notes). Inserts a character
-// at the caret. Kept here so both presets draw from one item registry.
-const EMOJIS = [
-  '😀', '🙂', '😅', '😎', '🤝', '👍', '👌', '🙏',
-  '🎉', '✅', '✔️', '❗', '❓', '⚠️', '⭐', '🔥',
-  '❤️', '💡', '📌', '📞', '✉️', '📅', '🕒', '💰',
-];
-
-function EmojiButton({ editor }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onDoc(e) {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    }
-    function onEsc(e) {
-      if (e.key === 'Escape') setOpen(false);
-    }
-    document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onEsc);
-    return () => {
-      document.removeEventListener('mousedown', onDoc);
-      document.removeEventListener('keydown', onEsc);
-    };
-  }, [open]);
-
-  function insert(emoji) {
-    editor.chain().focus().insertContent(emoji).run();
-    setOpen(false);
-  }
-
-  return (
-    <div className="relative shrink-0" ref={ref}>
-      <button
-        type="button"
-        aria-label="אימוג'י"
-        title="אימוג'י"
-        onMouseDown={(e) => e.preventDefault()}
-        onClick={() => setOpen((v) => !v)}
-        className="w-9 h-9 flex items-center justify-center rounded-md text-[15px] text-gray-700 hover:bg-gray-200 transition"
-      >
-        🙂
-      </button>
-      {open && (
-        <div
-          role="menu"
-          dir="ltr"
-          className="absolute bottom-full left-0 mb-1 bg-white border border-gray-200 rounded-md shadow-lg z-30 p-2 grid grid-cols-8 gap-0.5 w-[18rem]"
-        >
-          {EMOJIS.map((em) => (
-            <button
-              key={em}
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => insert(em)}
-              className="w-8 h-8 flex items-center justify-center rounded hover:bg-gray-100 text-[18px]"
-            >
-              {em}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
   );
 }
 
