@@ -44,11 +44,20 @@ export const TECH_FIELD_KEYS = ['city', 'date', 'time', 'participants', 'duratio
 // Everything that shows a title (the quote renderer + the Product Variant editor
 // group) reads it from here, so a rename applies everywhere. Defaults match the
 // renderer's previous built-in titles, so existing output is unchanged.
-export const CONFIGURABLE_TITLE_KEYS = ['program', 'product_marketing', 'pricing'];
+export const CONFIGURABLE_TITLE_KEYS = [
+  'program', 'tour_details', 'product_marketing', 'why_grafitiyul', 'pricing',
+  'faq', 'cancellation', 'participant_policy', 'signature',
+];
 export const SECTION_TITLE_DEFAULTS = {
   program: { titleHe: 'אז מה בתוכנית?', titleEn: "What's in the program?" },
+  tour_details: { titleHe: 'פרטים טכניים', titleEn: 'Technical Details' },
   product_marketing: { titleHe: 'מה כולל הסיור?', titleEn: "What's Included?" },
+  why_grafitiyul: { titleHe: 'למה גרפיטיול?', titleEn: 'Why Grafitiyul?' },
   pricing: { titleHe: 'כמה עולה?', titleEn: 'Pricing' },
+  faq: { titleHe: 'שאלות נפוצות', titleEn: 'FAQ' },
+  cancellation: { titleHe: 'מדיניות ביטול / דחייה', titleEn: 'Cancellation / Postponement' },
+  participant_policy: { titleHe: 'מדיניות שינוי כמות המשתתפים', titleEn: 'Participant Quantity Change Policy' },
+  signature: { titleHe: 'חתימה', titleEn: 'Signature' },
 };
 
 // Legacy overlay presets (kept for backward compatibility with older saved
@@ -116,12 +125,8 @@ export const DEFAULT_LAYOUT = {
   sections: SECTION_KEYS.map((key) => ({ key, hidden: false })),
   technical: { fields: TECH_FIELD_KEYS.map((key) => ({ key, visible: true })) },
   // Localized titles for the configurable sections (source of truth). Content
-  // itself is owned elsewhere (Product Variant / Pricing Builder), not here.
-  sectionTitles: {
-    program: { ...SECTION_TITLE_DEFAULTS.program },
-    product_marketing: { ...SECTION_TITLE_DEFAULTS.product_marketing },
-    pricing: { ...SECTION_TITLE_DEFAULTS.pricing },
-  },
+  // itself is owned by each section's business entity, not here.
+  sectionTitles: Object.fromEntries(CONFIGURABLE_TITLE_KEYS.map((k) => [k, { ...SECTION_TITLE_DEFAULTS[k] }])),
   // Video Library — zero or more videos, each shown only in quotes whose Product
   // Variant is assigned to it. A variant belongs to AT MOST ONE video (enforced on
   // normalize). Independent of Shared Content. Empty by default.

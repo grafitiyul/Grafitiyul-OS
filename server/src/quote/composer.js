@@ -47,8 +47,7 @@ const SOURCE_LABELS = {
   signature: 'Signers',
   product_marketing: 'Product',
   city_content: 'Location',
-  classification: 'OrganizationType / Subtype',
-  why_us: 'QuoteSection',
+  why_us: 'OrganizationType / Subtype',
   faq: 'QuoteSection',
   cancellation: 'QuoteSection',
   participant_policy: 'QuoteSection',
@@ -100,8 +99,7 @@ export function editTargetFor(type, deal) {
     case 'tour_details': return { kind: 'deal', label: 'ערוך פרטי הסיור' };
     case 'pricing': return { kind: 'builder', label: 'ערוך תמחור', dialog: true };
     case 'product_marketing': return { kind: 'product', label: 'ערוך מוצר', id: deal?.productId || null };
-    case 'classification': return { kind: 'orgType', label: 'ערוך תוכן סוג ארגון', id: deal?.organizationTypeId || deal?.organization?.organizationTypeId || null };
-    case 'why_us': return { kind: 'quoteSections', label: 'ערוך תוכן שיווקי', category: 'why_us' };
+    case 'why_us': return { kind: 'orgType', label: 'ערוך תוכן “למה גרפיטיול” (סוג ארגון)', id: deal?.organizationTypeId || deal?.organization?.organizationTypeId || null };
     case 'faq': return { kind: 'quoteSections', label: 'ערוך שאלות נפוצות', category: 'faq' };
     case 'cancellation': return { kind: 'quoteSections', label: 'ערוך מדיניות ביטול', category: 'cancellation' };
     case 'participant_policy': return { kind: 'quoteSections', label: 'ערוך מדיניות משתתפים', category: 'participant_policy' };
@@ -232,6 +230,7 @@ function buildTourDetails({ deal, displayName, lang, template, sharedContent }) 
   const city = pickLang(cityLocation?.nameHe, cityLocation?.nameEn, lang) || cityLocation?.nameHe || null;
   return {
     data: {
+      title: sectionTitle(template, 'tour_details', lang),
       productName: displayName,
       city,
       tourDate: deal?.tourDate || null,
@@ -305,9 +304,10 @@ function buildPricing({ deal, lines, displayName, lang, template }) {
 }
 
 
-function buildSignature() {
+function buildSignature({ template, lang }) {
   // No signer infrastructure wired in this slice — placeholder slot shape only.
-  return { data: { signerSlots: [] }, warnings: [] };
+  // Heading comes from the Quote Template like every other configurable section.
+  return { data: { title: sectionTitle(template, 'signature', lang), signerSlots: [] }, warnings: [] };
 }
 
 // ── Content block builders (pure, language-aware) ────────────────────────────
@@ -331,19 +331,23 @@ function buildCityContent({ deal, lang }) {
   return { data: { html }, warnings };
 }
 
-function buildClassification({ deal, lang }) {
+// "למה גרפיטיול?" — TITLE from the Quote Template; CONTENT from the Organization
+// Subtype (override) → the Organization Type. This is the single source of truth for
+// this section's copy — it is NOT duplicated on deals or variants. Empty → skipped.
+function buildWhyGrafitiyul({ deal, lang, template }) {
   const sub = deal?.organizationSubtype;
   const type = deal?.organizationType || deal?.organization?.organizationType;
   const html = pickLang(sub?.quoteContentHe, sub?.quoteContentEn, lang) || pickLang(type?.quoteContentHe, type?.quoteContentEn, lang);
   const warnings = [];
-  if ((sub || type) && !html) warnings.push(warn('classification', 'classification', 'quoteContent', lang));
-  return { data: { html }, warnings };
+  if ((sub || type) && !html) warnings.push(warn('why_grafitiyul', 'why_us', 'quoteContent', lang));
+  return { data: { title: sectionTitle(template, 'why_grafitiyul', lang), html }, warnings };
 }
 
 // Reusable QuoteSection content, selected by category. Deterministic order:
 // sortOrder, then id as a stable tiebreak. Each item warns if its rich text is
-// missing in the quote language (title is a label → Hebrew fallback, no warning).
-function buildSectionContent({ quoteSections, category, blockKey, lang }) {
+// missing in the quote language. The SECTION heading comes from the Quote Template
+// (blockKey); the per-item titles stay from the QuoteSection rows.
+function buildSectionContent({ quoteSections, category, blockKey, lang, template }) {
   const rows = (quoteSections || [])
     .filter((s) => s.active !== false && s.category === category)
     .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || String(a.id).localeCompare(String(b.id)));
@@ -353,7 +357,7 @@ function buildSectionContent({ quoteSections, category, blockKey, lang }) {
     if (!html) warnings.push(warn(blockKey, category, `richText:${s.id}`, lang));
     return { id: s.id, title: pickLang(s.titleHe, s.titleEn, lang) || s.titleHe || null, html };
   });
-  return { data: { items }, warnings };
+  return { data: { title: sectionTitle(template, blockKey, lang), items }, warnings };
 }
 
 // ── Dispatch ─────────────────────────────────────────────────────────────────
@@ -368,8 +372,7 @@ function assembleBlock(type, ctx) {
     case 'signature': return buildSignature(ctx);
     case 'product_marketing': return buildProductMarketing(ctx);
     case 'city_content': return buildCityContent(ctx);
-    case 'classification': return buildClassification(ctx);
-    case 'why_us': return buildSectionContent({ ...ctx, category: 'why_us', blockKey: 'why_grafitiyul' });
+    case 'why_us': return buildWhyGrafitiyul(ctx);
     case 'faq': return buildSectionContent({ ...ctx, category: 'faq', blockKey: 'faq' });
     case 'cancellation': return buildSectionContent({ ...ctx, category: 'cancellation', blockKey: 'cancellation' });
     case 'participant_policy': return buildSectionContent({ ...ctx, category: 'participant_policy', blockKey: 'participant_policy' });

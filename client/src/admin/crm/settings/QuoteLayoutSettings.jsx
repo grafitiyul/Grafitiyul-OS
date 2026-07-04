@@ -28,11 +28,10 @@ const SECTION_LABELS = {
   product_marketing: 'תיאור המוצר',
   video: 'וידאו',
   why_grafitiyul: 'למה גרפיטיול',
-  classification: 'תוכן לפי סוג ארגון',
   pricing: 'תמחור',
   faq: 'שאלות נפוצות',
-  cancellation: 'מדיניות ביטול',
-  participant_policy: 'מדיניות משתתפים',
+  cancellation: 'מדיניות ביטול / דחייה',
+  participant_policy: 'מדיניות שינוי כמות המשתתפים',
   signature: 'חתימה',
 };
 // Hero is the only fixed block (the document header, pinned first + never hidden).
@@ -56,8 +55,14 @@ const TABS = [
 // is the row/menu name; the actual title lives in layout.sectionTitles[key].
 const TITLE_SECTIONS = [
   { key: 'program', label: 'אז מה בתוכנית?' },
+  { key: 'tour_details', label: 'פרטים טכניים' },
   { key: 'product_marketing', label: 'תיאור המוצר' },
+  { key: 'why_grafitiyul', label: 'למה גרפיטיול' },
   { key: 'pricing', label: 'תמחור' },
+  { key: 'faq', label: 'שאלות נפוצות' },
+  { key: 'cancellation', label: 'מדיניות ביטול / דחייה' },
+  { key: 'participant_policy', label: 'מדיניות שינוי כמות המשתתפים' },
+  { key: 'signature', label: 'חתימה' },
 ];
 
 // Quick design presets — each is a partial hero patch. "פרימיום כהה" is the

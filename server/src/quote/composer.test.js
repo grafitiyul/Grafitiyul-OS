@@ -189,11 +189,11 @@ test('composer: HTML override replaces section content and clears its warning', 
 });
 
 test('composer: HTML override replaces a single-html content block', () => {
-  const document = doc({ overrideState: { blocks: { classification: { html: '<p>נוסח מותאם</p>' } } } });
+  const document = doc({ overrideState: { blocks: { why_grafitiyul: { html: '<p>נוסח מותאם</p>' } } } });
   const model = compose({ document });
-  const cls = blockByKey(model, 'classification');
-  assert.equal(cls.data.html, '<p>נוסח מותאם</p>');
-  assert.equal(cls.overridden, true);
+  const b = blockByKey(model, 'why_grafitiyul');
+  assert.equal(b.data.html, '<p>נוסח מותאם</p>');
+  assert.equal(b.overridden, true);
 });
 
 test('composer: title override is applied to a content block', () => {
@@ -224,6 +224,9 @@ test('composer: each block carries a contextual editTarget (route to source)', (
   assert.equal(blockByKey(model, 'faq').editTarget.category, 'faq');
   assert.equal(blockByKey(model, 'program').editTarget.kind, 'product');
   assert.equal(blockByKey(model, 'program').editTarget.id, 'p1');
+  // "Why Grafitiyul" now edits at the Organization Type (its content source).
+  assert.equal(blockByKey(model, 'why_grafitiyul').editTarget.kind, 'orgType');
+  assert.equal(blockByKey(model, 'why_grafitiyul').editTarget.id, 'ot1');
 });
 
 // ── Shared Content dual-read (Slice 2) ───────────────────────────────────────
@@ -390,4 +393,28 @@ test('composer: duration resolves from the variant; deal override wins; absent w
   assert.equal(blockByKey(compose({ deal: noDur }), 'tour_details').data.durationHours, null, 'legitimately absent');
   const dealDur = baseDeal({ durationHours: 3 });
   assert.equal(blockByKey(compose({ deal: dealDur }), 'tour_details').data.durationHours, 3, 'deal override wins');
+});
+
+// ── Why Grafitiyul: content from Org Subtype → Org Type; single source of truth ─
+test('composer: Why Grafitiyul — subtype overrides type; type fallback; empty skips', () => {
+  const both = baseDeal({ organization: {}, organizationSubtype: { quoteContentHe: '<p>תת-סוג</p>' }, organizationType: { quoteContentHe: '<p>סוג</p>' } });
+  assert.equal(blockByKey(compose({ deal: both }), 'why_grafitiyul').data.html, '<p>תת-סוג</p>', 'subtype overrides type');
+  const typeOnly = baseDeal({ organization: {}, organizationSubtype: null, organizationType: { quoteContentHe: '<p>סוג</p>' } });
+  assert.equal(blockByKey(compose({ deal: typeOnly }), 'why_grafitiyul').data.html, '<p>סוג</p>', 'type fallback');
+  const neither = baseDeal({ organization: {}, organizationSubtype: null, organizationType: null });
+  assert.equal(blockByKey(compose({ deal: neither }), 'why_grafitiyul').data.html, null, 'empty → skip');
+});
+
+test('composer: the duplicate "classification" section is gone', () => {
+  assert.ok(!compose().blocks.some((b) => b.key === 'classification' || b.type === 'classification'), 'no classification block');
+});
+
+test('composer: every heading section gets a default title (no template → built-in defaults)', () => {
+  const b = (k) => blockByKey(compose(), k).data.title;
+  assert.equal(b('tour_details'), 'פרטים טכניים');
+  assert.equal(b('why_grafitiyul'), 'למה גרפיטיול?');
+  assert.equal(b('faq'), 'שאלות נפוצות');
+  assert.equal(b('cancellation'), 'מדיניות ביטול / דחייה');
+  assert.equal(b('participant_policy'), 'מדיניות שינוי כמות המשתתפים');
+  assert.equal(b('signature'), 'חתימה');
 });

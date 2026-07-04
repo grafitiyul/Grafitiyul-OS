@@ -489,10 +489,9 @@ export function QuoteBlock({ block, lang = 'he' }) {
       );
     case 'program':
     case 'product_marketing':
-    case 'classification':
+    case 'why_us':
     case 'city_content':
       return <>{title && <Heading>{title}</Heading>}<Html html={d.html} lang={lang} /></>;
-    case 'why_us':
     case 'faq':
     case 'cancellation':
     case 'participant_policy':

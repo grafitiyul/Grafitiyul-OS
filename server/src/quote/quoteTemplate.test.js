@@ -273,6 +273,7 @@ test('normalizeLayout: an old sections list gains program/video at their canonic
   const oldOrder = ['hero','tour_details','product_marketing','why_grafitiyul','classification','pricing','payment_terms','faq','cancellation','participant_policy','signature'];
   const keys = normalizeLayout({ sections: oldOrder.map((key) => ({ key })) }).sections.map((s) => s.key);
   assert.ok(!keys.includes('payment_terms'), 'stale/removed block (payment_terms) is dropped');
+  assert.ok(!keys.includes('classification'), 'stale/removed block (classification) is dropped');
   assert.equal(keys.indexOf('program') + 1, keys.indexOf('tour_details'), 'program before Technical Details');
   assert.equal(keys.indexOf('video'), keys.indexOf('product_marketing') + 1, 'video after Product Details');
 });
@@ -287,4 +288,15 @@ test('composer: the template drag order is followed by the quote', () => {
   const template = normalizeLayout({ v: 2, sections: [{ key: 'faq' }, { key: 'pricing' }] }); // faq dragged before pricing
   const keys = compose(template).blocks.map((b) => b.key);
   assert.ok(keys.indexOf('faq') < keys.indexOf('pricing'), 'quote follows the template order');
+});
+
+// ── section titles: a rename in Quote Structure flows to the quote (all sections) ─
+test('composer: renamed section titles flow to the quote (why_grafitiyul, faq, signature)', () => {
+  const template = normalizeLayout({ v: 2, sectionTitles: {
+    why_grafitiyul: { titleHe: 'למה אנחנו?' }, faq: { titleHe: 'שו״ת' }, signature: { titleHe: 'אישור' },
+  } });
+  const title = (k) => compose(template).blocks.find((b) => b.key === k).data.title;
+  assert.equal(title('why_grafitiyul'), 'למה אנחנו?');
+  assert.equal(title('faq'), 'שו״ת');
+  assert.equal(title('signature'), 'אישור');
 });

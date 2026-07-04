@@ -16,9 +16,9 @@ import { resolveFinanceWorkspace, FINANCE_WORKSPACE } from '../deals/config.js';
 
 const LABELS = {
   hero: 'כותרת', program: 'אז מה בתוכנית?', tour_details: 'פרטים טכניים',
-  product_marketing: 'תיאור המוצר', video: 'וידאו', why_grafitiyul: 'למה גרפיתיול', classification: 'תוכן לפי סוג ארגון',
+  product_marketing: 'תיאור המוצר', video: 'וידאו', why_grafitiyul: 'למה גרפיטיול',
   pricing: 'תמחור', faq: 'שאלות נפוצות',
-  cancellation: 'מדיניות ביטול', participant_policy: 'מדיניות משתתפים', signature: 'חתימה',
+  cancellation: 'מדיניות ביטול / דחייה', participant_policy: 'מדיניות שינוי כמות המשתתפים', signature: 'חתימה',
 };
 // The section list/warnings prefer the composed (live) title when the block has
 // one — so a Quote-Structure rename of "אז מה בתוכנית?" shows here immediately.
@@ -40,7 +40,7 @@ function hasContent(block) {
       return !!d.url;
     case 'program':
     case 'product_marketing':
-    case 'classification':
+    case 'why_us':
     case 'city_content':
       return !!(d.html && String(d.html).trim());
     default:

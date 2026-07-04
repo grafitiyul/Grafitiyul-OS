@@ -18,8 +18,10 @@ export const DEFAULT_QUOTE_BLOCKS = [
   // Video (YouTube) — shown only in quotes whose Product Variant is selected in the
   // Quote Structure → Video tab. Config lives in the template; content is the URL.
   { key: 'video', type: 'video', kind: 'content', optional: true, removable: true },
+  // "למה גרפיטיול?" — content comes from the Organization Subtype (override) → the
+  // Organization Type. (This absorbed the old duplicate "Content by Organization
+  // Type" section, which is removed.)
   { key: 'why_grafitiyul', type: 'why_us', kind: 'content', optional: true, removable: true },
-  { key: 'classification', type: 'classification', kind: 'content', optional: true, removable: true },
   // Pricing owns the payment terms/method too (rendered inside the pricing section).
   { key: 'pricing', type: 'pricing', kind: 'dynamic', optional: true, removable: true },
   { key: 'faq', type: 'faq', kind: 'content', optional: true, removable: true },
