@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
-import { buildPhoneIndex, matchContactId } from '../whatsapp/phone.js';
+import { buildPhoneIndex, matchContactId, normalizePhoneIntl } from '../whatsapp/phone.js';
 import { isConfigured as r2Configured, presignGet } from '../r2.js';
 
 // WhatsApp module — Slice 1 (accounts / connections admin).
@@ -375,6 +375,81 @@ router.get(
     }
     res.set('Cache-Control', 'no-store');
     res.json(chats.map(toClientChat));
+  }),
+);
+
+// Chats for a CRM subject (Deal / Contact / Organization page). Resolves the
+// subject to its contact ids, proactively links any still-unmatched chats for
+// those contacts' phones (same exactly-one rule as autoMatchChats — the deal
+// tab must not depend on someone having opened the inbox first), and returns
+// every linked chat across ALL accounts (the account rides on each chat so
+// the UI can render a number switcher). Link-only, never creates Contacts.
+router.get(
+  '/context-chats',
+  handle(async (req, res) => {
+    const subjectType = String(req.query.subjectType || '');
+    const subjectId = String(req.query.subjectId || '');
+    if (!subjectId) return res.status(400).json({ error: 'subject_required' });
+
+    let contactIds = [];
+    if (subjectType === 'deal') {
+      const links = await prisma.dealContact.findMany({
+        where: { dealId: subjectId },
+        select: { contactId: true },
+      });
+      contactIds = links.map((l) => l.contactId);
+    } else if (subjectType === 'contact') {
+      contactIds = [subjectId];
+    } else if (subjectType === 'organization') {
+      const links = await prisma.contactOrganization.findMany({
+        where: { organizationId: subjectId },
+        select: { contactId: true },
+      });
+      contactIds = [...new Set(links.map((l) => l.contactId))];
+    } else {
+      return res.status(400).json({ error: 'unsupported_subject_type' });
+    }
+
+    res.set('Cache-Control', 'no-store');
+    if (contactIds.length === 0) return res.json({ chats: [] });
+
+    // Proactive matching for THIS subject's phones only (cheap, targeted).
+    const ownPhones = await prisma.contactPhone.findMany({
+      where: { contactId: { in: contactIds } },
+      select: { value: true },
+    });
+    const wanted = [...new Set(ownPhones.map((p) => normalizePhoneIntl(p.value)).filter(Boolean))];
+    if (wanted.length > 0) {
+      const candidates = await prisma.whatsAppChat.findMany({
+        where: { contactId: null, type: 'private', phoneNumber: { in: wanted } },
+        select: { id: true, phoneNumber: true },
+      });
+      if (candidates.length > 0) {
+        const allPhones = await prisma.contactPhone.findMany({
+          select: { contactId: true, value: true },
+        });
+        const index = buildPhoneIndex(allPhones);
+        for (const chat of candidates) {
+          const contactId = matchContactId(chat.phoneNumber, index);
+          if (!contactId) continue; // shared number → stays unmatched
+          await prisma.whatsAppChat.update({
+            where: { id: chat.id },
+            data: { contactId, matchSource: 'phone' },
+          });
+        }
+      }
+    }
+
+    const chats = await prisma.whatsAppChat.findMany({
+      where: { contactId: { in: contactIds } },
+      orderBy: [{ lastMessageAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
+      include: {
+        contact: { select: CONTACT_LITE_SELECT },
+        account: { select: { id: true, label: true, status: true } },
+        messages: { orderBy: { timestampFromSource: 'desc' }, take: 1 },
+      },
+    });
+    res.json({ chats: chats.map((c) => ({ ...toClientChat(c), account: c.account })) });
   }),
 );
 

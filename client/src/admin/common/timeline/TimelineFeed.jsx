@@ -3,6 +3,7 @@ import { api } from '../../../lib/api.js';
 import RichEditor from '../../../editor/RichEditor.jsx';
 import ReorderableList from '../ReorderableList.jsx';
 import NoteCard from './NoteCard.jsx';
+import WhatsAppPanel from '../../whatsapp/WhatsAppPanel.jsx';
 import { useDirtyForm } from '../../../lib/dirtyForms.js';
 
 // Reusable Timeline / Activity-Feed. Entity-agnostic: it is scoped ONLY by
@@ -59,7 +60,7 @@ function PaperclipIcon() {
 const COMPOSER_TABS = [
   { key: 'note', label: 'פתק', enabled: true, icon: '📝' },
   { key: 'activity', label: 'פעילות', enabled: false, icon: '✅' },
-  { key: 'whatsapp', label: 'וואטסאפ', enabled: false, icon: <WhatsAppIcon /> },
+  { key: 'whatsapp', label: 'וואטסאפ', enabled: true, icon: <WhatsAppIcon /> },
   { key: 'email', label: 'אימייל', enabled: false, icon: <GmailIcon /> },
   { key: 'file', label: 'קובץ', enabled: false, icon: <PaperclipIcon /> },
 ];
@@ -230,6 +231,8 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
                 </div>
               )}
             </div>
+          ) : tab === 'whatsapp' ? (
+            <WhatsAppPanel subjectType={subjectType} subjectId={subjectId} />
           ) : (
             <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center text-sm text-gray-400">
               {COMPOSER_TABS.find((t) => t.key === tab)?.label} — ייפתח בגרסה הבאה.

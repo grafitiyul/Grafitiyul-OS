@@ -446,6 +446,11 @@ export const api = {
       request(`/api/whatsapp/accounts/${id}/hard-reset-session`, { method: 'POST', body: JSON.stringify({}) }),
     signOut: (id) =>
       request(`/api/whatsapp/accounts/${id}/sign-out`, { method: 'POST', body: JSON.stringify({}) }),
+    // Chat mirror (Slices 2-3): chats linked to a CRM subject + thread pages.
+    contextChats: (subjectType, subjectId) =>
+      request(`/api/whatsapp/context-chats${qs({ subjectType, subjectId })}`),
+    chatMessages: (chatId, params) =>
+      request(`/api/whatsapp/chats/${chatId}/messages${qs(params)}`),
   },
   // ── Quote Module (quote documents + composer preview) ───────────
   quoteDocuments: {
