@@ -51,9 +51,20 @@ const DIAGNOSE_HINTS = {
   different_database: 'שירות החיבור פעיל אך שומר נתונים במסד נתונים אחר — יש לוודא שהוא מחובר לאותו מסד נתונים של המערכת.',
 };
 
+// Small colored dot for the account tabs — persisted status only (the live
+// status is polled by the selected card; unselected accounts don't poll).
+const TAB_DOT = {
+  connected: 'bg-emerald-500',
+  qr_required: 'bg-amber-500',
+  pairing: 'bg-blue-500',
+  connecting: 'bg-blue-500',
+  disconnected: 'bg-red-500',
+};
+
 export default function WhatsAppConnectionsPage() {
   const [accounts, setAccounts] = useState(null);
   const [error, setError] = useState(null);
+  const [selectedId, setSelectedId] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -67,6 +78,12 @@ export default function WhatsAppConnectionsPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Exactly ONE account is manageable at a time: only the selected account's
+  // card (and QR) exists in the DOM, so scanning the wrong account's QR is
+  // impossible. Keep the selection valid across reloads.
+  const selected =
+    (accounts || []).find((a) => a.id === selectedId) || (accounts || [])[0] || null;
 
   return (
     <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-4xl mx-auto">
@@ -100,11 +117,42 @@ export default function WhatsAppConnectionsPage() {
         </div>
       )}
 
-      <div className="space-y-6">
-        {(accounts || []).map((a) => (
-          <AccountCard key={a.id} account={a} onChanged={load} />
-        ))}
-      </div>
+      {/* Account switcher — a segmented control; each number is managed in
+          its own tab so only one QR can ever be on screen. */}
+      {accounts && accounts.length > 1 && (
+        <div
+          role="tablist"
+          aria-label="חשבונות WhatsApp"
+          className="mb-5 inline-flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-gray-200 bg-gray-100 p-1"
+        >
+          {accounts.map((a) => {
+            const active = selected && a.id === selected.id;
+            return (
+              <button
+                key={a.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setSelectedId(a.id)}
+                className={`flex items-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-[13px] font-semibold transition ${
+                  active
+                    ? 'bg-white text-gray-900 shadow-sm ring-1 ring-gray-200'
+                    : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                <span className={`h-2 w-2 rounded-full ${TAB_DOT[a.status] || TAB_DOT.disconnected}`} />
+                {a.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {selected && (
+        // key= forces a full remount on tab switch: polling state, QR image
+        // and diagnostics never leak between accounts.
+        <AccountCard key={selected.id} account={selected} onChanged={load} />
+      )}
     </div>
   );
 }
@@ -291,7 +339,10 @@ function AccountCard({ account, onChanged }) {
             QR ~every 20s; the fast poll keeps the image fresh. */}
         {status === 'qr_required' && live?.qrDataUrl && (
           <div className="flex flex-col items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 p-4">
-            <img src={live.qrDataUrl} alt="WhatsApp QR" className="w-64 h-64 rounded-lg bg-white p-2 border border-gray-200" />
+            <p className="text-[13px] font-semibold text-gray-900">
+              קוד QR עבור: {account.label}
+            </p>
+            <img src={live.qrDataUrl} alt={`WhatsApp QR — ${account.label}`} className="w-64 h-64 rounded-lg bg-white p-2 border border-gray-200" />
             <p className="text-[13px] text-gray-700 text-center leading-relaxed">
               בטלפון: וואטסאפ ← הגדרות ← מכשירים מקושרים ← קישור מכשיר
             </p>
