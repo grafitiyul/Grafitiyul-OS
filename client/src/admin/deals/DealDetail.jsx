@@ -9,7 +9,7 @@ import DealSalesScript from './DealSalesScript.jsx';
 import DealContactsDialog from './DealContactsDialog.jsx';
 import OrganizationEditDialog from './OrganizationEditDialog.jsx';
 import PriceBuilderDialog from './PriceBuilderDialog.jsx';
-import DealPaymentSection from './DealPaymentSection.jsx';
+import Dialog from '../common/Dialog.jsx';
 import GroupTicketBuilderDialog from './GroupTicketBuilderDialog.jsx';
 import WorkspaceLayout from '../../shell/WorkspaceLayout.jsx';
 import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
@@ -532,9 +532,14 @@ export default function DealDetail() {
               </p>
             )}
 
-            {/* Operational action bar — primary action varies by Activity Type. UI
-                only for now (no handlers wired yet). */}
-            <DealActionRow activityType={deal.activityType} />
+            {/* Operational action bar — payment-link actions are live (permanent
+                /pay URL); the other actions are still placeholders. */}
+            <DealActionRow
+              deal={deal}
+              productName={products.find((p) => p.id === deal.productId)?.nameHe || deal.title}
+              onOpenPriceBuilder={() => setPriceBuilderOpen(true)}
+              onOpenContacts={() => setContactsDialogOpen(true)}
+            />
 
             {/* Important customer information — sits BELOW the action bar. Collapsed to
                 ~3 formatted lines by default, with a "show more" control. */}
@@ -555,16 +560,6 @@ export default function DealDetail() {
           >
             📄 הצעת מחיר (בטא)
           </Link>
-        </Card>
-
-        {/* iCount payment module — personal payment link for THIS deal.
-            Generated once, stored on the deal; regeneration is explicit. */}
-        <Card variant="panel" title="תשלום באייקאונט">
-          <DealPaymentSection
-            deal={deal}
-            productName={products.find((p) => p.id === deal.productId)?.nameHe || deal.title}
-            onChanged={refresh}
-          />
         </Card>
 
       {deal.status === 'lost' && (
@@ -1388,36 +1383,121 @@ function FieldBox({ label, children }) {
   );
 }
 // Operational action bar under the Tour Details fields. The PRIMARY action varies
-// by Activity Type; "תשלום" and "פעולות" are shared. UI ONLY for now — no handlers
-// are wired (the menu items are placeholders). When tour bookings exist, a Group
-// deal's primary will switch from "שבץ לסיור" to "החלף סיור" based on assignment.
-const DEAL_ACTIONS_MENU = [
-  { label: 'העתק קישור לתשלום' },
-  { label: 'הסר הרשמה מסיור' },
-  { label: 'הפק מסמך' },
-  { label: 'שליחת מייל אישור' },
-  { sep: true },
-  { label: 'פעולה נוספת...' },
-];
+// by Activity Type; "תשלום" and "פעולות" are shared. The payment-link actions are
+// LIVE; the rest are placeholders. When tour bookings exist, a Group deal's
+// primary will switch from "שבץ לסיור" to "החלף סיור" based on assignment.
 function dealPrimaryAction(activityType, groupAssigned) {
   if (activityType === 'private') return 'צור סיור';
   if (activityType === 'group') return groupAssigned ? 'החלף סיור' : 'שבץ לסיור';
   return 'הפק הצעת מחיר'; // business + default
 }
-function DealActionRow({ activityType }) {
+// Prefill contact — mirror of the server's pick (dealPayment.js): first contact
+// flagged to receive payment links, else the primary/first contact.
+function pickPaymentContact(contacts) {
+  const list = contacts || [];
+  return list.find((dc) => dc.receivePaymentLinks) || list[0] || null;
+}
+function waHref(phone, text) {
+  let digits = String(phone || '').replace(/\D/g, '');
+  if (digits.startsWith('0')) digits = `972${digits.slice(1)}`;
+  return digits ? `https://wa.me/${digits}?text=${encodeURIComponent(text)}` : null;
+}
+function DealActionRow({ deal, productName, onOpenPriceBuilder, onOpenContacts }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
   // No tour-assignment model yet → a Group deal is always "before assignment".
   const groupAssigned = false;
   const soon = 'בקרוב';
+
+  // ── Payment link (permanent GOS /pay URL — the ONLY URL customers get) ────
+  // Copy/open/send are instant: no confirmation popup. A dialog appears only
+  // when data is missing — amount is REQUIRED (blocks; iCount needs a priced
+  // item), customer details are OPTIONAL (warn once, allow continuing — iCount
+  // lets the customer fill them on the payment page).
+  const [payBusy, setPayBusy] = useState(false);
+  const [payFeedback, setPayFeedback] = useState(null);
+  const [missingDialog, setMissingDialog] = useState(null); // { action, kind: 'amount'|'waPhone'|'optional', missing? }
+  const feedbackTimer = useRef(null);
+
+  const contact = pickPaymentContact(deal.contacts)?.contact || null;
+  const contactName =
+    contactNameHe(contact) || `${contact?.firstNameEn || ''} ${contact?.lastNameEn || ''}`.trim();
+  const contactPhone = contact?.phones?.[0]?.value || '';
+  const contactEmail = contact?.emails?.[0]?.value || '';
+  const amountMinor = Number(deal.valueMinor || 0);
+
+  function flash(msg) {
+    setPayFeedback(msg);
+    clearTimeout(feedbackTimer.current);
+    feedbackTimer.current = setTimeout(() => setPayFeedback(null), 2500);
+  }
+
+  async function runPayAction(action) {
+    setMissingDialog(null);
+    setPayBusy(true);
+    try {
+      // Token is permanent — every call returns the SAME URL for this deal.
+      const { paymentUrl } = await api.deals.ensurePaymentToken(deal.id);
+      if (action === 'copy') {
+        await navigator.clipboard.writeText(paymentUrl);
+        flash('✓ קישור התשלום הועתק');
+      } else if (action === 'open') {
+        window.open(paymentUrl, '_blank', 'noopener');
+      } else if (action === 'wa') {
+        const text = `שלום${contactName ? ` ${contactName}` : ''}, מצורף קישור לתשלום עבור ${productName}: ${paymentUrl}`;
+        const wa = waHref(contactPhone, text);
+        if (wa) window.open(wa, '_blank', 'noopener');
+      }
+    } catch {
+      flash('פעולת קישור התשלום נכשלה — נסו שוב');
+    } finally {
+      setPayBusy(false);
+    }
+  }
+
+  function payAction(action) {
+    setMenuOpen(false);
+    if (amountMinor <= 0) return setMissingDialog({ action, kind: 'amount' });
+    if (action === 'wa' && !contactPhone) return setMissingDialog({ action, kind: 'waPhone' });
+    const missing = [];
+    if (!contactName) missing.push('שם איש קשר');
+    if (!contactPhone) missing.push('טלפון');
+    if (!contactEmail) missing.push('אימייל');
+    if (missing.length) return setMissingDialog({ action, kind: 'optional', missing });
+    runPayAction(action);
+  }
+
+  const PAY_ACTIONS = [
+    { key: 'copy', label: 'העתק קישור לתשלום' },
+    { key: 'open', label: 'פתח קישור לתשלום' },
+    { key: 'wa', label: 'שלח קישור בוואטסאפ' },
+  ];
+  const PLACEHOLDER_ACTIONS = ['הסר הרשמה מסיור', 'הפק מסמך', 'שליחת מייל אישור'];
+
+  const dlg = missingDialog;
+  const dlgBtn = (label, onClick, primary) => (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        primary
+          ? 'text-sm text-white rounded px-4 py-1.5 font-medium bg-blue-600 hover:bg-blue-700'
+          : 'text-sm text-gray-600 px-3 py-1.5 rounded hover:bg-gray-100'
+      }
+    >
+      {label}
+    </button>
+  );
+
   return (
     <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-gray-100">
       <button type="button" title={soon}
         className="rounded-lg bg-blue-600 text-white text-sm font-semibold px-4 py-2 hover:bg-blue-700">
-        {dealPrimaryAction(activityType, groupAssigned)}
+        {dealPrimaryAction(deal.activityType, groupAssigned)}
       </button>
-      <button type="button" title={soon}
-        className="rounded-lg border border-gray-300 text-gray-700 text-sm font-medium px-4 py-2 hover:bg-gray-50">
+      <button type="button" disabled={payBusy} onClick={() => payAction('copy')}
+        title="העתק את קישור התשלום הקבוע של העסקה"
+        className="rounded-lg border border-gray-300 text-gray-700 text-sm font-medium px-4 py-2 hover:bg-gray-50 disabled:opacity-50">
         תשלום
       </button>
       <button ref={menuRef} type="button" onClick={() => setMenuOpen((o) => !o)}
@@ -1425,18 +1505,65 @@ function DealActionRow({ activityType }) {
         className="rounded-lg border border-gray-300 text-gray-700 text-sm font-medium px-3 py-2 hover:bg-gray-50 inline-flex items-center gap-1">
         פעולות <span className="text-[9px] text-gray-400">▼</span>
       </button>
+      {payFeedback && <span className="text-[12px] text-gray-500">{payFeedback}</span>}
       <AnchoredMenu anchorRef={menuRef} open={menuOpen} onClose={() => setMenuOpen(false)} width={216} align="start">
-        {DEAL_ACTIONS_MENU.map((it, i) =>
-          it.sep ? (
-            <div key={i} className="my-1 border-t border-gray-100" />
-          ) : (
-            <button key={i} type="button" onClick={() => setMenuOpen(false)} title={soon}
-              className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
-              {it.label}
-            </button>
-          ),
-        )}
+        {PAY_ACTIONS.map((a) => (
+          <button key={a.key} type="button" disabled={payBusy} onClick={() => payAction(a.key)}
+            className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+            {a.label}
+          </button>
+        ))}
+        <div className="my-1 border-t border-gray-100" />
+        {PLACEHOLDER_ACTIONS.map((label) => (
+          <button key={label} type="button" onClick={() => setMenuOpen(false)} title={soon}
+            className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+            {label}
+          </button>
+        ))}
       </AnchoredMenu>
+
+      {/* Missing-data dialog — the only popup in the payment flow. */}
+      <Dialog
+        open={dlg !== null}
+        onClose={() => setMissingDialog(null)}
+        title={
+          dlg?.kind === 'amount' ? 'חסר מחיר לעסקה'
+            : dlg?.kind === 'waPhone' ? 'אין טלפון לאיש הקשר'
+              : 'פרטי לקוח חסרים'
+        }
+        size="md"
+        footer={
+          <>
+            {dlgBtn('ביטול', () => setMissingDialog(null))}
+            {dlg?.kind === 'optional' &&
+              dlgBtn('המשך בכל זאת', () => runPayAction(dlg.action))}
+            {dlg?.kind === 'amount'
+              ? dlgBtn('פתח בונה מחיר', () => { setMissingDialog(null); onOpenPriceBuilder(); }, true)
+              : dlgBtn('השלם פרטים', () => { setMissingDialog(null); onOpenContacts(); }, true)}
+          </>
+        }
+      >
+        {dlg?.kind === 'amount' && (
+          <p className="text-sm text-gray-800">
+            לא ניתן ליצור קישור תשלום ללא סכום — אייקאונט דורש פריט עם מחיר.
+            קבעו מחיר לעסקה בבונה המחיר ונסו שוב.
+          </p>
+        )}
+        {dlg?.kind === 'waPhone' && (
+          <p className="text-sm text-gray-800">
+            לא ניתן לשלוח בוואטסאפ בלי מספר טלפון לאיש הקשר. השלימו טלפון ונסו שוב.
+          </p>
+        )}
+        {dlg?.kind === 'optional' && (
+          <div className="space-y-2 text-sm text-gray-800">
+            <p>הפרטים הבאים חסרים לאיש הקשר: {dlg.missing.join(', ')}.</p>
+            <p className="text-gray-500">
+              אפשר להמשיך בכל זאת — הקישור ייווצר בלי מילוי מוקדם של הפרטים החסרים,
+              והלקוח ישלים אותם בעמוד התשלום של אייקאונט.
+            </p>
+          </div>
+        )}
+      </Dialog>
     </div>
   );
 }

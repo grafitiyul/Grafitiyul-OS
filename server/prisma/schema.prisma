@@ -909,6 +909,12 @@ model Deal {
   // Legacy flag from the inline base-price input (now unused — per-line override
   // lives on QuoteLine.overridden). Kept to avoid a destructive drop; removable later.
   basePriceOverridden   Boolean              @default(false)
+  // PERMANENT customer-facing payment token: the customer always gets
+  // ${PUBLIC_ORIGIN}/pay/<token>, which redirects to the CURRENT iCount link
+  // (regenerated behind the scenes when payment data changes). Only the token
+  // is stored — the display URL is built from PUBLIC_ORIGIN at request time,
+  // so a future domain change needs no DB migration. Created lazily.
+  paymentToken          String?              @unique
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
   contacts              DealContact[]

@@ -425,10 +425,11 @@ export const api = {
       request(`/api/deals/${id}/price-lines`, { method: 'PUT', body: JSON.stringify(data) }),
     // Quote Module — ensure + return the draft QuoteDocument for this deal.
     quoteDocument: (id) => request(`/api/deals/${id}/quote-document`),
-    // iCount personal payment link. Explicit action only: regenerating an
-    // existing link requires { regenerate: true } (server 409s otherwise).
-    createPaymentLink: (id, data) =>
-      request(`/api/deals/${id}/payment-link`, { method: 'POST', body: JSON.stringify(data || {}) }),
+    // Permanent customer payment URL — ensures the deal's payment token and
+    // returns { token, paymentUrl } (always the SAME URL for a deal). The
+    // underlying iCount link is generated/refreshed lazily by GET /pay/:token.
+    ensurePaymentToken: (id) =>
+      request(`/api/deals/${id}/payment-token`, { method: 'POST', body: JSON.stringify({}) }),
   },
   // ── Quote Module (quote documents + composer preview) ───────────
   quoteDocuments: {

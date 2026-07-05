@@ -50,6 +50,7 @@ import tourContentExportRouter from './routes/tourContentExport.js';
 import staffEventsRouter from './routes/staffEvents.js';
 import staffExportRouter from './routes/staffExport.js';
 import icountWebhookRouter from './routes/icountWebhook.js';
+import payRouter from './routes/pay.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -150,6 +151,11 @@ app.use('/api/staff-export', staffExportRouter);
 // iCount IPN receiver — URL-secret gated (not cookie-gated; iCount calls it).
 // Audit-log only in this slice: persists raw payloads, changes NO deal state.
 app.use('/api/webhooks', icountWebhookRouter);
+// PERMANENT customer payment URL (/pay/<Deal.paymentToken>) — public,
+// token-gated like the quote page. Redirects to the current iCount link,
+// regenerating it behind the scenes when the deal's payment data changed.
+// Must be mounted before the SPA fallback (it is a top-level non-/api path).
+app.use('/pay', payRouter);
 
 // ── Admin-only routes ──────────────────────────────────────────
 //
