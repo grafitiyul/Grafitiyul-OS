@@ -15,6 +15,7 @@ import WorkspaceLayout from '../../shell/WorkspaceLayout.jsx';
 import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
 import { minorToInput } from '../../lib/money.js';
 import { useDirtyForm, useDirtyWhen, valuesEqual } from '../../lib/dirtyForms.js';
+import { contactNamesFromParts } from '../../lib/nameSplit.js';
 import {
   ACTIVITY_TYPES,
   ACTIVITY_TYPE_LABELS,
@@ -538,7 +539,7 @@ export default function DealDetail() {
               deal={deal}
               productName={products.find((p) => p.id === deal.productId)?.nameHe || deal.title}
               onOpenPriceBuilder={() => setPriceBuilderOpen(true)}
-              onOpenContacts={() => setContactsDialogOpen(true)}
+              onRefresh={refresh}
             />
 
             {/* Important customer information — sits BELOW the action bar. Collapsed to
@@ -1402,7 +1403,10 @@ function waHref(phone, text) {
   if (digits.startsWith('0')) digits = `972${digits.slice(1)}`;
   return digits ? `https://wa.me/${digits}?text=${encodeURIComponent(text)}` : null;
 }
-function DealActionRow({ deal, productName, onOpenPriceBuilder, onOpenContacts }) {
+const DLG_FIELD = 'border border-gray-300 rounded-md px-3 py-1.5 text-sm w-full';
+const EMPTY_DLG_FORM = { first: '', last: '', phone: '', email: '' };
+
+function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
   // No tour-assignment model yet → a Group deal is always "before assignment".
@@ -1410,13 +1414,16 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onOpenContacts }
   const soon = 'בקרוב';
 
   // ── Payment link (permanent GOS /pay URL — the ONLY URL customers get) ────
-  // Copy/open/send are instant: no confirmation popup. A dialog appears only
-  // when data is missing — amount is REQUIRED (blocks; iCount needs a priced
-  // item), customer details are OPTIONAL (warn once, allow continuing — iCount
-  // lets the customer fill them on the payment page).
+  // "תשלום" OPENS the link; copy / WhatsApp live in the actions menu. All are
+  // instant — no confirmation popup on success. A dialog appears only when
+  // data is missing: amount is REQUIRED (blocks; iCount needs a priced item),
+  // customer details are OPTIONAL and completed INLINE in the dialog — saved
+  // to the real Contact record (never a payment-only copy), then the original
+  // action continues automatically.
   const [payBusy, setPayBusy] = useState(false);
   const [payFeedback, setPayFeedback] = useState(null);
-  const [missingDialog, setMissingDialog] = useState(null); // { action, kind: 'amount'|'waPhone'|'optional', missing? }
+  const [missingDialog, setMissingDialog] = useState(null); // { action, kind: 'amount'|'details', needName, needPhone, needEmail }
+  const [dlgForm, setDlgForm] = useState(EMPTY_DLG_FORM);
   const feedbackTimer = useRef(null);
 
   const contact = pickPaymentContact(deal.contacts)?.contact || null;
@@ -1432,7 +1439,7 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onOpenContacts }
     feedbackTimer.current = setTimeout(() => setPayFeedback(null), 2500);
   }
 
-  async function runPayAction(action) {
+  async function runPayAction(action, over = {}) {
     setMissingDialog(null);
     setPayBusy(true);
     try {
@@ -1444,8 +1451,9 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onOpenContacts }
       } else if (action === 'open') {
         window.open(paymentUrl, '_blank', 'noopener');
       } else if (action === 'wa') {
-        const text = `שלום${contactName ? ` ${contactName}` : ''}, מצורף קישור לתשלום עבור ${productName}: ${paymentUrl}`;
-        const wa = waHref(contactPhone, text);
+        const name = over.name ?? contactName;
+        const text = `שלום${name ? ` ${name}` : ''}, מצורף קישור לתשלום עבור ${productName}: ${paymentUrl}`;
+        const wa = waHref(over.phone ?? contactPhone, text);
         if (wa) window.open(wa, '_blank', 'noopener');
       }
     } catch {
@@ -1458,31 +1466,75 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onOpenContacts }
   function payAction(action) {
     setMenuOpen(false);
     if (amountMinor <= 0) return setMissingDialog({ action, kind: 'amount' });
-    if (action === 'wa' && !contactPhone) return setMissingDialog({ action, kind: 'waPhone' });
-    const missing = [];
-    if (!contactName) missing.push('שם איש קשר');
-    if (!contactPhone) missing.push('טלפון');
-    if (!contactEmail) missing.push('אימייל');
-    if (missing.length) return setMissingDialog({ action, kind: 'optional', missing });
+    const needName = !contactName;
+    const needPhone = !contactPhone;
+    const needEmail = !contactEmail;
+    if (needName || needPhone || needEmail) {
+      setDlgForm(EMPTY_DLG_FORM);
+      return setMissingDialog({ action, kind: 'details', needName, needPhone, needEmail });
+    }
     runPayAction(action);
   }
 
-  const PAY_ACTIONS = [
+  // Save the filled fields to their real source of truth — the Contact record
+  // (creating + linking a primary contact when the deal has none) — then
+  // continue the original action with the fresh values.
+  async function saveDetailsAndContinue() {
+    const { action, needName, needPhone, needEmail } = missingDialog;
+    const first = dlgForm.first.trim();
+    const last = dlgForm.last.trim();
+    const phone = dlgForm.phone.trim();
+    const email = dlgForm.email.trim();
+    setPayBusy(true);
+    try {
+      if (!contact) {
+        // No contact on the deal — a name is required to create one (enforced
+        // by the disabled save button).
+        const created = await api.contacts.create(contactNamesFromParts(first, last));
+        if (phone) await api.contacts.addPhone(created.id, { value: phone, isPrimary: true });
+        if (email) await api.contacts.addEmail(created.id, { value: email, isPrimary: true });
+        await api.deals.addContact(deal.id, { contactId: created.id, isPrimary: true });
+      } else {
+        if (needName && first) await api.contacts.update(contact.id, contactNamesFromParts(first, last));
+        if (needPhone && phone) await api.contacts.addPhone(contact.id, { value: phone, isPrimary: true });
+        if (needEmail && email) await api.contacts.addEmail(contact.id, { value: email, isPrimary: true });
+      }
+    } catch (e) {
+      setPayBusy(false);
+      flash(`שמירת הפרטים נכשלה: ${e?.payload?.error || e?.message || ''}`);
+      return;
+    }
+    onRefresh?.(); // background — the action itself doesn't depend on it
+    await runPayAction(action, {
+      phone: phone || contactPhone,
+      name: [first, last].filter(Boolean).join(' ') || contactName,
+    });
+  }
+
+  const PAY_MENU_ACTIONS = [
     { key: 'copy', label: 'העתק קישור לתשלום' },
-    { key: 'open', label: 'פתח קישור לתשלום' },
     { key: 'wa', label: 'שלח קישור בוואטסאפ' },
   ];
   const PLACEHOLDER_ACTIONS = ['הסר הרשמה מסיור', 'הפק מסמך', 'שליחת מייל אישור'];
 
   const dlg = missingDialog;
-  const dlgBtn = (label, onClick, primary) => (
+  // Effective values after the form: what the action would actually run with.
+  const effPhone = dlgForm.phone.trim() || contactPhone;
+  // Creating a brand-new contact requires a name; WhatsApp requires a phone.
+  const canSave =
+    !payBusy &&
+    (contact ? true : !!dlgForm.first.trim()) &&
+    (dlg?.action !== 'wa' || !!effPhone);
+  const canSkip = !payBusy && (dlg?.action !== 'wa' || !!contactPhone);
+  const dlgBtn = (label, onClick, { primary = false, disabled = false } = {}) => (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className={
         primary
-          ? 'text-sm text-white rounded px-4 py-1.5 font-medium bg-blue-600 hover:bg-blue-700'
-          : 'text-sm text-gray-600 px-3 py-1.5 rounded hover:bg-gray-100'
+          ? 'text-sm text-white rounded px-4 py-1.5 font-medium bg-blue-600 hover:bg-blue-700 disabled:opacity-50'
+          : 'text-sm text-gray-600 px-3 py-1.5 rounded hover:bg-gray-100 disabled:opacity-50'
       }
     >
       {label}
@@ -1495,8 +1547,8 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onOpenContacts }
         className="rounded-lg bg-blue-600 text-white text-sm font-semibold px-4 py-2 hover:bg-blue-700">
         {dealPrimaryAction(deal.activityType, groupAssigned)}
       </button>
-      <button type="button" disabled={payBusy} onClick={() => payAction('copy')}
-        title="העתק את קישור התשלום הקבוע של העסקה"
+      <button type="button" disabled={payBusy} onClick={() => payAction('open')}
+        title="פתח את קישור התשלום הקבוע של העסקה"
         className="rounded-lg border border-gray-300 text-gray-700 text-sm font-medium px-4 py-2 hover:bg-gray-50 disabled:opacity-50">
         תשלום
       </button>
@@ -1507,7 +1559,7 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onOpenContacts }
       </button>
       {payFeedback && <span className="text-[12px] text-gray-500">{payFeedback}</span>}
       <AnchoredMenu anchorRef={menuRef} open={menuOpen} onClose={() => setMenuOpen(false)} width={216} align="start">
-        {PAY_ACTIONS.map((a) => (
+        {PAY_MENU_ACTIONS.map((a) => (
           <button key={a.key} type="button" disabled={payBusy} onClick={() => payAction(a.key)}
             className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50">
             {a.label}
@@ -1522,25 +1574,26 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onOpenContacts }
         ))}
       </AnchoredMenu>
 
-      {/* Missing-data dialog — the only popup in the payment flow. */}
+      {/* Missing-data dialog — the only popup in the payment flow. Details are
+          completed INLINE and saved to the Contact, then the action continues. */}
       <Dialog
         open={dlg !== null}
-        onClose={() => setMissingDialog(null)}
-        title={
-          dlg?.kind === 'amount' ? 'חסר מחיר לעסקה'
-            : dlg?.kind === 'waPhone' ? 'אין טלפון לאיש הקשר'
-              : 'פרטי לקוח חסרים'
-        }
+        onClose={() => (payBusy ? null : setMissingDialog(null))}
+        title={dlg?.kind === 'amount' ? 'חסר מחיר לעסקה' : 'השלמת פרטי לקוח'}
         size="md"
         footer={
-          <>
-            {dlgBtn('ביטול', () => setMissingDialog(null))}
-            {dlg?.kind === 'optional' &&
-              dlgBtn('המשך בכל זאת', () => runPayAction(dlg.action))}
-            {dlg?.kind === 'amount'
-              ? dlgBtn('פתח בונה מחיר', () => { setMissingDialog(null); onOpenPriceBuilder(); }, true)
-              : dlgBtn('השלם פרטים', () => { setMissingDialog(null); onOpenContacts(); }, true)}
-          </>
+          dlg?.kind === 'amount' ? (
+            <>
+              {dlgBtn('ביטול', () => setMissingDialog(null))}
+              {dlgBtn('פתח בונה מחיר', () => { setMissingDialog(null); onOpenPriceBuilder(); }, { primary: true })}
+            </>
+          ) : (
+            <>
+              {dlgBtn('ביטול', () => setMissingDialog(null), { disabled: payBusy })}
+              {dlgBtn('המשך בלי הפרטים', () => runPayAction(dlg.action), { disabled: !canSkip })}
+              {dlgBtn(payBusy ? 'שומר…' : 'שמור והמשך', saveDetailsAndContinue, { primary: true, disabled: !canSave })}
+            </>
+          )
         }
       >
         {dlg?.kind === 'amount' && (
@@ -1549,17 +1602,41 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onOpenContacts }
             קבעו מחיר לעסקה בבונה המחיר ונסו שוב.
           </p>
         )}
-        {dlg?.kind === 'waPhone' && (
-          <p className="text-sm text-gray-800">
-            לא ניתן לשלוח בוואטסאפ בלי מספר טלפון לאיש הקשר. השלימו טלפון ונסו שוב.
-          </p>
-        )}
-        {dlg?.kind === 'optional' && (
-          <div className="space-y-2 text-sm text-gray-800">
-            <p>הפרטים הבאים חסרים לאיש הקשר: {dlg.missing.join(', ')}.</p>
-            <p className="text-gray-500">
-              אפשר להמשיך בכל זאת — הקישור ייווצר בלי מילוי מוקדם של הפרטים החסרים,
-              והלקוח ישלים אותם בעמוד התשלום של אייקאונט.
+        {dlg?.kind === 'details' && (
+          <div className="space-y-3">
+            <p className="text-sm text-gray-800">
+              {contact
+                ? 'חסרים פרטים לאיש הקשר. השלימו אותם כאן והם יישמרו על איש הקשר של הדיל.'
+                : 'לדיל אין איש קשר. מלאו את הפרטים כאן — ייווצר איש קשר ראשי לדיל.'}
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              {dlg.needName && (
+                <>
+                  <FieldBox label={contact ? 'שם פרטי' : 'שם פרטי *'}>
+                    <input autoFocus value={dlgForm.first} className={DLG_FIELD}
+                      onChange={(e) => setDlgForm((s) => ({ ...s, first: e.target.value }))} />
+                  </FieldBox>
+                  <FieldBox label="שם משפחה">
+                    <input value={dlgForm.last} className={DLG_FIELD}
+                      onChange={(e) => setDlgForm((s) => ({ ...s, last: e.target.value }))} />
+                  </FieldBox>
+                </>
+              )}
+              {dlg.needPhone && (
+                <FieldBox label={dlg.action === 'wa' ? 'טלפון *' : 'טלפון'}>
+                  <input value={dlgForm.phone} dir="ltr" className={DLG_FIELD}
+                    onChange={(e) => setDlgForm((s) => ({ ...s, phone: e.target.value }))} />
+                </FieldBox>
+              )}
+              {dlg.needEmail && (
+                <FieldBox label="אימייל">
+                  <input value={dlgForm.email} dir="ltr" className={DLG_FIELD}
+                    onChange={(e) => setDlgForm((s) => ({ ...s, email: e.target.value }))} />
+                </FieldBox>
+              )}
+            </div>
+            <p className="text-[12px] text-gray-500">
+              אפשר גם להמשיך בלי הפרטים — הלקוח ישלים אותם בעמוד התשלום של אייקאונט.
             </p>
           </div>
         )}
