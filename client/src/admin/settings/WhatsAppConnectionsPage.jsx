@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
+import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 
 // WhatsApp connections admin ("תקשורת → חיבורי וואטסאפ") — Slice 1.
 //
@@ -58,10 +59,13 @@ export default function WhatsAppConnectionsPage() {
   return (
     <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-4xl mx-auto">
       <header className="mb-8">
-        <h1 className="text-2xl font-bold tracking-tight text-gray-900">חיבורי וואטסאפ</h1>
+        <h1 className="flex items-center gap-3 text-2xl font-bold tracking-tight text-gray-900">
+          <WhatsAppLogo size={28} />
+          WhatsApp
+        </h1>
         <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed">
-          כל מספר וואטסאפ של המערכת רץ כשירות חיבור נפרד. כאן מקשרים מכשיר (QR),
-          עוקבים אחרי מצב החיבור ומבצעים פעולות התאוששות.
+          חיבור מספרי ה-WhatsApp של העסק למערכת — קישור מכשיר בסריקת QR, מעקב
+          אחרי מצב החיבור ופעולות ניהול.
         </p>
       </header>
 
@@ -72,10 +76,15 @@ export default function WhatsAppConnectionsPage() {
       )}
 
       {accounts && accounts.length === 0 && (
-        <div className="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-600 leading-relaxed">
-          אין עדיין חשבונות וואטסאפ. חשבון נוצר אוטומטית ברגע ששירות גשר
-          (bridge) עולה ב-Railway עם <span dir="ltr" className="font-mono">WHATSAPP_ACCOUNT_ID</span> משלו —
-          ראו את ההוראות ב-<span dir="ltr" className="font-mono">bridge/README.md</span>.
+        <div className="rounded-2xl border border-gray-200 bg-white p-10 text-center">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50">
+            <WhatsAppLogo size={30} />
+          </div>
+          <h2 className="text-[15px] font-semibold text-gray-900">עדיין אין חשבון WhatsApp מחובר</h2>
+          <p className="mx-auto mt-2 max-w-sm text-sm text-gray-500 leading-relaxed">
+            כל מספר WhatsApp מתחבר למערכת בסריקת QR מהטלפון. לאחר החיבור תוכלו
+            לראות כאן את מצב החיבור ולבצע פעולות ניהול.
+          </p>
         </div>
       )}
 
@@ -165,7 +174,7 @@ function AccountCard({ account, onChanged }) {
     <section className="bg-white border border-gray-200 rounded-2xl shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-4 pb-3 border-b border-gray-100">
         <div className="flex items-center gap-3 min-w-0">
-          <span className="text-xl">💬</span>
+          <WhatsAppLogo size={22} />
           {editingLabel ? (
             <input
               autoFocus
@@ -187,7 +196,6 @@ function AccountCard({ account, onChanged }) {
               {account.label}
             </h2>
           )}
-          <span dir="ltr" className="text-[11px] text-gray-400 font-mono">{account.id}</span>
         </div>
         <span className={`inline-flex items-center rounded-full px-3 py-1 text-[12px] font-semibold ring-1 ${theme.cls}`}>
           {theme.label}
@@ -197,13 +205,12 @@ function AccountCard({ account, onChanged }) {
       <div className="p-5 space-y-4">
         {!account.bridgeConfigured && (
           <p className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[13px] text-amber-800">
-            שירות הגשר של המספר הזה אינו מוגדר בשרת (חסר ב-
-            <span dir="ltr" className="font-mono">WHATSAPP_BRIDGE_URLS</span>) — מוצג המצב האחרון שנשמר בלבד.
+            החיבור של המספר הזה עדיין לא הופעל במערכת — מוצג המצב האחרון שנשמר בלבד.
           </p>
         )}
         {account.bridgeConfigured && unreachable && (
           <p className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-[13px] text-red-700">
-            שירות הגשר לא מגיב כרגע — מוצג המצב האחרון שנשמר. ננסה שוב אוטומטית.
+            לא ניתן להגיע לחיבור של המספר הזה כרגע — מוצג המצב האחרון שנשמר. ננסה שוב אוטומטית.
           </p>
         )}
 
@@ -232,11 +239,15 @@ function AccountCard({ account, onChanged }) {
           </div>
         )}
 
-        {/* Diagnostics strip — only when the bridge reports not-ready. */}
+        {/* Technical diagnostics — collapsed by default so the card stays a
+            product surface; support opens it only when something is wrong. */}
         {account.bridgeConfigured && !unreachable && r && !r.ok && status !== 'qr_required' && (
-          <p dir="ltr" className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 text-[11px] font-mono text-gray-500 overflow-x-auto">
-            reason={r.reason} ws={r.wsState} lastUpdate={r.lastUpdate ?? '—'} reconnecting={String(r.reconnecting)}
-          </p>
+          <details className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2">
+            <summary className="cursor-pointer text-[12px] text-gray-500 select-none">פרטים טכניים</summary>
+            <p dir="ltr" className="mt-1.5 text-[11px] font-mono text-gray-500 overflow-x-auto">
+              reason={r.reason} ws={r.wsState} lastUpdate={r.lastUpdate ?? '—'} reconnecting={String(r.reconnecting)}
+            </p>
+          </details>
         )}
 
         <div className="flex flex-wrap items-center gap-2 pt-1">

@@ -1,4 +1,5 @@
 import { CategoryGrid, CategoryCard } from './cards.jsx';
+import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 
 // Global Settings home — category cards. Low-frequency configuration, reached
 // from the bottom of the sidebar. Only CRM Settings is active today; the rest
@@ -31,9 +32,9 @@ export default function SettingsHome() {
         />
         <CategoryCard
           to="/admin/settings/whatsapp"
-          icon="💬"
-          title="תקשורת"
-          description="חיבורי וואטסאפ — קישור מכשירים, מצב חיבור והתאוששות."
+          icon={<WhatsAppLogo size={30} />}
+          title="WhatsApp"
+          description="חיבור מספרי WhatsApp למערכת, מצב חיבור ופעולות ניהול."
         />
         <CategoryCard
           icon="💰"
