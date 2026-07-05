@@ -1407,13 +1407,27 @@ const DLG_FIELD = 'border border-gray-300 rounded-md px-3 py-1.5 text-sm w-full'
 const EMPTY_DLG_FORM = { first: '', last: '', phone: '', email: '' };
 
 // A customer detail that already exists — shown read-only (calm gray box with
-// a check) so the dialog reads as "complete the customer's details", making it
-// obvious what is known vs. what is being completed.
-function DlgKnownValue({ children, dir }) {
+// a check) so the dialog reads as "review & complete the customer's details".
+// The subtle pencil turns JUST that field editable, so outdated info can be
+// fixed inline without leaving the payment flow or opening the full editor.
+function DlgKnownValue({ children, dir, onEdit }) {
   return (
-    <div className="flex items-center justify-between gap-2 rounded-md bg-gray-50 border border-gray-200 px-3 py-1.5">
+    <div className="group flex items-center justify-between gap-2 rounded-md bg-gray-50 border border-gray-200 px-3 py-1.5">
       <span dir={dir} className="text-sm text-gray-800 truncate">{children}</span>
-      <span className="shrink-0 text-[12px] text-emerald-600">✓</span>
+      <span className="shrink-0 inline-flex items-center gap-1">
+        <span className="text-[12px] text-emerald-600">✓</span>
+        <button
+          type="button"
+          onClick={onEdit}
+          title="ערוך"
+          aria-label="ערוך"
+          className="rounded p-0.5 text-gray-300 group-hover:text-gray-400 hover:!text-gray-600 hover:bg-gray-200/60 transition-colors"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+          </svg>
+        </button>
+      </span>
     </div>
   );
 }
@@ -1436,6 +1450,8 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
   const [payFeedback, setPayFeedback] = useState(null);
   const [missingDialog, setMissingDialog] = useState(null); // { action, kind: 'amount'|'details', needName, needPhone, needEmail }
   const [dlgForm, setDlgForm] = useState(EMPTY_DLG_FORM);
+  // Pencil-edit state: an EXISTING value the user chose to correct inline.
+  const [dlgEdit, setDlgEdit] = useState({ name: false, phone: false, email: false });
   const feedbackTimer = useRef(null);
 
   const contact = pickPaymentContact(deal.contacts)?.contact || null;
@@ -1483,14 +1499,33 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
     const needEmail = !contactEmail;
     if (needName || needPhone || needEmail) {
       setDlgForm(EMPTY_DLG_FORM);
+      setDlgEdit({ name: false, phone: false, email: false });
       return setMissingDialog({ action, kind: 'details', needName, needPhone, needEmail });
     }
     runPayAction(action);
   }
 
+  // Pencil click: seed the form with the current value and make ONLY that
+  // field editable.
+  function startDlgEdit(field) {
+    if (field === 'name') {
+      setDlgForm((s) => ({
+        ...s,
+        first: contact?.firstNameHe || contact?.firstNameEn || '',
+        last: contact?.lastNameHe || contact?.lastNameEn || '',
+      }));
+    } else if (field === 'phone') {
+      setDlgForm((s) => ({ ...s, phone: contactPhone }));
+    } else if (field === 'email') {
+      setDlgForm((s) => ({ ...s, email: contactEmail }));
+    }
+    setDlgEdit((s) => ({ ...s, [field]: true }));
+  }
+
   // Save the filled fields to their real source of truth — the Contact record
-  // (creating + linking a primary contact when the deal has none) — then
-  // continue the original action with the fresh values.
+  // (creating + linking a primary contact when the deal has none; pencil-edited
+  // existing values update their existing phone/email rows) — then continue
+  // the original action with the fresh values.
   async function saveDetailsAndContinue() {
     const { action, needName, needPhone, needEmail } = missingDialog;
     const first = dlgForm.first.trim();
@@ -1507,9 +1542,23 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
         if (email) await api.contacts.addEmail(created.id, { value: email, isPrimary: true });
         await api.deals.addContact(deal.id, { contactId: created.id, isPrimary: true });
       } else {
-        if (needName && first) await api.contacts.update(contact.id, contactNamesFromParts(first, last));
-        if (needPhone && phone) await api.contacts.addPhone(contact.id, { value: phone, isPrimary: true });
-        if (needEmail && email) await api.contacts.addEmail(contact.id, { value: email, isPrimary: true });
+        // A field is written only when it was editable (missing OR pencil-
+        // edited), non-empty, and actually changed. Existing rows are UPDATED
+        // in place — never duplicated.
+        const fullName = [first, last].filter(Boolean).join(' ');
+        if ((needName || dlgEdit.name) && first && fullName !== contactName) {
+          await api.contacts.update(contact.id, contactNamesFromParts(first, last));
+        }
+        if ((needPhone || dlgEdit.phone) && phone && phone !== contactPhone) {
+          const row = contact.phones?.[0];
+          if (row) await api.contacts.updatePhone(row.id, { value: phone });
+          else await api.contacts.addPhone(contact.id, { value: phone, isPrimary: true });
+        }
+        if ((needEmail || dlgEdit.email) && email && email !== contactEmail) {
+          const row = contact.emails?.[0];
+          if (row) await api.contacts.updateEmail(row.id, { value: email });
+          else await api.contacts.addEmail(contact.id, { value: email, isPrimary: true });
+        }
       }
     } catch (e) {
       setPayBusy(false);
@@ -1618,14 +1667,14 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
           <div className="space-y-5 py-1">
             <p className="text-sm text-gray-800">
               {contact
-                ? 'אלה פרטי הלקוח שימולאו מראש בעמוד התשלום. השלימו את החסר — הפרטים יישמרו על איש הקשר של הדיל.'
+                ? 'אלה פרטי הלקוח שימולאו מראש בעמוד התשלום. השלימו את החסר — ואפשר גם לתקן פרט קיים בלחיצה על העיפרון. הכל נשמר על איש הקשר של הדיל.'
                 : 'לדיל אין עדיין איש קשר. מלאו את הפרטים כאן — ייווצר איש קשר ראשי לדיל וישמש לעמוד התשלום.'}
             </p>
             <div className="space-y-4">
-              {/* Name — the full known picture: existing values read-only, only
-                  the missing ones editable. */}
+              {/* The full known picture: existing values read-only (pencil turns
+                  just that field editable), missing ones editable from the start. */}
               <FieldBox label={dlg.needName && !contact ? 'שם *' : 'שם'}>
-                {dlg.needName ? (
+                {dlg.needName || dlgEdit.name ? (
                   <div className="grid grid-cols-2 gap-3">
                     <input autoFocus placeholder="שם פרטי" value={dlgForm.first} className={DLG_FIELD}
                       onChange={(e) => setDlgForm((s) => ({ ...s, first: e.target.value }))} />
@@ -1633,25 +1682,25 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
                       onChange={(e) => setDlgForm((s) => ({ ...s, last: e.target.value }))} />
                   </div>
                 ) : (
-                  <DlgKnownValue>{contactName}</DlgKnownValue>
+                  <DlgKnownValue onEdit={() => startDlgEdit('name')}>{contactName}</DlgKnownValue>
                 )}
               </FieldBox>
               <FieldBox label={dlg.needPhone && dlg.action === 'wa' ? 'טלפון *' : 'טלפון'}>
-                {dlg.needPhone ? (
-                  <input autoFocus={!dlg.needName} placeholder="050-0000000" value={dlgForm.phone} dir="ltr"
-                    className={DLG_FIELD}
+                {dlg.needPhone || dlgEdit.phone ? (
+                  <input autoFocus={dlgEdit.phone || !dlg.needName} placeholder="050-0000000"
+                    value={dlgForm.phone} dir="ltr" className={DLG_FIELD}
                     onChange={(e) => setDlgForm((s) => ({ ...s, phone: e.target.value }))} />
                 ) : (
-                  <DlgKnownValue dir="ltr">{contactPhone}</DlgKnownValue>
+                  <DlgKnownValue dir="ltr" onEdit={() => startDlgEdit('phone')}>{contactPhone}</DlgKnownValue>
                 )}
               </FieldBox>
               <FieldBox label="אימייל">
-                {dlg.needEmail ? (
-                  <input autoFocus={!dlg.needName && !dlg.needPhone} placeholder="name@example.com"
+                {dlg.needEmail || dlgEdit.email ? (
+                  <input autoFocus={dlgEdit.email || (!dlg.needName && !dlg.needPhone)} placeholder="name@example.com"
                     value={dlgForm.email} dir="ltr" className={DLG_FIELD}
                     onChange={(e) => setDlgForm((s) => ({ ...s, email: e.target.value }))} />
                 ) : (
-                  <DlgKnownValue dir="ltr">{contactEmail}</DlgKnownValue>
+                  <DlgKnownValue dir="ltr" onEdit={() => startDlgEdit('email')}>{contactEmail}</DlgKnownValue>
                 )}
               </FieldBox>
             </div>

@@ -67,6 +67,20 @@ test('buildPaymentSnapshot: full deal → all prefill fields', () => {
   });
 });
 
+test('buildPaymentSnapshot: linked organization wins the display name; contact person still prefills', () => {
+  const d = { ...baseDeal(), organization: { name: 'חברת הייטק בע"מ' } };
+  const s = buildPaymentSnapshot(d);
+  assert.equal(s.customerName, 'חברת הייטק בע"מ');
+  // The payer's personal fields stay the contact's — they prefill the form.
+  assert.equal(s.firstName, 'רחל');
+  assert.equal(s.lastName, 'כהן');
+  assert.equal(s.customerPhone, '0501234567');
+});
+
+test('buildPaymentSnapshot: no organization → contact full name (existing behavior)', () => {
+  assert.equal(buildPaymentSnapshot(baseDeal()).customerName, 'רחל כהן');
+});
+
 test('buildPaymentSnapshot: product name falls back to deal title', () => {
   const d = { ...baseDeal(), product: null };
   assert.equal(buildPaymentSnapshot(d).productName, 'סיור גרפיטי לחברה');

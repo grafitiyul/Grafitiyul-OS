@@ -45,6 +45,11 @@ export function pickPaymentContact(contacts) {
 
 // What a link generated NOW would be built from — the fields that make an
 // existing iCount link stale when they drift.
+//
+// customerName is the iCount document/customer DISPLAY name: the Deal's
+// ORGANIZATION when linked (businesses invoice the org, not the person),
+// else the contact's full name. first/last stay the CONTACT person's — they
+// prefill the form fields the payer fills in.
 export function buildPaymentSnapshot(deal) {
   const c = pickPaymentContact(deal.contacts)?.contact || null;
   const firstName = c ? c.firstNameHe || c.firstNameEn || '' : '';
@@ -55,7 +60,8 @@ export function buildPaymentSnapshot(deal) {
     productName: deal.product?.nameHe || deal.title,
     firstName,
     lastName,
-    customerName: [firstName, lastName].filter(Boolean).join(' ') || null,
+    customerName:
+      deal.organization?.name || [firstName, lastName].filter(Boolean).join(' ') || null,
     customerPhone: c?.phones?.[0]?.value || null,
     customerEmail: c?.emails?.[0]?.value || null,
   };
@@ -76,6 +82,7 @@ export function linkMatchesSnapshot(link, snap) {
 // Everything ensureCurrentIcountLink needs on the deal row.
 export const PAYMENT_DEAL_INCLUDE = {
   product: { select: { nameHe: true } },
+  organization: { select: { name: true } },
   contacts: {
     orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
     include: {
