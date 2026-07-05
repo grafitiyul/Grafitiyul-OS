@@ -62,4 +62,15 @@ export const config = {
   reconnectHealthyMs: int('BRIDGE_RECONNECT_HEALTHY_MS', 5 * 60_000),
 
   logLevel: optional('LOG_LEVEL', 'info'),
+
+  // ── Media capture (Slice 2) ────────────────────────────────────────
+  // Same var names as the GOS server's r2.js. When unset, ingestion still
+  // mirrors message text/metadata; media rows get mediaStatus='disabled'.
+  r2AccountId: optional('R2_ACCOUNT_ID'),
+  r2AccessKeyId: optional('R2_ACCESS_KEY_ID'),
+  r2SecretAccessKey: optional('R2_SECRET_ACCESS_KEY'),
+  r2Bucket: optional('R2_BUCKET'),
+  // Hard cap per media object — larger files are skipped with
+  // mediaStatus='too_large' (recorded, never silently dropped).
+  mediaMaxBytes: int('WHATSAPP_MEDIA_MAX_BYTES', 64 * 1024 * 1024),
 };

@@ -725,6 +725,7 @@ model Contact {
   emails       ContactEmail[]
   orgLinks     ContactOrganization[]
   dealContacts DealContact[]
+  whatsAppChats WhatsAppChat[]
 
   @@index([lastNameHe])
   @@index([lastNameEn])
@@ -1023,6 +1024,114 @@ model WhatsAppAccount {
   updatedAt            DateTime          @updatedAt
   sessions             WhatsAppSession[]
   dataGaps             WhatsAppDataGap[]
+  chats                WhatsAppChat[]
+  messages             WhatsAppMessage[]
+  reactions            WhatsAppMessageReaction[]
+}
+
+// One WhatsApp conversation as seen by ONE of our numbers. The same customer
+// can legitimately have a separate thread per account, so chats are unique on
+// (accountId, externalChatId) — never globally.
+//
+// Identity columns (ported from the proven Challenge System resolution):
+//   externalChatId — the JID WhatsApp reports (@lid privacy id, @s.whatsapp.net
+//                    phone form, or @g.us group). lidJid/phoneJid hold the two
+//                    canonical person forms once learned (cross-referenced from
+//                    contacts events + v7 lidPnMappings); phoneNumber is the
+//                    counterparty's digits — NEVER the connected owner's.
+//   savedContactName / pushName / groupSubject — display-name sources, written
+//                    only by their dedicated event paths.
+//
+// CRM matching is LINK-ONLY: contactId points at an existing Contact (matched
+// by normalized phone → matchSource='phone', or linked by an admin →
+// 'manual'). WhatsApp never creates or edits Contacts; unlinking clears these
+// two fields and nothing else.
+model WhatsAppChat {
+  id                String            @id @default(cuid())
+  account           WhatsAppAccount   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId         String
+  externalChatId    String
+  type              String // 'private' | 'group'
+  savedContactName  String?
+  pushName          String?
+  groupSubject      String?
+  phoneNumber       String? // counterparty digits, international form
+  lidJid            String?
+  phoneJid          String?
+  profilePictureUrl String?
+  contact           Contact?          @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  contactId         String?
+  matchSource       String? // 'phone' | 'manual'
+  lastMessageAt     DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  messages          WhatsAppMessage[]
+
+  @@unique([accountId, externalChatId])
+  @@index([accountId, lastMessageAt])
+  @@index([accountId, phoneNumber])
+  @@index([accountId, lidJid])
+  @@index([accountId, phoneJid])
+  @@index([contactId])
+}
+
+// One mirrored message. accountId is deliberately DENORMALIZED (also derivable
+// via chat) — the purge/query contract: every WhatsApp model carries a direct
+// accountId. Dedup is the (accountId, externalMessageId) unique — Baileys
+// delivers the same message via live event AND history sync.
+//
+// Media lifecycle (media is downloaded AT INGEST — WhatsApp media expires):
+//   mediaStatus: 'pending'  row created, download in flight
+//                'stored'   bytes in R2 under mediaKey
+//                'failed'   live download failed (placeholder in UI)
+//                'expired'  history-synced message whose media is gone
+//                'too_large' over the configured cap
+//                'disabled' R2 not configured on the bridge
+//   mediaKey:    R2 object key — ALWAYS `whatsapp/<accountId>/…` (purge contract)
+//   mediaThumbBase64: tiny embedded jpegThumbnail (images/videos) for instant
+//                previews even before/without the full download.
+model WhatsAppMessage {
+  id                  String          @id @default(cuid())
+  account             WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId           String
+  chat                WhatsAppChat    @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  chatId              String
+  externalMessageId   String?
+  direction           String? // 'incoming' | 'outgoing'
+  senderName          String?
+  senderPhone         String?
+  messageType         String // text | image | video | audio | document | sticker | system
+  textContent         String?
+  mediaKey            String?
+  mediaStatus         String?
+  mediaMimeType       String?
+  mediaSizeBytes      Int?
+  mediaOriginalName   String?
+  mediaThumbBase64    String?
+  quotedExternalId    String?
+  rawPayload          Json?
+  timestampFromSource DateTime
+  createdAt           DateTime        @default(now())
+
+  @@unique([accountId, externalMessageId])
+  @@index([chatId, timestampFromSource])
+  @@index([accountId, createdAt])
+}
+
+// Emoji reactions, keyed by the target message's external id. emoji='' is a
+// removal (kept as the current state). Stored account-scoped like everything.
+model WhatsAppMessageReaction {
+  id                String          @id @default(cuid())
+  account           WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId         String
+  externalMessageId String
+  reactorPhone      String
+  reactorName       String?
+  emoji             String
+  reactedAt         DateTime
+  createdAt         DateTime        @default(now())
+
+  @@unique([accountId, externalMessageId, reactorPhone])
 }
 
 // Baileys auth state (creds + signal keys) — Postgres-backed so a Railway

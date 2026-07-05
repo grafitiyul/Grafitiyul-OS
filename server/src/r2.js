@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import {
   S3Client,
   PutObjectCommand,
+  GetObjectCommand,
   DeleteObjectCommand,
   ListObjectsV2Command,
 } from '@aws-sdk/client-s3';
@@ -77,6 +78,14 @@ export async function presignPut({ key, contentType }) {
     ContentType: contentType,
   });
   return getSignedUrl(client(), cmd, { expiresIn: 300 }); // 5 minutes
+}
+
+// Short-lived read URL for PRIVATE objects (e.g. WhatsApp chat media — customer
+// data that must never sit on a public URL). The admin-authed route mints one
+// per view; the link dies in minutes.
+export async function presignGet({ key, expiresIn = 300 }) {
+  const cmd = new GetObjectCommand({ Bucket: R2_BUCKET, Key: key });
+  return getSignedUrl(client(), cmd, { expiresIn });
 }
 
 // Best-effort delete — never throw (storage cleanup must not break the request).

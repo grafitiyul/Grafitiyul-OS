@@ -11,9 +11,11 @@
     "generate": "node scripts/sync-schema.mjs && prisma generate --schema prisma/schema.prisma",
     "postinstall": "npm run generate",
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "test": "node --test src/*.test.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1075.0",
     "@hapi/boom": "^10.0.1",
     "@prisma/client": "^5.22.0",
     "@whiskeysockets/baileys": "7.0.0-rc13",

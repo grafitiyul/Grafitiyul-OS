@@ -37,6 +37,8 @@ import { prisma } from './db.js';
 import { getBaileys } from './baileysLib.js';
 import { makePostgresAuthState } from './authStore.js';
 import { accountState } from './accountState.js';
+import { createIngest } from './ingest.js';
+import { isMediaConfigured } from './media.js';
 
 const RETRY_CACHE_TTL_MS = 15 * 60_000;
 
@@ -356,6 +358,13 @@ export class WaClient {
     try {
       socket.ev.removeAllListeners('connection.update');
       socket.ev.removeAllListeners('creds.update');
+      socket.ev.removeAllListeners('messages.upsert');
+      socket.ev.removeAllListeners('messages.reaction');
+      socket.ev.removeAllListeners('messaging-history.set');
+      socket.ev.removeAllListeners('chats.upsert');
+      socket.ev.removeAllListeners('chats.update');
+      socket.ev.removeAllListeners('contacts.upsert');
+      socket.ev.removeAllListeners('contacts.update');
     } catch {
       /* old socket already torn down */
     }
@@ -428,13 +437,31 @@ export class WaClient {
       await this.handleConnectionUpdate(socketId, update);
     });
 
-    // ── SLICE-2 HOOK ────────────────────────────────────────────────────
-    // Message ingestion attaches here: messages.upsert / messages.reaction /
-    // messaging-history.set / chats.* / contacts.* — each handler MUST
-    // capture `socketId` and no-op when it !== this.activeSocketId (stale-
-    // socket guard), exactly like handleConnectionUpdate below.
+    // ── Message ingestion (Slice 2) ─────────────────────────────────────
+    // One ingest instance per socket (fresh socket reference per reconnect).
+    // Every handler captures `socketId` and no-ops when it no longer matches
+    // activeSocketId — the same stale-socket guard as handleConnectionUpdate;
+    // without it a replaced socket's late events kept writing through old
+    // references after a reopen (duplicate rows / stale media reads).
+    const ingest = createIngest({
+      prisma,
+      socket,
+      accountId: this.accountId,
+      log: pino({ level: config.logLevel, name: `ingest:${this.accountId}` }),
+    });
+    const guarded = (fn) => (payload) => {
+      if (socketId !== this.activeSocketId) return;
+      void fn(payload);
+    };
+    socket.ev.on('messages.upsert', guarded(ingest.onMessagesUpsert));
+    socket.ev.on('messages.reaction', guarded(ingest.onReactions));
+    socket.ev.on('messaging-history.set', guarded(ingest.onHistorySync));
+    socket.ev.on('chats.upsert', guarded(ingest.onChatsUpsert));
+    socket.ev.on('chats.update', guarded(ingest.onChatsUpdate));
+    socket.ev.on('contacts.upsert', guarded(ingest.onContactsUpsert));
+    socket.ev.on('contacts.update', guarded(ingest.onContactsUpdate));
 
-    this.log.info({ socketId }, 'handlers wired');
+    this.log.info({ socketId, mediaConfigured: isMediaConfigured() }, 'handlers wired');
   }
 
   async handleConnectionUpdate(socketId, update) {

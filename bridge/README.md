@@ -59,6 +59,16 @@ PORT                    = 3000
 in the GOS server's `WHATSAPP_BRIDGE_URLS` — never rely on an injected PORT
 for private-only services.
 
+### Media capture (Slice 2) — both bridge services
+
+Add the SAME R2 values the GOS server already uses (Variables →
+`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`).
+Incoming media is downloaded at ingest (WhatsApp media expires!) and stored
+PRIVATE under `whatsapp/<accountId>/…`; the GOS server serves it to admins
+via short-lived presigned GETs. Without these vars, messages still mirror and
+media rows are honestly marked `disabled`. Optional cap:
+`WHATSAPP_MEDIA_MAX_BYTES` (default 64MB → `too_large`).
+
 **Only `WHATSAPP_ACCOUNT_ID` / `WHATSAPP_ACCOUNT_LABEL` differ between the two
 services.** Everything else is identical.
 

@@ -81,6 +81,30 @@ export const accountState = {
     await patch(prisma, { reconnectAttempts: 0 });
   },
 
+  // Any-direction activity heartbeat.
+  async heartbeat(prisma) {
+    await patch(prisma, { lastMessageAt: new Date() });
+  },
+
+  // INBOUND-only heartbeat — called after an incoming (non-fromMe) message
+  // row is created. This is the signal that detects "connected but receiving
+  // nothing" zombie sockets, which the conflated lastMessageAt cannot surface
+  // (outbound sends keep bumping it).
+  async inboundHeartbeat(prisma) {
+    await patch(prisma, { lastInboundMessageAt: new Date() });
+  },
+
+  // Surface the most recent media-handling failure to the admin UI. Cleared
+  // by the next successful media store. Summary only — never message content.
+  async setMediaError(prisma, summary) {
+    await patch(prisma, { lastMediaError: String(summary).slice(0, 240), lastMediaErrorAt: new Date() });
+  },
+
+  async clearMediaError(prisma) {
+    // lastMediaErrorAt intentionally kept — "last incident" breadcrumb.
+    await patch(prisma, { lastMediaError: null });
+  },
+
   async snapshot(prisma) {
     return prisma.whatsAppAccount.findUnique({ where: { id: ACCOUNT_ID } });
   },
