@@ -246,7 +246,7 @@ export default function CustomerQuoteView() {
           <div className="absolute inset-0 bg-black/30" onClick={() => setTocOpen(false)} />
           <aside
             dir={rtl ? 'rtl' : 'ltr'}
-            className={`absolute inset-y-0 ${rtl ? 'end-0' : 'start-0'} flex w-[300px] max-w-[85vw] flex-col bg-white shadow-2xl`}
+            className="absolute inset-y-0 right-0 flex w-[300px] max-w-[85vw] flex-col bg-white shadow-2xl"
           >
             <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
               <span className="text-sm font-semibold text-gray-800">{t.toc}</span>
