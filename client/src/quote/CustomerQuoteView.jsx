@@ -16,9 +16,12 @@ const SIGN_BLUE = '#2563eb';
 // The proposal SENDER (our brand) — used for the signature popup title. This is
 // the sender, never the customer's organization. (Matches the hero's "by".)
 const SENDER = { he: 'גרפיטיול', en: 'Grafitiyul' };
-// Fixed on-screen document width — a readable A4-style proposal sheet, not a
-// mobile card. Caps on desktop; shrinks to fit on small screens.
-const DOC_WIDTH = 'max-w-4xl';
+// Fixed on-screen document width — a large A4-style proposal sheet that dominates
+// the page (the gray background is secondary), NOT a fluid web layout. ~1152px on
+// desktop (comfortable side margins remain); shrinks to fit on small screens. The
+// paper and the sticky bar both use this, so they stay exactly matched. Print/PDF
+// is unaffected (the print CSS overrides max-width to full page).
+const DOC_WIDTH = 'max-w-6xl';
 
 const L = {
   he: {
