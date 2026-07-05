@@ -159,32 +159,41 @@ export default function CustomerQuoteView() {
 
   return (
     <div dir={rtl ? 'rtl' : 'ltr'} className="cq-root min-h-screen bg-gray-100">
-      {/* Print rules. The PDF is the SAME proposal, printed — not a separate design.
-          The one thing browsers do by default that breaks fidelity is dropping
-          background colours/images to save ink; print-color-adjust:exact forces them
-          back (hero image, overlays, teal accents, white/gray cards, pricing +
-          technical cards all rely on CSS backgrounds). We reset NOTHING else — no
-          black-text override, no spacing/typography changes — and remove ONLY the UI
-          chrome. The page itself becomes white; the paper becomes the page. */}
+      {/* Print rules. The PDF must be a FROZEN photograph of the on-screen proposal,
+          not a printer re-layout. Two things break that by default and we fix both:
+
+          1. Reflow. The browser normally shrinks the page to the paper width (~A4),
+             recomputing every width so the layout looks different. We stop that by
+             making the printed PAGE exactly the on-screen document width (1280px) and
+             pinning the document to that width — so nothing reflows. The page is just
+             the document, paginated. (@page size is honoured by Chromium/Edge — the
+             common Save-as-PDF path; other engines fall back to a scaled fit.)
+          2. Ink-saving background stripping. print-color-adjust:exact keeps the hero
+             image, overlays, teal accents and every card exactly as on screen.
+
+          We reset NOTHING else (no black-text override, no spacing/typography change)
+          and remove ONLY the interactive chrome (.cq-no-print). */}
       <style>{`
       @media print {
+        @page { size: 1280px 1811px; margin: 0; }
         *, *::before, *::after {
           -webkit-print-color-adjust: exact !important;
           print-color-adjust: exact !important;
         }
         .cq-no-print { display: none !important; }
-        html, body { background: #fff !important; }
+        html, body { background: #fff !important; margin: 0 !important; }
         .cq-root { background: #fff !important; min-height: 0 !important; }
-        .cq-page { padding: 0 !important; max-width: none !important; }
-        .cq-paper { box-shadow: none !important; border-radius: 0 !important; }
+        /* Freeze the exact desktop layout — the document keeps its on-screen width
+           and never reflows to the paper. */
+        .cq-page { width: 1280px !important; max-width: 1280px !important; margin: 0 auto !important; padding: 0 !important; }
+        .cq-paper { width: 1280px !important; box-shadow: none !important; border-radius: 0 !important; }
         /* Keep whole sections together across page breaks when they fit. */
         .cq-paper section { break-inside: avoid; }
       }
-      @page { margin: 12mm; }
       `}</style>
 
-      {/* Top-right floating menu — Contents + PDF. */}
-      <div className="cq-no-print fixed end-4 top-4 z-40 flex items-center gap-1 rounded-full border border-gray-200 bg-white/95 p-1 shadow-lg backdrop-blur">
+      {/* Top-right floating menu — Contents + PDF. Physical top-right (RTL-correct). */}
+      <div className="cq-no-print fixed right-4 top-4 z-40 flex items-center gap-1 rounded-full border border-gray-200 bg-white/95 p-1 shadow-lg backdrop-blur">
         <button
           type="button"
           onClick={() => setTocOpen(true)}
@@ -206,7 +215,7 @@ export default function CustomerQuoteView() {
 
       {/* Signed audit panel — permanent, floating on the LEFT (desktop). */}
       {signature && (
-        <div className="cq-no-print fixed bottom-6 left-5 z-30 hidden lg:block">
+        <div className="cq-no-print fixed bottom-28 left-5 z-30 hidden lg:block">
           <SignedStatusPanel signature={signature} header={header} lang={lang} />
         </div>
       )}
@@ -228,7 +237,7 @@ export default function CustomerQuoteView() {
             <QuoteDocumentRenderer model={renderModel} />
           </QuoteViewContext.Provider>
         </div>
-        <div className="h-28" aria-hidden />
+        <div className="cq-no-print h-28" aria-hidden />
       </main>
 
       {/* Table of Contents drawer. */}
@@ -264,83 +273,83 @@ export default function CustomerQuoteView() {
         </div>
       )}
 
-      {/* Sticky bottom action bar. */}
-      <div className="cq-no-print fixed inset-x-0 bottom-0 z-40">
-        <div className={`mx-auto ${DOC_WIDTH} px-3 pb-3`}>
-          <div className="flex items-center justify-between gap-3 rounded-t-2xl rounded-b-xl border border-gray-100 bg-white px-4 py-3 shadow-[0_-8px_30px_-12px_rgba(0,0,0,0.25)]">
-            {/* Reading-start: who this proposal is for. */}
-            <div className="min-w-0">
-              {header.customerName && <div className="truncate text-[14px] font-semibold text-gray-900">{header.customerName}</div>}
-              {header.organizationName && <div className="truncate text-[12px] text-gray-400">{header.organizationName}</div>}
-            </div>
+      {/* Sticky bottom action bar — a full-viewport-width application toolbar,
+          DECOUPLED from the proposal width (no DOC_WIDTH). The proposal centers
+          independently above it. Actions on the (physical) left; owner on the right. */}
+      <div className="cq-no-print fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 shadow-[0_-10px_34px_-14px_rgba(0,0,0,0.28)] backdrop-blur">
+        <div className="flex w-full items-center justify-between gap-6 px-5 py-4 sm:px-10">
+          {/* Owner info — physical right (reading start in RTL). */}
+          <div className="min-w-0">
+            {header.customerName && <div className="truncate text-[16px] font-semibold text-gray-900">{header.customerName}</div>}
+            {header.organizationName && <div className="truncate text-[13px] text-gray-400">{header.organizationName}</div>}
+          </div>
 
-            {/* Actions. */}
-            <div className="flex items-center gap-2">
+          {/* Primary actions — physical left. */}
+          <div className="flex shrink-0 items-center gap-3 sm:gap-4">
+            {hasSignatureSection && !locked && (
               <button
                 type="button"
-                onClick={downloadPdf}
-                title={t.pdf}
-                className="hidden items-center gap-1.5 rounded-xl px-3 py-2 text-[13px] font-medium text-gray-600 transition hover:bg-gray-100 sm:flex"
+                onClick={goSign}
+                className="flex items-center gap-2 rounded-xl px-7 py-3.5 text-[15px] font-semibold text-white shadow-sm transition hover:brightness-105"
+                style={{ backgroundColor: SIGN_BLUE }}
               >
-                <Icon.download className="h-4 w-4" /> {t.pdf}
+                <Icon.pen className="h-5 w-5" /> {t.sign}
               </button>
+            )}
+            {locked && (
+              <span className="flex items-center gap-2 rounded-xl bg-emerald-50 px-6 py-3.5 text-[15px] font-semibold text-emerald-700">
+                <Icon.check className="h-5 w-5" /> {t.signed}
+              </span>
+            )}
 
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setContactOpen((o) => !o)}
-                  className="flex items-center gap-1.5 rounded-xl border border-gray-200 px-3 py-2 text-[13px] font-medium text-gray-700 transition hover:bg-gray-50"
-                >
-                  <Icon.chat className="h-4 w-4" /> {t.contact}
-                </button>
-                {contactOpen && (
-                  <>
-                    <div className="fixed inset-0 z-10" onClick={() => setContactOpen(false)} />
-                    <div className="absolute bottom-full z-20 mb-2 end-0 w-44 overflow-hidden rounded-xl border border-gray-100 bg-white py-1 shadow-xl">
-                      {contact.whatsapp && (
-                        <a
-                          href={`https://wa.me/${contact.whatsapp}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          onClick={() => setContactOpen(false)}
-                          className="flex items-center gap-2.5 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                        >
-                          <Icon.whatsapp className="h-4 w-4 text-[#25D366]" /> {t.whatsapp}
-                        </a>
-                      )}
-                      {contact.email && (
-                        <a
-                          href={`mailto:${contact.email}`}
-                          onClick={() => setContactOpen(false)}
-                          className="flex items-center gap-2.5 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                        >
-                          <Icon.mail className="h-4 w-4 text-gray-500" /> {t.email}
-                        </a>
-                      )}
-                      {!contact.whatsapp && !contact.email && (
-                        <div className="px-3 py-2 text-[12px] text-gray-400">—</div>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {hasSignatureSection && !locked && (
-                <button
-                  type="button"
-                  onClick={goSign}
-                  className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-[14px] font-semibold text-white shadow-sm transition hover:brightness-105"
-                  style={{ backgroundColor: SIGN_BLUE }}
-                >
-                  <Icon.pen className="h-4 w-4" /> {t.sign}
-                </button>
-              )}
-              {locked && (
-                <span className="flex items-center gap-1.5 rounded-xl bg-emerald-50 px-4 py-2 text-[14px] font-semibold text-emerald-700">
-                  <Icon.check className="h-4 w-4" /> {t.signed}
-                </span>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setContactOpen((o) => !o)}
+                className="flex items-center gap-2 rounded-xl border border-gray-200 px-5 py-3 text-[14px] font-medium text-gray-700 transition hover:bg-gray-50"
+              >
+                <Icon.chat className="h-[18px] w-[18px]" /> {t.contact}
+              </button>
+              {contactOpen && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setContactOpen(false)} />
+                  <div className="absolute bottom-full z-20 mb-2 end-0 w-48 overflow-hidden rounded-xl border border-gray-100 bg-white py-1 shadow-xl">
+                    {contact.whatsapp && (
+                      <a
+                        href={`https://wa.me/${contact.whatsapp}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={() => setContactOpen(false)}
+                        className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        <Icon.whatsapp className="h-4 w-4 text-[#25D366]" /> {t.whatsapp}
+                      </a>
+                    )}
+                    {contact.email && (
+                      <a
+                        href={`mailto:${contact.email}`}
+                        onClick={() => setContactOpen(false)}
+                        className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        <Icon.mail className="h-4 w-4 text-gray-500" /> {t.email}
+                      </a>
+                    )}
+                    {!contact.whatsapp && !contact.email && (
+                      <div className="px-4 py-2.5 text-[12px] text-gray-400">—</div>
+                    )}
+                  </div>
+                </>
               )}
             </div>
+
+            <button
+              type="button"
+              onClick={downloadPdf}
+              title={t.pdf}
+              className="hidden items-center gap-2 rounded-xl px-5 py-3 text-[14px] font-medium text-gray-600 transition hover:bg-gray-100 sm:flex"
+            >
+              <Icon.download className="h-[18px] w-[18px]" /> {t.pdf}
+            </button>
           </div>
         </div>
       </div>
