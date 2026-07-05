@@ -7,6 +7,7 @@ import {
   ensureDraftQuoteDocument,
   toClientQuoteDocument,
 } from '../quote/quoteDocument.js';
+import { generateSale, isIcountConfigured } from '../icount.js';
 
 // Deal CRUD + DealContact management. The Deal is the commercial object: it
 // owns agreed value (integer minor units + currency), discount, payment terms,
@@ -110,6 +111,13 @@ const DEAL_INCLUDE = {
   contacts: {
     orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
     include: { contact: { select: CONTACT_SELECT } },
+  },
+  // The deal's CURRENT personal iCount link (latest non-superseded row). History
+  // rows stay in the table; the UI only ever shows/acts on this one.
+  paymentLinks: {
+    where: { status: 'created' },
+    orderBy: { createdAt: 'desc' },
+    take: 1,
   },
 };
 
@@ -539,6 +547,113 @@ router.get(
     const result = await ensureDraftQuoteDocument(prisma, req.params.id);
     if (result.error === 'not_found') return res.status(404).json({ error: 'not_found' });
     res.json({ quoteDocument: toClientQuoteDocument(result.doc), created: result.created });
+  }),
+);
+
+// ── iCount personal payment link ("תשלום באייקאונט") ─────────────────────────
+// POST /:id/payment-link — generate a PERSONAL iCount link for THIS deal and
+// store it. Explicit-action only: if a live link already exists the call fails
+// with 409 unless body.regenerate === true (the UI asks first), so links are
+// never recreated accidentally. Regeneration supersedes the old row (history
+// kept). Amount = Deal.valueMinor — the pricing engine's frozen VAT-inclusive
+// gross (discount lines are already inside it; same source the quote uses).
+// Generating a link never touches deal status — payment confirmation is a
+// separate slice (webhook processing / manual admin action).
+
+// Prefill contact: the first contact flagged receivePaymentLinks, else the
+// primary/first contact. Missing contact/phone/email is fine — iCount accepts
+// empty prefill fields and the customer types them on the page.
+function pickPaymentContact(contacts) {
+  const list = contacts || [];
+  return list.find((dc) => dc.receivePaymentLinks) || list[0] || null;
+}
+
+router.post(
+  '/:id/payment-link',
+  handle(async (req, res) => {
+    if (!isIcountConfigured()) return res.status(503).json({ error: 'icount_not_configured' });
+    const paypageId = process.env.ICOUNT_DEFAULT_PAYPAGE_ID;
+    if (!paypageId) return res.status(503).json({ error: 'icount_paypage_not_configured' });
+
+    const deal = await prisma.deal.findUnique({
+      where: { id: req.params.id },
+      include: {
+        product: { select: { nameHe: true } },
+        contacts: {
+          orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+          include: { contact: { select: CONTACT_SELECT } },
+        },
+        paymentLinks: { where: { status: 'created' }, take: 1 },
+      },
+    });
+    if (!deal) return res.status(404).json({ error: 'not_found' });
+    if (deal.paymentLinks.length && req.body?.regenerate !== true) {
+      return res.status(409).json({ error: 'link_exists' });
+    }
+    const amountMinor = deal.valueMinor ?? 0n;
+    if (amountMinor <= 0n) return res.status(400).json({ error: 'amount_missing' });
+
+    const productName = deal.product?.nameHe || deal.title;
+    const dc = pickPaymentContact(deal.contacts);
+    const c = dc?.contact || null;
+    const firstName = c ? c.firstNameHe || c.firstNameEn || '' : '';
+    const lastName = c ? c.lastNameHe || c.lastNameEn || '' : '';
+    const customerName = [firstName, lastName].filter(Boolean).join(' ') || null;
+    const customerPhone = c?.phones?.[0]?.value || null;
+    const customerEmail = c?.emails?.[0]?.value || null;
+
+    // IPN: only attached when the webhook receiver is configured. The receiver
+    // logs raw payloads only (no state changes) — see routes/icountWebhook.js.
+    const origin = String(process.env.PUBLIC_ORIGIN || '').replace(/\/+$/, '');
+    const secret = process.env.ICOUNT_WEBHOOK_SECRET;
+    const ipnUrl =
+      origin && secret
+        ? `${origin}/api/webhooks/icount/${secret}?dealId=${encodeURIComponent(deal.id)}`
+        : null;
+
+    const { saleUrl, raw } = await generateSale({
+      paypageId,
+      items: [
+        {
+          quantity: 1,
+          description: productName,
+          // iCount expects major units, VAT-INCLUSIVE (unitprice_incl).
+          unitprice_incl: Number(amountMinor) / 100,
+        },
+      ],
+      clientName: customerName || 'לקוח',
+      firstName,
+      lastName,
+      email: customerEmail,
+      phone: customerPhone,
+      maxPayments: Number(process.env.ICOUNT_MAX_PAYMENTS) || 10,
+      ipnUrl,
+    });
+
+    await prisma.$transaction([
+      prisma.dealPaymentLink.updateMany({
+        where: { dealId: deal.id, status: 'created' },
+        data: { status: 'superseded' },
+      }),
+      prisma.dealPaymentLink.create({
+        data: {
+          dealId: deal.id,
+          provider: 'icount',
+          status: 'created',
+          paymentLinkUrl: saleUrl,
+          paypageId: String(paypageId),
+          amountMinor,
+          currency: deal.currency || 'ILS',
+          productName,
+          customerName,
+          customerPhone,
+          customerEmail,
+          createdBy: req.adminAuth?.userId || null,
+          rawProviderResponse: raw ?? undefined,
+        },
+      }),
+    ]);
+    res.json(await loadDeal(deal.id));
   }),
 );
 

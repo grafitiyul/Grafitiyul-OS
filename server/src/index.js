@@ -49,6 +49,7 @@ import tourContentRouter from './routes/tourContent.js';
 import tourContentExportRouter from './routes/tourContentExport.js';
 import staffEventsRouter from './routes/staffEvents.js';
 import staffExportRouter from './routes/staffExport.js';
+import icountWebhookRouter from './routes/icountWebhook.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -146,6 +147,9 @@ app.use('/api/tour-content-export', tourContentExportRouter);
 app.use('/api/staff-events', staffEventsRouter);
 // Staff roster export (GOS → recruitment READ). Secret-gated. GOS owns the roster.
 app.use('/api/staff-export', staffExportRouter);
+// iCount IPN receiver — URL-secret gated (not cookie-gated; iCount calls it).
+// Audit-log only in this slice: persists raw payloads, changes NO deal state.
+app.use('/api/webhooks', icountWebhookRouter);
 
 // ── Admin-only routes ──────────────────────────────────────────
 //

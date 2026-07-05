@@ -9,6 +9,7 @@ import DealSalesScript from './DealSalesScript.jsx';
 import DealContactsDialog from './DealContactsDialog.jsx';
 import OrganizationEditDialog from './OrganizationEditDialog.jsx';
 import PriceBuilderDialog from './PriceBuilderDialog.jsx';
+import DealPaymentSection from './DealPaymentSection.jsx';
 import GroupTicketBuilderDialog from './GroupTicketBuilderDialog.jsx';
 import WorkspaceLayout from '../../shell/WorkspaceLayout.jsx';
 import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
@@ -554,6 +555,16 @@ export default function DealDetail() {
           >
             📄 הצעת מחיר (בטא)
           </Link>
+        </Card>
+
+        {/* iCount payment module — personal payment link for THIS deal.
+            Generated once, stored on the deal; regeneration is explicit. */}
+        <Card variant="panel" title="תשלום באייקאונט">
+          <DealPaymentSection
+            deal={deal}
+            productName={products.find((p) => p.id === deal.productId)?.nameHe || deal.title}
+            onChanged={refresh}
+          />
         </Card>
 
       {deal.status === 'lost' && (

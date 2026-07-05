@@ -914,6 +914,7 @@ model Deal {
   contacts              DealContact[]
   quoteVersions         QuoteVersion[]
   quoteDocuments        QuoteDocument[]
+  paymentLinks          DealPaymentLink[]
 
   @@index([organizationId])
   @@index([organizationUnitId])
@@ -952,6 +953,48 @@ model DealContact {
 
   @@unique([dealId, contactId])
   @@index([contactId])
+  @@index([dealId])
+}
+
+// ── iCount payment links ("תשלום באייקאונט" — Deal payment module) ───────────
+// GOS stays the operational source of truth; iCount is ONLY the payment/invoice
+// provider. One row per generate action: regenerating marks the previous row
+// 'superseded' and inserts a new one (full history kept; the latest 'created'
+// row is THE deal's personal link). Customer/amount fields are FROZEN copies of
+// what was actually sent to iCount — the deal may change later, the link won't.
+// Generating a link NEVER changes deal status or marks anything paid; payment
+// confirmation is a future slice (webhook processing / manual admin action).
+model DealPaymentLink {
+  id                  String   @id @default(cuid())
+  deal                Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  dealId              String
+  provider            String   @default("icount")
+  status              String   @default("created") // 'created' | 'superseded'
+  paymentLinkUrl      String
+  paypageId           String? // iCount paypage template the sale was generated from
+  amountMinor         BigInt // agorot, VAT-inclusive gross (Deal.valueMinor at generation time)
+  currency            String   @default("ILS")
+  productName         String
+  customerName        String?
+  customerPhone       String?
+  customerEmail       String?
+  createdBy           String? // loose AdminUser id (same convention as Deal.ownerUserId)
+  rawProviderResponse Json? // iCount generate_sale response, for audit/debug
+  createdAt           DateTime @default(now())
+
+  @@index([dealId])
+}
+
+// Raw iCount IPN payloads — audit log ONLY in this slice. The receiver persists
+// the payload and returns 200; it changes NO deal/payment state (processing is
+// a future slice). Logged now so links generated today aren't deaf: every
+// payment made through them is captured and can be processed retroactively.
+model IcountWebhookLog {
+  id        String   @id @default(cuid())
+  dealId    String? // from the ipn_url query param, when present (not an FK — log survives deal deletion)
+  payload   Json
+  createdAt DateTime @default(now())
+
   @@index([dealId])
 }
 
