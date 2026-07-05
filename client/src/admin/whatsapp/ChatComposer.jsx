@@ -23,10 +23,20 @@ function quotedPreviewText(msg) {
   return label || 'הודעה';
 }
 
-export default function ChatComposer({ chat, replyTo, onCancelReply, onSent }) {
+// datetime-local default: round up to the next full hour.
+function nextHourLocal() {
+  const d = new Date(Date.now() + 60 * 60_000);
+  d.setMinutes(0, 0, 0);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onScheduled }) {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduleAt, setScheduleAt] = useState('');
   const keyRef = useRef({ key: null, fingerprint: null });
   const textareaRef = useRef(null);
 
@@ -56,6 +66,33 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent }) {
       onSent?.(resp.message || null);
     } catch (e) {
       setError(SEND_ERRORS[e?.payload?.error] || 'השליחה נכשלה — נסו שוב.');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function schedule() {
+    const body = text.trim();
+    if (!body || sending || !scheduleAt) return;
+    const when = new Date(scheduleAt);
+    if (Number.isNaN(when.getTime()) || when.getTime() < Date.now() + 60_000) {
+      setError('בחרו מועד עתידי (לפחות דקה קדימה).');
+      return;
+    }
+    setSending(true);
+    setError(null);
+    try {
+      await api.whatsapp.scheduleMessage(chat.id, { text: body, scheduledAt: when.toISOString() });
+      setText('');
+      setScheduleOpen(false);
+      onCancelReply?.();
+      onScheduled?.();
+    } catch (e) {
+      setError(
+        e?.payload?.error === 'scheduled_at_past'
+          ? 'המועד שנבחר כבר עבר — בחרו מועד עתידי.'
+          : 'קביעת התזמון נכשלה — נסו שוב.',
+      );
     } finally {
       setSending(false);
     }
@@ -110,6 +147,20 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent }) {
         />
         <button
           type="button"
+          title="תזמון שליחה"
+          disabled={sending || !text.trim()}
+          onClick={() => {
+            setScheduleOpen(!scheduleOpen);
+            if (!scheduleAt) setScheduleAt(nextHourLocal());
+          }}
+          className={`flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-xl border text-[16px] transition disabled:opacity-40 ${
+            scheduleOpen ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-300 bg-white text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          🕓
+        </button>
+        <button
+          type="button"
           onClick={send}
           disabled={sending || !text.trim()}
           className="h-[38px] shrink-0 rounded-xl bg-emerald-600 px-4 text-[13px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-40"
@@ -117,6 +168,32 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent }) {
           {sending ? 'שולח…' : 'שליחה'}
         </button>
       </div>
+      {scheduleOpen && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-gray-200 bg-blue-50/60 px-3 py-2">
+          <span className="text-[12px] font-medium text-gray-700">שליחה בתאריך:</span>
+          <input
+            type="datetime-local"
+            value={scheduleAt}
+            onChange={(e) => setScheduleAt(e.target.value)}
+            className="rounded-lg border border-gray-300 px-2 py-1 text-[13px]"
+          />
+          <button
+            type="button"
+            onClick={schedule}
+            disabled={sending || !text.trim() || !scheduleAt}
+            className="rounded-lg bg-blue-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-blue-700 disabled:opacity-40"
+          >
+            {sending ? 'קובע…' : 'תזמון ההודעה'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setScheduleOpen(false)}
+            className="text-[12px] text-gray-500 hover:text-gray-700"
+          >
+            ביטול
+          </button>
+        </div>
+      )}
     </div>
   );
 }

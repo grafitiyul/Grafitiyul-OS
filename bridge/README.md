@@ -108,12 +108,13 @@ WHATSAPP_BRIDGE_SECRET = <the same BRIDGE_INTERNAL_SECRET value>
 - All bridge endpoints except `/health` require
   `Authorization: Bearer <BRIDGE_INTERNAL_SECRET>`.
 
-## HTTP API (Slice 1)
+## HTTP API
 
 | Endpoint | Purpose |
 |---|---|
 | `GET /health` | Honest health: 200 = restart would NOT help (healthy / boot grace / reconnecting / waiting on QR); 503 = restart MIGHT help. No auth. |
 | `GET /status` | Persisted account row + live readiness snapshot + QR as data URL. |
+| `POST /send` | Text send (Slice 6): serialized, onWhatsApp-gated, 12s timeout, idempotent via `idempotencyKey`, optional reply context. |
 | `POST /restart-socket` | Rebuild the socket, KEEP the session (zombie recovery). |
 | `POST /hard-reset-session` | Wipe the session + fresh QR (corrupt session). |
 | `POST /sign-out` | Unlink the device on WhatsApp's side + wipe the session. |

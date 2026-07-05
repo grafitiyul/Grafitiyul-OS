@@ -52,6 +52,7 @@ import staffExportRouter from './routes/staffExport.js';
 import icountWebhookRouter from './routes/icountWebhook.js';
 import payRouter from './routes/pay.js';
 import whatsappRouter from './routes/whatsapp.js';
+import { startScheduledWorker } from './whatsapp/scheduledWorker.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -435,4 +436,7 @@ const port = Number(process.env.PORT) || 4000;
 
 app.listen(port, () => {
   console.log(`[grafitiyul-os-server] listening on port ${port}`);
+  // Scheduled WhatsApp messages (Slice 7) — claim-based 60s tick; no-op when
+  // no bridges are configured (local dev without WHATSAPP_BRIDGE_URLS).
+  startScheduledWorker(console);
 });

@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import MessageBubble from './MessageBubble.jsx';
 import ChatComposer from './ChatComposer.jsx';
+import ScheduledStrip from './ScheduledStrip.jsx';
 
 // Read view of one WhatsApp chat — the single thread component every surface
 // (Deal tab, Contact page, future inbox) mounts. Messages come from the GOS
@@ -49,6 +50,8 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
   const [replyTo, setReplyTo] = useState(null);
   // Bumped after a successful send → the poll effect re-runs immediately.
   const [refreshNonce, setRefreshNonce] = useState(0);
+  // Bumped after scheduling/cancelling → the scheduled strip reloads.
+  const [scheduledNonce, setScheduledNonce] = useState(0);
   const containerRef = useRef(null);
   const stickToBottomRef = useRef(true);
   const loadingOlderRef = useRef(false);
@@ -189,16 +192,20 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
         </p>
       )}
       {canSend && (
-        <ChatComposer
-          chat={chat}
-          replyTo={replyTo}
-          onCancelReply={() => setReplyTo(null)}
-          onSent={(message) => {
-            stickToBottomRef.current = true;
-            if (message) setMessages((cur) => mergeMessages(cur || [], [message]));
-            setRefreshNonce((n) => n + 1);
-          }}
-        />
+        <>
+          <ScheduledStrip chat={chat} nonce={scheduledNonce} />
+          <ChatComposer
+            chat={chat}
+            replyTo={replyTo}
+            onCancelReply={() => setReplyTo(null)}
+            onSent={(message) => {
+              stickToBottomRef.current = true;
+              if (message) setMessages((cur) => mergeMessages(cur || [], [message]));
+              setRefreshNonce((n) => n + 1);
+            }}
+            onScheduled={() => setScheduledNonce((n) => n + 1)}
+          />
+        </>
       )}
     </div>
   );

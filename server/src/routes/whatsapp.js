@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { buildPhoneIndex, matchContactId, normalizePhoneIntl } from '../whatsapp/phone.js';
+import { bridgeUrlMap, callBridge } from '../whatsapp/bridgeClient.js';
 import { isConfigured as r2Configured, presignGet } from '../r2.js';
 
 // WhatsApp module — Slice 1 (accounts / connections admin).
@@ -20,49 +21,6 @@ import { isConfigured as r2Configured, presignGet } from '../r2.js';
 // live actions return 'bridge_not_configured'.
 
 const router = Router();
-
-function bridgeUrlMap() {
-  const raw = String(process.env.WHATSAPP_BRIDGE_URLS || '').trim();
-  const map = {};
-  for (const pair of raw.split(',')) {
-    const idx = pair.indexOf('=');
-    if (idx <= 0) continue;
-    const key = pair.slice(0, idx).trim();
-    const url = pair.slice(idx + 1).trim().replace(/\/+$/, '');
-    if (key && url) map[key] = url;
-  }
-  return map;
-}
-
-async function callBridge(accountId, path, { method = 'GET', timeoutMs = 10_000, body } = {}) {
-  const base = bridgeUrlMap()[accountId];
-  const secret = process.env.WHATSAPP_BRIDGE_SECRET;
-  if (!base || !secret) {
-    const err = new Error('bridge_not_configured');
-    err.code = 'bridge_not_configured';
-    throw err;
-  }
-  const res = await fetch(`${base}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${secret}`,
-      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-    },
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  const data = await res.json().catch(() => null);
-  if (!res.ok && res.status !== 202) {
-    // Preserve the bridge's structured error (code + payload) — send-path
-    // callers map these to user-facing outcomes instead of a generic 502.
-    const err = new Error(`bridge_error: ${data?.error || res.status}`);
-    err.code = 'bridge_error';
-    err.status = res.status;
-    err.data = data;
-    throw err;
-  }
-  return data;
-}
 
 function bridgeErrorResponse(res, err) {
   if (err?.code === 'bridge_not_configured') {
@@ -579,6 +537,112 @@ router.post(
       }
       return res.status(502).json({ error: 'bridge_unreachable' });
     }
+  }),
+);
+
+// ── Scheduled messages (Slice 7, text-only V1) ─────────────────────────────
+// The claim-based worker in whatsapp/scheduledWorker.js does the sending; the
+// routes only manage rows. All mutations are guarded updateMany against the
+// row's status, so an admin action can never race a send in progress — the
+// API answers 409 instead of pretending.
+
+function toClientScheduled(s) {
+  return {
+    id: s.id,
+    chatId: s.chatId,
+    content: s.content,
+    scheduledAt: s.scheduledAt,
+    status: s.status,
+    attemptCount: s.attemptCount,
+    failureReason: s.failureReason,
+    sentAt: s.sentAt,
+    createdAt: s.createdAt,
+  };
+}
+
+router.post(
+  '/chats/:chatId/scheduled',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const text = typeof b.text === 'string' ? b.text.trim() : '';
+    const scheduledAt = b.scheduledAt ? new Date(String(b.scheduledAt)) : null;
+    if (!text) return res.status(400).json({ error: 'text_required' });
+    if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) {
+      return res.status(400).json({ error: 'scheduled_at_invalid' });
+    }
+    if (scheduledAt.getTime() < Date.now() + 30_000) {
+      return res.status(400).json({ error: 'scheduled_at_past' });
+    }
+    const chat = await prisma.whatsAppChat.findUnique({
+      where: { id: req.params.chatId },
+      select: { id: true, accountId: true },
+    });
+    if (!chat) return res.status(404).json({ error: 'not_found' });
+    const row = await prisma.whatsAppScheduledMessage.create({
+      data: {
+        accountId: chat.accountId,
+        chatId: chat.id,
+        content: text,
+        scheduledAt,
+        createdById: req.adminAuth?.userId ?? null,
+      },
+    });
+    res.status(201).json(toClientScheduled(row));
+  }),
+);
+
+// Upcoming + recently-problematic rows for one chat (the thread strip).
+router.get(
+  '/chats/:chatId/scheduled',
+  handle(async (req, res) => {
+    const rows = await prisma.whatsAppScheduledMessage.findMany({
+      where: { chatId: req.params.chatId, status: { in: ['pending', 'sending', 'failed', 'skipped'] } },
+      orderBy: { scheduledAt: 'asc' },
+      take: 50,
+    });
+    res.set('Cache-Control', 'no-store');
+    res.json(rows.map(toClientScheduled));
+  }),
+);
+
+// Cancel — only while still pending/failed/skipped; a row mid-send conflicts.
+router.post(
+  '/scheduled/:id/cancel',
+  handle(async (req, res) => {
+    const updated = await prisma.whatsAppScheduledMessage.updateMany({
+      where: { id: req.params.id, status: { in: ['pending', 'failed', 'skipped'] } },
+      data: { status: 'cancelled', claimedAt: null, claimedBy: null, nextRetryAt: null },
+    });
+    if (updated.count === 0) return res.status(409).json({ error: 'not_cancellable' });
+    res.json({ ok: true });
+  }),
+);
+
+// Reschedule (and optionally edit the text) — resets the retry state so the
+// row is judged fresh at its new time. Same status guard as cancel.
+router.put(
+  '/scheduled/:id',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const data = { status: 'pending', attemptCount: 0, nextRetryAt: null, failureReason: null, claimedAt: null, claimedBy: null };
+    if (b.scheduledAt !== undefined) {
+      const scheduledAt = new Date(String(b.scheduledAt));
+      if (Number.isNaN(scheduledAt.getTime())) return res.status(400).json({ error: 'scheduled_at_invalid' });
+      if (scheduledAt.getTime() < Date.now() + 30_000) return res.status(400).json({ error: 'scheduled_at_past' });
+      data.scheduledAt = scheduledAt;
+    }
+    if (b.text !== undefined) {
+      const text = String(b.text).trim();
+      if (!text) return res.status(400).json({ error: 'text_required' });
+      data.content = text;
+    }
+    const updated = await prisma.whatsAppScheduledMessage.updateMany({
+      where: { id: req.params.id, status: { in: ['pending', 'failed', 'skipped'] } },
+      data,
+    });
+    if (updated.count === 0) return res.status(409).json({ error: 'not_editable' });
+    const row = await prisma.whatsAppScheduledMessage.findUnique({ where: { id: req.params.id } });
+    res.json(toClientScheduled(row));
   }),
 );
 

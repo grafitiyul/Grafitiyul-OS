@@ -453,6 +453,14 @@ export const api = {
       request(`/api/whatsapp/chats/${chatId}/messages${qs(params)}`),
     sendMessage: (chatId, data) =>
       request(`/api/whatsapp/chats/${chatId}/send`, { method: 'POST', body: JSON.stringify(data) }),
+    // Scheduled messages (Slice 7)
+    scheduledList: (chatId) => request(`/api/whatsapp/chats/${chatId}/scheduled`),
+    scheduleMessage: (chatId, data) =>
+      request(`/api/whatsapp/chats/${chatId}/scheduled`, { method: 'POST', body: JSON.stringify(data) }),
+    cancelScheduled: (id) =>
+      request(`/api/whatsapp/scheduled/${id}/cancel`, { method: 'POST', body: JSON.stringify({}) }),
+    updateScheduled: (id, data) =>
+      request(`/api/whatsapp/scheduled/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   },
   // ── Quote Module (quote documents + composer preview) ───────────
   quoteDocuments: {
