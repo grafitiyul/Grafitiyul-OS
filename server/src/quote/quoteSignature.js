@@ -28,10 +28,13 @@ export async function signQuoteByToken(client, token, input, meta) {
   if (!method) return { error: 'invalid_method' };
 
   const signerName = typeof input?.signerName === 'string' ? input.signerName.trim().slice(0, 120) : '';
-  if (!signerName) return { error: 'name_required' };
 
+  // Validation is scoped to the method: typed needs a name; uploaded/drawn need an
+  // image (the image IS the signature — no name is collected for those methods).
   let signatureImage = null;
-  if (method === 'uploaded' || method === 'drawn') {
+  if (method === 'typed') {
+    if (!signerName) return { error: 'name_required' };
+  } else {
     const img = typeof input?.signatureImage === 'string' ? input.signatureImage : '';
     if (!/^data:image\/(png|jpeg|jpg);base64,/.test(img)) return { error: 'image_required' };
     if (img.length > MAX_IMAGE_CHARS) return { error: 'image_too_large' };

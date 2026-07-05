@@ -13,6 +13,12 @@ import SignedStatusPanel from './SignedStatusPanel.jsx';
 // primary action + the Signature section.
 
 const SIGN_BLUE = '#2563eb';
+// The proposal SENDER (our brand) — used for the signature popup title. This is
+// the sender, never the customer's organization. (Matches the hero's "by".)
+const SENDER = { he: 'גרפיטיול', en: 'Grafitiyul' };
+// Fixed on-screen document width — a readable A4-style proposal sheet, not a
+// mobile card. Caps on desktop; shrinks to fit on small screens.
+const DOC_WIDTH = 'max-w-4xl';
 
 const L = {
   he: {
@@ -189,7 +195,7 @@ export default function CustomerQuoteView() {
       {/* The proposal — centered premium sheet; the print target. The signing
           context is supplied ONLY here, so the Signature section's button opens the
           popup (and once signed, renders the captured signature). */}
-      <main className="cq-page mx-auto max-w-3xl px-3 py-6 sm:py-10">
+      <main className={`cq-page mx-auto ${DOC_WIDTH} px-3 py-6 sm:py-10`}>
         {/* On mobile the audit panel sits inline above the proposal. */}
         {signature && (
           <div className="cq-no-print mb-4 lg:hidden">
@@ -241,7 +247,7 @@ export default function CustomerQuoteView() {
 
       {/* Sticky bottom action bar. */}
       <div className="cq-no-print fixed inset-x-0 bottom-0 z-40">
-        <div className="mx-auto max-w-3xl px-3 pb-3">
+        <div className={`mx-auto ${DOC_WIDTH} px-3 pb-3`}>
           <div className="flex items-center justify-between gap-3 rounded-t-2xl rounded-b-xl border border-gray-100 bg-white px-4 py-3 shadow-[0_-8px_30px_-12px_rgba(0,0,0,0.25)]">
             {/* Reading-start: who this proposal is for. */}
             <div className="min-w-0">
@@ -323,7 +329,7 @@ export default function CustomerQuoteView() {
       {/* Signature popup — opened from the Signature section's blue button. */}
       {popupOpen && !locked && (
         <SignaturePopup
-          company={header.organizationName || header.customerName || ''}
+          company={SENDER[lang] || SENDER.he}
           lang={lang}
           busy={signing}
           onSubmit={handleSign}

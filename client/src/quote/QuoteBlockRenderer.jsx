@@ -603,8 +603,7 @@ function SignedSignature({ sig, en }) {
         sig.signatureImage && <img src={sig.signatureImage} alt={sig.signerName} className="mx-auto max-h-24 object-contain" />
       )}
       <div className="mt-3 border-t border-gray-200 pt-2 text-[12px] text-gray-400">
-        {sig.signerName}
-        {date ? ` · ${date}${time ? ` ${time}` : ''}` : ''}
+        {[sig.signerName, date ? `${date}${time ? ` ${time}` : ''}` : null].filter(Boolean).join(' · ')}
       </div>
     </div>
   );
