@@ -431,6 +431,21 @@ export const api = {
     ensurePaymentToken: (id) =>
       request(`/api/deals/${id}/payment-token`, { method: 'POST', body: JSON.stringify({}) }),
   },
+  // ── WhatsApp module — connections admin (Slice 1) ────────────────
+  // Accounts come from the DB; live status/actions proxy to the
+  // per-number bridge services.
+  whatsapp: {
+    accounts: () => request('/api/whatsapp/accounts'),
+    updateAccount: (id, data) =>
+      request(`/api/whatsapp/accounts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    accountStatus: (id) => request(`/api/whatsapp/accounts/${id}/status`),
+    restartSocket: (id) =>
+      request(`/api/whatsapp/accounts/${id}/restart-socket`, { method: 'POST', body: JSON.stringify({}) }),
+    hardResetSession: (id) =>
+      request(`/api/whatsapp/accounts/${id}/hard-reset-session`, { method: 'POST', body: JSON.stringify({}) }),
+    signOut: (id) =>
+      request(`/api/whatsapp/accounts/${id}/sign-out`, { method: 'POST', body: JSON.stringify({}) }),
+  },
   // ── Quote Module (quote documents + composer preview) ───────────
   quoteDocuments: {
     get: (id) => request(`/api/quote-documents/${id}`),

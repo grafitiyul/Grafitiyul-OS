@@ -51,6 +51,7 @@ import staffEventsRouter from './routes/staffEvents.js';
 import staffExportRouter from './routes/staffExport.js';
 import icountWebhookRouter from './routes/icountWebhook.js';
 import payRouter from './routes/pay.js';
+import whatsappRouter from './routes/whatsapp.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -186,6 +187,9 @@ app.use('/api/contacts', requireAdminAuth, contactsRouter);
 // Deal module (commercial core): deals + pipeline stages. Admin-only. Quotes /
 // payments / tours / activities are NOT built yet.
 app.use('/api/deals', requireAdminAuth, dealsRouter);
+// WhatsApp module — account/connection admin (proxies live actions to the
+// per-number bridge services over Railway's private network).
+app.use('/api/whatsapp', requireAdminAuth, whatsappRouter);
 app.use('/api/deal-stages', requireAdminAuth, dealStagesRouter);
 // Quote Module — Slice 1 (quote document foundation). Admin-only. Draft
 // metadata only; no produce/render/public page/signature/PDF/delivery yet.

@@ -47,6 +47,7 @@ import QuotePreviewCanvas from './admin/quote/QuotePreviewCanvas.jsx';
 import CustomerQuoteView from './quote/CustomerQuoteView.jsx';
 // Global Settings module (low-frequency configuration).
 import SettingsHome from './admin/settings/SettingsHome.jsx';
+import WhatsAppConnectionsPage from './admin/settings/WhatsAppConnectionsPage.jsx';
 import CrmSettingsHome from './admin/settings/CrmSettingsHome.jsx';
 import ProductsAreaHome from './admin/settings/ProductsAreaHome.jsx';
 import DealStagesSettings from './admin/crm/settings/DealStagesSettings.jsx';
@@ -158,6 +159,7 @@ export default function App() {
             Organization Types / Subtypes / Deal Stages screen) lives here,
             no longer as a prominent CRM tab. */}
         <Route path="settings" element={<SettingsHome />} />
+        <Route path="settings/whatsapp" element={<WhatsAppConnectionsPage />} />
         <Route path="settings/crm" element={<CrmSettingsHome />} />
         <Route
           path="settings/crm/organization-types"

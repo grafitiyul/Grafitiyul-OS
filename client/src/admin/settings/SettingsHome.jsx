@@ -30,10 +30,10 @@ export default function SettingsHome() {
           comingSoon
         />
         <CategoryCard
+          to="/admin/settings/whatsapp"
           icon="💬"
           title="תקשורת"
-          description="חיבורי WhatsApp ואימייל, תבניות הודעה."
-          comingSoon
+          description="חיבורי וואטסאפ — קישור מכשירים, מצב חיבור והתאוששות."
         />
         <CategoryCard
           icon="💰"

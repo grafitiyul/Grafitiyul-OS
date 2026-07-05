@@ -991,6 +991,74 @@ model DealPaymentLink {
   @@index([dealId])
 }
 
+// ── WhatsApp module (Slice 1 — accounts + Baileys sessions) ──────────────────
+//
+// GOS runs ONE bridge service per WhatsApp number (gos-whatsapp-main /
+// gos-whatsapp-office — same code, same DB, different WHATSAPP_ACCOUNT_ID env).
+// Everything is scoped by accountId: no singleton assumptions, no hardcoded
+// number. The account row is the sender profile AND the live connection state —
+// the bridge upserts its own row at boot (id comes from env, so deployment
+// identity = account identity) and mirrors every Baileys connection.update into
+// it; the admin UI reads the row via the GOS API without touching Baileys.
+model WhatsAppAccount {
+  id                   String            @id // stable key from bridge env, e.g. 'main' | 'office'
+  label                String // display name, editable in admin ("מספר ראשי")
+  active               Boolean           @default(true)
+  sortOrder            Int               @default(0)
+  // Live connection state (written by this account's bridge only).
+  status               String            @default("disconnected") // disconnected | qr_required | pairing | connecting | connected
+  qr                   String? // current pairing QR payload (null when not pairing)
+  phoneJid             String? // our own number's JID after pairing
+  deviceName           String?
+  lastQrAt             DateTime?
+  lastConnectedAt      DateTime?
+  lastDisconnectAt     DateTime?
+  lastDisconnectReason String?
+  lastMessageAt        DateTime? // any-direction heartbeat
+  lastInboundMessageAt DateTime? // inbound-only — detects "connected but silent" zombies
+  reconnectAttempts    Int               @default(0)
+  lastMediaError       String?
+  lastMediaErrorAt     DateTime?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  sessions             WhatsAppSession[]
+  dataGaps             WhatsAppDataGap[]
+}
+
+// Baileys auth state (creds + signal keys) — Postgres-backed so a Railway
+// redeploy resumes the session without re-pairing (volumes don't survive).
+// Mirrors the proven Challenge System store: kind = the file-auth "type"
+// ('creds' | 'pre-key' | 'session' | ...), keyId = the key id, data =
+// BufferJSON-serialized. Scoped per account so the two bridges sharing this
+// DB can never overwrite each other.
+model WhatsAppSession {
+  id        String          @id @default(cuid())
+  account   WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId String
+  kind      String
+  keyId     String
+  data      Json
+  updatedAt DateTime        @updatedAt
+
+  @@unique([accountId, kind, keyId])
+}
+
+// Honest outage ledger: one row per disconnected window, per account. Opened
+// on disconnect, closed on reconnect. Operator visibility only — messages in
+// the window may be missing and we never claim recovery.
+model WhatsAppDataGap {
+  id               String          @id @default(cuid())
+  account          WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId        String
+  disconnectedAt   DateTime
+  reconnectedAt    DateTime?
+  durationMs       Int?
+  disconnectReason String?
+  createdAt        DateTime        @default(now())
+
+  @@index([accountId, reconnectedAt])
+}
+
 // Raw iCount IPN payloads — audit log ONLY in this slice. The receiver persists
 // the payload and returns 200; it changes NO deal/payment state (processing is
 // a future slice). Logged now so links generated today aren't deaf: every

@@ -1,0 +1,25 @@
+{
+  "name": "gos-whatsapp-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Baileys-backed WhatsApp bridge for GOS. One Railway service per WhatsApp number (gos-whatsapp-main / gos-whatsapp-office) — same code, same Postgres, account selected by WHATSAPP_ACCOUNT_ID env. Slice 1: auth store + connection lifecycle + admin status/recovery. Ingestion/send come in later slices.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "generate": "node scripts/sync-schema.mjs && prisma generate --schema prisma/schema.prisma",
+    "postinstall": "npm run generate",
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@prisma/client": "^5.22.0",
+    "@whiskeysockets/baileys": "7.0.0-rc13",
+    "express": "^4.21.2",
+    "pino": "^9.6.0",
+    "prisma": "^5.22.0",
+    "qrcode": "^1.5.4"
+  }
+}

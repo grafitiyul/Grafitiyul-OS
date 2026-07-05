@@ -11,3 +11,5 @@ npm-debug.log*
 .idea/
 coverage/
 .figma-ref/
+# Build artifact: schema copied from server/prisma by bridge/scripts/sync-schema.mjs
+bridge/prisma/schema.prisma
