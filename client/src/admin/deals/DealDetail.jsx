@@ -1406,6 +1406,18 @@ function waHref(phone, text) {
 const DLG_FIELD = 'border border-gray-300 rounded-md px-3 py-1.5 text-sm w-full';
 const EMPTY_DLG_FORM = { first: '', last: '', phone: '', email: '' };
 
+// A customer detail that already exists — shown read-only (calm gray box with
+// a check) so the dialog reads as "complete the customer's details", making it
+// obvious what is known vs. what is being completed.
+function DlgKnownValue({ children, dir }) {
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-md bg-gray-50 border border-gray-200 px-3 py-1.5">
+      <span dir={dir} className="text-sm text-gray-800 truncate">{children}</span>
+      <span className="shrink-0 text-[12px] text-emerald-600">✓</span>
+    </div>
+  );
+}
+
 function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
@@ -1580,7 +1592,7 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
         open={dlg !== null}
         onClose={() => (payBusy ? null : setMissingDialog(null))}
         title={dlg?.kind === 'amount' ? 'חסר מחיר לעסקה' : 'השלמת פרטי לקוח'}
-        size="md"
+        size={dlg?.kind === 'details' ? 'lg' : 'md'}
         footer={
           dlg?.kind === 'amount' ? (
             <>
@@ -1603,37 +1615,45 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
           </p>
         )}
         {dlg?.kind === 'details' && (
-          <div className="space-y-3">
+          <div className="space-y-5 py-1">
             <p className="text-sm text-gray-800">
               {contact
-                ? 'חסרים פרטים לאיש הקשר. השלימו אותם כאן והם יישמרו על איש הקשר של הדיל.'
-                : 'לדיל אין איש קשר. מלאו את הפרטים כאן — ייווצר איש קשר ראשי לדיל.'}
+                ? 'אלה פרטי הלקוח שימולאו מראש בעמוד התשלום. השלימו את החסר — הפרטים יישמרו על איש הקשר של הדיל.'
+                : 'לדיל אין עדיין איש קשר. מלאו את הפרטים כאן — ייווצר איש קשר ראשי לדיל וישמש לעמוד התשלום.'}
             </p>
-            <div className="grid grid-cols-2 gap-3">
-              {dlg.needName && (
-                <>
-                  <FieldBox label={contact ? 'שם פרטי' : 'שם פרטי *'}>
-                    <input autoFocus value={dlgForm.first} className={DLG_FIELD}
+            <div className="space-y-4">
+              {/* Name — the full known picture: existing values read-only, only
+                  the missing ones editable. */}
+              <FieldBox label={dlg.needName && !contact ? 'שם *' : 'שם'}>
+                {dlg.needName ? (
+                  <div className="grid grid-cols-2 gap-3">
+                    <input autoFocus placeholder="שם פרטי" value={dlgForm.first} className={DLG_FIELD}
                       onChange={(e) => setDlgForm((s) => ({ ...s, first: e.target.value }))} />
-                  </FieldBox>
-                  <FieldBox label="שם משפחה">
-                    <input value={dlgForm.last} className={DLG_FIELD}
+                    <input placeholder="שם משפחה" value={dlgForm.last} className={DLG_FIELD}
                       onChange={(e) => setDlgForm((s) => ({ ...s, last: e.target.value }))} />
-                  </FieldBox>
-                </>
-              )}
-              {dlg.needPhone && (
-                <FieldBox label={dlg.action === 'wa' ? 'טלפון *' : 'טלפון'}>
-                  <input value={dlgForm.phone} dir="ltr" className={DLG_FIELD}
+                  </div>
+                ) : (
+                  <DlgKnownValue>{contactName}</DlgKnownValue>
+                )}
+              </FieldBox>
+              <FieldBox label={dlg.needPhone && dlg.action === 'wa' ? 'טלפון *' : 'טלפון'}>
+                {dlg.needPhone ? (
+                  <input autoFocus={!dlg.needName} placeholder="050-0000000" value={dlgForm.phone} dir="ltr"
+                    className={DLG_FIELD}
                     onChange={(e) => setDlgForm((s) => ({ ...s, phone: e.target.value }))} />
-                </FieldBox>
-              )}
-              {dlg.needEmail && (
-                <FieldBox label="אימייל">
-                  <input value={dlgForm.email} dir="ltr" className={DLG_FIELD}
+                ) : (
+                  <DlgKnownValue dir="ltr">{contactPhone}</DlgKnownValue>
+                )}
+              </FieldBox>
+              <FieldBox label="אימייל">
+                {dlg.needEmail ? (
+                  <input autoFocus={!dlg.needName && !dlg.needPhone} placeholder="name@example.com"
+                    value={dlgForm.email} dir="ltr" className={DLG_FIELD}
                     onChange={(e) => setDlgForm((s) => ({ ...s, email: e.target.value }))} />
-                </FieldBox>
-              )}
+                ) : (
+                  <DlgKnownValue dir="ltr">{contactEmail}</DlgKnownValue>
+                )}
+              </FieldBox>
             </div>
             <p className="text-[12px] text-gray-500">
               אפשר גם להמשיך בלי הפרטים — הלקוח ישלים אותם בעמוד התשלום של אייקאונט.
