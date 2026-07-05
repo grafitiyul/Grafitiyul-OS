@@ -42,6 +42,7 @@ DATABASE_URL            = (same Postgres as the GOS server)
 WHATSAPP_ACCOUNT_ID     = main
 WHATSAPP_ACCOUNT_LABEL  = מספר ראשי          (optional; first-boot label only)
 BRIDGE_INTERNAL_SECRET  = <long random secret, shared with the GOS server>
+PORT                    = 3000
 ```
 
 ### Environment variables — gos-whatsapp-office
@@ -51,7 +52,12 @@ DATABASE_URL            = (same Postgres)
 WHATSAPP_ACCOUNT_ID     = office
 WHATSAPP_ACCOUNT_LABEL  = מספר משרד          (optional)
 BRIDGE_INTERNAL_SECRET  = <same secret>
+PORT                    = 3000
 ```
+
+`PORT=3000` is set EXPLICITLY so the listen port always matches the `:3000`
+in the GOS server's `WHATSAPP_BRIDGE_URLS` — never rely on an injected PORT
+for private-only services.
 
 **Only `WHATSAPP_ACCOUNT_ID` / `WHATSAPP_ACCOUNT_LABEL` differ between the two
 services.** Everything else is identical.
