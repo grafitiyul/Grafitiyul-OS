@@ -104,6 +104,29 @@ WHATSAPP_BRIDGE_SECRET = <the same BRIDGE_INTERNAL_SECRET value>
 4. The card flips to מחובר; from now on redeploys resume the session
    automatically.
 
+## Test accounts + clean deletion
+
+For the pre-production test phase a personal number can be paired under a
+clearly-marked account, e.g. `WHATSAPP_ACCOUNT_ID=personal_test`. Everything
+the bridge writes is accountId-scoped, so all test data can later be removed
+in one account-exact operation:
+
+```
+cd server
+npm run purge:whatsapp -- personal_test          # dry-run (counts only)
+npm run purge:whatsapp -- personal_test -- --yes # actually delete
+```
+
+The purge deletes ONLY WhatsApp rows (chats/messages/media metadata/
+scheduled/sessions/data-gaps + the account row) and R2 objects under
+`whatsapp/<accountId>/` — never Deals, Contacts, Quotes, Payments or any
+other CRM data. Sign out / stop the bridge service first (a live bridge
+re-creates session rows).
+
+Slice-2+ schema contract (assumed by the purge): every WhatsApp model carries
+a direct `accountId` column, and all media object keys start with
+`whatsapp/<accountId>/`.
+
 ## Local development
 
 ```

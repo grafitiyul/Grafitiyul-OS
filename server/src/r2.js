@@ -3,6 +3,7 @@ import {
   S3Client,
   PutObjectCommand,
   DeleteObjectCommand,
+  ListObjectsV2Command,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
@@ -87,4 +88,26 @@ export async function deleteObject(key) {
   } catch (e) {
     console.warn('[r2] delete failed for', key, e?.message);
   }
+}
+
+// List ALL object keys under a prefix (paged). Used by account-scoped cleanup
+// (e.g. purging every `whatsapp/<accountId>/…` object). Throws on failure —
+// callers doing destructive work must know listing was incomplete.
+export async function listKeys(prefix) {
+  const keys = [];
+  let token;
+  do {
+    const out = await client().send(
+      new ListObjectsV2Command({
+        Bucket: R2_BUCKET,
+        Prefix: prefix,
+        ContinuationToken: token,
+      }),
+    );
+    for (const obj of out.Contents || []) {
+      if (obj.Key) keys.push(obj.Key);
+    }
+    token = out.IsTruncated ? out.NextContinuationToken : undefined;
+  } while (token);
+  return keys;
 }
