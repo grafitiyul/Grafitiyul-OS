@@ -439,6 +439,7 @@ export const api = {
     updateAccount: (id, data) =>
       request(`/api/whatsapp/accounts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     accountStatus: (id) => request(`/api/whatsapp/accounts/${id}/status`),
+    diagnose: (id) => request(`/api/whatsapp/accounts/${id}/diagnose`),
     restartSocket: (id) =>
       request(`/api/whatsapp/accounts/${id}/restart-socket`, { method: 'POST', body: JSON.stringify({}) }),
     hardResetSession: (id) =>

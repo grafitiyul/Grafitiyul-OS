@@ -39,6 +39,18 @@ function phoneFromJid(jid) {
   return digits.startsWith('972') ? `0${digits.slice(3)}` : digits;
 }
 
+// Product-level wiring hints, keyed by the server's diagnose verdict. The
+// exact env-var/service specifics stay inside the collapsed technical pane.
+const DIAGNOSE_HINTS = {
+  bridge_not_configured: 'החיבור של המספר הזה עדיין לא הוגדר בשרת המערכת.',
+  bridge_unreachable: 'שירות החיבור של המספר הזה לא נגיש כרגע. בדקו שהשירות פעיל ושכתובת הרשת הפנימית נכונה.',
+  wrong_service_code: 'השירות שמוגדר עבור המספר הזה לא מריץ את רכיב החיבור של וואטסאפ — ככל הנראה חסרות פקודות ההפעלה בהגדרות השירות.',
+  account_id_mismatch: 'השירות שמוגדר עבור המספר הזה מזוהה כחשבון אחר — יש אי-התאמה בזיהוי החשבון.',
+  secret_missing: 'סוד הגישה לשירות החיבור אינו מוגדר בשרת המערכת.',
+  secret_mismatch: 'סוד הגישה בין שרת המערכת לשירות החיבור אינו תואם.',
+  different_database: 'שירות החיבור פעיל אך שומר נתונים במסד נתונים אחר — יש לוודא שהוא מחובר לאותו מסד נתונים של המערכת.',
+};
+
 export default function WhatsAppConnectionsPage() {
   const [accounts, setAccounts] = useState(null);
   const [error, setError] = useState(null);
@@ -100,15 +112,41 @@ export default function WhatsAppConnectionsPage() {
 function AccountCard({ account, onChanged }) {
   const [live, setLive] = useState(null); // last /status payload
   const [unreachable, setUnreachable] = useState(false);
+  const [diagnosis, setDiagnosis] = useState(null); // server verdict when something is wrong
   const [busy, setBusy] = useState(null); // action key in flight
   const [confirm, setConfirm] = useState(null); // 'hardReset' | 'signOut'
   const [editingLabel, setEditingLabel] = useState(false);
   const [labelDraft, setLabelDraft] = useState(account.label);
   const timerRef = useRef(null);
+  const diagnoseBusyRef = useRef(false);
 
   const status = live?.status || account.status || 'disconnected';
   const ready = !!live?.readiness?.ok;
   const theme = STATUS_THEME[status] || STATUS_THEME.disconnected;
+  // Something is wrong with the WIRING (as opposed to a normal QR wait):
+  // the bridge never provisioned its account row, or the status proxy fails.
+  const wiringProblem = !account.provisioned || unreachable;
+
+  const runDiagnose = useCallback(async () => {
+    if (diagnoseBusyRef.current) return;
+    diagnoseBusyRef.current = true;
+    try {
+      const d = await api.whatsapp.diagnose(account.id);
+      setDiagnosis(d);
+      // Self-heal: the bridge came alive and provisioned its row since the
+      // page loaded — refresh the accounts list so the card goes normal.
+      if (d.verdict === 'ok' && !account.provisioned) await onChanged?.();
+    } catch {
+      /* diagnose itself failing = server unreachable; the page error covers it */
+    } finally {
+      diagnoseBusyRef.current = false;
+    }
+  }, [account.id, account.provisioned, onChanged]);
+
+  useEffect(() => {
+    if (wiringProblem) runDiagnose();
+    else setDiagnosis(null);
+  }, [wiringProblem, runDiagnose]);
 
   const poll = useCallback(async () => {
     if (!account.bridgeConfigured) return;
@@ -123,13 +161,20 @@ function AccountCard({ account, onChanged }) {
 
   // Adaptive polling: 2.5s while pairing/disconnected (QR rotates ~20s),
   // 15s heartbeat while connected+ready. Paused when the tab is hidden.
+  // While a wiring problem is showing, re-diagnose on a slow cadence so the
+  // card heals itself once the operator fixes the deployment.
   useEffect(() => {
     let cancelled = false;
+    let ticks = 0;
     function schedule() {
       const fast = !(status === 'connected' && ready);
       timerRef.current = setTimeout(async () => {
         if (cancelled) return;
-        if (!document.hidden) await poll();
+        if (!document.hidden) {
+          await poll();
+          ticks++;
+          if (wiringProblem && ticks % 4 === 0) await runDiagnose();
+        }
         if (!cancelled) schedule();
       }, fast ? 2500 : 15000);
     }
@@ -139,7 +184,7 @@ function AccountCard({ account, onChanged }) {
       cancelled = true;
       clearTimeout(timerRef.current);
     };
-  }, [poll, status, ready]);
+  }, [poll, status, ready, wiringProblem, runDiagnose]);
 
   async function run(action, fn) {
     setBusy(action);
@@ -189,9 +234,9 @@ function AccountCard({ account, onChanged }) {
             />
           ) : (
             <h2
-              onClick={() => setEditingLabel(true)}
-              title="לחצו לשינוי השם"
-              className="text-[15px] font-semibold text-gray-900 cursor-text rounded px-1 -mx-1 hover:bg-gray-50 truncate"
+              onClick={() => account.provisioned && setEditingLabel(true)}
+              title={account.provisioned ? 'לחצו לשינוי השם' : undefined}
+              className={`text-[15px] font-semibold text-gray-900 rounded px-1 -mx-1 truncate ${account.provisioned ? 'cursor-text hover:bg-gray-50' : ''}`}
             >
               {account.label}
             </h2>
@@ -208,10 +253,25 @@ function AccountCard({ account, onChanged }) {
             החיבור של המספר הזה עדיין לא הופעל במערכת — מוצג המצב האחרון שנשמר בלבד.
           </p>
         )}
-        {account.bridgeConfigured && unreachable && (
-          <p className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-[13px] text-red-700">
-            לא ניתן להגיע לחיבור של המספר הזה כרגע — מוצג המצב האחרון שנשמר. ננסה שוב אוטומטית.
-          </p>
+        {/* Wiring problem — the server's self-diagnosis pinpoints the cause;
+            the friendly line is product-level, specifics stay collapsed. */}
+        {account.bridgeConfigured && wiringProblem && (
+          <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 space-y-1.5">
+            <p className="text-[13px] text-amber-800">
+              {(diagnosis && DIAGNOSE_HINTS[diagnosis.verdict]) ||
+                'החיבור של המספר הזה עדיין לא דיווח למערכת — בודקים את החיבור…'}
+            </p>
+            {diagnosis && diagnosis.verdict !== 'ok' && (
+              <details>
+                <summary className="cursor-pointer text-[12px] text-amber-700/80 select-none">פרטים טכניים</summary>
+                <p dir="ltr" className="mt-1.5 text-[11px] font-mono text-amber-800/80 overflow-x-auto">
+                  verdict={diagnosis.verdict} url={diagnosis.url ?? '—'} health={diagnosis.health ?? '—'}{' '}
+                  bridgeAccountId={diagnosis.bridgeAccountId ?? '—'} statusCheck={diagnosis.statusCheck ?? '—'}{' '}
+                  dbRow={String(diagnosis.dbRowExists)} secretConfigured={String(diagnosis.secretConfigured)}
+                </p>
+              </details>
+            )}
+          </div>
         )}
 
         <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">

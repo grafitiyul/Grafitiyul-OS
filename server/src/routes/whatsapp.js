@@ -67,8 +67,12 @@ function bridgeErrorResponse(res, err) {
   return res.status(502).json({ error: 'bridge_unreachable', detail: err?.message || String(err) });
 }
 
-// List accounts — straight from the DB (each bridge keeps its own row live).
-// bridgeConfigured tells the UI whether live actions are possible per account.
+// List accounts — DB rows (each bridge keeps its own row live) MERGED with
+// accounts declared in WHATSAPP_BRIDGE_URLS that have no row yet. A declared-
+// but-rowless account means its bridge never wrote to this DB (not booted /
+// wrong start command / different DATABASE_URL) — the UI must show a card for
+// it (with the diagnose hint) instead of a misleading "no accounts" empty
+// state. provisioned=false marks those placeholder entries.
 router.get(
   '/accounts',
   handle(async (_req, res) => {
@@ -76,7 +80,106 @@ router.get(
     const rows = await prisma.whatsAppAccount.findMany({
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
     });
-    res.json(rows.map((r) => ({ ...r, qr: undefined, bridgeConfigured: !!urls[r.id] })));
+    const known = new Set(rows.map((r) => r.id));
+    const placeholders = Object.keys(urls)
+      .filter((id) => !known.has(id))
+      .map((id) => ({
+        id,
+        label: id,
+        active: true,
+        status: 'disconnected',
+        bridgeConfigured: true,
+        provisioned: false,
+      }));
+    res.set('Cache-Control', 'no-store');
+    res.json([
+      ...rows.map((r) => ({ ...r, qr: undefined, bridgeConfigured: !!urls[r.id], provisioned: true })),
+      ...placeholders,
+    ]);
+  }),
+);
+
+// Structured self-diagnosis for one account's bridge wiring. Probes the
+// bridge over the private network and classifies the failure so the operator
+// doesn't have to guess between "wrong hostname", "wrong start command",
+// "secret mismatch", "wrong database". Read-only.
+router.get(
+  '/accounts/:id/diagnose',
+  handle(async (req, res) => {
+    const accountId = req.params.id;
+    const base = bridgeUrlMap()[accountId];
+    const secret = process.env.WHATSAPP_BRIDGE_SECRET;
+    const dbRow = await prisma.whatsAppAccount.findUnique({ where: { id: accountId } });
+    const out = {
+      accountId,
+      urlConfigured: !!base,
+      url: base || null,
+      secretConfigured: !!secret,
+      dbRowExists: !!dbRow,
+      health: null,
+      statusCheck: null,
+      bridgeAccountId: null,
+      verdict: 'ok',
+    };
+    res.set('Cache-Control', 'no-store');
+
+    if (!base) {
+      out.verdict = 'bridge_not_configured';
+      return res.json(out);
+    }
+
+    // 1. /health — unauthenticated by design; also our "is this even the
+    //    bridge?" probe. The GOS server answering here (wrong start command)
+    //    returns HTML (SPA fallback) or JSON without accountId.
+    try {
+      const r = await fetch(`${base}/health`, { signal: AbortSignal.timeout(6000) });
+      const text = await r.text();
+      let json = null;
+      try { json = JSON.parse(text); } catch { /* non-JSON */ }
+      if (!json || typeof json !== 'object' || !('accountId' in json)) {
+        out.health = 'not_bridge';
+        out.verdict = 'wrong_service_code';
+        return res.json(out);
+      }
+      out.health = 'ok';
+      out.bridgeAccountId = json.accountId;
+      if (json.accountId !== accountId) {
+        out.verdict = 'account_id_mismatch';
+        return res.json(out);
+      }
+    } catch (err) {
+      out.health = 'unreachable';
+      out.healthDetail = err?.message || String(err);
+      out.verdict = 'bridge_unreachable';
+      return res.json(out);
+    }
+
+    // 2. /status — authenticated; a 401 here means the secrets differ.
+    if (!secret) {
+      out.statusCheck = 'skipped';
+      out.verdict = 'secret_missing';
+      return res.json(out);
+    }
+    try {
+      const r = await fetch(`${base}/status`, {
+        headers: { Authorization: `Bearer ${secret}` },
+        signal: AbortSignal.timeout(6000),
+      });
+      if (r.status === 401) {
+        out.statusCheck = 'auth_failed';
+        out.verdict = 'secret_mismatch';
+        return res.json(out);
+      }
+      out.statusCheck = r.ok ? 'ok' : `http_${r.status}`;
+    } catch (err) {
+      out.statusCheck = 'error';
+      out.statusDetail = err?.message || String(err);
+    }
+
+    // 3. Bridge alive + right account + auth fine, but no row in OUR DB →
+    //    the bridge is writing somewhere else.
+    if (!dbRow) out.verdict = 'different_database';
+    return res.json(out);
   }),
 );
 
