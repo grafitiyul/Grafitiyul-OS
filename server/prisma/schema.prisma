@@ -1027,6 +1027,8 @@ model WhatsAppAccount {
   chats                WhatsAppChat[]
   messages             WhatsAppMessage[]
   reactions            WhatsAppMessageReaction[]
+  outboundIdempotency  WhatsAppOutboundIdempotency[]
+  scheduledMessages    WhatsAppScheduledMessage[]
 }
 
 // One WhatsApp conversation as seen by ONE of our numbers. The same customer
@@ -1066,6 +1068,7 @@ model WhatsAppChat {
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
   messages          WhatsAppMessage[]
+  scheduledMessages WhatsAppScheduledMessage[]
 
   @@unique([accountId, externalChatId])
   @@index([accountId, lastMessageAt])
@@ -1110,12 +1113,64 @@ model WhatsAppMessage {
   mediaThumbBase64    String?
   quotedExternalId    String?
   rawPayload          Json?
+  // Slice 6: proto-encoded outbound payload, kept for WhatsApp's retransmit
+  // replay (getMessage) — without it a recipient whose device asks for a
+  // resend sees "waiting for this message". Null for inbound rows.
+  outboundPayload     Bytes?
   timestampFromSource DateTime
   createdAt           DateTime        @default(now())
 
   @@unique([accountId, externalMessageId])
   @@index([chatId, timestampFromSource])
   @@index([accountId, createdAt])
+}
+
+// Outbound send idempotency (Slice 6) — one row per caller-supplied key so a
+// retried send replays the recorded outcome instead of double-messaging a
+// customer. Ported from the proven Challenge System bridge.
+model WhatsAppOutboundIdempotency {
+  key               String          @id
+  account           WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId         String
+  outcome           String // 'ok' | 'failed'
+  externalMessageId String?
+  errorCode         String?
+  errorMessage      String?
+  createdAt         DateTime        @default(now())
+
+  @@index([accountId])
+  @@index([createdAt])
+}
+
+// Scheduled outbound messages (Slice 7) — text-only V1, claim-based worker in
+// the GOS server (claimedAt/claimedBy + atomic updateMany claim = safe across
+// restarts/instances; the idempotency key derives from id+scheduledAt+attempt
+// so a recovered row can never double-send).
+model WhatsAppScheduledMessage {
+  id                      String          @id @default(cuid())
+  account                 WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId               String
+  chat                    WhatsAppChat    @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  chatId                  String
+  content                 String
+  scheduledAt             DateTime
+  status                  String          @default("pending") // pending | sending | sent | failed | cancelled | skipped
+  attemptCount            Int             @default(0)
+  lastAttemptAt           DateTime?
+  nextRetryAt             DateTime?
+  connectionDeferredCount Int             @default(0)
+  claimedAt               DateTime?
+  claimedBy               String?
+  sentAt                  DateTime?
+  externalMessageId       String?
+  failureReason           String?
+  createdById             String?
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+
+  @@index([status, scheduledAt])
+  @@index([accountId, status])
+  @@index([chatId, status])
 }
 
 // Emoji reactions, keyed by the target message's external id. emoji='' is a

@@ -126,6 +126,10 @@ export class WaClient {
     // survives reopenSocket() but two accounts in one process could never
     // share state. No module-level account state anywhere in this file.
     this.msgRetryCounterCache = makeRetryCounterCache();
+    // All outbound sends serialize through one promise chain (Slice 6) —
+    // concurrent sends through one WhatsApp socket corrupt ordering and trip
+    // rate heuristics. Same withSendLock pattern as the reconnect chain.
+    this.sendChain = Promise.resolve();
   }
 
   async start() {
@@ -342,6 +346,135 @@ export class WaClient {
     await accountState.setDisconnected(prisma, 'signed_out', { incrementAttempts: false });
   }
 
+  // ── Outbound send (Slice 6) — verbatim port of the proven sendText ───────
+  // Serialization + double readiness check + onWhatsApp gate + 12s timeout
+  // with stale-mark-and-reconnect + stale-socket guard. Text-only V1.
+
+  withSendLock(fn) {
+    const next = this.sendChain.then(fn, fn);
+    this.sendChain = next.catch(() => undefined);
+    return next;
+  }
+
+  // Existence probe before a phone-JID send. Groups (and @lid privacy JIDs,
+  // which onWhatsApp can't resolve) pass through — they only exist because
+  // WhatsApp itself told us about them.
+  async checkOnWhatsApp(jid) {
+    if (!this.socket) throw new Error('whatsapp_not_connected');
+    if (!jid.endsWith('@s.whatsapp.net')) return { registered: true, resolvedJid: jid };
+    const ON_WA_TIMEOUT_MS = 6_000;
+    let timer = null;
+    const probe = this.socket.onWhatsApp(jid);
+    probe.catch(() => undefined);
+    try {
+      const result = await Promise.race([
+        probe,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('on_whatsapp_timeout')), ON_WA_TIMEOUT_MS);
+        }),
+      ]);
+      const first = Array.isArray(result) ? result[0] : null;
+      return { registered: !!first?.exists, resolvedJid: first?.jid ?? null };
+    } catch (err) {
+      if (err instanceof Error && err.message === 'on_whatsapp_timeout') throw err;
+      throw new Error('on_whatsapp_failed');
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  // Send a text message to a JID (existing chat or phone JID). `quoted` is an
+  // optional reply context reconstructed from a mirrored row:
+  //   { externalId, fromMe, participant, text }
+  // Returns { externalMessageId, payloadBytes, timestamp }.
+  async sendText({ jid, text, quoted = null }) {
+    // Fast-fail outside the lock — don't queue behind other sends when the
+    // socket is already known-unusable.
+    const pre = this.getReadiness();
+    if (!pre.ok) {
+      this.log.warn({ readiness: pre }, 'sendText pre-flight readiness failed');
+      throw new Error('whatsapp_not_connected');
+    }
+    return this.withSendLock(async () => {
+      // Re-check INSIDE the lock — the socket may have gone stale while this
+      // send waited its turn.
+      const readiness = this.getReadiness();
+      if (!readiness.ok) {
+        this.log.warn({ readiness }, 'sendText post-lock readiness failed');
+        throw new Error('whatsapp_not_connected');
+      }
+      const capturedSocketId = this.activeSocketId;
+      const socket = this.socket;
+
+      const { registered } = await this.checkOnWhatsApp(jid);
+      if (!registered) throw new Error('whatsapp_number_not_found');
+
+      if (this.activeSocketId !== capturedSocketId || this.socket !== socket) {
+        this.log.warn(
+          { capturedSocketId, activeSocketId: this.activeSocketId },
+          'sendText: socket replaced during send — refusing stale send',
+        );
+        throw new Error('whatsapp_not_connected');
+      }
+
+      const options = {};
+      if (quoted?.externalId) {
+        // Minimal reconstructed context — enough for WhatsApp clients to
+        // render the reply header. participant is required in groups.
+        options.quoted = {
+          key: {
+            remoteJid: jid,
+            id: quoted.externalId,
+            fromMe: !!quoted.fromMe,
+            ...(quoted.participant ? { participant: quoted.participant } : {}),
+          },
+          message: { conversation: quoted.text || ' ' },
+        };
+      }
+
+      const SEND_TIMEOUT_MS = 12_000;
+      let timer = null;
+      const sendPromise = socket.sendMessage(jid, { text }, options);
+      sendPromise.catch(() => undefined);
+      let result;
+      try {
+        result = await Promise.race([
+          sendPromise,
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error('send_timeout')), SEND_TIMEOUT_MS);
+          }),
+        ]);
+      } catch (err) {
+        if (err instanceof Error && err.message === 'send_timeout') {
+          // A hung sendMessage means the socket is a zombie — recycle it so
+          // the NEXT send has a chance. Fire-and-forget; this send fails.
+          this.log.warn({ jidShape: jid.slice(-20) }, 'sendText timed out — marking socket stale and reconnecting');
+          void this.reopenSocket('send_timeout', { markStale: true });
+        }
+        throw err;
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+
+      const id = result?.key?.id;
+      if (!id) throw new Error('send_no_message_id');
+
+      // Proto-encode the payload for retransmit replay (getMessage). Failure
+      // here is non-fatal — the message went out; only replay is unavailable.
+      let payloadBytes = null;
+      try {
+        const inner = result?.message;
+        if (inner) payloadBytes = Buffer.from(getBaileys().proto.Message.encode(inner).finish());
+      } catch (err) {
+        this.log.warn({ externalMessageId: id, err: errMessage(err) }, 'sendText: payload encode failed — replay unavailable for this id');
+      }
+
+      const ts = result?.messageTimestamp ? new Date(Number(result.messageTimestamp) * 1000) : new Date();
+      this.log.info({ externalMessageId: id, quoted: !!quoted }, 'sendText: sent');
+      return { externalMessageId: id, payloadBytes, timestamp: ts };
+    });
+  }
+
   // Serialize ALL connect/reopen work through one promise chain. Errors are
   // swallowed at the chain boundary so one failed reopen doesn't poison the
   // queue for subsequent calls.
@@ -418,9 +551,25 @@ export class WaClient {
       // Retry-receipt counter cache — per account instance, survives reopens.
       msgRetryCounterCache: this.msgRetryCounterCache,
       logger: baileysLogger,
-      // Outbound retransmit replay (getMessage) arrives with the send slice —
-      // until we send messages there is nothing to replay.
-      getMessage: async () => undefined,
+      // Outbound retransmit replay (Slice 6): when a recipient's device asks
+      // WhatsApp to resend one of OUR messages, Baileys calls this; returning
+      // the stored proto payload prevents "waiting for this message" on their
+      // side. Miss (old/inbound/encode-failed row) → undefined, which is safe.
+      getMessage: async (key) => {
+        const id = key?.id;
+        if (!id) return undefined;
+        try {
+          const row = await prisma.whatsAppMessage.findUnique({
+            where: { accountId_externalMessageId: { accountId: this.accountId, externalMessageId: id } },
+            select: { outboundPayload: true },
+          });
+          if (!row?.outboundPayload) return undefined;
+          return getBaileys().proto.Message.decode(row.outboundPayload);
+        } catch (err) {
+          this.log.warn({ id, err: errMessage(err) }, '[getMessage] lookup/decode failed — returning undefined');
+          return undefined;
+        }
+      },
     });
     this.socket = socket;
     this.log.info({ socketId }, 'socket created');

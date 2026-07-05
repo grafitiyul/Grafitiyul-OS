@@ -37,8 +37,9 @@ import * as r2 from '../src/r2.js';
 // nothing outside it is ever touched.
 const WHATSAPP_MODELS = [
   'whatsAppMessageReaction',
-  'whatsAppMessage',
+  'whatsAppOutboundIdempotency',
   'whatsAppScheduledMessage',
+  'whatsAppMessage',
   'whatsAppChat',
   'whatsAppDataGap',
   'whatsAppSession',

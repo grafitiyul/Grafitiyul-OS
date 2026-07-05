@@ -1,0 +1,158 @@
+// POST /send handler (Slice 6) — text-only V1, called ONLY by the GOS server.
+//
+// Contract (ported from the proven Challenge System bridge):
+//   body: { jid, text, quoted?, idempotencyKey? }
+//     jid    — destination chat JID (@s.whatsapp.net / @g.us / @lid)
+//     quoted — reply context reconstructed from a mirrored row:
+//              { externalId, fromMe, participant, text }
+//   200 { ok, externalMessageId, cached }        message accepted by WhatsApp
+//   400 invalid_payload                           bad jid/text (terminal)
+//   404 whatsapp_number_not_found                 not on WhatsApp (terminal)
+//   503 whatsapp_not_connected (+readiness)       retry after reconnect
+//   504 send_timeout | on_whatsapp_timeout        socket recycled; retry
+//   500 send_failed                               Baileys threw (terminal)
+//
+// Idempotency: the caller-supplied key replays a recorded outcome instead of
+// re-sending. Only TERMINAL outcomes are cached — connection-level failures
+// stay uncached so a retry can succeed.
+//
+// Persistence: the outbound row is written HERE, right after WhatsApp's ack
+// (with the proto payload for retransmit replay); the messages.upsert echo is
+// the backup path and dedups on (accountId, externalMessageId).
+
+import { jidToPhone, isGroupJid } from './extract.js';
+import { accountState } from './accountState.js';
+
+const MAX_TEXT_LEN = 4096;
+
+function errSummary(err) {
+  if (err instanceof Error) return err.message.split('\n')[0]?.slice(0, 240) ?? 'unknown';
+  return String(err).slice(0, 240);
+}
+
+const VALID_JID = /^[\w.:-]+@(s\.whatsapp\.net|g\.us|lid)$/;
+
+export function createSendHandler({ prisma, client, accountId, log }) {
+  async function cacheOutcome(key, data) {
+    if (!key) return;
+    try {
+      await prisma.whatsAppOutboundIdempotency.upsert({
+        where: { key },
+        create: { key, accountId, ...data },
+        update: data,
+      });
+    } catch (err) {
+      log.warn({ err: errSummary(err), key }, '[/send] idempotency persist failed — proceeding');
+    }
+  }
+
+  async function persistOutboundRow({ jid, text, quotedExternalId, externalMessageId, payloadBytes, timestamp }) {
+    const isGroup = isGroupJid(jid);
+    let chat = await prisma.whatsAppChat.findUnique({
+      where: { accountId_externalChatId: { accountId, externalChatId: jid } },
+      select: { id: true },
+    });
+    if (!chat) {
+      chat = await prisma.whatsAppChat.create({
+        data: {
+          accountId,
+          externalChatId: jid,
+          type: isGroup ? 'group' : 'private',
+          phoneNumber: jidToPhone(jid),
+        },
+        select: { id: true },
+      });
+    }
+    await prisma.whatsAppMessage.upsert({
+      where: { accountId_externalMessageId: { accountId, externalMessageId } },
+      create: {
+        accountId,
+        chatId: chat.id,
+        externalMessageId,
+        direction: 'outgoing',
+        messageType: 'text',
+        textContent: text,
+        quotedExternalId: quotedExternalId ?? null,
+        rawPayload: { source: 'bridge_send' },
+        outboundPayload: payloadBytes,
+        timestampFromSource: timestamp,
+      },
+      update: {
+        ...(payloadBytes ? { outboundPayload: payloadBytes } : {}),
+      },
+    });
+    await prisma.whatsAppChat.update({ where: { id: chat.id }, data: { lastMessageAt: timestamp } });
+    await accountState.heartbeat(prisma);
+    return chat.id;
+  }
+
+  return async function handleSend(req, res) {
+    const b = req.body || {};
+    const jid = typeof b.jid === 'string' ? b.jid.trim() : '';
+    const text = typeof b.text === 'string' ? b.text.trim() : '';
+    const idempotencyKey = typeof b.idempotencyKey === 'string' && b.idempotencyKey ? b.idempotencyKey : null;
+    const quoted = b.quoted && typeof b.quoted === 'object' ? b.quoted : null;
+
+    if (!VALID_JID.test(jid) || !text || text.length > MAX_TEXT_LEN) {
+      log.warn({ jidShape: jid.slice(-24), textLen: text.length }, '[/send] invalid_payload');
+      return res.status(400).json({ error: 'invalid_payload' });
+    }
+
+    // Replay a recorded outcome for this key.
+    if (idempotencyKey) {
+      try {
+        const cached = await prisma.whatsAppOutboundIdempotency.findUnique({ where: { key: idempotencyKey } });
+        if (cached) {
+          log.info({ idempotencyKey, outcome: cached.outcome }, '[/send] idempotency hit — replaying');
+          if (cached.outcome === 'ok') {
+            return res.json({ ok: true, externalMessageId: cached.externalMessageId, cached: true });
+          }
+          const code = cached.errorCode || 'send_failed';
+          const status = code === 'whatsapp_number_not_found' ? 404 : code === 'invalid_payload' ? 400 : 500;
+          return res.status(status).json({ error: code, detail: cached.errorMessage ?? undefined, cached: true });
+        }
+      } catch (err) {
+        log.warn({ err: errSummary(err), idempotencyKey }, '[/send] idempotency lookup failed — treating as miss');
+      }
+    }
+
+    let result;
+    try {
+      result = await client.sendText({ jid, text, quoted });
+    } catch (err) {
+      const code = err instanceof Error ? err.message : 'send_failed';
+      if (code === 'whatsapp_not_connected') {
+        return res.status(503).json({ error: 'whatsapp_not_connected', readiness: client.getReadiness() });
+      }
+      if (code === 'send_timeout' || code === 'on_whatsapp_timeout' || code === 'on_whatsapp_failed') {
+        return res.status(504).json({ error: code });
+      }
+      if (code === 'whatsapp_number_not_found') {
+        await cacheOutcome(idempotencyKey, { outcome: 'failed', errorCode: code });
+        return res.status(404).json({ error: code });
+      }
+      const detail = errSummary(err);
+      log.error({ err: detail }, '[/send] send_failed');
+      await cacheOutcome(idempotencyKey, { outcome: 'failed', errorCode: 'send_failed', errorMessage: detail });
+      return res.status(500).json({ error: 'send_failed', detail });
+    }
+
+    let chatId = null;
+    try {
+      chatId = await persistOutboundRow({
+        jid,
+        text,
+        quotedExternalId: quoted?.externalId ?? null,
+        externalMessageId: result.externalMessageId,
+        payloadBytes: result.payloadBytes,
+        timestamp: result.timestamp,
+      });
+    } catch (err) {
+      // Non-fatal: the message IS out; the echo will create the row.
+      log.warn({ err: errSummary(err), externalMessageId: result.externalMessageId }, '[/send] outbound row persist failed; relying on echo');
+    }
+
+    await cacheOutcome(idempotencyKey, { outcome: 'ok', externalMessageId: result.externalMessageId, errorCode: null, errorMessage: null });
+    return res.json({ ok: true, externalMessageId: result.externalMessageId, chatId, cached: false });
+  };
+}

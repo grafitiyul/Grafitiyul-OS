@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import MessageBubble from './MessageBubble.jsx';
+import ChatComposer from './ChatComposer.jsx';
 
 // Read view of one WhatsApp chat — the single thread component every surface
 // (Deal tab, Contact page, future inbox) mounts. Messages come from the GOS
@@ -41,15 +42,25 @@ function dayLabel(m) {
   return d.toLocaleDateString('he-IL', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-export default function ChatThread({ chat, heightClass = 'h-[26rem]', footer = null }) {
+export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = true }) {
   const [messages, setMessages] = useState(null); // ascending, null = loading
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState(null);
+  const [replyTo, setReplyTo] = useState(null);
+  // Bumped after a successful send → the poll effect re-runs immediately.
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const containerRef = useRef(null);
   const stickToBottomRef = useRef(true);
   const loadingOlderRef = useRef(false);
   // Set right before a prepend: the scrollHeight to restore relative to.
   const prependAnchorRef = useRef(null);
+
+  // Quoted-message lookup for reply rendering (only among loaded messages).
+  const byExternalId = useMemo(() => {
+    const map = new Map();
+    for (const m of messages || []) if (m.externalMessageId) map.set(m.externalMessageId, m);
+    return map;
+  }, [messages]);
 
   // Initial load + polling. Chat switch remounts (key=chat.id in the panel).
   // Hidden tab = skip the fetch, keep the schedule.
@@ -77,7 +88,7 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', footer = n
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [chat.id]);
+  }, [chat.id, refreshNonce]);
 
   async function loadOlder() {
     if (loadingOlderRef.current || !hasMore || !messages?.length) return;
@@ -160,7 +171,12 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', footer = n
                       </span>
                     </div>
                   )}
-                  <MessageBubble message={m} showSender={isGroup && m.direction === 'inbound'} />
+                  <MessageBubble
+                    message={m}
+                    showSender={isGroup && m.direction === 'incoming'}
+                    quoted={m.quotedExternalId ? byExternalId.get(m.quotedExternalId) : null}
+                    onReply={canSend ? () => setReplyTo(m) : null}
+                  />
                 </div>
               );
             })}
@@ -172,7 +188,18 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', footer = n
           בעיה זמנית בטעינת הודעות — מנסים שוב…
         </p>
       )}
-      {footer}
+      {canSend && (
+        <ChatComposer
+          chat={chat}
+          replyTo={replyTo}
+          onCancelReply={() => setReplyTo(null)}
+          onSent={(message) => {
+            stickToBottomRef.current = true;
+            if (message) setMessages((cur) => mergeMessages(cur || [], [message]));
+            setRefreshNonce((n) => n + 1);
+          }}
+        />
+      )}
     </div>
   );
 }

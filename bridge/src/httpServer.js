@@ -22,6 +22,7 @@ import qrcode from 'qrcode';
 import { config } from './config.js';
 import { prisma } from './db.js';
 import { accountState } from './accountState.js';
+import { createSendHandler } from './send.js';
 
 const log = pino({ level: config.logLevel, name: 'http' });
 
@@ -158,6 +159,20 @@ export function startHttpServer(client) {
     res.status(202).json({ ok: true, hard_reset_started: true, readiness: client.getReadiness() });
   });
 
+  // Outbound send (Slice 6) — serialized, idempotent, text-only V1.
+  const handleSend = createSendHandler({
+    prisma,
+    client,
+    accountId: config.accountId,
+    log: pino({ level: config.logLevel, name: 'send' }),
+  });
+  app.post('/send', (req, res) => {
+    void handleSend(req, res).catch((err) => {
+      log.error({ err: errSummary(err) }, '[/send] handler crashed');
+      if (!res.headersSent) res.status(500).json({ error: 'send_failed' });
+    });
+  });
+
   app.post('/sign-out', async (_req, res) => {
     log.warn('[/sign-out] requested');
     try {
@@ -177,7 +192,7 @@ export function startHttpServer(client) {
       error: 'not_found',
       method: req.method,
       url: req.url,
-      registeredRoutes: ['GET /health', 'GET /status', 'POST /restart-socket', 'POST /hard-reset-session', 'POST /sign-out'],
+      registeredRoutes: ['GET /health', 'GET /status', 'POST /send', 'POST /restart-socket', 'POST /hard-reset-session', 'POST /sign-out'],
     });
   });
 

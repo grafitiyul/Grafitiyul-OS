@@ -34,7 +34,7 @@ function bridgeUrlMap() {
   return map;
 }
 
-async function callBridge(accountId, path, { method = 'GET', timeoutMs = 10_000 } = {}) {
+async function callBridge(accountId, path, { method = 'GET', timeoutMs = 10_000, body } = {}) {
   const base = bridgeUrlMap()[accountId];
   const secret = process.env.WHATSAPP_BRIDGE_SECRET;
   if (!base || !secret) {
@@ -44,14 +44,21 @@ async function callBridge(accountId, path, { method = 'GET', timeoutMs = 10_000 
   }
   const res = await fetch(`${base}${path}`, {
     method,
-    headers: { Authorization: `Bearer ${secret}` },
+    headers: {
+      Authorization: `Bearer ${secret}`,
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     signal: AbortSignal.timeout(timeoutMs),
   });
   const data = await res.json().catch(() => null);
   if (!res.ok && res.status !== 202) {
+    // Preserve the bridge's structured error (code + payload) — send-path
+    // callers map these to user-facing outcomes instead of a generic 502.
     const err = new Error(`bridge_error: ${data?.error || res.status}`);
     err.code = 'bridge_error';
     err.status = res.status;
+    err.data = data;
     throw err;
   }
   return data;
@@ -273,6 +280,7 @@ function chatDisplayName(chat) {
 function toClientMessage(m) {
   return {
     id: m.id,
+    externalMessageId: m.externalMessageId,
     direction: m.direction,
     messageType: m.messageType,
     textContent: m.textContent,
@@ -493,6 +501,84 @@ router.get(
     const hasMore = messages.length > limit;
     res.set('Cache-Control', 'no-store');
     res.json({ messages: messages.slice(0, limit).map(toClientMessage), hasMore });
+  }),
+);
+
+// Send a text message into an existing chat (Slice 6, text-only V1).
+// clientKey (a UUID the composer generates per logical message) becomes the
+// bridge idempotency key — a network retry of the SAME message replays the
+// recorded outcome instead of double-messaging the customer. Never marks
+// anything else (no Deal/Contact side effects).
+router.post(
+  '/chats/:chatId/send',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const text = typeof b.text === 'string' ? b.text.trim() : '';
+    const clientKey = typeof b.clientKey === 'string' ? b.clientKey.trim() : '';
+    if (!text) return res.status(400).json({ error: 'text_required' });
+    if (!clientKey || clientKey.length > 100) return res.status(400).json({ error: 'client_key_required' });
+
+    const chat = await prisma.whatsAppChat.findUnique({
+      where: { id: req.params.chatId },
+      select: { id: true, accountId: true, externalChatId: true, type: true },
+    });
+    if (!chat) return res.status(404).json({ error: 'not_found' });
+
+    // Reply context: reconstruct from the quoted row (must belong to this
+    // chat). participant (group sender) rides in the sanitised rawPayload.
+    let quoted = null;
+    if (b.quotedMessageId) {
+      const q = await prisma.whatsAppMessage.findUnique({
+        where: { id: String(b.quotedMessageId) },
+        select: { chatId: true, externalMessageId: true, direction: true, textContent: true, messageType: true, rawPayload: true },
+      });
+      if (!q || q.chatId !== chat.id || !q.externalMessageId) {
+        return res.status(400).json({ error: 'quoted_message_invalid' });
+      }
+      quoted = {
+        externalId: q.externalMessageId,
+        fromMe: q.direction === 'outgoing',
+        participant: chat.type === 'group' ? q.rawPayload?.key?.participant || null : null,
+        text: q.textContent || '',
+      };
+    }
+
+    try {
+      const data = await callBridge(chat.accountId, '/send', {
+        method: 'POST',
+        timeoutMs: 25_000,
+        body: {
+          jid: chat.externalChatId,
+          text,
+          quoted,
+          idempotencyKey: `gos-${chat.id}-${clientKey}`,
+        },
+      });
+      // Return the mirrored row when the bridge already persisted it, so the
+      // composer can append instantly (poll covers the echo-only case).
+      let message = null;
+      if (data?.externalMessageId) {
+        const row = await prisma.whatsAppMessage.findUnique({
+          where: {
+            accountId_externalMessageId: {
+              accountId: chat.accountId,
+              externalMessageId: data.externalMessageId,
+            },
+          },
+        });
+        if (row) message = toClientMessage(row);
+      }
+      res.json({ ok: true, externalMessageId: data?.externalMessageId ?? null, message });
+    } catch (err) {
+      if (err?.code === 'bridge_not_configured') {
+        return res.status(503).json({ error: 'bridge_not_configured' });
+      }
+      if (err?.code === 'bridge_error' && err.data?.error) {
+        // Pass the bridge's send taxonomy through with its status.
+        return res.status(err.status || 500).json({ error: err.data.error });
+      }
+      return res.status(502).json({ error: 'bridge_unreachable' });
+    }
   }),
 );
 

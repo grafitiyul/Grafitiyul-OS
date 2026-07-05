@@ -451,6 +451,8 @@ export const api = {
       request(`/api/whatsapp/context-chats${qs({ subjectType, subjectId })}`),
     chatMessages: (chatId, params) =>
       request(`/api/whatsapp/chats/${chatId}/messages${qs(params)}`),
+    sendMessage: (chatId, data) =>
+      request(`/api/whatsapp/chats/${chatId}/send`, { method: 'POST', body: JSON.stringify(data) }),
   },
   // ── Quote Module (quote documents + composer preview) ───────────
   quoteDocuments: {
