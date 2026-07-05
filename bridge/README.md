@@ -21,19 +21,32 @@ source of truth.
 
 ## Railway setup (per bridge service)
 
-Both services point at the SAME GitHub repo.
+Both services point at the SAME GitHub repo, **with all Build/Start commands
+left at Railway defaults**. The repo root's npm scripts dispatch by role
+(`scripts/railway-dispatch.mjs`): if `WHATSAPP_ACCOUNT_ID` is set the service
+installs and starts the bridge; otherwise it installs, builds and starts the
+GOS server. The env vars ARE the deployment identity — no per-service command
+configuration to get wrong.
 
 | Setting | Value |
 |---|---|
 | Root Directory | *(repo root — leave empty)* |
-| Build Command | `cd bridge && npm install` |
-| Start Command | `cd bridge && npm start` |
-| Watch Paths (optional) | `bridge/**`, `server/prisma/schema.prisma` |
+| Build Command | *(leave empty — root scripts dispatch by `WHATSAPP_ACCOUNT_ID`)* |
+| Start Command | *(leave empty)* |
+| Watch Paths (optional) | `bridge/**`, `server/prisma/schema.prisma`, `scripts/**`, `package.json` |
 | Healthcheck path (optional) | `/health` |
 
-`npm install` runs the `postinstall` hook → `prisma generate --schema
-../server/prisma/schema.prisma` (this is why Root Directory must stay the repo
-root: the schema lives outside `bridge/`).
+If a service previously had custom Build/Start commands set, REMOVE them and
+redeploy — the defaults now do the right thing. (Custom
+`cd bridge && npm install` / `cd bridge && npm start` still work, but they are
+a second thing that can silently drift.)
+
+Never set `WHATSAPP_ACCOUNT_ID` on the gos-server service — that would turn
+it into a bridge.
+
+Bridge install runs the `postinstall` hook → `prisma generate` against a copy
+of `server/prisma/schema.prisma` (this is why Root Directory must stay the
+repo root: the schema lives outside `bridge/`).
 
 ### Environment variables — gos-whatsapp-main
 

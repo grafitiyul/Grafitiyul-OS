@@ -7,11 +7,11 @@
     "node": ">=20"
   },
   "scripts": {
-    "postinstall": "npm install --prefix server && npm install --prefix client",
+    "postinstall": "node scripts/railway-dispatch.mjs install",
     "prepare": "git config core.hooksPath .githooks || exit 0",
     "validate:migrations": "npm run validate:migrations --prefix server",
-    "build": "npm run build --prefix client && npm run build --prefix server",
-    "start": "npm start --prefix server",
+    "build": "node scripts/railway-dispatch.mjs build",
+    "start": "node scripts/railway-dispatch.mjs start",
     "dev:server": "npm run dev --prefix server",
     "dev:client": "npm run dev --prefix client"
   }
