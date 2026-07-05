@@ -838,10 +838,11 @@ model Deal {
   // now and later to the actual tour/activity. Nullable for backward compat;
   // no Postgres enum (project convention is string enums validated at the API).
   activityType          String?
-  // The Deal's CURRENT organization type — the single source of truth ONLY while
-  // no Organization is linked (e.g. a business deal whose org doesn't exist yet).
-  // Once an Organization IS linked, the Organization's own organizationType is
-  // the effective type and this field is cleared by the API (no duplicate truth).
+  // THIS deal's organization type — its quote/business classification. It is kept
+  // independently of any linked Organization: the Organization's own type is only a
+  // DEFAULT, and a specific deal may OVERRIDE it for the quote context. Precedence
+  // (composer + pricing): deal.organizationType first, org's type as the fallback.
+  // Not a duplicate source of truth — org = default classification, deal = override.
   organizationType      OrganizationType?    @relation(fields: [organizationTypeId], references: [id], onDelete: SetNull)
   organizationTypeId    String?
   // Operational tour selection: the chosen Product and its Product×Location

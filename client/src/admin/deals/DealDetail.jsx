@@ -259,7 +259,9 @@ export default function DealDetail() {
             productId: form.productId || null,
             productVariantId: form.productVariantId || null,
             activityTypeId: resolveActivityTypeId(form.activityType),
-            organizationTypeId: orgType?.id || deal?.organizationTypeId || null,
+            // Deal classification wins: the deal's own type overrides the linked
+            // organization's default (same precedence the quote composer uses).
+            organizationTypeId: deal?.organizationTypeId || orgType?.id || null,
             organizationSubtypeId: deal?.organizationSubtypeId || null,
             participantCount: form.participants === '' ? 0 : Number(form.participants),
           }
@@ -923,12 +925,11 @@ function ActivityBadge({ deal, types, subtypes, onActivityType, onDealOrgType, o
 
   const at = deal.activityType;
   const hasOrg = !!deal.organization;
-  const effTypeId = hasOrg
-    ? deal.organization.organizationTypeId || ''
-    : deal.organizationTypeId || '';
-  const effTypeLabel = hasOrg
-    ? deal.organization.organizationType?.label
-    : deal.organizationType?.label;
+  // The deal's effective classification: its OWN organization type if set (the
+  // per-deal override), otherwise the linked organization's default. The selector
+  // can freely change it for THIS deal, regardless of the linked organization.
+  const effTypeId = deal.organizationTypeId || deal.organization?.organizationTypeId || '';
+  const effTypeLabel = deal.organizationType?.label || deal.organization?.organizationType?.label;
   const subtypeLabel = deal.organizationSubtype?.label;
 
   let label;
@@ -996,9 +997,10 @@ function ActivityEditor({ deal, types, subtypes, effTypeId, effTypeLabel, hasOrg
   function pickActivity(v) {
     if (v === 'business') {
       if (deal.activityType !== 'business') onActivityType('business');
-      // Advance to the type step immediately. The 'orgType' step handles BOTH the
-      // deal-owned (editable) and the org-owned (locked) cases, so the parent type
-      // is always reachable — a subtype can never trap the user in subtype-only.
+      // Always advance to the FULL, editable type list — for every deal, org-linked
+      // or not. The type chosen here is THIS deal's quote classification (it may
+      // differ from the linked organization's default), so the parent type is always
+      // reachable and a subtype can never trap the user in subtype-only.
       setStep('orgType');
       return;
     }
@@ -1020,35 +1022,11 @@ function ActivityEditor({ deal, types, subtypes, effTypeId, effTypeLabel, hasOrg
   }
 
   if (step === 'orgType') {
-    // Org-linked → the ORGANIZATION owns the type (single source of truth): show it
-    // read-only with an edit-org link, plus a way through to the (deal-owned)
-    // subtype when the org type has any. Deal-level → the deal owns the type, so the
-    // full list is selectable and the trap can't occur.
-    if (hasOrg) {
-      const orgTypeId = deal.organization.organizationTypeId || '';
-      const canSubtype = orgTypeId && subtypesFor(orgTypeId).length > 0;
-      return (
-        <StepShell title="סוג ארגון" onBack={() => setStep('activity')}>
-          <div className="px-2.5 py-1.5">
-            <div className="text-[11px] text-gray-400">סוג הארגון</div>
-            <div className="mt-0.5 text-sm font-medium text-gray-800">{effTypeLabel || '—'}</div>
-            <p className="text-[10px] text-gray-400 mt-0.5">נקבע על הארגון (מקור אמת יחיד).</p>
-            <button
-              type="button"
-              onClick={() => { close(); onOpenOrgDialog(); }}
-              className="mt-1 text-[12px] text-blue-700 hover:underline"
-            >
-              ערוך ארגון ←
-            </button>
-          </div>
-          {canSubtype && (
-            <RowBtn onClick={() => { setTypeId(orgTypeId); setStep('subtype'); }}>בחר תת-סוג ←</RowBtn>
-          )}
-        </StepShell>
-      );
-    }
+    // The FULL Organization Type list, always selectable — this sets THIS deal's
+    // classification. A linked organization does NOT restrict the choice; its own
+    // type is only a default. (Master org data is edited elsewhere, not here.)
     return (
-      <StepShell title="סוג ארגון" onBack={() => setStep('activity')}>
+      <StepShell title="סוג ארגון (לצורך ההצעה)" onBack={() => setStep('activity')}>
         {types.length === 0 && <div className="px-2.5 py-2 text-[12px] text-gray-400">אין סוגי ארגון</div>}
         {types.map((t) => (
           <RowBtn key={t.id} onClick={() => pickType(t)} selected={t.id === effTypeId}>{t.label}</RowBtn>

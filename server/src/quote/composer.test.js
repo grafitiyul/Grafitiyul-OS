@@ -475,3 +475,27 @@ test('isLockedStatus: finalised statuses lock; draft does not', () => {
   assert.equal(isLockedStatus('draft'), false);
   assert.equal(isLockedStatus(undefined), false);
 });
+
+// ── Deal-level organization type OVERRIDES the linked org's default ──────────
+// The quote's org-type-dependent content ("why_us") must follow THIS deal's
+// classification, not the linked organization's default type.
+test('composer: deal.organizationType overrides the linked org type for why_us', () => {
+  const deal = baseDeal({
+    organizationSubtype: null,
+    organizationType: { quoteContentHe: '<p>מפיקים</p>', quoteContentEn: '<p>producers</p>' }, // deal override
+    organization: { name: 'X', organizationType: { quoteContentHe: '<p>בתי ספר</p>', quoteContentEn: '<p>schools</p>' } }, // org default
+  });
+  const why = blockByKey(compose({ deal }), 'why_grafitiyul').data;
+  assert.match(why.html, /מפיקים/, 'uses the deal classification content');
+  assert.doesNotMatch(why.html, /בתי ספר/, 'not the linked org default');
+});
+
+test('composer: with no deal-level type, why_us falls back to the linked org type', () => {
+  const deal = baseDeal({
+    organizationSubtype: null,
+    organizationType: null, // no override
+    organization: { name: 'X', organizationType: { quoteContentHe: '<p>בתי ספר</p>', quoteContentEn: '<p>schools</p>' } },
+  });
+  const why = blockByKey(compose({ deal }), 'why_grafitiyul').data;
+  assert.match(why.html, /בתי ספר/, 'falls back to the org default');
+});

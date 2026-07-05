@@ -196,11 +196,9 @@ router.post(
       }
       activityType = b.activityType;
     }
-    // SSOT: a Deal.organizationTypeId is only kept while NO organization is
-    // linked. If an org is provided, the org is the source of truth.
-    const organizationTypeId = b.organizationId
-      ? null
-      : b.organizationTypeId || null;
+    // Deal.organizationTypeId = this deal's quote/business classification, kept
+    // independently of any linked organization (which only supplies a default type).
+    const organizationTypeId = b.organizationTypeId || null;
 
     const data = {
       title,
@@ -278,18 +276,13 @@ router.put(
       }
       data.activityType = b.activityType || null;
     }
+    // Deal.organizationTypeId = THIS deal's quote/business classification. It is
+    // independent of any linked organization: the organization's own type is only a
+    // DEFAULT, and a deal may override it for the quote context (the composer reads
+    // deal.organizationType first, org type as fallback). So it is persisted exactly
+    // as sent — NOT force-cleared when an organization is linked.
     if (b.organizationTypeId !== undefined)
       data.organizationTypeId = b.organizationTypeId || null;
-
-    // SSOT reconciliation: Deal.organizationTypeId is only meaningful while NO
-    // organization is linked. Compute the org the deal will have AFTER this
-    // update; if it has one, the organization is the source of truth and we
-    // force-clear the deal's own org type (never two competing truths).
-    const finalOrgId =
-      b.organizationId !== undefined
-        ? b.organizationId || null
-        : existing.organizationId;
-    if (finalOrgId) data.organizationTypeId = null;
     if (b.valueMinor !== undefined) data.valueMinor = toMinor(b.valueMinor) ?? 0n;
     if (b.currency !== undefined) data.currency = String(b.currency).trim() || 'ILS';
     if (b.discountMinor !== undefined) data.discountMinor = toMinor(b.discountMinor);
