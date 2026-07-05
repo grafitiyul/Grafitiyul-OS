@@ -17,11 +17,11 @@ const SIGN_BLUE = '#2563eb';
 // the sender, never the customer's organization. (Matches the hero's "by".)
 const SENDER = { he: 'גרפיטיול', en: 'Grafitiyul' };
 // Fixed on-screen document width — a large A4-style proposal sheet that dominates
-// the page (the gray background is secondary), NOT a fluid web layout. ~1152px on
+// the page (the gray background is secondary), NOT a fluid web layout. ~1280px on
 // desktop (comfortable side margins remain); shrinks to fit on small screens. The
 // paper and the sticky bar both use this, so they stay exactly matched. Print/PDF
 // is unaffected (the print CSS overrides max-width to full page).
-const DOC_WIDTH = 'max-w-6xl';
+const DOC_WIDTH = 'max-w-[1280px]';
 
 const L = {
   he: {
@@ -158,14 +158,30 @@ export default function CustomerQuoteView() {
   }
 
   return (
-    <div dir={rtl ? 'rtl' : 'ltr'} className="min-h-screen bg-gray-100">
-      {/* Print rules — hide all chrome, let the proposal fill the page. */}
-      <style>{`@media print {
+    <div dir={rtl ? 'rtl' : 'ltr'} className="cq-root min-h-screen bg-gray-100">
+      {/* Print rules. The PDF is the SAME proposal, printed — not a separate design.
+          The one thing browsers do by default that breaks fidelity is dropping
+          background colours/images to save ink; print-color-adjust:exact forces them
+          back (hero image, overlays, teal accents, white/gray cards, pricing +
+          technical cards all rely on CSS backgrounds). We reset NOTHING else — no
+          black-text override, no spacing/typography changes — and remove ONLY the UI
+          chrome. The page itself becomes white; the paper becomes the page. */}
+      <style>{`
+      @media print {
+        *, *::before, *::after {
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
         .cq-no-print { display: none !important; }
         html, body { background: #fff !important; }
+        .cq-root { background: #fff !important; min-height: 0 !important; }
         .cq-page { padding: 0 !important; max-width: none !important; }
         .cq-paper { box-shadow: none !important; border-radius: 0 !important; }
-      }`}</style>
+        /* Keep whole sections together across page breaks when they fit. */
+        .cq-paper section { break-inside: avoid; }
+      }
+      @page { margin: 12mm; }
+      `}</style>
 
       {/* Top-right floating menu — Contents + PDF. */}
       <div className="cq-no-print fixed end-4 top-4 z-40 flex items-center gap-1 rounded-full border border-gray-200 bg-white/95 p-1 shadow-lg backdrop-blur">
