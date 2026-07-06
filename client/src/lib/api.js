@@ -453,6 +453,10 @@ export const api = {
       request(`/api/whatsapp/chats/${chatId}/messages${qs(params)}`),
     sendMessage: (chatId, data) =>
       request(`/api/whatsapp/chats/${chatId}/send`, { method: 'POST', body: JSON.stringify(data) }),
+    // Unmatched inbox + manual linking (Slice 8)
+    unmatchedChats: (search) => request(`/api/whatsapp/unmatched-chats${qs({ search })}`),
+    linkChat: (chatId, contactId) =>
+      request(`/api/whatsapp/chats/${chatId}/link`, { method: 'PUT', body: JSON.stringify({ contactId }) }),
     // Scheduled messages (Slice 7)
     scheduledList: (chatId) => request(`/api/whatsapp/chats/${chatId}/scheduled`),
     scheduleMessage: (chatId, data) =>

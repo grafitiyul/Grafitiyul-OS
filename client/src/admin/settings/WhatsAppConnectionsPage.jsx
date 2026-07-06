@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
+import UnmatchedInbox from '../whatsapp/UnmatchedInbox.jsx';
 
 // WhatsApp connections admin ("תקשורת → חיבורי וואטסאפ") — Slice 1.
 //
@@ -65,6 +66,8 @@ export default function WhatsAppConnectionsPage() {
   const [accounts, setAccounts] = useState(null);
   const [error, setError] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
+  const [view, setView] = useState('connections'); // 'connections' | 'inbox'
+  const [unmatchedCount, setUnmatchedCount] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -77,6 +80,11 @@ export default function WhatsAppConnectionsPage() {
 
   useEffect(() => {
     load();
+    // Badge count for the inbox tab — the inbox itself keeps it fresh once open.
+    api.whatsapp
+      .unmatchedChats()
+      .then((rows) => setUnmatchedCount(rows.length))
+      .catch(() => {});
   }, [load]);
 
   // Exactly ONE account is manageable at a time: only the selected account's
@@ -98,13 +106,41 @@ export default function WhatsAppConnectionsPage() {
         </p>
       </header>
 
-      {error && (
+      {/* View switch: connection management vs. the unmatched-chats inbox. */}
+      <div className="mb-6 flex items-center gap-1 border-b border-gray-200">
+        {[
+          { key: 'connections', label: 'חיבורים' },
+          { key: 'inbox', label: 'שיחות ללא שיוך', badge: unmatchedCount },
+        ].map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setView(t.key)}
+            className={`-mb-px flex items-center gap-1.5 border-b-2 px-4 py-2 text-[13px] font-semibold transition ${
+              view === t.key
+                ? 'border-emerald-600 text-emerald-700'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {t.label}
+            {t.badge > 0 && (
+              <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                {t.badge > 99 ? '99+' : t.badge}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {view === 'inbox' && <UnmatchedInbox onCountChange={setUnmatchedCount} />}
+
+      {view === 'connections' && error && (
         <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           שגיאה בטעינת החשבונות: <span dir="ltr" className="font-mono">{error}</span>
         </div>
       )}
 
-      {accounts && accounts.length === 0 && (
+      {view === 'connections' && accounts && accounts.length === 0 && (
         <div className="rounded-2xl border border-gray-200 bg-white p-10 text-center">
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50">
             <WhatsAppLogo size={30} />
@@ -119,7 +155,7 @@ export default function WhatsAppConnectionsPage() {
 
       {/* Account switcher — a segmented control; each number is managed in
           its own tab so only one QR can ever be on screen. */}
-      {accounts && accounts.length > 1 && (
+      {view === 'connections' && accounts && accounts.length > 1 && (
         <div
           role="tablist"
           aria-label="חשבונות WhatsApp"
@@ -148,7 +184,7 @@ export default function WhatsAppConnectionsPage() {
         </div>
       )}
 
-      {selected && (
+      {view === 'connections' && selected && (
         // key= forces a full remount on tab switch: polling state, QR image
         // and diagnostics never leak between accounts.
         <AccountCard key={selected.id} account={selected} onChanged={load} />

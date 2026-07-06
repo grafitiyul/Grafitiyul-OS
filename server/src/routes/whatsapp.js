@@ -426,6 +426,78 @@ router.get(
   }),
 );
 
+// ── Unmatched inbox (Slice 8) ───────────────────────────────────────────────
+// Private chats without a linked Contact, across ALL accounts. The lazy
+// auto-matcher runs first so anything trivially matchable (exactly one owner
+// of the number) links itself before an admin ever sees it; what remains
+// genuinely needs a human decision.
+router.get(
+  '/unmatched-chats',
+  handle(async (req, res) => {
+    const search = String(req.query.search || '').trim();
+    const preliminary = await prisma.whatsAppChat.findMany({
+      where: { contactId: null, type: 'private' },
+      select: { id: true, contactId: true, type: true, phoneNumber: true },
+    });
+    await autoMatchChats(preliminary);
+    const chats = await prisma.whatsAppChat.findMany({
+      where: {
+        contactId: null,
+        type: 'private',
+        ...(search
+          ? {
+              OR: [
+                { savedContactName: { contains: search, mode: 'insensitive' } },
+                { pushName: { contains: search, mode: 'insensitive' } },
+                { phoneNumber: { contains: search.replace(/\D/g, '') || search } },
+              ],
+            }
+          : {}),
+      },
+      orderBy: [{ lastMessageAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
+      take: 200,
+      include: {
+        account: { select: { id: true, label: true } },
+        messages: { orderBy: { timestampFromSource: 'desc' }, take: 1 },
+      },
+    });
+    res.set('Cache-Control', 'no-store');
+    res.json(chats.map((c) => ({ ...toClientChat(c), account: c.account })));
+  }),
+);
+
+// Manual link / unlink (Slice 8). Link-only, reversible: sets the chat's
+// contactId (matchSource='manual') or clears it — the Contact itself is
+// NEVER created or modified from WhatsApp.
+router.put(
+  '/chats/:chatId/link',
+  handle(async (req, res) => {
+    const chat = await prisma.whatsAppChat.findUnique({
+      where: { id: req.params.chatId },
+      select: { id: true, type: true },
+    });
+    if (!chat) return res.status(404).json({ error: 'not_found' });
+    const contactId = req.body?.contactId ?? null;
+    if (contactId === null) {
+      const row = await prisma.whatsAppChat.update({
+        where: { id: chat.id },
+        data: { contactId: null, matchSource: null },
+        include: { contact: { select: CONTACT_LITE_SELECT } },
+      });
+      return res.json(toClientChat(row));
+    }
+    if (chat.type !== 'private') return res.status(400).json({ error: 'group_not_linkable' });
+    const contact = await prisma.contact.findUnique({ where: { id: String(contactId) }, select: { id: true } });
+    if (!contact) return res.status(400).json({ error: 'contact_not_found' });
+    const row = await prisma.whatsAppChat.update({
+      where: { id: chat.id },
+      data: { contactId: contact.id, matchSource: 'manual' },
+      include: { contact: { select: CONTACT_LITE_SELECT } },
+    });
+    res.json(toClientChat(row));
+  }),
+);
+
 router.get(
   '/chats/:chatId',
   handle(async (req, res) => {
