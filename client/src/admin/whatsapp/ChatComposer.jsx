@@ -684,7 +684,10 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                send();
+                // In schedule mode the ONLY primary action is scheduling —
+                // Enter must never send immediately.
+                if (scheduleOpen) schedule();
+                else send();
               }
             }}
             onPaste={(e) => {
@@ -755,20 +758,34 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
             >
               🕓
             </button>
-            <button
-              type="button"
-              onClick={send}
-              disabled={sending || (!text.trim() && attachments.length === 0)}
-              className="mr-auto h-9 shrink-0 rounded-xl bg-emerald-600 px-5 text-[13px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-40"
-            >
-              {sending
-                ? 'שולח…'
-                : attachments.length > 1
-                  ? `שליחת ${attachments.length} קבצים`
-                  : attachments.length === 1
-                    ? 'שליחת קובץ'
-                    : 'שליחה'}
-            </button>
+            {/* In schedule mode the primary action becomes "תזמן הודעה" and the
+                normal immediate-send action is gone entirely — so a user who
+                opened scheduling can't accidentally send now. */}
+            {scheduleOpen ? (
+              <button
+                type="button"
+                onClick={schedule}
+                disabled={sending || !text.trim() || !scheduleAt}
+                className="mr-auto h-9 shrink-0 rounded-xl bg-blue-600 px-5 text-[13px] font-semibold text-white transition hover:bg-blue-700 disabled:opacity-40"
+              >
+                {sending ? 'קובע…' : 'תזמן הודעה'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={send}
+                disabled={sending || (!text.trim() && attachments.length === 0)}
+                className="mr-auto h-9 shrink-0 rounded-xl bg-emerald-600 px-5 text-[13px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-40"
+              >
+                {sending
+                  ? 'שולח…'
+                  : attachments.length > 1
+                    ? `שליחת ${attachments.length} קבצים`
+                    : attachments.length === 1
+                      ? 'שליחת קובץ'
+                      : 'שליחה'}
+              </button>
+            )}
           </div>
           {emojiOpen && (
             <EmojiPicker onPick={(e) => insertEmoji(e)} onClose={() => setEmojiOpen(false)} />
@@ -789,20 +806,14 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
             onChange={(e) => setScheduleAt(e.target.value)}
             className="rounded-lg border border-gray-300 px-2 py-1 text-[13px]"
           />
-          <button
-            type="button"
-            onClick={schedule}
-            disabled={sending || !text.trim() || !scheduleAt}
-            className="rounded-lg bg-blue-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-blue-700 disabled:opacity-40"
-          >
-            {sending ? 'קובע…' : 'תזמון ההודעה'}
-          </button>
+          {/* The schedule action lives on the primary button above (which
+              replaced "שליחה"); this only exits schedule mode. */}
           <button
             type="button"
             onClick={() => setScheduleOpen(false)}
             className="text-[12px] text-gray-500 hover:text-gray-700"
           >
-            ביטול
+            ביטול תזמון
           </button>
         </div>
       )}
