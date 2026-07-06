@@ -435,11 +435,13 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
   }, [chats, statusFilter, unreadCounts, manualUnread]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Open a conversation. WORK-QUEUE MODE: when the deal drawer is already
-  // open, switching conversations re-resolves the drawer to the NEW chat's
-  // deal (exactly-one → swaps in place; several → the choose dialog; no
-  // contact/deals → the create/open flows — every path lands in the same
-  // drawer). Unsaved Deal edits are guarded by the global dirty-forms
-  // registry; note + WhatsApp drafts persist on their own (localStorage).
+  // open, switching conversations follows PASSIVELY — exactly-one matching
+  // deal swaps the drawer in place, several raise the choose dialog, and NO
+  // matching deal simply CLOSES the drawer and shows the conversation
+  // (creating/opening a deal stays a deliberate act via the panel button —
+  // browsing must never be interrupted by a create-deal popup). Unsaved
+  // Deal edits are guarded by the global dirty-forms registry; note +
+  // WhatsApp drafts persist on their own (localStorage).
   function openChat(chat) {
     const switching = selected?.id !== chat.id;
     setSelected(chat);
@@ -447,9 +449,23 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
     setLinking(false);
     if (!drawerDealId || !switching) return;
     if (hasDirtyForms()) {
-      setFollowConfirm(chat); // ask before replacing the deal under the edits
+      setFollowConfirm(chat); // ask before dropping the edits
     } else {
-      openDeal(chat);
+      followDrawer(chat);
+    }
+  }
+
+  // Passive drawer follow — never opens create/confirm flows on its own.
+  async function followDrawer(chat) {
+    try {
+      const r = await api.whatsapp.dealResolution(chat.id);
+      if (r.kind === 'open') setDrawerDealId(r.dealId);
+      else if (r.kind === 'choose') setDialog({ ...r, chat, follow: true });
+      else setDrawerDealId(null); // no matching deal — just show the conversation
+    } catch (e) {
+      // Never trap the reader in an unrelated deal because resolution failed.
+      setDrawerDealId(null);
+      setError(errText('איתור הדיל לשיחה נכשל', e));
     }
   }
 
@@ -813,7 +829,12 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
             setDialog(null);
             setDrawerDealId(d.id);
           }}
-          onClose={() => setDialog(null)}
+          onClose={() => {
+            // A drawer-follow choice that was dismissed: don't leave the
+            // PREVIOUS conversation's deal on screen — show the conversation.
+            if (dialog.follow) setDrawerDealId(null);
+            setDialog(null);
+          }}
         />
       )}
 
@@ -824,13 +845,13 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
       <ConfirmDialog
         open={!!followConfirm}
         title="שינויים שלא נשמרו בדיל"
-        body={'בדיל הפתוח יש שינויים שעדיין לא נשמרו.\nלעבור לדיל של השיחה החדשה? (טיוטות של פתקים והודעות נשמרות אוטומטית — אבל שינויים בשדות הדיל יאבדו.)'}
-        confirmLabel="מעבר לדיל החדש"
+        body={'בדיל הפתוח יש שינויים שעדיין לא נשמרו.\nלהמשיך לשיחה החדשה? (טיוטות של פתקים והודעות נשמרות אוטומטית — אבל שינויים בשדות הדיל יאבדו.)'}
+        confirmLabel="המשך בלי לשמור"
         onCancel={() => setFollowConfirm(null)}
         onConfirm={() => {
           const chat = followConfirm;
           setFollowConfirm(null);
-          if (chat) openDeal(chat);
+          if (chat) followDrawer(chat);
         }}
       />
 
