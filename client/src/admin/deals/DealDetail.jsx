@@ -71,8 +71,11 @@ function fmtDate(iso) {
 // The title is inline-editable in the hero; every property section saves itself
 // with its own local שמור button (no global header save). Side-panel width and
 // open/closed state persist in localStorage via WorkspaceLayout.
-export default function DealDetail() {
-  const { id } = useParams();
+// `dealId` prop overrides the route param — lets the WhatsApp inbox (and any
+// future surface) embed the full deal workspace inside a drawer.
+export default function DealDetail({ dealId: dealIdProp = null }) {
+  const { id: routeId } = useParams();
+  const id = dealIdProp || routeId;
   const navigate = useNavigate();
   const [deal, setDeal] = useState(null);
   const [stages, setStages] = useState([]);

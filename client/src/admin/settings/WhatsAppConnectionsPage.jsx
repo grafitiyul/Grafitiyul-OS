@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
-import UnmatchedInbox from '../whatsapp/UnmatchedInbox.jsx';
+import WhatsAppInbox from '../whatsapp/WhatsAppInbox.jsx';
 
 // WhatsApp connections admin ("תקשורת → חיבורי וואטסאפ") — Slice 1.
 //
@@ -66,7 +66,9 @@ export default function WhatsAppConnectionsPage() {
   const [accounts, setAccounts] = useState(null);
   const [error, setError] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
-  const [view, setView] = useState('connections'); // 'connections' | 'inbox'
+  // The inbox is the working surface — it's the landing view; connection
+  // management lives one tab over.
+  const [view, setView] = useState('inbox'); // 'inbox' | 'connections'
   const [unmatchedCount, setUnmatchedCount] = useState(null);
 
   const load = useCallback(async () => {
@@ -82,8 +84,8 @@ export default function WhatsAppConnectionsPage() {
     load();
     // Badge count for the inbox tab — the inbox itself keeps it fresh once open.
     api.whatsapp
-      .unmatchedChats()
-      .then((rows) => setUnmatchedCount(rows.length))
+      .inboxChats({ unmatched: 1 })
+      .then((data) => setUnmatchedCount(data.unmatchedCount ?? data.chats?.length ?? 0))
       .catch(() => {});
   }, [load]);
 
@@ -109,8 +111,8 @@ export default function WhatsAppConnectionsPage() {
       {/* View switch: connection management vs. the unmatched-chats inbox. */}
       <div className="mb-6 flex items-center gap-1 border-b border-gray-200">
         {[
+          { key: 'inbox', label: 'שיחות', badge: unmatchedCount },
           { key: 'connections', label: 'חיבורים' },
-          { key: 'inbox', label: 'שיחות ללא שיוך', badge: unmatchedCount },
         ].map((t) => (
           <button
             key={t.key}
@@ -132,7 +134,12 @@ export default function WhatsAppConnectionsPage() {
         ))}
       </div>
 
-      {view === 'inbox' && <UnmatchedInbox onCountChange={setUnmatchedCount} />}
+      {view === 'inbox' && (
+        <WhatsAppInbox
+          accounts={(accounts || []).filter((a) => a.provisioned !== false)}
+          onCountChange={setUnmatchedCount}
+        />
+      )}
 
       {view === 'connections' && error && (
         <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

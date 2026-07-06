@@ -443,15 +443,17 @@ router.get(
   }),
 );
 
-// ── Unmatched inbox (Slice 8) ───────────────────────────────────────────────
-// Private chats without a linked Contact, across ALL accounts. The lazy
-// auto-matcher runs first so anything trivially matchable (exactly one owner
-// of the number) links itself before an admin ever sees it; what remains
-// genuinely needs a human decision.
+// ── Active WhatsApp inbox (Slice 8+) ────────────────────────────────────────
+// The working CRM inbox: ALL private conversations (matched and unmatched),
+// filterable per account, newest first. The lazy auto-matcher runs on the
+// unmatched subset first so anything trivially matchable links itself before
+// an admin ever sees it. ?unmatched=1 narrows to the repair view.
 router.get(
-  '/unmatched-chats',
+  '/inbox-chats',
   handle(async (req, res) => {
     const search = String(req.query.search || '').trim();
+    const accountId = String(req.query.accountId || '').trim();
+    const unmatchedOnly = req.query.unmatched === '1';
     const preliminary = await prisma.whatsAppChat.findMany({
       where: { contactId: null, type: 'private' },
       select: { id: true, contactId: true, type: true, phoneNumber: true },
@@ -459,14 +461,25 @@ router.get(
     await autoMatchChats(preliminary);
     const chats = await prisma.whatsAppChat.findMany({
       where: {
-        contactId: null,
         type: 'private',
+        ...(unmatchedOnly ? { contactId: null } : {}),
+        ...(accountId ? { accountId } : {}),
         ...(search
           ? {
               OR: [
                 { savedContactName: { contains: search, mode: 'insensitive' } },
                 { pushName: { contains: search, mode: 'insensitive' } },
                 { phoneNumber: { contains: search.replace(/\D/g, '') || search } },
+                {
+                  contact: {
+                    OR: [
+                      { firstNameHe: { contains: search, mode: 'insensitive' } },
+                      { lastNameHe: { contains: search, mode: 'insensitive' } },
+                      { firstNameEn: { contains: search, mode: 'insensitive' } },
+                      { lastNameEn: { contains: search, mode: 'insensitive' } },
+                    ],
+                  },
+                },
               ],
             }
           : {}),
@@ -474,12 +487,137 @@ router.get(
       orderBy: [{ lastMessageAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
       take: 200,
       include: {
+        contact: { select: CONTACT_LITE_SELECT },
         account: { select: { id: true, label: true } },
         messages: { orderBy: { timestampFromSource: 'desc' }, take: 1 },
       },
     });
+    const unmatchedCount = await prisma.whatsAppChat.count({
+      where: { contactId: null, type: 'private', ...(accountId ? { accountId } : {}) },
+    });
     res.set('Cache-Control', 'no-store');
-    res.json(chats.map((c) => ({ ...toClientChat(c), account: c.account })));
+    res.json({
+      chats: chats.map((c) => ({ ...toClientChat(c), account: c.account })),
+      unmatchedCount,
+    });
+  }),
+);
+
+// Which Deal does this conversation belong to? Deterministic when confident,
+// asks when not (per product spec):
+//   no linked contact              → no_contact (client confirms create)
+//   exactly ONE candidate          → open       (candidates = open deals +
+//                                                WON deals toured ≤7 days ago)
+//   several candidates             → choose
+//   contact with no deals at all   → no_deals   (client confirms new deal)
+//   only stale LOST/old-WON deals  → old_or_new
+function dealSummary(d) {
+  return {
+    id: d.id,
+    title: d.title,
+    status: d.status,
+    tourDate: d.tourDate,
+    organizationName: d.organization?.name ?? null,
+    valueMinor: d.valueMinor,
+    stageName: d.dealStage?.name ?? null,
+  };
+}
+
+router.get(
+  '/chats/:chatId/deal-resolution',
+  handle(async (req, res) => {
+    const chat = await prisma.whatsAppChat.findUnique({
+      where: { id: req.params.chatId },
+      include: { contact: { select: CONTACT_LITE_SELECT } },
+    });
+    if (!chat) return res.status(404).json({ error: 'not_found' });
+    res.set('Cache-Control', 'no-store');
+    if (!chat.contactId) {
+      return res.json({
+        kind: 'no_contact',
+        suggestedName: chat.savedContactName || chat.pushName || chat.phoneNumber || null,
+      });
+    }
+    const contactName = contactDisplayName(chat.contact);
+    const links = await prisma.dealContact.findMany({
+      where: { contactId: chat.contactId },
+      include: {
+        deal: {
+          include: {
+            organization: { select: { name: true } },
+            dealStage: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    const deals = links.map((l) => l.deal);
+    if (deals.length === 0) return res.json({ kind: 'no_deals', contactName });
+
+    // tourDate is "YYYY-MM-DD" — lexicographic compare is date compare.
+    const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+    const open = deals.filter((d) => d.status === 'open');
+    const recentWon = deals.filter((d) => d.status === 'won' && d.tourDate && d.tourDate >= sevenDaysAgo);
+    const candidates = [...open, ...recentWon];
+    if (candidates.length === 1) return res.json({ kind: 'open', dealId: candidates[0].id });
+    if (candidates.length > 1) {
+      return res.json({ kind: 'choose', contactName, deals: candidates.map(dealSummary) });
+    }
+    return res.json({ kind: 'old_or_new', contactName, deals: deals.map(dealSummary) });
+  }),
+);
+
+// Create the Contact (when missing) and/or a fresh Deal from a conversation —
+// ONLY ever called after the user confirmed in the UI (the no-auto-create
+// rule holds: this endpoint IS the confirmation's effect).
+router.post(
+  '/chats/:chatId/open-deal',
+  handle(async (req, res) => {
+    const chat = await prisma.whatsAppChat.findUnique({
+      where: { id: req.params.chatId },
+      include: { contact: { select: CONTACT_LITE_SELECT } },
+    });
+    if (!chat) return res.status(404).json({ error: 'not_found' });
+    if (chat.type !== 'private') return res.status(400).json({ error: 'group_not_supported' });
+
+    let contactId = chat.contactId;
+    let displayName = contactDisplayName(chat.contact);
+    if (!contactId) {
+      const rawName = (chat.savedContactName || chat.pushName || '').trim();
+      const [first, ...rest] = rawName.split(/\s+/).filter(Boolean);
+      const contact = await prisma.contact.create({
+        data: {
+          firstNameHe: first || chat.phoneNumber || 'WhatsApp',
+          lastNameHe: rest.join(' ') || '',
+          ...(chat.phoneNumber
+            ? { phones: { create: { value: chat.phoneNumber, isPrimary: true, label: 'WhatsApp' } } }
+            : {}),
+        },
+        select: { id: true, firstNameHe: true, lastNameHe: true },
+      });
+      contactId = contact.id;
+      displayName = `${contact.firstNameHe} ${contact.lastNameHe}`.trim();
+      await prisma.whatsAppChat.update({
+        where: { id: chat.id },
+        data: { contactId, matchSource: 'manual' },
+      });
+    }
+
+    const firstStage = await prisma.dealStage.findFirst({
+      orderBy: { sortOrder: 'asc' },
+      select: { id: true },
+    });
+    if (!firstStage) return res.status(400).json({ error: 'no_stages' });
+    const deal = await prisma.deal.create({
+      data: {
+        title: displayName || chat.phoneNumber || 'שיחת WhatsApp',
+        dealStageId: firstStage.id,
+        status: 'open',
+        contacts: { create: { contactId, isPrimary: true } },
+      },
+      select: { id: true },
+    });
+    res.status(201).json({ dealId: deal.id, contactId });
   }),
 );
 

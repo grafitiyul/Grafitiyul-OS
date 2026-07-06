@@ -453,10 +453,13 @@ export const api = {
       request(`/api/whatsapp/chats/${chatId}/messages${qs(params)}`),
     sendMessage: (chatId, data) =>
       request(`/api/whatsapp/chats/${chatId}/send`, { method: 'POST', body: JSON.stringify(data) }),
-    // Unmatched inbox + manual linking (Slice 8)
-    unmatchedChats: (search) => request(`/api/whatsapp/unmatched-chats${qs({ search })}`),
+    // Active inbox + manual linking + WhatsApp→Deal navigation (Slice 8)
+    inboxChats: (params) => request(`/api/whatsapp/inbox-chats${qs(params)}`),
     linkChat: (chatId, contactId) =>
       request(`/api/whatsapp/chats/${chatId}/link`, { method: 'PUT', body: JSON.stringify({ contactId }) }),
+    dealResolution: (chatId) => request(`/api/whatsapp/chats/${chatId}/deal-resolution`),
+    openDealFromChat: (chatId) =>
+      request(`/api/whatsapp/chats/${chatId}/open-deal`, { method: 'POST', body: JSON.stringify({}) }),
     // Scheduled messages (Slice 7)
     scheduledList: (chatId) => request(`/api/whatsapp/chats/${chatId}/scheduled`),
     scheduleMessage: (chatId, data) =>
