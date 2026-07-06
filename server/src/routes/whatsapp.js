@@ -235,7 +235,7 @@ function chatDisplayName(chat) {
   );
 }
 
-function toClientMessage(m) {
+function toClientMessage(m, reactions = null) {
   return {
     id: m.id,
     externalMessageId: m.externalMessageId,
@@ -246,6 +246,9 @@ function toClientMessage(m) {
     senderPhone: m.senderPhone,
     quotedExternalId: m.quotedExternalId,
     timestampFromSource: m.timestampFromSource,
+    deliveryStatus: m.deliveryStatus ?? null,
+    starred: !!m.starredAt,
+    ...(reactions ? { reactions } : {}),
     media: m.mediaStatus
       ? {
           status: m.mediaStatus,
@@ -272,8 +275,19 @@ function toClientChat(chat) {
       : null,
     matchSource: chat.matchSource,
     lastMessageAt: chat.lastMessageAt,
+    pinnedAt: chat.pinnedAt ?? null,
+    snoozedUntil: chat.snoozedUntil ?? null,
+    snoozedAt: chat.snoozedAt ?? null,
     lastMessage: chat.messages?.[0] ? toClientMessage(chat.messages[0]) : null,
   };
+}
+
+// Gmail-style snooze visibility: a snoozed chat is hidden until snoozedUntil,
+// but wakes EARLY if a new message arrived after the snooze was set.
+function isSnoozedNow(chat, now = new Date()) {
+  if (!chat.snoozedUntil || chat.snoozedUntil <= now) return false;
+  if (chat.snoozedAt && chat.lastMessageAt && chat.lastMessageAt > chat.snoozedAt) return false;
+  return true;
 }
 
 // Lazy auto-matching: link unmatched private chats to Contacts by normalized
@@ -489,7 +503,7 @@ router.get(
           ],
         }
       : null;
-    const chats = await prisma.whatsAppChat.findMany({
+    const chatsRaw = await prisma.whatsAppChat.findMany({
       where: {
         type: 'private',
         ...(accountId ? { accountId } : {}),
@@ -497,7 +511,12 @@ router.get(
         // clobber each other on the same object key.
         AND: [scopeWhere, ...(searchWhere ? [searchWhere] : [])],
       },
-      orderBy: [{ lastMessageAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
+      // Pinned chats float to the top, then the usual recency order.
+      orderBy: [
+        { pinnedAt: { sort: 'desc', nulls: 'last' } },
+        { lastMessageAt: { sort: 'desc', nulls: 'last' } },
+        { createdAt: 'desc' },
+      ],
       take: 200,
       include: {
         contact: { select: CONTACT_LITE_SELECT },
@@ -505,6 +524,10 @@ router.get(
         messages: { orderBy: { timestampFromSource: 'desc' }, take: 1 },
       },
     });
+    // Snoozed chats leave the active work queue (until they wake); they stay
+    // findable under 'all', in search, and in the unmatched repair view.
+    const chats =
+      scope === 'active' && !search ? chatsRaw.filter((c) => !isSnoozedNow(c)) : chatsRaw;
     const unmatchedCount = await prisma.whatsAppChat.count({
       where: { contactId: null, type: 'private', ...(accountId ? { accountId } : {}) },
     });
@@ -828,14 +851,39 @@ router.get(
 // Thread page — newest-first, keyset-paged by ?before=<ISO timestamp>. The
 // client renders in reverse and asks for the next page when scrolled to the
 // top. hasMore tells it whether to keep asking.
+// Attach reactions to a serialized page — reactions are keyed by the
+// EXTERNAL message id (they can arrive before/without the target row).
+async function reactionsFor(accountId, rows) {
+  const extIds = rows.map((m) => m.externalMessageId).filter(Boolean);
+  if (extIds.length === 0) return new Map();
+  const reactions = await prisma.whatsAppMessageReaction.findMany({
+    where: { accountId, externalMessageId: { in: extIds } },
+    select: { externalMessageId: true, emoji: true, reactorPhone: true },
+  });
+  const byExt = new Map();
+  for (const r of reactions) {
+    if (!r.emoji) continue; // empty emoji = reaction removed
+    if (!byExt.has(r.externalMessageId)) byExt.set(r.externalMessageId, []);
+    byExt.get(r.externalMessageId).push({ emoji: r.emoji, reactorPhone: r.reactorPhone });
+  }
+  return byExt;
+}
+
+function serializePage(accountId, rows) {
+  return reactionsFor(accountId, rows).then((byExt) =>
+    rows.map((m) => toClientMessage(m, m.externalMessageId ? byExt.get(m.externalMessageId) ?? [] : [])),
+  );
+}
+
 router.get(
   '/chats/:chatId/messages',
   handle(async (req, res) => {
     const chat = await prisma.whatsAppChat.findUnique({
       where: { id: req.params.chatId },
-      select: { id: true },
+      select: { id: true, accountId: true },
     });
     if (!chat) return res.status(404).json({ error: 'not_found' });
+    res.set('Cache-Control', 'no-store');
     // Count mode (?count=1&after=ISO): number of INCOMING messages newer than
     // `after` — powers the unread badge straight from the message store.
     if (req.query.count === '1') {
@@ -847,10 +895,32 @@ router.get(
           ...(after && !Number.isNaN(after.getTime()) ? { timestampFromSource: { gt: after } } : {}),
         },
       });
-      res.set('Cache-Control', 'no-store');
       return res.json({ count });
     }
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
+    // Search mode (?search=q): match text content, newest first — powers
+    // search-inside-conversation. Results are jump anchors, not a page.
+    const search = String(req.query.search || '').trim();
+    if (search) {
+      const matches = await prisma.whatsAppMessage.findMany({
+        where: { chatId: chat.id, textContent: { contains: search, mode: 'insensitive' } },
+        orderBy: { timestampFromSource: 'desc' },
+        take: Math.min(limit, 30),
+      });
+      return res.json({ messages: await serializePage(chat.accountId, matches), hasMore: false });
+    }
+    // Forward paging (?after=ISO, ascending) — fills the window downward
+    // after a jump-to-date / jump-to-message. Default is backward (?before=).
+    const after = req.query.after ? new Date(String(req.query.after)) : null;
+    if (after && !Number.isNaN(after.getTime())) {
+      const rows = await prisma.whatsAppMessage.findMany({
+        where: { chatId: chat.id, timestampFromSource: { gt: after } },
+        orderBy: { timestampFromSource: 'asc' },
+        take: limit + 1,
+      });
+      const hasMore = rows.length > limit;
+      return res.json({ messages: await serializePage(chat.accountId, rows.slice(0, limit)), hasMore });
+    }
     const before = req.query.before ? new Date(String(req.query.before)) : null;
     const messages = await prisma.whatsAppMessage.findMany({
       where: {
@@ -861,8 +931,82 @@ router.get(
       take: limit + 1,
     });
     const hasMore = messages.length > limit;
+    res.json({ messages: await serializePage(chat.accountId, messages.slice(0, limit)), hasMore });
+  }),
+);
+
+// Pin / snooze — team-level inbox workflow state on the chat row. Both are
+// display-state only (never touch messages/contacts); reversible.
+router.put(
+  '/chats/:chatId/state',
+  handle(async (req, res) => {
+    const chat = await prisma.whatsAppChat.findUnique({
+      where: { id: req.params.chatId },
+      select: { id: true, pinnedAt: true },
+    });
+    if (!chat) return res.status(404).json({ error: 'not_found' });
+    const b = req.body || {};
+    const data = {};
+    if (b.pinned !== undefined) {
+      data.pinnedAt = b.pinned ? chat.pinnedAt ?? new Date() : null;
+    }
+    if (b.snoozedUntil !== undefined) {
+      if (b.snoozedUntil === null) {
+        data.snoozedUntil = null;
+        data.snoozedAt = null;
+      } else {
+        const until = new Date(String(b.snoozedUntil));
+        if (Number.isNaN(until.getTime()) || until.getTime() < Date.now() + 30_000) {
+          return res.status(400).json({ error: 'snoozed_until_invalid' });
+        }
+        data.snoozedUntil = until;
+        data.snoozedAt = new Date();
+      }
+    }
+    if (Object.keys(data).length === 0) return res.status(400).json({ error: 'nothing_to_update' });
+    const row = await prisma.whatsAppChat.update({
+      where: { id: chat.id },
+      data,
+      include: { contact: { select: CONTACT_LITE_SELECT } },
+    });
+    res.json(toClientChat(row));
+  }),
+);
+
+// Star / unstar one message (team-level bookmark).
+router.put(
+  '/messages/:id/star',
+  handle(async (req, res) => {
+    const msg = await prisma.whatsAppMessage.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, starredAt: true },
+    });
+    if (!msg) return res.status(404).json({ error: 'not_found' });
+    const starred = !!req.body?.starred;
+    const row = await prisma.whatsAppMessage.update({
+      where: { id: msg.id },
+      data: { starredAt: starred ? msg.starredAt ?? new Date() : null },
+    });
+    res.json(toClientMessage(row));
+  }),
+);
+
+// Starred messages of one chat, newest first — the ⭐ panel in the thread.
+router.get(
+  '/chats/:chatId/starred',
+  handle(async (req, res) => {
+    const chat = await prisma.whatsAppChat.findUnique({
+      where: { id: req.params.chatId },
+      select: { id: true, accountId: true },
+    });
+    if (!chat) return res.status(404).json({ error: 'not_found' });
+    const rows = await prisma.whatsAppMessage.findMany({
+      where: { chatId: chat.id, starredAt: { not: null } },
+      orderBy: { timestampFromSource: 'desc' },
+      take: 100,
+    });
     res.set('Cache-Control', 'no-store');
-    res.json({ messages: messages.slice(0, limit).map(toClientMessage), hasMore });
+    res.json({ messages: await serializePage(chat.accountId, rows) });
   }),
 );
 

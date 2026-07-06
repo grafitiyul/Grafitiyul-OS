@@ -1065,6 +1065,12 @@ model WhatsAppChat {
   contactId         String?
   matchSource       String? // 'phone' | 'manual'
   lastMessageAt     DateTime?
+  // Inbox workflow state (team-level, not per-admin): pinned floats the chat
+  // to the top; snooze hides it from the active scope until snoozedUntil —
+  // UNLESS a new message arrives after snoozedAt (Gmail-style early wake).
+  pinnedAt          DateTime?
+  snoozedUntil      DateTime?
+  snoozedAt         DateTime?
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
   messages          WhatsAppMessage[]
@@ -1112,6 +1118,11 @@ model WhatsAppMessage {
   mediaOriginalName   String?
   mediaThumbBase64    String?
   quotedExternalId    String?
+  // Outgoing delivery ladder from WhatsApp acks (messages.update):
+  // 'sent' | 'delivered' | 'read' | 'played'. Null for incoming rows.
+  deliveryStatus      String?
+  // Team-level star (message bookmarks) — set from the GOS UI only.
+  starredAt           DateTime?
   rawPayload          Json?
   // Slice 6: proto-encoded outbound payload, kept for WhatsApp's retransmit
   // replay (getMessage) — without it a recipient whose device asks for a

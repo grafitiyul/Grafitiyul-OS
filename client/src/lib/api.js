@@ -451,6 +451,12 @@ export const api = {
       request(`/api/whatsapp/context-chats${qs({ subjectType, subjectId })}`),
     chatMessages: (chatId, params) =>
       request(`/api/whatsapp/chats/${chatId}/messages${qs(params)}`),
+    // Inbox workflow state (pin / snooze) + message bookmarks (star)
+    chatState: (chatId, data) =>
+      request(`/api/whatsapp/chats/${chatId}/state`, { method: 'PUT', body: JSON.stringify(data) }),
+    starMessage: (messageId, starred) =>
+      request(`/api/whatsapp/messages/${messageId}/star`, { method: 'PUT', body: JSON.stringify({ starred }) }),
+    chatStarred: (chatId) => request(`/api/whatsapp/chats/${chatId}/starred`),
     sendMessage: (chatId, data) =>
       request(`/api/whatsapp/chats/${chatId}/send`, { method: 'POST', body: JSON.stringify(data) }),
     sendVoice: (chatId, data) =>

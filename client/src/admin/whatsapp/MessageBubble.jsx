@@ -1,8 +1,11 @@
 import MessageMedia from './MessageMedia.jsx';
+import Checks from './Checks.jsx';
 
 // One WhatsApp message, WhatsApp-style: outbound = green bubble on the far
 // side (left in RTL, like Hebrew WhatsApp), inbound = white. System events
 // render as a centered chip. Group chats show the sender name on inbound.
+// Outgoing messages carry the delivery checks (✓ / ✓✓ / blue ✓✓); reactions
+// received on a message render as an emoji chip under the bubble.
 
 const TYPE_LABEL = {
   image: 'תמונה',
@@ -35,7 +38,32 @@ function quotedSnippet(q) {
   return TYPE_LABEL[q.messageType] || 'הודעה';
 }
 
-export default function MessageBubble({ message: m, showSender = false, quoted = null, onReply = null }) {
+// Group raw reactions ([{emoji, reactorPhone}]) into "👍 2"-style chips.
+function groupReactions(list) {
+  const counts = new Map();
+  for (const r of list || []) {
+    if (!r?.emoji) continue;
+    counts.set(r.emoji, (counts.get(r.emoji) || 0) + 1);
+  }
+  return [...counts.entries()];
+}
+
+function HoverAction({ onClick, title, children, active = false }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className={`h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/90 text-[13px] shadow-sm hover:text-gray-800 ${
+        active ? 'flex text-amber-500' : 'hidden text-gray-500 group-hover:flex'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+export default function MessageBubble({ message: m, showSender = false, quoted = null, onReply = null, onToggleStar = null }) {
   if (m.messageType === 'system') {
     return (
       <div className="my-2 flex justify-center">
@@ -48,20 +76,29 @@ export default function MessageBubble({ message: m, showSender = false, quoted =
 
   const outbound = m.direction === 'outgoing';
   const sender = m.senderName || m.senderPhone;
+  const reactions = groupReactions(m.reactions);
+
+  const actions = (
+    <>
+      {onReply && (
+        <HoverAction onClick={onReply} title="תגובה">↩</HoverAction>
+      )}
+      {onToggleStar && (
+        <HoverAction
+          onClick={() => onToggleStar(m)}
+          title={m.starred ? 'הסרת כוכב' : 'סימון בכוכב'}
+          active={m.starred}
+        >
+          {m.starred ? '★' : '☆'}
+        </HoverAction>
+      )}
+    </>
+  );
 
   return (
     <div className={`group mb-1.5 flex items-center gap-1 ${outbound ? 'justify-end' : 'justify-start'}`}>
-      {/* Reply affordance — appears on hover, on the empty side of the row */}
-      {onReply && outbound && (
-        <button
-          type="button"
-          onClick={onReply}
-          title="תגובה"
-          className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/90 text-[13px] text-gray-500 shadow-sm hover:text-gray-800 group-hover:flex"
-        >
-          ↩
-        </button>
-      )}
+      {/* Hover actions — on the empty side of the row */}
+      {outbound && actions}
       <div
         className={`relative max-w-[78%] rounded-2xl px-3 py-2 shadow-sm ${
           outbound ? 'rounded-tl-md bg-[#d9fdd3]' : 'rounded-tr-md bg-white'
@@ -93,20 +130,32 @@ export default function MessageBubble({ message: m, showSender = false, quoted =
           </p>
         )}
 
-        <p className={`mt-0.5 text-[10px] text-gray-400 ${outbound ? 'text-left' : 'text-right'}`} dir="ltr">
-          {fmtTime(m.timestampFromSource)}
-        </p>
-      </div>
-      {onReply && !outbound && (
-        <button
-          type="button"
-          onClick={onReply}
-          title="תגובה"
-          className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/90 text-[13px] text-gray-500 shadow-sm hover:text-gray-800 group-hover:flex"
+        <p
+          className={`mt-0.5 flex items-center gap-1 text-[10px] text-gray-400 ${
+            outbound ? 'justify-start' : 'justify-end'
+          }`}
+          dir="ltr"
         >
-          ↩
-        </button>
-      )}
+          {outbound && <Checks status={m.deliveryStatus || 'sent'} size={14} />}
+          <span>{fmtTime(m.timestampFromSource)}</span>
+          {m.starred && <span className="text-[10px] text-amber-500">★</span>}
+        </p>
+
+        {reactions.length > 0 && (
+          <div className={`-mb-3 mt-0.5 flex translate-y-1.5 gap-1 ${outbound ? 'justify-start' : 'justify-end'}`}>
+            {reactions.map(([emoji, count]) => (
+              <span
+                key={emoji}
+                className="inline-flex items-center gap-0.5 rounded-full bg-white px-1.5 py-0.5 text-[11px] shadow ring-1 ring-gray-200"
+              >
+                <span>{emoji}</span>
+                {count > 1 && <span className="text-[10px] text-gray-500">{count}</span>}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      {!outbound && actions}
     </div>
   );
 }

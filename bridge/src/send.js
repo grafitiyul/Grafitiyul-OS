@@ -89,6 +89,9 @@ export function createSendHandlers({ prisma, client, accountId, log }) {
         chatId: chat.id,
         externalMessageId,
         direction: 'outgoing',
+        // The WhatsApp server accepted the send (Baileys resolved) — that IS
+        // 'sent'; delivery/read upgrades arrive via messages.update acks.
+        deliveryStatus: 'sent',
         messageType,
         textContent: text,
         quotedExternalId,

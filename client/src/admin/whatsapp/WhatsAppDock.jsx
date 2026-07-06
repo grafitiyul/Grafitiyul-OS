@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import ChatThread from './ChatThread.jsx';
+import { ensureSeen, markSeen } from './seenStore.js';
 
 // Floating WhatsApp dock for the Deal page. Rendered through WorkspaceLayout's
 // `seamLeft` slot, so the closed bubble sits in the empty gap between the deal
@@ -10,17 +11,16 @@ import ChatThread from './ChatThread.jsx';
 // overlay (may cover the script), horizontally RESIZABLE by dragging its
 // center-facing edge; the chosen width persists globally across deals.
 //
-// Unread badge: derived from the EXISTING message store — per-chat "last seen"
-// markers live in localStorage; the count is the store's incoming messages
-// after that marker (no duplicate unread system). Opening the popup marks the
-// visible conversation read.
+// Unread badge: derived from the SHARED seen-store (seenStore.js — the same
+// per-chat "last seen" markers the inbox uses; no duplicate unread system);
+// the count is the store's incoming messages after each marker. Opening the
+// popup marks the visible conversation read.
 //
 // Contact model (user spec): default to the Deal's PRIMARY contact; a compact
 // selector switches between the deal's linked contacts inside the same popup.
 // Conversations are per-contact and never merged.
 
 const WIDTH_KEY = 'gos-whatsapp-dock'; // { width } — global, not per-deal
-const SEEN_KEY = 'gos-whatsapp-seen'; // { [chatId]: ISO lastSeenAt }
 const MIN_W = 380;
 const MAX_W = 760;
 
@@ -38,13 +38,6 @@ function writeJson(key, value) {
   } catch {
     /* storage unavailable — non-fatal */
   }
-}
-
-function markSeen(chatId) {
-  if (!chatId) return;
-  const map = readJson(SEEN_KEY, {});
-  map[chatId] = new Date().toISOString();
-  writeJson(SEEN_KEY, map);
 }
 
 export default function WhatsAppDock({ subjectType, subjectId }) {
@@ -74,16 +67,11 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
   // "unread"); only messages arriving after that count.
   const computeUnread = useCallback(async (d) => {
     const chats = d?.chats || [];
-    const seen = readJson(SEEN_KEY, {});
-    let changed = false;
+    // First sight initializes markers to NOW (history isn't "unread").
+    const seen = ensureSeen(chats.map((c) => c.id));
     let total = 0;
     for (const chat of chats) {
-      if (!seen[chat.id]) {
-        seen[chat.id] = new Date().toISOString();
-        changed = true;
-        continue;
-      }
-      if (!chat.lastMessageAt || chat.lastMessageAt <= seen[chat.id]) continue;
+      if (!seen[chat.id] || !chat.lastMessageAt || chat.lastMessageAt <= seen[chat.id]) continue;
       try {
         const { count } = await api.whatsapp.chatMessages(chat.id, { after: seen[chat.id], count: 1 });
         total += count || 0;
@@ -91,7 +79,6 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
         /* transient — next poll recounts */
       }
     }
-    if (changed) writeJson(SEEN_KEY, seen);
     setUnread(total);
   }, []);
 

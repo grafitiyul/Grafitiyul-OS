@@ -38,6 +38,18 @@ export function resolveActivityLabel({ activityType, orgTypeLabel, subtypeLabel 
   return [orgTypeLabel, subtypeLabel].filter(Boolean).join(' ') || ACTIVITY_TYPE_LABELS.business;
 }
 
+// The SINGLE source of truth for the activity-badge COLORS — the Deal header
+// badge and every other surface (WhatsApp inbox rows) must use these, so the
+// same deal can never look different in two places.
+// business = green, private = red, group = amber. Soft, modern, tasteful.
+export const ACTIVITY_BADGE_TONE = {
+  business: 'bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-200 hover:bg-emerald-200/60',
+  private: 'bg-rose-100 text-rose-800 ring-1 ring-inset ring-rose-200 hover:bg-rose-200/60',
+  group: 'bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-200 hover:bg-amber-200/60',
+};
+export const ACTIVITY_BADGE_NEUTRAL =
+  'bg-gray-50 text-gray-500 ring-1 ring-inset ring-gray-200 border border-dashed border-gray-300 hover:bg-gray-100';
+
 // Finance workspace routing — which pricing workspace a Deal opens when the user
 // clicks "מחיר". Kept in ONE place so the rule is swappable: today it maps from
 // activityType, but the intended future model is a CRM setting

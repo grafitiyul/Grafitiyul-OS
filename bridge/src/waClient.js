@@ -621,6 +621,8 @@ export class WaClient {
       void fn(payload);
     };
     socket.ev.on('messages.upsert', guarded(ingest.onMessagesUpsert));
+    // Delivery acks (sent/delivered/read/played) → outgoing check indicators.
+    socket.ev.on('messages.update', guarded(ingest.onMessagesUpdate));
     socket.ev.on('messages.reaction', guarded(ingest.onReactions));
     socket.ev.on('messaging-history.set', guarded(ingest.onHistorySync));
     socket.ev.on('chats.upsert', guarded(ingest.onChatsUpsert));

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 // Media block inside a message bubble — the full experience, honest about
 // every lifecycle state the bridge records:
@@ -73,6 +73,52 @@ function Placeholder({ icon, title, subtitle, media }) {
 
 const DOC_ICON = '📄';
 
+// Voice/audio player with WhatsApp-style playback speed (×1 / ×1.5 / ×2).
+// The chosen rate is remembered for the session, so listening through a
+// backlog of voice notes keeps the speed you picked.
+const PLAYBACK_RATES = [1, 1.5, 2];
+let sessionRate = 1;
+
+function AudioPlayer({ src }) {
+  const audioRef = useRef(null);
+  const [rate, setRate] = useState(sessionRate);
+
+  function cycleRate() {
+    const next = PLAYBACK_RATES[(PLAYBACK_RATES.indexOf(rate) + 1) % PLAYBACK_RATES.length];
+    sessionRate = next;
+    setRate(next);
+    if (audioRef.current) audioRef.current.playbackRate = next;
+  }
+
+  return (
+    <div className="mb-1 flex min-w-[220px] items-center gap-1.5">
+      <audio
+        ref={audioRef}
+        controls
+        preload="none"
+        src={src}
+        className="h-10 min-w-0 flex-1"
+        onPlay={(e) => {
+          e.currentTarget.playbackRate = rate;
+        }}
+      />
+      <button
+        type="button"
+        onClick={cycleRate}
+        title="מהירות ניגון"
+        dir="ltr"
+        className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-bold ring-1 transition ${
+          rate === 1
+            ? 'bg-white text-gray-500 ring-gray-300 hover:bg-gray-50'
+            : 'bg-emerald-600 text-white ring-emerald-600'
+        }`}
+      >
+        ×{rate}
+      </button>
+    </div>
+  );
+}
+
 export default function MessageMedia({ message: m, typeLabel }) {
   const [lightbox, setLightbox] = useState(false);
   const media = m.media;
@@ -145,11 +191,7 @@ export default function MessageMedia({ message: m, typeLabel }) {
       );
     }
     if (m.messageType === 'audio') {
-      return (
-        <div className="mb-1 min-w-[220px]">
-          <audio controls preload="none" src={mediaUrl(m)} className="h-10 w-full" />
-        </div>
-      );
+      return <AudioPlayer src={mediaUrl(m)} />;
     }
     // document (and any other stored type) — open/download card
     return (

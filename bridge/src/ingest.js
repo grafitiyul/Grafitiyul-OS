@@ -29,6 +29,10 @@ function errSummary(err) {
   return String(err).slice(0, 240);
 }
 
+// WhatsApp ack ladder (proto WAMessageStatus → our deliveryStatus strings).
+const ACK_BY_STATUS = { 2: 'sent', 3: 'delivered', 4: 'read', 5: 'played' };
+const ACK_RANK = { sent: 1, delivered: 2, read: 3, played: 4 };
+
 function pickName(raw) {
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
@@ -363,6 +367,9 @@ export function createIngest({ prisma, socket, log, accountId }) {
         chatId: chat.id,
         externalMessageId,
         direction,
+        // Outgoing rows start at whatever ack the payload already carries
+        // (history-synced sends arrive pre-acked), minimum 'sent'.
+        deliveryStatus: isFromMe ? ACK_BY_STATUS[Number(msg.status)] ?? 'sent' : null,
         senderName,
         senderPhone,
         messageType: content.messageType,
@@ -494,6 +501,22 @@ export function createIngest({ prisma, socket, log, accountId }) {
     }
   }
 
+  // ── outgoing delivery acks (messages.update) ─────────────────────────────
+  // WAMessageStatus: 2=SERVER_ACK(sent) 3=DELIVERY_ACK 4=READ 5=PLAYED. The
+  // ladder only climbs — a late 'delivered' ack must never demote 'read'.
+  async function ingestAck(update) {
+    const externalMessageId = update?.key?.id;
+    const status = ACK_BY_STATUS[Number(update?.update?.status)];
+    if (!externalMessageId || !status) return;
+    const row = await prisma.whatsAppMessage.findUnique({
+      where: { accountId_externalMessageId: { accountId, externalMessageId } },
+      select: { id: true, direction: true, deliveryStatus: true },
+    });
+    if (!row || row.direction !== 'outgoing') return;
+    if ((ACK_RANK[row.deliveryStatus] ?? 0) >= ACK_RANK[status]) return;
+    await prisma.whatsAppMessage.update({ where: { id: row.id }, data: { deliveryStatus: status } });
+  }
+
   // ── reactions ───────────────────────────────────────────────────────────
   async function ingestReaction(r) {
     const targetId = r.key?.id;
@@ -558,6 +581,16 @@ export function createIngest({ prisma, socket, log, accountId }) {
           await ingestMessage(msg, 'history');
         } catch (err) {
           log.error({ err: errSummary(err), msgId: msg.key?.id ?? null, chatId: msg.key?.remoteJid ?? null }, 'history-sync ingest failed');
+        }
+      }
+    },
+
+    async onMessagesUpdate(updates) {
+      for (const u of updates || []) {
+        try {
+          await ingestAck(u);
+        } catch (err) {
+          log.error({ err: errSummary(err), msgId: u.key?.id ?? null }, 'ack ingest failed');
         }
       }
     },

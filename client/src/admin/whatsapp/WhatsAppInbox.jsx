@@ -4,18 +4,23 @@ import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import ChatThread from './ChatThread.jsx';
 import DealDrawer from './DealDrawer.jsx';
-import { resolveActivityLabel } from '../deals/config.js';
+import Checks from './Checks.jsx';
+import ActivityBadgeChip from '../deals/ActivityBadgeChip.jsx';
+import { ensureSeen, isUnread, markSeen, markUnread, readSeen } from './seenStore.js';
 
 // Active WhatsApp inbox — WhatsApp-style two-pane workspace:
 //   RIGHT: pinned conversation list (resizable, persisted width) with the
-//          account switcher, scope filter and search. Clicking a ROW opens
-//          the chat; the primary row action is פתח דיל.
+//          account switcher, scope + status filters and search. Rows are
+//          CLEAN (name / preview / time / indicators only) — actions live in
+//          a hover cluster (pin / read / snooze); פתח דיל lives in the
+//          THREAD header, not on rows.
 //   LEFT:  the selected conversation (full thread + composer). Manual
-//          contact-linking lives HERE (unmatched chats only) — not as row
-//          noise. Opening a deal slides the drawer over the chat area while
-//          the list stays visible.
+//          contact-linking lives HERE (unmatched chats only). Opening a deal
+//          slides the drawer over the chat area while the list stays visible.
 // Default scope is the WORK QUEUE: linked conversations + recent unknown
 // ones; ancient unknown numbers stay behind the "הכל" scope or search.
+// Keyboard: ↑/↓ move the cursor, Enter opens it, Esc closes/clears, Ctrl+K
+// focuses search.
 
 const LAYOUT_KEY = 'gos-whatsapp-inbox'; // { listWidth }
 const LIST_MIN = 300;
@@ -33,6 +38,14 @@ function fmtWhen(iso) {
     return same
       ? d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
       : d.toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' });
+  } catch {
+    return '';
+  }
+}
+
+function fmtSnoozedUntil(iso) {
+  try {
+    return new Date(iso).toLocaleString('he-IL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' });
   } catch {
     return '';
   }
@@ -69,11 +82,42 @@ function errText(prefix, e) {
   return `${prefix} — נסו שוב.${code ? ` (${code}${detail ? `: ${detail}` : ''})` : ''}`;
 }
 
+function isToday(iso) {
+  if (!iso) return false;
+  const d = new Date(iso);
+  const t = new Date();
+  return d.getFullYear() === t.getFullYear() && d.getMonth() === t.getMonth() && d.getDate() === t.getDate();
+}
+
 const DEAL_STATUS = {
   open: { label: 'פתוח', cls: 'bg-blue-50 text-blue-700 ring-blue-200' },
   won: { label: 'נסגר', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
   lost: { label: 'אבוד', cls: 'bg-gray-100 text-gray-500 ring-gray-200' },
 };
+
+// Status filters — applied client-side on the loaded list.
+const STATUS_FILTERS = [
+  { key: 'all', label: 'הכל' },
+  { key: 'unread', label: 'לא נקראו' },
+  { key: 'awaiting', label: 'ממתינות למענה' },
+  { key: 'deal', label: 'עם דיל' },
+  { key: 'nodeal', label: 'בלי דיל' },
+  { key: 'today', label: 'היום' },
+];
+
+// Snooze presets → a concrete Date.
+function snoozeOptions() {
+  const now = Date.now();
+  const tomorrow9 = new Date();
+  tomorrow9.setDate(tomorrow9.getDate() + 1);
+  tomorrow9.setHours(9, 0, 0, 0);
+  return [
+    { label: 'לשעה', until: new Date(now + 3600_000) },
+    { label: 'ל-3 שעות', until: new Date(now + 3 * 3600_000) },
+    { label: 'עד מחר 9:00', until: tomorrow9 },
+    { label: 'לשבוע', until: new Date(now + 7 * 86_400_000) },
+  ];
+}
 
 function DealChoiceRow({ deal, onPick }) {
   const st = DEAL_STATUS[deal.status] || DEAL_STATUS.open;
@@ -278,11 +322,29 @@ function ContactPicker({ onPick, onCancel, busy }) {
   );
 }
 
+// Tiny icon button in the row's hover action cluster.
+function RowAction({ onClick, title, children }) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick(e);
+      }}
+      className="flex h-6 w-6 items-center justify-center rounded-md bg-white text-[12px] text-gray-500 shadow-sm ring-1 ring-gray-200 hover:text-gray-800"
+    >
+      {children}
+    </button>
+  );
+}
+
 export default function WhatsAppInbox({ accounts = [], onCountChange }) {
   const [chats, setChats] = useState(null);
   const [unmatchedCount, setUnmatchedCount] = useState(0);
   const [accountFilter, setAccountFilter] = useState('all');
   const [scope, setScope] = useState('active'); // active | unmatched | all
+  const [statusFilter, setStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(null); // chat object snapshot
   const [linking, setLinking] = useState(false);
@@ -290,6 +352,12 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
   const [dialog, setDialog] = useState(null);
   const [drawerDealId, setDrawerDealId] = useState(null);
   const [error, setError] = useState(null);
+  // Per-chat unread counts (device-local seen markers + server counts).
+  const [unreadCounts, setUnreadCounts] = useState({});
+  // Which chat's snooze menu is open (chat id or null).
+  const [snoozeMenuFor, setSnoozeMenuFor] = useState(null);
+  // Keyboard cursor (chat id) — ↑/↓ move it, Enter opens it.
+  const [cursorId, setCursorId] = useState(null);
   const [listWidth, setListWidth] = useState(() => {
     try {
       const w = Number(JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}').listWidth);
@@ -300,6 +368,25 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
   });
   const draggingRef = useRef(false);
   const containerRef = useRef(null);
+  const searchInputRef = useRef(null);
+
+  // Unread counts for chats whose last message is newer than the seen marker.
+  // Bounded: only unread candidates hit the count endpoint (usually a few).
+  const computeUnread = useCallback(async (list) => {
+    const seen = ensureSeen(list.map((c) => c.id));
+    const candidates = list.filter((c) => isUnread(c, seen)).slice(0, 25);
+    const entries = await Promise.all(
+      candidates.map(async (c) => {
+        try {
+          const { count } = await api.whatsapp.chatMessages(c.id, { count: 1, after: seen[c.id] });
+          return [c.id, count || 0];
+        } catch {
+          return [c.id, 1]; // it IS unread — show at least a dot-equivalent
+        }
+      }),
+    );
+    setUnreadCounts(Object.fromEntries(entries.filter(([, n]) => n > 0)));
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -314,10 +401,11 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
       // Keep the open thread's snapshot fresh (name/contact may change).
       setSelected((cur) => (cur ? data.chats.find((c) => c.id === cur.id) || cur : cur));
       setError(null);
+      computeUnread(data.chats);
     } catch (e) {
       setError(e?.payload?.error || e?.message || 'failed');
     }
-  }, [search, accountFilter, scope, onCountChange]);
+  }, [search, accountFilter, scope, onCountChange, computeUnread]);
 
   useEffect(() => {
     const t = setTimeout(() => load(), search ? 300 : 0);
@@ -330,6 +418,18 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
     }, 20_000);
     return () => clearInterval(t);
   }, [load, drawerDealId]);
+
+  // Reading the open conversation = seen (also as new messages arrive).
+  useEffect(() => {
+    if (!selected) return;
+    markSeen(selected.id);
+    setUnreadCounts((cur) => {
+      if (!cur[selected.id]) return cur;
+      const next = { ...cur };
+      delete next[selected.id];
+      return next;
+    });
+  }, [selected?.id, selected?.lastMessageAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // List resize — anchored to the container's RIGHT edge (RTL list).
   useEffect(() => {
@@ -358,6 +458,84 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
       document.removeEventListener('mouseup', onUp);
     };
   }, []);
+
+  // Status filter — client-side over the loaded window.
+  const filteredChats = useMemo(() => {
+    if (!chats) return null;
+    if (statusFilter === 'all') return chats;
+    const seen = readSeen();
+    return chats.filter((c) => {
+      switch (statusFilter) {
+        case 'unread':
+          return isUnread(c, seen);
+        case 'awaiting':
+          return c.lastMessage?.direction === 'incoming';
+        case 'deal':
+          return !!c.deal;
+        case 'nodeal':
+          return !c.deal;
+        case 'today':
+          return isToday(c.lastMessageAt);
+        default:
+          return true;
+      }
+    });
+  }, [chats, statusFilter, unreadCounts]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function openChat(chat) {
+    setSelected(chat);
+    setCursorId(chat.id);
+    setLinking(false);
+  }
+
+  // Keyboard shortcuts. Typing in inputs is respected (only Ctrl+K / Esc
+  // reach through); the cursor follows ↑/↓ and Enter opens it.
+  useEffect(() => {
+    function onKey(e) {
+      const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName) || e.target?.isContentEditable;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+      if (e.key === 'Escape') {
+        if (drawerDealId) return; // the drawer handles its own ESC
+        if (dialog) {
+          setDialog(null);
+          return;
+        }
+        if (inField) {
+          e.target.blur();
+          if (e.target === searchInputRef.current) setSearch('');
+          return;
+        }
+        if (snoozeMenuFor) setSnoozeMenuFor(null);
+        else if (selected) setSelected(null);
+        return;
+      }
+      if (inField || dialog || drawerDealId) return;
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        const list = filteredChats || [];
+        if (list.length === 0) return;
+        e.preventDefault();
+        const idx = list.findIndex((c) => c.id === (cursorId || selected?.id));
+        const next =
+          e.key === 'ArrowDown'
+            ? list[Math.min(list.length - 1, idx + 1)] || list[0]
+            : list[Math.max(0, idx - 1)] || list[0];
+        setCursorId(next.id);
+        document.querySelector(`[data-chat-row="${next.id}"]`)?.scrollIntoView({ block: 'nearest' });
+        return;
+      }
+      if (e.key === 'Enter') {
+        const list = filteredChats || [];
+        const cur = list.find((c) => c.id === cursorId);
+        if (cur) openChat(cur);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [filteredChats, cursorId, selected, dialog, drawerDealId, snoozeMenuFor]);
 
   async function link(chat, contact) {
     setBusy(chat.id);
@@ -397,6 +575,31 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
       setError(errText('יצירת הדיל נכשלה', e));
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function setChatState(chat, data) {
+    try {
+      await api.whatsapp.chatState(chat.id, data);
+      await load();
+    } catch (e) {
+      setError(errText('הפעולה נכשלה', e));
+    }
+  }
+
+  function toggleRead(chat) {
+    const seen = readSeen();
+    if (isUnread(chat, seen) || unreadCounts[chat.id]) {
+      markSeen(chat.id);
+      setUnreadCounts((cur) => {
+        const next = { ...cur };
+        delete next[chat.id];
+        return next;
+      });
+    } else if (chat.lastMessage?.direction === 'incoming') {
+      markUnread(chat.id, chat.lastMessage.timestampFromSource || chat.lastMessageAt);
+      setUnreadCounts((cur) => ({ ...cur, [chat.id]: 1 }));
+      if (selected?.id === chat.id) setSelected(null);
     }
   }
 
@@ -453,19 +656,36 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                 </button>
               ))}
             </div>
+            <div className="flex items-center gap-1 overflow-x-auto">
+              {STATUS_FILTERS.map((f) => (
+                <button
+                  key={f.key}
+                  type="button"
+                  onClick={() => setStatusFilter(f.key)}
+                  className={`whitespace-nowrap rounded-full px-2 py-0.5 text-[10.5px] font-medium transition ${
+                    statusFilter === f.key
+                      ? 'bg-gray-800 text-white'
+                      : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
             <input
+              ref={searchInputRef}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="חיפוש לפי שם או מספר…"
+              placeholder="חיפוש לפי שם או מספר…  (Ctrl+K)"
               dir="auto"
               className="w-full rounded-xl border border-gray-300 bg-white px-3 py-1.5 text-[13px] focus:border-emerald-500 focus:outline-none"
             />
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {chats === null ? (
+            {filteredChats === null ? (
               <p className="px-4 py-10 text-center text-sm text-gray-400">טוען שיחות…</p>
-            ) : chats.length === 0 ? (
+            ) : filteredChats.length === 0 ? (
               <div className="px-4 py-10 text-center">
                 <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-emerald-50">
                   <WhatsAppLogo size={24} />
@@ -476,51 +696,69 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
               </div>
             ) : (
               <ul className="divide-y divide-gray-100">
-                {chats.map((chat) => {
+                {filteredChats.map((chat) => {
                   const active = selected && chat.id === selected.id;
+                  const unreadN = unreadCounts[chat.id] || 0;
+                  const unread = unreadN > 0;
+                  const lastOut = chat.lastMessage?.direction === 'outgoing';
+                  const snoozed = chat.snoozedUntil && new Date(chat.snoozedUntil) > new Date();
                   return (
                     <li key={chat.id}>
                       <div
                         role="button"
                         tabIndex={0}
-                        onClick={() => {
-                          setSelected(chat);
-                          setLinking(false);
-                        }}
-                        onKeyDown={(e) => e.key === 'Enter' && setSelected(chat)}
-                        className={`cursor-pointer px-3 py-2.5 transition ${
-                          active ? 'bg-emerald-50/70' : 'hover:bg-gray-50'
+                        data-chat-row={chat.id}
+                        onClick={() => openChat(chat)}
+                        onKeyDown={(e) => e.key === 'Enter' && openChat(chat)}
+                        className={`group relative cursor-pointer px-3 py-2.5 transition ${
+                          active
+                            ? 'bg-emerald-50/70'
+                            : cursorId === chat.id
+                              ? 'bg-gray-100'
+                              : 'hover:bg-gray-50'
                         }`}
                       >
                         <div className="flex items-center gap-2">
-                          <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold text-gray-900" dir="auto">
+                          {chat.pinnedAt && <span className="shrink-0 text-[11px] text-gray-400" title="שיחה נעוצה">📌</span>}
+                          {snoozed && (
+                            <span className="shrink-0 text-[11px]" title={`בנודניק עד ${fmtSnoozedUntil(chat.snoozedUntil)}`}>💤</span>
+                          )}
+                          <span
+                            className={`min-w-0 flex-1 truncate text-[13.5px] text-gray-900 ${unread ? 'font-bold' : 'font-semibold'}`}
+                            dir="auto"
+                          >
                             {chat.displayName || chat.phoneNumber || 'לא מזוהה'}
                           </span>
-                          <span className="shrink-0 text-[11px] text-gray-400" dir="ltr">
+                          <span className={`shrink-0 text-[11px] ${unread ? 'font-semibold text-emerald-600' : 'text-gray-400'}`} dir="ltr">
                             {fmtWhen(chat.lastMessageAt)}
                           </span>
                         </div>
-                        <div className="mt-0.5 flex items-center gap-2">
-                          <span className="min-w-0 flex-1 truncate text-[12px] text-gray-500" dir="auto">
+                        <div className="mt-0.5 flex items-center gap-1.5">
+                          {/* Direction indicator: outgoing = delivery checks,
+                              incoming unread = bold + count badge. */}
+                          {lastOut && <Checks status={chat.lastMessage?.deliveryStatus || 'sent'} size={14} />}
+                          <span
+                            className={`min-w-0 flex-1 truncate text-[12px] ${unread ? 'font-semibold text-gray-800' : 'text-gray-500'}`}
+                            dir="auto"
+                          >
                             {snippet(chat.lastMessage)}
                           </span>
-                          {accountFilter === 'all' && accounts.length > 1 && (
-                            <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">
-                              {chat.account?.label || chat.accountId}
+                          {unread && (
+                            <span className="flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-emerald-500 px-1 text-[10.5px] font-bold text-white">
+                              {unreadN > 99 ? '99+' : unreadN}
                             </span>
                           )}
                         </div>
                         <div className="mt-1.5 flex items-center gap-2">
                           {chat.deal ? (
-                            // Confidently-resolved deal — the SAME activity
-                            // badge text the Deal header shows (specific
-                            // org-type + subtype for business deals).
-                            <span
-                              className="min-w-0 truncate rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-medium text-emerald-700 ring-1 ring-emerald-200"
+                            // The EXACT Deal-header badge (shared resolver +
+                            // shared tones) — specific type for business deals.
+                            <ActivityBadgeChip
+                              activityType={chat.deal.activityType}
+                              orgTypeLabel={chat.deal.orgTypeLabel}
+                              subtypeLabel={chat.deal.subtypeLabel}
                               title={chat.deal.title}
-                            >
-                              {resolveActivityLabel(chat.deal) || chat.deal.title || 'דיל'}
-                            </span>
+                            />
                           ) : chat.contact ? (
                             <span className="min-w-0 truncate rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-medium text-emerald-700 ring-1 ring-emerald-200">
                               {chat.contact.name || 'איש קשר'}
@@ -530,20 +768,69 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                               ללא שיוך
                             </span>
                           )}
-                          <button
-                            type="button"
-                            disabled={busy === chat.id}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openDeal(chat);
-                            }}
-                            className={`mr-auto rounded-lg px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-50 ${
-                              chat.contact ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700'
-                            }`}
-                          >
-                            {busy === chat.id ? 'פותח…' : chat.contact ? 'פתח דיל' : 'צור דיל'}
-                          </button>
+                          {/* Hover action cluster — pin / read / snooze */}
+                          <div className="relative mr-auto hidden items-center gap-1 group-hover:flex">
+                            <RowAction
+                              title={chat.pinnedAt ? 'ביטול נעיצה' : 'נעיצת השיחה'}
+                              onClick={() => setChatState(chat, { pinned: !chat.pinnedAt })}
+                            >
+                              📌
+                            </RowAction>
+                            <RowAction
+                              title={unread ? 'סימון כנקראה' : 'סימון כלא נקראה'}
+                              onClick={() => toggleRead(chat)}
+                            >
+                              {unread ? '✓' : '✉'}
+                            </RowAction>
+                            <RowAction
+                              title={snoozed ? 'נודניק פעיל' : 'נודניק (הסתרה זמנית)'}
+                              onClick={() => setSnoozeMenuFor(snoozeMenuFor === chat.id ? null : chat.id)}
+                            >
+                              💤
+                            </RowAction>
+                          </div>
                         </div>
+                        {snoozeMenuFor === chat.id && (
+                          <>
+                            <div
+                              className="fixed inset-0 z-30"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSnoozeMenuFor(null);
+                              }}
+                            />
+                            <div
+                              className="absolute left-2 top-full z-40 -mt-1 w-44 rounded-xl border border-gray-200 bg-white py-1 shadow-xl"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {snoozeOptions().map((o) => (
+                                <button
+                                  key={o.label}
+                                  type="button"
+                                  onClick={() => {
+                                    setSnoozeMenuFor(null);
+                                    setChatState(chat, { snoozedUntil: o.until.toISOString() });
+                                  }}
+                                  className="block w-full px-3 py-1.5 text-right text-[12.5px] text-gray-700 hover:bg-gray-50"
+                                >
+                                  {o.label}
+                                </button>
+                              ))}
+                              {snoozed && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSnoozeMenuFor(null);
+                                    setChatState(chat, { snoozedUntil: null });
+                                  }}
+                                  className="block w-full border-t border-gray-100 px-3 py-1.5 text-right text-[12.5px] font-medium text-red-600 hover:bg-red-50"
+                                >
+                                  ביטול הנודניק
+                                </button>
+                              )}
+                            </div>
+                          </>
+                        )}
                       </div>
                     </li>
                   );
@@ -623,6 +910,7 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                 <WhatsAppLogo size={30} />
               </div>
               <p className="text-sm text-gray-500">בחרו שיחה מהרשימה כדי לצפות ולהשיב</p>
+              <p className="text-[11.5px] text-gray-400">↑↓ מעבר בין שיחות · Enter פתיחה · Ctrl+K חיפוש</p>
             </div>
           )}
 

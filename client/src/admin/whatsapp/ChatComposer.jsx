@@ -180,7 +180,7 @@ function classifyFile(file) {
   return 'document';
 }
 
-export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onScheduled, droppedFile = null, onDroppedFileConsumed }) {
+export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onScheduled, droppedFiles = null, onDroppedFilesConsumed }) {
   const draftKey = `${chat.accountId || chat.account?.id || ''}:${chat.id}`;
   const [text, setText] = useState(() => readDrafts()[draftKey] || '');
   const [sending, setSending] = useState(false);
@@ -193,8 +193,8 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
   // Live input level while recording (0..1) — the on-screen proof the mic is
   // actually being heard; a flat meter = capture problem, named immediately.
   const [recLevel, setRecLevel] = useState(0);
-  // Pending attachment: { file, kind, url (image preview), key }
-  const [attachment, setAttachment] = useState(null);
+  // Pending attachments (multi): [{ file, kind, url (image preview), key }]
+  const [attachments, setAttachments] = useState([]);
   const keyRef = useRef({ key: null, fingerprint: null });
   const textareaRef = useRef(null);
   const recorderRef = useRef(null);
@@ -203,69 +203,80 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
   const maxLevelRef = useRef(0);
   const fileInputRef = useRef(null);
 
-  function attachFile(file) {
-    if (!file) return;
+  function attachFiles(fileList) {
+    const files = [...(fileList || [])].filter(Boolean);
+    if (files.length === 0) return;
     setError(null);
-    if (file.size > MAX_ATTACHMENT_BYTES) {
-      setError('הקובץ גדול מדי — ניתן לשלוח עד 16MB.');
-      return;
-    }
-    if (file.size < 10) {
-      setError('הקובץ ריק.');
-      return;
-    }
-    setAttachment((cur) => {
-      if (cur?.url) URL.revokeObjectURL(cur.url);
+    const accepted = [];
+    for (const file of files) {
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        setError(`"${file.name || 'קובץ'}" גדול מדי — ניתן לשלוח עד 16MB.`);
+        continue;
+      }
+      if (file.size < 10) continue; // empty
       const kind = classifyFile(file);
-      return {
+      accepted.push({
         file,
         kind,
         url: kind === 'image' ? URL.createObjectURL(file) : null,
         // One idempotency key per attachment — retry-safe.
         key: crypto.randomUUID(),
-      };
-    });
+      });
+    }
+    if (accepted.length) setAttachments((cur) => [...cur, ...accepted].slice(0, 10));
   }
 
-  function removeAttachment() {
-    setAttachment((cur) => {
-      if (cur?.url) URL.revokeObjectURL(cur.url);
-      return null;
+  function removeAttachment(key) {
+    setAttachments((cur) => {
+      const item = cur.find((a) => a.key === key);
+      if (item?.url) URL.revokeObjectURL(item.url);
+      return cur.filter((a) => a.key !== key);
     });
   }
 
   // Files dropped anywhere on the thread arrive via prop.
   useEffect(() => {
-    if (droppedFile) {
-      attachFile(droppedFile);
-      onDroppedFileConsumed?.();
+    if (droppedFiles?.length) {
+      attachFiles(droppedFiles);
+      onDroppedFilesConsumed?.();
     }
-  }, [droppedFile]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [droppedFiles]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function sendAttachment() {
-    if (!attachment || sending) return;
+  // Send the attachment queue sequentially. The composer text rides as the
+  // caption of the FIRST file. Files that made it out are removed from the
+  // queue as they go, so a mid-batch failure retries only the remainder —
+  // each item keeps its own idempotency key across retries.
+  async function sendAttachments() {
+    if (attachments.length === 0 || sending) return;
     setSending(true);
     setError(null);
+    const queue = [...attachments];
+    let firstOut = true;
+    let lastMessage = null;
     try {
-      const mediaBase64 = await blobToBase64(attachment.file);
-      const resp = await api.whatsapp.sendMedia(chat.id, {
-        mediaBase64,
-        mimeType: attachment.file.type || 'application/octet-stream',
-        fileName: attachment.file.name || '',
-        kind: attachment.kind,
-        caption: text.trim(),
-        clientKey: attachment.key,
-      });
-      removeAttachment();
+      for (const item of queue) {
+        const mediaBase64 = await blobToBase64(item.file);
+        const resp = await api.whatsapp.sendMedia(chat.id, {
+          mediaBase64,
+          mimeType: item.file.type || 'application/octet-stream',
+          fileName: item.file.name || '',
+          kind: item.kind,
+          caption: firstOut ? text.trim() : '',
+          clientKey: item.key,
+        });
+        firstOut = false;
+        lastMessage = resp.message || lastMessage;
+        removeAttachment(item.key);
+      }
       setText('');
       writeDraft(draftKey, '');
       onCancelReply?.();
-      onSent?.(resp.message || null);
+      onSent?.(lastMessage);
     } catch (e) {
       setError(
         e?.payload?.error === 'media_too_large'
           ? 'הקובץ גדול מדי — ניתן לשלוח עד 16MB.'
-          : SEND_ERRORS[e?.payload?.error] || 'שליחת הקובץ נכשלה — נסו שוב.',
+          : SEND_ERRORS[e?.payload?.error] || 'שליחת הקובץ נכשלה — הקבצים שנותרו לא נשלחו, נסו שוב.',
       );
     } finally {
       setSending(false);
@@ -295,7 +306,10 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Teardown on unmount: stop any live recording + release the blob URL.
+  // Teardown on unmount: stop any live recording + release blob URLs
+  // (recording preview + attachment image previews).
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
   useEffect(
     () => () => {
       try {
@@ -303,6 +317,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
         recorderRef.current?.stop?.();
       } catch { /* already stopped */ }
       clearInterval(recTimerRef.current);
+      for (const a of attachmentsRef.current) if (a.url) URL.revokeObjectURL(a.url);
     },
     [],
   );
@@ -450,7 +465,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
   }
 
   async function send() {
-    if (attachment) return sendAttachment();
+    if (attachments.length) return sendAttachments();
     const body = text.trim();
     if (!body || sending) return;
     // Same text + same reply target ⇒ same idempotency key across retries.
@@ -596,7 +611,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
         // Two rows: the text field gets the FULL width (long Hebrew wraps
         // comfortably, grows up to ~8 lines), actions live on their own row
         // beneath — nothing squeezes the text. Dropping a file anywhere here
-        // attaches it (the thread area forwards drops via droppedFile).
+        // attaches them (the thread area forwards drops via droppedFiles).
         <div
           className="relative px-3 pb-2 pt-2"
           onDragOver={(e) => {
@@ -604,33 +619,43 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
           }}
           onDrop={(e) => {
             e.preventDefault();
-            attachFile(e.dataTransfer?.files?.[0]);
+            attachFiles(e.dataTransfer?.files);
           }}
         >
-          {attachment && (
-            <div className="mb-1.5 flex items-center gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50/50 px-2.5 py-2">
-              {attachment.url ? (
-                <img src={attachment.url} alt="" className="h-12 w-12 shrink-0 rounded-lg object-cover" />
-              ) : (
-                <span className="text-2xl leading-none">{attachment.kind === 'video' ? '🎬' : '📄'}</span>
-              )}
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[13px] font-medium text-gray-800" dir="ltr">
-                  {attachment.file.name || 'קובץ'}
-                </p>
-                <p className="text-[11px] text-gray-500">
-                  {fmtKb(attachment.file.size)} · יישלח כ{attachment.kind === 'image' ? 'תמונה' : attachment.kind === 'video' ? 'סרטון' : 'מסמך'}
-                  {text.trim() ? ' עם הכיתוב שלמטה' : ''}
-                </p>
+          {attachments.length > 0 && (
+            <div className="mb-1.5 rounded-xl border border-emerald-200 bg-emerald-50/50 px-2.5 py-2">
+              <div className="flex flex-wrap gap-2">
+                {attachments.map((a) => (
+                  <div
+                    key={a.key}
+                    className="relative flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-2 py-1.5"
+                  >
+                    {a.url ? (
+                      <img src={a.url} alt="" className="h-12 w-12 shrink-0 rounded-md object-cover" />
+                    ) : (
+                      <span className="text-xl leading-none">{a.kind === 'video' ? '🎬' : '📄'}</span>
+                    )}
+                    <div className="min-w-0 max-w-[150px]">
+                      <p className="truncate text-[12px] font-medium text-gray-800" dir="ltr">
+                        {a.file.name || 'קובץ'}
+                      </p>
+                      <p className="text-[10.5px] text-gray-500">{fmtKb(a.file.size)}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeAttachment(a.key)}
+                      aria-label="הסרת הקובץ"
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[15px] text-gray-400 hover:bg-gray-100 hover:text-red-600"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
               </div>
-              <button
-                type="button"
-                onClick={removeAttachment}
-                aria-label="הסרת הקובץ"
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-lg text-gray-400 hover:bg-white hover:text-red-600"
-              >
-                ×
-              </button>
+              <p className="mt-1 text-[11px] text-gray-500">
+                {attachments.length === 1 ? 'קובץ אחד יישלח' : `${attachments.length} קבצים יישלחו`}
+                {text.trim() ? ' — הכיתוב שלמטה יצורף לקובץ הראשון' : ''}
+              </p>
             </div>
           )}
           <textarea
@@ -650,7 +675,16 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
                 send();
               }
             }}
-            placeholder={attachment ? 'כיתוב לקובץ (לא חובה)…' : 'כתבו הודעה…'}
+            onPaste={(e) => {
+              // Ctrl+V with an image (or files) on the clipboard attaches it —
+              // screenshots paste straight into the conversation.
+              const files = [...(e.clipboardData?.files || [])];
+              if (files.length) {
+                e.preventDefault();
+                attachFiles(files);
+              }
+            }}
+            placeholder={attachments.length ? 'כיתוב לקובץ הראשון (לא חובה)…' : 'כתבו הודעה…'}
             dir="auto"
             className="block min-h-[42px] w-full resize-none rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-[14px] leading-relaxed focus:border-emerald-500 focus:outline-none disabled:opacity-60"
           />
@@ -658,9 +692,10 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
             <input
               ref={fileInputRef}
               type="file"
+              multiple
               className="hidden"
               onChange={(e) => {
-                attachFile(e.target.files?.[0]);
+                attachFiles(e.target.files);
                 e.target.value = '';
               }}
             />
@@ -711,10 +746,16 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
             <button
               type="button"
               onClick={send}
-              disabled={sending || (!text.trim() && !attachment)}
+              disabled={sending || (!text.trim() && attachments.length === 0)}
               className="mr-auto h-9 shrink-0 rounded-xl bg-emerald-600 px-5 text-[13px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-40"
             >
-              {sending ? 'שולח…' : attachment ? 'שליחת קובץ' : 'שליחה'}
+              {sending
+                ? 'שולח…'
+                : attachments.length > 1
+                  ? `שליחת ${attachments.length} קבצים`
+                  : attachments.length === 1
+                    ? 'שליחת קובץ'
+                    : 'שליחה'}
             </button>
           </div>
           {emojiOpen && (

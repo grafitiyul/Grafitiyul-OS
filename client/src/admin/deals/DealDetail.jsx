@@ -20,6 +20,8 @@ import { contactNamesFromParts } from '../../lib/nameSplit.js';
 import {
   ACTIVITY_TYPES,
   ACTIVITY_TYPE_LABELS,
+  ACTIVITY_BADGE_TONE,
+  ACTIVITY_BADGE_NEUTRAL,
   resolveActivityLabel,
   ROLE_LABELS,
   TOUR_LANGS,
@@ -909,16 +911,8 @@ function BuildingIcon() {
   );
 }
 
-// Per-activity badge colour. The badge itself carries the colour (no dot):
-// business = green, private = red, group = amber. Soft, modern, tasteful.
-const ACTIVITY_BADGE_TONE = {
-  business: 'bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-200 hover:bg-emerald-200/60',
-  private: 'bg-rose-100 text-rose-800 ring-1 ring-inset ring-rose-200 hover:bg-rose-200/60',
-  group: 'bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-200 hover:bg-amber-200/60',
-};
-const ACTIVITY_BADGE_NEUTRAL =
-  'bg-gray-50 text-gray-500 ring-1 ring-inset ring-gray-200 border border-dashed border-gray-300 hover:bg-gray-100';
-// Selected-option styling inside the editor popover.
+// Selected-option styling inside the editor popover. (Badge tone maps live in
+// deals/config.js — shared with the WhatsApp inbox badge, one source only.)
 const ACTIVITY_OPTION_ON = {
   business: 'bg-emerald-600 text-white border-emerald-600',
   private: 'bg-rose-600 text-white border-rose-600',
