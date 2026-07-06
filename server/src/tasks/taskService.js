@@ -143,6 +143,30 @@ export async function markTaskSentByScheduled(taskId) {
   }
 }
 
+// Called when a linked scheduled message is rescheduled/edited from the WhatsApp
+// thread's scheduled strip. Keeps the Task's due date/time (and title) in lockstep
+// with the scheduled message so the two never drift. dueDate/dueTime are the
+// user's LOCAL wall-clock parts (the strip sends them from its datetime picker) —
+// the same convention the task composer uses — so no timezone reinterpretation.
+export async function syncTaskFromScheduledEdit(taskId, { dueDate, dueTime, title }) {
+  try {
+    const task = await prisma.task.findUnique({ where: { id: taskId }, select: { id: true, status: true } });
+    if (!task || task.status !== OPEN_STATUS) return;
+    const data = {};
+    if (dueDate) {
+      const d = new Date(dueDate);
+      if (!Number.isNaN(d.getTime())) data.dueDate = d;
+    }
+    if (dueTime !== undefined) {
+      data.dueTime = dueTime && /^([01]\d|2[0-3]):[0-5]\d$/.test(dueTime) ? dueTime : null;
+    }
+    if (title !== undefined && String(title).trim()) data.title = String(title).trim().slice(0, 500);
+    if (Object.keys(data).length) await prisma.task.update({ where: { id: taskId }, data });
+  } catch (e) {
+    console.warn('[task] syncTaskFromScheduledEdit failed', taskId, e?.message);
+  }
+}
+
 // Called when a scheduled message is cancelled OUTSIDE the task flow (e.g. from
 // the WhatsApp thread's scheduled strip). Moves the linked task to 'not_sent'
 // ("בסוף לא נשלחה") so the two surfaces stay consistent.

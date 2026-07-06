@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
+import { emitDealTasksChanged } from '../deals/tasks/taskEvents.js';
 
 // Collapsible strip above the composer listing this chat's scheduled
 // messages (pending / failed / skipped). Cancel and reschedule inline; a row
@@ -28,7 +29,7 @@ export function toLocalInputValue(date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export default function ScheduledStrip({ chat, nonce = 0 }) {
+export default function ScheduledStrip({ chat, nonce = 0, dealId = null }) {
   const [rows, setRows] = useState([]);
   const [open, setOpen] = useState(false);
   // { id, value } = time-only re-arm (failed/skipped);
@@ -58,6 +59,9 @@ export default function ScheduledStrip({ chat, nonce = 0 }) {
     setBusy(id);
     try {
       await fn();
+      // In a Deal context, a linked Task may have changed (reschedule/edit/
+      // cancel) — refresh the Deal focus area immediately (no page refresh).
+      if (dealId) emitDealTasksChanged(dealId);
     } catch {
       /* 409 = state moved on; the reload shows the truth */
     } finally {
@@ -120,6 +124,10 @@ export default function ScheduledStrip({ chat, nonce = 0 }) {
                               run(s.id, () =>
                                 api.whatsapp.updateScheduled(s.id, {
                                   scheduledAt: new Date(editing.value).toISOString(),
+                                  // Local wall-clock parts keep the linked Task's
+                                  // due date/time tz-correct (never drift).
+                                  dueDate: String(editing.value).slice(0, 10),
+                                  dueTime: String(editing.value).slice(11, 16),
                                   ...(editing.text !== undefined ? { text: editing.text.trim() } : {}),
                                 }),
                               )

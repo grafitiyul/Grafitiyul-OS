@@ -519,7 +519,7 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
       )}
       {canSend && (
         <>
-          <ScheduledStrip chat={chat} nonce={scheduledNonce} />
+          <ScheduledStrip chat={chat} nonce={scheduledNonce} dealId={dealId} />
           <ChatComposer
             chat={chat}
             dealId={dealId}

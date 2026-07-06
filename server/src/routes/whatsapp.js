@@ -4,7 +4,11 @@ import { handle } from '../asyncHandler.js';
 import { buildPhoneIndex, matchContactId, normalizePhoneIntl } from '../whatsapp/phone.js';
 import { bridgeUrlMap, callBridge } from '../whatsapp/bridgeClient.js';
 import { isConfigured as r2Configured, presignGet } from '../r2.js';
-import { markTaskNotSentByScheduled, createWhatsappTaskForScheduledMessage } from '../tasks/taskService.js';
+import {
+  markTaskNotSentByScheduled,
+  createWhatsappTaskForScheduledMessage,
+  syncTaskFromScheduledEdit,
+} from '../tasks/taskService.js';
 
 // WhatsApp module — Slice 1 (accounts / connections admin).
 //
@@ -1354,6 +1358,15 @@ router.put(
     });
     if (updated.count === 0) return res.status(409).json({ error: 'not_editable' });
     const row = await prisma.whatsAppScheduledMessage.findUnique({ where: { id: req.params.id } });
+    // Keep the linked CRM Task's due date/time (and title) in lockstep — the two
+    // must never drift. dueDate/dueTime are the client's LOCAL wall-clock parts.
+    if (row?.taskId) {
+      await syncTaskFromScheduledEdit(row.taskId, {
+        dueDate: typeof b.dueDate === 'string' ? b.dueDate : undefined,
+        dueTime: typeof b.dueTime === 'string' ? b.dueTime : undefined,
+        title: b.text !== undefined ? String(b.text) : undefined,
+      });
+    }
     res.json(toClientScheduled(row));
   }),
 );
