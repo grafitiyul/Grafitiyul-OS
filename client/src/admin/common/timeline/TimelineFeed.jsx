@@ -65,7 +65,12 @@ const COMPOSER_TABS = [
   { key: 'file', label: 'קובץ', enabled: false, icon: <PaperclipIcon /> },
 ];
 
-export default function TimelineFeed({ subjectType, subjectId, aggregate = false }) {
+// `showWhatsApp={false}` drops the WhatsApp composer tab — the Deal page
+// surfaces chat through the floating WhatsAppDock instead of the timeline.
+export default function TimelineFeed({ subjectType, subjectId, aggregate = false, showWhatsApp = true }) {
+  const composerTabs = showWhatsApp
+    ? COMPOSER_TABS
+    : COMPOSER_TABS.filter((t) => t.key !== 'whatsapp');
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -190,7 +195,7 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
       {/* Composer */}
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
         <div className="flex items-center gap-1 border-b border-gray-100 px-2 pt-2">
-          {COMPOSER_TABS.map((t) => (
+          {composerTabs.map((t) => (
             <button
               key={t.key}
               type="button"
@@ -235,7 +240,7 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
             <WhatsAppPanel subjectType={subjectType} subjectId={subjectId} />
           ) : (
             <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center text-sm text-gray-400">
-              {COMPOSER_TABS.find((t) => t.key === tab)?.label} — ייפתח בגרסה הבאה.
+              {composerTabs.find((t) => t.key === tab)?.label} — ייפתח בגרסה הבאה.
             </div>
           )}
         </div>

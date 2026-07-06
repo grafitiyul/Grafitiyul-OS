@@ -43,7 +43,7 @@ function dayLabel(m) {
   return d.toLocaleDateString('he-IL', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = true }) {
+export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = true, fill = false }) {
   const [messages, setMessages] = useState(null); // ascending, null = loading
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState(null);
@@ -136,11 +136,11 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
   const isGroup = chat.type === 'group';
 
   return (
-    <div className="flex flex-col overflow-hidden rounded-xl border border-gray-200 bg-[#efeae2]">
+    <div className={`flex flex-col overflow-hidden bg-[#efeae2] ${fill ? 'h-full min-h-0' : 'rounded-xl border border-gray-200'}`}>
       <div
         ref={containerRef}
         onScroll={onScroll}
-        className={`flex-1 overflow-y-auto px-3 py-3 ${heightClass}`}
+        className={`flex-1 overflow-y-auto px-3 py-3 ${fill ? 'min-h-0' : heightClass}`}
       >
         {messages === null ? (
           <div className="flex h-full items-center justify-center text-sm text-gray-500">

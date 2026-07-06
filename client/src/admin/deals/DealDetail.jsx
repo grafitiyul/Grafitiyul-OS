@@ -13,6 +13,7 @@ import Dialog from '../common/Dialog.jsx';
 import GroupTicketBuilderDialog from './GroupTicketBuilderDialog.jsx';
 import WorkspaceLayout from '../../shell/WorkspaceLayout.jsx';
 import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
+import WhatsAppDock from '../whatsapp/WhatsAppDock.jsx';
 import { minorToInput } from '../../lib/money.js';
 import { useDirtyForm, useDirtyWhen, valuesEqual } from '../../lib/dirtyForms.js';
 import { contactNamesFromParts } from '../../lib/nameSplit.js';
@@ -737,8 +738,15 @@ export default function DealDetail() {
 
       {/* Timeline — the reusable Activity Feed (notes V1). Scoped to this deal;
           the exact same component will later mount on Contact / Organization.
-          Contacts live in the header relationship row now (no separate card). */}
-      <TimelineFeed subjectType="deal" subjectId={deal.id} />
+          Contacts live in the header relationship row now (no separate card).
+          WhatsApp lives in the floating dock (below), NOT as a timeline tab —
+          the chat must not permanently consume the deal workspace. */}
+      <TimelineFeed subjectType="deal" subjectId={deal.id} showWhatsApp={false} />
+
+      {/* Floating WhatsApp bubble + popup, at the seam next to the sales
+          script. Opens on the primary contact; compact selector switches
+          between the deal's linked contacts. */}
+      <WhatsAppDock subjectType="deal" subjectId={deal.id} />
 
       <LostDealDialog
         open={lostOpen}

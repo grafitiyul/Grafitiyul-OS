@@ -358,14 +358,18 @@ router.get(
     if (!subjectId) return res.status(400).json({ error: 'subject_required' });
 
     let contactIds = [];
+    let primaryContactId = null;
     if (subjectType === 'deal') {
       const links = await prisma.dealContact.findMany({
         where: { dealId: subjectId },
-        select: { contactId: true },
+        select: { contactId: true, isPrimary: true },
+        orderBy: { createdAt: 'asc' },
       });
       contactIds = links.map((l) => l.contactId);
+      primaryContactId = links.find((l) => l.isPrimary)?.contactId ?? links[0]?.contactId ?? null;
     } else if (subjectType === 'contact') {
       contactIds = [subjectId];
+      primaryContactId = subjectId;
     } else if (subjectType === 'organization') {
       const links = await prisma.contactOrganization.findMany({
         where: { organizationId: subjectId },
@@ -377,7 +381,7 @@ router.get(
     }
 
     res.set('Cache-Control', 'no-store');
-    if (contactIds.length === 0) return res.json({ chats: [] });
+    if (contactIds.length === 0) return res.json({ chats: [], primaryContactId: null });
 
     // Proactive matching for THIS subject's phones only (cheap, targeted).
     const ownPhones = await prisma.contactPhone.findMany({
@@ -415,7 +419,10 @@ router.get(
         messages: { orderBy: { timestampFromSource: 'desc' }, take: 1 },
       },
     });
-    res.json({ chats: chats.map((c) => ({ ...toClientChat(c), account: c.account })) });
+    res.json({
+      chats: chats.map((c) => ({ ...toClientChat(c), account: c.account, contactId: c.contactId })),
+      primaryContactId,
+    });
   }),
 );
 

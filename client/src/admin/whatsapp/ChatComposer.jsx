@@ -148,10 +148,11 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
         <button
           type="button"
           title="תזמון שליחה"
-          disabled={sending || !text.trim()}
+          disabled={sending}
           onClick={() => {
             setScheduleOpen(!scheduleOpen);
             if (!scheduleAt) setScheduleAt(nextHourLocal());
+            if (!scheduleOpen) textareaRef.current?.focus();
           }}
           className={`flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-xl border text-[16px] transition disabled:opacity-40 ${
             scheduleOpen ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-300 bg-white text-gray-500 hover:text-gray-700'
@@ -170,6 +171,11 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
       </div>
       {scheduleOpen && (
         <div className="flex flex-wrap items-center gap-2 border-t border-gray-200 bg-blue-50/60 px-3 py-2">
+          {!text.trim() && (
+            <p className="w-full text-[12px] text-blue-800">
+              כתבו את ההודעה בשדה למעלה, בחרו מועד — והיא תישלח אוטומטית.
+            </p>
+          )}
           <span className="text-[12px] font-medium text-gray-700">שליחה בתאריך:</span>
           <input
             type="datetime-local"

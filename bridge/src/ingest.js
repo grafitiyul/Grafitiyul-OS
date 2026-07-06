@@ -77,6 +77,102 @@ export function createIngest({ prisma, socket, log, accountId }) {
     mediaChain = mediaChain.then(fn, fn).catch(() => undefined);
   };
 
+  // ── chat identity resolution + duplicate merge ─────────────────────────
+  // v7 reports the SAME private conversation under different JID forms across
+  // event types (@lid on one message, @s.whatsapp.net on another — the exact
+  // split-thread bug from live QA: a voice note opened a second chat). A row
+  // is therefore resolved across EVERY known form — externalChatId, lidJid,
+  // phoneJid, phoneNumber — and when the split already happened, the rows are
+  // merged on the spot (messages/scheduled moved, identity united, duplicate
+  // deleted). This runs on every private-message ingest, so an existing split
+  // self-heals on the next message in that conversation.
+
+  const CHAT_RESOLVE_SELECT = {
+    id: true, externalChatId: true, pushName: true, savedContactName: true,
+    phoneNumber: true, lidJid: true, phoneJid: true, profilePictureUrl: true,
+    contactId: true, matchSource: true, lastMessageAt: true, createdAt: true,
+  };
+
+  async function mergeChatInto(survivor, dup) {
+    log.warn(
+      { survivorId: survivor.id, survivorJid: survivor.externalChatId, dupId: dup.id, dupJid: dup.externalChatId },
+      'merging duplicate chat rows (same person, different JID form)',
+    );
+    await prisma.whatsAppMessage.updateMany({ where: { chatId: dup.id }, data: { chatId: survivor.id } });
+    if (prisma.whatsAppScheduledMessage) {
+      await prisma.whatsAppScheduledMessage.updateMany({ where: { chatId: dup.id }, data: { chatId: survivor.id } });
+    }
+    const fill = {};
+    for (const f of ['pushName', 'savedContactName', 'phoneNumber', 'lidJid', 'phoneJid', 'profilePictureUrl', 'contactId', 'matchSource']) {
+      if (!survivor[f] && dup[f]) fill[f] = dup[f];
+    }
+    // The duplicate's externalChatId is a legitimate alias — keep it findable.
+    if (dup.externalChatId.endsWith('@lid') && !survivor.lidJid && !fill.lidJid) fill.lidJid = dup.externalChatId;
+    if (dup.externalChatId.endsWith('@s.whatsapp.net') && !survivor.phoneJid && !fill.phoneJid) fill.phoneJid = dup.externalChatId;
+    if (dup.lastMessageAt && (!survivor.lastMessageAt || dup.lastMessageAt > survivor.lastMessageAt)) {
+      fill.lastMessageAt = dup.lastMessageAt;
+    }
+    if (Object.keys(fill).length > 0) {
+      await prisma.whatsAppChat.update({ where: { id: survivor.id }, data: fill });
+      Object.assign(survivor, fill);
+    }
+    await prisma.whatsAppChat.delete({ where: { id: dup.id } });
+  }
+
+  // Find the ONE row this private conversation lives in, across all JID forms
+  // we currently know (the message's remoteJid + its Alt/senderPn hints).
+  // Merges duplicates; returns the survivor row or null.
+  async function resolvePrivateChat(...jids) {
+    const lidForms = new Set();
+    const pnForms = new Set();
+    for (const jid of jids) {
+      if (typeof jid !== 'string' || !jid) continue;
+      if (jid.endsWith('@lid')) lidForms.add(jid);
+      else if (jid.endsWith('@s.whatsapp.net')) pnForms.add(jid);
+    }
+    const or = [];
+    for (const lid of lidForms) or.push({ externalChatId: lid }, { lidJid: lid });
+    for (const pn of pnForms) {
+      or.push({ externalChatId: pn }, { phoneJid: pn });
+      const digits = jidToPhone(pn);
+      if (digits) or.push({ phoneNumber: digits });
+    }
+    if (or.length === 0) return null;
+    const rows = await prisma.whatsAppChat.findMany({
+      where: { accountId, type: 'private', OR: or },
+      orderBy: { createdAt: 'asc' },
+      select: CHAT_RESOLVE_SELECT,
+    });
+    if (rows.length === 0) return null;
+    // Prefer the row keyed by the PRIMARY jid (first arg — the live remoteJid,
+    // which future events will look up), else the oldest row.
+    const primaryJid = jids[0];
+    const survivor = rows.find((r) => r.externalChatId === primaryJid) ?? rows[0];
+    for (const dup of rows) {
+      if (dup.id === survivor.id) continue;
+      try {
+        await mergeChatInto(survivor, dup);
+      } catch (err) {
+        log.error({ err: errSummary(err), survivorId: survivor.id, dupId: dup.id }, 'chat merge failed; rows left split');
+      }
+    }
+    // Backfill any cross-reference we just learned from the message key.
+    const learn = {};
+    const someLid = [...lidForms][0];
+    const somePn = [...pnForms][0];
+    if (someLid && !survivor.lidJid) learn.lidJid = someLid;
+    if (somePn && !survivor.phoneJid) learn.phoneJid = somePn;
+    if (somePn && !survivor.phoneNumber) {
+      const digits = jidToPhone(somePn);
+      if (digits) learn.phoneNumber = digits;
+    }
+    if (Object.keys(learn).length > 0) {
+      await prisma.whatsAppChat.update({ where: { id: survivor.id }, data: learn });
+      Object.assign(survivor, learn);
+    }
+    return survivor;
+  }
+
   // ── chat upsert ─────────────────────────────────────────────────────────
   // Identity rules (hard-learned in production, kept verbatim):
   //   - pushName: only from NON-fromMe messages (else every chat gets named
@@ -84,11 +180,13 @@ export function createIngest({ prisma, socket, log, accountId }) {
   //   - phoneNumber: the COUNTERPARTY's phone (from externalChatId or inbound
   //     senderPn) — never the owner's, never @lid digits.
   //   - savedContactName/groupSubject: written only by their event handlers.
-  async function upsertChat(externalChatId, isGroup, senderPushName, counterpartyPhone, senderPnJid, lastMessageAt) {
-    const existing = await prisma.whatsAppChat.findUnique({
-      where: { accountId_externalChatId: { accountId, externalChatId } },
-      select: { id: true, pushName: true, phoneNumber: true, phoneJid: true },
-    });
+  async function upsertChat(externalChatId, isGroup, senderPushName, counterpartyPhone, senderPnJid, lastMessageAt, altJid = null) {
+    const existing = isGroup
+      ? await prisma.whatsAppChat.findUnique({
+          where: { accountId_externalChatId: { accountId, externalChatId } },
+          select: { id: true, pushName: true, phoneNumber: true, phoneJid: true },
+        })
+      : await resolvePrivateChat(externalChatId, altJid, senderPnJid);
 
     if (existing) {
       const patch = {};
@@ -136,9 +234,12 @@ export function createIngest({ prisma, socket, log, accountId }) {
       }
     }
     const profilePictureUrl = await fetchProfilePictureSafe(socket, externalChatId, log);
-    const lidJid = !isGroup && externalChatId.endsWith('@lid') ? externalChatId : null;
+    const altLid = altJid?.endsWith('@lid') ? altJid : null;
+    const altPn = altJid?.endsWith('@s.whatsapp.net') ? altJid : null;
+    const lidJid = !isGroup && externalChatId.endsWith('@lid') ? externalChatId : altLid;
     const phoneJidFromChatId = !isGroup && externalChatId.endsWith('@s.whatsapp.net') ? externalChatId : null;
-    const senderPnPhone = senderPnJid ? jidToPhone(senderPnJid) : null;
+    const pnJid = phoneJidFromChatId ?? altPn ?? senderPnJid;
+    const pnPhone = pnJid ? jidToPhone(pnJid) : null;
 
     return prisma.whatsAppChat.create({
       data: {
@@ -147,9 +248,9 @@ export function createIngest({ prisma, socket, log, accountId }) {
         type: isGroup ? 'group' : 'private',
         pushName: isGroup ? null : senderPushName,
         groupSubject,
-        phoneNumber: counterpartyPhone ?? senderPnPhone,
+        phoneNumber: counterpartyPhone ?? pnPhone,
         lidJid,
-        phoneJid: phoneJidFromChatId ?? senderPnJid,
+        phoneJid: pnJid,
         profilePictureUrl,
         lastMessageAt,
       },
@@ -239,13 +340,19 @@ export function createIngest({ prisma, socket, log, accountId }) {
     const senderPushNameForChat = isFromMe ? null : senderName;
     const chatPhoneFromCounterparty = isGroup ? null : jidToPhone(externalChatId);
     const senderPnJid = !isGroup && !isFromMe ? senderPnFromKey(msg.key) : null;
+    // v7: key.remoteJidAlt is the SAME chat's other JID form (lid ↔ pn) and
+    // is present regardless of direction — the strongest cross-reference we
+    // get, and the one that prevents a media message under @lid from opening
+    // a second thread next to a text message under @s.whatsapp.net.
+    const chatAltJid =
+      !isGroup && typeof msg.key.remoteJidAlt === 'string' ? msg.key.remoteJidAlt : null;
     const timestampSec = typeof msg.messageTimestamp === 'number'
       ? msg.messageTimestamp
       : Number(msg.messageTimestamp ?? 0);
     const timestampFromSource = new Date(timestampSec * 1000);
 
     const chat = await upsertChat(
-      externalChatId, isGroup, senderPushNameForChat, chatPhoneFromCounterparty, senderPnJid, timestampFromSource,
+      externalChatId, isGroup, senderPushNameForChat, chatPhoneFromCounterparty, senderPnJid, timestampFromSource, chatAltJid,
     );
 
     const initialMediaStatus = content.mediaInfo ? (isMediaConfigured() ? 'pending' : 'disabled') : null;
@@ -329,6 +436,16 @@ export function createIngest({ prisma, socket, log, accountId }) {
     const hasCrossReference = !!contact.lid && !!pnJid;
     if (!savedName && !notifyName && !realPhone && !hasCrossReference) return;
 
+    // A contact event carrying BOTH forms is a merge opportunity — reconcile
+    // any lid/pn split for this person before fanning names out.
+    if (hasCrossReference) {
+      try {
+        await resolvePrivateChat(contact.lid, pnJid);
+      } catch (err) {
+        log.warn({ contactId: contact.id, err: errSummary(err) }, 'contact-identity chat reconcile failed');
+      }
+    }
+
     const rows = await prisma.whatsAppChat.findMany({
       where: {
         accountId,
@@ -367,20 +484,12 @@ export function createIngest({ prisma, socket, log, accountId }) {
         const lidJid = m.lid.includes('@') ? m.lid : `${m.lid}@lid`;
         const pnJid = m.pn.includes('@') ? m.pn : `${m.pn}@s.whatsapp.net`;
         if (!lidJid.endsWith('@lid') || !pnJid.endsWith('@s.whatsapp.net')) continue;
-        const phone = jidToPhone(pnJid);
-        // Conservative: only NULL columns are filled; never overwrite.
-        await prisma.whatsAppChat.updateMany({
-          where: { accountId, externalChatId: lidJid, phoneJid: null },
-          data: { phoneJid: pnJid },
-        });
-        if (phone) {
-          await prisma.whatsAppChat.updateMany({
-            where: { accountId, externalChatId: lidJid, phoneNumber: null },
-            data: { phoneNumber: phone },
-          });
-        }
+        // Resolution both backfills the cross-reference columns AND merges a
+        // lid-keyed row with a pn-keyed row when the split already happened.
+        // No-op when we track neither form.
+        await resolvePrivateChat(lidJid, pnJid);
       } catch (err) {
-        log.warn({ err: errSummary(err), lid: m.lid }, 'chat lid→pn forward-fill failed');
+        log.warn({ err: errSummary(err), lid: m.lid }, 'chat lid→pn reconcile failed');
       }
     }
   }
