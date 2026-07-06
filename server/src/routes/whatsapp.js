@@ -788,6 +788,61 @@ router.post(
   }),
 );
 
+// Send a voice note recorded in the composer. Same idempotency contract as
+// text (clientKey per recording); the bridge transcodes to OGG/Opus (real
+// WhatsApp PTT), sends serialized, and stores our copy in R2.
+router.post(
+  '/chats/:chatId/send-voice',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const audioBase64 = typeof b.audioBase64 === 'string' ? b.audioBase64 : '';
+    const clientKey = typeof b.clientKey === 'string' ? b.clientKey.trim() : '';
+    if (!audioBase64 || audioBase64.length > 22_000_000) {
+      return res.status(400).json({ error: 'audio_invalid' });
+    }
+    if (!clientKey || clientKey.length > 100) return res.status(400).json({ error: 'client_key_required' });
+    const chat = await prisma.whatsAppChat.findUnique({
+      where: { id: req.params.chatId },
+      select: { id: true, accountId: true, externalChatId: true },
+    });
+    if (!chat) return res.status(404).json({ error: 'not_found' });
+    try {
+      const data = await callBridge(chat.accountId, '/send-voice', {
+        method: 'POST',
+        timeoutMs: 60_000, // transcode + upload + send
+        body: {
+          jid: chat.externalChatId,
+          audioBase64,
+          mimeType: typeof b.mimeType === 'string' ? b.mimeType : '',
+          seconds: Number(b.seconds) || null,
+          idempotencyKey: `gos-voice-${chat.id}-${clientKey}`,
+        },
+      });
+      let message = null;
+      if (data?.externalMessageId) {
+        const row = await prisma.whatsAppMessage.findUnique({
+          where: {
+            accountId_externalMessageId: {
+              accountId: chat.accountId,
+              externalMessageId: data.externalMessageId,
+            },
+          },
+        });
+        if (row) message = toClientMessage(row);
+      }
+      res.json({ ok: true, externalMessageId: data?.externalMessageId ?? null, message });
+    } catch (err) {
+      if (err?.code === 'bridge_not_configured') {
+        return res.status(503).json({ error: 'bridge_not_configured' });
+      }
+      if (err?.code === 'bridge_error' && err.data?.error) {
+        return res.status(err.status || 500).json({ error: err.data.error });
+      }
+      return res.status(502).json({ error: 'bridge_unreachable' });
+    }
+  }),
+);
+
 // ── Scheduled messages (Slice 7, text-only V1) ─────────────────────────────
 // The claim-based worker in whatsapp/scheduledWorker.js does the sending; the
 // routes only manage rows. All mutations are guarded updateMany against the

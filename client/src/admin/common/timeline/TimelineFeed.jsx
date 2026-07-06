@@ -76,6 +76,9 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
   const [error, setError] = useState(null);
   const [tab, setTab] = useState('note');
   const [draft, setDraft] = useState('');
+  // Bumped on ביטול — remounts the rich editor so its internal DOM state
+  // clears along with the draft.
+  const [editorNonce, setEditorNonce] = useState(0);
   const [posting, setPosting] = useState(false);
   // Global expand: default ON. Per-note overrides take precedence over it.
   const [expandAll, setExpandAll] = useState(true);
@@ -214,6 +217,7 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
           {tab === 'note' ? (
             <div className="space-y-2">
               <RichEditor
+                key={editorNonce}
                 preset="note"
                 collapsible
                 value={draft}
@@ -222,10 +226,22 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
                 maxHeight="50vh"
                 ariaLabel="פתק חדש"
               />
-              {/* The post button appears once there's something to post — keeps
-                  the collapsed composer minimal. */}
+              {/* The action buttons appear once there's something to post —
+                  keeps the collapsed composer minimal. ביטול discards the
+                  draft entirely (nothing is saved). */}
               {draft.trim() && (
-                <div className="flex justify-end">
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDraft('');
+                      setEditorNonce((n) => n + 1);
+                    }}
+                    disabled={posting}
+                    className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    ביטול
+                  </button>
                   <button
                     onClick={postNote}
                     disabled={posting}

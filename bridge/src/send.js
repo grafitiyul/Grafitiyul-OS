@@ -22,8 +22,11 @@
 
 import { jidToPhone, isGroupJid } from './extract.js';
 import { accountState } from './accountState.js';
+import { transcodeToVoiceNote } from './voice.js';
+import { isMediaConfigured, buildMediaKey, storeMedia } from './media.js';
 
 const MAX_TEXT_LEN = 4096;
+const MAX_VOICE_BYTES = 16 * 1024 * 1024;
 
 function errSummary(err) {
   if (err instanceof Error) return err.message.split('\n')[0]?.slice(0, 240) ?? 'unknown';
@@ -32,7 +35,7 @@ function errSummary(err) {
 
 const VALID_JID = /^[\w.:-]+@(s\.whatsapp\.net|g\.us|lid)$/;
 
-export function createSendHandler({ prisma, client, accountId, log }) {
+export function createSendHandlers({ prisma, client, accountId, log }) {
   async function cacheOutcome(key, data) {
     if (!key) return;
     try {
@@ -46,7 +49,10 @@ export function createSendHandler({ prisma, client, accountId, log }) {
     }
   }
 
-  async function persistOutboundRow({ jid, text, quotedExternalId, externalMessageId, payloadBytes, timestamp }) {
+  async function persistOutboundRow({
+    jid, text = null, quotedExternalId = null, externalMessageId, payloadBytes, timestamp,
+    messageType = 'text', media = null, source = 'bridge_send',
+  }) {
     const isGroup = isGroupJid(jid);
     let chat = await prisma.whatsAppChat.findUnique({
       where: { accountId_externalChatId: { accountId, externalChatId: jid } },
@@ -70,15 +76,26 @@ export function createSendHandler({ prisma, client, accountId, log }) {
         chatId: chat.id,
         externalMessageId,
         direction: 'outgoing',
-        messageType: 'text',
+        messageType,
         textContent: text,
-        quotedExternalId: quotedExternalId ?? null,
-        rawPayload: { source: 'bridge_send' },
+        quotedExternalId,
+        ...(media
+          ? {
+              mediaStatus: media.status,
+              mediaKey: media.key ?? null,
+              mediaMimeType: media.mimeType ?? null,
+              mediaSizeBytes: media.sizeBytes ?? null,
+            }
+          : {}),
+        rawPayload: { source },
         outboundPayload: payloadBytes,
         timestampFromSource: timestamp,
       },
       update: {
         ...(payloadBytes ? { outboundPayload: payloadBytes } : {}),
+        ...(media?.status === 'stored'
+          ? { mediaStatus: media.status, mediaKey: media.key, mediaMimeType: media.mimeType, mediaSizeBytes: media.sizeBytes }
+          : {}),
       },
     });
     await prisma.whatsAppChat.update({ where: { id: chat.id }, data: { lastMessageAt: timestamp } });
@@ -86,7 +103,7 @@ export function createSendHandler({ prisma, client, accountId, log }) {
     return chat.id;
   }
 
-  return async function handleSend(req, res) {
+  async function handleSend(req, res) {
     const b = req.body || {};
     const jid = typeof b.jid === 'string' ? b.jid.trim() : '';
     const text = typeof b.text === 'string' ? b.text.trim() : '';
@@ -154,5 +171,104 @@ export function createSendHandler({ prisma, client, accountId, log }) {
 
     await cacheOutcome(idempotencyKey, { outcome: 'ok', externalMessageId: result.externalMessageId, errorCode: null, errorMessage: null });
     return res.json({ ok: true, externalMessageId: result.externalMessageId, chatId, cached: false });
-  };
+  }
+
+  // POST /send-voice — { jid, audioBase64, mimeType, seconds?, idempotencyKey? }
+  // Browser recording → OGG/Opus transcode (real PTT voice note) → serialized
+  // send → outbound row persisted WITH the audio stored in R2 (same
+  // whatsapp/<accountId>/ key contract, mediaStatus honest when R2 is off).
+  async function handleSendVoice(req, res) {
+    const b = req.body || {};
+    const jid = typeof b.jid === 'string' ? b.jid.trim() : '';
+    const audioBase64 = typeof b.audioBase64 === 'string' ? b.audioBase64 : '';
+    const mimeType = typeof b.mimeType === 'string' ? b.mimeType : '';
+    const seconds = Number(b.seconds) || null;
+    const idempotencyKey = typeof b.idempotencyKey === 'string' && b.idempotencyKey ? b.idempotencyKey : null;
+
+    let raw = null;
+    try {
+      raw = Buffer.from(audioBase64, 'base64');
+    } catch {
+      raw = null;
+    }
+    if (!VALID_JID.test(jid) || !raw || raw.byteLength < 100 || raw.byteLength > MAX_VOICE_BYTES) {
+      log.warn({ jidShape: jid.slice(-24), bytes: raw?.byteLength ?? 0 }, '[/send-voice] invalid_payload');
+      return res.status(400).json({ error: 'invalid_payload' });
+    }
+
+    if (idempotencyKey) {
+      try {
+        const cached = await prisma.whatsAppOutboundIdempotency.findUnique({ where: { key: idempotencyKey } });
+        if (cached) {
+          log.info({ idempotencyKey, outcome: cached.outcome }, '[/send-voice] idempotency hit — replaying');
+          if (cached.outcome === 'ok') {
+            return res.json({ ok: true, externalMessageId: cached.externalMessageId, cached: true });
+          }
+          const code = cached.errorCode || 'send_failed';
+          const status = code === 'whatsapp_number_not_found' ? 404 : code === 'invalid_payload' ? 400 : 500;
+          return res.status(status).json({ error: code, cached: true });
+        }
+      } catch (err) {
+        log.warn({ err: errSummary(err), idempotencyKey }, '[/send-voice] idempotency lookup failed — treating as miss');
+      }
+    }
+
+    const voice = await transcodeToVoiceNote(raw, mimeType, log);
+
+    let result;
+    try {
+      result = await client.sendVoice({ jid, buffer: voice.buffer, mimetype: voice.mimetype, seconds });
+    } catch (err) {
+      const code = err instanceof Error ? err.message : 'send_failed';
+      if (code === 'whatsapp_not_connected') {
+        return res.status(503).json({ error: 'whatsapp_not_connected', readiness: client.getReadiness() });
+      }
+      if (code === 'send_timeout' || code === 'on_whatsapp_timeout' || code === 'on_whatsapp_failed') {
+        return res.status(504).json({ error: code });
+      }
+      if (code === 'whatsapp_number_not_found') {
+        await cacheOutcome(idempotencyKey, { outcome: 'failed', errorCode: code });
+        return res.status(404).json({ error: code });
+      }
+      const detail = errSummary(err);
+      log.error({ err: detail }, '[/send-voice] send_failed');
+      await cacheOutcome(idempotencyKey, { outcome: 'failed', errorCode: 'send_failed', errorMessage: detail });
+      return res.status(500).json({ error: 'send_failed', detail });
+    }
+
+    // Store OUR copy in R2 so the sent voice note is playable in GOS forever
+    // (same store as inbound media). Honest 'disabled' when R2 is off.
+    let media = { status: 'disabled', mimeType: voice.mimetype, sizeBytes: voice.buffer.byteLength };
+    if (isMediaConfigured()) {
+      try {
+        const ext = /ogg/.test(voice.mimetype) ? 'ogg' : 'bin';
+        const key = buildMediaKey(accountId, jid, result.externalMessageId, ext, result.timestamp);
+        const stored = await storeMedia({ key, mimeType: voice.mimetype, data: voice.buffer });
+        media = { status: 'stored', key: stored.key, mimeType: voice.mimetype, sizeBytes: stored.size };
+      } catch (err) {
+        log.warn({ err: errSummary(err) }, '[/send-voice] R2 store failed — message sent, media marked failed');
+        media = { status: 'failed', mimeType: voice.mimetype, sizeBytes: voice.buffer.byteLength };
+      }
+    }
+
+    let chatId = null;
+    try {
+      chatId = await persistOutboundRow({
+        jid,
+        externalMessageId: result.externalMessageId,
+        payloadBytes: result.payloadBytes,
+        timestamp: result.timestamp,
+        messageType: 'audio',
+        media,
+        source: 'bridge_send_voice',
+      });
+    } catch (err) {
+      log.warn({ err: errSummary(err), externalMessageId: result.externalMessageId }, '[/send-voice] outbound row persist failed; relying on echo');
+    }
+
+    await cacheOutcome(idempotencyKey, { outcome: 'ok', externalMessageId: result.externalMessageId, errorCode: null, errorMessage: null });
+    return res.json({ ok: true, externalMessageId: result.externalMessageId, chatId, cached: false });
+  }
+
+  return { handleSend, handleSendVoice };
 }

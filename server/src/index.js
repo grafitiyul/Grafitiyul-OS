@@ -77,7 +77,9 @@ const runningVersion = (() => {
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '1mb' }));
+// 25mb: WhatsApp voice notes are uploaded from the composer as base64 JSON.
+// Everything else stays far below this; admin-authed surface.
+app.use(express.json({ limit: '25mb' }));
 
 // Money is stored as BigInt minor units (see Deal module). JSON.stringify can't
 // serialize BigInt, so convert it to a Number on the way out. Our money values

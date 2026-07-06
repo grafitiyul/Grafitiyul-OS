@@ -388,11 +388,44 @@ export class WaClient {
   //   { externalId, fromMe, participant, text }
   // Returns { externalMessageId, payloadBytes, timestamp }.
   async sendText({ jid, text, quoted = null }) {
+    const options = {};
+    if (quoted?.externalId) {
+      // Minimal reconstructed context — enough for WhatsApp clients to
+      // render the reply header. participant is required in groups.
+      options.quoted = {
+        key: {
+          remoteJid: jid,
+          id: quoted.externalId,
+          fromMe: !!quoted.fromMe,
+          ...(quoted.participant ? { participant: quoted.participant } : {}),
+        },
+        message: { conversation: quoted.text || ' ' },
+      };
+    }
+    return this.sendContent(jid, { text }, options);
+  }
+
+  // Send a voice note (Slice: voice from GOS). ptt:true renders the WhatsApp
+  // voice-message bubble; the buffer should already be OGG/Opus (see
+  // voice.js) — anything else degrades to an audio-file message.
+  async sendVoice({ jid, buffer, mimetype, seconds = null }) {
+    return this.sendContent(jid, {
+      audio: buffer,
+      ptt: true,
+      mimetype,
+      ...(seconds ? { seconds: Math.round(seconds) } : {}),
+    });
+  }
+
+  // The serialized send core every outbound type funnels through:
+  // double readiness check, onWhatsApp gate, stale-socket guard, 12s timeout
+  // with stale-mark-and-reconnect, retransmit payload capture.
+  async sendContent(jid, content, options = {}) {
     // Fast-fail outside the lock — don't queue behind other sends when the
     // socket is already known-unusable.
     const pre = this.getReadiness();
     if (!pre.ok) {
-      this.log.warn({ readiness: pre }, 'sendText pre-flight readiness failed');
+      this.log.warn({ readiness: pre }, 'send pre-flight readiness failed');
       throw new Error('whatsapp_not_connected');
     }
     return this.withSendLock(async () => {
@@ -400,7 +433,7 @@ export class WaClient {
       // send waited its turn.
       const readiness = this.getReadiness();
       if (!readiness.ok) {
-        this.log.warn({ readiness }, 'sendText post-lock readiness failed');
+        this.log.warn({ readiness }, 'send post-lock readiness failed');
         throw new Error('whatsapp_not_connected');
       }
       const capturedSocketId = this.activeSocketId;
@@ -412,29 +445,14 @@ export class WaClient {
       if (this.activeSocketId !== capturedSocketId || this.socket !== socket) {
         this.log.warn(
           { capturedSocketId, activeSocketId: this.activeSocketId },
-          'sendText: socket replaced during send — refusing stale send',
+          'send: socket replaced during send — refusing stale send',
         );
         throw new Error('whatsapp_not_connected');
       }
 
-      const options = {};
-      if (quoted?.externalId) {
-        // Minimal reconstructed context — enough for WhatsApp clients to
-        // render the reply header. participant is required in groups.
-        options.quoted = {
-          key: {
-            remoteJid: jid,
-            id: quoted.externalId,
-            fromMe: !!quoted.fromMe,
-            ...(quoted.participant ? { participant: quoted.participant } : {}),
-          },
-          message: { conversation: quoted.text || ' ' },
-        };
-      }
-
       const SEND_TIMEOUT_MS = 12_000;
       let timer = null;
-      const sendPromise = socket.sendMessage(jid, { text }, options);
+      const sendPromise = socket.sendMessage(jid, content, options);
       sendPromise.catch(() => undefined);
       let result;
       try {
@@ -448,7 +466,7 @@ export class WaClient {
         if (err instanceof Error && err.message === 'send_timeout') {
           // A hung sendMessage means the socket is a zombie — recycle it so
           // the NEXT send has a chance. Fire-and-forget; this send fails.
-          this.log.warn({ jidShape: jid.slice(-20) }, 'sendText timed out — marking socket stale and reconnecting');
+          this.log.warn({ jidShape: jid.slice(-20) }, 'send timed out — marking socket stale and reconnecting');
           void this.reopenSocket('send_timeout', { markStale: true });
         }
         throw err;
@@ -466,11 +484,11 @@ export class WaClient {
         const inner = result?.message;
         if (inner) payloadBytes = Buffer.from(getBaileys().proto.Message.encode(inner).finish());
       } catch (err) {
-        this.log.warn({ externalMessageId: id, err: errMessage(err) }, 'sendText: payload encode failed — replay unavailable for this id');
+        this.log.warn({ externalMessageId: id, err: errMessage(err) }, 'send: payload encode failed — replay unavailable for this id');
       }
 
       const ts = result?.messageTimestamp ? new Date(Number(result.messageTimestamp) * 1000) : new Date();
-      this.log.info({ externalMessageId: id, quoted: !!quoted }, 'sendText: sent');
+      this.log.info({ externalMessageId: id, quoted: !!options.quoted, ptt: !!content.ptt }, 'send: sent');
       return { externalMessageId: id, payloadBytes, timestamp: ts };
     });
   }
