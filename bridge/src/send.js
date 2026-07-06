@@ -27,6 +27,19 @@ import { isMediaConfigured, buildMediaKey, storeMedia } from './media.js';
 
 const MAX_TEXT_LEN = 4096;
 const MAX_VOICE_BYTES = 16 * 1024 * 1024;
+const MAX_MEDIA_BYTES = 16 * 1024 * 1024;
+const MEDIA_KINDS = new Set(['image', 'video', 'document']);
+
+function extensionFor(fileName, mimeType) {
+  const fromName = /\.([A-Za-z0-9]{1,8})$/.exec(fileName || '')?.[1];
+  if (fromName) return fromName.toLowerCase();
+  const map = {
+    'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+    'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm',
+    'application/pdf': 'pdf',
+  };
+  return map[mimeType] || 'bin';
+}
 
 function errSummary(err) {
   if (err instanceof Error) return err.message.split('\n')[0]?.slice(0, 240) ?? 'unknown';
@@ -85,6 +98,7 @@ export function createSendHandlers({ prisma, client, accountId, log }) {
               mediaKey: media.key ?? null,
               mediaMimeType: media.mimeType ?? null,
               mediaSizeBytes: media.sizeBytes ?? null,
+              mediaOriginalName: media.originalName ?? null,
             }
           : {}),
         rawPayload: { source },
@@ -270,5 +284,109 @@ export function createSendHandlers({ prisma, client, accountId, log }) {
     return res.json({ ok: true, externalMessageId: result.externalMessageId, chatId, cached: false });
   }
 
-  return { handleSend, handleSendVoice };
+  // POST /send-media — { jid, mediaBase64, mimeType, fileName, kind, caption?, idempotencyKey? }
+  // kind: image | video | document. Sent as REAL WhatsApp media (never a
+  // link); our copy stored in R2 under the account prefix, honest statuses.
+  async function handleSendMedia(req, res) {
+    const b = req.body || {};
+    const jid = typeof b.jid === 'string' ? b.jid.trim() : '';
+    const mediaBase64 = typeof b.mediaBase64 === 'string' ? b.mediaBase64 : '';
+    const mimeType = typeof b.mimeType === 'string' && b.mimeType ? b.mimeType : 'application/octet-stream';
+    const fileName = typeof b.fileName === 'string' ? b.fileName.slice(0, 180) : '';
+    const kind = typeof b.kind === 'string' ? b.kind : '';
+    const caption = typeof b.caption === 'string' ? b.caption.trim().slice(0, MAX_TEXT_LEN) : '';
+    const idempotencyKey = typeof b.idempotencyKey === 'string' && b.idempotencyKey ? b.idempotencyKey : null;
+
+    let raw = null;
+    try {
+      raw = Buffer.from(mediaBase64, 'base64');
+    } catch {
+      raw = null;
+    }
+    if (!VALID_JID.test(jid) || !MEDIA_KINDS.has(kind) || !raw || raw.byteLength < 10) {
+      log.warn({ jidShape: jid.slice(-24), kind, bytes: raw?.byteLength ?? 0 }, '[/send-media] invalid_payload');
+      return res.status(400).json({ error: 'invalid_payload' });
+    }
+    if (raw.byteLength > MAX_MEDIA_BYTES) {
+      return res.status(400).json({ error: 'media_too_large' });
+    }
+
+    if (idempotencyKey) {
+      try {
+        const cached = await prisma.whatsAppOutboundIdempotency.findUnique({ where: { key: idempotencyKey } });
+        if (cached) {
+          log.info({ idempotencyKey, outcome: cached.outcome }, '[/send-media] idempotency hit — replaying');
+          if (cached.outcome === 'ok') {
+            return res.json({ ok: true, externalMessageId: cached.externalMessageId, cached: true });
+          }
+          const code = cached.errorCode || 'send_failed';
+          const status = code === 'whatsapp_number_not_found' ? 404 : code === 'invalid_payload' ? 400 : 500;
+          return res.status(status).json({ error: code, cached: true });
+        }
+      } catch (err) {
+        log.warn({ err: errSummary(err), idempotencyKey }, '[/send-media] idempotency lookup failed — treating as miss');
+      }
+    }
+
+    const content =
+      kind === 'image'
+        ? { image: raw, ...(caption ? { caption } : {}) }
+        : kind === 'video'
+          ? { video: raw, mimetype: mimeType, ...(caption ? { caption } : {}) }
+          : { document: raw, mimetype: mimeType, fileName: fileName || 'file', ...(caption ? { caption } : {}) };
+
+    let result;
+    try {
+      result = await client.sendContent(jid, content);
+    } catch (err) {
+      const code = err instanceof Error ? err.message : 'send_failed';
+      if (code === 'whatsapp_not_connected') {
+        return res.status(503).json({ error: 'whatsapp_not_connected', readiness: client.getReadiness() });
+      }
+      if (code === 'send_timeout' || code === 'on_whatsapp_timeout' || code === 'on_whatsapp_failed') {
+        return res.status(504).json({ error: code });
+      }
+      if (code === 'whatsapp_number_not_found') {
+        await cacheOutcome(idempotencyKey, { outcome: 'failed', errorCode: code });
+        return res.status(404).json({ error: code });
+      }
+      const detail = errSummary(err);
+      log.error({ err: detail, kind }, '[/send-media] send_failed');
+      await cacheOutcome(idempotencyKey, { outcome: 'failed', errorCode: 'send_failed', errorMessage: detail });
+      return res.status(500).json({ error: 'send_failed', detail });
+    }
+
+    let media = { status: 'disabled', mimeType, sizeBytes: raw.byteLength };
+    if (isMediaConfigured()) {
+      try {
+        const key = buildMediaKey(accountId, jid, result.externalMessageId, extensionFor(fileName, mimeType), result.timestamp);
+        const stored = await storeMedia({ key, mimeType, data: raw });
+        media = { status: 'stored', key: stored.key, mimeType, sizeBytes: stored.size };
+      } catch (err) {
+        log.warn({ err: errSummary(err) }, '[/send-media] R2 store failed — message sent, media marked failed');
+        media = { status: 'failed', mimeType, sizeBytes: raw.byteLength };
+      }
+    }
+
+    let chatId = null;
+    try {
+      chatId = await persistOutboundRow({
+        jid,
+        text: caption || null,
+        externalMessageId: result.externalMessageId,
+        payloadBytes: result.payloadBytes,
+        timestamp: result.timestamp,
+        messageType: kind,
+        media: { ...media, originalName: fileName || null },
+        source: 'bridge_send_media',
+      });
+    } catch (err) {
+      log.warn({ err: errSummary(err), externalMessageId: result.externalMessageId }, '[/send-media] outbound row persist failed; relying on echo');
+    }
+
+    await cacheOutcome(idempotencyKey, { outcome: 'ok', externalMessageId: result.externalMessageId, errorCode: null, errorMessage: null });
+    return res.json({ ok: true, externalMessageId: result.externalMessageId, chatId, cached: false });
+  }
+
+  return { handleSend, handleSendVoice, handleSendMedia };
 }

@@ -453,36 +453,49 @@ router.get(
   handle(async (req, res) => {
     const search = String(req.query.search || '').trim();
     const accountId = String(req.query.accountId || '').trim();
-    const unmatchedOnly = req.query.unmatched === '1';
+    // Scope: 'active' (default work queue — linked conversations + unknown
+    // ones with recent activity), 'unmatched' (repair view), 'all'.
+    // Legacy unmatched=1 maps to 'unmatched'.
+    const scope = req.query.unmatched === '1' ? 'unmatched' : String(req.query.scope || 'active');
     const preliminary = await prisma.whatsAppChat.findMany({
       where: { contactId: null, type: 'private' },
       select: { id: true, contactId: true, type: true, phoneNumber: true },
     });
     await autoMatchChats(preliminary);
+    const RECENT_UNKNOWN_DAYS = 30;
+    const recentCutoff = new Date(Date.now() - RECENT_UNKNOWN_DAYS * 86_400_000);
+    const scopeWhere =
+      scope === 'unmatched'
+        ? { contactId: null }
+        : scope === 'active'
+          ? { OR: [{ contactId: { not: null } }, { lastMessageAt: { gte: recentCutoff } }] }
+          : {};
+    const searchWhere = search
+      ? {
+          OR: [
+            { savedContactName: { contains: search, mode: 'insensitive' } },
+            { pushName: { contains: search, mode: 'insensitive' } },
+            { phoneNumber: { contains: search.replace(/\D/g, '') || search } },
+            {
+              contact: {
+                OR: [
+                  { firstNameHe: { contains: search, mode: 'insensitive' } },
+                  { lastNameHe: { contains: search, mode: 'insensitive' } },
+                  { firstNameEn: { contains: search, mode: 'insensitive' } },
+                  { lastNameEn: { contains: search, mode: 'insensitive' } },
+                ],
+              },
+            },
+          ],
+        }
+      : null;
     const chats = await prisma.whatsAppChat.findMany({
       where: {
         type: 'private',
-        ...(unmatchedOnly ? { contactId: null } : {}),
         ...(accountId ? { accountId } : {}),
-        ...(search
-          ? {
-              OR: [
-                { savedContactName: { contains: search, mode: 'insensitive' } },
-                { pushName: { contains: search, mode: 'insensitive' } },
-                { phoneNumber: { contains: search.replace(/\D/g, '') || search } },
-                {
-                  contact: {
-                    OR: [
-                      { firstNameHe: { contains: search, mode: 'insensitive' } },
-                      { lastNameHe: { contains: search, mode: 'insensitive' } },
-                      { firstNameEn: { contains: search, mode: 'insensitive' } },
-                      { lastNameEn: { contains: search, mode: 'insensitive' } },
-                    ],
-                  },
-                },
-              ],
-            }
-          : {}),
+        // Both blocks are OR-shaped — combine under AND so they never
+        // clobber each other on the same object key.
+        AND: [scopeWhere, ...(searchWhere ? [searchWhere] : [])],
       },
       orderBy: [{ lastMessageAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
       take: 200,
@@ -526,6 +539,7 @@ function dealSummary(d) {
 router.get(
   '/chats/:chatId/deal-resolution',
   handle(async (req, res) => {
+    try {
     const chat = await prisma.whatsAppChat.findUnique({
       where: { id: req.params.chatId },
       include: { contact: { select: CONTACT_LITE_SELECT } },
@@ -564,6 +578,12 @@ router.get(
       return res.json({ kind: 'choose', contactName, deals: candidates.map(dealSummary) });
     }
     return res.json({ kind: 'old_or_new', contactName, deals: deals.map(dealSummary) });
+    } catch (err) {
+      // Surfaced explicitly (not just the generic 500) so a live failure names
+      // itself in the UI and in the Railway logs.
+      console.error('[whatsapp] deal-resolution failed:', err);
+      return res.status(500).json({ error: 'deal_resolution_failed', detail: err?.message?.slice(0, 300) });
+    }
   }),
 );
 
@@ -573,6 +593,7 @@ router.get(
 router.post(
   '/chats/:chatId/open-deal',
   handle(async (req, res) => {
+    try {
     const chat = await prisma.whatsAppChat.findUnique({
       where: { id: req.params.chatId },
       include: { contact: { select: CONTACT_LITE_SELECT } },
@@ -618,6 +639,10 @@ router.post(
       select: { id: true },
     });
     res.status(201).json({ dealId: deal.id, contactId });
+    } catch (err) {
+      console.error('[whatsapp] open-deal failed:', err);
+      return res.status(500).json({ error: 'open_deal_failed', detail: err?.message?.slice(0, 300) });
+    }
   }),
 );
 
@@ -816,6 +841,65 @@ router.post(
           mimeType: typeof b.mimeType === 'string' ? b.mimeType : '',
           seconds: Number(b.seconds) || null,
           idempotencyKey: `gos-voice-${chat.id}-${clientKey}`,
+        },
+      });
+      let message = null;
+      if (data?.externalMessageId) {
+        const row = await prisma.whatsAppMessage.findUnique({
+          where: {
+            accountId_externalMessageId: {
+              accountId: chat.accountId,
+              externalMessageId: data.externalMessageId,
+            },
+          },
+        });
+        if (row) message = toClientMessage(row);
+      }
+      res.json({ ok: true, externalMessageId: data?.externalMessageId ?? null, message });
+    } catch (err) {
+      if (err?.code === 'bridge_not_configured') {
+        return res.status(503).json({ error: 'bridge_not_configured' });
+      }
+      if (err?.code === 'bridge_error' && err.data?.error) {
+        return res.status(err.status || 500).json({ error: err.data.error });
+      }
+      return res.status(502).json({ error: 'bridge_unreachable' });
+    }
+  }),
+);
+
+// Send an attachment (image / video / document) from the composer. Same
+// idempotency contract (clientKey per attachment); the bridge sends real
+// WhatsApp media and stores our copy in R2.
+router.post(
+  '/chats/:chatId/send-media',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const mediaBase64 = typeof b.mediaBase64 === 'string' ? b.mediaBase64 : '';
+    const clientKey = typeof b.clientKey === 'string' ? b.clientKey.trim() : '';
+    const kind = typeof b.kind === 'string' ? b.kind : '';
+    if (!mediaBase64 || mediaBase64.length > 22_000_000) {
+      return res.status(400).json({ error: 'media_invalid' });
+    }
+    if (!['image', 'video', 'document'].includes(kind)) return res.status(400).json({ error: 'kind_invalid' });
+    if (!clientKey || clientKey.length > 100) return res.status(400).json({ error: 'client_key_required' });
+    const chat = await prisma.whatsAppChat.findUnique({
+      where: { id: req.params.chatId },
+      select: { id: true, accountId: true, externalChatId: true },
+    });
+    if (!chat) return res.status(404).json({ error: 'not_found' });
+    try {
+      const data = await callBridge(chat.accountId, '/send-media', {
+        method: 'POST',
+        timeoutMs: 90_000, // upload to WhatsApp can take a while for videos
+        body: {
+          jid: chat.externalChatId,
+          mediaBase64,
+          mimeType: typeof b.mimeType === 'string' ? b.mimeType : '',
+          fileName: typeof b.fileName === 'string' ? b.fileName : '',
+          kind,
+          caption: typeof b.caption === 'string' ? b.caption : '',
+          idempotencyKey: `gos-media-${chat.id}-${clientKey}`,
         },
       });
       let message = null;

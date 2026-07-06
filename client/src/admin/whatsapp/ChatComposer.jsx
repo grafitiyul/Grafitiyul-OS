@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
+// Emoji DATA bundled locally (content-hashed static asset) — the picker's
+// default is a CDN fetch, which is both against the project's caching rules
+// and the root cause of the "טעינת האימוג׳י נכשלה" failure.
+import emojiDataUrl from 'emoji-picker-element-data/en/emojibase/data.json?url';
 
 // Text composer at the bottom of a chat thread (Slice 6). Enter sends,
 // Shift+Enter breaks a line — WhatsApp muscle memory. Each logical message
@@ -77,7 +81,10 @@ function EmojiPicker({ onPick, onClose }) {
         if (cancelled || !hostRef.current) return;
         picker = document.createElement('emoji-picker');
         picker.i18n = EMOJI_I18N_HE;
-        picker.dataset.source = 'gos';
+        // NOTE: never touch picker.dataset.source — `data-source` IS the
+        // component's data-URL attribute (setting it to a junk string was
+        // exactly the loading failure).
+        picker.dataSource = emojiDataUrl;
         picker.style.setProperty('--emoji-size', '1.35rem');
         picker.style.width = '320px';
         picker.style.maxWidth = '88vw';
@@ -163,7 +170,15 @@ function writeDraft(key, text) {
   }
 }
 
-export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onScheduled }) {
+const MAX_ATTACHMENT_BYTES = 16 * 1024 * 1024;
+
+function classifyFile(file) {
+  if (file.type?.startsWith('image/')) return 'image';
+  if (file.type?.startsWith('video/')) return 'video';
+  return 'document';
+}
+
+export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onScheduled, droppedFile = null, onDroppedFileConsumed }) {
   const draftKey = `${chat.accountId || chat.account?.id || ''}:${chat.id}`;
   const [text, setText] = useState(() => readDrafts()[draftKey] || '');
   const [sending, setSending] = useState(false);
@@ -173,10 +188,87 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
   const [emojiOpen, setEmojiOpen] = useState(false);
   // Voice recording: null | {phase:'recording',seconds} | {phase:'preview',blob,url,seconds,key}
   const [rec, setRec] = useState(null);
+  // Live input level while recording (0..1) — the on-screen proof the mic is
+  // actually being heard; a flat meter = capture problem, named immediately.
+  const [recLevel, setRecLevel] = useState(0);
+  // Pending attachment: { file, kind, url (image preview), key }
+  const [attachment, setAttachment] = useState(null);
   const keyRef = useRef({ key: null, fingerprint: null });
   const textareaRef = useRef(null);
   const recorderRef = useRef(null);
   const recTimerRef = useRef(null);
+  const meterRef = useRef({ ctx: null, timer: null });
+  const maxLevelRef = useRef(0);
+  const fileInputRef = useRef(null);
+
+  function attachFile(file) {
+    if (!file) return;
+    setError(null);
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      setError('הקובץ גדול מדי — ניתן לשלוח עד 16MB.');
+      return;
+    }
+    if (file.size < 10) {
+      setError('הקובץ ריק.');
+      return;
+    }
+    setAttachment((cur) => {
+      if (cur?.url) URL.revokeObjectURL(cur.url);
+      const kind = classifyFile(file);
+      return {
+        file,
+        kind,
+        url: kind === 'image' ? URL.createObjectURL(file) : null,
+        // One idempotency key per attachment — retry-safe.
+        key: crypto.randomUUID(),
+      };
+    });
+  }
+
+  function removeAttachment() {
+    setAttachment((cur) => {
+      if (cur?.url) URL.revokeObjectURL(cur.url);
+      return null;
+    });
+  }
+
+  // Files dropped anywhere on the thread arrive via prop.
+  useEffect(() => {
+    if (droppedFile) {
+      attachFile(droppedFile);
+      onDroppedFileConsumed?.();
+    }
+  }, [droppedFile]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function sendAttachment() {
+    if (!attachment || sending) return;
+    setSending(true);
+    setError(null);
+    try {
+      const mediaBase64 = await blobToBase64(attachment.file);
+      const resp = await api.whatsapp.sendMedia(chat.id, {
+        mediaBase64,
+        mimeType: attachment.file.type || 'application/octet-stream',
+        fileName: attachment.file.name || '',
+        kind: attachment.kind,
+        caption: text.trim(),
+        clientKey: attachment.key,
+      });
+      removeAttachment();
+      setText('');
+      writeDraft(draftKey, '');
+      onCancelReply?.();
+      onSent?.(resp.message || null);
+    } catch (e) {
+      setError(
+        e?.payload?.error === 'media_too_large'
+          ? 'הקובץ גדול מדי — ניתן לשלוח עד 16MB.'
+          : SEND_ERRORS[e?.payload?.error] || 'שליחת הקובץ נכשלה — נסו שוב.',
+      );
+    } finally {
+      setSending(false);
+    }
+  }
 
   useEffect(() => {
     if (replyTo) textareaRef.current?.focus();
@@ -251,9 +343,37 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
     recorder.ondataavailable = (e) => {
       if (e.data?.size) chunks.push(e.data);
     };
+    // Live level meter (WebAudio analyser on the same stream) — if this stays
+    // flat while speaking, the capture itself is silent (wrong input device).
+    maxLevelRef.current = 0;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new Ctx();
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      ctx.createMediaStreamSource(stream).connect(analyser);
+      const buf = new Uint8Array(analyser.fftSize);
+      const timer = setInterval(() => {
+        analyser.getByteTimeDomainData(buf);
+        let peak = 0;
+        for (const v of buf) {
+          const d = Math.abs(v - 128);
+          if (d > peak) peak = d;
+        }
+        const level = peak / 128;
+        if (level > maxLevelRef.current) maxLevelRef.current = level;
+        setRecLevel(level);
+      }, 120);
+      meterRef.current = { ctx, timer };
+    } catch {
+      meterRef.current = { ctx: null, timer: null };
+    }
     recorder.onstop = () => {
       stream.getTracks().forEach((t) => t.stop());
       clearInterval(recTimerRef.current);
+      clearInterval(meterRef.current.timer);
+      meterRef.current.ctx?.close?.().catch?.(() => undefined);
+      setRecLevel(0);
       setRec((cur) => {
         if (!cur || cur.phase !== 'recording' || cur.cancelled) return null;
         const blob = new Blob(chunks, { type: recorder.mimeType || mime || 'audio/webm' });
@@ -263,6 +383,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
           blob,
           url: URL.createObjectURL(blob),
           seconds: cur.seconds,
+          maxLevel: maxLevelRef.current,
           // One idempotency key per RECORDING — a retry of the same clip
           // replays instead of double-sending.
           key: crypto.randomUUID(),
@@ -327,6 +448,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
   }
 
   async function send() {
+    if (attachment) return sendAttachment();
     const body = text.trim();
     if (!body || sending) return;
     // Same text + same reply target ⇒ same idempotency key across retries.
@@ -415,6 +537,13 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
             מקליט…
           </span>
           <span dir="ltr" className="font-mono text-[13px] text-gray-600">{fmtRecSeconds(rec.seconds)}</span>
+          {/* Live input level — flat while speaking = the mic isn't heard. */}
+          <span className="h-1.5 w-24 overflow-hidden rounded-full bg-gray-200" title="עוצמת קליטה">
+            <span
+              className="block h-full rounded-full bg-emerald-500 transition-[width] duration-100"
+              style={{ width: `${Math.min(100, Math.round(recLevel * 160))}%` }}
+            />
+          </span>
           <div className="mr-auto flex items-center gap-2">
             <button
               type="button"
@@ -434,6 +563,11 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
         </div>
       ) : rec?.phase === 'preview' ? (
         <div className="flex flex-wrap items-center gap-2 px-3 py-2.5">
+          {rec.maxLevel !== undefined && rec.maxLevel < 0.03 && (
+            <p className="w-full rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[12px] text-amber-800">
+              ⚠️ כמעט לא נקלט קול בהקלטה — ייתכן שנבחר מיקרופון שגוי בהגדרות המערכת/הדפדפן.
+            </p>
+          )}
           <audio controls src={rec.url} className="h-10 min-w-0 flex-1" />
           <span dir="ltr" className="font-mono text-[12px] text-gray-500">
             {fmtRecSeconds(rec.seconds)} · {fmtKb(rec.blob.size)}
@@ -459,8 +593,44 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
       ) : (
         // Two rows: the text field gets the FULL width (long Hebrew wraps
         // comfortably, grows up to ~8 lines), actions live on their own row
-        // beneath — nothing squeezes the text.
-        <div className="relative px-3 pb-2 pt-2">
+        // beneath — nothing squeezes the text. Dropping a file anywhere here
+        // attaches it (the thread area forwards drops via droppedFile).
+        <div
+          className="relative px-3 pb-2 pt-2"
+          onDragOver={(e) => {
+            if (e.dataTransfer?.types?.includes('Files')) e.preventDefault();
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            attachFile(e.dataTransfer?.files?.[0]);
+          }}
+        >
+          {attachment && (
+            <div className="mb-1.5 flex items-center gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50/50 px-2.5 py-2">
+              {attachment.url ? (
+                <img src={attachment.url} alt="" className="h-12 w-12 shrink-0 rounded-lg object-cover" />
+              ) : (
+                <span className="text-2xl leading-none">{attachment.kind === 'video' ? '🎬' : '📄'}</span>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[13px] font-medium text-gray-800" dir="ltr">
+                  {attachment.file.name || 'קובץ'}
+                </p>
+                <p className="text-[11px] text-gray-500">
+                  {fmtKb(attachment.file.size)} · יישלח כ{attachment.kind === 'image' ? 'תמונה' : attachment.kind === 'video' ? 'סרטון' : 'מסמך'}
+                  {text.trim() ? ' עם הכיתוב שלמטה' : ''}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={removeAttachment}
+                aria-label="הסרת הקובץ"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-lg text-gray-400 hover:bg-white hover:text-red-600"
+              >
+                ×
+              </button>
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             rows={1}
@@ -478,11 +648,29 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
                 send();
               }
             }}
-            placeholder="כתבו הודעה…"
+            placeholder={attachment ? 'כיתוב לקובץ (לא חובה)…' : 'כתבו הודעה…'}
             dir="auto"
             className="block min-h-[42px] w-full resize-none rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-[14px] leading-relaxed focus:border-emerald-500 focus:outline-none disabled:opacity-60"
           />
           <div className="mt-1.5 flex items-center gap-1.5">
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              onChange={(e) => {
+                attachFile(e.target.files?.[0]);
+                e.target.value = '';
+              }}
+            />
+            <button
+              type="button"
+              title="צירוף קובץ"
+              disabled={sending}
+              onClick={() => fileInputRef.current?.click()}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-gray-300 bg-white text-[16px] text-gray-500 transition hover:text-gray-700 disabled:opacity-40"
+            >
+              📎
+            </button>
             <button
               type="button"
               title="אימוג'י"
@@ -521,10 +709,10 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
             <button
               type="button"
               onClick={send}
-              disabled={sending || !text.trim()}
+              disabled={sending || (!text.trim() && !attachment)}
               className="mr-auto h-9 shrink-0 rounded-xl bg-emerald-600 px-5 text-[13px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-40"
             >
-              {sending ? 'שולח…' : 'שליחה'}
+              {sending ? 'שולח…' : attachment ? 'שליחת קובץ' : 'שליחה'}
             </button>
           </div>
           {emojiOpen && (

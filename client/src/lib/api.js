@@ -455,6 +455,8 @@ export const api = {
       request(`/api/whatsapp/chats/${chatId}/send`, { method: 'POST', body: JSON.stringify(data) }),
     sendVoice: (chatId, data) =>
       request(`/api/whatsapp/chats/${chatId}/send-voice`, { method: 'POST', body: JSON.stringify(data) }),
+    sendMedia: (chatId, data) =>
+      request(`/api/whatsapp/chats/${chatId}/send-media`, { method: 'POST', body: JSON.stringify(data) }),
     // Active inbox + manual linking + WhatsApp→Deal navigation (Slice 8)
     inboxChats: (params) => request(`/api/whatsapp/inbox-chats${qs(params)}`),
     linkChat: (chatId, contactId) =>

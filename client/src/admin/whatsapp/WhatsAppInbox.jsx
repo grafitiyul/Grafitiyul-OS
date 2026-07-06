@@ -1,23 +1,37 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import ChatThread from './ChatThread.jsx';
 import DealDrawer from './DealDrawer.jsx';
 
-// Active WhatsApp inbox — the working CRM surface that replaces "copy the
-// number from WhatsApp Web and search for the deal": every conversation, per
-// connected number, with a one-click "פתח דיל" that resolves to the RIGHT
-// deal (server logic): confident → the deal drawer opens directly; ambiguous
-// → a selection dialog; no contact / no deals → explicit confirmation before
-// anything is created. Deals open in a 75% slide-in drawer so the operator
-// never loses their place in the queue. Manual linking for unmatched chats
-// stays here too.
+// Active WhatsApp inbox — WhatsApp-style two-pane workspace:
+//   RIGHT: pinned conversation list (resizable, persisted width) with the
+//          account switcher, scope filter and search. Clicking a ROW opens
+//          the chat; the primary row action is פתח דיל.
+//   LEFT:  the selected conversation (full thread + composer). Manual
+//          contact-linking lives HERE (unmatched chats only) — not as row
+//          noise. Opening a deal slides the drawer over the chat area while
+//          the list stays visible.
+// Default scope is the WORK QUEUE: linked conversations + recent unknown
+// ones; ancient unknown numbers stay behind the "הכל" scope or search.
+
+const LAYOUT_KEY = 'gos-whatsapp-inbox'; // { listWidth }
+const LIST_MIN = 300;
+const LIST_MAX = 540;
 
 function fmtWhen(iso) {
   if (!iso) return '';
   try {
-    return new Date(iso).toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' });
+    const d = new Date(iso);
+    const today = new Date();
+    const same =
+      d.getFullYear() === today.getFullYear() &&
+      d.getMonth() === today.getMonth() &&
+      d.getDate() === today.getDate();
+    return same
+      ? d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
+      : d.toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' });
   } catch {
     return '';
   }
@@ -40,12 +54,18 @@ function fmtMoney(minor) {
 
 function snippet(msg) {
   if (!msg) return 'אין הודעות';
-  if (msg.textContent) return msg.textContent.slice(0, 80);
+  if (msg.textContent) return msg.textContent.slice(0, 60);
   return { image: '📷 תמונה', video: '🎬 סרטון', audio: '🎤 הודעה קולית', document: '📄 מסמך', sticker: 'סטיקר' }[msg.messageType] || 'הודעה';
 }
 
 function contactLabel(c) {
   return c.fullNameHe || c.fullNameEn || `${c.firstNameHe || ''} ${c.lastNameHe || ''}`.trim() || '—';
+}
+
+function errText(prefix, e) {
+  const code = e?.payload?.error;
+  const detail = e?.payload?.detail;
+  return `${prefix} — נסו שוב.${code ? ` (${code}${detail ? `: ${detail}` : ''})` : ''}`;
 }
 
 const DEAL_STATUS = {
@@ -54,7 +74,6 @@ const DEAL_STATUS = {
   lost: { label: 'אבוד', cls: 'bg-gray-100 text-gray-500 ring-gray-200' },
 };
 
-// One deal row inside the selection dialogs — a useful at-a-glance summary.
 function DealChoiceRow({ deal, onPick }) {
   const st = DEAL_STATUS[deal.status] || DEAL_STATUS.open;
   const money = fmtMoney(deal.valueMinor);
@@ -81,14 +100,10 @@ function DealChoiceRow({ deal, onPick }) {
   );
 }
 
-// Selection dialog (multiple candidates / old-or-new).
 function DealPickDialog({ title, body, deals, allowNew, busy, onPick, onNew, onClose }) {
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div
-        className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-[15px] font-bold text-gray-900">{title}</h3>
         {body && <p className="mt-1 text-[13px] leading-relaxed text-gray-500">{body}</p>}
         <div className="mt-3 max-h-[50vh] space-y-2 overflow-y-auto">
@@ -116,7 +131,7 @@ function DealPickDialog({ title, body, deals, allowNew, busy, onPick, onNew, onC
   );
 }
 
-// Inline contact picker for manual linking (unchanged behavior).
+// Inline contact picker for manual linking (thread header, unmatched only).
 function ContactPicker({ onPick, onCancel, busy }) {
   const [contacts, setContacts] = useState(null);
   const [q, setQ] = useState('');
@@ -187,37 +202,48 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
   const [chats, setChats] = useState(null);
   const [unmatchedCount, setUnmatchedCount] = useState(0);
   const [accountFilter, setAccountFilter] = useState('all');
-  const [unmatchedOnly, setUnmatchedOnly] = useState(false);
+  const [scope, setScope] = useState('active'); // active | unmatched | all
   const [search, setSearch] = useState('');
-  const [expanded, setExpanded] = useState(null); // chatId with open thread
-  const [linking, setLinking] = useState(null); // chatId with open picker
-  const [busy, setBusy] = useState(null); // chatId with an action in flight
-  const [dialog, setDialog] = useState(null); // { type, chat, ... }
+  const [selected, setSelected] = useState(null); // chat object snapshot
+  const [linking, setLinking] = useState(false);
+  const [busy, setBusy] = useState(null);
+  const [dialog, setDialog] = useState(null);
   const [drawerDealId, setDrawerDealId] = useState(null);
   const [error, setError] = useState(null);
+  const [listWidth, setListWidth] = useState(() => {
+    try {
+      const w = Number(JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}').listWidth);
+      return Number.isFinite(w) && w >= LIST_MIN && w <= LIST_MAX ? w : 360;
+    } catch {
+      return 360;
+    }
+  });
+  const draggingRef = useRef(false);
+  const containerRef = useRef(null);
 
   const load = useCallback(async () => {
     try {
       const data = await api.whatsapp.inboxChats({
         search: search || undefined,
         accountId: accountFilter === 'all' ? undefined : accountFilter,
-        unmatched: unmatchedOnly ? 1 : undefined,
+        scope: search ? 'all' : scope,
       });
       setChats(data.chats);
       setUnmatchedCount(data.unmatchedCount);
       onCountChange?.(data.unmatchedCount);
+      // Keep the open thread's snapshot fresh (name/contact may change).
+      setSelected((cur) => (cur ? data.chats.find((c) => c.id === cur.id) || cur : cur));
       setError(null);
     } catch (e) {
       setError(e?.payload?.error || e?.message || 'failed');
     }
-  }, [search, accountFilter, unmatchedOnly, onCountChange]);
+  }, [search, accountFilter, scope, onCountChange]);
 
   useEffect(() => {
     const t = setTimeout(() => load(), search ? 300 : 0);
     return () => clearTimeout(t);
   }, [load, search]);
 
-  // Keep the inbox fresh — this is a working queue, not a settings page.
   useEffect(() => {
     const t = setInterval(() => {
       if (!document.hidden && !drawerDealId) load();
@@ -225,34 +251,61 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
     return () => clearInterval(t);
   }, [load, drawerDealId]);
 
+  // List resize — anchored to the container's RIGHT edge (RTL list).
+  useEffect(() => {
+    function onMove(e) {
+      if (!draggingRef.current) return;
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setListWidth(Math.max(LIST_MIN, Math.min(LIST_MAX, rect.right - e.clientX)));
+    }
+    function onUp() {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      setListWidth((w) => {
+        try {
+          localStorage.setItem(LAYOUT_KEY, JSON.stringify({ listWidth: w }));
+        } catch { /* non-fatal */ }
+        return w;
+      });
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+
   async function link(chat, contact) {
     setBusy(chat.id);
     try {
       await api.whatsapp.linkChat(chat.id, contact.id);
-      setLinking(null);
+      setLinking(false);
       await load();
-    } catch {
-      setError('השיוך נכשל — נסו שוב.');
+    } catch (e) {
+      setError(errText('השיוך נכשל', e));
     } finally {
       setBusy(null);
     }
   }
 
-  // "פתח דיל" — ask the server which deal this conversation belongs to.
   async function openDeal(chat) {
     setBusy(chat.id);
+    setError(null);
     try {
       const r = await api.whatsapp.dealResolution(chat.id);
       if (r.kind === 'open') setDrawerDealId(r.dealId);
       else setDialog({ ...r, chat });
-    } catch {
-      setError('פתיחת הדיל נכשלה — נסו שוב.');
+    } catch (e) {
+      setError(errText('פתיחת הדיל נכשלה', e));
     } finally {
       setBusy(null);
     }
   }
 
-  // Confirmed creation (new contact and/or new deal) → open the drawer.
   async function createAndOpen(chat) {
     setBusy(chat.id);
     try {
@@ -260,149 +313,225 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
       setDialog(null);
       setDrawerDealId(dealId);
       await load();
-    } catch {
-      setError('יצירת הדיל נכשלה — נסו שוב.');
+    } catch (e) {
+      setError(errText('יצירת הדיל נכשלה', e));
     } finally {
       setBusy(null);
     }
   }
 
-  return (
-    <div className="space-y-3">
-      {/* Account switcher — one number at a time, or everything. */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="inline-flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-100 p-1">
-          {[{ id: 'all', label: 'כל המספרים' }, ...accounts.map((a) => ({ id: a.id, label: a.label }))].map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setAccountFilter(t.id)}
-              className={`whitespace-nowrap rounded-lg px-3.5 py-1.5 text-[13px] font-semibold transition ${
-                accountFilter === t.id
-                  ? 'bg-white text-emerald-700 shadow-sm ring-1 ring-emerald-200'
-                  : 'text-gray-500 hover:text-gray-800'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={() => setUnmatchedOnly(!unmatchedOnly)}
-          className={`rounded-full border px-3 py-1 text-[12px] font-medium transition ${
-            unmatchedOnly
-              ? 'border-amber-500 bg-amber-500 text-white'
-              : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50'
-          }`}
-        >
-          ללא שיוך בלבד{unmatchedCount > 0 ? ` (${unmatchedCount})` : ''}
-        </button>
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="חיפוש לפי שם או מספר…"
-          dir="auto"
-          className="w-full max-w-xs rounded-xl border border-gray-300 bg-white px-4 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-        />
-      </div>
+  const scopeChips = [
+    { key: 'active', label: 'שיחות' },
+    { key: 'unmatched', label: unmatchedCount > 0 ? `ללא שיוך (${unmatchedCount})` : 'ללא שיוך' },
+    { key: 'all', label: 'הכל' },
+  ];
 
+  return (
+    <>
       {error && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700" dir="auto">
           {error}
         </div>
       )}
 
-      {chats === null ? (
-        <div className="rounded-2xl border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-400">
-          טוען שיחות…
-        </div>
-      ) : chats.length === 0 ? (
-        <div className="rounded-2xl border border-gray-200 bg-white p-10 text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50">
-            <WhatsAppLogo size={30} />
+      <div
+        ref={containerRef}
+        className="flex h-[calc(100vh-250px)] min-h-[460px] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm"
+      >
+        {/* RIGHT — conversation list (pinned, resizable) */}
+        <aside style={{ width: listWidth }} className="flex min-w-0 shrink-0 flex-col border-l border-gray-200">
+          <div className="space-y-2 border-b border-gray-100 p-2.5">
+            <div className="flex items-center gap-1 overflow-x-auto rounded-xl bg-gray-100 p-1">
+              {[{ id: 'all', label: 'כל המספרים' }, ...accounts.map((a) => ({ id: a.id, label: a.label }))].map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setAccountFilter(t.id)}
+                  className={`whitespace-nowrap rounded-lg px-3 py-1 text-[12px] font-semibold transition ${
+                    accountFilter === t.id
+                      ? 'bg-white text-emerald-700 shadow-sm ring-1 ring-emerald-200'
+                      : 'text-gray-500 hover:text-gray-800'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-1.5">
+              {scopeChips.map((c) => (
+                <button
+                  key={c.key}
+                  type="button"
+                  onClick={() => setScope(c.key)}
+                  className={`whitespace-nowrap rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition ${
+                    scope === c.key && !search
+                      ? 'border-emerald-600 bg-emerald-600 text-white'
+                      : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="חיפוש לפי שם או מספר…"
+              dir="auto"
+              className="w-full rounded-xl border border-gray-300 bg-white px-3 py-1.5 text-[13px] focus:border-emerald-500 focus:outline-none"
+            />
           </div>
-          <h2 className="text-[15px] font-semibold text-gray-900">
-            {search || unmatchedOnly ? 'אין שיחות תואמות' : 'אין עדיין שיחות'}
-          </h2>
-        </div>
-      ) : (
-        <ul className="space-y-2">
-          {chats.map((chat) => (
-            <li key={chat.id} className="rounded-2xl border border-gray-200 bg-white shadow-sm">
-              <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {chats === null ? (
+              <p className="px-4 py-10 text-center text-sm text-gray-400">טוען שיחות…</p>
+            ) : chats.length === 0 ? (
+              <div className="px-4 py-10 text-center">
+                <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-emerald-50">
+                  <WhatsAppLogo size={24} />
+                </div>
+                <p className="text-sm text-gray-500">
+                  {search ? 'אין תוצאות' : scope === 'unmatched' ? 'אין שיחות ללא שיוך 🎉' : 'אין שיחות בתצוגה הזו'}
+                </p>
+              </div>
+            ) : (
+              <ul className="divide-y divide-gray-100">
+                {chats.map((chat) => {
+                  const active = selected && chat.id === selected.id;
+                  return (
+                    <li key={chat.id}>
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => {
+                          setSelected(chat);
+                          setLinking(false);
+                        }}
+                        onKeyDown={(e) => e.key === 'Enter' && setSelected(chat)}
+                        className={`cursor-pointer px-3 py-2.5 transition ${
+                          active ? 'bg-emerald-50/70' : 'hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold text-gray-900" dir="auto">
+                            {chat.displayName || chat.phoneNumber || 'לא מזוהה'}
+                          </span>
+                          <span className="shrink-0 text-[11px] text-gray-400" dir="ltr">
+                            {fmtWhen(chat.lastMessageAt)}
+                          </span>
+                        </div>
+                        <div className="mt-0.5 flex items-center gap-2">
+                          <span className="min-w-0 flex-1 truncate text-[12px] text-gray-500" dir="auto">
+                            {snippet(chat.lastMessage)}
+                          </span>
+                          {accountFilter === 'all' && accounts.length > 1 && (
+                            <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">
+                              {chat.account?.label || chat.accountId}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1.5 flex items-center gap-2">
+                          {chat.contact ? (
+                            <span className="min-w-0 truncate rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                              {chat.contact.name || 'איש קשר'}
+                            </span>
+                          ) : (
+                            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10.5px] font-medium text-amber-700 ring-1 ring-amber-200">
+                              ללא שיוך
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy === chat.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openDeal(chat);
+                            }}
+                            className="mr-auto rounded-lg bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                          >
+                            {busy === chat.id ? 'פותח…' : 'פתח דיל'}
+                          </button>
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </aside>
+
+        {/* Resize handle */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="שינוי רוחב רשימת השיחות"
+          onMouseDown={() => {
+            draggingRef.current = true;
+            document.body.style.userSelect = 'none';
+            document.body.style.cursor = 'col-resize';
+          }}
+          className="w-1 shrink-0 cursor-col-resize bg-gray-100 hover:bg-emerald-400/60"
+        />
+
+        {/* LEFT — the selected conversation */}
+        <section className="flex min-w-0 flex-1 flex-col">
+          {selected ? (
+            <>
+              <div className="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2">
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="truncate text-[14px] font-semibold text-gray-900" dir="auto">
-                      {chat.displayName || 'לא מזוהה'}
-                    </span>
-                    {chat.phoneNumber && chat.displayName !== chat.phoneNumber && (
-                      <span dir="ltr" className="text-[12px] text-gray-400">{chat.phoneNumber}</span>
-                    )}
-                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-500">
-                      {chat.account?.label || chat.accountId}
-                    </span>
-                    {chat.contact ? (
-                      <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-                        {chat.contact.name || 'איש קשר'}
-                      </span>
+                  <p className="truncate text-[14px] font-semibold text-gray-900" dir="auto">
+                    {selected.displayName || selected.phoneNumber || 'לא מזוהה'}
+                  </p>
+                  <p className="flex items-center gap-2 text-[11.5px] text-gray-500">
+                    {selected.phoneNumber && <span dir="ltr">{selected.phoneNumber}</span>}
+                    <span>· {selected.account?.label || selected.accountId}</span>
+                    {selected.contact ? (
+                      <span className="text-emerald-700">· {selected.contact.name}</span>
                     ) : (
-                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-amber-200">
-                        ללא שיוך
-                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setLinking(!linking)}
+                        className="text-blue-700 hover:underline"
+                      >
+                        · שיוך לאיש קשר
+                      </button>
                     )}
-                  </div>
-                  <p className="mt-0.5 truncate text-[12px] text-gray-500" dir="auto">
-                    {snippet(chat.lastMessage)}
-                    {chat.lastMessageAt && <span className="text-gray-400"> · {fmtWhen(chat.lastMessageAt)}</span>}
                   </p>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setExpanded(expanded === chat.id ? null : chat.id);
-                      setLinking(null);
-                    }}
-                    className="rounded-lg border border-gray-300 px-3 py-1.5 text-[12px] font-medium text-gray-600 hover:bg-gray-50"
-                  >
-                    {expanded === chat.id ? 'סגור שיחה' : 'צפייה בשיחה'}
-                  </button>
-                  {!chat.contact && (
-                    <button
-                      type="button"
-                      onClick={() => setLinking(linking === chat.id ? null : chat.id)}
-                      className="rounded-lg border border-gray-300 px-3 py-1.5 text-[12px] font-medium text-gray-600 hover:bg-gray-50"
-                    >
-                      שיוך לאיש קשר
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    disabled={busy === chat.id}
-                    onClick={() => openDeal(chat)}
-                    className="rounded-lg bg-emerald-600 px-3.5 py-1.5 text-[12px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-                  >
-                    {busy === chat.id ? 'פותח…' : 'פתח דיל'}
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  disabled={busy === selected.id}
+                  onClick={() => openDeal(selected)}
+                  className="shrink-0 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-[12px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {busy === selected.id ? 'פותח…' : 'פתח דיל'}
+                </button>
               </div>
-              {linking === chat.id && (
-                <div className="border-t border-gray-100 px-4 py-3">
-                  <ContactPicker busy={busy === chat.id} onPick={(c) => link(chat, c)} onCancel={() => setLinking(null)} />
+              {linking && !selected.contact && (
+                <div className="border-b border-gray-100 px-3 py-2.5">
+                  <ContactPicker
+                    busy={busy === selected.id}
+                    onPick={(c) => link(selected, c)}
+                    onCancel={() => setLinking(false)}
+                  />
                 </div>
               )}
-              {expanded === chat.id && (
-                <div className="border-t border-gray-100 p-3">
-                  <ChatThread chat={chat} heightClass="h-[22rem]" />
-                </div>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+              <div className="min-h-0 flex-1">
+                <ChatThread key={selected.id} chat={selected} fill />
+              </div>
+            </>
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50">
+                <WhatsAppLogo size={30} />
+              </div>
+              <p className="text-sm text-gray-500">בחרו שיחה מהרשימה כדי לצפות ולהשיב</p>
+            </div>
+          )}
+        </section>
+      </div>
 
-      {/* No linked contact — explicit confirmation before creating anything. */}
       <ConfirmDialog
         open={dialog?.kind === 'no_contact'}
         title="יצירת איש קשר ודיל חדשים"
@@ -412,7 +541,6 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
         onConfirm={() => createAndOpen(dialog.chat)}
       />
 
-      {/* Linked contact without any deal — confirm the new deal. */}
       <ConfirmDialog
         open={dialog?.kind === 'no_deals'}
         title="פתיחת דיל חדש"
@@ -422,7 +550,6 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
         onConfirm={() => createAndOpen(dialog.chat)}
       />
 
-      {/* Several plausible deals — never guess. */}
       {dialog?.kind === 'choose' && (
         <DealPickDialog
           title={`לאיזה דיל של ${dialog.contactName || 'איש הקשר'}?`}
@@ -437,7 +564,6 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
         />
       )}
 
-      {/* Only stale deals — open a new one or pick an old one. */}
       {dialog?.kind === 'old_or_new' && (
         <DealPickDialog
           title={`אין דיל פעיל ל${dialog.contactName || 'איש הקשר'}`}
@@ -463,6 +589,6 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
           }}
         />
       )}
-    </div>
+    </>
   );
 }

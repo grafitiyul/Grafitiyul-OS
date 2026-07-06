@@ -162,7 +162,7 @@ export function startHttpServer(client) {
   });
 
   // Outbound send — serialized, idempotent. Text + voice notes.
-  const { handleSend, handleSendVoice } = createSendHandlers({
+  const { handleSend, handleSendVoice, handleSendMedia } = createSendHandlers({
     prisma,
     client,
     accountId: config.accountId,
@@ -177,6 +177,12 @@ export function startHttpServer(client) {
   app.post('/send-voice', (req, res) => {
     void handleSendVoice(req, res).catch((err) => {
       log.error({ err: errSummary(err) }, '[/send-voice] handler crashed');
+      if (!res.headersSent) res.status(500).json({ error: 'send_failed' });
+    });
+  });
+  app.post('/send-media', (req, res) => {
+    void handleSendMedia(req, res).catch((err) => {
+      log.error({ err: errSummary(err) }, '[/send-media] handler crashed');
       if (!res.headersSent) res.status(500).json({ error: 'send_failed' });
     });
   });

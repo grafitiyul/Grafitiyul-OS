@@ -52,6 +52,9 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
   const [refreshNonce, setRefreshNonce] = useState(0);
   // Bumped after scheduling/cancelling → the scheduled strip reloads.
   const [scheduledNonce, setScheduledNonce] = useState(0);
+  // Drag&drop anywhere on the thread attaches the file in the composer.
+  const [dragOver, setDragOver] = useState(false);
+  const [droppedFile, setDroppedFile] = useState(null);
   const containerRef = useRef(null);
   const stickToBottomRef = useRef(true);
   const loadingOlderRef = useRef(false);
@@ -136,7 +139,32 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
   const isGroup = chat.type === 'group';
 
   return (
-    <div className={`flex flex-col overflow-hidden bg-[#efeae2] ${fill ? 'h-full min-h-0' : 'rounded-xl border border-gray-200'}`}>
+    <div
+      className={`relative flex flex-col overflow-hidden bg-[#efeae2] ${fill ? 'h-full min-h-0' : 'rounded-xl border border-gray-200'}`}
+      onDragOver={(e) => {
+        if (canSend && e.dataTransfer?.types?.includes('Files')) {
+          e.preventDefault();
+          setDragOver(true);
+        }
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false);
+      }}
+      onDrop={(e) => {
+        if (!canSend) return;
+        e.preventDefault();
+        setDragOver(false);
+        const f = e.dataTransfer?.files?.[0];
+        if (f) setDroppedFile(f);
+      }}
+    >
+      {dragOver && canSend && (
+        <div className="pointer-events-none absolute inset-1.5 z-20 flex items-center justify-center rounded-xl border-2 border-dashed border-emerald-500 bg-emerald-500/10">
+          <span className="rounded-full bg-white/95 px-4 py-2 text-[13px] font-semibold text-emerald-700 shadow-sm">
+            📎 שחררו כאן כדי לצרף את הקובץ
+          </span>
+        </div>
+      )}
       <div
         ref={containerRef}
         onScroll={onScroll}
@@ -204,6 +232,8 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
               setRefreshNonce((n) => n + 1);
             }}
             onScheduled={() => setScheduledNonce((n) => n + 1)}
+            droppedFile={droppedFile}
+            onDroppedFileConsumed={() => setDroppedFile(null)}
           />
         </>
       )}

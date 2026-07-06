@@ -230,9 +230,15 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
                   keeps the collapsed composer minimal. ביטול discards the
                   draft entirely (nothing is saved). */}
               {draft.trim() && (
+                // onMouseDown preventDefault: clicking a button blurs the
+                // collapsible editor, which collapses and MOVES the buttons
+                // before mouseup — so the click never fired (the "ביטול needs
+                // two clicks" bug). Keeping focus during mousedown lets the
+                // click land; the action itself then resets/collapses.
                 <div className="flex justify-end gap-2">
                   <button
                     type="button"
+                    onMouseDown={(e) => e.preventDefault()}
                     onClick={() => {
                       setDraft('');
                       setEditorNonce((n) => n + 1);
@@ -243,6 +249,7 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
                     ביטול
                   </button>
                   <button
+                    onMouseDown={(e) => e.preventDefault()}
                     onClick={postNote}
                     disabled={posting}
                     className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
