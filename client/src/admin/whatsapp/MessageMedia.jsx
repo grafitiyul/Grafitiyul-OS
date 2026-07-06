@@ -28,8 +28,9 @@ function Thumb({ media, className }) {
   return <img src={`data:image/jpeg;base64,${media.thumbBase64}`} alt="" className={className} />;
 }
 
-// Full-screen image viewer. ESC / click anywhere closes.
-function Lightbox({ src, onClose }) {
+// Full-screen media viewer (images AND videos). ESC / backdrop / × closes;
+// clicks on the media itself don't (so video controls stay usable).
+function Lightbox({ onClose, children }) {
   useEffect(() => {
     function onKey(e) {
       if (e.key === 'Escape') onClose();
@@ -39,10 +40,10 @@ function Lightbox({ src, onClose }) {
   }, [onClose]);
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 p-4"
       onClick={onClose}
     >
-      <img src={src} alt="" className="max-h-full max-w-full rounded-lg object-contain" />
+      {children}
       <button
         type="button"
         onClick={onClose}
@@ -95,19 +96,52 @@ export default function MessageMedia({ message: m, typeLabel }) {
               className={`${sticker ? 'max-h-36' : 'max-h-72'} w-auto max-w-full rounded-xl object-contain`}
             />
           </button>
-          {lightbox && <Lightbox src={mediaUrl(m)} onClose={() => setLightbox(false)} />}
+          {lightbox && (
+            <Lightbox onClose={() => setLightbox(false)}>
+              <img src={mediaUrl(m)} alt="" className="max-h-full max-w-full rounded-lg object-contain" />
+            </Lightbox>
+          )}
         </>
       );
     }
     if (m.messageType === 'video') {
+      // Same feel as images: a bubble-sized thumbnail with a play overlay;
+      // one click opens the large viewer and playback starts immediately
+      // (full screen via the player's own control). No raw inline <video>.
+      const poster = media.thumbBase64 ? `data:image/jpeg;base64,${media.thumbBase64}` : null;
       return (
-        <video
-          controls
-          preload="none"
-          src={mediaUrl(m)}
-          poster={media.thumbBase64 ? `data:image/jpeg;base64,${media.thumbBase64}` : undefined}
-          className="mb-1 max-h-72 w-full max-w-[320px] rounded-xl bg-black"
-        />
+        <>
+          <button
+            type="button"
+            onClick={() => setLightbox(true)}
+            className="relative mb-1 block overflow-hidden rounded-xl bg-gray-900 focus:outline-none"
+            title="הפעלת הסרטון"
+          >
+            {poster ? (
+              <img src={poster} alt={typeLabel} className="max-h-72 w-auto max-w-full min-w-[200px] rounded-xl object-contain" />
+            ) : (
+              <div className="h-44 w-64 max-w-full rounded-xl" />
+            )}
+            <span className="absolute inset-0 flex items-center justify-center">
+              <span className="flex h-14 w-14 items-center justify-center rounded-full bg-black/55 text-2xl text-white shadow-lg backdrop-blur-[2px] transition group-hover:bg-black/70">
+                <span dir="ltr" className="translate-x-[2px]">▶</span>
+              </span>
+            </span>
+          </button>
+          {lightbox && (
+            <Lightbox onClose={() => setLightbox(false)}>
+              <video
+                src={mediaUrl(m)}
+                controls
+                autoPlay
+                playsInline
+                poster={poster || undefined}
+                onClick={(e) => e.stopPropagation()}
+                className="max-h-full max-w-full rounded-lg"
+              />
+            </Lightbox>
+          )}
+        </>
       );
     }
     if (m.messageType === 'audio') {
