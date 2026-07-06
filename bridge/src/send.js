@@ -240,7 +240,16 @@ export function createSendHandlers({ prisma, client, accountId, log }) {
 
     let result;
     try {
-      result = await client.sendVoice({ jid, buffer: voice.buffer, mimetype: voice.mimetype, seconds });
+      result = await client.sendVoice({
+        jid,
+        buffer: voice.buffer,
+        mimetype: voice.mimetype,
+        // Prefer the EXACT duration measured from the transcoded audio over
+        // the browser recorder's timer; waveform makes the recipient render
+        // the native voice-note UI.
+        seconds: voice.seconds ?? seconds,
+        waveform: voice.waveform,
+      });
     } catch (err) {
       const code = err instanceof Error ? err.message : 'send_failed';
       if (code === 'whatsapp_not_connected') {

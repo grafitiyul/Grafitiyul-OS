@@ -406,14 +406,19 @@ export class WaClient {
   }
 
   // Send a voice note (Slice: voice from GOS). ptt:true renders the WhatsApp
-  // voice-message bubble; the buffer should already be OGG/Opus (see
-  // voice.js) — anything else degrades to an audio-file message.
-  async sendVoice({ jid, buffer, mimetype, seconds = null }) {
+  // voice-message bubble; the buffer must already be OGG/Opus (see voice.js —
+  // it throws on anything else). seconds + waveform are supplied explicitly
+  // so recipients get the NATIVE voice-note UI (the waveform bar) — passing
+  // them also makes Baileys skip its optional audio-decode/music-metadata
+  // processing entirely. Deliberately NO fileName here: this is a voice
+  // note, not an audio-file attachment (that's /send-media's job).
+  async sendVoice({ jid, buffer, mimetype, seconds = null, waveform = null }) {
     return this.sendContent(jid, {
       audio: buffer,
       ptt: true,
       mimetype,
       ...(seconds ? { seconds: Math.round(seconds) } : {}),
+      ...(waveform ? { waveform } : {}),
     });
   }
 
