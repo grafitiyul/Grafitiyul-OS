@@ -81,7 +81,9 @@ export default function DealDrawer({ dealId, onClose }) {
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
-        <DealDetail dealId={dealId} />
+        {/* key: switching deals (work-queue follow) remounts the workspace so
+            the new deal loads with completely fresh state — no stale buffers. */}
+        <DealDetail key={dealId} dealId={dealId} />
       </div>
 
       {/* Same transient confirmation DealDetail uses (no global toast infra yet). */}

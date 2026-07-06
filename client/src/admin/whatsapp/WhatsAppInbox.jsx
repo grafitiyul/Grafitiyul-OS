@@ -3,9 +3,9 @@ import { api } from '../../lib/api.js';
 import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import ChatThread from './ChatThread.jsx';
+import ChatListRow from './ChatListRow.jsx';
 import DealDrawer from './DealDrawer.jsx';
-import Checks from './Checks.jsx';
-import ActivityBadgeChip from '../deals/ActivityBadgeChip.jsx';
+import { hasDirtyForms } from '../../lib/dirtyForms.js';
 import { ensureSeen, isUnread, markSeen, markUnread, readManualUnread, readSeen } from './seenStore.js';
 
 // Active WhatsApp inbox — WhatsApp-style two-pane workspace:
@@ -26,31 +26,6 @@ const LAYOUT_KEY = 'gos-whatsapp-inbox'; // { listWidth }
 const LIST_MIN = 300;
 const LIST_MAX = 540;
 
-function fmtWhen(iso) {
-  if (!iso) return '';
-  try {
-    const d = new Date(iso);
-    const today = new Date();
-    const same =
-      d.getFullYear() === today.getFullYear() &&
-      d.getMonth() === today.getMonth() &&
-      d.getDate() === today.getDate();
-    return same
-      ? d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
-      : d.toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' });
-  } catch {
-    return '';
-  }
-}
-
-function fmtSnoozedUntil(iso) {
-  try {
-    return new Date(iso).toLocaleString('he-IL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' });
-  } catch {
-    return '';
-  }
-}
-
 function fmtTourDate(d) {
   if (!d) return null;
   try {
@@ -64,12 +39,6 @@ function fmtMoney(minor) {
   const n = Number(minor);
   if (!Number.isFinite(n) || n === 0) return null;
   return new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 }).format(n / 100);
-}
-
-function snippet(msg) {
-  if (!msg) return 'אין הודעות';
-  if (msg.textContent) return msg.textContent.slice(0, 60);
-  return { image: '📷 תמונה', video: '🎬 סרטון', audio: '🎤 הודעה קולית', document: '📄 מסמך', sticker: 'סטיקר' }[msg.messageType] || 'הודעה';
 }
 
 function contactLabel(c) {
@@ -104,20 +73,6 @@ const STATUS_FILTERS = [
   { key: 'nodeal', label: 'בלי דיל' },
   { key: 'today', label: 'היום' },
 ];
-
-// Snooze presets → a concrete Date.
-function snoozeOptions() {
-  const now = Date.now();
-  const tomorrow9 = new Date();
-  tomorrow9.setDate(tomorrow9.getDate() + 1);
-  tomorrow9.setHours(9, 0, 0, 0);
-  return [
-    { label: 'לשעה', until: new Date(now + 3600_000) },
-    { label: 'ל-3 שעות', until: new Date(now + 3 * 3600_000) },
-    { label: 'עד מחר 9:00', until: tomorrow9 },
-    { label: 'לשבוע', until: new Date(now + 7 * 86_400_000) },
-  ];
-}
 
 function DealChoiceRow({ deal, onPick }) {
   const st = DEAL_STATUS[deal.status] || DEAL_STATUS.open;
@@ -322,23 +277,6 @@ function ContactPicker({ onPick, onCancel, busy }) {
   );
 }
 
-// Tiny icon button in the row's hover action cluster.
-function RowAction({ onClick, title, children }) {
-  return (
-    <button
-      type="button"
-      title={title}
-      onClick={(e) => {
-        e.stopPropagation();
-        onClick(e);
-      }}
-      className="flex h-6 w-6 items-center justify-center rounded-md bg-white text-[12px] text-gray-500 shadow-sm ring-1 ring-gray-200 hover:text-gray-800"
-    >
-      {children}
-    </button>
-  );
-}
-
 export default function WhatsAppInbox({ accounts = [], onCountChange }) {
   const [chats, setChats] = useState(null);
   const [unmatchedCount, setUnmatchedCount] = useState(0);
@@ -351,6 +289,9 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
   const [busy, setBusy] = useState(null);
   const [dialog, setDialog] = useState(null);
   const [drawerDealId, setDrawerDealId] = useState(null);
+  // Work-queue drawer follow: a chat waiting for "switch despite unsaved
+  // deal edits" confirmation (null = no pending confirmation).
+  const [followConfirm, setFollowConfirm] = useState(null);
   const [error, setError] = useState(null);
   // Per-chat unread counts (device-local seen markers + server counts).
   const [unreadCounts, setUnreadCounts] = useState({});
@@ -493,10 +434,23 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
     });
   }, [chats, statusFilter, unreadCounts, manualUnread]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Open a conversation. WORK-QUEUE MODE: when the deal drawer is already
+  // open, switching conversations re-resolves the drawer to the NEW chat's
+  // deal (exactly-one → swaps in place; several → the choose dialog; no
+  // contact/deals → the create/open flows — every path lands in the same
+  // drawer). Unsaved Deal edits are guarded by the global dirty-forms
+  // registry; note + WhatsApp drafts persist on their own (localStorage).
   function openChat(chat) {
+    const switching = selected?.id !== chat.id;
     setSelected(chat);
     setCursorId(chat.id);
     setLinking(false);
+    if (!drawerDealId || !switching) return;
+    if (hasDirtyForms()) {
+      setFollowConfirm(chat); // ask before replacing the deal under the edits
+    } else {
+      openDeal(chat);
+    }
   }
 
   // Keyboard shortcuts. Typing in inputs is respected (only Ctrl+K / Esc
@@ -510,6 +464,10 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
         return;
       }
       if (e.key === 'Escape') {
+        if (followConfirm) {
+          setFollowConfirm(null);
+          return;
+        }
         if (drawerDealId) return; // the drawer handles its own ESC
         if (dialog) {
           setDialog(null);
@@ -546,7 +504,7 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [filteredChats, cursorId, selected, dialog, drawerDealId, snoozeMenuFor]);
+  }, [filteredChats, cursorId, selected, dialog, drawerDealId, snoozeMenuFor, followConfirm]);
 
   async function link(chat, contact) {
     setBusy(chat.id);
@@ -714,173 +672,26 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
               </div>
             ) : (
               <ul className="divide-y divide-gray-100">
-                {filteredChats.map((chat) => {
-                  const active = selected && chat.id === selected.id;
-                  const unreadN = unreadCounts[chat.id] || 0;
-                  const manualOnly = !!manualUnread[chat.id] && unreadN === 0;
-                  const unread = unreadN > 0 || manualOnly;
-                  const lastOut = chat.lastMessage?.direction === 'outgoing';
-                  const snoozed = chat.snoozedUntil && new Date(chat.snoozedUntil) > new Date();
-                  const showPhone = chat.phoneNumber && chat.displayName !== chat.phoneNumber;
-                  return (
-                    <li key={chat.id}>
-                      <div
-                        role="button"
-                        tabIndex={0}
-                        data-chat-row={chat.id}
-                        onClick={() => openChat(chat)}
-                        onKeyDown={(e) => e.key === 'Enter' && openChat(chat)}
-                        className={`group relative cursor-pointer px-3 py-2.5 transition ${
-                          active
-                            ? 'bg-emerald-50/70'
-                            : cursorId === chat.id
-                              ? 'bg-gray-100'
-                              : 'hover:bg-gray-50'
-                        }`}
-                      >
-                        {/* Selected indicator — thin green accent on the far
-                            right edge, readable at a glance while scanning. */}
-                        {active && <span className="absolute inset-y-0 right-0 w-[3px] bg-emerald-500" />}
-                        <div className="flex items-center gap-2">
-                          {chat.pinnedAt && <span className="shrink-0 text-[11px] text-gray-400" title="שיחה נעוצה">📌</span>}
-                          {snoozed && (
-                            <span className="shrink-0 text-[11px]" title={`בנודניק עד ${fmtSnoozedUntil(chat.snoozedUntil)}`}>💤</span>
-                          )}
-                          {/* text-right keeps English names on the same right
-                              edge as Hebrew ones (dir=auto only fixes bidi
-                              ordering, not alignment). */}
-                          <span
-                            className={`min-w-0 flex-1 truncate text-right text-[13.5px] ${
-                              unread ? 'font-bold text-gray-900' : 'font-medium text-gray-700'
-                            }`}
-                            dir="auto"
-                          >
-                            {chat.displayName || chat.phoneNumber || 'לא מזוהה'}
-                          </span>
-                          <span className={`shrink-0 text-[10.5px] ${unread ? 'font-semibold text-emerald-600' : 'text-gray-400'}`} dir="ltr">
-                            {fmtWhen(chat.lastMessageAt)}
-                          </span>
-                        </div>
-                        <div className="mt-0.5 flex items-center gap-1.5">
-                          {/* Direction indicator: outgoing = delivery checks,
-                              incoming unread = stronger text + badge. */}
-                          {lastOut && <Checks status={chat.lastMessage?.deliveryStatus || 'sent'} size={14} />}
-                          <span
-                            className={`min-w-0 flex-1 truncate text-right text-[12px] ${
-                              unread ? 'font-semibold text-gray-800' : 'text-gray-400'
-                            }`}
-                            dir="auto"
-                          >
-                            {snippet(chat.lastMessage)}
-                          </span>
-                          {unreadN > 0 ? (
-                            <span className="flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-emerald-500 px-1 text-[10.5px] font-bold text-white">
-                              {unreadN > 99 ? '99+' : unreadN}
-                            </span>
-                          ) : manualOnly ? (
-                            // Manually marked unread, no new messages — an
-                            // empty circle (WhatsApp Desktop behavior).
-                            <span
-                              className="h-[11px] w-[11px] shrink-0 rounded-full border-2 border-emerald-500"
-                              title="סומנה כלא נקראה"
-                            />
-                          ) : null}
-                        </div>
-                        <div className="mt-1.5 flex items-center gap-2">
-                          {/* Phone — always visible, right-aligned with the
-                              rest of the identity block. */}
-                          {showPhone && (
-                            <span className="shrink-0 text-[10.5px] text-gray-400" dir="ltr">
-                              {chat.phoneNumber}
-                            </span>
-                          )}
-                          {chat.deal ? (
-                            // The EXACT Deal-header badge (shared resolver +
-                            // shared tones) — specific type for business deals.
-                            <ActivityBadgeChip
-                              activityType={chat.deal.activityType}
-                              orgTypeLabel={chat.deal.orgTypeLabel}
-                              subtypeLabel={chat.deal.subtypeLabel}
-                              title={chat.deal.title}
-                            />
-                          ) : chat.contact ? (
-                            <span className="min-w-0 truncate rounded-full bg-gray-100 px-2 py-0.5 text-[10.5px] font-medium text-gray-500">
-                              {chat.contact.name || 'איש קשר'}
-                            </span>
-                          ) : (
-                            // Blue = "needs CRM attention" — deliberately far
-                            // from the amber קבוצתי activity tone.
-                            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10.5px] font-semibold text-blue-700 ring-1 ring-blue-200">
-                              ללא שיוך
-                            </span>
-                          )}
-                          {/* Hover action cluster — pin / read / snooze */}
-                          <div className="relative mr-auto hidden items-center gap-1 group-hover:flex">
-                            <RowAction
-                              title={chat.pinnedAt ? 'ביטול נעיצה' : 'נעיצת השיחה'}
-                              onClick={() => setChatState(chat, { pinned: !chat.pinnedAt })}
-                            >
-                              📌
-                            </RowAction>
-                            <RowAction
-                              title={unread ? 'סימון כנקראה' : 'סימון כלא נקראה'}
-                              onClick={() => toggleRead(chat)}
-                            >
-                              {unread ? '✓' : '✉'}
-                            </RowAction>
-                            <RowAction
-                              title={snoozed ? 'נודניק פעיל' : 'נודניק (הסתרה זמנית)'}
-                              onClick={() => setSnoozeMenuFor(snoozeMenuFor === chat.id ? null : chat.id)}
-                            >
-                              💤
-                            </RowAction>
-                          </div>
-                        </div>
-                        {snoozeMenuFor === chat.id && (
-                          <>
-                            <div
-                              className="fixed inset-0 z-30"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSnoozeMenuFor(null);
-                              }}
-                            />
-                            <div
-                              className="absolute left-2 top-full z-40 -mt-1 w-44 rounded-xl border border-gray-200 bg-white py-1 shadow-xl"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              {snoozeOptions().map((o) => (
-                                <button
-                                  key={o.label}
-                                  type="button"
-                                  onClick={() => {
-                                    setSnoozeMenuFor(null);
-                                    setChatState(chat, { snoozedUntil: o.until.toISOString() });
-                                  }}
-                                  className="block w-full px-3 py-1.5 text-right text-[12.5px] text-gray-700 hover:bg-gray-50"
-                                >
-                                  {o.label}
-                                </button>
-                              ))}
-                              {snoozed && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setSnoozeMenuFor(null);
-                                    setChatState(chat, { snoozedUntil: null });
-                                  }}
-                                  className="block w-full border-t border-gray-100 px-3 py-1.5 text-right text-[12.5px] font-medium text-red-600 hover:bg-red-50"
-                                >
-                                  ביטול הנודניק
-                                </button>
-                              )}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    </li>
-                  );
-                })}
+                {filteredChats.map((chat) => (
+                  <li key={chat.id}>
+                    <ChatListRow
+                      chat={chat}
+                      active={!!selected && chat.id === selected.id}
+                      cursor={cursorId === chat.id}
+                      unreadCount={unreadCounts[chat.id] || 0}
+                      manualUnread={!!manualUnread[chat.id]}
+                      snoozeMenuOpen={snoozeMenuFor === chat.id}
+                      onOpen={openChat}
+                      onTogglePin={(c) => setChatState(c, { pinned: !c.pinnedAt })}
+                      onToggleRead={toggleRead}
+                      onToggleSnoozeMenu={(c) => setSnoozeMenuFor(c && snoozeMenuFor !== c.id ? c.id : null)}
+                      onSnooze={(untilIso) => {
+                        setSnoozeMenuFor(null);
+                        setChatState(chat, { snoozedUntil: untilIso });
+                      }}
+                    />
+                  </li>
+                ))}
               </ul>
             )}
           </div>
@@ -1005,6 +816,23 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
           onClose={() => setDialog(null)}
         />
       )}
+
+      {/* Switching conversations while the drawer holds unsaved Deal edits —
+          never replace them silently. Cancel keeps the current deal open
+          (the conversation still switches; nothing is lost either way).
+          Note + WhatsApp drafts auto-persist regardless. */}
+      <ConfirmDialog
+        open={!!followConfirm}
+        title="שינויים שלא נשמרו בדיל"
+        body={'בדיל הפתוח יש שינויים שעדיין לא נשמרו.\nלעבור לדיל של השיחה החדשה? (טיוטות של פתקים והודעות נשמרות אוטומטית — אבל שינויים בשדות הדיל יאבדו.)'}
+        confirmLabel="מעבר לדיל החדש"
+        onCancel={() => setFollowConfirm(null)}
+        onConfirm={() => {
+          const chat = followConfirm;
+          setFollowConfirm(null);
+          if (chat) openDeal(chat);
+        }}
+      />
 
       {dialog?.kind === 'old_or_new' && (
         <DealPickDialog
