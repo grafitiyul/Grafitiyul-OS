@@ -337,7 +337,12 @@ export function createIngest({ prisma, socket, log, accountId }) {
     const senderJid = isFromMe
       ? socket.user?.phoneNumber ?? socket.user?.id ?? null
       : (msg.key.participant ?? msg.key.remoteJid);
-    const senderPhone = jidToPhone(senderJid);
+    // participant/remoteJid may be a @lid privacy JID (jidToPhone strictly
+    // returns null for those) — the *_Alt key fields carry the real
+    // @s.whatsapp.net twin when WhatsApp provides it. Without this, group
+    // messages from @lid senders stored NO senderPhone at all (the
+    // "anonymous group bubbles" bug).
+    const senderPhone = jidToPhone(senderJid) ?? (!isFromMe ? jidToPhone(senderPnFromKey(msg.key)) : null);
     const senderName = msg.pushName ?? null;
     // fromMe pushName is the OWNER's display name — never let it reach the
     // chat row (the "every chat named after the owner" bug).

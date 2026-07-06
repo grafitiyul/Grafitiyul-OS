@@ -161,6 +161,12 @@ export default function ChatListRow({
   const snoozed = chat.snoozedUntil && new Date(chat.snoozedUntil) > new Date();
   const isGroup = chat.type === 'group';
   const showPhone = !isGroup && chat.phoneNumber && chat.displayName !== chat.phoneNumber;
+  // WhatsApp-style group preview: "יובל: מגיע עוד 10 דקות" — sender name →
+  // phone → the same consistent unknown-participant fallback the bubbles use.
+  const senderPrefix =
+    isGroup && chat.lastMessage && chat.lastMessage.direction === 'incoming'
+      ? `${chat.lastMessage.senderName || chat.lastMessage.senderPhone || 'משתתף לא מזוהה'}: `
+      : '';
 
   return (
     <div
@@ -209,6 +215,7 @@ export default function ChatListRow({
           }`}
           dir="auto"
         >
+          {senderPrefix}
           {snippet(chat.lastMessage)}
         </span>
         {unreadN > 0 ? (

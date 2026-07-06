@@ -75,6 +75,9 @@ export default function MessageBubble({ message: m, showSender = false, quoted =
   }
 
   const outbound = m.direction === 'outgoing';
+  // Group sender identity ladder: display name → phone → a consistent
+  // "unknown participant" fallback. NEVER hide the label in a group — an
+  // unattributed bubble reads as unreliable.
   const sender = m.senderName || m.senderPhone;
   const reactions = groupReactions(m.reactions);
 
@@ -104,9 +107,12 @@ export default function MessageBubble({ message: m, showSender = false, quoted =
           outbound ? 'rounded-tl-md bg-[#d9fdd3]' : 'rounded-tr-md bg-white'
         }`}
       >
-        {showSender && sender && (
-          <p className={`mb-0.5 text-[12px] font-semibold ${senderColor(sender)}`} dir="auto">
-            {sender}
+        {showSender && (
+          <p
+            className={`mb-0.5 text-[12px] font-semibold ${sender ? senderColor(sender) : 'text-gray-400'}`}
+            dir="auto"
+          >
+            {sender || 'משתתף לא מזוהה'}
           </p>
         )}
 
@@ -114,7 +120,7 @@ export default function MessageBubble({ message: m, showSender = false, quoted =
         {quoted && (
           <div className="mb-1.5 rounded-lg border-r-4 border-emerald-500 bg-black/5 px-2.5 py-1.5">
             <p className="text-[11px] font-semibold text-emerald-700" dir="auto">
-              {quoted.direction === 'outgoing' ? 'אני' : quoted.senderName || quoted.senderPhone || ''}
+              {quoted.direction === 'outgoing' ? 'אני' : quoted.senderName || quoted.senderPhone || 'משתתף לא מזוהה'}
             </p>
             <p className="truncate text-[12px] text-gray-600" dir="auto">
               {quotedSnippet(quoted)}
