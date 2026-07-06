@@ -471,6 +471,11 @@ router.get(
     // ones with recent activity), 'unmatched' (repair view), 'all'.
     // Legacy unmatched=1 maps to 'unmatched'.
     const scope = req.query.unmatched === '1' ? 'unmatched' : String(req.query.scope || 'active');
+    // Kind: 'private' (default — the CRM workflow), 'group', 'all'. Groups
+    // are read/reply conversations only: they are NEVER auto-matched, never
+    // linked to Contacts (PUT /link rejects them), and never resolve deals.
+    const kind = ['group', 'all'].includes(String(req.query.kind || '')) ? String(req.query.kind) : 'private';
+    const typeWhere = kind === 'all' ? { type: { in: ['private', 'group'] } } : { type: kind };
     const preliminary = await prisma.whatsAppChat.findMany({
       where: { contactId: null, type: 'private' },
       select: { id: true, contactId: true, type: true, phoneNumber: true },
@@ -489,6 +494,7 @@ router.get(
           OR: [
             { savedContactName: { contains: search, mode: 'insensitive' } },
             { pushName: { contains: search, mode: 'insensitive' } },
+            { groupSubject: { contains: search, mode: 'insensitive' } },
             { phoneNumber: { contains: search.replace(/\D/g, '') || search } },
             {
               contact: {
@@ -505,7 +511,7 @@ router.get(
       : null;
     const chatsRaw = await prisma.whatsAppChat.findMany({
       where: {
-        type: 'private',
+        ...typeWhere,
         ...(accountId ? { accountId } : {}),
         // Both blocks are OR-shaped — combine under AND so they never
         // clobber each other on the same object key.

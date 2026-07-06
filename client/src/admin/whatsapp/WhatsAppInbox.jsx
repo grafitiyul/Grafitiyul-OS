@@ -283,6 +283,9 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
   const [unmatchedCount, setUnmatchedCount] = useState(0);
   const [accountFilter, setAccountFilter] = useState('all');
   const [scope, setScope] = useState('active'); // active | unmatched | all
+  // Conversation kind: private (default, the CRM workflow) | group | all.
+  // Groups are read/reply-only here — no CRM linking or deal actions.
+  const [kind, setKind] = useState('private');
   const [statusFilter, setStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(null); // chat object snapshot
@@ -341,6 +344,7 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
         search: search || undefined,
         accountId: accountFilter === 'all' ? undefined : accountFilter,
         scope: search ? 'all' : scope,
+        kind,
       });
       setChats(data.chats);
       setUnmatchedCount(data.unmatchedCount);
@@ -352,7 +356,7 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
     } catch (e) {
       setError(e?.payload?.error || e?.message || 'failed');
     }
-  }, [search, accountFilter, scope, onCountChange, computeUnread]);
+  }, [search, accountFilter, scope, kind, onCountChange, computeUnread]);
 
   useEffect(() => {
     const t = setTimeout(() => load(), search ? 300 : 0);
@@ -458,6 +462,11 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
 
   // Passive drawer follow — never opens create/confirm flows on its own.
   async function followDrawer(chat) {
+    // Groups have no CRM identity — never resolve deals for them.
+    if (chat.type === 'group') {
+      setDrawerDealId(null);
+      return;
+    }
     try {
       const r = await api.whatsapp.dealResolution(chat.id);
       if (r.kind === 'open') setDrawerDealId(r.dealId);
@@ -596,11 +605,26 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
     }
   }
 
-  const scopeChips = [
-    { key: 'active', label: 'שיחות' },
-    { key: 'unmatched', label: unmatchedCount > 0 ? `ללא שיוך (${unmatchedCount})` : 'ללא שיוך' },
+  const kindChips = [
+    { key: 'private', label: 'פרטיות' },
+    { key: 'group', label: 'קבוצות' },
     { key: 'all', label: 'הכל' },
   ];
+
+  // The unmatched (CRM repair) scope is a private-chat concept — hidden in
+  // the groups view.
+  const scopeChips = [
+    { key: 'active', label: 'שיחות' },
+    ...(kind === 'group'
+      ? []
+      : [{ key: 'unmatched', label: unmatchedCount > 0 ? `ללא שיוך (${unmatchedCount})` : 'ללא שיוך' }]),
+    { key: 'all', label: 'הכל' },
+  ];
+
+  // Deal-based filters are meaningless for groups.
+  const statusFilters = STATUS_FILTERS.filter(
+    (f) => kind !== 'group' || (f.key !== 'deal' && f.key !== 'nodeal'),
+  );
 
   return (
     <>
@@ -633,7 +657,28 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                 </button>
               ))}
             </div>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 overflow-x-auto">
+              {/* Kind switch — groups live behind an explicit toggle so the
+                  default CRM work queue stays private-chat only. */}
+              <div className="flex shrink-0 items-center gap-0.5 rounded-full bg-gray-100 p-0.5">
+                {kindChips.map((k) => (
+                  <button
+                    key={k.key}
+                    type="button"
+                    onClick={() => {
+                      setKind(k.key);
+                      if (k.key === 'group' && scope === 'unmatched') setScope('active');
+                      if (k.key === 'group') setStatusFilter((f) => (f === 'deal' || f === 'nodeal' ? 'all' : f));
+                    }}
+                    className={`whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold transition ${
+                      kind === k.key ? 'bg-white text-emerald-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    {k.label}
+                  </button>
+                ))}
+              </div>
+              <span className="h-4 w-px shrink-0 bg-gray-200" />
               {scopeChips.map((c) => (
                 <button
                   key={c.key}
@@ -650,7 +695,7 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
               ))}
             </div>
             <div className="flex items-center gap-1 overflow-x-auto">
-              {STATUS_FILTERS.map((f) => (
+              {statusFilters.map((f) => (
                 <button
                   key={f.key}
                   type="button"
@@ -739,6 +784,7 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                     {selected.displayName || selected.phoneNumber || 'לא מזוהה'}
                   </p>
                   <p className="flex items-center gap-2 text-[11.5px] text-gray-500">
+                    {selected.type === 'group' && <span>👥 קבוצה</span>}
                     {selected.phoneNumber && (
                       <span className="flex items-center gap-1" dir="ltr">
                         <PhoneFlag phone={selected.phoneNumber} />
@@ -746,31 +792,36 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                       </span>
                     )}
                     <span>· {selected.account?.label || selected.accountId}</span>
-                    {selected.contact ? (
-                      <span className="text-emerald-700">· {selected.contact.name}</span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setLinking(!linking)}
-                        className="text-blue-700 hover:underline"
-                      >
-                        · שיוך לאיש קשר
-                      </button>
-                    )}
+                    {/* CRM identity is a PRIVATE-chat concept — groups get no
+                        linking affordance and no deal actions. */}
+                    {selected.type !== 'group' &&
+                      (selected.contact ? (
+                        <span className="text-emerald-700">· {selected.contact.name}</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setLinking(!linking)}
+                          className="text-blue-700 hover:underline"
+                        >
+                          · שיוך לאיש קשר
+                        </button>
+                      ))}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  disabled={busy === selected.id}
-                  onClick={() => openDeal(selected)}
-                  className={`shrink-0 rounded-lg px-3.5 py-1.5 text-[12px] font-semibold text-white disabled:opacity-50 ${
-                    selected.contact ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700'
-                  }`}
-                >
-                  {busy === selected.id ? 'פותח…' : selected.contact ? 'פתח דיל' : 'צור דיל'}
-                </button>
+                {selected.type !== 'group' && (
+                  <button
+                    type="button"
+                    disabled={busy === selected.id}
+                    onClick={() => openDeal(selected)}
+                    className={`shrink-0 rounded-lg px-3.5 py-1.5 text-[12px] font-semibold text-white disabled:opacity-50 ${
+                      selected.contact ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700'
+                    }`}
+                  >
+                    {busy === selected.id ? 'פותח…' : selected.contact ? 'פתח דיל' : 'צור דיל'}
+                  </button>
+                )}
               </div>
-              {linking && !selected.contact && (
+              {linking && !selected.contact && selected.type !== 'group' && (
                 <div className="border-b border-gray-100 px-3 py-2.5">
                   <ContactPicker
                     busy={busy === selected.id}

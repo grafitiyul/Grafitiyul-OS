@@ -105,6 +105,13 @@ function Avatar({ chat }) {
       />
     );
   }
+  if (chat.type === 'group') {
+    return (
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-100 text-[17px]">
+        👥
+      </span>
+    );
+  }
   const initials = initialsOf(chat);
   return (
     <span
@@ -152,7 +159,8 @@ export default function ChatListRow({
   const unread = unreadN > 0 || manualOnly;
   const lastOut = chat.lastMessage?.direction === 'outgoing';
   const snoozed = chat.snoozedUntil && new Date(chat.snoozedUntil) > new Date();
-  const showPhone = chat.phoneNumber && chat.displayName !== chat.phoneNumber;
+  const isGroup = chat.type === 'group';
+  const showPhone = !isGroup && chat.phoneNumber && chat.displayName !== chat.phoneNumber;
 
   return (
     <div
@@ -226,7 +234,13 @@ export default function ChatListRow({
             {chat.phoneNumber}
           </span>
         )}
-        {chat.deal ? (
+        {isGroup ? (
+          // Groups carry NO CRM chips (no deal / contact / needs-attention) —
+          // they are read/reply conversations, outside the CRM workflow.
+          <span className="flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[10.5px] font-medium text-gray-500">
+            👥 קבוצה
+          </span>
+        ) : chat.deal ? (
           // The EXACT Deal-header badge (shared resolver + shared tones).
           <ActivityBadgeChip
             activityType={chat.deal.activityType}
