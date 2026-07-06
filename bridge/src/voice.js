@@ -1,17 +1,15 @@
 // Voice-note transcoding: browsers record opus in WebM (Chrome/Edge) or mp4
 // (Safari), but WhatsApp voice notes (PTT bubbles with waveform/speed
-// controls, playable on iPhone) must be OGG/Opus. ffmpeg-static ships the
-// binary; transcode via temp files. On ANY failure we fall back to sending
-// the original bytes — an audio file message instead of a PTT bubble, never
-// a lost message.
+// controls, playable on iPhone) must be OGG/Opus.
 //
 // ALWAYS re-encode — even when the browser claims it already produced
-// ogg/opus. Browser MediaRecorder containers are frequently malformed
-// (missing duration metadata, broken headers on some Chromium ogg builds);
-// a passthrough of a bad source file silently reaches WhatsApp AND our R2
-// copy. ffmpeg normalization guarantees one clean canonical file.
+// ogg/opus (browser containers are frequently malformed). And on ANY failure
+// we now THROW instead of falling back to the original bytes: sending a
+// browser WebM as ptt produced an unplayable bubble on the recipient's phone
+// — a broken message the sender can't see. An honest error beats that.
 
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -19,10 +17,21 @@ import ffmpegPath from 'ffmpeg-static';
 
 const OGG_OPUS = 'audio/ogg; codecs=opus';
 
+export function ffmpegAvailable() {
+  return !!ffmpegPath && existsSync(ffmpegPath);
+}
+
+export class VoiceTranscodeError extends Error {
+  constructor(message) {
+    super(message);
+    this.code = 'voice_transcode_failed';
+  }
+}
+
 export async function transcodeToVoiceNote(buffer, inputMime, log) {
-  if (!ffmpegPath) {
-    log.warn('ffmpeg-static missing — sending original audio bytes');
-    return { buffer, mimetype: inputMime || 'application/octet-stream', transcoded: false };
+  if (!ffmpegAvailable()) {
+    log.error({ ffmpegPath }, 'ffmpeg binary unavailable — voice notes cannot be sent');
+    throw new VoiceTranscodeError('ffmpeg_unavailable');
   }
   let dir = null;
   try {
@@ -31,7 +40,9 @@ export async function transcodeToVoiceNote(buffer, inputMime, log) {
     const outFile = path.join(dir, 'out.ogg');
     await writeFile(inFile, buffer);
     await new Promise((resolve, reject) => {
-      const args = ['-y', '-i', inFile, '-vn', '-c:a', 'libopus', '-b:a', '32k', '-ar', '48000', '-ac', '1', outFile];
+      // -application voip: opus tuned for speech — the encoding WhatsApp's
+      // own voice notes use.
+      const args = ['-y', '-i', inFile, '-vn', '-c:a', 'libopus', '-b:a', '32k', '-ar', '48000', '-ac', '1', '-application', 'voip', outFile];
       const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
       let stderr = '';
       proc.stderr.on('data', (d) => {
@@ -53,14 +64,17 @@ export async function transcodeToVoiceNote(buffer, inputMime, log) {
       });
     });
     const out = await readFile(outFile);
+    // Container sanity: a valid Ogg stream starts with the OggS capture
+    // pattern. Anything else must not reach WhatsApp.
+    if (out.byteLength < 100 || out.subarray(0, 4).toString('latin1') !== 'OggS') {
+      throw new Error(`invalid_ogg_output (${out.byteLength} bytes)`);
+    }
     log.info({ inBytes: buffer.byteLength, outBytes: out.byteLength, inputMime }, 'voice transcoded to ogg/opus');
     return { buffer: out, mimetype: OGG_OPUS, transcoded: true };
   } catch (err) {
-    log.warn(
-      { err: err instanceof Error ? err.message.slice(0, 300) : String(err), inputMime },
-      'voice transcode failed — sending original bytes (audio file, not PTT)',
-    );
-    return { buffer, mimetype: inputMime || 'application/octet-stream', transcoded: false };
+    const detail = err instanceof Error ? err.message.slice(0, 300) : String(err);
+    log.error({ err: detail, inputMime }, 'voice transcode FAILED — refusing to send unplayable audio');
+    throw new VoiceTranscodeError(detail);
   } finally {
     if (dir) await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }

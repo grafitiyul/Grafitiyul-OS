@@ -530,10 +530,49 @@ function dealSummary(d) {
     title: d.title,
     status: d.status,
     tourDate: d.tourDate,
-    organizationName: d.organization?.name ?? null,
+    organizationName: d.organizationName ?? null,
     valueMinor: d.valueMinor,
-    stageName: d.dealStage?.name ?? null,
+    stageName: d.stageName ?? null,
   };
+}
+
+// The deals a contact is linked to, enriched with stage/org names. Written
+// WITHOUT nested relation includes on purpose — the production Prisma client
+// rejected `include.deal.include.dealStage` ("Unknown argument dealStage")
+// even though the same query validates locally; plain scalar selects + two
+// id-lookups are immune to that class of failure.
+async function dealsForContact(contactId) {
+  const rows = await prisma.deal.findMany({
+    where: { contacts: { some: { contactId } } },
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      tourDate: true,
+      valueMinor: true,
+      dealStageId: true,
+      organizationId: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (rows.length === 0) return [];
+  const stageIds = [...new Set(rows.map((d) => d.dealStageId).filter(Boolean))];
+  const orgIds = [...new Set(rows.map((d) => d.organizationId).filter(Boolean))];
+  const [stages, orgs] = await Promise.all([
+    stageIds.length
+      ? prisma.dealStage.findMany({ where: { id: { in: stageIds } }, select: { id: true, name: true } })
+      : [],
+    orgIds.length
+      ? prisma.organization.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true } })
+      : [],
+  ]);
+  const stageName = new Map(stages.map((s) => [s.id, s.name]));
+  const orgName = new Map(orgs.map((o) => [o.id, o.name]));
+  return rows.map((d) => ({
+    ...d,
+    stageName: stageName.get(d.dealStageId) ?? null,
+    organizationName: orgName.get(d.organizationId) ?? null,
+  }));
 }
 
 router.get(
@@ -553,19 +592,7 @@ router.get(
       });
     }
     const contactName = contactDisplayName(chat.contact);
-    const links = await prisma.dealContact.findMany({
-      where: { contactId: chat.contactId },
-      include: {
-        deal: {
-          include: {
-            organization: { select: { name: true } },
-            dealStage: { select: { name: true } },
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-    const deals = links.map((l) => l.deal);
+    const deals = await dealsForContact(chat.contactId);
     if (deals.length === 0) return res.json({ kind: 'no_deals', contactName });
 
     // tourDate is "YYYY-MM-DD" — lexicographic compare is date compare.

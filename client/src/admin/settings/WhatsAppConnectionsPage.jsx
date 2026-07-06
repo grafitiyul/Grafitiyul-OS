@@ -95,21 +95,28 @@ export default function WhatsAppConnectionsPage() {
   const selected =
     (accounts || []).find((a) => a.id === selectedId) || (accounts || [])[0] || null;
 
+  const isInbox = view === 'inbox';
+
   return (
-    <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-6xl mx-auto">
-      <header className="mb-8">
-        <h1 className="flex items-center gap-3 text-2xl font-bold tracking-tight text-gray-900">
-          <WhatsAppLogo size={28} />
+    // The inbox is a full-width workspace (list pinned to the nav side, chat
+    // fills the rest — no dead margins); connection management keeps the
+    // narrower reading width.
+    <div className={isInbox ? 'px-3 pt-4 pb-3 lg:px-4' : 'px-5 py-8 lg:px-10 lg:py-10 max-w-6xl mx-auto'}>
+      <header className={isInbox ? 'mb-3' : 'mb-8'}>
+        <h1 className={`flex items-center gap-3 font-bold tracking-tight text-gray-900 ${isInbox ? 'text-xl' : 'text-2xl'}`}>
+          <WhatsAppLogo size={isInbox ? 22 : 28} />
           WhatsApp
         </h1>
-        <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed">
-          כל שיחות ה-WhatsApp של העסק במקום אחד — מעבר מהיר מהשיחה לדיל הנכון,
-          שיוך שיחות לאנשי קשר, וניהול חיבורי המספרים.
-        </p>
+        {!isInbox && (
+          <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed">
+            כל שיחות ה-WhatsApp של העסק במקום אחד — מעבר מהיר מהשיחה לדיל הנכון,
+            שיוך שיחות לאנשי קשר, וניהול חיבורי המספרים.
+          </p>
+        )}
       </header>
 
       {/* View switch: connection management vs. the unmatched-chats inbox. */}
-      <div className="mb-6 flex items-center gap-1 border-b border-gray-200">
+      <div className={`flex items-center gap-1 border-b border-gray-200 ${isInbox ? 'mb-3' : 'mb-6'}`}>
         {[
           { key: 'inbox', label: 'שיחות', badge: unmatchedCount },
           { key: 'connections', label: 'חיבורים' },

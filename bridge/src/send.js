@@ -227,7 +227,13 @@ export function createSendHandlers({ prisma, client, accountId, log }) {
       }
     }
 
-    const voice = await transcodeToVoiceNote(raw, mimeType, log);
+    let voice;
+    try {
+      voice = await transcodeToVoiceNote(raw, mimeType, log);
+    } catch (err) {
+      // Honest failure — never send an unplayable blob to a customer.
+      return res.status(500).json({ error: 'voice_transcode_failed', detail: err?.message?.slice(0, 200) });
+    }
 
     let result;
     try {

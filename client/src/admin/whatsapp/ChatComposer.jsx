@@ -18,6 +18,8 @@ const SEND_ERRORS = {
   on_whatsapp_timeout: 'השליחה נתקעה — נסו שוב בעוד רגע.',
   bridge_unreachable: 'שירות ה-WhatsApp לא זמין כרגע.',
   bridge_not_configured: 'שירות ה-WhatsApp לא הוגדר עדיין למספר הזה.',
+  voice_transcode_failed: 'עיבוד ההקלטה נכשל בשרת — ההודעה לא נשלחה (הקלטות דורשות רכיב המרה בשרת).',
+  media_too_large: 'הקובץ גדול מדי — ניתן לשלוח עד 16MB.',
 };
 
 function quotedPreviewText(msg) {

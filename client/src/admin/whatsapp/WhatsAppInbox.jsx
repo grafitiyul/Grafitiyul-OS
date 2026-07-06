@@ -336,7 +336,7 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
 
       <div
         ref={containerRef}
-        className="flex h-[calc(100vh-250px)] min-h-[460px] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm"
+        className="flex h-[calc(100vh-190px)] min-h-[460px] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm"
       >
         {/* RIGHT — conversation list (pinned, resizable) */}
         <aside style={{ width: listWidth }} className="flex min-w-0 shrink-0 flex-col border-l border-gray-200">

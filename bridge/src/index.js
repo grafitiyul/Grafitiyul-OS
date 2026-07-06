@@ -25,6 +25,7 @@ import { loadBaileys } from './baileysLib.js';
 import { ensureAccountRow } from './accountState.js';
 import { WaClient } from './waClient.js';
 import { startHttpServer } from './httpServer.js';
+import { ffmpegAvailable } from './voice.js';
 
 const log = pino({ level: config.logLevel, name: 'bridge' });
 
@@ -33,6 +34,12 @@ async function main() {
     { accountId: config.accountId, httpPort: config.httpPort, reconnectMaxDelayMs: config.reconnectMaxDelayMs },
     'gos-whatsapp-bridge starting',
   );
+
+  // Voice notes require the bundled ffmpeg binary — announce its state at
+  // boot so a missing/failed download is visible in the deploy log, not
+  // discovered on the first send.
+  if (ffmpegAvailable()) log.info('ffmpeg available — voice-note transcoding enabled');
+  else log.error('ffmpeg binary MISSING — /send-voice will fail until the ffmpeg-static install is fixed');
 
   await prisma.$connect();
   log.info('prisma connected');
