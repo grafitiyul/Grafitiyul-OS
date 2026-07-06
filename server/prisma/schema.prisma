@@ -726,6 +726,7 @@ model Contact {
   orgLinks     ContactOrganization[]
   dealContacts DealContact[]
   whatsAppChats WhatsAppChat[]
+  emailThreads EmailThread[]
 
   @@index([lastNameHe])
   @@index([lastNameEn])
@@ -924,6 +925,7 @@ model Deal {
   paymentLinks          DealPaymentLink[]
   tasks                 Task[]
   files                 DealFile[]
+  emailThreads          EmailThread[]
 
   @@index([organizationId])
   @@index([organizationUnitId])
@@ -2464,4 +2466,151 @@ model TourStationNote {
   sortOrder Int         @default(0)
 
   @@index([stationId, sortOrder])
+}
+
+// ── Email module (Gmail integration) ─────────────────────────────────────────
+// GOS mirrors Gmail READ-ONLY (scope gmail.readonly + gmail.send): it never
+// archives/labels/deletes or marks read in the mailbox. Gmail is the transport;
+// GOS owns the CRM truth — which Contact/Deal a thread belongs to, GOS-side
+// read state, engagement data. Tokens are AES-256-GCM encrypted with the
+// EMAIL_TOKEN_KEY env secret (see src/email/tokenCrypto.js) — never plaintext.
+
+// One connected Gmail mailbox (business account, Workspace "internal" OAuth app).
+model EmailAccount {
+  id                   String    @id @default(cuid())
+  provider             String    @default("gmail")
+  emailAddress         String    @unique
+  displayName          String?
+  googleAccountId      String? // Google `sub` claim — stable across email renames
+  accessTokenEnc       String? // encrypted, short-lived
+  accessTokenExpiresAt DateTime?
+  refreshTokenEnc      String? // encrypted; null = disconnected (must reconnect)
+  scopes               String? // space-separated granted scopes snapshot
+  // idle | syncing | error | disconnected — worker status surface for the UI.
+  syncStatus           String    @default("idle")
+  syncError            String?
+  lastSyncAt           DateTime?
+  // Gmail incremental cursor (users.history.list). Null until backfill completes.
+  historyId            String?
+  backfillDone         Boolean   @default(false)
+  isActive             Boolean   @default(true)
+  connectedById        String? // AdminUser.id (loose key, same convention as tasks)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  threads              EmailThread[]
+  messages             EmailMessage[]
+
+  @@index([isActive])
+}
+
+// A Gmail conversation mirrored into the CRM. CRM linking lives HERE (thread
+// level, like WhatsAppChat.contactId): contact by address match or manual;
+// deal auto-linked ONLY when exactly one safe candidate exists, else manual.
+model EmailThread {
+  id                String       @id @default(cuid())
+  account           EmailAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId         String
+  gmailThreadId     String
+  subject           String?
+  normalizedSubject String? // Re:/Fwd:-stripped, for grouping/search
+  // Counterparties [{ email, name }] — never includes the account's own address.
+  participants      Json?
+  snippet           String?
+  lastMessageAt     DateTime?
+  messageCount      Int          @default(0)
+  // GOS-side unread state ONLY — never written back to Gmail.
+  unreadCount       Int          @default(0)
+  lastReadAt        DateTime?
+  contact           Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  contactId         String?
+  matchSource       String? // 'email' | 'manual' (auto-match only on exact single hit)
+  linkedDeal        Deal?        @relation(fields: [linkedDealId], references: [id], onDelete: SetNull)
+  linkedDealId      String?
+  linkSource        String? // 'auto' | 'manual'
+  pinnedAt          DateTime?
+  snoozedUntil      DateTime?
+  snoozedAt         DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  messages          EmailMessage[]
+
+  @@unique([accountId, gmailThreadId])
+  @@index([accountId, lastMessageAt])
+  @@index([contactId])
+  @@index([linkedDealId])
+}
+
+// One email message (mirrored inbound/synced or GOS-sent outbound). bodyHtml is
+// sanitized server-side AT INGEST (sanitize-html) and additionally rendered in
+// a sandboxed iframe client-side. Duplicate Gmail events are idempotent via
+// @@unique([accountId, gmailMessageId]).
+model EmailMessage {
+  id               String      @id @default(cuid())
+  account          EmailAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId        String
+  thread           EmailThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  threadId         String
+  gmailMessageId   String
+  messageIdHeader  String? // RFC 822 Message-ID — reply threading
+  inReplyTo        String?
+  referencesHeader String?
+  direction        String // 'inbound' | 'outbound'
+  fromEmail        String?
+  fromName         String?
+  toRecipients     Json? // [{ email, name }]
+  ccRecipients     Json?
+  bccRecipients    Json? // outbound-only (Gmail doesn't expose inbound BCC)
+  subject          String?
+  snippet          String?
+  bodyText         String?
+  bodyHtml         String? // sanitized
+  sentAt           DateTime? // Gmail internalDate
+  hasAttachments   Boolean     @default(false)
+  createdByUserId  String? // AdminUser.id when sent from GOS (loose key)
+  // Open-tracking pixel token for GOS-sent messages (unguessable, public URL).
+  trackingId       String?     @unique
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  attachments      EmailAttachment[]
+  engagement       EmailEngagement?
+
+  @@unique([accountId, gmailMessageId])
+  @@index([threadId, sentAt])
+  @@index([accountId, sentAt])
+}
+
+// Attachment metadata captured at ingest; bytes stay in Gmail (it retains them,
+// unlike WhatsApp media) and are cached into PRIVATE R2 on first download —
+// after which r2Key is set and downloads mint short-lived presigned GETs
+// (same contract as DealFile: no public URLs, ever).
+model EmailAttachment {
+  id                String       @id @default(cuid())
+  message           EmailMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  messageId         String
+  gmailAttachmentId String? // fetch-on-demand handle (may rotate; refetched by part)
+  partId            String? // MIME part id inside the message
+  fileName          String
+  mimeType          String?
+  sizeBytes         Int?
+  r2Key             String? // set once cached in R2
+  bucket            String?
+  createdAt         DateTime     @default(now())
+
+  @@index([messageId])
+}
+
+// Engagement for GOS-sent messages (tracking pixel). Honest-by-design: opens
+// are best-effort signals (Gmail proxy / Apple MPP / blockers distort them).
+// Click columns exist now so link tracking can land later without a migration.
+model EmailEngagement {
+  id            String       @id @default(cuid())
+  message       EmailMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  messageId     String       @unique
+  openCount     Int          @default(0)
+  firstOpenedAt DateTime?
+  lastOpenedAt  DateTime?
+  clickCount    Int          @default(0)
+  lastClickedAt DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 }

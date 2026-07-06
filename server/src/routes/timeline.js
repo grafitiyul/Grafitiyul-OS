@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
+import { emailFeedItemsForDeal, emailFeedItemsForContact } from '../email/timelineMerge.js';
 
 // Reusable Timeline / Activity-Feed API. Every item is a TimelineEntry scoped to
 // a subject via (subjectType, subjectId) — so the SAME endpoints serve Deals,
@@ -68,6 +69,19 @@ router.get(
       orderBy: { createdAt: 'desc' },
       include: ENTRY_INCLUDE,
     });
+    // Emails merge in at READ time (kind='email' pseudo-entries) — EmailMessage
+    // stays the single source of truth, so linking/unlinking a thread is
+    // reflected instantly with no copied rows. Chronology uses the mail's
+    // sentAt.
+    if (subjectType === 'deal') {
+      const emailItems = await emailFeedItemsForDeal(subjectId);
+      if (emailItems.length) {
+        const merged = [...entries, ...emailItems].sort(
+          (a, b) => new Date(b.createdAt) - new Date(a.createdAt),
+        );
+        return res.json(merged);
+      }
+    }
     res.json(entries);
   }),
 );
@@ -152,7 +166,32 @@ router.get(
         sourceLabel: direct ? null : labels[`${e.subjectType}:${e.subjectId}`] || null,
       };
     });
-    res.json(tagged);
+
+    // Email pseudo-entries (read-time merge, same as the deal feed):
+    //   contact page      → threads matched to this contact (direct comms)
+    //   organization page → threads linked to its deals, badged per deal
+    let emailItems = [];
+    if (subjectType === 'contact') {
+      emailItems = (await emailFeedItemsForContact(subjectId)).map((e) => ({
+        ...e,
+        sourceType: 'direct',
+        sourceLabel: null,
+      }));
+    } else if (dealIds.length) {
+      const perDeal = await Promise.all(dealIds.map((id) => emailFeedItemsForDeal(id)));
+      emailItems = perDeal.flatMap((items, i) =>
+        items.map((e) => ({
+          ...e,
+          sourceType: 'deal',
+          sourceLabel: labels[`deal:${dealIds[i]}`] || null,
+        })),
+      );
+    }
+    if (!emailItems.length) return res.json(tagged);
+    const merged = [...tagged, ...emailItems].sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt),
+    );
+    res.json(merged);
   }),
 );
 

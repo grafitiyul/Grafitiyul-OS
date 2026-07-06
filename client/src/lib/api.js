@@ -535,6 +535,34 @@ export const api = {
     updateScheduled: (id, data) =>
       request(`/api/whatsapp/scheduled/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   },
+  // ── Email module — Gmail integration ─────────────────────────────
+  // Read-only mirror + send. Read/unread state is GOS-side only; Gmail is
+  // never mutated (no archive/label/mark-read) during the Make transition.
+  email: {
+    accounts: () => request('/api/email/accounts'),
+    connectStart: () => request('/api/email/connect/start'),
+    syncAccount: (id) => request(`/api/email/accounts/${id}/sync`, { method: 'POST', body: JSON.stringify({}) }),
+    updateAccount: (id, data) =>
+      request(`/api/email/accounts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    disconnectAccount: (id) =>
+      request(`/api/email/accounts/${id}/disconnect`, { method: 'POST', body: JSON.stringify({}) }),
+    inbox: (params) => request(`/api/email/inbox${qs(params)}`),
+    threadsByDeal: (dealId) => request(`/api/email/by-deal/${dealId}`),
+    threadsByContact: (contactId) => request(`/api/email/by-contact/${contactId}`),
+    thread: (id) => request(`/api/email/threads/${id}`),
+    markThreadRead: (id) => request(`/api/email/threads/${id}/read`, { method: 'POST', body: JSON.stringify({}) }),
+    pinThread: (id, pinned) =>
+      request(`/api/email/threads/${id}/pin`, { method: 'PUT', body: JSON.stringify({ pinned }) }),
+    linkContact: (id, contactId) =>
+      request(`/api/email/threads/${id}/link-contact`, { method: 'PUT', body: JSON.stringify({ contactId }) }),
+    linkDeal: (id, dealId) =>
+      request(`/api/email/threads/${id}/link-deal`, { method: 'PUT', body: JSON.stringify({ dealId }) }),
+    dealResolution: (id) => request(`/api/email/threads/${id}/deal-resolution`),
+    openDealFromThread: (id, data) =>
+      request(`/api/email/threads/${id}/open-deal`, { method: 'POST', body: JSON.stringify(data || {}) }),
+    send: (data) => request('/api/email/send', { method: 'POST', body: JSON.stringify(data) }),
+    attachmentDownload: (attachmentId) => request(`/api/email/attachments/${attachmentId}/download`),
+  },
   // ── Quote Module (quote documents + composer preview) ───────────
   quoteDocuments: {
     get: (id) => request(`/api/quote-documents/${id}`),

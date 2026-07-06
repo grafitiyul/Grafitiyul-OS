@@ -55,7 +55,10 @@ import staffExportRouter from './routes/staffExport.js';
 import icountWebhookRouter from './routes/icountWebhook.js';
 import payRouter from './routes/pay.js';
 import whatsappRouter from './routes/whatsapp.js';
+import emailRouter from './routes/email.js';
+import emailTrackingRouter from './routes/emailTracking.js';
 import { startScheduledWorker } from './whatsapp/scheduledWorker.js';
+import { startEmailSyncWorker } from './email/syncWorker.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -163,6 +166,10 @@ app.use('/api/webhooks', icountWebhookRouter);
 // regenerating it behind the scenes when the deal's payment data changed.
 // Must be mounted before the SPA fallback (it is a top-level non-/api path).
 app.use('/pay', payRouter);
+// Email open-tracking pixel — PUBLIC (the recipient's mail client fetches it),
+// gated only by the per-message unguessable tracking id. attachAuth above lets
+// it skip counting self-opens from logged-in GOS sessions.
+app.use('/api/track', emailTrackingRouter);
 
 // ── Admin-only routes ──────────────────────────────────────────
 //
@@ -200,6 +207,11 @@ app.use('/api/deals', requireAdminAuth, dealFilesRouter);
 // WhatsApp module — account/connection admin (proxies live actions to the
 // per-number bridge services over Railway's private network).
 app.use('/api/whatsapp', requireAdminAuth, whatsappRouter);
+// Email module — Gmail integration (accounts/OAuth, read-only sync mirror,
+// inbox, send, CRM linking). The OAuth callback rides the admin session cookie
+// (top-level GET navigation → SameSite=Lax sends it), so the whole router is
+// cookie-gated; the public tracking pixel lives separately under /api/track.
+app.use('/api/email', requireAdminAuth, emailRouter);
 app.use('/api/deal-stages', requireAdminAuth, dealStagesRouter);
 // CRM Task Types catalog (configurable task types behind the Deal task composer).
 app.use('/api/task-types', requireAdminAuth, taskTypesRouter);
@@ -450,4 +462,7 @@ app.listen(port, () => {
   // Scheduled WhatsApp messages (Slice 7) — claim-based 60s tick; no-op when
   // no bridges are configured (local dev without WHATSAPP_BRIDGE_URLS).
   startScheduledWorker(console);
+  // Gmail read-only sync mirror — 60s tick; no-op until GOOGLE_CLIENT_ID/SECRET
+  // + EMAIL_TOKEN_KEY are configured and an account is connected.
+  startEmailSyncWorker(console);
 });

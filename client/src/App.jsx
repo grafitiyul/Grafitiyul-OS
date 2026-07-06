@@ -48,6 +48,7 @@ import CustomerQuoteView from './quote/CustomerQuoteView.jsx';
 // Global Settings module (low-frequency configuration).
 import SettingsHome from './admin/settings/SettingsHome.jsx';
 import WhatsAppConnectionsPage from './admin/settings/WhatsAppConnectionsPage.jsx';
+import EmailPage from './admin/email/EmailPage.jsx';
 import CrmSettingsHome from './admin/settings/CrmSettingsHome.jsx';
 import ProductsAreaHome from './admin/settings/ProductsAreaHome.jsx';
 import DealStagesSettings from './admin/crm/settings/DealStagesSettings.jsx';
@@ -164,6 +165,8 @@ export default function App() {
             settings path keeps working for existing links/bookmarks. */}
         <Route path="whatsapp" element={<WhatsAppConnectionsPage />} />
         <Route path="settings/whatsapp" element={<WhatsAppConnectionsPage />} />
+        {/* Email is a top-level module (inbox + Gmail account management). */}
+        <Route path="email" element={<EmailPage />} />
         <Route path="settings/crm" element={<CrmSettingsHome />} />
         <Route
           path="settings/crm/organization-types"

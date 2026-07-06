@@ -8,6 +8,8 @@ import {
   toClientQuoteDocument,
 } from '../quote/quoteDocument.js';
 import { ensurePaymentToken, paymentUrlFor } from '../dealPayment.js';
+import { recordDealChanges, recordDealContactChange, DEAL_DIFF_SELECT } from '../timeline/dealChangelog.js';
+import { userOrigin } from '../timeline/events.js';
 
 // Deal CRUD + DealContact management. The Deal is the commercial object: it
 // owns agreed value (integer minor units + currency), discount, payment terms,
@@ -52,6 +54,16 @@ function cleanRoles(input) {
   if (!Array.isArray(input)) return [];
   return [...new Set(input.filter((r) => VALID_ROLES.includes(r)))];
 }
+
+// Display name for changelog events (Hebrew first, English fallback — same
+// convention as the timeline aggregate endpoint).
+function contactDisplayName(c) {
+  if (!c) return 'איש קשר';
+  const he = `${c.firstNameHe || ''} ${c.lastNameHe || ''}`.trim();
+  return he || `${c.firstNameEn || ''} ${c.lastNameEn || ''}`.trim() || 'איש קשר';
+}
+
+const CONTACT_NAME_SELECT = { firstNameHe: true, lastNameHe: true, firstNameEn: true, lastNameEn: true };
 
 // Validate + copy the "פרטי הסיור" working fields from body → data. Only keys
 // PRESENT in the body are touched, so partial (section) updates stay partial.
@@ -245,9 +257,11 @@ router.put(
   '/:id',
   handle(async (req, res) => {
     const b = req.body || {};
+    // Snapshot every changelog-tracked scalar (includes status/organizationId
+    // used below) — the "before" side of the structured history diff.
     const existing = await prisma.deal.findUnique({
       where: { id: req.params.id },
-      select: { status: true, organizationId: true },
+      select: DEAL_DIFF_SELECT,
     });
     if (!existing) return res.status(404).json({ error: 'not_found' });
 
@@ -366,6 +380,14 @@ router.put(
       data,
       include: DEAL_INCLUDE,
     });
+    // Structured changelog → Deal history (grouped per save; no-op when nothing
+    // tracked actually changed). Never blocks the save itself.
+    await recordDealChanges(prisma, {
+      dealId: req.params.id,
+      before: existing,
+      after: deal,
+      origin: await userOrigin(req.adminAuth?.userId),
+    });
     res.json(deal);
   }),
 );
@@ -419,6 +441,13 @@ router.post(
         return res.status(409).json({ error: 'contact_already_linked' });
       throw e;
     }
+    const linkedContact = await prisma.contact.findUnique({ where: { id: contactId }, select: CONTACT_NAME_SELECT });
+    await recordDealContactChange(prisma, {
+      dealId: req.params.id,
+      event: 'linked',
+      contactName: contactDisplayName(linkedContact),
+      origin: await userOrigin(req.adminAuth?.userId),
+    });
     res.status(201).json(await loadDeal(req.params.id));
   }),
 );
@@ -434,6 +463,14 @@ router.put(
     const data = {};
     if (b.roles !== undefined) data.roles = cleanRoles(b.roles);
     for (const f of PREF_FIELDS) if (b[f] !== undefined) data[f] = !!b[f];
+    // Changelog: capture the outgoing primary BEFORE the transaction flips it.
+    const becomesPrimary = b.isPrimary === true && !link.isPrimary;
+    const prevPrimary = becomesPrimary
+      ? await prisma.dealContact.findFirst({
+          where: { dealId: link.dealId, isPrimary: true },
+          select: { contact: { select: CONTACT_NAME_SELECT } },
+        })
+      : null;
     await prisma.$transaction(async (tx) => {
       if (b.isPrimary === true) {
         await tx.dealContact.updateMany({
@@ -446,6 +483,16 @@ router.put(
       }
       await tx.dealContact.update({ where: { id: link.id }, data });
     });
+    if (becomesPrimary) {
+      const c = await prisma.contact.findUnique({ where: { id: link.contactId }, select: CONTACT_NAME_SELECT });
+      await recordDealContactChange(prisma, {
+        dealId: link.dealId,
+        event: 'primary',
+        contactName: contactDisplayName(c),
+        oldName: prevPrimary ? contactDisplayName(prevPrimary.contact) : null,
+        origin: await userOrigin(req.adminAuth?.userId),
+      });
+    }
     res.json(await loadDeal(link.dealId));
   }),
 );
@@ -455,9 +502,16 @@ router.delete(
   handle(async (req, res) => {
     const link = await prisma.dealContact.findUnique({
       where: { id: req.params.linkId },
+      include: { contact: { select: CONTACT_NAME_SELECT } },
     });
     if (!link) return res.status(404).json({ error: 'not_found' });
     await prisma.dealContact.delete({ where: { id: link.id } });
+    await recordDealContactChange(prisma, {
+      dealId: link.dealId,
+      event: 'unlinked',
+      contactName: contactDisplayName(link.contact),
+      origin: await userOrigin(req.adminAuth?.userId),
+    });
     res.json(await loadDeal(link.dealId));
   }),
 );
@@ -496,8 +550,10 @@ router.put(
   '/:id/price-lines',
   handle(async (req, res) => {
     const b = req.body || {};
-    const deal = await prisma.deal.findUnique({ where: { id: req.params.id }, select: { id: true } });
-    if (!deal) return res.status(404).json({ error: 'not_found' });
+    // Full diff snapshot (not just existence): the builder patch may change
+    // price/product/city/participants — those belong in the Deal changelog too.
+    const before = await prisma.deal.findUnique({ where: { id: req.params.id }, select: DEAL_DIFF_SELECT });
+    if (!before) return res.status(404).json({ error: 'not_found' });
     const inputLines = Array.isArray(b.lines) ? b.lines : [];
     const rows = inputLines.map((ln, i) => lineToData(ln, i));
 
@@ -528,6 +584,18 @@ router.put(
       if (Object.keys(dealPatch).length) await tx.deal.update({ where: { id: req.params.id }, data: dealPatch });
       return version.id;
     });
+
+    // Changelog for the headline fields the builder just patched (diff-based,
+    // so an unchanged re-save emits nothing).
+    const after = await prisma.deal.findUnique({ where: { id: req.params.id }, select: DEAL_DIFF_SELECT });
+    if (after) {
+      await recordDealChanges(prisma, {
+        dealId: req.params.id,
+        before,
+        after,
+        origin: await userOrigin(req.adminAuth?.userId),
+      });
+    }
 
     const lines = await prisma.quoteLine.findMany({
       where: { quoteVersionId: versionId },

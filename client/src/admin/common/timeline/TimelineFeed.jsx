@@ -8,6 +8,9 @@ import TaskComposer from '../../deals/tasks/TaskComposer.jsx';
 import OpenTasksStrip from '../../deals/tasks/OpenTasksStrip.jsx';
 import TaskEventRow from '../../deals/tasks/TaskEventRow.jsx';
 import FileEventRow from '../../deals/files/FileEventRow.jsx';
+import ChangeEventRow from './ChangeEventRow.jsx';
+import EmailEventRow from '../../email/EmailEventRow.jsx';
+import EmailPanel from '../../email/EmailPanel.jsx';
 import DealFilesTab from '../../deals/files/DealFilesTab.jsx';
 import WhatsAppIconShared from '../icons/WhatsAppIcon.jsx';
 import { DEAL_TASKS_CHANGED_EVENT } from '../../deals/tasks/taskEvents.js';
@@ -63,6 +66,7 @@ const COMPOSER_TABS = [
   { key: 'note', label: 'פתק', enabled: true, icon: '📝' },
   { key: 'task', label: 'משימה', enabled: false, icon: '✅' },
   { key: 'whatsapp', label: 'וואטסאפ', enabled: true, icon: <WhatsAppIconShared /> },
+  // Functional on Deal + Contact pages (EmailPanel); placeholder elsewhere.
   { key: 'email', label: 'אימייל', enabled: false, icon: <GmailIcon /> },
   { key: 'file', label: 'קובץ', enabled: false, icon: <PaperclipIcon /> },
 ];
@@ -110,7 +114,11 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
   const isDeal = subjectType === 'deal';
   const composerTabs = COMPOSER_TABS
     .filter((t) => showWhatsApp || t.key !== 'whatsapp')
-    .map((t) => ((t.key === 'task' || t.key === 'file') ? { ...t, enabled: isDeal } : t));
+    .map((t) => {
+      if (t.key === 'task' || t.key === 'file') return { ...t, enabled: isDeal };
+      if (t.key === 'email') return { ...t, enabled: isDeal || subjectType === 'contact' };
+      return t;
+    });
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -398,6 +406,8 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
             </div>
           ) : tab === 'whatsapp' ? (
             <WhatsAppPanel subjectType={subjectType} subjectId={subjectId} />
+          ) : tab === 'email' && (isDeal || subjectType === 'contact') ? (
+            <EmailPanel subjectType={subjectType} subjectId={subjectId} />
           ) : tab === 'task' && isDeal ? (
             <TaskComposer dealId={subjectId} onCreated={onTaskChanged} />
           ) : tab === 'file' && isDeal ? (
@@ -497,6 +507,22 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
                     return (
                       <li key={entry.id}>
                         <FileEventRow entry={entry} />
+                      </li>
+                    );
+                  }
+                  // Structured Deal changelog events (field old → new, grouped per save).
+                  if (entry.kind === 'change') {
+                    return (
+                      <li key={entry.id}>
+                        <ChangeEventRow entry={entry} />
+                      </li>
+                    );
+                  }
+                  // Email events (read-time merged from the email mirror).
+                  if (entry.kind === 'email') {
+                    return (
+                      <li key={entry.id}>
+                        <EmailEventRow entry={entry} />
                       </li>
                     );
                   }

@@ -80,6 +80,21 @@ export async function presignPut({ key, contentType }) {
   return getSignedUrl(client(), cmd, { expiresIn: 300 }); // 5 minutes
 }
 
+// Server-side upload for bytes the SERVER already holds (e.g. email attachments
+// fetched from Gmail and cached privately). Client uploads keep using the
+// presigned-PUT flow — this is only for server-origin bytes.
+export async function putObject({ key, body, contentType }) {
+  await client().send(
+    new PutObjectCommand({
+      Bucket: R2_BUCKET,
+      Key: key,
+      Body: body,
+      ContentType: contentType || 'application/octet-stream',
+    }),
+  );
+  return key;
+}
+
 // Short-lived read URL for PRIVATE objects (e.g. WhatsApp chat media — customer
 // data that must never sit on a public URL). The admin-authed route mints one
 // per view; the link dies in minutes.

@@ -9,6 +9,7 @@ import {
   createWhatsappTaskForScheduledMessage,
   syncTaskFromScheduledEdit,
 } from '../tasks/taskService.js';
+import { dealsForContact, classifyDealsForContact } from '../crm/dealResolution.js';
 
 // WhatsApp module — Slice 1 (accounts / connections admin).
 //
@@ -638,57 +639,9 @@ router.get(
 //   several candidates             → choose
 //   contact with no deals at all   → no_deals   (client confirms new deal)
 //   only stale LOST/old-WON deals  → old_or_new
-function dealSummary(d) {
-  return {
-    id: d.id,
-    title: d.title,
-    status: d.status,
-    tourDate: d.tourDate,
-    organizationName: d.organizationName ?? null,
-    valueMinor: d.valueMinor,
-    stageName: d.stageName ?? null,
-  };
-}
-
-// The deals a contact is linked to, enriched with stage/org names. Written
-// WITHOUT nested relation includes on purpose — the production Prisma client
-// rejected `include.deal.include.dealStage` ("Unknown argument dealStage")
-// even though the same query validates locally; plain scalar selects + two
-// id-lookups are immune to that class of failure.
-async function dealsForContact(contactId) {
-  const rows = await prisma.deal.findMany({
-    where: { contacts: { some: { contactId } } },
-    select: {
-      id: true,
-      title: true,
-      status: true,
-      tourDate: true,
-      valueMinor: true,
-      dealStageId: true,
-      organizationId: true,
-    },
-    orderBy: { createdAt: 'desc' },
-  });
-  if (rows.length === 0) return [];
-  const stageIds = [...new Set(rows.map((d) => d.dealStageId).filter(Boolean))];
-  const orgIds = [...new Set(rows.map((d) => d.organizationId).filter(Boolean))];
-  const [stages, orgs] = await Promise.all([
-    stageIds.length
-      ? // DealStage has label/labelEn — NOT name (live-QA Prisma error).
-        prisma.dealStage.findMany({ where: { id: { in: stageIds } }, select: { id: true, label: true } })
-      : [],
-    orgIds.length
-      ? prisma.organization.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true } })
-      : [],
-  ]);
-  const stageName = new Map(stages.map((s) => [s.id, s.label]));
-  const orgName = new Map(orgs.map((o) => [o.id, o.name]));
-  return rows.map((d) => ({
-    ...d,
-    stageName: stageName.get(d.dealStageId) ?? null,
-    organizationName: orgName.get(d.organizationId) ?? null,
-  }));
-}
+// dealSummary / dealsForContact / classifyDealsForContact moved to
+// ../crm/dealResolution.js — SHARED with the Email module (one source of truth
+// for "which Deal does this conversation belong to?").
 
 router.get(
   '/chats/:chatId/deal-resolution',
@@ -708,18 +661,9 @@ router.get(
     }
     const contactName = contactDisplayName(chat.contact);
     const deals = await dealsForContact(chat.contactId);
-    if (deals.length === 0) return res.json({ kind: 'no_deals', contactName });
-
-    // tourDate is "YYYY-MM-DD" — lexicographic compare is date compare.
-    const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
-    const open = deals.filter((d) => d.status === 'open');
-    const recentWon = deals.filter((d) => d.status === 'won' && d.tourDate && d.tourDate >= sevenDaysAgo);
-    const candidates = [...open, ...recentWon];
-    if (candidates.length === 1) return res.json({ kind: 'open', dealId: candidates[0].id });
-    if (candidates.length > 1) {
-      return res.json({ kind: 'choose', contactName, deals: candidates.map(dealSummary) });
-    }
-    return res.json({ kind: 'old_or_new', contactName, deals: deals.map(dealSummary) });
+    const outcome = classifyDealsForContact(deals);
+    if (outcome.kind === 'open') return res.json({ kind: 'open', dealId: outcome.dealId });
+    return res.json({ ...outcome, contactName });
     } catch (err) {
       // Surfaced explicitly (not just the generic 500) so a live failure names
       // itself in the UI and in the Railway logs.

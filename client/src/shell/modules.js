@@ -8,6 +8,9 @@ export const TOP_MODULES = [
   // The active WhatsApp inbox (conversations → deals) + connection management.
   // A working surface, not a setting — hence a top-level module.
   { key: 'whatsapp', to: '/admin/whatsapp', label: 'WhatsApp', glyph: '💬' },
+  // The email inbox (Gmail mirror → deals) + account management. Same
+  // working-surface reasoning as WhatsApp.
+  { key: 'email', to: '/admin/email', label: 'אימייל', glyph: '📧' },
 ];
 
 // Bottom cluster, top→bottom: צוות, תוכן סיורים, מסמכים, נהלים, הגדרות, משתמשים.
