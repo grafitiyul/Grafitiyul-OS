@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import Checks from './Checks.jsx';
 import ActivityBadgeChip from '../deals/ActivityBadgeChip.jsx';
+import PhoneFlag from './PhoneFlag.jsx';
 
 // ONE conversation row — the shared list-row component for every WhatsApp
 // conversation list (the inbox today; any future surface reuses this, so the
@@ -59,6 +61,62 @@ function snoozeOptions() {
   ];
 }
 
+// WhatsApp profile picture with a clean fallback. The URL was captured at
+// ingest (WhatsApp CDN, signed + expiring) — the image lazy-loads, and any
+// failure (expired URL, offline CDN) falls back to an initials avatar with a
+// deterministic pastel per chat; unnamed numbers get a person glyph. Nothing
+// here fetches synchronously — it's just an <img loading="lazy">.
+const AVATAR_TONES = [
+  'bg-emerald-100 text-emerald-700',
+  'bg-sky-100 text-sky-700',
+  'bg-violet-100 text-violet-700',
+  'bg-rose-100 text-rose-700',
+  'bg-amber-100 text-amber-700',
+  'bg-teal-100 text-teal-700',
+];
+
+function avatarTone(id) {
+  let h = 0;
+  for (const ch of String(id || '')) h = (h * 31 + ch.charCodeAt(0)) | 0;
+  return AVATAR_TONES[Math.abs(h) % AVATAR_TONES.length];
+}
+
+function initialsOf(chat) {
+  const name = chat.displayName && chat.displayName !== chat.phoneNumber ? chat.displayName : '';
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return null;
+  return parts
+    .slice(0, 2)
+    .map((w) => [...w][0])
+    .join('');
+}
+
+function Avatar({ chat }) {
+  const [broken, setBroken] = useState(false);
+  if (chat.profilePictureUrl && !broken) {
+    return (
+      <img
+        src={chat.profilePictureUrl}
+        alt=""
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        onError={() => setBroken(true)}
+        className="h-10 w-10 shrink-0 rounded-full object-cover"
+      />
+    );
+  }
+  const initials = initialsOf(chat);
+  return (
+    <span
+      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold ${
+        initials ? avatarTone(chat.id) : 'bg-gray-100 text-gray-400'
+      }`}
+    >
+      {initials || '👤'}
+    </span>
+  );
+}
+
 // Tiny icon button in the row's hover action cluster.
 function RowAction({ onClick, title, children }) {
   return (
@@ -110,6 +168,9 @@ export default function ChatListRow({
       {/* Selected indicator — thin emerald accent on the far right edge. */}
       {active && <span className="absolute inset-y-0 right-0 w-[3px] bg-emerald-500" />}
 
+      <div className="flex items-start gap-2.5">
+        <Avatar chat={chat} />
+        <div className="min-w-0 flex-1">
       <div className="flex items-center gap-2">
         {chat.pinnedAt && <span className="shrink-0 text-[11px] text-gray-400" title="שיחה נעוצה">📌</span>}
         {snoozed && (
@@ -157,9 +218,11 @@ export default function ChatListRow({
       </div>
 
       <div className="mt-1.5 flex items-center gap-2">
-        {/* Phone — always visible, on the identity edge. */}
+        {/* Phone — always visible, on the identity edge; foreign numbers
+            carry a small country flag (Israeli numbers stay bare). */}
         {showPhone && (
-          <span className="shrink-0 text-[10.5px] text-gray-400" dir="ltr">
+          <span className="flex shrink-0 items-center gap-1 text-[10.5px] text-gray-400" dir="ltr">
+            <PhoneFlag phone={chat.phoneNumber} />
             {chat.phoneNumber}
           </span>
         )}
@@ -201,6 +264,8 @@ export default function ChatListRow({
           >
             💤
           </RowAction>
+        </div>
+      </div>
         </div>
       </div>
 

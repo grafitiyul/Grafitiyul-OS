@@ -4,6 +4,7 @@ import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import ChatThread from './ChatThread.jsx';
 import ChatListRow from './ChatListRow.jsx';
+import PhoneFlag from './PhoneFlag.jsx';
 import DealDrawer from './DealDrawer.jsx';
 import { hasDirtyForms } from '../../lib/dirtyForms.js';
 import { ensureSeen, isUnread, markSeen, markUnread, readManualUnread, readSeen } from './seenStore.js';
@@ -738,7 +739,12 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                     {selected.displayName || selected.phoneNumber || 'לא מזוהה'}
                   </p>
                   <p className="flex items-center gap-2 text-[11.5px] text-gray-500">
-                    {selected.phoneNumber && <span dir="ltr">{selected.phoneNumber}</span>}
+                    {selected.phoneNumber && (
+                      <span className="flex items-center gap-1" dir="ltr">
+                        <PhoneFlag phone={selected.phoneNumber} />
+                        {selected.phoneNumber}
+                      </span>
+                    )}
                     <span>· {selected.account?.label || selected.accountId}</span>
                     {selected.contact ? (
                       <span className="text-emerald-700">· {selected.contact.name}</span>
