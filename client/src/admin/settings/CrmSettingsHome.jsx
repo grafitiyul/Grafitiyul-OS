@@ -43,6 +43,12 @@ export default function CrmSettingsHome() {
           description="מאיפה הגיעו פניות חדשות — פייסבוק, אתר, הפניה, כנס."
         />
         <CategoryCard
+          to="/admin/settings/crm/task-types"
+          icon="✅"
+          title="סוגי משימות"
+          description="הסוגים שמופיעים בבורר המשימות של הדיל — שם, אייקון, ברירות מחדל וערוץ."
+        />
+        <CategoryCard
           to="/admin/settings/crm/quote-sections"
           icon="📝"
           title="הצעות מחיר"

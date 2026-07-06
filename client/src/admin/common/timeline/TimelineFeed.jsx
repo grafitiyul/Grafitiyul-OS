@@ -4,6 +4,10 @@ import RichEditor from '../../../editor/RichEditor.jsx';
 import ReorderableList from '../ReorderableList.jsx';
 import NoteCard from './NoteCard.jsx';
 import WhatsAppPanel from '../../whatsapp/WhatsAppPanel.jsx';
+import TaskComposer from '../../deals/tasks/TaskComposer.jsx';
+import OpenTasksStrip from '../../deals/tasks/OpenTasksStrip.jsx';
+import TaskEventRow from '../../deals/tasks/TaskEventRow.jsx';
+import DealFilesTab from '../../deals/files/DealFilesTab.jsx';
 import { useDirtyForm } from '../../../lib/dirtyForms.js';
 
 // Reusable Timeline / Activity-Feed. Entity-agnostic: it is scoped ONLY by
@@ -57,9 +61,12 @@ function PaperclipIcon() {
 
 // Composer kinds. Only 'note' is functional in V1; the rest are visible tabs the
 // architecture already expects (placeholders until their modules land).
+// 'task' (משימה) + 'file' become functional on Deal pages (subjectType==='deal');
+// elsewhere they stay "בקרוב" placeholders. NOTE: replaces the old disabled
+// 'פעילות'/Activity tab — the product wording is now משימה, never "Activity".
 const COMPOSER_TABS = [
   { key: 'note', label: 'פתק', enabled: true, icon: '📝' },
-  { key: 'activity', label: 'פעילות', enabled: false, icon: '✅' },
+  { key: 'task', label: 'משימה', enabled: false, icon: '✅' },
   { key: 'whatsapp', label: 'וואטסאפ', enabled: true, icon: <WhatsAppIcon /> },
   { key: 'email', label: 'אימייל', enabled: false, icon: <GmailIcon /> },
   { key: 'file', label: 'קובץ', enabled: false, icon: <PaperclipIcon /> },
@@ -103,9 +110,12 @@ function writeNoteDraft(key, html) {
 // surfaces chat through the floating WhatsAppDock instead of the timeline.
 export default function TimelineFeed({ subjectType, subjectId, aggregate = false, showWhatsApp = true }) {
   const noteDraftKey = `${subjectType}:${subjectId}`;
-  const composerTabs = showWhatsApp
-    ? COMPOSER_TABS
-    : COMPOSER_TABS.filter((t) => t.key !== 'whatsapp');
+  // Tasks + files are Deal-only features; on Contact/Organization they stay
+  // "בקרוב" placeholders so the shared component keeps one shape.
+  const isDeal = subjectType === 'deal';
+  const composerTabs = COMPOSER_TABS
+    .filter((t) => showWhatsApp || t.key !== 'whatsapp')
+    .map((t) => ((t.key === 'task' || t.key === 'file') ? { ...t, enabled: isDeal } : t));
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -176,6 +186,26 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Open tasks (Deal focus area). Terminal tasks are NOT loaded here — they
+  // arrive as kind='task' timeline events in HISTORY.
+  const [openTasks, setOpenTasks] = useState([]);
+  const loadTasks = useCallback(async () => {
+    if (!isDeal) return;
+    try {
+      setOpenTasks(await api.dealTasks.list(subjectId, 'open'));
+    } catch {
+      /* non-fatal — the strip just stays empty */
+    }
+  }, [isDeal, subjectId]);
+  useEffect(() => {
+    loadTasks();
+  }, [loadTasks]);
+  // A task change can both move it out of the open list AND drop a history event.
+  const onTaskChanged = useCallback(() => {
+    loadTasks();
+    refresh();
+  }, [loadTasks, refresh]);
 
   // An item is "direct" when it's owned by THIS page's subject; otherwise it's an
   // aggregated item from a related deal/contact (read-only, source-badged).
@@ -339,6 +369,10 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
             </div>
           ) : tab === 'whatsapp' ? (
             <WhatsAppPanel subjectType={subjectType} subjectId={subjectId} />
+          ) : tab === 'task' && isDeal ? (
+            <TaskComposer dealId={subjectId} onCreated={onTaskChanged} />
+          ) : tab === 'file' && isDeal ? (
+            <DealFilesTab dealId={subjectId} />
           ) : (
             <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center text-sm text-gray-400">
               {composerTabs.find((t) => t.key === tab)?.label} — ייפתח בגרסה הבאה.
@@ -373,6 +407,11 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
                 </button>
               ))}
             </div>
+          )}
+
+          {/* OPEN TASKS — Deal focus area (fed by the tasks API, not the timeline) */}
+          {isDeal && showFocus && (
+            <OpenTasksStrip dealId={subjectId} tasks={openTasks} onChanged={onTaskChanged} />
           )}
 
           {/* FOCUS — pinned DIRECT items, manually ordered */}
@@ -416,6 +455,14 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
             ) : (
               <ul className="space-y-3">
                 {history.map((entry) => {
+                  // Terminal task events render as compact rows (not editable notes).
+                  if (entry.kind === 'task') {
+                    return (
+                      <li key={entry.id}>
+                        <TaskEventRow entry={entry} />
+                      </li>
+                    );
+                  }
                   const direct = isDirect(entry);
                   return (
                     <li key={entry.id}>

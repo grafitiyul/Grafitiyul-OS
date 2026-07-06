@@ -922,6 +922,8 @@ model Deal {
   quoteVersions         QuoteVersion[]
   quoteDocuments        QuoteDocument[]
   paymentLinks          DealPaymentLink[]
+  tasks                 Task[]
+  files                 DealFile[]
 
   @@index([organizationId])
   @@index([organizationUnitId])
@@ -936,6 +938,90 @@ model Deal {
   @@index([lostReasonId])
   @@index([dealSourceId])
   @@index([status])
+}
+
+// ── CRM Tasks (משימות) ──────────────────────────────────────────────────────
+// A Task is a FUTURE action on a Deal (call, follow-up, collection, WhatsApp…).
+// Types are configurable in CRM settings (TaskType) — the UI never hard-codes
+// them. Open tasks live in the Deal focus area; completed/cancelled/sent/
+// not_sent tasks leave that list and surface as TimelineEntry events in history
+// (one source of truth — the timeline is not a second store for tasks).
+//
+// A 'whatsapp' task links 1:1 to a WhatsAppScheduledMessage. The Task NEVER
+// sends — the existing claim-based scheduled worker owns sending; the Task only
+// tracks the outcome. Ticking a WhatsApp task's checkbox BEFORE it sends does
+// NOT send — it cancels the scheduled message and records status 'not_sent'
+// ("בסוף לא נשלחה").
+model TaskType {
+  id                   String   @id @default(cuid())
+  key                  String   @unique
+  nameHe               String
+  icon                 String   @default("check") // client-side icon key
+  color                String? // optional accent (client maps to a tone)
+  isActive             Boolean  @default(true)
+  sortOrder            Int      @default(0)
+  defaultText          String?
+  // How the default due date is derived when a task of this type is created.
+  defaultDueOffsetType String   @default("today") // today | tomorrow | days_from_now | none
+  defaultDueOffsetDays Int      @default(0)
+  defaultTime          String? // "HH:MM"
+  requiresTime         Boolean  @default(false)
+  channel              String   @default("none") // none | whatsapp
+  isSystem             Boolean  @default(false) // seeded defaults; protected from delete
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  tasks                Task[]
+
+  @@index([isActive, sortOrder])
+}
+
+model Task {
+  id                      String    @id @default(cuid())
+  deal                    Deal      @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  dealId                  String
+  // Type is optional at the FK level (SetNull) so deleting a type never destroys
+  // task history; the channel/text were snapshotted onto the Task at create.
+  taskType                TaskType? @relation(fields: [taskTypeId], references: [id], onDelete: SetNull)
+  taskTypeId              String?
+  title                   String
+  dueDate                 DateTime // required for every task
+  dueTime                 String? // "HH:MM" — optional (WhatsApp defaults 10:00)
+  priority                String? // null | low | medium | high  ("סדר עדיפות")
+  ownerUserId             String // AdminUser id — loose key (no FK), always set
+  createdByUserId         String?
+  status                  String    @default("open") // open | completed | cancelled | sent | not_sent
+  completedAt             DateTime?
+  cancelledAt             DateTime?
+  notes                   String?
+  channel                 String    @default("none") // snapshot: none | whatsapp
+  // WhatsApp linkage (loose keys — the scheduled worker owns the send).
+  scheduledMessageId      String? // → WhatsAppScheduledMessage.id
+  whatsappSenderAccountId String? // → WhatsAppAccount.id
+  whatsappChatId          String? // → WhatsAppChat.id
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  @@index([dealId, status])
+  @@index([ownerUserId, status])
+}
+
+// Private files attached to a Deal. R2-backed, PRIVATE by contract: unlike
+// MediaFile there is NO public `url` column — downloads go only through an
+// admin-authed route that mints a short-lived presigned GET (§15: no public
+// file URLs). Objects live under `deals/<dealId>/…`.
+model DealFile {
+  id           String   @id @default(cuid())
+  deal         Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  dealId       String
+  r2Key        String   @unique
+  bucket       String
+  filename     String
+  mimeType     String
+  sizeBytes    Int
+  uploadedById String? // AdminUser id — loose key
+  createdAt    DateTime @default(now())
+
+  @@index([dealId, createdAt])
 }
 
 // Deal ↔ Contact link. A deal often has MULTIPLE contacts with different roles
@@ -1176,12 +1262,18 @@ model WhatsAppScheduledMessage {
   externalMessageId       String?
   failureReason           String?
   createdById             String?
+  // Optional back-link to the CRM Task that scheduled this message (WhatsApp
+  // tasks). LOOSE key (no FK relation, same convention as createdById) so the
+  // sensitive scheduled-message table stays decoupled from CRM. The worker
+  // reads it to move the linked Task to 'sent' the moment the send succeeds.
+  taskId                  String?
   createdAt               DateTime        @default(now())
   updatedAt               DateTime        @updatedAt
 
   @@index([status, scheduledAt])
   @@index([accountId, status])
   @@index([chatId, status])
+  @@index([taskId])
 }
 
 // Emoji reactions, keyed by the target message's external id. emoji='' is a

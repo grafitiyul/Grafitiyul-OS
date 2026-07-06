@@ -27,6 +27,7 @@
 
 import { prisma } from '../db.js';
 import { callBridge, bridgeUrlMap } from './bridgeClient.js';
+import { markTaskSentByScheduled } from '../tasks/taskService.js';
 
 const TICK_MS = 60_000;
 const TICK_BATCH = 5;
@@ -156,6 +157,9 @@ async function tick(log) {
       });
       sent++;
       log.info(`[whatsapp-scheduled] sent id=${id} account=${row.accountId}`);
+      // If a CRM Task scheduled this message, move it to 'sent' and drop a Deal
+      // history event. Defensive: never throws, never blocks the send loop.
+      if (row.taskId) await markTaskSentByScheduled(row.taskId);
     } catch (err) {
       const c = classify(err);
       if (c.kind === 'retryable_connection') {

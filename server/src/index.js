@@ -26,6 +26,9 @@ import dealsRouter from './routes/deals.js';
 import quoteDocumentsRouter from './routes/quoteDocuments.js';
 import publicQuoteRouter from './routes/publicQuote.js';
 import dealStagesRouter from './routes/dealStages.js';
+import dealTasksRouter from './routes/dealTasks.js';
+import dealFilesRouter from './routes/dealFiles.js';
+import taskTypesRouter from './routes/taskTypes.js';
 import mediaFilesRouter from './routes/mediaFiles.js';
 import locationsRouter from './routes/locations.js';
 import productsRouter from './routes/products.js';
@@ -190,10 +193,16 @@ app.use('/api/contacts', requireAdminAuth, contactsRouter);
 // Deal module (commercial core): deals + pipeline stages. Admin-only. Quotes /
 // payments / tours / activities are NOT built yet.
 app.use('/api/deals', requireAdminAuth, dealsRouter);
+// Deal Tasks (משימות) + Deal Files — nested under /api/deals/:id/*. Mounted after
+// dealsRouter (no path overlap; deals owns /:id, these own /:id/tasks|files).
+app.use('/api/deals', requireAdminAuth, dealTasksRouter);
+app.use('/api/deals', requireAdminAuth, dealFilesRouter);
 // WhatsApp module — account/connection admin (proxies live actions to the
 // per-number bridge services over Railway's private network).
 app.use('/api/whatsapp', requireAdminAuth, whatsappRouter);
 app.use('/api/deal-stages', requireAdminAuth, dealStagesRouter);
+// CRM Task Types catalog (configurable task types behind the Deal task composer).
+app.use('/api/task-types', requireAdminAuth, taskTypesRouter);
 // Quote Module — Slice 1 (quote document foundation). Admin-only. Draft
 // metadata only; no produce/render/public page/signature/PDF/delivery yet.
 app.use('/api/quote-documents', requireAdminAuth, quoteDocumentsRouter);

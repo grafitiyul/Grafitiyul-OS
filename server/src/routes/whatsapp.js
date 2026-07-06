@@ -4,6 +4,7 @@ import { handle } from '../asyncHandler.js';
 import { buildPhoneIndex, matchContactId, normalizePhoneIntl } from '../whatsapp/phone.js';
 import { bridgeUrlMap, callBridge } from '../whatsapp/bridgeClient.js';
 import { isConfigured as r2Configured, presignGet } from '../r2.js';
+import { markTaskNotSentByScheduled } from '../tasks/taskService.js';
 
 // WhatsApp module — Slice 1 (accounts / connections admin).
 //
@@ -1277,11 +1278,18 @@ router.get(
 router.post(
   '/scheduled/:id/cancel',
   handle(async (req, res) => {
+    const row = await prisma.whatsAppScheduledMessage.findUnique({
+      where: { id: req.params.id },
+      select: { taskId: true },
+    });
     const updated = await prisma.whatsAppScheduledMessage.updateMany({
       where: { id: req.params.id, status: { in: ['pending', 'failed', 'skipped'] } },
       data: { status: 'cancelled', claimedAt: null, claimedBy: null, nextRetryAt: null },
     });
     if (updated.count === 0) return res.status(409).json({ error: 'not_cancellable' });
+    // If a CRM Task scheduled this message, cancelling it here (from the thread's
+    // scheduled strip) moves the linked task to 'not_sent' so both surfaces agree.
+    if (row?.taskId) await markTaskNotSentByScheduled(row.taskId);
     res.json({ ok: true });
   }),
 );

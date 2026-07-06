@@ -431,6 +431,62 @@ export const api = {
     ensurePaymentToken: (id) =>
       request(`/api/deals/${id}/payment-token`, { method: 'POST', body: JSON.stringify({}) }),
   },
+  // ── CRM Task Types (configurable catalog behind the Deal task composer) ──
+  taskTypes: {
+    list: (activeOnly = false) => request(`/api/task-types${activeOnly ? '?activeOnly=1' : ''}`),
+    create: (data) => request('/api/task-types', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/api/task-types/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/task-types/${id}`, { method: 'DELETE' }),
+    reorder: (ids) => request('/api/task-types/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
+  },
+  // ── Deal Tasks (משימות) — future actions on a deal ───────────────
+  dealTasks: {
+    list: (dealId, status) => request(`/api/deals/${dealId}/tasks${qs({ status })}`),
+    create: (dealId, data) => request(`/api/deals/${dealId}/tasks`, { method: 'POST', body: JSON.stringify(data) }),
+    update: (dealId, taskId, data) =>
+      request(`/api/deals/${dealId}/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    complete: (dealId, taskId) =>
+      request(`/api/deals/${dealId}/tasks/${taskId}/complete`, { method: 'POST', body: JSON.stringify({}) }),
+    cancel: (dealId, taskId) =>
+      request(`/api/deals/${dealId}/tasks/${taskId}/cancel`, { method: 'POST', body: JSON.stringify({}) }),
+    sendNow: (dealId, taskId) =>
+      request(`/api/deals/${dealId}/tasks/${taskId}/send-now`, { method: 'POST', body: JSON.stringify({}) }),
+  },
+  // ── Deal Files (private, R2-backed; download via signed redirect) ──
+  dealFiles: {
+    list: (dealId) => request(`/api/deals/${dealId}/files`),
+    presign: (dealId, data) =>
+      request(`/api/deals/${dealId}/files/presign`, { method: 'POST', body: JSON.stringify(data) }),
+    create: (dealId, data) =>
+      request(`/api/deals/${dealId}/files`, { method: 'POST', body: JSON.stringify(data) }),
+    remove: (dealId, fileId) => request(`/api/deals/${dealId}/files/${fileId}`, { method: 'DELETE' }),
+    downloadUrl: (dealId, fileId) => `/api/deals/${dealId}/files/${fileId}/download`,
+    // Full upload: presign → PUT bytes straight to R2 → persist the row.
+    upload: async (dealId, file) => {
+      const { uploadUrl, key } = await request(`/api/deals/${dealId}/files/presign`, {
+        method: 'POST',
+        body: JSON.stringify({ filename: file.name, contentType: file.type || 'application/octet-stream' }),
+      });
+      const put = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        body: file,
+      });
+      if (!put.ok) throw new Error(`upload_failed ${put.status}`);
+      return request(`/api/deals/${dealId}/files`, {
+        method: 'POST',
+        body: JSON.stringify({
+          key,
+          filename: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          sizeBytes: file.size,
+        }),
+      });
+    },
+  },
+  auth: {
+    status: () => request('/api/auth/status'),
+  },
   // ── WhatsApp module — connections admin (Slice 1) ────────────────
   // Accounts come from the DB; live status/actions proxy to the
   // per-number bridge services.
