@@ -7,7 +7,10 @@ import WhatsAppPanel from '../../whatsapp/WhatsAppPanel.jsx';
 import TaskComposer from '../../deals/tasks/TaskComposer.jsx';
 import OpenTasksStrip from '../../deals/tasks/OpenTasksStrip.jsx';
 import TaskEventRow from '../../deals/tasks/TaskEventRow.jsx';
+import FileEventRow from '../../deals/files/FileEventRow.jsx';
 import DealFilesTab from '../../deals/files/DealFilesTab.jsx';
+import WhatsAppIconShared from '../icons/WhatsAppIcon.jsx';
+import { DEAL_TASKS_CHANGED_EVENT } from '../../deals/tasks/taskEvents.js';
 import { useDirtyForm } from '../../../lib/dirtyForms.js';
 
 // Reusable Timeline / Activity-Feed. Entity-agnostic: it is scoped ONLY by
@@ -17,15 +20,7 @@ import { useDirtyForm } from '../../../lib/dirtyForms.js';
 // already exist as tabs so the structure naturally grows.
 
 // Official brand marks for the composer tabs (recognizable logos, not custom
-// graphics). Emoji covers the generic kinds.
-function WhatsAppIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden>
-      <path fill="#25D366" d="M.057 24l1.687-6.163a11.867 11.867 0 0 1-1.587-5.946C.16 5.335 5.495 0 12.05 0a11.82 11.82 0 0 1 8.413 3.488 11.82 11.82 0 0 1 3.48 8.414c-.003 6.557-5.338 11.892-11.893 11.892a11.9 11.9 0 0 1-5.688-1.448L.057 24z" />
-      <path fill="#FFF" d="M12.05 21.785h-.005a9.87 9.87 0 0 1-5.03-1.378l-.36-.214-3.742.982.999-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.002-5.45 4.436-9.884 9.889-9.884a9.82 9.82 0 0 1 6.991 2.898 9.82 9.82 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.884 9.884m5.422-7.403c-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.149-.173.198-.297.297-.495.099-.198.05-.372-.025-.521-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51l-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479s1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347" />
-    </svg>
-  );
-}
+// graphics). Emoji covers the generic kinds. WhatsApp uses the shared mark.
 function GmailIcon() {
   return (
     <svg viewBox="0 0 48 48" width="16" height="16" aria-hidden>
@@ -67,7 +62,7 @@ function PaperclipIcon() {
 const COMPOSER_TABS = [
   { key: 'note', label: 'פתק', enabled: true, icon: '📝' },
   { key: 'task', label: 'משימה', enabled: false, icon: '✅' },
-  { key: 'whatsapp', label: 'וואטסאפ', enabled: true, icon: <WhatsAppIcon /> },
+  { key: 'whatsapp', label: 'וואטסאפ', enabled: true, icon: <WhatsAppIconShared /> },
   { key: 'email', label: 'אימייל', enabled: false, icon: <GmailIcon /> },
   { key: 'file', label: 'קובץ', enabled: false, icon: <PaperclipIcon /> },
 ];
@@ -193,7 +188,8 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
   const loadTasks = useCallback(async () => {
     if (!isDeal) return;
     try {
-      setOpenTasks(await api.dealTasks.list(subjectId, 'open'));
+      const list = await api.dealTasks.list(subjectId, 'open');
+      setOpenTasks(Array.isArray(list) ? list : []);
     } catch {
       /* non-fatal — the strip just stays empty */
     }
@@ -206,6 +202,39 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
     loadTasks();
     refresh();
   }, [loadTasks, refresh]);
+
+  // Immediate refresh when a task changes OUTSIDE this component (e.g. a WhatsApp
+  // message scheduled from the floating dock creates a Task) — no page refresh.
+  useEffect(() => {
+    if (!isDeal) return undefined;
+    const onExternal = (e) => {
+      if (e?.detail?.dealId === subjectId) onTaskChanged();
+    };
+    window.addEventListener(DEAL_TASKS_CHANGED_EVENT, onExternal);
+    return () => window.removeEventListener(DEAL_TASKS_CHANGED_EVENT, onExternal);
+  }, [isDeal, subjectId, onTaskChanged]);
+
+  // Background poll: a scheduled WhatsApp task is sent by a server-side worker,
+  // so nothing on the client fires. While there's an open WhatsApp task, poll;
+  // when the open-task set changes (one got sent/cancelled) refresh the history
+  // too so it moves down immediately without a manual refresh.
+  useEffect(() => {
+    if (!isDeal) return undefined;
+    const hasWhatsappTask = openTasks.some((t) => t.channel === 'whatsapp');
+    if (!hasWhatsappTask) return undefined;
+    const prevIds = openTasks.map((t) => t.id).join(',');
+    const iv = setInterval(async () => {
+      try {
+        const list = await api.dealTasks.list(subjectId, 'open');
+        const next = Array.isArray(list) ? list : [];
+        setOpenTasks(next);
+        if (next.map((t) => t.id).join(',') !== prevIds) refresh();
+      } catch {
+        /* transient — try again next tick */
+      }
+    }, 15000);
+    return () => clearInterval(iv);
+  }, [isDeal, subjectId, openTasks, refresh]);
 
   // An item is "direct" when it's owned by THIS page's subject; otherwise it's an
   // aggregated item from a related deal/contact (read-only, source-badged).
@@ -372,7 +401,7 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
           ) : tab === 'task' && isDeal ? (
             <TaskComposer dealId={subjectId} onCreated={onTaskChanged} />
           ) : tab === 'file' && isDeal ? (
-            <DealFilesTab dealId={subjectId} />
+            <DealFilesTab dealId={subjectId} onChanged={refresh} />
           ) : (
             <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center text-sm text-gray-400">
               {composerTabs.find((t) => t.key === tab)?.label} — ייפתח בגרסה הבאה.
@@ -460,6 +489,14 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
                     return (
                       <li key={entry.id}>
                         <TaskEventRow entry={entry} />
+                      </li>
+                    );
+                  }
+                  // File upload/delete events (chronological, same history feed).
+                  if (entry.kind === 'file') {
+                    return (
+                      <li key={entry.id}>
+                        <FileEventRow entry={entry} />
                       </li>
                     );
                   }

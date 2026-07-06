@@ -107,7 +107,7 @@ function ToolButton({ onClick, title, active, children }) {
   );
 }
 
-export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = true, fill = false }) {
+export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = true, fill = false, dealId = null }) {
   const [messages, setMessages] = useState(null); // ascending, null = loading
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState(null);
@@ -522,6 +522,7 @@ export default function ChatThread({ chat, heightClass = 'h-[26rem]', canSend = 
           <ScheduledStrip chat={chat} nonce={scheduledNonce} />
           <ChatComposer
             chat={chat}
+            dealId={dealId}
             replyTo={replyTo}
             onCancelReply={() => setReplyTo(null)}
             onSent={(message) => {

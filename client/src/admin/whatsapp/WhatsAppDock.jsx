@@ -299,7 +299,7 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
           {/* Body */}
           <div className="min-h-0 flex-1">
             {activeChat ? (
-              <ChatThread key={activeChat.id} chat={activeChat} fill />
+              <ChatThread key={activeChat.id} chat={activeChat} fill dealId={subjectType === 'deal' ? subjectId : null} />
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
                 <WhatsAppLogo size={28} />

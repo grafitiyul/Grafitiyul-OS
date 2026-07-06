@@ -24,7 +24,7 @@ function fileEmoji(mime) {
   return '📎';
 }
 
-export default function DealFilesTab({ dealId }) {
+export default function DealFilesTab({ dealId, onChanged }) {
   const [files, setFiles] = useState([]);
   const [userMap, setUserMap] = useState({});
   const [loading, setLoading] = useState(true);
@@ -45,9 +45,13 @@ export default function DealFilesTab({ dealId }) {
 
   useEffect(() => {
     load();
+    // /api/admin-users returns { users: [...] } (envelope) — normalize to an array.
     api.adminUsers
       .list()
-      .then((us) => setUserMap(Object.fromEntries((us || []).map((u) => [u.id, u.username]))))
+      .then((res) => {
+        const arr = Array.isArray(res) ? res : res?.users || [];
+        setUserMap(Object.fromEntries(arr.map((u) => [u.id, u.username])));
+      })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dealId]);
@@ -73,6 +77,7 @@ export default function DealFilesTab({ dealId }) {
       }
     }
     await load();
+    onChanged?.(); // surface the new upload event(s) in the Deal history now
   }
 
   async function remove(file) {
@@ -80,6 +85,7 @@ export default function DealFilesTab({ dealId }) {
     try {
       await api.dealFiles.remove(dealId, file.id);
       setFiles((fs) => fs.filter((x) => x.id !== file.id));
+      onChanged?.(); // surface the delete event in the Deal history now
     } catch (e) {
       alert('שגיאה במחיקה: ' + (e.payload?.error || e.message));
     }

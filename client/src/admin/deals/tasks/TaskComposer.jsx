@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../../lib/api.js';
-import { taskIcon, PRIORITY_OPTIONS, defaultDueDate } from './taskConfig.js';
+import { PRIORITY_OPTIONS, defaultDueDate } from './taskConfig.js';
+import TaskIcon from './TaskIcon.jsx';
 
 // Task composer — the "משימה" tab of the Deal timeline composer. Renders whatever
 // active TaskTypes exist (never hard-coded). A 'whatsapp' type reveals the
@@ -34,21 +35,26 @@ export default function TaskComposer({ dealId, onCreated }) {
     let alive = true;
     (async () => {
       try {
-        const [tt, us, status] = await Promise.all([
+        // taskTypes errors are REAL (surface them). adminUsers/status are
+        // best-effort (owner list can degrade). Both endpoints may return an
+        // array OR an envelope — normalize to an array before using it.
+        const [ttRes, usRes, status] = await Promise.all([
           api.taskTypes.list(true),
-          api.adminUsers.list().catch(() => []),
+          api.adminUsers.list().catch(() => ({ users: [] })),
           api.auth.status().catch(() => ({})),
         ]);
         if (!alive) return;
+        const tt = Array.isArray(ttRes) ? ttRes : ttRes?.taskTypes || [];
+        const usersArr = Array.isArray(usRes) ? usRes : usRes?.users || [];
         setTypes(tt);
-        const active = (us || []).filter((u) => u.isActive);
+        const active = usersArr.filter((u) => u.isActive);
         setUsers(active);
         const me = active.find((u) => u.username === status?.username);
         setMeId(me?.id || '');
         setOwnerUserId(me?.id || active[0]?.id || '');
         if (tt[0]) applyType(tt[0]);
       } catch (e) {
-        if (alive) setError(e.message);
+        if (alive) setError(e.payload?.error || e.message);
       }
     })();
     return () => {
@@ -127,7 +133,7 @@ export default function TaskComposer({ dealId, onCreated }) {
                 : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
             }`}
           >
-            <span aria-hidden>{taskIcon(t.icon)}</span>
+            <TaskIcon name={t.icon} channel={t.channel} size={15} />
             <span>{t.nameHe}</span>
           </button>
         ))}

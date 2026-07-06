@@ -97,7 +97,7 @@ export default function WhatsAppPanel({ subjectType, subjectId }) {
               <span className="text-gray-400">· {selected.account?.label || selected.accountId}</span>
             </p>
           )}
-          <ChatThread key={selected.id} chat={selected} />
+          <ChatThread key={selected.id} chat={selected} dealId={subjectType === 'deal' ? subjectId : null} />
         </>
       )}
     </div>

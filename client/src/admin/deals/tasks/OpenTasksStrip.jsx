@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../../lib/api.js';
-import { taskIcon, PRIORITY_TONE, PRIORITY_OPTIONS, formatDue, toDateInput } from './taskConfig.js';
+import { PRIORITY_TONE, PRIORITY_OPTIONS, formatDue, toDateInput } from './taskConfig.js';
+import TaskIcon from './TaskIcon.jsx';
 
 // Open-tasks strip — lives in the Deal focus area (above the timeline FOCUS).
 // Compact rows: checkbox (mark done), type icon, title, due, priority, owner.
@@ -15,9 +16,13 @@ export default function OpenTasksStrip({ dealId, tasks, onChanged }) {
   const [editId, setEditId] = useState(null);
 
   useEffect(() => {
+    // /api/admin-users returns { users: [...] } — normalize to an array.
     api.adminUsers
       .list()
-      .then((us) => setUserMap(Object.fromEntries((us || []).map((u) => [u.id, u.username]))))
+      .then((res) => {
+        const arr = Array.isArray(res) ? res : res?.users || [];
+        setUserMap(Object.fromEntries(arr.map((u) => [u.id, u.username])));
+      })
       .catch(() => {});
   }, []);
 
@@ -75,7 +80,9 @@ export default function OpenTasksStrip({ dealId, tasks, onChanged }) {
               >
                 ✓
               </button>
-              <span aria-hidden className="text-[15px] leading-none">{taskIcon(t.icon)}</span>
+              <span className="shrink-0 text-[15px] leading-none">
+                <TaskIcon name={t.icon} channel={t.channel} size={16} />
+              </span>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-[13.5px] font-medium text-gray-800">{t.title}</div>
                 <div className="flex items-center gap-2 text-[11.5px] text-gray-500">

@@ -1,4 +1,4 @@
-import { taskIcon } from './taskConfig.js';
+import TaskIcon from './TaskIcon.jsx';
 
 // Compact history row for a terminal task event (TimelineEntry kind='task').
 // These are emitted by the backend when a task is completed/cancelled/sent/
@@ -20,7 +20,9 @@ export default function TaskEventRow({ entry }) {
 
   return (
     <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2" dir="rtl">
-      <span aria-hidden className="text-[15px] leading-none">{taskIcon(data.icon)}</span>
+      <span className="shrink-0 text-[15px] leading-none">
+        <TaskIcon name={data.icon} channel={data.channel} size={16} />
+      </span>
       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-semibold ring-1 ${style.cls}`}>
         {style.label}
       </span>

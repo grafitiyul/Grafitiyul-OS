@@ -4,7 +4,7 @@ import { handle } from '../asyncHandler.js';
 import { buildPhoneIndex, matchContactId, normalizePhoneIntl } from '../whatsapp/phone.js';
 import { bridgeUrlMap, callBridge } from '../whatsapp/bridgeClient.js';
 import { isConfigured as r2Configured, presignGet } from '../r2.js';
-import { markTaskNotSentByScheduled } from '../tasks/taskService.js';
+import { markTaskNotSentByScheduled, createWhatsappTaskForScheduledMessage } from '../tasks/taskService.js';
 
 // WhatsApp module — Slice 1 (accounts / connections admin).
 //
@@ -1247,13 +1247,46 @@ router.post(
       select: { id: true, accountId: true },
     });
     if (!chat) return res.status(404).json({ error: 'not_found' });
+
+    // Deal context (scheduled from the Deal WhatsApp panel): also create a linked
+    // WhatsApp Task so it shows in the Deal focus area with the shared lifecycle.
+    // dueDate/dueTime are the user's LOCAL wall-clock (the client splits its
+    // datetime picker); scheduledAt is the tz-correct instant.
+    const dealId = typeof b.dealId === 'string' ? b.dealId.trim() : '';
+    const ownerUserId = req.adminAuth?.userId || null;
+    let deal = null;
+    if (dealId && ownerUserId) {
+      deal = await prisma.deal.findUnique({ where: { id: dealId }, select: { id: true } });
+    }
+
+    if (deal) {
+      const row = await prisma.$transaction(async (tx) => {
+        const sched = await tx.whatsAppScheduledMessage.create({
+          data: { accountId: chat.accountId, chatId: chat.id, content: text, scheduledAt, createdById: ownerUserId },
+        });
+        await createWhatsappTaskForScheduledMessage(tx, {
+          dealId: deal.id,
+          scheduledMessageId: sched.id,
+          chatId: chat.id,
+          accountId: chat.accountId,
+          title: text,
+          dueDate: b.dueDate ? new Date(String(b.dueDate)) : scheduledAt,
+          dueTime: typeof b.dueTime === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(b.dueTime) ? b.dueTime : null,
+          ownerUserId,
+          createdByUserId: ownerUserId,
+        });
+        return sched;
+      });
+      return res.status(201).json(toClientScheduled(row));
+    }
+
     const row = await prisma.whatsAppScheduledMessage.create({
       data: {
         accountId: chat.accountId,
         chatId: chat.id,
         content: text,
         scheduledAt,
-        createdById: req.adminAuth?.userId ?? null,
+        createdById: ownerUserId,
       },
     });
     res.status(201).json(toClientScheduled(row));

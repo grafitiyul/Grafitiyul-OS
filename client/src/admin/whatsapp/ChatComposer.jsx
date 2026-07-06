@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
+import { emitDealTasksChanged } from '../deals/tasks/taskEvents.js';
 // Emoji DATA bundled locally (content-hashed static asset) — the picker's
 // default is a CDN fetch, which is both against the project's caching rules
 // and the root cause of the "טעינת האימוג׳י נכשלה" failure.
@@ -180,7 +181,7 @@ function classifyFile(file) {
   return 'document';
 }
 
-export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onScheduled, droppedFiles = null, onDroppedFilesConsumed }) {
+export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onScheduled, dealId = null, droppedFiles = null, onDroppedFilesConsumed }) {
   const draftKey = `${chat.accountId || chat.account?.id || ''}:${chat.id}`;
   const [text, setText] = useState(() => readDrafts()[draftKey] || '');
   const [sending, setSending] = useState(false);
@@ -504,12 +505,23 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
     setSending(true);
     setError(null);
     try {
-      await api.whatsapp.scheduleMessage(chat.id, { text: body, scheduledAt: when.toISOString() });
+      // In a Deal context the backend also creates a linked WhatsApp Task; send
+      // the user's LOCAL wall-clock date/time (the picker is local) alongside the
+      // tz-correct ISO instant so the task's due fields read correctly.
+      await api.whatsapp.scheduleMessage(chat.id, {
+        text: body,
+        scheduledAt: when.toISOString(),
+        ...(dealId
+          ? { dealId, dueDate: String(scheduleAt).slice(0, 10), dueTime: String(scheduleAt).slice(11, 16) }
+          : {}),
+      });
       setText('');
       writeDraft(draftKey, '');
       setScheduleOpen(false);
       onCancelReply?.();
       onScheduled?.();
+      // Deal focus area shows the new open Task immediately (no page refresh).
+      if (dealId) emitDealTasksChanged(dealId);
     } catch (e) {
       setError(
         e?.payload?.error === 'scheduled_at_past'

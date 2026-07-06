@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import * as r2 from '../r2.js';
+import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 
 // Deal Files — mounted at /api/deals, serves /:dealId/files*. PRIVATE by
 // contract: unlike MediaFile there is NO public URL. Objects live under
@@ -92,6 +93,14 @@ router.post(
           uploadedById: req.adminAuth?.userId || null,
         },
       });
+      // Surface the upload in the Deal history (chronological, existing timeline).
+      await emitTimelineEvent(null, {
+        subjectId: deal.id,
+        kind: 'file',
+        body: `קובץ הועלה: ${created.filename}`,
+        data: { event: 'file_uploaded', fileId: created.id, filename: created.filename, mimeType: created.mimeType, sizeBytes: created.sizeBytes },
+        origin: await userOrigin(req.adminAuth?.userId),
+      });
       res.status(201).json(toClient(created));
     } catch (e) {
       if (e.code === 'P2002') return res.status(409).json({ error: 'key_exists' });
@@ -122,6 +131,14 @@ router.delete(
     if (!file || file.dealId !== req.params.dealId) return res.status(404).json({ error: 'not_found' });
     await prisma.dealFile.delete({ where: { id: file.id } });
     if (r2.isConfigured()) await r2.deleteObject(file.r2Key);
+    // Record the deletion in the Deal history too (keeps the record honest).
+    await emitTimelineEvent(null, {
+      subjectId: file.dealId,
+      kind: 'file',
+      body: `קובץ נמחק: ${file.filename}`,
+      data: { event: 'file_deleted', filename: file.filename },
+      origin: await userOrigin(req.adminAuth?.userId),
+    });
     res.status(204).end();
   }),
 );

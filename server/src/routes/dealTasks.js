@@ -59,7 +59,9 @@ async function serializeTasks(tasks) {
     dealId: t.dealId,
     taskTypeId: t.taskTypeId,
     typeName: t.taskType?.nameHe ?? null,
-    icon: t.taskType?.icon ?? 'check',
+    // Fall back to the channel when the type is gone/unlinked so a WhatsApp task
+    // always resolves to the WhatsApp mark.
+    icon: t.taskType?.icon ?? (t.channel === 'whatsapp' ? 'whatsapp' : 'check'),
     title: t.title,
     dueDate: t.dueDate,
     dueTime: t.dueTime,

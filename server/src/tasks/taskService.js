@@ -14,24 +14,15 @@
 //     scheduled-message cancel, and double-calls are harmless (idempotent).
 
 import { prisma } from '../db.js';
+import { emitTimelineEvent, systemOrigin, userOrigin } from '../timeline/events.js';
 
 export const TASK_STATUSES = ['open', 'completed', 'cancelled', 'sent', 'not_sent'];
 export const TASK_PRIORITIES = ['low', 'medium', 'high']; // null = "ללא" (none)
 export const OPEN_STATUS = 'open';
 
-// Human-readable, non-anonymous origin fields (same shape the timeline uses).
-export function systemOrigin() {
-  return { actorType: 'system', actorLabel: 'מערכת', createdBy: null, createdByName: null };
-}
-
-export async function userOrigin(userId) {
-  if (!userId) return systemOrigin();
-  const u = await prisma.adminUser.findUnique({
-    where: { id: userId },
-    select: { username: true },
-  });
-  return { actorType: 'user', actorLabel: null, createdBy: userId, createdByName: u?.username || null };
-}
+// Re-exported so existing callers (routes/whatsapp/…) keep importing these from
+// taskService; the single implementation now lives in timeline/events.js.
+export { systemOrigin, userOrigin };
 
 // Short Hebrew history line per terminal event. The rich detail (icon, channel,
 // priority) rides in `data` so the client can render a proper task-event row.
@@ -54,24 +45,20 @@ function eventBody(event, task) {
 // Emit the single history event for a terminal task transition. `client` may be
 // a prisma transaction client so the event and the status change commit together.
 async function emitEvent(client, { dealId, event, task, origin }) {
-  await client.timelineEntry.create({
+  await emitTimelineEvent(client, {
+    subjectId: dealId,
+    kind: 'task',
+    body: eventBody(event, task),
     data: {
-      subjectType: 'deal',
-      subjectId: dealId,
-      kind: 'task',
-      body: eventBody(event, task),
-      isSystem: true,
-      data: {
-        event,
-        taskId: task.id,
-        title: task.title,
-        icon: task.icon ?? null,
-        channel: task.channel ?? 'none',
-        priority: task.priority ?? null,
-        status: task.status,
-      },
-      ...origin,
+      event,
+      taskId: task.id,
+      title: task.title,
+      icon: task.icon ?? null,
+      channel: task.channel ?? 'none',
+      priority: task.priority ?? null,
+      status: task.status,
     },
+    origin,
   });
 }
 
@@ -104,6 +91,41 @@ export async function transitionTask(taskId, { status, event, origin }) {
     });
     return updated;
   });
+}
+
+// Create an open WhatsApp Task bound to an ALREADY-created scheduled message and
+// back-link the two. Used when a WhatsApp message is scheduled from the Deal
+// WhatsApp panel — it becomes a first-class Task just like one made in the task
+// composer. Runs inside the caller's transaction so the pair is atomic.
+export async function createWhatsappTaskForScheduledMessage(
+  tx,
+  { dealId, scheduledMessageId, chatId, accountId, title, dueDate, dueTime, ownerUserId, createdByUserId },
+) {
+  // Snapshot the WhatsApp task type when one exists (for the type label); the
+  // icon is derived from channel='whatsapp' regardless, so a missing type is fine.
+  const type = await tx.taskType.findFirst({
+    where: { channel: 'whatsapp' },
+    orderBy: { sortOrder: 'asc' },
+    select: { id: true },
+  });
+  const task = await tx.task.create({
+    data: {
+      dealId,
+      taskTypeId: type?.id ?? null,
+      title,
+      dueDate,
+      dueTime: dueTime || null,
+      ownerUserId,
+      createdByUserId: createdByUserId ?? null,
+      status: 'open',
+      channel: 'whatsapp',
+      whatsappChatId: chatId,
+      whatsappSenderAccountId: accountId,
+      scheduledMessageId,
+    },
+  });
+  await tx.whatsAppScheduledMessage.update({ where: { id: scheduledMessageId }, data: { taskId: task.id } });
+  return task;
 }
 
 // ── System / cross-surface sync helpers (never throw) ───────────────────────
