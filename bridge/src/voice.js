@@ -4,6 +4,12 @@
 // binary; transcode via temp files. On ANY failure we fall back to sending
 // the original bytes — an audio file message instead of a PTT bubble, never
 // a lost message.
+//
+// ALWAYS re-encode — even when the browser claims it already produced
+// ogg/opus. Browser MediaRecorder containers are frequently malformed
+// (missing duration metadata, broken headers on some Chromium ogg builds);
+// a passthrough of a bad source file silently reaches WhatsApp AND our R2
+// copy. ffmpeg normalization guarantees one clean canonical file.
 
 import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -13,12 +19,7 @@ import ffmpegPath from 'ffmpeg-static';
 
 const OGG_OPUS = 'audio/ogg; codecs=opus';
 
-export function isOggOpus(mime) {
-  return /audio\/ogg/i.test(mime || '');
-}
-
 export async function transcodeToVoiceNote(buffer, inputMime, log) {
-  if (isOggOpus(inputMime)) return { buffer, mimetype: OGG_OPUS, transcoded: false };
   if (!ffmpegPath) {
     log.warn('ffmpeg-static missing — sending original audio bytes');
     return { buffer, mimetype: inputMime || 'application/octet-stream', transcoded: false };

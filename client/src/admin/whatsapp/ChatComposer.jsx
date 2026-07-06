@@ -31,37 +31,80 @@ function nextHourLocal() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// Curated emoji set (no external picker dependency) — the ones people
-// actually send in business chats, WhatsApp-ish ordering.
-const EMOJIS = [
-  '😀','😃','😄','😁','😆','😅','😂','🤣','😊','😇','🙂','😉','😍','🥰','😘','😋',
-  '😎','🤩','🥳','😏','😌','😴','🤔','🤨','😐','😬','🙄','😮','😲','🥺','😢','😭',
-  '😤','😡','🤯','😱','😳','🤗','🤭','🤫','🤝','🙏','👍','👎','👌','✌️','🤞','💪',
-  '👏','🙌','👋','🤙','☝️','👆','👇','👈','👉','✋','❤️','🧡','💛','💚','💙','💜',
-  '🖤','🤍','💔','❣️','💕','💖','💯','✨','🌟','⭐','🔥','🎉','🎊','🎈','🎁','🏆',
-  '✅','❌','⚠️','❓','❗','💡','📌','📍','📅','🕐','⏰','📞','📱','💬','✉️','📷',
-  '🚌','🚐','🚶','🏃','🗺️','🧭','🎨','🖼️','🏙️','🌆','🌃','🌇','☀️','🌧️','⛱️','🍕',
-  '☕','🍺','🥤','🍦','💰','💳','🧾','📝','🤦','🤷','😜','😛','🫶','👀','🎯','🚀',
-];
+// Emoji picker — emoji-picker-element (lightweight web component: search,
+// categories, skin tones, remembers frequently-used in IndexedDB). Loaded
+// lazily on first open so the chat bundle stays lean.
+const EMOJI_I18N_HE = {
+  categoriesLabel: 'קטגוריות',
+  emojiUnsupportedMessage: 'הדפדפן לא תומך באימוג׳י צבעוני.',
+  favoritesLabel: 'בשימוש תדיר',
+  loadingMessage: 'טוען…',
+  networkErrorMessage: 'טעינת האימוג׳י נכשלה.',
+  regionLabel: 'בחירת אימוג׳י',
+  searchDescription: 'כשהתוצאות זמינות, השתמשו בחיצים ו-Enter לבחירה.',
+  searchLabel: 'חיפוש',
+  searchResultsLabel: 'תוצאות חיפוש',
+  skinToneDescription: 'כשנפתח, השתמשו בחיצים ו-Enter לבחירה.',
+  skinToneLabel: 'גוון עור (${skinTone})',
+  skinTones: ['ברירת מחדל', 'בהיר', 'בהיר-בינוני', 'בינוני', 'כהה-בינוני', 'כהה'],
+  skinTonesLabel: 'גווני עור',
+  categories: {
+    custom: 'מותאם אישית',
+    'smileys-emotion': 'סמיילים ורגשות',
+    'people-body': 'אנשים',
+    'animals-nature': 'חיות וטבע',
+    'food-drink': 'אוכל ושתייה',
+    'travel-places': 'נסיעות ומקומות',
+    activities: 'פעילויות',
+    objects: 'חפצים',
+    symbols: 'סמלים',
+    flags: 'דגלים',
+  },
+};
 
 function EmojiPicker({ onPick, onClose }) {
+  const hostRef = useRef(null);
+  // The handler changes on every parent render (it closes over the text);
+  // route through a ref so the picker mounts ONCE and keeps its search state.
+  const onPickRef = useRef(onPick);
+  onPickRef.current = onPick;
+
+  useEffect(() => {
+    let cancelled = false;
+    let picker = null;
+    import('emoji-picker-element')
+      .then(() => {
+        if (cancelled || !hostRef.current) return;
+        picker = document.createElement('emoji-picker');
+        picker.i18n = EMOJI_I18N_HE;
+        picker.dataset.source = 'gos';
+        picker.style.setProperty('--emoji-size', '1.35rem');
+        picker.style.width = '320px';
+        picker.style.maxWidth = '88vw';
+        picker.style.height = '300px';
+        picker.addEventListener('emoji-click', (e) => {
+          const unicode = e?.detail?.unicode;
+          if (unicode) onPickRef.current(unicode);
+        });
+        hostRef.current.appendChild(picker);
+      })
+      .catch(() => {
+        /* picker unavailable (offline chunk load) — the button just closes */
+      });
+    return () => {
+      cancelled = true;
+      picker?.remove();
+    };
+  }, []);
+
   return (
     <>
       <div className="fixed inset-0 z-20" onClick={onClose} />
-      <div className="absolute bottom-[46px] left-0 z-30 max-h-56 w-72 max-w-[85vw] overflow-y-auto rounded-2xl border border-gray-200 bg-white p-2 shadow-xl">
-        <div dir="ltr" className="grid grid-cols-8 gap-0.5">
-          {EMOJIS.map((e) => (
-            <button
-              key={e}
-              type="button"
-              onClick={() => onPick(e)}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-[20px] leading-none hover:bg-gray-100"
-            >
-              {e}
-            </button>
-          ))}
-        </div>
-      </div>
+      <div
+        ref={hostRef}
+        dir="rtl"
+        className="absolute bottom-[52px] right-0 z-30 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl"
+      />
     </>
   );
 }
@@ -70,8 +113,18 @@ function fmtRecSeconds(s) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-const REC_MIME_CANDIDATES = ['audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+// WebM/Opus FIRST — the battle-tested MediaRecorder path in Chromium. Some
+// Chromium builds claim ogg support but emit broken (silent) files, which was
+// exactly the "voice message has no sound" bug: the bad source poisoned the
+// preview, the WhatsApp send AND the stored copy. Ogg stays last-resort
+// (Firefox records it natively and correctly); the bridge re-encodes
+// EVERYTHING through ffmpeg regardless.
+const REC_MIME_CANDIDATES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
 const MAX_REC_SECONDS = 300;
+
+function fmtKb(bytes) {
+  return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)}MB` : `${Math.max(1, Math.round(bytes / 1024))}KB`;
+}
 
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
@@ -82,8 +135,37 @@ function blobToBase64(blob) {
   });
 }
 
+// Local draft persistence — closing the panel must never eat a half-written
+// message. Scoped by accountId+chatId so drafts can't leak between contacts,
+// deals or our two numbers. Sending (or manually emptying the text) clears
+// the entry. localStorage only (V1, no server persistence).
+const DRAFTS_KEY = 'gos-whatsapp-drafts';
+
+function readDrafts() {
+  try {
+    return JSON.parse(localStorage.getItem(DRAFTS_KEY) || '{}') || {};
+  } catch {
+    return {};
+  }
+}
+
+function writeDraft(key, text) {
+  try {
+    const map = readDrafts();
+    if (text && text.trim()) map[key] = text;
+    else delete map[key];
+    // Safety valve: never let the map grow unbounded.
+    const keys = Object.keys(map);
+    if (keys.length > 100) for (const k of keys.slice(0, keys.length - 100)) delete map[k];
+    localStorage.setItem(DRAFTS_KEY, JSON.stringify(map));
+  } catch {
+    /* storage unavailable — non-fatal */
+  }
+}
+
 export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onScheduled }) {
-  const [text, setText] = useState('');
+  const draftKey = `${chat.accountId || chat.account?.id || ''}:${chat.id}`;
+  const [text, setText] = useState(() => readDrafts()[draftKey] || '');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -99,6 +181,25 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
   useEffect(() => {
     if (replyTo) textareaRef.current?.focus();
   }, [replyTo]);
+
+  // Persist the draft while typing (debounced), and FLUSH on unmount so
+  // closing the panel mid-word never loses the tail.
+  const textForDraftRef = useRef(text);
+  textForDraftRef.current = text;
+  useEffect(() => {
+    const t = setTimeout(() => writeDraft(draftKey, text), 250);
+    return () => clearTimeout(t);
+  }, [draftKey, text]);
+  useEffect(() => () => writeDraft(draftKey, textForDraftRef.current), [draftKey]);
+
+  // A restored multi-line draft needs its height computed once on mount.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (el && el.value) {
+      el.style.height = 'auto';
+      el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Teardown on unmount: stop any live recording + release the blob URL.
   useEffect(
@@ -169,7 +270,9 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
       });
     };
     recorderRef.current = recorder;
-    recorder.start();
+    // Timeslice: deliver chunks every 250ms during recording instead of one
+    // flush on stop — immune to platforms that lose the final flush.
+    recorder.start(250);
     setRec({ phase: 'recording', seconds: 0 });
     recTimerRef.current = setInterval(() => {
       setRec((cur) => {
@@ -241,6 +344,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
       });
       keyRef.current = { key: null, fingerprint: null };
       setText('');
+      writeDraft(draftKey, '');
       onCancelReply?.();
       onSent?.(resp.message || null);
     } catch (e) {
@@ -263,6 +367,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
     try {
       await api.whatsapp.scheduleMessage(chat.id, { text: body, scheduledAt: when.toISOString() });
       setText('');
+      writeDraft(draftKey, '');
       setScheduleOpen(false);
       onCancelReply?.();
       onScheduled?.();
@@ -330,7 +435,9 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
       ) : rec?.phase === 'preview' ? (
         <div className="flex flex-wrap items-center gap-2 px-3 py-2.5">
           <audio controls src={rec.url} className="h-10 min-w-0 flex-1" />
-          <span dir="ltr" className="font-mono text-[12px] text-gray-500">{fmtRecSeconds(rec.seconds)}</span>
+          <span dir="ltr" className="font-mono text-[12px] text-gray-500">
+            {fmtRecSeconds(rec.seconds)} · {fmtKb(rec.blob.size)}
+          </span>
           <button
             type="button"
             disabled={sending}
@@ -350,7 +457,10 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
           </button>
         </div>
       ) : (
-        <div className="relative flex items-end gap-2 px-3 py-2">
+        // Two rows: the text field gets the FULL width (long Hebrew wraps
+        // comfortably, grows up to ~8 lines), actions live on their own row
+        // beneath — nothing squeezes the text.
+        <div className="relative px-3 pb-2 pt-2">
           <textarea
             ref={textareaRef}
             rows={1}
@@ -358,9 +468,9 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
             disabled={sending}
             onChange={(e) => {
               setText(e.target.value);
-              // auto-grow up to ~5 lines
+              // auto-grow, capped so the thread stays visible
               e.target.style.height = 'auto';
-              e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+              e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -370,57 +480,56 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
             }}
             placeholder="כתבו הודעה…"
             dir="auto"
-            className="min-h-[38px] flex-1 resize-none rounded-xl border border-gray-300 bg-white px-3 py-2 text-[14px] leading-snug focus:border-emerald-500 focus:outline-none disabled:opacity-60"
+            className="block min-h-[42px] w-full resize-none rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-[14px] leading-relaxed focus:border-emerald-500 focus:outline-none disabled:opacity-60"
           />
-          <button
-            type="button"
-            title="אימוג'י"
-            disabled={sending}
-            onClick={() => setEmojiOpen(!emojiOpen)}
-            className={`flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-xl border text-[17px] transition disabled:opacity-40 ${
-              emojiOpen ? 'border-amber-400 bg-amber-50' : 'border-gray-300 bg-white text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            😊
-          </button>
+          <div className="mt-1.5 flex items-center gap-1.5">
+            <button
+              type="button"
+              title="אימוג'י"
+              disabled={sending}
+              onClick={() => setEmojiOpen(!emojiOpen)}
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border text-[17px] transition disabled:opacity-40 ${
+                emojiOpen ? 'border-amber-400 bg-amber-50' : 'border-gray-300 bg-white text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              😊
+            </button>
+            <button
+              type="button"
+              title="הקלטת הודעה קולית"
+              disabled={sending}
+              onClick={startRecording}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-gray-300 bg-white text-[16px] text-gray-500 transition hover:text-gray-700 disabled:opacity-40"
+            >
+              🎙️
+            </button>
+            <button
+              type="button"
+              title="תזמון שליחה"
+              disabled={sending}
+              onClick={() => {
+                setScheduleOpen(!scheduleOpen);
+                if (!scheduleAt) setScheduleAt(nextHourLocal());
+                if (!scheduleOpen) textareaRef.current?.focus();
+              }}
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border text-[16px] transition disabled:opacity-40 ${
+                scheduleOpen ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-300 bg-white text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              🕓
+            </button>
+            <button
+              type="button"
+              onClick={send}
+              disabled={sending || !text.trim()}
+              className="mr-auto h-9 shrink-0 rounded-xl bg-emerald-600 px-5 text-[13px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-40"
+            >
+              {sending ? 'שולח…' : 'שליחה'}
+            </button>
+          </div>
           {emojiOpen && (
-            <EmojiPicker
-              onPick={(e) => insertEmoji(e)}
-              onClose={() => setEmojiOpen(false)}
-            />
+            <EmojiPicker onPick={(e) => insertEmoji(e)} onClose={() => setEmojiOpen(false)} />
           )}
-          <button
-            type="button"
-            title="הקלטת הודעה קולית"
-            disabled={sending}
-            onClick={startRecording}
-            className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-xl border border-gray-300 bg-white text-[16px] text-gray-500 transition hover:text-gray-700 disabled:opacity-40"
-          >
-            🎙️
-          </button>
-          <button
-            type="button"
-            title="תזמון שליחה"
-            disabled={sending}
-            onClick={() => {
-              setScheduleOpen(!scheduleOpen);
-              if (!scheduleAt) setScheduleAt(nextHourLocal());
-              if (!scheduleOpen) textareaRef.current?.focus();
-            }}
-            className={`flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-xl border text-[16px] transition disabled:opacity-40 ${
-              scheduleOpen ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-300 bg-white text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            🕓
-          </button>
-          <button
-            type="button"
-            onClick={send}
-            disabled={sending || !text.trim()}
-            className="h-[38px] shrink-0 rounded-xl bg-emerald-600 px-4 text-[13px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-40"
-          >
-            {sending ? 'שולח…' : 'שליחה'}
-          </button>
         </div>
       )}
       {scheduleOpen && (
