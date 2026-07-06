@@ -4,6 +4,7 @@ import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import ChatThread from './ChatThread.jsx';
 import DealDrawer from './DealDrawer.jsx';
+import { ACTIVITY_TYPE_LABELS } from '../deals/config.js';
 
 // Active WhatsApp inbox — WhatsApp-style two-pane workspace:
 //   RIGHT: pinned conversation list (resizable, persisted width) with the
@@ -125,6 +126,85 @@ function DealPickDialog({ title, body, deals, allowNew, busy, onPick, onNew, onC
               {busy ? 'יוצר…' : '+ פתיחת דיל חדש'}
             </button>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Contact-creation dialog for "צור דיל" on an unknown number — everything is
+// editable BEFORE anything is created. Pre-filled from the WhatsApp identity:
+// the pushed name lands in the Hebrew or English fields by script detection,
+// the phone comes from the chat, and the communication language defaults by
+// country (Israeli number → עברית, foreign → English).
+function CreateDealDialog({ chat, suggestedName, busy, onConfirm, onClose }) {
+  const [form, setForm] = useState(() => {
+    const name = (suggestedName || '').trim();
+    const hasHebrew = /[֐-׿]/.test(name);
+    const [first, ...rest] = name.split(/\s+/).filter(Boolean);
+    const last = rest.join(' ');
+    const phone = chat.phoneNumber || '';
+    return {
+      firstNameHe: hasHebrew ? first || '' : '',
+      lastNameHe: hasHebrew ? last : '',
+      firstNameEn: !hasHebrew && name ? first || '' : '',
+      lastNameEn: !hasHebrew && name ? last : '',
+      phone,
+      communicationLanguage: phone.startsWith('972') ? 'he' : 'en',
+    };
+  });
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const valid = (form.firstNameHe.trim() || form.firstNameEn.trim()) && form.phone.trim();
+
+  const field = 'w-full rounded-lg border border-gray-300 px-3 py-1.5 text-[13px] focus:border-blue-500 focus:outline-none';
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-[15px] font-bold text-gray-900">יצירת איש קשר ודיל חדשים</h3>
+        <p className="mt-1 text-[13px] leading-relaxed text-gray-500">
+          בדקו וערכו את הפרטים — איש הקשר והדיל ייווצרו רק לאחר אישור, והשיחה תקושר אליהם.
+        </p>
+        <div className="mt-4 grid grid-cols-2 gap-2.5">
+          <label className="space-y-1">
+            <span className="text-[11.5px] font-medium text-gray-500">שם פרטי (עברית)</span>
+            <input value={form.firstNameHe} onChange={set('firstNameHe')} dir="rtl" className={field} />
+          </label>
+          <label className="space-y-1">
+            <span className="text-[11.5px] font-medium text-gray-500">שם משפחה (עברית)</span>
+            <input value={form.lastNameHe} onChange={set('lastNameHe')} dir="rtl" className={field} />
+          </label>
+          <label className="space-y-1">
+            <span className="text-[11.5px] font-medium text-gray-500">First name</span>
+            <input value={form.firstNameEn} onChange={set('firstNameEn')} dir="ltr" className={field} />
+          </label>
+          <label className="space-y-1">
+            <span className="text-[11.5px] font-medium text-gray-500">Last name</span>
+            <input value={form.lastNameEn} onChange={set('lastNameEn')} dir="ltr" className={field} />
+          </label>
+          <label className="space-y-1">
+            <span className="text-[11.5px] font-medium text-gray-500">טלפון</span>
+            <input value={form.phone} onChange={set('phone')} dir="ltr" className={field} />
+          </label>
+          <label className="space-y-1">
+            <span className="text-[11.5px] font-medium text-gray-500">שפת תקשורת</span>
+            <select value={form.communicationLanguage} onChange={set('communicationLanguage')} className={field}>
+              <option value="he">עברית</option>
+              <option value="en">English</option>
+            </select>
+          </label>
+        </div>
+        <div className="mt-4 flex items-center justify-between">
+          <button type="button" onClick={onClose} className="rounded-lg px-3 py-1.5 text-[13px] text-gray-500 hover:bg-gray-100">
+            ביטול
+          </button>
+          <button
+            type="button"
+            disabled={busy || !valid}
+            onClick={() => onConfirm(form)}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {busy ? 'יוצר…' : 'צור איש קשר ודיל'}
+          </button>
         </div>
       </div>
     </div>
@@ -306,10 +386,10 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
     }
   }
 
-  async function createAndOpen(chat) {
+  async function createAndOpen(chat, form = null) {
     setBusy(chat.id);
     try {
-      const { dealId } = await api.whatsapp.openDealFromChat(chat.id);
+      const { dealId } = await api.whatsapp.openDealFromChat(chat.id, form || {});
       setDialog(null);
       setDrawerDealId(dealId);
       await load();
@@ -431,7 +511,16 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                           )}
                         </div>
                         <div className="mt-1.5 flex items-center gap-2">
-                          {chat.contact ? (
+                          {chat.deal ? (
+                            // Confidently-resolved deal — show its activity
+                            // type (the badge next to the deal title).
+                            <span
+                              className="min-w-0 truncate rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-medium text-emerald-700 ring-1 ring-emerald-200"
+                              title={chat.deal.title}
+                            >
+                              {ACTIVITY_TYPE_LABELS[chat.deal.activityType] || chat.deal.title || 'דיל'}
+                            </span>
+                          ) : chat.contact ? (
                             <span className="min-w-0 truncate rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-medium text-emerald-700 ring-1 ring-emerald-200">
                               {chat.contact.name || 'איש קשר'}
                             </span>
@@ -447,9 +536,11 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                               e.stopPropagation();
                               openDeal(chat);
                             }}
-                            className="mr-auto rounded-lg bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                            className={`mr-auto rounded-lg px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-50 ${
+                              chat.contact ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700'
+                            }`}
                           >
-                            {busy === chat.id ? 'פותח…' : 'פתח דיל'}
+                            {busy === chat.id ? 'פותח…' : chat.contact ? 'פתח דיל' : 'צור דיל'}
                           </button>
                         </div>
                       </div>
@@ -503,9 +594,11 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                   type="button"
                   disabled={busy === selected.id}
                   onClick={() => openDeal(selected)}
-                  className="shrink-0 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-[12px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                  className={`shrink-0 rounded-lg px-3.5 py-1.5 text-[12px] font-semibold text-white disabled:opacity-50 ${
+                    selected.contact ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700'
+                  }`}
                 >
-                  {busy === selected.id ? 'פותח…' : 'פתח דיל'}
+                  {busy === selected.id ? 'פותח…' : selected.contact ? 'פתח דיל' : 'צור דיל'}
                 </button>
               </div>
               {linking && !selected.contact && (
@@ -532,14 +625,15 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
         </section>
       </div>
 
-      <ConfirmDialog
-        open={dialog?.kind === 'no_contact'}
-        title="יצירת איש קשר ודיל חדשים"
-        body={`לשיחה הזו אין עדיין איש קשר במערכת.\nיווצרו איש קשר חדש (${dialog?.suggestedName || dialog?.chat?.phoneNumber || 'ללא שם'}) ודיל חדש, והשיחה תקושר אליהם. להמשיך?`}
-        confirmLabel="צור ופתח דיל"
-        onCancel={() => setDialog(null)}
-        onConfirm={() => createAndOpen(dialog.chat)}
-      />
+      {dialog?.kind === 'no_contact' && (
+        <CreateDealDialog
+          chat={dialog.chat}
+          suggestedName={dialog.suggestedName}
+          busy={busy === dialog.chat?.id}
+          onConfirm={(form) => createAndOpen(dialog.chat, form)}
+          onClose={() => setDialog(null)}
+        />
+      )}
 
       <ConfirmDialog
         open={dialog?.kind === 'no_deals'}

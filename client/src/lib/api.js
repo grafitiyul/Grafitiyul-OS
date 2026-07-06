@@ -462,8 +462,8 @@ export const api = {
     linkChat: (chatId, contactId) =>
       request(`/api/whatsapp/chats/${chatId}/link`, { method: 'PUT', body: JSON.stringify({ contactId }) }),
     dealResolution: (chatId) => request(`/api/whatsapp/chats/${chatId}/deal-resolution`),
-    openDealFromChat: (chatId) =>
-      request(`/api/whatsapp/chats/${chatId}/open-deal`, { method: 'POST', body: JSON.stringify({}) }),
+    openDealFromChat: (chatId, data) =>
+      request(`/api/whatsapp/chats/${chatId}/open-deal`, { method: 'POST', body: JSON.stringify(data || {}) }),
     // Scheduled messages (Slice 7)
     scheduledList: (chatId) => request(`/api/whatsapp/chats/${chatId}/scheduled`),
     scheduleMessage: (chatId, data) =>

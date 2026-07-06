@@ -508,9 +508,52 @@ router.get(
     const unmatchedCount = await prisma.whatsAppChat.count({
       where: { contactId: null, type: 'private', ...(accountId ? { accountId } : {}) },
     });
+    // Attach the CONFIDENTLY-resolved deal per linked conversation (same
+    // exactly-one candidate rule as deal-resolution: open deals + WON deals
+    // toured ≤7 days ago) so the row can show the deal's activity type.
+    const linkedContactIds = [...new Set(chats.map((c) => c.contactId).filter(Boolean))];
+    const dealByContact = new Map();
+    if (linkedContactIds.length) {
+      const links = await prisma.dealContact.findMany({
+        where: { contactId: { in: linkedContactIds } },
+        select: { contactId: true, dealId: true },
+      });
+      const dealIds = [...new Set(links.map((l) => l.dealId))];
+      const deals = dealIds.length
+        ? await prisma.deal.findMany({
+            where: { id: { in: dealIds } },
+            select: { id: true, title: true, status: true, tourDate: true, activityType: true },
+          })
+        : [];
+      const dealById = new Map(deals.map((d) => [d.id, d]));
+      const byContact = new Map();
+      for (const l of links) {
+        const d = dealById.get(l.dealId);
+        if (!d) continue;
+        if (!byContact.has(l.contactId)) byContact.set(l.contactId, []);
+        byContact.get(l.contactId).push(d);
+      }
+      const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+      for (const [cid, ds] of byContact) {
+        const candidates = ds.filter(
+          (d) => d.status === 'open' || (d.status === 'won' && d.tourDate && d.tourDate >= sevenDaysAgo),
+        );
+        if (candidates.length === 1) {
+          dealByContact.set(cid, {
+            id: candidates[0].id,
+            title: candidates[0].title,
+            activityType: candidates[0].activityType,
+          });
+        }
+      }
+    }
     res.set('Cache-Control', 'no-store');
     res.json({
-      chats: chats.map((c) => ({ ...toClientChat(c), account: c.account })),
+      chats: chats.map((c) => ({
+        ...toClientChat(c),
+        account: c.account,
+        deal: c.contactId ? dealByContact.get(c.contactId) ?? null : null,
+      })),
       unmatchedCount,
     });
   }),
@@ -560,13 +603,14 @@ async function dealsForContact(contactId) {
   const orgIds = [...new Set(rows.map((d) => d.organizationId).filter(Boolean))];
   const [stages, orgs] = await Promise.all([
     stageIds.length
-      ? prisma.dealStage.findMany({ where: { id: { in: stageIds } }, select: { id: true, name: true } })
+      ? // DealStage has label/labelEn — NOT name (live-QA Prisma error).
+        prisma.dealStage.findMany({ where: { id: { in: stageIds } }, select: { id: true, label: true } })
       : [],
     orgIds.length
       ? prisma.organization.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true } })
       : [],
   ]);
-  const stageName = new Map(stages.map((s) => [s.id, s.name]));
+  const stageName = new Map(stages.map((s) => [s.id, s.label]));
   const orgName = new Map(orgs.map((o) => [o.id, o.name]));
   return rows.map((d) => ({
     ...d,
@@ -631,20 +675,43 @@ router.post(
     let contactId = chat.contactId;
     let displayName = contactDisplayName(chat.contact);
     if (!contactId) {
-      const rawName = (chat.savedContactName || chat.pushName || '').trim();
-      const [first, ...rest] = rawName.split(/\s+/).filter(Boolean);
+      // The creation dialog sends the (user-edited) contact details; server-
+      // side inference from the WhatsApp identity remains the fallback.
+      const b = req.body || {};
+      const s = (v) => (typeof v === 'string' ? v.trim() : '');
+      let firstNameHe = s(b.firstNameHe);
+      let lastNameHe = s(b.lastNameHe);
+      const firstNameEn = s(b.firstNameEn);
+      const lastNameEn = s(b.lastNameEn);
+      if (!firstNameHe && !firstNameEn) {
+        const rawName = (chat.savedContactName || chat.pushName || '').trim();
+        const [first, ...rest] = rawName.split(/\s+/).filter(Boolean);
+        firstNameHe = first || chat.phoneNumber || 'WhatsApp';
+        lastNameHe = rest.join(' ');
+      }
+      const phone = s(b.phone) || chat.phoneNumber || null;
+      const communicationLanguage = ['he', 'en'].includes(b.communicationLanguage)
+        ? b.communicationLanguage
+        : null;
       const contact = await prisma.contact.create({
         data: {
-          firstNameHe: first || chat.phoneNumber || 'WhatsApp',
-          lastNameHe: rest.join(' ') || '',
-          ...(chat.phoneNumber
-            ? { phones: { create: { value: chat.phoneNumber, isPrimary: true, label: 'WhatsApp' } } }
+          // All four name columns are REQUIRED (empty string is the schema's
+          // "not set" convention, same as the contacts module).
+          firstNameHe,
+          lastNameHe,
+          firstNameEn,
+          lastNameEn,
+          communicationLanguage,
+          ...(phone
+            ? { phones: { create: { value: phone, isPrimary: true, label: 'WhatsApp' } } }
             : {}),
         },
-        select: { id: true, firstNameHe: true, lastNameHe: true },
+        select: { id: true, firstNameHe: true, lastNameHe: true, firstNameEn: true, lastNameEn: true },
       });
       contactId = contact.id;
-      displayName = `${contact.firstNameHe} ${contact.lastNameHe}`.trim();
+      displayName =
+        `${contact.firstNameHe} ${contact.lastNameHe}`.trim() ||
+        `${contact.firstNameEn} ${contact.lastNameEn}`.trim();
       await prisma.whatsAppChat.update({
         where: { id: chat.id },
         data: { contactId, matchSource: 'manual' },
