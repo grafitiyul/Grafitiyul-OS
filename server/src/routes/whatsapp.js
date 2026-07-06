@@ -453,6 +453,20 @@ router.get(
       select: { id: true },
     });
     if (!chat) return res.status(404).json({ error: 'not_found' });
+    // Count mode (?count=1&after=ISO): number of INCOMING messages newer than
+    // `after` — powers the unread badge straight from the message store.
+    if (req.query.count === '1') {
+      const after = req.query.after ? new Date(String(req.query.after)) : null;
+      const count = await prisma.whatsAppMessage.count({
+        where: {
+          chatId: chat.id,
+          direction: 'incoming',
+          ...(after && !Number.isNaN(after.getTime()) ? { timestampFromSource: { gt: after } } : {}),
+        },
+      });
+      res.set('Cache-Control', 'no-store');
+      return res.json({ count });
+    }
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
     const before = req.query.before ? new Date(String(req.query.before)) : null;
     const messages = await prisma.whatsAppMessage.findMany({
@@ -625,8 +639,10 @@ router.post(
   }),
 );
 
-// Reschedule (and optionally edit the text) — resets the retry state so the
-// row is judged fresh at its new time. Same status guard as cancel.
+// Edit (content and/or time) — resets the retry state so the row is judged
+// fresh. Content edits are allowed on PENDING rows only (a sent/failed/
+// cancelled message keeps its audit trail); a time-only change may also
+// re-arm a failed/skipped row. A row mid-send conflicts (409).
 router.put(
   '/scheduled/:id',
   handle(async (req, res) => {
@@ -643,8 +659,9 @@ router.put(
       if (!text) return res.status(400).json({ error: 'text_required' });
       data.content = text;
     }
+    const allowedStatuses = b.text !== undefined ? ['pending'] : ['pending', 'failed', 'skipped'];
     const updated = await prisma.whatsAppScheduledMessage.updateMany({
-      where: { id: req.params.id, status: { in: ['pending', 'failed', 'skipped'] } },
+      where: { id: req.params.id, status: { in: allowedStatuses } },
       data,
     });
     if (updated.count === 0) return res.status(409).json({ error: 'not_editable' });

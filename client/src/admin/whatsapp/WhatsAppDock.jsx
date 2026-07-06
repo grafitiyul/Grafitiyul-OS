@@ -1,49 +1,119 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import ChatThread from './ChatThread.jsx';
 
-// Floating WhatsApp dock for the Deal page: a compact bubble at the seam
-// between the deal content and the sales-script panel; clicking it opens a
-// large stable chat popup that overlays the script area and stays open until
-// toggled/X'd. Same shared components + store as everywhere else — this file
-// is ONLY Deal-page chrome.
+// Floating WhatsApp dock for the Deal page. Rendered through WorkspaceLayout's
+// `seamLeft` slot, so the closed bubble sits in the empty gap between the deal
+// center area and the sales-script panel, aligned with the deal header row —
+// not inside the header, not on top of the script. The open panel is a fixed
+// overlay (may cover the script), horizontally RESIZABLE by dragging its
+// center-facing edge; the chosen width persists globally across deals.
 //
-// Contact model (user spec): default to the Deal's PRIMARY contact; when the
-// deal has several linked contacts, a compact selector at the top switches
-// the conversation inside the same popup. Conversations are per-contact and
-// are never merged across contacts.
+// Unread badge: derived from the EXISTING message store — per-chat "last seen"
+// markers live in localStorage; the count is the store's incoming messages
+// after that marker (no duplicate unread system). Opening the popup marks the
+// visible conversation read.
+//
+// Contact model (user spec): default to the Deal's PRIMARY contact; a compact
+// selector switches between the deal's linked contacts inside the same popup.
+// Conversations are per-contact and never merged.
+
+const WIDTH_KEY = 'gos-whatsapp-dock'; // { width } — global, not per-deal
+const SEEN_KEY = 'gos-whatsapp-seen'; // { [chatId]: ISO lastSeenAt }
+const MIN_W = 380;
+const MAX_W = 760;
+
+function readJson(key, fallback) {
+  try {
+    return { ...fallback, ...JSON.parse(localStorage.getItem(key) || '{}') };
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJson(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* storage unavailable — non-fatal */
+  }
+}
+
+function markSeen(chatId) {
+  if (!chatId) return;
+  const map = readJson(SEEN_KEY, {});
+  map[chatId] = new Date().toISOString();
+  writeJson(SEEN_KEY, map);
+}
 
 export default function WhatsAppDock({ subjectType, subjectId }) {
   const [open, setOpen] = useState(false);
   const [data, setData] = useState(null); // { chats, primaryContactId }
   const [contactSel, setContactSel] = useState(null);
   const [chatSel, setChatSel] = useState(null);
+  const [unread, setUnread] = useState(0);
+  const [width, setWidth] = useState(() => {
+    const w = Number(readJson(WIDTH_KEY, {}).width);
+    return Number.isFinite(w) && w >= MIN_W && w <= MAX_W ? w : 440;
+  });
+  const draggingRef = useRef(false);
 
   const load = useCallback(async () => {
     try {
-      setData(await api.whatsapp.contextChats(subjectType, subjectId));
+      const d = await api.whatsapp.contextChats(subjectType, subjectId);
+      setData(d);
+      return d;
     } catch {
-      /* bubble stays; popup shows the empty state until the next refresh */
+      return null;
     }
   }, [subjectType, subjectId]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  // Unread = incoming messages newer than each chat's last-seen marker. A
+  // chat we've never seen gets its marker initialized to NOW (history isn't
+  // "unread"); only messages arriving after that count.
+  const computeUnread = useCallback(async (d) => {
+    const chats = d?.chats || [];
+    const seen = readJson(SEEN_KEY, {});
+    let changed = false;
+    let total = 0;
+    for (const chat of chats) {
+      if (!seen[chat.id]) {
+        seen[chat.id] = new Date().toISOString();
+        changed = true;
+        continue;
+      }
+      if (!chat.lastMessageAt || chat.lastMessageAt <= seen[chat.id]) continue;
+      try {
+        const { count } = await api.whatsapp.chatMessages(chat.id, { after: seen[chat.id], count: 1 });
+        total += count || 0;
+      } catch {
+        /* transient — next poll recounts */
+      }
+    }
+    if (changed) writeJson(SEEN_KEY, seen);
+    setUnread(total);
+  }, []);
 
-  // While open, keep the chat list fresh on a slow cadence (new chats appear;
-  // the thread itself polls fast on its own).
+  // Load + poll the chat list. While CLOSED the poll only feeds the badge;
+  // while OPEN it also keeps the selector fresh (the thread polls itself).
   useEffect(() => {
-    if (!open) return undefined;
+    let cancelled = false;
+    async function refresh() {
+      const d = await load();
+      if (!cancelled && d) await computeUnread(d);
+    }
+    refresh();
     const t = setInterval(() => {
-      if (!document.hidden) load();
+      if (!document.hidden) refresh();
     }, 45_000);
-    return () => clearInterval(t);
-  }, [open, load]);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [load, computeUnread]);
 
-  // Group chats by CRM contact — the selector is contact-first, and a contact
-  // with threads on both of our numbers gets a small secondary switcher.
+  // Group chats by CRM contact — the selector is contact-first.
   const contacts = useMemo(() => {
     const map = new Map();
     for (const c of data?.chats || []) {
@@ -64,24 +134,98 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
   const activeChat =
     activeContact?.chats.find((c) => c.id === chatSel) || activeContact?.chats[0] || null;
 
+  // Reading the conversation = seen. Mark on open/switch and keep marking
+  // while the popup stays open on it (the badge is for the CLOSED bubble).
+  useEffect(() => {
+    if (!open || !activeChat) return undefined;
+    markSeen(activeChat.id);
+    setUnread(0);
+    const t = setInterval(() => {
+      if (!document.hidden) markSeen(activeChat.id);
+    }, 10_000);
+    return () => {
+      clearInterval(t);
+      markSeen(activeChat.id);
+    };
+  }, [open, activeChat?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Drag-to-resize: the panel is anchored at the viewport's LEFT edge, so
+  // width follows the pointer's clientX. Persisted globally on release.
+  useEffect(() => {
+    function onMove(e) {
+      if (!draggingRef.current) return;
+      const w = Math.max(MIN_W, Math.min(MAX_W, e.clientX - 16));
+      setWidth(w);
+    }
+    function onUp() {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      setWidth((w) => {
+        writeJson(WIDTH_KEY, { width: w });
+        return w;
+      });
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+
+  const badge = unread > 99 ? '99+' : String(unread);
+
+  const bubble = (positionClass) => (
+    <button
+      type="button"
+      onClick={() => setOpen(!open)}
+      title="WhatsApp"
+      aria-label={unread > 0 ? `WhatsApp — ${unread} הודעות חדשות` : 'WhatsApp'}
+      aria-expanded={open}
+      className={`${positionClass} h-11 w-11 items-center justify-center rounded-full shadow-lg ring-1 transition hover:scale-105 ${
+        open ? 'bg-emerald-600 ring-emerald-700' : 'bg-white ring-gray-200'
+      }`}
+    >
+      {open ? <span className="text-xl text-white">×</span> : <WhatsAppLogo size={24} />}
+      {!open && unread > 0 && (
+        <span
+          dir="ltr"
+          className="absolute -top-1 -left-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white ring-2 ring-white"
+        >
+          {badge}
+        </span>
+      )}
+    </button>
+  );
+
   return (
     <>
-      {/* Bubble — always visible, top of the seam next to the sales script. */}
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        title="WhatsApp"
-        aria-label="WhatsApp"
-        aria-expanded={open}
-        className={`fixed left-5 top-24 z-40 flex h-12 w-12 items-center justify-center rounded-full shadow-lg ring-1 transition hover:scale-105 ${
-          open ? 'bg-emerald-600 ring-emerald-700' : 'bg-white ring-gray-200'
-        }`}
-      >
-        {open ? <span className="text-xl text-white">×</span> : <WhatsAppLogo size={26} />}
-      </button>
+      {/* Desktop: anchored in the seam gap, aligned with the deal header row.
+          Mobile: fixed bottom-left fallback (the seam anchor is meaningless
+          in the stacked layout). */}
+      {bubble('hidden lg:flex absolute top-5 left-2 z-40')}
+      {bubble('flex lg:hidden fixed bottom-5 left-4 z-40')}
 
       {open && (
-        <div className="fixed bottom-4 left-4 top-40 z-40 flex w-[440px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl">
+        <div
+          style={{ width }}
+          className="fixed bottom-4 left-4 top-24 z-40 flex max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl"
+        >
+          {/* Resize handle — the center-facing edge. */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="שינוי רוחב הצ'אט"
+            onMouseDown={() => {
+              draggingRef.current = true;
+              document.body.style.userSelect = 'none';
+              document.body.style.cursor = 'col-resize';
+            }}
+            className="absolute bottom-0 right-0 top-0 z-10 w-1.5 cursor-col-resize hover:bg-emerald-400/60"
+          />
+
           {/* Header */}
           <div className="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2">
             <WhatsAppLogo size={18} />
@@ -122,7 +266,7 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
                     }`}
                   >
                     {c.name}
-                    {c.id === data?.primaryContactId && contacts.length > 1 && (
+                    {c.id === data?.primaryContactId && (
                       <span className={active ? 'text-emerald-100' : 'text-gray-400'}> ★</span>
                     )}
                   </button>

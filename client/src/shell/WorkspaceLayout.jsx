@@ -134,7 +134,11 @@ function SidePanel({ side, title, open, width, onCollapse, children }) {
   );
 }
 
-export default function WorkspaceLayout({ storageKey, right = {}, left = {}, children }) {
+// `seamLeft` — optional floating accessory anchored at the seam between the
+// center and the LEFT panel (e.g. the Deal page's WhatsApp bubble). Rendered
+// as a zero-width relative container so it never affects the flex layout;
+// the accessory positions itself absolutely from that anchor.
+export default function WorkspaceLayout({ storageKey, right = {}, left = {}, seamLeft = null, children }) {
   // Either side panel is optional — a page may show only a right details panel
   // (Contact / Organization) or none at all; the center always fills the rest.
   const hasRight = !!(right && right.content);
@@ -244,6 +248,11 @@ export default function WorkspaceLayout({ storageKey, right = {}, left = {}, chi
           {children}
         </div>
       </section>
+
+      {/* Seam accessory — floats at the center↔left-panel boundary. Zero-size
+          on mobile too (the accessory handles its own responsive display; its
+          fixed-position children must not be display:none'd by this wrapper). */}
+      {seamLeft && <div className="relative z-40 h-0 w-0">{seamLeft}</div>}
 
       {/* LEFT panel — physically on the left (end) in RTL. Also optional. */}
       {hasLeft && (

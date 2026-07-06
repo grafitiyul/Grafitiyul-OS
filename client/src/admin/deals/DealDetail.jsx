@@ -596,6 +596,7 @@ export default function DealDetail() {
       storageKey="gos.workspace.deal"
       right={{ title: 'פרטי הדיל', content: dealProperties, defaultWidth: 460, minWidth: 360, maxWidth: 720 }}
       left={{ title: 'תסריט מכירה', content: <DealSalesScript />, defaultWidth: 300, minWidth: 220, maxWidth: 460 }}
+      seamLeft={<WhatsAppDock subjectType="deal" subjectId={deal.id} />}
     >
       {/* Hero header — title + actions, then a full-width pipeline bar.
           Lives in the center stack, so its width matches the cards. */}
@@ -742,11 +743,6 @@ export default function DealDetail() {
           WhatsApp lives in the floating dock (below), NOT as a timeline tab —
           the chat must not permanently consume the deal workspace. */}
       <TimelineFeed subjectType="deal" subjectId={deal.id} showWhatsApp={false} />
-
-      {/* Floating WhatsApp bubble + popup, at the seam next to the sales
-          script. Opens on the primary contact; compact selector switches
-          between the deal's linked contacts. */}
-      <WhatsAppDock subjectType="deal" subjectId={deal.id} />
 
       <LostDealDialog
         open={lostOpen}

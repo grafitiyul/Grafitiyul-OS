@@ -31,7 +31,9 @@ export function toLocalInputValue(date) {
 export default function ScheduledStrip({ chat, nonce = 0 }) {
   const [rows, setRows] = useState([]);
   const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState(null); // { id, value }
+  // { id, value } = time-only re-arm (failed/skipped);
+  // { id, value, text } = full edit — content + time (pending only).
+  const [editing, setEditing] = useState(null);
   const [busy, setBusy] = useState(null);
 
   const load = useCallback(async () => {
@@ -92,47 +94,76 @@ export default function ScheduledStrip({ chat, nonce = 0 }) {
                   <p className="mt-0.5 text-[11px] text-red-600" dir="auto">{s.failureReason}</p>
                 )}
                 {s.status !== 'sending' && (
-                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                  <div className="mt-1.5 space-y-1.5">
                     {editing?.id === s.id ? (
                       <>
-                        <input
-                          type="datetime-local"
-                          value={editing.value}
-                          onChange={(e) => setEditing({ id: s.id, value: e.target.value })}
-                          className="rounded-lg border border-gray-300 px-2 py-1 text-[12px]"
-                        />
-                        <button
-                          type="button"
-                          disabled={busy === s.id}
-                          onClick={() =>
-                            run(s.id, () =>
-                              api.whatsapp.updateScheduled(s.id, {
-                                scheduledAt: new Date(editing.value).toISOString(),
-                              }),
-                            )
-                          }
-                          className="rounded-lg bg-blue-600 px-2.5 py-1 text-[12px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-                        >
-                          שמירה
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setEditing(null)}
-                          className="text-[12px] text-gray-500 hover:text-gray-700"
-                        >
-                          ביטול
-                        </button>
+                        {editing.text !== undefined && (
+                          <textarea
+                            rows={2}
+                            value={editing.text}
+                            onChange={(e) => setEditing({ ...editing, text: e.target.value })}
+                            dir="auto"
+                            className="w-full resize-y rounded-lg border border-gray-300 px-2 py-1.5 text-[13px] focus:border-blue-500 focus:outline-none"
+                          />
+                        )}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            type="datetime-local"
+                            value={editing.value}
+                            onChange={(e) => setEditing({ ...editing, value: e.target.value })}
+                            className="rounded-lg border border-gray-300 px-2 py-1 text-[12px]"
+                          />
+                          <button
+                            type="button"
+                            disabled={busy === s.id || (editing.text !== undefined && !editing.text.trim())}
+                            onClick={() =>
+                              run(s.id, () =>
+                                api.whatsapp.updateScheduled(s.id, {
+                                  scheduledAt: new Date(editing.value).toISOString(),
+                                  ...(editing.text !== undefined ? { text: editing.text.trim() } : {}),
+                                }),
+                              )
+                            }
+                            className="rounded-lg bg-blue-600 px-2.5 py-1 text-[12px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                          >
+                            שמירה
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditing(null)}
+                            className="text-[12px] text-gray-500 hover:text-gray-700"
+                          >
+                            ביטול
+                          </button>
+                        </div>
                       </>
                     ) : (
-                      <>
-                        <button
-                          type="button"
-                          disabled={busy === s.id}
-                          onClick={() => setEditing({ id: s.id, value: toLocalInputValue(s.scheduledAt) })}
-                          className="text-[12px] font-medium text-blue-700 hover:underline"
-                        >
-                          שינוי מועד
-                        </button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {/* Full edit (content + time) — PENDING only; other
+                            states keep their audit trail untouched. */}
+                        {s.status === 'pending' && (
+                          <button
+                            type="button"
+                            disabled={busy === s.id}
+                            onClick={() =>
+                              setEditing({ id: s.id, value: toLocalInputValue(s.scheduledAt), text: s.content })
+                            }
+                            className="text-[12px] font-medium text-blue-700 hover:underline"
+                          >
+                            ערוך
+                          </button>
+                        )}
+                        {/* Time-only re-arm for a failed/skipped row. */}
+                        {s.status !== 'pending' && (
+                          <button
+                            type="button"
+                            disabled={busy === s.id}
+                            onClick={() => setEditing({ id: s.id, value: toLocalInputValue(s.scheduledAt) })}
+                            className="text-[12px] font-medium text-blue-700 hover:underline"
+                          >
+                            שינוי מועד
+                          </button>
+                        )}
                         <button
                           type="button"
                           disabled={busy === s.id}
@@ -141,7 +172,7 @@ export default function ScheduledStrip({ chat, nonce = 0 }) {
                         >
                           {busy === s.id ? 'מבטל…' : 'ביטול הודעה'}
                         </button>
-                      </>
+                      </div>
                     )}
                   </div>
                 )}
