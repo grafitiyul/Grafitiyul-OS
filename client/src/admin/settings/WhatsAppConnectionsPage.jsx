@@ -96,15 +96,15 @@ export default function WhatsAppConnectionsPage() {
     (accounts || []).find((a) => a.id === selectedId) || (accounts || [])[0] || null;
 
   return (
-    <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-4xl mx-auto">
+    <div className="px-5 py-8 lg:px-10 lg:py-10 max-w-6xl mx-auto">
       <header className="mb-8">
         <h1 className="flex items-center gap-3 text-2xl font-bold tracking-tight text-gray-900">
           <WhatsAppLogo size={28} />
           WhatsApp
         </h1>
         <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed">
-          חיבור מספרי ה-WhatsApp של העסק למערכת — קישור מכשיר בסריקת QR, מעקב
-          אחרי מצב החיבור ופעולות ניהול.
+          כל שיחות ה-WhatsApp של העסק במקום אחד — מעבר מהיר מהשיחה לדיל הנכון,
+          שיוך שיחות לאנשי קשר, וניהול חיבורי המספרים.
         </p>
       </header>
 

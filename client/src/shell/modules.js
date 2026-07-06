@@ -5,6 +5,9 @@
 export const TOP_MODULES = [
   // CRM is the operational hub: Deals (primary tab) + Contacts + Organizations.
   { key: 'crm', to: '/admin/crm', label: 'CRM', glyph: '🏢' },
+  // The active WhatsApp inbox (conversations → deals) + connection management.
+  // A working surface, not a setting — hence a top-level module.
+  { key: 'whatsapp', to: '/admin/whatsapp', label: 'WhatsApp', glyph: '💬' },
 ];
 
 // Bottom cluster, top→bottom: צוות, תוכן סיורים, מסמכים, נהלים, הגדרות, משתמשים.

@@ -31,10 +31,10 @@ export default function SettingsHome() {
           comingSoon
         />
         <CategoryCard
-          to="/admin/settings/whatsapp"
+          to="/admin/whatsapp"
           icon={<WhatsAppLogo size={30} />}
           title="WhatsApp"
-          description="חיבור מספרי WhatsApp למערכת, מצב חיבור ופעולות ניהול."
+          description="תיבת השיחות, חיבור מספרי WhatsApp, מצב חיבור ופעולות ניהול."
         />
         <CategoryCard
           icon="💰"

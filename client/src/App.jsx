@@ -159,6 +159,9 @@ export default function App() {
             Organization Types / Subtypes / Deal Stages screen) lives here,
             no longer as a prominent CRM tab. */}
         <Route path="settings" element={<SettingsHome />} />
+        {/* WhatsApp is a top-level module (inbox + connections); the old
+            settings path keeps working for existing links/bookmarks. */}
+        <Route path="whatsapp" element={<WhatsAppConnectionsPage />} />
         <Route path="settings/whatsapp" element={<WhatsAppConnectionsPage />} />
         <Route path="settings/crm" element={<CrmSettingsHome />} />
         <Route
