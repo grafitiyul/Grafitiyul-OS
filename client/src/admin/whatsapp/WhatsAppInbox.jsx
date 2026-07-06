@@ -6,7 +6,7 @@ import ChatThread from './ChatThread.jsx';
 import DealDrawer from './DealDrawer.jsx';
 import Checks from './Checks.jsx';
 import ActivityBadgeChip from '../deals/ActivityBadgeChip.jsx';
-import { ensureSeen, isUnread, markSeen, markUnread, readSeen } from './seenStore.js';
+import { ensureSeen, isUnread, markSeen, markUnread, readManualUnread, readSeen } from './seenStore.js';
 
 // Active WhatsApp inbox — WhatsApp-style two-pane workspace:
 //   RIGHT: pinned conversation list (resizable, persisted width) with the
@@ -354,6 +354,8 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
   const [error, setError] = useState(null);
   // Per-chat unread counts (device-local seen markers + server counts).
   const [unreadCounts, setUnreadCounts] = useState({});
+  // Manual "mark unread" flags (mirrors the shared store, for rendering).
+  const [manualUnread, setManualUnread] = useState(() => readManualUnread());
   // Which chat's snooze menu is open (chat id or null).
   const [snoozeMenuFor, setSnoozeMenuFor] = useState(null);
   // Keyboard cursor (chat id) — ↑/↓ move it, Enter opens it.
@@ -374,7 +376,10 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
   // Bounded: only unread candidates hit the count endpoint (usually a few).
   const computeUnread = useCallback(async (list) => {
     const seen = ensureSeen(list.map((c) => c.id));
-    const candidates = list.filter((c) => isUnread(c, seen)).slice(0, 25);
+    setManualUnread(readManualUnread());
+    // Counts reflect REAL new messages only (manual flags are display-only),
+    // so pass an empty manual map when picking count candidates.
+    const candidates = list.filter((c) => isUnread(c, seen, {})).slice(0, 25);
     const entries = await Promise.all(
       candidates.map(async (c) => {
         try {
@@ -423,6 +428,12 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
   useEffect(() => {
     if (!selected) return;
     markSeen(selected.id);
+    setManualUnread((cur) => {
+      if (!cur[selected.id]) return cur;
+      const next = { ...cur };
+      delete next[selected.id];
+      return next;
+    });
     setUnreadCounts((cur) => {
       if (!cur[selected.id]) return cur;
       const next = { ...cur };
@@ -467,7 +478,7 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
     return chats.filter((c) => {
       switch (statusFilter) {
         case 'unread':
-          return isUnread(c, seen);
+          return isUnread(c, seen, manualUnread);
         case 'awaiting':
           return c.lastMessage?.direction === 'incoming';
         case 'deal':
@@ -480,7 +491,7 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
           return true;
       }
     });
-  }, [chats, statusFilter, unreadCounts]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [chats, statusFilter, unreadCounts, manualUnread]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function openChat(chat) {
     setSelected(chat);
@@ -589,16 +600,23 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
 
   function toggleRead(chat) {
     const seen = readSeen();
-    if (isUnread(chat, seen) || unreadCounts[chat.id]) {
+    if (isUnread(chat, seen, manualUnread) || unreadCounts[chat.id]) {
       markSeen(chat.id);
+      setManualUnread((cur) => {
+        const next = { ...cur };
+        delete next[chat.id];
+        return next;
+      });
       setUnreadCounts((cur) => {
         const next = { ...cur };
         delete next[chat.id];
         return next;
       });
-    } else if (chat.lastMessage?.direction === 'incoming') {
-      markUnread(chat.id, chat.lastMessage.timestampFromSource || chat.lastMessageAt);
-      setUnreadCounts((cur) => ({ ...cur, [chat.id]: 1 }));
+    } else {
+      // WhatsApp-style manual unread: a display flag (empty circle) — counts
+      // stay honest and only reflect real new messages.
+      markUnread(chat.id);
+      setManualUnread((cur) => ({ ...cur, [chat.id]: true }));
       if (selected?.id === chat.id) setSelected(null);
     }
   }
@@ -699,9 +717,11 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                 {filteredChats.map((chat) => {
                   const active = selected && chat.id === selected.id;
                   const unreadN = unreadCounts[chat.id] || 0;
-                  const unread = unreadN > 0;
+                  const manualOnly = !!manualUnread[chat.id] && unreadN === 0;
+                  const unread = unreadN > 0 || manualOnly;
                   const lastOut = chat.lastMessage?.direction === 'outgoing';
                   const snoozed = chat.snoozedUntil && new Date(chat.snoozedUntil) > new Date();
+                  const showPhone = chat.phoneNumber && chat.displayName !== chat.phoneNumber;
                   return (
                     <li key={chat.id}>
                       <div
@@ -718,38 +738,62 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                               : 'hover:bg-gray-50'
                         }`}
                       >
+                        {/* Selected indicator — thin green accent on the far
+                            right edge, readable at a glance while scanning. */}
+                        {active && <span className="absolute inset-y-0 right-0 w-[3px] bg-emerald-500" />}
                         <div className="flex items-center gap-2">
                           {chat.pinnedAt && <span className="shrink-0 text-[11px] text-gray-400" title="שיחה נעוצה">📌</span>}
                           {snoozed && (
                             <span className="shrink-0 text-[11px]" title={`בנודניק עד ${fmtSnoozedUntil(chat.snoozedUntil)}`}>💤</span>
                           )}
+                          {/* text-right keeps English names on the same right
+                              edge as Hebrew ones (dir=auto only fixes bidi
+                              ordering, not alignment). */}
                           <span
-                            className={`min-w-0 flex-1 truncate text-[13.5px] text-gray-900 ${unread ? 'font-bold' : 'font-semibold'}`}
+                            className={`min-w-0 flex-1 truncate text-right text-[13.5px] ${
+                              unread ? 'font-bold text-gray-900' : 'font-medium text-gray-700'
+                            }`}
                             dir="auto"
                           >
                             {chat.displayName || chat.phoneNumber || 'לא מזוהה'}
                           </span>
-                          <span className={`shrink-0 text-[11px] ${unread ? 'font-semibold text-emerald-600' : 'text-gray-400'}`} dir="ltr">
+                          <span className={`shrink-0 text-[10.5px] ${unread ? 'font-semibold text-emerald-600' : 'text-gray-400'}`} dir="ltr">
                             {fmtWhen(chat.lastMessageAt)}
                           </span>
                         </div>
                         <div className="mt-0.5 flex items-center gap-1.5">
                           {/* Direction indicator: outgoing = delivery checks,
-                              incoming unread = bold + count badge. */}
+                              incoming unread = stronger text + badge. */}
                           {lastOut && <Checks status={chat.lastMessage?.deliveryStatus || 'sent'} size={14} />}
                           <span
-                            className={`min-w-0 flex-1 truncate text-[12px] ${unread ? 'font-semibold text-gray-800' : 'text-gray-500'}`}
+                            className={`min-w-0 flex-1 truncate text-right text-[12px] ${
+                              unread ? 'font-semibold text-gray-800' : 'text-gray-400'
+                            }`}
                             dir="auto"
                           >
                             {snippet(chat.lastMessage)}
                           </span>
-                          {unread && (
+                          {unreadN > 0 ? (
                             <span className="flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-emerald-500 px-1 text-[10.5px] font-bold text-white">
                               {unreadN > 99 ? '99+' : unreadN}
                             </span>
-                          )}
+                          ) : manualOnly ? (
+                            // Manually marked unread, no new messages — an
+                            // empty circle (WhatsApp Desktop behavior).
+                            <span
+                              className="h-[11px] w-[11px] shrink-0 rounded-full border-2 border-emerald-500"
+                              title="סומנה כלא נקראה"
+                            />
+                          ) : null}
                         </div>
                         <div className="mt-1.5 flex items-center gap-2">
+                          {/* Phone — always visible, right-aligned with the
+                              rest of the identity block. */}
+                          {showPhone && (
+                            <span className="shrink-0 text-[10.5px] text-gray-400" dir="ltr">
+                              {chat.phoneNumber}
+                            </span>
+                          )}
                           {chat.deal ? (
                             // The EXACT Deal-header badge (shared resolver +
                             // shared tones) — specific type for business deals.
@@ -760,11 +804,13 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                               title={chat.deal.title}
                             />
                           ) : chat.contact ? (
-                            <span className="min-w-0 truncate rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                            <span className="min-w-0 truncate rounded-full bg-gray-100 px-2 py-0.5 text-[10.5px] font-medium text-gray-500">
                               {chat.contact.name || 'איש קשר'}
                             </span>
                           ) : (
-                            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10.5px] font-medium text-amber-700 ring-1 ring-amber-200">
+                            // Blue = "needs CRM attention" — deliberately far
+                            // from the amber קבוצתי activity tone.
+                            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10.5px] font-semibold text-blue-700 ring-1 ring-blue-200">
                               ללא שיוך
                             </span>
                           )}
