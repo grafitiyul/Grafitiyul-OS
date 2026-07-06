@@ -212,10 +212,11 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
 
   return (
     <>
-      {/* Desktop: in the content's left gutter, hugging the deal header's
-          edge (the sticky seam wrapper keeps it visible while scrolling).
-          Mobile: fixed bottom-left fallback. */}
-      {bubble('hidden lg:flex absolute top-0 left-0 z-40')}
+      {/* Desktop: in the content's left gutter, nudged 16px past the content
+          edge so it clears the header's 3-dot actions (the sticky seam
+          wrapper keeps it visible while scrolling). Mobile: fixed
+          bottom-left fallback. */}
+      {bubble('hidden lg:flex absolute top-0 -left-4 z-40')}
       {bubble('flex lg:hidden fixed bottom-5 left-4 z-40')}
 
       {open && (

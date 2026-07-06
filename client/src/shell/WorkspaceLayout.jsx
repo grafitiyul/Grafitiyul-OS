@@ -243,7 +243,10 @@ export default function WorkspaceLayout({ storageKey, right = {}, left = {}, sea
       {/* CENTER — the workspace. First on mobile, middle on desktop. The cap is
           generous so the center soaks up free space (pipeline labels fit, the
           header breathes) without becoming excessively wide on huge monitors. */}
-      <section className="order-first lg:order-none flex-1 min-w-0 lg:overflow-y-auto">
+      {/* overflow-x-hidden: a seam accessory may overhang the content's left
+          edge slightly; in RTL that overhang would otherwise mint a
+          horizontal scrollbar on narrow-center screens. */}
+      <section className="order-first lg:order-none flex-1 min-w-0 lg:overflow-y-auto overflow-x-hidden">
         <div className="relative mx-auto w-full max-w-[1320px] px-4 lg:px-8 py-4 space-y-4">
           {/* Seam accessory — floats in the content's left gutter (inside the
               horizontal padding, hugging the first card's edge), sticky so it
