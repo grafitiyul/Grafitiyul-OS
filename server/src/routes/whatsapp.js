@@ -381,7 +381,7 @@ router.get(
     }
 
     res.set('Cache-Control', 'no-store');
-    if (contactIds.length === 0) return res.json({ chats: [], primaryContactId: null });
+    if (contactIds.length === 0) return res.json({ chats: [], contacts: [], primaryContactId: null });
 
     // Proactive matching for THIS subject's phones only (cheap, targeted).
     const ownPhones = await prisma.contactPhone.findMany({
@@ -419,8 +419,25 @@ router.get(
         messages: { orderBy: { timestampFromSource: 'desc' }, take: 1 },
       },
     });
+    // The subject's FULL contact list (not just contacts that already have a
+    // chat) — the Deal panel shows a tab per contact, including ones with no
+    // WhatsApp thread yet. Order: primary first, then linkage order.
+    const contactRows = await prisma.contact.findMany({
+      where: { id: { in: contactIds } },
+      select: CONTACT_LITE_SELECT,
+    });
+    const byId = new Map(contactRows.map((c) => [c.id, c]));
+    const contacts = contactIds
+      .filter((id) => byId.has(id))
+      .sort((a, b) => (a === primaryContactId ? -1 : 0) - (b === primaryContactId ? -1 : 0))
+      .map((id) => ({
+        id,
+        name: contactDisplayName(byId.get(id)) || '—',
+        isPrimary: id === primaryContactId,
+      }));
     res.json({
       chats: chats.map((c) => ({ ...toClientChat(c), account: c.account, contactId: c.contactId })),
+      contacts,
       primaryContactId,
     });
   }),

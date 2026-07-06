@@ -244,15 +244,16 @@ export default function WorkspaceLayout({ storageKey, right = {}, left = {}, sea
           generous so the center soaks up free space (pipeline labels fit, the
           header breathes) without becoming excessively wide on huge monitors. */}
       <section className="order-first lg:order-none flex-1 min-w-0 lg:overflow-y-auto">
-        <div className="mx-auto w-full max-w-[1320px] px-4 lg:px-8 py-4 space-y-4">
+        <div className="relative mx-auto w-full max-w-[1320px] px-4 lg:px-8 py-4 space-y-4">
+          {/* Seam accessory — floats in the content's left gutter (inside the
+              horizontal padding, hugging the first card's edge), sticky so it
+              stays visible while the center scrolls. Zero-size wrapper; the
+              accessory handles its own responsive display and must not be
+              display:none'd here (it may render fixed-position children). */}
+          {seamLeft && <div className="sticky top-3 z-40 h-0">{seamLeft}</div>}
           {children}
         </div>
       </section>
-
-      {/* Seam accessory — floats at the center↔left-panel boundary. Zero-size
-          on mobile too (the accessory handles its own responsive display; its
-          fixed-position children must not be display:none'd by this wrapper). */}
-      {seamLeft && <div className="relative z-40 h-0 w-0">{seamLeft}</div>}
 
       {/* LEFT panel — physically on the left (end) in RTL. Also optional. */}
       {hasLeft && (

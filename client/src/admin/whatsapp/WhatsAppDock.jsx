@@ -113,10 +113,20 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
     };
   }, [load, computeUnread]);
 
-  // Group chats by CRM contact — the selector is contact-first.
+  // Contact tabs come from the DEAL'S contact list (server), so a contact
+  // with no WhatsApp thread yet still gets a tab (with an empty state) — and
+  // adding/removing deal contacts updates the tabs on the next refresh.
+  // Fallback to chat-derived grouping when the server sends no contacts.
   const contacts = useMemo(() => {
+    const chats = data?.chats || [];
+    if (data?.contacts?.length) {
+      return data.contacts.map((c) => ({
+        ...c,
+        chats: chats.filter((chat) => (chat.contact?.id || chat.contactId) === c.id),
+      }));
+    }
     const map = new Map();
-    for (const c of data?.chats || []) {
+    for (const c of chats) {
       const key = c.contact?.id || c.contactId || c.id;
       if (!map.has(key)) {
         map.set(key, { id: key, name: c.contact?.name || c.displayName || 'לא מזוהה', chats: [] });
@@ -192,7 +202,7 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
       {!open && unread > 0 && (
         <span
           dir="ltr"
-          className="absolute -top-1 -left-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white ring-2 ring-white"
+          className="absolute -top-2 -left-2 flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[12px] font-bold leading-none text-white shadow-sm ring-2 ring-white"
         >
           {badge}
         </span>
@@ -202,10 +212,10 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
 
   return (
     <>
-      {/* Desktop: anchored in the seam gap, aligned with the deal header row.
-          Mobile: fixed bottom-left fallback (the seam anchor is meaningless
-          in the stacked layout). */}
-      {bubble('hidden lg:flex absolute top-5 left-2 z-40')}
+      {/* Desktop: in the content's left gutter, hugging the deal header's
+          edge (the sticky seam wrapper keeps it visible while scrolling).
+          Mobile: fixed bottom-left fallback. */}
+      {bubble('hidden lg:flex absolute top-0 left-0 z-40')}
       {bubble('flex lg:hidden fixed bottom-5 left-4 z-40')}
 
       {open && (
@@ -305,9 +315,12 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
                 <WhatsAppLogo size={28} />
-                <p className="text-sm font-medium text-gray-700">אין שיחת WhatsApp מקושרת</p>
+                <p className="text-sm font-medium text-gray-700">
+                  {activeContact ? `עדיין אין שיחת WhatsApp עם ${activeContact.name}` : 'אין שיחת WhatsApp מקושרת'}
+                </p>
                 <p className="text-[12px] leading-relaxed text-gray-500">
                   שיחות מתקשרות אוטומטית לפי מספר הטלפון של אנשי הקשר בדיל.
+                  ברגע שתתקיים שיחה — היא תופיע כאן.
                 </p>
               </div>
             )}
