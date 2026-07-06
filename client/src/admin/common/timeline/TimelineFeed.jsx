@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../../lib/api.js';
 import RichEditor from '../../../editor/RichEditor.jsx';
 import ReorderableList from '../ReorderableList.jsx';
@@ -65,9 +65,44 @@ const COMPOSER_TABS = [
   { key: 'file', label: 'קובץ', enabled: false, icon: <PaperclipIcon /> },
 ];
 
+// Local note-draft persistence (Pipedrive-style) — a half-written note must
+// survive closing a drawer, leaving the page, or returning days later. Scoped
+// by subjectType:subjectId so drafts never leak between deals/contacts/orgs.
+// localStorage only (V1); saving or cancelling the note clears it.
+const NOTE_DRAFTS_KEY = 'gos-note-drafts';
+
+function readNoteDrafts() {
+  try {
+    return JSON.parse(localStorage.getItem(NOTE_DRAFTS_KEY) || '{}') || {};
+  } catch {
+    return {};
+  }
+}
+
+// RichEditor "empty" can be '<p></p>' / whitespace-only markup — strip tags to
+// decide whether there is real content worth persisting.
+function noteIsEmpty(html) {
+  return !html || !html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+}
+
+function writeNoteDraft(key, html) {
+  try {
+    const map = readNoteDrafts();
+    if (noteIsEmpty(html)) delete map[key];
+    else map[key] = html;
+    // Safety valve: never let the map grow unbounded.
+    const keys = Object.keys(map);
+    if (keys.length > 200) for (const k of keys.slice(0, keys.length - 200)) delete map[k];
+    localStorage.setItem(NOTE_DRAFTS_KEY, JSON.stringify(map));
+  } catch {
+    /* storage unavailable — non-fatal */
+  }
+}
+
 // `showWhatsApp={false}` drops the WhatsApp composer tab — the Deal page
 // surfaces chat through the floating WhatsAppDock instead of the timeline.
 export default function TimelineFeed({ subjectType, subjectId, aggregate = false, showWhatsApp = true }) {
+  const noteDraftKey = `${subjectType}:${subjectId}`;
   const composerTabs = showWhatsApp
     ? COMPOSER_TABS
     : COMPOSER_TABS.filter((t) => t.key !== 'whatsapp');
@@ -75,11 +110,45 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [tab, setTab] = useState('note');
-  const [draft, setDraft] = useState('');
-  // Bumped on ביטול — remounts the rich editor so its internal DOM state
-  // clears along with the draft.
+  // Restore any saved draft for THIS subject on mount.
+  const [draft, setDraft] = useState(() => readNoteDrafts()[noteDraftKey] || '');
+  // True when the composer opened with a previously-saved draft (shows the
+  // "טיוטה" indicator so restored text clearly reads as a draft).
+  const [draftRestored, setDraftRestored] = useState(() => !noteIsEmpty(readNoteDrafts()[noteDraftKey]));
+  // Bumped on ביטול / record switch — remounts the rich editor so its internal
+  // DOM state clears/reloads along with the draft.
   const [editorNonce, setEditorNonce] = useState(0);
   const [posting, setPosting] = useState(false);
+  const draftKeyRef = useRef(noteDraftKey);
+  const draftValRef = useRef(draft);
+  draftValRef.current = draft;
+
+  // Persist the draft while typing (debounced) and flush on unmount, so
+  // closing a drawer / navigating away never loses in-progress text.
+  useEffect(() => {
+    const t = setTimeout(() => writeNoteDraft(noteDraftKey, draft), 300);
+    return () => clearTimeout(t);
+  }, [noteDraftKey, draft]);
+  useEffect(() => () => writeNoteDraft(draftKeyRef.current, draftValRef.current), []);
+
+  // Switching to a different record: flush the old draft, load the new one.
+  useEffect(() => {
+    const prevKey = draftKeyRef.current;
+    if (prevKey === noteDraftKey) return;
+    writeNoteDraft(prevKey, draftValRef.current);
+    draftKeyRef.current = noteDraftKey;
+    const restored = readNoteDrafts()[noteDraftKey] || '';
+    setDraft(restored);
+    setDraftRestored(!noteIsEmpty(restored));
+    setEditorNonce((n) => n + 1);
+  }, [noteDraftKey]);
+
+  function clearDraft() {
+    setDraft('');
+    setDraftRestored(false);
+    writeNoteDraft(noteDraftKey, '');
+    setEditorNonce((n) => n + 1);
+  }
   // Global expand: default ON. Per-note overrides take precedence over it.
   const [expandAll, setExpandAll] = useState(true);
   const [expandOverrides, setExpandOverrides] = useState({});
@@ -154,7 +223,7 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
     setPosting(true);
     try {
       await api.timeline.create({ subjectType, subjectId, kind: 'note', body });
-      setDraft('');
+      clearDraft();
       await refresh();
     } catch (e) {
       alert('שגיאה בשמירת הפתק: ' + (e.payload?.error || e.message));
@@ -235,27 +304,36 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
                 // before mouseup — so the click never fired (the "ביטול needs
                 // two clicks" bug). Keeping focus during mousedown lets the
                 // click land; the action itself then resets/collapses.
-                <div className="flex justify-end gap-2">
-                  <button
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      setDraft('');
-                      setEditorNonce((n) => n + 1);
-                    }}
-                    disabled={posting}
-                    className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                <div className="flex items-center justify-between gap-2">
+                  <span
+                    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-medium ${
+                      draftRestored
+                        ? 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'
+                        : 'text-gray-400'
+                    }`}
+                    title="הטקסט נשמר אוטומטית כטיוטה מקומית עד שתשמרו או תבטלו"
                   >
-                    ביטול
-                  </button>
-                  <button
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={postNote}
-                    disabled={posting}
-                    className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-                  >
-                    {posting ? 'מוסיף…' : 'הוסף פתק'}
-                  </button>
+                    ● טיוטה שלא נשמרה
+                  </span>
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={clearDraft}
+                      disabled={posting}
+                      className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      בטל טיוטה
+                    </button>
+                    <button
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={postNote}
+                      disabled={posting}
+                      className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {posting ? 'מוסיף…' : 'שמור פתק'}
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

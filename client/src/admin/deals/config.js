@@ -24,6 +24,20 @@ export const ACTIVITY_TYPE_LABELS = {
   business: 'עסקי',
 };
 
+// The SINGLE source of truth for the activity-badge text — used by both the
+// Deal header (ActivityBadge) and the WhatsApp inbox row badge, so they can
+// never diverge. For a business deal it shows the SPECIFIC classification (the
+// effective org-type + subtype labels), falling back to the broad "עסקי" only
+// when no specific type exists. `orgTypeLabel` is the deal's own org-type
+// label OR the linked organization's default; `subtypeLabel` is the subtype's.
+// Returns null when no activity type is set (callers supply their own affordance).
+export function resolveActivityLabel({ activityType, orgTypeLabel, subtypeLabel } = {}) {
+  if (!activityType) return null;
+  if (activityType === 'private') return ACTIVITY_TYPE_LABELS.private;
+  if (activityType === 'group') return ACTIVITY_TYPE_LABELS.group;
+  return [orgTypeLabel, subtypeLabel].filter(Boolean).join(' ') || ACTIVITY_TYPE_LABELS.business;
+}
+
 // Finance workspace routing — which pricing workspace a Deal opens when the user
 // clicks "מחיר". Kept in ONE place so the rule is swappable: today it maps from
 // activityType, but the intended future model is a CRM setting

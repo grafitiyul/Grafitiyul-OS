@@ -20,6 +20,7 @@ import { contactNamesFromParts } from '../../lib/nameSplit.js';
 import {
   ACTIVITY_TYPES,
   ACTIVITY_TYPE_LABELS,
+  resolveActivityLabel,
   ROLE_LABELS,
   TOUR_LANGS,
   contactNameHe,
@@ -946,11 +947,10 @@ function ActivityBadge({ deal, types, subtypes, onActivityType, onDealOrgType, o
   const effTypeLabel = deal.organizationType?.label || deal.organization?.organizationType?.label;
   const subtypeLabel = deal.organizationSubtype?.label;
 
-  let label;
-  if (!at) label = '+ בחר סוג פעילות';
-  else if (at === 'private') label = 'פרטי';
-  else if (at === 'group') label = 'קבוצתי';
-  else label = [effTypeLabel, subtypeLabel].filter(Boolean).join(' ') || 'עסקי';
+  // Shared resolver — the WhatsApp inbox badge uses the exact same function.
+  const label =
+    resolveActivityLabel({ activityType: at, orgTypeLabel: effTypeLabel, subtypeLabel }) ||
+    '+ בחר סוג פעילות';
 
   const tone = at ? ACTIVITY_BADGE_TONE[at] : ACTIVITY_BADGE_NEUTRAL;
 

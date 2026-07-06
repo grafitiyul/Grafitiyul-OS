@@ -522,9 +522,43 @@ router.get(
       const deals = dealIds.length
         ? await prisma.deal.findMany({
             where: { id: { in: dealIds } },
-            select: { id: true, title: true, status: true, tourDate: true, activityType: true },
+            select: {
+              id: true,
+              title: true,
+              status: true,
+              tourDate: true,
+              activityType: true,
+              organizationTypeId: true,
+              organizationSubtypeId: true,
+              organizationId: true,
+            },
           })
         : [];
+      // Resolve the SPECIFIC classification labels the same way the Deal header
+      // does: effective org type = the deal's own type OR its organization's
+      // default. Batched id-lookups only (no nested relation includes).
+      const orgIds = [...new Set(deals.map((d) => d.organizationId).filter(Boolean))];
+      const orgs = orgIds.length
+        ? await prisma.organization.findMany({
+            where: { id: { in: orgIds } },
+            select: { id: true, organizationTypeId: true },
+          })
+        : [];
+      const orgTypeIdByOrg = new Map(orgs.map((o) => [o.id, o.organizationTypeId]));
+      const effTypeIdFor = (d) => d.organizationTypeId || orgTypeIdByOrg.get(d.organizationId) || null;
+      const typeIds = [...new Set(deals.map(effTypeIdFor).filter(Boolean))];
+      const subtypeIds = [...new Set(deals.map((d) => d.organizationSubtypeId).filter(Boolean))];
+      const [types, subtypes] = await Promise.all([
+        typeIds.length
+          ? prisma.organizationType.findMany({ where: { id: { in: typeIds } }, select: { id: true, label: true } })
+          : [],
+        subtypeIds.length
+          ? prisma.organizationSubtype.findMany({ where: { id: { in: subtypeIds } }, select: { id: true, label: true } })
+          : [],
+      ]);
+      const typeLabel = new Map(types.map((t) => [t.id, t.label]));
+      const subtypeLabel = new Map(subtypes.map((s) => [s.id, s.label]));
+
       const dealById = new Map(deals.map((d) => [d.id, d]));
       const byContact = new Map();
       for (const l of links) {
@@ -539,10 +573,13 @@ router.get(
           (d) => d.status === 'open' || (d.status === 'won' && d.tourDate && d.tourDate >= sevenDaysAgo),
         );
         if (candidates.length === 1) {
+          const d = candidates[0];
           dealByContact.set(cid, {
-            id: candidates[0].id,
-            title: candidates[0].title,
-            activityType: candidates[0].activityType,
+            id: d.id,
+            title: d.title,
+            activityType: d.activityType,
+            orgTypeLabel: typeLabel.get(effTypeIdFor(d)) ?? null,
+            subtypeLabel: d.organizationSubtypeId ? subtypeLabel.get(d.organizationSubtypeId) ?? null : null,
           });
         }
       }

@@ -4,7 +4,7 @@ import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import ChatThread from './ChatThread.jsx';
 import DealDrawer from './DealDrawer.jsx';
-import { ACTIVITY_TYPE_LABELS } from '../deals/config.js';
+import { resolveActivityLabel } from '../deals/config.js';
 
 // Active WhatsApp inbox — WhatsApp-style two-pane workspace:
 //   RIGHT: pinned conversation list (resizable, persisted width) with the
@@ -512,13 +512,14 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                         </div>
                         <div className="mt-1.5 flex items-center gap-2">
                           {chat.deal ? (
-                            // Confidently-resolved deal — show its activity
-                            // type (the badge next to the deal title).
+                            // Confidently-resolved deal — the SAME activity
+                            // badge text the Deal header shows (specific
+                            // org-type + subtype for business deals).
                             <span
                               className="min-w-0 truncate rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-medium text-emerald-700 ring-1 ring-emerald-200"
                               title={chat.deal.title}
                             >
-                              {ACTIVITY_TYPE_LABELS[chat.deal.activityType] || chat.deal.title || 'דיל'}
+                              {resolveActivityLabel(chat.deal) || chat.deal.title || 'דיל'}
                             </span>
                           ) : chat.contact ? (
                             <span className="min-w-0 truncate rounded-full bg-emerald-50 px-2 py-0.5 text-[10.5px] font-medium text-emerald-700 ring-1 ring-emerald-200">
@@ -565,8 +566,10 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
           className="w-1 shrink-0 cursor-col-resize bg-gray-100 hover:bg-emerald-400/60"
         />
 
-        {/* LEFT — the selected conversation */}
-        <section className="flex min-w-0 flex-1 flex-col">
+        {/* LEFT — the selected conversation. position:relative so the deal
+            drawer (rendered at the bottom of this section) covers exactly the
+            chat area and stops at the conversation-list boundary. */}
+        <section className="relative flex min-w-0 flex-1 flex-col">
           {selected ? (
             <>
               <div className="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2">
@@ -622,6 +625,17 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
               <p className="text-sm text-gray-500">בחרו שיחה מהרשימה כדי לצפות ולהשיב</p>
             </div>
           )}
+
+          {/* Deal drawer — covers the chat area only; the list stays visible. */}
+          {drawerDealId && (
+            <DealDrawer
+              dealId={drawerDealId}
+              onClose={() => {
+                setDrawerDealId(null);
+                load();
+              }}
+            />
+          )}
         </section>
       </div>
 
@@ -674,15 +688,6 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
         />
       )}
 
-      {drawerDealId && (
-        <DealDrawer
-          dealId={drawerDealId}
-          onClose={() => {
-            setDrawerDealId(null);
-            load();
-          }}
-        />
-      )}
     </>
   );
 }
