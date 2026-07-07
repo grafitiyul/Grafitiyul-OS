@@ -153,6 +153,7 @@ export default function ChatListRow({
   onToggleRead,
   onToggleSnoozeMenu,
   onSnooze, // (isoString | null)
+  onToggleHidden, // manual hide/unhide ("הסתר מהרשימה")
 }) {
   const unreadN = unreadCount;
   const manualOnly = manualUnread && unreadN === 0;
@@ -189,6 +190,23 @@ export default function ChatListRow({
         {chat.pinnedAt && <span className="shrink-0 text-[11px] text-gray-400" title="שיחה נעוצה">📌</span>}
         {snoozed && (
           <span className="shrink-0 text-[11px]" title={`בנודניק עד ${fmtSnoozedUntil(chat.snoozedUntil)}`}>💤</span>
+        )}
+        {/* Provider/GOS state badges — visible only in the 'הכל' scope (these
+            chats never reach the active work queue). */}
+        {chat.providerDeletedAt && (
+          <span className="shrink-0 rounded-full bg-red-50 px-1.5 py-px text-[10px] font-semibold text-red-600 ring-1 ring-red-200" title="השיחה נמחקה בטלפון">
+            נמחקה
+          </span>
+        )}
+        {!chat.providerDeletedAt && chat.providerArchivedAt && (
+          <span className="shrink-0 rounded-full bg-gray-100 px-1.5 py-px text-[10px] font-semibold text-gray-500 ring-1 ring-gray-200" title="השיחה בארכיון בטלפון">
+            בארכיון
+          </span>
+        )}
+        {chat.hiddenAt && (
+          <span className="shrink-0 rounded-full bg-gray-100 px-1.5 py-px text-[10px] font-semibold text-gray-500 ring-1 ring-gray-200" title="הוסתרה ידנית מהרשימה">
+            מוסתרת
+          </span>
         )}
         <span
           className={`min-w-0 flex-1 truncate text-right text-[14px] ${
@@ -320,6 +338,17 @@ export default function ChatListRow({
                 className="block w-full border-t border-gray-100 px-3 py-1.5 text-right text-[12.5px] font-medium text-red-600 hover:bg-red-50"
               >
                 ביטול הנודניק
+              </button>
+            )}
+            {/* Permanent manual hide — cleanup for chats that no longer exist
+                on the phone (pre-tracking deletions). Reversible from 'הכל'. */}
+            {onToggleHidden && (
+              <button
+                type="button"
+                onClick={() => onToggleHidden(chat)}
+                className="block w-full border-t border-gray-100 px-3 py-1.5 text-right text-[12.5px] text-gray-600 hover:bg-gray-50"
+              >
+                {chat.hiddenAt ? 'ביטול ההסתרה' : 'הסתרה מהרשימה'}
               </button>
             )}
           </div>

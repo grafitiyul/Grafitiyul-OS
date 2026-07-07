@@ -751,6 +751,10 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                         setSnoozeMenuFor(null);
                         setChatState(chat, { snoozedUntil: untilIso });
                       }}
+                      onToggleHidden={(c) => {
+                        setSnoozeMenuFor(null);
+                        setChatState(c, { hidden: !c.hiddenAt });
+                      }}
                     />
                   </li>
                 ))}

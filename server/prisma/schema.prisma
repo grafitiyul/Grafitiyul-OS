@@ -1159,6 +1159,14 @@ model WhatsAppChat {
   pinnedAt          DateTime?
   snoozedUntil      DateTime?
   snoozedAt         DateTime?
+  // PROVIDER state (mirrors the phone, written by the bridge): archived /
+  // deleted on WhatsApp itself. Rows are never deleted — the active inbox
+  // excludes them while CRM history keeps the full mirror.
+  providerArchivedAt DateTime?
+  providerDeletedAt  DateTime?
+  // GOS-side manual hide ("הסתר מהרשימה") — cleanup for chats deleted on the
+  // phone BEFORE provider-state tracking existed (no retroactive signal).
+  hiddenAt          DateTime?
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
   messages          WhatsAppMessage[]
@@ -2518,9 +2526,15 @@ model EmailThread {
   snippet           String?
   lastMessageAt     DateTime?
   messageCount      Int          @default(0)
-  // GOS-side unread state ONLY — never written back to Gmail.
+  // GOS-side unread state ONLY — never written back to Gmail. Sourced from
+  // Gmail's UNREAD label; cleared by GOS reads (lastReadAt cutoff) OR by Gmail
+  // reads (labelRemoved:UNREAD history event).
   unreadCount       Int          @default(0)
   lastReadAt        DateTime?
+  // ACTIVE-INBOX membership — true while ANY live message carries Gmail's
+  // INBOX label. Archiving/deleting in Gmail drops the thread from the GOS
+  // active inbox (the mirror row stays — CRM history never loses data).
+  inInbox           Boolean      @default(true)
   contact           Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
   contactId         String?
   matchSource       String? // 'email' | 'manual' (auto-match only on exact single hit)
@@ -2536,6 +2550,7 @@ model EmailThread {
 
   @@unique([accountId, gmailThreadId])
   @@index([accountId, lastMessageAt])
+  @@index([accountId, inInbox, lastMessageAt])
   @@index([contactId])
   @@index([linkedDealId])
 }
@@ -2566,6 +2581,13 @@ model EmailMessage {
   bodyHtml         String? // sanitized
   sentAt           DateTime? // Gmail internalDate
   hasAttachments   Boolean     @default(false)
+  // Gmail labels snapshot (["INBOX","UNREAD",…]) — kept current by the history
+  // sync (labelAdded/labelRemoved). Null on rows mirrored before this column
+  // existed; the worker's reconcile pass backfills those.
+  labelIds         Json?
+  // Stamped when Gmail reports the message deleted (history messageDeleted /
+  // reconcile 404). Row is KEPT (CRM history); active views exclude it.
+  providerDeletedAt DateTime?
   createdByUserId  String? // AdminUser.id when sent from GOS (loose key)
   // Open-tracking pixel token for GOS-sent messages (unguessable, public URL).
   trackingId       String?     @unique

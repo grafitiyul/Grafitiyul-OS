@@ -32,7 +32,11 @@ import { matchContactByEmails, resolveAutoDealId } from './matching.js';
 // A manual UNLINK sets the 'unlinked' sentinel — auto-linking respects it and
 // never re-links what a user deliberately disconnected.
 
-const SKIP_LABELS = new Set(['DRAFT', 'SPAM', 'TRASH']);
+// DRAFT/SPAM/TRASH are not inbox material; CHAT is not email AT ALL — legacy
+// Hangouts/Google Chat artifacts that Workspace stores inside the mailbox.
+// messages.list returns them but Gmail's own UI/search never shows them (the
+// exact "conversations that don't exist in Gmail" pollution from live QA).
+const SKIP_LABELS = new Set(['DRAFT', 'SPAM', 'TRASH', 'CHAT']);
 
 function participantKey(p) {
   return normalizeEmail(p.email);
@@ -102,6 +106,12 @@ export async function ingestGmailMessage(account, full, { createdByUserId = null
 
   const { bodyText, bodyHtml, attachments } = parsePayload(full.payload);
   const snippet = htmlToText(full.snippet || '').slice(0, 300) || null;
+  // Provider state, straight from Gmail: INBOX membership drives the active
+  // inbox; UNREAD drives unread (so backfilled already-read history never
+  // shows as unread, and live mail matches Gmail exactly).
+  const labelIds = full.labelIds || [];
+  const inGmailInbox = labels.has('INBOX');
+  const isGmailUnread = labels.has('UNREAD');
 
   // ── Thread upsert (unique-guarded against a concurrent creator) ──────────
   let thread = await db.emailThread.findUnique({
@@ -119,6 +129,7 @@ export async function ingestGmailMessage(account, full, { createdByUserId = null
           participants: parties,
           snippet,
           lastMessageAt: sentAt,
+          inInbox: inGmailInbox,
         },
       });
     } catch (e) {
@@ -167,6 +178,7 @@ export async function ingestGmailMessage(account, full, { createdByUserId = null
           bodyHtml: sanitizeEmailHtml(bodyHtml),
           sentAt,
           hasAttachments: attachments.length > 0,
+          labelIds,
           createdByUserId,
           trackingId,
           ...(attachments.length
@@ -192,10 +204,18 @@ export async function ingestGmailMessage(account, full, { createdByUserId = null
           participants: mergedParticipants,
           messageCount: { increment: 1 },
           ...(isNewer ? { lastMessageAt: sentAt, snippet } : {}),
-          // GOS-side unread only (never written to Gmail). Outbound resets it —
-          // replying from anywhere means the conversation was handled.
+          // An INBOX-labeled message puts/keeps the thread in the active inbox
+          // (Gmail behavior: a new message revives an archived conversation).
+          // Non-inbox messages never FLIP it off here — that only happens via
+          // label-change events (recomputeThreadState).
+          ...(inGmailInbox ? { inInbox: true } : {}),
+          // Unread mirrors Gmail's UNREAD label — a backfilled already-read
+          // message never counts. Outbound resets (replying from anywhere
+          // means the conversation was handled).
           ...(direction === 'inbound'
-            ? { unreadCount: { increment: 1 } }
+            ? isGmailUnread
+              ? { unreadCount: { increment: 1 } }
+              : {}
             : { unreadCount: 0, lastReadAt: new Date() }),
         },
       });

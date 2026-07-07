@@ -396,8 +396,46 @@ export function createIngest({ prisma, socket, log, accountId }) {
     }
 
     await prisma.whatsAppChat.update({ where: { id: chat.id }, data: { lastMessageAt: timestampFromSource } });
+    // A LIVE message revives the conversation (WhatsApp's own default: a new
+    // message unarchives; a written-to deleted chat reappears). History-synced
+    // messages must NOT revive — they describe the past, not the present.
+    if (source !== 'history') {
+      await prisma.whatsAppChat.updateMany({
+        where: {
+          id: chat.id,
+          OR: [{ providerArchivedAt: { not: null } }, { providerDeletedAt: { not: null } }],
+        },
+        data: { providerArchivedAt: null, providerDeletedAt: null },
+      });
+    }
     await accountState.heartbeat(prisma);
     if (direction === 'incoming') await accountState.inboundHeartbeat(prisma);
+  }
+
+  // ── provider state: archived / deleted (chats.update / chats.delete) ─────
+  // The phone's OWN chat-list state, mirrored so the GOS active inbox can
+  // exclude what WhatsApp itself wouldn't show. Rows are never deleted here —
+  // CRM history keeps the full mirror; only the flags change.
+  async function applyChatState(externalChatId, archived) {
+    if (archived === undefined || archived === null) return;
+    const existing = await prisma.whatsAppChat.findUnique({
+      where: { accountId_externalChatId: { accountId, externalChatId } },
+      select: { id: true, providerArchivedAt: true },
+    });
+    if (!existing) return; // never seed empty chats from state events
+    if (archived && !existing.providerArchivedAt) {
+      await prisma.whatsAppChat.update({
+        where: { id: existing.id },
+        data: { providerArchivedAt: new Date() },
+      });
+      log.info({ chatId: externalChatId }, 'chat archived on phone — flagged');
+    } else if (!archived && existing.providerArchivedAt) {
+      await prisma.whatsAppChat.update({
+        where: { id: existing.id },
+        data: { providerArchivedAt: null },
+      });
+      log.info({ chatId: externalChatId }, 'chat unarchived on phone — flag cleared');
+    }
   }
 
   // ── identity: chats.upsert / chats.update ───────────────────────────────
@@ -588,6 +626,17 @@ export function createIngest({ prisma, socket, log, accountId }) {
           log.error({ err: errSummary(err), msgId: msg.key?.id ?? null, chatId: msg.key?.remoteJid ?? null }, 'history-sync ingest failed');
         }
       }
+      // Provider state AFTER the message pass — history messages just created
+      // rows for archived chats; this flags them so the active inbox never
+      // shows conversations the phone's own list wouldn't (root-cause fix).
+      for (const c of chats) {
+        try {
+          const archived = c.archived ?? c.archive;
+          if (c.id && archived !== undefined) await applyChatState(c.id, !!archived);
+        } catch (err) {
+          log.warn({ chatId: c.id, err: errSummary(err) }, 'history chats state failed');
+        }
+      }
     },
 
     async onMessagesUpdate(updates) {
@@ -615,6 +664,8 @@ export function createIngest({ prisma, socket, log, accountId }) {
         if (!chat.id) continue;
         try {
           await applyChatIdentity(chat.id, chat.name);
+          const archived = chat.archived ?? chat.archive;
+          if (archived !== undefined) await applyChatState(chat.id, !!archived);
         } catch (err) {
           log.warn({ chatId: chat.id, err: errSummary(err) }, 'chats.upsert identity failed');
         }
@@ -623,11 +674,37 @@ export function createIngest({ prisma, socket, log, accountId }) {
 
     async onChatsUpdate(updates) {
       for (const update of updates || []) {
-        if (!update.id || update.name === undefined) continue;
+        if (!update.id) continue;
         try {
-          await applyChatIdentity(update.id, update.name);
+          if (update.name !== undefined) await applyChatIdentity(update.id, update.name);
+          // Archive / unarchive on the phone (some Baileys lines emit
+          // `archived`, chat-modify sync actions emit `archive`).
+          const archived = update.archived ?? update.archive;
+          if (archived !== undefined) await applyChatState(update.id, !!archived);
         } catch (err) {
           log.warn({ chatId: update.id, err: errSummary(err) }, 'chats.update identity failed');
+        }
+      }
+    },
+
+    // Chat deleted on the phone → flag the mirror row (never delete it: the
+    // conversation stays in CRM history/Deal context; only the active inbox
+    // stops showing it). A later LIVE message clears the flag (revive).
+    async onChatsDelete(ids) {
+      for (const jid of ids || []) {
+        if (typeof jid !== 'string' || !jid) continue;
+        try {
+          const res = await prisma.whatsAppChat.updateMany({
+            where: {
+              accountId,
+              providerDeletedAt: null,
+              OR: [{ externalChatId: jid }, { lidJid: jid }, { phoneJid: jid }],
+            },
+            data: { providerDeletedAt: new Date() },
+          });
+          if (res.count > 0) log.info({ chatId: jid }, 'chat deleted on phone — flagged');
+        } catch (err) {
+          log.warn({ chatId: jid, err: errSummary(err) }, 'chats.delete flag failed');
         }
       }
     },

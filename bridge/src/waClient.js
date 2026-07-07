@@ -519,6 +519,7 @@ export class WaClient {
       socket.ev.removeAllListeners('messaging-history.set');
       socket.ev.removeAllListeners('chats.upsert');
       socket.ev.removeAllListeners('chats.update');
+      socket.ev.removeAllListeners('chats.delete');
       socket.ev.removeAllListeners('contacts.upsert');
       socket.ev.removeAllListeners('contacts.update');
     } catch {
@@ -632,6 +633,9 @@ export class WaClient {
     socket.ev.on('messaging-history.set', guarded(ingest.onHistorySync));
     socket.ev.on('chats.upsert', guarded(ingest.onChatsUpsert));
     socket.ev.on('chats.update', guarded(ingest.onChatsUpdate));
+    // Chat deleted on the phone → providerDeletedAt flag (mirror row kept;
+    // only the active inbox stops showing it).
+    socket.ev.on('chats.delete', guarded(ingest.onChatsDelete));
     socket.ev.on('contacts.upsert', guarded(ingest.onContactsUpsert));
     socket.ev.on('contacts.update', guarded(ingest.onContactsUpdate));
 

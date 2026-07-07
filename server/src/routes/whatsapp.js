@@ -284,6 +284,9 @@ function toClientChat(chat) {
     pinnedAt: chat.pinnedAt ?? null,
     snoozedUntil: chat.snoozedUntil ?? null,
     snoozedAt: chat.snoozedAt ?? null,
+    providerArchivedAt: chat.providerArchivedAt ?? null,
+    providerDeletedAt: chat.providerDeletedAt ?? null,
+    hiddenAt: chat.hiddenAt ?? null,
     lastMessage: chat.messages?.[0] ? toClientMessage(chat.messages[0]) : null,
   };
 }
@@ -495,6 +498,14 @@ router.get(
         : scope === 'active'
           ? { OR: [{ contactId: { not: null } }, { lastMessageAt: { gte: recentCutoff } }] }
           : {};
+    // Provider/GOS visibility: the working scopes only show what the phone's
+    // own chat list would show today — archived/deleted on WhatsApp (bridge-
+    // tracked) and manually-hidden chats leave them. 'הכל' still shows
+    // everything (mirror view, badged in the UI).
+    const visibilityWhere =
+      scope === 'all'
+        ? {}
+        : { providerArchivedAt: null, providerDeletedAt: null, hiddenAt: null };
     const searchWhere = search
       ? {
           OR: [
@@ -521,7 +532,7 @@ router.get(
         ...(accountId ? { accountId } : {}),
         // Both blocks are OR-shaped — combine under AND so they never
         // clobber each other on the same object key.
-        AND: [scopeWhere, ...(searchWhere ? [searchWhere] : [])],
+        AND: [scopeWhere, visibilityWhere, ...(searchWhere ? [searchWhere] : [])],
       },
       // Pinned chats float to the top, then the usual recency order.
       orderBy: [
@@ -541,7 +552,16 @@ router.get(
     const chats =
       scope === 'active' && !search ? chatsRaw.filter((c) => !isSnoozedNow(c)) : chatsRaw;
     const unmatchedCount = await prisma.whatsAppChat.count({
-      where: { contactId: null, type: 'private', ...(accountId ? { accountId } : {}) },
+      where: {
+        contactId: null,
+        type: 'private',
+        // The repair badge counts only chats that need ACTIVE work — not ones
+        // archived/deleted on the phone or manually hidden.
+        providerArchivedAt: null,
+        providerDeletedAt: null,
+        hiddenAt: null,
+        ...(accountId ? { accountId } : {}),
+      },
     });
     // Attach the CONFIDENTLY-resolved deal per linked conversation (same
     // exactly-one candidate rule as deal-resolution: open deals + WON deals
@@ -897,13 +917,18 @@ router.put(
   handle(async (req, res) => {
     const chat = await prisma.whatsAppChat.findUnique({
       where: { id: req.params.chatId },
-      select: { id: true, pinnedAt: true },
+      select: { id: true, pinnedAt: true, hiddenAt: true },
     });
     if (!chat) return res.status(404).json({ error: 'not_found' });
     const b = req.body || {};
     const data = {};
     if (b.pinned !== undefined) {
       data.pinnedAt = b.pinned ? chat.pinnedAt ?? new Date() : null;
+    }
+    // Manual hide ("הסתר מהרשימה") — GOS-side cleanup for chats deleted on
+    // the phone before provider-state tracking existed. Reversible from 'הכל'.
+    if (b.hidden !== undefined) {
+      data.hiddenAt = b.hidden ? chat.hiddenAt ?? new Date() : null;
     }
     if (b.snoozedUntil !== undefined) {
       if (b.snoozedUntil === null) {

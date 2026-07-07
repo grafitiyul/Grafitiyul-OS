@@ -77,6 +77,7 @@ function toClientThread(t) {
     lastMessageAt: t.lastMessageAt,
     messageCount: t.messageCount,
     unreadCount: t.unreadCount,
+    inInbox: t.inInbox,
     pinnedAt: t.pinnedAt,
     contactId: t.contactId,
     matchSource: t.matchSource,
@@ -243,7 +244,14 @@ router.post(
 
 // ── Inbox ────────────────────────────────────────────────────────────────────
 
-// GET /inbox?accountId=&filter=all|unread|unmatched|deal|nodeal|today&q=
+// GET /inbox?accountId=&filter=all|unread|unmatched|deal|nodeal|today|archive&q=
+//
+// ACTIVE INBOX = what Gmail itself would show today: only threads with a live
+// INBOX-labeled message (inInbox, maintained by the sync's label tracking).
+// The 'archive' filter exposes the rest of the mirror (archived / sent-only)
+// deliberately; free-text search also spans the whole mirror.
+// Ordering (product spec): unread section first, then read — newest activity
+// first within each; GOS-pinned threads float above both.
 router.get(
   '/inbox',
   handle(async (req, res) => {
@@ -252,6 +260,8 @@ router.get(
     const q = String(req.query.q || '').trim();
 
     const where = { ...(accountId ? { accountId } : {}) };
+    if (filter === 'archive') where.inInbox = false;
+    else if (!q) where.inInbox = true; // search spans the full mirror
     if (filter === 'unread') where.unreadCount = { gt: 0 };
     else if (filter === 'unmatched') where.contactId = null;
     else if (filter === 'deal') where.linkedDealId = { not: null };
@@ -279,14 +289,27 @@ router.get(
       ];
     }
 
-    const threads = await prisma.emailThread.findMany({
+    const rows = await prisma.emailThread.findMany({
       where,
       include: THREAD_INCLUDE,
-      orderBy: [{ pinnedAt: { sort: 'desc', nulls: 'last' } }, { lastMessageAt: 'desc' }],
+      // Explicit nulls:'last' everywhere — Postgres DESC defaults to NULLS
+      // FIRST, which pinned broken-dated threads to the TOP (live-QA bug).
+      orderBy: [
+        { pinnedAt: { sort: 'desc', nulls: 'last' } },
+        { lastMessageAt: { sort: 'desc', nulls: 'last' } },
+        { createdAt: 'desc' },
+      ],
       take: 200,
     });
+    // Unread-first sectioning (stable — recency order kept inside each
+    // section). Pinned threads stay on top regardless of read state.
+    const pinned = rows.filter((t) => t.pinnedAt);
+    const unread = rows.filter((t) => !t.pinnedAt && t.unreadCount > 0);
+    const read = rows.filter((t) => !t.pinnedAt && t.unreadCount === 0);
+    const threads = [...pinned, ...unread, ...read];
+
     const unreadTotal = await prisma.emailThread.count({
-      where: { ...(accountId ? { accountId } : {}), unreadCount: { gt: 0 } },
+      where: { ...(accountId ? { accountId } : {}), inInbox: true, unreadCount: { gt: 0 } },
     });
     res.json({ threads: threads.map(toClientThread), unreadTotal });
   }),
@@ -328,7 +351,9 @@ router.get(
     });
     if (!thread) return res.status(404).json({ error: 'not_found' });
     const messages = await prisma.emailMessage.findMany({
-      where: { threadId: thread.id },
+      // Messages deleted in Gmail leave the reading view (like Gmail itself);
+      // they stay in the mirror and in CRM history/timeline.
+      where: { threadId: thread.id, providerDeletedAt: null },
       orderBy: { sentAt: 'asc' },
       include: {
         attachments: true,

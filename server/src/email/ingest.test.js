@@ -109,7 +109,8 @@ function gmailMessage({
   from = 'dana@x.co.il',
   fromName = 'Dana',
   to = 'info@biz.co.il',
-  labels = [],
+  // Default: a fresh inbound inbox message, exactly as Gmail delivers it.
+  labels = ['INBOX', 'UNREAD'],
   internalDate = 1751900000000,
   subject = 'שלום',
 } = {}) {
@@ -139,8 +140,43 @@ test('new inbound message creates thread + message and applies aggregates once',
   const thread = db.store.threadsById.get(out.threadId);
   assert.equal(thread.messageCount, 1);
   assert.equal(thread.unreadCount, 1);
+  assert.equal(thread.inInbox, true);
   assert.ok(thread.lastMessageAt instanceof Date);
   assert.equal(db.store.messages.size, 1);
+});
+
+test('provider state follows Gmail labels: archived stays out of inbox, read stays not-unread', async () => {
+  const db = fakeDb();
+  // Archived (no INBOX) + already read (no UNREAD) — e.g. 30-day backfill of
+  // an old handled conversation.
+  const out = await ingestGmailMessage(
+    account,
+    gmailMessage({ id: 'g1', threadId: 'th1', labels: [] }),
+    { db },
+  );
+  const thread = db.store.threadsById.get(out.threadId);
+  assert.equal(thread.inInbox, false); // NOT in the active inbox
+  assert.equal(thread.unreadCount, 0); // NOT counted unread
+  // A new INBOX message revives the conversation (Gmail behavior).
+  await ingestGmailMessage(
+    account,
+    gmailMessage({ id: 'g2', threadId: 'th1', labels: ['INBOX', 'UNREAD'], internalDate: 1751900100000 }),
+    { db },
+  );
+  assert.equal(db.store.threadsById.get(out.threadId).inInbox, true);
+  assert.equal(db.store.threadsById.get(out.threadId).unreadCount, 1);
+});
+
+test('CHAT-labeled artifacts (legacy Hangouts) are never imported', async () => {
+  const db = fakeDb();
+  const out = await ingestGmailMessage(
+    account,
+    gmailMessage({ id: 'g-chat', threadId: 'th1', labels: ['CHAT'] }),
+    { db },
+  );
+  assert.equal(out.skipped, true);
+  assert.equal(db.store.messages.size, 0);
+  assert.equal(db.store.threads.size, 0);
 });
 
 test('re-ingesting the same message is a no-op (fast path) — counts untouched', async () => {

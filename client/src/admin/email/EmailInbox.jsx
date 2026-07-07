@@ -21,6 +21,8 @@ const LAYOUT_KEY = 'gos-email-inbox'; // { listWidth }
 const LIST_MIN = 300;
 const LIST_MAX = 540;
 
+// All chips except ארכיון are scoped to the ACTIVE inbox (threads Gmail's own
+// inbox would show); ארכיון exposes the rest of the mirror. Search spans both.
 const FILTERS = [
   { key: 'all', label: 'הכל' },
   { key: 'unread', label: 'לא נקראו' },
@@ -28,6 +30,7 @@ const FILTERS = [
   { key: 'deal', label: 'עם דיל' },
   { key: 'nodeal', label: 'בלי דיל' },
   { key: 'today', label: 'היום' },
+  { key: 'archive', label: 'ארכיון' },
 ];
 
 const DEAL_STATUS = {
@@ -571,6 +574,11 @@ export default function EmailInbox({ accounts = [] }) {
                             {!t.contactId && (
                               <span className="shrink-0 rounded-full bg-amber-50 px-1.5 py-px text-[10px] font-semibold text-amber-700 ring-1 ring-amber-200">
                                 ללא שיוך
+                              </span>
+                            )}
+                            {t.inInbox === false && (
+                              <span className="shrink-0 rounded-full bg-gray-100 px-1.5 py-px text-[10px] font-semibold text-gray-500 ring-1 ring-gray-200">
+                                ארכיון
                               </span>
                             )}
                           </p>

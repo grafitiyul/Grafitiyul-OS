@@ -1,7 +1,9 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { gmail, emailIntegrationConfigured } from './googleClient.js';
 import { ingestGmailMessage } from './ingest.js';
 import { matchContactByEmails } from './matching.js';
+import { applyLabelChange, applyMessageDeleted, recomputeThreadState } from './providerState.js';
 
 // Gmail sync worker — READ-ONLY mirror (scope gmail.readonly: it physically
 // cannot archive/label/mark-read, so it can never fight Make/Pipedrive during
@@ -95,6 +97,10 @@ export async function syncAccount(accountOrId, logger = console) {
     const result = !account.backfillDone
       ? await backfillAccount(account, logger)
       : await incrementalSync(account, logger);
+    // Backfill Gmail labels onto rows mirrored before the labelIds column
+    // existed (self-terminating: no-op once none are null). Keeps the active
+    // inbox honest for pre-existing data without any manual cleanup.
+    await reconcileNullLabels(account, logger);
     // Self-healing pass: contacts created AFTER their emails arrived (or a
     // crash inside the tiny ingest→link window) get matched here.
     await rematchUnmatchedThreads(account, logger);
@@ -215,11 +221,16 @@ async function incrementalSync(account, logger) {
   let pageToken;
   let latestHistoryId = account.historyId;
   const newIds = new Set();
+  // Provider-state changes ride the SAME history stream: archive/unarchive/
+  // read-in-Gmail arrive as label changes, deletes as messageDeleted. This is
+  // what keeps the GOS active inbox matching what Gmail shows today.
+  const deletedIds = new Set();
+  const labelChanges = []; // { message, labelIds, kind: 'add' | 'remove' }
   try {
     do {
       const page = await gmail.listHistory(prisma, account, {
         startHistoryId: account.historyId,
-        historyTypes: 'messageAdded',
+        historyTypes: ['messageAdded', 'messageDeleted', 'labelAdded', 'labelRemoved'],
         maxResults: 100,
         pageToken,
       });
@@ -227,6 +238,15 @@ async function incrementalSync(account, logger) {
       for (const h of page.history || []) {
         for (const added of h.messagesAdded || []) {
           if (added.message?.id) newIds.add(added.message.id);
+        }
+        for (const del of h.messagesDeleted || []) {
+          if (del.message?.id) deletedIds.add(del.message.id);
+        }
+        for (const la of h.labelsAdded || []) {
+          labelChanges.push({ message: la.message, labelIds: la.labelIds, kind: 'add' });
+        }
+        for (const lr of h.labelsRemoved || []) {
+          labelChanges.push({ message: lr.message, labelIds: lr.labelIds, kind: 'remove' });
         }
       }
       pageToken = page.nextPageToken;
@@ -262,6 +282,27 @@ async function incrementalSync(account, logger) {
     fetched += 1;
   }
 
+  // Provider-state changes — cheap local DB ops, all idempotent (the window
+  // may be replayed after a held cursor and converges to the same state).
+  // Order matters: adds were ingested above so label events find their rows.
+  const dirtyThreads = new Set();
+  for (const change of labelChanges) {
+    const threadId = await applyLabelChange(account, change, change.kind);
+    if (threadId) dirtyThreads.add(threadId);
+  }
+  for (const id of deletedIds) {
+    const threadId = await applyMessageDeleted(account, id);
+    if (threadId) dirtyThreads.add(threadId);
+  }
+  for (const threadId of dirtyThreads) {
+    await recomputeThreadState(threadId);
+  }
+  if (dirtyThreads.size) {
+    logger.log(
+      `[email-sync] ${account.emailAddress}: provider state — ${labelChanges.length} label changes, ${deletedIds.size} deletions, ${dirtyThreads.size} threads recomputed`,
+    );
+  }
+
   if (fetched >= MAX_FETCH_PER_TICK && newIds.size > fetched) {
     // Budget spent mid-batch: do NOT advance the cursor — next tick replays
     // the same history window and the skip-known fast path absorbs duplicates.
@@ -277,4 +318,52 @@ async function incrementalSync(account, logger) {
   }
   if (fetched) logger.log(`[email-sync] ${account.emailAddress}: +${fetched} messages`);
   return { phase: 'incremental', fetched, done: true };
+}
+
+// One-time (self-terminating) reconciliation: rows mirrored before the
+// labelIds column existed carry SQL NULL there. Fetch their CURRENT labels
+// from Gmail (format=minimal — no payload) so pre-existing archived mail /
+// artifacts classify themselves out of the active inbox, and messages that
+// were deleted in Gmail meanwhile get flagged. No manual cleanup, ever.
+const RECONCILE_BATCH = 40;
+async function reconcileNullLabels(account, logger) {
+  const rows = await prisma.emailMessage.findMany({
+    where: { accountId: account.id, labelIds: { equals: Prisma.DbNull }, providerDeletedAt: null },
+    select: { id: true, gmailMessageId: true, threadId: true },
+    take: RECONCILE_BATCH,
+  });
+  if (!rows.length) return;
+  const dirtyThreads = new Set();
+  for (const row of rows) {
+    try {
+      const minimal = await gmail.getMessage(prisma, account, row.gmailMessageId, 'minimal');
+      await prisma.emailMessage.update({
+        where: { id: row.id },
+        data: { labelIds: minimal.labelIds || [] },
+      });
+    } catch (e) {
+      if (e.status !== 404) throw e;
+      // Gone from Gmail — keep the mirror row, flag it out of active views.
+      await prisma.emailMessage.update({
+        where: { id: row.id },
+        data: { providerDeletedAt: new Date() },
+      });
+    }
+    dirtyThreads.add(row.threadId);
+  }
+  let recomputed = 0;
+  for (const threadId of dirtyThreads) {
+    // Recompute only once ALL of the thread's live messages carry labels —
+    // a mixed thread would otherwise flap out of the inbox mid-reconcile.
+    const pending = await prisma.emailMessage.count({
+      where: { threadId, labelIds: { equals: Prisma.DbNull }, providerDeletedAt: null },
+    });
+    if (pending === 0) {
+      await recomputeThreadState(threadId);
+      recomputed += 1;
+    }
+  }
+  logger.log(
+    `[email-sync] ${account.emailAddress}: label reconcile — ${rows.length} messages classified, ${recomputed} threads recomputed`,
+  );
 }
