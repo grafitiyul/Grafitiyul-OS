@@ -2531,6 +2531,10 @@ model EmailThread {
   // reads (labelRemoved:UNREAD history event).
   unreadCount       Int          @default(0)
   lastReadAt        DateTime?
+  // Manual "סמן כלא נקרא" (GOS-side only — the mailbox is never written).
+  // Display flag like WhatsApp's manual unread: renders bold/dot but never
+  // inflates the honest Gmail-matching unread count. Cleared on read.
+  manualUnread      Boolean      @default(false)
   // ACTIVE-INBOX membership — true while ANY live message carries Gmail's
   // INBOX label. Archiving/deleting in Gmail drops the thread from the GOS
   // active inbox (the mirror row stays — CRM history never loses data).

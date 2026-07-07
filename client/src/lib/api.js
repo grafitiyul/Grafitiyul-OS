@@ -551,6 +551,7 @@ export const api = {
     threadsByContact: (contactId) => request(`/api/email/by-contact/${contactId}`),
     thread: (id) => request(`/api/email/threads/${id}`),
     markThreadRead: (id) => request(`/api/email/threads/${id}/read`, { method: 'POST', body: JSON.stringify({}) }),
+    markThreadUnread: (id) => request(`/api/email/threads/${id}/unread`, { method: 'POST', body: JSON.stringify({}) }),
     pinThread: (id, pinned) =>
       request(`/api/email/threads/${id}/pin`, { method: 'PUT', body: JSON.stringify({ pinned }) }),
     linkContact: (id, contactId) =>

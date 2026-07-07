@@ -209,14 +209,15 @@ export async function ingestGmailMessage(account, full, { createdByUserId = null
           // Non-inbox messages never FLIP it off here — that only happens via
           // label-change events (recomputeThreadState).
           ...(inGmailInbox ? { inInbox: true } : {}),
-          // Unread mirrors Gmail's UNREAD label — a backfilled already-read
-          // message never counts. Outbound resets (replying from anywhere
-          // means the conversation was handled).
+          // Unread mirrors Gmail's inbox badge: only UNREAD messages that are
+          // ALSO in the INBOX count (an archived-but-never-opened message
+          // doesn't bold Gmail's inbox — it must not bold ours). Outbound
+          // resets (replying from anywhere means the conversation was handled).
           ...(direction === 'inbound'
-            ? isGmailUnread
+            ? isGmailUnread && inGmailInbox
               ? { unreadCount: { increment: 1 } }
               : {}
-            : { unreadCount: 0, lastReadAt: new Date() }),
+            : { unreadCount: 0, lastReadAt: new Date(), manualUnread: false }),
         },
       });
       return row;

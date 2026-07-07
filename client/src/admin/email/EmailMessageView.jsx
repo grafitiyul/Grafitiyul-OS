@@ -62,7 +62,12 @@ function HtmlBody({ html }) {
     <iframe
       ref={frameRef}
       title="תוכן המייל"
-      sandbox="allow-same-origin allow-popups"
+      // No allow-scripts (JS can never run — XSS layer 2 after server-side
+      // sanitize). allow-popups-to-escape-sandbox is REQUIRED for links to
+      // actually open: without it the new tab inherits the sandbox and the
+      // browser blocks it (the "clicking links does nothing" bug). Links are
+      // target=_blank + rel=noopener via the sanitizer and <base>.
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
       srcDoc={srcDoc}
       style={{ height }}
       className="w-full rounded-lg border border-gray-100 bg-white"

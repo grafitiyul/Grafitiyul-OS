@@ -53,11 +53,13 @@ export async function applyMessageDeleted(account, gmailMessageId, db = prisma) 
 
 // Re-derive thread state from its LIVE (non-deleted) messages:
 //   inInbox     — any live message carries INBOX
-//   unreadCount — live inbound messages carrying UNREAD that the team hasn't
-//                 read IN GOS (sentAt > lastReadAt). GOS reads can't clear
-//                 Gmail's UNREAD label (read-only scope), so the GOS read
-//                 marker wins; a Gmail-side read arrives as labelRemoved and
-//                 clears it here too. Both directions converge.
+//   unreadCount — live inbound messages carrying BOTH UNREAD and INBOX (the
+//                 exact set Gmail's own inbox badge counts — an archived
+//                 unread message doesn't bold Gmail's inbox, so it must not
+//                 bold ours) that the team hasn't read IN GOS (sentAt >
+//                 lastReadAt). GOS reads can't clear Gmail's UNREAD label
+//                 (read-only scope), so the GOS read marker wins; a Gmail-side
+//                 read arrives as labelRemoved and clears it here too.
 //   lastMessageAt / snippet — from the newest live message.
 export async function recomputeThreadState(threadId, db = prisma) {
   const thread = await db.emailThread.findUnique({
@@ -76,6 +78,7 @@ export async function recomputeThreadState(threadId, db = prisma) {
     (m) =>
       m.direction === 'inbound' &&
       has(m, 'UNREAD') &&
+      has(m, 'INBOX') &&
       (!thread.lastReadAt || (m.sentAt && m.sentAt > thread.lastReadAt)),
   ).length;
   const newest = messages[0] || null;

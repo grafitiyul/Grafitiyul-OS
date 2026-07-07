@@ -77,6 +77,7 @@ function toClientThread(t) {
     lastMessageAt: t.lastMessageAt,
     messageCount: t.messageCount,
     unreadCount: t.unreadCount,
+    manualUnread: t.manualUnread,
     inInbox: t.inInbox,
     pinnedAt: t.pinnedAt,
     contactId: t.contactId,
@@ -262,7 +263,7 @@ router.get(
     const where = { ...(accountId ? { accountId } : {}) };
     if (filter === 'archive') where.inInbox = false;
     else if (!q) where.inInbox = true; // search spans the full mirror
-    if (filter === 'unread') where.unreadCount = { gt: 0 };
+    if (filter === 'unread') where.AND = [{ OR: [{ unreadCount: { gt: 0 } }, { manualUnread: true }] }];
     else if (filter === 'unmatched') where.contactId = null;
     else if (filter === 'deal') where.linkedDealId = { not: null };
     else if (filter === 'nodeal') where.linkedDealId = null;
@@ -302,10 +303,12 @@ router.get(
       take: 200,
     });
     // Unread-first sectioning (stable — recency order kept inside each
-    // section). Pinned threads stay on top regardless of read state.
+    // section). Pinned threads stay on top regardless of read state; a manual
+    // "סמן כלא נקרא" joins the unread section visually.
+    const isUnread = (t) => t.unreadCount > 0 || t.manualUnread;
     const pinned = rows.filter((t) => t.pinnedAt);
-    const unread = rows.filter((t) => !t.pinnedAt && t.unreadCount > 0);
-    const read = rows.filter((t) => !t.pinnedAt && t.unreadCount === 0);
+    const unread = rows.filter((t) => !t.pinnedAt && isUnread(t));
+    const read = rows.filter((t) => !t.pinnedAt && !isUnread(t));
     const threads = [...pinned, ...unread, ...read];
 
     const unreadTotal = await prisma.emailThread.count({
@@ -364,7 +367,8 @@ router.get(
   }),
 );
 
-// GOS-side read marker ONLY — Gmail is never touched.
+// GOS-side read marker ONLY — Gmail is never touched. Clears the manual
+// unread flag too (reading is reading).
 router.post(
   '/threads/:id/read',
   handle(async (req, res) => {
@@ -372,7 +376,25 @@ router.post(
     if (!thread) return res.status(404).json({ error: 'not_found' });
     const updated = await prisma.emailThread.update({
       where: { id: thread.id },
-      data: { unreadCount: 0, lastReadAt: new Date() },
+      data: { unreadCount: 0, lastReadAt: new Date(), manualUnread: false },
+      include: THREAD_INCLUDE,
+    });
+    res.json(toClientThread(updated));
+  }),
+);
+
+// "סמן כלא נקרא" — GOS-side display flag (like WhatsApp's manual unread):
+// the thread renders unread again, but the honest Gmail-matching unread
+// count is NOT inflated, and Gmail itself is never written (that would need
+// the gmail.modify scope — a deliberate product decision, not taken here).
+router.post(
+  '/threads/:id/unread',
+  handle(async (req, res) => {
+    const thread = await prisma.emailThread.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!thread) return res.status(404).json({ error: 'not_found' });
+    const updated = await prisma.emailThread.update({
+      where: { id: thread.id },
+      data: { manualUnread: true },
       include: THREAD_INCLUDE,
     });
     res.json(toClientThread(updated));

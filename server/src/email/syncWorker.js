@@ -101,6 +101,12 @@ export async function syncAccount(accountOrId, logger = console) {
     // existed (self-terminating: no-op once none are null). Keeps the active
     // inbox honest for pre-existing data without any manual cleanup.
     await reconcileNullLabels(account, logger);
+    // Snapshot reconciliation — the convergence guarantee: every tick, GOS's
+    // idea of "in the inbox / unread" is forced to match Gmail's CURRENT
+    // INBOX/UNREAD state, healing anything history events ever missed
+    // (expired cursors, gaps, historical inflation). This is what makes the
+    // GOS inbox trustworthy enough to stop opening Gmail.
+    await snapshotInboxState(account, logger);
     // Self-healing pass: contacts created AFTER their emails arrived (or a
     // crash inside the tiny ingest→link window) get matched here.
     await rematchUnmatchedThreads(account, logger);
@@ -119,6 +125,121 @@ export async function syncAccount(accountOrId, logger = console) {
     throw e;
   } finally {
     activeSyncs.delete(account.id);
+  }
+}
+
+// ── Inbox snapshot reconciliation ────────────────────────────────────────────
+// Lists Gmail's CURRENT inbox (id-only, cheap) and diffs it against the
+// mirror in both directions:
+//   • mirror rows claiming INBOX that Gmail no longer has there → INBOX
+//     stripped (thread drops out of the active inbox)
+//   • Gmail inbox ids missing from the mirror → imported (budgeted)
+//   • UNREAD refreshed for every current inbox message, so the GOS unread
+//     badge equals Gmail's
+// All idempotent; affected threads are recomputed once.
+
+const SNAPSHOT_FETCH_BUDGET = 20; // full-message imports per pass
+const SNAPSHOT_MAX_IDS = 5000; // hard cap — a real inbox is far smaller
+
+async function listAllMessageIds(account, labelIds) {
+  const ids = new Set();
+  let pageToken;
+  do {
+    const page = await gmail.listMessages(prisma, account, {
+      labelIds,
+      maxResults: 500,
+      pageToken,
+    });
+    for (const m of page.messages || []) ids.add(m.id);
+    pageToken = page.nextPageToken;
+  } while (pageToken && ids.size < SNAPSHOT_MAX_IDS);
+  return ids;
+}
+
+async function snapshotInboxState(account, logger) {
+  const inboxIds = await listAllMessageIds(account, ['INBOX']);
+  const unreadIds = await listAllMessageIds(account, ['INBOX', 'UNREAD']);
+  const dirty = new Set();
+  let stripped = 0;
+  let refreshed = 0;
+  let imported = 0;
+
+  // 1) Rows claiming INBOX that Gmail no longer has in the inbox → strip the
+  //    label (archived/deleted in Gmail while we weren't looking).
+  const claiming = await prisma.emailMessage.findMany({
+    where: {
+      accountId: account.id,
+      providerDeletedAt: null,
+      labelIds: { array_contains: ['INBOX'] },
+    },
+    select: { id: true, gmailMessageId: true, threadId: true, labelIds: true },
+  });
+  for (const row of claiming) {
+    if (inboxIds.has(row.gmailMessageId)) continue;
+    await prisma.emailMessage.update({
+      where: { id: row.id },
+      data: { labelIds: (row.labelIds || []).filter((l) => l !== 'INBOX') },
+    });
+    dirty.add(row.threadId);
+    stripped += 1;
+  }
+
+  // 2) Gmail's current inbox: ensure every id is mirrored with correct
+  //    INBOX/UNREAD labels.
+  const idList = [...inboxIds];
+  const known = new Map();
+  for (let i = 0; i < idList.length; i += 200) {
+    const rows = await prisma.emailMessage.findMany({
+      where: { accountId: account.id, gmailMessageId: { in: idList.slice(i, i + 200) } },
+      select: { id: true, gmailMessageId: true, threadId: true, labelIds: true, providerDeletedAt: true },
+    });
+    for (const r of rows) known.set(r.gmailMessageId, r);
+  }
+  for (const gid of inboxIds) {
+    const row = known.get(gid);
+    if (!row) {
+      // In Gmail's inbox but not mirrored (history gap / deep backfill still
+      // running) — the inbox is the priority: import it now, budgeted.
+      if (imported >= SNAPSHOT_FETCH_BUDGET) continue; // rest next tick
+      try {
+        const full = await gmail.getMessage(prisma, account, gid);
+        const res = await ingestGmailMessage(account, full);
+        if (res.threadId) dirty.add(res.threadId);
+        imported += 1;
+      } catch (e) {
+        if (e.status !== 404) throw e;
+      }
+      continue;
+    }
+    const labels = new Set(Array.isArray(row.labelIds) ? row.labelIds : []);
+    const wantUnread = unreadIds.has(gid);
+    let changed = false;
+    if (!labels.has('INBOX')) {
+      labels.add('INBOX');
+      changed = true;
+    }
+    if (wantUnread !== labels.has('UNREAD')) {
+      if (wantUnread) labels.add('UNREAD');
+      else labels.delete('UNREAD');
+      changed = true;
+    }
+    const patch = {};
+    if (changed) patch.labelIds = [...labels];
+    if (row.providerDeletedAt) patch.providerDeletedAt = null; // it's back
+    if (Object.keys(patch).length) {
+      await prisma.emailMessage.update({ where: { id: row.id }, data: patch });
+      dirty.add(row.threadId);
+      refreshed += 1;
+    }
+  }
+
+  for (const threadId of dirty) {
+    await recomputeThreadState(threadId);
+  }
+  if (stripped || refreshed || imported) {
+    logger.log(
+      `[email-sync] ${account.emailAddress}: snapshot — inbox=${inboxIds.size} unread=${unreadIds.size}; stripped ${stripped}, refreshed ${refreshed}, imported ${imported}, ${dirty.size} threads recomputed`,
+    );
   }
 }
 

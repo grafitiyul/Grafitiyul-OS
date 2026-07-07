@@ -549,19 +549,22 @@ export default function EmailInbox({ accounts = [] }) {
               <ul className="divide-y divide-gray-100">
                 {threads.map((t) => {
                   const active = !!selected && t.id === selected.id;
+                  const unread = t.unreadCount > 0 || t.manualUnread;
                   return (
                     <li key={t.id}>
-                      <button
-                        type="button"
+                      <div
+                        role="button"
+                        tabIndex={0}
                         onClick={() => openThread(t)}
-                        className={`flex w-full items-start gap-2 px-3 py-2.5 text-right transition ${
+                        onKeyDown={(e) => e.key === 'Enter' && openThread(t)}
+                        className={`group flex w-full cursor-pointer items-start gap-2 px-3 py-2.5 text-right transition ${
                           active ? 'bg-blue-50/70' : 'hover:bg-gray-50'
                         }`}
                       >
                         <div className="min-w-0 flex-1">
                           <p className="flex items-center gap-1.5">
                             <span
-                              className={`truncate text-[13.5px] ${t.unreadCount ? 'font-bold text-gray-900' : 'font-medium text-gray-800'}`}
+                              className={`truncate text-[13.5px] ${unread ? 'font-bold text-gray-900' : 'font-medium text-gray-800'}`}
                               dir="auto"
                             >
                               {threadTitle(t)}
@@ -582,20 +585,46 @@ export default function EmailInbox({ accounts = [] }) {
                               </span>
                             )}
                           </p>
-                          <p className={`truncate text-[12.5px] ${t.unreadCount ? 'font-semibold text-gray-700' : 'text-gray-500'}`} dir="auto">
+                          <p className={`truncate text-[12.5px] ${unread ? 'font-semibold text-gray-700' : 'text-gray-500'}`} dir="auto">
                             {t.subject || '(ללא נושא)'}
                           </p>
                           <p className="truncate text-[12px] text-gray-400" dir="auto">{t.snippet || ''}</p>
                         </div>
                         <div className="flex shrink-0 flex-col items-end gap-1">
                           <span className="text-[11px] text-gray-400">{fmtListTime(t.lastMessageAt)}</span>
-                          {t.unreadCount > 0 && (
+                          {t.unreadCount > 0 ? (
                             <span className="rounded-full bg-blue-600 px-1.5 text-[10.5px] font-bold text-white">
                               {t.unreadCount}
                             </span>
-                          )}
+                          ) : t.manualUnread ? (
+                            // Manual "סמן כלא נקרא" — display dot only; the
+                            // honest Gmail-matching count is never inflated.
+                            <span
+                              className="h-3 w-3 rounded-full border-[2.5px] border-blue-500"
+                              title="סומנה כלא נקראה"
+                            />
+                          ) : null}
+                          {/* Hover action — mark read/unread (GOS-side only;
+                              Gmail is never written). */}
+                          <button
+                            type="button"
+                            title={unread ? 'סמן כנקרא' : 'סמן כלא נקרא'}
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              try {
+                                if (unread) await api.email.markThreadRead(t.id);
+                                else await api.email.markThreadUnread(t.id);
+                                await load();
+                              } catch (err) {
+                                setError(errText('הפעולה נכשלה', err));
+                              }
+                            }}
+                            className="hidden h-6 w-6 items-center justify-center rounded-md bg-white text-[12px] text-gray-500 shadow-sm ring-1 ring-gray-200 hover:text-gray-800 group-hover:flex"
+                          >
+                            {unread ? '✓' : '✉'}
+                          </button>
                         </div>
-                      </button>
+                      </div>
                     </li>
                   );
                 })}
