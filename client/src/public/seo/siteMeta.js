@@ -9,9 +9,14 @@
 
 export const siteMeta = {
   name: 'גרפיטיול',
-  // Canonical origin. Placeholder until the production domain is confirmed at
-  // cutover; used to build absolute canonical + OG URLs.
-  baseUrl: 'https://www.grafitiyul.co.il',
+  // Canonical origin for absolute canonical + OG URLs (public marketing pages).
+  // Config-driven: set VITE_PUBLIC_BASE_URL at build time to the public
+  // marketing domain; the literal is only the fallback when it is unset. This
+  // is the ONE absolute URL the app hardcodes — every functional link (OAuth
+  // callback, payment, tracking pixel, portal, deep links) derives from
+  // PUBLIC_ORIGIN (server) or window.location.origin (client) instead.
+  baseUrl:
+    (import.meta.env.VITE_PUBLIC_BASE_URL || 'https://www.grafitiyul.co.il').replace(/\/+$/, ''),
   defaultTitle: 'גרפיטיול — סיורי וסדנאות גרפיטי',
   titleTemplate: '%s | גרפיטיול',
   defaultDescription:
