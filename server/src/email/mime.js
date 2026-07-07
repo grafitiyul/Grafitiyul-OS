@@ -117,15 +117,21 @@ export function parsePayload(payload) {
     if (!part) return;
     const mime = String(part.mimeType || '').toLowerCase();
     const filename = decodeMimeWords(part.filename || '');
-    if (filename && part.body?.attachmentId) {
-      // Real attachments AND inline images (cid) both land here — the CRM
-      // lists them; cid: references in the HTML are stripped by the sanitizer.
+    const partHeaders = headerMap(part.headers);
+    // RFC 2392 Content-ID (angle brackets stripped) — inline images reference
+    // the part via cid:<id> in the HTML; the client resolves those to
+    // presigned downloads at render time.
+    const contentId = (partHeaders['content-id'] || '').replace(/^<|>$/g, '') || null;
+    if ((filename || contentId) && part.body?.attachmentId) {
+      // Real attachments AND inline images (cid) both land here — inline parts
+      // may have no filename, only a Content-ID.
       result.attachments.push({
-        fileName: filename,
+        fileName: filename || (contentId ? `inline-${contentId.slice(0, 24)}` : 'attachment'),
         mimeType: mime || null,
         sizeBytes: Number(part.body.size) || null,
         gmailAttachmentId: part.body.attachmentId,
         partId: part.partId || null,
+        contentId,
       });
     } else if (mime === 'text/html' && !result.bodyHtml) {
       result.bodyHtml = decodeBody(part);

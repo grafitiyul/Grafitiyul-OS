@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
+import RichEditor from '../../editor/RichEditor.jsx';
 import EmailInbox from './EmailInbox.jsx';
 
 // Email module page — the inbox is the working surface (landing view);
@@ -34,6 +35,64 @@ function fmtTime(iso) {
   } catch {
     return '—';
   }
+}
+
+// Per-account composer signature (rich HTML, sanitized server-side). Collapsed
+// by default; appended automatically by the composer above quoted history.
+function SignatureEditor({ account, onSaved }) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState(account.signature || '');
+  const [saving, setSaving] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await api.email.updateAccount(account.id, { signature: value });
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 1800);
+      onSaved?.();
+    } catch (e) {
+      alert('שמירת החתימה נכשלה: ' + (e.payload?.error || e.message));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 border-t border-gray-100 pt-3">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="text-[12.5px] font-semibold text-gray-600 hover:text-gray-900"
+      >
+        {open ? '▾' : '◂'} חתימה למיילים יוצאים {account.signature ? '' : '(לא הוגדרה)'}
+      </button>
+      {open && (
+        <div className="mt-2 space-y-2">
+          <RichEditor
+            preset="lite"
+            value={value}
+            onChange={setValue}
+            placeholder="החתימה שתצורף לכל מייל יוצא…"
+            maxHeight="30vh"
+            ariaLabel="חתימת מייל"
+          />
+          <div className="flex items-center justify-end gap-2">
+            {savedFlash && <span className="text-[12px] font-medium text-emerald-700">נשמר ✓</span>}
+            <button
+              type="button"
+              disabled={saving}
+              onClick={save}
+              className="rounded-lg bg-blue-600 px-4 py-1.5 text-[12.5px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? 'שומר…' : 'שמירת חתימה'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function EmailPage() {
@@ -224,6 +283,14 @@ export default function EmailPage() {
                             ייבוא ראשוני רץ…
                           </span>
                         )}
+                        {a.needsReconsent && (
+                          <span
+                            className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200"
+                            title="החשבון חובר עם הרשאות קריאה בלבד. חיבור מחדש חד-פעמי יאפשר ארכוב וסימון נקרא/לא נקרא ישירות ב-Gmail. הסנכרון ממשיך לעבוד בינתיים."
+                          >
+                            נדרש חיבור מחדש (הרשאות חדשות)
+                          </span>
+                        )}
                       </p>
                       <p className="mt-0.5 text-[12.5px] text-gray-500">
                         {a.displayName && <span dir="auto">{a.displayName} · </span>}
@@ -244,16 +311,7 @@ export default function EmailPage() {
                           {busy === a.id ? 'מסנכרן…' : 'סנכרון עכשיו'}
                         </button>
                       )}
-                      {a.connected ? (
-                        <button
-                          type="button"
-                          disabled={busy === a.id}
-                          onClick={() => setConfirmDisconnect(a)}
-                          className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
-                        >
-                          ניתוק
-                        </button>
-                      ) : (
+                      {(!a.connected || a.needsReconsent) && (
                         <button
                           type="button"
                           disabled={busy === 'connect' || !data?.configured}
@@ -263,8 +321,19 @@ export default function EmailPage() {
                           חיבור מחדש
                         </button>
                       )}
+                      {a.connected && (
+                        <button
+                          type="button"
+                          disabled={busy === a.id}
+                          onClick={() => setConfirmDisconnect(a)}
+                          className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                        >
+                          ניתוק
+                        </button>
+                      )}
                     </div>
                   </div>
+                  {a.connected && <SignatureEditor account={a} onSaved={load} />}
                 </div>
               );
             })}

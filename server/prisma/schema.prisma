@@ -2503,6 +2503,8 @@ model EmailAccount {
   backfillDone         Boolean   @default(false)
   isActive             Boolean   @default(true)
   connectedById        String? // AdminUser.id (loose key, same convention as tasks)
+  // Per-account email signature (sanitized rich HTML) — appended by the composer.
+  signature            String?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
   threads              EmailThread[]
@@ -2615,6 +2617,10 @@ model EmailAttachment {
   messageId         String
   gmailAttachmentId String? // fetch-on-demand handle (may rotate; refetched by part)
   partId            String? // MIME part id inside the message
+  // RFC 2392 Content-ID (angle brackets stripped) — inline images reference it
+  // via cid: URLs in the HTML body; the thread view resolves those to presigned
+  // downloads at render time.
+  contentId         String?
   fileName          String
   mimeType          String?
   sizeBytes         Int?

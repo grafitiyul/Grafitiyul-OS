@@ -3,22 +3,35 @@ import { cryptoConfigured, decryptToken, encryptToken } from './tokenCrypto.js';
 
 // Google OAuth 2.0 + Gmail REST, hand-rolled over global fetch — no googleapis
 // SDK (same lean-dependency approach as the iCount port and the WhatsApp
-// bridge client). Scopes are deliberately the NON-destructive pair:
-//   gmail.readonly — mirror mail; physically cannot archive/label/mark-read
-//   gmail.send     — send from GOS
-// Upgrading (e.g. gmail.modify) would require a user re-consent by design.
+// bridge client).
+//
+// Scope history (product decision, explicit): the module launched read-only
+// (gmail.readonly + gmail.send) during the Make/Pipedrive transition. Now that
+// GOS is the primary email workspace, the requested scope is gmail.modify —
+// full read/write EXCEPT permanent deletion (delete stays out by design).
+// Accounts connected under the old scopes keep syncing (their tokens stay
+// valid) but Gmail-write actions are gated per-account until a re-consent
+// reconnect grants gmail.modify (see accountHasModifyScope).
 
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 export const GMAIL_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
 
+export const GMAIL_MODIFY_SCOPE = 'https://www.googleapis.com/auth/gmail.modify';
+
 export const GMAIL_SCOPES = [
   'openid',
   'email',
   'profile',
-  'https://www.googleapis.com/auth/gmail.readonly',
+  GMAIL_MODIFY_SCOPE,
   'https://www.googleapis.com/auth/gmail.send',
 ];
+
+// Does THIS account's granted-scopes snapshot include gmail.modify? Accounts
+// connected before the scope upgrade return false until reconnected.
+export function accountHasModifyScope(account) {
+  return String(account?.scopes || '').includes('gmail.modify');
+}
 
 export function emailIntegrationConfigured() {
   return !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) && cryptoConfigured();
@@ -196,6 +209,18 @@ export const gmail = {
   listHistory: (client, account, query) => gmailFetch(client, account, '/history', { query }),
   getAttachment: (client, account, messageId, attachmentId) =>
     gmailFetch(client, account, `/messages/${messageId}/attachments/${attachmentId}`),
+  // Label writes (gmail.modify scope). Thread-level = every message in the
+  // conversation (Gmail's own archive/mark-read semantics).
+  modifyThread: (client, account, gmailThreadId, { addLabelIds, removeLabelIds }) =>
+    gmailFetch(client, account, `/threads/${gmailThreadId}/modify`, {
+      method: 'POST',
+      body: { ...(addLabelIds?.length ? { addLabelIds } : {}), ...(removeLabelIds?.length ? { removeLabelIds } : {}) },
+    }),
+  modifyMessage: (client, account, gmailMessageId, { addLabelIds, removeLabelIds }) =>
+    gmailFetch(client, account, `/messages/${gmailMessageId}/modify`, {
+      method: 'POST',
+      body: { ...(addLabelIds?.length ? { addLabelIds } : {}), ...(removeLabelIds?.length ? { removeLabelIds } : {}) },
+    }),
   sendRaw: (client, account, raw, threadId) =>
     gmailFetch(client, account, '/messages/send', {
       method: 'POST',

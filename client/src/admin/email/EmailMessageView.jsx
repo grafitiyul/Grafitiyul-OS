@@ -1,10 +1,11 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 
 // One email message in a thread: header (from/to/time), the HTML body inside a
-// SANDBOXED iframe (allow-same-origin only, no allow-scripts — JS cannot run;
-// the server also sanitized the HTML at ingest), attachments (private,
-// presigned on demand) and the honest engagement line for outbound mail.
+// SANDBOXED iframe (no allow-scripts — JS cannot run; the server also
+// sanitized the HTML at ingest), attachments (private, presigned on demand),
+// inline (cid:) images resolved to presigned URLs at render time, reply /
+// reply-all / forward actions, and the honest engagement line for outbound.
 
 function fmtStamp(iso) {
   if (!iso) return '';
@@ -57,6 +58,7 @@ function HtmlBody({ html }) {
   const srcDoc = `<!doctype html><html dir="auto"><head><meta charset="utf-8"><base target="_blank"><style>
     body{margin:8px;font:14px/1.6 -apple-system,'Segoe UI',Arial,sans-serif;color:#111827;word-break:break-word;overflow-wrap:anywhere}
     img{max-width:100%;height:auto} table{max-width:100%}
+    blockquote{margin:0 0 0 .8ex;border-right:2px solid #e5e7eb;padding-right:1ex;color:#6b7280}
   </style></head><body>${html}</body></html>`;
   return (
     <iframe
@@ -65,8 +67,8 @@ function HtmlBody({ html }) {
       // No allow-scripts (JS can never run — XSS layer 2 after server-side
       // sanitize). allow-popups-to-escape-sandbox is REQUIRED for links to
       // actually open: without it the new tab inherits the sandbox and the
-      // browser blocks it (the "clicking links does nothing" bug). Links are
-      // target=_blank + rel=noopener via the sanitizer and <base>.
+      // browser blocks it. Links are target=_blank + rel=noopener via the
+      // sanitizer and <base>.
       sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
       srcDoc={srcDoc}
       style={{ height }}
@@ -85,8 +87,42 @@ function HtmlBody({ html }) {
 
 export default function EmailMessageView({ message, defaultOpen = true, onReply }) {
   const [open, setOpen] = useState(defaultOpen);
+  const [resolvedHtml, setResolvedHtml] = useState(message.bodyHtml);
   const outbound = message.direction === 'outbound';
   const opens = message.engagement?.openCount || 0;
+
+  // Inline images: the sanitizer preserved cid: srcs; swap each for a
+  // short-lived presigned URL of the matching attachment (by Content-ID).
+  useEffect(() => {
+    setResolvedHtml(message.bodyHtml);
+    const html = message.bodyHtml;
+    if (!open || !html || !html.includes('cid:')) return;
+    const inline = (message.attachments || []).filter((a) => a.contentId && html.includes(`cid:${a.contentId}`));
+    if (!inline.length) return;
+    let cancelled = false;
+    (async () => {
+      let out = html;
+      for (const att of inline) {
+        try {
+          const { url } = await api.email.attachmentDownload(att.id);
+          out = out.split(`cid:${att.contentId}`).join(url);
+        } catch {
+          /* unresolved cid: img simply doesn't render — non-fatal */
+        }
+      }
+      if (!cancelled) setResolvedHtml(out);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [message.id, message.bodyHtml, open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Real attachments only in the chips row — inline images render in-body.
+  const listedAttachments = (message.attachments || []).filter(
+    (a) => !(a.contentId && (message.bodyHtml || '').includes(`cid:${a.contentId}`)),
+  );
+
+  const actionBtn = 'rounded-lg px-2.5 py-1 text-[12px] font-medium text-blue-700 hover:bg-blue-50';
 
   return (
     <div className={`rounded-xl border ${outbound ? 'border-blue-100 bg-blue-50/30' : 'border-gray-200 bg-white'}`}>
@@ -104,6 +140,9 @@ export default function EmailMessageView({ message, defaultOpen = true, onReply 
         </span>
         <span className="min-w-0 flex-1 truncate text-[13px] text-gray-800" dir="auto">
           <span className="font-medium">{message.fromName || message.fromEmail}</span>
+          {message.fromName && message.fromEmail && (
+            <span className="text-gray-400" dir="ltr"> ‹{message.fromEmail}›</span>
+          )}
           {!open && message.snippet && <span className="text-gray-400"> — {message.snippet}</span>}
         </span>
         {message.hasAttachments && <span className="shrink-0 text-[12px] text-gray-400">📎</span>}
@@ -116,16 +155,16 @@ export default function EmailMessageView({ message, defaultOpen = true, onReply 
             אל: {recipientsLine(message.toRecipients) || '—'}
             {(message.ccRecipients || []).length > 0 && <> · עותק: {recipientsLine(message.ccRecipients)}</>}
           </p>
-          {message.bodyHtml ? (
-            <HtmlBody html={message.bodyHtml} />
+          {resolvedHtml ? (
+            <HtmlBody html={resolvedHtml} />
           ) : (
             <pre className="whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-3 text-[13px] leading-relaxed text-gray-800" dir="auto">
               {message.bodyText || message.snippet || ''}
             </pre>
           )}
-          {(message.attachments || []).length > 0 && (
+          {listedAttachments.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {message.attachments.map((a) => (
+              {listedAttachments.map((a) => (
                 <AttachmentChip key={a.id} att={a} />
               ))}
             </div>
@@ -144,13 +183,17 @@ export default function EmailMessageView({ message, defaultOpen = true, onReply 
               <span />
             )}
             {onReply && (
-              <button
-                type="button"
-                onClick={() => onReply(message)}
-                className="rounded-lg px-2.5 py-1 text-[12px] font-medium text-blue-700 hover:bg-blue-50"
-              >
-                ↩ השב
-              </button>
+              <span className="flex items-center gap-1">
+                <button type="button" onClick={() => onReply(message, 'reply')} className={actionBtn}>
+                  ↩ השב
+                </button>
+                <button type="button" onClick={() => onReply(message, 'replyAll')} className={actionBtn}>
+                  ↩ השב לכולם
+                </button>
+                <button type="button" onClick={() => onReply(message, 'forward')} className={actionBtn}>
+                  ⤴ העבר
+                </button>
+              </span>
             )}
           </div>
         </div>

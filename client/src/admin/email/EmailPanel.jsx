@@ -78,6 +78,7 @@ export default function EmailPanel({ subjectType, subjectId }) {
         defaultTo={defaultTo}
         dealId={isDeal ? subjectId : null}
         contactId={isDeal ? null : subjectId}
+        draftKey={`${subjectType}:${subjectId}:new`}
         onCancel={() => setComposing(false)}
         onSent={() => {
           setComposing(false);

@@ -24,7 +24,10 @@ const OPTIONS = {
     th: ['colspan', 'rowspan'],
   },
   allowedSchemes: ['http', 'https', 'mailto', 'tel'],
-  allowedSchemesByTag: { img: ['http', 'https', 'data'] },
+  // cid: = RFC 2392 inline-image references — kept so the thread view can
+  // swap them for presigned attachment URLs at render time (nothing loads
+  // from a cid: URL directly; unresolved ones simply don't render).
+  allowedSchemesByTag: { img: ['http', 'https', 'data', 'cid'] },
   transformTags: {
     // External links open outside the app and never keep an opener handle.
     a: sanitizeHtml.simpleTransform('a', { target: '_blank', rel: 'noopener noreferrer' }),

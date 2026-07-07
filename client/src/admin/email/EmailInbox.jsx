@@ -21,15 +21,19 @@ const LAYOUT_KEY = 'gos-email-inbox'; // { listWidth }
 const LIST_MIN = 300;
 const LIST_MAX = 540;
 
-// All chips except ארכיון are scoped to the ACTIVE inbox (threads Gmail's own
-// inbox would show); ארכיון exposes the rest of the mirror. Search spans both.
+// All chips except ארכיון/נשלחו are scoped to the ACTIVE inbox (threads
+// Gmail's own inbox would show); ארכיון and נשלחו are their own label views
+// (Gmail semantics). Search spans the whole mirror.
 const FILTERS = [
   { key: 'all', label: 'הכל' },
   { key: 'unread', label: 'לא נקראו' },
+  { key: 'read', label: 'נקראו' },
+  { key: 'sent', label: 'נשלחו' },
   { key: 'unmatched', label: 'ללא שיוך' },
   { key: 'deal', label: 'עם דיל' },
   { key: 'nodeal', label: 'בלי דיל' },
   { key: 'today', label: 'היום' },
+  { key: 'week', label: 'השבוע' },
   { key: 'archive', label: 'ארכיון' },
 ];
 
@@ -292,6 +296,10 @@ export default function EmailInbox({ accounts = [] }) {
   const [drawerDealId, setDrawerDealId] = useState(null);
   const [followConfirm, setFollowConfirm] = useState(null);
   const [error, setError] = useState(null);
+  // Multi-select (Gmail-style bulk actions) + keyboard cursor.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [cursorId, setCursorId] = useState(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [listWidth, setListWidth] = useState(() => {
     try {
       const w = Number(JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}').listWidth);
@@ -366,6 +374,7 @@ export default function EmailInbox({ accounts = [] }) {
   function openThread(thread) {
     const switching = selected?.id !== thread.id;
     setSelected(thread);
+    setCursorId(thread.id);
     setComposing(false);
     setLinking(false);
     if (!drawerDealId || !switching) return;
@@ -388,7 +397,9 @@ export default function EmailInbox({ accounts = [] }) {
     }
   }
 
-  // Keyboard: Esc closes (dialog → search → thread), Ctrl+K focuses search.
+  // Keyboard (Gmail-style where practical): ↑/↓ move the cursor, Enter opens,
+  // E archives/unarchives, U toggles read state, Esc closes (dialog → search →
+  // thread), Ctrl+K focuses search. Letters only fire outside inputs.
   useEffect(() => {
     function onKey(e) {
       const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName) || e.target?.isContentEditable;
@@ -406,12 +417,109 @@ export default function EmailInbox({ accounts = [] }) {
           if (e.target === searchInputRef.current) setSearch('');
           return;
         }
+        if (composing) return setComposing(false);
         if (selected) setSelected(null);
+        return;
+      }
+      if (inField || dialog || drawerDealId || composing) return;
+      const list = threads || [];
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        if (!list.length) return;
+        e.preventDefault();
+        const idx = list.findIndex((t) => t.id === (cursorId || selected?.id));
+        const next =
+          e.key === 'ArrowDown'
+            ? list[Math.min(list.length - 1, idx + 1)] || list[0]
+            : list[Math.max(0, idx - 1)] || list[0];
+        setCursorId(next.id);
+        document.querySelector(`[data-thread-row="${next.id}"]`)?.scrollIntoView({ block: 'nearest' });
+        return;
+      }
+      if (e.key === 'Enter') {
+        const cur = list.find((t) => t.id === cursorId);
+        if (cur) openThread(cur);
+        return;
+      }
+      const target = selected || list.find((t) => t.id === cursorId);
+      if (!target) return;
+      if (e.key === 'e' || e.key === 'E') {
+        e.preventDefault();
+        threadAction(target, target.inInbox === false ? 'unarchive' : 'archive');
+      } else if (e.key === 'u' || e.key === 'U') {
+        e.preventDefault();
+        threadAction(target, isThreadUnread(target) ? 'read' : 'unread');
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [dialog, drawerDealId, selected, followConfirm]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialog, drawerDealId, selected, followConfirm, composing, threads, cursorId, filter]);
+
+  // ── Thread actions (Gmail-synced) ─────────────────────────────────────────
+  const isThreadUnread = (t) => t.unreadCount > 0 || t.manualUnread;
+
+  async function reconnectAccount() {
+    try {
+      const { url } = await api.email.connectStart();
+      window.location.href = url;
+    } catch (e) {
+      setError(errText('החיבור מחדש נכשל', e));
+    }
+  }
+
+  async function threadAction(t, action) {
+    if (!t) return;
+    const call = {
+      read: api.email.markThreadRead,
+      unread: api.email.markThreadUnread,
+      archive: api.email.archiveThread,
+      unarchive: api.email.unarchiveThread,
+    }[action];
+    try {
+      await call(t.id);
+      // Archiving removes the thread from the current view — don't leave its
+      // reading pane open on a conversation the list no longer shows.
+      if (action === 'archive' && selected?.id === t.id && filter !== 'archive') setSelected(null);
+      await load();
+    } catch (e) {
+      if (e.status === 409 && e.payload?.error === 'reconsent_required') {
+        setError('פעולות בתיבת Gmail דורשות חיבור מחדש של החשבון (הרשאות חדשות) — לחצו "חיבור מחדש" למעלה.');
+      } else {
+        setError(errText('הפעולה נכשלה', e));
+      }
+    }
+  }
+
+  async function bulkAction(action) {
+    if (!selectedIds.size || bulkBusy) return;
+    setBulkBusy(true);
+    try {
+      const res = await api.email.bulkThreadAction([...selectedIds], action);
+      if (res.reconsent > 0) {
+        setError('חלק מהפעולות דורשות חיבור מחדש של חשבון Gmail (הרשאות חדשות) — לחצו "חיבור מחדש" למעלה.');
+      } else if (res.failed > 0) {
+        setError(`הפעולה נכשלה עבור ${res.failed} שיחות — נסו שוב.`);
+      }
+      if (action === 'archive' && selected && selectedIds.has(selected.id) && filter !== 'archive') {
+        setSelected(null);
+      }
+      setSelectedIds(new Set());
+      await load();
+    } catch (e) {
+      setError(errText('הפעולה נכשלה', e));
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  function toggleSelected(id) {
+    setSelectedIds((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   async function linkContact(thread, contact) {
     setBusy(thread.id);
@@ -469,6 +577,23 @@ export default function EmailInbox({ accounts = [] }) {
 
   return (
     <>
+      {/* Scope upgrade banner: accounts connected under the old read-only
+          consent keep syncing, but Gmail-write actions (archive / mark
+          read-unread IN GMAIL) need one reconnect to grant gmail.modify. */}
+      {accounts.some((a) => a.needsReconsent) && (
+        <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+          <span>
+            הרשאות Gmail התרחבו (ארכוב וסימון נקרא/לא נקרא ישירות ב-Gmail) — נדרש חיבור מחדש חד-פעמי של החשבון.
+          </span>
+          <button
+            type="button"
+            onClick={reconnectAccount}
+            className="shrink-0 rounded-lg bg-amber-600 px-3.5 py-1.5 text-[12.5px] font-semibold text-white hover:bg-amber-700"
+          >
+            חיבור מחדש
+          </button>
+        </div>
+      )}
       {error && (
         <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700" dir="auto">
           {error}
@@ -537,6 +662,25 @@ export default function EmailInbox({ accounts = [] }) {
             </div>
           </div>
 
+          {/* Bulk action bar — appears while any thread is checked. */}
+          {selectedIds.size > 0 && (
+            <div className="flex items-center gap-2 border-b border-blue-100 bg-blue-50/70 px-3 py-1.5 text-[12px]">
+              <span className="font-semibold text-blue-800">{selectedIds.size} נבחרו</span>
+              <button type="button" disabled={bulkBusy} onClick={() => bulkAction('archive')} className="rounded px-2 py-0.5 font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50">
+                ארכוב
+              </button>
+              <button type="button" disabled={bulkBusy} onClick={() => bulkAction('read')} className="rounded px-2 py-0.5 font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50">
+                סמן כנקרא
+              </button>
+              <button type="button" disabled={bulkBusy} onClick={() => bulkAction('unread')} className="rounded px-2 py-0.5 font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50">
+                סמן כלא נקרא
+              </button>
+              <button type="button" onClick={() => setSelectedIds(new Set())} className="mr-auto rounded px-2 py-0.5 text-gray-500 hover:bg-gray-100">
+                ביטול
+              </button>
+            </div>
+          )}
+
           <div className="min-h-0 flex-1 overflow-y-auto">
             {threads === null ? (
               <p className="px-4 py-10 text-center text-sm text-gray-400">טוען מיילים…</p>
@@ -549,18 +693,31 @@ export default function EmailInbox({ accounts = [] }) {
               <ul className="divide-y divide-gray-100">
                 {threads.map((t) => {
                   const active = !!selected && t.id === selected.id;
-                  const unread = t.unreadCount > 0 || t.manualUnread;
+                  const unread = isThreadUnread(t);
+                  const checked = selectedIds.has(t.id);
                   return (
                     <li key={t.id}>
                       <div
                         role="button"
                         tabIndex={0}
+                        data-thread-row={t.id}
                         onClick={() => openThread(t)}
                         onKeyDown={(e) => e.key === 'Enter' && openThread(t)}
                         className={`group flex w-full cursor-pointer items-start gap-2 px-3 py-2.5 text-right transition ${
-                          active ? 'bg-blue-50/70' : 'hover:bg-gray-50'
+                          active ? 'bg-blue-50/70' : cursorId === t.id ? 'bg-gray-100' : checked ? 'bg-blue-50/40' : 'hover:bg-gray-50'
                         }`}
                       >
+                        {/* Multi-select checkbox — visible on hover / while any selection exists. */}
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleSelected(t.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label="בחירת שיחה"
+                          className={`mt-1 h-3.5 w-3.5 shrink-0 cursor-pointer accent-blue-600 ${
+                            checked || selectedIds.size > 0 ? '' : 'invisible group-hover:visible'
+                          }`}
+                        />
                         <div className="min-w-0 flex-1">
                           <p className="flex items-center gap-1.5">
                             <span
@@ -604,25 +761,31 @@ export default function EmailInbox({ accounts = [] }) {
                               title="סומנה כלא נקראה"
                             />
                           ) : null}
-                          {/* Hover action — mark read/unread (GOS-side only;
-                              Gmail is never written). */}
-                          <button
-                            type="button"
-                            title={unread ? 'סמן כנקרא' : 'סמן כלא נקרא'}
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              try {
-                                if (unread) await api.email.markThreadRead(t.id);
-                                else await api.email.markThreadUnread(t.id);
-                                await load();
-                              } catch (err) {
-                                setError(errText('הפעולה נכשלה', err));
-                              }
-                            }}
-                            className="hidden h-6 w-6 items-center justify-center rounded-md bg-white text-[12px] text-gray-500 shadow-sm ring-1 ring-gray-200 hover:text-gray-800 group-hover:flex"
-                          >
-                            {unread ? '✓' : '✉'}
-                          </button>
+                          {/* Hover cluster — Gmail-synced read/unread + archive. */}
+                          <span className="hidden items-center gap-1 group-hover:flex">
+                            <button
+                              type="button"
+                              title={unread ? 'סמן כנקרא (U)' : 'סמן כלא נקרא (U)'}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                threadAction(t, unread ? 'read' : 'unread');
+                              }}
+                              className="flex h-6 w-6 items-center justify-center rounded-md bg-white text-[12px] text-gray-500 shadow-sm ring-1 ring-gray-200 hover:text-gray-800"
+                            >
+                              {unread ? '✓' : '✉'}
+                            </button>
+                            <button
+                              type="button"
+                              title={t.inInbox === false ? 'החזרה לתיבת הדואר (E)' : 'ארכוב — גם ב-Gmail (E)'}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                threadAction(t, t.inInbox === false ? 'unarchive' : 'archive');
+                              }}
+                              className="flex h-6 w-6 items-center justify-center rounded-md bg-white text-[12px] text-gray-500 shadow-sm ring-1 ring-gray-200 hover:text-gray-800"
+                            >
+                              {t.inInbox === false ? '📤' : '📥'}
+                            </button>
+                          </span>
                         </div>
                       </div>
                     </li>
@@ -653,6 +816,7 @@ export default function EmailInbox({ accounts = [] }) {
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
               <h3 className="mb-3 text-[15px] font-bold text-gray-900">מייל חדש</h3>
               <EmailComposer
+                draftKey="inbox:new"
                 onCancel={() => setComposing(false)}
                 onSent={() => {
                   setComposing(false);
@@ -701,6 +865,23 @@ export default function EmailInbox({ accounts = [] }) {
                     )}
                   </p>
                 </div>
+                {/* Gmail-synced actions on the open conversation. */}
+                <button
+                  type="button"
+                  title={isThreadUnread(selected) ? 'סמן כנקרא (U)' : 'סמן כלא נקרא (U)'}
+                  onClick={() => threadAction(selected, isThreadUnread(selected) ? 'read' : 'unread')}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white text-[13px] text-gray-500 ring-1 ring-gray-200 hover:text-gray-800"
+                >
+                  {isThreadUnread(selected) ? '✓' : '✉'}
+                </button>
+                <button
+                  type="button"
+                  title={selected.inInbox === false ? 'החזרה לתיבת הדואר (E)' : 'ארכוב — גם ב-Gmail (E)'}
+                  onClick={() => threadAction(selected, selected.inInbox === false ? 'unarchive' : 'archive')}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white text-[13px] text-gray-500 ring-1 ring-gray-200 hover:text-gray-800"
+                >
+                  {selected.inInbox === false ? '📤' : '📥'}
+                </button>
                 <button
                   type="button"
                   disabled={busy === selected.id}

@@ -552,6 +552,10 @@ export const api = {
     thread: (id) => request(`/api/email/threads/${id}`),
     markThreadRead: (id) => request(`/api/email/threads/${id}/read`, { method: 'POST', body: JSON.stringify({}) }),
     markThreadUnread: (id) => request(`/api/email/threads/${id}/unread`, { method: 'POST', body: JSON.stringify({}) }),
+    archiveThread: (id) => request(`/api/email/threads/${id}/archive`, { method: 'POST', body: JSON.stringify({}) }),
+    unarchiveThread: (id) => request(`/api/email/threads/${id}/unarchive`, { method: 'POST', body: JSON.stringify({}) }),
+    bulkThreadAction: (ids, action) =>
+      request('/api/email/threads/bulk-action', { method: 'POST', body: JSON.stringify({ ids, action }) }),
     pinThread: (id, pinned) =>
       request(`/api/email/threads/${id}/pin`, { method: 'PUT', body: JSON.stringify({ pinned }) }),
     linkContact: (id, contactId) =>

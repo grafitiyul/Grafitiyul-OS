@@ -10,8 +10,10 @@ import {
   decodeIdToken,
   mintOAuthState,
   verifyOAuthState,
+  accountHasModifyScope,
   gmail,
 } from '../email/googleClient.js';
+import { recomputeThreadState } from '../email/providerState.js';
 import { encryptToken } from '../email/tokenCrypto.js';
 import { buildRawMessage, htmlToText, normalizeEmail, normalizeSubject } from '../email/mime.js';
 import { sanitizeEmailHtml } from '../email/sanitize.js';
@@ -54,6 +56,7 @@ const ACCOUNT_SAFE_SELECT = {
   lastSyncAt: true,
   backfillDone: true,
   isActive: true,
+  signature: true,
   createdAt: true,
 };
 
@@ -111,14 +114,17 @@ router.get(
   handle(async (_req, res) => {
     const accounts = await prisma.emailAccount.findMany({
       orderBy: { createdAt: 'asc' },
-      select: { ...ACCOUNT_SAFE_SELECT, refreshTokenEnc: true },
+      select: { ...ACCOUNT_SAFE_SELECT, refreshTokenEnc: true, scopes: true },
     });
     res.json({
       configured: emailIntegrationConfigured(),
       missing: missingEmailConfig(),
-      accounts: accounts.map(({ refreshTokenEnc, ...a }) => ({
+      accounts: accounts.map(({ refreshTokenEnc, scopes, ...a }) => ({
         ...a,
         connected: !!refreshTokenEnc,
+        // Connected under the old read-only scopes → Gmail-write actions
+        // (archive / mark read-unread) are gated until a re-consent reconnect.
+        needsReconsent: !!refreshTokenEnc && !String(scopes || '').includes('gmail.modify'),
       })),
     });
   }),
@@ -212,6 +218,9 @@ router.put(
     if (!account) return res.status(404).json({ error: 'not_found' });
     const data = {};
     if (req.body?.isActive !== undefined) data.isActive = !!req.body.isActive;
+    // Composer signature (rich HTML) — sanitized with the same email rules.
+    if (req.body?.signature !== undefined) data.signature = sanitizeEmailHtml(req.body.signature);
+    if (Object.keys(data).length === 0) return res.status(400).json({ error: 'nothing_to_update' });
     const updated = await prisma.emailAccount.update({
       where: { id: account.id },
       data,
@@ -261,18 +270,28 @@ router.get(
     const q = String(req.query.q || '').trim();
 
     const where = { ...(accountId ? { accountId } : {}) };
+    // Label-view filters escape the active-inbox scope (Gmail semantics:
+    // ארכיון and נשלחו are their own views); free-text search spans everything.
     if (filter === 'archive') where.inInbox = false;
-    else if (!q) where.inInbox = true; // search spans the full mirror
+    else if (filter !== 'sent' && !q) where.inInbox = true;
     if (filter === 'unread') where.AND = [{ OR: [{ unreadCount: { gt: 0 } }, { manualUnread: true }] }];
+    else if (filter === 'read') where.AND = [{ unreadCount: 0, manualUnread: false }];
     else if (filter === 'unmatched') where.contactId = null;
     else if (filter === 'deal') where.linkedDealId = { not: null };
     else if (filter === 'nodeal') where.linkedDealId = null;
-    else if (filter === 'today') {
+    else if (filter === 'sent') {
+      where.messages = { some: { direction: 'outbound', providerDeletedAt: null } };
+    } else if (filter === 'today') {
       const start = new Date();
       start.setHours(0, 0, 0, 0);
       where.lastMessageAt = { gte: start };
+    } else if (filter === 'week') {
+      where.lastMessageAt = { gte: new Date(Date.now() - 7 * 86_400_000) };
     }
     if (q) {
+      // Search spans: subject/snippet, sender, recipients (via message
+      // subject/from), body text, attachment names, the matched CONTACT's
+      // name, and the linked DEAL's title.
       where.OR = [
         { subject: { contains: q, mode: 'insensitive' } },
         { snippet: { contains: q, mode: 'insensitive' } },
@@ -283,10 +302,23 @@ router.get(
                 { fromEmail: { contains: q, mode: 'insensitive' } },
                 { fromName: { contains: q, mode: 'insensitive' } },
                 { subject: { contains: q, mode: 'insensitive' } },
+                { bodyText: { contains: q, mode: 'insensitive' } },
+                { attachments: { some: { fileName: { contains: q, mode: 'insensitive' } } } },
               ],
             },
           },
         },
+        {
+          contact: {
+            OR: [
+              { firstNameHe: { contains: q, mode: 'insensitive' } },
+              { lastNameHe: { contains: q, mode: 'insensitive' } },
+              { firstNameEn: { contains: q, mode: 'insensitive' } },
+              { lastNameEn: { contains: q, mode: 'insensitive' } },
+            ],
+          },
+        },
+        { linkedDeal: { title: { contains: q, mode: 'insensitive' } } },
       ];
     }
 
@@ -367,37 +399,164 @@ router.get(
   }),
 );
 
-// GOS-side read marker ONLY — Gmail is never touched. Clears the manual
-// unread flag too (reading is reading).
-router.post(
-  '/threads/:id/read',
-  handle(async (req, res) => {
-    const thread = await prisma.emailThread.findUnique({ where: { id: req.params.id }, select: { id: true } });
-    if (!thread) return res.status(404).json({ error: 'not_found' });
-    const updated = await prisma.emailThread.update({
+// ── Thread actions (Gmail-synced: GOS is a real Gmail client now) ───────────
+//
+// With the gmail.modify scope, read/unread/archive/unarchive WRITE TO GMAIL
+// and update the mirror immediately (the snapshot sync confirms within a
+// minute). Accounts still on the old read-only consent:
+//   • read / unread fall back to the proven GOS-side behavior (lastReadAt /
+//     manualUnread) and return gmailSynced:false
+//   • archive / unarchive have no honest local equivalent → 409
+//     reconsent_required (the UI routes the user to reconnect).
+// No delete anywhere — permanent deletion stays out by design.
+
+// Apply a label change to every live message of a thread in the MIRROR
+// (matching what threads.modify just did in Gmail), then recompute.
+async function applyLocalThreadLabels(threadId, { add = [], remove = [] }) {
+  const messages = await prisma.emailMessage.findMany({
+    where: { threadId, providerDeletedAt: null },
+    select: { id: true, labelIds: true },
+  });
+  for (const m of messages) {
+    const labels = new Set(Array.isArray(m.labelIds) ? m.labelIds : []);
+    for (const l of add) labels.add(l);
+    for (const l of remove) labels.delete(l);
+    await prisma.emailMessage.update({ where: { id: m.id }, data: { labelIds: [...labels] } });
+  }
+  await recomputeThreadState(threadId);
+}
+
+const THREAD_ACTIONS = new Set(['read', 'unread', 'archive', 'unarchive']);
+
+// → { ok, gmailSynced } — throws coded errors the routes translate.
+async function performThreadAction(threadId, action) {
+  const thread = await prisma.emailThread.findUnique({
+    where: { id: threadId },
+    select: { id: true, accountId: true, gmailThreadId: true },
+  });
+  if (!thread) {
+    const e = new Error('not_found');
+    e.code = 'not_found';
+    throw e;
+  }
+  const account = await prisma.emailAccount.findUnique({ where: { id: thread.accountId } });
+  const canModify = !!account?.refreshTokenEnc && account.isActive && accountHasModifyScope(account);
+
+  if (action === 'read') {
+    if (canModify) {
+      try {
+        await gmail.modifyThread(prisma, account, thread.gmailThreadId, { removeLabelIds: ['UNREAD'] });
+        await applyLocalThreadLabels(thread.id, { remove: ['UNREAD'] });
+        await prisma.emailThread.update({
+          where: { id: thread.id },
+          data: { lastReadAt: new Date(), manualUnread: false, unreadCount: 0 },
+        });
+        return { ok: true, gmailSynced: true };
+      } catch (e) {
+        console.error('[email] gmail mark-read failed (falling back to GOS-side):', e?.message);
+      }
+    }
+    // GOS-side fallback (old consent / transient Gmail failure) — user intent
+    // is honored locally either way.
+    await prisma.emailThread.update({
       where: { id: thread.id },
       data: { unreadCount: 0, lastReadAt: new Date(), manualUnread: false },
-      include: THREAD_INCLUDE,
     });
-    res.json(toClientThread(updated));
-  }),
-);
+    return { ok: true, gmailSynced: false };
+  }
 
-// "סמן כלא נקרא" — GOS-side display flag (like WhatsApp's manual unread):
-// the thread renders unread again, but the honest Gmail-matching unread
-// count is NOT inflated, and Gmail itself is never written (that would need
-// the gmail.modify scope — a deliberate product decision, not taken here).
+  if (action === 'unread') {
+    if (canModify) {
+      // Gmail's own "mark as unread" semantics: flag the NEWEST message (not
+      // the whole conversation — the count must read 1, not N).
+      const newest = await prisma.emailMessage.findFirst({
+        where: { threadId: thread.id, providerDeletedAt: null },
+        orderBy: [{ direction: 'asc' } /* 'inbound' < 'outbound' */, { sentAt: 'desc' }],
+        select: { id: true, gmailMessageId: true, labelIds: true },
+      });
+      if (newest) {
+        try {
+          await gmail.modifyMessage(prisma, account, newest.gmailMessageId, { addLabelIds: ['UNREAD'] });
+          const labels = new Set(Array.isArray(newest.labelIds) ? newest.labelIds : []);
+          labels.add('UNREAD');
+          await prisma.emailMessage.update({ where: { id: newest.id }, data: { labelIds: [...labels] } });
+          // Clear the GOS read cutoff so the UNREAD label actually counts.
+          await prisma.emailThread.update({
+            where: { id: thread.id },
+            data: { lastReadAt: null, manualUnread: false },
+          });
+          await recomputeThreadState(thread.id);
+          return { ok: true, gmailSynced: true };
+        } catch (e) {
+          console.error('[email] gmail mark-unread failed (falling back to GOS-side):', e?.message);
+        }
+      }
+    }
+    await prisma.emailThread.update({ where: { id: thread.id }, data: { manualUnread: true } });
+    return { ok: true, gmailSynced: false };
+  }
+
+  // archive / unarchive — real mailbox moves; no honest local-only fallback.
+  if (!canModify) {
+    const e = new Error('reconsent_required');
+    e.code = 'reconsent_required';
+    throw e;
+  }
+  if (action === 'archive') {
+    await gmail.modifyThread(prisma, account, thread.gmailThreadId, { removeLabelIds: ['INBOX'] });
+    await applyLocalThreadLabels(thread.id, { remove: ['INBOX'] });
+  } else {
+    await gmail.modifyThread(prisma, account, thread.gmailThreadId, { addLabelIds: ['INBOX'] });
+    await applyLocalThreadLabels(thread.id, { add: ['INBOX'] });
+  }
+  return { ok: true, gmailSynced: true };
+}
+
+function threadActionRoute(action) {
+  return handle(async (req, res) => {
+    try {
+      const result = await performThreadAction(req.params.id, action);
+      const updated = await prisma.emailThread.findUnique({
+        where: { id: req.params.id },
+        include: THREAD_INCLUDE,
+      });
+      res.json({ ...result, thread: toClientThread(updated) });
+    } catch (e) {
+      if (e.code === 'not_found') return res.status(404).json({ error: 'not_found' });
+      if (e.code === 'reconsent_required') return res.status(409).json({ error: 'reconsent_required' });
+      console.error(`[email] thread ${action} failed:`, e?.message);
+      return res.status(502).json({ error: `${action}_failed`, detail: (e?.message || '').slice(0, 300) });
+    }
+  });
+}
+
+router.post('/threads/:id/read', threadActionRoute('read'));
+router.post('/threads/:id/unread', threadActionRoute('unread'));
+router.post('/threads/:id/archive', threadActionRoute('archive'));
+router.post('/threads/:id/unarchive', threadActionRoute('unarchive'));
+
+// Bulk (multi-select in the inbox): applies one action to many threads,
+// per-thread isolation — one failure never aborts the rest.
 router.post(
-  '/threads/:id/unread',
+  '/threads/bulk-action',
   handle(async (req, res) => {
-    const thread = await prisma.emailThread.findUnique({ where: { id: req.params.id }, select: { id: true } });
-    if (!thread) return res.status(404).json({ error: 'not_found' });
-    const updated = await prisma.emailThread.update({
-      where: { id: thread.id },
-      data: { manualUnread: true },
-      include: THREAD_INCLUDE,
-    });
-    res.json(toClientThread(updated));
+    const action = String(req.body?.action || '');
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((x) => typeof x === 'string') : [];
+    if (!THREAD_ACTIONS.has(action)) return res.status(400).json({ error: 'invalid_action' });
+    if (!ids.length || ids.length > 100) return res.status(400).json({ error: 'invalid_ids' });
+    let done = 0;
+    let reconsent = 0;
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        await performThreadAction(id, action);
+        done += 1;
+      } catch (e) {
+        if (e.code === 'reconsent_required') reconsent += 1;
+        else failed += 1;
+      }
+    }
+    res.json({ ok: failed === 0 && reconsent === 0, done, reconsent, failed });
   }),
 );
 
@@ -623,6 +782,38 @@ router.post(
         subject = base ? `Re: ${base}` : 'Re:';
       }
     }
+
+    // Forward: stays in the same Gmail conversation (Gmail threads forwards
+    // too) and the ORIGINAL files are re-attached SERVER-side — the client
+    // never had their bytes to begin with.
+    const forwardAttachments = [];
+    if (b.forwardOfMessageId && !b.replyToMessageId) {
+      const orig = await prisma.emailMessage.findUnique({
+        where: { id: String(b.forwardOfMessageId) },
+        include: { attachments: true, thread: { select: { gmailThreadId: true, accountId: true } } },
+      });
+      if (!orig) return res.status(400).json({ error: 'forward_source_not_found' });
+      if (orig.thread.accountId !== account.id) return res.status(400).json({ error: 'forward_account_mismatch' });
+      gmailThreadId = orig.thread.gmailThreadId;
+      if (!subject) {
+        const base = normalizeSubject(orig.subject || '');
+        subject = base ? `Fwd: ${base}` : 'Fwd:';
+      }
+      for (const att of orig.attachments) {
+        if (!att.gmailAttachmentId) continue;
+        try {
+          const payload = await gmail.getAttachment(prisma, account, orig.gmailMessageId, att.gmailAttachmentId);
+          forwardAttachments.push({
+            filename: att.fileName,
+            mimeType: att.mimeType || 'application/octet-stream',
+            contentBase64: Buffer.from(payload.data || '', 'base64url').toString('base64'),
+          });
+        } catch (e) {
+          console.error('[email] forward attachment fetch failed:', e?.message);
+          return res.status(502).json({ error: 'forward_attachment_failed', detail: (e?.message || '').slice(0, 200) });
+        }
+      }
+    }
     if (!subject) return res.status(400).json({ error: 'subject_required' });
 
     // Body: sanitize the HTML we send too (defence in depth — the composer is
@@ -631,8 +822,14 @@ router.post(
     const bodyText = String(b.bodyText || '').trim() || htmlToText(bodyHtml || '');
     if (!bodyHtml && !bodyText) return res.status(400).json({ error: 'body_required' });
 
-    const attachments = [];
-    let attachmentBytes = 0;
+    const attachments = [...forwardAttachments];
+    let attachmentBytes = forwardAttachments.reduce(
+      (s, a) => s + Math.floor(a.contentBase64.length * 0.75),
+      0,
+    );
+    if (attachmentBytes > MAX_ATTACHMENT_TOTAL) {
+      return res.status(400).json({ error: 'attachments_too_large' });
+    }
     for (const a of Array.isArray(b.attachments) ? b.attachments : []) {
       const filename = String(a?.filename || '').trim();
       const contentBase64 = String(a?.dataBase64 || '');

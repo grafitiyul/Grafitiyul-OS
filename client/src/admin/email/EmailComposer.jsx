@@ -1,15 +1,44 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import RichEditor from '../../editor/RichEditor.jsx';
 import { useDirtyForm } from '../../lib/dirtyForms.js';
 
-// Email composer — new mail or reply. Sends through the connected Gmail
-// account (selectable when several are connected). Recipients are simple
-// comma-separated address inputs (V1); the body is the shared RichEditor.
-// Attachments ride the JSON send request as base64 (16MB total, matching the
-// server limit).
+// Email composer — new mail, reply, reply-all or forward. Sends through the
+// connected Gmail account (selectable when several are connected).
+//
+// Gmail-client behaviors:
+//   • To / Cc / Bcc (comma-separated addresses)
+//   • attachments via picker OR drag & drop onto the composer
+//   • per-account signature auto-appended (above the quoted history)
+//   • quoted history arrives via initialBody (reply/forward builders)
+//   • local draft persistence (localStorage, keyed by context) — a half-
+//     written email survives closing the drawer/thread. Gmail Drafts API
+//     sync is a future slice; the storage seam is this draftKey.
 
 const MAX_ATTACHMENT_TOTAL = 15 * 1024 * 1024;
+const DRAFTS_KEY = 'gos-email-drafts';
+
+function readDrafts() {
+  try {
+    return JSON.parse(localStorage.getItem(DRAFTS_KEY) || '{}') || {};
+  } catch {
+    return {};
+  }
+}
+
+function writeDraft(key, draft) {
+  if (!key) return;
+  try {
+    const map = readDrafts();
+    if (draft) map[key] = draft;
+    else delete map[key];
+    const keys = Object.keys(map);
+    if (keys.length > 50) for (const k of keys.slice(0, keys.length - 50)) delete map[k];
+    localStorage.setItem(DRAFTS_KEY, JSON.stringify(map));
+  } catch {
+    /* storage unavailable — non-fatal */
+  }
+}
 
 function parseRecipients(text) {
   return String(text || '')
@@ -24,23 +53,37 @@ function editorIsEmpty(html) {
 
 export default function EmailComposer({
   defaultTo = '',
+  defaultCc = '',
   defaultSubject = '',
+  initialBody = '', // quoted history for reply/forward (below the caret + signature)
   replyToMessageId = null,
+  forwardOfMessageId = null,
   dealId = null,
   contactId = null,
+  draftKey = null,
   onSent,
   onCancel,
 }) {
   const [accounts, setAccounts] = useState(null);
   const [accountId, setAccountId] = useState(null);
-  const [to, setTo] = useState(defaultTo);
-  const [cc, setCc] = useState('');
-  const [showCc, setShowCc] = useState(false);
-  const [subject, setSubject] = useState(defaultSubject);
-  const [body, setBody] = useState('');
+  // Restore a saved local draft for this context, else start from props.
+  const saved = draftKey ? readDrafts()[draftKey] : null;
+  const [to, setTo] = useState(saved?.to ?? defaultTo);
+  const [cc, setCc] = useState(saved?.cc ?? defaultCc);
+  const [bcc, setBcc] = useState(saved?.bcc ?? '');
+  const [showCc, setShowCc] = useState(!!(saved?.cc ?? defaultCc));
+  const [showBcc, setShowBcc] = useState(!!saved?.bcc);
+  const [subject, setSubject] = useState(saved?.subject ?? defaultSubject);
+  const [body, setBody] = useState(saved?.body ?? initialBody);
+  const [draftRestored] = useState(!!saved);
   const [files, setFiles] = useState([]); // { filename, mimeType, dataBase64, size }
   const [sending, setSending] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState(null);
+  // Signature injects ONCE into a pristine body (never over a restored draft
+  // or after the user typed).
+  const signatureInjected = useRef(!!saved);
+  const touched = useRef(false);
 
   useEffect(() => {
     api.email
@@ -49,14 +92,42 @@ export default function EmailComposer({
         const connected = (d.accounts || []).filter((a) => a.connected && a.isActive);
         setAccounts(connected);
         setAccountId((cur) => cur || connected[0]?.id || null);
+        const sig = connected[0]?.signature;
+        if (sig && !signatureInjected.current) {
+          signatureInjected.current = true;
+          // Empty line for typing, then the signature, then any quoted history.
+          setBody((cur) => (cur === initialBody ? `<p></p>${sig}${initialBody}` : cur));
+        }
       })
       .catch(() => setAccounts([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const dirty = !!(to.trim() || subject.trim() || !editorIsEmpty(body) || files.length);
+  // Persist the local draft while typing (debounced); only after a real edit.
+  useEffect(() => {
+    if (!draftKey || !touched.current) return undefined;
+    const t = setTimeout(() => {
+      const empty = !to.trim() && !subject.trim() && editorIsEmpty(body) && !cc.trim() && !bcc.trim();
+      writeDraft(draftKey, empty ? null : { to, cc, bcc, subject, body });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [draftKey, to, cc, bcc, subject, body]);
+
+  const touch = (setter) => (v) => {
+    touched.current = true;
+    setter(v);
+  };
+  const setToT = touch(setTo);
+  const setCcT = touch(setCc);
+  const setBccT = touch(setBcc);
+  const setSubjectT = touch(setSubject);
+  const setBodyT = touch(setBody);
+
+  const dirty = !!(to.trim() || subject.trim() || files.length) && touched.current;
   useDirtyForm(dirty && !sending);
 
   async function addFiles(list) {
+    setError(null);
     const next = [...files];
     let total = next.reduce((s, f) => s + f.size, 0);
     for (const file of list) {
@@ -81,10 +152,15 @@ export default function EmailComposer({
     setFiles(next);
   }
 
+  function clearDraftAnd(cb) {
+    writeDraft(draftKey, null);
+    cb?.();
+  }
+
   async function send() {
     const toList = parseRecipients(to);
     if (!toList.length) return setError('נדרשת כתובת נמען תקינה');
-    if (!replyToMessageId && !subject.trim()) return setError('נדרש נושא');
+    if (!replyToMessageId && !forwardOfMessageId && !subject.trim()) return setError('נדרש נושא');
     if (editorIsEmpty(body)) return setError('אין תוכן להודעה');
     setSending(true);
     setError(null);
@@ -93,14 +169,16 @@ export default function EmailComposer({
         accountId,
         to: toList,
         cc: parseRecipients(cc),
+        bcc: parseRecipients(bcc),
         subject: subject.trim(),
         bodyHtml: body,
         replyToMessageId,
+        forwardOfMessageId,
         dealId,
         contactId,
         attachments: files.map(({ filename, mimeType, dataBase64 }) => ({ filename, mimeType, dataBase64 })),
       });
-      onSent?.(result);
+      clearDraftAnd(() => onSent?.(result));
     } catch (e) {
       setError('השליחה נכשלה: ' + (e.payload?.error || e.message));
     } finally {
@@ -120,7 +198,23 @@ export default function EmailComposer({
   }
 
   return (
-    <div className="space-y-2" dir="rtl">
+    <div
+      dir="rtl"
+      className={`space-y-2 rounded-xl transition ${dragOver ? 'ring-2 ring-blue-400 ring-offset-2' : ''}`}
+      onDragOver={(e) => {
+        if (e.dataTransfer?.types?.includes('Files')) {
+          e.preventDefault();
+          setDragOver(true);
+        }
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => {
+        if (!e.dataTransfer?.files?.length) return;
+        e.preventDefault();
+        setDragOver(false);
+        addFiles([...e.dataTransfer.files]);
+      }}
+    >
       {accounts && accounts.length > 1 && (
         <label className="flex items-center gap-2 text-[12px] text-gray-500">
           <span>נשלח מ:</span>
@@ -134,33 +228,39 @@ export default function EmailComposer({
       <div className="flex items-center gap-2">
         <input
           value={to}
-          onChange={(e) => setTo(e.target.value)}
+          onChange={(e) => setToT(e.target.value)}
           placeholder="אל: כתובת אימייל (מופרדות בפסיק)"
           dir="ltr"
           className={field}
         />
-        {!showCc && (
-          <button type="button" onClick={() => setShowCc(true)} className="shrink-0 text-[12px] text-gray-400 hover:text-gray-600">
-            + עותק
-          </button>
-        )}
+        <span className="flex shrink-0 gap-1.5 text-[12px] text-gray-400">
+          {!showCc && (
+            <button type="button" onClick={() => setShowCc(true)} className="hover:text-gray-600">עותק</button>
+          )}
+          {!showBcc && (
+            <button type="button" onClick={() => setShowBcc(true)} className="hover:text-gray-600">עותק סמוי</button>
+          )}
+        </span>
       </div>
       {showCc && (
-        <input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="עותק (Cc)" dir="ltr" className={field} />
+        <input value={cc} onChange={(e) => setCcT(e.target.value)} placeholder="עותק (Cc)" dir="ltr" className={field} />
+      )}
+      {showBcc && (
+        <input value={bcc} onChange={(e) => setBccT(e.target.value)} placeholder="עותק סמוי (Bcc)" dir="ltr" className={field} />
       )}
       <input
         value={subject}
-        onChange={(e) => setSubject(e.target.value)}
-        placeholder={replyToMessageId ? 'נושא (ריק = Re: אוטומטי)' : 'נושא'}
+        onChange={(e) => setSubjectT(e.target.value)}
+        placeholder={replyToMessageId || forwardOfMessageId ? 'נושא (ריק = Re:/Fwd: אוטומטי)' : 'נושא'}
         dir="auto"
         className={field}
       />
       <RichEditor
         preset="lite"
         value={body}
-        onChange={setBody}
+        onChange={setBodyT}
         placeholder="תוכן ההודעה…"
-        maxHeight="40vh"
+        maxHeight="45vh"
         ariaLabel="תוכן המייל"
       />
       {files.length > 0 && (
@@ -182,23 +282,31 @@ export default function EmailComposer({
       )}
       {error && <p className="text-[12.5px] text-red-600">{error}</p>}
       <div className="flex items-center justify-between gap-2">
-        <label className="cursor-pointer rounded-lg px-2 py-1 text-[12.5px] text-gray-500 hover:bg-gray-100">
-          📎 צירוף קובץ
-          <input
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              addFiles([...e.target.files]);
-              e.target.value = '';
-            }}
-          />
-        </label>
+        <span className="flex items-center gap-2">
+          <label className="cursor-pointer rounded-lg px-2 py-1 text-[12.5px] text-gray-500 hover:bg-gray-100">
+            📎 צירוף קובץ
+            <input
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                addFiles([...e.target.files]);
+                e.target.value = '';
+              }}
+            />
+          </label>
+          <span className="text-[11px] text-gray-300">אפשר גם לגרור קבצים לכאן</span>
+          {draftRestored && (
+            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-amber-200">
+              ● טיוטה שוחזרה
+            </span>
+          )}
+        </span>
         <div className="flex gap-2">
           {onCancel && (
             <button
               type="button"
-              onClick={onCancel}
+              onClick={() => clearDraftAnd(onCancel)}
               disabled={sending}
               className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
             >

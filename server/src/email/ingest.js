@@ -187,6 +187,7 @@ export async function ingestGmailMessage(account, full, { createdByUserId = null
                   create: attachments.map((a) => ({
                     gmailAttachmentId: a.gmailAttachmentId,
                     partId: a.partId,
+                    contentId: a.contentId ?? null,
                     fileName: a.fileName,
                     mimeType: a.mimeType,
                     sizeBytes: a.sizeBytes,

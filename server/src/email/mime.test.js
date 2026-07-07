@@ -82,7 +82,28 @@ test('parsePayload walks multipart tree: bodies + attachments', () => {
     sizeBytes: 1024,
     gmailAttachmentId: 'ATT123',
     partId: '2',
+    contentId: null,
   });
+});
+
+test('parsePayload captures Content-ID for inline (cid:) images, even without a filename', () => {
+  const payload = {
+    mimeType: 'multipart/related',
+    parts: [
+      { mimeType: 'text/html', body: { data: Buffer.from('<img src="cid:logo123">', 'utf8').toString('base64url') } },
+      {
+        mimeType: 'image/png',
+        filename: '',
+        partId: '2',
+        headers: [{ name: 'Content-ID', value: '<logo123>' }],
+        body: { attachmentId: 'ATT9', size: 512 },
+      },
+    ],
+  };
+  const out = parsePayload(payload);
+  assert.equal(out.attachments.length, 1);
+  assert.equal(out.attachments[0].contentId, 'logo123'); // angle brackets stripped
+  assert.match(out.attachments[0].fileName, /^inline-/); // synthetic name for nameless inline parts
 });
 
 test('buildRawMessage produces base64url RFC 2822 with threading headers', () => {
