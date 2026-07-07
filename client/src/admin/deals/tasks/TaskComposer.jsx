@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../../lib/api.js';
 import { PRIORITY_OPTIONS, defaultDueDate } from './taskConfig.js';
 import TaskIcon from './TaskIcon.jsx';
+import { DateField, TimeField } from '../../common/pickers/DateTimeFields.jsx';
 
 // Task composer — the "משימה" tab of the Deal timeline composer. Renders whatever
 // active TaskTypes exist (never hard-coded). A 'whatsapp' type reveals the
@@ -177,24 +178,10 @@ export default function TaskComposer({ dealId, onCreated }) {
 
       {/* Date / time / priority / owner */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <label className="block text-[12px] text-gray-600">
-          תאריך
-          <input
-            type="date"
-            value={dueDate}
-            onChange={(e) => setDueDate(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm"
-          />
-        </label>
-        <label className="block text-[12px] text-gray-600">
-          שעה {isWhatsapp ? '' : '(רשות)'}
-          <input
-            type="time"
-            value={dueTime}
-            onChange={(e) => setDueTime(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm"
-          />
-        </label>
+        {/* Date is required (submit validates) → no clear; time stays optional
+            for normal tasks. WhatsApp keeps its 10:00 default via applyType. */}
+        <DateField label="תאריך" value={dueDate} onChange={setDueDate} clearable={false} />
+        <TimeField label={`שעה ${isWhatsapp ? '' : '(רשות)'}`} value={dueTime} onChange={setDueTime} clearable={!isWhatsapp} />
         <label className="block text-[12px] text-gray-600">
           סדר עדיפות
           <select

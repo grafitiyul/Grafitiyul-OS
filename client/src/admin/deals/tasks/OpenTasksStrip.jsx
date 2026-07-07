@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../../../lib/api.js';
 import { PRIORITY_TONE, PRIORITY_OPTIONS, formatDue, toDateInput } from './taskConfig.js';
 import TaskIcon from './TaskIcon.jsx';
+import { DateField, TimeField } from '../../common/pickers/DateTimeFields.jsx';
 
 // Open-tasks strip — lives in the Deal focus area (above the timeline FOCUS).
 // Compact rows: checkbox (mark done), type icon, title, due, priority, owner.
@@ -203,8 +204,15 @@ function TaskEditForm({ dealId, task, userMap, onDone, onCancel }) {
         className="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm"
       />
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
-        <input type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
+        {/* Date required; a WhatsApp task keeps a concrete send time (save
+            falls back to 10:00), so its time is not clearable. */}
+        <DateField value={dueDate} onChange={setDueDate} clearable={false} />
+        <TimeField
+          value={dueTime}
+          onChange={setDueTime}
+          placeholder={task.channel === 'whatsapp' ? 'בחירת שעה' : 'שעה (רשות)'}
+          clearable={task.channel !== 'whatsapp'}
+        />
         <select value={priority} onChange={(e) => setPriority(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
           {PRIORITY_OPTIONS.map((p) => (
             <option key={p.value} value={p.value}>{p.label}</option>

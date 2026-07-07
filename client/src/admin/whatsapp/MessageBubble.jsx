@@ -1,5 +1,6 @@
 import MessageMedia from './MessageMedia.jsx';
 import Checks from './Checks.jsx';
+import { linkifyText } from '../../lib/linkify.jsx';
 
 // One WhatsApp message, WhatsApp-style: outbound = green bubble on the far
 // side (left in RTL, like Hebrew WhatsApp), inbound = white. System events
@@ -132,7 +133,7 @@ export default function MessageBubble({ message: m, showSender = false, quoted =
 
         {m.textContent && (
           <p className="whitespace-pre-wrap break-words text-[14px] leading-relaxed text-gray-900" dir="auto">
-            {m.textContent}
+            {linkifyText(m.textContent)}
           </p>
         )}
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { emitDealTasksChanged } from '../deals/tasks/taskEvents.js';
+import { linkifyText } from '../../lib/linkify.jsx';
 
 // Collapsible strip above the composer listing this chat's scheduled
 // messages (pending / failed / skipped). Cancel and reschedule inline; a row
@@ -93,7 +94,7 @@ export default function ScheduledStrip({ chat, nonce = 0, dealId = null }) {
                   </span>
                   <span className="text-[12px] text-gray-500" dir="ltr">{fmtWhen(s.scheduledAt)}</span>
                 </div>
-                <p className="mt-1 truncate text-[13px] text-gray-800" dir="auto">{s.content}</p>
+                <p className="mt-1 truncate text-[13px] text-gray-800" dir="auto">{linkifyText(s.content)}</p>
                 {s.failureReason && s.status !== 'pending' && (
                   <p className="mt-0.5 text-[11px] text-red-600" dir="auto">{s.failureReason}</p>
                 )}
