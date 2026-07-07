@@ -26,8 +26,9 @@ export function dealSummary(d) {
 // rejected `include.deal.include.dealStage` ("Unknown argument dealStage")
 // even though the same query validates locally; plain scalar selects + two
 // id-lookups are immune to that class of failure.
-export async function dealsForContact(contactId) {
-  const rows = await prisma.deal.findMany({
+// `db` is injectable for tests; existing callers (whatsapp.js) omit it.
+export async function dealsForContact(contactId, db = prisma) {
+  const rows = await db.deal.findMany({
     where: { contacts: { some: { contactId } } },
     select: {
       id: true,
@@ -46,10 +47,10 @@ export async function dealsForContact(contactId) {
   const [stages, orgs] = await Promise.all([
     stageIds.length
       ? // DealStage has label/labelEn — NOT name (live-QA Prisma error).
-        prisma.dealStage.findMany({ where: { id: { in: stageIds } }, select: { id: true, label: true } })
+        db.dealStage.findMany({ where: { id: { in: stageIds } }, select: { id: true, label: true } })
       : [],
     orgIds.length
-      ? prisma.organization.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true } })
+      ? db.organization.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true } })
       : [],
   ]);
   const stageName = new Map(stages.map((s) => [s.id, s.label]));

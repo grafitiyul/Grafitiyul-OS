@@ -5,11 +5,12 @@ import { dealsForContact, classifyDealsForContact } from '../crm/dealResolution.
 // Email → CRM matching. Same safety posture as WhatsApp phone matching:
 // exactly ONE owning contact → link; zero → unmatched; several → ambiguous
 // (manual selection required, never guess). No auto-creation of contacts.
+// `db` is injectable for tests; production uses the singleton.
 
-export async function matchContactByEmails(addresses) {
+export async function matchContactByEmails(addresses, db = prisma) {
   const list = [...new Set((addresses || []).map(normalizeEmail).filter(Boolean))];
   if (!list.length) return { contactId: null, ambiguous: false };
-  const rows = await prisma.contactEmail.findMany({
+  const rows = await db.contactEmail.findMany({
     where: { OR: list.map((e) => ({ value: { equals: e, mode: 'insensitive' } })) },
     select: { contactId: true },
   });
@@ -21,9 +22,9 @@ export async function matchContactByEmails(addresses) {
 // Deal auto-link for a thread: ONLY when the contact resolves to exactly one
 // safe candidate (open, or WON toured ≤7 days — shared classification).
 // Anything else stays unlinked for the user to decide.
-export async function resolveAutoDealId(contactId) {
+export async function resolveAutoDealId(contactId, db = prisma) {
   if (!contactId) return null;
-  const deals = await dealsForContact(contactId);
+  const deals = await dealsForContact(contactId, db);
   const outcome = classifyDealsForContact(deals);
   return outcome.kind === 'open' ? outcome.dealId : null;
 }

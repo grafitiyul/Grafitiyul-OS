@@ -1,6 +1,7 @@
 import { prisma } from '../db.js';
 import { gmail, emailIntegrationConfigured } from './googleClient.js';
 import { ingestGmailMessage } from './ingest.js';
+import { matchContactByEmails } from './matching.js';
 
 // Gmail sync worker — READ-ONLY mirror (scope gmail.readonly: it physically
 // cannot archive/label/mark-read, so it can never fight Make/Pipedrive during
@@ -30,6 +31,11 @@ const MAX_FETCH_PER_TICK = 40; // full-message downloads per account per tick
 
 let timer = null;
 let ticking = false;
+// Per-account overlap guard: the manual "סנכרון עכשיו" endpoint and the worker
+// tick may target the same account concurrently. Ingest is idempotent either
+// way (unique constraints), but running twice just burns Gmail quota — skip.
+// In-process only; GOS runs as one service (project deployment rule).
+const activeSyncs = new Set();
 
 export function startEmailSyncWorker(logger = console) {
   if (timer) return;
@@ -75,15 +81,23 @@ export async function syncAccount(accountOrId, logger = console) {
       ? await prisma.emailAccount.findUnique({ where: { id: accountOrId } })
       : accountOrId;
   if (!account || !account.isActive || !account.refreshTokenEnc) return { skipped: true };
+  if (activeSyncs.has(account.id)) return { skipped: true, reason: 'already_syncing' };
+  activeSyncs.add(account.id);
 
-  await prisma.emailAccount.update({
-    where: { id: account.id },
-    data: { syncStatus: 'syncing' },
-  });
   try {
+    // NOTE: syncStatus is a display surface, NOT a lock — a crash mid-sync
+    // leaves it 'syncing' but the next tick simply syncs again (all ingest is
+    // idempotent), so there is no stuck state to clean up manually.
+    await prisma.emailAccount.update({
+      where: { id: account.id },
+      data: { syncStatus: 'syncing' },
+    });
     const result = !account.backfillDone
       ? await backfillAccount(account, logger)
       : await incrementalSync(account, logger);
+    // Self-healing pass: contacts created AFTER their emails arrived (or a
+    // crash inside the tiny ingest→link window) get matched here.
+    await rematchUnmatchedThreads(account, logger);
     await prisma.emailAccount.update({
       where: { id: account.id },
       data: { syncStatus: 'idle', syncError: null, lastSyncAt: new Date() },
@@ -97,7 +111,34 @@ export async function syncAccount(accountOrId, logger = console) {
       data: { syncStatus: 'error', syncError: message, lastSyncAt: new Date() },
     });
     throw e;
+  } finally {
+    activeSyncs.delete(account.id);
   }
+}
+
+// Bounded re-match sweep over unmatched threads (newest first). Only fills
+// NULL contactIds and NEVER touches threads a user manually unlinked
+// (matchSource='unlinked' sentinel) — auto-matching must not fight the user.
+const REMATCH_BATCH = 25;
+async function rematchUnmatchedThreads(account, logger) {
+  const threads = await prisma.emailThread.findMany({
+    where: { accountId: account.id, contactId: null, matchSource: null },
+    orderBy: { lastMessageAt: 'desc' },
+    take: REMATCH_BATCH,
+    select: { id: true, participants: true },
+  });
+  let linked = 0;
+  for (const t of threads) {
+    const { contactId } = await matchContactByEmails((t.participants || []).map((p) => p.email));
+    if (!contactId) continue;
+    // Guard the fill (contactId: null) so a concurrent manual link wins.
+    const res = await prisma.emailThread.updateMany({
+      where: { id: t.id, contactId: null },
+      data: { contactId, matchSource: 'email' },
+    });
+    linked += res.count;
+  }
+  if (linked) logger.log(`[email-sync] ${account.emailAddress}: re-matched ${linked} threads to contacts`);
 }
 
 async function backfillAccount(account, logger) {
@@ -137,7 +178,14 @@ async function backfillAccount(account, logger) {
         if (known.has(id)) continue;
         sawUnknown = true;
         if (fetched >= MAX_FETCH_PER_TICK) break;
-        const full = await gmail.getMessage(prisma, account, id);
+        let full;
+        try {
+          full = await gmail.getMessage(prisma, account, id);
+        } catch (e) {
+          // Deleted in Gmail between list and fetch — read-only mirror, skip.
+          if (e.status === 404) continue;
+          throw e;
+        }
         await ingestGmailMessage(account, full);
         fetched += 1;
       }

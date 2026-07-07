@@ -384,7 +384,9 @@ router.put(
       where: { id: thread.id },
       data: contactId
         ? { contactId: String(contactId), matchSource: 'manual' }
-        : { contactId: null, matchSource: null, linkedDealId: null, linkSource: null },
+        : // 'unlinked' sentinel: auto-matching (ingest + the worker's re-match
+          // sweep) skips this thread forever — it never fights a manual unlink.
+          { contactId: null, matchSource: 'unlinked', linkedDealId: null, linkSource: 'unlinked' },
       include: THREAD_INCLUDE,
     });
     res.json(toClientThread(updated));
@@ -405,7 +407,8 @@ router.put(
       where: { id: thread.id },
       data: dealId
         ? { linkedDealId: String(dealId), linkSource: 'manual' }
-        : { linkedDealId: null, linkSource: null },
+        : // 'unlinked' sentinel — ingest never auto-re-links this thread.
+          { linkedDealId: null, linkSource: 'unlinked' },
       include: THREAD_INCLUDE,
     });
     res.json(toClientThread(updated));
@@ -629,6 +632,14 @@ router.post(
         createdByUserId: req.adminAuth?.userId || null,
         trackingId,
       });
+      // If the sync worker mirrored the sent message FIRST (rare race), its row
+      // has no trackingId/creator — patch them in so opens still count.
+      if (mirrored && mirrored.created === false && mirrored.message?.id) {
+        await prisma.emailMessage.updateMany({
+          where: { id: mirrored.message.id, trackingId: null },
+          data: { trackingId, createdByUserId: req.adminAuth?.userId || null },
+        });
+      }
       if (mirrored?.message?.id) {
         await prisma.emailEngagement.upsert({
           where: { messageId: mirrored.message.id },
