@@ -33,6 +33,8 @@ import RichEditor from '../../editor/RichEditor.jsx';
 import { InlineEditScope } from '../common/inline/InlineEditScope.jsx';
 import InlineField from '../common/inline/InlineField.jsx';
 import { InlineDatePicker, InlineTimePicker } from '../common/inline/InlinePickers.jsx';
+import ProduceDocumentModal from './icount/ProduceDocumentModal.jsx';
+import CustomPaymentLinkModal from './icount/CustomPaymentLinkModal.jsx';
 import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
 
 const INPUT =
@@ -1450,6 +1452,9 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
   const [payBusy, setPayBusy] = useState(false);
   const [payFeedback, setPayFeedback] = useState(null);
   const [missingDialog, setMissingDialog] = useState(null); // { action, kind: 'amount'|'details', needName, needPhone, needEmail }
+  // iCount accounting: "הפק מסמך" + "קישור לתשלום מותאם אישית".
+  const [docModalOpen, setDocModalOpen] = useState(false);
+  const [customLinkOpen, setCustomLinkOpen] = useState(false);
   const [dlgForm, setDlgForm] = useState(EMPTY_DLG_FORM);
   // Pencil-edit state: an EXISTING value the user chose to correct inline.
   const [dlgEdit, setDlgEdit] = useState({ name: false, phone: false, email: false });
@@ -1577,7 +1582,7 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
     { key: 'copy', label: 'העתק קישור לתשלום' },
     { key: 'wa', label: 'שלח קישור בוואטסאפ' },
   ];
-  const PLACEHOLDER_ACTIONS = ['הסר הרשמה מסיור', 'הפק מסמך', 'שליחת מייל אישור'];
+  const PLACEHOLDER_ACTIONS = ['הסר הרשמה מסיור', 'שליחת מייל אישור'];
 
   const dlg = missingDialog;
   // Effective values after the form: what the action would actually run with.
@@ -1628,6 +1633,15 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
           </button>
         ))}
         <div className="my-1 border-t border-gray-100" />
+        <button type="button" onClick={() => { setMenuOpen(false); setDocModalOpen(true); }}
+          className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+          הפק מסמך
+        </button>
+        <button type="button" onClick={() => { setMenuOpen(false); setCustomLinkOpen(true); }}
+          className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+          קישור לתשלום מותאם אישית
+        </button>
+        <div className="my-1 border-t border-gray-100" />
         {PLACEHOLDER_ACTIONS.map((label) => (
           <button key={label} type="button" onClick={() => setMenuOpen(false)} title={soon}
             className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
@@ -1635,6 +1649,9 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
           </button>
         ))}
       </AnchoredMenu>
+
+      <ProduceDocumentModal dealId={deal.id} open={docModalOpen} onClose={() => setDocModalOpen(false)} />
+      <CustomPaymentLinkModal dealId={deal.id} open={customLinkOpen} onClose={() => setCustomLinkOpen(false)} />
 
       {/* Missing-data dialog — the only popup in the payment flow. Details are
           completed INLINE and saved to the Contact, then the action continues. */}

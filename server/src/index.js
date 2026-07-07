@@ -28,6 +28,7 @@ import publicQuoteRouter from './routes/publicQuote.js';
 import dealStagesRouter from './routes/dealStages.js';
 import dealTasksRouter from './routes/dealTasks.js';
 import dealFilesRouter from './routes/dealFiles.js';
+import icountDocsRouter from './routes/icountDocs.js';
 import taskTypesRouter from './routes/taskTypes.js';
 import mediaFilesRouter from './routes/mediaFiles.js';
 import locationsRouter from './routes/locations.js';
@@ -228,6 +229,9 @@ app.use('/api/deals', requireAdminAuth, dealsRouter);
 // dealsRouter (no path overlap; deals owns /:id, these own /:id/tasks|files).
 app.use('/api/deals', requireAdminAuth, dealTasksRouter);
 app.use('/api/deals', requireAdminAuth, dealFilesRouter);
+// iCount accounting documents + custom payment links — /:id/icount/*,
+// /:id/custom-payment-links (same nested-under-deals pattern as tasks/files).
+app.use('/api/deals', requireAdminAuth, icountDocsRouter);
 // WhatsApp module — account/connection admin (proxies live actions to the
 // per-number bridge services over Railway's private network).
 app.use('/api/whatsapp', requireAdminAuth, whatsappRouter);

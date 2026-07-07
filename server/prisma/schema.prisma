@@ -923,6 +923,8 @@ model Deal {
   quoteVersions         QuoteVersion[]
   quoteDocuments        QuoteDocument[]
   paymentLinks          DealPaymentLink[]
+  icountDocuments       IcountDocument[]
+  customPaymentLinks    DealCustomPaymentLink[]
   tasks                 Task[]
   files                 DealFile[]
   emailThreads          EmailThread[]
@@ -1075,6 +1077,62 @@ model DealPaymentLink {
   customerEmail       String?
   createdBy           String? // loose AdminUser id (same convention as Deal.ownerUserId)
   rawProviderResponse Json? // iCount generate_sale response, for audit/debug
+  createdAt           DateTime @default(now())
+
+  @@index([dealId])
+}
+
+// ── iCount accounting documents ──────────────────────────────────────────────
+// One row per accounting document GOS knows about for a deal: issued from the
+// "הפק מסמך" modal (source 'user'), or captured from an iCount IPN webhook
+// (source 'webhook'). GOS stays the operational source of truth; iCount is the
+// accounting provider — the row stores the ISSUED snapshot (type/number/amount/
+// customer/url) plus the raw provider response for audit. `idempotencyKey` is
+// UNIQUE and dedupes both a double-clicked modal submit and a retried webhook.
+model IcountDocument {
+  id             String   @id @default(cuid())
+  deal           Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  dealId         String
+  provider       String   @default("icount")
+  source         String   @default("user") // 'user' | 'webhook'
+  doctype        String // iCount doctype: 'deal'|'invoice'|'invrec'|'receipt'|'refund'
+  docnum         String? // iCount document number (string — provider-owned format)
+  providerDocId  String? // iCount internal doc_id (used as origin_doc_id for credits)
+  status         String   @default("issued") // 'issued' (failed attempts are never stored)
+  amountMinor    BigInt // agorot, VAT-inclusive gross as issued
+  currency       String   @default("ILS")
+  clientName     String
+  clientVatId    String? // ח.פ / ע.מ / ת.ז as sent to iCount
+  docUrl         String? // iCount pdf/original link (admin-facing, not a customer URL)
+  basedOnDoctype String? // base document this one closed/credited (if any)
+  basedOnDocnum  String?
+  idempotencyKey String?  @unique
+  issuedBy       String? // loose AdminUser id; null for webhook/system
+  raw            Json? // iCount doc/create response (or webhook payload extract)
+  createdAt      DateTime @default(now())
+
+  @@index([dealId])
+}
+
+// ── Custom payment links ("קישור לתשלום מותאם אישית") ────────────────────────
+// A per-deal payment link whose invoice line/amount intentionally DIFFER from
+// the deal's products (customer asked for a different description on the
+// document). Frozen at creation — the iCount sale link is generated once and
+// reused; the customer always gets the GOS URL /pay/c/<token> (same redirect
+// pattern as the regular /pay/<Deal.paymentToken>, which stays untouched).
+model DealCustomPaymentLink {
+  id                  String   @id @default(cuid())
+  deal                Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  dealId              String
+  token               String   @unique
+  status              String   @default("active") // 'active' | 'disabled'
+  description         String // the custom invoice/product line the customer sees
+  amountMinor         BigInt // agorot, VAT-inclusive gross
+  currency            String   @default("ILS")
+  notes               String?
+  paymentLinkUrl      String? // generated iCount sale_url (created eagerly, reused)
+  rawProviderResponse Json?
+  createdBy           String?
   createdAt           DateTime @default(now())
 
   @@index([dealId])

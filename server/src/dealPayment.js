@@ -186,3 +186,51 @@ export async function ensureCurrentIcountLink(prisma, deal, { createdBy } = {}) 
   ]);
   return created;
 }
+
+// ── Custom payment links ("קישור לתשלום מותאם אישית") ────────────────────────
+// Same GOS-redirect architecture, different content: the iCount page is built
+// from the link row's FROZEN custom description + amount (the customer asked
+// for a different line on the document), while contact prefill still comes
+// from the deal — the payment stays tied to the same deal (ipn dealId) and the
+// regular /pay/<Deal.paymentToken> flow is untouched. The row never drifts, so
+// the sale link is generated once and reused; regeneration happens only if the
+// eager attempt at creation time failed.
+export async function ensureCustomIcountLink(prisma, link, deal) {
+  if (link.paymentLinkUrl) return link;
+
+  if (!isIcountConfigured()) throw codedError('icount_not_configured');
+  const paypageId = process.env.ICOUNT_DEFAULT_PAYPAGE_ID;
+  if (!paypageId) throw codedError('icount_paypage_not_configured');
+
+  const snap = buildPaymentSnapshot(deal);
+  const origin = String(process.env.PUBLIC_ORIGIN || '').replace(/\/+$/, '');
+  const secret = process.env.ICOUNT_WEBHOOK_SECRET;
+  const ipnUrl =
+    origin && secret
+      ? `${origin}/api/webhooks/icount/${secret}?dealId=${encodeURIComponent(deal.id)}&customLinkId=${encodeURIComponent(link.id)}`
+      : null;
+
+  const { saleUrl, raw } = await generateSale({
+    paypageId,
+    items: [
+      {
+        quantity: 1,
+        description: link.description,
+        // iCount expects major units, VAT-INCLUSIVE (unitprice_incl).
+        unitprice_incl: Number(link.amountMinor) / 100,
+      },
+    ],
+    clientName: snap.customerName || 'לקוח',
+    firstName: snap.firstName,
+    lastName: snap.lastName,
+    email: snap.customerEmail,
+    phone: snap.customerPhone,
+    maxPayments: Number(process.env.ICOUNT_MAX_PAYMENTS) || 10,
+    ipnUrl,
+  });
+
+  return prisma.dealCustomPaymentLink.update({
+    where: { id: link.id },
+    data: { paymentLinkUrl: saleUrl, rawProviderResponse: raw ?? undefined },
+  });
+}

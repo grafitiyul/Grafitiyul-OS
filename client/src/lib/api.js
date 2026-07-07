@@ -430,6 +430,16 @@ export const api = {
     // underlying iCount link is generated/refreshed lazily by GET /pay/:token.
     ensurePaymentToken: (id) =>
       request(`/api/deals/${id}/payment-token`, { method: 'POST', body: JSON.stringify({}) }),
+    // iCount document production ("הפק מסמך") — prefill defaults, previous
+    // documents (GOS + live iCount), issue (idempotent via idempotencyKey).
+    icountDefaults: (id) => request(`/api/deals/${id}/icount/defaults`),
+    icountDocuments: (id) => request(`/api/deals/${id}/icount/documents`),
+    issueIcountDocument: (id, data) =>
+      request(`/api/deals/${id}/icount/documents`, { method: 'POST', body: JSON.stringify(data) }),
+    // Custom-description payment links (/pay/c/<token>).
+    customPaymentLinks: (id) => request(`/api/deals/${id}/custom-payment-links`),
+    createCustomPaymentLink: (id, data) =>
+      request(`/api/deals/${id}/custom-payment-links`, { method: 'POST', body: JSON.stringify(data) }),
   },
   // ── CRM Task Types (configurable catalog behind the Deal task composer) ──
   taskTypes: {

@@ -1,14 +1,20 @@
-// Outbound iCount PayPage client — personal payment links only.
-//   POST ${ICOUNT_API_BASE}/paypage/generate_sale
+// Outbound iCount API client.
+//   POST ${ICOUNT_API_BASE}/paypage/generate_sale   — personal payment links
+//   POST ${ICOUNT_API_BASE}/doc/create              — accounting documents
+//   POST ${ICOUNT_API_BASE}/doc/search              — previous documents
+//   POST ${ICOUNT_API_BASE}/doc/info                — one document (credit base)
+//   POST ${ICOUNT_API_BASE}/doc/get_doc_url         — document view URL
 //
-// Ported 1:1 from the PROVEN Challenge System integration (confirmed against
-// production 2026-05-29): cid/user/pass sent in the JSON body, NO Bearer
-// header — this exact shape is what makes iCount prefill the visible customer
-// form fields, and prices are sent VAT-INCLUSIVE (unitprice_incl; sending
-// `unitprice` would make iCount add VAT again). Do not "modernize" this call.
+// generate_sale is ported 1:1 from the PROVEN Challenge System integration
+// (confirmed against production 2026-05-29): cid/user/pass sent in the JSON
+// body, NO Bearer header — this exact shape is what makes iCount prefill the
+// visible customer form fields, and prices are sent VAT-INCLUSIVE
+// (unitprice_incl; sending `unitprice` would make iCount add VAT again). Do
+// not "modernize" this call. The doc/* endpoints reuse the same body auth and
+// the same VAT-inclusive item shape.
 //
 // Credentials come ONLY from env (never hardcoded, never logged). When creds
-// are missing the route returns a clean 'icount_not_configured' error, so
+// are missing the routes return a clean 'icount_not_configured' error, so
 // deploying without Railway variables set is safe.
 
 const API_BASE_DEFAULT = 'https://api.icount.co.il/api/v3.php';
@@ -68,4 +74,83 @@ export async function generateSale(p) {
     throw err;
   }
   return { saleUrl: data.sale_url, raw: data };
+}
+
+// ── doc/* endpoints (accounting documents) ───────────────────────────────────
+
+// Generic iCount call with the same legacy body auth as generate_sale.
+// Returns the parsed JSON; throws a coded error when iCount reports failure
+// (status:false / error_description / HTTP error). Secrets never logged.
+async function icountRequest(path, payload) {
+  const legacy = legacyAuthBody();
+  const base = process.env.ICOUNT_API_BASE || API_BASE_DEFAULT;
+  console.log(`[icount] ${path} body: ${JSON.stringify({ cid: legacy.cid, user: legacy.user, pass: '***', ...payload })}`);
+
+  const res = await fetch(`${base}/${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, // legacy body auth — no Bearer
+    body: JSON.stringify({ ...legacy, ...payload }),
+  });
+  const data = await res.json().catch(() => null);
+
+  if (!res.ok || !data || data.status === false) {
+    const reason =
+      (data && (data.reason || data.error_description || data.message || data.error)) ||
+      `HTTP ${res.status}`;
+    console.error(`[icount] ${path} failed: ${reason}`);
+    const err = new Error(`icount_request_failed: ${reason}`);
+    err.code = 'icount_request_failed';
+    err.reason = String(reason);
+    throw err;
+  }
+  return data;
+}
+
+// Create an accounting document (doc/create). `payload` is the full iCount
+// body built by the service layer (doctype, client fields, items with
+// unitprice_incl, payment blocks, based_on / origin_doc_id, hwc…).
+// Returns { docId, docnum, docUrl, raw }.
+export async function createDoc(payload) {
+  const data = await icountRequest('doc/create', payload);
+  const d = data.data || data;
+  const docnum = d.doc_number ?? d.docnum ?? null;
+  const docId = d.doc_id ?? null;
+  const docUrl = d.pdf_link ?? d.doc_url ?? null;
+  if (docnum == null && docId == null) {
+    // status was true but no document identity came back — treat as failure so
+    // we never record a phantom document.
+    const err = new Error('icount_request_failed: no docnum in response');
+    err.code = 'icount_request_failed';
+    err.reason = 'no_docnum_in_response';
+    err.raw = data;
+    throw err;
+  }
+  return { docId: docId != null ? String(docId) : null, docnum: docnum != null ? String(docnum) : null, docUrl, raw: data };
+}
+
+// Search documents (doc/search) — used to list the customer's previous iCount
+// documents for base/close/credit selection. Returns the raw rows array.
+export async function searchDocs(filters) {
+  const data = await icountRequest('doc/search', { detail_level: 2, max_results: 50, ...filters });
+  const rows = data.data;
+  return Array.isArray(rows) ? rows : [];
+}
+
+// One document's details (doc/info) — the credit flow needs the original
+// document's internal doc_id (origin_doc_id) and its items.
+export async function docInfo(doctype, docnum) {
+  const data = await icountRequest('doc/info', { doctype, docnum: Number(docnum) });
+  return data.data || data;
+}
+
+// Viewer URL for an issued document (doc/get_doc_url).
+export async function getDocUrl(doctype, docnum) {
+  const data = await icountRequest('doc/get_doc_url', {
+    doctype,
+    docnum: Number(docnum),
+    lang: 'he',
+    orig: true,
+    hidenis: false,
+  });
+  return data.url || null;
 }

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
-import { PAYMENT_DEAL_INCLUDE, ensureCurrentIcountLink } from '../dealPayment.js';
+import { PAYMENT_DEAL_INCLUDE, ensureCurrentIcountLink, ensureCustomIcountLink } from '../dealPayment.js';
 
 // PUBLIC permanent payment URL — GET /pay/:token.
 //
@@ -31,6 +31,33 @@ function page(res, status, title, body) {
 </body>
 </html>`);
 }
+
+// Custom-description payment link — /pay/c/<token>. Declared BEFORE /:token so
+// the 'c' segment is never swallowed by the generic route. Frozen content: the
+// iCount page shows the custom line/amount; the deal association (ipn) and the
+// GOS-redirect pattern are identical to the regular flow.
+router.get(
+  '/c/:token',
+  handle(async (req, res) => {
+    const token = String(req.params.token || '');
+    const link = /^[A-Za-z0-9_-]+$/.test(token)
+      ? await prisma.dealCustomPaymentLink.findUnique({ where: { token } })
+      : null;
+    if (!link || link.status !== 'active') {
+      return page(res, 404, 'קישור התשלום לא נמצא', 'ייתכן שהקישור שגוי או שאינו פעיל עוד. אנא פנו אלינו לקבלת קישור מעודכן.');
+    }
+    try {
+      const deal = await prisma.deal.findUnique({ where: { id: link.dealId }, include: PAYMENT_DEAL_INCLUDE });
+      if (!deal) throw new Error('deal_missing');
+      const fresh = await ensureCustomIcountLink(prisma, link, deal);
+      res.set('Cache-Control', 'no-store');
+      return res.redirect(302, fresh.paymentLinkUrl);
+    } catch (err) {
+      console.error(`[pay] custom link failed for deal ${link.dealId}: ${err?.code || ''} ${err?.message || err}`);
+      return page(res, 503, 'עמוד התשלום אינו זמין כרגע', 'אנא נסו שוב מאוחר יותר או פנו אלינו ונשמח לעזור.');
+    }
+  }),
+);
 
 router.get(
   '/:token',

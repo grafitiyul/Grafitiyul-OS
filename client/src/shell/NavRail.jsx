@@ -5,7 +5,7 @@ import { TOP_MODULES, BOTTOM_MODULES } from './modules.js';
 // less-frequent utility/config, pushed to the bottom by a spacer. The module
 // lists live in ./modules.js so the TopBar breadcrumb shares the same source.
 
-function Item({ to, glyph, label }) {
+function Item({ to, glyph, label, Icon }) {
   return (
     <NavLink
       to={to}
@@ -17,7 +17,11 @@ function Item({ to, glyph, label }) {
         }`
       }
     >
-      <span className="text-xl leading-none">{glyph}</span>
+      {/* Brand-mark modules render their real logo; the rest keep emoji. The
+          span box matches text-xl line height so both align identically. */}
+      <span className="flex h-5 items-center justify-center text-xl leading-none">
+        {Icon ? <Icon size={20} /> : glyph}
+      </span>
       <span>{label}</span>
     </NavLink>
   );
