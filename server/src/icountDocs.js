@@ -1,4 +1,4 @@
-import { createDoc, docInfo, searchDocs, isIcountConfigured } from './icount.js';
+import { createDoc, docInfo, searchDocs, findClient, upsertClient, isIcountConfigured } from './icount.js';
 import { emitTimelineEvent, userOrigin, systemOrigin } from './timeline/events.js';
 
 // iCount document production — the domain logic behind "הפק מסמך".
@@ -53,10 +53,12 @@ export const ICOUNT_DEAL_INCLUDE = {
     include: {
       contact: {
         select: {
+          id: true,
           firstNameHe: true,
           lastNameHe: true,
           firstNameEn: true,
           lastNameEn: true,
+          taxId: true,
           phones: { where: { isPrimary: true }, take: 1 },
           emails: { where: { isPrimary: true }, take: 1 },
         },
@@ -128,7 +130,11 @@ export function buildDocumentDefaults(deal) {
       // Org linked → invoice the organization by default (same rule as the
       // payment link's customerName).
       defaultMode: organizationName ? 'organization' : 'contact',
-      vatId: org?.taxId || null,
+      // Per-mode tax ids: the org's ח.פ vs the contact's ת.ז — the modal swaps
+      // them with the name toggle. `vatId` stays the default-mode value.
+      vatIdOrganization: org?.taxId || null,
+      vatIdContact: contact?.taxId || null,
+      vatId: (organizationName ? org?.taxId : contact?.taxId) || org?.taxId || contact?.taxId || null,
       email: org?.financeEmail || contact?.emails?.[0]?.value || null,
       phone: contact?.phones?.[0]?.value || null,
       address: org?.address || null,
@@ -148,6 +154,151 @@ function codedError(code, message) {
 }
 
 const round2 = (n) => Math.round(n * 100) / 100;
+
+// ── Base-document inheritance ────────────────────────────────────────────────
+// A follow-up document (closing / crediting) must carry the BASE document's
+// actual lines and total — never the deal's current price. doc/info items may
+// be priced VAT-exclusive (`unitprice`) or inclusive (`unitprice_incl`), so we
+// normalize against the document's known gross total: matching sum → use as
+// is; otherwise scale proportionally (covers the exclusive case); rounding
+// drift is absorbed into the last quantity-1 line, and when it can't be, a
+// single consolidated line keeps the TOTAL exact — the total is the accounting
+// truth, the split is presentation.
+export function normalizeBaseDocItems(rawItems, grossIls, fallbackLabel) {
+  const strip = (r) => ({ description: r.description, quantity: r.quantity, unitPriceIls: r.unitPriceIls });
+  const items = (Array.isArray(rawItems) ? rawItems : [])
+    .map((it) => ({
+      description: String(it.description ?? it.desc ?? '').trim() || fallbackLabel,
+      quantity: Number(it.quantity ?? it.qty ?? 1) || 1,
+      unitPriceIls: round2(Number(it.unitprice_incl ?? it.unitprice ?? it.unit_price ?? 0) || 0),
+    }))
+    .filter((r) => r.quantity > 0 && r.unitPriceIls > 0);
+
+  const gross = round2(Number(grossIls) || 0);
+  const single = () => [{ description: fallbackLabel, quantity: 1, unitPriceIls: gross }];
+  if (!items.length) return gross > 0 ? single() : [];
+  const sum = round2(items.reduce((s, r) => s + r.quantity * r.unitPriceIls, 0));
+  if (!(gross > 0) || Math.abs(sum - gross) <= 0.02) return items.map(strip);
+
+  const factor = gross / sum;
+  const scaled = items.map((r) => ({ ...r, unitPriceIls: round2(r.unitPriceIls * factor) }));
+  const scaledSum = round2(scaled.reduce((s, r) => s + r.quantity * r.unitPriceIls, 0));
+  const drift = round2(gross - scaledSum);
+  if (drift !== 0) {
+    const last = scaled[scaled.length - 1];
+    if (last.quantity === 1) last.unitPriceIls = round2(last.unitPriceIls + drift);
+    else return single();
+  }
+  return scaled.map(strip);
+}
+
+// The document's VAT-inclusive total from a doc/info payload — field names are
+// read defensively (totalwithvat is the classic iCount name; totalsum+totalvat
+// is the before-VAT pair).
+export function grossFromDocInfo(info) {
+  for (const k of ['totalwithvat', 'total_with_vat', 'totalWithVat', 'total_inc_vat']) {
+    const v = Number(info?.[k]);
+    if (Number.isFinite(v) && v > 0) return round2(v);
+  }
+  const sum = Number(info?.totalsum);
+  const vat = Number(info?.totalvat);
+  if (Number.isFinite(sum) && sum > 0) return round2(sum + (Number.isFinite(vat) && vat > 0 ? vat : 0));
+  return null;
+}
+
+// Live prefill for a selected base document: its real lines + total (+ client
+// name), normalized for the modal. A GOS-recorded row of the same document
+// supplies the gross as a fallback when doc/info's totals are unreadable.
+export async function fetchBaseDocumentPrefill(prisma, deal, doctype, docnum) {
+  if (!DOC_TYPE_LABELS[doctype]) throw codedError('invalid_doctype');
+  const local = await prisma.icountDocument.findFirst({
+    where: { dealId: deal.id, doctype, docnum: String(docnum) },
+    orderBy: { createdAt: 'desc' },
+  });
+  const info = await docInfo(doctype, docnum);
+  const localGross = local ? Number(local.amountMinor) / 100 : null;
+  const gross = grossFromDocInfo(info) ?? localGross;
+  const fallbackLabel = `לפי ${DOC_TYPE_LABELS[doctype]} מס׳ ${docnum}`;
+  const rows = normalizeBaseDocItems(info?.items, gross, fallbackLabel);
+  const amountIls = gross ?? round2(rows.reduce((s, r) => s + r.quantity * r.unitPriceIls, 0));
+  console.log(
+    `[icount] base prefill ${doctype}/${docnum}: items=${Array.isArray(info?.items) ? info.items.length : 'none'} gross=${gross ?? '?'} → rows=${rows.length} total=${amountIls}`,
+  );
+  return {
+    doctype,
+    docnum: String(docnum),
+    doctypeLabel: DOC_TYPE_LABELS[doctype],
+    rows,
+    amountIls,
+    clientName: info?.client_name || local?.clientName || null,
+  };
+}
+
+// ── iCount customer identity (email-first) ───────────────────────────────────
+// EMAIL is the accounting identity key. When the modal's customer carries an
+// email, we look it up in iCount first: an existing customer is REUSED (and
+// updated with the edited fields) via client_id — doc/create never mints a
+// duplicate for a known email. No email / not found → the document's client_*
+// fields let iCount create the customer as before. Update failures degrade to
+// "reuse without update" (identity beats freshness); lookup failures degrade
+// to the legacy path — both logged, neither blocks issuing.
+export async function resolveClientIdentity(client) {
+  const email = String(client.email || '').trim();
+  if (!email) return { clientId: null, updated: false };
+  const clientId = await findClient({ email });
+  if (!clientId) return { clientId: null, updated: false };
+  try {
+    await upsertClient({
+      clientId,
+      name: client.name,
+      vatId: client.vatId ? String(client.vatId).trim() : null,
+      email,
+      phone: client.phone ? String(client.phone).trim() : null,
+      address: client.address ? String(client.address).trim() : null,
+    });
+    return { clientId, updated: true };
+  } catch (err) {
+    console.error(`[icount] client update failed for ${clientId} — reusing without update: ${err?.reason || err?.message}`);
+    return { clientId, updated: false };
+  }
+}
+
+// ── GOS write-back: ח.פ / ת.ז persistence ────────────────────────────────────
+// Where an issued document's tax id should live in GOS so the NEXT document is
+// prefilled: org mode → the deal's OrganizationUnit (most specific) else its
+// Organization; contact mode → the deal's primary Contact. Pure — testable.
+export function vatIdWriteTarget(deal, clientMode) {
+  if (clientMode === 'contact') {
+    const contactId = deal.contacts?.[0]?.contact?.id || null;
+    return contactId ? { model: 'contact', id: contactId } : null;
+  }
+  if (deal.organizationUnitId) return { model: 'organizationUnit', id: deal.organizationUnitId };
+  if (deal.organizationId) return { model: 'organization', id: deal.organizationId };
+  // Org mode without an org can't happen from the modal; fall back to contact.
+  const contactId = deal.contacts?.[0]?.contact?.id || null;
+  return contactId ? { model: 'contact', id: contactId } : null;
+}
+
+// Best-effort (never fails the issue): persist the tax id typed in the modal
+// back onto the GOS entity it belongs to.
+async function persistClientVatId(prisma, deal, clientMode, vatId) {
+  try {
+    const value = String(vatId || '').trim();
+    if (!value) return;
+    const target = vatIdWriteTarget(deal, clientMode || 'organization');
+    if (!target) return;
+    const current = {
+      contact: deal.contacts?.[0]?.contact?.taxId,
+      organizationUnit: deal.organizationUnit?.taxId,
+      organization: deal.organization?.taxId,
+    }[target.model];
+    if ((current || '') === value) return; // unchanged — nothing to write
+    await prisma[target.model].update({ where: { id: target.id }, data: { taxId: value } });
+    console.log(`[icount] persisted vat id onto ${target.model} ${target.id}`);
+  } catch (err) {
+    console.error(`[icount] vat id write-back failed (non-fatal): ${err?.message || err}`);
+  }
+}
 
 // Totals for a set of edited rows (major units, VAT-inclusive).
 export function totalsForRows(rows, vatRate) {
@@ -298,12 +449,18 @@ export async function issueDocument(prisma, deal, input, userId) {
 
   const payments = typeDef.paymentsAllowed ? buildPaymentBlocks(input.payments) : {};
 
+  // EMAIL-first customer identity: reuse+update an existing iCount customer
+  // with this email (client_id) instead of letting doc/create mint a
+  // duplicate. Falls back to the client_* fields when no email / no match.
+  const identity = await resolveClientIdentity({ ...client, name: clientName });
+
   // Build the iCount body. Items are VAT-inclusive major units (same proven
   // shape as generate_sale).
   const body = {
     doctype,
     lang: 'he',
     currency_code: deal.currency || 'ILS',
+    ...(identity.clientId ? { client_id: identity.clientId } : {}),
     client_name: clientName,
     ...(client.vatId ? { vat_id: String(client.vatId).trim() } : {}),
     ...(client.email ? { email: String(client.email).trim() } : {}),
@@ -362,6 +519,114 @@ export async function issueDocument(prisma, deal, input, userId) {
     return created;
   });
 
+  // After success: the typed ח.פ/ת.ז becomes the GOS prefill for next time.
+  await persistClientVatId(prisma, deal, input.clientMode, client.vatId);
+
+  return { doc, reused: false };
+}
+
+// ── External document linking ("שייך מסמך אחר מאייקאונט") ────────────────────
+
+// Search iCount documents for the link picker. One free-text query routed by
+// shape onto doc/search's verified filters (email / docnum / vat_id /
+// client_name — phone is NOT a doc/search filter), plus an optional doctype.
+export async function searchExternalDocuments({ query, doctype }) {
+  const q = String(query || '').trim();
+  const filters = [];
+  if (q.includes('@')) filters.push({ email: q });
+  else if (/^\d{8,9}$/.test(q)) filters.push({ vat_id: q }, { docnum: Number(q) });
+  else if (/^\d+$/.test(q)) filters.push({ docnum: Number(q) });
+  else if (q) filters.push({ client_name: q });
+  else filters.push({}); // type-only browse
+  const seen = new Set();
+  const out = [];
+  for (const f of filters) {
+    const rows = await searchDocs({ ...f, ...(doctype ? { doctype } : {}), max_results: 30 }).catch(() => []);
+    for (const r of rows) {
+      const dt = r.doctype || r.doc_type;
+      const dn = r.docnum != null ? String(r.docnum) : null;
+      if (!dt || !dn || !DOC_TYPE_LABELS[dt]) continue;
+      const key = `${dt}:${dn}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        doctype: dt,
+        doctypeLabel: DOC_TYPE_LABELS[dt],
+        docnum: dn,
+        clientName: r.client_name || null,
+        email: r.email || r.client_email || null,
+        phone: r.phone || r.client_phone || null,
+        amountIls: grossFromDocInfo(r) ?? (r.total != null ? round2(Number(r.total)) : null),
+        issuedAt: r.dateissued || r.date_issued || null,
+        // 0 open / 1 closed / 2 partially closed (doc/search convention).
+        status: r.status === 1 || r.status === '1' ? 'closed' : r.status === 2 || r.status === '2' ? 'partial' : 'open',
+      });
+    }
+  }
+  return out.slice(0, 30);
+}
+
+// Link an EXTERNAL iCount document (not issued through GOS) to a deal so it
+// becomes a base-document candidate. Verified against doc/info before linking
+// (never links a document iCount doesn't confirm), recorded in the SAME
+// IcountDocument table (source 'linked'), idempotent via the derived key —
+// re-linking returns the existing row and emits nothing.
+export async function linkExternalDocument(prisma, deal, { doctype, docnum }, userId) {
+  if (!DOC_TYPE_LABELS[doctype]) throw codedError('invalid_doctype');
+  const num = String(docnum || '').trim();
+  if (!num) throw codedError('docnum_required');
+
+  const idempotencyKey = `linked:${deal.id}:${doctype}:${num}`;
+  const existing = await prisma.icountDocument.findUnique({ where: { idempotencyKey } });
+  if (existing) return { doc: existing, reused: true };
+  // Also treat a GOS-issued/webhook-captured row of the same document as
+  // already-linked — one document must never appear twice on a deal.
+  const sameDoc = await prisma.icountDocument.findFirst({
+    where: { dealId: deal.id, doctype, docnum: num },
+  });
+  if (sameDoc) return { doc: sameDoc, reused: true };
+
+  const info = await docInfo(doctype, num);
+  const gross = grossFromDocInfo(info) ?? 0;
+  const clientName = info?.client_name || 'לקוח';
+
+  const origin = await userOrigin(userId);
+  const doc = await prisma.$transaction(async (tx) => {
+    const created = await tx.icountDocument.create({
+      data: {
+        dealId: deal.id,
+        source: 'linked',
+        doctype,
+        docnum: num,
+        providerDocId: info?.doc_id != null ? String(info.doc_id) : null,
+        amountMinor: BigInt(Math.round(gross * 100)),
+        currency: deal.currency || 'ILS',
+        clientName,
+        clientVatId: info?.vat_id ? String(info.vat_id) : null,
+        idempotencyKey,
+        issuedBy: userId || null,
+        raw: info ?? undefined,
+      },
+    });
+    // Visible (non-pinned) event — a manual association, not a new document.
+    await emitTimelineEvent(tx, {
+      subjectType: 'deal',
+      subjectId: deal.id,
+      kind: 'accounting',
+      data: {
+        event: 'icount_document_linked',
+        doctype,
+        doctypeLabel: DOC_TYPE_LABELS[doctype],
+        docnum: num,
+        amountIls: gross,
+        currency: deal.currency || 'ILS',
+        clientName,
+        source: 'user',
+      },
+      origin,
+    });
+    return created;
+  });
   return { doc, reused: false };
 }
 
@@ -383,7 +648,7 @@ export async function listDealDocuments(prisma, deal) {
     clientName: d.clientName,
     docUrl: d.docUrl,
     createdAt: d.createdAt,
-    origin: 'gos',
+    origin: d.source === 'linked' ? 'linked' : 'gos',
   }));
 
   let liveError = null;

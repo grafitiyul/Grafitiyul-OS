@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Dialog from '../../common/Dialog.jsx';
 import { api } from '../../../lib/api.js';
 import { emitDealTasksChanged } from '../tasks/taskEvents.js';
+import LinkExternalDocumentPanel from './LinkExternalDocumentPanel.jsx';
 
 // "הפק מסמך" — produce an iCount accounting document from a Deal.
 //
@@ -48,7 +49,11 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
   const [notes, setNotes] = useState('');
   const [payments, setPayments] = useState([]);
   const [baseDoc, setBaseDoc] = useState(null); // { doctype, docnum }
-  const [sendEmail, setSendEmail] = useState(false);
+  const [baseLoading, setBaseLoading] = useState(false);
+  const [baseError, setBaseError] = useState(null);
+  const [baseNote, setBaseNote] = useState(null); // "rows inherited from …"
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [sendEmail, setSendEmail] = useState(true);
 
   const [issuing, setIssuing] = useState(false);
   const [issueError, setIssueError] = useState(null);
@@ -87,7 +92,10 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
         setNotes(d.notes || '');
         setPayments([]);
         setBaseDoc(null);
-        setSendEmail(false);
+        setBaseError(null);
+        setBaseNote(null);
+        setLinkOpen(false);
+        setSendEmail(true);
       } catch (e) {
         setLoadError(e.payload?.error || e.message);
       } finally {
@@ -128,23 +136,101 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
 
   function switchMode(mode) {
     setClientMode(mode);
-    const name = mode === 'organization' ? defaults?.customer?.organizationName : defaults?.customer?.contactName;
-    setClient((c) => ({ ...c, name: name || '' }));
+    const c = defaults?.customer;
+    setClient((prev) => ({
+      ...prev,
+      name: (mode === 'organization' ? c?.organizationName : c?.contactName) || '',
+      // The tax id follows the entity: org's ח.פ vs the contact's ת.ז.
+      vatId: (mode === 'organization' ? c?.vatIdOrganization : c?.vatIdContact) || '',
+    }));
   }
 
+  // A selected base document RESTRICTS the type: only its valid follow-ups
+  // (e.g. base חשבונית מס → only קבלה / חשבונית זיכוי; never חשבונית מס קבלה).
+  const allowedTypeKeys = useMemo(() => {
+    if (!baseDoc || !defaults) return null; // null = all allowed
+    return defaults.docTypes.filter((t) => t.baseTypes.includes(baseDoc.doctype)).map((t) => t.key);
+  }, [baseDoc, defaults]);
+
   function pickType(key) {
-    setDoctype(key);
-    setBaseDoc(null);
     const def = (defaults?.docTypes || []).find((t) => t.key === key);
+    setDoctype(key);
+    if (baseDoc && def?.baseTypes?.includes(baseDoc.doctype)) {
+      // Base stays; inherited rows stay; payments follow the inherited total.
+      setPayments(def?.paymentsAllowed ? [newPayment(grossIls)] : []);
+      return;
+    }
+    setBaseDoc(null);
+    setBaseNote(null);
+    setBaseError(null);
     // Docs that record money received start with one payment row over the total.
     setPayments(def?.paymentsAllowed ? [newPayment(grossIls)] : []);
+  }
+
+  // Selecting a base document inherits its REAL lines + total from iCount —
+  // the deal's own pricing must never leak into a follow-up/closing document.
+  async function selectBase(sel, { forDoctype = doctype } = {}) {
+    setBaseError(null);
+    if (!sel) {
+      setBaseDoc(null);
+      setBaseNote(null);
+      const restored = (defaults?.rows || []).map((r) => ({ ...r }));
+      setRows(restored);
+      const def = (defaults?.docTypes || []).find((t) => t.key === forDoctype);
+      const restoredGross = restored.reduce((s, r) => s + (Number(r.quantity) || 0) * (Number(r.unitPriceIls) || 0), 0);
+      setPayments(def?.paymentsAllowed ? [newPayment(Math.round(restoredGross * 100) / 100)] : []);
+      return;
+    }
+    setBaseDoc({ doctype: sel.doctype, docnum: sel.docnum });
+    setBaseLoading(true);
+    try {
+      const prefill = await api.deals.icountBaseDocument(dealId, sel.doctype, sel.docnum);
+      setRows(prefill.rows.map((r) => ({ ...r })));
+      const def = (defaults?.docTypes || []).find((t) => t.key === forDoctype);
+      setPayments(def?.paymentsAllowed ? [newPayment(prefill.amountIls)] : []);
+      setBaseNote(`השורות והסכום נטענו מ${prefill.doctypeLabel} מס׳ ${prefill.docnum} (ניתן לערוך)`);
+    } catch (e) {
+      // Base stays selected (the accounting link matters) — rows stay editable.
+      setBaseNote(null);
+      setBaseError(e.payload?.reason || e.payload?.error || e.message);
+    } finally {
+      setBaseLoading(false);
+    }
+  }
+
+  // An external document was linked ("שייך מסמך אחר מאייקאונט"): it becomes a
+  // previous-docs row + the selected base; the type auto-switches to a valid
+  // follow-up when the current one is incompatible.
+  async function onExternalLinked(document) {
+    setLinkOpen(false);
+    try {
+      const docs = await api.deals.icountDocuments(dealId);
+      setPrevDocs(docs.documents || []);
+      setLiveError(docs.liveError || null);
+    } catch {
+      /* list refresh is cosmetic — the base selection below still works */
+    }
+    const compatible = (defaults?.docTypes || []).filter((t) => t.baseTypes.includes(document.doctype));
+    if (compatible.length === 0) {
+      // Linked + recorded on the deal, but nothing can be issued "based on" it
+      // (e.g. a receipt) — don't select it as base.
+      setBaseNote('המסמך שויך לדיל, אך אין סוגי מסמכי המשך תקפים עבורו.');
+      return;
+    }
+    let nextType = doctype;
+    if (!compatible.some((t) => t.key === doctype)) {
+      nextType = compatible[0].key;
+      setDoctype(nextType);
+    }
+    await selectBase({ doctype: document.doctype, docnum: document.docnum }, { forDoctype: nextType });
   }
 
   const setRow = (i, patch) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const setPayment = (i, patch) => setPayments((ps) => ps.map((p, j) => (j === i ? { ...p, ...patch } : p)));
 
   const canIssue =
-    !issuing && !loading && !loadError && typeDef && client.name.trim() && rows.some((r) => r.description && Number(r.quantity) > 0) &&
+    !issuing && !loading && !loadError && !baseLoading && typeDef && client.name.trim() &&
+    rows.some((r) => r.description && Number(r.quantity) > 0) &&
     !allocationBlocked && !baseMissing && defaults?.icountConfigured;
 
   async function issue() {
@@ -155,6 +241,8 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
       const { document } = await api.deals.issueIcountDocument(dealId, {
         doctype,
         idempotencyKey: idemKey.current,
+        // Which GOS entity the typed ח.פ/ת.ז is written back onto.
+        clientMode,
         client: {
           name: client.name.trim(),
           vatId: client.vatId.trim() || null,
@@ -232,20 +320,43 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
             </div>
           )}
 
-          {/* Document type */}
+          {/* Document type — restricted to valid follow-ups once a base is selected */}
           <div>
-            <p className="mb-1.5 text-[12px] font-semibold text-gray-500">סוג המסמך</p>
+            <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[12px] font-semibold text-gray-500">סוג המסמך</p>
+              <button type="button" onClick={() => setLinkOpen((o) => !o)}
+                className="rounded-lg border border-blue-300 bg-white px-2.5 py-1 text-[12px] font-medium text-blue-700 hover:bg-blue-50">
+                שייך מסמך אחר מאייקאונט
+              </button>
+            </div>
             <div className="flex flex-wrap gap-1.5">
-              {(defaults?.docTypes || []).map((t) => (
-                <button key={t.key} type="button" onClick={() => pickType(t.key)}
-                  className={`rounded-full border px-3 py-1.5 text-[13px] font-medium transition ${
-                    doctype === t.key ? 'border-blue-600 bg-blue-600 text-white' : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50'
-                  }`}>
-                  {t.label}
-                </button>
-              ))}
+              {(defaults?.docTypes || []).map((t) => {
+                const blocked = allowedTypeKeys !== null && !allowedTypeKeys.includes(t.key);
+                return (
+                  <button key={t.key} type="button" onClick={() => pickType(t.key)} disabled={blocked}
+                    title={blocked ? 'לא ניתן להפיק מסמך זה על בסיס המסמך שנבחר' : undefined}
+                    className={`rounded-full border px-3 py-1.5 text-[13px] font-medium transition ${
+                      doctype === t.key
+                        ? 'border-blue-600 bg-blue-600 text-white'
+                        : blocked
+                          ? 'border-gray-200 bg-gray-50 text-gray-300'
+                          : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50'
+                    }`}>
+                    {t.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
+
+          {linkOpen && (
+            <LinkExternalDocumentPanel
+              dealId={dealId}
+              docTypes={defaults?.docTypes || []}
+              onLinked={onExternalLinked}
+              onClose={() => setLinkOpen(false)}
+            />
+          )}
 
           {/* Base / previous document */}
           {typeDef?.baseTypes?.length > 0 && (
@@ -262,7 +373,7 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
                 <div className="mt-1.5 space-y-1">
                   {doctype !== 'refund' && (
                     <label className="flex items-center gap-2 text-[13px] text-gray-700">
-                      <input type="radio" name="baseDoc" checked={!baseDoc} onChange={() => setBaseDoc(null)} />
+                      <input type="radio" name="baseDoc" checked={!baseDoc} onChange={() => selectBase(null)} />
                       ללא קישור למסמך קודם
                     </label>
                   )}
@@ -270,21 +381,34 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
                     <label key={`${d.doctype}:${d.docnum}`} className="flex items-center gap-2 text-[13px] text-gray-700">
                       <input type="radio" name="baseDoc"
                         checked={baseDoc?.doctype === d.doctype && baseDoc?.docnum === d.docnum}
-                        onChange={() => setBaseDoc({ doctype: d.doctype, docnum: d.docnum })} />
+                        onChange={() => selectBase(d)} />
                       <span>
                         {d.doctypeLabel} מס׳ {d.docnum}
                         {d.amountIls != null && <span className="text-gray-500"> · {fmtIls(d.amountIls)}</span>}
                         {d.clientName && <span className="text-gray-500"> · {d.clientName}</span>}
-                        <span className="text-[11px] text-gray-400"> ({d.origin === 'gos' ? 'הופק מ־GOS' : 'iCount'})</span>
+                        <span className="text-[11px] text-gray-400">
+                          {' '}({d.origin === 'gos' ? 'הופק מ־GOS' : d.origin === 'linked' ? 'שויך ידנית' : 'iCount'})
+                        </span>
                       </span>
                     </label>
                   ))}
                 </div>
               )}
+              {baseLoading && <p className="mt-1 text-[12px] text-blue-700">טוען את שורות המסמך המקורי…</p>}
+              {baseNote && !baseLoading && <p className="mt-1 text-[12px] text-emerald-700">✓ {baseNote}</p>}
+              {baseError && !baseLoading && (
+                <p className="mt-1 text-[12px] text-amber-700">
+                  ⚠ לא ניתן לטעון את שורות המסמך המקורי ({baseError}) — הקישור החשבונאי יישמר, אך יש לוודא את השורות והסכום ידנית.
+                </p>
+              )}
               {liveError && (
                 <p className="mt-1 text-[11px] text-amber-700">חיפוש מסמכים חיים ב־iCount לא זמין כרגע — מוצגים מסמכים שהופקו מ־GOS בלבד.</p>
               )}
             </div>
+          )}
+          {/* A base note can also arrive from linking a doc with no follow-ups */}
+          {!typeDef?.baseTypes?.length && baseNote && (
+            <p className="text-[12px] text-emerald-700">✓ {baseNote}</p>
           )}
 
           {/* Customer */}

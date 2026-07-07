@@ -436,6 +436,14 @@ export const api = {
     icountDocuments: (id) => request(`/api/deals/${id}/icount/documents`),
     issueIcountDocument: (id, data) =>
       request(`/api/deals/${id}/icount/documents`, { method: 'POST', body: JSON.stringify(data) }),
+    // Base-document prefill: the selected base's REAL lines + total from iCount.
+    icountBaseDocument: (id, doctype, docnum) =>
+      request(`/api/deals/${id}/icount/base-document${qs({ doctype, docnum })}`),
+    // External document linking ("שייך מסמך אחר מאייקאונט").
+    icountSearchDocuments: (id, q, doctype) =>
+      request(`/api/deals/${id}/icount/search-documents${qs({ q, doctype })}`),
+    icountLinkDocument: (id, data) =>
+      request(`/api/deals/${id}/icount/link-document`, { method: 'POST', body: JSON.stringify(data) }),
     // Custom-description payment links (/pay/c/<token>).
     customPaymentLinks: (id) => request(`/api/deals/${id}/custom-payment-links`),
     createCustomPaymentLink: (id, data) =>

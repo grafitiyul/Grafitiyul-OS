@@ -6,6 +6,9 @@ import {
   buildDocumentDefaults,
   issueDocument,
   listDealDocuments,
+  fetchBaseDocumentPrefill,
+  searchExternalDocuments,
+  linkExternalDocument,
 } from '../icountDocs.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 import { ensureCustomIcountLink, newPaymentToken, resolvePublicOrigin } from '../dealPayment.js';
@@ -40,6 +43,62 @@ router.get(
     const deal = await loadDeal(req.params.id);
     if (!deal) return res.status(404).json({ error: 'not_found' });
     res.json(await listDealDocuments(prisma, deal));
+  }),
+);
+
+// Live prefill for a selected base document — its REAL lines + total from
+// iCount (doc/info), normalized to the modal's VAT-inclusive row shape.
+router.get(
+  '/:id/icount/base-document',
+  handle(async (req, res) => {
+    const deal = await prisma.deal.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!deal) return res.status(404).json({ error: 'not_found' });
+    try {
+      res.json(await fetchBaseDocumentPrefill(prisma, deal, String(req.query.doctype || ''), String(req.query.docnum || '')));
+    } catch (err) {
+      const code = err?.code || 'base_prefill_failed';
+      const status = code === 'icount_request_failed' || code === 'icount_not_configured' ? 502 : 400;
+      return res.status(status).json({ error: code, reason: err?.reason || null });
+    }
+  }),
+);
+
+// Search iCount for an EXTERNAL document to link ("שייך מסמך אחר מאייקאונט").
+router.get(
+  '/:id/icount/search-documents',
+  handle(async (req, res) => {
+    try {
+      const documents = await searchExternalDocuments({
+        query: req.query.q,
+        doctype: String(req.query.doctype || '') || null,
+      });
+      res.json({ documents });
+    } catch (err) {
+      const code = err?.code || 'search_failed';
+      return res.status(502).json({ error: code, reason: err?.reason || null });
+    }
+  }),
+);
+
+// Link a confirmed external document to the deal (idempotent).
+router.post(
+  '/:id/icount/link-document',
+  handle(async (req, res) => {
+    const deal = await prisma.deal.findUnique({ where: { id: req.params.id }, select: { id: true, currency: true } });
+    if (!deal) return res.status(404).json({ error: 'not_found' });
+    try {
+      const { doc, reused } = await linkExternalDocument(
+        prisma,
+        deal,
+        { doctype: String(req.body?.doctype || ''), docnum: req.body?.docnum },
+        req.adminAuth?.userId || null,
+      );
+      res.status(reused ? 200 : 201).json({ document: doc, reused });
+    } catch (err) {
+      const code = err?.code || 'link_failed';
+      const status = code === 'icount_request_failed' || code === 'icount_not_configured' ? 502 : 400;
+      return res.status(status).json({ error: code, reason: err?.reason || null });
+    }
   }),
 );
 

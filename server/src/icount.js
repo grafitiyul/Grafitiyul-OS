@@ -143,6 +143,50 @@ export async function docInfo(doctype, docnum) {
   return data.data || data;
 }
 
+// ── client/* endpoints (customer identity) ───────────────────────────────────
+// EMAIL is the accounting identity key: before a document creates a customer
+// implicitly, we look the email up (client/find) and reuse+update the existing
+// iCount customer (client/create_or_update) instead of letting doc/create
+// mint a duplicate under a new display name.
+
+// Find an existing iCount customer by email (or ח.פ). Returns client_id or
+// null. "Not found" comes back as status:false — that is NORMAL here, so this
+// never throws; genuine API failures also resolve to null (the caller then
+// falls back to letting doc/create handle the customer) and are logged.
+export async function findClient({ email, hp }) {
+  try {
+    const body = {};
+    if (email) body.email = email;
+    if (hp) body.hp = hp;
+    const data = await icountRequest('client/find', body);
+    const id = data?.data?.client_id ?? data?.client_id ?? null;
+    return id != null ? String(id) : null;
+  } catch (err) {
+    // status:false = not found (expected). Anything else is best-effort.
+    if (err?.code !== 'icount_request_failed') {
+      console.error(`[icount] client/find failed: ${err?.message || err}`);
+    }
+    return null;
+  }
+}
+
+// Update (or create) an iCount customer. `fields` uses the modal's edited
+// values; both spellings are sent where iCount accepts either (same shape as
+// the verified v3 integration). Returns the client_id.
+export async function upsertClient({ clientId, name, vatId, email, phone, address }) {
+  const body = {
+    ...(clientId ? { client_id: clientId } : {}),
+    client_name: name,
+    ...(vatId ? { vat_id: vatId, hp: vatId } : {}),
+    ...(email ? { email, client_email: email } : {}),
+    ...(phone ? { phone, client_phone: phone } : {}),
+    ...(address ? { address, client_address: address } : {}),
+  };
+  const data = await icountRequest('client/create_or_update', body);
+  const id = data?.data?.client_id ?? data?.client_id ?? clientId ?? null;
+  return id != null ? String(id) : null;
+}
+
 // Viewer URL for an issued document (doc/get_doc_url).
 export async function getDocUrl(doctype, docnum) {
   const data = await icountRequest('doc/get_doc_url', {

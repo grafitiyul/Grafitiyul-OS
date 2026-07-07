@@ -719,6 +719,10 @@ model Contact {
   // Preferred communication language with this person (he | en). Lives on the
   // Contact — the Deal/Quote never copies it; a future Quote defaults from here.
   communicationLanguage String?
+  // ת.ז / ע.מ for PRIVATE-customer accounting documents (iCount vat_id). The
+  // organization's ח.פ lives on Organization/OrganizationUnit.taxId — this is
+  // only the person-level fallback, written back from the הפק מסמך modal.
+  taxId        String?
   createdAt    DateTime              @default(now())
   updatedAt    DateTime              @updatedAt
   phones       ContactPhone[]

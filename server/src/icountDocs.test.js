@@ -6,6 +6,9 @@ import {
   totalsForRows,
   allocationRequirement,
   buildPaymentBlocks,
+  normalizeBaseDocItems,
+  grossFromDocInfo,
+  vatIdWriteTarget,
 } from './icountDocs.js';
 
 // Pure domain logic only — the iCount HTTP client and prisma writes are out of
@@ -136,4 +139,89 @@ test('payments: duplicate non-cheque method / bad amount / unknown method are re
   assert.throws(() => buildPaymentBlocks([{ method: 'cash', amount: 1 }, { method: 'cash', amount: 2 }]), /payment_method_duplicate/);
   assert.throws(() => buildPaymentBlocks([{ method: 'cash', amount: 0 }]), /payment_amount_invalid/);
   assert.throws(() => buildPaymentBlocks([{ method: 'bit', amount: 10 }]), /payment_method_invalid/);
+});
+
+test('defaults: per-mode tax ids — org ח.פ vs contact ת.ז, contact fallback when no org', () => {
+  const withContactTz = {
+    ...baseDeal,
+    contacts: [{ contact: { ...baseDeal.contacts[0].contact, taxId: '039876543' } }],
+  };
+  const d = buildDocumentDefaults(withContactTz);
+  assert.equal(d.customer.vatIdOrganization, '514123456');
+  assert.equal(d.customer.vatIdContact, '039876543');
+  assert.equal(d.customer.vatId, '514123456'); // default mode = organization
+  const noOrg = buildDocumentDefaults({ ...withContactTz, organization: null });
+  assert.equal(noOrg.customer.vatId, '039876543'); // contact mode default
+});
+
+test('base items: VAT-inclusive items whose sum matches gross pass through untouched', () => {
+  const rows = normalizeBaseDocItems(
+    [{ description: 'סיור', quantity: 2, unitprice: 1180 }],
+    2360,
+    'fallback',
+  );
+  assert.deepEqual(rows, [{ description: 'סיור', quantity: 2, unitPriceIls: 1180 }]);
+});
+
+test('base items: VAT-exclusive items are scaled up to the document gross', () => {
+  // doc/info returned before-VAT unit prices; gross carries the 18% VAT.
+  const rows = normalizeBaseDocItems(
+    [{ description: 'סיור', quantity: 1, unitprice: 5000 }],
+    5900,
+    'fallback',
+  );
+  assert.deepEqual(rows, [{ description: 'סיור', quantity: 1, unitPriceIls: 5900 }]);
+});
+
+test('base items: rounding drift lands on the last quantity-1 line; total stays exact', () => {
+  const rows = normalizeBaseDocItems(
+    [
+      { description: 'א', quantity: 1, unitprice: 33.33 },
+      { description: 'ב', quantity: 1, unitprice: 33.33 },
+      { description: 'ג', quantity: 1, unitprice: 33.33 },
+    ],
+    118, // ×1.18 with rounding per line drifts off the exact gross
+    'fallback',
+  );
+  const sum = Math.round(rows.reduce((s, r) => s + r.quantity * r.unitPriceIls, 0) * 100) / 100;
+  assert.equal(sum, 118);
+  assert.equal(rows.length, 3);
+});
+
+test('base items: no items → single consolidated line over the gross; nothing → empty', () => {
+  assert.deepEqual(normalizeBaseDocItems([], 500, 'לפי חשבון עסקה מס׳ 7'), [
+    { description: 'לפי חשבון עסקה מס׳ 7', quantity: 1, unitPriceIls: 500 },
+  ]);
+  assert.deepEqual(normalizeBaseDocItems([], null, 'x'), []);
+});
+
+test('grossFromDocInfo: totalwithvat wins; totalsum+totalvat is the fallback pair', () => {
+  assert.equal(grossFromDocInfo({ totalwithvat: 118.5 }), 118.5);
+  assert.equal(grossFromDocInfo({ totalsum: 100, totalvat: 18 }), 118);
+  assert.equal(grossFromDocInfo({ totalsum: 100 }), 100);
+  assert.equal(grossFromDocInfo({}), null);
+});
+
+test('vatIdWriteTarget: unit beats org; contact mode targets the primary contact', () => {
+  const deal = {
+    organizationId: 'org1',
+    organizationUnitId: 'unit1',
+    contacts: [{ contact: { id: 'c1' } }],
+  };
+  assert.deepEqual(vatIdWriteTarget(deal, 'organization'), { model: 'organizationUnit', id: 'unit1' });
+  assert.deepEqual(vatIdWriteTarget({ ...deal, organizationUnitId: null }, 'organization'), { model: 'organization', id: 'org1' });
+  assert.deepEqual(vatIdWriteTarget(deal, 'contact'), { model: 'contact', id: 'c1' });
+  assert.deepEqual(
+    vatIdWriteTarget({ organizationId: null, organizationUnitId: null, contacts: [{ contact: { id: 'c1' } }] }, 'organization'),
+    { model: 'contact', id: 'c1' },
+  );
+  assert.equal(vatIdWriteTarget({ contacts: [] }, 'contact'), null);
+});
+
+test('follow-up restriction map: base חשבונית מס allows only קבלה/זיכוי — never חשבונית מס קבלה', () => {
+  const followUpsFor = (base) => DOC_TYPES.filter((t) => t.baseTypes.includes(base)).map((t) => t.key);
+  assert.deepEqual(followUpsFor('deal'), ['invoice', 'invrec']);
+  assert.deepEqual(followUpsFor('invoice'), ['receipt', 'refund']);
+  assert.deepEqual(followUpsFor('invrec'), ['refund']);
+  assert.deepEqual(followUpsFor('receipt'), []);
 });

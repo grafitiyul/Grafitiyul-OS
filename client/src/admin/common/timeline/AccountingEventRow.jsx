@@ -1,7 +1,8 @@
 // kind='accounting' timeline events — iCount documents + custom payment links.
-// Two shapes share the renderer (data.event):
-//   'icount_document'     — issued document (pinned into FOCUS by the server)
-//   'custom_payment_link' — a custom-description payment link was created
+// Three shapes share the renderer (data.event):
+//   'icount_document'        — issued document (pinned into FOCUS by the server)
+//   'icount_document_linked' — an existing iCount document manually linked to the deal
+//   'custom_payment_link'    — a custom-description payment link was created
 // System events: not editable, no comments; pinned rows expose unpin.
 
 const fmtIls = (n) =>
@@ -23,9 +24,10 @@ const SOURCE_LABEL = {
 
 export default function AccountingEventRow({ entry, dragHandle = null, onTogglePin = null }) {
   const d = entry.data || {};
-  const isDoc = d.event === 'icount_document';
+  const isDoc = d.event === 'icount_document' || d.event === 'icount_document_linked';
+  const isLinked = d.event === 'icount_document_linked';
   const who = entry.createdByName || entry.actorLabel || 'מערכת';
-  const sourceNote = SOURCE_LABEL[d.source] || null;
+  const sourceNote = isLinked ? `שויך ידנית מאייקאונט ע״י ${who}` : SOURCE_LABEL[d.source] || null;
 
   return (
     <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-3 py-2.5" dir="rtl">
