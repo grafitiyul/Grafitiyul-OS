@@ -59,6 +59,7 @@ import emailRouter from './routes/email.js';
 import emailTrackingRouter from './routes/emailTracking.js';
 import { startScheduledWorker } from './whatsapp/scheduledWorker.js';
 import { startEmailSyncWorker } from './email/syncWorker.js';
+import { makeLegacyRedirect } from './legacyRedirect.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -82,6 +83,29 @@ const runningVersion = (() => {
 })();
 
 const app = express();
+
+// ---------- Legacy-domain 301 redirect (must be FIRST) ----------
+//
+// Requests still arriving on the OLD Railway public host are permanently
+// redirected to the same path+query on the canonical domain, so links already
+// in the wild (/pay/<token>, /p/<token>, tracking pixels, bookmarks) keep
+// working. Runs before body parsing — a stale POST to the old host is
+// redirected without reading its (up to 25mb) body. ONLY the exact legacy
+// public host matches; *.railway.internal, the new domain, localhost and the
+// health probe all pass through (see src/legacyRedirect.js). Configurable:
+//   CANONICAL_ORIGIN     default https://app.grafitiyul.co.il
+//   LEGACY_PUBLIC_HOST   default grafitiyul-os-production.up.railway.app
+const legacyRedirectTarget = makeLegacyRedirect({
+  canonicalOrigin: process.env.CANONICAL_ORIGIN || 'https://app.grafitiyul.co.il',
+  legacyHost: process.env.LEGACY_PUBLIC_HOST || 'grafitiyul-os-production.up.railway.app',
+});
+app.use((req, res, next) => {
+  const target = legacyRedirectTarget(req.headers.host, req.path, req.originalUrl);
+  if (!target) return next();
+  res.set('Cache-Control', 'no-store');
+  return res.redirect(301, target);
+});
+
 app.use(cors());
 // 25mb: WhatsApp voice notes are uploaded from the composer as base64 JSON.
 // Everything else stays far below this; admin-authed surface.
