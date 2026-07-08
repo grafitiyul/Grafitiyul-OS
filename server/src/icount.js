@@ -128,19 +128,32 @@ export async function createDoc(payload) {
   return { docId: docId != null ? String(docId) : null, docnum: docnum != null ? String(docnum) : null, docUrl, raw: data };
 }
 
+// "Zero results" comes back from iCount as status:false with one of these
+// reasons — that is an EMPTY result, never an error.
+const NO_RESULTS_REASONS = /no_results_found|client_not_found|not_found/i;
+
 // Search documents (doc/search) — used to list the customer's previous iCount
-// documents for base/close/credit selection. Returns the raw rows array.
+// documents for base/close/credit selection. Rows live under `results_list`
+// (verified against the live API 2026-07-08). Returns [] for iCount's
+// "no results" status; real API failures still throw.
 export async function searchDocs(filters) {
-  const data = await icountRequest('doc/search', { detail_level: 2, max_results: 50, ...filters });
-  const rows = data.data;
+  let data;
+  try {
+    data = await icountRequest('doc/search', { detail_level: 2, max_results: 50, ...filters });
+  } catch (err) {
+    if (NO_RESULTS_REASONS.test(String(err?.reason || ''))) return [];
+    throw err;
+  }
+  const rows = data.results_list ?? data.data;
   return Array.isArray(rows) ? rows : [];
 }
 
-// One document's details (doc/info) — the credit flow needs the original
-// document's internal doc_id (origin_doc_id) and its items.
+// One document's details (doc/info) — the payload nests everything under
+// `doc_info` (items with NET unitprice + per-item tax_rate/tax_exempt,
+// totals, doc_url, based_on/based_on_this; verified live 2026-07-08).
 export async function docInfo(doctype, docnum) {
   const data = await icountRequest('doc/info', { doctype, docnum: Number(docnum) });
-  return data.data || data;
+  return data.doc_info || data.data || data;
 }
 
 // ── client/* endpoints (customer identity) ───────────────────────────────────
@@ -149,22 +162,22 @@ export async function docInfo(doctype, docnum) {
 // iCount customer (client/create_or_update) instead of letting doc/create
 // mint a duplicate under a new display name.
 
-// Find an existing iCount customer by email (or ח.פ). Returns client_id or
-// null. "Not found" comes back as status:false — that is NORMAL here, so this
-// never throws; genuine API failures also resolve to null (the caller then
-// falls back to letting doc/create handle the customer) and are logged.
+// Find an existing iCount customer by email (or ח.פ). client/info resolves an
+// email to its client (matching_query_id:'email'; client/find is bad_method
+// under body auth — verified live 2026-07-08). Returns client_id or null;
+// "not found" and genuine failures both resolve to null (the caller falls
+// back to letting doc/create handle the customer) — failures are logged.
 export async function findClient({ email, hp }) {
   try {
     const body = {};
     if (email) body.email = email;
     if (hp) body.hp = hp;
-    const data = await icountRequest('client/find', body);
-    const id = data?.data?.client_id ?? data?.client_id ?? null;
+    const data = await icountRequest('client/info', body);
+    const id = data?.client_id ?? data?.client_info?.client_id ?? null;
     return id != null ? String(id) : null;
   } catch (err) {
-    // status:false = not found (expected). Anything else is best-effort.
-    if (err?.code !== 'icount_request_failed') {
-      console.error(`[icount] client/find failed: ${err?.message || err}`);
+    if (!NO_RESULTS_REASONS.test(String(err?.reason || ''))) {
+      console.error(`[icount] client/info lookup failed: ${err?.reason || err?.message || err}`);
     }
     return null;
   }

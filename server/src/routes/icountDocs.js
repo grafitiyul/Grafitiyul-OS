@@ -75,7 +75,8 @@ router.get(
       res.json({ documents });
     } catch (err) {
       const code = err?.code || 'search_failed';
-      return res.status(502).json({ error: code, reason: err?.reason || null });
+      const status = code === 'phone_search_unsupported' ? 400 : 502;
+      return res.status(status).json({ error: code, reason: err?.reason || null });
     }
   }),
 );

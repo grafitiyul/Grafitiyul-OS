@@ -33,7 +33,12 @@ export default function LinkExternalDocumentPanel({ dealId, docTypes, onLinked, 
       const { documents } = await api.deals.icountSearchDocuments(dealId, query.trim(), doctype || undefined);
       setResults(documents);
     } catch (e) {
-      setError(e.payload?.reason || e.payload?.error || e.message);
+      const code = e.payload?.error;
+      setError(
+        code === 'phone_search_unsupported'
+          ? 'חיפוש לפי מספר טלפון אינו נתמך ע״י אייקאונט — חפשו לפי אימייל, שם לקוח, ח.פ או מספר מסמך.'
+          : e.payload?.reason || code || e.message,
+      );
       setResults(null);
     } finally {
       setSearching(false);

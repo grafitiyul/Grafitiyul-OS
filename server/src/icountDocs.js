@@ -156,40 +156,34 @@ function codedError(code, message) {
 const round2 = (n) => Math.round(n * 100) / 100;
 
 // ── Base-document inheritance ────────────────────────────────────────────────
-// A follow-up document (closing / crediting) must carry the BASE document's
-// actual lines and total — never the deal's current price. doc/info items may
-// be priced VAT-exclusive (`unitprice`) or inclusive (`unitprice_incl`), so we
-// normalize against the document's known gross total: matching sum → use as
-// is; otherwise scale proportionally (covers the exclusive case); rounding
-// drift is absorbed into the last quantity-1 line, and when it can't be, a
-// single consolidated line keeps the TOTAL exact — the total is the accounting
-// truth, the split is presentation.
-export function normalizeBaseDocItems(rawItems, grossIls, fallbackLabel) {
-  const strip = (r) => ({ description: r.description, quantity: r.quantity, unitPriceIls: r.unitPriceIls });
-  const items = (Array.isArray(rawItems) ? rawItems : [])
-    .map((it) => ({
-      description: String(it.description ?? it.desc ?? '').trim() || fallbackLabel,
-      quantity: Number(it.quantity ?? it.qty ?? 1) || 1,
-      unitPriceIls: round2(Number(it.unitprice_incl ?? it.unitprice ?? it.unit_price ?? 0) || 0),
-    }))
-    .filter((r) => r.quantity > 0 && r.unitPriceIls > 0);
-
-  const gross = round2(Number(grossIls) || 0);
-  const single = () => [{ description: fallbackLabel, quantity: 1, unitPriceIls: gross }];
-  if (!items.length) return gross > 0 ? single() : [];
-  const sum = round2(items.reduce((s, r) => s + r.quantity * r.unitPriceIls, 0));
-  if (!(gross > 0) || Math.abs(sum - gross) <= 0.02) return items.map(strip);
-
-  const factor = gross / sum;
-  const scaled = items.map((r) => ({ ...r, unitPriceIls: round2(r.unitPriceIls * factor) }));
-  const scaledSum = round2(scaled.reduce((s, r) => s + r.quantity * r.unitPriceIls, 0));
-  const drift = round2(gross - scaledSum);
-  if (drift !== 0) {
-    const last = scaled[scaled.length - 1];
-    if (last.quantity === 1) last.unitPriceIls = round2(last.unitPriceIls + drift);
-    else return single();
-  }
-  return scaled.map(strip);
+// A follow-up document (closing / crediting) carries the BASE document's item
+// rows EXACTLY as iCount stores them — same descriptions, quantities, prices
+// and row details; multiple rows preserved; nothing consolidated, nothing
+// synthesized. doc_info items (verified live 2026-07-08) carry a NET
+// high-precision `unitprice` + per-item `tax_rate`/`tax_exempt`, so each row
+// converts to the modal's VAT-inclusive price with ITS OWN rate — exactly the
+// numbers iCount itself shows on the document.
+export function normalizeBaseDocItems(rawItems) {
+  return (Array.isArray(rawItems) ? rawItems : [])
+    .map((it) => {
+      const quantity = Number(it.quantity ?? it.qty ?? 1) || 0;
+      let unitPriceIls;
+      if (it.unitprice_incl != null) {
+        unitPriceIls = round2(Number(it.unitprice_incl) || 0);
+      } else {
+        const net = Number(it.unitprice ?? it.unit_price ?? 0) || 0;
+        const exempt = it.tax_exempt === '1' || it.tax_exempt === 1 || it.tax_exempt === true;
+        const rate = Number(it.tax_rate);
+        unitPriceIls = round2(exempt || !Number.isFinite(rate) ? net : net * (1 + rate / 100));
+      }
+      return {
+        description: String(it.description ?? it.desc ?? '').trim(),
+        details: String(it.long_description ?? '').trim() || null,
+        quantity,
+        unitPriceIls,
+      };
+    })
+    .filter((r) => r.description && r.quantity > 0);
 }
 
 // The document's VAT-inclusive total from a doc/info payload — field names are
@@ -207,7 +201,7 @@ export function grossFromDocInfo(info) {
 }
 
 // Live prefill for a selected base document: its real lines + total (+ client
-// name), normalized for the modal. A GOS-recorded row of the same document
+// name), copied from doc/info. A GOS-recorded row of the same document
 // supplies the gross as a fallback when doc/info's totals are unreadable.
 export async function fetchBaseDocumentPrefill(prisma, deal, doctype, docnum) {
   if (!DOC_TYPE_LABELS[doctype]) throw codedError('invalid_doctype');
@@ -218,8 +212,7 @@ export async function fetchBaseDocumentPrefill(prisma, deal, doctype, docnum) {
   const info = await docInfo(doctype, docnum);
   const localGross = local ? Number(local.amountMinor) / 100 : null;
   const gross = grossFromDocInfo(info) ?? localGross;
-  const fallbackLabel = `לפי ${DOC_TYPE_LABELS[doctype]} מס׳ ${docnum}`;
-  const rows = normalizeBaseDocItems(info?.items, gross, fallbackLabel);
+  const rows = normalizeBaseDocItems(info?.items);
   const amountIls = gross ?? round2(rows.reduce((s, r) => s + r.quantity * r.unitPriceIls, 0));
   console.log(
     `[icount] base prefill ${doctype}/${docnum}: items=${Array.isArray(info?.items) ? info.items.length : 'none'} gross=${gross ?? '?'} → rows=${rows.length} total=${amountIls}`,
@@ -427,6 +420,7 @@ export async function issueDocument(prisma, deal, input, userId) {
   const rows = (input.rows || [])
     .map((r) => ({
       description: String(r.description || '').trim(),
+      details: String(r.details || '').trim() || null,
       quantity: Number(r.quantity) || 0,
       unitPriceIls: round2(Number(r.unitPriceIls) || 0),
     }))
@@ -470,6 +464,8 @@ export async function issueDocument(prisma, deal, input, userId) {
       description: r.description,
       quantity: r.quantity,
       unitprice_incl: r.unitPriceIls,
+      // Row details from an inherited base document (doc_info item schema).
+      ...(r.details ? { long_description: r.details } : {}),
     })),
     ...(String(input.notes || '').trim() ? { hwc: String(input.notes).trim() } : {}),
     ...(input.sendEmail && client.email ? { send_email: 1 } : {}),
@@ -477,16 +473,11 @@ export async function issueDocument(prisma, deal, input, userId) {
   };
 
   if (basedOn) {
-    if (doctype === 'refund') {
-      // Credit flow: iCount links credits by the ORIGINAL doc's internal id.
-      const info = await docInfo(basedOn.doctype, basedOn.docnum);
-      const originDocId = info?.doc_id ?? null;
-      if (!originDocId) throw codedError('base_document_not_found');
-      body.origin_doc_id = originDocId;
-    } else {
-      // Closing flow (חשבון עסקה → חשבונית, חשבונית → קבלה): based_on.
-      body.based_on = [{ doctype: basedOn.doctype, docnum: Number(basedOn.docnum) }];
-    }
+    // Closing AND crediting both link by based_on. (The live doc_info payload
+    // carries no internal doc_id, so the origin_doc_id variant from Bearer-
+    // auth integrations is not available under body auth — verified
+    // 2026-07-08; based_on is the mechanism doc/create supports here.)
+    body.based_on = [{ doctype: basedOn.doctype, docnum: Number(basedOn.docnum) }];
   }
 
   const { docId, docnum, docUrl, raw } = await createDoc(body);
@@ -532,6 +523,11 @@ export async function issueDocument(prisma, deal, input, userId) {
 // client_name — phone is NOT a doc/search filter), plus an optional doctype.
 export async function searchExternalDocuments({ query, doctype }) {
   const q = String(query || '').trim();
+  // A phone-shaped query (05X…/+972…) has no doc/search filter — reject it
+  // explicitly so the UI explains instead of showing a false "no results".
+  if (/^(\+?972|0)5\d{8}$/.test(q.replace(/[-\s]/g, ''))) {
+    throw codedError('phone_search_unsupported');
+  }
   const filters = [];
   if (q.includes('@')) filters.push({ email: q });
   else if (/^\d{8,9}$/.test(q)) filters.push({ vat_id: q }, { docnum: Number(q) });
@@ -541,7 +537,9 @@ export async function searchExternalDocuments({ query, doctype }) {
   const seen = new Set();
   const out = [];
   for (const f of filters) {
-    const rows = await searchDocs({ ...f, ...(doctype ? { doctype } : {}), max_results: 30 }).catch(() => []);
+    // searchDocs returns [] for iCount's "no results"; real failures bubble up
+    // so the UI shows an ERROR, never a false empty state.
+    const rows = await searchDocs({ ...f, ...(doctype ? { doctype } : {}), max_results: 30 });
     for (const r of rows) {
       const dt = r.doctype || r.doc_type;
       const dn = r.docnum != null ? String(r.docnum) : null;
@@ -603,6 +601,7 @@ export async function linkExternalDocument(prisma, deal, { doctype, docnum }, us
         currency: deal.currency || 'ILS',
         clientName,
         clientVatId: info?.vat_id ? String(info.vat_id) : null,
+        docUrl: info?.doc_url || null,
         idempotencyKey,
         issuedBy: userId || null,
         raw: info ?? undefined,

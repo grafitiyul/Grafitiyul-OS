@@ -185,10 +185,17 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
     setBaseLoading(true);
     try {
       const prefill = await api.deals.icountBaseDocument(dealId, sel.doctype, sel.docnum);
+      if (prefill.rows.length === 0) {
+        // A base with no readable items: the accounting link is kept but the
+        // rows are the user's to provide — never a synthesized line.
+        setBaseNote(null);
+        setBaseError('לא נמצאו שורות במסמך המקורי — יש לוודא את השורות והסכום ידנית');
+        return;
+      }
       setRows(prefill.rows.map((r) => ({ ...r })));
       const def = (defaults?.docTypes || []).find((t) => t.key === forDoctype);
       setPayments(def?.paymentsAllowed ? [newPayment(prefill.amountIls)] : []);
-      setBaseNote(`השורות והסכום נטענו מ${prefill.doctypeLabel} מס׳ ${prefill.docnum} (ניתן לערוך)`);
+      setBaseNote(`שורות המסמך המקורי נטענו מ${prefill.doctypeLabel} מס׳ ${prefill.docnum} (ניתן לערוך)`);
     } catch (e) {
       // Base stays selected (the accounting link matters) — rows stay editable.
       setBaseNote(null);
@@ -252,7 +259,12 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
         },
         rows: rows
           .filter((r) => r.description && Number(r.quantity) > 0)
-          .map((r) => ({ description: r.description, quantity: Number(r.quantity), unitPriceIls: Number(r.unitPriceIls) || 0 })),
+          .map((r) => ({
+            description: r.description,
+            details: r.details || null,
+            quantity: Number(r.quantity),
+            unitPriceIls: Number(r.unitPriceIls) || 0,
+          })),
         notes: notes.trim() || null,
         payments: typeDef.paymentsAllowed ? payments : [],
         basedOn: baseDoc,
@@ -467,13 +479,19 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
                 <span>תיאור</span><span>כמות</span><span>מחיר יח׳</span><span>סה״כ</span><span />
               </div>
               {rows.map((r, i) => (
-                <div key={i} className="grid grid-cols-[1fr_4.5rem_6.5rem_6.5rem_2rem] items-center gap-2">
-                  <input value={r.description} onChange={(e) => setRow(i, { description: e.target.value })} className={FIELD} />
-                  <input type="number" min="0" value={r.quantity} onChange={(e) => setRow(i, { quantity: e.target.value })} className={`${FIELD} text-center`} dir="ltr" />
-                  <input type="number" min="0" step="0.01" value={r.unitPriceIls} onChange={(e) => setRow(i, { unitPriceIls: e.target.value })} className={FIELD} dir="ltr" />
-                  <span className="text-[13px] text-gray-700" dir="ltr">{fmtIls((Number(r.quantity) || 0) * (Number(r.unitPriceIls) || 0))}</span>
-                  <button type="button" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} title="הסרת שורה"
-                    className="text-gray-400 hover:text-red-600">✕</button>
+                <div key={i}>
+                  <div className="grid grid-cols-[1fr_4.5rem_6.5rem_6.5rem_2rem] items-center gap-2">
+                    <input value={r.description} onChange={(e) => setRow(i, { description: e.target.value })} className={FIELD} />
+                    <input type="number" min="0" value={r.quantity} onChange={(e) => setRow(i, { quantity: e.target.value })} className={`${FIELD} text-center`} dir="ltr" />
+                    <input type="number" min="0" step="0.01" value={r.unitPriceIls} onChange={(e) => setRow(i, { unitPriceIls: e.target.value })} className={FIELD} dir="ltr" />
+                    <span className="text-[13px] text-gray-700" dir="ltr">{fmtIls((Number(r.quantity) || 0) * (Number(r.unitPriceIls) || 0))}</span>
+                    <button type="button" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} title="הסרת שורה"
+                      className="text-gray-400 hover:text-red-600">✕</button>
+                  </div>
+                  {/* Row details inherited from a base document (long_description) */}
+                  {r.details && (
+                    <p className="mt-0.5 pr-1 text-[11.5px] text-gray-500" dir="auto">{r.details}</p>
+                  )}
                 </div>
               ))}
             </div>

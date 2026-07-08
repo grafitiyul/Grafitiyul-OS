@@ -154,45 +154,37 @@ test('defaults: per-mode tax ids — org ח.פ vs contact ת.ז, contact fallbac
   assert.equal(noOrg.customer.vatId, '039876543'); // contact mode default
 });
 
-test('base items: VAT-inclusive items whose sum matches gross pass through untouched', () => {
-  const rows = normalizeBaseDocItems(
-    [{ description: 'סיור', quantity: 2, unitprice: 1180 }],
-    2360,
-    'fallback',
-  );
-  assert.deepEqual(rows, [{ description: 'סיור', quantity: 2, unitPriceIls: 1180 }]);
-});
-
-test('base items: VAT-exclusive items are scaled up to the document gross', () => {
-  // doc/info returned before-VAT unit prices; gross carries the 18% VAT.
-  const rows = normalizeBaseDocItems(
-    [{ description: 'סיור', quantity: 1, unitprice: 5000 }],
-    5900,
-    'fallback',
-  );
-  assert.deepEqual(rows, [{ description: 'סיור', quantity: 1, unitPriceIls: 5900 }]);
-});
-
-test('base items: rounding drift lands on the last quantity-1 line; total stays exact', () => {
-  const rows = normalizeBaseDocItems(
-    [
-      { description: 'א', quantity: 1, unitprice: 33.33 },
-      { description: 'ב', quantity: 1, unitprice: 33.33 },
-      { description: 'ג', quantity: 1, unitprice: 33.33 },
-    ],
-    118, // ×1.18 with rounding per line drifts off the exact gross
-    'fallback',
-  );
-  const sum = Math.round(rows.reduce((s, r) => s + r.quantity * r.unitPriceIls, 0) * 100) / 100;
-  assert.equal(sum, 118);
-  assert.equal(rows.length, 3);
-});
-
-test('base items: no items → single consolidated line over the gross; nothing → empty', () => {
-  assert.deepEqual(normalizeBaseDocItems([], 500, 'לפי חשבון עסקה מס׳ 7'), [
-    { description: 'לפי חשבון עסקה מס׳ 7', quantity: 1, unitPriceIls: 500 },
+// Item fixtures mirror the LIVE doc/info payload shape (verified 2026-07-08):
+// string quantities, NET high-precision unitprice, per-item tax_rate/tax_exempt.
+test('base items: copied EXACTLY — every row kept, net price → inclusive per its own tax_rate', () => {
+  const rows = normalizeBaseDocItems([
+    { item_id: '1', description: 'סיור גרפיטי', long_description: '', unitprice: '1000', quantity: '2', tax_rate: 18, tax_exempt: '0' },
+    { item_id: '2', description: 'סדנה', long_description: 'כולל ציוד', unitprice: '500', quantity: '1', tax_rate: 18, tax_exempt: '0' },
+    { item_id: '3', description: 'תרומה', long_description: '', unitprice: '100', quantity: '1', tax_rate: 18, tax_exempt: '1' },
   ]);
-  assert.deepEqual(normalizeBaseDocItems([], null, 'x'), []);
+  assert.deepEqual(rows, [
+    { description: 'סיור גרפיטי', details: null, quantity: 2, unitPriceIls: 1180 },
+    { description: 'סדנה', details: 'כולל ציוד', quantity: 1, unitPriceIls: 590 },
+    { description: 'תרומה', details: null, quantity: 1, unitPriceIls: 100 }, // exempt stays net
+  ]);
+});
+
+test('base items: document 54526 regression — high-precision net converts to the exact inclusive price', () => {
+  // The real item behind the QA bug: 0.0084745762711864 × 1.18 = 0.01.
+  const rows = normalizeBaseDocItems([
+    { description: 'סיור וסדנת גרפיטי', long_description: '', unitprice: '0.0084745762711864', quantity: '1', tax_rate: 18, tax_exempt: '0' },
+  ]);
+  assert.deepEqual(rows, [
+    { description: 'סיור וסדנת גרפיטי', details: null, quantity: 1, unitPriceIls: 0.01 },
+  ]);
+});
+
+test('base items: unitprice_incl preferred when present; no items → empty (never synthesized)', () => {
+  assert.deepEqual(normalizeBaseDocItems([{ description: 'א', unitprice_incl: 118, unitprice: 100, quantity: 1 }]), [
+    { description: 'א', details: null, quantity: 1, unitPriceIls: 118 },
+  ]);
+  assert.deepEqual(normalizeBaseDocItems([]), []);
+  assert.deepEqual(normalizeBaseDocItems(undefined), []);
 });
 
 test('grossFromDocInfo: totalwithvat wins; totalsum+totalvat is the fallback pair', () => {
