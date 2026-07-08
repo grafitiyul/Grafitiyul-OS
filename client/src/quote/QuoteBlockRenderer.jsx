@@ -1,7 +1,7 @@
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useState } from 'react';
 import { formatMinor } from '../lib/money.js';
 import GrafitiyulHeroLogo from './GrafitiyulHeroLogo.jsx';
-import { parseEmbedUrl } from '../editor/embedProviders.js';
+import { parseEmbedUrl, buildWatchUrl, posterCandidates, providerLabel } from '../editor/embedProviders.js';
 
 // Signing context — supplied ONLY by the public customer page. It carries the
 // current signature (once signed) and the handler that opens the signature popup.
@@ -498,14 +498,19 @@ function SectionItems({ d, lang }) {
 // Video — a safe embed built from (provider, id), never the raw pasted URL. Only
 // renders when a parseable URL is present (the composer already gates on the
 // selected variant); otherwise nothing shows.
+//
+// Print/PDF: a cross-origin iframe cannot print — Chromium paints its content as
+// a detached fragment pages away from the (empty) container. So the live player
+// is screen-only, and print gets a static poster card instead: the provider
+// thumbnail (when one exists), a play badge, and the watch URL as a real link.
 function VideoEmbed({ d, lang }) {
   const embed = parseEmbedUrl(d.url);
   if (!embed?.embedUrl) return null;
   const title = d.title || (lang === 'en' ? 'Video' : 'סרטון');
   return (
-    <>
+    <div className="break-inside-avoid">
       <Heading>{title}</Heading>
-      <div className="relative w-full overflow-hidden rounded-2xl bg-black ring-1 ring-gray-100" style={{ aspectRatio: '16 / 9' }}>
+      <div className="relative w-full overflow-hidden rounded-2xl bg-black ring-1 ring-gray-100 print:hidden" style={{ aspectRatio: '16 / 9' }}>
         <iframe
           src={embed.embedUrl}
           title={title}
@@ -516,7 +521,55 @@ function VideoEmbed({ d, lang }) {
           referrerPolicy="strict-origin-when-cross-origin"
         />
       </div>
-    </>
+      <VideoPrintCard embed={embed} title={title} lang={lang} />
+    </div>
+  );
+}
+
+// The print-only stand-in for the live player. Always in the DOM (posters load
+// eagerly at page load, so they are ready before the print dialog opens) and
+// hidden on screen. When no poster resolves (Vimeo, or every candidate failed)
+// the card keeps its designed dark state — never a broken image, never empty.
+function VideoPrintCard({ embed, title, lang }) {
+  const candidates = posterCandidates(embed.provider, embed.videoId);
+  const [idx, setIdx] = useState(0);
+  const src = idx < candidates.length ? candidates[idx] : null;
+  const advance = () => setIdx((i) => i + 1);
+  const watchUrl = buildWatchUrl(embed.provider, embed.videoId, { hash: embed.videoHash });
+  return (
+    <figure className="m-0 hidden break-inside-avoid print:block">
+      <div className="relative w-full overflow-hidden rounded-2xl bg-gray-900 ring-1 ring-gray-100" style={{ aspectRatio: '16 / 9' }}>
+        {src && (
+          <img
+            src={src}
+            alt={title}
+            loading="eager"
+            className="absolute inset-0 h-full w-full object-cover"
+            onError={advance}
+            onLoad={(e) => { if (e.currentTarget.naturalWidth <= 120) advance(); }}
+          />
+        )}
+        <div className="absolute inset-0 bg-black/25" />
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="flex h-20 w-20 items-center justify-center rounded-full bg-white/95 shadow-lg">
+            <svg viewBox="0 0 24 24" className="h-9 w-9 translate-x-[2px]" fill={TEAL} aria-hidden="true">
+              <path d="M8 5.5v13l11-6.5z" />
+            </svg>
+          </span>
+        </div>
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-5 pb-4 pt-10 text-start">
+          <div className="text-[15px] font-semibold text-white">
+            {(lang === 'en' ? 'Video' : 'סרטון') + ' · ' + providerLabel(embed.provider)}
+          </div>
+        </div>
+      </div>
+      {watchUrl && (
+        <figcaption className="mt-3 text-start text-[13.5px] leading-relaxed text-gray-500">
+          {lang === 'en' ? 'Watch the video: ' : 'לצפייה בסרטון: '}
+          <a href={watchUrl} dir="ltr" className="font-medium underline" style={{ color: TEAL }}>{watchUrl}</a>
+        </figcaption>
+      )}
+    </figure>
   );
 }
 

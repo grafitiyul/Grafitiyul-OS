@@ -189,6 +189,12 @@ export default function CustomerQuoteView() {
         .cq-paper { width: 1280px !important; box-shadow: none !important; border-radius: 0 !important; }
         /* Keep whole sections together across page breaks when they fit. */
         .cq-paper section { break-inside: avoid; }
+        /* Media never splits across pages, and no live iframe ever reaches the
+           PDF — a cross-origin frame prints as an empty box with its content
+           painted pages away. The video block ships its own print poster card
+           (VideoPrintCard); this backstop also covers embeds inside rich text. */
+        .cq-paper iframe { display: none !important; }
+        .cq-paper figure, .cq-paper img { break-inside: avoid; page-break-inside: avoid; }
       }
       `}</style>
 

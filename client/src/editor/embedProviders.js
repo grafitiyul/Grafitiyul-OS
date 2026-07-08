@@ -160,6 +160,48 @@ export function buildEmbedUrl(provider, videoId, opts = {}) {
   return null;
 }
 
+// Human-facing watch URL, rebuilt from (provider, videoId, hash) exactly like
+// buildEmbedUrl — never echo the raw pasted URL back to the customer. Printed
+// under the video's poster in the PDF, where the embedded player can't exist.
+export function buildWatchUrl(provider, videoId, opts = {}) {
+  if (!videoId) return null;
+  if (provider === 'youtube') {
+    return `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+  }
+  if (provider === 'vimeo') {
+    const base = `https://vimeo.com/${encodeURIComponent(videoId)}`;
+    if (opts?.hash && VIMEO_HASH_RE.test(opts.hash)) {
+      return `${base}/${encodeURIComponent(opts.hash)}`;
+    }
+    return base;
+  }
+  if (provider === 'drive') {
+    return `https://drive.google.com/file/d/${encodeURIComponent(videoId)}/view`;
+  }
+  return null;
+}
+
+// Static poster URLs to try in order, for contexts where a live player can't
+// render (print/PDF). YouTube: maxresdefault exists only for HD uploads and its
+// "missing" response is a decodable 120×90 grey image (no onerror) — callers must
+// also treat a tiny naturalWidth as a miss and advance to hqdefault, which exists
+// for every video. Vimeo has no keyless poster endpoint — empty list; the caller
+// falls back to its designed no-photo card.
+export function posterCandidates(provider, videoId) {
+  if (!videoId) return [];
+  const id = encodeURIComponent(videoId);
+  if (provider === 'youtube') {
+    return [
+      `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`,
+      `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+    ];
+  }
+  if (provider === 'drive') {
+    return [`https://drive.google.com/thumbnail?id=${id}&sz=w1280`];
+  }
+  return [];
+}
+
 export function isKnownProvider(p) {
   return p === 'youtube' || p === 'vimeo' || p === 'drive';
 }
