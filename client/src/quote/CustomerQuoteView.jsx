@@ -117,6 +117,38 @@ export default function CustomerQuoteView() {
     return () => io.disconnect();
   }, [phase, toc]);
 
+  // Media-print safety sweep. Chromium composites cross-origin iframes into the
+  // print output even when print CSS hides them (out-of-process frames are
+  // rasterized separately and land pages away, detached). The video block's own
+  // player is unmounted by React (useIsPrinting in the renderer); this sweep
+  // covers what React cannot see — author-written rich HTML ([data-rich], set
+  // via dangerouslySetInnerHTML): any embed inside it is physically removed for
+  // the duration of printing and restored afterwards. Lazy images are flipped
+  // to eager so pagination never captures a not-yet-loaded image.
+  useEffect(() => {
+    const removed = [];
+    const onBeforePrint = () => {
+      document.querySelectorAll('.cq-paper [data-rich] iframe').forEach((frame) => {
+        const marker = document.createComment('iframe-removed-for-print');
+        frame.replaceWith(marker);
+        removed.push([marker, frame]);
+      });
+      document.querySelectorAll('.cq-paper img[loading="lazy"]').forEach((img) => { img.loading = 'eager'; });
+    };
+    const onAfterPrint = () => {
+      while (removed.length) {
+        const [marker, frame] = removed.pop();
+        if (marker.parentNode) marker.replaceWith(frame);
+      }
+    };
+    window.addEventListener('beforeprint', onBeforePrint);
+    window.addEventListener('afterprint', onAfterPrint);
+    return () => {
+      window.removeEventListener('beforeprint', onBeforePrint);
+      window.removeEventListener('afterprint', onAfterPrint);
+    };
+  }, []);
+
   const downloadPdf = () => window.print();
   // Sticky "sign" scrolls to the section (Prospero flow) — it never opens the popup.
   const goSign = () => (hasSignatureSection ? scrollToKey('signature') : null);

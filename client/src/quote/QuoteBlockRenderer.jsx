@@ -1,4 +1,5 @@
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { formatMinor } from '../lib/money.js';
 import GrafitiyulHeroLogo from './GrafitiyulHeroLogo.jsx';
 import { parseEmbedUrl, buildWatchUrl, posterCandidates, providerLabel } from '../editor/embedProviders.js';
@@ -116,7 +117,31 @@ function Empty({ lang }) {
 function Html({ html, lang, className = PROPOSAL_RICH }) {
   const safe = toDisplayHtml(html);
   if (!safe) return <Empty lang={lang} />;
-  return <div className={className} dangerouslySetInnerHTML={{ __html: safe }} />;
+  // data-rich marks author-written HTML that React does not track — the print
+  // safety sweep (CustomerQuoteView) may mutate media inside it, nowhere else.
+  return <div data-rich="" className={className} dangerouslySetInnerHTML={{ __html: safe }} />;
+}
+
+// True while the browser is laying out the document for print. Chromium
+// composites a CROSS-ORIGIN iframe into the print output even when print CSS
+// hides it — the out-of-process frame is rasterized separately and lands pages
+// away as a detached artifact (the duplicate-thumbnail bug). CSS is therefore
+// only a fallback: screen-only media must actually LEAVE the DOM while printing.
+// flushSync commits the unmount inside the beforeprint task, before the browser
+// starts painting pages; afterprint restores the live element.
+function useIsPrinting() {
+  const [printing, setPrinting] = useState(false);
+  useEffect(() => {
+    const before = () => flushSync(() => setPrinting(true));
+    const after = () => setPrinting(false);
+    window.addEventListener('beforeprint', before);
+    window.addEventListener('afterprint', after);
+    return () => {
+      window.removeEventListener('beforeprint', before);
+      window.removeEventListener('afterprint', after);
+    };
+  }, []);
+  return printing;
 }
 
 // Normalise a user-authored value (pricing row note, etc.) to safe display HTML.
@@ -499,28 +524,32 @@ function SectionItems({ d, lang }) {
 // renders when a parseable URL is present (the composer already gates on the
 // selected variant); otherwise nothing shows.
 //
-// Print/PDF: a cross-origin iframe cannot print — Chromium paints its content as
-// a detached fragment pages away from the (empty) container. So the live player
-// is screen-only, and print gets a static poster card instead: the provider
-// thumbnail (when one exists), a play badge, and the watch URL as a real link.
+// Print/PDF: the live player renders exactly one stand-in — the static poster
+// card. The iframe is UNMOUNTED while printing (see useIsPrinting: print CSS
+// alone cannot stop Chromium from compositing a cross-origin frame into the
+// output as a detached fragment); print:hidden stays as the CSS fallback for
+// engines without print events.
 function VideoEmbed({ d, lang }) {
+  const printing = useIsPrinting();
   const embed = parseEmbedUrl(d.url);
   if (!embed?.embedUrl) return null;
   const title = d.title || (lang === 'en' ? 'Video' : 'סרטון');
   return (
     <div className="break-inside-avoid">
       <Heading>{title}</Heading>
-      <div className="relative w-full overflow-hidden rounded-2xl bg-black ring-1 ring-gray-100 print:hidden" style={{ aspectRatio: '16 / 9' }}>
-        <iframe
-          src={embed.embedUrl}
-          title={title}
-          className="absolute inset-0 h-full w-full"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-          allowFullScreen
-          loading="lazy"
-          referrerPolicy="strict-origin-when-cross-origin"
-        />
-      </div>
+      {!printing && (
+        <div className="relative w-full overflow-hidden rounded-2xl bg-black ring-1 ring-gray-100 print:hidden" style={{ aspectRatio: '16 / 9' }}>
+          <iframe
+            src={embed.embedUrl}
+            title={title}
+            className="absolute inset-0 h-full w-full"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowFullScreen
+            loading="lazy"
+            referrerPolicy="strict-origin-when-cross-origin"
+          />
+        </div>
+      )}
       <VideoPrintCard embed={embed} title={title} lang={lang} />
     </div>
   );
