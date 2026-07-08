@@ -8,6 +8,7 @@ import {
   editRequest,
   cancelRequest,
   findPendingRequest,
+  syncPendingRequestWithDeal,
   toClientRequest,
   publicPaymentUrl,
 } from '../touristPayment.js';
@@ -40,7 +41,10 @@ router.get(
   handle(async (req, res) => {
     const deal = await loadDeal(req.params.id);
     if (!deal) return res.status(404).json({ error: 'not_found' });
-    const active = await findPendingRequest(prisma, deal.id);
+    // A pending request is resynced from the Deal (SSOT) before it is shown.
+    const active = await findPendingRequest(prisma, deal.id).then((r) =>
+      r ? syncPendingRequestWithDeal(prisma, deal, r) : null,
+    );
     res.json({
       defaults: buildTouristDefaults(deal),
       activeRequest: active ? toClientRequest(active) : null,
@@ -71,12 +75,14 @@ router.post(
 router.patch(
   '/:id/tourist-payment/:reqId',
   handle(async (req, res) => {
+    const deal = await loadDeal(req.params.id);
+    if (!deal) return res.status(404).json({ error: 'not_found' });
     const existing = await prisma.paymentRequest.findFirst({
-      where: { id: req.params.reqId, dealId: req.params.id, provider: 'cardcom' },
+      where: { id: req.params.reqId, dealId: deal.id, provider: 'cardcom' },
     });
     if (!existing) return res.status(404).json({ error: 'not_found' });
     try {
-      const { request } = await editRequest(prisma, existing, req.body || {}, req.adminAuth?.userId || null);
+      const { request } = await editRequest(prisma, deal, existing, req.body || {}, req.adminAuth?.userId || null);
       res.json({ request: toClientRequest(request), publicUrl: publicPaymentUrl(req, request.token) });
     } catch (err) {
       const code = err?.code || 'tourist_payment_failed';

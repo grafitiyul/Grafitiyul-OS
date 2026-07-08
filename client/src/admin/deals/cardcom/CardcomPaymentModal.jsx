@@ -11,6 +11,11 @@ import { emitDealTasksChanged } from '../tasks/taskEvents.js';
 // lazily when they open it. Accounting policy is FIXED (auto-issue חשבונית מס קבלה
 // in English after payment, never auto-sent, VAT from the Deal) — not shown here.
 //
+// The DEAL is the Single Source of Truth while pending: amount / currency / VAT
+// are shown READ-ONLY here and stay synchronized with the Deal automatically
+// (edit them through the normal Deal workflow). Operator-owned fields: customer
+// details, the English description wording, quantity.
+//
 // One active (pending) request per deal: opening the action REOPENS the existing
 // pending request in edit mode instead of creating a second. Editing keeps the
 // same GOS link.
@@ -33,14 +38,13 @@ function friendly(e) {
 export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }) {
   const [loading, setLoading] = useState(true);
   const [reqId, setReqId] = useState(null); // set → edit mode (existing pending)
-  const [currencies, setCurrencies] = useState(['ILS', 'USD', 'EUR']);
+  // Deal-owned (read-only, kept in sync with the Deal by the server).
+  const [dealAmount, setDealAmount] = useState({ amount: 0, currency: 'ILS' });
   const [form, setForm] = useState({
     customerName: '',
     customerEmail: '',
     customerPhone: '',
     productDescriptionEn: '',
-    amount: '',
-    currency: 'ILS',
     quantity: '1',
   });
   const [busy, setBusy] = useState(false);
@@ -59,7 +63,12 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
       try {
         const { defaults, activeRequest, publicUrl } = await api.deals.touristPayment(dealId);
         if (cancelled) return;
-        setCurrencies(defaults.supportedCurrencies || ['ILS', 'USD', 'EUR']);
+        // Amount + currency always come from the Deal (server keeps a pending
+        // request in sync with it) — displayed, never edited here.
+        setDealAmount({
+          amount: activeRequest ? activeRequest.amountIls : defaults.amountIls,
+          currency: activeRequest ? activeRequest.currency : defaults.currency || 'ILS',
+        });
         if (activeRequest) {
           setReqId(activeRequest.id);
           setLink(publicUrl);
@@ -68,8 +77,6 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
             customerEmail: activeRequest.customerEmail || '',
             customerPhone: activeRequest.customerPhone || '',
             productDescriptionEn: activeRequest.productDescriptionEn || '',
-            amount: String(activeRequest.amountIls ?? ''),
-            currency: activeRequest.currency || 'ILS',
             quantity: String(activeRequest.quantity || 1),
           });
         } else {
@@ -79,8 +86,6 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
             customerEmail: defaults.customerEmail || '',
             customerPhone: defaults.customerPhone || '',
             productDescriptionEn: defaults.productDescriptionEn || '',
-            amount: defaults.amountIls ? String(defaults.amountIls) : '',
-            currency: defaults.currency || 'ILS',
             quantity: '1',
           });
         }
@@ -96,21 +101,19 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
   }, [open, dealId]);
 
   const set = (k) => (e) => setForm((s) => ({ ...s, [k]: e.target.value }));
-  const amountNum = Number(form.amount);
-  const canSubmit =
-    !busy && form.productDescriptionEn.trim() && Number.isFinite(amountNum) && amountNum > 0;
+  const dealHasAmount = Number(dealAmount.amount) > 0;
+  const canSubmit = !busy && form.productDescriptionEn.trim() && dealHasAmount;
 
   async function submit() {
     if (!canSubmit) return;
     setBusy(true);
     setError(null);
+    // Operator-owned fields only — amount/currency/VAT derive from the Deal.
     const payload = {
       customerName: form.customerName.trim() || null,
       customerEmail: form.customerEmail.trim() || null,
       customerPhone: form.customerPhone.trim() || null,
       productDescriptionEn: form.productDescriptionEn.trim(),
-      amountIls: amountNum,
-      currency: form.currency,
       quantity: Math.max(1, Math.round(Number(form.quantity) || 1)),
     };
     try {
@@ -231,20 +234,25 @@ export default function CardcomPaymentModal({ dealId, open, onClose, onChanged }
               placeholder="e.g. Graffiti workshop" />
           </label>
 
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block text-[12px] text-gray-600">
-              סכום לתשלום (כולל מע״מ) *
-              <input type="number" min="0" step="0.01" value={form.amount} onChange={set('amount')} dir="ltr" className={`mt-1 ${FIELD}`} />
-            </label>
-            <label className="block text-[12px] text-gray-600">
-              מטבע
-              <select value={form.currency} onChange={set('currency')} className={`mt-1 ${FIELD}`}>
-                {currencies.map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-            </label>
+          {/* Deal-owned: read-only here, synchronized with the Deal automatically
+              (also while the link is already out with the customer). */}
+          <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+            <p className="text-[12px] text-gray-600">
+              סכום לתשלום (מהעסקה, כולל מע״מ)
+              <span className="mr-2 text-[14px] font-semibold text-gray-900" dir="ltr">
+                {Number(dealAmount.amount || 0).toLocaleString('he-IL', { minimumFractionDigits: 2 })} {dealAmount.currency}
+              </span>
+            </p>
+            <p className="mt-0.5 text-[11.5px] text-gray-500">
+              הסכום, המטבע והמע״מ נלקחים מהעסקה ונשארים מסונכרנים אליה אוטומטית — לעדכון, ערכו את העסקה.
+              הקישור ללקוח נשאר זהה.
+            </p>
           </div>
+          {!dealHasAmount && (
+            <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
+              לעסקה אין עדיין סכום — קבעו שווי עסקה לפני יצירת קישור תשלום.
+            </p>
+          )}
 
           {error && (
             <p className="text-[13px] text-red-600">שגיאה: <span dir="ltr" className="font-mono">{error}</span></p>

@@ -6,16 +6,26 @@ import { newPaymentToken, pickPaymentContact, resolvePublicOrigin } from './deal
 
 // Cardcom tourist-payment domain logic — the "קישור לתשלום כרטיס תייר" flow.
 //
-// GOS is the source of truth: a PaymentRequest is a frozen payment INTENT with
-// its own lifecycle (pending → paid | canceled). The customer always receives
-// the stable GOS URL /payment/cardcom/<token>; the Cardcom LowProfile behind it
-// is created LAZILY (only when the customer opens the link) and regenerated if
-// the pending request was edited — the GOS URL never changes.
+// Lifecycle model (business rule):
+//   PENDING → synchronized with the Deal. The Deal stays the Single Source of
+//   Truth for the BUSINESS fields (amount, currency, VAT treatment, product
+//   identity, and the English description when the product changes): editing
+//   the Deal automatically flows into the pending request on every read/open.
+//   The customer keeps the exact same GOS URL /payment/cardcom/<token> — the
+//   Cardcom LowProfile behind it is minted LAZILY on open and transparently
+//   regenerated when the synced snapshot drifted. A second link is never needed.
+//   Operator-owned fields (customer name/email/phone, English description
+//   wording, quantity) live on the request and are edited via the modal.
+//
+//   PAID → frozen forever. The row records exactly what was actually paid: the
+//   amount is taken from the VERIFIED Cardcom result (GetLpResult), never from a
+//   newer Deal state, and no code path mutates a paid/canceled request.
 //
 // Cardcom only clears (3DS tourist cards, configured on the terminal). It issues
 // NO accounting document. After a verified payment we auto-issue the iCount
 // document (fixed policy: חשבונית מס קבלה / invrec, English, GOS English product,
-// VAT inherited from the Deal), reusing the existing issueDocument pipeline.
+// VAT inherited from the Deal), reusing the existing issueDocument pipeline —
+// always from the paid (frozen) values.
 //
 // INVARIANT: at most one PENDING cardcom request per deal (DB partial unique
 // index + reopen-on-conflict here).
@@ -68,23 +78,33 @@ export function buildTouristDefaults(deal) {
   };
 }
 
-// Validate + normalize the editable fields shared by create and edit.
-function normalizeInput(input) {
-  const amountIls = Number(input.amountIls);
-  if (!Number.isFinite(amountIls) || amountIls <= 0) throw codedError('amount_invalid');
-  const currency = String(input.currency || 'ILS').toUpperCase();
-  if (!SUPPORTED_CURRENCIES.includes(currency)) throw codedError('currency_unsupported');
+// Validate + normalize the OPERATOR-owned fields (modal input). Business fields
+// (amount / currency / VAT / product identity) are never taken from the modal —
+// they derive from the Deal (see dealBusinessFields).
+function normalizeOperatorInput(input) {
   const productDescriptionEn = String(input.productDescriptionEn || '').trim();
   if (!productDescriptionEn) throw codedError('product_description_required');
   const quantity = Math.max(1, Math.round(Number(input.quantity) || 1));
   return {
-    amountMinor: BigInt(Math.round(amountIls * 100)),
-    currency,
     quantity,
     productDescriptionEn,
     customerName: String(input.customerName || '').trim() || null,
     customerEmail: String(input.customerEmail || '').trim() || null,
     customerPhone: String(input.customerPhone || '').trim() || null,
+  };
+}
+
+// The business fields the DEAL owns while the request is pending — recomputed
+// from the live Deal on every create / edit / sync, so a Deal edit through the
+// normal workflow flows into the pending request automatically.
+function dealBusinessFields(deal) {
+  return {
+    amountMinor: deal.valueMinor ?? 0n,
+    currency: String(deal.currency || 'ILS').toUpperCase(),
+    vatExempt: dealVatExempt(deal),
+    productId: deal.productId || null,
+    productVariantId: deal.productVariantId || null,
+    quoteVersionId: deal.quoteVersions?.[0]?.id || null,
   };
 }
 
@@ -153,20 +173,18 @@ export async function findPendingRequest(prisma, dealId) {
 // second create hits the partial unique index (P2002) and reopens the winner.
 export async function createOrReopenRequest(prisma, deal, input, userId) {
   const existing = await findPendingRequest(prisma, deal.id);
-  if (existing) return editRequest(prisma, existing, input, userId, { reopened: true });
+  if (existing) return editRequest(prisma, deal, existing, input, userId, { reopened: true });
 
-  const fields = normalizeInput(input);
+  const op = normalizeOperatorInput(input);
+  const biz = dealBusinessFields(deal);
+  if (biz.amountMinor <= 0n) throw codedError('amount_missing');
+  const fields = { ...op, ...biz };
   const data = {
     dealId: deal.id,
     provider: 'cardcom',
     status: 'pending',
     token: newPaymentToken(),
     ...fields,
-    vatExempt: dealVatExempt(deal),
-    // Frozen GOS business identity (reporting/audit — not sent to Cardcom).
-    productId: deal.productId || null,
-    productVariantId: deal.productVariantId || null,
-    quoteVersionId: deal.quoteVersions?.[0]?.id || null,
     snapshotHash: snapshotHashOf(fields),
     createdBy: userId || null,
   };
@@ -177,7 +195,7 @@ export async function createOrReopenRequest(prisma, deal, input, userId) {
   } catch (e) {
     if (e?.code === 'P2002') {
       const winner = await findPendingRequest(prisma, deal.id);
-      if (winner) return editRequest(prisma, winner, input, userId, { reopened: true });
+      if (winner) return editRequest(prisma, deal, winner, input, userId, { reopened: true });
     }
     throw e;
   }
@@ -197,26 +215,29 @@ export async function createOrReopenRequest(prisma, deal, input, userId) {
   return { request, reopened: false };
 }
 
-// Edit a PENDING request (also the "reopen" path). Resets the Cardcom target so
-// the next open regenerates the LowProfile — the GOS public URL is unchanged.
-export async function editRequest(prisma, req, input, userId, { reopened = false } = {}) {
+// Edit a PENDING request's operator-owned fields (also the "reopen" path) AND
+// resync the business fields from the Deal in the same write. Resets the
+// Cardcom target when page inputs drifted — the GOS public URL is unchanged.
+export async function editRequest(prisma, deal, req, input, userId, { reopened = false } = {}) {
   if (req.status !== 'pending') throw codedError('request_not_editable');
-  const fields = normalizeInput(input);
-  const changed =
+  const op = normalizeOperatorInput(input);
+  const biz = dealBusinessFields(deal);
+  const fields = { ...op, ...biz };
+  const pageChanged =
     String(req.amountMinor) !== String(fields.amountMinor) ||
     req.currency !== fields.currency ||
     req.productDescriptionEn !== fields.productDescriptionEn ||
     (req.customerName || null) !== fields.customerName ||
     (req.customerEmail || null) !== fields.customerEmail ||
-    (req.customerPhone || null) !== fields.customerPhone ||
-    req.quantity !== fields.quantity;
+    (req.customerPhone || null) !== fields.customerPhone;
+  const changed = pageChanged || req.quantity !== fields.quantity || req.vatExempt !== fields.vatExempt;
 
   const request = await prisma.paymentRequest.update({
     where: { id: req.id },
     data: {
       ...fields,
       // Force LowProfile regeneration on next open when the page inputs drifted.
-      ...(changed ? { cardcomLowProfileId: null, cardcomPayUrl: null, snapshotHash: snapshotHashOf(fields) } : {}),
+      ...(pageChanged ? { cardcomLowProfileId: null, cardcomPayUrl: null, snapshotHash: snapshotHashOf(fields) } : {}),
     },
   });
 
@@ -235,6 +256,54 @@ export async function editRequest(prisma, req, input, userId, { reopened = false
     });
   }
   return { request, reopened };
+}
+
+// PENDING ↔ DEAL sync — the Deal stays the Single Source of Truth while the
+// request is pending: recompute the business fields from the live Deal and
+// silently update the row when they drifted (Deal edits already produce their
+// own changelog events; this sync adds no timeline noise). The English
+// description follows the Deal's PRODUCT only when the product itself changed
+// (and has an English name) — the wording stays operator-owned otherwise.
+// Paid/canceled requests are never touched (frozen forever).
+export async function syncPendingRequestWithDeal(prisma, deal, req) {
+  if (!req || req.status !== 'pending') return req;
+  const biz = dealBusinessFields(deal);
+  const productDescriptionEn =
+    req.productId !== biz.productId && deal.product?.nameEn
+      ? deal.product.nameEn
+      : req.productDescriptionEn;
+  const changed =
+    String(req.amountMinor) !== String(biz.amountMinor) ||
+    req.currency !== biz.currency ||
+    req.vatExempt !== biz.vatExempt ||
+    (req.productId || null) !== biz.productId ||
+    (req.productVariantId || null) !== biz.productVariantId ||
+    (req.quoteVersionId || null) !== biz.quoteVersionId ||
+    req.productDescriptionEn !== productDescriptionEn;
+  if (!changed) return req;
+
+  const pageChanged =
+    String(req.amountMinor) !== String(biz.amountMinor) ||
+    req.currency !== biz.currency ||
+    req.productDescriptionEn !== productDescriptionEn;
+  const fields = {
+    ...biz,
+    productDescriptionEn,
+    customerName: req.customerName,
+    customerEmail: req.customerEmail,
+    customerPhone: req.customerPhone,
+  };
+  console.log(`[cardcom] pending request ${req.id} resynced from deal ${deal.id} (pageChanged=${pageChanged})`);
+  return prisma.paymentRequest.update({
+    where: { id: req.id },
+    data: {
+      ...biz,
+      productDescriptionEn,
+      // Page inputs drifted → the next open transparently mints a fresh
+      // LowProfile; the customer's GOS URL never changes.
+      ...(pageChanged ? { cardcomLowProfileId: null, cardcomPayUrl: null, snapshotHash: snapshotHashOf(fields) } : {}),
+    },
+  });
 }
 
 // Cancel a pending request → the GOS link becomes unusable, a timeline event is
@@ -273,6 +342,7 @@ export async function ensureCurrentCardcomLowProfile(prisma, req, { req: httpReq
     return req.cardcomPayUrl;
   }
 
+  if (req.amountMinor <= 0n) throw codedError('amount_missing');
   if (!isCardcomConfigured()) throw codedError('cardcom_not_configured');
 
   const origin = String(process.env.PUBLIC_ORIGIN || '').replace(/\/+$/, '') || resolvePublicOrigin(httpReq);
@@ -302,7 +372,23 @@ export async function ensureCurrentCardcomLowProfile(prisma, req, { req: httpReq
 // best-effort auto-issue the iCount document. The pending→paid transition is a
 // conditional update (guard) so concurrent webhook retries can't double-process.
 // Payment success NEVER depends on the accounting document succeeding.
+//
+// FREEZE AT REALITY: the paid row must represent exactly what was actually
+// charged, so the amount is taken from the VERIFIED GetLpResult value (never
+// from a newer Deal state — e.g. the deal was edited after the customer opened
+// the page). From this moment the request is immutable.
 export async function markPaidFromResult(prisma, req, result) {
+  const verifiedAmountMinor =
+    Number.isFinite(result.amount) && result.amount > 0
+      ? BigInt(Math.round(result.amount * 100))
+      : req.amountMinor;
+  if (verifiedAmountMinor !== req.amountMinor) {
+    console.warn(
+      `[cardcom] request ${req.id}: verified paid amount ${Number(verifiedAmountMinor) / 100} differs from stored ${Number(req.amountMinor) / 100} — freezing the verified amount`,
+    );
+  }
+  const paid = { ...req, amountMinor: verifiedAmountMinor };
+
   // Atomic guard + pinned payment event — only the winner of the race emits.
   const won = await prisma.$transaction(async (tx) => {
     const upd = await tx.paymentRequest.updateMany({
@@ -310,6 +396,7 @@ export async function markPaidFromResult(prisma, req, result) {
       data: {
         status: 'paid',
         paidAt: new Date(),
+        amountMinor: verifiedAmountMinor,
         cardcomTransactionId: result.transactionId || null,
         paidRaw: result.raw ?? undefined,
       },
@@ -320,12 +407,12 @@ export async function markPaidFromResult(prisma, req, result) {
       kind: 'accounting',
       data: {
         event: 'cardcom_payment',
-        amountIls: Number(req.amountMinor) / 100,
-        currency: req.currency,
+        amountIls: Number(paid.amountMinor) / 100,
+        currency: paid.currency,
         transactionId: result.transactionId || null,
         cardLast4: result.cardLast4 || null,
-        customerName: req.customerName,
-        productDescriptionEn: req.productDescriptionEn,
+        customerName: paid.customerName,
+        productDescriptionEn: paid.productDescriptionEn,
       },
       origin: systemOrigin(),
     });
@@ -333,7 +420,8 @@ export async function markPaidFromResult(prisma, req, result) {
   });
   if (!won) return { alreadyProcessed: true };
 
-  await autoIssueDocument(prisma, req, result);
+  // The document is generated from the PAID (frozen) values — never the Deal.
+  await autoIssueDocument(prisma, paid, result);
   return { alreadyProcessed: false };
 }
 

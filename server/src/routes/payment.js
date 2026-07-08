@@ -2,7 +2,11 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { PAYMENT_DEAL_INCLUDE, ensureCurrentIcountLink, ensureCustomIcountLink } from '../dealPayment.js';
-import { ensureCurrentCardcomLowProfile } from '../touristPayment.js';
+import {
+  TOURIST_DEAL_INCLUDE,
+  ensureCurrentCardcomLowProfile,
+  syncPendingRequestWithDeal,
+} from '../touristPayment.js';
 
 // PUBLIC canonical payment URLs — /payment/<provider>/<token>. The provider is
 // visible in the URL (future-proof) and clearly distinguishes Cardcom (tourist
@@ -53,7 +57,13 @@ router.get(
       return page(res, 200, 'התשלום כבר בוצע', 'תודה! התשלום עבור קישור זה כבר התקבל.');
     }
     try {
-      const url = await ensureCurrentCardcomLowProfile(prisma, pr, { req });
+      // The Deal is the SSOT while pending: resync the request from the live
+      // Deal first, so the page the customer opens reflects the current Deal —
+      // same GOS URL, LowProfile transparently re-minted when it drifted.
+      const deal = await prisma.deal.findUnique({ where: { id: pr.dealId }, include: TOURIST_DEAL_INCLUDE });
+      if (!deal) throw new Error('deal_missing');
+      const synced = await syncPendingRequestWithDeal(prisma, deal, pr);
+      const url = await ensureCurrentCardcomLowProfile(prisma, synced, { req });
       res.set('Cache-Control', 'no-store');
       return res.redirect(302, url);
     } catch (err) {
