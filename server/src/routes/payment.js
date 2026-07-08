@@ -43,18 +43,37 @@ function page(res, status, title, body) {
 const NOT_FOUND = ['קישור התשלום לא נמצא', 'ייתכן שהקישור שגוי או שאינו פעיל עוד. אנא פנו אלינו לקבלת קישור מעודכן.'];
 const UNAVAILABLE = ['עמוד התשלום אינו זמין כרגע', 'אנא נסו שוב מאוחר יותר או פנו אלינו ונשמח לעזור.'];
 
-// ── Cardcom tourist payment — /payment/cardcom/:token ────────────────────────
+// English customer-facing page — the Cardcom flow serves FOREIGN customers, so
+// every state under /payment/cardcom/* is English-only. Same calm-page rule:
+// the customer sees a clean message; the technical reason goes to the log.
+function pageEn(res, status, title, body) {
+  res.status(status).set('Cache-Control', 'no-store').type('html').send(`<!doctype html>
+<html lang="en" dir="ltr">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title></head>
+<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f9fafb;font-family:system-ui,-apple-system,'Segoe UI',sans-serif">
+  <div style="max-width:26rem;margin:1rem;padding:2rem;background:#fff;border:1px solid #e5e7eb;border-radius:1rem;text-align:center">
+    <div style="font-size:2rem;margin-bottom:.75rem">💳</div>
+    <h1 style="font-size:1.1rem;margin:0 0 .5rem;color:#111827">${title}</h1>
+    <p style="font-size:.9rem;color:#6b7280;margin:0">${body}</p>
+  </div>
+</body>
+</html>`);
+}
+
+// ── Cardcom tourist payment — /payment/cardcom/:token (ENGLISH-ONLY UX) ──────
 router.get(
   '/cardcom/:token',
   handle(async (req, res) => {
     const token = String(req.params.token || '');
     const pr = TOKEN.test(token) ? await prisma.paymentRequest.findUnique({ where: { token } }) : null;
-    if (!pr || pr.provider !== 'cardcom') return page(res, 404, ...NOT_FOUND);
+    if (!pr || pr.provider !== 'cardcom') {
+      return pageEn(res, 404, 'Payment link not found', 'This payment link is invalid or no longer active. Please contact us for an updated link.');
+    }
     if (pr.status === 'canceled') {
-      return page(res, 410, 'הקישור בוטל', 'קישור התשלום בוטל. אנא פנו אלינו לקבלת קישור מעודכן.');
+      return pageEn(res, 410, 'Payment link cancelled', 'This payment link has been cancelled. Please contact us for an updated link.');
     }
     if (pr.status === 'paid') {
-      return page(res, 200, 'התשלום כבר בוצע', 'תודה! התשלום עבור קישור זה כבר התקבל.');
+      return pageEn(res, 200, 'Payment already completed', 'Thank you! The payment for this link has already been received.');
     }
     try {
       // The Deal is the SSOT while pending: resync the request from the live
@@ -67,8 +86,11 @@ router.get(
       res.set('Cache-Control', 'no-store');
       return res.redirect(302, url);
     } catch (err) {
-      console.error(`[payment] cardcom link failed for ${pr.id}: ${err?.code || ''} ${err?.message || err}`);
-      return page(res, 503, ...UNAVAILABLE);
+      // Full technical detail for the operator; the customer gets clean English.
+      console.error(
+        `[payment] cardcom link failed for request ${pr.id} (deal ${pr.dealId}): code=${err?.code || 'unknown'} reason=${err?.reason || '-'} responseCode=${err?.responseCode ?? '-'} message=${err?.message || err}`,
+      );
+      return pageEn(res, 503, 'Payment page temporarily unavailable', 'Please try again in a few minutes, or contact us — we will be happy to help.');
     }
   }),
 );

@@ -24,10 +24,11 @@ const FIELD = 'w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm focu
 
 const CARDCOM_ERROR = {
   cardcom_not_configured: 'סליקת קארדקום אינה מוגדרת עדיין (חסרים פרטי טרמינל/מפתח). פנו למנהל המערכת.',
+  cardcom_webhook_not_configured: 'חסר סוד Webhook לקארדקום (CARDCOM_WEBHOOK_SECRET) — בלעדיו אישורי תשלום לא יגיעו. פנו למנהל המערכת.',
   cardcom_request_failed: 'יצירת עמוד התשלום בקארדקום נכשלה.',
   cardcom_timeout: 'קארדקום לא הגיב בזמן. נסו שוב.',
   currency_unsupported: 'מטבע לא נתמך.',
-  amount_invalid: 'סכום לא תקין.',
+  amount_missing: 'לעסקה אין סכום — קבעו שווי עסקה קודם.',
   product_description_required: 'נדרש תיאור מוצר באנגלית.',
 };
 function friendly(e) {

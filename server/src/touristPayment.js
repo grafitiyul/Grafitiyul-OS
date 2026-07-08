@@ -347,7 +347,14 @@ export async function ensureCurrentCardcomLowProfile(prisma, req, { req: httpReq
 
   const origin = String(process.env.PUBLIC_ORIGIN || '').replace(/\/+$/, '') || resolvePublicOrigin(httpReq);
   const secret = process.env.CARDCOM_WEBHOOK_SECRET;
-  const webHookUrl = origin && secret ? `${origin}/api/webhooks/cardcom/${secret}` : null;
+  if (!secret) {
+    // REFUSE to mint without a webhook receiver: the customer could pay for
+    // real and GOS would never learn about it (no paid state, no document).
+    // A clean failure now beats silent money later.
+    console.error('[cardcom] refusing to mint LowProfile — CARDCOM_WEBHOOK_SECRET is not set (payment confirmations would never arrive)');
+    throw codedError('cardcom_webhook_not_configured');
+  }
+  const webHookUrl = `${origin}/api/webhooks/cardcom/${secret}`;
   const backUrl = `${origin}/payment/cardcom/${req.token}`;
 
   const { lowProfileId, url, raw } = await createLowProfile({

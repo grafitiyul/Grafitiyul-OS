@@ -27,7 +27,10 @@ import {
 const router = Router();
 
 function statusFor(code) {
-  return code === 'cardcom_request_failed' || code === 'cardcom_not_configured' || code === 'cardcom_timeout'
+  return code === 'cardcom_request_failed' ||
+    code === 'cardcom_not_configured' ||
+    code === 'cardcom_webhook_not_configured' ||
+    code === 'cardcom_timeout'
     ? 422
     : 400;
 }

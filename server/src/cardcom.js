@@ -22,8 +22,13 @@ function cardcomAuth() {
   const terminal = process.env.CARDCOM_TERMINAL_NUMBER;
   const apiName = process.env.CARDCOM_API_NAME;
   if (!terminal || !apiName) {
+    // Name exactly which vars are missing (names only, never values) so the
+    // operator can fix the deployment from the log alone.
+    const missing = [!terminal && 'CARDCOM_TERMINAL_NUMBER', !apiName && 'CARDCOM_API_NAME'].filter(Boolean);
+    console.error(`[cardcom] not configured — missing env: ${missing.join(', ')}`);
     const err = new Error('cardcom_not_configured');
     err.code = 'cardcom_not_configured';
+    err.reason = `missing env: ${missing.join(', ')}`;
     throw err;
   }
   const auth = { TerminalNumber: Number(terminal), ApiName: apiName };
@@ -85,20 +90,32 @@ async function cardcomRequest(path, payload) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...auth, ...payload }),
   });
-  const data = await res.json().catch(() => null);
+  // Read as text first so a non-JSON body (HTML error page, proxy response) is
+  // still captured verbatim in the log instead of vanishing into a null parse.
+  const text = await res.text().catch(() => '');
+  let data = null;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    /* non-JSON body — logged below */
+  }
 
   if (!res.ok || !data) {
     const reason = `HTTP ${res.status}`;
-    console.error(`[cardcom] ${path} transport failed: ${reason}`);
+    console.error(`[cardcom] ${path} transport failed: ${reason} body=${text.slice(0, 800) || '(empty)'}`);
     const err = new Error(`cardcom_request_failed: ${reason}`);
     err.code = 'cardcom_request_failed';
     err.reason = reason;
     throw err;
   }
-  // v11: success is ResponseCode === 0. Anything else carries a Description.
+  // v11: success is ResponseCode === 0. Anything else carries a Description —
+  // log the COMPLETE payload so the exact rejection class (auth / currency /
+  // missing parameter / terminal config / validation) is visible in the log.
   if (Number(data.ResponseCode) !== 0) {
     const reason = data.Description || `ResponseCode ${data.ResponseCode}`;
-    console.error(`[cardcom] ${path} rejected: ${reason}`);
+    console.error(
+      `[cardcom] ${path} rejected: ResponseCode=${data.ResponseCode} description="${data.Description || ''}" fullResponse=${JSON.stringify(data).slice(0, 1500)}`,
+    );
     const err = new Error(`cardcom_request_failed: ${reason}`);
     err.code = 'cardcom_request_failed';
     err.reason = String(reason);
@@ -121,10 +138,15 @@ export async function createLowProfile({
   failedUrl,
   language = 'en',
 }) {
+  const coinId = isoCoinId(currency);
+  // The mapping actually used + webhook presence, on one greppable line.
+  console.log(
+    `[cardcom] LowProfile/Create: currency=${currency} → ISOCoinId=${coinId}, amount=${Number(amountMajor)}, webhook=${webHookUrl ? 'set' : 'MISSING'}`,
+  );
   const payload = {
     Operation: 'ChargeOnly', // plain charge; 3DS handled by the terminal config
     Amount: Number(amountMajor),
-    ISOCoinId: isoCoinId(currency),
+    ISOCoinId: coinId,
     Language: language,
     ProductName: String(productName || '').slice(0, 250),
     ReturnValue: String(returnValue || ''),
