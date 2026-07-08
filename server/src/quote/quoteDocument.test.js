@@ -20,14 +20,27 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ── Fake Prisma client ───────────────────────────────────────────────────────
 // Implements only the methods the service uses, over in-memory arrays.
-function fakeClient({ deals = {}, versions = [], docs = [] } = {}) {
+function fakeClient({ deals = {}, versions = [], docs = [], offers = [] } = {}) {
   let vSeq = 0;
   let dSeq = 0;
-  const state = { versions: [...versions], docs: [...docs] };
+  let oSeq = 0;
+  const state = { versions: [...versions], docs: [...docs], offers: [...offers] };
   return {
     state,
     deal: {
       findUnique: async ({ where }) => deals[where.id] || null,
+    },
+    quoteOffer: {
+      findFirst: async ({ where }) =>
+        state.offers
+          .filter((o) => o.dealId === where.dealId)
+          .sort((a, b) => a.offerNo - b.offerNo)[0] || null,
+      findUnique: async ({ where }) => state.offers.find((o) => o.id === where.id) || null,
+      create: async ({ data }) => {
+        const o = { id: `off_${++oSeq}`, ...data };
+        state.offers.push(o);
+        return o;
+      },
     },
     quoteVersion: {
       findFirst: async ({ where }) =>
@@ -37,6 +50,11 @@ function fakeClient({ deals = {}, versions = [], docs = [] } = {}) {
       create: async ({ data }) => {
         const v = { id: `ver_${++vSeq}`, ...data };
         state.versions.push(v);
+        return v;
+      },
+      update: async ({ where, data }) => {
+        const v = state.versions.find((x) => x.id === where.id);
+        Object.assign(v, data);
         return v;
       },
     },
@@ -118,6 +136,11 @@ test('ensureDraft: creates exactly one draft + a working version for a fresh dea
   assert.ok(r.doc.publicToken);
   assert.equal(client.state.docs.length, 1, 'one document');
   assert.equal(client.state.versions.length, 1, 'one working version created');
+  assert.equal(client.state.offers.length, 1, 'primary offer #1 created');
+  assert.equal(client.state.offers[0].offerNo, 1);
+  assert.equal(client.state.offers[0].isPrimary, true);
+  assert.equal(r.doc.offerId, client.state.offers[0].id, 'draft attached to the offer');
+  assert.equal(client.state.versions[0].offerId, client.state.offers[0].id, 'working version attached to the offer');
 });
 
 test('ensureDraft: reuses the existing draft instead of creating a duplicate', async () => {
@@ -129,6 +152,7 @@ test('ensureDraft: reuses the existing draft instead of creating a duplicate', a
   assert.equal(second.doc.id, first.doc.id, 'same document returned');
   assert.equal(client.state.docs.length, 1, 'no duplicate created');
   assert.equal(client.state.versions.length, 1, 'no duplicate working version');
+  assert.equal(client.state.offers.length, 1, 'no duplicate offer');
 });
 
 test('ensureDraft: returns not_found for a missing deal', async () => {

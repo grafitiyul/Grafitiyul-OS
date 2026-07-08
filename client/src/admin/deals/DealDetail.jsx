@@ -38,6 +38,7 @@ import ProduceDocumentModal from './icount/ProduceDocumentModal.jsx';
 import CustomPaymentLinkModal from './icount/CustomPaymentLinkModal.jsx';
 import CardcomPaymentModal from './cardcom/CardcomPaymentModal.jsx';
 import SendDocumentModal from './icount/SendDocumentModal.jsx';
+import DealQuoteCard from './quote/DealQuoteCard.jsx';
 import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
 
 const INPUT =
@@ -564,17 +565,11 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
           </div>
         </Card>
 
-        {/* Quote Module (Slice 3) — entry point to the Quote Preview Canvas
-            (internal admin draft workspace). Ensures a draft QuoteDocument and
-            opens the canvas. Public page / PDF / signature are built later. */}
+        {/* Quote Module — generation + management. Before the first generated
+            quote: the "הפק הצעת מחיר" entry (opens the generation modal). After:
+            a management card (status, date, language, permanent public URL). */}
         <Card variant="panel" title="הצעת מחיר">
-          <p className="mb-3 text-[12px] text-gray-500">בנייה ועיצוב של מסמך הצעת המחיר ללקוח.</p>
-          <Link
-            to={`/admin/quote/${deal.id}`}
-            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-          >
-            📄 הצעת מחיר (בטא)
-          </Link>
+          <DealQuoteCard deal={deal} />
         </Card>
 
       {deal.status === 'lost' && (

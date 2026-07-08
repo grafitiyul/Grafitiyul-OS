@@ -562,11 +562,29 @@ export async function composeQuoteDraftPreview(client, id) {
   return { model };
 }
 
-// A signed/finalised document is LOCKED: it renders the frozen snapshot, not a
-// live recompose, and cannot be signed again.
-const LOCKED_STATUSES = ['accepted', 'produced', 'rejected', 'expired'];
+// A finalised document is LOCKED: it cannot be signed (again). 'produced' is
+// NOT locked — it is the signable state: every generated document is already
+// frozen (renderModelSnapshot written at produce time), and signing locks it.
+const LOCKED_STATUSES = ['accepted', 'rejected', 'expired'];
 export function isLockedStatus(status) {
   return LOCKED_STATUSES.includes(status);
+}
+
+// The newest produced/accepted version of the SAME offer that is newer than
+// `document`, or null. Offers never supersede each other — only versions within
+// one offer chain do. Shared by the public page (replacement screen) and the
+// sign guard (a superseded version must not be signable).
+export async function findNewerVersion(client, document) {
+  if (!document?.offerId || document?.versionNo == null) return null;
+  return client.quoteDocument.findFirst({
+    where: {
+      offerId: document.offerId,
+      status: { in: ['produced', 'accepted'] },
+      versionNo: { gt: document.versionNo },
+    },
+    orderBy: { versionNo: 'desc' },
+    select: { id: true, publicToken: true, versionNo: true },
+  });
 }
 
 // Strip per-block admin fields (editTarget / source / warnings / overridden); keep
@@ -609,25 +627,51 @@ function headerFromModel(model) {
 }
 
 // Public customer-facing compose: look up the QuoteDocument by its capability
-// token and return ONLY what the customer page needs — a sanitised render model,
-// the business contact, a small header, the lock state, and (once signed) the
-// signature audit record. A locked document renders its FROZEN snapshot so what
-// the customer signed can never silently change under them.
+// token and return ONLY what the customer page needs. Rules (product-locked):
+//   * Drafts are NEVER public — customers only ever receive produced URLs.
+//   * A produced document renders its FROZEN snapshot (written at produce time);
+//     what the customer sees can never silently change under them.
+//   * A SIGNED document renders forever at its URL (it is the audit record of
+//     what was signed) — no supersede/expiry screen can replace it.
+//   * An unsigned version superseded by a newer version of the SAME offer does
+//     not render its content: the customer gets state='superseded' + the latest
+//     version's token ("ההצעה הזו כבר לא רלוונטית…"). Parallel offers are
+//     independent paths and never supersede each other.
 export async function composeQuoteByPublicToken(client, token) {
   if (!token || typeof token !== 'string') return { error: 'not_found' };
   const document = await client.quoteDocument.findUnique({
     where: { publicToken: token },
     include: { signature: true },
   });
-  if (!document) return { error: 'not_found' };
+  if (!document || document.status === 'draft') return { error: 'not_found' };
 
-  const locked = isLockedStatus(document.status) || !!document.signature;
+  const signed = !!document.signature;
+
+  if (!signed) {
+    if (document.expiresAt && document.expiresAt.getTime() < Date.now()) {
+      return { result: { state: 'expired', doc: { language: document.language } } };
+    }
+    const newer = await findNewerVersion(client, document);
+    if (newer) {
+      return {
+        result: {
+          state: 'superseded',
+          latestToken: newer.publicToken,
+          doc: { language: document.language },
+        },
+      };
+    }
+  }
+
+  const locked = isLockedStatus(document.status) || signed;
   const template = await getQuoteTemplate(client);
 
   let model;
-  if (locked && document.renderModelSnapshot) {
+  if (document.renderModelSnapshot) {
     model = document.renderModelSnapshot; // already a sanitised public model
   } else {
+    // Legacy safety net only (pre-offer documents produced before freeze-at-
+    // generation existed). Every new produce writes the snapshot.
     const composed = await composeQuoteDraftPreview(client, document.id);
     if (composed.error) return composed;
     model = toPublicModel(composed.model);
@@ -635,11 +679,13 @@ export async function composeQuoteByPublicToken(client, token) {
 
   return {
     result: {
+      state: 'ok',
       model,
       doc: {
-        status: document.status, // draft | produced | accepted | rejected | expired
+        status: document.status, // produced | accepted | rejected | expired
         language: document.language,
         publicToken: document.publicToken,
+        versionNo: document.versionNo ?? null,
         locked,
       },
       contact: template.contact || { whatsapp: '', email: '' },

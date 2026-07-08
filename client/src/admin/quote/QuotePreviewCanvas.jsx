@@ -298,17 +298,9 @@ export default function QuotePreviewCanvas() {
               )}
             </div>
           )}
-          {doc?.publicToken && (
-            <a
-              href={`/quote/${doc.publicToken}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              title="פתח את עמוד הלקוח (קישור ציבורי)"
-              className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
-            >
-              ↗ צפייה כלקוח
-            </a>
-          )}
+          {/* Drafts are no longer public — the customer only ever receives the
+              permanent URL of a GENERATED (frozen) quote, from הפק הצעת מחיר on
+              the deal. Preview mode below shows the exact customer rendering. */}
           <button type="button" onClick={() => setPreviewMode((p) => !p)} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">{previewMode ? 'יציאה מתצוגה' : '👁 תצוגה'}</button>
           {!previewMode && <button type="button" onClick={() => setPanelOpen(true)} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">⋯ מקטעים</button>}
         </div>
@@ -336,7 +328,7 @@ export default function QuotePreviewCanvas() {
             ))}
           </div>
         </article>
-        <p className="mt-6 text-center text-[12px] text-gray-400">טיוטה — התוכן נשאב מ-GOS. הפקה, עמוד ציבורי, חתימה ו-PDF בשלבים הבאים.</p>
+        <p className="mt-6 text-center text-[12px] text-gray-400">טיוטת עבודה — התוכן נשאב מ-GOS. ההפקה והשליחה ללקוח נעשות מכרטיס הצעת המחיר בעסקה.</p>
       </div>
 
       {/* sections panel */}

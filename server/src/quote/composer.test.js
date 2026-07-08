@@ -69,14 +69,20 @@ test('composer: produces the approved default block order', () => {
 // ── 2. language from Contact.communicationLanguage (end-to-end via the service) ─
 test('composer: language reflects the contact-derived document language', async () => {
   // Slice-1 service resolves language from the payer contact, then the composer uses it.
-  const state = { versions: [], docs: [] };
+  const state = { versions: [], docs: [], offers: [] };
   let vSeq = 0;
   const client = {
     deal: { findUnique: async ({ where, include }) => (where.id === 'deal_1' ? (include ? baseDeal() : { id: 'deal_1', communicationLanguage: null, quoteEmailIntro: null, contacts: [{ roles: ['payer'], isPrimary: false, contact: { communicationLanguage: 'en' } }] }) : null) },
+    quoteOffer: {
+      findFirst: async () => state.offers[0] || null,
+      findUnique: async ({ where }) => state.offers.find((o) => o.id === where.id) || null,
+      create: async ({ data }) => { const o = { id: 'off_1', ...data }; state.offers.push(o); return o; },
+    },
     quoteVersion: {
       findFirst: async () => state.versions[0] || null,
       findUnique: async ({ where }) => state.versions.find((v) => v.id === where.id) || null,
       create: async ({ data }) => { const v = { id: `ver_${++vSeq}`, ...data }; state.versions.push(v); return v; },
+      update: async ({ where, data }) => { const v = state.versions.find((x) => x.id === where.id); Object.assign(v, data); return v; },
     },
     quoteDocument: {
       findFirst: async () => state.docs[0] || null,
@@ -470,8 +476,11 @@ test('toPublicSignature: customer-safe shape; null passthrough; never leaks crea
   assert.equal(pub.timezone, 'Asia/Jerusalem');
 });
 
-test('isLockedStatus: finalised statuses lock; draft does not', () => {
-  for (const s of ['accepted', 'produced', 'rejected', 'expired']) assert.equal(isLockedStatus(s), true, s);
+test('isLockedStatus: finalised statuses lock; draft and produced do not', () => {
+  for (const s of ['accepted', 'rejected', 'expired']) assert.equal(isLockedStatus(s), true, s);
+  // 'produced' is the SIGNABLE state (already frozen by its snapshot) — signing
+  // is what locks it. Freeze-at-generation, lock-at-signature.
+  assert.equal(isLockedStatus('produced'), false);
   assert.equal(isLockedStatus('draft'), false);
   assert.equal(isLockedStatus(undefined), false);
 });

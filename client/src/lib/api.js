@@ -425,6 +425,9 @@ export const api = {
       request(`/api/deals/${id}/price-lines`, { method: 'PUT', body: JSON.stringify(data) }),
     // Quote Module — ensure + return the draft QuoteDocument for this deal.
     quoteDocument: (id) => request(`/api/deals/${id}/quote-document`),
+    quoteDocuments: (id) => request(`/api/deals/${id}/quote-documents`),
+    sendQuoteEmail: (id, data) =>
+      request(`/api/deals/${id}/send-quote-email`, { method: 'POST', body: JSON.stringify(data) }),
     // Permanent customer payment URL — ensures the deal's payment token and
     // returns { token, paymentUrl } (always the SAME URL for a deal). The
     // underlying iCount link is generated/refreshed lazily by GET /pay/:token.
@@ -607,6 +610,7 @@ export const api = {
     update: (id, data) =>
       request(`/api/quote-documents/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     composePreview: (id) => request(`/api/quote-documents/${id}/compose-preview`),
+    produce: (id) => request(`/api/quote-documents/${id}/produce`, { method: 'POST' }),
     resetToSource: (id) =>
       request(`/api/quote-documents/${id}/reset-to-source`, { method: 'POST' }),
   },

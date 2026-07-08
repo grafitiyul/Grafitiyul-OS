@@ -36,6 +36,9 @@ router.post(
     const r = await signQuoteByToken(prisma, req.params.token, req.body || {}, meta);
     if (r.error === 'not_found' || r.error === 'deal_not_found') return res.status(404).json({ error: 'not_found' });
     if (r.error === 'already_signed') return res.status(409).json({ error: 'already_signed' });
+    // A newer version of the same offer exists — not signable; the client reloads
+    // into the replacement screen (same 409 recovery path as already_signed).
+    if (r.error === 'superseded') return res.status(409).json({ error: 'superseded' });
     if (r.error) return res.status(400).json({ error: r.error });
     res.json(r.result);
   }),

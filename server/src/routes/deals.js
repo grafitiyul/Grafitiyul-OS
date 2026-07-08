@@ -5,11 +5,13 @@ import { toClientLine, lineToData } from '../quote/quoteLineMapping.js';
 import {
   ensureWorkingVersion,
   ensureDraftQuoteDocument,
+  listDealQuoteDocuments,
   toClientQuoteDocument,
 } from '../quote/quoteDocument.js';
-import { ensurePaymentToken, paymentUrlFor } from '../dealPayment.js';
+import { ensurePaymentToken, paymentUrlFor, resolvePublicOrigin } from '../dealPayment.js';
 import { recordDealChanges, recordDealContactChange, DEAL_DIFF_SELECT } from '../timeline/dealChangelog.js';
-import { userOrigin } from '../timeline/events.js';
+import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
+import { sendSimpleEmail } from '../email/simpleSend.js';
 
 // Deal CRUD + DealContact management. The Deal is the commercial object: it
 // owns agreed value (integer minor units + currency), discount, payment terms,
@@ -615,6 +617,66 @@ router.get(
     const result = await ensureDraftQuoteDocument(prisma, req.params.id);
     if (result.error === 'not_found') return res.status(404).json({ error: 'not_found' });
     res.json({ quoteDocument: toClientQuoteDocument(result.doc), created: result.created });
+  }),
+);
+
+// All offers of this deal with their PRODUCED (immutable) quote documents —
+// feeds the Deal quote card + the quote-history popup. Drafts excluded.
+router.get(
+  '/:id/quote-documents',
+  handle(async (req, res) => {
+    const offers = await listDealQuoteDocuments(prisma, req.params.id);
+    res.json({ offers, publicOrigin: resolvePublicOrigin(req) });
+  }),
+);
+
+// Send a produced quote to the customer by email (operator-reviewed text — the
+// modal shows editable subject/body before this is called; nothing is auto-sent).
+router.post(
+  '/:id/send-quote-email',
+  handle(async (req, res) => {
+    const { quoteDocumentId, to, subject, body, contactId } = req.body || {};
+    const doc = await prisma.quoteDocument.findUnique({ where: { id: String(quoteDocumentId || '') } });
+    if (!doc || doc.dealId !== req.params.id) return res.status(404).json({ error: 'not_found' });
+    if (doc.status === 'draft') return res.status(409).json({ error: 'not_produced' });
+    const toAddr = String(to || '').trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(toAddr)) return res.status(422).json({ error: 'invalid_email' });
+    if (!String(subject || '').trim() || !String(body || '').trim()) {
+      return res.status(422).json({ error: 'missing_content' });
+    }
+
+    let sent;
+    try {
+      sent = await sendSimpleEmail({
+        to: toAddr,
+        subject: String(subject).trim(),
+        bodyText: String(body),
+        dealId: req.params.id,
+        contactId: contactId || null,
+        createdByUserId: req.adminAuth?.userId || null,
+      });
+    } catch (e) {
+      // Provider failures answer 422 (never a 5xx that Cloudflare masks as HTML).
+      return res.status(422).json({ error: 'send_failed', message: e?.message || 'send_failed' });
+    }
+
+    await emitTimelineEvent(prisma, {
+      subjectType: 'deal',
+      subjectId: req.params.id,
+      kind: 'quote',
+      data: {
+        event: 'quote_sent',
+        channel: 'email',
+        to: toAddr,
+        quoteDocumentId: doc.id,
+        versionNo: doc.versionNo,
+        language: doc.language,
+        publicToken: doc.publicToken,
+      },
+      origin: await userOrigin(req.adminAuth?.userId),
+    });
+
+    res.json({ ok: true, gmailMessageId: sent.gmailMessageId, accountEmail: sent.accountEmail });
   }),
 );
 

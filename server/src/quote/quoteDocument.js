@@ -69,12 +69,32 @@ export function buildInitialDraftData({ dealId, quoteVersionId, language }) {
   };
 }
 
+// Every deal with quote data has at least offer #1 (its PRIMARY commercial
+// path). Parallel offers (#2, #3 …) are created explicitly by the operator;
+// this only guarantees the baseline. Idempotent; patches nothing else.
+export async function ensureOffer(client, dealId) {
+  const existing = await client.quoteOffer.findFirst({
+    where: { dealId },
+    orderBy: { offerNo: 'asc' },
+  });
+  if (existing) return existing;
+  return client.quoteOffer.create({ data: { dealId, offerNo: 1, isPrimary: true } });
+}
+
 // Exactly one working QuoteVersion per deal (the version the Builder edits).
 // Centralised here so the Quote module and the Price Builder share one definition.
+// Attached to the deal's primary offer; legacy rows (offerId null) are adopted.
 export async function ensureWorkingVersion(client, dealId) {
   const existing = await client.quoteVersion.findFirst({ where: { dealId, isWorking: true } });
-  if (existing) return existing;
-  return client.quoteVersion.create({ data: { dealId, isWorking: true, status: 'draft' } });
+  if (existing) {
+    if (!existing.offerId) {
+      const offer = await ensureOffer(client, dealId);
+      return client.quoteVersion.update({ where: { id: existing.id }, data: { offerId: offer.id } });
+    }
+    return existing;
+  }
+  const offer = await ensureOffer(client, dealId);
+  return client.quoteVersion.create({ data: { dealId, offerId: offer.id, isWorking: true, status: 'draft' } });
 }
 
 const DEAL_SELECT_FOR_QUOTE = {
@@ -102,16 +122,61 @@ export async function ensureDraftQuoteDocument(client, dealId) {
     where: { dealId, quoteVersionId: version.id, status: 'draft' },
     orderBy: { createdAt: 'asc' },
   });
-  if (existing) return { doc: existing, created: false };
+  if (existing) {
+    if (!existing.offerId && version.offerId) {
+      const doc = await client.quoteDocument.update({
+        where: { id: existing.id },
+        data: { offerId: version.offerId },
+      });
+      return { doc, created: false };
+    }
+    return { doc: existing, created: false };
+  }
 
   const doc = await client.quoteDocument.create({
-    data: buildInitialDraftData({
-      dealId,
-      quoteVersionId: version.id,
-      language: resolveQuoteLanguage(deal),
-    }),
+    data: {
+      ...buildInitialDraftData({
+        dealId,
+        quoteVersionId: version.id,
+        language: resolveQuoteLanguage(deal),
+      }),
+      offerId: version.offerId ?? null,
+    },
   });
   return { doc, created: true };
+}
+
+// All offers of a deal with their PRODUCED documents (newest version first) —
+// feeds the Deal quote card and the quote-history popup. Drafts are excluded:
+// they are the working copy, not a generated quote.
+export async function listDealQuoteDocuments(client, dealId) {
+  const offers = await client.quoteOffer.findMany({
+    where: { dealId },
+    orderBy: { offerNo: 'asc' },
+    include: {
+      quoteDocuments: {
+        where: { status: { not: 'draft' } },
+        orderBy: { versionNo: 'desc' },
+        include: { signature: { select: { signedAt: true, signerName: true, method: true } } },
+      },
+    },
+  });
+  return offers.map((o) => ({
+    id: o.id,
+    offerNo: o.offerNo,
+    isPrimary: o.isPrimary,
+    documents: o.quoteDocuments.map((d) => ({
+      id: d.id,
+      status: d.status,
+      language: d.language,
+      versionNo: d.versionNo,
+      publicToken: d.publicToken,
+      producedAt: d.producedAt,
+      expiresAt: d.expiresAt,
+      signedAt: d.signature?.signedAt || null,
+      signerName: d.signature?.signerName || null,
+    })),
+  }));
 }
 
 // Read one QuoteDocument by id. Returns { error:'not_found' } if absent.
@@ -172,6 +237,8 @@ export function toClientQuoteDocument(doc) {
     id: doc.id,
     dealId: doc.dealId,
     quoteVersionId: doc.quoteVersionId,
+    offerId: doc.offerId ?? null,
+    versionNo: doc.versionNo ?? null,
     status: doc.status,
     language: doc.language,
     publicToken: doc.publicToken,

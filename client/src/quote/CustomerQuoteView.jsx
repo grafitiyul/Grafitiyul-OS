@@ -180,6 +180,47 @@ export default function CustomerQuoteView() {
   if (phase === 'loading') {
     return <div className="flex min-h-screen items-center justify-center bg-gray-100 text-gray-400">{L.he.loading}</div>;
   }
+
+  // Superseded: a newer version of the SAME offer exists — the old content is
+  // not shown at all (product rule); the customer is routed to the latest.
+  if (phase === 'ready' && data?.state === 'superseded') {
+    const sLang = data?.doc?.language === 'en' ? 'en' : 'he';
+    const sRtl = sLang !== 'en';
+    return (
+      <div dir={sRtl ? 'rtl' : 'ltr'} className="flex min-h-screen flex-col items-center justify-center bg-gray-100 px-6 text-center">
+        <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
+          <div className="text-lg font-semibold text-gray-800">
+            {sLang === 'en'
+              ? 'This proposal is no longer relevant — a newer proposal is available.'
+              : 'ההצעה הזו כבר לא רלוונטית, כי קיימת הצעה עדכנית יותר.'}
+          </div>
+          <a
+            href={`/quote/${data.latestToken}`}
+            className="mt-6 inline-flex items-center justify-center rounded-xl px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
+            style={{ background: SIGN_BLUE }}
+          >
+            {sLang === 'en' ? 'Open the latest proposal' : 'לחץ כאן להצעה הכי עדכנית'}
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  // Expired (unsigned + past expiresAt): friendly dead-end, no content.
+  if (phase === 'ready' && data?.state === 'expired') {
+    const sLang = data?.doc?.language === 'en' ? 'en' : 'he';
+    return (
+      <div dir={sLang === 'en' ? 'ltr' : 'rtl'} className="flex min-h-screen flex-col items-center justify-center bg-gray-100 px-6 text-center">
+        <div className="text-lg font-semibold text-gray-700">
+          {sLang === 'en' ? 'This proposal has expired.' : 'תוקף ההצעה הזו פג.'}
+        </div>
+        <div className="mt-1 text-sm text-gray-400">
+          {sLang === 'en' ? 'Please contact us for an updated proposal.' : 'צרו איתנו קשר לקבלת הצעה מעודכנת.'}
+        </div>
+      </div>
+    );
+  }
+
   if (phase === 'error' || !renderModel) {
     return (
       <div dir="rtl" className="flex min-h-screen flex-col items-center justify-center bg-gray-100 px-6 text-center">

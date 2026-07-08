@@ -926,6 +926,7 @@ model Deal {
   contacts              DealContact[]
   quoteVersions         QuoteVersion[]
   quoteDocuments        QuoteDocument[]
+  quoteOffers           QuoteOffer[]
   paymentLinks          DealPaymentLink[]
   icountDocuments       IcountDocument[]
   customPaymentLinks    DealCustomPaymentLink[]
@@ -1482,16 +1483,42 @@ model IcountWebhookLog {
   @@index([dealId])
 }
 
+// ── Quote Offers ─────────────────────────────────────────────────────────────
+// An Offer is ONE commercial path of a deal (הצעה 1 / הצעה 2 — parallel
+// alternatives that never supersede each other). Within one offer, generated
+// QuoteDocuments are numbered VERSIONS (v1, v2 …); a newer produced version
+// supersedes older unsigned ones (their public URL shows a "newer proposal"
+// screen). Exactly one offer per deal is primary — the offer a WON deal refers
+// to. Terminology (locked): Offer = alternative; Version = revision within an
+// offer (QuoteDocument.versionNo); QuoteVersion below = PRICING lines (historic
+// name, distinct concept).
+model QuoteOffer {
+  id             String          @id @default(cuid())
+  deal           Deal            @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  dealId         String
+  offerNo        Int // 1, 2, 3 … per deal
+  isPrimary      Boolean         @default(false)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  quoteVersions  QuoteVersion[]
+  quoteDocuments QuoteDocument[]
+
+  @@unique([dealId, offerNo])
+  @@index([dealId])
+}
+
 // ── Quote model (canonical line storage) ────────────────────────────────────
 // QuoteVersion + QuoteLine are the SINGLE source of truth for a deal's pricing
-// lines. For now each deal has exactly ONE working version (isWorking=true) that
-// the Price Builder edits — no quote workflow yet (no alternatives, sending,
-// acceptance, or WON). Those are added later as fields/rows ON TOP of this model,
-// with no storage migration. Deal.valueMinor caches the working version's gross.
+// lines. Each offer has exactly ONE working version (isWorking=true) that the
+// Price Builder edits. Deal.valueMinor caches the working version's gross.
 model QuoteVersion {
   id         String      @id @default(cuid())
   deal       Deal        @relation(fields: [dealId], references: [id], onDelete: Cascade)
   dealId     String
+  // The offer this priced version belongs to. Nullable for legacy rows;
+  // backfilled to offer #1. SetNull so pricing survives an offer row's removal.
+  offer      QuoteOffer? @relation(fields: [offerId], references: [id], onDelete: SetNull)
+  offerId    String?
   status     String      @default("draft") // draft | produced | accepted | rejected (only 'draft' used now)
   isWorking  Boolean     @default(true) // the version the builder/panel edits (exactly one per deal for now)
   isSelected Boolean     @default(false) // the accepted/main version (unused until the quote workflow)
@@ -1501,6 +1528,7 @@ model QuoteVersion {
   quoteDocuments QuoteDocument[]
 
   @@index([dealId])
+  @@index([offerId])
 }
 
 // One priced line on a quote version. Same shape the Price Builder UI uses; refs
@@ -2334,6 +2362,14 @@ model QuoteDocument {
   // document's content survives independently inside renderModelSnapshot.
   quoteVersion        QuoteVersion          @relation(fields: [quoteVersionId], references: [id], onDelete: Cascade)
   quoteVersionId      String
+  // The offer (commercial path) this document belongs to. Backfilled to offer #1
+  // for legacy rows. versionNo is the customer-facing version WITHIN the offer
+  // (v1, v2 …) — null while draft, assigned when the document is produced. The
+  // newest produced versionNo per offer is the live one; older unsigned versions
+  // are superseded (public URL shows the "newer proposal available" screen).
+  offer               QuoteOffer?           @relation(fields: [offerId], references: [id], onDelete: SetNull)
+  offerId             String?
+  versionNo           Int?
   status              String                @default("draft") // draft | produced | accepted | rejected | expired
   // Resolved automatically from the relevant Contact.communicationLanguage at
   // create time (role priority: payer -> decisionMaker -> coordinator -> isPrimary),
@@ -2355,8 +2391,10 @@ model QuoteDocument {
   renders             QuoteDocumentRender[]
   signature           QuoteSignature?
 
+  @@unique([offerId, versionNo]) // no two produced versions share a number (drafts: versionNo null)
   @@index([dealId])
   @@index([quoteVersionId])
+  @@index([offerId])
   @@index([status])
 }
 

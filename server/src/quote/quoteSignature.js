@@ -1,4 +1,4 @@
-import { composeQuoteDraftPreview, toPublicModel, toPublicSignature, isLockedStatus } from './composer.js';
+import { composeQuoteDraftPreview, toPublicModel, toPublicSignature, isLockedStatus, findNewerVersion } from './composer.js';
 
 // Signing a proposal — the permanent audit record + the lock. One signature per
 // QuoteDocument (enforced by the unique quoteDocumentId); a signed document is
@@ -17,12 +17,18 @@ export async function signQuoteByToken(client, token, input, meta) {
     where: { publicToken: token },
     include: { signature: true },
   });
-  if (!document) return { error: 'not_found' };
+  // Drafts are never public and never signable — only produced documents are.
+  if (!document || document.status === 'draft') return { error: 'not_found' };
 
   // Already signed / finalised → do not create a second signature.
   if (document.signature || isLockedStatus(document.status)) {
     return { error: 'already_signed' };
   }
+
+  // A version superseded by a newer version of the same offer is not signable —
+  // the public page shows the replacement screen; this guard covers direct POSTs.
+  const newer = await findNewerVersion(client, document);
+  if (newer) return { error: 'superseded' };
 
   const method = METHODS.includes(input?.method) ? input.method : null;
   if (!method) return { error: 'invalid_method' };
@@ -41,10 +47,15 @@ export async function signQuoteByToken(client, token, input, meta) {
     signatureImage = img;
   }
 
-  // Freeze exactly what is being signed (audit integrity), then lock the document.
-  const composed = await composeQuoteDraftPreview(client, document.id);
-  if (composed.error) return composed;
-  const snapshot = toPublicModel(composed.model);
+  // The customer signs EXACTLY the frozen snapshot they were shown (written at
+  // produce time). Live recompose remains only as a legacy safety net for
+  // pre-freeze documents.
+  let snapshot = document.renderModelSnapshot;
+  if (!snapshot) {
+    const composed = await composeQuoteDraftPreview(client, document.id);
+    if (composed.error) return composed;
+    snapshot = toPublicModel(composed.model);
+  }
 
   const timezone = typeof input?.timezone === 'string' ? input.timezone.slice(0, 64) : null;
 
@@ -65,7 +76,8 @@ export async function signQuoteByToken(client, token, input, meta) {
     }),
     client.quoteDocument.update({
       where: { id: document.id },
-      data: { status: 'accepted', producedAt: new Date(), renderModelSnapshot: snapshot },
+      // producedAt is the GENERATION moment — never overwritten by signing.
+      data: { status: 'accepted', producedAt: document.producedAt ?? new Date(), renderModelSnapshot: snapshot },
     }),
   ]);
 

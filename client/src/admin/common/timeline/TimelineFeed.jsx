@@ -15,6 +15,7 @@ import DealFilesTab from '../../deals/files/DealFilesTab.jsx';
 import WhatsAppIconShared from '../icons/WhatsAppIcon.jsx';
 import GmailIcon from '../icons/GmailIcon.jsx';
 import AccountingEventRow from './AccountingEventRow.jsx';
+import QuoteEventRow from './QuoteEventRow.jsx';
 import { DEAL_TASKS_CHANGED_EVENT } from '../../deals/tasks/taskEvents.js';
 import { useDirtyForm } from '../../../lib/dirtyForms.js';
 
@@ -519,6 +520,14 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
                     return (
                       <li key={entry.id}>
                         <EmailEventRow entry={entry} />
+                      </li>
+                    );
+                  }
+                  // Quote events (generated / sent — permanent public URL).
+                  if (entry.kind === 'quote') {
+                    return (
+                      <li key={entry.id}>
+                        <QuoteEventRow entry={entry} />
                       </li>
                     );
                   }
