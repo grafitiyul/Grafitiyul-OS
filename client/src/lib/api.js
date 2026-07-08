@@ -457,8 +457,12 @@ export const api = {
     cancelTouristPayment: (id, reqId) =>
       request(`/api/deals/${id}/tourist-payment/${reqId}/cancel`, { method: 'POST' }),
     // Send an issued iCount document to a customer by email (שלח ללקוח → אימייל).
+    // On iCount failure the error payload carries a Gmail proposal — approved
+    // (possibly edited) sends go through sendIcountDocumentGmail.
     sendIcountDocument: (id, data) =>
       request(`/api/deals/${id}/icount/send-document`, { method: 'POST', body: JSON.stringify(data) }),
+    sendIcountDocumentGmail: (id, data) =>
+      request(`/api/deals/${id}/icount/send-document-gmail`, { method: 'POST', body: JSON.stringify(data) }),
   },
   // ── CRM Task Types (configurable catalog behind the Deal task composer) ──
   taskTypes: {

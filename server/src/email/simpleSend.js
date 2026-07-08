@@ -9,6 +9,9 @@ import { ingestGmailMessage } from './ingest.js';
 // Used by flows that must not dead-end when a provider fails (e.g. the iCount
 // document-send Gmail fallback). No reply/forward threading and no
 // open-tracking pixel — those stay in POST /api/email/send.
+//
+// PRODUCT RULE: no email text is ever sent without operator approval — callers
+// must only invoke this with content the operator explicitly confirmed.
 
 function coded(code) {
   const err = new Error(code);
@@ -16,12 +19,19 @@ function coded(code) {
   return err;
 }
 
-export async function sendSimpleEmail({ to, subject, bodyText, dealId = null, contactId = null, createdByUserId = null }) {
-  if (!emailIntegrationConfigured()) throw coded('email_not_configured');
-  const account = await prisma.emailAccount.findFirst({
+// The account server-initiated sends go out from (first connected active
+// account) — also used to PREVIEW the sender in approval flows before sending.
+export async function getSendAccount() {
+  if (!emailIntegrationConfigured()) return null;
+  return prisma.emailAccount.findFirst({
     where: { isActive: true, refreshTokenEnc: { not: null } },
     orderBy: { createdAt: 'asc' },
   });
+}
+
+export async function sendSimpleEmail({ to, subject, bodyText, dealId = null, contactId = null, createdByUserId = null }) {
+  if (!emailIntegrationConfigured()) throw coded('email_not_configured');
+  const account = await getSendAccount();
   if (!account) throw coded('no_connected_account');
 
   const raw = buildRawMessage({

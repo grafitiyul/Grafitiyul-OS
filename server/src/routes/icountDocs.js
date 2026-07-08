@@ -12,18 +12,20 @@ import {
   linkExternalDocument,
 } from '../icountDocs.js';
 import { sendDocByEmail, getDocUrl } from '../icount.js';
-import { sendSimpleEmail } from '../email/simpleSend.js';
+import { sendSimpleEmail, getSendAccount } from '../email/simpleSend.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 import { ensureCustomIcountLink, newPaymentToken, resolvePublicOrigin } from '../dealPayment.js';
 
 // Deal accounting endpoints — mounted under /api/deals (admin-auth like the
 // other deal routers).
 //
-//   GET  /:id/icount/defaults        — modal prefill (customer / rows / VAT / types)
-//   GET  /:id/icount/documents       — previous documents (GOS rows + live iCount)
-//   POST /:id/icount/documents       — issue a document (idempotent)
-//   GET  /:id/custom-payment-links   — this deal's custom links
-//   POST /:id/custom-payment-links   — create a custom-description payment link
+//   GET  /:id/icount/defaults            — modal prefill (customer / rows / VAT / types)
+//   GET  /:id/icount/documents           — previous documents (GOS rows + live iCount)
+//   POST /:id/icount/documents           — issue a document (idempotent)
+//   POST /:id/icount/send-document       — email a document via iCount (failure → Gmail proposal, never auto-sends)
+//   POST /:id/icount/send-document-gmail — operator-approved Gmail fallback send
+//   GET  /:id/custom-payment-links       — this deal's custom links
+//   POST /:id/custom-payment-links       — create a custom-description payment link
 //
 // Provider failures return 422 (NOT 502/504): Cloudflare replaces origin
 // 502/504 bodies with its own HTML error page, which is exactly the raw-HTML
@@ -131,33 +133,54 @@ router.post(
   }),
 );
 
+// Shared validation + the timeline event both send endpoints emit.
+function parseSendDocBody(req) {
+  return {
+    doctype: String(req.body?.doctype || ''),
+    docnum: String(req.body?.docnum || '').trim(),
+    email: String(req.body?.email || '').trim(),
+  };
+}
+
+async function emitDocumentSentEvent(dealId, { doctype, docnum, email, via }, userId) {
+  await emitTimelineEvent(prisma, {
+    subjectType: 'deal',
+    subjectId: dealId,
+    kind: 'accounting',
+    data: {
+      event: 'icount_document_sent',
+      doctype,
+      doctypeLabel: DOC_TYPE_LABELS[doctype] || doctype,
+      docnum,
+      channel: 'email',
+      via,
+      recipient: email,
+    },
+    origin: await userOrigin(userId),
+  });
+}
+
 // Send an already-issued iCount document to a customer by email ("שלח ללקוח →
-// אימייל"). Primary path is iCount's own doc/email; when iCount fails for ANY
-// reason the document link is sent through the connected Gmail account instead
-// — the operator must never hit a dead end. Either success emits an accounting
-// timeline event (channel=email + recipient + via).
+// אימייל"). Primary path is iCount's own doc/email. PRODUCT RULE: no email
+// text is ever sent automatically — when iCount fails (or can't confirm the
+// requested recipient) NOTHING is sent; the error response carries a
+// ready-to-approve Gmail proposal (sender/subject/body/link) that the modal
+// shows for editing, and only the explicit approval endpoint below sends it.
 router.post(
   '/:id/icount/send-document',
   handle(async (req, res) => {
     const deal = await prisma.deal.findUnique({ where: { id: req.params.id }, select: { id: true } });
     if (!deal) return res.status(404).json({ error: 'not_found' });
-    const doctype = String(req.body?.doctype || '');
-    const docnum = String(req.body?.docnum || '').trim();
-    const email = String(req.body?.email || '').trim();
+    const { doctype, docnum, email } = parseSendDocBody(req);
     if (!doctype || !docnum) return res.status(400).json({ error: 'document_required' });
     if (!/.+@.+\..+/.test(email)) return res.status(400).json({ error: 'email_invalid' });
 
-    let via = 'icount';
-    let icountErr = null;
     try {
       await sendDocByEmail({ doctype, docnum, email });
-    } catch (err) {
-      icountErr = err;
-    }
-
-    if (icountErr) {
-      // Gmail fallback: email the document LINK. doc/get_doc_url is the fresh
-      // source; the modal's stored docUrl covers iCount being unreachable.
+    } catch (icountErr) {
+      // Build the Gmail-fallback PROPOSAL (nothing is sent here). doc/get_doc_url
+      // is the fresh link source; the modal's stored docUrl covers iCount being
+      // fully unreachable.
       let docUrl = null;
       try {
         docUrl = await getDocUrl(doctype, docnum);
@@ -165,52 +188,67 @@ router.post(
         docUrl = null;
       }
       if (!docUrl) docUrl = String(req.body?.docUrl || '').trim() || null;
-      const label = DOC_TYPE_LABELS[doctype] || doctype;
-      const docRef = `${label}${docnum ? ` מס׳ ${docnum}` : ''}`;
-      let fallback = docUrl ? null : 'no_doc_url';
-      if (docUrl) {
-        try {
-          await sendSimpleEmail({
-            to: email,
-            subject: docRef,
-            bodyText: `שלום,\n\nמצורף קישור לצפייה במסמך — ${docRef}:\n${docUrl}\n\nתודה`,
-            dealId: deal.id,
-            contactId: String(req.body?.contactId || '') || null,
-            createdByUserId: req.adminAuth?.userId || null,
-          });
-          via = 'gmail';
-        } catch (gmailErr) {
-          fallback =
-            gmailErr?.code === 'email_not_configured' || gmailErr?.code === 'no_connected_account'
-              ? 'gmail_unavailable'
-              : 'gmail_failed';
-          console.error(`[icount] gmail fallback failed (${fallback}): ${gmailErr?.message}`);
-        }
+      const account = await getSendAccount();
+      let gmail;
+      if (!account) {
+        gmail = { available: false, reason: 'gmail_unavailable' };
+      } else if (!docUrl) {
+        gmail = { available: false, reason: 'no_doc_url' };
+      } else {
+        const label = DOC_TYPE_LABELS[doctype] || doctype;
+        const docRef = `${label}${docnum ? ` מס׳ ${docnum}` : ''}`;
+        gmail = {
+          available: true,
+          from: account.emailAddress,
+          to: email,
+          subject: docRef,
+          bodyText: `שלום,\n\nמצורף קישור לצפייה במסמך — ${docRef}:\n${docUrl}\n\nתודה`,
+          docUrl,
+        };
       }
-      if (via !== 'gmail') {
-        const code = icountErr?.code || 'send_failed';
-        return res.status(providerErrorStatus(code)).json({ error: code, reason: icountErr?.reason || null, fallback });
-      }
-      console.error(`[icount] doc/email failed (${icountErr?.reason || icountErr?.message}) — sent via Gmail fallback`);
+      const code = icountErr?.code || 'send_failed';
+      return res.status(providerErrorStatus(code)).json({ error: code, reason: icountErr?.reason || null, gmail });
     }
 
-    await emitTimelineEvent(prisma, {
-      subjectType: 'deal',
-      subjectId: deal.id,
-      kind: 'accounting',
-      data: {
-        event: 'icount_document_sent',
-        doctype,
-        doctypeLabel: DOC_TYPE_LABELS[doctype] || doctype,
-        docnum,
-        channel: 'email',
-        via,
-        recipient: email,
-      },
-      origin: await userOrigin(req.adminAuth?.userId || null),
-    });
+    await emitDocumentSentEvent(deal.id, { doctype, docnum, email, via: 'icount' }, req.adminAuth?.userId || null);
+    res.json({ ok: true, via: 'icount' });
+  }),
+);
 
-    res.json({ ok: true, via });
+// Operator-APPROVED Gmail fallback send. The subject/body arrive from the
+// approval modal exactly as the operator confirmed them — this endpoint is
+// only ever called after an explicit approval click.
+router.post(
+  '/:id/icount/send-document-gmail',
+  handle(async (req, res) => {
+    const deal = await prisma.deal.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!deal) return res.status(404).json({ error: 'not_found' });
+    const { doctype, docnum, email } = parseSendDocBody(req);
+    const subject = String(req.body?.subject || '').trim();
+    const bodyText = String(req.body?.bodyText || '').trim();
+    if (!doctype || !docnum) return res.status(400).json({ error: 'document_required' });
+    if (!/.+@.+\..+/.test(email)) return res.status(400).json({ error: 'email_invalid' });
+    if (!subject) return res.status(400).json({ error: 'subject_required' });
+    if (!bodyText) return res.status(400).json({ error: 'body_required' });
+
+    try {
+      await sendSimpleEmail({
+        to: email,
+        subject,
+        bodyText,
+        dealId: deal.id,
+        contactId: String(req.body?.contactId || '') || null,
+        createdByUserId: req.adminAuth?.userId || null,
+      });
+    } catch (err) {
+      const code = err?.code || 'gmail_send_failed';
+      console.error(`[icount] approved gmail fallback send failed: ${err?.message}`);
+      const status = code === 'email_not_configured' || code === 'no_connected_account' ? 400 : 422;
+      return res.status(status).json({ error: code });
+    }
+
+    await emitDocumentSentEvent(deal.id, { doctype, docnum, email, via: 'gmail' }, req.adminAuth?.userId || null);
+    res.json({ ok: true, via: 'gmail' });
   }),
 );
 

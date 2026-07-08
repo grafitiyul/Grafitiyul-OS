@@ -5,10 +5,12 @@ import { openWhatsappComposer } from '../../whatsapp/composerEvents.js';
 
 // "שלח ללקוח" — send an already-issued iCount document to the customer, reusing
 // existing infrastructure only:
-//   • Email    → iCount's own document email flow (api.deals.sendIcountDocument);
-//                when iCount fails, the SERVER automatically falls back to the
-//                connected Gmail account (document link) — response.via says
-//                which channel actually delivered.
+//   • Email    → iCount's own document email flow (api.deals.sendIcountDocument).
+//                PRODUCT RULE: no email text is ever sent automatically — when
+//                iCount fails, the server returns a Gmail PROPOSAL (sender/
+//                subject/body/link) that the operator reviews and can edit
+//                here; only the explicit approval button sends it (via
+//                api.deals.sendIcountDocumentGmail).
 //   • WhatsApp → the EXISTING composer: we seed a draft ("הנה החשבונית: <link>")
 //                and open the dock on the chosen chat (openWhatsappComposer).
 // A single obvious recipient/number is auto-selected; the operator only chooses
@@ -37,6 +39,11 @@ export default function SendDocumentModal({ open, onClose, deal, entry }) {
   const [error, setError] = useState(null);
   const [sent, setSent] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Gmail-fallback approval state: the server's proposal (never auto-sent) +
+  // the operator-editable subject/body.
+  const [fallback, setFallback] = useState(null); // { reason, from, docUrl }
+  const [fbSubject, setFbSubject] = useState('');
+  const [fbBody, setFbBody] = useState('');
 
   // Email recipients — the deal's contacts that actually have an email.
   const emailRecipients = useMemo(() => {
@@ -56,6 +63,7 @@ export default function SendDocumentModal({ open, onClose, deal, entry }) {
     setError(null);
     setSent(false);
     setCopied(false);
+    setFallback(null);
     setChannel('email');
     setText(docUrl ? `הנה החשבונית:\n${docUrl}` : 'הנה החשבונית:');
     // Auto-select the single obvious email recipient.
@@ -83,27 +91,59 @@ export default function SendDocumentModal({ open, onClose, deal, entry }) {
     setBusy(true);
     setError(null);
     try {
-      const resp = await api.deals.sendIcountDocument(deal.id, {
+      await api.deals.sendIcountDocument(deal.id, {
         doctype: d.doctype,
         docnum: d.docnum,
         email: emailSel,
         docUrl: docUrl || undefined,
         contactId: emailRecipients.find((r) => r.email === emailSel)?.id || undefined,
       });
-      setSent(resp?.via === 'gmail' ? 'gmail' : 'icount');
+      setSent('icount');
     } catch (e) {
       const code = e?.payload?.error || e?.code || '';
-      const fallbackNote =
-        e?.payload?.fallback === 'gmail_unavailable'
-          ? ' שליחה חלופית דרך Gmail אינה זמינה (אין חשבון מייל מחובר).'
-          : e?.payload?.fallback === 'gmail_failed'
-            ? ' גם הניסיון לשלוח דרך Gmail נכשל.'
+      const g = e?.payload?.gmail;
+      if (g?.available) {
+        // iCount failed but a Gmail proposal is ready — switch to the approval
+        // view. NOTHING was sent yet.
+        setFallback({ reason: e?.payload?.reason || code, from: g.from, docUrl: g.docUrl });
+        setFbSubject(g.subject || '');
+        setFbBody(g.bodyText || '');
+        setBusy(false);
+        return;
+      }
+      const unavailableNote =
+        g?.reason === 'no_doc_url'
+          ? ' שליחה חלופית דרך Gmail לא אפשרית (אין קישור למסמך).'
+          : g?.reason === 'gmail_unavailable'
+            ? ' שליחה חלופית דרך Gmail אינה זמינה (אין חשבון מייל מחובר).'
             : '';
       setError(
         code === 'icount_request_failed'
-          ? `שליחת המייל דרך iCount נכשלה${e?.payload?.reason ? ` (${e.payload.reason})` : ''}.${fallbackNote} ניתן לשלוח בוואטסאפ במקום.`
+          ? `שליחת המייל דרך iCount נכשלה${e?.payload?.reason ? ` (${e.payload.reason})` : ''}.${unavailableNote} ניתן לשלוח בוואטסאפ במקום.`
           : e?.payload?.reason || code || 'שליחת המייל נכשלה.',
       );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function approveGmailSend() {
+    if (busy || !fbSubject.trim() || !fbBody.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.deals.sendIcountDocumentGmail(deal.id, {
+        doctype: d.doctype,
+        docnum: d.docnum,
+        email: emailSel,
+        subject: fbSubject,
+        bodyText: fbBody,
+        contactId: emailRecipients.find((r) => r.email === emailSel)?.id || undefined,
+      });
+      setSent('gmail');
+      setFallback(null);
+    } catch {
+      setError('השליחה דרך Gmail נכשלה. ניתן לנסות שוב או לשלוח בוואטסאפ.');
     } finally {
       setBusy(false);
     }
@@ -126,7 +166,7 @@ export default function SendDocumentModal({ open, onClose, deal, entry }) {
   }
 
   const TabBtn = ({ value, children }) => (
-    <button type="button" onClick={() => { setChannel(value); setError(null); setSent(false); }}
+    <button type="button" onClick={() => { setChannel(value); setError(null); setSent(false); setFallback(null); }}
       className={`rounded-lg px-3 py-1.5 text-sm font-medium ${channel === value ? 'bg-blue-600 text-white' : 'border border-gray-300 text-gray-700 hover:bg-gray-50'}`}>
       {children}
     </button>
@@ -148,6 +188,45 @@ export default function SendDocumentModal({ open, onClose, deal, entry }) {
         </div>
 
         {channel === 'email' ? (
+          fallback && !sent ? (
+            /* Gmail-fallback APPROVAL view — iCount failed; nothing was sent.
+               The operator reviews/edits the exact email and explicitly approves. */
+            <div className="space-y-3">
+              <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
+                שליחת המסמך דרך iCount נכשלה{fallback.reason ? ` (${fallback.reason})` : ''}. במקום זאת ניתן לשלוח
+                את הקישור למסמך מחשבון המייל של המערכת — בדקו את תוכן המייל ואשרו את השליחה. שום דבר לא נשלח עדיין.
+              </p>
+              <div className="space-y-0.5 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[12.5px] text-gray-700">
+                <p>מאת: <span dir="ltr" className="font-medium">{fallback.from}</span></p>
+                <p>אל: <span dir="ltr" className="font-medium">{emailSel}</span></p>
+                <p className="truncate">
+                  קישור למסמך:{' '}
+                  <a href={fallback.docUrl} target="_blank" rel="noopener noreferrer" dir="ltr" className="text-blue-700 underline">
+                    {fallback.docUrl}
+                  </a>
+                </p>
+              </div>
+              <label className="block text-[12px] text-gray-600">
+                נושא
+                <input value={fbSubject} onChange={(e) => setFbSubject(e.target.value)} dir="auto" className={`mt-1 ${FIELD}`} />
+              </label>
+              <label className="block text-[12px] text-gray-600">
+                תוכן ההודעה
+                <textarea value={fbBody} onChange={(e) => setFbBody(e.target.value)} rows={6} dir="auto" className={`mt-1 ${FIELD} resize-none`} />
+              </label>
+              {error && <p className="text-[13px] text-red-600">{error}</p>}
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={approveGmailSend} disabled={busy || !fbSubject.trim() || !fbBody.trim()}
+                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+                  {busy ? 'שולח…' : 'אישור ושליחה דרך Gmail'}
+                </button>
+                <button type="button" onClick={() => { setFallback(null); setError(null); }} disabled={busy}
+                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                  ביטול
+                </button>
+              </div>
+            </div>
+          ) : (
           <div className="space-y-3">
             {emailRecipients.length === 0 ? (
               <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
@@ -165,11 +244,11 @@ export default function SendDocumentModal({ open, onClose, deal, entry }) {
               </label>
             )}
             <p className="text-[12px] text-gray-500">
-              המסמך יישלח ישירות דרך iCount לכתובת שנבחרה. אם iCount לא זמין, יישלח אוטומטית קישור למסמך דרך המייל של המערכת.
+              המסמך יישלח ישירות דרך iCount לכתובת שנבחרה. אם iCount לא זמין, תוצג אפשרות לשליחה מחשבון המייל של המערכת — באישור מראש בלבד.
             </p>
             {sent && (
               <p className="text-[13px] font-semibold text-emerald-700">
-                ✓ המסמך נשלח לאימייל{sent === 'gmail' ? ' (קישור למסמך, דרך המייל של המערכת — iCount לא היה זמין)' : ''}
+                ✓ המסמך נשלח לאימייל{sent === 'gmail' ? ' (קישור למסמך, אושר ונשלח דרך Gmail)' : ''}
               </p>
             )}
             {error && <p className="text-[13px] text-red-600">{error}</p>}
@@ -180,6 +259,7 @@ export default function SendDocumentModal({ open, onClose, deal, entry }) {
               </button>
             )}
           </div>
+          )
         ) : (
           <div className="space-y-3">
             {chats.length > 1 && (
