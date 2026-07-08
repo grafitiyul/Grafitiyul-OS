@@ -21,8 +21,18 @@ import { ensureCustomIcountLink, newPaymentToken, resolvePublicOrigin } from '..
 //   POST /:id/icount/documents       — issue a document (idempotent)
 //   GET  /:id/custom-payment-links   — this deal's custom links
 //   POST /:id/custom-payment-links   — create a custom-description payment link
+//
+// Provider failures return 422 (NOT 502/504): Cloudflare replaces origin
+// 502/504 bodies with its own HTML error page, which is exactly the raw-HTML
+// modal bug QA hit — 4xx bodies pass through untouched.
 
 const router = Router();
+
+function providerErrorStatus(code) {
+  return code === 'icount_request_failed' || code === 'icount_not_configured' || code === 'icount_timeout'
+    ? 422
+    : 400;
+}
 
 async function loadDeal(id) {
   return prisma.deal.findUnique({ where: { id }, include: ICOUNT_DEAL_INCLUDE });
@@ -57,8 +67,7 @@ router.get(
       res.json(await fetchBaseDocumentPrefill(prisma, deal, String(req.query.doctype || ''), String(req.query.docnum || '')));
     } catch (err) {
       const code = err?.code || 'base_prefill_failed';
-      const status = code === 'icount_request_failed' || code === 'icount_not_configured' ? 502 : 400;
-      return res.status(status).json({ error: code, reason: err?.reason || null });
+      return res.status(providerErrorStatus(code)).json({ error: code, reason: err?.reason || null });
     }
   }),
 );
@@ -75,7 +84,7 @@ router.get(
       res.json({ documents });
     } catch (err) {
       const code = err?.code || 'search_failed';
-      const status = code === 'phone_search_unsupported' ? 400 : 502;
+      const status = code === 'phone_search_unsupported' ? 400 : providerErrorStatus(code);
       return res.status(status).json({ error: code, reason: err?.reason || null });
     }
   }),
@@ -97,8 +106,7 @@ router.post(
       res.status(reused ? 200 : 201).json({ document: doc, reused });
     } catch (err) {
       const code = err?.code || 'link_failed';
-      const status = code === 'icount_request_failed' || code === 'icount_not_configured' ? 502 : 400;
-      return res.status(status).json({ error: code, reason: err?.reason || null });
+      return res.status(providerErrorStatus(code)).json({ error: code, reason: err?.reason || null });
     }
   }),
 );
@@ -115,8 +123,7 @@ router.post(
       // Validation / provider failures come back as coded errors the modal can
       // present precisely (allocation details included when relevant).
       const code = err?.code || 'issue_failed';
-      const status = code === 'icount_request_failed' || code === 'icount_not_configured' ? 502 : 400;
-      return res.status(status).json({ error: code, reason: err?.reason || null, details: err?.details || null });
+      return res.status(providerErrorStatus(code)).json({ error: code, reason: err?.reason || null, details: err?.details || null });
     }
   }),
 );

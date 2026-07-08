@@ -49,6 +49,13 @@ test('doc types: the five Hebrew document types with correct linking rules', () 
   assert.equal(receipt.paymentsAllowed, true);
 });
 
+test('doc types: money-recording docs REQUIRE a payment; the rest never do', () => {
+  const required = DOC_TYPES.filter((t) => t.paymentsRequired).map((t) => t.key);
+  assert.deepEqual(required, ['invrec', 'receipt']);
+  // Guard: a type must never require payments without allowing them.
+  for (const t of DOC_TYPES) if (t.paymentsRequired) assert.equal(t.paymentsAllowed, true);
+});
+
 test('defaults: organization is the default customer, org tax id + finance email win', () => {
   const d = buildDocumentDefaults(baseDeal);
   assert.equal(d.customer.defaultMode, 'organization');

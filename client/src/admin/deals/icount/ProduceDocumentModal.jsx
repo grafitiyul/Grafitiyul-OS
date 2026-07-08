@@ -3,6 +3,8 @@ import Dialog from '../../common/Dialog.jsx';
 import { api } from '../../../lib/api.js';
 import { emitDealTasksChanged } from '../tasks/taskEvents.js';
 import LinkExternalDocumentPanel from './LinkExternalDocumentPanel.jsx';
+import { friendlyIcountError } from './icountErrors.js';
+import { DateField } from '../../common/pickers/DateTimeFields.jsx';
 
 // "הפק מסמך" — produce an iCount accounting document from a Deal.
 //
@@ -54,6 +56,8 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
   const [baseNote, setBaseNote] = useState(null); // "rows inherited from …"
   const [linkOpen, setLinkOpen] = useState(false);
   const [sendEmail, setSendEmail] = useState(true);
+  const [docDate, setDocDate] = useState(today());
+  const [lang, setLang] = useState('he');
 
   const [issuing, setIssuing] = useState(false);
   const [issueError, setIssueError] = useState(null);
@@ -96,6 +100,8 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
         setBaseNote(null);
         setLinkOpen(false);
         setSendEmail(true);
+        setDocDate(today());
+        setLang(d.language === 'en' ? 'en' : 'he');
       } catch (e) {
         setLoadError(e.payload?.error || e.message);
       } finally {
@@ -133,6 +139,10 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
     [payments],
   );
   const paymentsMismatch = typeDef?.paymentsAllowed && payments.length > 0 && paymentsTotal !== grossIls;
+  // קבלה / חשבונית מס קבלה record money received — iCount rejects them without
+  // a payment, so GOS blocks upfront with a clear message.
+  const paymentsMissing =
+    !!typeDef?.paymentsRequired && !payments.some((p) => p.method && Number(p.amount) > 0);
 
   function switchMode(mode) {
     setClientMode(mode);
@@ -199,7 +209,7 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
     } catch (e) {
       // Base stays selected (the accounting link matters) — rows stay editable.
       setBaseNote(null);
-      setBaseError(e.payload?.reason || e.payload?.error || e.message);
+      setBaseError(friendlyIcountError(e));
     } finally {
       setBaseLoading(false);
     }
@@ -238,7 +248,7 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
   const canIssue =
     !issuing && !loading && !loadError && !baseLoading && typeDef && client.name.trim() &&
     rows.some((r) => r.description && Number(r.quantity) > 0) &&
-    !allocationBlocked && !baseMissing && defaults?.icountConfigured;
+    !allocationBlocked && !baseMissing && !paymentsMissing && defaults?.icountConfigured;
 
   async function issue() {
     if (!canIssue) return;
@@ -248,6 +258,8 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
       const { document } = await api.deals.issueIcountDocument(dealId, {
         doctype,
         idempotencyKey: idemKey.current,
+        docDate,
+        lang,
         // Which GOS entity the typed ח.פ/ת.ז is written back onto.
         clientMode,
         client: {
@@ -274,9 +286,7 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
       idemKey.current = crypto.randomUUID(); // next issue is a NEW document
       emitDealTasksChanged(dealId); // refreshes the Deal timeline (pinned note)
     } catch (e) {
-      const code = e.payload?.error || e.message;
-      const reason = e.payload?.reason;
-      setIssueError(reason ? `${code}: ${reason}` : code);
+      setIssueError(friendlyIcountError(e));
     } finally {
       setIssuing(false);
     }
@@ -369,6 +379,17 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
               onClose={() => setLinkOpen(false)}
             />
           )}
+
+          {/* Document date + language — like iCount's own issue form */}
+          <div className="grid grid-cols-2 gap-2 sm:max-w-md">
+            <DateField label="תאריך המסמך" value={docDate} onChange={setDocDate} clearable={false} />
+            <label className={LABEL}>שפת המסמך
+              <select value={lang} onChange={(e) => setLang(e.target.value)} className={`mt-1 ${FIELD}`}>
+                <option value="he">עברית</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+          </div>
 
           {/* Base / previous document */}
           {typeDef?.baseTypes?.length > 0 && (
@@ -522,9 +543,7 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
                         <input type="number" min="0" step="0.01" value={p.amount} dir="ltr"
                           onChange={(e) => setPayment(i, { amount: e.target.value })} className={`mt-1 ${FIELD}`} />
                       </label>
-                      <label className={LABEL}>תאריך תשלום
-                        <input type="date" value={p.date} onChange={(e) => setPayment(i, { date: e.target.value })} className={`mt-1 ${FIELD}`} />
-                      </label>
+                      <DateField label="תאריך תשלום" value={p.date} onChange={(v) => setPayment(i, { date: v })} clearable={false} />
                       <label className={LABEL}>{p.method === 'cheque' ? 'מס׳ שיק' : p.method === 'banktransfer' ? 'חשבון / אסמכתא' : 'אסמכתא / קוד אישור'}
                         <input value={p.reference} dir="ltr" onChange={(e) => setPayment(i, { reference: e.target.value })} className={`mt-1 ${FIELD}`} />
                       </label>
@@ -574,7 +593,12 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
                   {fmtIls(paymentsTotal)} / {fmtIls(grossIls)}
                 </span>
               </div>
-              {paymentsMismatch && (
+              {paymentsMissing && (
+                <p className="mt-1 text-[12.5px] font-medium text-amber-700">
+                  ⚠ כדי להפיק {typeDef?.label} חובה להזין אמצעי תשלום ופרטי תשלום.
+                </p>
+              )}
+              {paymentsMismatch && !paymentsMissing && (
                 <p className="mt-1 text-[12px] text-amber-700">⚠ סך התשלומים שונה מסך המסמך — iCount עשוי לדחות את ההפקה.</p>
               )}
             </div>
@@ -592,8 +616,8 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
           </div>
 
           {issueError && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">
-              ההפקה נכשלה: <span dir="ltr" className="font-mono">{issueError}</span>
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700" dir="auto">
+              ההפקה נכשלה: {issueError}
             </div>
           )}
         </div>

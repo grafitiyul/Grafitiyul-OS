@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from '../../../lib/api.js';
+import { friendlyIcountError } from './icountErrors.js';
 
 // "שייך מסמך אחר מאייקאונט" — search iCount for a document that was NOT
 // issued through GOS, confirm it ("האם זה המסמך הנכון?"), and link it to the
@@ -33,12 +34,7 @@ export default function LinkExternalDocumentPanel({ dealId, docTypes, onLinked, 
       const { documents } = await api.deals.icountSearchDocuments(dealId, query.trim(), doctype || undefined);
       setResults(documents);
     } catch (e) {
-      const code = e.payload?.error;
-      setError(
-        code === 'phone_search_unsupported'
-          ? 'חיפוש לפי מספר טלפון אינו נתמך ע״י אייקאונט — חפשו לפי אימייל, שם לקוח, ח.פ או מספר מסמך.'
-          : e.payload?.reason || code || e.message,
-      );
+      setError(friendlyIcountError(e));
       setResults(null);
     } finally {
       setSearching(false);
@@ -56,7 +52,7 @@ export default function LinkExternalDocumentPanel({ dealId, docTypes, onLinked, 
       });
       onLinked(document);
     } catch (e) {
-      setError(e.payload?.reason || e.payload?.error || e.message);
+      setError(friendlyIcountError(e));
       setLinking(false);
     }
   }
@@ -145,7 +141,7 @@ export default function LinkExternalDocumentPanel({ dealId, docTypes, onLinked, 
       )}
 
       {error && (
-        <p className="mt-2 text-[12.5px] text-red-600">שגיאה: <span dir="ltr" className="font-mono">{error}</span></p>
+        <p className="mt-2 text-[12.5px] text-red-600" dir="auto">שגיאה: {error}</p>
       )}
     </div>
   );

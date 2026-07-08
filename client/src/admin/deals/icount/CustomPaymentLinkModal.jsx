@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import Dialog from '../../common/Dialog.jsx';
 import { api } from '../../../lib/api.js';
 import { emitDealTasksChanged } from '../tasks/taskEvents.js';
+import { friendlyIcountError } from './icountErrors.js';
 
 // "קישור לתשלום מותאם אישית" — a payment link whose invoice line/amount
 // intentionally differ from the deal's products (the customer asked for a
@@ -47,7 +48,7 @@ export default function CustomPaymentLinkModal({ dealId, open, onClose }) {
       setCreated({ url: res.link.url, ready: res.ready, generateError: res.generateError });
       emitDealTasksChanged(dealId); // surfaces the new timeline event
     } catch (e) {
-      setError(e.payload?.error || e.message);
+      setError(friendlyIcountError(e));
     } finally {
       setBusy(false);
     }

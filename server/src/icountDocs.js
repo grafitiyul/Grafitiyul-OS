@@ -18,12 +18,15 @@ import { emitTimelineEvent, userOrigin, systemOrigin } from './timeline/events.j
 // blocks (docs that RECORD money received). `baseTypes` = which previous
 // documents this type may be based on / close; `baseRequired` marks the credit
 // flow where issuing without an original invoice would be dangerous guessing.
+// `paymentsRequired`: a קבלה / חשבונית מס קבלה RECORDS money received — iCount
+// rejects it without a payment block (create_doc_failed), so both GOS layers
+// block it upfront with a clean message.
 export const DOC_TYPES = [
-  { key: 'deal', label: 'חשבון עסקה', paymentsAllowed: false, baseTypes: [], baseRequired: false },
-  { key: 'invoice', label: 'חשבונית מס', paymentsAllowed: false, baseTypes: ['deal'], baseRequired: false },
-  { key: 'invrec', label: 'חשבונית מס קבלה', paymentsAllowed: true, baseTypes: ['deal'], baseRequired: false },
-  { key: 'receipt', label: 'קבלה', paymentsAllowed: true, baseTypes: ['invoice'], baseRequired: false },
-  { key: 'refund', label: 'חשבונית זיכוי', paymentsAllowed: false, baseTypes: ['invoice', 'invrec'], baseRequired: true },
+  { key: 'deal', label: 'חשבון עסקה', paymentsAllowed: false, paymentsRequired: false, baseTypes: [], baseRequired: false },
+  { key: 'invoice', label: 'חשבונית מס', paymentsAllowed: false, paymentsRequired: false, baseTypes: ['deal'], baseRequired: false },
+  { key: 'invrec', label: 'חשבונית מס קבלה', paymentsAllowed: true, paymentsRequired: true, baseTypes: ['deal'], baseRequired: false },
+  { key: 'receipt', label: 'קבלה', paymentsAllowed: true, paymentsRequired: true, baseTypes: ['invoice'], baseRequired: false },
+  { key: 'refund', label: 'חשבונית זיכוי', paymentsAllowed: false, paymentsRequired: false, baseTypes: ['invoice', 'invrec'], baseRequired: true },
 ];
 
 export const DOC_TYPE_LABELS = Object.fromEntries(DOC_TYPES.map((t) => [t.key, t.label]));
@@ -141,6 +144,8 @@ export function buildDocumentDefaults(deal) {
     },
     rows,
     currency: deal.currency || 'ILS',
+    // Document language default: the deal's communication language when set.
+    language: deal.communicationLanguage === 'en' ? 'en' : 'he',
     paymentMethodName: deal.paymentMethodRef?.nameHe || null,
     paymentTermName: deal.paymentTerm?.nameHe || null,
     notes: '',
@@ -442,6 +447,16 @@ export async function issueDocument(prisma, deal, input, userId) {
   }
 
   const payments = typeDef.paymentsAllowed ? buildPaymentBlocks(input.payments) : {};
+  if (typeDef.paymentsRequired && Object.keys(payments).length === 0) {
+    throw codedError('payment_required');
+  }
+
+  // Document date: today by default; an explicit date must be well-formed —
+  // never silently swapped. iCount enforces numbering chronology itself and
+  // its rejection reason is surfaced verbatim.
+  const docDate = String(input.docDate || '').trim();
+  if (docDate && !/^\d{4}-\d{2}-\d{2}$/.test(docDate)) throw codedError('doc_date_invalid');
+  const lang = input.lang === 'en' ? 'en' : 'he';
 
   // EMAIL-first customer identity: reuse+update an existing iCount customer
   // with this email (client_id) instead of letting doc/create mint a
@@ -452,8 +467,9 @@ export async function issueDocument(prisma, deal, input, userId) {
   // shape as generate_sale).
   const body = {
     doctype,
-    lang: 'he',
+    lang,
     currency_code: deal.currency || 'ILS',
+    ...(docDate ? { doc_date: docDate } : {}),
     ...(identity.clientId ? { client_id: identity.clientId } : {}),
     client_name: clientName,
     ...(client.vatId ? { vat_id: String(client.vatId).trim() } : {}),

@@ -52,13 +52,32 @@ function salePayload(p) {
   };
 }
 
+// Every iCount call is bounded: a hung provider must surface as a structured
+// GOS error, never as an upstream gateway timeout (Cloudflare replaces origin
+// 502/504 bodies with its own HTML page).
+function icountTimeoutMs() {
+  const v = Number(process.env.ICOUNT_TIMEOUT_MS);
+  return Number.isFinite(v) && v > 0 ? v : 30_000;
+}
+
+async function boundedFetch(url, init) {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(icountTimeoutMs()) });
+  } catch (e) {
+    const err = new Error('icount_timeout');
+    err.code = 'icount_timeout';
+    err.reason = e?.name === 'TimeoutError' || e?.name === 'AbortError' ? 'timeout' : String(e?.message || e);
+    throw err;
+  }
+}
+
 export async function generateSale(p) {
   const legacy = legacyAuthBody();
   const base = process.env.ICOUNT_API_BASE || API_BASE_DEFAULT;
   const payload = salePayload(p);
   console.log(`[icount] generate_sale body: ${JSON.stringify({ cid: legacy.cid, user: legacy.user, pass: '***', ...payload })}`);
 
-  const res = await fetch(`${base}/paypage/generate_sale`, {
+  const res = await boundedFetch(`${base}/paypage/generate_sale`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' }, // legacy body auth — no Bearer
     body: JSON.stringify({ ...legacy, ...payload }),
@@ -86,7 +105,7 @@ async function icountRequest(path, payload) {
   const base = process.env.ICOUNT_API_BASE || API_BASE_DEFAULT;
   console.log(`[icount] ${path} body: ${JSON.stringify({ cid: legacy.cid, user: legacy.user, pass: '***', ...payload })}`);
 
-  const res = await fetch(`${base}/${path}`, {
+  const res = await boundedFetch(`${base}/${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' }, // legacy body auth — no Bearer
     body: JSON.stringify({ ...legacy, ...payload }),
@@ -94,9 +113,14 @@ async function icountRequest(path, payload) {
   const data = await res.json().catch(() => null);
 
   if (!res.ok || !data || data.status === false) {
+    // Surface everything iCount tells us: the reason code plus any
+    // error_details (e.g. WHY a create_doc failed — date chronology, missing
+    // fields) — the modal maps these to clean Hebrew.
+    const details = Array.isArray(data?.error_details) && data.error_details.length
+      ? ` (${data.error_details.map((d) => (typeof d === 'string' ? d : JSON.stringify(d))).join('; ')})`
+      : '';
     const reason =
-      (data && (data.reason || data.error_description || data.message || data.error)) ||
-      `HTTP ${res.status}`;
+      ((data && (data.reason || data.error_description || data.message || data.error)) || `HTTP ${res.status}`) + details;
     console.error(`[icount] ${path} failed: ${reason}`);
     const err = new Error(`icount_request_failed: ${reason}`);
     err.code = 'icount_request_failed';
