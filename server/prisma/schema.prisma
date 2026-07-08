@@ -929,6 +929,7 @@ model Deal {
   paymentLinks          DealPaymentLink[]
   icountDocuments       IcountDocument[]
   customPaymentLinks    DealCustomPaymentLink[]
+  paymentRequests       PaymentRequest[]
   tasks                 Task[]
   files                 DealFile[]
   emailThreads          EmailThread[]
@@ -1140,6 +1141,76 @@ model DealCustomPaymentLink {
   createdAt           DateTime @default(now())
 
   @@index([dealId])
+}
+
+// ── Cardcom tourist payment requests ─────────────────────────────────────────
+// A provider-tagged payment INTENT with its own lifecycle (pending → paid |
+// canceled) — distinct from DealPaymentLink (a regenerating link with no paid
+// state). GOS stays the source of truth; Cardcom ONLY clears (3DS tourist
+// cards); iCount stays the accounting provider. The customer always receives the
+// stable GOS URL /payment/cardcom/<token>, which lazily creates/refreshes the
+// Cardcom LowProfile behind the scenes (never at create/edit time). Frozen GOS
+// business identity (product/version) is preserved for long-term reporting even
+// though only the English description is shown on the page/document.
+//
+// INVARIANT — at most ONE pending cardcom request per deal: enforced by a
+// PARTIAL UNIQUE INDEX in the migration (dealId WHERE status='pending' AND
+// provider='cardcom'), so even concurrent creates can't produce a second.
+model PaymentRequest {
+  id                   String    @id @default(cuid())
+  deal                 Deal      @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  dealId               String
+  provider             String    @default("cardcom")
+  status               String    @default("pending") // 'pending' | 'paid' | 'canceled'
+  token                String    @unique // public /payment/cardcom/<token>
+
+  // Frozen customer-facing values
+  currency             String    @default("ILS")
+  amountMinor          BigInt // minor units, VAT-inclusive gross
+  quantity             Int       @default(1)
+  productDescriptionEn String // English line shown on the page + accounting document
+  customerName         String?
+  customerEmail        String?
+  customerPhone        String?
+  vatExempt            Boolean   @default(false) // inherited from Deal pricing, frozen
+
+  // Frozen GOS business identity (SSOT for reporting/audit — NOT sent to Cardcom)
+  productId            String?
+  productVariantId     String?
+  quoteVersionId       String?
+
+  // Cardcom target — the currently-active LowProfile (created lazily on open)
+  cardcomLowProfileId  String?
+  cardcomPayUrl        String?
+  snapshotHash         String? // frozen-field fingerprint → regenerate when it drifts
+
+  // Payment result
+  paidAt               DateTime?
+  cardcomTransactionId String?
+  paidRaw              Json?
+
+  // Accounting outcome (auto-issue is best-effort; payment stays paid regardless)
+  docStatus            String    @default("none") // 'none' | 'issued' | 'failed'
+  icountDocumentId     String?
+
+  createdBy            String? // loose AdminUser id
+  rawProviderResponse  Json? // last Cardcom LowProfile/Create response, for audit
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([dealId])
+  @@index([dealId, status])
+}
+
+// Raw Cardcom webhook payloads — logged BEFORE processing (audit + retroactive
+// reprocessing). Not an FK: the log survives deal deletion.
+model CardcomWebhookLog {
+  id        String   @id @default(cuid())
+  token     String? // ReturnValue carried by the payload, when present
+  payload   Json
+  createdAt DateTime @default(now())
+
+  @@index([token])
 }
 
 // ── WhatsApp module (Slice 1 — accounts + Baileys sessions) ──────────────────

@@ -35,6 +35,8 @@ import InlineField from '../common/inline/InlineField.jsx';
 import { InlineDatePicker, InlineTimePicker } from '../common/inline/InlinePickers.jsx';
 import ProduceDocumentModal from './icount/ProduceDocumentModal.jsx';
 import CustomPaymentLinkModal from './icount/CustomPaymentLinkModal.jsx';
+import CardcomPaymentModal from './cardcom/CardcomPaymentModal.jsx';
+import SendDocumentModal from './icount/SendDocumentModal.jsx';
 import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
 
 const INPUT =
@@ -103,6 +105,8 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   // Header editing surfaces.
   const [contactsDialogOpen, setContactsDialogOpen] = useState(false);
   const [orgDialogOpen, setOrgDialogOpen] = useState(false);
+  // The accounting document a "שלח ללקוח" action targets (timeline entry).
+  const [sendDocEntry, setSendDocEntry] = useState(null);
   const [copied, setCopied] = useState(false);
   // Product/pricing (Tour Details). Catalog lists load once; `variants` holds the
   // selected product's Product×Location options ("cities"). The base price is now
@@ -750,7 +754,14 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
           Contacts live in the header relationship row now (no separate card).
           WhatsApp lives in the floating dock (below), NOT as a timeline tab —
           the chat must not permanently consume the deal workspace. */}
-      <TimelineFeed subjectType="deal" subjectId={deal.id} showWhatsApp={false} />
+      <TimelineFeed subjectType="deal" subjectId={deal.id} showWhatsApp={false} onSendDocument={setSendDocEntry} />
+
+      <SendDocumentModal
+        open={!!sendDocEntry}
+        entry={sendDocEntry}
+        deal={deal}
+        onClose={() => setSendDocEntry(null)}
+      />
 
       <LostDealDialog
         open={lostOpen}
@@ -1455,6 +1466,7 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
   // iCount accounting: "הפק מסמך" + "קישור לתשלום מותאם אישית".
   const [docModalOpen, setDocModalOpen] = useState(false);
   const [customLinkOpen, setCustomLinkOpen] = useState(false);
+  const [cardcomOpen, setCardcomOpen] = useState(false);
   const [dlgForm, setDlgForm] = useState(EMPTY_DLG_FORM);
   // Pencil-edit state: an EXISTING value the user chose to correct inline.
   const [dlgEdit, setDlgEdit] = useState({ name: false, phone: false, email: false });
@@ -1641,6 +1653,10 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
           className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
           קישור לתשלום מותאם אישית
         </button>
+        <button type="button" onClick={() => { setMenuOpen(false); setCardcomOpen(true); }}
+          className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+          קישור לתשלום כרטיס תייר
+        </button>
         <div className="my-1 border-t border-gray-100" />
         {PLACEHOLDER_ACTIONS.map((label) => (
           <button key={label} type="button" onClick={() => setMenuOpen(false)} title={soon}
@@ -1652,6 +1668,7 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
 
       <ProduceDocumentModal dealId={deal.id} open={docModalOpen} onClose={() => setDocModalOpen(false)} />
       <CustomPaymentLinkModal dealId={deal.id} open={customLinkOpen} onClose={() => setCustomLinkOpen(false)} />
+      <CardcomPaymentModal dealId={deal.id} open={cardcomOpen} onClose={() => setCardcomOpen(false)} />
 
       {/* Missing-data dialog — the only popup in the payment flow. Details are
           completed INLINE and saved to the Contact, then the action continues. */}

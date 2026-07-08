@@ -3,6 +3,7 @@ import { api } from '../../lib/api.js';
 import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import ChatThread from './ChatThread.jsx';
 import { ensureSeen, markSeen } from './seenStore.js';
+import { OPEN_WHATSAPP_COMPOSER_EVENT } from './composerEvents.js';
 
 // Floating WhatsApp dock for the Deal page. Rendered through WorkspaceLayout's
 // `seamLeft` slot, so the closed bubble sits in the empty gap between the deal
@@ -51,6 +52,22 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
     return Number.isFinite(w) && w >= MIN_W && w <= MAX_W ? w : 440;
   });
   const draggingRef = useRef(false);
+  // A generic "open composer on this chat" request (e.g. from "שלח ללקוח →
+  // WhatsApp"); applied once the chat list is loaded.
+  const [pendingOpenChatId, setPendingOpenChatId] = useState(null);
+
+  // Open-composer signal: open the dock and remember which chat to focus. The
+  // draft text is seeded by the caller through the shared draft store, which
+  // ChatComposer reads on mount — so this reuses the real composer/send flow.
+  useEffect(() => {
+    function onOpen(e) {
+      if (e.detail?.subjectId && e.detail.subjectId !== subjectId) return;
+      setOpen(true);
+      if (e.detail?.chatId) setPendingOpenChatId(e.detail.chatId);
+    }
+    window.addEventListener(OPEN_WHATSAPP_COMPOSER_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_WHATSAPP_COMPOSER_EVENT, onOpen);
+  }, [subjectId]);
 
   const load = useCallback(async () => {
     try {
@@ -99,6 +116,18 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
       clearInterval(t);
     };
   }, [load, computeUnread]);
+
+  // Apply a pending "open on this chat" request once the chat list is loaded:
+  // select the chat's contact + number so ChatThread mounts on it (and its
+  // composer reads the seeded draft).
+  useEffect(() => {
+    if (!pendingOpenChatId || !data?.chats?.length) return;
+    const chat = data.chats.find((c) => c.id === pendingOpenChatId);
+    if (!chat) return;
+    setContactSel(chat.contact?.id || chat.contactId || null);
+    setChatSel(chat.id);
+    setPendingOpenChatId(null);
+  }, [pendingOpenChatId, data]);
 
   // Contact tabs come from the DEAL'S contact list (server), so a contact
   // with no WhatsApp thread yet still gets a tab (with an empty state) — and

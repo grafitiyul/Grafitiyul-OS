@@ -33,7 +33,9 @@ export function resolvePublicOrigin(req) {
 }
 
 export function paymentUrlFor(req, token) {
-  return `${resolvePublicOrigin(req)}/pay/${token}`;
+  // Canonical provider-visible URL. Old /pay/<token> links keep working via a
+  // 301 redirect (routes/pay.js → /payment/icount/<token>).
+  return `${resolvePublicOrigin(req)}/payment/icount/${token}`;
 }
 
 // Prefill contact: the first contact flagged to receive payment links, else

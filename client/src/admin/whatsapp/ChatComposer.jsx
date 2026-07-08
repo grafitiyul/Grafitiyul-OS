@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { emitDealTasksChanged } from '../deals/tasks/taskEvents.js';
+import { readDrafts, writeDraft, draftKeyFor } from './drafts.js';
 // Emoji DATA bundled locally (content-hashed static asset) — the picker's
 // default is a CDN fetch, which is both against the project's caching rules
 // and the root cause of the "טעינת האימוג׳י נכשלה" failure.
@@ -145,33 +146,10 @@ function blobToBase64(blob) {
   });
 }
 
-// Local draft persistence — closing the panel must never eat a half-written
-// message. Scoped by accountId+chatId so drafts can't leak between contacts,
-// deals or our two numbers. Sending (or manually emptying the text) clears
-// the entry. localStorage only (V1, no server persistence).
-const DRAFTS_KEY = 'gos-whatsapp-drafts';
-
-function readDrafts() {
-  try {
-    return JSON.parse(localStorage.getItem(DRAFTS_KEY) || '{}') || {};
-  } catch {
-    return {};
-  }
-}
-
-function writeDraft(key, text) {
-  try {
-    const map = readDrafts();
-    if (text && text.trim()) map[key] = text;
-    else delete map[key];
-    // Safety valve: never let the map grow unbounded.
-    const keys = Object.keys(map);
-    if (keys.length > 100) for (const k of keys.slice(0, keys.length - 100)) delete map[k];
-    localStorage.setItem(DRAFTS_KEY, JSON.stringify(map));
-  } catch {
-    /* storage unavailable — non-fatal */
-  }
-}
+// Draft persistence lives in ./drafts.js (shared) — closing the panel must
+// never eat a half-written message, and any feature can seed a draft there and
+// open the composer. Scoped by accountId+chatId; sending (or emptying the text)
+// clears the entry.
 
 const MAX_ATTACHMENT_BYTES = 16 * 1024 * 1024;
 
@@ -182,7 +160,7 @@ function classifyFile(file) {
 }
 
 export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onScheduled, dealId = null, droppedFiles = null, onDroppedFilesConsumed }) {
-  const draftKey = `${chat.accountId || chat.account?.id || ''}:${chat.id}`;
+  const draftKey = draftKeyFor(chat);
   const [text, setText] = useState(() => readDrafts()[draftKey] || '');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);

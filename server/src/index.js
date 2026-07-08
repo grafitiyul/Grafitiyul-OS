@@ -54,7 +54,10 @@ import tourContentExportRouter from './routes/tourContentExport.js';
 import staffEventsRouter from './routes/staffEvents.js';
 import staffExportRouter from './routes/staffExport.js';
 import icountWebhookRouter from './routes/icountWebhook.js';
+import cardcomWebhookRouter from './routes/cardcomWebhook.js';
 import payRouter from './routes/pay.js';
+import paymentRouter from './routes/payment.js';
+import touristPaymentRouter from './routes/touristPayment.js';
 import whatsappRouter from './routes/whatsapp.js';
 import emailRouter from './routes/email.js';
 import emailTrackingRouter from './routes/emailTracking.js';
@@ -186,10 +189,15 @@ app.use('/api/staff-export', staffExportRouter);
 // iCount IPN receiver — URL-secret gated (not cookie-gated; iCount calls it).
 // Audit-log only in this slice: persists raw payloads, changes NO deal state.
 app.use('/api/webhooks', icountWebhookRouter);
-// PERMANENT customer payment URL (/pay/<Deal.paymentToken>) — public,
-// token-gated like the quote page. Redirects to the current iCount link,
-// regenerating it behind the scenes when the deal's payment data changed.
-// Must be mounted before the SPA fallback (it is a top-level non-/api path).
+// Cardcom webhook receiver — URL-secret gated (Cardcom calls it). Logs the raw
+// payload, re-verifies server-side (GetLpResult), marks the request paid once,
+// and triggers the iCount document. Idempotent against retries.
+app.use('/api/webhooks', cardcomWebhookRouter);
+// PUBLIC canonical payment URLs — /payment/<provider>/<token> (Cardcom + iCount).
+// Provider is visible in the URL. Must be mounted before the SPA fallback.
+app.use('/payment', paymentRouter);
+// LEGACY /pay/<token> + /pay/c/<token> — 301-redirect to the canonical
+// /payment/icount/... URLs above (keeps old links in the wild working).
 app.use('/pay', payRouter);
 // Email open-tracking pixel — PUBLIC (the recipient's mail client fetches it),
 // gated only by the per-message unguessable tracking id. attachAuth above lets
@@ -232,6 +240,9 @@ app.use('/api/deals', requireAdminAuth, dealFilesRouter);
 // iCount accounting documents + custom payment links — /:id/icount/*,
 // /:id/custom-payment-links (same nested-under-deals pattern as tasks/files).
 app.use('/api/deals', requireAdminAuth, icountDocsRouter);
+// Cardcom tourist payment requests — /:id/tourist-payment[/*] (same
+// nested-under-deals pattern). Cardcom clears; iCount stays the doc provider.
+app.use('/api/deals', requireAdminAuth, touristPaymentRouter);
 // WhatsApp module — account/connection admin (proxies live actions to the
 // per-number bridge services over Railway's private network).
 app.use('/api/whatsapp', requireAdminAuth, whatsappRouter);

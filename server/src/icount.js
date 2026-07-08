@@ -224,6 +224,27 @@ export async function upsertClient({ clientId, name, vatId, email, phone, addres
   return id != null ? String(id) : null;
 }
 
+// Email an already-issued document to a recipient (doc/send). Used by the
+// accounting card's "שלח ללקוח → Email" action. NOTE: verify `doc/send` against
+// the live account — if the method is unsupported iCount returns a coded error
+// (surfaced to the caller so the UI can fall back / explain). Both `email` and
+// `email_to` are sent (either spelling accepted across iCount integrations).
+export async function sendDocByEmail({ doctype, docnum, email }) {
+  const addr = String(email || '').trim();
+  if (!addr) {
+    const err = new Error('email_required');
+    err.code = 'email_required';
+    throw err;
+  }
+  await icountRequest('doc/send', {
+    doctype,
+    docnum: Number(docnum),
+    email: addr,
+    email_to: addr,
+  });
+  return { sent: true };
+}
+
 // Viewer URL for an issued document (doc/get_doc_url).
 export async function getDocUrl(doctype, docnum) {
   const data = await icountRequest('doc/get_doc_url', {

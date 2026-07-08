@@ -99,7 +99,7 @@ function writeNoteDraft(key, html) {
 
 // `showWhatsApp={false}` drops the WhatsApp composer tab — the Deal page
 // surfaces chat through the floating WhatsAppDock instead of the timeline.
-export default function TimelineFeed({ subjectType, subjectId, aggregate = false, showWhatsApp = true }) {
+export default function TimelineFeed({ subjectType, subjectId, aggregate = false, showWhatsApp = true, onSendDocument = null }) {
   const noteDraftKey = `${subjectType}:${subjectId}`;
   // Tasks + files are Deal-only features; on Contact/Organization they stay
   // "בקרוב" placeholders so the shared component keeps one shape.
@@ -454,7 +454,7 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
                 onReorder={reorderPins}
                 renderRow={(entry, { handle }) =>
                   entry.kind === 'accounting' ? (
-                    <AccountingEventRow entry={entry} dragHandle={handle} onTogglePin={actions.onTogglePin} />
+                    <AccountingEventRow entry={entry} dragHandle={handle} onTogglePin={actions.onTogglePin} onSendDocument={onSendDocument} />
                   ) : (
                     <NoteCard
                       entry={entry}
@@ -529,6 +529,7 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
                         <AccountingEventRow
                           entry={entry}
                           onTogglePin={isDirect(entry) ? actions.onTogglePin : null}
+                          onSendDocument={onSendDocument}
                         />
                       </li>
                     );

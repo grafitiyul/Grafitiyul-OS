@@ -428,6 +428,7 @@ export async function issueDocument(prisma, deal, input, userId) {
       details: String(r.details || '').trim() || null,
       quantity: Number(r.quantity) || 0,
       unitPriceIls: round2(Number(r.unitPriceIls) || 0),
+      vatExempt: !!r.vatExempt, // VAT treatment inherited from the Deal pricing
     }))
     .filter((r) => r.description && r.quantity > 0);
   if (!rows.length) throw codedError('rows_required');
@@ -457,6 +458,9 @@ export async function issueDocument(prisma, deal, input, userId) {
   const docDate = String(input.docDate || '').trim();
   if (docDate && !/^\d{4}-\d{2}-\d{2}$/.test(docDate)) throw codedError('doc_date_invalid');
   const lang = input.lang === 'en' ? 'en' : 'he';
+  // Document currency: an explicit override (e.g. a Cardcom charge in USD/EUR)
+  // wins over the deal's default currency.
+  const currency = input.currency || deal.currency || 'ILS';
 
   // EMAIL-first customer identity: reuse+update an existing iCount customer
   // with this email (client_id) instead of letting doc/create mint a
@@ -468,7 +472,7 @@ export async function issueDocument(prisma, deal, input, userId) {
   const body = {
     doctype,
     lang,
-    currency_code: deal.currency || 'ILS',
+    currency_code: currency,
     ...(docDate ? { doc_date: docDate } : {}),
     ...(identity.clientId ? { client_id: identity.clientId } : {}),
     client_name: clientName,
@@ -480,6 +484,8 @@ export async function issueDocument(prisma, deal, input, userId) {
       description: r.description,
       quantity: r.quantity,
       unitprice_incl: r.unitPriceIls,
+      // VAT treatment inherited from the Deal pricing (e.g. export → exempt).
+      ...(r.vatExempt ? { tax_exempt: 1 } : {}),
       // Row details from an inherited base document (doc_info item schema).
       ...(r.details ? { long_description: r.details } : {}),
     })),
@@ -501,17 +507,21 @@ export async function issueDocument(prisma, deal, input, userId) {
   const { grossIls } = totalsForRows(rows, vatRatePercent());
   const amountMinor = BigInt(Math.round(grossIls * 100));
 
-  const origin = await userOrigin(userId);
+  // Origin/source overridable so automated issuers (e.g. Cardcom post-payment)
+  // record a system-attributed document + event; defaults to the user path.
+  const origin = input.origin || (await userOrigin(userId));
+  const source = input.source || 'user';
+  const sourceLabel = input.sourceLabel || 'user';
   const doc = await prisma.$transaction(async (tx) => {
     const created = await tx.icountDocument.create({
       data: {
         dealId: deal.id,
-        source: 'user',
+        source,
         doctype,
         docnum,
         providerDocId: docId,
         amountMinor,
-        currency: deal.currency || 'ILS',
+        currency,
         clientName,
         clientVatId: client.vatId ? String(client.vatId).trim() : null,
         docUrl,
@@ -522,7 +532,7 @@ export async function issueDocument(prisma, deal, input, userId) {
         raw: raw ?? undefined,
       },
     });
-    await emitAccountingEvent(tx, { dealId: deal.id, doc: created, origin, sourceLabel: 'user' });
+    await emitAccountingEvent(tx, { dealId: deal.id, doc: created, origin, sourceLabel });
     return created;
   });
 

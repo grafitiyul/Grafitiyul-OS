@@ -10,6 +10,7 @@ import {
   searchExternalDocuments,
   linkExternalDocument,
 } from '../icountDocs.js';
+import { sendDocByEmail } from '../icount.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 import { ensureCustomIcountLink, newPaymentToken, resolvePublicOrigin } from '../dealPayment.js';
 
@@ -128,12 +129,33 @@ router.post(
   }),
 );
 
+// Send an already-issued iCount document to a customer by email ("שלח ללקוח →
+// אימייל"). Reuses the iCount doc/send flow; the recipient email is chosen in
+// the modal from the deal's contacts.
+router.post(
+  '/:id/icount/send-document',
+  handle(async (req, res) => {
+    const doctype = String(req.body?.doctype || '');
+    const docnum = String(req.body?.docnum || '').trim();
+    const email = String(req.body?.email || '').trim();
+    if (!doctype || !docnum) return res.status(400).json({ error: 'document_required' });
+    if (!/.+@.+\..+/.test(email)) return res.status(400).json({ error: 'email_invalid' });
+    try {
+      await sendDocByEmail({ doctype, docnum, email });
+      res.json({ ok: true });
+    } catch (err) {
+      const code = err?.code || 'send_failed';
+      res.status(providerErrorStatus(code)).json({ error: code, reason: err?.reason || null });
+    }
+  }),
+);
+
 // ── Custom payment links ─────────────────────────────────────────────────────
 
 function toClientCustomLink(req, row) {
   return {
     id: row.id,
-    url: `${resolvePublicOrigin(req)}/pay/c/${row.token}`,
+    url: `${resolvePublicOrigin(req)}/payment/icount/c/${row.token}`,
     description: row.description,
     amountIls: Number(row.amountMinor) / 100,
     currency: row.currency,
@@ -197,7 +219,7 @@ router.post(
       console.error(`[icount] custom link generate failed for deal ${deal.id}: ${err?.reason || err?.message}`);
     }
 
-    const url = `${resolvePublicOrigin(req)}/pay/c/${row.token}`;
+    const url = `${resolvePublicOrigin(req)}/payment/icount/c/${row.token}`;
     // Visible (non-pinned) timeline event — the override must be obvious in GOS.
     await emitTimelineEvent(prisma, {
       subjectType: 'deal',

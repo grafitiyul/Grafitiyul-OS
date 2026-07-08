@@ -448,6 +448,17 @@ export const api = {
     customPaymentLinks: (id) => request(`/api/deals/${id}/custom-payment-links`),
     createCustomPaymentLink: (id, data) =>
       request(`/api/deals/${id}/custom-payment-links`, { method: 'POST', body: JSON.stringify(data) }),
+    // Cardcom tourist payment links (/payment/cardcom/<token>).
+    touristPayment: (id) => request(`/api/deals/${id}/tourist-payment`),
+    createTouristPayment: (id, data) =>
+      request(`/api/deals/${id}/tourist-payment`, { method: 'POST', body: JSON.stringify(data) }),
+    editTouristPayment: (id, reqId, data) =>
+      request(`/api/deals/${id}/tourist-payment/${reqId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    cancelTouristPayment: (id, reqId) =>
+      request(`/api/deals/${id}/tourist-payment/${reqId}/cancel`, { method: 'POST' }),
+    // Send an issued iCount document to a customer by email (שלח ללקוח → אימייל).
+    sendIcountDocument: (id, data) =>
+      request(`/api/deals/${id}/icount/send-document`, { method: 'POST', body: JSON.stringify(data) }),
   },
   // ── CRM Task Types (configurable catalog behind the Deal task composer) ──
   taskTypes: {
