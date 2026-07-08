@@ -18,6 +18,13 @@ import { DateField } from '../../common/pickers/DateTimeFields.jsx';
 // The ITA allocation-number precondition (סכום לפני מע״מ ≥ סף) blocks issuing
 // until the customer's ח.פ/ע.מ is filled. Issue is idempotent (a key minted
 // per attempt-scope protects against double-click).
+//
+// sendFlow ("שלח חשבון עסקה חדש"): the same modal, locked to חשבון עסקה, for
+// re-issuing after the customer changed quantities/products. On success it
+// hands the fresh document to onIssued() instead of showing the success
+// screen — the caller continues into the EXISTING sharing flow
+// (SendDocumentModal). iCount's own send-at-issue email is off here so the
+// document is never sent before the operator reviews the share step.
 
 const FIELD = 'w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-400 focus:outline-none';
 const LABEL = 'block text-[12px] text-gray-600';
@@ -37,7 +44,7 @@ function newPayment(amount) {
   return { method: 'banktransfer', amount: amount || 0, date: today(), reference: '', cardType: 'VISA', cardLast4: '', installments: 1, holderName: '' };
 }
 
-export default function ProduceDocumentModal({ dealId, open, onClose }) {
+export default function ProduceDocumentModal({ dealId, open, onClose, sendFlow = false, onIssued }) {
   const [defaults, setDefaults] = useState(null);
   const [prevDocs, setPrevDocs] = useState([]);
   const [liveError, setLiveError] = useState(null);
@@ -99,7 +106,7 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
         setBaseError(null);
         setBaseNote(null);
         setLinkOpen(false);
-        setSendEmail(true);
+        setSendEmail(!sendFlow);
         setDocDate(today());
         setLang(d.language === 'en' ? 'en' : 'he');
       } catch (e) {
@@ -282,9 +289,15 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
         basedOn: baseDoc,
         sendEmail,
       });
-      setIssued(document);
       idemKey.current = crypto.randomUUID(); // next issue is a NEW document
       emitDealTasksChanged(dealId); // refreshes the Deal timeline (pinned note)
+      if (sendFlow && onIssued) {
+        // Hand off to the sharing flow — the caller closes this modal and
+        // opens SendDocumentModal on the fresh document.
+        onIssued({ ...document, doctypeLabel: typeDef?.label || document.doctype });
+        return;
+      }
+      setIssued(document);
     } catch (e) {
       setIssueError(friendlyIcountError(e));
     } finally {
@@ -303,13 +316,13 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
       </button>
       <button type="button" onClick={issue} disabled={!canIssue}
         className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
-        {issuing ? 'מפיק…' : `הפקת ${typeDef?.label || 'מסמך'}`}
+        {issuing ? 'מפיק…' : sendFlow ? 'הפקה והמשך לשליחה' : `הפקת ${typeDef?.label || 'מסמך'}`}
       </button>
     </>
   );
 
   return (
-    <Dialog open={open} onClose={issuing ? null : onClose} title="הפקת מסמך" size="xl" footer={footer}>
+    <Dialog open={open} onClose={issuing ? null : onClose} title={sendFlow ? 'שלח חשבון עסקה חדש' : 'הפקת מסמך'} size="xl" footer={footer}>
       {loading ? (
         <div className="py-16 text-center text-sm text-gray-400">טוען נתוני מסמך…</div>
       ) : loadError ? (
@@ -342,7 +355,17 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
             </div>
           )}
 
-          {/* Document type — restricted to valid follow-ups once a base is selected */}
+          {sendFlow && (
+            <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[13px] text-blue-800">
+              יופק חשבון עסקה חדש לפי מצב הדיל הנוכחי — בדקו את השורות והסכומים לפני ההפקה.
+              מיד לאחר ההפקה ייפתח חלון השליחה ללקוח (אימייל / וואטסאפ).
+            </div>
+          )}
+
+          {/* Document type — restricted to valid follow-ups once a base is
+              selected. In sendFlow the type is locked to חשבון עסקה, so the
+              picker (and external-doc linking) is hidden. */}
+          {!sendFlow && (
           <div>
             <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
               <p className="text-[12px] font-semibold text-gray-500">סוג המסמך</p>
@@ -370,6 +393,7 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
               })}
             </div>
           </div>
+          )}
 
           {linkOpen && (
             <LinkExternalDocumentPanel
@@ -609,10 +633,12 @@ export default function ProduceDocumentModal({ dealId, open, onClose }) {
             <label className={LABEL}>הערות (יופיעו במסמך)
               <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} className={`mt-1 ${FIELD} resize-y`} />
             </label>
-            <label className="flex items-center gap-2 pb-1 text-[13px] text-gray-700">
-              <input type="checkbox" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} disabled={!client.email.trim()} />
-              שליחה במייל ללקוח
-            </label>
+            {!sendFlow && (
+              <label className="flex items-center gap-2 pb-1 text-[13px] text-gray-700">
+                <input type="checkbox" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} disabled={!client.email.trim()} />
+                שליחה במייל ללקוח
+              </label>
+            )}
           </div>
 
           {issueError && (

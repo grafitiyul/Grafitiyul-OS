@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
+import SplitButton from '../common/SplitButton.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import HoverCard from '../common/HoverCard.jsx';
 import LostDealDialog from './LostDealDialog.jsx';
@@ -1398,9 +1399,10 @@ function FieldBox({ label, children }) {
   );
 }
 // Operational action bar under the Tour Details fields. The PRIMARY action varies
-// by Activity Type; "תשלום" and "פעולות" are shared. The payment-link actions are
-// LIVE; the rest are placeholders. When tour bookings exist, a Group deal's
-// primary will switch from "שבץ לסיור" to "החלף סיור" based on assignment.
+// by Activity Type; "תשלום" (split button — payment/accounting menu under its
+// arrow) and "פעולות" (general deal actions) are shared. The payment actions are
+// LIVE; the "פעולות" items are placeholders. When tour bookings exist, a Group
+// deal's primary will switch from "שבץ לסיור" to "החלף סיור" based on assignment.
 function dealPrimaryAction(activityType, groupAssigned) {
   if (activityType === 'private') return 'צור סיור';
   if (activityType === 'group') return groupAssigned ? 'החלף סיור' : 'שבץ לסיור';
@@ -1454,7 +1456,8 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
   const soon = 'בקרוב';
 
   // ── Payment link (permanent GOS /pay URL — the ONLY URL customers get) ────
-  // "תשלום" OPENS the link; copy / WhatsApp live in the actions menu. All are
+  // "תשלום" is a SPLIT button: its body OPENS the link; its arrow opens the
+  // payment/accounting menu (copy / WhatsApp / iCount actions). All are
   // instant — no confirmation popup on success. A dialog appears only when
   // data is missing: amount is REQUIRED (blocks; iCount needs a priced item),
   // customer details are OPTIONAL and completed INLINE in the dialog — saved
@@ -1467,6 +1470,12 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
   const [docModalOpen, setDocModalOpen] = useState(false);
   const [customLinkOpen, setCustomLinkOpen] = useState(false);
   const [cardcomOpen, setCardcomOpen] = useState(false);
+  // "שלח חשבון עסקה חדש" — re-issue a חשבון עסקה from the CURRENT deal state
+  // (customer changed quantities/products), then continue into the existing
+  // sharing flow: newInvoiceOpen → ProduceDocumentModal(sendFlow) → onIssued
+  // hands the fresh document to SendDocumentModal via shareEntry.
+  const [newInvoiceOpen, setNewInvoiceOpen] = useState(false);
+  const [shareEntry, setShareEntry] = useState(null);
   const [dlgForm, setDlgForm] = useState(EMPTY_DLG_FORM);
   // Pencil-edit state: an EXISTING value the user chose to correct inline.
   const [dlgEdit, setDlgEdit] = useState({ name: false, phone: false, email: false });
@@ -1510,7 +1519,6 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
   }
 
   function payAction(action) {
-    setMenuOpen(false);
     if (amountMinor <= 0) return setMissingDialog({ action, kind: 'amount' });
     const needName = !contactName;
     const needPhone = !contactPhone;
@@ -1626,11 +1634,47 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
         className="rounded-lg bg-blue-600 text-white text-sm font-semibold px-4 py-2 hover:bg-blue-700">
         {dealPrimaryAction(deal.activityType, groupAssigned)}
       </button>
-      <button type="button" disabled={payBusy} onClick={() => payAction('open')}
-        title="פתח את קישור התשלום הקבוע של העסקה"
-        className="rounded-lg border border-gray-300 text-gray-700 text-sm font-medium px-4 py-2 hover:bg-gray-50 disabled:opacity-50">
-        תשלום
-      </button>
+      {/* Payment split button: the body opens the permanent payment link; the
+          arrow opens the payment/accounting actions menu. */}
+      <SplitButton
+        label="תשלום"
+        primaryTitle="פתח את קישור התשלום הקבוע של העסקה"
+        disabled={payBusy}
+        onPrimary={() => payAction('open')}
+        menuAriaLabel="פעולות תשלום"
+      >
+        {(close) => (
+          <>
+            {PAY_MENU_ACTIONS.map((a) => (
+              <button key={a.key} type="button" disabled={payBusy}
+                onClick={() => { close(); payAction(a.key); }}
+                className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                {a.label}
+              </button>
+            ))}
+            <div className="my-1 border-t border-gray-100" />
+            <button type="button" onClick={() => { close(); setDocModalOpen(true); }}
+              className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+              הפק מסמך
+            </button>
+            <button type="button" onClick={() => { close(); setCustomLinkOpen(true); }}
+              className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+              קישור לתשלום מותאם אישית
+            </button>
+            <button type="button" onClick={() => { close(); setCardcomOpen(true); }}
+              className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+              קישור לתשלום כרטיס תייר
+            </button>
+            <div className="my-1 border-t border-gray-100" />
+            <button type="button" onClick={() => { close(); setNewInvoiceOpen(true); }}
+              className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+              שלח חשבון עסקה חדש
+            </button>
+          </>
+        )}
+      </SplitButton>
+      {/* "פעולות" — general deal actions only; payment/accounting actions live
+          under the payment split button. */}
       <button ref={menuRef} type="button" onClick={() => setMenuOpen((o) => !o)}
         aria-haspopup="menu" aria-expanded={menuOpen}
         className="rounded-lg border border-gray-300 text-gray-700 text-sm font-medium px-3 py-2 hover:bg-gray-50 inline-flex items-center gap-1">
@@ -1638,26 +1682,6 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
       </button>
       {payFeedback && <span className="text-[12px] text-gray-500">{payFeedback}</span>}
       <AnchoredMenu anchorRef={menuRef} open={menuOpen} onClose={() => setMenuOpen(false)} width={216} align="start">
-        {PAY_MENU_ACTIONS.map((a) => (
-          <button key={a.key} type="button" disabled={payBusy} onClick={() => payAction(a.key)}
-            className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50">
-            {a.label}
-          </button>
-        ))}
-        <div className="my-1 border-t border-gray-100" />
-        <button type="button" onClick={() => { setMenuOpen(false); setDocModalOpen(true); }}
-          className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
-          הפק מסמך
-        </button>
-        <button type="button" onClick={() => { setMenuOpen(false); setCustomLinkOpen(true); }}
-          className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
-          קישור לתשלום מותאם אישית
-        </button>
-        <button type="button" onClick={() => { setMenuOpen(false); setCardcomOpen(true); }}
-          className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
-          קישור לתשלום כרטיס תייר
-        </button>
-        <div className="my-1 border-t border-gray-100" />
         {PLACEHOLDER_ACTIONS.map((label) => (
           <button key={label} type="button" onClick={() => setMenuOpen(false)} title={soon}
             className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
@@ -1667,6 +1691,17 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
       </AnchoredMenu>
 
       <ProduceDocumentModal dealId={deal.id} open={docModalOpen} onClose={() => setDocModalOpen(false)} />
+      <ProduceDocumentModal
+        dealId={deal.id}
+        open={newInvoiceOpen}
+        onClose={() => setNewInvoiceOpen(false)}
+        sendFlow
+        onIssued={(doc) => {
+          setNewInvoiceOpen(false);
+          setShareEntry({ data: { doctype: doc.doctype, doctypeLabel: doc.doctypeLabel, docnum: doc.docnum, docUrl: doc.docUrl } });
+        }}
+      />
+      <SendDocumentModal open={!!shareEntry} entry={shareEntry} deal={deal} onClose={() => setShareEntry(null)} />
       <CustomPaymentLinkModal dealId={deal.id} open={customLinkOpen} onClose={() => setCustomLinkOpen(false)} />
       <CardcomPaymentModal dealId={deal.id} open={cardcomOpen} onClose={() => setCardcomOpen(false)} />
 
