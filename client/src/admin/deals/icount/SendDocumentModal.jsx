@@ -5,7 +5,10 @@ import { openWhatsappComposer } from '../../whatsapp/composerEvents.js';
 
 // "שלח ללקוח" — send an already-issued iCount document to the customer, reusing
 // existing infrastructure only:
-//   • Email    → iCount's own document email flow (api.deals.sendIcountDocument)
+//   • Email    → iCount's own document email flow (api.deals.sendIcountDocument);
+//                when iCount fails, the SERVER automatically falls back to the
+//                connected Gmail account (document link) — response.via says
+//                which channel actually delivered.
 //   • WhatsApp → the EXISTING composer: we seed a draft ("הנה החשבונית: <link>")
 //                and open the dock on the chosen chat (openWhatsappComposer).
 // A single obvious recipient/number is auto-selected; the operator only chooses
@@ -80,13 +83,25 @@ export default function SendDocumentModal({ open, onClose, deal, entry }) {
     setBusy(true);
     setError(null);
     try {
-      await api.deals.sendIcountDocument(deal.id, { doctype: d.doctype, docnum: d.docnum, email: emailSel });
-      setSent(true);
+      const resp = await api.deals.sendIcountDocument(deal.id, {
+        doctype: d.doctype,
+        docnum: d.docnum,
+        email: emailSel,
+        docUrl: docUrl || undefined,
+        contactId: emailRecipients.find((r) => r.email === emailSel)?.id || undefined,
+      });
+      setSent(resp?.via === 'gmail' ? 'gmail' : 'icount');
     } catch (e) {
       const code = e?.payload?.error || e?.code || '';
+      const fallbackNote =
+        e?.payload?.fallback === 'gmail_unavailable'
+          ? ' שליחה חלופית דרך Gmail אינה זמינה (אין חשבון מייל מחובר).'
+          : e?.payload?.fallback === 'gmail_failed'
+            ? ' גם הניסיון לשלוח דרך Gmail נכשל.'
+            : '';
       setError(
         code === 'icount_request_failed'
-          ? `שליחת המייל דרך iCount נכשלה${e?.payload?.reason ? ` (${e.payload.reason})` : ''}. ניתן לשלוח בוואטסאפ במקום.`
+          ? `שליחת המייל דרך iCount נכשלה${e?.payload?.reason ? ` (${e.payload.reason})` : ''}.${fallbackNote} ניתן לשלוח בוואטסאפ במקום.`
           : e?.payload?.reason || code || 'שליחת המייל נכשלה.',
       );
     } finally {
@@ -149,8 +164,14 @@ export default function SendDocumentModal({ open, onClose, deal, entry }) {
                 </select>
               </label>
             )}
-            <p className="text-[12px] text-gray-500">המסמך יישלח ישירות דרך iCount לכתובת שנבחרה.</p>
-            {sent && <p className="text-[13px] font-semibold text-emerald-700">✓ המסמך נשלח לאימייל</p>}
+            <p className="text-[12px] text-gray-500">
+              המסמך יישלח ישירות דרך iCount לכתובת שנבחרה. אם iCount לא זמין, יישלח אוטומטית קישור למסמך דרך המייל של המערכת.
+            </p>
+            {sent && (
+              <p className="text-[13px] font-semibold text-emerald-700">
+                ✓ המסמך נשלח לאימייל{sent === 'gmail' ? ' (קישור למסמך, דרך המייל של המערכת — iCount לא היה זמין)' : ''}
+              </p>
+            )}
             {error && <p className="text-[13px] text-red-600">{error}</p>}
             {!sent && (
               <button type="button" onClick={sendEmail} disabled={!emailSel || busy}

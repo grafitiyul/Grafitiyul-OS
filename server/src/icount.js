@@ -3,6 +3,7 @@
 //   POST ${ICOUNT_API_BASE}/doc/create              — accounting documents
 //   POST ${ICOUNT_API_BASE}/doc/search              — previous documents
 //   POST ${ICOUNT_API_BASE}/doc/info                — one document (credit base)
+//   POST ${ICOUNT_API_BASE}/doc/email               — email a document to the customer
 //   POST ${ICOUNT_API_BASE}/doc/get_doc_url         — document view URL
 //
 // generate_sale is ported 1:1 from the PROVEN Challenge System integration
@@ -224,11 +225,13 @@ export async function upsertClient({ clientId, name, vatId, email, phone, addres
   return id != null ? String(id) : null;
 }
 
-// Email an already-issued document to a recipient (doc/send). Used by the
-// accounting card's "שלח ללקוח → Email" action. NOTE: verify `doc/send` against
-// the live account — if the method is unsupported iCount returns a coded error
-// (surfaced to the caller so the UI can fall back / explain). Both `email` and
-// `email_to` are sent (either spelling accepted across iCount integrations).
+// Email an already-issued document to a recipient. The live v3 method is
+// doc/email — doc/send does NOT exist (bad_method; both verified live
+// 2026-07-08). Params: doctype + docnum + email_to. HAZARD (also verified
+// live): doc/email IGNORES unknown params, and without a usable recipient it
+// silently falls back to the customer email on the iCount client card — so
+// success is only reported after the response's per-recipient email_status
+// confirms OUR address actually received the mail.
 export async function sendDocByEmail({ doctype, docnum, email }) {
   const addr = String(email || '').trim();
   if (!addr) {
@@ -236,13 +239,32 @@ export async function sendDocByEmail({ doctype, docnum, email }) {
     err.code = 'email_required';
     throw err;
   }
-  await icountRequest('doc/send', {
+  const data = await icountRequest('doc/email', {
     doctype,
     docnum: Number(docnum),
-    email: addr,
     email_to: addr,
   });
+  if (!emailRecipientConfirmed(data, addr)) {
+    const err = new Error('icount_request_failed: doc/email did not confirm the recipient');
+    err.code = 'icount_request_failed';
+    err.reason = 'recipient_not_confirmed';
+    throw err;
+  }
   return { sent: true };
+}
+
+// Pure: did doc/email's response confirm delivery to `addr`? The response
+// carries email_status keyed by address — { email, addr?, email_sent } per
+// recipient (live shape 2026-07-08).
+export function emailRecipientConfirmed(data, addr) {
+  const want = String(addr || '').trim().toLowerCase();
+  if (!want) return false;
+  const statuses =
+    data?.email_status && typeof data.email_status === 'object' ? Object.values(data.email_status) : [];
+  return statuses.some((s) => {
+    const got = String(s?.email || s?.addr || '').trim().toLowerCase();
+    return got === want && s?.email_sent === true;
+  });
 }
 
 // Viewer URL for an issued document (doc/get_doc_url).

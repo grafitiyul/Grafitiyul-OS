@@ -4,6 +4,8 @@ import AnchoredMenu from '../AnchoredMenu.jsx';
 // kind='accounting' timeline events. Shapes (data.event):
 //   'icount_document'        — issued document (pinned into FOCUS by the server)
 //   'icount_document_linked' — an existing iCount document manually linked
+//   'icount_document_sent'   — document emailed to the customer (via iCount or
+//                              the Gmail fallback; data: channel/via/recipient)
 //   'custom_payment_link'    — a custom-description payment link was created
 //   'cardcom_link' / 'cardcom_link_updated' / 'cardcom_link_canceled'
 //                            — Cardcom tourist payment link lifecycle
@@ -113,6 +115,19 @@ export default function AccountingEventRow({ entry, dragHandle = null, onToggleP
           {d.basedOnDocnum && <span className="text-gray-500"> · על בסיס מסמך {d.basedOnDocnum}</span>}
         </p>
         {stamp(sourceNote)}
+      </Shell>
+    );
+  }
+
+  // ── Document sent to the customer by email (iCount / Gmail fallback) ───────
+  if (d.event === 'icount_document_sent') {
+    return (
+      <Shell dragHandle={dragHandle} icon="✉️" right={pinBtn}>
+        <p className="text-[13.5px] font-semibold text-gray-900">
+          נשלח ללקוח באימייל: {d.doctypeLabel || d.doctype}{d.docnum ? ` מס׳ ${d.docnum}` : ''}
+        </p>
+        <p className="truncate text-[12.5px] text-gray-600" dir="ltr">{d.recipient}</p>
+        {stamp(`${d.via === 'gmail' ? 'נשלח קישור למסמך דרך המייל של המערכת' : 'נשלח דרך iCount'} · ע״י ${who}`)}
       </Shell>
     );
   }

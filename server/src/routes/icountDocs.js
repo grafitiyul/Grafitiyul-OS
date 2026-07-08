@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import {
   ICOUNT_DEAL_INCLUDE,
+  DOC_TYPE_LABELS,
   buildDocumentDefaults,
   issueDocument,
   listDealDocuments,
@@ -10,7 +11,8 @@ import {
   searchExternalDocuments,
   linkExternalDocument,
 } from '../icountDocs.js';
-import { sendDocByEmail } from '../icount.js';
+import { sendDocByEmail, getDocUrl } from '../icount.js';
+import { sendSimpleEmail } from '../email/simpleSend.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 import { ensureCustomIcountLink, newPaymentToken, resolvePublicOrigin } from '../dealPayment.js';
 
@@ -130,23 +132,85 @@ router.post(
 );
 
 // Send an already-issued iCount document to a customer by email ("שלח ללקוח →
-// אימייל"). Reuses the iCount doc/send flow; the recipient email is chosen in
-// the modal from the deal's contacts.
+// אימייל"). Primary path is iCount's own doc/email; when iCount fails for ANY
+// reason the document link is sent through the connected Gmail account instead
+// — the operator must never hit a dead end. Either success emits an accounting
+// timeline event (channel=email + recipient + via).
 router.post(
   '/:id/icount/send-document',
   handle(async (req, res) => {
+    const deal = await prisma.deal.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!deal) return res.status(404).json({ error: 'not_found' });
     const doctype = String(req.body?.doctype || '');
     const docnum = String(req.body?.docnum || '').trim();
     const email = String(req.body?.email || '').trim();
     if (!doctype || !docnum) return res.status(400).json({ error: 'document_required' });
     if (!/.+@.+\..+/.test(email)) return res.status(400).json({ error: 'email_invalid' });
+
+    let via = 'icount';
+    let icountErr = null;
     try {
       await sendDocByEmail({ doctype, docnum, email });
-      res.json({ ok: true });
     } catch (err) {
-      const code = err?.code || 'send_failed';
-      res.status(providerErrorStatus(code)).json({ error: code, reason: err?.reason || null });
+      icountErr = err;
     }
+
+    if (icountErr) {
+      // Gmail fallback: email the document LINK. doc/get_doc_url is the fresh
+      // source; the modal's stored docUrl covers iCount being unreachable.
+      let docUrl = null;
+      try {
+        docUrl = await getDocUrl(doctype, docnum);
+      } catch {
+        docUrl = null;
+      }
+      if (!docUrl) docUrl = String(req.body?.docUrl || '').trim() || null;
+      const label = DOC_TYPE_LABELS[doctype] || doctype;
+      const docRef = `${label}${docnum ? ` מס׳ ${docnum}` : ''}`;
+      let fallback = docUrl ? null : 'no_doc_url';
+      if (docUrl) {
+        try {
+          await sendSimpleEmail({
+            to: email,
+            subject: docRef,
+            bodyText: `שלום,\n\nמצורף קישור לצפייה במסמך — ${docRef}:\n${docUrl}\n\nתודה`,
+            dealId: deal.id,
+            contactId: String(req.body?.contactId || '') || null,
+            createdByUserId: req.adminAuth?.userId || null,
+          });
+          via = 'gmail';
+        } catch (gmailErr) {
+          fallback =
+            gmailErr?.code === 'email_not_configured' || gmailErr?.code === 'no_connected_account'
+              ? 'gmail_unavailable'
+              : 'gmail_failed';
+          console.error(`[icount] gmail fallback failed (${fallback}): ${gmailErr?.message}`);
+        }
+      }
+      if (via !== 'gmail') {
+        const code = icountErr?.code || 'send_failed';
+        return res.status(providerErrorStatus(code)).json({ error: code, reason: icountErr?.reason || null, fallback });
+      }
+      console.error(`[icount] doc/email failed (${icountErr?.reason || icountErr?.message}) — sent via Gmail fallback`);
+    }
+
+    await emitTimelineEvent(prisma, {
+      subjectType: 'deal',
+      subjectId: deal.id,
+      kind: 'accounting',
+      data: {
+        event: 'icount_document_sent',
+        doctype,
+        doctypeLabel: DOC_TYPE_LABELS[doctype] || doctype,
+        docnum,
+        channel: 'email',
+        via,
+        recipient: email,
+      },
+      origin: await userOrigin(req.adminAuth?.userId || null),
+    });
+
+    res.json({ ok: true, via });
   }),
 );
 
