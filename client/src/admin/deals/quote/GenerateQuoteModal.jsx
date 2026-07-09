@@ -444,6 +444,14 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated })
                 ))}
               </div>
             </div>
+            {(model?.warnings?.length || 0) > 0 && (
+              <span
+                className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[12px] text-amber-700"
+                title="מקטעים ללא תוכן בשפת ההצעה — מסומנים בגוף התצוגה"
+              >
+                ⚠ {model.warnings.length} חסרי תוכן בשפת ההצעה
+              </span>
+            )}
             <span className="ms-auto text-[11.5px] text-gray-400">
               ריחוף על מקטע טקסט מציג ✎ עריכה — לעסקה זו בלבד, לא לתבנית הגלובלית.
             </span>
@@ -499,10 +507,20 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated })
                             {blockHasContent(b) ? (
                               <QuoteBlock block={b} lang={lang} />
                             ) : (
+                              // Empty section — say exactly WHY. A language gap
+                              // (source filled only in the other language) is the
+                              // common case after resetting an override; the
+                              // strict no-cross-language-fallback rule is by
+                              // design, so the operator gets the precise cause +
+                              // every way out (switch language / fill source /
+                              // per-deal override).
                               <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50/60 px-5 py-6 text-start">
                                 <div className="text-[15px] font-semibold text-gray-500">{b.data?.title || b.key}</div>
                                 <p className="mt-1 text-[12.5px] leading-relaxed text-gray-400">
-                                  אין תוכן במקטע זה בשפת ההצעה — הוא לא יוצג ללקוח. אפשר למלא תוכן במקור, או להוסיף התאמה לעסקה זו.
+                                  {(model.warnings || []).some((w) => w.blockKey === b.key && w.otherLanguageHasContent)
+                                    ? `התוכן קיים במקור ${lang === 'en' ? 'בעברית' : 'באנגלית'} — אבל ההצעה ${lang === 'en' ? 'באנגלית' : 'בעברית'}, ואין במקור תוכן בשפה זו, ולכן המקטע לא יוצג ללקוח. אפשר להחליף את שפת ההצעה למעלה, למלא את התרגום במקור, או להוסיף התאמה לעסקה זו.`
+                                    : 'אין תוכן במקטע זה במקור — הוא לא יוצג ללקוח. אפשר למלא תוכן במקור, או להוסיף התאמה לעסקה זו.'}
+                                  {b.source ? ` (מקור: ${b.source})` : ''}
                                 </p>
                                 <button
                                   type="button"

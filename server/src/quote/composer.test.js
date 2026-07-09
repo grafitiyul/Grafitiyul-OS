@@ -477,6 +477,44 @@ test('toPublicSignature: customer-safe shape; null passthrough; never leaks crea
   assert.equal(pub.timezone, 'Asia/Jerusalem');
 });
 
+// ── source resolution is INDEPENDENT of overrides (the reset contract) ───────
+// Global Source → Deal Override (optional) → Draft → Snapshot: the override is
+// an overlay ONLY. Removing it must reproduce the exact pre-override model.
+test('composer: removing an override restores the EXACT pre-override source data', () => {
+  const pristine = compose();
+  const overridden = compose({
+    document: doc({ overrideState: { blocks: { faq: { html: '<p>מותאם</p>' }, product_marketing: { html: '<p>אחר</p>' } } } }),
+  });
+  assert.equal(blockByKey(overridden, 'faq').data.customHtml, '<p>מותאם</p>', 'override applied');
+  assert.equal(blockByKey(overridden, 'product_marketing').data.html, '<p>אחר</p>', 'override applied');
+
+  const restored = compose({ document: doc({ overrideState: null }) });
+  assert.deepEqual(
+    restored.blocks.map((b) => b.data),
+    pristine.blocks.map((b) => b.data),
+    'after removal, every block composes exactly as if the override never existed',
+  );
+});
+
+// A section that "disappears" after reset was never a reset bug: the source has
+// no content in the CURRENT quote language (strict pickLang — no cross-language
+// fallback, by design), and the override was masking that. The composer now
+// reports the gap so the workspace can explain it precisely.
+test('composer: Hebrew-only source empties the EN section and reports the language gap', () => {
+  const deal = baseDeal({
+    product: { nameHe: 'סיור', nameEn: 'Tour', marketingDescHe: '<p>שיווק</p>', marketingDescEn: '' },
+    productVariant: null,
+  });
+  const he = compose({ deal, document: doc({ language: 'he' }), lang: 'he' });
+  assert.equal(blockByKey(he, 'product_marketing').data.html, '<p>שיווק</p>', 'Hebrew quote shows the source');
+
+  const en = compose({ deal, document: doc({ language: 'en' }), lang: 'en' });
+  assert.equal(blockByKey(en, 'product_marketing').data.html, null, 'English quote: strict pick, no fallback');
+  const w = en.warnings.find((x) => x.blockKey === 'product_marketing');
+  assert.ok(w, 'missing-content warning emitted');
+  assert.equal(w.otherLanguageHasContent, true, 'the gap is reported: content EXISTS in the other language');
+});
+
 // ── temporary vs persistent overrides ────────────────────────────────────────
 test('mergeOverrideState: overlay wins field-level, persisted fields survive', () => {
   const base = { blocks: { faq: { html: '<p>קבוע</p>', title: 'שאלות' }, program: { html: '<p>תוכנית</p>' } } };

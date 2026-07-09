@@ -33,8 +33,17 @@ export function pickLang(he, en, lang) {
   return isFilled(v) ? v : null;
 }
 
-function warn(blockKey, type, field, language) {
-  return { code: 'missing_content', blockKey, type, field, language };
+function warn(blockKey, type, field, language, extra) {
+  return { code: 'missing_content', blockKey, type, field, language, ...(extra || {}) };
+}
+
+// The OTHER quote language ('he' ↔ 'en') — used to report whether a
+// missing-in-this-language source actually has content in the other language
+// (admin diagnostics only; pickLang itself stays strictly no-fallback).
+const otherLang = (lang) => (lang === 'en' ? 'he' : 'en');
+
+function hasOtherLang(he, en, lang) {
+  return !!pickLang(he, en, otherLang(lang));
 }
 
 // Human-facing source metadata per block type (admin "where does this come from").
@@ -214,7 +223,11 @@ function buildProgram({ deal, lang, template }) {
   const v = deal?.productVariant;
   const html = pickLang(v?.programHe, v?.programEn, lang);
   const warnings = [];
-  if (v && !html) warnings.push(warn('program', 'program', 'program', lang));
+  if (v && !html) {
+    warnings.push(warn('program', 'program', 'program', lang, {
+      otherLanguageHasContent: hasOtherLang(v?.programHe, v?.programEn, lang),
+    }));
+  }
   return { data: { title: sectionTitle(template, 'program', lang), html }, warnings };
 }
 
@@ -375,7 +388,12 @@ function buildProductMarketing({ deal, lang, template }) {
   const p = deal?.product;
   const html = pickLang(v?.marketingDescHe, v?.marketingDescEn, lang) || pickLang(p?.marketingDescHe, p?.marketingDescEn, lang);
   const warnings = [];
-  if ((v || p) && !html) warnings.push(warn('product_marketing', 'product_marketing', 'marketingDesc', lang));
+  if ((v || p) && !html) {
+    warnings.push(warn('product_marketing', 'product_marketing', 'marketingDesc', lang, {
+      otherLanguageHasContent:
+        hasOtherLang(v?.marketingDescHe, v?.marketingDescEn, lang) || hasOtherLang(p?.marketingDescHe, p?.marketingDescEn, lang),
+    }));
+  }
   return { data: { title: sectionTitle(template, 'product_marketing', lang), html }, warnings };
 }
 
@@ -383,7 +401,11 @@ function buildCityContent({ deal, lang }) {
   const loc = deal?.location;
   const html = pickLang(loc?.marketingDescHe, loc?.marketingDescEn, lang);
   const warnings = [];
-  if (loc && !html) warnings.push(warn('city_content', 'city_content', 'marketingDesc', lang));
+  if (loc && !html) {
+    warnings.push(warn('city_content', 'city_content', 'marketingDesc', lang, {
+      otherLanguageHasContent: hasOtherLang(loc?.marketingDescHe, loc?.marketingDescEn, lang),
+    }));
+  }
   return { data: { html }, warnings };
 }
 
@@ -395,7 +417,12 @@ function buildWhyGrafitiyul({ deal, lang, template }) {
   const type = deal?.organizationType || deal?.organization?.organizationType;
   const html = pickLang(sub?.quoteContentHe, sub?.quoteContentEn, lang) || pickLang(type?.quoteContentHe, type?.quoteContentEn, lang);
   const warnings = [];
-  if ((sub || type) && !html) warnings.push(warn('why_grafitiyul', 'why_us', 'quoteContent', lang));
+  if ((sub || type) && !html) {
+    warnings.push(warn('why_grafitiyul', 'why_us', 'quoteContent', lang, {
+      otherLanguageHasContent:
+        hasOtherLang(sub?.quoteContentHe, sub?.quoteContentEn, lang) || hasOtherLang(type?.quoteContentHe, type?.quoteContentEn, lang),
+    }));
+  }
   return { data: { title: sectionTitle(template, 'why_grafitiyul', lang), html }, warnings };
 }
 
