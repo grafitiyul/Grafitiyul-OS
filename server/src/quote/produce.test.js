@@ -36,9 +36,15 @@ function fakeClient({ draft, drafts, dealBox }) {
     updates: [], // every quoteDocument.update call, for leak assertions
   };
   const box = dealBox || { value: DEAL };
+  const catalog = { products: {}, variants: {}, locations: {} };
   return {
     state,
+    catalog, // tests register offer-context rows here
     deal: { findUnique: async () => box.value },
+    product: { findUnique: async ({ where }) => catalog.products[where.id] || null },
+    productVariant: { findUnique: async ({ where }) => catalog.variants[where.id] || null },
+    location: { findUnique: async ({ where }) => catalog.locations[where.id] || null },
+    productVariantSharedContent: { findMany: async () => [] },
     quoteOffer: {
       findFirst: async () => state.offers[0],
       findUnique: async ({ where }) => state.offers.find((o) => o.id === where.id) || null,
@@ -163,6 +169,44 @@ test('produce: resetting offer A\'s override leaves offer B untouched', async ()
   assert.equal(faqHtmlOf(a.doc.renderModelSnapshot), '<p>מקור</p>', 'offer A back to source');
   assert.equal(faqHtmlOf(b.doc.renderModelSnapshot), '<p>B</p>', 'offer B keeps its own override');
   assert.deepEqual(draftB.overrideState, { blocks: { faq: { html: '<p>B</p>' } } }, 'offer B draft untouched');
+});
+
+// OFFER-OWNED CONTEXT: an own-mode (non-primary) offer composes from ITS OWN
+// product/variant — Deal edits can never change its future versions. This is
+// the guarantee that makes the ציפי-2 incident impossible by construction.
+test('produce: own-mode offer is immune to Deal product changes; primary follows the Deal', async () => {
+  const dealBox = {
+    value: { ...DEAL, productVariant: { programHe: '<p>מוצר העסקה</p>', programEn: null } },
+  };
+  const draftPrimary = {
+    id: 'qd_primary', dealId: 'deal_1', quoteVersionId: 'ver_1', offerId: 'off_1',
+    status: 'draft', language: 'he', displayProductName: null, compositionDraft: null, overrideState: null,
+  };
+  const draftOwn = {
+    id: 'qd_own', dealId: 'deal_1', quoteVersionId: 'ver_2', offerId: 'off_2',
+    status: 'draft', language: 'he', displayProductName: null, compositionDraft: null, overrideState: null,
+  };
+  const client = fakeClient({ drafts: [draftPrimary, draftOwn], dealBox });
+  // Offer 2 owns its context: a different variant with its own program text.
+  Object.assign(client.state.offers[1], {
+    contextMode: 'own', productId: 'p_own', productVariantId: 'v_own', locationId: null,
+    participants: 25, tourDate: null, tourTime: null, valueMinor: 237500n,
+  });
+  client.catalog.variants.v_own = { id: 'v_own', programHe: '<p>מוצר ההצעה המקבילה</p>', programEn: null };
+  client.catalog.products.p_own = { id: 'p_own', nameHe: 'מוצר אחר', nameEn: 'Other' };
+  const programOf = (snap) => snap.blocks.find((b) => b.type === 'program')?.data?.html ?? null;
+
+  const own1 = await produceQuoteDocument(client, 'qd_own');
+  assert.equal(programOf(own1.doc.renderModelSnapshot), '<p>מוצר ההצעה המקבילה</p>', 'own context composes');
+
+  // The operator changes the DEAL's product — the parallel offer must not move.
+  dealBox.value = { ...DEAL, productVariant: { programHe: '<p>מוצר חדש לגמרי</p>', programEn: null } };
+
+  const own2 = await produceQuoteDocument(client, 'qd_own');
+  assert.equal(programOf(own2.doc.renderModelSnapshot), '<p>מוצר ההצעה המקבילה</p>', 'own-mode offer immune to Deal edits');
+
+  const primary = await produceQuoteDocument(client, 'qd_primary');
+  assert.equal(programOf(primary.doc.renderModelSnapshot), '<p>מוצר חדש לגמרי</p>', 'primary mirrors the Deal');
 });
 
 // THE PRODUCTION REPRO (deal ציפי 2): the deal's product/variant was switched

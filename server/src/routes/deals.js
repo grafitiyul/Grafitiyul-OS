@@ -8,7 +8,7 @@ import {
   listDealQuoteDocuments,
   toClientQuoteDocument,
 } from '../quote/quoteDocument.js';
-import { createParallelOffer, activateOffer, setPrimaryOffer, removeOrArchiveOffer, unarchiveOffer, buildWonQuoteRef } from '../quote/quoteOffers.js';
+import { createParallelOffer, activateOffer, setPrimaryOffer, removeOrArchiveOffer, unarchiveOffer, buildWonQuoteRef, splitBuilderPatch } from '../quote/quoteOffers.js';
 import { ensurePaymentToken, paymentUrlFor, resolvePublicOrigin } from '../dealPayment.js';
 import { recordDealChanges, recordDealContactChange, DEAL_DIFF_SELECT } from '../timeline/dealChangelog.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
@@ -588,22 +588,17 @@ router.put(
           data: rows.map((r) => ({ ...r, quoteVersionId: version.id })),
         });
       }
-      // Deal headline cache + the operational product/city this was priced against.
-      const dealPatch = {};
-      if (b.valueMinor !== undefined) dealPatch.valueMinor = BigInt(Math.round(Number(b.valueMinor) || 0));
-      if (b.productId !== undefined) dealPatch.productId = b.productId || null;
-      if (b.productVariantId !== undefined) dealPatch.productVariantId = b.productVariantId || null;
-      // A product change inside the builder carries its city too, so the Deal stays
-      // coherent (same product → variant → city resolution as the Tour Details card).
-      if (b.locationId !== undefined) dealPatch.locationId = b.locationId || null;
-      // Group Ticket Builder derives the headcount from ticket quantities — the Deal
-      // participants follow the tickets (one source of truth) and are read-only in
-      // the panel. Only the Group builder sends this; other callers leave it alone.
-      if (b.participants !== undefined) {
-        const n = parseInt(b.participants, 10);
-        dealPatch.participants = Number.isFinite(n) && n >= 0 ? n : null;
-      }
+      // Headline cache + the product/city/participants this was priced against.
+      // Routed by the ACTIVE offer's context mode: primary (deal-mode) patches
+      // the Deal exactly as always (Deal ≡ primary); a non-primary own-mode
+      // offer keeps its context to ITSELF — pricing an alternative never
+      // mutates the Deal (the ציפי-2 lesson).
+      const offer = version.offerId
+        ? await tx.quoteOffer.findUnique({ where: { id: version.offerId } })
+        : null;
+      const { dealPatch, offerPatch } = splitBuilderPatch(offer, b);
       if (Object.keys(dealPatch).length) await tx.deal.update({ where: { id: req.params.id }, data: dealPatch });
+      if (Object.keys(offerPatch).length) await tx.quoteOffer.update({ where: { id: offer.id }, data: offerPatch });
       return version.id;
     });
 
@@ -699,13 +694,29 @@ router.post(
   }),
 );
 
-// Exactly one primary offer per deal — what a WON deal refers to.
+// Exactly one primary offer per deal — and the Deal ALWAYS mirrors the primary:
+// promoting an offer immediately adopts its commercial context (product/variant/
+// city/participants/date/pricing headline) onto the Deal. The adoption lands in
+// the Deal changelog like any other deal edit.
 router.put(
   '/:id/quote-offers/:offerId/primary',
   handle(async (req, res) => {
+    const before = await prisma.deal.findUnique({ where: { id: req.params.id }, select: DEAL_DIFF_SELECT });
     const r = await setPrimaryOffer(prisma, req.params.id, req.params.offerId);
     if (r.error === 'not_found') return res.status(404).json({ error: 'not_found' });
+    if (r.error === 'archived') return res.status(409).json({ error: 'archived' });
     if (r.error) return res.status(400).json({ error: r.error });
+    if (before && r.changed) {
+      const after = await prisma.deal.findUnique({ where: { id: req.params.id }, select: DEAL_DIFF_SELECT });
+      if (after) {
+        await recordDealChanges(prisma, {
+          dealId: req.params.id,
+          before,
+          after,
+          origin: await userOrigin(req.adminAuth?.userId),
+        });
+      }
+    }
     res.json({ ok: true });
   }),
 );

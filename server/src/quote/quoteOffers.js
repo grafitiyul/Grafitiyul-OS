@@ -11,12 +11,41 @@ import { ensureDraftQuoteDocument } from './quoteDocument.js';
 //   * Each offer keeps its own draft QuoteDocument (its own overrides), keyed by
 //     its own QuoteVersion — switching offers never mixes wording or pricing.
 
+// The Deal fields that form an offer's commercial context (Deal ≡ primary).
+const CONTEXT_SELECT = {
+  id: true,
+  productId: true,
+  productVariantId: true,
+  locationId: true,
+  participants: true,
+  tourDate: true,
+  tourTime: true,
+  valueMinor: true,
+};
+
+const contextOf = (src) => ({
+  productId: src.productId ?? null,
+  productVariantId: src.productVariantId ?? null,
+  locationId: src.locationId ?? null,
+  participants: src.participants ?? null,
+  tourDate: src.tourDate ?? null,
+  tourTime: src.tourTime ?? null,
+  valueMinor: src.valueMinor ?? null,
+});
+
+const EMPTY_CONTEXT = {
+  productId: null, productVariantId: null, locationId: null,
+  participants: null, tourDate: null, tourTime: null, valueMinor: null,
+};
+
 // Create the next parallel offer: clone the active offer's priced lines into a
 // fresh QuoteVersion owned by the new offer, make it the working version (the
 // operator immediately adjusts product/pricing and generates), and give the new
 // offer its own draft document (fresh from source — an alternative starts clean).
+// A PARALLEL offer is born contextMode='own', seeded from the Deal's current
+// context — the Deal itself is never mutated by creating an alternative.
 export async function createParallelOffer(client, dealId) {
-  const deal = await client.deal.findUnique({ where: { id: dealId }, select: { id: true } });
+  const deal = await client.deal.findUnique({ where: { id: dealId }, select: CONTEXT_SELECT });
   if (!deal) return { error: 'not_found' };
 
   const current = await client.quoteVersion.findFirst({
@@ -27,7 +56,13 @@ export async function createParallelOffer(client, dealId) {
   const agg = await client.quoteOffer.aggregate({ where: { dealId }, _max: { offerNo: true } });
   const hasAny = (agg?._max?.offerNo || 0) > 0;
   const offer = await client.quoteOffer.create({
-    data: { dealId, offerNo: (agg?._max?.offerNo || 0) + 1, isPrimary: !hasAny },
+    data: {
+      dealId,
+      offerNo: (agg?._max?.offerNo || 0) + 1,
+      isPrimary: !hasAny,
+      // First-ever offer = primary = mirrors the Deal; a parallel one owns its context.
+      ...(hasAny ? { contextMode: 'own', ...contextOf(deal) } : {}),
+    },
   });
 
   const version = await client.quoteVersion.create({
@@ -87,8 +122,10 @@ export async function unarchiveOffer(client, dealId, offerId) {
     where: { dealId, isPrimary: true, archivedAt: null },
   });
   if (!livePrimary) {
-    await client.quoteOffer.updateMany({ where: { dealId, isPrimary: true }, data: { isPrimary: false } });
-    await client.quoteOffer.update({ where: { id: offerId }, data: { isPrimary: true } });
+    // Full promotion — the Deal adopts the restored offer's commercial context
+    // (Deal ≡ primary, always).
+    const r = await setPrimaryOffer(client, dealId, offerId);
+    if (r.error) return r;
   }
   return { ok: true };
 }
@@ -116,15 +153,68 @@ export async function buildWonQuoteRef(client, dealId) {
   };
 }
 
-// Exactly one primary per deal (transactional flip).
+// Exactly one primary per deal — and the Deal ALWAYS mirrors the primary.
+// Promoting an offer:
+//   1. The outgoing primary keeps exactly the context it had (the Deal's
+//      current values) — frozen as its own.
+//   2. The Deal adopts the new primary's commercial context (product, variant,
+//      location, participants, date/time, pricing headline).
+//   3. The new primary flips to contextMode='deal' (mirrors the Deal onward).
+// WON never does this — it is only the customer's acceptance.
 export async function setPrimaryOffer(client, dealId, offerId) {
   const offer = await client.quoteOffer.findUnique({ where: { id: offerId } });
   if (!offer || offer.dealId !== dealId) return { error: 'not_found' };
-  await client.$transaction([
-    client.quoteOffer.updateMany({ where: { dealId, isPrimary: true }, data: { isPrimary: false } }),
-    client.quoteOffer.update({ where: { id: offerId }, data: { isPrimary: true } }),
-  ]);
-  return { ok: true };
+  if (offer.archivedAt) return { error: 'archived' };
+  if (offer.isPrimary) return { ok: true, changed: false };
+
+  const deal = await client.deal.findUnique({ where: { id: dealId }, select: CONTEXT_SELECT });
+  if (!deal) return { error: 'not_found' };
+
+  const outgoing = await client.quoteOffer.findFirst({ where: { dealId, isPrimary: true } });
+
+  // 1. Freeze the outgoing primary with the Deal's current context.
+  if (outgoing && outgoing.id !== offerId) {
+    await client.quoteOffer.update({
+      where: { id: outgoing.id },
+      data: { isPrimary: false, contextMode: 'own', ...contextOf(deal) },
+    });
+  } else {
+    await client.quoteOffer.updateMany({ where: { dealId, isPrimary: true }, data: { isPrimary: false } });
+  }
+
+  // 2. The Deal adopts the new primary's context ('own' offers only — a
+  //    deal-mode offer already mirrors the Deal).
+  if (offer.contextMode === 'own') {
+    const adopt = contextOf(offer);
+    if (adopt.valueMinor == null) delete adopt.valueMinor; // never blank the headline
+    await client.deal.update({ where: { id: dealId }, data: adopt });
+  }
+
+  // 3. The new primary follows the Deal from here on.
+  await client.quoteOffer.update({
+    where: { id: offerId },
+    data: { isPrimary: true, contextMode: 'deal', ...EMPTY_CONTEXT },
+  });
+  return { ok: true, changed: true };
+}
+
+// PURE: route the Price Builder's headline patch (price/product/city/
+// participants) by the ACTIVE offer's context mode. Primary (deal-mode) →
+// patch the Deal, exactly the historic behavior (Deal ≡ primary). Non-primary
+// own-mode offer → patch the OFFER's context; the Deal is never touched by
+// pricing work on an alternative.
+export function splitBuilderPatch(offer, b = {}) {
+  const patch = {};
+  if (b.valueMinor !== undefined) patch.valueMinor = BigInt(Math.round(Number(b.valueMinor) || 0));
+  if (b.productId !== undefined) patch.productId = b.productId || null;
+  if (b.productVariantId !== undefined) patch.productVariantId = b.productVariantId || null;
+  if (b.locationId !== undefined) patch.locationId = b.locationId || null;
+  if (b.participants !== undefined) {
+    const n = parseInt(b.participants, 10);
+    patch.participants = Number.isFinite(n) && n >= 0 ? n : null;
+  }
+  const toOffer = !!offer && !offer.isPrimary && offer.contextMode === 'own';
+  return toOffer ? { dealPatch: {}, offerPatch: patch } : { dealPatch: patch, offerPatch: {} };
 }
 
 // Remove an offer, safely:
@@ -166,14 +256,16 @@ export async function removeOrArchiveOffer(client, dealId, offerId) {
   }
 
   // Fall back primary + Builder context to the first remaining live offer.
+  // Promotion runs the full Deal-mirrors-primary flow (the Deal adopts the
+  // fallback offer's commercial context).
   const fallback = await client.quoteOffer.findFirst({
     where: { dealId, archivedAt: null },
     orderBy: { offerNo: 'asc' },
   });
   if (fallback) {
     if (offer.isPrimary) {
-      await client.quoteOffer.updateMany({ where: { dealId, isPrimary: true }, data: { isPrimary: false } });
-      await client.quoteOffer.update({ where: { id: fallback.id }, data: { isPrimary: true } });
+      const r = await setPrimaryOffer(client, dealId, fallback.id);
+      if (r.error) return r;
     }
     if (wasWorking) {
       const r = await activateOffer(client, dealId, fallback.id);

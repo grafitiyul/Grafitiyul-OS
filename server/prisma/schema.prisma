@@ -1504,6 +1504,26 @@ model QuoteOffer {
   dealId         String
   offerNo        Int // 1, 2, 3 … per deal
   isPrimary      Boolean         @default(false)
+  // ── Commercial context ─────────────────────────────────────────────────────
+  // INVARIANT: the PRIMARY offer is always contextMode='deal' — the Deal IS the
+  // primary offer's commercial truth (product, variant, pricing headline,
+  // participants, technical context). Non-primary (parallel) offers are always
+  // contextMode='own': they carry their OWN context here and compose from it,
+  // fully immune to Deal edits. "Make Primary" adopts the offer's context onto
+  // the Deal, freezes the outgoing primary's context as 'own', and flips the
+  // new primary to 'deal'. WON is only the customer's acceptance — it never
+  // changes the Deal. Context fields are meaningful only when contextMode='own'.
+  contextMode      String          @default("deal") // 'deal' | 'own'
+  product          Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productId        String?
+  productVariant   ProductVariant? @relation(fields: [productVariantId], references: [id], onDelete: SetNull)
+  productVariantId String?
+  location         Location?       @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  locationId       String?
+  participants     Int?
+  tourDate         String? // "YYYY-MM-DD"
+  tourTime         String? // "HH:MM"
+  valueMinor       BigInt? // the offer's gross (Builder-computed) — headline when promoted to primary
   // Soft removal. An offer WITH generated documents is never hard-deleted —
   // archiving hides it from the workspace tabs while history/admin access to
   // its immutable documents stays intact. Hard delete is allowed only for an
@@ -1654,6 +1674,7 @@ model Location {
   updatedAt           DateTime         @updatedAt
   variants            ProductVariant[]
   deals               Deal[]
+  quoteOffers         QuoteOffer[]
   // Shared Content Library items anchored to this location. Back-relation only.
   sharedContent       SharedContent[]  @relation("SharedContentAnchor")
   // Location Defaults (source of truth per type; a variant link is an override).
@@ -1687,6 +1708,7 @@ model Product {
   variants        ProductVariant[]
   priceRules      PriceRule[]
   deals           Deal[]
+  quoteOffers     QuoteOffer[]
 
   @@index([sortOrder])
 }
@@ -1735,6 +1757,7 @@ model ProductVariant {
   sharedContentLinks    ProductVariantSharedContent[]
   // Quote Image Library references per quote position (hero | slot1 | slot2).
   quoteImageLinks       ProductVariantQuoteImage[]
+  quoteOffers           QuoteOffer[]
 
   @@unique([productId, locationId])
   @@index([productId])

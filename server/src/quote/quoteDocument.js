@@ -163,6 +163,7 @@ export async function listDealQuoteDocuments(client, dealId) {
     where: { dealId },
     orderBy: { offerNo: 'asc' },
     include: {
+      product: { select: { nameHe: true } },
       quoteDocuments: {
         where: { status: { not: 'draft' } },
         orderBy: { versionNo: 'desc' },
@@ -180,6 +181,10 @@ export async function listDealQuoteDocuments(client, dealId) {
       id: o.id,
       offerNo: o.offerNo,
       isPrimary: o.isPrimary,
+      // 'deal' = mirrors the Deal (always the primary); 'own' = independent
+      // commercial context. productNameHe helps the workspace label own-mode tabs.
+      contextMode: o.contextMode,
+      productNameHe: o.contextMode === 'own' ? o.product?.nameHe ?? null : null,
       archivedAt: o.archivedAt ?? null,
       documents: o.quoteDocuments.map((d, i) => ({
         id: d.id,

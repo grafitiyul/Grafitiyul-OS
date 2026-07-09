@@ -588,6 +588,42 @@ const DEAL_INCLUDE = {
   contacts: { include: { contact: true } },
 };
 
+// Offer-owned commercial context (contextMode='own'): the effective composition
+// context is the DEAL overlaid with the offer's product/variant/location/
+// participants/date/time/valueMinor — a parallel offer composes from ITS OWN
+// context and is immune to Deal edits. The primary offer is always
+// contextMode='deal' (the Deal IS the primary), so it passes through untouched.
+// Customer/org/payment/contact identity always stays Deal-level.
+export async function resolveEffectiveDeal(client, deal, offerId) {
+  if (!offerId) return deal;
+  const offer = await client.quoteOffer.findUnique({ where: { id: offerId } });
+  if (!offer || offer.contextMode !== 'own') return deal;
+
+  const [product, productVariant, location] = await Promise.all([
+    offer.productId ? client.product.findUnique({ where: { id: offer.productId } }) : null,
+    offer.productVariantId
+      ? client.productVariant.findUnique({ where: { id: offer.productVariantId }, include: DEAL_INCLUDE.productVariant.include })
+      : null,
+    offer.locationId
+      ? client.location.findUnique({ where: { id: offer.locationId }, include: DEAL_INCLUDE.location.include })
+      : null,
+  ]);
+
+  return {
+    ...deal,
+    productId: offer.productId,
+    product,
+    productVariantId: offer.productVariantId,
+    productVariant,
+    locationId: offer.locationId,
+    location,
+    participants: offer.participants,
+    tourDate: offer.tourDate,
+    tourTime: offer.tourTime,
+    valueMinor: offer.valueMinor,
+  };
+}
+
 // PURE: merge a TEMPORARY override overlay on top of the persisted override
 // state. Field-level, overlay wins. Persisted overrides are the Deal's lasting
 // customization (carried into every future version); the overlay is one-shot —
@@ -613,8 +649,11 @@ export async function composeQuoteDraftPreview(client, id, opts = {}) {
     ? { ...stored, overrideState: mergeOverrideState(stored.overrideState, opts.overrideOverlay) }
     : stored;
 
-  const deal = await client.deal.findUnique({ where: { id: document.dealId }, include: DEAL_INCLUDE });
-  if (!deal) return { error: 'deal_not_found' };
+  const dealRow = await client.deal.findUnique({ where: { id: document.dealId }, include: DEAL_INCLUDE });
+  if (!dealRow) return { error: 'deal_not_found' };
+  // Non-primary offers compose from THEIR OWN commercial context (immune to
+  // Deal edits); the primary offer passes through as-is (Deal ≡ primary).
+  const deal = await resolveEffectiveDeal(client, dealRow, document.offerId);
 
   const version = await client.quoteVersion.findUnique({ where: { id: document.quoteVersionId } });
   const lines = await client.quoteLine.findMany({

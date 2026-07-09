@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { removeOrArchiveOffer } from './quoteOffers.js';
+import { removeOrArchiveOffer, setPrimaryOffer, splitBuilderPatch } from './quoteOffers.js';
 
 // Safety rules for removing a parallel offer:
 //   signed document anywhere → refuse; produced documents → ARCHIVE (history
@@ -95,6 +95,104 @@ function fakeClient({ offers, versions = [], docs = [] }) {
 }
 
 const offer = (id, offerNo, over = {}) => ({ id, dealId: 'deal_1', offerNo, isPrimary: offerNo === 1, archivedAt: null, ...over });
+
+// ── Deal ≡ primary: promotion + builder routing ─────────────────────────────
+
+function promoteFake({ deal, offers }) {
+  const state = { deal: { ...deal }, offers: offers.map((o) => ({ ...o })), dealUpdates: [] };
+  return {
+    state,
+    deal: {
+      findUnique: async () => state.deal,
+      update: async ({ data }) => {
+        state.dealUpdates.push(data);
+        Object.assign(state.deal, data);
+        return state.deal;
+      },
+    },
+    quoteOffer: {
+      findUnique: async ({ where }) => state.offers.find((o) => o.id === where.id) || null,
+      findFirst: async ({ where }) =>
+        state.offers.find((o) =>
+          o.dealId === where.dealId
+          && (where.isPrimary === undefined || o.isPrimary === where.isPrimary)
+          && (where.archivedAt === undefined || (o.archivedAt ?? null) === where.archivedAt)) || null,
+      update: async ({ where, data }) => {
+        const o = state.offers.find((x) => x.id === where.id);
+        Object.assign(o, data);
+        return o;
+      },
+      updateMany: async ({ where, data }) => {
+        state.offers
+          .filter((o) => o.dealId === where.dealId && (!where.isPrimary || o.isPrimary))
+          .forEach((o) => Object.assign(o, data));
+      },
+    },
+  };
+}
+
+test('makePrimary: Deal adopts the offer context; outgoing primary keeps what it had', async () => {
+  const client = promoteFake({
+    deal: {
+      id: 'deal_1', productId: 'p1', productVariantId: 'v1', locationId: 'l1',
+      participants: 30, tourDate: '2026-08-04', tourTime: '10:00', valueMinor: 350000n,
+    },
+    offers: [
+      offer('off_1', 1, { contextMode: 'deal' }),
+      offer('off_2', 2, {
+        isPrimary: false, contextMode: 'own',
+        productId: 'p2', productVariantId: 'v2', locationId: 'l2',
+        participants: 25, tourDate: '2026-08-10', tourTime: '12:00', valueMinor: 237500n,
+      }),
+    ],
+  });
+
+  const r = await setPrimaryOffer(client, 'deal_1', 'off_2');
+  assert.equal(r.changed, true);
+
+  const [a, b] = client.state.offers;
+  // Outgoing primary froze the Deal's PRE-adoption context as its own.
+  assert.equal(a.isPrimary, false);
+  assert.equal(a.contextMode, 'own');
+  assert.equal(a.productId, 'p1');
+  assert.equal(a.valueMinor, 350000n);
+  // The Deal now mirrors the new primary.
+  assert.equal(client.state.deal.productId, 'p2');
+  assert.equal(client.state.deal.productVariantId, 'v2');
+  assert.equal(client.state.deal.participants, 25);
+  assert.equal(client.state.deal.valueMinor, 237500n);
+  // The new primary follows the Deal (context cleared).
+  assert.equal(b.isPrimary, true);
+  assert.equal(b.contextMode, 'deal');
+  assert.equal(b.productId, null);
+});
+
+test('makePrimary: promoting the current primary is a no-op', async () => {
+  const client = promoteFake({
+    deal: { id: 'deal_1', productId: 'p1', productVariantId: null, locationId: null, participants: null, tourDate: null, tourTime: null, valueMinor: 0n },
+    offers: [offer('off_1', 1, { contextMode: 'deal' })],
+  });
+  const r = await setPrimaryOffer(client, 'deal_1', 'off_1');
+  assert.equal(r.changed, false);
+  assert.deepEqual(client.state.dealUpdates, [], 'deal untouched');
+});
+
+test('splitBuilderPatch: primary (deal-mode) patches the Deal; own-mode offer keeps it to itself', () => {
+  const b = { valueMinor: 1000, productId: 'p9', productVariantId: 'v9', locationId: 'l9', participants: '40' };
+  const primary = splitBuilderPatch({ isPrimary: true, contextMode: 'deal' }, b);
+  assert.deepEqual(primary.offerPatch, {});
+  assert.equal(primary.dealPatch.valueMinor, 1000n);
+  assert.equal(primary.dealPatch.productId, 'p9');
+  assert.equal(primary.dealPatch.participants, 40);
+
+  const own = splitBuilderPatch({ isPrimary: false, contextMode: 'own' }, b);
+  assert.deepEqual(own.dealPatch, {}, 'pricing an alternative never mutates the Deal');
+  assert.equal(own.offerPatch.productId, 'p9');
+  assert.equal(own.offerPatch.valueMinor, 1000n);
+
+  // Legacy safety: no offer row at all → historic behavior (patch the Deal).
+  assert.equal(splitBuilderPatch(null, b).dealPatch.productId, 'p9');
+});
 
 test('remove: refuses when the offer has a signed document', async () => {
   const client = fakeClient({
