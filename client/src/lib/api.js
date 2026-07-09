@@ -1054,6 +1054,13 @@ export const api = {
         body: JSON.stringify({ tourEventId }),
       }),
     list: (params = {}) => request('/api/tours' + qs(params)),
+    // Orphaned bookings — tours intentionally kept when their deal left WON.
+    orphans: () => request('/api/tours/orphans'),
+    orphansCount: () => request('/api/tours/orphans/count'),
+    reconnectOrphan: (bookingId) =>
+      request(`/api/tours/orphans/${bookingId}/reconnect`, { method: 'POST', body: '{}' }),
+    cancelOrphan: (bookingId) =>
+      request(`/api/tours/orphans/${bookingId}/cancel`, { method: 'POST', body: '{}' }),
     get: (id) => request(`/api/tours/${id}`),
     // Creates a group Tour Slot (private/business tours are created only by
     // the deal WON transition, never from here).

@@ -41,6 +41,7 @@ import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
 import Dialog from '../common/Dialog.jsx';
 import TourSlotPickerDialog from '../tours/TourSlotPickerDialog.jsx';
 import { fmtTourDate } from '../tours/config.js';
+import { notifyOrphansChanged } from '../../shell/OrphanToursIndicator.jsx';
 
 const INPUT =
   'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
@@ -1004,7 +1005,10 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
           </button>
           <button
             type="button"
-            onClick={() => { setReopenChoiceTour(null); setStatus('open', { tourChoice: 'keep' }); }}
+            onClick={() => {
+              setReopenChoiceTour(null);
+              setStatus('open', { tourChoice: 'keep' }).then(() => notifyOrphansChanged());
+            }}
             className="w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-right text-sm hover:bg-amber-100"
           >
             <span className="block font-semibold text-amber-800">השאר את הסיור</span>

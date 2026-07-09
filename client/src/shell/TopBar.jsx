@@ -1,6 +1,7 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { moduleForPath } from './modules.js';
+import OrphanToursIndicator from './OrphanToursIndicator.jsx';
 
 export default function TopBar() {
   const navigate = useNavigate();
@@ -31,6 +32,10 @@ export default function TopBar() {
         <span className="text-gray-700">{moduleLabel}</span>
       </div>
       <div className="flex-1" />
+      {/* Permanent orphan-tours warning (renders nothing when none exist). */}
+      <div className="me-3">
+        <OrphanToursIndicator />
+      </div>
       <button
         type="button"
         onClick={handleLogout}

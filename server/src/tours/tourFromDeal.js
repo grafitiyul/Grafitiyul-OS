@@ -247,6 +247,66 @@ export async function orphanDealBooking(tx, booking, { origin }) {
   });
 }
 
+// Reconnect an ORPHANED booking to its original deal. Valid only when that
+// deal is WON again and not already on another tour (attaching a DIFFERENT
+// deal to a group slot is the regular "שבץ לסיור" flow — not this).
+// Returns { dealSync } — non-null when the tour is a group slot (slot stays
+// authoritative, its fields re-sync onto the deal).
+export async function reconnectOrphanBooking(tx, booking, { origin }) {
+  const deal = await tx.deal.findUnique({ where: { id: booking.dealId } });
+  if (!deal || deal.status !== 'won') {
+    const err = new Error('deal_not_won');
+    err.code = 'deal_not_won';
+    throw err;
+  }
+  const current = await activeBookingFor(tx, deal.id);
+  if (current) {
+    const err = new Error('deal_already_on_tour');
+    err.code = 'deal_already_on_tour';
+    throw err;
+  }
+  await tx.booking.update({
+    where: { id: booking.id },
+    data: { status: 'active', orphanedAt: null },
+  });
+  await emitTimelineEvent(tx, {
+    subjectType: 'tour_event',
+    subjectId: booking.tourEventId,
+    kind: 'tour',
+    data: { event: 'booking_reconnected', dealId: deal.id, dealOrderNo: deal.orderNo },
+    origin,
+  });
+  await emitTimelineEvent(tx, {
+    subjectType: 'deal',
+    subjectId: deal.id,
+    kind: 'tour',
+    data: {
+      event: 'booking_reconnected',
+      tourEventId: booking.tourEventId,
+      date: booking.tourEvent.date,
+      startTime: booking.tourEvent.startTime,
+    },
+    origin,
+  });
+
+  const tour = booking.tourEvent;
+  if (tour.kind === 'group_slot') {
+    return {
+      dealSync: {
+        tourDate: tour.date,
+        tourTime: tour.startTime,
+        tourLanguage: tour.tourLanguage,
+        locationId: tour.locationId,
+        productId: tour.productId,
+        productVariantId: tour.productVariantId,
+      },
+    };
+  }
+  // private/business: the deal stayed the planning source — mirror deal→tour.
+  await syncDealToTour(tx, deal, { ...booking, status: 'active' }, { origin });
+  return { dealSync: null };
+}
+
 // Mechanical Deal→Tour mirror for private/business tours. The DEAL is the
 // planning source of truth after WON; this runs in the SAME transaction as
 // every deal save so the two can never drift. Returns true when the tour row

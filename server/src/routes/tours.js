@@ -10,6 +10,11 @@ import {
   missingFields,
 } from '../tours/requiredFields.js';
 import { occupancyFor } from '../tours/occupancy.js';
+import {
+  cancelDealBooking,
+  reconnectOrphanBooking,
+} from '../tours/tourFromDeal.js';
+import { recordDealChanges, DEAL_DIFF_SELECT } from '../timeline/dealChangelog.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 
 // TourEvent CRUD — the OPERATIONAL tours module ("סיורים"). Distinct from the
@@ -104,6 +109,112 @@ router.get(
     });
     const occ = await occupancyFor(prisma, tours.map((t) => t.id));
     res.json(tours.map((t) => toClientTour(t, occ[t.id])));
+  }),
+);
+
+// ---------- orphans ----------
+// Orphaned bookings = tours intentionally kept when their deal left WON.
+// Product rule: they must never be hidden — the app header shows a permanent
+// warning while any exist, and this queue is where they get resolved
+// (reconnect to the re-won deal, or cancel). Registered BEFORE '/:id'.
+
+router.get(
+  '/orphans/count',
+  handle(async (_req, res) => {
+    const count = await prisma.booking.count({ where: { status: 'orphaned' } });
+    res.json({ count });
+  }),
+);
+
+router.get(
+  '/orphans',
+  handle(async (_req, res) => {
+    const orphans = await prisma.booking.findMany({
+      where: { status: 'orphaned' },
+      orderBy: { orphanedAt: 'asc' },
+      include: {
+        tourEvent: {
+          select: {
+            id: true,
+            kind: true,
+            status: true,
+            date: true,
+            startTime: true,
+            product: { select: { id: true, nameHe: true } },
+            location: { select: { id: true, nameHe: true } },
+          },
+        },
+        deal: {
+          select: {
+            id: true,
+            orderNo: true,
+            title: true,
+            status: true,
+            organization: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+    res.json(orphans);
+  }),
+);
+
+// Reconnect the orphan to its original deal (requires the deal WON again and
+// free of other tours). Group slots stay authoritative — their fields re-sync
+// onto the deal with a changelog entry per field.
+router.post(
+  '/orphans/:bookingId/reconnect',
+  handle(async (req, res) => {
+    const booking = await prisma.booking.findUnique({
+      where: { id: req.params.bookingId },
+      include: { tourEvent: true },
+    });
+    if (!booking) return res.status(404).json({ error: 'not_found' });
+    if (booking.status !== 'orphaned') return res.status(409).json({ error: 'not_orphaned' });
+
+    const before = await prisma.deal.findUnique({
+      where: { id: booking.dealId },
+      select: { ...DEAL_DIFF_SELECT, productVariantId: true },
+    });
+    const origin = await userOrigin(req.adminAuth?.userId);
+    try {
+      await prisma.$transaction(async (tx) => {
+        const { dealSync } = await reconnectOrphanBooking(tx, booking, { origin });
+        if (dealSync) {
+          await tx.deal.update({ where: { id: booking.dealId }, data: dealSync });
+        }
+      });
+    } catch (e) {
+      if (e.code === 'deal_not_won' || e.code === 'deal_already_on_tour') {
+        return res.status(409).json({ error: e.code });
+      }
+      throw e;
+    }
+    const after = await prisma.deal.findUnique({
+      where: { id: booking.dealId },
+      select: { ...DEAL_DIFF_SELECT, productVariantId: true },
+    });
+    await recordDealChanges(prisma, { dealId: booking.dealId, before, after, origin });
+    res.json({ ok: true });
+  }),
+);
+
+// Cancel the orphan tour participation. Reuses the ONE booking-cancellation
+// path (timeline events + auto-cancel of an empty private/business tour).
+router.post(
+  '/orphans/:bookingId/cancel',
+  handle(async (req, res) => {
+    const booking = await prisma.booking.findUnique({
+      where: { id: req.params.bookingId },
+      include: { tourEvent: true },
+    });
+    if (!booking) return res.status(404).json({ error: 'not_found' });
+    if (booking.status !== 'orphaned') return res.status(409).json({ error: 'not_orphaned' });
+    const origin = await userOrigin(req.adminAuth?.userId);
+    await prisma.$transaction(async (tx) => {
+      await cancelDealBooking(tx, booking, { reason: 'orphan_cancelled', origin });
+    });
+    res.json({ ok: true });
   }),
 );
 
