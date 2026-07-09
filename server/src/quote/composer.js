@@ -42,8 +42,8 @@ const SOURCE_LABELS = {
   hero: 'Deal',
   program: 'Product Variant',
   video: 'Quote Structure · Video',
-  image_slot_1: 'Quote Structure · Images',
-  image_slot_2: 'Quote Structure · Images',
+  image_slot_1: 'Product Variant · Image Library',
+  image_slot_2: 'Product Variant · Image Library',
   tour_details: 'Deal · Product · Location',
   pricing: 'QuoteVersion (Builder)',
   signature: 'Signers',
@@ -83,9 +83,20 @@ function contactDisplayName(deal, lang) {
 }
 
 // Cover hero image: product-variant gallery first, then meeting-point images.
+// LEGACY fallback only — per-variant hero selection now lives in the Quote
+// Image Library references (see variantQuoteImages below).
 function heroImageUrl(deal) {
   const v = deal?.productVariant;
   return v?.galleryImages?.[0]?.mediaFile?.url || v?.meetingPointImage?.url || deal?.location?.meetingPointImage?.url || null;
+}
+
+// The variant's Quote Image Library references for one position (hero | slot1 |
+// slot2), in display order, keeping only renderable entries (image uploaded).
+// The library entry is the source of truth; the variant only points at it.
+function variantQuoteImages(deal, position) {
+  const links = deal?.productVariant?.quoteImageLinks;
+  if (!Array.isArray(links)) return [];
+  return links.filter((l) => l?.position === position && l?.quoteImage?.mediaFile?.url);
 }
 
 // "Edit at source" target per section — the Quote orchestrates the existing GOS
@@ -98,8 +109,10 @@ export function editTargetFor(type, deal, lang) {
     case 'hero': return { kind: 'deal', label: 'ערוך פרטי לקוח' };
     case 'program': return { kind: 'product', label: 'ערוך תוכן התוכנית (וריאציה)', id: deal?.productId || null };
     case 'video': return { kind: 'quoteStructure', label: 'ערוך וידאו', tab: 'video' };
+    // Image slots are configured on the Product Variant (library references);
+    // the library itself is managed in Quote Structure → Images.
     case 'image_slot_1':
-    case 'image_slot_2': return { kind: 'quoteStructure', label: 'ערוך תמונות', tab: 'images' };
+    case 'image_slot_2': return { kind: 'product', label: 'ערוך תמונות ההצעה (וריאציה)', id: deal?.productId || null };
     case 'tour_details': return { kind: 'deal', label: 'ערוך פרטי הסיור' };
     case 'pricing': return { kind: 'builder', label: 'ערוך תמחור', dialog: true };
     case 'product_marketing': return { kind: 'product', label: 'ערוך מוצר', id: deal?.productId || null };
@@ -137,13 +150,18 @@ function buildHero({ deal, document, displayName, lang, template }) {
       tourDate: deal?.tourDate || null,
       // Proposal creation date (תאריך הפקה) — the hero shows this, NOT the tour date.
       createdAt: document?.createdAt || null,
-      // Hero image: the Quote Structure (global template) hero is the SOURCE OF
-      // TRUTH and wins; the Deal's own product/location imagery is only a fallback
-      // when no hero is configured; renderer draws a gradient if both are null.
+      // Hero image precedence: the variant's own hero pick from the Quote Image
+      // Library wins; the Quote Structure (global template) hero is the default
+      // when the variant chose nothing; the Deal's legacy product/location
+      // imagery is the last fallback; renderer draws a gradient if all are null.
       // This rule lives HERE (shared composition) so preview and produced/frozen
       // snapshots cannot diverge. Existing frozen quotes are unaffected — they
       // read renderModelSnapshot, never this composer.
-      heroImageUrl: hero?.image?.url || heroImageUrl(deal) || null,
+      heroImageUrl:
+        variantQuoteImages(deal, 'hero')[0]?.quoteImage?.mediaFile?.url ||
+        hero?.image?.url ||
+        heroImageUrl(deal) ||
+        null,
       // Global-template hero copy/style. null title/subtitle → renderer falls
       // back to its built-in "הצעת מחיר" + product name.
       heroTitle: pickLang(hero?.titleHe, hero?.titleEn, lang),
@@ -217,21 +235,22 @@ function buildVideo({ deal, lang, template }) {
   return { data: { title, url: match.url }, warnings: [] };
 }
 
-// Quote Image Library — one slot (slot1|slot2). Renders the image whose slot matches
-// AND whose variantIds includes the quote's Product Variant AND that has an uploaded
-// image; otherwise imageUrl is null and the renderer skips the slot. Caption is
-// language-picked. Same shape/gating idea as the video block. The section title
-// (Quote Structure) is carried for the sections list; the renderer shows the image,
-// not a heading. Image media is template-owned — NOT the variant/Shared Content.
+// Quote Image Library — one position (slot1|slot2). Renders the variant's
+// ORDERED library references for the position: zero images → the renderer
+// skips the slot; several → they show together in that section. Captions are
+// the library titles, language-picked. The section title (Quote Structure) is
+// carried for the sections list; the renderer shows the images, not a heading.
+// `imageUrl`/`caption` mirror images[0] for back-compat: produced documents
+// frozen BEFORE the library refactor carry only the single-image shape, and
+// the renderer accepts both.
 function buildImageSlot({ deal, lang, template, slot, blockKey }) {
-  const variantId = deal?.productVariantId || deal?.productVariant?.id || null;
-  const images = Array.isArray(template?.images) ? template.images : [];
-  const match = variantId
-    ? images.find((im) => im?.slot === slot && im?.image?.url && Array.isArray(im.variantIds) && im.variantIds.includes(variantId))
-    : null;
   const title = sectionTitle(template, blockKey, lang);
-  if (!match) return { data: { title, imageUrl: null }, warnings: [] };
-  return { data: { title, imageUrl: match.image.url, caption: pickLang(match.captionHe, match.captionEn, lang) }, warnings: [] };
+  const images = variantQuoteImages(deal, slot).map((l) => ({
+    url: l.quoteImage.mediaFile.url,
+    caption: pickLang(l.quoteImage.titleHe, l.quoteImage.titleEn, lang),
+  }));
+  if (!images.length) return { data: { title, imageUrl: null, images: [] }, warnings: [] };
+  return { data: { title, imageUrl: images[0].url, caption: images[0].caption, images }, warnings: [] };
 }
 
 function buildTourDetails({ deal, displayName, lang, template, sharedContent }) {
@@ -520,6 +539,11 @@ const DEAL_INCLUDE = {
       location: true,
       meetingPointImage: true,
       galleryImages: { include: { mediaFile: true }, orderBy: { sortOrder: 'asc' } },
+      // Quote Image Library references (hero | slot1 | slot2), in display order.
+      quoteImageLinks: {
+        orderBy: [{ position: 'asc' }, { sortOrder: 'asc' }],
+        include: { quoteImage: { include: { mediaFile: { select: { id: true, url: true } } } } },
+      },
     },
   },
   location: { include: { meetingPointImage: true } },

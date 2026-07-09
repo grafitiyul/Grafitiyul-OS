@@ -602,21 +602,33 @@ function VideoPrintCard({ embed, title, lang }) {
   );
 }
 
-// Quote Image Library slot — a premium image card with an optional caption. Only
-// renders when the composer resolved an image for this slot + the quote's variant;
-// otherwise nothing shows (no placeholder). No heading (the image IS the section).
+// Quote Image Library slot — premium image cards with optional captions. The
+// variant may reference SEVERAL library images for one slot; they show together
+// in order. Only renders when the composer resolved at least one image;
+// otherwise nothing shows (no placeholder). No heading (the images ARE the
+// section). Back-compat: documents frozen before the library refactor carry a
+// single { imageUrl, caption } instead of the images[] array.
 function ImageSlot({ d }) {
-  if (!d.imageUrl) return null;
+  const images = Array.isArray(d.images) && d.images.length
+    ? d.images.filter((im) => im?.url)
+    : d.imageUrl
+      ? [{ url: d.imageUrl, caption: d.caption }]
+      : [];
+  if (!images.length) return null;
   return (
-    <figure className="m-0">
-      <img
-        src={d.imageUrl}
-        alt={d.caption || ''}
-        loading="lazy"
-        className="w-full rounded-2xl border border-gray-200 object-cover shadow-sm"
-      />
-      {d.caption && <figcaption className="mt-3 text-center text-[14px] leading-relaxed text-gray-500">{d.caption}</figcaption>}
-    </figure>
+    <div className="space-y-6">
+      {images.map((im, i) => (
+        <figure key={i} className="m-0">
+          <img
+            src={im.url}
+            alt={im.caption || ''}
+            loading="lazy"
+            className="w-full rounded-2xl border border-gray-200 object-cover shadow-sm"
+          />
+          {im.caption && <figcaption className="mt-3 text-center text-[14px] leading-relaxed text-gray-500">{im.caption}</figcaption>}
+        </figure>
+      ))}
+    </div>
   );
 }
 
@@ -739,7 +751,7 @@ export function blockHasContent(block) {
       return !!d.url;
     case 'image_slot_1':
     case 'image_slot_2':
-      return !!d.imageUrl;
+      return !!(d.imageUrl || (Array.isArray(d.images) && d.images.some((im) => im?.url)));
     case 'program':
     case 'product_marketing':
     case 'why_us':

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
+import { QUOTE_IMAGE_POSITIONS } from './quoteImages.js';
 
 // Product catalog + Product Variants (Product × Location) + variant gallery.
 // Products own bilingual name + rich marketing descriptions (no pricing). The
@@ -25,6 +26,12 @@ const VARIANT_INCLUDE = {
   galleryImages: {
     orderBy: { sortOrder: 'asc' },
     include: { mediaFile: true },
+  },
+  // Quote Image Library references (hero | slot1 | slot2) — the variant does
+  // not own images; it points at shared library entries.
+  quoteImageLinks: {
+    orderBy: [{ position: 'asc' }, { sortOrder: 'asc' }],
+    include: { quoteImage: { include: { mediaFile: { select: { id: true, url: true } } } } },
   },
 };
 
@@ -325,7 +332,61 @@ router.delete(
   }),
 );
 
+// ---------- Variant quote images (library references) ----------
+
+// Replace-all write of the variant's Quote Image Library references.
+// Body: { positions: { hero: [quoteImageId…], slot1: […], slot2: […] } }.
+// Array order IS the display order. Unknown positions are ignored, stale
+// library ids are dropped silently (the library is the source of truth).
+router.put(
+  '/variants/:variantId/quote-images',
+  handle(async (req, res) => {
+    const variantId = req.params.variantId;
+    const variant = await prisma.productVariant.findUnique({
+      where: { id: variantId },
+      select: { id: true },
+    });
+    if (!variant) return res.status(404).json({ error: 'not_found' });
+    const positions = req.body?.positions;
+    if (!positions || typeof positions !== 'object')
+      return res.status(400).json({ error: 'positions_required' });
+
+    const rows = [];
+    for (const position of QUOTE_IMAGE_POSITIONS) {
+      const ids = Array.isArray(positions[position]) ? positions[position] : [];
+      const seen = new Set();
+      let sortOrder = 0;
+      for (const raw of ids) {
+        const quoteImageId = typeof raw === 'string' ? raw.trim() : '';
+        if (!quoteImageId || seen.has(quoteImageId)) continue;
+        seen.add(quoteImageId);
+        rows.push({ productVariantId: variantId, quoteImageId, position, sortOrder: sortOrder++ });
+      }
+    }
+    const wanted = [...new Set(rows.map((r) => r.quoteImageId))];
+    const existing = wanted.length
+      ? new Set(
+          (await prisma.quoteImage.findMany({ where: { id: { in: wanted } }, select: { id: true } })).map((x) => x.id),
+        )
+      : new Set();
+    const valid = rows.filter((r) => existing.has(r.quoteImageId));
+
+    await prisma.$transaction([
+      prisma.productVariantQuoteImage.deleteMany({ where: { productVariantId: variantId } }),
+      ...(valid.length ? [prisma.productVariantQuoteImage.createMany({ data: valid })] : []),
+    ]);
+    const updated = await prisma.productVariant.findUnique({
+      where: { id: variantId },
+      include: VARIANT_INCLUDE,
+    });
+    res.json(updated);
+  }),
+);
+
 // ---------- Variant gallery ----------
+// LEGACY: uploads are no longer offered in the UI (the Quote Image Library
+// replaced per-variant uploads). Endpoints kept for the remaining legacy data
+// (hero fallback still reads galleryImages) until a dedicated cleanup slice.
 
 router.post(
   '/variants/:variantId/images',

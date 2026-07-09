@@ -669,9 +669,18 @@ export const api = {
     addVariant: (id, data) => request(`/api/products/${id}/variants`, { method: 'POST', body: JSON.stringify(data) }),
     updateVariant: (variantId, data) => request(`/api/products/variants/${variantId}`, { method: 'PUT', body: JSON.stringify(data) }),
     removeVariant: (variantId) => request(`/api/products/variants/${variantId}`, { method: 'DELETE' }),
-    addVariantImage: (variantId, mediaFileId) =>
-      request(`/api/products/variants/${variantId}/images`, { method: 'POST', body: JSON.stringify({ mediaFileId }) }),
-    removeVariantImage: (imageId) => request(`/api/products/variants/images/${imageId}`, { method: 'DELETE' }),
+    // Quote Image Library references — replace-all per variant.
+    // positions: { hero: [quoteImageId…], slot1: […], slot2: […] } (order = display order).
+    setVariantQuoteImages: (variantId, positions) =>
+      request(`/api/products/variants/${variantId}/quote-images`, { method: 'PUT', body: JSON.stringify({ positions }) }),
+  },
+  // Quote Image Library — independent reusable quote images (single source of
+  // truth). Variants only reference these; see products.setVariantQuoteImages.
+  quoteImages: {
+    list: () => request('/api/quote-images'),
+    create: (data) => request('/api/quote-images', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/api/quote-images/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/quote-images/${id}`, { method: 'DELETE' }),
   },
   // Shared Content Library — reusable content referenced by variants (and, later,
   // other consumers). Everything is by reference; only `fork` copies.

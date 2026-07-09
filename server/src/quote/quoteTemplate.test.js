@@ -301,39 +301,44 @@ test('composer: renamed section titles flow to the quote (why_grafitiyul, faq, s
   assert.equal(title('signature'), 'אישור');
 });
 
-// ── Quote Image Library (per-slot one-variant-one-image) ─────────────────────
-test('normalizeImages: a variant belongs to ONE image PER SLOT; allowed across slots', () => {
-  const url = 'https://cdn/a.jpg';
-  const { images } = normalizeLayout({ images: [
-    { id: 'a', slot: 'slot1', image: { url }, variantIds: ['v1', 'v2'] },
-    { id: 'b', slot: 'slot1', image: { url }, variantIds: ['v2', 'v3'] }, // v2 already claimed in slot1
-    { id: 'c', slot: 'slot2', image: { url }, variantIds: ['v1'] },       // v1 in the OTHER slot is allowed
-  ] });
-  assert.deepEqual(images[0].variantIds, ['v1', 'v2']);
-  assert.deepEqual(images[1].variantIds, ['v3'], 'v2 dropped within slot1');
-  assert.deepEqual(images[2].variantIds, ['v1'], 'v1 allowed in slot2');
-});
+// ── Quote Image Library (variant → library references per position) ──────────
+// The library is DB-backed (QuoteImage + ProductVariantQuoteImage); the deal's
+// variant carries quoteImageLinks, and the composer only reads those.
+const qi = (url, titleHe = null, titleEn = null) => ({ titleHe, titleEn, mediaFile: url ? { url } : null });
+const dealWithLinks = (links) => ({ ...deal(), productVariant: { id: 'v1', durationHours: 2, quoteImageLinks: links } });
+const composeDeal = (template, dealObj) =>
+  assembleComposition({ document: doc(), deal: dealObj, version: { id: 'v' }, lines: [], quoteSections: [], lang: 'he', template });
 
-test('normalizeImages: stable id, valid slot, url required, empty default', () => {
-  assert.deepEqual(normalizeLayout(null).images, []);
-  const { images } = normalizeLayout({ images: [{ slot: 'bogus', image: { id: 'm' }, variantIds: [] }] });
-  assert.equal(images.length, 1);
-  assert.ok(typeof images[0].id === 'string' && images[0].id.length > 0);
-  assert.equal(images[0].slot, 'slot1', 'invalid slot → slot1');
-  assert.equal(images[0].image, null, 'image needs a url');
-});
-
-test('composer: image slot renders the matching image for the deal variant, skips otherwise', () => {
-  const url = 'https://cdn/pic.jpg';
-  const t = normalizeLayout({ images: [
-    { id: '1', slot: 'slot1', image: { url }, variantIds: ['v1'], captionHe: 'כיתוב' },
-    { id: '2', slot: 'slot2', image: { url }, variantIds: ['other'] },
-  ] }); // deal().productVariantId === 'v1'
-  const s1 = compose(t).blocks.find((b) => b.key === 'image_slot_1').data;
-  const s2 = compose(t).blocks.find((b) => b.key === 'image_slot_2').data;
-  assert.equal(s1.imageUrl, url);
+test('composer: image slots render the variant library references, in order, several together', () => {
+  const d = dealWithLinks([
+    { position: 'slot1', sortOrder: 0, quoteImage: qi('https://cdn/a.jpg', 'כיתוב') },
+    { position: 'slot1', sortOrder: 1, quoteImage: qi('https://cdn/b.jpg') },
+    { position: 'slot2', sortOrder: 0, quoteImage: qi(null, 'ללא קובץ') }, // not uploaded → not renderable
+  ]);
+  const model = composeDeal(normalizeLayout(null), d);
+  const s1 = model.blocks.find((b) => b.key === 'image_slot_1').data;
+  const s2 = model.blocks.find((b) => b.key === 'image_slot_2').data;
+  assert.deepEqual(s1.images, [
+    { url: 'https://cdn/a.jpg', caption: 'כיתוב' },
+    { url: 'https://cdn/b.jpg', caption: null },
+  ]);
+  assert.equal(s1.imageUrl, 'https://cdn/a.jpg', 'back-compat single-image mirror');
   assert.equal(s1.caption, 'כיתוב');
-  assert.equal(s2.imageUrl, null, 'no slot2 image targets v1 → skipped');
+  assert.equal(s2.imageUrl, null, 'no renderable slot2 reference → skipped');
+  assert.deepEqual(s2.images, []);
+});
+
+test('composer: image slots are empty when the variant references nothing', () => {
+  const model = composeDeal(normalizeLayout(null), deal()); // no quoteImageLinks at all
+  assert.equal(model.blocks.find((b) => b.key === 'image_slot_1').data.imageUrl, null);
+  assert.equal(model.blocks.find((b) => b.key === 'image_slot_2').data.imageUrl, null);
+});
+
+test('composer: the variant hero pick (library) wins over the template hero image', () => {
+  const template = normalizeLayout({ hero: { image: { id: 'm', url: 'https://cdn/template-hero.jpg' } } });
+  const d = dealWithLinks([{ position: 'hero', sortOrder: 0, quoteImage: qi('https://cdn/variant-hero.jpg') }]);
+  const hero = composeDeal(template, d).blocks.find((b) => b.key === 'hero').data;
+  assert.equal(hero.heroImageUrl, 'https://cdn/variant-hero.jpg');
 });
 
 // ── Business contact (public-page "צור קשר") ─────────────────────────────────

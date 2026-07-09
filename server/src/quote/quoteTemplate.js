@@ -62,10 +62,6 @@ export const SECTION_TITLE_DEFAULTS = {
   signature: { titleHe: 'חתימה', titleEn: 'Signature' },
 };
 
-// Quote Image Library slots. Keys mirror the block keys so title/order/visibility
-// use the same section mechanism as every other section.
-export const IMAGE_SLOTS = ['slot1', 'slot2'];
-
 // Legacy overlay presets (kept for backward compatibility with older saved
 // layouts; the premium hero now uses an explicit color + opacity instead).
 const OVERLAY_PRESETS = ['light', 'medium', 'dark'];
@@ -137,10 +133,10 @@ export const DEFAULT_LAYOUT = {
   // Variant is assigned to it. A variant belongs to AT MOST ONE video (enforced on
   // normalize). Independent of Shared Content. Empty by default.
   videos: [],
-  // Quote Image Library — zero or more images, each with a slot (slot1|slot2),
-  // captions, and assigned variants. A variant belongs to AT MOST ONE image PER
-  // SLOT (enforced on normalize), but may be assigned in both slots. Empty by default.
-  images: [],
+  // NOTE: the Quote Image Library moved OUT of this layout into real entities
+  // (QuoteImage + ProductVariantQuoteImage) — see routes/quoteImages.js. A
+  // legacy `images` key in a stored layout is simply ignored on normalize
+  // (already backfilled into the tables by the quote_image_library migration).
   // Business contact for the customer-facing "צור קשר" action on the public quote
   // page (WhatsApp + Email). Global (no per-deal owner / User model yet). Empty
   // strings hide the corresponding action. Never a source of customer data.
@@ -278,38 +274,6 @@ function normalizeVideos(raw, legacyVideo) {
   return out;
 }
 
-// Quote Image Library. Each item is { id, image:{id,url}, slot, captionHe, captionEn,
-// variantIds }. Same architecture as the video library, but the one-variant-one-item
-// rule is enforced PER SLOT: a variant claimed by an earlier image IN THE SAME SLOT
-// is dropped from later images of that slot — yet the same variant may be assigned in
-// both slots (they are different places in the quote). image/captions optional; every
-// item gets a stable id and a valid slot. Nothing is copied from anywhere else.
-let __imageIdSeq = 0;
-function normalizeImages(raw) {
-  const list = Array.isArray(raw) ? raw : [];
-  const claimedBySlot = { slot1: new Set(), slot2: new Set() };
-  const out = [];
-  for (const item of list) {
-    if (!item || typeof item !== 'object') continue;
-    const slot = IMAGE_SLOTS.includes(item.slot) ? item.slot : 'slot1';
-    const claimed = claimedBySlot[slot];
-    const ids = Array.isArray(item.variantIds) ? item.variantIds.filter(isStr).map((s) => String(s)) : [];
-    const variantIds = [];
-    for (const vid of ids) {
-      if (!claimed.has(vid)) { claimed.add(vid); variantIds.push(vid); }
-    }
-    out.push({
-      id: isStr(item.id) ? String(item.id) : `img_${Date.now().toString(36)}_${__imageIdSeq++}`,
-      image: normalizeImageRef(item.image),
-      slot,
-      captionHe: cleanText(item.captionHe),
-      captionEn: cleanText(item.captionEn),
-      variantIds,
-    });
-  }
-  return out;
-}
-
 // Normalise ANY input (saved row, API body, or null) into a complete, safe
 // layout. Always returns every section and tech field exactly once.
 export function normalizeLayout(raw) {
@@ -323,7 +287,6 @@ export function normalizeLayout(raw) {
     hero: normalizeHero(l.hero),
     sectionTitles: normalizeSectionTitles(l.sectionTitles, l.program),
     videos: normalizeVideos(l.videos, l.video),
-    images: normalizeImages(l.images),
     contact: normalizeContact(l.contact),
     // Hero is the document header: always first and never hidden, so the stored
     // template stays consistent with the UI (which shows it pinned, not in the

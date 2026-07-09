@@ -5,8 +5,8 @@ import { useDirtyWhen, valuesEqual } from '../../lib/dirtyForms.js';
 import RichEditor from '../../editor/RichEditor.jsx';
 import { minorToInput, toMinor } from '../../lib/money.js';
 import { durationDisplay } from '../../lib/duration.js';
-import { Gallery } from './ImageUploader.jsx';
 import VariantSharedContent from './VariantSharedContent.jsx';
+import VariantQuoteImages from './VariantQuoteImages.jsx';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Product Variant editor — a dedicated, full-page CMS-style workspace.
@@ -78,7 +78,9 @@ const GROUPS = [
 const SECTIONS = [
   { group: 'quote', key: 'program', title: 'אז מה בתוכנית?', sub: 'הטקסט שמופיע בראש ההצעה ללקוח', track: true },
   { group: 'quote', key: 'productDetails', title: 'פרטים על המוצר', sub: 'מופיע בהצעת המחיר', track: true },
-  { group: 'quote', key: 'gallery', title: 'גלריית תמונות להצעת מחיר', sub: 'תמונות שמלוות את ההצעה', track: true },
+  // Quote images are library REFERENCES (Quote Image Library) — the variant no
+  // longer uploads/owns image files. Replaced the old per-variant gallery.
+  { group: 'quote', key: 'quoteImages', title: 'תמונות בהצעה', sub: 'בחירת תמונות מהספרייה לכל מיקום בהצעה', track: true },
   { group: 'guide', key: 'guideDesc', title: 'תיאור למדריך', sub: 'פנימי בלבד — לא נחשף ללקוח', track: true },
   { group: 'operational', key: 'duration', title: 'משך הסיור', sub: 'זמן משוער בשעות', track: true },
   { group: 'operational', key: 'shared', title: 'נקודת מפגש וסיום', sub: 'תוכן תפעולי מתוך הספרייה המשותפת', track: false },
@@ -95,6 +97,9 @@ export default function VariantEditor() {
   const [variant, setVariant] = useState(null);
   const [locations, setLocations] = useState([]);
   const [programTitle, setProgramTitle] = useState({ he: 'אז מה בתוכנית?', en: "What's in the program?" });
+  // Image-slot section titles (Quote Structure is the source of truth) — used as
+  // the position labels in the "תמונות בהצעה" section.
+  const [slotTitles, setSlotTitles] = useState({ slot1: 'תמונה — מיקום 1', slot2: 'תמונה — מיקום 2' });
   const [form, setForm] = useState(null);
   const [original, setOriginal] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -122,6 +127,9 @@ export default function VariantEditor() {
       setLocations(locs);
       const pt = template?.sectionTitles?.program;
       if (pt) setProgramTitle({ he: pt.titleHe, en: pt.titleEn });
+      const s1 = template?.sectionTitles?.image_slot_1?.titleHe;
+      const s2 = template?.sectionTitles?.image_slot_2?.titleHe;
+      if (s1 || s2) setSlotTitles((t) => ({ slot1: s1 || t.slot1, slot2: s2 || t.slot2 }));
       // Init the editable buffer ONCE — later refreshes (gallery / shared-content
       // saves) must NOT clobber in-progress rich-text edits in the buffer.
       if (!inited.current) {
@@ -211,7 +219,7 @@ export default function VariantEditor() {
     program: htmlHasText(form.programHe) || htmlHasText(form.programEn),
     // "פרטים על המוצר" — the marketingDesc* columns, which DO appear in the quote.
     productDetails: htmlHasText(form.marketingDescHe) || htmlHasText(form.marketingDescEn),
-    gallery: (variant.galleryImages?.length || 0) > 0,
+    quoteImages: (variant.quoteImageLinks?.length || 0) > 0,
     guideDesc: htmlHasText(form.guideDescHe) || htmlHasText(form.guideDescEn),
     duration: form.durationHours !== '' && Number(form.durationHours) > 0,
     guidePay: (toMinor(form.baseGuidePayment) ?? 0) > 0,
@@ -334,6 +342,7 @@ export default function VariantEditor() {
                 variant={variant}
                 locations={locations}
                 programTitle={programTitle}
+                slotTitles={slotTitles}
                 onRelationChange={refresh}
                 onRemove={remove}
               />
@@ -366,14 +375,14 @@ export default function VariantEditor() {
 }
 
 // ── Section bodies ───────────────────────────────────────────────────────────
-function SectionBody({ k, form, set, variant, locations, programTitle, onRelationChange, onRemove }) {
+function SectionBody({ k, form, set, variant, locations, programTitle, slotTitles, onRelationChange, onRemove }) {
   switch (k) {
     case 'program':
       return <BiEditor he={form.programHe} en={form.programEn} onHe={(h) => set('programHe', h)} onEn={(h) => set('programEn', h)} minH={150} />;
     case 'productDetails':
       return <BiEditor he={form.marketingDescHe} en={form.marketingDescEn} onHe={(h) => set('marketingDescHe', h)} onEn={(h) => set('marketingDescEn', h)} minH={150} />;
-    case 'gallery':
-      return <Gallery variantId={variant.id} images={variant.galleryImages} onChanged={onRelationChange} folder="products/gallery" />;
+    case 'quoteImages':
+      return <VariantQuoteImages variant={variant} slotTitles={slotTitles} onChanged={onRelationChange} />;
     case 'guideDesc':
       return <BiEditor he={form.guideDescHe} en={form.guideDescEn} onHe={(h) => set('guideDescHe', h)} onEn={(h) => set('guideDescEn', h)} minH={130} />;
     case 'duration':

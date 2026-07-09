@@ -1615,6 +1615,8 @@ model MediaFile {
   // reference R2/MediaFile (never DB binary). By reference; no byte copy.
   tourStationHeroes     TourStation[]        @relation("TourStationHero")
   tourBlockAssets       TourBlockAsset[]     @relation("TourBlockAssetMedia")
+  // Quote Image Library items backed by this file (by reference; no byte copy).
+  quoteImages           QuoteImage[]         @relation("QuoteImageMedia")
 }
 
 // Simple location catalog (e.g. "תל אביב - פלורנטין"). No City/Area split.
@@ -1651,6 +1653,8 @@ model Location {
   defaultMeetingPointId String?
   defaultEndingPoint    SharedContent? @relation("LocationDefaultEnding", fields: [defaultEndingPointId], references: [id], onDelete: SetNull)
   defaultEndingPointId  String?
+  // Quote Image Library items tagged as applicable to this location.
+  quoteImageLinks       QuoteImageLocation[]
 
   @@index([sortOrder])
   @@index([defaultMeetingPointId])
@@ -1718,6 +1722,8 @@ model ProductVariant {
   // Explicit references to Shared Content Library items (meeting point, ending
   // point, …). Content is never copied onto the variant — see ProductVariantSharedContent.
   sharedContentLinks    ProductVariantSharedContent[]
+  // Quote Image Library references per quote position (hero | slot1 | slot2).
+  quoteImageLinks       ProductVariantQuoteImage[]
 
   @@unique([productId, locationId])
   @@index([productId])
@@ -1725,6 +1731,9 @@ model ProductVariant {
 }
 
 // Ordered quote gallery for a variant (explicit per-owner join, not polymorphic).
+// LEGACY (Quote Image Library refactor): no new uploads — the variant editor now
+// references QuoteImage library items instead. Kept only because the hero image
+// fallback chain still reads galleryImages[0] for variants with no hero pick.
 model ProductVariantImage {
   id               String         @id @default(cuid())
   productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
@@ -1735,6 +1744,61 @@ model ProductVariantImage {
 
   @@index([productVariantId])
   @@index([mediaFileId])
+}
+
+// ============================================================================
+// Quote Image Library — reusable presentation images for quote documents
+// ============================================================================
+// An image is an independent asset, NOT owned by a Product Variant. Variants
+// only REFERENCE library images per quote position (hero | slot1 | slot2) via
+// ProductVariantQuoteImage — one image can serve many variants, and replacing
+// it in the library updates every quote that references it. Locations are
+// organizational metadata for filtering the picker; they never gate rendering.
+model QuoteImage {
+  id          String    @id @default(cuid())
+  mediaFile   MediaFile @relation("QuoteImageMedia", fields: [mediaFileId], references: [id], onDelete: Cascade)
+  mediaFileId String
+  titleHe     String? // shown as the image caption in the quote (He)
+  titleEn     String? // caption (En)
+  description String? // internal organization note — never rendered to the customer
+  tags        String[] @default([]) // future metadata; no UI yet
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  locations    QuoteImageLocation[]
+  variantLinks ProductVariantQuoteImage[]
+
+  @@index([sortOrder])
+}
+
+// Image ↔ Location tagging (multi-select "applicable locations").
+model QuoteImageLocation {
+  quoteImage   QuoteImage @relation(fields: [quoteImageId], references: [id], onDelete: Cascade)
+  quoteImageId String
+  location     Location   @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  locationId   String
+
+  @@id([quoteImageId, locationId])
+  @@index([locationId])
+}
+
+// Variant → library image reference per quote position. Ordered within a
+// position (slots may show several images together; hero uses the first).
+// Deleting a library image removes its references — the quote just stops
+// showing it (the delete UI surfaces usage before confirming).
+model ProductVariantQuoteImage {
+  id               String         @id @default(cuid())
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
+  productVariantId String
+  quoteImage       QuoteImage     @relation(fields: [quoteImageId], references: [id], onDelete: Cascade)
+  quoteImageId     String
+  position         String // hero | slot1 | slot2
+  sortOrder        Int    @default(0)
+
+  @@unique([productVariantId, position, quoteImageId], map: "PVQuoteImage_variant_position_image_key")
+  @@index([productVariantId])
+  @@index([quoteImageId])
 }
 
 // Seeded: public | private | business. priceModel drives Slice-2 pricing.

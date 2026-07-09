@@ -47,6 +47,7 @@ import lostReasonsRouter from './routes/lostReasons.js';
 import dealSourcesRouter from './routes/dealSources.js';
 import quoteSectionsRouter from './routes/quoteSections.js';
 import quoteTemplateRouter from './routes/quoteTemplate.js';
+import quoteImagesRouter from './routes/quoteImages.js';
 import timelineRouter from './routes/timeline.js';
 import sharedContentRouter from './routes/sharedContent.js';
 import tourContentRouter from './routes/tourContent.js';
@@ -285,6 +286,7 @@ app.use('/api/deal-sources', requireAdminAuth, dealSourcesRouter);
 app.use('/api/quote-sections', requireAdminAuth, quoteSectionsRouter);
 // CRM settings → Quote Layout & Sections: global default quote composition.
 app.use('/api/quote-template', requireAdminAuth, quoteTemplateRouter);
+app.use('/api/quote-images', requireAdminAuth, quoteImagesRouter);
 // Reusable Timeline / Activity-Feed (notes V1). Scoped by (subjectType, subjectId).
 app.use('/api/timeline', requireAdminAuth, timelineRouter);
 // Shared Content Library — platform-wide reusable content (meeting/ending point…).

@@ -4,6 +4,8 @@ import SettingsChrome from '../../settings/SettingsChrome.jsx';
 import ReorderableList from '../../common/ReorderableList.jsx';
 import { SettingsCard } from './catalogKit.jsx';
 import { SingleImage } from '../../products/ImageUploader.jsx';
+import CollapsibleCard from '../../common/CollapsibleCard.jsx';
+import QuoteImageLibrary from './QuoteImageLibrary.jsx';
 import { useDirtyWhen } from '../../../lib/dirtyForms.js';
 import { HeroCover, previewHeroData } from '../../../quote/QuoteBlockRenderer.jsx';
 import { parseEmbedUrl } from '../../../editor/embedProviders.js';
@@ -126,7 +128,6 @@ export default function QuoteLayoutSettings() {
   const patchSectionTitle = (key, patch) =>
     setLayout((l) => ({ ...l, sectionTitles: { ...l.sectionTitles, [key]: { ...l.sectionTitles?.[key], ...patch } } }));
   const setVideos = (videos) => setLayout((l) => ({ ...l, videos }));
-  const setImages = (images) => setLayout((l) => ({ ...l, images }));
   const setTechFields = (fields) => setLayout((l) => ({ ...l, technical: { ...l.technical, fields } }));
   const patchContact = (patch) => setLayout((l) => ({ ...l, contact: { ...(l.contact || {}), ...patch } }));
 
@@ -205,8 +206,10 @@ export default function QuoteLayoutSettings() {
           {tab === 'video' && (
             <div className="max-w-3xl"><VideoTab videos={layout.videos} onChange={setVideos} /></div>
           )}
+          {/* The Image Library is entity-backed (its own API + per-image save),
+              NOT part of the layout JSON / the global save button above. */}
           {tab === 'images' && (
-            <div className="max-w-3xl"><ImagesTab images={layout.images} onChange={setImages} /></div>
+            <div className="max-w-3xl"><QuoteImageLibrary /></div>
           )}
           {tab === 'contact' && (
             <div className="max-w-3xl"><ContactTab contact={layout.contact} onChange={patchContact} /></div>
@@ -236,14 +239,14 @@ function HeroEditor({ hero, onChange, onCardFields }) {
       {/* ── Controls (reading-start) ── */}
       <div className="space-y-4">
         {/* Background image */}
-        <SettingsCard title="תמונת רקע" description="הרקע של שער ההצעה. תמונת המוצר/המיקום שבדיל גוברת עליה.">
+        <SettingsCard title="תמונת רקע" description="ברירת המחדל של שער ההצעה. תמונה ראשית שנבחרה בוריאציה (מספריית התמונות) גוברת עליה.">
           <div className="p-2 sm:p-3">
             <SingleImage
               image={hero.image ? { url: hero.image.url } : null}
               onChange={(mf) => onChange({ image: mf ? { id: mf.id, url: mf.url } : null })}
               folder="quote/hero"
             />
-            <p className="mt-2 text-[11px] text-gray-400">זו ברירת המחדל כשאין לדיל תמונה משלו.</p>
+            <p className="mt-2 text-[11px] text-gray-400">מוצגת כשלוריאציה אין תמונה ראשית משלה.</p>
           </div>
         </SettingsCard>
 
@@ -552,6 +555,9 @@ const newVideoId = () =>
 function VideoTab({ videos, onChange }) {
   const list = Array.isArray(videos) ? videos : [];
   const [options, setOptions] = useState(null);
+  // Single-open accordion (shared CollapsibleCard): finished videos collapse to
+  // one summary row so a long library stays scannable while editing.
+  const [openId, setOpenId] = useState(null);
   useEffect(() => {
     let alive = true;
     api.products.variantOptions().then((o) => { if (alive) setOptions(Array.isArray(o) ? o : []); }).catch(() => { if (alive) setOptions([]); });
@@ -560,7 +566,11 @@ function VideoTab({ videos, onChange }) {
 
   const updateVideo = (id, patch) => onChange(list.map((v) => (v.id === id ? { ...v, ...patch } : v)));
   const removeVideo = (id) => onChange(list.filter((v) => v.id !== id));
-  const addVideo = () => onChange([...list, { id: newVideoId(), url: '', titleHe: '', titleEn: '', variantIds: [] }]);
+  const addVideo = () => {
+    const id = newVideoId();
+    onChange([...list, { id, url: '', titleHe: '', titleEn: '', variantIds: [] }]);
+    setOpenId(id);
+  };
 
   return (
     <div className="space-y-4">
@@ -584,6 +594,8 @@ function VideoTab({ videos, onChange }) {
               video={video}
               options={options}
               takenElsewhere={takenElsewhere}
+              open={openId === video.id}
+              onToggle={() => setOpenId((k) => (k === video.id ? null : video.id))}
               onPatch={(patch) => updateVideo(video.id, patch)}
               onRemove={() => removeVideo(video.id)}
             />
@@ -594,7 +606,7 @@ function VideoTab({ videos, onChange }) {
   );
 }
 
-function VideoCard({ index, video, options, takenElsewhere, onPatch, onRemove }) {
+function VideoCard({ index, video, options, takenElsewhere, open, onToggle, onPatch, onRemove }) {
   const v = video || {};
   const selected = Array.isArray(v.variantIds) ? v.variantIds : [];
   const embed = parseEmbedUrl(v.url || '');
@@ -608,12 +620,19 @@ function VideoCard({ index, video, options, takenElsewhere, onPatch, onRemove })
   const available = (options || []).filter((o) => !takenElsewhere.has(o.id));
 
   return (
-    <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-      <div className="flex items-center justify-between border-b border-gray-100 px-5 pt-4 pb-3">
-        <h3 className="text-[15px] font-semibold text-gray-900">סרטון {index + 1}</h3>
+    <CollapsibleCard
+      open={open}
+      onToggle={onToggle}
+      title={v.titleHe || v.titleEn || `סרטון ${index + 1}`}
+      subtitle={[
+        v.url ? v.url : 'ללא קישור',
+        selected.length ? `מוקצה ל-${selected.length} וריאציות` : 'לא מוקצה',
+      ].join(' · ')}
+      actions={
         <button type="button" onClick={onRemove} className="rounded-md px-2 py-1 text-[12px] font-medium text-red-600 hover:bg-red-50">מחק</button>
-      </div>
-      <div className="space-y-5 p-4">
+      }
+    >
+      <div className="space-y-5">
         <div>
           <span className={LABEL}>קישור YouTube</span>
           <input value={v.url || ''} onChange={(e) => onPatch({ url: e.target.value })} dir="ltr" placeholder="https://www.youtube.com/watch?v=…"
@@ -658,134 +677,7 @@ function VideoCard({ index, video, options, takenElsewhere, onPatch, onRemove })
           {selected.length > 0 && <p className="mt-2 text-[11px] text-gray-400">מוקצה ל-{selected.length} וריאציות.</p>}
         </div>
       </div>
-    </section>
-  );
-}
-
-// Images tab — a small Quote Image Library, same architecture as videos. Each image
-// has a slot (מיקום 1 / מיקום 2), optional He/En captions and assigned variants. A
-// variant belongs to at most ONE image PER SLOT: within a slot, a variant claimed by
-// another image is EXCLUDED from this image's picker (not disabled, not warned) — but
-// the same variant may be assigned in the other slot too. Media is template-owned.
-const IMAGE_SLOT_OPTIONS = [
-  { value: 'slot1', label: 'מיקום 1' },
-  { value: 'slot2', label: 'מיקום 2' },
-];
-const newImageId = () =>
-  (typeof crypto !== 'undefined' && crypto.randomUUID ? `img_${crypto.randomUUID()}` : `img_${Date.now().toString(36)}`);
-
-function ImagesTab({ images, onChange }) {
-  const list = Array.isArray(images) ? images : [];
-  const [options, setOptions] = useState(null);
-  useEffect(() => {
-    let alive = true;
-    api.products.variantOptions().then((o) => { if (alive) setOptions(Array.isArray(o) ? o : []); }).catch(() => { if (alive) setOptions([]); });
-    return () => { alive = false; };
-  }, []);
-
-  const updateImage = (id, patch) => onChange(list.map((im) => (im.id === id ? { ...im, ...patch } : im)));
-  const removeImage = (id) => onChange(list.filter((im) => im.id !== id));
-  const addImage = () => onChange([...list, { id: newImageId(), image: null, slot: 'slot1', captionHe: '', captionEn: '', variantIds: [] }]);
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-[13px] text-gray-500">ספריית תמונות — כל תמונה מוצגת רק בהצעות של הווריאציות שהוקצו לה, במיקום שנבחר. באותו מיקום, וריאציה שייכת לתמונה אחת בלבד.</p>
-        <button type="button" onClick={addImage} className="shrink-0 rounded-lg bg-teal-600 px-3 py-2 text-[13px] font-semibold text-white shadow-sm hover:bg-teal-700">+ תמונה</button>
-      </div>
-
-      {list.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 px-4 py-10 text-center text-sm text-gray-400">
-          אין עדיין תמונות. לחצו “+ תמונה” כדי להוסיף.
-        </div>
-      ) : (
-        list.map((image, i) => {
-          // Excluded from THIS image's picker: variants claimed by ANOTHER image in
-          // the SAME slot (different slots don't conflict).
-          const takenElsewhere = new Set(
-            list.filter((x) => x.id !== image.id && x.slot === image.slot).flatMap((x) => x.variantIds || []),
-          );
-          return (
-            <ImageCard
-              key={image.id}
-              index={i}
-              image={image}
-              options={options}
-              takenElsewhere={takenElsewhere}
-              onPatch={(patch) => updateImage(image.id, patch)}
-              onRemove={() => removeImage(image.id)}
-            />
-          );
-        })
-      )}
-    </div>
-  );
-}
-
-function ImageCard({ index, image, options, takenElsewhere, onPatch, onRemove }) {
-  const im = image || {};
-  const slot = im.slot || 'slot1';
-  const selected = Array.isArray(im.variantIds) ? im.variantIds : [];
-
-  function toggleVariant(id) {
-    const next = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
-    onPatch({ variantIds: next });
-  }
-  const available = (options || []).filter((o) => !takenElsewhere.has(o.id));
-  const slotLabel = IMAGE_SLOT_OPTIONS.find((s) => s.value === slot)?.label || '';
-
-  return (
-    <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-      <div className="flex items-center justify-between border-b border-gray-100 px-5 pt-4 pb-3">
-        <h3 className="text-[15px] font-semibold text-gray-900">תמונה {index + 1} · {slotLabel}{selected.length > 0 ? ` · ${selected.length} וריאציות` : ''}</h3>
-        <button type="button" onClick={onRemove} className="rounded-md px-2 py-1 text-[12px] font-medium text-red-600 hover:bg-red-50">מחק</button>
-      </div>
-      <div className="space-y-5 p-4">
-        <div>
-          <span className={LABEL}>תמונה</span>
-          <SingleImage
-            image={im.image ? { url: im.image.url } : null}
-            onChange={(mf) => onPatch({ image: mf ? { id: mf.id, url: mf.url } : null })}
-            folder="quote/images"
-          />
-        </div>
-
-        <Field label="מיקום בהצעה">
-          <Segmented value={slot} onChange={(v) => onPatch({ slot: v })} options={IMAGE_SLOT_OPTIONS} />
-        </Field>
-
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <label className="block"><span className={LABEL}>כיתוב (עברית, אופציונלי)</span>
-            <input value={im.captionHe || ''} onChange={(e) => onPatch({ captionHe: e.target.value })} className={INPUT} /></label>
-          <label className="block"><span className={LABEL}>Caption (EN, optional)</span>
-            <input value={im.captionEn || ''} onChange={(e) => onPatch({ captionEn: e.target.value })} dir="ltr" className={INPUT} /></label>
-        </div>
-
-        <div>
-          <span className={LABEL}>הצג בווריאציות (במיקום {slotLabel})</span>
-          {options === null ? (
-            <p className="text-[13px] text-gray-400">טוען…</p>
-          ) : available.length === 0 ? (
-            <p className="text-[13px] text-gray-400">אין וריאציות פנויות במיקום זה — כולן כבר מוקצות לתמונות אחרות באותו מיקום.</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {available.map((o) => {
-                const on = selected.includes(o.id);
-                const label = `${o.productNameHe || o.productNameEn} · ${o.locationNameHe || o.locationNameEn}`;
-                return (
-                  <button key={o.id} type="button" onClick={() => toggleVariant(o.id)}
-                    className={`rounded-full px-3 py-1.5 text-[13px] font-medium transition ${
-                      on ? 'bg-teal-600 text-white shadow-sm' : 'border border-gray-200 bg-white text-gray-600 hover:border-teal-300'
-                    }`}>
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-    </section>
+    </CollapsibleCard>
   );
 }
 
