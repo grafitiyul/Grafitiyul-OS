@@ -62,6 +62,18 @@ export const SECTION_TITLE_DEFAULTS = {
   signature: { titleHe: 'חתימה', titleEn: 'Signature' },
 };
 
+// Media language policy — every quote media type DECLARES whether it is
+// language-neutral (one asset serves both quote languages) or language-dependent
+// (a separate asset per quote language, with NO cross-language fallback). Add
+// new media types here explicitly so the architecture stays consistent.
+//   image (Quote Image Library) — neutral: the same photo serves He+En quotes;
+//     only its caption is bilingual (on the QuoteImage entity).
+//   video — per_language: a marketing video is narrated/subtitled in ONE
+//     language, so each library entry holds parallel He/En URLs and the
+//     composer picks strictly by quote language (missing language → admin
+//     warning + the section is skipped, never the wrong-language video).
+export const MEDIA_LANGUAGE_POLICY = { image: 'neutral', video: 'per_language' };
+
 // Legacy overlay presets (kept for backward compatibility with older saved
 // layouts; the premium hero now uses an explicit color + opacity instead).
 const OVERLAY_PRESETS = ['light', 'medium', 'dark'];
@@ -131,7 +143,9 @@ export const DEFAULT_LAYOUT = {
   sectionTitles: Object.fromEntries(CONFIGURABLE_TITLE_KEYS.map((k) => [k, { ...SECTION_TITLE_DEFAULTS[k] }])),
   // Video Library — zero or more videos, each shown only in quotes whose Product
   // Variant is assigned to it. A variant belongs to AT MOST ONE video (enforced on
-  // normalize). Independent of Shared Content. Empty by default.
+  // normalize). Videos are LANGUAGE-DEPENDENT media (see MEDIA_LANGUAGE_POLICY):
+  // one logical entity carries parallel He/En URLs; the composer picks by quote
+  // language. Independent of Shared Content. Empty by default.
   videos: [],
   // NOTE: the Quote Image Library moved OUT of this layout into real entities
   // (QuoteImage + ProductVariantQuoteImage) — see routes/quoteImages.js. A
@@ -240,14 +254,18 @@ function normalizeSectionTitles(raw, legacyProgram) {
   return out;
 }
 
-// Video Library. Each item is its own entity { id, url, titleHe, titleEn,
-// variantIds }; url/titles optional (empty → null). Two invariants are enforced
-// HERE (the single source of truth), regardless of what the client sends:
+// Video Library. Each item is ONE logical video with parallel language variants:
+// { id, urlHe, urlEn, titleHe, titleEn, variantIds }; urls/titles optional
+// (empty → null). Two invariants are enforced HERE (the single source of truth),
+// regardless of what the client sends:
 //   • every video has a stable id;
 //   • a Product Variant belongs to AT MOST ONE video — a variant claimed by an
 //     earlier video is dropped from any later one (first occurrence wins).
-// Back-compat: an older layout stored a single `video` object; it is migrated
-// into a one-item library. No content copied from anywhere (no Shared Content).
+// Back-compat, applied ONCE on normalize (the stored layout then carries the new
+// shape): a pre-bilingual `url` seeds BOTH urlHe and urlEn — that single URL was
+// shown in both quote languages, so rendered output is unchanged until the admin
+// deliberately splits the languages. An even older layout stored a single
+// `video` object; it is migrated into a one-item library the same way.
 let __videoIdSeq = 0;
 function normalizeVideos(raw, legacyVideo) {
   let list = Array.isArray(raw) ? raw : [];
@@ -263,9 +281,11 @@ function normalizeVideos(raw, legacyVideo) {
     for (const vid of ids) {
       if (!claimed.has(vid)) { claimed.add(vid); variantIds.push(vid); }
     }
+    const legacyUrl = cleanText(item.url);
     out.push({
       id: isStr(item.id) ? String(item.id) : `vid_${Date.now().toString(36)}_${__videoIdSeq++}`,
-      url: cleanText(item.url),
+      urlHe: cleanText(item.urlHe) || legacyUrl,
+      urlEn: cleanText(item.urlEn) || legacyUrl,
       titleHe: cleanText(item.titleHe),
       titleEn: cleanText(item.titleEn),
       variantIds,

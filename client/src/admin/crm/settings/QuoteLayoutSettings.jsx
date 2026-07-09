@@ -203,8 +203,10 @@ export default function QuoteLayoutSettings() {
           {tab === 'technical' && (
             <div className="max-w-3xl"><TechnicalTab fields={layout.technical.fields} onChange={setTechFields} /></div>
           )}
+          {/* Wider than the other list tabs — each video edits its two language
+              variants side-by-side (He | En), which needs the horizontal room. */}
           {tab === 'video' && (
-            <div className="max-w-3xl"><VideoTab videos={layout.videos} onChange={setVideos} /></div>
+            <div className="max-w-5xl"><VideoTab videos={layout.videos} onChange={setVideos} /></div>
           )}
           {/* The Image Library is entity-backed (its own API + per-image save),
               NOT part of the layout JSON / the global save button above. */}
@@ -545,10 +547,13 @@ function SectionTitlesCard({ sectionTitles, onChange }) {
   );
 }
 
-// Video tab — a small Video Library. Each video is its own entity (URL, optional
-// He/En titles, assigned variants). A Product Variant belongs to at most ONE video:
-// a variant already assigned elsewhere is simply EXCLUDED from a video's picker
-// (not disabled, not warned). Self-contained (no Shared Content).
+// Video tab — a small Video Library. Videos are LANGUAGE-DEPENDENT media (unlike
+// images): each entry is ONE logical video with two parallel language variants,
+// edited side-by-side (Hebrew | English) so it's obvious they belong together. A
+// Hebrew quote renders urlHe, an English quote urlEn — strictly, no fallback; a
+// missing language shows a warning here AND on the quote workspace. A Product
+// Variant belongs to at most ONE video: a variant already assigned elsewhere is
+// simply EXCLUDED from a video's picker (not disabled, not warned).
 const newVideoId = () =>
   (typeof crypto !== 'undefined' && crypto.randomUUID ? `vid_${crypto.randomUUID()}` : `vid_${Date.now().toString(36)}`);
 
@@ -568,14 +573,17 @@ function VideoTab({ videos, onChange }) {
   const removeVideo = (id) => onChange(list.filter((v) => v.id !== id));
   const addVideo = () => {
     const id = newVideoId();
-    onChange([...list, { id, url: '', titleHe: '', titleEn: '', variantIds: [] }]);
+    onChange([...list, { id, urlHe: '', urlEn: '', titleHe: '', titleEn: '', variantIds: [] }]);
     setOpenId(id);
   };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-[13px] text-gray-500">ספריית סרטונים — כל סרטון מוצג רק בהצעות של הווריאציות שהוקצו לו. וריאציה שייכת לסרטון אחד בלבד.</p>
+        <p className="text-[13px] text-gray-500">
+          ספריית סרטונים — לכל סרטון שתי גרסאות שפה (עברית / English), וההצעה מציגה את הגרסה
+          בשפתה בלבד. כל סרטון מוצג רק בהצעות של הווריאציות שהוקצו לו; וריאציה שייכת לסרטון אחד בלבד.
+        </p>
         <button type="button" onClick={addVideo} className="shrink-0 rounded-lg bg-teal-600 px-3 py-2 text-[13px] font-semibold text-white shadow-sm hover:bg-teal-700">+ סרטון</button>
       </div>
 
@@ -606,11 +614,19 @@ function VideoTab({ videos, onChange }) {
   );
 }
 
+// The missing-language state of a video: which side has a usable (parseable)
+// URL. Drives the collapsed badge, the expanded warning, and nothing else —
+// rendering rules live in the composer (single source of truth).
+function videoLangState(v) {
+  const he = !!parseEmbedUrl(v?.urlHe || '');
+  const en = !!parseEmbedUrl(v?.urlEn || '');
+  return { he, en, missing: he && !en ? 'en' : en && !he ? 'he' : null };
+}
+
 function VideoCard({ index, video, options, takenElsewhere, open, onToggle, onPatch, onRemove }) {
   const v = video || {};
   const selected = Array.isArray(v.variantIds) ? v.variantIds : [];
-  const embed = parseEmbedUrl(v.url || '');
-  const urlInvalid = !!(v.url && !embed);
+  const lang = videoLangState(v);
 
   function toggleVariant(id) {
     const next = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
@@ -619,38 +635,62 @@ function VideoCard({ index, video, options, takenElsewhere, open, onToggle, onPa
   // Available = variants not claimed by another video (this video's own stay visible).
   const available = (options || []).filter((o) => !takenElsewhere.has(o.id));
 
+  const langSummary = lang.he && lang.en ? 'עברית + English' : lang.he ? 'עברית בלבד' : lang.en ? 'English בלבד' : 'ללא קישור';
+  const missingText = lang.missing === 'en'
+    ? 'חסרה גרסה באנגלית — הצעות באנגלית לא יציגו את הסרטון.'
+    : lang.missing === 'he'
+      ? 'חסרה גרסה בעברית — הצעות בעברית לא יציגו את הסרטון.'
+      : null;
+
   return (
     <CollapsibleCard
       open={open}
       onToggle={onToggle}
       title={v.titleHe || v.titleEn || `סרטון ${index + 1}`}
-      subtitle={[
-        v.url ? v.url : 'ללא קישור',
-        selected.length ? `מוקצה ל-${selected.length} וריאציות` : 'לא מוקצה',
-      ].join(' · ')}
+      subtitle={[langSummary, selected.length ? `מוקצה ל-${selected.length} וריאציות` : 'לא מוקצה'].join(' · ')}
+      meta={lang.missing ? (
+        <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[10.5px] font-semibold text-amber-700">
+          ⚠ {lang.missing === 'en' ? 'חסר באנגלית' : 'חסר בעברית'}
+        </span>
+      ) : null}
       actions={
         <button type="button" onClick={onRemove} className="rounded-md px-2 py-1 text-[12px] font-medium text-red-600 hover:bg-red-50">מחק</button>
       }
     >
       <div className="space-y-5">
-        <div>
-          <span className={LABEL}>קישור YouTube</span>
-          <input value={v.url || ''} onChange={(e) => onPatch({ url: e.target.value })} dir="ltr" placeholder="https://www.youtube.com/watch?v=…"
-            className={`${INPUT} ${urlInvalid ? 'border-red-300 focus:ring-red-200 focus:border-red-400' : ''}`} />
-          {urlInvalid && <p className="mt-1 text-[11px] text-red-500">הקישור אינו קישור YouTube תקין.</p>}
-          {embed && (
-            <div className="mt-3 max-w-md overflow-hidden rounded-xl bg-black ring-1 ring-gray-200" style={{ aspectRatio: '16 / 9' }}>
-              <iframe src={embed.embedUrl} title="preview" className="h-full w-full" allowFullScreen loading="lazy" referrerPolicy="strict-origin-when-cross-origin" />
-            </div>
-          )}
+        {/* Two language variants of the SAME video, side-by-side. RTL: the first
+            column (Hebrew) renders on the right, English on the left. */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <VideoLangColumn
+            heading="עברית"
+            url={v.urlHe || ''}
+            title={v.titleHe || ''}
+            onUrl={(val) => onPatch({ urlHe: val })}
+            onTitle={(val) => onPatch({ titleHe: val })}
+            urlLabel="קישור YouTube (עברית)"
+            titleLabel="כותרת (אופציונלי)"
+            titlePlaceholder="סרטון"
+            invalidText="הקישור אינו קישור YouTube תקין."
+          />
+          <VideoLangColumn
+            heading="English"
+            url={v.urlEn || ''}
+            title={v.titleEn || ''}
+            onUrl={(val) => onPatch({ urlEn: val })}
+            onTitle={(val) => onPatch({ titleEn: val })}
+            urlLabel="YouTube link (English)"
+            titleLabel="Title (optional)"
+            titlePlaceholder="Video"
+            titleDir="ltr"
+            invalidText="Not a valid YouTube link."
+          />
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <label className="block"><span className={LABEL}>כותרת (עברית, אופציונלי)</span>
-            <input value={v.titleHe || ''} onChange={(e) => onPatch({ titleHe: e.target.value })} placeholder="סרטון" className={INPUT} /></label>
-          <label className="block"><span className={LABEL}>Title (EN, optional)</span>
-            <input value={v.titleEn || ''} onChange={(e) => onPatch({ titleEn: e.target.value })} placeholder="Video" dir="ltr" className={INPUT} /></label>
-        </div>
+        {missingText && (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-700">
+            ⚠ {missingText}
+          </p>
+        )}
 
         <div>
           <span className={LABEL}>הצג בווריאציות</span>
@@ -678,6 +718,31 @@ function VideoCard({ index, video, options, takenElsewhere, open, onToggle, onPa
         </div>
       </div>
     </CollapsibleCard>
+  );
+}
+
+// One language variant of a video: URL (+ live embed preview) and its optional
+// title, boxed so the He/En pairing reads as two halves of one entity.
+function VideoLangColumn({ heading, url, title, onUrl, onTitle, urlLabel, titleLabel, titlePlaceholder, titleDir, invalidText }) {
+  const embed = parseEmbedUrl(url || '');
+  const urlInvalid = !!(url && !embed);
+  return (
+    <div className="space-y-3 rounded-xl border border-gray-100 bg-gray-50/60 p-3">
+      <div className="text-[12.5px] font-bold text-gray-700">{heading}</div>
+      <div>
+        <span className={LABEL}>{urlLabel}</span>
+        <input value={url} onChange={(e) => onUrl(e.target.value)} dir="ltr" placeholder="https://www.youtube.com/watch?v=…"
+          className={`${INPUT} ${urlInvalid ? 'border-red-300 focus:ring-red-200 focus:border-red-400' : ''}`} />
+        {urlInvalid && <p className="mt-1 text-[11px] text-red-500">{invalidText}</p>}
+        {embed && (
+          <div className="mt-3 overflow-hidden rounded-xl bg-black ring-1 ring-gray-200" style={{ aspectRatio: '16 / 9' }}>
+            <iframe src={embed.embedUrl} title={`preview ${heading}`} className="h-full w-full" allowFullScreen loading="lazy" referrerPolicy="strict-origin-when-cross-origin" />
+          </div>
+        )}
+      </div>
+      <label className="block"><span className={LABEL}>{titleLabel}</span>
+        <input value={title} onChange={(e) => onTitle(e.target.value)} placeholder={titlePlaceholder} dir={titleDir} className={INPUT} /></label>
+    </div>
   );
 }
 

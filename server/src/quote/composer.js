@@ -219,20 +219,26 @@ function buildProgram({ deal, lang, template }) {
 }
 
 // Video (YouTube) — the Video Library holds many videos, each assigned to specific
-// Product Variants (a variant belongs to at most one video). Renders the video
-// whose variantIds includes the deal's variant AND has a URL; otherwise data.url
-// is null and the renderer skips the block. Output shape is unchanged from the
-// single-video model. Independent of Shared Content. The renderer parses the URL
-// into a safe embed at render time (reusing the shared embed parser).
+// Product Variants (a variant belongs to at most one video). Videos are
+// LANGUAGE-DEPENDENT media (MEDIA_LANGUAGE_POLICY): each entry carries parallel
+// He/En URLs and the quote uses STRICTLY the URL of its own language — never the
+// other language's video. A video is "configured" for the variant when it has a
+// URL in ANY language; if the quote's language is the missing one, data.url is
+// null (renderer skips the section) and a missing_content warning surfaces in
+// the admin UI. Output shape is unchanged ({ title, url }) so frozen snapshots
+// and the renderer are unaffected. The renderer parses the URL into a safe
+// embed at render time (reusing the shared embed parser).
 function buildVideo({ deal, lang, template }) {
   const variantId = deal?.productVariantId || deal?.productVariant?.id || null;
   const videos = Array.isArray(template?.videos) ? template.videos : [];
   const match = variantId
-    ? videos.find((v) => v?.url && Array.isArray(v.variantIds) && v.variantIds.includes(variantId))
+    ? videos.find((v) => v && (v.urlHe || v.urlEn) && Array.isArray(v.variantIds) && v.variantIds.includes(variantId))
     : null;
   if (!match) return { data: { url: null }, warnings: [] };
+  const url = pickLang(match.urlHe, match.urlEn, lang);
+  if (!url) return { data: { url: null }, warnings: [warn('video', 'video', 'url', lang)] };
   const title = pickLang(match.titleHe, match.titleEn, lang) || (lang === 'en' ? 'Video' : 'סרטון');
-  return { data: { title, url: match.url }, warnings: [] };
+  return { data: { title, url }, warnings: [] };
 }
 
 // Quote Image Library — one position (slot1|slot2). Renders the variant's

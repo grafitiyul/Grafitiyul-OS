@@ -214,40 +214,64 @@ test('composer: program/product-details/pricing titles come from the template', 
   assert.equal(blocks.find((b) => b.key === 'pricing').data.title, 'כמה זה עולה?');
 });
 
-// ── Video Library (variant-gated; one variant → one video) ───────────────────
+// ── Video Library (variant-gated; one variant → one video; per-language URLs) ─
 const videoBlock = (template) => compose(template).blocks.find((b) => b.key === 'video').data;
+const videoModel = (template, lang = 'he') =>
+  assembleComposition({ document: doc(), deal: deal(), version: { id: 'v' }, lines: [], quoteSections: [], lang, template });
 const A = 'https://youtu.be/aaaaaaaaaaa';
 const B = 'https://youtu.be/bbbbbbbbbbb';
 
 test('composer: renders the library video whose variant matches the deal (v1)', () => {
   const t = normalizeLayout({ videos: [
-    { id: '1', url: A, variantIds: ['other'] },
-    { id: '2', url: B, variantIds: ['v1'], titleHe: 'צפו בסיור' }, // deal.productVariantId === 'v1'
+    { id: '1', urlHe: A, variantIds: ['other'] },
+    { id: '2', urlHe: B, variantIds: ['v1'], titleHe: 'צפו בסיור' }, // deal.productVariantId === 'v1'
   ] });
   const d = videoBlock(t);
   assert.equal(d.url, B, 'the video assigned to v1 wins');
   assert.equal(d.title, 'צפו בסיור');
 });
 
-test('composer: no video matches the deal variant → section skipped', () => {
-  const t = normalizeLayout({ videos: [{ id: '1', url: A, variantIds: ['other'] }] });
-  assert.equal(videoBlock(t).url, null);
+test('composer: the video URL follows the quote language strictly (no cross-language fallback)', () => {
+  const t = normalizeLayout({ videos: [{ id: '1', urlHe: A, urlEn: B, variantIds: ['v1'] }] });
+  const he = videoModel(t, 'he').blocks.find((b) => b.key === 'video');
+  const en = videoModel(t, 'en').blocks.find((b) => b.key === 'video');
+  assert.equal(he.data.url, A, 'Hebrew quote uses the Hebrew video');
+  assert.equal(en.data.url, B, 'English quote uses the English video');
 });
 
-test('composer: a video with no URL never renders even if the variant matches', () => {
-  const t = normalizeLayout({ videos: [{ id: '1', url: '', variantIds: ['v1'] }] });
+test('composer: a missing language variant skips the section AND raises an admin warning', () => {
+  const t = normalizeLayout({ videos: [{ id: '1', urlHe: A, urlEn: '', variantIds: ['v1'] }] });
+  const model = videoModel(t, 'en');
+  const block = model.blocks.find((b) => b.key === 'video');
+  assert.equal(block.data.url, null, 'never falls back to the Hebrew video');
+  assert.ok(
+    model.warnings.some((w) => w.blockKey === 'video' && w.code === 'missing_content' && w.language === 'en'),
+    'missing English video surfaces as a warning',
+  );
+  assert.equal(videoModel(t, 'he').warnings.filter((w) => w.blockKey === 'video').length, 0, 'Hebrew quote is fine');
+});
+
+test('composer: no video matches the deal variant → section skipped, no warning', () => {
+  const t = normalizeLayout({ videos: [{ id: '1', urlHe: A, variantIds: ['other'] }] });
+  const model = videoModel(t, 'he');
+  assert.equal(model.blocks.find((b) => b.key === 'video').data.url, null);
+  assert.equal(model.warnings.filter((w) => w.blockKey === 'video').length, 0);
+});
+
+test('composer: a video with no URL in any language never renders even if the variant matches', () => {
+  const t = normalizeLayout({ videos: [{ id: '1', urlHe: '', urlEn: '', variantIds: ['v1'] }] });
   assert.equal(videoBlock(t).url, null);
 });
 
 test('composer: video title defaults to "סרטון"/"Video" when none is set', () => {
-  const t = normalizeLayout({ videos: [{ id: '1', url: A, variantIds: ['v1'] }] });
+  const t = normalizeLayout({ videos: [{ id: '1', urlHe: A, variantIds: ['v1'] }] });
   assert.equal(videoBlock(t).title, 'סרטון');
 });
 
 test('normalizeVideos: a variant belongs to ONE video (first occurrence wins)', () => {
   const { videos } = normalizeLayout({ videos: [
-    { id: '1', url: A, variantIds: ['v1', 'v2'] },
-    { id: '2', url: B, variantIds: ['v2', 'v3'] }, // v2 already claimed by video 1
+    { id: '1', urlHe: A, variantIds: ['v1', 'v2'] },
+    { id: '2', urlHe: B, variantIds: ['v2', 'v3'] }, // v2 already claimed by video 1
   ] });
   assert.deepEqual(videos[0].variantIds, ['v1', 'v2']);
   assert.deepEqual(videos[1].variantIds, ['v3'], 'v2 dropped from the second video');
@@ -255,15 +279,23 @@ test('normalizeVideos: a variant belongs to ONE video (first occurrence wins)', 
 
 test('normalizeVideos: every video gets a stable id; empty default', () => {
   assert.deepEqual(normalizeLayout(null).videos, []);
-  const { videos } = normalizeLayout({ videos: [{ url: A, variantIds: [] }] });
+  const { videos } = normalizeLayout({ videos: [{ urlHe: A, variantIds: [] }] });
   assert.equal(videos.length, 1);
   assert.ok(typeof videos[0].id === 'string' && videos[0].id.length > 0, 'id backfilled');
 });
 
-test('normalizeVideos: legacy single `video` object migrates into a one-item library', () => {
+test('normalizeVideos: a pre-bilingual `url` seeds BOTH languages (rendered output unchanged)', () => {
+  const { videos } = normalizeLayout({ videos: [{ id: '1', url: A, variantIds: ['v1'] }] });
+  assert.equal(videos[0].urlHe, A);
+  assert.equal(videos[0].urlEn, A);
+  assert.ok(!('url' in videos[0]), 'legacy key not carried forward');
+});
+
+test('normalizeVideos: legacy single `video` object migrates into a one-item bilingual library', () => {
   const { videos } = normalizeLayout({ video: { url: A, variantIds: ['v1'], titleHe: 'ישן' } });
   assert.equal(videos.length, 1);
-  assert.equal(videos[0].url, A);
+  assert.equal(videos[0].urlHe, A);
+  assert.equal(videos[0].urlEn, A);
   assert.deepEqual(videos[0].variantIds, ['v1']);
   assert.equal(videos[0].titleHe, 'ישן');
 });
