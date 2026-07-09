@@ -39,6 +39,7 @@ import CustomPaymentLinkModal from './icount/CustomPaymentLinkModal.jsx';
 import CardcomPaymentModal from './cardcom/CardcomPaymentModal.jsx';
 import SendDocumentModal from './icount/SendDocumentModal.jsx';
 import DealQuoteCard from './quote/DealQuoteCard.jsx';
+import { productContextFor, locationContextFor } from './tourContext.js';
 import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
 
 const INPUT =
@@ -236,6 +237,8 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   // Pick a product → load its city/location options and auto-fill the city
   // (one → it; many → the first/default). Operational selection; pricing now lives
   // in the Price Builder, which reads this as context.
+  // Product/city derivation lives in the SHARED tourContext module (also used by
+  // the parallel-offer dialog) — one rulebook for every commercial-context surface.
   async function chooseProduct(productId) {
     if (!productId) {
       setVariants([]);
@@ -244,16 +247,9 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
     }
     setForm((f) => ({ ...f, productId }));
     try {
-      const p = await api.products.get(productId);
-      const vs = p.variants || [];
-      setVariants(vs);
-      // Auto-fill the city to the first/default variant's location (recommended).
-      const first = vs[0];
-      setForm((f) => ({
-        ...f,
-        productVariantId: first ? first.id : '',
-        locationId: first ? first.location?.id || first.locationId || '' : '',
-      }));
+      const d = await productContextFor(productId);
+      setVariants(d.variants);
+      setForm((f) => ({ ...f, productVariantId: d.productVariantId, locationId: d.locationId }));
     } catch {
       setVariants([]);
       setForm((f) => ({ ...f, productVariantId: '', locationId: '' }));
@@ -264,8 +260,8 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   // product when one exists; otherwise leave productVariantId empty (a non-variant
   // "other" location — pricing resolves without a variant, see the inline hint).
   function chooseLocation(locationId) {
-    const v = variants.find((x) => (x.location?.id || x.locationId) === locationId);
-    setForm((f) => ({ ...f, locationId, productVariantId: v ? v.id : '' }));
+    const d = locationContextFor(variants, locationId);
+    setForm((f) => ({ ...f, locationId: d.locationId, productVariantId: d.productVariantId }));
   }
 
   // Pricing context handed to the Price Builder (it owns the calculation now).
@@ -472,17 +468,16 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   const saveField = (patch) => api.deals.update(id, patch).then(refresh);
   async function saveProduct(productId) {
     if (!productId) return saveField({ productId: null, productVariantId: null, locationId: null });
-    const p = await api.products.get(productId);
-    const first = (p.variants || [])[0];
+    const d = await productContextFor(productId);
     return saveField({
       productId,
-      productVariantId: first ? first.id : null,
-      locationId: first ? first.location?.id || first.locationId : null,
+      productVariantId: d.productVariantId || null,
+      locationId: d.locationId || null,
     });
   }
   function saveLocation(locationId) {
-    const v = variants.find((x) => (x.location?.id || x.locationId) === locationId);
-    return saveField({ locationId: locationId || null, productVariantId: v ? v.id : null });
+    const d = locationContextFor(variants, locationId);
+    return saveField({ locationId: d.locationId || null, productVariantId: d.productVariantId || null });
   }
 
   const dealProperties = (

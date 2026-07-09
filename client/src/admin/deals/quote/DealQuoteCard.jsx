@@ -3,6 +3,7 @@ import { api } from '../../../lib/api.js';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 import GenerateQuoteModal from './GenerateQuoteModal.jsx';
 import QuoteHistoryDialog from './QuoteHistoryDialog.jsx';
+import ParallelOfferDialog from './ParallelOfferDialog.jsx';
 
 // The Deal's Quote card — the COMPLETE proposal workspace (business deals only).
 // Everything proposal-related lives here: generate, versions, history, parallel
@@ -54,6 +55,7 @@ export default function DealQuoteCard({ deal }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [parallelDialog, setParallelDialog] = useState(null); // { offer: null } = create; { offer } = edit
   const [removeAsk, setRemoveAsk] = useState(null); // { offer, mode: 'delete'|'archive' }
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -100,17 +102,15 @@ export default function DealQuoteCard({ deal }) {
     }
   }
 
-  async function createParallel() {
-    if (busy) return;
+  // Parallel-offer creation/editing happens in the dedicated dialog (context
+  // fields + full price builder writing to the OFFER only) — see ParallelOfferDialog.
+  function openParallelCreate() {
     setMenuOpen(false);
-    setBusy(true);
-    try {
-      const r = await api.deals.createQuoteOffer(deal.id);
-      await load();
-      if (r?.offer?.id) setSelectedOfferId(r.offer.id);
-    } finally {
-      setBusy(false);
-    }
+    setParallelDialog({ offer: null });
+  }
+  function openParallelEdit(o) {
+    setMenuOpen(false);
+    setParallelDialog({ offer: o });
   }
 
   async function makePrimary() {
@@ -157,15 +157,19 @@ export default function DealQuoteCard({ deal }) {
                 type="button"
                 disabled={busy}
                 onClick={() => selectOffer(o.id)}
-                className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 transition disabled:opacity-50 ${
+                title={o.isPrimary ? 'ההצעה הראשית — משקפת את פרטי העסקה' : 'הצעה עצמאית — פרטים ותמחור משלה'}
+                className={`inline-flex max-w-[220px] items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 transition disabled:opacity-50 ${
                   o.id === selected?.id
                     ? 'bg-gray-900 text-white ring-gray-900'
                     : 'bg-white text-gray-600 ring-gray-200 hover:bg-gray-50'
                 }`}
               >
-                הצעה {o.offerNo}
+                <span className="truncate">
+                  הצעה {o.offerNo}
+                  {o.productNameHe ? ` · ${o.productNameHe}` : ''}
+                </span>
                 {o.isPrimary && (
-                  <span className={`rounded-full px-1 text-[9px] font-bold ${o.id === selected?.id ? 'bg-white/20 text-white' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'}`}>
+                  <span className={`shrink-0 rounded-full px-1 text-[9px] font-bold ${o.id === selected?.id ? 'bg-white/20 text-white' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'}`}>
                     ראשית
                   </span>
                 )}
@@ -184,12 +188,19 @@ export default function DealQuoteCard({ deal }) {
           </button>
           {menuOpen && (
             <div className="absolute left-0 top-7 z-30 w-60 rounded-xl border border-gray-200 bg-white py-1 text-right shadow-xl">
-              <button type="button" onClick={createParallel} disabled={busy}
+              <button type="button" onClick={openParallelCreate} disabled={busy}
                 className="block w-full px-3 py-2 text-right text-[13px] text-gray-700 hover:bg-gray-50 disabled:opacity-50">
                 ＋ צור הצעה מקבילה
               </button>
+              {selected && !selected.isPrimary && selected.contextMode === 'own' && (
+                <button type="button" onClick={() => openParallelEdit(selected)} disabled={busy}
+                  className="block w-full px-3 py-2 text-right text-[13px] text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                  ✎ ערוך פרטים ותמחור של הצעה זו
+                </button>
+              )}
               {selected && !selected.isPrimary && (
                 <button type="button" onClick={makePrimary} disabled={busy}
+                  title="העסקה תאמץ את המוצר, הפרטים והמחיר של הצעה זו"
                   className="block w-full px-3 py-2 text-right text-[13px] text-gray-700 hover:bg-gray-50 disabled:opacity-50">
                   ★ הפוך לראשית
                 </button>
@@ -309,6 +320,15 @@ export default function DealQuoteCard({ deal }) {
           offers={allOffers}
           dealId={deal.id}
           onChanged={load}
+        />
+      )}
+      {parallelDialog && (
+        <ParallelOfferDialog
+          open
+          deal={deal}
+          offer={parallelDialog.offer}
+          onClose={() => setParallelDialog(null)}
+          onDone={() => load()}
         />
       )}
       <ConfirmDialog

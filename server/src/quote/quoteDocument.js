@@ -182,9 +182,20 @@ export async function listDealQuoteDocuments(client, dealId) {
       offerNo: o.offerNo,
       isPrimary: o.isPrimary,
       // 'deal' = mirrors the Deal (always the primary); 'own' = independent
-      // commercial context. productNameHe helps the workspace label own-mode tabs.
+      // commercial context. productNameHe helps the workspace label own-mode tabs;
+      // the context fields feed the edit-offer dialog.
       contextMode: o.contextMode,
       productNameHe: o.contextMode === 'own' ? o.product?.nameHe ?? null : null,
+      context: o.contextMode === 'own'
+        ? {
+            productId: o.productId,
+            productVariantId: o.productVariantId,
+            locationId: o.locationId,
+            participants: o.participants,
+            tourDate: o.tourDate,
+            tourTime: o.tourTime,
+          }
+        : null,
       archivedAt: o.archivedAt ?? null,
       documents: o.quoteDocuments.map((d, i) => ({
         id: d.id,

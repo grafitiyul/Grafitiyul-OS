@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { removeOrArchiveOffer, setPrimaryOffer, splitBuilderPatch } from './quoteOffers.js';
+import { removeOrArchiveOffer, setPrimaryOffer, splitBuilderPatch, updateOfferContext } from './quoteOffers.js';
 
 // Safety rules for removing a parallel offer:
 //   signed document anywhere → refuse; produced documents → ARCHIVE (history
@@ -175,6 +175,41 @@ test('makePrimary: promoting the current primary is a no-op', async () => {
   const r = await setPrimaryOffer(client, 'deal_1', 'off_1');
   assert.equal(r.changed, false);
   assert.deepEqual(client.state.dealUpdates, [], 'deal untouched');
+});
+
+test('updateOfferContext: writes the OWN offer only — the Deal is never touched', async () => {
+  const client = promoteFake({
+    deal: { id: 'deal_1', productId: 'p1', productVariantId: 'v1', locationId: 'l1', participants: 30, tourDate: null, tourTime: null, valueMinor: 0n },
+    offers: [
+      offer('off_1', 1, { contextMode: 'deal' }),
+      offer('off_2', 2, { isPrimary: false, contextMode: 'own', productId: 'p1' }),
+    ],
+  });
+  const r = await updateOfferContext(client, 'deal_1', 'off_2', {
+    productId: 'p2', productVariantId: 'v2', locationId: 'l2',
+    participants: 25, tourDate: '2026-08-10', tourTime: '12:00',
+  });
+  assert.ok(!r.error);
+  const o = client.state.offers[1];
+  assert.equal(o.productId, 'p2');
+  assert.equal(o.participants, 25);
+  assert.equal(o.tourDate, '2026-08-10');
+  assert.deepEqual(client.state.dealUpdates, [], 'Deal untouched');
+});
+
+test('updateOfferContext: primary/archived/invalid are rejected', async () => {
+  const client = promoteFake({
+    deal: { id: 'deal_1', productId: 'p1', productVariantId: null, locationId: null, participants: null, tourDate: null, tourTime: null, valueMinor: 0n },
+    offers: [
+      offer('off_1', 1, { contextMode: 'deal' }),
+      offer('off_2', 2, { isPrimary: false, contextMode: 'own' }),
+      offer('off_3', 3, { isPrimary: false, contextMode: 'own', archivedAt: new Date() }),
+    ],
+  });
+  assert.equal((await updateOfferContext(client, 'deal_1', 'off_1', { productId: 'p2' })).error, 'primary_follows_deal');
+  assert.equal((await updateOfferContext(client, 'deal_1', 'off_3', { productId: 'p2' })).error, 'archived');
+  assert.equal((await updateOfferContext(client, 'deal_1', 'off_2', { participants: -3 })).error, 'invalid_participants');
+  assert.equal((await updateOfferContext(client, 'deal_1', 'nope', {})).error, 'not_found');
 });
 
 test('splitBuilderPatch: primary (deal-mode) patches the Deal; own-mode offer keeps it to itself', () => {

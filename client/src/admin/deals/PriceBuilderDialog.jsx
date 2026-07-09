@@ -45,7 +45,13 @@ function isRichEmpty(html) {
 }
 const CELL = 'h-10 rounded-md border border-gray-200 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-gray-50 disabled:text-gray-400';
 
-export default function PriceBuilderDialog({ open, deal, context, onClose, onSaved }) {
+// Additive embedding props (the parallel-offer dialog reuses this builder as-is):
+//   title       — dialog title override (default "עריכת מחיר").
+//   headerExtra — rendered ABOVE the builder body (the offer's context fields).
+//   skipDealTermsWrite — when true, payment terms/method are NOT edited or
+//     written (they are DEAL-level commercial terms; a parallel offer follows
+//     the Deal's terms and must never mutate the Deal).
+export default function PriceBuilderDialog({ open, deal, context, onClose, onSaved, title, headerExtra, skipDealTermsWrite = false }) {
   const [lines, setLines] = useState([]);
   const [openNotes, setOpenNotes] = useState(() => new Set());
   const [freeRows, setFreeRows] = useState(() => new Set());
@@ -79,6 +85,17 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     setCtx(context);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, deal?.id]);
+
+  // Participant count follows the context prop LIVE (the embedded parallel-offer
+  // header edits it while the builder is open; the deal flow's context is stable
+  // while open, so this is a no-op there). Product/variant stay line/remount
+  // driven — unchanged.
+  useEffect(() => {
+    if (context?.participantCount === undefined) return;
+    setCtx((c) => (c && c.participantCount !== context.participantCount
+      ? { ...c, participantCount: context.participantCount }
+      : c));
+  }, [context?.participantCount]);
 
   // Follow the first product line's product → effective context (productId + its
   // first variant + city). The engine then reprices through the SAME /builder
@@ -255,10 +272,14 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
         productVariantId: ctx?.productVariantId || null,
         ...(ctx && 'locationId' in ctx ? { locationId: ctx.locationId } : {}),
       });
-      await api.deals.update(deal.id, {
-        paymentTermId: paymentTermId || null,
-        paymentMethodId: paymentMethodId || null,
-      });
+      // Payment terms are DEAL-level; embedded (parallel-offer) mode never
+      // writes to the Deal.
+      if (!skipDealTermsWrite) {
+        await api.deals.update(deal.id, {
+          paymentTermId: paymentTermId || null,
+          paymentMethodId: paymentMethodId || null,
+        });
+      }
       await onSaved?.();
       onClose?.();
     } catch (e) {
@@ -274,7 +295,7 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     <Dialog
       open={open}
       onClose={onClose}
-      title="עריכת מחיר"
+      title={title || 'עריכת מחיר'}
       size="2xl"
       footer={
         <>
@@ -287,6 +308,7 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
         </>
       }
     >
+      {headerExtra}
       <div className="space-y-7 px-2 py-2 min-h-[60vh] flex flex-col">
         {/* In-app save error (no native alert). */}
         {saveError && (
@@ -363,18 +385,26 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
         {/* Bottom — payment (right) and totals (left). */}
         <div className="flex flex-wrap items-start justify-between gap-8 pt-4 border-t border-gray-100">
           <div className="w-72 space-y-3 pt-2">
-            <Field label="תנאי תשלום">
-              <select value={paymentTermId} onChange={(e) => pickTerm(e.target.value)} className={FIELD}>
-                <option value="">— ללא —</option>
-                {terms.map((t) => (<option key={t.id} value={t.id}>{t.nameHe}</option>))}
-              </select>
-            </Field>
-            <Field label="אמצעי תשלום">
-              <select value={paymentMethodId} onChange={(e) => pickMethod(e.target.value)} className={FIELD}>
-                <option value="">— ללא —</option>
-                {methods.map((m) => (<option key={m.id} value={m.id}>{m.nameHe}</option>))}
-              </select>
-            </Field>
+            {skipDealTermsWrite ? (
+              <p className="rounded-lg bg-gray-50 px-3 py-2 text-[12px] leading-relaxed text-gray-500 ring-1 ring-gray-200">
+                תנאי ואמצעי התשלום נקבעים ברמת העסקה (בבונה המחיר של ההצעה הראשית) וחלים על כל ההצעות.
+              </p>
+            ) : (
+              <>
+                <Field label="תנאי תשלום">
+                  <select value={paymentTermId} onChange={(e) => pickTerm(e.target.value)} className={FIELD}>
+                    <option value="">— ללא —</option>
+                    {terms.map((t) => (<option key={t.id} value={t.id}>{t.nameHe}</option>))}
+                  </select>
+                </Field>
+                <Field label="אמצעי תשלום">
+                  <select value={paymentMethodId} onChange={(e) => pickMethod(e.target.value)} className={FIELD}>
+                    <option value="">— ללא —</option>
+                    {methods.map((m) => (<option key={m.id} value={m.id}>{m.nameHe}</option>))}
+                  </select>
+                </Field>
+              </>
+            )}
           </div>
 
           <div className="min-w-[18rem] space-y-2 text-[15px] pt-2">

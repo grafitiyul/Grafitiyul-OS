@@ -198,6 +198,35 @@ export async function setPrimaryOffer(client, dealId, offerId) {
   return { ok: true, changed: true };
 }
 
+// Update an OWN-mode offer's commercial context (the parallel-offer dialog's
+// header). The primary offer has no context of its own — the Deal is its truth,
+// edited in the Deal card — so it is rejected here. Field semantics mirror the
+// Deal's tour fields exactly (same trims, same participants rule).
+export async function updateOfferContext(client, dealId, offerId, body = {}) {
+  const offer = await client.quoteOffer.findUnique({ where: { id: offerId } });
+  if (!offer || offer.dealId !== dealId) return { error: 'not_found' };
+  if (offer.archivedAt) return { error: 'archived' };
+  if (offer.isPrimary || offer.contextMode !== 'own') return { error: 'primary_follows_deal' };
+
+  const data = {};
+  if (body.productId !== undefined) data.productId = body.productId || null;
+  if (body.productVariantId !== undefined) data.productVariantId = body.productVariantId || null;
+  if (body.locationId !== undefined) data.locationId = body.locationId || null;
+  if (body.tourDate !== undefined) data.tourDate = body.tourDate ? String(body.tourDate).trim() : null;
+  if (body.tourTime !== undefined) data.tourTime = body.tourTime ? String(body.tourTime).trim() : null;
+  if (body.participants !== undefined) {
+    if (body.participants === null || body.participants === '') data.participants = null;
+    else {
+      const n = Number(body.participants);
+      if (!Number.isInteger(n) || n < 0) return { error: 'invalid_participants' };
+      data.participants = n;
+    }
+  }
+  if (Object.keys(data).length === 0) return { offer };
+  const updated = await client.quoteOffer.update({ where: { id: offerId }, data });
+  return { offer: updated };
+}
+
 // PURE: route the Price Builder's headline patch (price/product/city/
 // participants) by the ACTIVE offer's context mode. Primary (deal-mode) →
 // patch the Deal, exactly the historic behavior (Deal ≡ primary). Non-primary
