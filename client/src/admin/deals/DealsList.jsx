@@ -6,7 +6,7 @@ import { contactNamesFromFull } from '../../lib/nameSplit.js';
 import { useDirtyWhen } from '../../lib/dirtyForms.js';
 import { DEAL_STATUS_LABELS, DEAL_STATUS_STYLES } from './config.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
-import { useTableColumns, ColumnPicker } from '../common/tableColumns.jsx';
+import { useTableColumns, ColumnPicker, SortableHeaderRow } from '../common/tableColumns.jsx';
 import { OrgPicker, resolveOrganization } from '../crm/common/OrgPicker.jsx';
 
 const MODAL_INPUT =
@@ -136,8 +136,10 @@ export default function DealsList() {
     saveFilters({ search, status, stageId, orgId, minVal, maxVal });
   }, [search, status, stageId, orgId, minVal, maxVal]);
 
-  // Visible table columns — persisted via the shared table-columns hook.
-  const { colKeys, toggleCol, visibleCols } = useTableColumns(COLUMNS_KEY, COLUMNS);
+  // Visible table columns + user order — persisted via the shared hook
+  // (column chooser + drag-reorderable headers).
+  const { colKeys, toggleCol, moveCol, visibleCols, orderedColumns } =
+    useTableColumns(COLUMNS_KEY, COLUMNS);
 
   async function refresh() {
     setError(null);
@@ -273,7 +275,7 @@ export default function DealsList() {
             <button onClick={clearFilters} className="text-sm text-blue-700 hover:underline px-1">נקה פילטרים</button>
           )}
           <div className="ms-auto">
-            <ColumnPicker columns={COLUMNS} colKeys={colKeys} onToggle={toggleCol} />
+            <ColumnPicker columns={orderedColumns} colKeys={colKeys} onToggle={toggleCol} />
           </div>
         </div>
       </div>
@@ -298,14 +300,16 @@ export default function DealsList() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-gray-500 bg-gray-50/70 border-b border-gray-100">
-                    {visibleCols.map((c) => (
-                      <Th key={c.key} className={c.align === 'left' ? 'text-left' : c.align === 'center' ? 'text-center' : ''}>
-                        {c.label}
-                      </Th>
-                    ))}
+                  <SortableHeaderRow
+                    cols={visibleCols}
+                    onMove={moveCol}
+                    trClassName="text-gray-500 bg-gray-50/70 border-b border-gray-100"
+                    thClassName={(c) =>
+                      c.align === 'left' ? 'text-left' : c.align === 'center' ? 'text-center' : ''
+                    }
+                  >
                     <Th className="w-10" />
-                  </tr>
+                  </SortableHeaderRow>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {pageRows.map((d) => (

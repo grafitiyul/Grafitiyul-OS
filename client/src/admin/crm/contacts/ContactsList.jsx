@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import PhoneDisplay from '../../common/PhoneDisplay.jsx';
-import { useTableColumns, ColumnPicker } from '../../common/tableColumns.jsx';
+import { useTableColumns, ColumnPicker, SortableHeaderRow } from '../../common/tableColumns.jsx';
 import ContactCreateDialog from './ContactCreateDialog.jsx';
 
 // Contacts — a real CRM list (like Deals): dominant search + a configurable
@@ -73,7 +73,8 @@ export default function ContactsList() {
   const [search, setSearch] = useState('');
   const [showCreate, setShowCreate] = useState(false);
 
-  const { colKeys, toggleCol, visibleCols } = useTableColumns('contacts.columns.v1', COLUMNS);
+  const { colKeys, toggleCol, moveCol, visibleCols, orderedColumns } =
+    useTableColumns('contacts.columns.v1', COLUMNS);
 
   async function refresh() {
     setError(null);
@@ -151,7 +152,7 @@ export default function ContactsList() {
             />
           </div>
           <div className="ms-auto">
-            <ColumnPicker columns={COLUMNS} colKeys={colKeys} onToggle={toggleCol} />
+            <ColumnPicker columns={orderedColumns} colKeys={colKeys} onToggle={toggleCol} />
           </div>
         </div>
       </div>
@@ -182,11 +183,12 @@ export default function ContactsList() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-gray-500 bg-gray-50/70 border-b border-gray-100">
-                  {visibleCols.map((c) => (
-                    <Th key={c.key} className={c.align === 'center' ? 'text-center' : ''}>{c.label}</Th>
-                  ))}
-                </tr>
+                <SortableHeaderRow
+                  cols={visibleCols}
+                  onMove={moveCol}
+                  trClassName="text-gray-500 bg-gray-50/70 border-b border-gray-100"
+                  thClassName={(c) => (c.align === 'center' ? 'text-center' : '')}
+                />
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {filtered.map((c) => (
@@ -216,9 +218,6 @@ export default function ContactsList() {
   );
 }
 
-function Th({ children, className = '' }) {
-  return <th className={`text-right text-[11px] uppercase tracking-wide font-semibold px-4 py-2.5 ${className}`}>{children}</th>;
-}
 function Td({ children, className = '', dir }) {
   return <td className={`px-4 py-3 align-middle ${className}`} dir={dir}>{children}</td>;
 }

@@ -20,10 +20,12 @@ export const TOP_MODULES = [
   { key: 'email', to: '/admin/email', label: 'אימייל', glyph: '📧', Icon: GmailIcon },
 ];
 
-// Bottom cluster, top→bottom: צוות, תוכן סיורים, מסמכים, נהלים, הגדרות, משתמשים.
-// "צוות" (the people/access module) moved here — it reflects its real purpose as
-// the staff/team surface; route (/admin/people) unchanged.
+// Bottom cluster, top→bottom: גבייה, צוות, תוכן סיורים, מסמכים, נהלים, הגדרות,
+// משתמשים. "צוות" (the people/access module) moved here — it reflects its real
+// purpose as the staff/team surface; route (/admin/people) unchanged.
 export const BOTTOM_MODULES = [
+  // Collection — WON deals that still owe money (server Collection service).
+  { key: 'collection', to: '/admin/collection', label: 'גבייה', glyph: '💰' },
   { key: 'people', to: '/admin/people', label: 'צוות', glyph: '👥' },
   { key: 'tour-content', to: '/admin/tour-content', label: 'תוכן סיורים', glyph: '🗺️' },
   { key: 'documents', to: '/admin/documents', label: 'מסמכים', glyph: '📄' },

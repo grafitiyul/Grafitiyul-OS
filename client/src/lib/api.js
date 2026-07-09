@@ -462,6 +462,9 @@ export const api = {
     customPaymentLinks: (id) => request(`/api/deals/${id}/custom-payment-links`),
     createCustomPaymentLink: (id, data) =>
       request(`/api/deals/${id}/custom-payment-links`, { method: 'POST', body: JSON.stringify(data) }),
+    // Collection (גבייה) — the server-computed financial summary (total /
+    // paid / balance / payment rows). The client never derives these itself.
+    collection: (id) => request(`/api/deals/${id}/collection`),
     // Cardcom tourist payment links (/payment/cardcom/<token>).
     touristPayment: (id) => request(`/api/deals/${id}/tourist-payment`),
     createTouristPayment: (id, data) =>
@@ -533,6 +536,10 @@ export const api = {
   },
   auth: {
     status: () => request('/api/auth/status'),
+  },
+  // ── Collection (גבייה) — WON deals that still require collection ──
+  collection: {
+    deals: () => request('/api/collection/deals'),
   },
   // ── WhatsApp module — connections admin (Slice 1) ────────────────
   // Accounts come from the DB; live status/actions proxy to the

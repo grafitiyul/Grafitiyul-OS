@@ -42,6 +42,7 @@ import ContactDetail from './admin/crm/contacts/ContactDetail.jsx';
 import CrmSettingsPage from './admin/crm/settings/CrmSettingsPage.jsx';
 // Deal module (commercial core) — deals + pipeline.
 import DealsList from './admin/deals/DealsList.jsx';
+import CollectionPage from './admin/collection/CollectionPage.jsx';
 import DealDetail from './admin/deals/DealDetail.jsx';
 import QuotePreviewCanvas from './admin/quote/QuotePreviewCanvas.jsx';
 import QuoteSnapshotView from './admin/quote/QuoteSnapshotView.jsx';
@@ -155,6 +156,10 @@ export default function App() {
           <Route path="organizations" element={<OrganizationsList />} />
           <Route path="organizations/:id" element={<OrganizationDetail />} />
         </Route>
+        {/* Collection (גבייה) — WON deals that still owe money. Rows open the
+            regular Deal workspace; numbers come from the server Collection
+            service. */}
+        <Route path="collection" element={<CollectionPage />} />
         {/* Quote Preview Canvas (Slice 3) — internal admin draft workspace,
             opened from a Deal. NOT the public quote page. */}
         <Route path="quote/:dealId" element={<QuotePreviewCanvas />} />

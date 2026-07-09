@@ -9,37 +9,20 @@ import SendDocumentModal from './icount/SendDocumentModal.jsx';
 import { formatMinor } from '../../lib/money.js';
 import { contactNameHe } from './config.js';
 import { contactNamesFromParts } from '../../lib/nameSplit.js';
+import {
+  COLLECTION_STATUS_LABELS,
+  COLLECTION_STATUS_STYLES,
+} from '../collection/collectionConfig.js';
 
-// גבייה — the Deal's financial summary card and the single home of all
-// payment actions (header ⋮ menu). The payment-link / accounting flows moved
-// here VERBATIM from the Tour Details action row (DealDetail's DealActionRow);
-// this card only relocated their entry point.
+// גבייה — the Deal's financial DASHBOARD (not a pricing editor) and the single
+// home of all payment actions (header ⋮ menu).
 //
-// Money model (no duplicate financial logic):
-//   - Deal total  = Deal.valueMinor — the Price Builder headline. Read live,
-//     never stored or recomputed here.
-//   - Rows        = the existing payment records, from the existing endpoints:
-//     iCount documents (GET /icount/documents — GOS rows + live iCount),
-//     the active pending Cardcom tourist request, active custom payment links.
-//   - Paid        = derived ONCE here (paidMinorFromDocs below) from the
-//     document list — nothing else in the system computes paid/balance yet;
-//     when payment milestones arrive this is the calculation to lift.
-
-// Money actually received = documents that RECORD payment (קבלה / חשבונית מס
-// קבלה), minus credit notes. 'deal'/'invoice' bill but do not collect. A paid
-// Cardcom request auto-issues such a document, so summing documents does not
-// double-count it.
-const PAID_SIGN = { receipt: 1, invrec: 1, refund: -1 };
-
-function paidMinorFromDocs(documents) {
-  let sum = 0;
-  for (const d of documents || []) {
-    const sign = PAID_SIGN[d.doctype];
-    if (!sign || d.amountIls == null || !Number.isFinite(Number(d.amountIls))) continue;
-    sum += sign * Math.round(Number(d.amountIls) * 100);
-  }
-  return sum;
-}
+// All numbers come from the server Collection service (GET /:id/collection —
+// server/src/collection.js), the single source of truth for paid/balance:
+// "paid" counts ONLY actual money received (קבלה / חשבונית מס קבלה, minus
+// זיכויים). Open payment links / pending requests are reachable through the
+// actions menu but are NOT rows here — a link becomes a row only once a real
+// receipt-type document exists. The client performs NO financial math.
 
 // Prefill contact — mirror of the server's pick (dealPayment.js): first contact
 // flagged to receive payment links, else the primary/first contact.
@@ -97,74 +80,66 @@ function fmtDay(v) {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('he-IL');
 }
 
-// One payment-record row: label + date on the reading side, amount on the far
-// side. `tone` colors the amount: received = green, credit = red, other = gray.
-function RecordRow({ label, sub, date, amountMinor, currency, tone = 'plain', href }) {
-  const amountCls =
-    tone === 'in' ? 'text-emerald-700' : tone === 'out' ? 'text-red-600' : 'text-gray-700';
+// One actual-payment row (server `payments`): receipt-type in green, credit
+// notes in red. Clicking opens the document when a docUrl exists.
+function PaymentRow({ row }) {
+  const out = row.direction === 'out';
   const body = (
     <>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13px] text-gray-800">{label}</span>
+        <span className="block truncate text-[13px] text-gray-800">
+          {row.doctypeLabel}
+          {row.docnum ? ` ${row.docnum}` : ''}
+        </span>
         <span className="block truncate text-[11px] text-gray-400">
-          {[sub, fmtDay(date)].filter(Boolean).join(' · ')}
+          {[row.clientName, fmtDay(row.createdAt)].filter(Boolean).join(' · ')}
         </span>
       </span>
-      {amountMinor != null && (
-        <span dir="ltr" className={`shrink-0 text-[13px] font-medium tabular-nums ${amountCls}`}>
-          {tone === 'out' ? '−' : ''}{formatMinor(Math.abs(amountMinor), currency)}
-        </span>
-      )}
+      <span
+        dir="ltr"
+        className={`shrink-0 text-[13px] font-medium tabular-nums ${out ? 'text-red-600' : 'text-emerald-700'}`}
+      >
+        {out ? '−' : ''}{formatMinor(row.amountMinor, row.currency)}
+      </span>
     </>
   );
-  const rowCls = 'flex items-center justify-between gap-3 rounded-lg px-2 py-1.5';
-  return href ? (
-    <a href={href} target="_blank" rel="noopener noreferrer" className={`${rowCls} hover:bg-gray-50`}>
+  const cls = 'flex items-center justify-between gap-3 rounded-lg px-2 py-1.5';
+  return row.docUrl ? (
+    <a href={row.docUrl} target="_blank" rel="noopener noreferrer" className={`${cls} hover:bg-gray-50`}>
       {body}
     </a>
   ) : (
-    <div className={rowCls}>{body}</div>
+    <div className={cls}>{body}</div>
   );
 }
 
 export default function DealCollectionCard({ deal, productName, onOpenPriceBuilder, onRefresh }) {
-  // ── Payment records (existing endpoints; see header comment) ─────────────
-  const [records, setRecords] = useState(null); // null = loading
-  const [recordsError, setRecordsError] = useState(false);
+  // ── Server collection summary — the ONLY source of the numbers below ─────
+  const [summary, setSummary] = useState(null); // null = loading
+  const [loadError, setLoadError] = useState(false);
 
   const reload = useCallback(async () => {
     try {
-      const [docsRes, touristRes, linksRes] = await Promise.all([
-        api.deals.icountDocuments(deal.id).catch(() => null),
-        api.deals.touristPayment(deal.id).catch(() => null),
-        api.deals.customPaymentLinks(deal.id).catch(() => null),
-      ]);
-      setRecordsError(!docsRes && !touristRes && !linksRes);
-      setRecords({
-        documents: docsRes?.documents || [],
-        docsFailed: !docsRes,
-        liveError: docsRes?.liveError || null,
-        pendingTourist: touristRes?.activeRequest || null,
-        touristUrl: touristRes?.publicUrl || null,
-        customLinks: (linksRes?.links || []).filter((l) => l.status === 'active'),
-      });
+      setSummary(await api.deals.collection(deal.id));
+      setLoadError(false);
     } catch {
-      setRecordsError(true);
-      setRecords((r) => r || { documents: [], docsFailed: true, liveError: null, pendingTourist: null, touristUrl: null, customLinks: [] });
+      setLoadError(true);
     }
   }, [deal.id]);
 
+  // Refetch on mount and whenever the Price Builder headline changes — the
+  // server total mirrors Deal.valueMinor and must never show stale.
   useEffect(() => {
-    setRecords(null);
     reload();
-  }, [reload]);
+  }, [reload, deal.valueMinor]);
 
-  // ── Payment actions — moved from the Tour Details action row ─────────────
+  // ── Payment actions (entry points only — flows live in their modals) ─────
   const [payBusy, setPayBusy] = useState(false);
   const [payFeedback, setPayFeedback] = useState(null);
   const [missingDialog, setMissingDialog] = useState(null); // { action, kind: 'amount'|'details', needName, needPhone, needEmail }
   const [docModalOpen, setDocModalOpen] = useState(false);
   const [customLinkOpen, setCustomLinkOpen] = useState(false);
+  const [depositOpen, setDepositOpen] = useState(false);
   const [cardcomOpen, setCardcomOpen] = useState(false);
   // "שלח חשבון עסקה חדש" — re-issue a חשבון עסקה from the CURRENT deal state,
   // then continue into the existing sharing flow: newInvoiceOpen →
@@ -293,38 +268,8 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
     });
   }
 
-  // ── Derived summary — the single paid/balance derivation (header comment) ─
-  const paidMinor = records ? paidMinorFromDocs(records.documents) : null;
-  const balanceMinor = paidMinor == null ? null : totalMinor - paidMinor;
-  const paidPct =
-    paidMinor == null || totalMinor <= 0
-      ? null
-      : Math.min(100, Math.max(0, Math.round((paidMinor / totalMinor) * 100)));
-
-  const openRequests = records
-    ? [
-        ...(records.pendingTourist
-          ? [{
-              key: `tourist-${records.pendingTourist.id}`,
-              label: 'קישור לתשלום כרטיס תייר',
-              sub: 'ממתין לתשלום',
-              date: records.pendingTourist.createdAt,
-              amountMinor: Math.round(Number(records.pendingTourist.amountIls || 0) * 100),
-              currency: records.pendingTourist.currency,
-              href: records.touristUrl,
-            }]
-          : []),
-        ...records.customLinks.map((l) => ({
-          key: `custom-${l.id}`,
-          label: `קישור מותאם אישית — ${l.description}`,
-          sub: 'פעיל',
-          date: l.createdAt,
-          amountMinor: Math.round(Number(l.amountIls || 0) * 100),
-          currency: l.currency,
-          href: l.url,
-        })),
-      ]
-    : [];
+  const paidPct = summary?.paidPct;
+  const barPct = paidPct == null ? null : Math.min(100, Math.max(0, paidPct));
 
   const dlg = missingDialog;
   const effPhone = dlgForm.phone.trim() || contactPhone;
@@ -355,6 +300,15 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
         <h2 className="text-[13px] font-semibold text-gray-900">גבייה</h2>
         <span className="inline-flex items-center gap-2">
           {payFeedback && <span className="text-[11px] text-gray-500">{payFeedback}</span>}
+          {summary && (
+            <span
+              className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                COLLECTION_STATUS_STYLES[summary.status] || 'bg-gray-100 text-gray-500'
+              }`}
+            >
+              {COLLECTION_STATUS_LABELS[summary.status] || summary.status}
+            </span>
+          )}
           <CardKebabMenu ariaLabel="פעולות גבייה" disabled={payBusy}>
             {(close) => (
               <>
@@ -371,6 +325,10 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
                   שלח קישור בוואטסאפ
                 </button>
                 <div className="my-1 border-t border-gray-100" />
+                <button type="button" className={MENU_ITEM}
+                  onClick={() => { close(); setDepositOpen(true); }}>
+                  תשלום מקדמה
+                </button>
                 <button type="button" className={MENU_ITEM}
                   onClick={() => { close(); setDocModalOpen(true); }}>
                   הפק מסמך
@@ -395,81 +353,51 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
       </div>
 
       <div className="p-4 space-y-3">
-        {/* Total — always the live Price Builder headline; click opens it. */}
-        <button
-          type="button"
-          onClick={onOpenPriceBuilder}
-          title="פתח בונה מחיר"
-          className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 transition-colors hover:bg-gray-50"
-        >
+        {/* Total — read-only. Pricing is edited in the Quote / Price Builder
+            area; this card is a financial dashboard. */}
+        <div className="flex items-center justify-between px-2 py-1.5">
           <span className="text-[12px] text-gray-500">סך העסקה</span>
           <span dir="ltr" className="text-[17px] font-bold text-gray-900 tabular-nums">
             {totalMinor ? formatMinor(totalMinor, deal.currency) : '—'}
           </span>
-        </button>
+        </div>
 
-        {/* Records */}
-        {!records && !recordsError && (
-          <p className="px-2 text-[12px] text-gray-400">טוען רשומות תשלום…</p>
+        {/* Actual payments only — links/requests never appear here. */}
+        {!summary && !loadError && (
+          <p className="px-2 text-[12px] text-gray-400">טוען נתוני גבייה…</p>
         )}
-        {recordsError && (
-          <p className="px-2 text-[12px] text-red-600">טעינת רשומות התשלום נכשלה — רעננו את העמוד.</p>
+        {loadError && (
+          <p className="px-2 text-[12px] text-red-600">טעינת נתוני הגבייה נכשלה — רעננו את העמוד.</p>
         )}
-        {records && (
+        {summary && (
           <>
-            {openRequests.length > 0 && (
-              <div>
-                <div className="px-2 pb-1 text-[11px] font-medium text-gray-400">בקשות תשלום פתוחות</div>
-                {openRequests.map((r) => (
-                  <RecordRow key={r.key} {...r} />
-                ))}
-              </div>
-            )}
             <div>
-              <div className="px-2 pb-1 text-[11px] font-medium text-gray-400">תשלומים ומסמכים</div>
-              {records.docsFailed ? (
-                <p className="px-2 text-[12px] text-amber-600">טעינת המסמכים מאייקאונט נכשלה — הרשימה והסיכום עשויים להיות חלקיים.</p>
-              ) : records.documents.length === 0 ? (
-                <p className="px-2 text-[12px] text-gray-400">אין עדיין תשלומים או מסמכים לעסקה זו.</p>
+              <div className="px-2 pb-1 text-[11px] font-medium text-gray-400">תשלומים שהתקבלו</div>
+              {summary.payments.length === 0 ? (
+                <p className="px-2 text-[12px] text-gray-400">עדיין לא התקבלו תשלומים לעסקה זו.</p>
               ) : (
-                records.documents.map((d, i) => (
-                  <RecordRow
-                    key={d.docnum ? `${d.doctype}-${d.docnum}` : `row-${i}`}
-                    label={`${d.doctypeLabel}${d.docnum ? ` ${d.docnum}` : ''}`}
-                    sub={d.clientName || null}
-                    date={d.createdAt}
-                    amountMinor={d.amountIls == null ? null : Math.round(Number(d.amountIls) * 100)}
-                    currency={d.currency}
-                    tone={PAID_SIGN[d.doctype] === 1 ? 'in' : PAID_SIGN[d.doctype] === -1 ? 'out' : 'plain'}
-                    href={d.docUrl || null}
-                  />
-                ))
-              )}
-              {records.liveError && !records.docsFailed && (
-                <p className="px-2 pt-1 text-[11px] text-amber-600">
-                  חיפוש המסמכים באייקאונט נכשל — ייתכן שמסמכים שהופקו ישירות באייקאונט חסרים.
-                </p>
+                summary.payments.map((row) => <PaymentRow key={row.id} row={row} />)
               )}
             </div>
 
-            {/* Summary — paid / balance derived above (the single place). */}
+            {/* Summary — server numbers, rendered as-is. */}
             <div className="space-y-1.5 border-t border-gray-100 pt-3">
               <div className="flex items-center justify-between px-2 text-[13px]">
                 <span className="text-gray-500">שולם</span>
                 <span dir="ltr" className="font-semibold text-emerald-700 tabular-nums">
-                  {formatMinor(paidMinor || 0, deal.currency)}
+                  {formatMinor(summary.paidMinor, summary.currency)}
                 </span>
               </div>
               <div className="flex items-center justify-between px-2 text-[13px]">
                 <span className="text-gray-500">יתרה לגבייה</span>
-                <span dir="ltr" className={`font-semibold tabular-nums ${balanceMinor > 0 ? 'text-gray-900' : 'text-emerald-700'}`}>
-                  {formatMinor(balanceMinor || 0, deal.currency)}
+                <span dir="ltr" className={`font-semibold tabular-nums ${summary.balanceMinor > 0 ? 'text-gray-900' : 'text-emerald-700'}`}>
+                  {formatMinor(summary.balanceMinor, summary.currency)}
                 </span>
               </div>
               {paidPct != null && (
                 <div className="flex items-center gap-2 px-2 pt-1">
                   <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-100">
-                    <div className="h-full rounded-full bg-emerald-500" style={{ width: `${paidPct}%` }} />
+                    <div className="h-full rounded-full bg-emerald-500" style={{ width: `${barPct}%` }} />
                   </div>
                   <span className="shrink-0 text-[11px] text-gray-500 tabular-nums">שולם {paidPct}%</span>
                 </div>
@@ -479,7 +407,8 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
         )}
       </div>
 
-      {/* Modals — closing any of them may have created a record → reload. */}
+      {/* Modals — closing any of them may have created a payment record
+          (e.g. a receipt was issued) → reload the server summary. */}
       <ProduceDocumentModal dealId={deal.id} open={docModalOpen} onClose={() => { setDocModalOpen(false); reload(); }} />
       <ProduceDocumentModal
         dealId={deal.id}
@@ -493,8 +422,22 @@ export default function DealCollectionCard({ deal, productName, onOpenPriceBuild
         }}
       />
       <SendDocumentModal open={!!shareEntry} entry={shareEntry} deal={deal} onClose={() => setShareEntry(null)} />
-      <CustomPaymentLinkModal dealId={deal.id} open={customLinkOpen} onClose={() => { setCustomLinkOpen(false); reload(); }} />
-      <CardcomPaymentModal dealId={deal.id} open={cardcomOpen} onClose={() => { setCardcomOpen(false); reload(); }} />
+      <CustomPaymentLinkModal dealId={deal.id} open={customLinkOpen} onClose={() => setCustomLinkOpen(false)} />
+      {/* תשלום מקדמה — the SAME custom-payment-link flow, configured as a
+          deposit: product prefilled as the line description, amount capped by
+          the remaining balance. The link itself never counts as paid. */}
+      <CustomPaymentLinkModal
+        dealId={deal.id}
+        open={depositOpen}
+        onClose={() => setDepositOpen(false)}
+        title="תשלום מקדמה"
+        intro="קישור לתשלום מקדמה על חשבון העסקה. הקישור עצמו אינו נספר כתשלום — הסכום ייכלל בגבייה רק כאשר תופק קבלה / חשבונית מס קבלה בפועל."
+        defaultDescription={productName || ''}
+        defaultNotes="מקדמה"
+        maxAmountIls={summary && summary.balanceMinor > 0 ? summary.balanceMinor / 100 : null}
+        maxLabel="היתרה לגבייה"
+      />
+      <CardcomPaymentModal dealId={deal.id} open={cardcomOpen} onClose={() => setCardcomOpen(false)} />
 
       {/* Missing-data dialog — the only popup in the payment flow. Details are
           completed INLINE and saved to the Contact, then the action continues. */}

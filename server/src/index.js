@@ -59,6 +59,7 @@ import cardcomWebhookRouter from './routes/cardcomWebhook.js';
 import payRouter from './routes/pay.js';
 import paymentRouter from './routes/payment.js';
 import touristPaymentRouter from './routes/touristPayment.js';
+import { dealCollectionRouter, collectionRouter } from './routes/collection.js';
 import whatsappRouter from './routes/whatsapp.js';
 import emailRouter from './routes/email.js';
 import emailTrackingRouter from './routes/emailTracking.js';
@@ -244,6 +245,10 @@ app.use('/api/deals', requireAdminAuth, icountDocsRouter);
 // Cardcom tourist payment requests — /:id/tourist-payment[/*] (same
 // nested-under-deals pattern). Cardcom clears; iCount stays the doc provider.
 app.use('/api/deals', requireAdminAuth, touristPaymentRouter);
+// Collection (גבייה) — server-side source of truth for paid/balance math:
+// /:id/collection (Deal card) + /api/collection/deals (Collection screen).
+app.use('/api/deals', requireAdminAuth, dealCollectionRouter);
+app.use('/api/collection', requireAdminAuth, collectionRouter);
 // WhatsApp module — account/connection admin (proxies live actions to the
 // per-number bridge services over Railway's private network).
 app.use('/api/whatsapp', requireAdminAuth, whatsappRouter);
