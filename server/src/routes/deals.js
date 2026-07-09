@@ -8,7 +8,7 @@ import {
   listDealQuoteDocuments,
   toClientQuoteDocument,
 } from '../quote/quoteDocument.js';
-import { createParallelOffer, activateOffer, setPrimaryOffer, removeOrArchiveOffer } from '../quote/quoteOffers.js';
+import { createParallelOffer, activateOffer, setPrimaryOffer, removeOrArchiveOffer, unarchiveOffer, buildWonQuoteRef } from '../quote/quoteOffers.js';
 import { ensurePaymentToken, paymentUrlFor, resolvePublicOrigin } from '../dealPayment.js';
 import { recordDealChanges, recordDealContactChange, DEAL_DIFF_SELECT } from '../timeline/dealChangelog.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
@@ -339,6 +339,15 @@ router.put(
         data.lostReasonId = null;
         data.lostNotes = null;
         data.lostReason = null;
+        // Stamp the PRIMARY quote this win is based on — only on the actual
+        // transition into WON (a re-save of an already-won deal never
+        // silently re-points the audit record).
+        if (existing.status !== 'won') {
+          const ref = await buildWonQuoteRef(prisma, req.params.id);
+          data.wonQuoteRef = ref
+            ? { ...ref, publicUrl: `${resolvePublicOrigin(req)}/quote/${ref.publicToken}`, stampedAt: new Date().toISOString() }
+            : null;
+        }
       } else if (b.status === 'lost') {
         const reasonId = b.lostReasonId ? String(b.lostReasonId) : null;
         if (!reasonId) return res.status(400).json({ error: 'lost_reason_required' });
@@ -391,6 +400,16 @@ router.put(
       after: deal,
       origin: await userOrigin(req.adminAuth?.userId),
     });
+    // WON audit trail: which proposal the win was based on (or none).
+    if (b.status === 'won' && existing.status !== 'won' && deal.wonQuoteRef) {
+      await emitTimelineEvent(prisma, {
+        subjectType: 'deal',
+        subjectId: req.params.id,
+        kind: 'quote',
+        data: { event: 'won_reference', ...deal.wonQuoteRef },
+        origin: await userOrigin(req.adminAuth?.userId),
+      });
+    }
     res.json(deal);
   }),
 );
@@ -665,6 +684,18 @@ router.delete(
     if (r.error === 'has_signed') return res.status(409).json({ error: 'has_signed' });
     if (r.error) return res.status(400).json({ error: r.error });
     res.json({ mode: r.mode });
+  }),
+);
+
+// Restore an archived offer to the workspace (offerNo/documents/URLs intact).
+router.post(
+  '/:id/quote-offers/:offerId/unarchive',
+  handle(async (req, res) => {
+    const r = await unarchiveOffer(prisma, req.params.id, req.params.offerId);
+    if (r.error === 'not_found') return res.status(404).json({ error: 'not_found' });
+    if (r.error === 'not_archived') return res.status(409).json({ error: 'not_archived' });
+    if (r.error) return res.status(400).json({ error: r.error });
+    res.json({ ok: true });
   }),
 );
 

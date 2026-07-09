@@ -214,6 +214,18 @@ test('updateMeta: rejects a non-object compositionDraft', async () => {
   assert.equal(r.error, 'invalid_composition_draft');
 });
 
+test('updateMeta: an overrideState with no block entries normalizes to null', async () => {
+  const client = fakeClient({ deals: { deal_1: deal() } });
+  const { doc } = await ensureDraftQuoteDocument(client, 'deal_1');
+  await updateQuoteDocumentMeta(client, doc.id, { overrideState: { blocks: { faq: { html: '<p>x</p>' } } } });
+  // Removing the LAST override must leave a clean null — never a hollow object
+  // that could read as "overridden with nothing" (the reset-default QA bug).
+  const r = await updateQuoteDocumentMeta(client, doc.id, { overrideState: { blocks: {} } });
+  assert.equal(r.doc.overrideState, null);
+  const r2 = await updateQuoteDocumentMeta(client, doc.id, { overrideState: null });
+  assert.equal(r2.doc.overrideState, null);
+});
+
 test('resetToSource: clears overrides + structural edits', async () => {
   const client = fakeClient({ deals: { deal_1: deal() } });
   const { doc } = await ensureDraftQuoteDocument(client, 'deal_1');

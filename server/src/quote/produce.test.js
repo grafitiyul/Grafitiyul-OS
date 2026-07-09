@@ -104,4 +104,63 @@ test('produce: temporary override applies to ONE generation and never mutates th
   const v3 = await produceQuoteDocument(client, 'qd_draft');
   assert.equal(v3.doc.versionNo, 3);
   assert.equal(faqHtmlOf(v3.doc.renderModelSnapshot), '<p>A-PERSIST</p>', 'V3 reverts to the persistent text');
+
+  // Earlier snapshots are immutable — later generations never rewrite them.
+  assert.equal(faqHtmlOf(v1.doc.renderModelSnapshot), '<p>A-PERSIST</p>');
+  assert.equal(faqHtmlOf(v2.doc.renderModelSnapshot), '<p>B-TEMP</p>');
+});
+
+test('produce: reset (override removed) falls back to SOURCE content — section stays visible', async () => {
+  const draft = {
+    id: 'qd_draft',
+    dealId: 'deal_1',
+    quoteVersionId: 'ver_1',
+    offerId: 'off_1',
+    status: 'draft',
+    language: 'he',
+    displayProductName: null,
+    compositionDraft: null,
+    overrideState: { blocks: { faq: { html: '<p>מותאם</p>' } } },
+  };
+  const client = fakeClient({ draft });
+
+  const v1 = await produceQuoteDocument(client, 'qd_draft');
+  assert.equal(faqHtmlOf(v1.doc.renderModelSnapshot), '<p>מותאם</p>');
+
+  // "שחזר טקסט ברירת מחדל" — the client PUT removes the override entirely.
+  draft.overrideState = null;
+
+  const v2 = await produceQuoteDocument(client, 'qd_draft');
+  const faq = v2.doc.renderModelSnapshot.blocks.find((b) => b.type === 'faq');
+  assert.equal(faq.data.customHtml ?? null, null, 'no override residue');
+  assert.ok(Array.isArray(faq.data.items) && faq.data.items.length > 0, 'SOURCE items are back');
+  assert.equal(faq.data.items[0].html, '<p>מקור</p>', 'source library text restored');
+  // The already-generated v1 snapshot is untouched by the reset.
+  assert.equal(faqHtmlOf(v1.doc.renderModelSnapshot), '<p>מותאם</p>');
+});
+
+test('produce: temp-only override → reset (layer dropped) → source content generated', async () => {
+  const draft = {
+    id: 'qd_draft',
+    dealId: 'deal_1',
+    quoteVersionId: 'ver_1',
+    offerId: 'off_1',
+    status: 'draft',
+    language: 'he',
+    displayProductName: null,
+    compositionDraft: null,
+    overrideState: null,
+  };
+  const client = fakeClient({ draft });
+
+  const withTemp = await produceQuoteDocument(client, 'qd_draft', {
+    temporaryOverrideState: { blocks: { faq: { html: '<p>זמני</p>' } } },
+  });
+  assert.equal(faqHtmlOf(withTemp.doc.renderModelSnapshot), '<p>זמני</p>');
+
+  // Reset = the one-shot layer is simply not sent again.
+  const afterReset = await produceQuoteDocument(client, 'qd_draft');
+  const faq = afterReset.doc.renderModelSnapshot.blocks.find((b) => b.type === 'faq');
+  assert.equal(faq.data.customHtml ?? null, null);
+  assert.equal(faq.data.items[0].html, '<p>מקור</p>', 'source text restored');
 });

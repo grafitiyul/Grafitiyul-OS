@@ -74,6 +74,48 @@ export async function activateOffer(client, dealId, offerId) {
   return { offer, versionId: version.id, draft: draft.doc };
 }
 
+// Restore an archived offer to the workspace. Its offerNo, documents and
+// permanent URLs were never touched by archiving, so nothing else changes. If
+// the deal has no live primary (e.g. the primary itself was archived), the
+// restored offer takes primary so the workspace never lacks one.
+export async function unarchiveOffer(client, dealId, offerId) {
+  const offer = await client.quoteOffer.findUnique({ where: { id: offerId } });
+  if (!offer || offer.dealId !== dealId) return { error: 'not_found' };
+  if (!offer.archivedAt) return { error: 'not_archived' };
+  await client.quoteOffer.update({ where: { id: offerId }, data: { archivedAt: null } });
+  const livePrimary = await client.quoteOffer.findFirst({
+    where: { dealId, isPrimary: true, archivedAt: null },
+  });
+  if (!livePrimary) {
+    await client.quoteOffer.updateMany({ where: { dealId, isPrimary: true }, data: { isPrimary: false } });
+    await client.quoteOffer.update({ where: { id: offerId }, data: { isPrimary: true } });
+  }
+  return { ok: true };
+}
+
+// The audit payload stamped on a deal when it is marked WON: the PRIMARY
+// offer's newest generated document. Null when nothing was ever generated —
+// the deal was won without a proposal, and that is recorded as such.
+export async function buildWonQuoteRef(client, dealId) {
+  const offer = await client.quoteOffer.findFirst({
+    where: { dealId, isPrimary: true, archivedAt: null },
+  });
+  if (!offer) return null;
+  const doc = await client.quoteDocument.findFirst({
+    where: { offerId: offer.id, status: { not: 'draft' } },
+    orderBy: { versionNo: 'desc' },
+  });
+  if (!doc) return null;
+  return {
+    offerId: offer.id,
+    offerNo: offer.offerNo,
+    versionNo: doc.versionNo,
+    quoteDocumentId: doc.id,
+    publicToken: doc.publicToken,
+    producedAt: doc.producedAt ? new Date(doc.producedAt).toISOString() : null,
+  };
+}
+
 // Exactly one primary per deal (transactional flip).
 export async function setPrimaryOffer(client, dealId, offerId) {
   const offer = await client.quoteOffer.findUnique({ where: { id: offerId } });

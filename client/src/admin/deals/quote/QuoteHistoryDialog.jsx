@@ -1,13 +1,16 @@
+import { useState } from 'react';
 import Dialog from '../../common/Dialog.jsx';
+import { api } from '../../../lib/api.js';
 import { quoteStatusOf, fmtQuoteDate } from './DealQuoteCard.jsx';
 
 // "היסטוריית הצעות" — ADMIN-only popup (customers never see this screen).
 // Every generated version, chronological (newest first), grouped by offer when
 // parallel offers exist. Each row: version / status / date / language + the
 // server-computed diff vs the previous version of the same offer ("שונה:
-// מחיר, שאלות נפוצות…"). Every historical proposal opens at its permanent URL —
-// generated documents are immutable snapshots forever, so old links are always
-// safe to open.
+// מחיר, שאלות נפוצות…"). Every historical proposal opens in the internal
+// archive view — generated documents are immutable snapshots forever.
+// Archived offers appear here with a "בארכיון" tag and a RESTORE action that
+// returns them to the workspace tabs (documents/URLs untouched).
 
 function VersionRow({ doc }) {
   const status = quoteStatusOf(doc);
@@ -49,9 +52,22 @@ function VersionRow({ doc }) {
   );
 }
 
-export default function QuoteHistoryDialog({ open, onClose, offers }) {
+export default function QuoteHistoryDialog({ open, onClose, offers, dealId, onChanged }) {
+  const [busyOfferId, setBusyOfferId] = useState(null);
   const withDocs = (offers || []).filter((o) => o.documents.length > 0);
   const multi = withDocs.length > 1;
+
+  async function restore(offer) {
+    if (busyOfferId) return;
+    setBusyOfferId(offer.id);
+    try {
+      await api.deals.unarchiveQuoteOffer(dealId, offer.id);
+      await onChanged?.();
+    } finally {
+      setBusyOfferId(null);
+    }
+  }
+
   return (
     <Dialog open={open} onClose={onClose} title="היסטוריית הצעות" size="md-wide">
       <div dir="rtl" className="space-y-4">
@@ -62,14 +78,24 @@ export default function QuoteHistoryDialog({ open, onClose, offers }) {
         )}
         {withDocs.map((offer) => (
           <div key={offer.id}>
-            {multi && (
+            {(multi || offer.archivedAt) && (
               <div className="mb-1.5 flex items-center gap-2">
                 <span className="text-[12px] font-semibold text-gray-600">הצעה {offer.offerNo}</span>
                 {offer.isPrimary && !offer.archivedAt && (
                   <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[9.5px] font-bold text-amber-700 ring-1 ring-amber-200">ראשית</span>
                 )}
                 {offer.archivedAt && (
-                  <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[9.5px] font-bold text-gray-500 ring-1 ring-gray-200">בארכיון</span>
+                  <>
+                    <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[9.5px] font-bold text-gray-500 ring-1 ring-gray-200">בארכיון</span>
+                    <button
+                      type="button"
+                      disabled={busyOfferId === offer.id}
+                      onClick={() => restore(offer)}
+                      className="ms-auto rounded-lg border border-gray-300 px-2 py-0.5 text-[11.5px] text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      {busyOfferId === offer.id ? 'משחזר…' : '↩ שחזר לסביבת העבודה'}
+                    </button>
+                  </>
                 )}
               </div>
             )}

@@ -886,6 +886,12 @@ model Deal {
   ownerUserId           String? // loose actor id (no User model yet)
   expectedCloseDate     DateTime?
   wonAt                 DateTime?
+  // Audit snapshot of the PRIMARY quote at the moment the deal was marked WON:
+  // { offerId, offerNo, versionNo, quoteDocumentId, publicToken, publicUrl,
+  //   producedAt, stampedAt }. Written only on the open/lost → won transition
+  // (never retroactively); preserved on reopen like wonAt. Null when the deal
+  // had no generated primary quote when it was won.
+  wonQuoteRef           Json?
   lostAt                DateTime?
   // LOST outcome — structured. lostReasonRef points at the shared LostReason
   // catalog (required at the API layer when status='lost'); lostNotes is free

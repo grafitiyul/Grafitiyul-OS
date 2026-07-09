@@ -459,8 +459,15 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated })
             <div className="rounded-xl bg-gray-100 p-2 sm:p-4">
               <article dir={lang === 'en' ? 'ltr' : 'rtl'} className="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200/70">
                 {(() => {
-                  const visible = (model.blocks || []).filter((b) => !b.hidden && blockHasContent(b));
-                  const heroBlock = visible.find((b) => b.type === 'hero');
+                  // Editable text sections stay in the WORKSPACE even when empty
+                  // (dashed placeholder + edit action) — resetting an override on
+                  // an empty-source section must never make it unreachable. The
+                  // customer page still hides empty sections; only produced
+                  // content reaches them.
+                  const visible = (model.blocks || []).filter(
+                    (b) => !b.hidden && (blockHasContent(b) || EDITABLE_TYPES.has(b.type)),
+                  );
+                  const heroBlock = visible.find((b) => b.type === 'hero' && blockHasContent(b));
                   const bodyBlocks = visible.filter((b) => b.type !== 'hero');
                   const tempKeys = new Set(Object.keys(tempOverrides?.blocks || {}));
                   return (
@@ -469,7 +476,7 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated })
                       <div className="space-y-16 px-6 py-12 lg:px-16 lg:py-14">
                         {bodyBlocks.map((b) => (
                           <section key={b.key} className="group relative">
-                            {EDITABLE_TYPES.has(b.type) && (
+                            {EDITABLE_TYPES.has(b.type) && blockHasContent(b) && (
                               <div className="absolute -top-3 start-0 z-10 flex items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
                                 <button
                                   type="button"
@@ -489,7 +496,23 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated })
                                 {tempKeys.has(b.key) ? 'זמני' : 'מותאם'}
                               </span>
                             )}
-                            <QuoteBlock block={b} lang={lang} />
+                            {blockHasContent(b) ? (
+                              <QuoteBlock block={b} lang={lang} />
+                            ) : (
+                              <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50/60 px-5 py-6 text-start">
+                                <div className="text-[15px] font-semibold text-gray-500">{b.data?.title || b.key}</div>
+                                <p className="mt-1 text-[12.5px] leading-relaxed text-gray-400">
+                                  אין תוכן במקטע זה בשפת ההצעה — הוא לא יוצג ללקוח. אפשר למלא תוכן במקור, או להוסיף התאמה לעסקה זו.
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditing(b)}
+                                  className="mt-2 rounded-md border border-gray-300 bg-white px-2.5 py-1 text-[12px] text-gray-700 hover:bg-gray-50"
+                                >
+                                  ✎ הוסף תוכן להצעה זו
+                                </button>
+                              </div>
+                            )}
                           </section>
                         ))}
                       </div>

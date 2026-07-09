@@ -303,7 +303,13 @@ export default function DealQuoteCard({ deal }) {
         />
       )}
       {historyOpen && (
-        <QuoteHistoryDialog open onClose={() => setHistoryOpen(false)} offers={allOffers} />
+        <QuoteHistoryDialog
+          open
+          onClose={() => setHistoryOpen(false)}
+          offers={allOffers}
+          dealId={deal.id}
+          onChanged={load}
+        />
       )}
       <ConfirmDialog
         open={!!removeAsk}

@@ -19,8 +19,9 @@ export default function QuoteEventRow({ entry }) {
   const when = entry.createdAt ? new Date(entry.createdAt) : null;
   const actor = entry.createdByName || entry.actorLabel || 'מערכת';
   const sent = d.event === 'quote_sent';
+  const won = d.event === 'won_reference';
   const version = d.versionNo ? `גרסה ${d.versionNo}` : null;
-  const offer = d.offerNo && d.offerNo > 1 ? `הצעה ${d.offerNo}` : null;
+  const offer = d.offerNo && (d.offerNo > 1 || won) ? `הצעה ${d.offerNo}` : null;
   const url = d.publicToken ? `/quote/${d.publicToken}` : null;
 
   return (
@@ -31,7 +32,9 @@ export default function QuoteEventRow({ entry }) {
           הצעת מחיר
         </span>
         <span className="min-w-0 flex-1 truncate text-[13px] text-gray-800">
-          <span className="font-medium">{sent ? `נשלחה ${d.channel === 'email' ? 'במייל' : 'ללקוח'}` : 'הופקה'}</span>
+          <span className="font-medium">
+            {won ? '🏆 העסקה נסגרה על בסיס הצעה זו' : sent ? `נשלחה ${d.channel === 'email' ? 'במייל' : 'ללקוח'}` : 'הופקה'}
+          </span>
           {[offer, version].filter(Boolean).map((part) => (
             <span key={part} className="text-gray-500"> · {part}</span>
           ))}

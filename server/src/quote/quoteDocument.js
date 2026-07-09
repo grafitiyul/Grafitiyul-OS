@@ -229,7 +229,12 @@ export async function updateQuoteDocumentMeta(client, id, body = {}) {
   }
   if (body.overrideState !== undefined) {
     if (body.overrideState !== null && typeof body.overrideState !== 'object') return { error: 'invalid_override_state' };
-    data.overrideState = body.overrideState ?? null;
+    // Normalize: an override state with no actual block entries IS "no
+    // overrides" — store null so removing the last override can never leave a
+    // hollow object behind that reads as "overridden with nothing".
+    const blocks = body.overrideState?.blocks;
+    const empty = !blocks || typeof blocks !== 'object' || Object.keys(blocks).length === 0;
+    data.overrideState = empty ? null : body.overrideState;
   }
   if (Object.keys(data).length === 0) return { doc };
 
