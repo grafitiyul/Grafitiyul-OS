@@ -1,4 +1,4 @@
-import { composeQuoteDraftPreview, toPublicModel } from './composer.js';
+import { composeQuoteDraftPreview, toPublicModel, mergeOverrideState } from './composer.js';
 import { newPublicToken, ensureOffer } from './quoteDocument.js';
 
 // Produce ("הפק") — the FREEZE event of the quote module.
@@ -14,10 +14,17 @@ import { newPublicToken, ensureOffer } from './quoteDocument.js';
 // Version-number race: (offerId, versionNo) is DB-unique, so two concurrent
 // produce calls cannot mint the same number — the loser throws and the operator
 // simply retries.
-export async function produceQuoteDocument(client, draftId) {
+// opts.temporaryOverrideState: a one-shot override layer for THIS generation
+// only — merged into the snapshot (and recorded on the produced document as the
+// effective override state), but NEVER written to the draft. Future versions go
+// back to the Deal's persistent overrides.
+export async function produceQuoteDocument(client, draftId, opts = {}) {
   const draft = await client.quoteDocument.findUnique({ where: { id: draftId } });
   if (!draft) return { error: 'not_found' };
   if (draft.status !== 'draft') return { error: 'not_draft' };
+  const temporary = opts.temporaryOverrideState && typeof opts.temporaryOverrideState === 'object'
+    ? opts.temporaryOverrideState
+    : null;
 
   // Legacy drafts predate offers — adopt into the deal's primary offer.
   let offerId = draft.offerId;
@@ -27,9 +34,13 @@ export async function produceQuoteDocument(client, draftId) {
     await client.quoteDocument.update({ where: { id: draft.id }, data: { offerId } });
   }
 
-  const composed = await composeQuoteDraftPreview(client, draft.id);
+  const composed = await composeQuoteDraftPreview(client, draft.id, { overrideOverlay: temporary });
   if (composed.error) return composed;
   const snapshot = toPublicModel(composed.model);
+  // What actually produced this snapshot (audit) — persisted + one-shot merged.
+  const effectiveOverrideState = temporary
+    ? mergeOverrideState(draft.overrideState, temporary)
+    : draft.overrideState;
 
   const agg = await client.quoteDocument.aggregate({
     where: { offerId, versionNo: { not: null } },
@@ -48,7 +59,7 @@ export async function produceQuoteDocument(client, draftId) {
       publicToken: newPublicToken(),
       displayProductName: draft.displayProductName,
       compositionDraft: draft.compositionDraft ?? undefined,
-      overrideState: draft.overrideState ?? undefined,
+      overrideState: effectiveOverrideState ?? undefined,
       renderModelSnapshot: snapshot,
       producedAt: new Date(),
     },

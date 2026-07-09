@@ -615,7 +615,10 @@ export const api = {
     update: (id, data) =>
       request(`/api/quote-documents/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     composePreview: (id) => request(`/api/quote-documents/${id}/compose-preview`),
-    produce: (id) => request(`/api/quote-documents/${id}/produce`, { method: 'POST' }),
+    composePreviewWith: (id, body) =>
+      request(`/api/quote-documents/${id}/compose-preview`, { method: 'POST', body: JSON.stringify(body || {}) }),
+    produce: (id, body) =>
+      request(`/api/quote-documents/${id}/produce`, { method: 'POST', body: JSON.stringify(body || {}) }),
     resetToSource: (id) =>
       request(`/api/quote-documents/${id}/reset-to-source`, { method: 'POST' }),
   },

@@ -4,7 +4,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assembleComposition, composeQuoteDraftPreview, DEFAULT_QUOTE_BLOCKS, pickLang, toPublicModel, toPublicSignature, isLockedStatus } from './composer.js';
+import { assembleComposition, composeQuoteDraftPreview, DEFAULT_QUOTE_BLOCKS, pickLang, toPublicModel, toPublicSignature, isLockedStatus, mergeOverrideState } from './composer.js';
 import { ensureDraftQuoteDocument } from './quoteDocument.js';
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
@@ -474,6 +474,20 @@ test('toPublicSignature: customer-safe shape; null passthrough; never leaks crea
   assert.equal(pub.method, 'typed');
   assert.equal(pub.signerName, 'דנה');
   assert.equal(pub.timezone, 'Asia/Jerusalem');
+});
+
+// ── temporary vs persistent overrides ────────────────────────────────────────
+test('mergeOverrideState: overlay wins field-level, persisted fields survive', () => {
+  const base = { blocks: { faq: { html: '<p>קבוע</p>', title: 'שאלות' }, program: { html: '<p>תוכנית</p>' } } };
+  const overlay = { blocks: { faq: { html: '<p>זמני</p>' }, cancellation: { html: '<p>חדש</p>' } } };
+  const merged = mergeOverrideState(base, overlay);
+  assert.equal(merged.blocks.faq.html, '<p>זמני</p>', 'overlay html wins');
+  assert.equal(merged.blocks.faq.title, 'שאלות', 'persisted title survives');
+  assert.equal(merged.blocks.program.html, '<p>תוכנית</p>', 'untouched block survives');
+  assert.equal(merged.blocks.cancellation.html, '<p>חדש</p>', 'overlay-only block added');
+  // No overlay → the persisted state is returned untouched (never cloned away).
+  assert.equal(mergeOverrideState(base, null), base);
+  assert.equal(mergeOverrideState(null, null), null);
 });
 
 test('isLockedStatus: finalised statuses lock; draft and produced do not', () => {

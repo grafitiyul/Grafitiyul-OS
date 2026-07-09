@@ -531,11 +531,30 @@ const DEAL_INCLUDE = {
   contacts: { include: { contact: true } },
 };
 
+// PURE: merge a TEMPORARY override overlay on top of the persisted override
+// state. Field-level, overlay wins. Persisted overrides are the Deal's lasting
+// customization (carried into every future version); the overlay is one-shot —
+// used for a single preview/produce and never written to the draft.
+export function mergeOverrideState(base, overlay) {
+  if (!overlay || typeof overlay !== 'object' || !overlay.blocks) return base ?? null;
+  const baseBlocks = base?.blocks || {};
+  const overlayBlocks = overlay.blocks || {};
+  const blocks = {};
+  for (const key of new Set([...Object.keys(baseBlocks), ...Object.keys(overlayBlocks)])) {
+    blocks[key] = { ...(baseBlocks[key] || {}), ...(overlayBlocks[key] || {}) };
+  }
+  return { blocks };
+}
+
 // Client-injected loader: read everything and assemble. Read-only — no produce,
-// no persist. Returns { model } or { error }.
-export async function composeQuoteDraftPreview(client, id) {
-  const document = await client.quoteDocument.findUnique({ where: { id } });
-  if (!document) return { error: 'not_found' };
+// no persist. Returns { model } or { error }. opts.overrideOverlay applies a
+// one-shot override layer (see mergeOverrideState) without touching the draft.
+export async function composeQuoteDraftPreview(client, id, opts = {}) {
+  const stored = await client.quoteDocument.findUnique({ where: { id } });
+  if (!stored) return { error: 'not_found' };
+  const document = opts.overrideOverlay
+    ? { ...stored, overrideState: mergeOverrideState(stored.overrideState, opts.overrideOverlay) }
+    : stored;
 
   const deal = await client.deal.findUnique({ where: { id: document.dealId }, include: DEAL_INCLUDE });
   if (!deal) return { error: 'deal_not_found' };

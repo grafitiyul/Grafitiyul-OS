@@ -60,7 +60,9 @@ router.post(
 router.post(
   '/:id/produce',
   handle(async (req, res) => {
-    const r = await produceQuoteDocument(prisma, req.params.id);
+    const r = await produceQuoteDocument(prisma, req.params.id, {
+      temporaryOverrideState: req.body?.temporaryOverrideState || null,
+    });
     if (r.error === 'not_found' || r.error === 'deal_not_found') return res.status(404).json({ error: 'not_found' });
     if (r.error === 'not_draft') return res.status(409).json({ error: 'not_draft' });
     if (r.error) return res.status(400).json({ error: r.error });
@@ -91,6 +93,20 @@ router.get(
   '/:id/compose-preview',
   handle(async (req, res) => {
     const r = await composeQuoteDraftPreview(prisma, req.params.id);
+    if (r.error === 'not_found' || r.error === 'deal_not_found') return res.status(404).json({ error: r.error });
+    if (r.error) return res.status(400).json({ error: r.error });
+    res.json(r.model);
+  }),
+);
+
+// Same preview with a one-shot TEMPORARY override layer (never persisted) —
+// the generation modal previews unchecked-"apply to future versions" edits here.
+router.post(
+  '/:id/compose-preview',
+  handle(async (req, res) => {
+    const r = await composeQuoteDraftPreview(prisma, req.params.id, {
+      overrideOverlay: req.body?.overrideOverlay || null,
+    });
     if (r.error === 'not_found' || r.error === 'deal_not_found') return res.status(404).json({ error: r.error });
     if (r.error) return res.status(400).json({ error: r.error });
     res.json(r.model);
