@@ -53,6 +53,9 @@ export const ASSIGNMENT_ROLE_STYLES = {
   workshop_assistant: 'bg-gray-100 text-gray-600 ring-1 ring-inset ring-gray-200',
 };
 
+// Weekday labels, index = TourScheduleRule.weekday (0=Sunday, JS convention).
+export const WEEKDAY_LABELS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+
 // "יום ה׳ · 06/08/2026" — tours are day-of-week work; every list shows both.
 export function fmtTourDate(dateStr) {
   if (!dateStr) return '—';

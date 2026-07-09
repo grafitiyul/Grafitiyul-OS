@@ -3,12 +3,14 @@ import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import {
   GROUP_SLOT_REQUIRED_FIELDS,
+  SCHEDULE_RULE_REQUIRED_FIELDS,
   TOUR_EVENT_STATUSES,
   TOUR_LANGS,
   DATE_RE,
   TIME_RE,
   missingFields,
 } from '../tours/requiredFields.js';
+import { ensureGeneratedSlots, getTourSettings } from '../tours/slotGeneration.js';
 import { occupancyFor } from '../tours/occupancy.js';
 import {
   cancelDealBooking,
@@ -93,6 +95,14 @@ async function resolveVariant(productId, productVariantId) {
 router.get(
   '/',
   handle(async (req, res) => {
+    // Sync-on-read: materialize any group slots that entered the horizon
+    // since the last read (idempotent — cursor + unique guard, see
+    // slotGeneration.js). Never blocks the list on a generation hiccup.
+    try {
+      await ensureGeneratedSlots(prisma);
+    } catch (e) {
+      console.error('[tours] slot generation failed', e);
+    }
     const where = {};
     if (req.query.kind) where.kind = String(req.query.kind);
     if (req.query.status) where.status = String(req.query.status);
@@ -109,6 +119,159 @@ router.get(
     });
     const occ = await occupancyFor(prisma, tours.map((t) => t.id));
     res.json(tours.map((t) => toClientTour(t, occ[t.id])));
+  }),
+);
+
+// ---------- scheduling (Settings → Tours) ----------
+// Global settings singleton + recurring weekly rules. Registered BEFORE
+// '/:id'. Rule mutations trigger immediate generation so the tours list
+// reflects the schedule without waiting for the next read.
+
+const WEEKDAY_MIN = 0;
+const WEEKDAY_MAX = 6;
+
+function validateRuleFields(b, data) {
+  if (b.weekday !== undefined) {
+    const w = Number(b.weekday);
+    if (!Number.isInteger(w) || w < WEEKDAY_MIN || w > WEEKDAY_MAX) return 'invalid_weekday';
+    data.weekday = w;
+  }
+  if (b.startTime !== undefined) {
+    if (!TIME_RE.test(String(b.startTime || ''))) return 'invalid_time';
+    data.startTime = String(b.startTime);
+  }
+  if (b.tourLanguage !== undefined) {
+    if (!TOUR_LANGS.includes(b.tourLanguage)) return 'invalid_tour_language';
+    data.tourLanguage = b.tourLanguage;
+  }
+  if (b.capacity !== undefined) {
+    const n = Number(b.capacity);
+    if (!Number.isInteger(n) || n < 1) return 'invalid_capacity';
+    data.capacity = n;
+  }
+  if (b.active !== undefined) data.active = !!b.active;
+  return null;
+}
+
+const RULE_INCLUDE = {
+  product: { select: { id: true, nameHe: true } },
+  productVariant: {
+    select: { id: true, location: { select: { id: true, nameHe: true } } },
+  },
+};
+
+router.get(
+  '/scheduling',
+  handle(async (_req, res) => {
+    const [settings, rules] = await Promise.all([
+      getTourSettings(prisma),
+      prisma.tourScheduleRule.findMany({
+        orderBy: [{ weekday: 'asc' }, { startTime: 'asc' }],
+        include: RULE_INCLUDE,
+      }),
+    ]);
+    res.json({ settings, rules });
+  }),
+);
+
+router.put(
+  '/scheduling/settings',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const data = {};
+    if (b.defaultCapacity !== undefined) {
+      const n = Number(b.defaultCapacity);
+      if (!Number.isInteger(n) || n < 1) return res.status(400).json({ error: 'invalid_capacity' });
+      data.defaultCapacity = n;
+    }
+    if (b.generateDaysAhead !== undefined) {
+      const n = Number(b.generateDaysAhead);
+      if (!Number.isInteger(n) || n < 0 || n > 366) {
+        return res.status(400).json({ error: 'invalid_days_ahead' });
+      }
+      data.generateDaysAhead = n;
+    }
+    await getTourSettings(prisma); // ensure the singleton exists
+    const settings = await prisma.tourSettings.update({ where: { id: 'singleton' }, data });
+    // A larger horizon should materialize immediately.
+    try {
+      await ensureGeneratedSlots(prisma);
+    } catch (e) {
+      console.error('[tours] slot generation failed', e);
+    }
+    res.json(settings);
+  }),
+);
+
+router.post(
+  '/scheduling/rules',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const missing = missingFields(b, SCHEDULE_RULE_REQUIRED_FIELDS);
+    if (missing.length) {
+      return res.status(422).json({ error: 'missing_required_fields', missing });
+    }
+    const data = {};
+    const fieldErr = validateRuleFields(b, data);
+    if (fieldErr) return res.status(400).json({ error: fieldErr });
+    const variant = await resolveVariant(b.productId, b.productVariantId);
+    if (!variant) return res.status(400).json({ error: 'invalid_product_variant' });
+    data.productId = b.productId;
+    data.productVariantId = variant.id;
+
+    const rule = await prisma.tourScheduleRule.create({ data, include: RULE_INCLUDE });
+    try {
+      await ensureGeneratedSlots(prisma);
+    } catch (e) {
+      console.error('[tours] slot generation failed', e);
+    }
+    res.status(201).json(rule);
+  }),
+);
+
+router.put(
+  '/scheduling/rules/:ruleId',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const existing = await prisma.tourScheduleRule.findUnique({
+      where: { id: req.params.ruleId },
+    });
+    if (!existing) return res.status(404).json({ error: 'not_found' });
+    const data = {};
+    const fieldErr = validateRuleFields(b, data);
+    if (fieldErr) return res.status(400).json({ error: fieldErr });
+    if (b.productId !== undefined || b.productVariantId !== undefined) {
+      const productId = b.productId ?? existing.productId;
+      const productVariantId = b.productVariantId ?? existing.productVariantId;
+      const variant = await resolveVariant(productId, productVariantId);
+      if (!variant) return res.status(400).json({ error: 'invalid_product_variant' });
+      data.productId = productId;
+      data.productVariantId = variant.id;
+    }
+    // Recipe changes apply to FUTURE generation only — already-created slots
+    // are real TourEvents and stay as they are (edited individually if needed).
+    // Reactivating or rescheduling resumes from the existing cursor.
+    const rule = await prisma.tourScheduleRule.update({
+      where: { id: existing.id },
+      data,
+      include: RULE_INCLUDE,
+    });
+    try {
+      await ensureGeneratedSlots(prisma);
+    } catch (e) {
+      console.error('[tours] slot generation failed', e);
+    }
+    res.json(rule);
+  }),
+);
+
+router.delete(
+  '/scheduling/rules/:ruleId',
+  handle(async (req, res) => {
+    // Already-generated slots survive (loose generatedByRuleId ref) — deleting
+    // a rule only stops FUTURE generation.
+    await prisma.tourScheduleRule.delete({ where: { id: req.params.ruleId } });
+    res.status(204).end();
   }),
 );
 

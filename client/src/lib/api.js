@@ -1054,6 +1054,16 @@ export const api = {
         body: JSON.stringify({ tourEventId }),
       }),
     list: (params = {}) => request('/api/tours' + qs(params)),
+    // Scheduling (Settings → Tours): global settings + recurring weekly rules.
+    scheduling: () => request('/api/tours/scheduling'),
+    updateSchedulingSettings: (data) =>
+      request('/api/tours/scheduling/settings', { method: 'PUT', body: JSON.stringify(data) }),
+    createScheduleRule: (data) =>
+      request('/api/tours/scheduling/rules', { method: 'POST', body: JSON.stringify(data) }),
+    updateScheduleRule: (id, data) =>
+      request(`/api/tours/scheduling/rules/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    removeScheduleRule: (id) =>
+      request(`/api/tours/scheduling/rules/${id}`, { method: 'DELETE' }),
     // Orphaned bookings — tours intentionally kept when their deal left WON.
     orphans: () => request('/api/tours/orphans'),
     orphansCount: () => request('/api/tours/orphans/count'),

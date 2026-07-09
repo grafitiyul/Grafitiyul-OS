@@ -1720,6 +1720,7 @@ model Product {
   deals           Deal[]
   quoteOffers     QuoteOffer[]
   tourEvents      TourEvent[]
+  tourScheduleRules TourScheduleRule[]
 
   @@index([sortOrder])
 }
@@ -1770,6 +1771,7 @@ model ProductVariant {
   quoteImageLinks       ProductVariantQuoteImage[]
   quoteOffers           QuoteOffer[]
   tourEvents            TourEvent[]
+  tourScheduleRules     TourScheduleRule[]
 
   @@unique([productId, locationId])
   @@index([productId])
@@ -3016,6 +3018,46 @@ model Booking {
 
   @@index([tourEventId, status])
   @@index([dealId, status])
+}
+
+// Automatic group-slot scheduling. Each rule = one recurring weekly slot
+// (product + variant + language + weekday + time + capacity — per product
+// decision, so different products/languages can have their own recurring
+// schedules). Generation materializes REAL TourEvents (kind='group_slot') as
+// dates enter the horizon (TourSettings.generateDaysAhead).
+//
+// `generatedThrough` is the per-rule generation cursor ("slots exist up to
+// this date"): generation only creates dates BEYOND it, so an operator who
+// deletes an empty generated slot never sees it resurrected on the next read.
+// The (generatedByRuleId, date) unique on TourEvent guards concurrent runs.
+// Rules are the recipe — the slots are the truth: editing a rule never
+// mutates already-created slots.
+model TourScheduleRule {
+  id               String          @id @default(cuid())
+  product          Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productId        String?
+  productVariant   ProductVariant? @relation(fields: [productVariantId], references: [id], onDelete: SetNull)
+  productVariantId String?
+  weekday          Int // 0=ראשון … 6=שבת (JS getDay convention)
+  startTime        String // "HH:MM"
+  tourLanguage     String
+  capacity         Int
+  active           Boolean         @default(true)
+  generatedThrough String? // "YYYY-MM-DD" generation cursor
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@index([active, weekday])
+}
+
+// Tours module global settings — a singleton row (id='singleton'), created
+// lazily on first read. defaultCapacity seeds new rules/slots in the UI;
+// generateDaysAhead is the auto-generation horizon.
+model TourSettings {
+  id                String   @id @default("singleton")
+  defaultCapacity   Int      @default(30)
+  generateDaysAhead Int      @default(60)
+  updatedAt         DateTime @updatedAt
 }
 
 // Guide assignment — a staff member (PersonRef, the GOS staff SSOT) working a

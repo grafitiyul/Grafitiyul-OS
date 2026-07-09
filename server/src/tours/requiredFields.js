@@ -28,6 +28,7 @@ export const FIELD_LABELS_HE = {
   date: 'תאריך',
   startTime: 'שעה',
   capacity: 'קיבולת',
+  weekday: 'יום בשבוע',
 };
 
 // WON gate, per Deal.activityType. Private/business deals must be fully
@@ -64,6 +65,17 @@ export const GROUP_SLOT_REQUIRED_FIELDS = [
   'productId',
   'productVariantId',
   'date',
+  'startTime',
+  'tourLanguage',
+  'capacity',
+];
+
+// Automatic scheduling rule (Settings → Tours). Per product decision each
+// rule carries its own Product/Variant/Language/Weekday/Time/Capacity.
+export const SCHEDULE_RULE_REQUIRED_FIELDS = [
+  'productId',
+  'productVariantId',
+  'weekday',
   'startTime',
   'tourLanguage',
   'capacity',
