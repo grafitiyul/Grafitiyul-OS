@@ -44,6 +44,7 @@ import CrmSettingsPage from './admin/crm/settings/CrmSettingsPage.jsx';
 import DealsList from './admin/deals/DealsList.jsx';
 import DealDetail from './admin/deals/DealDetail.jsx';
 import QuotePreviewCanvas from './admin/quote/QuotePreviewCanvas.jsx';
+import QuoteSnapshotView from './admin/quote/QuoteSnapshotView.jsx';
 import CustomerQuoteView from './quote/CustomerQuoteView.jsx';
 // Global Settings module (low-frequency configuration).
 import SettingsHome from './admin/settings/SettingsHome.jsx';
@@ -157,6 +158,9 @@ export default function App() {
         {/* Quote Preview Canvas (Slice 3) — internal admin draft workspace,
             opened from a Deal. NOT the public quote page. */}
         <Route path="quote/:dealId" element={<QuotePreviewCanvas />} />
+        {/* Admin archive view of a generated quote's frozen snapshot (the
+            public URL of a superseded version shows the replacement screen). */}
+        <Route path="quote-view/:docId" element={<QuoteSnapshotView />} />
         {/* Global Settings — category cards. CRM Settings (incl. the
             Organization Types / Subtypes / Deal Stages screen) lives here,
             no longer as a prominent CRM tab. */}

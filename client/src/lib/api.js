@@ -428,6 +428,11 @@ export const api = {
     quoteDocuments: (id) => request(`/api/deals/${id}/quote-documents`),
     sendQuoteEmail: (id, data) =>
       request(`/api/deals/${id}/send-quote-email`, { method: 'POST', body: JSON.stringify(data) }),
+    createQuoteOffer: (id) => request(`/api/deals/${id}/quote-offers`, { method: 'POST' }),
+    activateQuoteOffer: (id, offerId) =>
+      request(`/api/deals/${id}/quote-offers/${offerId}/activate`, { method: 'POST' }),
+    setPrimaryQuoteOffer: (id, offerId) =>
+      request(`/api/deals/${id}/quote-offers/${offerId}/primary`, { method: 'PUT' }),
     // Permanent customer payment URL — ensures the deal's payment token and
     // returns { token, paymentUrl } (always the SAME URL for a deal). The
     // underlying iCount link is generated/refreshed lazily by GET /pay/:token.

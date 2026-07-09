@@ -8,6 +8,7 @@ import {
   listDealQuoteDocuments,
   toClientQuoteDocument,
 } from '../quote/quoteDocument.js';
+import { createParallelOffer, activateOffer, setPrimaryOffer } from '../quote/quoteOffers.js';
 import { ensurePaymentToken, paymentUrlFor, resolvePublicOrigin } from '../dealPayment.js';
 import { recordDealChanges, recordDealContactChange, DEAL_DIFF_SELECT } from '../timeline/dealChangelog.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
@@ -625,8 +626,42 @@ router.get(
 router.get(
   '/:id/quote-documents',
   handle(async (req, res) => {
-    const offers = await listDealQuoteDocuments(prisma, req.params.id);
-    res.json({ offers, publicOrigin: resolvePublicOrigin(req) });
+    const r = await listDealQuoteDocuments(prisma, req.params.id);
+    res.json({ ...r, publicOrigin: resolvePublicOrigin(req) });
+  }),
+);
+
+// Create a parallel offer (independent commercial alternative — its own
+// versions, history and permanent URLs) and make it the active one.
+router.post(
+  '/:id/quote-offers',
+  handle(async (req, res) => {
+    const r = await createParallelOffer(prisma, req.params.id);
+    if (r.error === 'not_found') return res.status(404).json({ error: 'not_found' });
+    if (r.error) return res.status(400).json({ error: r.error });
+    res.json({ offer: { id: r.offer.id, offerNo: r.offer.offerNo, isPrimary: r.offer.isPrimary } });
+  }),
+);
+
+// Switch the ACTIVE offer (Builder context + generation target).
+router.post(
+  '/:id/quote-offers/:offerId/activate',
+  handle(async (req, res) => {
+    const r = await activateOffer(prisma, req.params.id, req.params.offerId);
+    if (r.error === 'not_found') return res.status(404).json({ error: 'not_found' });
+    if (r.error) return res.status(400).json({ error: r.error });
+    res.json({ ok: true });
+  }),
+);
+
+// Exactly one primary offer per deal — what a WON deal refers to.
+router.put(
+  '/:id/quote-offers/:offerId/primary',
+  handle(async (req, res) => {
+    const r = await setPrimaryOffer(prisma, req.params.id, req.params.offerId);
+    if (r.error === 'not_found') return res.status(404).json({ error: 'not_found' });
+    if (r.error) return res.status(400).json({ error: r.error });
+    res.json({ ok: true });
   }),
 );
 

@@ -565,12 +565,15 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
           </div>
         </Card>
 
-        {/* Quote Module — generation + management. Before the first generated
-            quote: the "הפק הצעת מחיר" entry (opens the generation modal). After:
-            a management card (status, date, language, permanent public URL). */}
-        <Card variant="panel" title="הצעת מחיר">
-          <DealQuoteCard deal={deal} />
-        </Card>
+        {/* Quote Module — the COMPLETE proposal workspace (business deals only:
+            group/private deals don't send proposals). Generation, versions,
+            history, parallel offers, primary, permanent public URLs — all here;
+            no proposal actions live anywhere else in the Deal UI. */}
+        {deal.activityType === 'business' && (
+          <Card variant="panel" title="הצעת מחיר">
+            <DealQuoteCard deal={deal} />
+          </Card>
+        )}
 
       {deal.status === 'lost' && (
         <Card variant="panel" title="פרטי LOST">
@@ -1398,10 +1401,12 @@ function FieldBox({ label, children }) {
 // arrow) and "פעולות" (general deal actions) are shared. The payment actions are
 // LIVE; the "פעולות" items are placeholders. When tour bookings exist, a Group
 // deal's primary will switch from "שבץ לסיור" to "החלף סיור" based on assignment.
+// Business deals get NO primary action here — quote generation lives solely in
+// the dedicated הצעת מחיר card (the complete proposal workspace).
 function dealPrimaryAction(activityType, groupAssigned) {
   if (activityType === 'private') return 'צור סיור';
   if (activityType === 'group') return groupAssigned ? 'החלף סיור' : 'שבץ לסיור';
-  return 'הפק הצעת מחיר'; // business + default
+  return null;
 }
 // Prefill contact — mirror of the server's pick (dealPayment.js): first contact
 // flagged to receive payment links, else the primary/first contact.
@@ -1625,10 +1630,12 @@ function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
 
   return (
     <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-gray-100">
-      <button type="button" title={soon}
-        className="rounded-lg bg-blue-600 text-white text-sm font-semibold px-4 py-2 hover:bg-blue-700">
-        {dealPrimaryAction(deal.activityType, groupAssigned)}
-      </button>
+      {dealPrimaryAction(deal.activityType, groupAssigned) && (
+        <button type="button" title={soon}
+          className="rounded-lg bg-blue-600 text-white text-sm font-semibold px-4 py-2 hover:bg-blue-700">
+          {dealPrimaryAction(deal.activityType, groupAssigned)}
+        </button>
+      )}
       {/* Payment split button: the body opens the permanent payment link; the
           arrow opens the payment/accounting actions menu. */}
       <SplitButton

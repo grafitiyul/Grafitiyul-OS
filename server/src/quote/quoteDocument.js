@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { diffQuoteSnapshots } from './historyDiff.js';
 
 // Quote Module — Slice 1 service (foundation only).
 //
@@ -148,7 +149,11 @@ export async function ensureDraftQuoteDocument(client, dealId) {
 
 // All offers of a deal with their PRODUCED documents (newest version first) —
 // feeds the Deal quote card and the quote-history popup. Drafts are excluded:
-// they are the working copy, not a generated quote.
+// they are the working copy, not a generated quote. Each document carries
+// `changes` — Hebrew labels of what differs from the PREVIOUS version of the
+// same offer (computed from the immutable snapshots; admin-only, never public).
+// `activeOfferId` marks the offer whose pricing version the Builder currently
+// edits (isWorking) — the offer a new generation goes into.
 export async function listDealQuoteDocuments(client, dealId) {
   const offers = await client.quoteOffer.findMany({
     where: { dealId },
@@ -161,22 +166,31 @@ export async function listDealQuoteDocuments(client, dealId) {
       },
     },
   });
-  return offers.map((o) => ({
-    id: o.id,
-    offerNo: o.offerNo,
-    isPrimary: o.isPrimary,
-    documents: o.quoteDocuments.map((d) => ({
-      id: d.id,
-      status: d.status,
-      language: d.language,
-      versionNo: d.versionNo,
-      publicToken: d.publicToken,
-      producedAt: d.producedAt,
-      expiresAt: d.expiresAt,
-      signedAt: d.signature?.signedAt || null,
-      signerName: d.signature?.signerName || null,
+  const working = await client.quoteVersion.findFirst({
+    where: { dealId, isWorking: true },
+    select: { offerId: true },
+  });
+  return {
+    activeOfferId: working?.offerId ?? null,
+    offers: offers.map((o) => ({
+      id: o.id,
+      offerNo: o.offerNo,
+      isPrimary: o.isPrimary,
+      documents: o.quoteDocuments.map((d, i) => ({
+        id: d.id,
+        status: d.status,
+        language: d.language,
+        versionNo: d.versionNo,
+        publicToken: d.publicToken,
+        producedAt: d.producedAt,
+        expiresAt: d.expiresAt,
+        signedAt: d.signature?.signedAt || null,
+        signerName: d.signature?.signerName || null,
+        // vs the previous version (list is newest-first → previous is i+1).
+        changes: diffQuoteSnapshots(o.quoteDocuments[i + 1]?.renderModelSnapshot, d.renderModelSnapshot),
+      })),
     })),
-  }));
+  };
 }
 
 // Read one QuoteDocument by id. Returns { error:'not_found' } if absent.

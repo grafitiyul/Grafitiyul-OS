@@ -1,16 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../../lib/api.js';
 import GenerateQuoteModal from './GenerateQuoteModal.jsx';
+import QuoteHistoryDialog from './QuoteHistoryDialog.jsx';
 
-// The Deal's Quote card body (right panel). Two states:
-//   • No generated quote yet → the "הפק הצעת מחיר" entry (opens the generation
-//     modal) + a small link to the content editor.
-//   • Generated → a management card for the PRIMARY offer's latest version:
-//     status, generated date, language, the permanent public URL + copy.
-// Every generated quote is an immutable snapshot; the URL never changes and
-// never re-points. History / parallel offers / primary switching come next
-// (Slices 2B/2C) — the data shape (offers[]) already carries them.
+// The Deal's Quote card — the COMPLETE proposal workspace (business deals only).
+// Everything proposal-related lives here: generate, versions, history, parallel
+// offers, primary, permanent public links. Generated documents are immutable
+// snapshots forever; the Deal's working draft carries wording forward.
+//
+// Offers = parallel commercial alternatives (tabs). The ACTIVE offer (the one
+// the Builder prices and a new generation goes into) follows the selected tab —
+// selecting a tab activates it server-side. Exactly one offer is PRIMARY (what
+// a WON deal refers to).
 
 const STATUS_LABELS = {
   produced: { text: 'הופקה', cls: 'bg-blue-50 text-blue-700 ring-blue-200' },
@@ -19,37 +20,100 @@ const STATUS_LABELS = {
   expired: { text: 'פג תוקף', cls: 'bg-gray-100 text-gray-500 ring-gray-200' },
 };
 
-function fmtDate(v) {
+export function quoteStatusOf(doc) {
+  if (!doc) return null;
+  return doc.signedAt ? STATUS_LABELS.accepted : STATUS_LABELS[doc.status] || STATUS_LABELS.produced;
+}
+
+export function fmtQuoteDate(v) {
   if (!v) return '—';
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
+const CopyIcon = (p) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="15" height="15" {...p}>
+    <rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" />
+  </svg>
+);
+const EyeIcon = (p) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="15" height="15" {...p}>
+    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" />
+  </svg>
+);
+const CheckIcon = (p) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" width="15" height="15" {...p}>
+    <path d="M20 6 9 17l-5-5" />
+  </svg>
+);
+
 export default function DealQuoteCard({ deal }) {
-  const [offers, setOffers] = useState(null); // null = loading
+  const [data, setData] = useState(null); // { activeOfferId, offers }
+  const [selectedOfferId, setSelectedOfferId] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const menuRef = useRef(null);
 
   const load = useCallback(async () => {
     try {
       const r = await api.deals.quoteDocuments(deal.id);
-      setOffers(r.offers || []);
+      setData(r);
+      setSelectedOfferId((cur) => cur && r.offers.some((o) => o.id === cur) ? cur : (r.activeOfferId || r.offers[0]?.id || null));
     } catch {
-      setOffers([]);
+      setData({ activeOfferId: null, offers: [] });
     }
   }, [deal.id]);
 
   useEffect(() => { load(); }, [load]);
 
-  // The card fronts the PRIMARY offer's newest version.
-  const latest = useMemo(() => {
-    const list = offers || [];
-    const primary = list.find((o) => o.isPrimary) || list[0] || null;
-    return primary?.documents?.[0] || null;
-  }, [offers]);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (e) => { if (!menuRef.current?.contains(e.target)) setMenuOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [menuOpen]);
 
+  const offers = data?.offers || [];
+  const selected = offers.find((o) => o.id === selectedOfferId) || offers[0] || null;
+  const latest = selected?.documents?.[0] || null;
   const url = latest ? `${window.location.origin}/quote/${latest.publicToken}` : null;
-  const status = latest ? (latest.signedAt ? STATUS_LABELS.accepted : STATUS_LABELS[latest.status] || STATUS_LABELS.produced) : null;
+  const status = quoteStatusOf(latest);
+  const hasAnyDoc = offers.some((o) => o.documents.length > 0);
+
+  // Selecting an offer tab also makes it ACTIVE (Builder + generation target).
+  async function selectOffer(offerId) {
+    if (offerId === selectedOfferId || busy) return;
+    setSelectedOfferId(offerId);
+    if (offerId !== data?.activeOfferId) {
+      setBusy(true);
+      try { await api.deals.activateQuoteOffer(deal.id, offerId); await load(); }
+      finally { setBusy(false); }
+    }
+  }
+
+  async function createParallel() {
+    if (busy) return;
+    setMenuOpen(false);
+    setBusy(true);
+    try {
+      const r = await api.deals.createQuoteOffer(deal.id);
+      await load();
+      if (r?.offer?.id) setSelectedOfferId(r.offer.id);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function makePrimary() {
+    if (!selected || busy) return;
+    setMenuOpen(false);
+    setBusy(true);
+    try { await api.deals.setPrimaryQuoteOffer(deal.id, selected.id); await load(); }
+    finally { setBusy(false); }
+  }
 
   async function copyUrl() {
     if (!url) return;
@@ -62,21 +126,75 @@ export default function DealQuoteCard({ deal }) {
 
   return (
     <div>
+      {/* header row: offer tabs (only when parallel offers exist) + ⋮ menu */}
+      <div className="mb-2 flex items-center gap-2">
+        {offers.length > 1 && (
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+            {offers.map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                disabled={busy}
+                onClick={() => selectOffer(o.id)}
+                className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium ring-1 transition disabled:opacity-50 ${
+                  o.id === selected?.id
+                    ? 'bg-gray-900 text-white ring-gray-900'
+                    : 'bg-white text-gray-600 ring-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                הצעה {o.offerNo}
+                {o.isPrimary && (
+                  <span className={`rounded-full px-1.5 text-[9.5px] font-bold ${o.id === selected?.id ? 'bg-white/20 text-white' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'}`}>
+                    ראשית
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="relative ms-auto" ref={menuRef}>
+          <button
+            type="button"
+            onClick={() => setMenuOpen((o) => !o)}
+            title="פעולות"
+            className="rounded-lg px-2 py-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+          >
+            ⋮
+          </button>
+          {menuOpen && (
+            <div className="absolute left-0 top-8 z-30 w-56 rounded-xl border border-gray-200 bg-white py-1 text-right shadow-xl">
+              <button type="button" onClick={createParallel} disabled={busy}
+                className="block w-full px-3 py-2 text-right text-[13px] text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                ＋ צור הצעה מקבילה
+              </button>
+              {selected && !selected.isPrimary && (
+                <button type="button" onClick={makePrimary} disabled={busy}
+                  className="block w-full px-3 py-2 text-right text-[13px] text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                  ★ הפוך לראשית
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
       {!latest ? (
         <>
-          <p className="mb-3 text-[12px] text-gray-500">הפקת מסמך הצעת מחיר ללקוח — תצוגה מקדימה, הפקה ושליחה.</p>
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setModalOpen(true)}
-              className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-            >
-              📄 הפק הצעת מחיר
+          <p className="mb-3 text-[12px] text-gray-500">
+            {offers.length > 1 ? `להצעה ${selected?.offerNo} עדיין לא הופקה גרסה.` : 'הפקת מסמך הצעת מחיר ללקוח — תצוגה מקדימה, הפקה ושליחה.'}
+          </p>
+          <button
+            type="button"
+            onClick={() => setModalOpen(true)}
+            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+          >
+            📄 הפק הצעת מחיר
+          </button>
+          {hasAnyDoc && (
+            <button type="button" onClick={() => setHistoryOpen(true)} className="ms-3 text-[12px] text-gray-400 hover:text-gray-600 hover:underline">
+              היסטוריית הצעות
             </button>
-            <Link to={`/admin/quote/${deal.id}`} className="text-[12px] text-blue-700 hover:underline">
-              עריכת תוכן ↗
-            </Link>
-          </div>
+          )}
         </>
       ) : (
         <div className="space-y-2.5">
@@ -86,26 +204,37 @@ export default function DealQuoteCard({ deal }) {
             </span>
             <span className="text-[12px] text-gray-500">גרסה {latest.versionNo ?? 1}</span>
             <span className="text-[12px] text-gray-400">·</span>
-            <span className="text-[12px] text-gray-500">הופקה {fmtDate(latest.producedAt)}</span>
+            <span className="text-[12px] text-gray-500">הופקה {fmtQuoteDate(latest.producedAt)}</span>
             <span className="text-[12px] text-gray-400">·</span>
             <span className="text-[12px] text-gray-500">{latest.language === 'en' ? 'English' : 'עברית'}</span>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1">
             <input
               readOnly
               dir="ltr"
               value={url}
               onFocus={(e) => e.target.select()}
-              className="w-full min-w-0 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5 text-[12px] text-gray-600 focus:outline-none"
+              className="w-full min-w-0 flex-1 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5 text-[12px] text-gray-600 focus:outline-none"
             />
             <button
               type="button"
               onClick={copyUrl}
               title="העתק קישור"
-              className="shrink-0 rounded-lg border border-gray-300 px-2.5 py-1.5 text-[12px] text-gray-700 hover:bg-gray-50"
+              aria-label="העתק קישור"
+              className={`shrink-0 rounded-lg border border-gray-300 p-1.5 hover:bg-gray-50 ${copied ? 'text-emerald-600' : 'text-gray-600'}`}
             >
-              {copied ? '✓' : '⧉ העתק'}
+              {copied ? <CheckIcon /> : <CopyIcon />}
             </button>
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="צפייה בהצעה"
+              aria-label="צפייה בהצעה"
+              className="shrink-0 rounded-lg border border-gray-300 p-1.5 text-gray-600 hover:bg-gray-50"
+            >
+              <EyeIcon />
+            </a>
           </div>
           <div className="flex items-center gap-3 pt-0.5">
             <button
@@ -115,12 +244,9 @@ export default function DealQuoteCard({ deal }) {
             >
               הפק גרסה חדשה
             </button>
-            <a href={url} target="_blank" rel="noopener noreferrer" className="text-[12px] text-blue-700 hover:underline">
-              צפייה ↗
-            </a>
-            <Link to={`/admin/quote/${deal.id}`} className="text-[12px] text-blue-700 hover:underline">
-              עריכת תוכן ↗
-            </Link>
+            <button type="button" onClick={() => setHistoryOpen(true)} className="text-[12px] text-gray-400 hover:text-gray-600 hover:underline">
+              היסטוריית הצעות
+            </button>
           </div>
         </div>
       )}
@@ -132,6 +258,9 @@ export default function DealQuoteCard({ deal }) {
           deal={deal}
           onGenerated={() => load()}
         />
+      )}
+      {historyOpen && (
+        <QuoteHistoryDialog open onClose={() => setHistoryOpen(false)} offers={offers} />
       )}
     </div>
   );
