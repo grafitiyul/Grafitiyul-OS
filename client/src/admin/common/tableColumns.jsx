@@ -14,6 +14,8 @@ import {
   toggleVisibleKey,
   moveKey,
   orderedVisibleColumns,
+  setKeyWidth,
+  MIN_COL_WIDTH,
 } from './tableColumnsCore.js';
 
 // Reusable table-column infrastructure, shared by the CRM list screens
@@ -64,7 +66,19 @@ export function useTableColumns(storageKey, columns) {
   function moveCol(fromKey, toKey) {
     setState((s) => ({ ...s, order: moveKey(s.order, fromKey, toKey) }));
   }
-  return { colKeys: state.visible, toggleCol, moveCol, visibleCols, orderedColumns };
+  // Committed once per resize drag (on release), then persisted like the rest.
+  function setColWidth(key, px, min) {
+    setState((s) => ({ ...s, widths: setKeyWidth(s.widths, key, px, min) }));
+  }
+  return {
+    colKeys: state.visible,
+    toggleCol,
+    moveCol,
+    setColWidth,
+    widths: state.widths,
+    visibleCols,
+    orderedColumns,
+  };
 }
 
 // "עמודות" picker — toggles which columns the table shows. Portal-anchored menu
@@ -124,6 +138,12 @@ export function ColumnPicker({ columns, colKeys, onToggle, label = 'עמודות
 
 const TH_BASE = 'text-[11px] uppercase tracking-wide font-semibold px-4 py-2.5';
 
+// Column separator — a whisper of a line on each cell's inline-start edge
+// (logical property → RTL-correct), skipped on the first cell. Lighter than
+// the gray-100 row dividers so the grid reads as a premium list, not a
+// spreadsheet.
+export const COL_SEP = 'border-s border-gray-100/70 first:border-s-0';
+
 // RTL table alignment convention: everything sits on the RIGHT by default —
 // headers and values alike — so the table reads naturally right-to-left.
 // `col.align` ('left' | 'center') is an explicit, per-column override for the
@@ -137,27 +157,78 @@ function alignClass(col) {
 // Keep the drag strictly horizontal — headers only ever move along the row.
 const horizontalOnly = ({ transform }) => ({ ...transform, y: 0 });
 
-function SortableTh({ col, className, sort, onSort }) {
+function SortableTh({ col, className, sort, onSort, width, onResize }) {
   const s = useSortable({ id: col.key });
+  const thRef = useRef(null);
+  const setRefs = (el) => {
+    s.setNodeRef(el);
+    thRef.current = el;
+  };
   // Click = sort (when the screen opts in via onSort and the column allows
   // it); drag past the 8px activation distance = reorder. dnd-kit only
   // swallows the click once a real drag started, so both coexist.
   const sortable = !!onSort && col.sortable !== false;
   const active = sortable && sort?.key === col.key;
+
+  // Resize: drag the header's inline-end edge. Width tracks the pointer
+  // imperatively (no re-render per move) and is committed + persisted once on
+  // release. Direction-aware so RTL drags grow the column naturally.
+  function startResize(e) {
+    const th = thRef.current;
+    if (!th) return;
+    e.preventDefault();
+    e.stopPropagation(); // never start a dnd column drag from the handle
+    const startX = e.clientX;
+    const startW = th.offsetWidth;
+    const rtl = getComputedStyle(th).direction === 'rtl';
+    const min = col.minWidth || MIN_COL_WIDTH;
+    let w = startW;
+    function onMove(ev) {
+      const delta = rtl ? startX - ev.clientX : ev.clientX - startX;
+      w = Math.max(min, Math.round(startW + delta));
+      th.style.width = `${w}px`;
+    }
+    function onUp() {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      onResize(col.key, w, min);
+    }
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+  }
+
   return (
     <th
-      ref={s.setNodeRef}
-      style={{ transform: CSS.Transform.toString(s.transform), transition: s.transition }}
+      ref={setRefs}
+      style={{
+        transform: CSS.Transform.toString(s.transform),
+        transition: s.transition,
+        width: width ? `${width}px` : undefined,
+      }}
       {...s.attributes}
       {...s.listeners}
       onClick={sortable ? () => onSort(col.key) : undefined}
       title={sortable ? 'לחיצה למיון · גרירה לשינוי סדר' : 'גרירה לשינוי סדר העמודות'}
-      className={`${TH_BASE} ${alignClass(col)} cursor-grab select-none active:cursor-grabbing ${
+      className={`${TH_BASE} ${COL_SEP} ${alignClass(col)} relative cursor-grab select-none active:cursor-grabbing ${
         s.isDragging ? 'z-10 rounded-md bg-blue-50 text-blue-700 shadow-sm' : ''
       } ${active ? 'text-blue-700' : ''} ${className || ''}`}
     >
       {col.label}
       {active && <span className="ms-1 text-[9px]">{sort.dir === 'asc' ? '▲' : '▼'}</span>}
+      {onResize && (
+        <span
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={`שינוי רוחב ${col.label}`}
+          onPointerDown={startResize}
+          onClick={(e) => e.stopPropagation()}
+          className="absolute inset-y-0 end-0 w-1.5 cursor-col-resize touch-none rounded hover:bg-blue-300/60"
+        />
+      )}
     </th>
   );
 }
@@ -169,7 +240,7 @@ function SortableTh({ col, className, sort, onSort }) {
 export function TableCell({ col = {}, className = '', stopClick = false, children }) {
   return (
     <td
-      className={`px-4 py-3 align-middle ${alignClass(col)} ${col.cls || ''} ${className}`}
+      className={`px-4 py-3 align-middle ${COL_SEP} ${alignClass(col)} ${col.cls || ''} ${className}`}
       dir={col.dir}
       onClick={stopClick ? (e) => e.stopPropagation() : undefined}
     >
@@ -178,7 +249,17 @@ export function TableCell({ col = {}, className = '', stopClick = false, childre
   );
 }
 
-export function SortableHeaderRow({ cols, onMove, trClassName = '', thClassName, sort, onSort, children }) {
+export function SortableHeaderRow({
+  cols,
+  onMove,
+  trClassName = '',
+  thClassName,
+  sort,
+  onSort,
+  widths,
+  onResize,
+  children,
+}) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   function onDragEnd({ active, over }) {
     if (over && active.id !== over.id) onMove(active.id, over.id);
@@ -199,6 +280,8 @@ export function SortableHeaderRow({ cols, onMove, trClassName = '', thClassName,
               className={thClassName ? thClassName(c) : ''}
               sort={sort}
               onSort={onSort}
+              width={widths?.[c.key]}
+              onResize={onResize}
             />
           ))}
           {children}

@@ -138,7 +138,7 @@ export default function CollectionPage() {
     saveFilters({ search, status });
   }, [search, status]);
 
-  const { colKeys, toggleCol, moveCol, visibleCols, orderedColumns } =
+  const { colKeys, toggleCol, moveCol, setColWidth, widths, visibleCols, orderedColumns } =
     useTableColumns(COLUMNS_KEY, COLUMNS);
 
   useEffect(() => {
@@ -273,9 +273,11 @@ export default function CollectionPage() {
                   onMove={moveCol}
                   sort={sort}
                   onSort={onSort}
+                  widths={widths}
+                  onResize={setColWidth}
                   trClassName="text-gray-500 bg-gray-50/70 border-b border-gray-100"
                 >
-                  <th className="w-10" />
+                  <th className="w-10 border-s border-gray-100/70" />
                 </SortableHeaderRow>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -288,7 +290,7 @@ export default function CollectionPage() {
                     {visibleCols.map((c) => (
                       <TableCell key={c.key} col={c}>{c.render(d)}</TableCell>
                     ))}
-                    <td className="px-4 py-3 align-middle" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-4 py-3 align-middle border-s border-gray-100/70" onClick={(e) => e.stopPropagation()}>
                       <button
                         type="button"
                         onClick={() => navigate(`/admin/crm/deals/${d.id}`)}

@@ -1,8 +1,11 @@
 // Pure column-state logic behind the shared table infrastructure
 // (tableColumns.jsx). No React, no DOM — unit-testable with node --test.
 //
-// Persisted state per table: { visible: [keys], order: [keys] }.
+// Persisted state per table: { visible: [keys], order: [keys], widths: {key: px} }.
 // Legacy format (a plain array of visible keys, pre-reorder) is still read.
+
+// Columns may not collapse below this (a column's `minWidth` can raise it).
+export const MIN_COL_WIDTH = 60;
 
 // Normalize whatever localStorage holds into a valid { visible, order }:
 // unknown keys are dropped, columns added to the app since the save are
@@ -32,7 +35,27 @@ export function normalizeColumnState(raw, canonicalKeys, defaultVisible) {
 
   const order = (rawOrder || []).filter((k) => known.has(k));
   for (const k of canonicalKeys) if (!order.includes(k)) order.push(k);
-  return { visible, order };
+
+  // Saved widths: unknown keys dropped, values clamped to the floor.
+  const rawWidths =
+    !legacy && raw && typeof raw === 'object' && raw.widths && typeof raw.widths === 'object'
+      ? raw.widths
+      : null;
+  const widths = {};
+  if (rawWidths) {
+    for (const k of Object.keys(rawWidths)) {
+      const v = Number(rawWidths[k]);
+      if (known.has(k) && Number.isFinite(v)) widths[k] = Math.max(MIN_COL_WIDTH, Math.round(v));
+    }
+  }
+  return { visible, order, widths };
+}
+
+// Commit a header-edge drag: clamp to the column's minimum and round to px.
+export function setKeyWidth(widths, key, px, min = MIN_COL_WIDTH) {
+  const v = Number(px);
+  if (!Number.isFinite(v)) return widths;
+  return { ...widths, [key]: Math.max(min, Math.round(v)) };
 }
 
 // Toggle a column's visibility. Never allows hiding the last visible column.

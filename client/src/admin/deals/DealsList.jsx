@@ -138,7 +138,7 @@ export default function DealsList() {
 
   // Visible table columns + user order — persisted via the shared hook
   // (column chooser + drag-reorderable headers).
-  const { colKeys, toggleCol, moveCol, visibleCols, orderedColumns } =
+  const { colKeys, toggleCol, moveCol, setColWidth, widths, visibleCols, orderedColumns } =
     useTableColumns(COLUMNS_KEY, COLUMNS);
 
   async function refresh() {
@@ -303,9 +303,11 @@ export default function DealsList() {
                   <SortableHeaderRow
                     cols={visibleCols}
                     onMove={moveCol}
+                    widths={widths}
+                    onResize={setColWidth}
                     trClassName="text-gray-500 bg-gray-50/70 border-b border-gray-100"
                   >
-                    <Th className="w-10" />
+                    <Th className="w-10 border-s border-gray-100/70" />
                   </SortableHeaderRow>
                 </thead>
                 <tbody className="divide-y divide-gray-100">

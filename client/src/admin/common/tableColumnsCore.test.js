@@ -5,6 +5,8 @@ import {
   toggleVisibleKey,
   moveKey,
   orderedVisibleColumns,
+  setKeyWidth,
+  MIN_COL_WIDTH,
 } from './tableColumnsCore.js';
 
 const KEYS = ['a', 'b', 'c', 'd'];
@@ -64,6 +66,27 @@ test('orderedVisibleColumns renders user order with visibility applied', () => {
   const columns = KEYS.map((k) => ({ key: k, label: k }));
   const out = orderedVisibleColumns(columns, { visible: ['a', 'c'], order: ['c', 'b', 'a', 'd'] });
   assert.deepEqual(out.map((c) => c.key), ['c', 'a']);
+});
+
+test('widths: restored per key, unknown keys dropped, clamped to the floor', () => {
+  const s = normalizeColumnState(
+    { visible: ['a'], order: ['a', 'b', 'c', 'd'], widths: { a: 240, b: 10, zz: 300, c: 'garbage' } },
+    KEYS,
+    DEFAULTS,
+  );
+  assert.deepEqual(s.widths, { a: 240, b: MIN_COL_WIDTH });
+});
+
+test('widths: legacy array save and missing widths → empty map', () => {
+  assert.deepEqual(normalizeColumnState(['a'], KEYS, DEFAULTS).widths, {});
+  assert.deepEqual(normalizeColumnState({ visible: ['a'], order: ['a', 'b'] }, KEYS, DEFAULTS).widths, {});
+});
+
+test('setKeyWidth clamps to min (default and per-column) and rounds', () => {
+  assert.deepEqual(setKeyWidth({}, 'a', 240.6), { a: 241 });
+  assert.deepEqual(setKeyWidth({ a: 240 }, 'a', 5), { a: MIN_COL_WIDTH });
+  assert.deepEqual(setKeyWidth({}, 'a', 90, 120), { a: 120 }); // col.minWidth wins
+  assert.deepEqual(setKeyWidth({ a: 240 }, 'a', NaN), { a: 240 }); // garbage → unchanged
 });
 
 test('per-table isolation: normalizing one table state never depends on another', () => {

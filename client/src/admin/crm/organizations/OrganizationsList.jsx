@@ -52,7 +52,7 @@ export default function OrganizationsList() {
   const [creating, setCreating] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
 
-  const { colKeys, toggleCol, moveCol, visibleCols, orderedColumns } =
+  const { colKeys, toggleCol, moveCol, setColWidth, widths, visibleCols, orderedColumns } =
     useTableColumns('organizations.columns.v1', COLUMNS);
 
   async function refresh() {
@@ -218,6 +218,8 @@ export default function OrganizationsList() {
                 <SortableHeaderRow
                   cols={visibleCols}
                   onMove={moveCol}
+                  widths={widths}
+                  onResize={setColWidth}
                   trClassName="text-gray-500 bg-gray-50/70 border-b border-gray-100"
                 />
               </thead>
