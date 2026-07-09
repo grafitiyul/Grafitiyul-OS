@@ -77,10 +77,15 @@ function blockHtmlOf(block) {
 // disappears. The checkbox INITIALIZES from the section's CURRENT layer —
 // a temp-edited section opens unchecked, so casually re-saving it can never
 // silently promote the temporary text into the Deal's persistent state.
-function OverrideEditor({ block, hasTemp, hasPersistent, busy, onSave, onReset, onClose }) {
+function OverrideEditor({ block, hasTemp, hasPersistent, previousHtml, busy, onSave, onReset, onClose }) {
   const [title, setTitle] = useState(block.data?.title || '');
   const [html, setHtml] = useState(blockHtmlOf(block));
   const [applyFuture, setApplyFuture] = useState(!hasTemp);
+  // The section is currently empty but a previously GENERATED version of this
+  // offer had wording for it (typical after the deal's product/variant was
+  // switched: the new source is empty while the old text lives on in frozen
+  // snapshots). One click brings that wording back as this deal's override.
+  const canLoadPrevious = !!previousHtml && !String(html || '').trim();
   return (
     <Dialog
       open
@@ -120,6 +125,20 @@ function OverrideEditor({ block, hasTemp, hasPersistent, busy, onSave, onReset, 
           <p className="rounded-lg bg-purple-50 px-3 py-2 text-[12px] leading-relaxed text-purple-700 ring-1 ring-purple-200">
             למקטע זה יש כרגע שינוי זמני — הוא יחול רק על הגרסה שתופק עכשיו. סמנו את התיבה למטה כדי להפוך אותו לקבוע.
           </p>
+        )}
+        {canLoadPrevious && (
+          <div className="flex items-center justify-between gap-2 rounded-lg bg-blue-50 px-3 py-2 ring-1 ring-blue-200">
+            <span className="text-[12px] leading-relaxed text-blue-800">
+              המקטע ריק כרגע, אבל בגרסה האחרונה שהופקה של הצעה זו היה לו נוסח.
+            </span>
+            <button
+              type="button"
+              onClick={() => setHtml(previousHtml)}
+              className="shrink-0 rounded-lg border border-blue-300 bg-white px-2.5 py-1 text-[12px] font-medium text-blue-700 hover:bg-blue-50"
+            >
+              טען את הנוסח הקודם
+            </button>
+          </div>
         )}
         <div>
           <label className="mb-1 block text-[12px] text-gray-500">כותרת המקטע</label>
@@ -185,6 +204,9 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated })
   // the one-shot layer (unchecked "apply to future") for THIS generation only.
   const [editing, setEditing] = useState(null);
   const [tempOverrides, setTempOverrides] = useState(null);
+  // The ACTIVE offer's latest generated snapshot — recovery source for sections
+  // that composed empty (e.g. after a product/variant switch on the deal).
+  const [lastSnapshot, setLastSnapshot] = useState(null);
 
   // The deal's contacts that actually have an email; quote recipients first.
   const emailRecipients = useMemo(() => {
@@ -212,6 +234,17 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated })
         const m = await api.quoteDocuments.composePreview(ens.quoteDocument.id);
         if (!alive) return;
         setModel(m);
+        // Best-effort: the active offer's newest generated snapshot (recovery
+        // source for empty sections). Never blocks the workspace.
+        try {
+          const { activeOfferId, offers } = await api.deals.quoteDocuments(deal.id);
+          const active = (offers || []).find((o) => o.id === activeOfferId) || null;
+          const latestId = active?.documents?.[0]?.id || null;
+          if (latestId) {
+            const full = await api.quoteDocuments.get(latestId);
+            if (alive) setLastSnapshot(full.quoteDocument?.renderModelSnapshot || null);
+          }
+        } catch { /* no generated version yet */ }
       } catch (e) {
         if (alive) setError(e?.payload?.error || e?.message || 'load_failed');
       } finally {
@@ -364,6 +397,15 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated })
     } finally {
       setBusy(false);
     }
+  }
+
+  // The block's wording in the active offer's last GENERATED version — the
+  // recovery source when the live compose is empty (immutable snapshots keep
+  // every wording that ever went out, even after a deal-level product switch).
+  function snapshotHtmlFor(key) {
+    const b = (lastSnapshot?.blocks || []).find((x) => x?.key === key);
+    const html = b ? blockHtmlOf(b) : '';
+    return String(html || '').trim() ? html : null;
   }
 
   async function copyUrl() {
@@ -522,6 +564,11 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated })
                                     : 'אין תוכן במקטע זה במקור — הוא לא יוצג ללקוח. אפשר למלא תוכן במקור, או להוסיף התאמה לעסקה זו.'}
                                   {b.source ? ` (מקור: ${b.source})` : ''}
                                 </p>
+                                {snapshotHtmlFor(b.key) && (
+                                  <p className="mt-1 text-[12.5px] leading-relaxed text-blue-700">
+                                    בגרסה האחרונה שהופקה היה למקטע זה נוסח — אפשר לטעון אותו דרך ״הוסף תוכן להצעה זו״.
+                                  </p>
+                                )}
                                 <button
                                   type="button"
                                   onClick={() => setEditing(b)}
@@ -608,6 +655,7 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated })
           block={editing}
           hasTemp={!!tempOverrides?.blocks?.[editing.key]}
           hasPersistent={!!doc?.overrideState?.blocks?.[editing.key]}
+          previousHtml={snapshotHtmlFor(editing.key)}
           busy={busy}
           onSave={(v) => saveOverride(editing, v)}
           onReset={() => resetOverride(editing)}
