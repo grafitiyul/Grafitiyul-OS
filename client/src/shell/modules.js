@@ -12,6 +12,9 @@ import GmailIcon from '../admin/common/icons/GmailIcon.jsx';
 export const TOP_MODULES = [
   // CRM is the operational hub: Deals (primary tab) + Contacts + Organizations.
   { key: 'crm', to: '/admin/crm', label: 'CRM', glyph: '🏢' },
+  // Tours — the OPERATIONAL execution module (TourEvent/Booking). Daily working
+  // surface, distinct from "תוכן סיורים" (training/route content) below.
+  { key: 'tours', to: '/admin/tours', label: 'סיורים', glyph: '🧭' },
   // The active WhatsApp inbox (conversations → deals) + connection management.
   // A working surface, not a setting — hence a top-level module.
   { key: 'whatsapp', to: '/admin/whatsapp', label: 'WhatsApp', glyph: '💬', Icon: WhatsAppLogo },

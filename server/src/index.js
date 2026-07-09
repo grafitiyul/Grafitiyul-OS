@@ -51,6 +51,7 @@ import quoteImagesRouter from './routes/quoteImages.js';
 import timelineRouter from './routes/timeline.js';
 import sharedContentRouter from './routes/sharedContent.js';
 import tourContentRouter from './routes/tourContent.js';
+import toursRouter from './routes/tours.js';
 import tourContentExportRouter from './routes/tourContentExport.js';
 import staffEventsRouter from './routes/staffEvents.js';
 import staffExportRouter from './routes/staffExport.js';
@@ -300,6 +301,10 @@ app.use('/api/shared-content', requireAdminAuth, sharedContentRouter);
 // (Tour → Station → ordered Steps → reusable ContentBlocks). Admin-only. No
 // recruitment migration, no permissions/access, no R2 uploads yet.
 app.use('/api/tour-content', requireAdminAuth, tourContentRouter);
+// Tours OPERATIONAL module ("סיורים") — TourEvent/Booking. Distinct from the
+// tour CONTENT routes above; see server/src/routes/tours.js for the ownership
+// contract (group slots managed here, private/business mirror their deal).
+app.use('/api/tours', requireAdminAuth, toursRouter);
 
 // Unknown /api/* paths get a real JSON 404 instead of falling through to
 // the SPA fallback (which would serve HTML for an API request).

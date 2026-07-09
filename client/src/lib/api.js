@@ -1043,6 +1043,18 @@ export const api = {
       request(`/api/documents/instances/${id}/finalize`, { method: 'POST' }),
   },
 
+  // Tours OPERATIONAL module ("סיורים") — TourEvent/Booking. Distinct from
+  // tourContent below (training/route content).
+  tours: {
+    list: (params = {}) => request('/api/tours' + qs(params)),
+    get: (id) => request(`/api/tours/${id}`),
+    // Creates a group Tour Slot (private/business tours are created only by
+    // the deal WON transition, never from here).
+    create: (data) => request('/api/tours', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/api/tours/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/tours/${id}`, { method: 'DELETE' }),
+  },
+
   // Tour Content (GOS source of truth). Tour → Station → ordered Step →
   // (reference) → ContentBlock → BlockAsset, plus admin-only StationNotes.
   // Media is R2/MediaFile only. Reorder endpoints take { order: [ids] }.

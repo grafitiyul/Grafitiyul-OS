@@ -945,6 +945,9 @@ model Deal {
   tasks                 Task[]
   files                 DealFile[]
   emailThreads          EmailThread[]
+  // Tours: the ONLY Deal↔TourEvent relationship (see Booking). Never add a
+  // direct tourEventId here.
+  bookings              Booking[]
 
   @@index([organizationId])
   @@index([organizationUnitId])
@@ -1692,6 +1695,7 @@ model Location {
   defaultEndingPointId  String?
   // Quote Image Library items tagged as applicable to this location.
   quoteImageLinks       QuoteImageLocation[]
+  tourEvents            TourEvent[]
 
   @@index([sortOrder])
   @@index([defaultMeetingPointId])
@@ -1714,6 +1718,7 @@ model Product {
   priceRules      PriceRule[]
   deals           Deal[]
   quoteOffers     QuoteOffer[]
+  tourEvents      TourEvent[]
 
   @@index([sortOrder])
 }
@@ -1763,6 +1768,7 @@ model ProductVariant {
   // Quote Image Library references per quote position (hero | slot1 | slot2).
   quoteImageLinks       ProductVariantQuoteImage[]
   quoteOffers           QuoteOffer[]
+  tourEvents            TourEvent[]
 
   @@unique([productId, locationId])
   @@index([productId])
@@ -2919,4 +2925,93 @@ model EmailEngagement {
   lastClickedAt DateTime?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
+}
+
+// ============================================================================
+// Tours operational module — TourEvent, Booking
+// ============================================================================
+// TourEvent is the OPERATIONAL execution instance ("סיור"). It is a different
+// domain from the Tour/TourStation/… CONTENT models above (training/route
+// content) — those are intentionally untouched. The Deal stays the commercial
+// entity; the ONLY Deal↔TourEvent relationship is the Booking join. Never add
+// a direct FK between Deal and TourEvent in either direction.
+
+// kind: 'private' | 'business' — created automatically on the deal's first WON
+//       transition (no draft state: creation is refused while required deal
+//       fields are missing);
+//       'group_slot' — scheduled ahead of time (a Tour Slot); deals join it
+//       later via Bookings, and it is NEVER auto-cancelled when empty.
+// Scheduling uses the SAME string conventions as the Deal working fields
+// (date "YYYY-MM-DD", startTime "HH:MM") — tours are single-day by product
+// decision, and the Deal↔TourEvent field sync stays type-identical.
+// Catalog FKs are nullable ONLY so catalog deletes never destroy tour history
+// (SetNull convention); required-ness is enforced at the API by the
+// declarative field config in src/tours/requiredFields.js.
+// status: cancellation is a STATUS, never a delete. Deleting a TourEvent is
+// allowed only while it has no Bookings at all (DB-enforced via Restrict).
+model TourEvent {
+  id               String          @id @default(cuid())
+  kind             String // 'private' | 'business' | 'group_slot'
+  status           String          @default("scheduled") // scheduled | completed | cancelled
+  date             String // "YYYY-MM-DD"
+  startTime        String // "HH:MM"
+  product          Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productId        String?
+  productVariant   ProductVariant? @relation(fields: [productVariantId], references: [id], onDelete: SetNull)
+  productVariantId String?
+  location         Location?       @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  locationId       String?
+  tourLanguage     String? // he | en | es | fr | ru (same vocabulary as Deal.tourLanguage)
+  // Soft ceiling for group slots (warnings only — the operator may explicitly
+  // overbook; never a DB constraint). Null for private/business tours.
+  capacity         Int?
+  // Operational notes — owned by the TourEvent (execution layer), unrelated to
+  // the Deal's commercial notes.
+  notes            String?
+  // Loose ref to the future auto-generation rule that minted this slot (no FK —
+  // rules are config). Together with `date` it makes generation idempotent.
+  generatedByRuleId String?
+  cancelledAt      DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  bookings         Booking[]
+
+  @@unique([generatedByRuleId, date])
+  @@index([date, startTime])
+  @@index([kind, status, date])
+  @@index([productId])
+  @@index([productVariantId])
+  @@index([locationId])
+}
+
+// The ONE relationship layer between Deal (commercial) and TourEvent
+// (operational). seats = this deal's participant count on the tour (seeded from
+// Deal.participants at WON). Tour occupancy is ALWAYS derived as
+// SUM(seats WHERE status='active') — never stored on the TourEvent.
+// status: 'active' | 'cancelled' | 'orphaned'. 'orphaned' = the deal left WON
+// (reopen) but the operator chose to keep the tour — intentionally disconnected
+// operational work, surfaced by the global header warning until reconnected or
+// cancelled. A partial unique index (dealId WHERE status='active') enforces the
+// product rule that a deal participates in at most ONE tour at a time (moving
+// = "החלף סיור", which cancels the old row and creates a new one).
+// Restrict on both FKs: a TourEvent with any bookings cannot be deleted, and a
+// Deal with bookings must be disconnected from its tour before deletion.
+model Booking {
+  id          String    @id @default(cuid())
+  tourEvent   TourEvent @relation(fields: [tourEventId], references: [id], onDelete: Restrict)
+  tourEventId String
+  deal        Deal      @relation(fields: [dealId], references: [id], onDelete: Restrict)
+  dealId      String
+  seats       Int       @default(0)
+  status      String    @default("active") // active | cancelled | orphaned
+  cancelledAt DateTime?
+  orphanedAt  DateTime?
+  // Per-booking operational note (this deal on this tour) — NOT tour-wide and
+  // NOT commercial.
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([tourEventId, status])
+  @@index([dealId, status])
 }

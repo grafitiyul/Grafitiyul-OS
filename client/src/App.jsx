@@ -43,6 +43,8 @@ import CrmSettingsPage from './admin/crm/settings/CrmSettingsPage.jsx';
 // Deal module (commercial core) — deals + pipeline.
 import DealsList from './admin/deals/DealsList.jsx';
 import CollectionPage from './admin/collection/CollectionPage.jsx';
+// Aliased: ToursPage is taken by the PUBLIC tours page import below.
+import AdminToursPage from './admin/tours/ToursPage.jsx';
 import DealDetail from './admin/deals/DealDetail.jsx';
 import QuotePreviewCanvas from './admin/quote/QuotePreviewCanvas.jsx';
 import QuoteSnapshotView from './admin/quote/QuoteSnapshotView.jsx';
@@ -161,6 +163,9 @@ export default function App() {
             regular Deal workspace; numbers come from the server Collection
             service. */}
         <Route path="collection" element={<CollectionPage />} />
+        {/* Tours — the operational tours module (TourEvent/Booking): table of
+            upcoming tours + group slot management. Calendar views come later. */}
+        <Route path="tours" element={<AdminToursPage />} />
         {/* Quote Preview Canvas (Slice 3) — internal admin draft workspace,
             opened from a Deal. NOT the public quote page. */}
         <Route path="quote/:dealId" element={<QuotePreviewCanvas />} />
