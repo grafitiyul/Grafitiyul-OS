@@ -126,8 +126,15 @@ export default function DealQuoteCard({ deal, onDealChanged }) {
     if (!selected || busy) return;
     setMenuOpen(false);
     setBusy(true);
-    try { await api.deals.setPrimaryQuoteOffer(deal.id, selected.id); await load(); }
-    finally { setBusy(false); }
+    try {
+      await api.deals.setPrimaryQuoteOffer(deal.id, selected.id);
+      await load();
+      // Promotion ADOPTS the offer's context onto the Deal — the whole deal
+      // page (Tour Details, price headline, changelog) must refresh now.
+      onDealChanged?.();
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function removeSelected() {
@@ -138,6 +145,9 @@ export default function DealQuoteCard({ deal, onDealChanged }) {
       setRemoveAsk(null);
       setSelectedOfferId(null);
       await load();
+      // Removing the primary promotes a fallback offer → the Deal adopted its
+      // context; refresh the deal page.
+      if (removeAsk.offer.isPrimary) onDealChanged?.();
     } finally {
       setBusy(false);
     }
@@ -329,7 +339,8 @@ export default function DealQuoteCard({ deal, onDealChanged }) {
           onClose={() => setHistoryOpen(false)}
           offers={allOffers}
           dealId={deal.id}
-          onChanged={load}
+          // Restoring can promote the offer to primary (Deal adopts its context).
+          onChanged={async () => { await load(); onDealChanged?.(); }}
         />
       )}
       <ConfirmDialog

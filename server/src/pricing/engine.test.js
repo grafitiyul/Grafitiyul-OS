@@ -74,6 +74,27 @@ test('fixed: ×groupCount', () => {
   assert.equal(r.netMinor, 750000);
 });
 
+// ── context contract (QA regression: 95 → 5,900) ────────────────────────────
+// An activity-scoped per-person rule must win over a generic fixed-total rule —
+// and a NULL activityTypeId in the context silently filters the scoped rule
+// out, letting the flat group total land as the row price. Callers must always
+// resolve the activity type BEFORE pricing (the quote workspace once opened the
+// builder before the catalog loaded, producing exactly this bug).
+test('context: per-person unit price survives quantity; null activityTypeId falls to the generic fixed total', () => {
+  const rules = [
+    { id: 'pp', active: true, priceModel: 'per_head', adultPriceMinor: 9500n, activityTypeId: 'at1', priority: 0 },
+    { id: 'gf', active: true, priceModel: 'fixed', fixedPriceMinor: 590000n, priority: 0 },
+  ];
+  // Correct context → the scoped per-person rule wins; unit stays ₪95/person.
+  const ok = run(rules, { adultCount: 3 });
+  assert.equal(ok.priceModel, 'per_head');
+  assert.equal(ok.netMinor, 28500); // 3 × 9500 — never 3 × 590000
+  // The hazard, pinned: null activity → the generic fixed ₪5,900 total wins.
+  const leaked = run(rules, { adultCount: 3 }, { activityTypeId: null });
+  assert.equal(leaked.priceModel, 'fixed');
+  assert.equal(leaked.netMinor, 590000);
+});
+
 test('fixed: missing price → rule_incomplete', () => {
   assert.throws(
     () => run([{ id: 'r1', active: true, priceModel: 'fixed', priority: 0 }], { participantCount: 5 }),

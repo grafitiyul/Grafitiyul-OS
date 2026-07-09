@@ -6,6 +6,7 @@ import { QuoteBlock, blockHasContent, TEAL } from '../../../quote/QuoteBlockRend
 import RichEditor from '../../../editor/RichEditor.jsx';
 import OfferContextBar from './OfferContextBar.jsx';
 import PriceBuilderDialog from '../PriceBuilderDialog.jsx';
+import { priceContextFor } from '../tourContext.js';
 
 // "הפק הצעת מחיר" — the quote GENERATION modal (the operator's main flow).
 //
@@ -462,20 +463,38 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated, o
     }
   }
 
-  // Pricing context for the embedded builder — same construction as the Deal card.
+  // Pricing context for the embedded builder — the SHARED constructor
+  // (tourContext.priceContextFor): exact Deal-card shape, no locationId, and
+  // activityTypeId resolved from a loaded catalog (a null activity silently
+  // drops activity-scoped price rules in the engine — the ₪95→₪5,900 bug).
   const builderContext = useMemo(() => {
     const f = ctxForm || contextSeed || {};
-    const k = deal?.activityType === 'group' ? 'public' : deal?.activityType;
-    return {
-      productId: f.productId || null,
-      productVariantId: f.productVariantId || null,
-      locationId: f.locationId || null,
-      activityTypeId: activityTypes.find((a) => a.key === k)?.id || null,
-      organizationTypeId: deal?.organizationTypeId || deal?.organization?.organizationTypeId || null,
-      organizationSubtypeId: deal?.organizationSubtypeId || null,
-      participantCount: f.participants === '' || f.participants == null ? 0 : Number(f.participants),
-    };
+    return priceContextFor(
+      {
+        productId: f.productId,
+        productVariantId: f.productVariantId,
+        participants: f.participants,
+        activityType: deal?.activityType,
+        organizationTypeId: deal?.organizationTypeId || deal?.organization?.organizationTypeId,
+        organizationSubtypeId: deal?.organizationSubtypeId,
+      },
+      activityTypes,
+    );
   }, [ctxForm, contextSeed, activityTypes, deal]);
+
+  // Never open the builder before the activity-type catalog is available —
+  // pricing with activityTypeId=null resolves the WRONG rule.
+  async function openBuilder() {
+    let ats = activityTypes;
+    if (!ats.length) {
+      try {
+        const r = await api.activityTypes.list();
+        ats = Array.isArray(r) ? r : r?.activityTypes || [];
+        setActivityTypes(ats);
+      } catch { /* engine will refuse without rules; better than mispricing */ }
+    }
+    setBuilderOpen(true);
+  }
 
   async function handleBuilderSaved() {
     await reloadPreview(doc?.id);
@@ -608,7 +627,7 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated, o
               valueMinor={isOwnOffer ? offerValueMinor : deal?.valueMinor}
               busy={ctxBusy || busy}
               onPatch={handleContextPatch}
-              onOpenBuilder={() => setBuilderOpen(true)}
+              onOpenBuilder={openBuilder}
             />
           )}
 
