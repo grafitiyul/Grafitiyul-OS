@@ -194,6 +194,7 @@ export async function listDealQuoteDocuments(client, dealId) {
             participants: o.participants,
             tourDate: o.tourDate,
             tourTime: o.tourTime,
+            valueMinor: o.valueMinor, // BigInt → number via the app-level json replacer
           }
         : null,
       archivedAt: o.archivedAt ?? null,

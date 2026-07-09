@@ -3,7 +3,6 @@ import { api } from '../../../lib/api.js';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 import GenerateQuoteModal from './GenerateQuoteModal.jsx';
 import QuoteHistoryDialog from './QuoteHistoryDialog.jsx';
-import ParallelOfferDialog from './ParallelOfferDialog.jsx';
 
 // The Deal's Quote card — the COMPLETE proposal workspace (business deals only).
 // Everything proposal-related lives here: generate, versions, history, parallel
@@ -49,13 +48,12 @@ const CheckIcon = (p) => (
   </svg>
 );
 
-export default function DealQuoteCard({ deal }) {
+export default function DealQuoteCard({ deal, onDealChanged }) {
   const [data, setData] = useState(null); // { activeOfferId, offers }
   const [selectedOfferId, setSelectedOfferId] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [parallelDialog, setParallelDialog] = useState(null); // { offer: null } = create; { offer } = edit
   const [removeAsk, setRemoveAsk] = useState(null); // { offer, mode: 'delete'|'archive' }
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -102,15 +100,26 @@ export default function DealQuoteCard({ deal }) {
     }
   }
 
-  // Parallel-offer creation/editing happens in the dedicated dialog (context
-  // fields + full price builder writing to the OFFER only) — see ParallelOfferDialog.
-  function openParallelCreate() {
+  // ONE flow for parallel offers: create (seeded from the Deal, activated) →
+  // straight into the generation screen, whose context bar IS where the offer's
+  // commercial identity is defined. No separate editing dialog.
+  async function openParallelCreate() {
+    if (busy) return;
     setMenuOpen(false);
-    setParallelDialog({ offer: null });
+    setBusy(true);
+    try {
+      const r = await api.deals.createQuoteOffer(deal.id);
+      await load();
+      if (r?.offer?.id) setSelectedOfferId(r.offer.id);
+      setModalOpen(true);
+    } finally {
+      setBusy(false);
+    }
   }
-  function openParallelEdit(o) {
+  async function openOfferWorkspace(o) {
     setMenuOpen(false);
-    setParallelDialog({ offer: o });
+    await selectOffer(o.id); // activate → the generation screen targets it
+    setModalOpen(true);
   }
 
   async function makePrimary() {
@@ -193,7 +202,7 @@ export default function DealQuoteCard({ deal }) {
                 ＋ צור הצעה מקבילה
               </button>
               {selected && !selected.isPrimary && selected.contextMode === 'own' && (
-                <button type="button" onClick={() => openParallelEdit(selected)} disabled={busy}
+                <button type="button" onClick={() => openOfferWorkspace(selected)} disabled={busy}
                   className="block w-full px-3 py-2 text-right text-[13px] text-gray-700 hover:bg-gray-50 disabled:opacity-50">
                   ✎ ערוך פרטים ותמחור של הצעה זו
                 </button>
@@ -308,9 +317,10 @@ export default function DealQuoteCard({ deal }) {
       {modalOpen && (
         <GenerateQuoteModal
           open
-          onClose={() => setModalOpen(false)}
+          onClose={() => { setModalOpen(false); load(); }}
           deal={deal}
           onGenerated={() => load()}
+          onDealChanged={onDealChanged}
         />
       )}
       {historyOpen && (
@@ -320,15 +330,6 @@ export default function DealQuoteCard({ deal }) {
           offers={allOffers}
           dealId={deal.id}
           onChanged={load}
-        />
-      )}
-      {parallelDialog && (
-        <ParallelOfferDialog
-          open
-          deal={deal}
-          offer={parallelDialog.offer}
-          onClose={() => setParallelDialog(null)}
-          onDone={() => load()}
         />
       )}
       <ConfirmDialog

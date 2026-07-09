@@ -4,6 +4,8 @@ import { api } from '../../../lib/api.js';
 import { openWhatsappComposer } from '../../whatsapp/composerEvents.js';
 import { QuoteBlock, blockHasContent, TEAL } from '../../../quote/QuoteBlockRenderer.jsx';
 import RichEditor from '../../../editor/RichEditor.jsx';
+import OfferContextBar from './OfferContextBar.jsx';
+import PriceBuilderDialog from '../PriceBuilderDialog.jsx';
 
 // "הפק הצעת מחיר" — the quote GENERATION modal (the operator's main flow).
 //
@@ -184,7 +186,7 @@ function emailDefaults({ lang, url, productName, firstName }) {
   };
 }
 
-export default function GenerateQuoteModal({ open, onClose, deal, onGenerated }) {
+export default function GenerateQuoteModal({ open, onClose, deal, onGenerated, onDealChanged }) {
   const [doc, setDoc] = useState(null); // the working draft
   const [model, setModel] = useState(null); // composed preview
   const [loading, setLoading] = useState(true);
@@ -207,6 +209,15 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated })
   // The ACTIVE offer's latest generated snapshot — recovery source for sections
   // that composed empty (e.g. after a product/variant switch on the deal).
   const [lastSnapshot, setLastSnapshot] = useState(null);
+  // The offer this generation targets (the active one) — drives the commercial
+  // context bar. Own-mode → edits land on the OFFER; primary → on the Deal
+  // (which the primary mirrors by design).
+  const [activeOffer, setActiveOffer] = useState(null);
+  const [ctxForm, setCtxForm] = useState(null); // last committed bar state
+  const [ctxBusy, setCtxBusy] = useState(false);
+  const [builderOpen, setBuilderOpen] = useState(false);
+  const [activityTypes, setActivityTypes] = useState([]);
+  const [offerValueMinor, setOfferValueMinor] = useState(null);
 
   // The deal's contacts that actually have an email; quote recipients first.
   const emailRecipients = useMemo(() => {
@@ -234,17 +245,24 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated })
         const m = await api.quoteDocuments.composePreview(ens.quoteDocument.id);
         if (!alive) return;
         setModel(m);
-        // Best-effort: the active offer's newest generated snapshot (recovery
-        // source for empty sections). Never blocks the workspace.
+        // The active offer (context-bar target) + its newest generated snapshot
+        // (recovery source for empty sections). Never blocks the workspace.
         try {
           const { activeOfferId, offers } = await api.deals.quoteDocuments(deal.id);
-          const active = (offers || []).find((o) => o.id === activeOfferId) || null;
+          const active = (offers || []).find((o) => o.id === activeOfferId) || (offers || []).find((o) => o.isPrimary) || null;
+          if (alive) {
+            setActiveOffer(active);
+            setOfferValueMinor(active?.contextMode === 'own' ? active.context?.valueMinor ?? null : null);
+          }
           const latestId = active?.documents?.[0]?.id || null;
           if (latestId) {
             const full = await api.quoteDocuments.get(latestId);
             if (alive) setLastSnapshot(full.quoteDocument?.renderModelSnapshot || null);
           }
         } catch { /* no generated version yet */ }
+        api.activityTypes.list()
+          .then((ats) => { if (alive) setActivityTypes(Array.isArray(ats) ? ats : ats?.activityTypes || []); })
+          .catch(() => {});
       } catch (e) {
         if (alive) setError(e?.payload?.error || e?.message || 'load_failed');
       } finally {
@@ -399,6 +417,79 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated })
     }
   }
 
+  // ── Commercial context bar (the offer's identity) ─────────────────────────
+  const isOwnOffer = activeOffer?.contextMode === 'own';
+  const contextSeed = useMemo(() => {
+    if (!activeOffer) return null;
+    return isOwnOffer
+      ? activeOffer.context || {}
+      : {
+          productId: deal?.productId,
+          productVariantId: deal?.productVariantId,
+          locationId: deal?.locationId,
+          participants: deal?.participants,
+          tourDate: deal?.tourDate,
+          tourTime: deal?.tourTime,
+        };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOffer?.id]);
+
+  // A bar change persists immediately — own-mode → the OFFER's context; primary
+  // → the Deal (Deal ≡ primary) — then the preview recomposes from it.
+  async function handleContextPatch(next) {
+    setCtxForm(next);
+    setCtxBusy(true); setError(null);
+    const payload = {
+      productId: next.productId || null,
+      productVariantId: next.productVariantId || null,
+      locationId: next.locationId || null,
+      participants: next.participants === '' || next.participants == null ? null : Number(next.participants),
+      tourDate: next.tourDate || null,
+      tourTime: next.tourTime || null,
+    };
+    try {
+      if (isOwnOffer) {
+        await api.deals.updateQuoteOfferContext(deal.id, activeOffer.id, payload);
+      } else {
+        await api.deals.update(deal.id, payload);
+        onDealChanged?.();
+      }
+      await reloadPreview(doc?.id);
+    } catch (e) {
+      setError(e?.payload?.error || e?.message || 'save_failed');
+    } finally {
+      setCtxBusy(false);
+    }
+  }
+
+  // Pricing context for the embedded builder — same construction as the Deal card.
+  const builderContext = useMemo(() => {
+    const f = ctxForm || contextSeed || {};
+    const k = deal?.activityType === 'group' ? 'public' : deal?.activityType;
+    return {
+      productId: f.productId || null,
+      productVariantId: f.productVariantId || null,
+      locationId: f.locationId || null,
+      activityTypeId: activityTypes.find((a) => a.key === k)?.id || null,
+      organizationTypeId: deal?.organizationTypeId || deal?.organization?.organizationTypeId || null,
+      organizationSubtypeId: deal?.organizationSubtypeId || null,
+      participantCount: f.participants === '' || f.participants == null ? 0 : Number(f.participants),
+    };
+  }, [ctxForm, contextSeed, activityTypes, deal]);
+
+  async function handleBuilderSaved() {
+    await reloadPreview(doc?.id);
+    try {
+      const { offers } = await api.deals.quoteDocuments(deal.id);
+      const fresh = (offers || []).find((o) => o.id === activeOffer?.id) || null;
+      if (fresh) {
+        setActiveOffer(fresh);
+        setOfferValueMinor(fresh.contextMode === 'own' ? fresh.context?.valueMinor ?? null : null);
+      }
+    } catch { /* bar price refreshes on next open */ }
+    if (!isOwnOffer) onDealChanged?.();
+  }
+
   // The block's wording in the active offer's last GENERATED version — the
   // recovery source when the live compose is empty (immutable snapshots keep
   // every wording that ever went out, even after a deal-level product switch).
@@ -447,10 +538,16 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated })
   );
 
   return (
-    // While the override editor is open, Esc/backdrop on the parent close ONLY
-    // the editor (both dialogs listen on document; the parent's handler runs
-    // first, so it must delegate).
-    <Dialog open={open} onClose={editing ? () => setEditing(null) : onClose} title="הפקת הצעת מחיר" size="2xl" footer={footer}>
+    // While a nested surface (override editor / price builder) is open,
+    // Esc/backdrop on the parent close ONLY that surface (both dialogs listen
+    // on document; the parent's handler runs first, so it must delegate).
+    <Dialog
+      open={open}
+      onClose={editing ? () => setEditing(null) : builderOpen ? () => setBuilderOpen(false) : onClose}
+      title={activeOffer && !activeOffer.isPrimary ? `הפקת הצעת מחיר — הצעה ${activeOffer.offerNo}` : 'הפקת הצעת מחיר'}
+      size="2xl"
+      footer={footer}
+    >
       {phase === 'preview' && (
         <div className="flex min-h-0 flex-col" dir="rtl">
           {/* compact single-row toolbar */}
@@ -498,6 +595,22 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated })
               ריחוף על מקטע טקסט מציג ✎ עריכה — לעסקה זו בלבד, לא לתבנית הגלובלית.
             </span>
           </div>
+
+          {/* The offer's commercial IDENTITY — same fields + derivation as the
+              Deal's פרטי הסיור card; edits land on the offer (or the Deal when
+              this is the primary) and the preview below recomposes immediately. */}
+          {activeOffer && contextSeed && (
+            <OfferContextBar
+              key={activeOffer.id}
+              offerNo={activeOffer.offerNo}
+              isPrimary={!!activeOffer.isPrimary}
+              seed={contextSeed}
+              valueMinor={isOwnOffer ? offerValueMinor : deal?.valueMinor}
+              busy={ctxBusy || busy}
+              onPatch={handleContextPatch}
+              onOpenBuilder={() => setBuilderOpen(true)}
+            />
+          )}
 
           {/* the actual customer proposal — internal scroll via the Dialog body.
               Editable text sections get a hover ✎ that opens the override popup. */}
@@ -660,6 +773,22 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated })
           onSave={(v) => saveOverride(editing, v)}
           onReset={() => resetOverride(editing)}
           onClose={() => setEditing(null)}
+        />
+      )}
+
+      {/* The EXISTING price builder, targeting the active offer's version.
+          Own-mode: writes go to the offer only (deal terms hidden). Structural
+          context change remounts it so its on-open line alignment applies. */}
+      {builderOpen && (
+        <PriceBuilderDialog
+          key={`${activeOffer?.id || 'deal'}|${builderContext.productId}|${builderContext.productVariantId}`}
+          open
+          deal={deal}
+          context={builderContext}
+          title={isOwnOffer ? `עריכת מחיר — הצעה ${activeOffer.offerNo}` : undefined}
+          skipDealTermsWrite={isOwnOffer}
+          onClose={() => setBuilderOpen(false)}
+          onSaved={handleBuilderSaved}
         />
       )}
     </Dialog>
