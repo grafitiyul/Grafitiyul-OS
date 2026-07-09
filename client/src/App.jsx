@@ -45,6 +45,7 @@ import DealsList from './admin/deals/DealsList.jsx';
 import CollectionPage from './admin/collection/CollectionPage.jsx';
 // Aliased: ToursPage is taken by the PUBLIC tours page import below.
 import AdminToursPage from './admin/tours/ToursPage.jsx';
+import TourEventPage from './admin/tours/TourPage.jsx';
 import DealDetail from './admin/deals/DealDetail.jsx';
 import QuotePreviewCanvas from './admin/quote/QuotePreviewCanvas.jsx';
 import QuoteSnapshotView from './admin/quote/QuoteSnapshotView.jsx';
@@ -166,6 +167,7 @@ export default function App() {
         {/* Tours — the operational tours module (TourEvent/Booking): table of
             upcoming tours + group slot management. Calendar views come later. */}
         <Route path="tours" element={<AdminToursPage />} />
+        <Route path="tours/:id" element={<TourEventPage />} />
         {/* Quote Preview Canvas (Slice 3) — internal admin draft workspace,
             opened from a Deal. NOT the public quote page. */}
         <Route path="quote/:dealId" element={<QuotePreviewCanvas />} />

@@ -1062,6 +1062,13 @@ export const api = {
     cancelOrphan: (bookingId) =>
       request(`/api/tours/orphans/${bookingId}/cancel`, { method: 'POST', body: '{}' }),
     get: (id) => request(`/api/tours/${id}`),
+    // Guide assignments (role lives on the assignment; switching = update).
+    addAssignment: (tourId, data) =>
+      request(`/api/tours/${tourId}/assignments`, { method: 'POST', body: JSON.stringify(data) }),
+    updateAssignment: (assignmentId, data) =>
+      request(`/api/tours/assignments/${assignmentId}`, { method: 'PUT', body: JSON.stringify(data) }),
+    removeAssignment: (assignmentId) =>
+      request(`/api/tours/assignments/${assignmentId}`, { method: 'DELETE' }),
     // Creates a group Tour Slot (private/business tours are created only by
     // the deal WON transition, never from here).
     create: (data) => request('/api/tours', { method: 'POST', body: JSON.stringify(data) }),

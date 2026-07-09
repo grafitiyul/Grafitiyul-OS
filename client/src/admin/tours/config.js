@@ -38,6 +38,21 @@ export const TOUR_STATUS_STYLES = {
   cancelled: 'bg-red-50 text-red-600 ring-1 ring-inset ring-red-200',
 };
 
+// Guide assignment roles — ordered by visual hierarchy (lead first).
+export const ASSIGNMENT_ROLES = ['lead_guide', 'guide', 'workshop_assistant'];
+
+export const ASSIGNMENT_ROLE_LABELS = {
+  lead_guide: 'מדריך ראשי',
+  guide: 'מדריך',
+  workshop_assistant: 'עוזר סדנה',
+};
+
+export const ASSIGNMENT_ROLE_STYLES = {
+  lead_guide: 'bg-indigo-600 text-white',
+  guide: 'bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200',
+  workshop_assistant: 'bg-gray-100 text-gray-600 ring-1 ring-inset ring-gray-200',
+};
+
 // "יום ה׳ · 06/08/2026" — tours are day-of-week work; every list shows both.
 export function fmtTourDate(dateStr) {
   if (!dateStr) return '—';

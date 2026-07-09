@@ -218,6 +218,9 @@ router.post(
   }),
 );
 
+// Tour page payload. Customer information is READ-THROUGH from each booking's
+// Deal (organization / contacts / customerInfo) — never copied onto the tour.
+// fieldRep / ordering-contact resolution happens client-side from the roles.
 router.get(
   '/:id',
   handle(async (req, res) => {
@@ -225,6 +228,14 @@ router.get(
       where: { id: req.params.id },
       include: {
         ...TOUR_INCLUDE,
+        assignments: {
+          orderBy: { createdAt: 'asc' },
+          include: {
+            personRef: {
+              select: { id: true, displayName: true, status: true, lifecycleHint: true },
+            },
+          },
+        },
         bookings: {
           orderBy: { createdAt: 'asc' },
           include: {
@@ -235,7 +246,27 @@ router.get(
                 title: true,
                 status: true,
                 participants: true,
+                customerInfo: true,
                 organization: { select: { id: true, name: true } },
+                organizationUnit: { select: { id: true, name: true } },
+                contacts: {
+                  orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+                  select: {
+                    roles: true,
+                    isPrimary: true,
+                    contact: {
+                      select: {
+                        id: true,
+                        firstNameHe: true,
+                        lastNameHe: true,
+                        firstNameEn: true,
+                        lastNameEn: true,
+                        phones: { where: { isPrimary: true }, take: 1, select: { value: true } },
+                        emails: { where: { isPrimary: true }, take: 1, select: { value: true } },
+                      },
+                    },
+                  },
+                },
               },
             },
           },
@@ -245,6 +276,107 @@ router.get(
     if (!tour) return res.status(404).json({ error: 'not_found' });
     const occ = await occupancyFor(prisma, [tour.id]);
     res.json(toClientTour(tour, occ[tour.id]));
+  }),
+);
+
+// ---------- guide assignments ----------
+// Role lives on the assignment (lead_guide | guide | workshop_assistant);
+// switching a role UPDATES the row — one assignment per person per tour.
+
+const ASSIGNMENT_ROLES = ['lead_guide', 'guide', 'workshop_assistant'];
+
+router.post(
+  '/:id/assignments',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    if (!ASSIGNMENT_ROLES.includes(b.role)) {
+      return res.status(400).json({ error: 'invalid_role' });
+    }
+    const tour = await prisma.tourEvent.findUnique({
+      where: { id: req.params.id },
+      select: { id: true },
+    });
+    if (!tour) return res.status(404).json({ error: 'not_found' });
+    const person = await prisma.personRef.findUnique({
+      where: { id: String(b.personRefId || '') },
+      select: { id: true, externalPersonId: true, displayName: true },
+    });
+    if (!person) return res.status(400).json({ error: 'person_not_found' });
+
+    let assignment;
+    try {
+      assignment = await prisma.tourAssignment.create({
+        data: {
+          tourEventId: tour.id,
+          personRefId: person.id,
+          externalPersonId: person.externalPersonId,
+          displayName: person.displayName,
+          role: b.role,
+          notes: b.notes ? String(b.notes) : null,
+        },
+      });
+    } catch (e) {
+      if (e.code === 'P2002') return res.status(409).json({ error: 'already_assigned' });
+      throw e;
+    }
+    await emitTimelineEvent(prisma, {
+      subjectType: 'tour_event',
+      subjectId: tour.id,
+      kind: 'tour',
+      data: { event: 'guide_assigned', name: person.displayName, role: b.role },
+      origin: await userOrigin(req.adminAuth?.userId),
+    });
+    res.status(201).json(assignment);
+  }),
+);
+
+router.put(
+  '/assignments/:assignmentId',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const existing = await prisma.tourAssignment.findUnique({
+      where: { id: req.params.assignmentId },
+    });
+    if (!existing) return res.status(404).json({ error: 'not_found' });
+    const data = {};
+    if (b.role !== undefined) {
+      if (!ASSIGNMENT_ROLES.includes(b.role)) return res.status(400).json({ error: 'invalid_role' });
+      data.role = b.role;
+    }
+    if (b.notes !== undefined) data.notes = b.notes ? String(b.notes) : null;
+    const updated = await prisma.tourAssignment.update({
+      where: { id: existing.id },
+      data,
+    });
+    if (data.role && data.role !== existing.role) {
+      await emitTimelineEvent(prisma, {
+        subjectType: 'tour_event',
+        subjectId: existing.tourEventId,
+        kind: 'tour',
+        data: { event: 'guide_role_changed', name: existing.displayName, from: existing.role, to: data.role },
+        origin: await userOrigin(req.adminAuth?.userId),
+      });
+    }
+    res.json(updated);
+  }),
+);
+
+router.delete(
+  '/assignments/:assignmentId',
+  handle(async (req, res) => {
+    const existing = await prisma.tourAssignment.findUnique({
+      where: { id: req.params.assignmentId },
+    });
+    if (!existing) return res.status(404).json({ error: 'not_found' });
+    await prisma.tourAssignment.delete({ where: { id: existing.id } });
+    await emitTimelineEvent(prisma, {
+      subjectType: 'tour_event',
+      subjectId: existing.tourEventId,
+      kind: 'tour',
+      data: { event: 'guide_removed', name: existing.displayName, role: existing.role },
+      origin: await userOrigin(req.adminAuth?.userId),
+    });
+    res.status(204).end();
   }),
 );
 

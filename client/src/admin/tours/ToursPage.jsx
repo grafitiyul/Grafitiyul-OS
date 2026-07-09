@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../common/tableColumns.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
@@ -115,6 +116,7 @@ const STATUS_FILTERS = [
 ];
 
 export default function ToursPage() {
+  const navigate = useNavigate();
   const [tab, setTab] = useState('table');
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -356,11 +358,11 @@ export default function ToursPage() {
                     {filtered.map((t) => (
                       <tr
                         key={t.id}
-                        className={`group transition-colors ${
-                          t.kind === 'group_slot' ? 'hover:bg-blue-50/40 cursor-pointer' : 'hover:bg-gray-50'
-                        } ${t.status === 'cancelled' ? 'opacity-60' : ''}`}
-                        onClick={() => openEdit(t)}
-                        title={t.kind !== 'group_slot' ? 'שדות התכנון של סיור פרטי/עסקי נערכים בדיל' : undefined}
+                        className={`group transition-colors hover:bg-blue-50/40 cursor-pointer ${
+                          t.status === 'cancelled' ? 'opacity-60' : ''
+                        }`}
+                        onClick={() => navigate(`/admin/tours/${t.id}`)}
+                        title="פתיחת עמוד הסיור"
                       >
                         {visibleCols.map((c) => (
                           <TableCell key={c.key} col={c}>{c.render(t)}</TableCell>
