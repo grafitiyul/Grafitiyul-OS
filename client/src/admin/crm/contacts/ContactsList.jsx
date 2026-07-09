@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import PhoneDisplay from '../../common/PhoneDisplay.jsx';
-import { useTableColumns, ColumnPicker, SortableHeaderRow } from '../../common/tableColumns.jsx';
+import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../../common/tableColumns.jsx';
 import ContactCreateDialog from './ContactCreateDialog.jsx';
 
 // Contacts — a real CRM list (like Deals): dominant search + a configurable
@@ -187,14 +187,13 @@ export default function ContactsList() {
                   cols={visibleCols}
                   onMove={moveCol}
                   trClassName="text-gray-500 bg-gray-50/70 border-b border-gray-100"
-                  thClassName={(c) => (c.align === 'center' ? 'text-center' : '')}
                 />
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {filtered.map((c) => (
                   <tr key={c.id} className="hover:bg-blue-50/40 transition-colors">
                     {visibleCols.map((col) => (
-                      <Td key={col.key} className={col.cls || ''} dir={col.dir}>{col.render(c)}</Td>
+                      <TableCell key={col.key} col={col}>{col.render(c)}</TableCell>
                     ))}
                   </tr>
                 ))}
@@ -218,6 +217,3 @@ export default function ContactsList() {
   );
 }
 
-function Td({ children, className = '', dir }) {
-  return <td className={`px-4 py-3 align-middle ${className}`} dir={dir}>{children}</td>;
-}

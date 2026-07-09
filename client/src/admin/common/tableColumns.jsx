@@ -122,7 +122,17 @@ export function ColumnPicker({ columns, colKeys, onToggle, label = 'עמודות
 // drag. `children` renders AFTER the sortable cells — for trailing utility
 // columns like the row-actions spacer.
 
-const TH_BASE = 'text-right text-[11px] uppercase tracking-wide font-semibold px-4 py-2.5';
+const TH_BASE = 'text-[11px] uppercase tracking-wide font-semibold px-4 py-2.5';
+
+// RTL table alignment convention: everything sits on the RIGHT by default —
+// headers and values alike — so the table reads naturally right-to-left.
+// `col.align` ('left' | 'center') is an explicit, per-column override for the
+// few cases with a clear reason (progress bars, icon/action cells, …).
+// `col.dir` ('ltr') only fixes glyph order for numbers/dates/emails — an LTR
+// value still sits on the right edge like every other cell.
+function alignClass(col) {
+  return col.align === 'left' ? 'text-left' : col.align === 'center' ? 'text-center' : 'text-right';
+}
 
 // Keep the drag strictly horizontal — headers only ever move along the row.
 const horizontalOnly = ({ transform }) => ({ ...transform, y: 0 });
@@ -142,13 +152,29 @@ function SortableTh({ col, className, sort, onSort }) {
       {...s.listeners}
       onClick={sortable ? () => onSort(col.key) : undefined}
       title={sortable ? 'לחיצה למיון · גרירה לשינוי סדר' : 'גרירה לשינוי סדר העמודות'}
-      className={`${TH_BASE} cursor-grab select-none active:cursor-grabbing ${
+      className={`${TH_BASE} ${alignClass(col)} cursor-grab select-none active:cursor-grabbing ${
         s.isDragging ? 'z-10 rounded-md bg-blue-50 text-blue-700 shadow-sm' : ''
       } ${active ? 'text-blue-700' : ''} ${className || ''}`}
     >
       {col.label}
       {active && <span className="ms-1 text-[9px]">{sort.dir === 'asc' ? '▲' : '▼'}</span>}
     </th>
+  );
+}
+
+// Shared body cell — enforces the same RTL alignment convention as the
+// headers (right by default, col.align overrides), applies the column's
+// `cls`/`dir`, so every CRM table inherits one consistent look. `stopClick`
+// is for action cells inside clickable rows (kebab, open-buttons).
+export function TableCell({ col = {}, className = '', stopClick = false, children }) {
+  return (
+    <td
+      className={`px-4 py-3 align-middle ${alignClass(col)} ${col.cls || ''} ${className}`}
+      dir={col.dir}
+      onClick={stopClick ? (e) => e.stopPropagation() : undefined}
+    >
+      {children}
+    </td>
   );
 }
 

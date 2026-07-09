@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { formatMinor } from '../../lib/money.js';
-import { useTableColumns, ColumnPicker, SortableHeaderRow } from '../common/tableColumns.jsx';
+import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../common/tableColumns.jsx';
 import { COLLECTION_STATUS_LABELS, COLLECTION_STATUS_STYLES } from './collectionConfig.js';
 
 // גבייה — the main Collection screen: every WON deal whose money has not fully
@@ -72,17 +72,17 @@ const COLUMNS = [
         d.primaryContactName || dash
       ),
     cls: 'text-gray-600' },
-  { key: 'total', label: 'סך העסקה', def: true, align: 'left', dir: 'ltr',
+  { key: 'total', label: 'סך העסקה', def: true, dir: 'ltr',
     sortVal: (d) => d.totalMinor,
-    cls: 'text-left font-bold text-gray-900 text-[15px] tabular-nums',
+    cls: 'font-bold text-gray-900 text-[15px] tabular-nums',
     render: (d) => formatMinor(d.totalMinor, d.currency) },
-  { key: 'paid', label: 'שולם', def: true, align: 'left', dir: 'ltr',
+  { key: 'paid', label: 'שולם', def: true, dir: 'ltr',
     sortVal: (d) => d.paidMinor,
-    cls: 'text-left tabular-nums text-emerald-700 font-medium',
+    cls: 'tabular-nums text-emerald-700 font-medium',
     render: (d) => formatMinor(d.paidMinor, d.currency) },
-  { key: 'balance', label: 'יתרה לגבייה', def: true, align: 'left', dir: 'ltr',
+  { key: 'balance', label: 'יתרה לגבייה', def: true, dir: 'ltr',
     sortVal: (d) => d.balanceMinor,
-    cls: 'text-left tabular-nums font-bold text-gray-900',
+    cls: 'tabular-nums font-bold text-gray-900',
     render: (d) => formatMinor(d.balanceMinor, d.currency) },
   { key: 'paidPct', label: '% שולם', def: true, align: 'center',
     sortVal: (d) => d.paidPct ?? -1,
@@ -274,9 +274,6 @@ export default function CollectionPage() {
                   sort={sort}
                   onSort={onSort}
                   trClassName="text-gray-500 bg-gray-50/70 border-b border-gray-100"
-                  thClassName={(c) =>
-                    c.align === 'left' ? 'text-left' : c.align === 'center' ? 'text-center' : ''
-                  }
                 >
                   <th className="w-10" />
                 </SortableHeaderRow>
@@ -289,9 +286,7 @@ export default function CollectionPage() {
                     onClick={() => navigate(`/admin/crm/deals/${d.id}`)}
                   >
                     {visibleCols.map((c) => (
-                      <td key={c.key} className={`px-4 py-3 align-middle ${c.cls || ''}`} dir={c.dir}>
-                        {c.render(d)}
-                      </td>
+                      <TableCell key={c.key} col={c}>{c.render(d)}</TableCell>
                     ))}
                     <td className="px-4 py-3 align-middle" onClick={(e) => e.stopPropagation()}>
                       <button

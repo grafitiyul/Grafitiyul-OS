@@ -6,7 +6,7 @@ import { contactNamesFromFull } from '../../lib/nameSplit.js';
 import { useDirtyWhen } from '../../lib/dirtyForms.js';
 import { DEAL_STATUS_LABELS, DEAL_STATUS_STYLES } from './config.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
-import { useTableColumns, ColumnPicker, SortableHeaderRow } from '../common/tableColumns.jsx';
+import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../common/tableColumns.jsx';
 import { OrgPicker, resolveOrganization } from '../crm/common/OrgPicker.jsx';
 
 const MODAL_INPUT =
@@ -63,11 +63,11 @@ const COLUMNS = [
         {DEAL_STATUS_LABELS[d.status]}
       </span>
     ) },
-  { key: 'amount', label: 'סכום', def: true, align: 'left', dir: 'ltr',
-    cls: 'text-left font-bold text-gray-900 text-[15px] tabular-nums',
+  { key: 'amount', label: 'סכום', def: true, dir: 'ltr',
+    cls: 'font-bold text-gray-900 text-[15px] tabular-nums',
     render: (d) => formatMinor(d.valueMinor, d.currency) },
-  { key: 'discount', label: 'הנחה', def: false, align: 'left', dir: 'ltr',
-    cls: 'text-left tabular-nums text-gray-600',
+  { key: 'discount', label: 'הנחה', def: false, dir: 'ltr',
+    cls: 'tabular-nums text-gray-600',
     render: (d) => (d.discountMinor != null ? formatMinor(d.discountMinor, d.currency) : dash) },
   { key: 'paymentTerms', label: 'תנאי תשלום', def: false,
     render: (d) => d.paymentTerms || dash, cls: 'text-gray-600' },
@@ -304,9 +304,6 @@ export default function DealsList() {
                     cols={visibleCols}
                     onMove={moveCol}
                     trClassName="text-gray-500 bg-gray-50/70 border-b border-gray-100"
-                    thClassName={(c) =>
-                      c.align === 'left' ? 'text-left' : c.align === 'center' ? 'text-center' : ''
-                    }
                   >
                     <Th className="w-10" />
                   </SortableHeaderRow>
@@ -420,7 +417,7 @@ function DealRow({ deal, cols, stageCls, onOpen, onDelete }) {
   return (
     <tr className="group hover:bg-blue-50/40 cursor-pointer transition-colors" onClick={onOpen}>
       {cols.map((c) => (
-        <Td key={c.key} className={c.cls || ''} dir={c.dir}>
+        <TableCell key={c.key} col={c}>
           {c.kind === 'stage' ? (
             <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ring-inset ${stageCls || 'bg-gray-50 text-gray-600 ring-gray-100'}`}>
               {deal.dealStage?.label}
@@ -428,11 +425,11 @@ function DealRow({ deal, cols, stageCls, onOpen, onDelete }) {
           ) : (
             c.render(deal)
           )}
-        </Td>
+        </TableCell>
       ))}
-      <Td onClickStop>
+      <TableCell stopClick>
         <KebabMenu onOpen={onOpen} onDelete={onDelete} />
-      </Td>
+      </TableCell>
     </tr>
   );
 }
@@ -677,13 +674,6 @@ function Field({ label, children }) {
 }
 function Th({ children, className = '' }) {
   return <th className={`text-right text-[11px] uppercase tracking-wide font-semibold px-4 py-2.5 ${className}`}>{children}</th>;
-}
-function Td({ children, className = '', dir, onClickStop }) {
-  return (
-    <td className={`px-4 py-3 align-middle ${className}`} dir={dir} onClick={onClickStop ? (e) => e.stopPropagation() : undefined}>
-      {children}
-    </td>
-  );
 }
 function PagerBtn({ children, disabled, onClick }) {
   return (

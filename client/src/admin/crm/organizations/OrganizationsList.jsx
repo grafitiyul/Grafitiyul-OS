@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
-import { useTableColumns, ColumnPicker, SortableHeaderRow } from '../../common/tableColumns.jsx';
+import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../../common/tableColumns.jsx';
 
 // Organizations index — reference/management list. Bank Leumi is one
 // Organization; its divisions/departments are Organization Units (managed on
@@ -219,7 +219,6 @@ export default function OrganizationsList() {
                   cols={visibleCols}
                   onMove={moveCol}
                   trClassName="text-gray-500 bg-gray-50/70 border-b border-gray-100"
-                  thClassName={(c) => (c.align === 'center' ? 'text-center' : '')}
                 />
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -230,9 +229,7 @@ export default function OrganizationsList() {
                     onClick={() => navigate(`/admin/crm/organizations/${o.id}`)}
                   >
                     {visibleCols.map((c) => (
-                      <td key={c.key} className={`px-4 py-3 align-middle ${c.cls || ''}`} dir={c.dir}>
-                        {c.render(o)}
-                      </td>
+                      <TableCell key={c.key} col={c}>{c.render(o)}</TableCell>
                     ))}
                   </tr>
                 ))}
