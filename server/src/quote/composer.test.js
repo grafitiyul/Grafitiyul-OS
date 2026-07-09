@@ -76,6 +76,7 @@ test('composer: language reflects the contact-derived document language', async 
     quoteOffer: {
       findFirst: async () => state.offers[0] || null,
       findUnique: async ({ where }) => state.offers.find((o) => o.id === where.id) || null,
+      aggregate: async () => ({ _max: { offerNo: Math.max(0, ...state.offers.map((o) => o.offerNo)) } }),
       create: async ({ data }) => { const o = { id: 'off_1', ...data }; state.offers.push(o); return o; },
     },
     quoteVersion: {

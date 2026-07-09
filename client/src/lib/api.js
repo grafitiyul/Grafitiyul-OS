@@ -433,6 +433,8 @@ export const api = {
       request(`/api/deals/${id}/quote-offers/${offerId}/activate`, { method: 'POST' }),
     setPrimaryQuoteOffer: (id, offerId) =>
       request(`/api/deals/${id}/quote-offers/${offerId}/primary`, { method: 'PUT' }),
+    removeQuoteOffer: (id, offerId) =>
+      request(`/api/deals/${id}/quote-offers/${offerId}`, { method: 'DELETE' }),
     // Permanent customer payment URL — ensures the deal's payment token and
     // returns { token, paymentUrl } (always the SAME URL for a deal). The
     // underlying iCount link is generated/refreshed lazily by GET /pay/:token.

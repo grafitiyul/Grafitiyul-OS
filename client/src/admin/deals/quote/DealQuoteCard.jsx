@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../../lib/api.js';
+import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 import GenerateQuoteModal from './GenerateQuoteModal.jsx';
 import QuoteHistoryDialog from './QuoteHistoryDialog.jsx';
 
@@ -53,6 +54,7 @@ export default function DealQuoteCard({ deal }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [removeAsk, setRemoveAsk] = useState(null); // { offer, mode: 'delete'|'archive' }
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const menuRef = useRef(null);
@@ -61,7 +63,8 @@ export default function DealQuoteCard({ deal }) {
     try {
       const r = await api.deals.quoteDocuments(deal.id);
       setData(r);
-      setSelectedOfferId((cur) => cur && r.offers.some((o) => o.id === cur) ? cur : (r.activeOfferId || r.offers[0]?.id || null));
+      const live = (r.offers || []).filter((o) => !o.archivedAt);
+      setSelectedOfferId((cur) => cur && live.some((o) => o.id === cur) ? cur : (r.activeOfferId || live[0]?.id || null));
     } catch {
       setData({ activeOfferId: null, offers: [] });
     }
@@ -76,12 +79,15 @@ export default function DealQuoteCard({ deal }) {
     return () => document.removeEventListener('mousedown', close);
   }, [menuOpen]);
 
-  const offers = data?.offers || [];
+  // Archived offers leave the workspace tabs; history still shows them.
+  const allOffers = data?.offers || [];
+  const offers = allOffers.filter((o) => !o.archivedAt);
   const selected = offers.find((o) => o.id === selectedOfferId) || offers[0] || null;
   const latest = selected?.documents?.[0] || null;
   const url = latest ? `${window.location.origin}/quote/${latest.publicToken}` : null;
   const status = quoteStatusOf(latest);
-  const hasAnyDoc = offers.some((o) => o.documents.length > 0);
+  const hasAnyDoc = allOffers.some((o) => o.documents.length > 0);
+  const selectedHasSigned = (selected?.documents || []).some((d) => d.signedAt);
 
   // Selecting an offer tab also makes it ACTIVE (Builder + generation target).
   async function selectOffer(offerId) {
@@ -115,6 +121,19 @@ export default function DealQuoteCard({ deal }) {
     finally { setBusy(false); }
   }
 
+  async function removeSelected() {
+    if (!removeAsk || busy) return;
+    setBusy(true);
+    try {
+      await api.deals.removeQuoteOffer(deal.id, removeAsk.offer.id);
+      setRemoveAsk(null);
+      setSelectedOfferId(null);
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function copyUrl() {
     if (!url) return;
     try {
@@ -124,19 +143,21 @@ export default function DealQuoteCard({ deal }) {
     } catch { /* URL stays selectable in the field */ }
   }
 
+  // The card renders its own panel shell (same look as DealDetail's panel Card)
+  // so the offer tabs + ⋮ menu live IN the title row — no second header row.
   return (
-    <div>
-      {/* header row: offer tabs (only when parallel offers exist) + ⋮ menu */}
-      <div className="mb-2 flex items-center gap-2">
+    <section className="bg-white border border-gray-200 rounded-xl">
+      <div className="flex items-center gap-2 border-b border-gray-100 px-4 pt-3 pb-2.5">
+        <h2 className="shrink-0 font-semibold text-gray-900 text-[13px]">הצעת מחיר</h2>
         {offers.length > 1 && (
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1">
             {offers.map((o) => (
               <button
                 key={o.id}
                 type="button"
                 disabled={busy}
                 onClick={() => selectOffer(o.id)}
-                className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium ring-1 transition disabled:opacity-50 ${
+                className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 transition disabled:opacity-50 ${
                   o.id === selected?.id
                     ? 'bg-gray-900 text-white ring-gray-900'
                     : 'bg-white text-gray-600 ring-gray-200 hover:bg-gray-50'
@@ -144,7 +165,7 @@ export default function DealQuoteCard({ deal }) {
               >
                 הצעה {o.offerNo}
                 {o.isPrimary && (
-                  <span className={`rounded-full px-1.5 text-[9.5px] font-bold ${o.id === selected?.id ? 'bg-white/20 text-white' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'}`}>
+                  <span className={`rounded-full px-1 text-[9px] font-bold ${o.id === selected?.id ? 'bg-white/20 text-white' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'}`}>
                     ראשית
                   </span>
                 )}
@@ -152,17 +173,17 @@ export default function DealQuoteCard({ deal }) {
             ))}
           </div>
         )}
-        <div className="relative ms-auto" ref={menuRef}>
+        <div className={`relative shrink-0 ${offers.length > 1 ? '' : 'ms-auto'}`} ref={menuRef}>
           <button
             type="button"
             onClick={() => setMenuOpen((o) => !o)}
             title="פעולות"
-            className="rounded-lg px-2 py-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+            className="rounded-lg px-1.5 py-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
           >
             ⋮
           </button>
           {menuOpen && (
-            <div className="absolute left-0 top-8 z-30 w-56 rounded-xl border border-gray-200 bg-white py-1 text-right shadow-xl">
+            <div className="absolute left-0 top-7 z-30 w-60 rounded-xl border border-gray-200 bg-white py-1 text-right shadow-xl">
               <button type="button" onClick={createParallel} disabled={busy}
                 className="block w-full px-3 py-2 text-right text-[13px] text-gray-700 hover:bg-gray-50 disabled:opacity-50">
                 ＋ צור הצעה מקבילה
@@ -173,11 +194,31 @@ export default function DealQuoteCard({ deal }) {
                   ★ הפוך לראשית
                 </button>
               )}
+              {selected && offers.length > 1 && (
+                selectedHasSigned ? (
+                  <div className="px-3 py-2 text-right text-[12px] text-gray-300" title="להצעה יש מסמך חתום — לא ניתן להסיר">
+                    🗑 לא ניתן להסיר — יש מסמך חתום
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setRemoveAsk({ offer: selected, mode: selected.documents.length ? 'archive' : 'delete' });
+                    }}
+                    className="block w-full px-3 py-2 text-right text-[13px] text-red-600 hover:bg-red-50 disabled:opacity-50"
+                  >
+                    {selected.documents.length ? '🗄 העבר הצעה זו לארכיון' : '🗑 מחק הצעה זו'}
+                  </button>
+                )
+              )}
             </div>
           )}
         </div>
       </div>
 
+      <div className="p-4">
       {!latest ? (
         <>
           <p className="mb-3 text-[12px] text-gray-500">
@@ -251,6 +292,8 @@ export default function DealQuoteCard({ deal }) {
         </div>
       )}
 
+      </div>
+
       {modalOpen && (
         <GenerateQuoteModal
           open
@@ -260,8 +303,19 @@ export default function DealQuoteCard({ deal }) {
         />
       )}
       {historyOpen && (
-        <QuoteHistoryDialog open onClose={() => setHistoryOpen(false)} offers={offers} />
+        <QuoteHistoryDialog open onClose={() => setHistoryOpen(false)} offers={allOffers} />
       )}
-    </div>
+      <ConfirmDialog
+        open={!!removeAsk}
+        danger
+        title={removeAsk?.mode === 'archive' ? 'העברת הצעה לארכיון' : 'מחיקת הצעה'}
+        body={removeAsk?.mode === 'archive'
+          ? `להצעה ${removeAsk?.offer?.offerNo} יש גרסאות שהופקו, ולכן היא תועבר לארכיון ולא תימחק: היא תוסר מסביבת העבודה, אבל כל הגרסאות שהופקו יישארו נגישות בהיסטוריה ובקישורים הקבועים.`
+          : `הצעה ${removeAsk?.offer?.offerNo} טרם הופקה — היא תימחק לצמיתות יחד עם התמחור והטיוטה שלה.`}
+        confirmLabel={removeAsk?.mode === 'archive' ? 'העבר לארכיון' : 'מחק'}
+        onCancel={() => setRemoveAsk(null)}
+        onConfirm={removeSelected}
+      />
+    </section>
   );
 }

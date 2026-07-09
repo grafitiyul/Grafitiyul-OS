@@ -8,7 +8,7 @@ import {
   listDealQuoteDocuments,
   toClientQuoteDocument,
 } from '../quote/quoteDocument.js';
-import { createParallelOffer, activateOffer, setPrimaryOffer } from '../quote/quoteOffers.js';
+import { createParallelOffer, activateOffer, setPrimaryOffer, removeOrArchiveOffer } from '../quote/quoteOffers.js';
 import { ensurePaymentToken, paymentUrlFor, resolvePublicOrigin } from '../dealPayment.js';
 import { recordDealChanges, recordDealContactChange, DEAL_DIFF_SELECT } from '../timeline/dealChangelog.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
@@ -651,6 +651,20 @@ router.post(
     if (r.error === 'not_found') return res.status(404).json({ error: 'not_found' });
     if (r.error) return res.status(400).json({ error: r.error });
     res.json({ ok: true });
+  }),
+);
+
+// Remove an offer: hard-delete only when nothing was ever generated; archive
+// (hide from tabs, keep history + permanent URLs) when documents exist; refuse
+// when a signed document exists.
+router.delete(
+  '/:id/quote-offers/:offerId',
+  handle(async (req, res) => {
+    const r = await removeOrArchiveOffer(prisma, req.params.id, req.params.offerId);
+    if (r.error === 'not_found') return res.status(404).json({ error: 'not_found' });
+    if (r.error === 'has_signed') return res.status(409).json({ error: 'has_signed' });
+    if (r.error) return res.status(400).json({ error: r.error });
+    res.json({ mode: r.mode });
   }),
 );
 

@@ -70,16 +70,20 @@ export function buildInitialDraftData({ dealId, quoteVersionId, language }) {
   };
 }
 
-// Every deal with quote data has at least offer #1 (its PRIMARY commercial
-// path). Parallel offers (#2, #3 …) are created explicitly by the operator;
-// this only guarantees the baseline. Idempotent; patches nothing else.
+// Every deal with quote data has at least one LIVE (non-archived) offer — its
+// PRIMARY commercial path. Parallel offers (#2, #3 …) are created explicitly by
+// the operator; this only guarantees the baseline. Archived offers are never
+// adopted, and their offerNo is never reused (unique per deal, history intact).
 export async function ensureOffer(client, dealId) {
   const existing = await client.quoteOffer.findFirst({
-    where: { dealId },
+    where: { dealId, archivedAt: null },
     orderBy: { offerNo: 'asc' },
   });
   if (existing) return existing;
-  return client.quoteOffer.create({ data: { dealId, offerNo: 1, isPrimary: true } });
+  const agg = await client.quoteOffer.aggregate({ where: { dealId }, _max: { offerNo: true } });
+  return client.quoteOffer.create({
+    data: { dealId, offerNo: (agg?._max?.offerNo || 0) + 1, isPrimary: true },
+  });
 }
 
 // Exactly one working QuoteVersion per deal (the version the Builder edits).
@@ -176,6 +180,7 @@ export async function listDealQuoteDocuments(client, dealId) {
       id: o.id,
       offerNo: o.offerNo,
       isPrimary: o.isPrimary,
+      archivedAt: o.archivedAt ?? null,
       documents: o.quoteDocuments.map((d, i) => ({
         id: d.id,
         status: d.status,

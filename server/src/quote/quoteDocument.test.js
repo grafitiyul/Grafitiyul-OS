@@ -33,9 +33,12 @@ function fakeClient({ deals = {}, versions = [], docs = [], offers = [] } = {}) 
     quoteOffer: {
       findFirst: async ({ where }) =>
         state.offers
-          .filter((o) => o.dealId === where.dealId)
+          .filter((o) => o.dealId === where.dealId && (where.archivedAt === undefined || (o.archivedAt ?? null) === where.archivedAt))
           .sort((a, b) => a.offerNo - b.offerNo)[0] || null,
       findUnique: async ({ where }) => state.offers.find((o) => o.id === where.id) || null,
+      aggregate: async ({ where }) => ({
+        _max: { offerNo: Math.max(0, ...state.offers.filter((o) => o.dealId === where.dealId).map((o) => o.offerNo)) },
+      }),
       create: async ({ data }) => {
         const o = { id: `off_${++oSeq}`, ...data };
         state.offers.push(o);

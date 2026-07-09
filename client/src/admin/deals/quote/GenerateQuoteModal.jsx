@@ -54,6 +54,13 @@ function mergeOverrides(base, overlay) {
   return { blocks };
 }
 
+// Remove one block's entry from an override layer; null when nothing remains.
+function withoutOverrideKey(state, key) {
+  if (!state?.blocks || !(key in state.blocks)) return state ?? null;
+  const { [key]: _drop, ...rest } = state.blocks;
+  return Object.keys(rest).length ? { blocks: rest } : null;
+}
+
 // The block's CURRENT effective body as editable HTML (the composed model
 // already reflects persisted + temporary overrides).
 function blockHtmlOf(block) {
@@ -65,13 +72,15 @@ function blockHtmlOf(block) {
 }
 
 // Rich-text popup for one section. The checkbox decides persistence:
-// checked (default) → the override becomes part of the Deal (all future
-// versions inherit it); unchecked → one-shot, applies only to the version
-// generated now, then disappears.
-function OverrideEditor({ block, busy, onSave, onClose }) {
+// checked → the override becomes part of the Deal (all future versions inherit
+// it); unchecked → one-shot, applies only to the version generated now, then
+// disappears. The checkbox INITIALIZES from the section's CURRENT layer —
+// a temp-edited section opens unchecked, so casually re-saving it can never
+// silently promote the temporary text into the Deal's persistent state.
+function OverrideEditor({ block, hasTemp, hasPersistent, busy, onSave, onReset, onClose }) {
   const [title, setTitle] = useState(block.data?.title || '');
   const [html, setHtml] = useState(blockHtmlOf(block));
-  const [applyFuture, setApplyFuture] = useState(true);
+  const [applyFuture, setApplyFuture] = useState(!hasTemp);
   return (
     <Dialog
       open
@@ -80,6 +89,17 @@ function OverrideEditor({ block, busy, onSave, onClose }) {
       size="lg"
       footer={(
         <>
+          {(hasTemp || hasPersistent) && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onReset}
+              title="מסיר את ההתאמה של העסקה ומחזיר את המקטע לטקסט המקור — גם בגרסאות עתידיות"
+              className="me-auto rounded-lg px-3 py-2 text-[12.5px] text-gray-500 hover:bg-gray-50 hover:text-gray-700 disabled:opacity-50"
+            >
+              ↺ שחזר טקסט ברירת מחדל
+            </button>
+          )}
           <button type="button" onClick={onClose} className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">ביטול</button>
           <button
             type="button"
@@ -96,6 +116,11 @@ function OverrideEditor({ block, busy, onSave, onClose }) {
         <p className="rounded-lg bg-gray-50 px-3 py-2 text-[12px] leading-relaxed text-gray-500 ring-1 ring-gray-200">
           העריכה כאן שייכת לעסקה הזו בלבד — התבנית הגלובלית והצעות שכבר הופקו לעולם אינן משתנות.
         </p>
+        {hasTemp && (
+          <p className="rounded-lg bg-purple-50 px-3 py-2 text-[12px] leading-relaxed text-purple-700 ring-1 ring-purple-200">
+            למקטע זה יש כרגע שינוי זמני — הוא יחול רק על הגרסה שתופק עכשיו. סמנו את התיבה למטה כדי להפוך אותו לקבוע.
+          </p>
+        )}
         <div>
           <label className="mb-1 block text-[12px] text-gray-500">כותרת המקטע</label>
           <input className={FIELD} value={title} onChange={(e) => setTitle(e.target.value)} />
@@ -221,7 +246,9 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated })
   }
 
   // Save from the override popup. Persistent → PUT overrideState on the Deal's
-  // working draft (all future versions inherit); temporary → local layer only.
+  // working draft (all future versions inherit) AND drop the section's temp
+  // entry — the temp layer must never keep shadowing (or later get mistaken
+  // for) the persistent text. Temporary → local one-shot layer only.
   async function saveOverride(block, { title, html, applyFuture }) {
     const patch = { html };
     if (title && title !== (block.data?.title || '')) patch.title = title;
@@ -231,12 +258,36 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated })
         const next = mergeOverrides(doc.overrideState, { blocks: { [block.key]: patch } });
         const r = await api.quoteDocuments.update(doc.id, { overrideState: next });
         setDoc(r.quoteDocument);
-        await reloadPreview(doc.id);
+        const temps = withoutOverrideKey(tempOverrides, block.key);
+        setTempOverrides(temps);
+        await reloadPreview(doc.id, temps);
       } else {
         const next = mergeOverrides(tempOverrides, { blocks: { [block.key]: patch } });
         setTempOverrides(next);
         await reloadPreview(doc.id, next);
       }
+      setEditing(null);
+    } catch (e) {
+      setError(e?.payload?.error || e?.message || 'save_failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // "שחזר טקסט ברירת מחדל" — remove the section's override from BOTH layers so
+  // it composes from source again, for this and every future version. Already-
+  // generated documents are immutable and unaffected.
+  async function resetOverride(block) {
+    setBusy(true); setError(null);
+    try {
+      const temps = withoutOverrideKey(tempOverrides, block.key);
+      setTempOverrides(temps);
+      if (doc.overrideState?.blocks?.[block.key]) {
+        const next = withoutOverrideKey(doc.overrideState, block.key);
+        const r = await api.quoteDocuments.update(doc.id, { overrideState: next });
+        setDoc(r.quoteDocument);
+      }
+      await reloadPreview(doc.id, temps);
       setEditing(null);
     } catch (e) {
       setError(e?.payload?.error || e?.message || 'save_failed');
@@ -514,8 +565,11 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated })
       {editing && (
         <OverrideEditor
           block={editing}
+          hasTemp={!!tempOverrides?.blocks?.[editing.key]}
+          hasPersistent={!!doc?.overrideState?.blocks?.[editing.key]}
           busy={busy}
           onSave={(v) => saveOverride(editing, v)}
+          onReset={() => resetOverride(editing)}
           onClose={() => setEditing(null)}
         />
       )}

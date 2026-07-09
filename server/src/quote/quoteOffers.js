@@ -52,6 +52,7 @@ export async function createParallelOffer(client, dealId) {
 export async function activateOffer(client, dealId, offerId) {
   const offer = await client.quoteOffer.findUnique({ where: { id: offerId } });
   if (!offer || offer.dealId !== dealId) return { error: 'not_found' };
+  if (offer.archivedAt) return { error: 'archived' };
 
   let version = await client.quoteVersion.findFirst({
     where: { dealId, offerId },
@@ -82,4 +83,60 @@ export async function setPrimaryOffer(client, dealId, offerId) {
     client.quoteOffer.update({ where: { id: offerId }, data: { isPrimary: true } }),
   ]);
   return { ok: true };
+}
+
+// Remove an offer, safely:
+//   * a SIGNED document anywhere in the offer → refuse (the offer is a legal
+//     commitment trail; nothing about it may disappear).
+//   * generated (produced) documents exist → ARCHIVE, never delete: the offer
+//     leaves the workspace tabs, but every generated document stays reachable
+//     (history dialog, admin archive view, permanent public URLs).
+//   * nothing ever generated → hard delete the offer with its draft + pricing
+//     rows (a fresh mistake leaves no trace).
+// If the removed offer was primary/active, both roles fall back to the first
+// remaining non-archived offer so the workspace never dangles.
+export async function removeOrArchiveOffer(client, dealId, offerId) {
+  const offer = await client.quoteOffer.findUnique({
+    where: { id: offerId },
+    include: {
+      quoteDocuments: {
+        where: { status: { not: 'draft' } },
+        select: { id: true, signature: { select: { id: true } } },
+      },
+      quoteVersions: { select: { id: true, isWorking: true } },
+    },
+  });
+  if (!offer || offer.dealId !== dealId) return { error: 'not_found' };
+  if (offer.quoteDocuments.some((d) => d.signature)) return { error: 'has_signed' };
+
+  const wasWorking = offer.quoteVersions.some((v) => v.isWorking);
+  let mode;
+  if (offer.quoteDocuments.length === 0) {
+    // Never generated → hard delete: drafts, pricing versions (lines cascade),
+    // then the offer row itself.
+    await client.quoteDocument.deleteMany({ where: { offerId, status: 'draft' } });
+    await client.quoteVersion.deleteMany({ where: { offerId } });
+    await client.quoteOffer.delete({ where: { id: offerId } });
+    mode = 'deleted';
+  } else {
+    await client.quoteOffer.update({ where: { id: offerId }, data: { archivedAt: new Date() } });
+    mode = 'archived';
+  }
+
+  // Fall back primary + Builder context to the first remaining live offer.
+  const fallback = await client.quoteOffer.findFirst({
+    where: { dealId, archivedAt: null },
+    orderBy: { offerNo: 'asc' },
+  });
+  if (fallback) {
+    if (offer.isPrimary) {
+      await client.quoteOffer.updateMany({ where: { dealId, isPrimary: true }, data: { isPrimary: false } });
+      await client.quoteOffer.update({ where: { id: fallback.id }, data: { isPrimary: true } });
+    }
+    if (wasWorking) {
+      const r = await activateOffer(client, dealId, fallback.id);
+      if (r.error) return r;
+    }
+  }
+  return { mode };
 }

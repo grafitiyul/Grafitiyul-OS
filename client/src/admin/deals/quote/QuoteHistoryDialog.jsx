@@ -65,8 +65,11 @@ export default function QuoteHistoryDialog({ open, onClose, offers }) {
             {multi && (
               <div className="mb-1.5 flex items-center gap-2">
                 <span className="text-[12px] font-semibold text-gray-600">הצעה {offer.offerNo}</span>
-                {offer.isPrimary && (
+                {offer.isPrimary && !offer.archivedAt && (
                   <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[9.5px] font-bold text-amber-700 ring-1 ring-amber-200">ראשית</span>
+                )}
+                {offer.archivedAt && (
+                  <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[9.5px] font-bold text-gray-500 ring-1 ring-gray-200">בארכיון</span>
                 )}
               </div>
             )}

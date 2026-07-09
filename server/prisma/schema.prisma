@@ -1498,6 +1498,11 @@ model QuoteOffer {
   dealId         String
   offerNo        Int // 1, 2, 3 … per deal
   isPrimary      Boolean         @default(false)
+  // Soft removal. An offer WITH generated documents is never hard-deleted —
+  // archiving hides it from the workspace tabs while history/admin access to
+  // its immutable documents stays intact. Hard delete is allowed only for an
+  // offer that never generated anything (and never with a signed document).
+  archivedAt     DateTime?
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   quoteVersions  QuoteVersion[]

@@ -569,11 +569,9 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
             group/private deals don't send proposals). Generation, versions,
             history, parallel offers, primary, permanent public URLs — all here;
             no proposal actions live anywhere else in the Deal UI. */}
-        {deal.activityType === 'business' && (
-          <Card variant="panel" title="הצעת מחיר">
-            <DealQuoteCard deal={deal} />
-          </Card>
-        )}
+        {/* DealQuoteCard renders its own panel shell — the offer tabs + ⋮ menu
+            share the title row, so no wrapping Card here. */}
+        {deal.activityType === 'business' && <DealQuoteCard deal={deal} />}
 
       {deal.status === 'lost' && (
         <Card variant="panel" title="פרטי LOST">
