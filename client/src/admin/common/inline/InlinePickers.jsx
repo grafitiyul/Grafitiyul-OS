@@ -14,8 +14,22 @@ import { DatePanel, TimePanel, fmtDate, fmtTime } from '../pickers/DateTimeField
 
 // Shared read trigger — visually identical to InlineField's icon-inline read mode
 // (icon beside a clickable value), so the picker sits flush with its grid row.
-function PickerTrigger({ label, icon, value, display, placeholder = '—', anchorRef, active, onOpen }) {
+// readOnly renders the same value with a 🔒 (InlineField convention) and a
+// hover hint instead of opening the panel — used e.g. for slot-owned fields on
+// a deal joined to a group tour.
+function PickerTrigger({ label, icon, value, display, placeholder = '—', anchorRef, active, onOpen, readOnly, readOnlyHint }) {
   const empty = value === '' || value === null || value === undefined;
+  if (readOnly) {
+    return (
+      <div className="flex items-center gap-1 w-full" title={readOnlyHint || label}>
+        <span className="shrink-0 inline-flex cursor-default">{icon}</span>
+        <span className={`flex-1 min-w-0 truncate text-right px-1 min-h-[38px] flex items-center text-[15px] ${empty ? 'text-gray-300' : 'font-medium text-gray-900'}`} dir="ltr">
+          {empty ? placeholder : display(value)}
+        </span>
+        <span className="ms-auto shrink-0 text-[11px] text-gray-300" aria-hidden title={readOnlyHint}>🔒</span>
+      </div>
+    );
+  }
   return (
     <div className="group flex items-center gap-1 w-full">
       <span title={label} className="shrink-0 inline-flex cursor-default">{icon}</span>
@@ -35,7 +49,7 @@ function PickerTrigger({ label, icon, value, display, placeholder = '—', ancho
 }
 
 // ── Date ── calendar popover; choosing a day saves + closes immediately.
-export function InlineDatePicker({ id, label, icon, value, placeholder, onSave }) {
+export function InlineDatePicker({ id, label, icon, value, placeholder, onSave, readOnly = false, readOnlyHint }) {
   const scope = useInlineScope();
   const open = scope.openId === id;
   const anchorRef = useRef(null);
@@ -56,17 +70,21 @@ export function InlineDatePicker({ id, label, icon, value, placeholder, onSave }
         anchorRef={anchorRef}
         active={open}
         onOpen={() => scope.requestOpen(id)}
+        readOnly={readOnly}
+        readOnlyHint={readOnlyHint}
       />
-      <AnchoredMenu anchorRef={anchorRef} open={open} onClose={scope.close} width={256} align="start">
-        <DatePanel value={value} onPick={pick} />
-      </AnchoredMenu>
+      {!readOnly && (
+        <AnchoredMenu anchorRef={anchorRef} open={open} onClose={scope.close} width={256} align="start">
+          <DatePanel value={value} onPick={pick} />
+        </AnchoredMenu>
+      )}
     </>
   );
 }
 
 // ── Time ── combobox: type to filter/normalise, or pick a 15-minute slot. An
 // off-grid current value (e.g. 14:20) is preserved and pinned at the top.
-export function InlineTimePicker({ id, label, icon, value, placeholder, onSave, stepMinutes = 15 }) {
+export function InlineTimePicker({ id, label, icon, value, placeholder, onSave, stepMinutes = 15, readOnly = false, readOnlyHint }) {
   const scope = useInlineScope();
   const open = scope.openId === id;
   const anchorRef = useRef(null);
@@ -87,10 +105,14 @@ export function InlineTimePicker({ id, label, icon, value, placeholder, onSave, 
         anchorRef={anchorRef}
         active={open}
         onOpen={() => scope.requestOpen(id)}
+        readOnly={readOnly}
+        readOnlyHint={readOnlyHint}
       />
-      <AnchoredMenu anchorRef={anchorRef} open={open} onClose={scope.close} width={150} align="start">
-        <TimePanel value={value} onPick={pick} stepMinutes={stepMinutes} />
-      </AnchoredMenu>
+      {!readOnly && (
+        <AnchoredMenu anchorRef={anchorRef} open={open} onClose={scope.close} width={150} align="start">
+          <TimePanel value={value} onPick={pick} stepMinutes={stepMinutes} />
+        </AnchoredMenu>
+      )}
     </>
   );
 }

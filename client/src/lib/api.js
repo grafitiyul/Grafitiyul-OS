@@ -1046,6 +1046,13 @@ export const api = {
   // Tours OPERATIONAL module ("סיורים") — TourEvent/Booking. Distinct from
   // tourContent below (training/route content).
   tours: {
+    // "שבץ לסיור" / "החלף סיור" — attach a WON group deal to a slot (replaces
+    // its current booking when one exists). Lives on the deals router.
+    assignDeal: (dealId, tourEventId) =>
+      request(`/api/deals/${dealId}/tour-booking`, {
+        method: 'POST',
+        body: JSON.stringify({ tourEventId }),
+      }),
     list: (params = {}) => request('/api/tours' + qs(params)),
     get: (id) => request(`/api/tours/${id}`),
     // Creates a group Tour Slot (private/business tours are created only by

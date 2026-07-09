@@ -13,6 +13,15 @@ import { ensurePaymentToken, paymentUrlFor, resolvePublicOrigin } from '../dealP
 import { recordDealChanges, recordDealContactChange, DEAL_DIFF_SELECT } from '../timeline/dealChangelog.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 import { sendSimpleEmail } from '../email/simpleSend.js';
+import {
+  wonGate,
+  activeBookingFor,
+  createTourForWonDeal,
+  cancelDealBooking,
+  orphanDealBooking,
+  syncDealToTour,
+  GROUP_LOCKED_FIELDS,
+} from '../tours/tourFromDeal.js';
 
 // Deal CRUD + DealContact management. The Deal is the commercial object: it
 // owns agreed value (integer minor units + currency), discount, payment terms,
@@ -134,7 +143,41 @@ const DEAL_INCLUDE = {
     orderBy: { createdAt: 'desc' },
     take: 1,
   },
+  // Tours: the deal's live tour connection (active) and any kept-behind orphan
+  // (reopen with "keep the tour"). Cancelled booking history is not needed by
+  // the workspace and stays out of the payload.
+  bookings: {
+    where: { status: { in: ['active', 'orphaned'] } },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      tourEvent: {
+        select: {
+          id: true,
+          kind: true,
+          status: true,
+          date: true,
+          startTime: true,
+          capacity: true,
+          tourLanguage: true,
+          product: { select: { id: true, nameHe: true } },
+          location: { select: { id: true, nameHe: true } },
+        },
+      },
+    },
+  },
 };
+
+// Compact tour payload for 409 choice dialogs (reopen / lost with a live tour).
+function tourChoicePayload(booking) {
+  return {
+    bookingId: booking.id,
+    tourEventId: booking.tourEventId,
+    kind: booking.tourEvent.kind,
+    date: booking.tourEvent.date,
+    startTime: booking.tourEvent.startTime,
+    seats: booking.seats,
+  };
+}
 
 async function loadDeal(id) {
   return prisma.deal.findUnique({ where: { id }, include: DEAL_INCLUDE });
@@ -280,9 +323,11 @@ router.put(
     const b = req.body || {};
     // Snapshot every changelog-tracked scalar (includes status/organizationId
     // used below) — the "before" side of the structured history diff.
+    // productVariantId/orderNo ride along for the Tours gate + timeline events
+    // (untracked by the changelog, harmless in the snapshot).
     const existing = await prisma.deal.findUnique({
       where: { id: req.params.id },
-      select: DEAL_DIFF_SELECT,
+      select: { ...DEAL_DIFF_SELECT, productVariantId: true, orderNo: true },
     });
     if (!existing) return res.status(404).json({ error: 'not_found' });
 
@@ -405,18 +450,105 @@ router.put(
       }
     }
 
-    const deal = await prisma.deal.update({
-      where: { id: req.params.id },
-      data,
-      include: DEAL_INCLUDE,
-    });
+    // ── Tours lifecycle gates (product decisions, see src/tours/tourFromDeal.js) ──
+    const activeBooking = await activeBookingFor(prisma, req.params.id);
+    const wonTransition = b.status === 'won' && existing.status !== 'won';
+    const lostTransition = b.status === 'lost' && existing.status !== 'lost';
+    const reopenTransition = b.status === 'open' && existing.status === 'won';
+
+    // A deal joined to a GROUP slot cannot edit slot-owned planning fields —
+    // the slot is authoritative; moving = "החלף סיור" (the tour-booking route).
+    if (activeBooking?.tourEvent.kind === 'group_slot') {
+      const touched = GROUP_LOCKED_FIELDS.filter(
+        (f) => f in data && (data[f] ?? null) !== (existing[f] ?? null),
+      );
+      if (touched.length) {
+        return res.status(409).json({ error: 'group_tour_fields_locked', fields: touched });
+      }
+    }
+
+    if (wonTransition) {
+      // NO draft tours: WON is refused while required fields are missing. The
+      // list is declarative (requiredFields.js) — merged over this same save so
+      // "fill field + WON" in one request works.
+      const gate = wonGate({ ...existing, ...data }, b.tourEventId);
+      if (gate.missing.length) {
+        return res.status(422).json({
+          error: 'won_requirements_missing',
+          missing: gate.missing,
+          activityType: data.activityType ?? existing.activityType ?? null,
+        });
+      }
+      if (gate.needsSlot) {
+        return res.status(422).json({ error: 'tour_slot_required' });
+      }
+    }
+    if (reopenTransition && activeBooking && b.tourChoice !== 'remove' && b.tourChoice !== 'keep') {
+      // Never disconnect automatically — the operator chooses.
+      return res.status(409).json({ error: 'tour_choice_required', tour: tourChoicePayload(activeBooking) });
+    }
+    if (lostTransition && activeBooking && b.confirmTourCancel !== true) {
+      // LOST cancels tour participation — requires explicit confirmation.
+      return res.status(409).json({ error: 'tour_cancel_confirm_required', tour: tourChoicePayload(activeBooking) });
+    }
+
+    const origin = await userOrigin(req.adminAuth?.userId);
+    let deal;
+    try {
+      deal = await prisma.$transaction(async (tx) => {
+        let updated = await tx.deal.update({
+          where: { id: req.params.id },
+          data,
+          include: DEAL_INCLUDE,
+        });
+        if (wonTransition) {
+          // First WON creates (private/business) or joins (group) the tour.
+          const { dealSync } = await createTourForWonDeal(tx, updated, {
+            targetTourEventId: b.tourEventId,
+            origin,
+          });
+          if (dealSync) {
+            // Group slot is authoritative — sync its fields onto the deal in
+            // the same transaction (changelog picks them up below).
+            updated = await tx.deal.update({
+              where: { id: updated.id },
+              data: dealSync,
+              include: DEAL_INCLUDE,
+            });
+          }
+        } else if (activeBooking && reopenTransition) {
+          if (b.tourChoice === 'remove') {
+            await cancelDealBooking(tx, activeBooking, { reason: 'deal_reopened', origin });
+          } else {
+            await orphanDealBooking(tx, activeBooking, { origin });
+          }
+        } else if (activeBooking && lostTransition) {
+          await cancelDealBooking(tx, activeBooking, { reason: 'deal_lost', origin });
+        } else if (activeBooking) {
+          // Regular save while on a tour: the Deal is the planning source —
+          // mirror it mechanically (private/business fields + seats).
+          await syncDealToTour(tx, updated, activeBooking, { origin });
+        }
+        return updated;
+      });
+    } catch (e) {
+      if (e.code === 'tour_slot_invalid' || e.code === 'tour_slot_not_scheduled') {
+        return res.status(422).json({ error: e.code });
+      }
+      throw e;
+    }
+    // Booking state changed inside the transaction — re-read so the response
+    // reflects it (DEAL_INCLUDE.bookings was captured by the first update).
+    if (wonTransition || reopenTransition || lostTransition) {
+      deal = await loadDeal(req.params.id);
+    }
     // Structured changelog → Deal history (grouped per save; no-op when nothing
     // tracked actually changed). Never blocks the save itself.
     await recordDealChanges(prisma, {
       dealId: req.params.id,
       before: existing,
       after: deal,
-      origin: await userOrigin(req.adminAuth?.userId),
+      origin,
     });
     // WON audit trail: which proposal the win was based on (or none).
     if (b.status === 'won' && existing.status !== 'won' && deal.wonQuoteRef) {
@@ -425,16 +557,78 @@ router.put(
         subjectId: req.params.id,
         kind: 'quote',
         data: { event: 'won_reference', ...deal.wonQuoteRef },
-        origin: await userOrigin(req.adminAuth?.userId),
+        origin,
       });
     }
     res.json(deal);
   }),
 );
 
+// "שבץ לסיור" / "החלף סיור" — attach a WON group deal to a scheduled group
+// slot, replacing its current booking if one exists. The slot is authoritative:
+// its planning fields are synced onto the deal (with changelog). Overbooking is
+// allowed — capacity is a warning the client shows before calling this.
+router.post(
+  '/:id/tour-booking',
+  handle(async (req, res) => {
+    const tourEventId = req.body?.tourEventId ? String(req.body.tourEventId) : '';
+    if (!tourEventId) return res.status(400).json({ error: 'tour_event_required' });
+    const before = await prisma.deal.findUnique({
+      where: { id: req.params.id },
+      select: { ...DEAL_DIFF_SELECT, productVariantId: true, orderNo: true },
+    });
+    if (!before) return res.status(404).json({ error: 'not_found' });
+    if (before.status !== 'won') return res.status(409).json({ error: 'deal_not_won' });
+    if (before.activityType !== 'group') return res.status(409).json({ error: 'not_group_deal' });
+    if (!Number.isInteger(Number(before.participants)) || Number(before.participants) < 1) {
+      return res.status(422).json({
+        error: 'won_requirements_missing',
+        missing: [{ field: 'participants', labelHe: 'משתתפים' }],
+      });
+    }
+
+    const origin = await userOrigin(req.adminAuth?.userId);
+    let deal;
+    try {
+      deal = await prisma.$transaction(async (tx) => {
+        const current = await activeBookingFor(tx, req.params.id);
+        if (current?.tourEventId === tourEventId) return null; // already there
+        if (current) {
+          await cancelDealBooking(tx, current, { reason: 'tour_replaced', origin });
+        }
+        const full = await tx.deal.findUnique({ where: { id: req.params.id } });
+        const { dealSync } = await createTourForWonDeal(tx, full, {
+          targetTourEventId: tourEventId,
+          origin,
+        });
+        return tx.deal.update({
+          where: { id: req.params.id },
+          data: dealSync || {},
+          include: DEAL_INCLUDE,
+        });
+      });
+    } catch (e) {
+      if (e.code === 'tour_slot_invalid' || e.code === 'tour_slot_not_scheduled') {
+        return res.status(422).json({ error: e.code });
+      }
+      throw e;
+    }
+    if (!deal) return res.json(await loadDeal(req.params.id));
+    await recordDealChanges(prisma, { dealId: req.params.id, before, after: deal, origin });
+    res.json(await loadDeal(req.params.id));
+  }),
+);
+
 router.delete(
   '/:id',
   handle(async (req, res) => {
+    // Tour bookings (any status — history included) block deletion by product
+    // rule + DB Restrict: operational work is never silently destroyed. The
+    // deal must be disconnected from its tour first.
+    const bookingCount = await prisma.booking.count({ where: { dealId: req.params.id } });
+    if (bookingCount > 0) {
+      return res.status(409).json({ error: 'deal_has_tour_bookings' });
+    }
     // DealContacts cascade. Organizations/contacts/stages are not deleted.
     await prisma.deal.delete({ where: { id: req.params.id } });
     res.status(204).end();

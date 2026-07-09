@@ -38,6 +38,9 @@ import DealQuoteCard from './quote/DealQuoteCard.jsx';
 import DealCollectionCard from './DealCollectionCard.jsx';
 import { productContextFor, locationContextFor } from './tourContext.js';
 import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
+import Dialog from '../common/Dialog.jsx';
+import TourSlotPickerDialog from '../tours/TourSlotPickerDialog.jsx';
+import { fmtTourDate } from '../tours/config.js';
 
 const INPUT =
   'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
@@ -116,6 +119,16 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   const [variants, setVariants] = useState([]);
   const [allLocations, setAllLocations] = useState([]);
   const [priceBuilderOpen, setPriceBuilderOpen] = useState(false);
+  // Tours lifecycle dialogs. WON is gated server-side (declarative required
+  // fields, no draft tours) — these render the server's answers:
+  //   • wonMissing: the 422 checklist ("להשלים לפני WON")
+  //   • slotPickerFor: 'won' (first WON of a group deal) | 'assign' (שבץ/החלף)
+  //   • reopenChoiceTour: the 409 reopen choice (remove from tour / keep)
+  //   • lostPending: LOST needs explicit tour-cancel confirmation
+  const [wonMissing, setWonMissing] = useState(null);
+  const [slotPickerFor, setSlotPickerFor] = useState(null);
+  const [reopenChoiceTour, setReopenChoiceTour] = useState(null);
+  const [lostPending, setLostPending] = useState(null);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -312,17 +325,47 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
     }
   }
 
-  async function setStatus(status) {
+  async function setStatus(status, extra = {}) {
     // LOST goes through the in-system modal (required reason + optional notes).
     if (status === 'lost') {
       setLostOpen(true);
       return;
     }
     try {
-      await api.deals.update(id, { status });
+      await api.deals.update(id, { status, ...extra });
       await refresh();
     } catch (e) {
-      alert('שגיאה: ' + e.message);
+      const code = e.payload?.error;
+      // Tours lifecycle answers (product decisions — see server tourFromDeal.js).
+      if (status === 'won' && code === 'won_requirements_missing') {
+        setWonMissing(e.payload.missing || []);
+        return;
+      }
+      if (status === 'won' && code === 'tour_slot_required') {
+        setSlotPickerFor('won');
+        return;
+      }
+      if (status === 'open' && code === 'tour_choice_required') {
+        setReopenChoiceTour(e.payload.tour || null);
+        return;
+      }
+      alert('שגיאה: ' + (code || e.message));
+    }
+  }
+
+  // Slot picked in the picker — first WON sends the slot with the status
+  // change (one transaction server-side); שבץ/החלף uses the dedicated route.
+  async function pickTourSlot(tourEventId) {
+    try {
+      if (slotPickerFor === 'won') {
+        await api.deals.update(id, { status: 'won', tourEventId });
+      } else {
+        await api.tours.assignDeal(id, tourEventId);
+      }
+      setSlotPickerFor(null);
+      await refresh();
+    } catch (e) {
+      alert('שגיאה: ' + (e.payload?.error || e.message));
     }
   }
 
@@ -361,12 +404,25 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
     }
   }
 
-  async function confirmLost({ lostReasonId, lostNotes }) {
+  async function confirmLost({ lostReasonId, lostNotes, confirmTourCancel = false }) {
     try {
-      await api.deals.update(id, { status: 'lost', lostReasonId, lostNotes });
+      await api.deals.update(id, {
+        status: 'lost',
+        lostReasonId,
+        lostNotes,
+        ...(confirmTourCancel ? { confirmTourCancel: true } : {}),
+      });
       setLostOpen(false);
+      setLostPending(null);
       await refresh();
     } catch (e) {
+      // LOST cancels tour participation — the server demands an explicit
+      // confirmation when the deal sits on a tour.
+      if (e.payload?.error === 'tour_cancel_confirm_required') {
+        setLostOpen(false);
+        setLostPending({ lostReasonId, lostNotes, tour: e.payload.tour });
+        return;
+      }
       alert('שגיאה: ' + (e.payload?.error || e.message));
     }
   }
@@ -466,6 +522,13 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   // so the panel field is locked (read-only). Business/Private stay editable. Uses
   // the single routing source of truth (no scattered activityType checks).
   const isGroup = resolveFinanceWorkspace(deal) === FINANCE_WORKSPACE.TICKET_BUILDER;
+  // Tours: the deal's live tour connection (server includes active + orphaned).
+  // While joined to a GROUP slot, the slot owns the planning fields — the deal
+  // shows them locked; changing = "החלף סיור".
+  const activeBooking = (deal.bookings || []).find((bk) => bk.status === 'active') || null;
+  const orphanedBooking = (deal.bookings || []).find((bk) => bk.status === 'orphaned') || null;
+  const onGroupSlot = activeBooking?.tourEvent?.kind === 'group_slot';
+  const GROUP_LOCK_MSG = 'לא ניתן לשנות זמנים בדיל של סיור קבוצתי.';
   // Full-color emoji field icons — secondary to the values, small but clearly
   // recognisable. The value remains the strongest visual element.
   const FIELD_EMOJI = 'text-[14px] leading-none';
@@ -499,11 +562,33 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
           title="פרטי הסיור"
           action={
             <CardKebabMenu ariaLabel="פעולות סיור">
-              {() => (
+              {(close) => (
                 <>
-                  {dealPrimaryAction(deal.activityType, false) && (
+                  {/* Group deals: the REAL tour action — שבץ before a booking
+                      exists, החלף after (same menu, per product decision).
+                      Available once the deal is WON; private/business tours
+                      are created automatically at WON (no manual action). */}
+                  {deal.activityType === 'group' && (
                     <>
-                      <MenuSoonItem label={dealPrimaryAction(deal.activityType, false)} />
+                      {deal.status === 'won' ? (
+                        <button
+                          type="button"
+                          onClick={() => { close(); setSlotPickerFor('assign'); }}
+                          className="flex w-full items-center px-3 py-2 text-sm text-gray-800 hover:bg-gray-50"
+                        >
+                          {activeBooking ? 'החלף סיור' : 'שבץ לסיור'}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled
+                          title="שיבוץ לסיור זמין לאחר סגירת הדיל (WON)"
+                          className="flex w-full items-center justify-between gap-2 px-3 py-2 text-sm text-gray-400 cursor-not-allowed"
+                        >
+                          <span>שבץ לסיור</span>
+                          <span className="text-[10px] rounded bg-gray-100 px-1.5 py-0.5">אחרי WON</span>
+                        </button>
+                      )}
                       <div className="my-1 border-t border-gray-100" />
                     </>
                   )}
@@ -516,6 +601,41 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
           }
         >
           <div className="space-y-3.5">
+            {/* Live tour connection — WON created (private/business) or joined
+                (group). Group deals change tours ONLY via "החלף סיור". */}
+            {activeBooking && (
+              <div className="flex items-center justify-between gap-2 rounded-lg bg-blue-50/70 ring-1 ring-inset ring-blue-100 px-3 py-2">
+                <div className="min-w-0 text-[13px] text-blue-900">
+                  <span className="me-1">🧭</span>
+                  <span className="font-semibold">
+                    {onGroupSlot ? 'משובץ לסיור קבוצתי' : 'סיור נוצר מהדיל'}
+                  </span>
+                  {' · '}
+                  {fmtTourDate(activeBooking.tourEvent.date)} ·{' '}
+                  <span dir="ltr" className="tabular-nums">{activeBooking.tourEvent.startTime}</span>
+                  {activeBooking.tourEvent.status === 'cancelled' && (
+                    <span className="ms-1 font-semibold text-red-600">(הסיור בוטל)</span>
+                  )}
+                </div>
+                {onGroupSlot && deal.status === 'won' && (
+                  <button
+                    type="button"
+                    onClick={() => setSlotPickerFor('assign')}
+                    className="shrink-0 rounded-lg border border-blue-200 bg-white px-2.5 py-1 text-[12px] font-semibold text-blue-700 hover:bg-blue-50"
+                  >
+                    החלף סיור
+                  </button>
+                )}
+              </div>
+            )}
+            {orphanedBooking && (
+              <div className="rounded-lg bg-amber-50 ring-1 ring-inset ring-amber-200 px-3 py-2 text-[13px] text-amber-800">
+                ⚠️ קיים סיור שנשמר בנפרד מהדיל (orphan) —{' '}
+                {fmtTourDate(orphanedBooking.tourEvent.date)} ·{' '}
+                <span dir="ltr" className="tabular-nums">{orphanedBooking.tourEvent.startTime}</span>.
+                הטיפול בו נעשה מהתראת ה-orphans שבכותרת המערכת.
+              </div>
+            )}
             {/* Strict 3-column grid: every field has a FIXED position — the layout
                 never floats with content. Each field is an emoji ICON (its visual
                 identifier; hover = field name) tightly attached to its clickable
@@ -529,6 +649,7 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
               <div className="col-span-2">
                 <InlineField id="f-product" iconInline icon={<span className={FIELD_EMOJI}>📦</span>} label="מוצר"
                   type="dropdown" value={deal.productId || ''} options={productOptions} editFirst={editFirst}
+                  readOnly={onGroupSlot} readOnlyHint={GROUP_LOCK_MSG}
                   placeholder="בחר מוצר" onSave={(v) => saveProduct(v)} />
               </div>
               <div className="flex items-center gap-1 min-w-0">
@@ -546,9 +667,11 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
               {/* Row 2 */}
               <InlineDatePicker id="f-date" icon={<span className={FIELD_EMOJI}>📅</span>} label="תאריך"
                 value={deal.tourDate || ''} placeholder="בחר תאריך"
+                readOnly={onGroupSlot} readOnlyHint={GROUP_LOCK_MSG}
                 onSave={(v) => saveField({ tourDate: v || null })} />
               <InlineTimePicker id="f-time" icon={<span className={FIELD_EMOJI}>🕒</span>} label="שעה"
                 value={deal.tourTime || ''} placeholder="בחר שעה"
+                readOnly={onGroupSlot} readOnlyHint={GROUP_LOCK_MSG}
                 onSave={(v) => saveField({ tourTime: v || null })} />
               <InlineField id="f-participants" iconInline icon={<span className={FIELD_EMOJI}>👥</span>} label="משתתפים"
                 type="number" numeric value={deal.participants ?? ''} editFirst={editFirst}
@@ -561,10 +684,12 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
               <InlineField id="f-city" iconInline icon={<span className={FIELD_EMOJI}>📍</span>} label="עיר"
                 type="dropdown" value={deal.locationId || ''} options={cityOptions} editFirst={editFirst}
                 placeholder="בחר עיר"
+                readOnly={onGroupSlot} readOnlyHint={GROUP_LOCK_MSG}
                 valueClassName={cityIsNonHome ? 'text-[15px] font-semibold text-red-600' : undefined}
                 onSave={(v) => saveLocation(v)} />
               <InlineField id="f-tourlang" iconInline icon={<span className={FIELD_EMOJI}>🌍</span>} label="שפת הסיור"
                 type="dropdown" value={deal.tourLanguage || ''} options={tourLangOptions} editFirst={editFirst}
+                readOnly={onGroupSlot} readOnlyHint={GROUP_LOCK_MSG}
                 placeholder="ללא" onSave={(v) => saveField({ tourLanguage: v || null })} />
             </div>
             {locNotConfigured && (
@@ -801,6 +926,115 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
         open={lostOpen}
         onClose={() => setLostOpen(false)}
         onSubmit={confirmLost}
+      />
+
+      {/* ── Tours lifecycle dialogs ── */}
+      {/* WON refused: the server's declarative checklist of missing fields. */}
+      <Dialog
+        open={!!wonMissing}
+        onClose={() => setWonMissing(null)}
+        title="הדיל עדיין לא מוכן ל-WON"
+        size="sm"
+        footer={
+          <button
+            type="button"
+            onClick={() => setWonMissing(null)}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+          >
+            הבנתי
+          </button>
+        }
+      >
+        <p className="mb-2 text-sm text-gray-600">
+          סגירת דיל כ-WON יוצרת סיור אמיתי — אין סיורי טיוטה. יש להשלים קודם:
+        </p>
+        <ul className="space-y-1.5">
+          {(wonMissing || []).map((m) => (
+            <li key={m.field} className="flex items-center gap-2 text-sm text-gray-800">
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-100 text-[11px]">✗</span>
+              {m.labelHe}
+            </li>
+          ))}
+        </ul>
+      </Dialog>
+
+      {/* Group slot picker — first WON ('won') or שבץ/החלף ('assign'). */}
+      <TourSlotPickerDialog
+        open={!!slotPickerFor}
+        deal={deal}
+        currentTourEventId={activeBooking?.tourEventId || null}
+        onClose={() => setSlotPickerFor(null)}
+        onPick={pickTourSlot}
+      />
+
+      {/* Reopen choice — never disconnect automatically. */}
+      <Dialog
+        open={!!reopenChoiceTour}
+        onClose={() => setReopenChoiceTour(null)}
+        title="לדיל יש סיור פעיל"
+        size="sm"
+        footer={
+          <button
+            type="button"
+            onClick={() => setReopenChoiceTour(null)}
+            className="rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-100"
+          >
+            ביטול
+          </button>
+        }
+      >
+        <p className="mb-3 text-sm text-gray-600">
+          הדיל מחובר לסיור בתאריך{' '}
+          <span className="font-semibold text-gray-900">
+            {reopenChoiceTour && fmtTourDate(reopenChoiceTour.date)}
+          </span>{' '}
+          בשעה <span dir="ltr" className="tabular-nums font-semibold text-gray-900">{reopenChoiceTour?.startTime}</span>.
+          מה לעשות עם הסיור בפתיחת הדיל מחדש?
+        </p>
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={() => { setReopenChoiceTour(null); setStatus('open', { tourChoice: 'remove' }); }}
+            className="w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-right text-sm hover:bg-red-100"
+          >
+            <span className="block font-semibold text-red-700">הסר את הדיל מהסיור</span>
+            <span className="block text-[12px] text-red-600">
+              ההזמנה תבוטל; סיור פרטי/עסקי שיישאר ריק יבוטל אוטומטית.
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => { setReopenChoiceTour(null); setStatus('open', { tourChoice: 'keep' }); }}
+            className="w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-right text-sm hover:bg-amber-100"
+          >
+            <span className="block font-semibold text-amber-800">השאר את הסיור</span>
+            <span className="block text-[12px] text-amber-700">
+              הסיור יישמר כמנותק (orphan) ויוצג בהתראה הקבועה בכותרת המערכת עד לחיבור מחדש או ביטול.
+            </span>
+          </button>
+        </div>
+      </Dialog>
+
+      {/* LOST with a live tour — explicit confirmation that participation is
+          cancelled too (empty private/business tours auto-cancel). */}
+      <ConfirmDialog
+        open={!!lostPending}
+        title="ביטול השתתפות בסיור"
+        body={
+          lostPending
+            ? `סימון הדיל כ-LOST יבטל גם את ההשתתפות בסיור בתאריך ${fmtTourDate(lostPending.tour?.date)} בשעה ${lostPending.tour?.startTime || ''}. להמשיך?`
+            : ''
+        }
+        confirmLabel="בטל דיל וסיור"
+        danger
+        onCancel={() => setLostPending(null)}
+        onConfirm={() =>
+          confirmLost({
+            lostReasonId: lostPending.lostReasonId,
+            lostNotes: lostPending.lostNotes,
+            confirmTourCancel: true,
+          })
+        }
       />
       <ConfirmDialog
         open={confirmDelete}
@@ -1425,19 +1659,11 @@ function Card({ title, action, children, variant = 'default' }) {
 }
 // General tour actions (still placeholders) — surfaced in the Tour Details
 // card's header ⋮. Payment/accounting actions live in DealCollectionCard.
-// ("טופס סיכום סיור" is the guide-facing counterpart — it belongs to the future
-// Tour page, which doesn't exist yet, so it is NOT listed here.)
+// ("טופס סיכום סיור" is the guide-facing counterpart — it belongs to the Tour
+// page.) The real group action (שבץ/החלף סיור) renders above these; private/
+// business tours are created automatically on WON, so they have no manual
+// creation entry.
 const TOUR_PLACEHOLDER_ACTIONS = ['טופס שיחת תיאום', 'הסר הרשמה מסיור', 'שליחת מייל אישור'];
-// The Tour Details PRIMARY action varies by Activity Type. When tour bookings
-// exist, a Group deal's primary will switch from "שבץ לסיור" to "החלף סיור"
-// based on assignment (no tour-assignment model yet → always "before").
-// Business deals get NO primary action here — quote generation lives solely in
-// the dedicated הצעת מחיר card (the complete proposal workspace).
-function dealPrimaryAction(activityType, groupAssigned) {
-  if (activityType === 'private') return 'צור סיור';
-  if (activityType === 'group') return groupAssigned ? 'החלף סיור' : 'שבץ לסיור';
-  return null;
-}
 
 // Disabled "coming soon" menu entry — the same visual language as the header
 // ⋮'s "איחוד דילים" placeholder, so unbuilt actions are never mistaken for live.

@@ -10,6 +10,7 @@ import TaskEventRow from '../../deals/tasks/TaskEventRow.jsx';
 import FileEventRow from '../../deals/files/FileEventRow.jsx';
 import ChangeEventRow from './ChangeEventRow.jsx';
 import EmailEventRow from '../../email/EmailEventRow.jsx';
+import TourEventRow from './TourEventRow.jsx';
 import EmailPanel from '../../email/EmailPanel.jsx';
 import DealFilesTab from '../../deals/files/DealFilesTab.jsx';
 import WhatsAppIconShared from '../icons/WhatsAppIcon.jsx';
@@ -528,6 +529,14 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
                     return (
                       <li key={entry.id}>
                         <QuoteEventRow entry={entry} />
+                      </li>
+                    );
+                  }
+                  // Tours lifecycle events (created / joined / left / orphaned).
+                  if (entry.kind === 'tour') {
+                    return (
+                      <li key={entry.id}>
+                        <TourEventRow entry={entry} />
                       </li>
                     );
                   }
