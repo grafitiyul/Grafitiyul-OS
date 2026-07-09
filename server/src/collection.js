@@ -123,6 +123,8 @@ export async function collectionDeals(prisma) {
         : null;
       return {
         id: deal.id,
+        // For the business-facing Deal URL (dealPath) on the Collection screen.
+        orderNo: deal.orderNo,
         title: deal.title,
         wonAt: deal.wonAt,
         tourDate: deal.tourDate,

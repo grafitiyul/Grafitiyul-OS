@@ -49,6 +49,7 @@ import QuoteSnapshotView from './admin/quote/QuoteSnapshotView.jsx';
 import CustomerQuoteView from './quote/CustomerQuoteView.jsx';
 // Global Settings module (low-frequency configuration).
 import SettingsHome from './admin/settings/SettingsHome.jsx';
+import ToursSettings from './admin/settings/ToursSettings.jsx';
 import WhatsAppConnectionsPage from './admin/settings/WhatsAppConnectionsPage.jsx';
 import EmailPage from './admin/email/EmailPage.jsx';
 import CrmSettingsHome from './admin/settings/CrmSettingsHome.jsx';
@@ -176,6 +177,9 @@ export default function App() {
         <Route path="settings/whatsapp" element={<WhatsAppConnectionsPage />} />
         {/* Email is a top-level module (inbox + Gmail account management). */}
         <Route path="email" element={<EmailPage />} />
+        {/* Tours module settings — the future configuration surface (guide
+            permission placeholders); the Tours module itself is not built yet. */}
+        <Route path="settings/tours" element={<ToursSettings />} />
         <Route path="settings/crm" element={<CrmSettingsHome />} />
         <Route
           path="settings/crm/organization-types"

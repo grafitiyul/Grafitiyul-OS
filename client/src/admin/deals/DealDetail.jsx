@@ -27,6 +27,7 @@ import {
   contactNameHe,
   FINANCE_WORKSPACE,
   resolveFinanceWorkspace,
+  dealPath,
 } from './config.js';
 import RichEditor from '../../editor/RichEditor.jsx';
 import { InlineEditScope } from '../common/inline/InlineEditScope.jsx';
@@ -202,6 +203,15 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
     refresh();
   }, [refresh]);
 
+  // Canonical address bar — once the deal is loaded, an internal-cuid URL is
+  // replaced with the business-facing "מספר הזמנה" URL (dealPath). Old cuid
+  // links keep working (the server accepts both); embedded drawer usage
+  // (dealIdProp) has no URL of its own to rewrite.
+  useEffect(() => {
+    if (dealIdProp || !deal?.orderNo) return;
+    if (routeId !== String(deal.orderNo)) navigate(dealPath(deal), { replace: true });
+  }, [dealIdProp, deal, routeId, navigate]);
+
   function set(field, v) {
     setForm((f) => ({ ...f, [field]: v }));
   }
@@ -340,7 +350,7 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   }
 
   async function copyDealUrl() {
-    const url = `${window.location.origin}/admin/crm/deals/${id}`;
+    const url = `${window.location.origin}${dealPath(deal)}`;
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
@@ -414,7 +424,7 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
         expectedCloseDate: deal.expectedCloseDate || null,
         notes: deal.notes || null,
       });
-      navigate(`/admin/crm/deals/${copy.id}`);
+      navigate(dealPath(copy));
     } catch (e) {
       alert('שגיאה בשכפול: ' + (e.payload?.error || e.message));
     }
@@ -480,19 +490,28 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
     <InlineEditScope>
       <div className="space-y-4">
         {/* ── Card 1 — פרטי הסיור (operational). Inline read-first editing.
-            Header ⋮ = the general tour actions (still placeholders); payment/
-            accounting actions live in the גבייה card below. ── */}
+            Header ⋮ = ALL the tour actions: the activity-type primary
+            (צור סיור / שבץ לסיור — Tour module not built yet) plus the
+            placeholder entries. Payment/accounting actions live in the
+            גבייה card below. ── */}
         <Card
           variant="panel"
           title="פרטי הסיור"
           action={
             <CardKebabMenu ariaLabel="פעולות סיור">
-              {(close) => TOUR_PLACEHOLDER_ACTIONS.map((label) => (
-                <button key={label} type="button" onClick={close} title="בקרוב"
-                  className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
-                  {label}
-                </button>
-              ))}
+              {() => (
+                <>
+                  {dealPrimaryAction(deal.activityType, false) && (
+                    <>
+                      <MenuSoonItem label={dealPrimaryAction(deal.activityType, false)} />
+                      <div className="my-1 border-t border-gray-100" />
+                    </>
+                  )}
+                  {TOUR_PLACEHOLDER_ACTIONS.map((label) => (
+                    <MenuSoonItem key={label} label={label} />
+                  ))}
+                </>
+              )}
             </CardKebabMenu>
           }
         >
@@ -552,18 +571,6 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
               <p className="text-[12px] text-amber-600">
                 העיר שנבחרה אינה מוגדרת כוריאנט של המוצר. ייתכן שיידרש תיאום מחיר ידני בבונה המחיר.
               </p>
-            )}
-
-            {/* Operational primary action (private/group deals only) — payment/
-                accounting actions moved to the גבייה card's ⋮ menu; general tour
-                actions moved to this card's header ⋮. */}
-            {dealPrimaryAction(deal.activityType, false) && (
-              <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-gray-100">
-                <button type="button" title="בקרוב"
-                  className="rounded-lg bg-blue-600 text-white text-sm font-semibold px-4 py-2 hover:bg-blue-700">
-                  {dealPrimaryAction(deal.activityType, false)}
-                </button>
-              </div>
             )}
 
             {/* Important customer information — collapsed to ~3 formatted lines
@@ -657,6 +664,17 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
               >
                 {deal.title}
               </h1>
+            )}
+            {/* "מספר הזמנה" — the business-facing deal identifier, prominent next
+                to the title. Also the deal's URL (see dealPath). */}
+            {deal.orderNo && (
+              <span
+                title="מספר הזמנה"
+                className="inline-flex items-center rounded-lg bg-gray-100 ring-1 ring-inset ring-gray-200 px-2.5 py-1 text-[15px] font-bold text-gray-600 tabular-nums"
+                dir="ltr"
+              >
+                #{deal.orderNo}
+              </span>
             )}
             {/* Single identity badge — the activity classification at a glance.
                 Display only; clicking opens the editing popover. */}
@@ -1407,7 +1425,9 @@ function Card({ title, action, children, variant = 'default' }) {
 }
 // General tour actions (still placeholders) — surfaced in the Tour Details
 // card's header ⋮. Payment/accounting actions live in DealCollectionCard.
-const TOUR_PLACEHOLDER_ACTIONS = ['הסר הרשמה מסיור', 'שליחת מייל אישור'];
+// ("טופס סיכום סיור" is the guide-facing counterpart — it belongs to the future
+// Tour page, which doesn't exist yet, so it is NOT listed here.)
+const TOUR_PLACEHOLDER_ACTIONS = ['טופס שיחת תיאום', 'הסר הרשמה מסיור', 'שליחת מייל אישור'];
 // The Tour Details PRIMARY action varies by Activity Type. When tour bookings
 // exist, a Group deal's primary will switch from "שבץ לסיור" to "החלף סיור"
 // based on assignment (no tour-assignment model yet → always "before").
@@ -1417,6 +1437,22 @@ function dealPrimaryAction(activityType, groupAssigned) {
   if (activityType === 'private') return 'צור סיור';
   if (activityType === 'group') return groupAssigned ? 'החלף סיור' : 'שבץ לסיור';
   return null;
+}
+
+// Disabled "coming soon" menu entry — the same visual language as the header
+// ⋮'s "איחוד דילים" placeholder, so unbuilt actions are never mistaken for live.
+function MenuSoonItem({ label }) {
+  return (
+    <button
+      type="button"
+      disabled
+      title="בקרוב"
+      className="flex w-full items-center justify-between gap-2 px-3 py-2 text-sm text-gray-400 cursor-not-allowed"
+    >
+      <span>{label}</span>
+      <span className="text-[10px] rounded bg-gray-100 px-1.5 py-0.5">בקרוב</span>
+    </button>
+  );
 }
 
 // Rarely-needed technical timestamps — collapsed by default so they never take

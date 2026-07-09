@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import DealDetail from '../deals/DealDetail.jsx';
+import { dealPath } from '../deals/config.js';
 
 // The FULL deal workspace (same DealDetail component, embedded), opened from
 // the WhatsApp inbox so the operator never loses their place in the queue.
@@ -11,11 +12,9 @@ import DealDetail from '../deals/DealDetail.jsx';
 // the right, with no dead gray space. Slides in from the left (RTL far side);
 // ESC / × returns to the inbox.
 
-// The canonical Deal URL — must match the router (App.jsx: /admin/crm/deals/:id)
-// and DealDetail's own copy-URL action, one source of truth for both buttons.
-function dealPath(dealId) {
-  return `/admin/crm/deals/${dealId}`;
-}
+// The Deal URL comes from the shared dealPath (deals/config.js) — one source of
+// truth with every other navigate/link/copy. Only the cuid is known here; the
+// full page canonicalises the address bar to the מספר הזמנה form on load.
 
 export default function DealDrawer({ dealId, onClose }) {
   const [entered, setEntered] = useState(false);
@@ -36,7 +35,7 @@ export default function DealDrawer({ dealId, onClose }) {
   }, [onClose]);
 
   async function copyDealUrl() {
-    const url = `${window.location.origin}${dealPath(dealId)}`;
+    const url = `${window.location.origin}${dealPath({ id: dealId })}`;
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
@@ -73,7 +72,7 @@ export default function DealDrawer({ dealId, onClose }) {
             העתקת קישור לדיל
           </button>
           <Link
-            to={dealPath(dealId)}
+            to={dealPath({ id: dealId })}
             className="text-[12px] font-medium text-blue-700 hover:underline"
           >
             פתיחה בעמוד מלא ↗

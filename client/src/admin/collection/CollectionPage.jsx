@@ -4,6 +4,7 @@ import { api } from '../../lib/api.js';
 import { formatMinor } from '../../lib/money.js';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../common/tableColumns.jsx';
 import { COLLECTION_STATUS_LABELS, COLLECTION_STATUS_STYLES } from './collectionConfig.js';
+import { dealPath } from '../deals/config.js';
 
 // גבייה — the main Collection screen: every WON deal whose money has not fully
 // arrived. Rows and all financial numbers come from the server Collection
@@ -285,7 +286,7 @@ export default function CollectionPage() {
                   <tr
                     key={d.id}
                     className="group hover:bg-blue-50/40 cursor-pointer transition-colors"
-                    onClick={() => navigate(`/admin/crm/deals/${d.id}`)}
+                    onClick={() => navigate(dealPath(d))}
                   >
                     {visibleCols.map((c) => (
                       <TableCell key={c.key} col={c}>{c.render(d)}</TableCell>
@@ -293,7 +294,7 @@ export default function CollectionPage() {
                     <td className="px-4 py-3 align-middle border-s border-gray-100/70" onClick={(e) => e.stopPropagation()}>
                       <button
                         type="button"
-                        onClick={() => navigate(`/admin/crm/deals/${d.id}`)}
+                        onClick={() => navigate(dealPath(d))}
                         title="פתח דיל"
                         className="h-8 w-8 rounded-md text-gray-400 hover:text-blue-700 hover:bg-blue-50"
                       >

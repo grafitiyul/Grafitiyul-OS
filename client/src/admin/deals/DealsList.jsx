@@ -4,7 +4,7 @@ import { api } from '../../lib/api.js';
 import { formatMinor, toMinor } from '../../lib/money.js';
 import { contactNamesFromFull } from '../../lib/nameSplit.js';
 import { useDirtyWhen } from '../../lib/dirtyForms.js';
-import { DEAL_STATUS_LABELS, DEAL_STATUS_STYLES } from './config.js';
+import { DEAL_STATUS_LABELS, DEAL_STATUS_STYLES, dealPath } from './config.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../common/tableColumns.jsx';
 import { OrgPicker, resolveOrganization } from '../crm/common/OrgPicker.jsx';
@@ -317,7 +317,7 @@ export default function DealsList() {
                       deal={d}
                       cols={visibleCols}
                       stageCls={stageColor.get(d.dealStageId)}
-                      onOpen={() => navigate(`/admin/crm/deals/${d.id}`)}
+                      onOpen={() => navigate(dealPath(d))}
                       onDelete={async () => {
                         if (!confirm(`למחוק את הדיל "${d.title}"?`)) return;
                         try { await api.deals.remove(d.id); await refresh(); }
@@ -349,7 +349,7 @@ export default function DealsList() {
           subtypes={subtypes}
           sources={sources}
           onClose={() => setShowCreate(false)}
-          onCreated={(deal) => navigate(`/admin/crm/deals/${deal.id}`)}
+          onCreated={(deal) => navigate(dealPath(deal))}
         />
       )}
     </div>

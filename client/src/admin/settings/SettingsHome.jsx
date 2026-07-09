@@ -43,10 +43,10 @@ export default function SettingsHome() {
           comingSoon
         />
         <CategoryCard
+          to="/admin/settings/tours"
           icon="🗺️"
           title="סיורים"
-          description="סוגי סיור, הגדרות תפעול ושיבוץ מדריכים."
-          comingSoon
+          description="הרשאות מדריכים והגדרות תפעול — הכנה למודול הסיורים."
         />
         <CategoryCard
           icon="⚙️"

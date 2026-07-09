@@ -140,6 +140,24 @@ async function loadDeal(id) {
   return prisma.deal.findUnique({ where: { id }, include: DEAL_INCLUDE });
 }
 
+// "מספר הזמנה" URL support — every /:id route on this router accepts EITHER the
+// internal cuid OR the business-facing sequential order number (all digits;
+// cuids never are). The one resolver below swaps a numeric id for the cuid
+// before any handler runs, so no handler needs to know which form arrived.
+// Unknown numbers fall through unchanged → the handler's own lookup 404s.
+router.param('id', (req, _res, next, value) => {
+  if (!/^\d+$/.test(value)) return next();
+  const orderNo = Number(value);
+  if (!Number.isSafeInteger(orderNo) || orderNo > 2147483647) return next();
+  prisma.deal
+    .findUnique({ where: { orderNo }, select: { id: true } })
+    .then((found) => {
+      if (found) req.params.id = found.id;
+      next();
+    })
+    .catch(next);
+});
+
 // ---------- Deals ----------
 
 router.get(

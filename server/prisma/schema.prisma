@@ -833,6 +833,11 @@ model DealStage {
 // Deal, not the Organization).
 model Deal {
   id                    String               @id @default(cuid())
+  // "מספר הזמנה" — the business-facing sequential deal number. Assigned by a
+  // dedicated Postgres sequence that starts at 27000 and only ever grows (gaps
+  // from deleted deals are fine, numbers are never reused). Shown in the Deal
+  // header and used as the Deal URL; the cuid `id` stays the internal PK/FK key.
+  orderNo               Int                  @unique @default(dbgenerated("nextval('deal_order_no_seq')"))
   title                 String
   organization          Organization?        @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   organizationId        String?

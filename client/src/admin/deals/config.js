@@ -69,6 +69,14 @@ export function resolveFinanceWorkspace(deal) {
     : FINANCE_WORKSPACE.PRICE_BUILDER;
 }
 
+// The canonical Deal URL — ONE source of truth for every navigate/link/copy.
+// Prefers the business-facing "מספר הזמנה" (orderNo); falls back to the internal
+// cuid for payloads that don't carry orderNo (old links keep working — the
+// server resolves both forms, and DealDetail canonicalises the address bar).
+export function dealPath(deal) {
+  return `/admin/crm/deals/${deal?.orderNo ?? deal?.id}`;
+}
+
 // DealContact roles — a contact may hold multiple. The first three are the
 // operational quick-add vocabulary; the rest are the original roles, kept for
 // backward compatibility with existing data. (Single hardcoded catalog for now;
