@@ -157,7 +157,7 @@ function alignClass(col) {
 // Keep the drag strictly horizontal — headers only ever move along the row.
 const horizontalOnly = ({ transform }) => ({ ...transform, y: 0 });
 
-function SortableTh({ col, className, sort, onSort, width, onResize }) {
+function SortableTh({ col, className, sort, onSort, width, resizable, onResizeEnd }) {
   const s = useSortable({ id: col.key });
   const thRef = useRef(null);
   const setRefs = (el) => {
@@ -170,30 +170,44 @@ function SortableTh({ col, className, sort, onSort, width, onResize }) {
   const sortable = !!onSort && col.sortable !== false;
   const active = sortable && sort?.key === col.key;
 
-  // Resize: drag the header's inline-end edge. Width tracks the pointer
-  // imperatively (no re-render per move) and is committed + persisted once on
-  // release. Direction-aware so RTL drags grow the column naturally.
+  // Resize: drag the header's inline-end edge, and THAT edge follows the
+  // pointer while every other edge stays anchored. A w-full auto-layout table
+  // can't do that (growing one column makes the browser steal the difference
+  // from its neighbors — the opposite edge moves), so for the drag we freeze
+  // the current geometry: every header gets its measured pixel width, the
+  // table switches to fixed layout with an explicit total, and each pointer
+  // move changes ONLY this column's width + the table total. In RTL the table
+  // grows leftward inside its overflow-x wrapper (right edge pinned), so the
+  // grabbed left edge tracks the pointer 1:1. Committed once on release.
   function startResize(e) {
     const th = thRef.current;
-    if (!th) return;
+    const table = th?.closest('table');
+    if (!th || !table) return;
     e.preventDefault();
     e.stopPropagation(); // never start a dnd column drag from the handle
+    // Freeze: snapshot every header cell, then pin the table itself.
+    for (const cell of th.parentElement.children) {
+      cell.style.width = `${cell.offsetWidth}px`;
+    }
     const startX = e.clientX;
     const startW = th.offsetWidth;
+    const startTableW = table.offsetWidth;
+    table.style.tableLayout = 'fixed';
+    table.style.width = `${startTableW}px`;
     const rtl = getComputedStyle(th).direction === 'rtl';
     const min = col.minWidth || MIN_COL_WIDTH;
-    let w = startW;
     function onMove(ev) {
       const delta = rtl ? startX - ev.clientX : ev.clientX - startX;
-      w = Math.max(min, Math.round(startW + delta));
+      const w = Math.max(min, Math.round(startW + delta));
       th.style.width = `${w}px`;
+      table.style.width = `${startTableW + (w - startW)}px`;
     }
     function onUp() {
       document.removeEventListener('pointermove', onMove);
       document.removeEventListener('pointerup', onUp);
       document.body.style.userSelect = '';
       document.body.style.cursor = '';
-      onResize(col.key, w, min);
+      onResizeEnd();
     }
     document.addEventListener('pointermove', onMove);
     document.addEventListener('pointerup', onUp);
@@ -204,6 +218,7 @@ function SortableTh({ col, className, sort, onSort, width, onResize }) {
   return (
     <th
       ref={setRefs}
+      data-colkey={col.key}
       style={{
         transform: CSS.Transform.toString(s.transform),
         transition: s.transition,
@@ -219,7 +234,7 @@ function SortableTh({ col, className, sort, onSort, width, onResize }) {
     >
       {col.label}
       {active && <span className="ms-1 text-[9px]">{sort.dir === 'asc' ? '▲' : '▼'}</span>}
-      {onResize && (
+      {resizable && (
         <span
           role="separator"
           aria-orientation="vertical"
@@ -260,10 +275,51 @@ export function SortableHeaderRow({
   onResize,
   children,
 }) {
+  const rowRef = useRef(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   function onDragEnd({ active, over }) {
     if (over && active.id !== over.id) onMove(active.id, over.id);
   }
+
+  // Resize release: persist the measured width of EVERY column (the drag
+  // froze all of them), so the anchored geometry survives re-renders and
+  // reloads instead of snapping back to fluid distribution. React batches
+  // the per-column setState calls into one commit.
+  function commitWidths() {
+    const tr = rowRef.current;
+    if (!tr || !onResize) return;
+    for (const th of tr.querySelectorAll('th[data-colkey]')) {
+      const key = th.dataset.colkey;
+      const min = cols.find((c) => c.key === key)?.minWidth || MIN_COL_WIDTH;
+      onResize(key, th.offsetWidth, min);
+    }
+  }
+
+  // Once every visible column has a persisted width (i.e. the user has
+  // resized), keep the table in the same frozen mode the drag used: fixed
+  // layout + explicit total (stored widths + measured utility cells). This is
+  // what makes a reload land exactly where the drag ended. With no stored
+  // widths (or a newly shown column without one) the styles are cleared and
+  // the table returns to the default fluid w-full behavior.
+  useEffect(() => {
+    const tr = rowRef.current;
+    const table = tr?.closest('table');
+    if (!table) return;
+    const frozen = cols.length > 0 && cols.every((c) => widths?.[c.key]);
+    if (!frozen) {
+      table.style.tableLayout = '';
+      table.style.width = '';
+      return;
+    }
+    let total = 0;
+    for (const th of tr.children) {
+      const key = th.dataset.colkey;
+      total += key && widths[key] ? widths[key] : th.offsetWidth;
+    }
+    table.style.tableLayout = 'fixed';
+    table.style.width = `${total}px`;
+  });
+
   return (
     <DndContext
       sensors={sensors}
@@ -272,7 +328,7 @@ export function SortableHeaderRow({
       modifiers={[horizontalOnly]}
     >
       <SortableContext items={cols.map((c) => c.key)} strategy={rectSortingStrategy}>
-        <tr className={trClassName}>
+        <tr ref={rowRef} className={trClassName}>
           {cols.map((c) => (
             <SortableTh
               key={c.key}
@@ -281,7 +337,8 @@ export function SortableHeaderRow({
               sort={sort}
               onSort={onSort}
               width={widths?.[c.key]}
-              onResize={onResize}
+              resizable={!!onResize}
+              onResizeEnd={commitWidths}
             />
           ))}
           {children}
