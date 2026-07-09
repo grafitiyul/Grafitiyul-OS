@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import ChatThread from './ChatThread.jsx';
 import { ensureSeen, markSeen } from './seenStore.js';
 import { OPEN_WHATSAPP_COMPOSER_EVENT } from './composerEvents.js';
+import { WorkspaceSeamContext } from '../../shell/WorkspaceLayout.jsx';
 
 // Floating WhatsApp dock for the Deal page. Rendered through WorkspaceLayout's
 // `seamLeft` slot, so the closed bubble sits in the empty gap between the deal
@@ -55,6 +56,19 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
   // A generic "open composer on this chat" request (e.g. from "שלח ללקוח →
   // WhatsApp"); applied once the chat list is loaded.
   const [pendingOpenChatId, setPendingOpenChatId] = useState(null);
+
+  // Report the open panel's width to the hosting WorkspaceLayout so the
+  // center workspace moves aside instead of being covered when the left panel
+  // is collapsed. `animate: false` while drag-resizing — the workspace must
+  // track the handle 1:1, and ease only on open/close. Null-safe: the dock
+  // may render outside a WorkspaceLayout.
+  const seam = useContext(WorkspaceSeamContext) || null;
+  const setSeamOverlay = seam?.setSeamOverlay;
+  useEffect(() => {
+    if (!setSeamOverlay) return undefined;
+    setSeamOverlay({ width: open ? width : 0, animate: !draggingRef.current });
+    return () => setSeamOverlay({ width: 0, animate: true });
+  }, [setSeamOverlay, open, width]);
 
   // Open-composer signal: open the dock and remember which chat to focus. The
   // draft text is seeded by the caller through the shared draft store, which

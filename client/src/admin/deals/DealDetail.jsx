@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
-import SplitButton from '../common/SplitButton.jsx';
+import CardKebabMenu from '../common/CardKebabMenu.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import HoverCard from '../common/HoverCard.jsx';
 import LostDealDialog from './LostDealDialog.jsx';
@@ -10,14 +10,12 @@ import DealSalesScript from './DealSalesScript.jsx';
 import DealContactsDialog from './DealContactsDialog.jsx';
 import OrganizationEditDialog from './OrganizationEditDialog.jsx';
 import PriceBuilderDialog from './PriceBuilderDialog.jsx';
-import Dialog from '../common/Dialog.jsx';
 import GroupTicketBuilderDialog from './GroupTicketBuilderDialog.jsx';
 import WorkspaceLayout from '../../shell/WorkspaceLayout.jsx';
 import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
 import WhatsAppDock from '../whatsapp/WhatsAppDock.jsx';
 import { minorToInput } from '../../lib/money.js';
 import { useDirtyForm, useDirtyWhen, valuesEqual } from '../../lib/dirtyForms.js';
-import { contactNamesFromParts } from '../../lib/nameSplit.js';
 import {
   ACTIVITY_TYPES,
   ACTIVITY_TYPE_LABELS,
@@ -34,11 +32,9 @@ import RichEditor from '../../editor/RichEditor.jsx';
 import { InlineEditScope } from '../common/inline/InlineEditScope.jsx';
 import InlineField from '../common/inline/InlineField.jsx';
 import { InlineDatePicker, InlineTimePicker } from '../common/inline/InlinePickers.jsx';
-import ProduceDocumentModal from './icount/ProduceDocumentModal.jsx';
-import CustomPaymentLinkModal from './icount/CustomPaymentLinkModal.jsx';
-import CardcomPaymentModal from './cardcom/CardcomPaymentModal.jsx';
 import SendDocumentModal from './icount/SendDocumentModal.jsx';
 import DealQuoteCard from './quote/DealQuoteCard.jsx';
+import DealCollectionCard from './DealCollectionCard.jsx';
 import { productContextFor, locationContextFor } from './tourContext.js';
 import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
 
@@ -483,8 +479,23 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   const dealProperties = (
     <InlineEditScope>
       <div className="space-y-4">
-        {/* ── Card 1 — פרטי הסיור (operational). Inline read-first editing. ── */}
-        <Card variant="panel" title="פרטי הסיור">
+        {/* ── Card 1 — פרטי הסיור (operational). Inline read-first editing.
+            Header ⋮ = the general tour actions (still placeholders); payment/
+            accounting actions live in the גבייה card below. ── */}
+        <Card
+          variant="panel"
+          title="פרטי הסיור"
+          action={
+            <CardKebabMenu ariaLabel="פעולות סיור">
+              {(close) => TOUR_PLACEHOLDER_ACTIONS.map((label) => (
+                <button key={label} type="button" onClick={close} title="בקרוב"
+                  className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                  {label}
+                </button>
+              ))}
+            </CardKebabMenu>
+          }
+        >
           <div className="space-y-3.5">
             {/* Strict 3-column grid: every field has a FIXED position — the layout
                 never floats with content. Each field is an emoji ICON (its visual
@@ -543,17 +554,20 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
               </p>
             )}
 
-            {/* Operational action bar — payment-link actions are live (permanent
-                /pay URL); the other actions are still placeholders. */}
-            <DealActionRow
-              deal={deal}
-              productName={products.find((p) => p.id === deal.productId)?.nameHe || deal.title}
-              onOpenPriceBuilder={() => setPriceBuilderOpen(true)}
-              onRefresh={refresh}
-            />
+            {/* Operational primary action (private/group deals only) — payment/
+                accounting actions moved to the גבייה card's ⋮ menu; general tour
+                actions moved to this card's header ⋮. */}
+            {dealPrimaryAction(deal.activityType, false) && (
+              <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-gray-100">
+                <button type="button" title="בקרוב"
+                  className="rounded-lg bg-blue-600 text-white text-sm font-semibold px-4 py-2 hover:bg-blue-700">
+                  {dealPrimaryAction(deal.activityType, false)}
+                </button>
+              </div>
+            )}
 
-            {/* Important customer information — sits BELOW the action bar. Collapsed to
-                ~3 formatted lines by default, with a "show more" control. */}
+            {/* Important customer information — collapsed to ~3 formatted lines
+                by default, with a "show more" control. */}
             <CollapsibleNote id="f-customerInfo" label="מידע חשוב על הלקוח" value={deal.customerInfo || ''} rich
               placeholder="הוסיפו מידע פנימי חשוב לשיחה…"
               onSave={(v) => saveField({ customerInfo: v || null })} />
@@ -567,6 +581,16 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
         {/* DealQuoteCard renders its own panel shell — the offer tabs + ⋮ menu
             share the title row, so no wrapping Card here. */}
         {deal.activityType === 'business' && <DealQuoteCard deal={deal} />}
+
+        {/* גבייה — the deal's financial summary + the single home of the
+            payment/accounting actions (header ⋮). Total is always the live
+            Price Builder headline; rows are the existing payment records. */}
+        <DealCollectionCard
+          deal={deal}
+          productName={products.find((p) => p.id === deal.productId)?.nameHe || deal.title}
+          onOpenPriceBuilder={() => setPriceBuilderOpen(true)}
+          onRefresh={refresh}
+        />
 
       {deal.status === 'lost' && (
         <Card variant="panel" title="פרטי LOST">
@@ -1381,402 +1405,18 @@ function Card({ title, action, children, variant = 'default' }) {
     </section>
   );
 }
-function FieldBox({ label, children }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-[11px] text-gray-500">{label}</label>
-      {children}
-    </div>
-  );
-}
-// Operational action bar under the Tour Details fields. The PRIMARY action varies
-// by Activity Type; "תשלום" (split button — payment/accounting menu under its
-// arrow) and "פעולות" (general deal actions) are shared. The payment actions are
-// LIVE; the "פעולות" items are placeholders. When tour bookings exist, a Group
-// deal's primary will switch from "שבץ לסיור" to "החלף סיור" based on assignment.
+// General tour actions (still placeholders) — surfaced in the Tour Details
+// card's header ⋮. Payment/accounting actions live in DealCollectionCard.
+const TOUR_PLACEHOLDER_ACTIONS = ['הסר הרשמה מסיור', 'שליחת מייל אישור'];
+// The Tour Details PRIMARY action varies by Activity Type. When tour bookings
+// exist, a Group deal's primary will switch from "שבץ לסיור" to "החלף סיור"
+// based on assignment (no tour-assignment model yet → always "before").
 // Business deals get NO primary action here — quote generation lives solely in
 // the dedicated הצעת מחיר card (the complete proposal workspace).
 function dealPrimaryAction(activityType, groupAssigned) {
   if (activityType === 'private') return 'צור סיור';
   if (activityType === 'group') return groupAssigned ? 'החלף סיור' : 'שבץ לסיור';
   return null;
-}
-// Prefill contact — mirror of the server's pick (dealPayment.js): first contact
-// flagged to receive payment links, else the primary/first contact.
-function pickPaymentContact(contacts) {
-  const list = contacts || [];
-  return list.find((dc) => dc.receivePaymentLinks) || list[0] || null;
-}
-function waHref(phone, text) {
-  let digits = String(phone || '').replace(/\D/g, '');
-  if (digits.startsWith('0')) digits = `972${digits.slice(1)}`;
-  return digits ? `https://wa.me/${digits}?text=${encodeURIComponent(text)}` : null;
-}
-const DLG_FIELD = 'border border-gray-300 rounded-md px-3 py-1.5 text-sm w-full';
-const EMPTY_DLG_FORM = { first: '', last: '', phone: '', email: '' };
-
-// A customer detail that already exists — shown read-only (calm gray box with
-// a check) so the dialog reads as "review & complete the customer's details".
-// The subtle pencil turns JUST that field editable, so outdated info can be
-// fixed inline without leaving the payment flow or opening the full editor.
-function DlgKnownValue({ children, dir, onEdit }) {
-  return (
-    <div className="group flex items-center justify-between gap-2 rounded-md bg-gray-50 border border-gray-200 px-3 py-1.5">
-      <span dir={dir} className="text-sm text-gray-800 truncate">{children}</span>
-      <span className="shrink-0 inline-flex items-center gap-1">
-        <span className="text-[12px] text-emerald-600">✓</span>
-        <button
-          type="button"
-          onClick={onEdit}
-          title="ערוך"
-          aria-label="ערוך"
-          className="rounded p-0.5 text-gray-300 group-hover:text-gray-400 hover:!text-gray-600 hover:bg-gray-200/60 transition-colors"
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-          </svg>
-        </button>
-      </span>
-    </div>
-  );
-}
-
-function DealActionRow({ deal, productName, onOpenPriceBuilder, onRefresh }) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef(null);
-  // No tour-assignment model yet → a Group deal is always "before assignment".
-  const groupAssigned = false;
-  const soon = 'בקרוב';
-
-  // ── Payment link (permanent GOS /pay URL — the ONLY URL customers get) ────
-  // "תשלום" is a SPLIT button: its body OPENS the link; its arrow opens the
-  // payment/accounting menu (copy / WhatsApp / iCount actions). All are
-  // instant — no confirmation popup on success. A dialog appears only when
-  // data is missing: amount is REQUIRED (blocks; iCount needs a priced item),
-  // customer details are OPTIONAL and completed INLINE in the dialog — saved
-  // to the real Contact record (never a payment-only copy), then the original
-  // action continues automatically.
-  const [payBusy, setPayBusy] = useState(false);
-  const [payFeedback, setPayFeedback] = useState(null);
-  const [missingDialog, setMissingDialog] = useState(null); // { action, kind: 'amount'|'details', needName, needPhone, needEmail }
-  // iCount accounting: "הפק מסמך" + "קישור לתשלום מותאם אישית".
-  const [docModalOpen, setDocModalOpen] = useState(false);
-  const [customLinkOpen, setCustomLinkOpen] = useState(false);
-  const [cardcomOpen, setCardcomOpen] = useState(false);
-  // "שלח חשבון עסקה חדש" — re-issue a חשבון עסקה from the CURRENT deal state
-  // (customer changed quantities/products), then continue into the existing
-  // sharing flow: newInvoiceOpen → ProduceDocumentModal(sendFlow) → onIssued
-  // hands the fresh document to SendDocumentModal via shareEntry.
-  const [newInvoiceOpen, setNewInvoiceOpen] = useState(false);
-  const [shareEntry, setShareEntry] = useState(null);
-  const [dlgForm, setDlgForm] = useState(EMPTY_DLG_FORM);
-  // Pencil-edit state: an EXISTING value the user chose to correct inline.
-  const [dlgEdit, setDlgEdit] = useState({ name: false, phone: false, email: false });
-  const feedbackTimer = useRef(null);
-
-  const contact = pickPaymentContact(deal.contacts)?.contact || null;
-  const contactName =
-    contactNameHe(contact) || `${contact?.firstNameEn || ''} ${contact?.lastNameEn || ''}`.trim();
-  const contactPhone = contact?.phones?.[0]?.value || '';
-  const contactEmail = contact?.emails?.[0]?.value || '';
-  const amountMinor = Number(deal.valueMinor || 0);
-
-  function flash(msg) {
-    setPayFeedback(msg);
-    clearTimeout(feedbackTimer.current);
-    feedbackTimer.current = setTimeout(() => setPayFeedback(null), 2500);
-  }
-
-  async function runPayAction(action, over = {}) {
-    setMissingDialog(null);
-    setPayBusy(true);
-    try {
-      // Token is permanent — every call returns the SAME URL for this deal.
-      const { paymentUrl } = await api.deals.ensurePaymentToken(deal.id);
-      if (action === 'copy') {
-        await navigator.clipboard.writeText(paymentUrl);
-        flash('✓ קישור התשלום הועתק');
-      } else if (action === 'open') {
-        window.open(paymentUrl, '_blank', 'noopener');
-      } else if (action === 'wa') {
-        const name = over.name ?? contactName;
-        const text = `שלום${name ? ` ${name}` : ''}, מצורף קישור לתשלום עבור ${productName}: ${paymentUrl}`;
-        const wa = waHref(over.phone ?? contactPhone, text);
-        if (wa) window.open(wa, '_blank', 'noopener');
-      }
-    } catch {
-      flash('פעולת קישור התשלום נכשלה — נסו שוב');
-    } finally {
-      setPayBusy(false);
-    }
-  }
-
-  function payAction(action) {
-    if (amountMinor <= 0) return setMissingDialog({ action, kind: 'amount' });
-    const needName = !contactName;
-    const needPhone = !contactPhone;
-    const needEmail = !contactEmail;
-    if (needName || needPhone || needEmail) {
-      setDlgForm(EMPTY_DLG_FORM);
-      setDlgEdit({ name: false, phone: false, email: false });
-      return setMissingDialog({ action, kind: 'details', needName, needPhone, needEmail });
-    }
-    runPayAction(action);
-  }
-
-  // Pencil click: seed the form with the current value and make ONLY that
-  // field editable.
-  function startDlgEdit(field) {
-    if (field === 'name') {
-      setDlgForm((s) => ({
-        ...s,
-        first: contact?.firstNameHe || contact?.firstNameEn || '',
-        last: contact?.lastNameHe || contact?.lastNameEn || '',
-      }));
-    } else if (field === 'phone') {
-      setDlgForm((s) => ({ ...s, phone: contactPhone }));
-    } else if (field === 'email') {
-      setDlgForm((s) => ({ ...s, email: contactEmail }));
-    }
-    setDlgEdit((s) => ({ ...s, [field]: true }));
-  }
-
-  // Save the filled fields to their real source of truth — the Contact record
-  // (creating + linking a primary contact when the deal has none; pencil-edited
-  // existing values update their existing phone/email rows) — then continue
-  // the original action with the fresh values.
-  async function saveDetailsAndContinue() {
-    const { action, needName, needPhone, needEmail } = missingDialog;
-    const first = dlgForm.first.trim();
-    const last = dlgForm.last.trim();
-    const phone = dlgForm.phone.trim();
-    const email = dlgForm.email.trim();
-    setPayBusy(true);
-    try {
-      if (!contact) {
-        // No contact on the deal — a name is required to create one (enforced
-        // by the disabled save button).
-        const created = await api.contacts.create(contactNamesFromParts(first, last));
-        if (phone) await api.contacts.addPhone(created.id, { value: phone, isPrimary: true });
-        if (email) await api.contacts.addEmail(created.id, { value: email, isPrimary: true });
-        await api.deals.addContact(deal.id, { contactId: created.id, isPrimary: true });
-      } else {
-        // A field is written only when it was editable (missing OR pencil-
-        // edited), non-empty, and actually changed. Existing rows are UPDATED
-        // in place — never duplicated.
-        const fullName = [first, last].filter(Boolean).join(' ');
-        if ((needName || dlgEdit.name) && first && fullName !== contactName) {
-          await api.contacts.update(contact.id, contactNamesFromParts(first, last));
-        }
-        if ((needPhone || dlgEdit.phone) && phone && phone !== contactPhone) {
-          const row = contact.phones?.[0];
-          if (row) await api.contacts.updatePhone(row.id, { value: phone });
-          else await api.contacts.addPhone(contact.id, { value: phone, isPrimary: true });
-        }
-        if ((needEmail || dlgEdit.email) && email && email !== contactEmail) {
-          const row = contact.emails?.[0];
-          if (row) await api.contacts.updateEmail(row.id, { value: email });
-          else await api.contacts.addEmail(contact.id, { value: email, isPrimary: true });
-        }
-      }
-    } catch (e) {
-      setPayBusy(false);
-      flash(`שמירת הפרטים נכשלה: ${e?.payload?.error || e?.message || ''}`);
-      return;
-    }
-    onRefresh?.(); // background — the action itself doesn't depend on it
-    await runPayAction(action, {
-      phone: phone || contactPhone,
-      name: [first, last].filter(Boolean).join(' ') || contactName,
-    });
-  }
-
-  const PAY_MENU_ACTIONS = [
-    { key: 'copy', label: 'העתק קישור לתשלום' },
-    { key: 'wa', label: 'שלח קישור בוואטסאפ' },
-  ];
-  const PLACEHOLDER_ACTIONS = ['הסר הרשמה מסיור', 'שליחת מייל אישור'];
-
-  const dlg = missingDialog;
-  // Effective values after the form: what the action would actually run with.
-  const effPhone = dlgForm.phone.trim() || contactPhone;
-  // Creating a brand-new contact requires a name; WhatsApp requires a phone.
-  const canSave =
-    !payBusy &&
-    (contact ? true : !!dlgForm.first.trim()) &&
-    (dlg?.action !== 'wa' || !!effPhone);
-  const canSkip = !payBusy && (dlg?.action !== 'wa' || !!contactPhone);
-  const dlgBtn = (label, onClick, { primary = false, disabled = false } = {}) => (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={
-        primary
-          ? 'text-sm text-white rounded px-4 py-1.5 font-medium bg-blue-600 hover:bg-blue-700 disabled:opacity-50'
-          : 'text-sm text-gray-600 px-3 py-1.5 rounded hover:bg-gray-100 disabled:opacity-50'
-      }
-    >
-      {label}
-    </button>
-  );
-
-  return (
-    <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-gray-100">
-      {dealPrimaryAction(deal.activityType, groupAssigned) && (
-        <button type="button" title={soon}
-          className="rounded-lg bg-blue-600 text-white text-sm font-semibold px-4 py-2 hover:bg-blue-700">
-          {dealPrimaryAction(deal.activityType, groupAssigned)}
-        </button>
-      )}
-      {/* Payment split button: the body opens the permanent payment link; the
-          arrow opens the payment/accounting actions menu. */}
-      <SplitButton
-        label="תשלום"
-        primaryTitle="פתח את קישור התשלום הקבוע של העסקה"
-        disabled={payBusy}
-        onPrimary={() => payAction('open')}
-        menuAriaLabel="פעולות תשלום"
-      >
-        {(close) => (
-          <>
-            {PAY_MENU_ACTIONS.map((a) => (
-              <button key={a.key} type="button" disabled={payBusy}
-                onClick={() => { close(); payAction(a.key); }}
-                className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50">
-                {a.label}
-              </button>
-            ))}
-            <div className="my-1 border-t border-gray-100" />
-            <button type="button" onClick={() => { close(); setDocModalOpen(true); }}
-              className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
-              הפק מסמך
-            </button>
-            <button type="button" onClick={() => { close(); setCustomLinkOpen(true); }}
-              className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
-              קישור לתשלום מותאם אישית
-            </button>
-            <button type="button" onClick={() => { close(); setCardcomOpen(true); }}
-              className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
-              קישור לתשלום כרטיס תייר
-            </button>
-            <div className="my-1 border-t border-gray-100" />
-            <button type="button" onClick={() => { close(); setNewInvoiceOpen(true); }}
-              className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
-              שלח חשבון עסקה חדש
-            </button>
-          </>
-        )}
-      </SplitButton>
-      {/* "פעולות" — general deal actions only; payment/accounting actions live
-          under the payment split button. */}
-      <button ref={menuRef} type="button" onClick={() => setMenuOpen((o) => !o)}
-        aria-haspopup="menu" aria-expanded={menuOpen}
-        className="rounded-lg border border-gray-300 text-gray-700 text-sm font-medium px-3 py-2 hover:bg-gray-50 inline-flex items-center gap-1">
-        פעולות <span className="text-[9px] text-gray-400">▼</span>
-      </button>
-      {payFeedback && <span className="text-[12px] text-gray-500">{payFeedback}</span>}
-      <AnchoredMenu anchorRef={menuRef} open={menuOpen} onClose={() => setMenuOpen(false)} width={216} align="start">
-        {PLACEHOLDER_ACTIONS.map((label) => (
-          <button key={label} type="button" onClick={() => setMenuOpen(false)} title={soon}
-            className="block w-full text-right px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
-            {label}
-          </button>
-        ))}
-      </AnchoredMenu>
-
-      <ProduceDocumentModal dealId={deal.id} open={docModalOpen} onClose={() => setDocModalOpen(false)} />
-      <ProduceDocumentModal
-        dealId={deal.id}
-        open={newInvoiceOpen}
-        onClose={() => setNewInvoiceOpen(false)}
-        sendFlow
-        onIssued={(doc) => {
-          setNewInvoiceOpen(false);
-          setShareEntry({ data: { doctype: doc.doctype, doctypeLabel: doc.doctypeLabel, docnum: doc.docnum, docUrl: doc.docUrl } });
-        }}
-      />
-      <SendDocumentModal open={!!shareEntry} entry={shareEntry} deal={deal} onClose={() => setShareEntry(null)} />
-      <CustomPaymentLinkModal dealId={deal.id} open={customLinkOpen} onClose={() => setCustomLinkOpen(false)} />
-      <CardcomPaymentModal dealId={deal.id} open={cardcomOpen} onClose={() => setCardcomOpen(false)} />
-
-      {/* Missing-data dialog — the only popup in the payment flow. Details are
-          completed INLINE and saved to the Contact, then the action continues. */}
-      <Dialog
-        open={dlg !== null}
-        onClose={() => (payBusy ? null : setMissingDialog(null))}
-        title={dlg?.kind === 'amount' ? 'חסר מחיר לעסקה' : 'השלמת פרטי לקוח'}
-        size={dlg?.kind === 'details' ? 'lg' : 'md'}
-        footer={
-          dlg?.kind === 'amount' ? (
-            <>
-              {dlgBtn('ביטול', () => setMissingDialog(null))}
-              {dlgBtn('פתח בונה מחיר', () => { setMissingDialog(null); onOpenPriceBuilder(); }, { primary: true })}
-            </>
-          ) : (
-            <>
-              {dlgBtn('ביטול', () => setMissingDialog(null), { disabled: payBusy })}
-              {dlgBtn('המשך בלי הפרטים', () => runPayAction(dlg.action), { disabled: !canSkip })}
-              {dlgBtn(payBusy ? 'שומר…' : 'שמור והמשך', saveDetailsAndContinue, { primary: true, disabled: !canSave })}
-            </>
-          )
-        }
-      >
-        {dlg?.kind === 'amount' && (
-          <p className="text-sm text-gray-800">
-            לא ניתן ליצור קישור תשלום ללא סכום — אייקאונט דורש פריט עם מחיר.
-            קבעו מחיר לעסקה בבונה המחיר ונסו שוב.
-          </p>
-        )}
-        {dlg?.kind === 'details' && (
-          <div className="space-y-5 py-1">
-            <p className="text-sm text-gray-800">
-              {contact
-                ? 'אלה פרטי הלקוח שימולאו מראש בעמוד התשלום. השלימו את החסר — ואפשר גם לתקן פרט קיים בלחיצה על העיפרון. הכל נשמר על איש הקשר של הדיל.'
-                : 'לדיל אין עדיין איש קשר. מלאו את הפרטים כאן — ייווצר איש קשר ראשי לדיל וישמש לעמוד התשלום.'}
-            </p>
-            <div className="space-y-4">
-              {/* The full known picture: existing values read-only (pencil turns
-                  just that field editable), missing ones editable from the start. */}
-              <FieldBox label={dlg.needName && !contact ? 'שם *' : 'שם'}>
-                {dlg.needName || dlgEdit.name ? (
-                  <div className="grid grid-cols-2 gap-3">
-                    <input autoFocus placeholder="שם פרטי" value={dlgForm.first} className={DLG_FIELD}
-                      onChange={(e) => setDlgForm((s) => ({ ...s, first: e.target.value }))} />
-                    <input placeholder="שם משפחה" value={dlgForm.last} className={DLG_FIELD}
-                      onChange={(e) => setDlgForm((s) => ({ ...s, last: e.target.value }))} />
-                  </div>
-                ) : (
-                  <DlgKnownValue onEdit={() => startDlgEdit('name')}>{contactName}</DlgKnownValue>
-                )}
-              </FieldBox>
-              <FieldBox label={dlg.needPhone && dlg.action === 'wa' ? 'טלפון *' : 'טלפון'}>
-                {dlg.needPhone || dlgEdit.phone ? (
-                  <input autoFocus={dlgEdit.phone || !dlg.needName} placeholder="050-0000000"
-                    value={dlgForm.phone} dir="ltr" className={DLG_FIELD}
-                    onChange={(e) => setDlgForm((s) => ({ ...s, phone: e.target.value }))} />
-                ) : (
-                  <DlgKnownValue dir="ltr" onEdit={() => startDlgEdit('phone')}>{contactPhone}</DlgKnownValue>
-                )}
-              </FieldBox>
-              <FieldBox label="אימייל">
-                {dlg.needEmail || dlgEdit.email ? (
-                  <input autoFocus={dlgEdit.email || (!dlg.needName && !dlg.needPhone)} placeholder="name@example.com"
-                    value={dlgForm.email} dir="ltr" className={DLG_FIELD}
-                    onChange={(e) => setDlgForm((s) => ({ ...s, email: e.target.value }))} />
-                ) : (
-                  <DlgKnownValue dir="ltr" onEdit={() => startDlgEdit('email')}>{contactEmail}</DlgKnownValue>
-                )}
-              </FieldBox>
-            </div>
-            <p className="text-[12px] text-gray-500">
-              אפשר גם להמשיך בלי הפרטים — הלקוח ישלים אותם בעמוד התשלום של אייקאונט.
-            </p>
-          </div>
-        )}
-      </Dialog>
-    </div>
-  );
 }
 
 // Rarely-needed technical timestamps — collapsed by default so they never take

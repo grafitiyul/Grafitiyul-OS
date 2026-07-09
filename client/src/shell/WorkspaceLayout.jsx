@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { createContext, useEffect, useMemo, useRef, useState } from 'react';
 
 // Reusable 3-column workspace shell (VS Code / Linear style), RTL-first.
 //
@@ -14,6 +14,21 @@ import { useEffect, useRef, useState } from 'react';
 // children. Any GOS module can reuse it.
 
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+
+// Seam coordination — lets a `seamLeft` accessory (e.g. the WhatsApp dock)
+// report the width of its OPEN fixed overlay, so the center workspace can move
+// aside instead of being covered when the LEFT panel is collapsed (when the
+// panel is open the overlay covers the panel, which is the intended behavior).
+// Value: { leftOpen, setSeamOverlay({ width, animate }) } — width 0 = closed.
+// Accessories must null-guard: the context is only provided by this layout.
+export const WorkspaceSeamContext = createContext(null);
+
+// Physical geometry of the seam overlay (matches the accessory's fixed
+// positioning): 16px viewport-left anchor + a small breathing gap, minus the
+// 36px collapsed rail that already offsets the center content.
+const SEAM_OVERLAY_LEFT = 16;
+const SEAM_OVERLAY_GAP = 12;
+const COLLAPSED_RAIL_W = 36;
 
 function readStored(key, fallback) {
   try {
@@ -153,6 +168,21 @@ export default function WorkspaceLayout({ storageKey, right = {}, left = {}, sea
   const [state, setState] = useState(() => readStored(storageKey, defaults));
   const { rightWidth, leftWidth, rightOpen, leftOpen } = state;
   const [dragging, setDragging] = useState(null); // 'right' | 'left' | null
+  // Reported by the seam accessory: its open overlay width (0 = closed) and
+  // whether the center should ANIMATE to the new offset (true on open/close,
+  // false while the accessory is being drag-resized, so it tracks 1:1).
+  const [seamOverlay, setSeamOverlay] = useState({ width: 0, animate: true });
+  const seamCtx = useMemo(() => ({ leftOpen, setSeamOverlay }), [leftOpen]);
+
+  // Push the center aside only when the overlay would otherwise cover it: the
+  // left panel is collapsed (or absent). Desktop-only — applied via lg: class.
+  const seamPushActive = seamOverlay.width > 0 && !(hasLeft && leftOpen);
+  const seamPush = seamPushActive
+    ? Math.max(
+        0,
+        SEAM_OVERLAY_LEFT + seamOverlay.width + SEAM_OVERLAY_GAP - (hasLeft ? COLLAPSED_RAIL_W : 0),
+      )
+    : 0;
 
   // Persist the whole layout state on every change.
   useEffect(() => {
@@ -209,6 +239,7 @@ export default function WorkspaceLayout({ storageKey, right = {}, left = {}, sea
   const setLeftOpen = (v) => setState((s) => ({ ...s, leftOpen: v }));
 
   return (
+    <WorkspaceSeamContext.Provider value={seamCtx}>
     <div
       ref={containerRef}
       dir="rtl"
@@ -246,7 +277,17 @@ export default function WorkspaceLayout({ storageKey, right = {}, left = {}, sea
       {/* overflow-x-hidden: a seam accessory may overhang the content's left
           edge slightly; in RTL that overhang would otherwise mint a
           horizontal scrollbar on narrow-center screens. */}
-      <section className="order-first lg:order-none flex-1 min-w-0 lg:overflow-y-auto overflow-x-hidden">
+      {/* --seam-push moves the workspace aside for an open seam overlay (see
+          WorkspaceSeamContext above). Physical padding-left: the overlay is
+          anchored at the viewport's LEFT edge regardless of RTL. Transition
+          only on open/close — while drag-resizing it must track the pointer. */}
+      <section
+        style={{
+          '--seam-push': `${seamPush}px`,
+          transition: seamOverlay.animate ? 'padding 200ms ease' : 'none',
+        }}
+        className="order-first lg:order-none flex-1 min-w-0 lg:overflow-y-auto overflow-x-hidden lg:pl-[var(--seam-push)]"
+      >
         <div className="relative mx-auto w-full max-w-[1320px] px-4 lg:px-8 py-4 space-y-4">
           {/* Seam accessory — floats in the content's left gutter (inside the
               horizontal padding, hugging the first card's edge), sticky so it
@@ -283,5 +324,6 @@ export default function WorkspaceLayout({ storageKey, right = {}, left = {}, sea
         </>
       )}
     </div>
+    </WorkspaceSeamContext.Provider>
   );
 }
