@@ -220,7 +220,7 @@ test('Tours list renders a populated row incl. the row-action buttons', async ()
   await unmount();
 });
 
-test('Tour page renders header, assignments and the customer panel', async () => {
+test('Tour modal renders header, team chips and the participant cards', async () => {
   const { container, unmount } = await render(
     React.createElement(
       MemoryRouter,
@@ -233,11 +233,17 @@ test('Tour page renders header, assignments and the customer panel', async () =>
     ),
   );
   const html = container.innerHTML;
+  assert.match(html, /role="dialog"/, 'the tour should render as a modal dialog');
   assert.match(html, /סיור גרפיטי בדיקה/, 'header should show the product');
-  assert.match(html, /שיבוץ מדריכים/, 'assignments section should render');
-  assert.match(html, /לקוחות והזמנות/, 'customer panel should render');
-  assert.match(html, /דיל בדיקה קבוצתי/, 'the booking customer card should render');
-  assert.match(html, /ישראל ישראלי/, 'the ordering contact should render');
-  assert.match(html, /טופס שיחת תיאום/, 'approved placeholder buttons should render');
+  assert.match(html, /צוות משובץ/, 'the renamed team section should render');
+  assert.match(html, /משתתפים/, 'the renamed participants section should render');
+  // Card title is now the CUSTOMER (primary contact), with the org beneath —
+  // no longer the deal title.
+  assert.match(html, /ישראל ישראלי/, 'the customer name should be the card title');
+  assert.match(html, /חברת בדיקות/, 'the organization should render under the customer');
+  assert.doesNotMatch(html, /דיל בדיקה קבוצתי/, 'the deal title must NOT be the card title');
+  assert.match(html, /טופס שיחת תיאום/, 'the coordination-call placeholder should render inside the card');
+  // Cancellation now lives on the Deal — the tour modal must not expose it.
+  assert.doesNotMatch(html, /בטל סיור/, 'the cancel-tour action must be removed');
   await unmount();
 });

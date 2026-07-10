@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Outlet, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../common/tableColumns.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
@@ -442,6 +442,10 @@ export default function ToursPage() {
         onCancel={() => setConfirmAction(null)}
         onConfirm={runConfirmAction}
       />
+
+      {/* The Tour page renders here as a modal ON TOP of this list (nested
+          route). Closing it refreshes the list so status/seat changes show. */}
+      <Outlet context={{ closeTour: () => { navigate('/admin/tours'); refresh(); } }} />
     </div>
   );
 }

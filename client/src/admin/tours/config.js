@@ -47,10 +47,20 @@ export const ASSIGNMENT_ROLE_LABELS = {
   workshop_assistant: 'עוזר סדנה',
 };
 
+// Role colors carry the visual hierarchy on the guide chips (see TourPage
+// "צוות משובץ"): lead = green (authority), guide = blue (the default), workshop
+// assistant = yellow. Kept obvious and distinct on purpose.
 export const ASSIGNMENT_ROLE_STYLES = {
-  lead_guide: 'bg-indigo-600 text-white',
-  guide: 'bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200',
-  workshop_assistant: 'bg-gray-100 text-gray-600 ring-1 ring-inset ring-gray-200',
+  lead_guide: 'bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-300',
+  guide: 'bg-blue-100 text-blue-700 ring-1 ring-inset ring-blue-300',
+  workshop_assistant: 'bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-300',
+};
+
+// Small solid dot per role — used in the role-picker menu on a chip.
+export const ASSIGNMENT_ROLE_DOTS = {
+  lead_guide: 'bg-emerald-500',
+  guide: 'bg-blue-500',
+  workshop_assistant: 'bg-amber-500',
 };
 
 // Weekday labels, index = TourScheduleRule.weekday (0=Sunday, JS convention).

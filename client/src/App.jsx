@@ -166,8 +166,11 @@ export default function App() {
         <Route path="collection" element={<CollectionPage />} />
         {/* Tours — the operational tours module (TourEvent/Booking): table of
             upcoming tours + group slot management. Calendar views come later. */}
-        <Route path="tours" element={<AdminToursPage />} />
-        <Route path="tours/:id" element={<TourEventPage />} />
+        {/* The tour opens as a modal on top of the list — nested so the list
+            stays mounted behind it (rendered via ToursPage's <Outlet />). */}
+        <Route path="tours" element={<AdminToursPage />}>
+          <Route path=":id" element={<TourEventPage />} />
+        </Route>
         {/* Quote Preview Canvas (Slice 3) — internal admin draft workspace,
             opened from a Deal. NOT the public quote page. */}
         <Route path="quote/:dealId" element={<QuotePreviewCanvas />} />
