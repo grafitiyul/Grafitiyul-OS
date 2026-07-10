@@ -56,6 +56,7 @@ function NumberInput({ q, value, onChange }) {
       dir="ltr"
       className={`${inputCls} text-left`}
       value={value ?? ''}
+      placeholder={q.placeholderText || ''}
       min={q.config?.min}
       max={q.config?.max}
       step={q.config?.integer ? 1 : 'any'}

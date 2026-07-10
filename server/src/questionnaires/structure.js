@@ -58,6 +58,7 @@ export function buildQuestionSnapshot(question, lang, defaultLanguage) {
     type: question.type,
     label: r(question.label),
     helpText: r(question.helpText) || null,
+    placeholder: r(question.placeholder) || null,
     required: !!question.required,
     config: question.config ?? null,
     sectionKey: question.section?.key ?? null,

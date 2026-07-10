@@ -163,6 +163,38 @@ test('buildQuestionSnapshot freezes the resolved single-language view', () => {
   assert.equal(snapEn.options[0].label, 'סיור');
 });
 
+test('placeholder: snapshot resolves per language with default-language fallback', () => {
+  const s = structureOf([
+    q('company', 'text', {
+      label: { he: 'שם החברה', en: 'Company name' },
+      helpText: { he: 'נא לכתוב את השם הרשמי' },
+      placeholder: { he: 'לדוגמה: חברת ישראל בע״מ', en: 'e.g. Israel Ltd' },
+    }),
+    q('notes', 'textarea', { placeholder: { he: 'פרטים נוספים' } }),
+    q('legacy', 'text'),
+  ]);
+  const [company, notes, legacy] = flatQuestions(s);
+  const he = buildQuestionSnapshot(company, 'he', 'he');
+  assert.equal(he.placeholder, 'לדוגמה: חברת ישראל בע״מ');
+  // helpText and placeholder are SEPARATE snapshot fields — not overloaded.
+  assert.equal(he.helpText, 'נא לכתוב את השם הרשמי');
+  assert.equal(buildQuestionSnapshot(company, 'en', 'he').placeholder, 'e.g. Israel Ltd');
+  // en missing → default-language fallback, never blank.
+  assert.equal(buildQuestionSnapshot(notes, 'en', 'he').placeholder, 'פרטים נוספים');
+  // Questions predating the field stay null — old data keeps working.
+  assert.equal(buildQuestionSnapshot(legacy, 'he', 'he').placeholder, null);
+});
+
+test('placeholder: version clone carries the full localized map', () => {
+  const s = structureOf([
+    q('company', 'text', { placeholder: { he: 'לדוגמה', en: 'e.g.' } }),
+    q('legacy', 'text'),
+  ]);
+  const clone = cloneStructureForNewVersion(s);
+  assert.deepEqual(clone[0].questions[0].placeholder, { he: 'לדוגמה', en: 'e.g.' });
+  assert.equal(clone[0].questions[1].placeholder, null);
+});
+
 test('buildSingletonKey: subject-bound only', () => {
   assert.equal(
     buildSingletonKey({ subjectType: 'booking', subjectId: 'b1', purpose: 'coordination' }),

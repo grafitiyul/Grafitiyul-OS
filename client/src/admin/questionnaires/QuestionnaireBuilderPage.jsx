@@ -74,6 +74,7 @@ function computeMissingLanguages(runtime) {
     check(s.title);
     for (const q of s.questions) {
       check(q.label, defHas(q.label));
+      check(q.placeholder, defHas(q.placeholder));
       for (const o of q.options || []) check(o.label, defHas(o.label));
     }
   }
@@ -81,6 +82,10 @@ function computeMissingLanguages(runtime) {
 }
 
 const OPTION_TYPES = ['choice', 'dropdown', 'multi'];
+// Free-input types where an in-field example text (placeholder) is meaningful.
+// date/time/datetime are excluded — native pickers ignore the placeholder
+// attribute, so offering the field would silently do nothing.
+const PLACEHOLDER_TYPES = ['text', 'textarea', 'number', 'email', 'phone', 'url'];
 // Question types offered by the builder — a strict subset of the server type
 // registry, extended only together with a working runtime renderer.
 const BUILDER_TYPES = [
@@ -740,6 +745,19 @@ function QuestionInspector({ state, runtime, isDraft, versionId, lx, onClose, on
                   onSave={(v) => save({ helpText: lx.merge(q.helpText, v) })}
                 />
               </div>
+              {PLACEHOLDER_TYPES.includes(q.type) ? (
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-[12.5px] font-medium text-gray-600">טקסט לדוגמה בתוך השדה (אופציונלי)</label>
+                  <InlineText
+                    input
+                    disabled={!isDraft}
+                    value={lx.read(q.placeholder)}
+                    placeholder={lx.hint(q.placeholder)}
+                    allowEmpty
+                    onSave={(v) => save({ placeholder: lx.merge(q.placeholder, v) })}
+                  />
+                </div>
+              ) : null}
               <div className="flex items-center gap-2">
                 <Toggle
                   checked={q.required}
