@@ -1106,6 +1106,19 @@ export const api = {
       request(`/api/tours/assignments/${assignmentId}`, { method: 'PUT', body: JSON.stringify(data) }),
     removeAssignment: (assignmentId) =>
       request(`/api/tours/assignments/${assignmentId}`, { method: 'DELETE' }),
+    // Activity components (per tour; seeded from the product, then tour-owned).
+    addComponent: (tourId, data) =>
+      request(`/api/tours/${tourId}/components`, { method: 'POST', body: JSON.stringify(data) }),
+    reorderComponents: (tourId, ids) =>
+      request(`/api/tours/${tourId}/components/reorder`, { method: 'PUT', body: JSON.stringify({ ids }) }),
+    setComponentLocation: (rowId, workshopLocationId) =>
+      request(`/api/tours/components/${rowId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ workshopLocationId }),
+      }),
+    removeComponent: (rowId) => request(`/api/tours/components/${rowId}`, { method: 'DELETE' }),
+    reseedComponents: (tourId) =>
+      request(`/api/tours/${tourId}/components/reseed`, { method: 'POST', body: '{}' }),
     // Creates a group Tour Slot (private/business tours are created only by
     // the deal WON transition, never from here).
     create: (data) => request('/api/tours', { method: 'POST', body: JSON.stringify(data) }),

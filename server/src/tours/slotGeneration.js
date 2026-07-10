@@ -11,6 +11,8 @@
 //   2. The TourEvent (generatedByRuleId, date) unique + skipDuplicates —
 //      guards concurrent requests racing on the same range.
 
+import { seedSlotComponents } from './tourComponents.js';
+
 // Israel-local calendar date (server runs UTC) — "YYYY-MM-DD".
 export function israelToday() {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' });
@@ -49,6 +51,10 @@ export async function ensureGeneratedSlots(client) {
 
   const rows = [];
   const cursorPatches = [];
+  // Dates generated per rule this run — used to seed the new slots' components
+  // from the rule's product defaults. Safe to target these exact (rule, date)
+  // pairs: the cursor guarantees they are freshly created, never revisited.
+  const generatedByRule = [];
   for (const rule of rules) {
     // A rule missing its catalog refs (product deleted) cannot mint valid
     // slots — skip it without moving the cursor, so fixing the rule resumes
@@ -58,8 +64,10 @@ export async function ensureGeneratedSlots(client) {
     let from = rule.generatedThrough ? addDays(rule.generatedThrough, 1) : today;
     if (from < today) from = today;
     if (from > target) continue;
+    const ruleDates = [];
     for (let d = from; d <= target; d = addDays(d, 1)) {
       if (weekdayOf(d) !== rule.weekday) continue;
+      ruleDates.push(d);
       rows.push({
         kind: 'group_slot',
         status: 'scheduled',
@@ -73,6 +81,7 @@ export async function ensureGeneratedSlots(client) {
         generatedByRuleId: rule.id,
       });
     }
+    if (ruleDates.length) generatedByRule.push({ ruleId: rule.id, productId: rule.productId, dates: ruleDates });
     cursorPatches.push({ id: rule.id, generatedThrough: target });
   }
 
@@ -80,6 +89,12 @@ export async function ensureGeneratedSlots(client) {
   if (rows.length) {
     const res = await client.tourEvent.createMany({ data: rows, skipDuplicates: true });
     created = res.count;
+    // Seed the newly-created slots' activity components from the product
+    // defaults (Slice C). After createMany the ids aren't returned, so we look
+    // the batch back up by (rule, date) inside the seeder.
+    for (const g of generatedByRule) {
+      await seedSlotComponents(client, g.ruleId, g.productId, g.dates);
+    }
   }
   for (const p of cursorPatches) {
     await client.tourScheduleRule.update({

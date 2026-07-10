@@ -18,6 +18,8 @@ import {
 } from '../tours/tourFromDeal.js';
 import { recordDealChanges, DEAL_DIFF_SELECT } from '../timeline/dealChangelog.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
+import { validateWorkshopLocationForComponent } from '../tours/activityCatalog.js';
+import { seedTourComponents } from '../tours/tourComponents.js';
 
 // TourEvent CRUD — the OPERATIONAL tours module ("סיורים"). Distinct from the
 // tour CONTENT routes (/api/tour-content). Ownership contract:
@@ -399,6 +401,10 @@ router.get(
             },
           },
         },
+        activityComponents: {
+          orderBy: { sortOrder: 'asc' },
+          include: { activityComponent: true, workshopLocation: true },
+        },
         bookings: {
           orderBy: { createdAt: 'asc' },
           include: {
@@ -447,6 +453,144 @@ router.get(
     if (!tour) return res.status(404).json({ error: 'not_found' });
     const occ = await occupancyFor(prisma, [tour.id]);
     res.json(toClientTour(tour, occ[tour.id]));
+  }),
+);
+
+// ---------- activity components (per tour) ----------
+// The tour's DELIVERED components (seeded from the product at creation; owned by
+// the tour after). Add / remove / reorder, and set a WorkshopLocation per
+// workshop component (a tour may hold several workshop components, each in a
+// different place). Non-workshop components never carry a location.
+
+const TOUR_COMPONENT_INCLUDE = { activityComponent: true, workshopLocation: true };
+
+// Add a component to a tour. Body { activityComponentId, workshopLocationId? }.
+router.post(
+  '/:id/components',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const tour = await prisma.tourEvent.findUnique({
+      where: { id: req.params.id },
+      select: { id: true },
+    });
+    if (!tour) return res.status(404).json({ error: 'not_found' });
+    const component = await prisma.activityComponent.findUnique({
+      where: { id: String(b.activityComponentId || '') },
+      select: { id: true, isActive: true, isWorkshop: true },
+    });
+    if (!component) return res.status(400).json({ error: 'component_not_found' });
+    // A NEW assignment must use an active catalog entry (existing rows survive a
+    // later deactivation — see the delete guard on the catalog).
+    if (!component.isActive) return res.status(409).json({ error: 'component_inactive' });
+
+    const loc = validateWorkshopLocationForComponent(component.isWorkshop, b.workshopLocationId);
+    if (!loc.ok) return res.status(400).json({ error: loc.error });
+
+    const last = await prisma.tourEventActivityComponent.findFirst({
+      where: { tourEventId: tour.id },
+      orderBy: { sortOrder: 'desc' },
+      select: { sortOrder: true },
+    });
+    try {
+      const row = await prisma.tourEventActivityComponent.create({
+        data: {
+          tourEventId: tour.id,
+          activityComponentId: component.id,
+          workshopLocationId: loc.workshopLocationId,
+          sortOrder: (last?.sortOrder ?? -1) + 1,
+        },
+        include: TOUR_COMPONENT_INCLUDE,
+      });
+      res.status(201).json(row);
+    } catch (e) {
+      if (e.code === 'P2002') return res.status(409).json({ error: 'component_already_on_tour' });
+      throw e;
+    }
+  }),
+);
+
+// Reorder — before '/components/:rowId'.
+router.put(
+  '/:id/components/reorder',
+  handle(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids)
+      ? req.body.ids.filter((x) => typeof x === 'string')
+      : [];
+    if (!ids.length) return res.json({ ok: true });
+    // Scope the reorder to THIS tour's rows so a stray id can't touch another.
+    const rows = await prisma.tourEventActivityComponent.findMany({
+      where: { tourEventId: req.params.id },
+      select: { id: true },
+    });
+    const own = new Set(rows.map((r) => r.id));
+    await prisma.$transaction(
+      ids
+        .filter((id) => own.has(id))
+        .map((id, i) =>
+          prisma.tourEventActivityComponent.update({ where: { id }, data: { sortOrder: i } }),
+        ),
+    );
+    res.json({ ok: true });
+  }),
+);
+
+// Set/clear a workshop component's location. Body { workshopLocationId | null }.
+router.put(
+  '/components/:rowId',
+  handle(async (req, res) => {
+    const row = await prisma.tourEventActivityComponent.findUnique({
+      where: { id: req.params.rowId },
+      include: { activityComponent: { select: { isWorkshop: true } } },
+    });
+    if (!row) return res.status(404).json({ error: 'not_found' });
+    const loc = validateWorkshopLocationForComponent(
+      row.activityComponent.isWorkshop,
+      req.body?.workshopLocationId,
+    );
+    if (!loc.ok) return res.status(400).json({ error: loc.error });
+    const updated = await prisma.tourEventActivityComponent.update({
+      where: { id: row.id },
+      data: { workshopLocationId: loc.workshopLocationId },
+      include: TOUR_COMPONENT_INCLUDE,
+    });
+    res.json(updated);
+  }),
+);
+
+router.delete(
+  '/components/:rowId',
+  handle(async (req, res) => {
+    const row = await prisma.tourEventActivityComponent.findUnique({
+      where: { id: req.params.rowId },
+      select: { id: true },
+    });
+    if (!row) return res.status(404).json({ error: 'not_found' });
+    await prisma.tourEventActivityComponent.delete({ where: { id: row.id } });
+    res.status(204).end();
+  }),
+);
+
+// Reseed a tour's components from its CURRENT product's defaults — the explicit
+// "replace" path when the operator changes the product (spec §5). Replaces the
+// whole set; workshop-location choices are intentionally reset (new components).
+router.post(
+  '/:id/components/reseed',
+  handle(async (req, res) => {
+    const tour = await prisma.tourEvent.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, productId: true },
+    });
+    if (!tour) return res.status(404).json({ error: 'not_found' });
+    await prisma.$transaction(async (tx) => {
+      await tx.tourEventActivityComponent.deleteMany({ where: { tourEventId: tour.id } });
+      await seedTourComponents(tx, tour.id, tour.productId);
+    });
+    const rows = await prisma.tourEventActivityComponent.findMany({
+      where: { tourEventId: tour.id },
+      orderBy: { sortOrder: 'asc' },
+      include: TOUR_COMPONENT_INCLUDE,
+    });
+    res.json(rows);
   }),
 );
 

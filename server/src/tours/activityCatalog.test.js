@@ -8,6 +8,9 @@ import {
   activityComponentDeletionVerdict,
   workshopLocationDeletionVerdict,
   sanitizeComponentSelection,
+  seedRowsFromDefaults,
+  validateWorkshopLocationForComponent,
+  componentsAfterProductChange,
 } from './activityCatalog.js';
 
 // Pure catalog logic (Slice A). No DB — same style as productDeletionVerdict.
@@ -86,4 +89,45 @@ test('selection tolerates empty / non-array input', () => {
   assert.deepEqual(sanitizeComponentSelection(undefined, CAT).ids, []);
   assert.deepEqual(sanitizeComponentSelection([], CAT).ids, []);
   assert.deepEqual(sanitizeComponentSelection([null, 1, {}], CAT).ids, []);
+});
+
+// ── seeding + workshop-location validation + product-change (Slice C) ──
+
+test('seedRowsFromDefaults copies ordered ids into tour rows, no locations', () => {
+  const rows = seedRowsFromDefaults(['a', 'b'], 'tour1');
+  assert.deepEqual(rows, [
+    { tourEventId: 'tour1', activityComponentId: 'a', sortOrder: 0, workshopLocationId: null },
+    { tourEventId: 'tour1', activityComponentId: 'b', sortOrder: 1, workshopLocationId: null },
+  ]);
+  // A COPY — the returned rows carry no reference back to the product defaults,
+  // so later product-default edits can't reach an existing tour.
+  assert.deepEqual(seedRowsFromDefaults([], 'tour1'), []);
+});
+
+test('workshop location: allowed only on workshop components', () => {
+  // non-workshop + a location → rejected
+  assert.deepEqual(validateWorkshopLocationForComponent(false, 'loc1'), {
+    ok: false,
+    error: 'workshop_location_not_allowed',
+  });
+  // non-workshop + no location → ok, forced null
+  assert.deepEqual(validateWorkshopLocationForComponent(false, null), {
+    ok: true,
+    workshopLocationId: null,
+  });
+  // workshop + a location → ok
+  assert.deepEqual(validateWorkshopLocationForComponent(true, 'loc1'), {
+    ok: true,
+    workshopLocationId: 'loc1',
+  });
+  // workshop + no location → ok, unset (UI shows "חסר מיקום סדנה")
+  assert.deepEqual(validateWorkshopLocationForComponent(true, ''), {
+    ok: true,
+    workshopLocationId: null,
+  });
+});
+
+test('product change: keep preserves current, replace uses new defaults', () => {
+  assert.deepEqual(componentsAfterProductChange('keep', ['a', 'b'], ['x', 'y']), ['a', 'b']);
+  assert.deepEqual(componentsAfterProductChange('replace', ['a', 'b'], ['x', 'y']), ['x', 'y']);
 });

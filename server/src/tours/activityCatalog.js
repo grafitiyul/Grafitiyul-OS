@@ -77,3 +77,38 @@ export function sanitizeComponentSelection(requestedIds, { validIds, activeIds, 
 export function workshopLocationDeletionVerdict(counts = {}) {
   return catalogDeletionVerdict(counts, ['tourEventLinks']);
 }
+
+// Seed rows for a TourEvent from an ORDERED list of default component ids — a
+// COPY, not a live link (later Product-default edits never touch existing
+// tours). Non-workshop rows carry no location; workshop rows start unset (the
+// operator picks the location on the tour). Pure — the caller createMany's it.
+export function seedRowsFromDefaults(componentIds, tourEventId) {
+  return (componentIds || []).map((activityComponentId, i) => ({
+    tourEventId,
+    activityComponentId,
+    sortOrder: i,
+    workshopLocationId: null,
+  }));
+}
+
+// Validate a workshop-location assignment against the component's nature
+// (spec §7): a location is allowed ONLY on a workshop component; anything set on
+// a non-workshop component is rejected. A workshop component may be left unset
+// (null → "חסר מיקום סדנה" warning in the UI). Returns
+//   { ok:true, workshopLocationId } | { ok:false, error }
+export function validateWorkshopLocationForComponent(isWorkshop, workshopLocationId) {
+  const loc = workshopLocationId || null;
+  if (!isWorkshop) {
+    if (loc) return { ok: false, error: 'workshop_location_not_allowed' };
+    return { ok: true, workshopLocationId: null };
+  }
+  return { ok: true, workshopLocationId: loc };
+}
+
+// When a tour's Product changes, the operator explicitly chooses (spec §5):
+//   'keep'    → leave the tour's current components untouched
+//   'replace' → reseed from the NEW product's defaults
+// Never silent. Returns the resulting ordered component-id list.
+export function componentsAfterProductChange(mode, currentIds, newDefaultIds) {
+  return mode === 'replace' ? [...(newDefaultIds || [])] : [...(currentIds || [])];
+}

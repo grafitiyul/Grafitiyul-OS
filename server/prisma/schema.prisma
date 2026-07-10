@@ -2980,6 +2980,7 @@ model TourEvent {
   updatedAt        DateTime        @updatedAt
   bookings         Booking[]
   assignments      TourAssignment[]
+  activityComponents TourEventActivityComponent[]
 
   @@unique([generatedByRuleId, date])
   @@index([date, startTime])
@@ -3106,7 +3107,8 @@ model ActivityComponent {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  productLinks ProductActivityComponent[]
+  productLinks   ProductActivityComponent[]
+  tourEventLinks TourEventActivityComponent[]
 
   @@index([sortOrder])
 }
@@ -3144,5 +3146,32 @@ model WorkshopLocation {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  tourEventLinks TourEventActivityComponent[]
+
   @@index([sortOrder])
+}
+
+// A TourEvent's ACTUAL delivered components — seeded from the Product defaults
+// at creation, then owned by the tour (operational truth; no live link back to
+// the Product). workshopLocationId is set ONLY for workshop components, and a
+// tour may hold several workshop components each in a DIFFERENT location — hence
+// the location lives on this row, never on TourEvent. onDelete: component &
+// location are Restrict (referenced catalog entries are deactivated, not
+// deleted); the tour link Cascades with the tour.
+model TourEventActivityComponent {
+  id                  String            @id @default(cuid())
+  tourEvent           TourEvent         @relation(fields: [tourEventId], references: [id], onDelete: Cascade)
+  tourEventId         String
+  activityComponent   ActivityComponent @relation(fields: [activityComponentId], references: [id], onDelete: Restrict)
+  activityComponentId String
+  workshopLocation    WorkshopLocation? @relation(fields: [workshopLocationId], references: [id], onDelete: Restrict)
+  workshopLocationId  String?
+  sortOrder           Int               @default(0)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  @@unique([tourEventId, activityComponentId])
+  @@index([tourEventId])
+  @@index([activityComponentId])
+  @@index([workshopLocationId])
 }
