@@ -65,6 +65,15 @@ const COMPOSER_TABS = [
   { key: 'file', label: 'קובץ', enabled: false, icon: <PaperclipIcon /> },
 ];
 
+// History-only subject types — surfaces where the timeline is a READ-ONLY
+// record of what happened, never an authoring/composer surface. Tours are an
+// operational execution surface: their events (created / joined / left) are a
+// log, and CRM authoring (notes / tasks / email / WhatsApp / files) belongs to
+// the Deal, not the Tour. Listing the subject here (rather than relying on a
+// caller to pass a prop) guarantees the composer can NEVER be re-enabled for it
+// by accident from a future call site.
+const HISTORY_ONLY_SUBJECTS = new Set(['tour_event']);
+
 // Local note-draft persistence (Pipedrive-style) — a half-written note must
 // survive closing a drawer, leaving the page, or returning days later. Scoped
 // by subjectType:subjectId so drafts never leak between deals/contacts/orgs.
@@ -101,7 +110,12 @@ function writeNoteDraft(key, html) {
 
 // `showWhatsApp={false}` drops the WhatsApp composer tab — the Deal page
 // surfaces chat through the floating WhatsAppDock instead of the timeline.
-export default function TimelineFeed({ subjectType, subjectId, aggregate = false, showWhatsApp = true, onSendDocument = null }) {
+export default function TimelineFeed({ subjectType, subjectId, aggregate = false, showWhatsApp = true, onSendDocument = null, readOnly = false }) {
+  // History-only: no composer, no authoring actions — a pure read-only event
+  // log. Forced ON for HISTORY_ONLY_SUBJECTS (e.g. tours) so a caller can never
+  // accidentally surface Deal CRM authoring on an execution surface; an explicit
+  // `readOnly` prop can also request it for any subject.
+  const historyOnly = readOnly || HISTORY_ONLY_SUBJECTS.has(subjectType);
   const noteDraftKey = `${subjectType}:${subjectId}`;
   // Tasks + files are Deal-only features; on Contact/Organization they stay
   // "בקרוב" placeholders so the shared component keeps one shape.
@@ -325,7 +339,10 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
 
   return (
     <div className="space-y-3" dir="rtl">
-      {/* Composer */}
+      {/* Composer — authoring only. Hidden entirely in history-only mode so the
+          Deal CRM composer (notes / tasks / email / WhatsApp / files) never
+          appears on read-only surfaces like the Tour timeline. */}
+      {!historyOnly && (
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
         <div className="flex items-center gap-1 border-b border-gray-100 px-2 pt-2">
           {composerTabs.map((t) => (
@@ -413,6 +430,7 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
           )}
         </div>
       </div>
+      )}
 
       {loading ? (
         <div className="py-10 text-center text-sm text-gray-400">טוען…</div>
@@ -443,12 +461,13 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
           )}
 
           {/* OPEN TASKS — Deal focus area (fed by the tasks API, not the timeline) */}
-          {isDeal && showFocus && (
+          {isDeal && !historyOnly && showFocus && (
             <OpenTasksStrip dealId={subjectId} tasks={openTasks} onChanged={onTaskChanged} />
           )}
 
-          {/* FOCUS — pinned DIRECT items, manually ordered */}
-          {showFocus && pinned.length > 0 && (
+          {/* FOCUS — pinned DIRECT items, manually ordered. History-only surfaces
+              show a flat event log, so FOCUS/pinning is suppressed there. */}
+          {!historyOnly && showFocus && pinned.length > 0 && (
             <section>
               <SectionTitle>FOCUS</SectionTitle>
               <ReorderableList
@@ -487,7 +506,11 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
             </div>
             {history.length === 0 ? (
               <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-10 text-center text-sm text-gray-400">
-                {entries.length === 0 ? 'אין עדיין פתקים. כתבו את הראשון למעלה.' : 'אין פריטים בקטגוריה זו.'}
+                {entries.length === 0
+                  ? historyOnly
+                    ? 'אין עדיין היסטוריה.'
+                    : 'אין עדיין פתקים. כתבו את הראשון למעלה.'
+                  : 'אין פריטים בקטגוריה זו.'}
               </div>
             ) : (
               <ul className="space-y-3">
@@ -559,7 +582,7 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
                         entry={entry}
                         expanded={isExpanded(entry.id)}
                         onToggleExpand={() => toggleExpand(entry.id)}
-                        readOnly={aggregate && !direct}
+                        readOnly={historyOnly || (aggregate && !direct)}
                         source={aggregate && !direct ? { type: entry.sourceType, label: entry.sourceLabel } : null}
                         {...actions}
                       />

@@ -90,6 +90,7 @@ let createRoot;
 let act;
 let ToursPage;
 let TourPage;
+let TimelineFeed;
 
 // Vite-only asset imports (css / ?url / emoji data) live deep inside the
 // TimelineFeed→RichEditor tree — irrelevant to a render smoke; stub them.
@@ -170,6 +171,7 @@ before(async () => {
   mkdirSync(cacheDir, { recursive: true });
   ToursPage = await bundle(esbuild, 'ToursPage.jsx');
   TourPage = await bundle(esbuild, 'TourPage.jsx');
+  TimelineFeed = await bundle(esbuild, '../common/timeline/TimelineFeed.jsx');
 
   React = (await import('react')).default ?? (await import('react'));
   ({ act } = await import('react'));
@@ -248,7 +250,35 @@ test('Tour modal renders header, team chips and the participant cards', async ()
   assert.match(html, /קבוצתי/, 'the header should render the shared activity badge');
   // Clicking the customer opens the Deal in a NEW tab — the tour stays open.
   assert.match(html, /target="_blank"/, 'the deal link must open in a new browser tab');
+  // The History accordion must be present (collapsed by default).
+  assert.match(html, /היסטוריה/, 'the History accordion must render');
   // Cancellation now lives on the Deal — the tour modal must not expose it.
   assert.doesNotMatch(html, /בטל סיור/, 'the cancel-tour action must be removed');
+  await unmount();
+});
+
+// The Tour timeline is a READ-ONLY event log. The shared TimelineFeed, when
+// scoped to a tour_event, must NOT surface the Deal CRM composer (notes / tasks
+// / email / WhatsApp / files) — that authoring belongs to the Deal. Mounting the
+// shared component directly (not through the collapsed accordion) proves the
+// history-only mode itself, which is where the guarantee lives.
+test('Tour timeline (tour_event) renders history only — no Deal CRM composer', async () => {
+  const { container, unmount } = await render(
+    React.createElement(
+      MemoryRouter,
+      null,
+      React.createElement(TimelineFeed, { subjectType: 'tour_event', subjectId: 'tour1' }),
+    ),
+  );
+  const html = container.innerHTML;
+  // The history log itself must remain.
+  assert.match(html, /היסטוריה/, 'the History section must still render for a tour');
+  // None of the Deal composer tabs/controls may appear on a tour timeline.
+  assert.doesNotMatch(html, /כתבו פתק/, 'the note composer must be absent');
+  assert.doesNotMatch(html, /משימה/, 'the task tab must be absent');
+  assert.doesNotMatch(html, /וואטסאפ/, 'the WhatsApp tab must be absent');
+  assert.doesNotMatch(html, /אימייל/, 'the email tab must be absent');
+  assert.doesNotMatch(html, /קובץ/, 'the file tab must be absent');
+  assert.doesNotMatch(html, /בקרוב/, 'no "coming soon" composer placeholders may appear');
   await unmount();
 });

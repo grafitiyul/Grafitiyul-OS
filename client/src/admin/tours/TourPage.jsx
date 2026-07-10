@@ -563,7 +563,7 @@ export default function TourPage() {
                 </button>
                 {historyOpen && (
                   <div className="border-t border-gray-100 p-3">
-                    <TimelineFeed subjectType="tour_event" subjectId={tour.id} />
+                    <TimelineFeed subjectType="tour_event" subjectId={tour.id} readOnly />
                   </div>
                 )}
               </section>
