@@ -69,6 +69,7 @@ import emailTrackingRouter from './routes/emailTracking.js';
 import { startScheduledWorker } from './whatsapp/scheduledWorker.js';
 import { startEmailSyncWorker } from './email/syncWorker.js';
 import questionnairesRouter from './routes/questionnaires.js';
+import publicQuestionnaireRouter from './routes/publicQuestionnaire.js';
 import { makeLegacyRedirect } from './legacyRedirect.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -178,6 +179,9 @@ app.use('/api/auth', buildAuthRoutes(express));
 app.use('/api/portal', portalRouter);
 // Public customer quote page — token-gated (QuoteDocument.publicToken), no auth.
 app.use('/api/public', publicQuoteRouter);
+// Public questionnaire fill (coordination forms etc.) — token-gated
+// (QuestionnaireLink.token), no auth. Same capability-URL philosophy.
+app.use('/api/public', publicQuestionnaireRouter);
 app.use('/api/attempts', attemptsRouter);
 app.use('/api/flows', flowsRouter);
 app.use('/api/items', itemsRouter);

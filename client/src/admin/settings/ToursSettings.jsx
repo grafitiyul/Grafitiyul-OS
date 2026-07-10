@@ -324,6 +324,13 @@ export default function ToursSettings() {
         description="השאלון שצוות הסיור ממלא בסיום כל סיור. נבנה בבילדר השאלונים — כאן רק בוחרים איזו תבנית משמשת."
       />
 
+      {/* ── Coordination questionnaire (public, per Booking) ── */}
+      <QuestionnairePurposeCard
+        purpose="coordination"
+        title="שיחת תיאום"
+        description="הטופס שהלקוח ממלא לפני הסיור (קישור אישי לכל הזמנה, ללא התחברות). נבנה בבילדר — כאן רק בוחרים איזו תבנית משמשת."
+      />
+
       {/* ── Guide permissions (approved placeholder) ── */}
       <section className="bg-white border border-gray-200 rounded-2xl shadow-sm">
         <div className="px-5 pt-4 pb-3 border-b border-gray-100">

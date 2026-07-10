@@ -4,6 +4,7 @@ import { api } from '../../lib/api.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
 import QuestionnaireFillDialog from '../../questionnaire/QuestionnaireFillDialog.jsx';
+import CoordinationFormAction from './CoordinationFormAction.jsx';
 import TourSlotModal from './TourSlotModal.jsx';
 import TourComponents from './TourComponents.jsx';
 import TourTeamEditor from './TourTeamEditor.jsx';
@@ -117,18 +118,10 @@ function CustomerCard({ booking }) {
         </div>
       )}
 
-      {/* Coordination call — belongs to the participant, placed above the info. */}
+      {/* Coordination form — belongs to the participant (one independent
+          form per Booking, generic engine purpose=coordination). */}
       <div className="border-t border-gray-100 px-3 py-2">
-        <button
-          type="button"
-          disabled
-          title="בקרוב"
-          className="flex w-full cursor-not-allowed items-center gap-2 text-[13px] text-gray-400"
-        >
-          <span aria-hidden>📋</span>
-          טופס שיחת תיאום
-          <span className="text-[10px]">· בקרוב</span>
-        </button>
+        <CoordinationFormAction bookingId={booking.id} />
       </div>
 
       {deal.customerInfo && (

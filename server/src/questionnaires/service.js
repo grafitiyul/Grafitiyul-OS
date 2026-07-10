@@ -611,7 +611,7 @@ async function resolveSubjectOrThrow({ purpose, subjectType, subjectId }) {
 
 // Get-or-create the active submission for a subject+purpose (§14). Resume is
 // the default: an existing draft/submitted submission is returned as-is.
-export async function startSubmission({ templateId, purpose, subjectType, subjectId, actor }) {
+export async function startSubmission({ templateId, purpose, subjectType, subjectId, actor, linkId }) {
   let template;
   if (templateId) {
     template = await prisma.questionnaireTemplate.findUnique({ where: { id: templateId } });
@@ -661,6 +661,7 @@ export async function startSubmission({ templateId, purpose, subjectType, subjec
         submittedByType: actor?.type || 'staff',
         submittedByRef: actor?.ref || null,
         submittedByName: actor?.name || null,
+        linkId: linkId || null,
         subjectSnapshot: subjectSnapshot || undefined,
         singletonKey: template.singletonPerSubject
           ? buildSingletonKey({ subjectType, subjectId, purpose: template.purpose })
@@ -826,6 +827,155 @@ export async function listSubmissions({ subjectType, subjectId, purpose, templat
     orderBy: { createdAt: 'desc' },
     take: 200,
   });
+}
+
+// ── public links (§12) ───────────────────────────────────────────────────────
+// GOS-native convention: high-entropy plaintext token, exact-match resolve,
+// no enumeration (same as QuoteDocument.publicToken). The link binds the URL
+// to (subject, purpose, template) — the SUBJECT ALWAYS COMES FROM THE LINK,
+// never from client input, so a token can only ever reach its own booking.
+
+function newPublicToken() {
+  return crypto.randomBytes(24).toString('base64url');
+}
+
+// Get-or-create the ONE active public link for (subject, purpose). Idempotent:
+// the operator can copy the same URL again and again; rotation = revoke+mint.
+export async function getOrCreatePublicLink({ purpose, subjectType, subjectId }) {
+  const cfg = await prisma.questionnairePurposeConfig.findUnique({ where: { purpose } });
+  if (!cfg?.templateId) throw new QError(409, 'purpose_not_configured');
+  const template = await prisma.questionnaireTemplate.findUnique({ where: { id: cfg.templateId } });
+  if (!template) throw new QError(404, 'template_not_found');
+  if (template.status !== 'active') throw new QError(409, 'template_not_active');
+  if (!template.currentVersionId) throw new QError(409, 'no_published_version');
+  if (!['public', 'both'].includes(template.audience)) throw new QError(409, 'template_not_public');
+
+  const adapter = await resolveSubjectOrThrow({ purpose, subjectType, subjectId });
+  const language = (adapter && (await adapter.resolveLanguage?.(subjectId))) || null;
+
+  const existing = await prisma.questionnaireLink.findFirst({
+    where: { templateId: template.id, subjectType, subjectId, purpose, isActive: true },
+  });
+  if (existing) return existing;
+  return prisma.questionnaireLink.create({
+    data: {
+      templateId: template.id,
+      subjectType,
+      subjectId,
+      purpose,
+      token: newPublicToken(),
+      language: language && template.supportedLanguages.includes(language) ? language : null,
+    },
+  });
+}
+
+export async function rotatePublicLink(linkId) {
+  const link = await prisma.questionnaireLink.findUnique({ where: { id: linkId } });
+  if (!link) throw new QError(404, 'link_not_found');
+  return prisma.$transaction(async (tx) => {
+    await tx.questionnaireLink.update({ where: { id: linkId }, data: { isActive: false } });
+    return tx.questionnaireLink.create({
+      data: {
+        templateId: link.templateId,
+        subjectType: link.subjectType,
+        subjectId: link.subjectId,
+        purpose: link.purpose,
+        token: newPublicToken(),
+        language: link.language,
+        label: link.label,
+      },
+    });
+  });
+}
+
+// Resolve a public token → live link, with every guard the public surface
+// needs. Generic 404s — probing can't distinguish revoked/expired/missing.
+export async function resolvePublicLink(token) {
+  const link = await prisma.questionnaireLink.findUnique({
+    where: { token: String(token || '') },
+    include: { template: true },
+  });
+  if (!link || !link.isActive) throw new QError(404, 'not_found');
+  if (link.expiresAt && link.expiresAt < new Date()) throw new QError(404, 'not_found');
+  if (link.template.status !== 'active' || !link.template.currentVersionId) {
+    throw new QError(404, 'not_found');
+  }
+  return link;
+}
+
+// Customer-safe subject snapshot — the public payload never leaks internal
+// ids/refs beyond what the customer already knows about their own booking.
+function publicSubjectContext(snapshot) {
+  if (!snapshot) return null;
+  return {
+    title: snapshot.title ?? null,
+    subtitle: snapshot.subtitle ?? null,
+    date: snapshot.date ?? null,
+    startTime: snapshot.startTime ?? null,
+  };
+}
+
+// The whole public form payload: start-or-resume the subject's submission
+// under the PUBLIC actor and return exactly what the fill page needs.
+export async function publicFormPayload(token) {
+  const link = await resolvePublicLink(token);
+  const { submission } = await startSubmission({
+    templateId: link.templateId,
+    subjectType: link.subjectType,
+    subjectId: link.subjectId,
+    actor: { type: 'public', ref: null, name: null },
+    linkId: link.id,
+  });
+  await prisma.questionnaireLink.update({ where: { id: link.id }, data: { lastUsedAt: new Date() } });
+  const version = await loadVersion(submission.versionId);
+  const adapter = link.subjectType ? getSubjectAdapter(link.subjectType) : null;
+  const language = link.language || submission.language;
+  const prefill = submission.status === 'draft' && adapter?.prefill
+    ? await adapter.prefill(link.subjectId, language)
+    : {};
+  return {
+    status: submission.status,
+    language,
+    subject: publicSubjectContext(submission.subjectSnapshot),
+    runtime: runtimePayload(version),
+    answers: Object.fromEntries((submission.answers || []).map((a) => [a.questionKey, a.value])),
+    submittedAt: submission.submittedAt,
+    outroOnly: submission.status !== 'draft',
+  };
+}
+
+// Locate the link's active submission for the write paths. The submission is
+// found through the LINK's subject — client input can't redirect it.
+async function activeSubmissionForLink(link) {
+  const submission = await prisma.questionnaireSubmission.findFirst({
+    where: {
+      subjectType: link.subjectType,
+      subjectId: link.subjectId,
+      purpose: link.purpose,
+      status: { in: ['draft', 'submitted', 'reviewed'] },
+    },
+  });
+  if (!submission) throw new QError(404, 'not_found');
+  return submission;
+}
+
+export async function publicSaveAnswers(token, answers) {
+  const link = await resolvePublicLink(token);
+  const submission = await activeSubmissionForLink(link);
+  return saveDraftAnswers(submission.id, answers);
+}
+
+export async function publicSubmit(token, answers) {
+  const link = await resolvePublicLink(token);
+  const submission = await activeSubmissionForLink(link);
+  const frozen = await submitSubmission(submission.id, {
+    answers,
+    actor: { type: 'public', ref: null, name: null },
+  });
+  if (link.singleUse) {
+    await prisma.questionnaireLink.update({ where: { id: link.id }, data: { isActive: false } });
+  }
+  return frozen;
 }
 
 // Staff actor from the admin session — resolves the username snapshot the

@@ -54,6 +54,7 @@ import CustomerQuoteView from './quote/CustomerQuoteView.jsx';
 import QuestionnairesPage from './admin/questionnaires/QuestionnairesPage.jsx';
 import QuestionnaireBuilderPage from './admin/questionnaires/QuestionnaireBuilderPage.jsx';
 import QuestionnairePreviewPage from './admin/questionnaires/QuestionnairePreviewPage.jsx';
+import PublicFormPage from './questionnaire/PublicFormPage.jsx';
 // Global Settings module (low-frequency configuration).
 import SettingsHome from './admin/settings/SettingsHome.jsx';
 import ToursSettings from './admin/settings/ToursSettings.jsx';
@@ -265,6 +266,9 @@ export default function App() {
       {/* Public customer quote page — token-gated (QuoteDocument.publicToken),
           no admin auth. The customer-facing proposal viewer + signature flow. */}
       <Route path="/quote/:token" element={<CustomerQuoteView />} />
+      {/* Public questionnaire fill (coordination form etc.) — token-gated
+          (QuestionnaireLink.token), no admin auth, mobile-first. */}
+      <Route path="/form/:token" element={<PublicFormPage />} />
       {/* Dedicated install entry — public, token-bearing URL that
           iOS Safari captures verbatim on Add to Home Screen, and
           that Android Chrome resolves through a per-token manifest

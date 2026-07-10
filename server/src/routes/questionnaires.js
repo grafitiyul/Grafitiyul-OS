@@ -12,6 +12,7 @@ import {
   getPurposeConfig, setPurposeConfig,
   startSubmission, getSubmission, saveDraftAnswers, submitSubmission, voidSubmission,
   listSubmissions, renderSubmissionAnswers, staffActorFromAuth,
+  getOrCreatePublicLink, rotatePublicLink,
 } from '../questionnaires/service.js';
 
 // Questionnaire Engine — ADMIN routes (builder + staff submission flows).
@@ -46,6 +47,23 @@ router.get('/purposes', qh(async (_req, res) => {
 
 router.put('/purpose-config/:purpose', qh(async (req, res) => {
   res.json(await setPurposeConfig(req.params.purpose, req.body?.templateId || null));
+}));
+
+// ── public links (operator side) ─────────────────────────────────────────────
+
+// Get-or-create the ONE active public link for (subject, purpose). Returns the
+// absolute URL the operator copies/sends (sending itself stays manual — GOS
+// never auto-sends customer communication).
+router.post('/links', qh(async (req, res) => {
+  const { purpose, subjectType, subjectId } = req.body || {};
+  const link = await getOrCreatePublicLink({ purpose, subjectType, subjectId });
+  res.json({ ...link, url: `${req.protocol}://${req.get('host')}/form/${link.token}` });
+}));
+
+// Rotate: revoke the current link and mint a fresh token (old URL dies).
+router.post('/links/:id/rotate', qh(async (req, res) => {
+  const link = await rotatePublicLink(req.params.id);
+  res.json({ ...link, url: `${req.protocol}://${req.get('host')}/form/${link.token}` });
 }));
 
 // ── submissions ──────────────────────────────────────────────────────────────

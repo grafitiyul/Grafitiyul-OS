@@ -1237,5 +1237,18 @@ export const api = {
     submit: (id, answers) =>
       request(`/api/questionnaires/submissions/${id}/submit`, { method: 'POST', body: JSON.stringify({ answers }) }),
     voidSubmission: (id) => request(`/api/questionnaires/submissions/${id}/void`, { method: 'POST' }),
+    // Public links (operator side) — get-or-create the ONE active link per
+    // (subject, purpose); rotate revokes and mints a fresh token.
+    getOrCreateLink: (data) =>
+      request('/api/questionnaires/links', { method: 'POST', body: JSON.stringify(data) }),
+    rotateLink: (linkId) => request(`/api/questionnaires/links/${linkId}/rotate`, { method: 'POST' }),
+    // Public fill (no auth — token IS the capability; used by /form/:token).
+    publicForm: {
+      get: (token) => request(`/api/public/form/${token}`),
+      saveAnswers: (token, answers) =>
+        request(`/api/public/form/${token}/answers`, { method: 'PUT', body: JSON.stringify({ answers }) }),
+      submit: (token, answers) =>
+        request(`/api/public/form/${token}/submit`, { method: 'POST', body: JSON.stringify({ answers }) }),
+    },
   },
 };
