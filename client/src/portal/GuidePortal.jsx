@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import GuideToursSection from './GuideToursSection.jsx';
 
 // Guide Portal — token-gated, mobile-first task feed.
 //
@@ -249,6 +250,9 @@ export default function GuidePortal() {
           </div>
         )}
         <PortalSummary tasks={tasks} />
+        {/* Assigned tours + gallery access — fails quiet, renders nothing
+            when the guide has no tours. */}
+        <GuideToursSection token={token} />
         <Sections
           tasks={tasks}
           startingId={startingId}

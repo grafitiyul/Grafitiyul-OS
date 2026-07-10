@@ -17,6 +17,7 @@ import ContentEditor from './admin/procedures/bank/ContentEditor.jsx';
 import QuestionEditor from './admin/procedures/bank/QuestionEditor.jsx';
 import { FlowEntry, AttemptRuntime } from './learner/LearnerRuntime.jsx';
 import GuidePortal from './portal/GuidePortal.jsx';
+import GuideTourGallery from './portal/GuideTourGallery.jsx';
 import InstallGuidePage from './portal/InstallGuidePage.jsx';
 import DocumentsLayout from './admin/documents/DocumentsLayout.jsx';
 import DocumentsIndexPage from './admin/documents/index_/DocumentsIndexPage.jsx';
@@ -275,6 +276,8 @@ export default function App() {
       <Route path="/attempt/:attemptId" element={<AttemptRuntime />} />
       {/* Guide portal — token-gated, mobile-first task feed. */}
       <Route path="/p/:token" element={<GuidePortal />} />
+      {/* Guide Portal → one tour's gallery (mobile-first upload + grid). */}
+      <Route path="/p/:token/tour/:tourEventId" element={<GuideTourGallery />} />
       {/* Public customer quote page — token-gated (QuoteDocument.publicToken),
           no admin auth. The customer-facing proposal viewer + signature flow. */}
       <Route path="/quote/:token" element={<CustomerQuoteView />} />

@@ -17,6 +17,7 @@ import teamsRouter from './routes/teams.js';
 import peopleRouter from './routes/people.js';
 import exportsRouter from './routes/exports.js';
 import portalRouter from './routes/portal.js';
+import portalGalleryRouter from './routes/portalGallery.js';
 import adminUsersRouter from './routes/adminUsers.js';
 import organizationsRouter from './routes/organizations.js';
 import organizationTypesRouter from './routes/organizationTypes.js';
@@ -179,6 +180,10 @@ app.use('/api/auth', buildAuthRoutes(express));
 // existing public guide link, which is exactly what the spec calls
 // out as forbidden.
 app.use('/api/portal', portalRouter);
+// Guide Portal → Tour Gallery (assigned-tours list, direct-to-R2 uploads,
+// settings-gated delete/share). Same portal-token credential; separate router
+// so the task-feed router stays focused.
+app.use('/api/portal', portalGalleryRouter);
 // Public customer quote page — token-gated (QuoteDocument.publicToken), no auth.
 app.use('/api/public', publicQuoteRouter);
 // Public questionnaire fill (coordination forms etc.) — token-gated
