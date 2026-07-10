@@ -232,7 +232,12 @@ async function render(element) {
   await act(async () => {});
   return {
     container,
-    unmount: () => act(async () => root.unmount()),
+    // Unmount AND detach the container — later tests assert against
+    // document.body (portal-rendered popovers), so leftovers must not linger.
+    unmount: async () => {
+      await act(async () => root.unmount());
+      container.remove();
+    },
   };
 }
 
@@ -436,7 +441,9 @@ test('Deal tour popover shows live staff, components and locations', async () =>
     trigger.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   });
   await act(async () => {});
-  const html = container.innerHTML;
+  // The popover renders through the AnchoredMenu PORTAL on document.body (so the
+  // right panel can never clip it) — assert against the body, not the container.
+  const html = document.body.innerHTML;
   assert.match(html, /דנה מדריכה/, 'popover shows the assigned guide');
   assert.match(html, /מדריך ראשי/, 'popover shows the guide role');
   assert.match(html, /bg-emerald-100/, 'lead-guide role color is intact');
@@ -444,6 +451,11 @@ test('Deal tour popover shows live staff, components and locations', async () =>
   assert.match(html, /סדנת תקליטים/, 'popover shows the workshop component');
   assert.match(html, /סטודיו תל אביב/, 'popover shows the workshop location');
   assert.match(html, /פתח סיור/, 'popover offers an open-tour action');
+  assert.doesNotMatch(
+    container.innerHTML,
+    /פתח סיור/,
+    'the popover must NOT render inline inside the panel (portal only)',
+  );
   await unmount();
 });
 

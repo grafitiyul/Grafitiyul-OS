@@ -126,7 +126,7 @@ export default function InlineField({
     );
     if (iconInline) {
       return (
-        <div className="flex items-center gap-1 w-full" title={readOnlyHint || label}>
+        <div className="flex items-center gap-1 w-full min-w-0" title={readOnlyHint || label}>
           {inlineIcon}
           <div className={`flex-1 min-w-0 px-1 ${BODY} flex items-center gap-1.5`}>
             {valueSpan}
@@ -162,7 +162,7 @@ export default function InlineField({
     if (iconInline) {
       // Tight icon→value gap: the icon feels attached to its value (one unit).
       return (
-        <div className="group flex items-center gap-1 w-full">
+        <div className="group flex items-center gap-1 w-full min-w-0">
           {inlineIcon}
           <button
             type="button"

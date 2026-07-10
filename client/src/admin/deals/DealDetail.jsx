@@ -630,8 +630,9 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
                   Row 2: Date · Time · Participants
                   Row 3: City · Tour Language · (empty) */}
             <div className="grid grid-cols-[1.9fr_1fr_1fr] gap-x-2 gap-y-3">
-              {/* Row 1 */}
-              <div className="col-span-2">
+              {/* Row 1 — min-w-0 on grid items so inner truncation can engage
+                  (grid items otherwise refuse to shrink below content width). */}
+              <div className="col-span-2 min-w-0">
                 <InlineField id="f-product" iconInline icon={<span className={FIELD_EMOJI}>📦</span>} label="מוצר"
                   type="dropdown" value={deal.productId || ''} options={productOptions} editFirst={editFirst}
                   readOnly={onGroupSlot} readOnlyHint={GROUP_LOCK_MSG}
@@ -645,7 +646,7 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
                   title="פתח בונה מחיר"
                   className="flex-1 min-w-0 text-right rounded-md px-1 min-h-[34px] flex items-center transition-colors hover:bg-gray-50"
                 >
-                  <span className="text-[15px] font-bold text-gray-900" dir="ltr">{deal.valueMinor ? `₪${minorToInput(deal.valueMinor)}` : '—'}</span>
+                  <span className="truncate text-[15px] font-bold text-gray-900" dir="ltr">{deal.valueMinor ? `₪${minorToInput(deal.valueMinor)}` : '—'}</span>
                 </button>
               </div>
 

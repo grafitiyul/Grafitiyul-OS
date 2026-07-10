@@ -144,7 +144,11 @@ function SidePanel({ side, title, open, width, onCollapse, children }) {
           </>
         )}
       </div>
-      <div className="flex-1 lg:overflow-y-auto p-4">{children}</div>
+      {/* overflow-x-hidden: panel content must NEVER escape or mint a horizontal
+          scrollbar at narrow widths — rows shrink/truncate instead. Floating
+          overlays inside must use the AnchoredMenu portal pattern (they cannot
+          rely on absolute positioning here — this box clips). */}
+      <div className="flex-1 min-w-0 lg:overflow-y-auto overflow-x-hidden p-4">{children}</div>
     </aside>
   );
 }

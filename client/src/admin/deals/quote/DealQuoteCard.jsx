@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../../lib/api.js';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
+import AnchoredMenu from '../../common/AnchoredMenu.jsx';
 import GenerateQuoteModal from './GenerateQuoteModal.jsx';
 import QuoteHistoryDialog from './QuoteHistoryDialog.jsx';
 
@@ -72,12 +73,8 @@ export default function DealQuoteCard({ deal, onDealChanged }) {
 
   useEffect(() => { load(); }, [load]);
 
-  useEffect(() => {
-    if (!menuOpen) return;
-    const close = (e) => { if (!menuRef.current?.contains(e.target)) setMenuOpen(false); };
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
-  }, [menuOpen]);
+  // The ⋮ menu renders through AnchoredMenu (portal) — it owns outside-click /
+  // Escape closing, and escapes the right panel's overflow clipping.
 
   // Archived offers leave the workspace tabs; history still shows them.
   const allOffers = data?.offers || [];
@@ -196,17 +193,20 @@ export default function DealQuoteCard({ deal, onDealChanged }) {
             ))}
           </div>
         )}
-        <div className={`relative shrink-0 ${offers.length > 1 ? '' : 'ms-auto'}`} ref={menuRef}>
+        <div className={`shrink-0 ${offers.length > 1 ? '' : 'ms-auto'}`}>
           <button
+            ref={menuRef}
             type="button"
             onClick={() => setMenuOpen((o) => !o)}
             title="פעולות"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
             className="rounded-lg px-1.5 py-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
           >
             ⋮
           </button>
-          {menuOpen && (
-            <div className="absolute left-0 top-7 z-30 w-60 rounded-xl border border-gray-200 bg-white py-1 text-right shadow-xl">
+          <AnchoredMenu anchorRef={menuRef} open={menuOpen} onClose={() => setMenuOpen(false)} width={240} align="start">
+            <div className="text-right">
               <button type="button" onClick={openParallelCreate} disabled={busy}
                 className="block w-full px-3 py-2 text-right text-[13px] text-gray-700 hover:bg-gray-50 disabled:opacity-50">
                 ＋ צור הצעה מקבילה
@@ -244,7 +244,7 @@ export default function DealQuoteCard({ deal, onDealChanged }) {
                 )
               )}
             </div>
-          )}
+          </AnchoredMenu>
         </div>
       </div>
 

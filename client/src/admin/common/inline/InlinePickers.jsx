@@ -21,7 +21,7 @@ function PickerTrigger({ label, icon, value, display, placeholder = '—', ancho
   const empty = value === '' || value === null || value === undefined;
   if (readOnly) {
     return (
-      <div className="flex items-center gap-1 w-full" title={readOnlyHint || label}>
+      <div className="flex items-center gap-1 w-full min-w-0" title={readOnlyHint || label}>
         <span className="shrink-0 inline-flex cursor-default">{icon}</span>
         <span className={`flex-1 min-w-0 truncate text-right px-1 min-h-[38px] flex items-center text-[15px] ${empty ? 'text-gray-300' : 'font-medium text-gray-900'}`} dir="ltr">
           {empty ? placeholder : display(value)}
@@ -31,7 +31,7 @@ function PickerTrigger({ label, icon, value, display, placeholder = '—', ancho
     );
   }
   return (
-    <div className="group flex items-center gap-1 w-full">
+    <div className="group flex items-center gap-1 w-full min-w-0">
       <span title={label} className="shrink-0 inline-flex cursor-default">{icon}</span>
       <button
         type="button"

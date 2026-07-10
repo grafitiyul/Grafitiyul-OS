@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
+import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import TourTeamEditor, { StaffAvatar } from './TourTeamEditor.jsx';
 import TourComponents from './TourComponents.jsx';
 import {
@@ -16,13 +17,22 @@ import {
 // flip into an editor that reuses the SAME components as the Tour modal
 // (TourTeamEditor + TourComponents) hitting the SAME TourEvent APIs — one source
 // of truth, two editing surfaces. Nothing is copied onto the Deal.
+//
+// The popover renders through AnchoredMenu (the platform portal pattern) so it
+// escapes the right panel's overflow clipping and is always fully visible —
+// never render a floating overlay with plain absolute positioning inside the
+// workspace side panels.
 export default function DealTourSummary({ booking, onGroupSlot, canReplace, onReplace }) {
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState(false);
   const [tour, setTour] = useState(null);
   const [loading, setLoading] = useState(false);
+  const anchorRef = useRef(null);
   const tourEventId = booking.tourEventId;
   const te = booking.tourEvent;
+  // Viewport-clamped width — AnchoredMenu keeps the box fully inside the screen
+  // regardless of how narrow the panel is.
+  const popWidth = Math.min(480, (typeof window !== 'undefined' ? window.innerWidth : 480) - 32);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -45,9 +55,10 @@ export default function DealTourSummary({ booking, onGroupSlot, canReplace, onRe
   const components = tour?.activityComponents || [];
 
   return (
-    <div className="relative">
+    <div>
       <div className="flex items-center justify-between gap-2 rounded-lg bg-blue-50/70 ring-1 ring-inset ring-blue-100 px-3 py-2">
         <button
+          ref={anchorRef}
           type="button"
           onClick={() => setOpen((o) => !o)}
           className="min-w-0 text-right text-[13px] text-blue-900 hover:text-blue-950"
@@ -73,10 +84,9 @@ export default function DealTourSummary({ booking, onGroupSlot, canReplace, onRe
         )}
       </div>
 
-      {open && (
-        <>
-          <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-          <div className="absolute z-30 mt-1 w-[min(30rem,calc(100vw-2rem))] rounded-2xl border border-gray-200 bg-white p-3.5 shadow-2xl" dir="rtl">
+      {/* Portal popover — always fully visible, never clipped by the panel. */}
+      <AnchoredMenu anchorRef={anchorRef} open={open} onClose={() => setOpen(false)} width={popWidth} align="start">
+        <div className="p-3" dir="rtl">
             <div className="mb-2 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <span className="text-[14px] font-bold text-gray-900">הסיור</span>
@@ -170,9 +180,8 @@ export default function DealTourSummary({ booking, onGroupSlot, canReplace, onRe
                 </section>
               </div>
             )}
-          </div>
-        </>
-      )}
+        </div>
+      </AnchoredMenu>
     </div>
   );
 }
