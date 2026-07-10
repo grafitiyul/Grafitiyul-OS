@@ -2,6 +2,7 @@ import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { evaluateCondition } from '../../../shared/questionnaire/conditions.mjs';
 import { resolveLocalized, isRtl } from '../../../shared/questionnaire/localized.mjs';
 import { uiStrings, errorText } from '../../../shared/questionnaire/uiStrings.mjs';
+import RichText from '../editor/RichText.jsx';
 
 // Questionnaire fill runtime — ONE renderer for every consumer: builder
 // preview (Slice 1), staff fill (tour modal), public token fill. Consumers
@@ -635,13 +636,9 @@ export default function QuestionnaireRuntime({
   // ONE question renderer for both layouts.
   const renderQuestion = (q) => {
     if (q.type === 'static_text') {
-      return (
-        <div
-          key={q.id || q.key}
-          className="prose prose-sm max-w-none text-[13.5px] text-gray-700"
-          dangerouslySetInnerHTML={{ __html: r(q.label) }}
-        />
-      );
+      // Canonical renderer (editor↔display parity invariant) — never a
+      // hand-rolled innerHTML with ad-hoc typography classes.
+      return <RichText key={q.id || q.key} html={r(q.label)} dir={dir} />;
     }
     const err = errorFor(q.key);
     const enriched = { ...q, placeholderText: r(q.placeholder) };
@@ -701,9 +698,7 @@ export default function QuestionnaireRuntime({
             {ui.previewNote}
           </div>
         ) : null}
-        {stepIdx === 0 && intro ? (
-          <div className="prose prose-sm max-w-none text-[14px] text-gray-700" dangerouslySetInnerHTML={{ __html: intro }} />
-        ) : null}
+        {stepIdx === 0 ? <RichText html={intro} dir={dir} /> : null}
         {progressBar}
         {current ? (
           <section className="bg-white border border-gray-200 rounded-2xl shadow-sm">
@@ -744,12 +739,7 @@ export default function QuestionnaireRuntime({
         </div>
       ) : null}
 
-      {intro ? (
-        <div
-          className="prose prose-sm max-w-none text-[14px] text-gray-700"
-          dangerouslySetInnerHTML={{ __html: intro }}
-        />
-      ) : null}
+      <RichText html={intro} dir={dir} />
 
       {progressBar}
 

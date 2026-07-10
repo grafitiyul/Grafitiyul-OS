@@ -246,3 +246,23 @@ If a service worker is ever added:
 Goal:
 Avoid hidden client-side caching layers that bypass normal
 HTTP cache rules and create inconsistent application behavior.
+
+## 16) Rich text rendering rule
+
+Rich text is rendered through the canonical shared renderer.
+Editing and display parity is mandatory.
+
+- The ONE rendering path for displaying rich/multi-line authored content is
+  `client/src/editor/RichText.jsx` (`.gos-prose` typography +
+  `richHtmlForDisplay` normalisation). The typography contract is shared with
+  the editor surface (`.rt-editor-prose` in `client/src/editor/editor.css`).
+- Displayed output must preserve exactly what the author sees while editing:
+  paragraph spacing, intentional blank lines, soft line breaks, headings,
+  lists, bold/italic/underline, links, alignment, RTL/LTR direction.
+- Never render stored rich/multi-line content as plain `{text}` interpolation
+  (it escapes HTML and collapses newlines), and never hand-roll
+  `dangerouslySetInnerHTML` with ad-hoc or surface-specific typography.
+- Tailwind `prose` classes are DEAD in this project (the typography plugin is
+  not installed) — do not use them.
+- New features must reuse `RichText`; introducing a separate/simplified
+  renderer is a violation of this rule.

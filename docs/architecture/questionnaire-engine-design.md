@@ -670,5 +670,33 @@ Submission list/report views, CSV export, optional Google Sheets sync module,
 
 ---
 
+## 19. Rich-text rendering invariant (system-wide)
+
+**Rich text is rendered through the canonical shared renderer. Editing and
+display parity is mandatory.**
+
+The single rendering path is `client/src/editor/RichText.jsx`:
+`.gos-prose` typography (mirrors the editor's `.rt-editor-prose`) +
+`richHtmlForDisplay` normalisation (plain-text newlines → real `<p>`/`<br>`
+blocks, double-`<br>` runs → paragraph splits, inline-heading tagging).
+
+Applies to every rich/multi-line content surface in the questionnaire engine —
+intro, outro/thank-you screens (public form, staff dialog, builder preview),
+`static_text` questions, and read-only submission views — and to any future
+GOS surface displaying editor-authored content.
+
+Never:
+- render stored rich/multi-line content as `{text}` interpolation (escapes
+  HTML and collapses newlines),
+- hand-roll `dangerouslySetInnerHTML` with ad-hoc typography classes,
+- use Tailwind `prose` classes (the typography plugin is not installed — they
+  are dead classes),
+- introduce a surface-specific renderer or CSS fork.
+
+Direction is per-language: pass `dir` to `RichText`; the
+`.gos-prose[dir]` rules make it win over the RTL class default.
+
+---
+
 *End of blueprint. Implementation begins only after this document is approved and
 a specific slice is selected.*

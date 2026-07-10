@@ -359,6 +359,17 @@
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+/* Per-surface direction: .gos-prose defaults to RTL (the GOS authoring
+   language), but multilingual read surfaces (questionnaire runtime,
+   public forms) render per-language. The class-level `direction: rtl`
+   above would beat the element's dir attribute (author CSS wins over
+   the UA dir mapping), so these attribute-qualified rules — same
+   pattern as the ul/ol/li[dir] rules shared with .rt-editor-prose —
+   let the renderer's dir prop win. The explicit text-align also keeps
+   content start-aligned (editor parity) even inside centered chrome
+   like the thank-you card. */
+.gos-prose[dir='ltr'] { direction: ltr; text-align: left; }
+.gos-prose[dir='rtl'] { direction: rtl; text-align: right; }
 /* Inter-block margin — 1.25em on top of the 1.55 line-height gives
    the ~1.8× ratio between paragraph break and soft-break gaps that
    the user defined as the source of truth in the admin preview. */

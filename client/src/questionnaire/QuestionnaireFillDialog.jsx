@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import Dialog from '../admin/common/Dialog.jsx';
 import QuestionnaireRuntime from './QuestionnaireRuntime.jsx';
-import { resolveLocalized } from '../../../shared/questionnaire/localized.mjs';
+import { resolveLocalized, isRtl } from '../../../shared/questionnaire/localized.mjs';
+import RichText from '../editor/RichText.jsx';
 import { SUBMISSION_STATUS_LABELS } from './constants.js';
 
 // Staff-side questionnaire fill dialog — the ONE component every internal
@@ -170,7 +171,11 @@ export default function QuestionnaireFillDialog({
         {phase === 'done' ? (
           <div className="py-10 text-center">
             <div className="text-4xl">✅</div>
-            <p className="mt-3 text-[15px] font-semibold text-gray-800">{outro || 'הטופס הוגש בהצלחה'}</p>
+            {outro ? (
+              <RichText html={outro} dir={isRtl(lang) ? 'rtl' : 'ltr'} className="mt-3" />
+            ) : (
+              <p className="mt-3 text-[15px] font-semibold text-gray-800">הטופס הוגש בהצלחה</p>
+            )}
             <button
               type="button"
               onClick={onClose}

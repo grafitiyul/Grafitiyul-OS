@@ -4,6 +4,7 @@ import { api } from '../../lib/api.js';
 import QuestionnaireRuntime from '../../questionnaire/QuestionnaireRuntime.jsx';
 import LanguageSwitcher from '../../questionnaire/LanguageSwitcher.jsx';
 import { resolveLocalized, isRtl } from '../../../../shared/questionnaire/localized.mjs';
+import RichText from '../../editor/RichText.jsx';
 
 // Builder preview — opens in a NEW WINDOW (product rule), renders the REAL
 // fill runtime against the requested version (draft included) and never saves
@@ -49,9 +50,11 @@ export default function QuestionnairePreviewPage() {
         {done ? (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-8 text-center">
             <div className="text-3xl">✅</div>
-            <div className="mt-2 text-[15px] font-semibold text-emerald-800">
-              {outro || 'תודה! (מסך הסיום)'}
-            </div>
+            {outro ? (
+              <RichText html={outro} dir={dir} className="mt-2" />
+            ) : (
+              <div className="mt-2 text-[15px] font-semibold text-emerald-800">תודה! (מסך הסיום)</div>
+            )}
             <p className="mt-2 text-[12.5px] text-emerald-700">
               תצוגה מקדימה — שום תשובה לא נשמרה.
             </p>

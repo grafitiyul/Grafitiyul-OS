@@ -4,6 +4,7 @@ import { api } from '../lib/api.js';
 import QuestionnaireRuntime from './QuestionnaireRuntime.jsx';
 import LanguageSwitcher from './LanguageSwitcher.jsx';
 import { resolveLocalized, isRtl } from '../../../shared/questionnaire/localized.mjs';
+import RichText from '../editor/RichText.jsx';
 
 // PUBLIC customer form page — /form/:token. No login: the high-entropy link
 // token is the whole capability (same philosophy as the public quote page).
@@ -116,9 +117,13 @@ export default function PublicFormPage() {
         {done ? (
           <div className="rounded-2xl border border-emerald-200 bg-white px-6 py-12 text-center shadow-sm">
             <div className="text-5xl">✅</div>
-            <h2 className="mt-4 text-[17px] font-bold text-gray-900">
-              {outro || (isRtl(lang) ? 'תודה! הפרטים נקלטו בהצלחה.' : 'Thank you! Your details were received.')}
-            </h2>
+            {outro ? (
+              <RichText html={outro} dir={dir} className="mt-4" />
+            ) : (
+              <h2 className="mt-4 text-[17px] font-bold text-gray-900">
+                {isRtl(lang) ? 'תודה! הפרטים נקלטו בהצלחה.' : 'Thank you! Your details were received.'}
+              </h2>
+            )}
             <p className="mt-2 text-[13px] text-gray-500">
               {isRtl(lang) ? 'ניתן לסגור את העמוד.' : 'You may close this page.'}
             </p>
