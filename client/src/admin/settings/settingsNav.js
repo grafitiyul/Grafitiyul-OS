@@ -32,7 +32,12 @@ export const SETTINGS_TREE = {
   '/admin/settings/crm/ticket-types': { label: 'סוגי כרטיסים', parent: '/admin/settings/crm' },
   '/admin/settings/crm/sabbath-hours': { label: 'שעות שבת וחג', parent: '/admin/settings/crm' },
   '/admin/settings/crm/shared-content': { label: 'ספריית תוכן משותף', parent: '/admin/settings/crm' },
-  '/admin/settings/tours': { label: 'סיורים', parent: '/admin/settings' },
+  '/admin/settings/tours': { label: 'הגדרות סיורים', parent: '/admin/settings' },
+  '/admin/settings/tours/group-tours': { label: 'סיורים קבוצתיים', parent: '/admin/settings/tours' },
+  '/admin/settings/tours/components': { label: 'מרכיבי הפעילות ומיקומי הסדנה', parent: '/admin/settings/tours' },
+  '/admin/settings/tours/coordination': { label: 'שיחת תיאום', parent: '/admin/settings/tours' },
+  '/admin/settings/tours/summary': { label: 'סיכום סיור', parent: '/admin/settings/tours' },
+  '/admin/settings/tours/guide-permissions': { label: 'הרשאות מדריכים', parent: '/admin/settings/tours' },
 };
 
 // Resolve a node for a pathname. Static paths come from the tree; the dynamic

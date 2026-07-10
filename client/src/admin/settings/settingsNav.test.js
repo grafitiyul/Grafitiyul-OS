@@ -52,6 +52,27 @@ test('resolveNode returns null for unknown, node for known', () => {
   assert.equal(resolveNode('/admin/settings/crm').label, 'הגדרות CRM');
 });
 
+// ── Tours settings hierarchy (same category-page pattern as CRM) ─────────────
+
+test('every Tours category sits under the Tours landing page', () => {
+  for (const path of [
+    '/admin/settings/tours/group-tours',
+    '/admin/settings/tours/components',
+    '/admin/settings/tours/coordination',
+    '/admin/settings/tours/summary',
+    '/admin/settings/tours/guide-permissions',
+  ]) {
+    assert.equal(parentOf(path), '/admin/settings/tours', path);
+  }
+});
+
+test('trail for Group Tours is root → Tours → Group Tours', () => {
+  assert.deepEqual(
+    getTrail('/admin/settings/tours/group-tours').map((c) => c.label),
+    ['הגדרות', 'הגדרות סיורים', 'סיורים קבוצתיים'],
+  );
+});
+
 // ── in-session history ───────────────────────────────────────────────────────
 
 test('back returns to the actual previous settings location when available', () => {

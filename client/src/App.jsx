@@ -58,6 +58,11 @@ import PublicFormPage from './questionnaire/PublicFormPage.jsx';
 // Global Settings module (low-frequency configuration).
 import SettingsHome from './admin/settings/SettingsHome.jsx';
 import ToursSettings from './admin/settings/ToursSettings.jsx';
+import GroupToursSettings from './admin/tours/settings/GroupToursSettings.jsx';
+import TourComponentsSettingsPage from './admin/tours/settings/TourComponentsSettingsPage.jsx';
+import CoordinationSettingsPage from './admin/tours/settings/CoordinationSettingsPage.jsx';
+import TourSummarySettingsPage from './admin/tours/settings/TourSummarySettingsPage.jsx';
+import GuidePermissionsSettings from './admin/tours/settings/GuidePermissionsSettings.jsx';
 import WhatsAppConnectionsPage from './admin/settings/WhatsAppConnectionsPage.jsx';
 import EmailPage from './admin/email/EmailPage.jsx';
 import CrmSettingsHome from './admin/settings/CrmSettingsHome.jsx';
@@ -199,6 +204,11 @@ export default function App() {
         {/* Tours module settings — the future configuration surface (guide
             permission placeholders); the Tours module itself is not built yet. */}
         <Route path="settings/tours" element={<ToursSettings />} />
+        <Route path="settings/tours/group-tours" element={<GroupToursSettings />} />
+        <Route path="settings/tours/components" element={<TourComponentsSettingsPage />} />
+        <Route path="settings/tours/coordination" element={<CoordinationSettingsPage />} />
+        <Route path="settings/tours/summary" element={<TourSummarySettingsPage />} />
+        <Route path="settings/tours/guide-permissions" element={<GuidePermissionsSettings />} />
         <Route path="settings/crm" element={<CrmSettingsHome />} />
         <Route
           path="settings/crm/organization-types"
