@@ -4,10 +4,9 @@ import { api } from '../../lib/api.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
 import TourSlotModal from './TourSlotModal.jsx';
+import ActivityBadgeChip from '../deals/ActivityBadgeChip.jsx';
 import { contactNameHe, dealPath } from '../deals/config.js';
 import {
-  TOUR_KIND_LABELS,
-  TOUR_KIND_STYLES,
   TOUR_STATUS_LABELS,
   TOUR_STATUS_STYLES,
   TOUR_LANG_LABELS,
@@ -17,6 +16,10 @@ import {
   ASSIGNMENT_ROLE_DOTS,
   fmtTourDate,
 } from './config.js';
+
+// The tour's activity dimension (kind) IS the Deal's activityType — one
+// vocabulary, mapped here so the header can reuse the Deal's activity badge.
+const KIND_TO_ACTIVITY = { private: 'private', business: 'business', group_slot: 'group' };
 
 // Tour page — the operational workspace of ONE TourEvent, opened as a large
 // CENTERED MODAL on top of the Tours list (the user never leaves the workspace).
@@ -174,7 +177,7 @@ function AddGuideButton({ people, onPick, busy }) {
 // the CUSTOMER (primary contact), with the organization beneath. The
 // coordination-call form and the "important info" accordion belong to the
 // participant and live inside the card.
-function CustomerCard({ booking, navigate }) {
+function CustomerCard({ booking }) {
   const deal = booking.deal;
   const [infoOpen, setInfoOpen] = useState(true); // operationally important → open by default
   if (!deal) return null;
@@ -187,11 +190,13 @@ function CustomerCard({ booking, navigate }) {
   return (
     <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
       <div className="flex items-start justify-between gap-3 p-3">
-        <button
-          type="button"
-          onClick={() => navigate(dealPath(deal))}
+        {/* Opens the Deal in a NEW tab — the operational tour stays open here. */}
+        <a
+          href={dealPath(deal)}
+          target="_blank"
+          rel="noopener noreferrer"
           className="min-w-0 text-right"
-          title="פתיחת הדיל"
+          title="פתיחת הדיל בכרטיסייה חדשה"
         >
           <div className="truncate text-[15px] font-semibold text-gray-900 hover:text-blue-700">
             {customerName}
@@ -203,7 +208,7 @@ function CustomerCard({ booking, navigate }) {
               <span dir="ltr" className="ms-1 tabular-nums text-gray-400">#{deal.orderNo}</span>
             )}
           </div>
-        </button>
+        </a>
         <div className="shrink-0 text-left text-[12px]">
           <div className="tabular-nums font-medium text-gray-700" dir="ltr">
             👥 {booking.seats}
@@ -411,6 +416,10 @@ export default function TourPage() {
   const city = tour?.location?.nameHe || tour?.productVariant?.location?.nameHe;
   const isSlot = tour?.kind === 'group_slot';
   const relevantBookings = (tour?.bookings || []).filter((b) => b.status !== 'cancelled');
+  // A private/business tour is 1:1 with a deal — its activity classification
+  // (org-type + subtype) is read from that deal so the header shows the SAME
+  // badge as the Deal header. Group slots have many deals → the broad "קבוצתי".
+  const classifyDeal = !isSlot ? relevantBookings[0]?.deal || null : null;
   const sortedAssignments = [...(tour?.assignments || [])].sort(
     (a, b) => ASSIGNMENT_ROLES.indexOf(a.role) - ASSIGNMENT_ROLES.indexOf(b.role),
   );
@@ -448,7 +457,15 @@ export default function TourPage() {
                     {city && <span className="text-base font-medium text-gray-400">· {city}</span>}
                   </h1>
                   <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-gray-600">
-                    <Chip styles={TOUR_KIND_STYLES[tour.kind]} label={TOUR_KIND_LABELS[tour.kind] || tour.kind} />
+                    <ActivityBadgeChip
+                      activityType={KIND_TO_ACTIVITY[tour.kind] || null}
+                      orgTypeLabel={
+                        classifyDeal?.organizationType?.label ||
+                        classifyDeal?.organization?.organizationType?.label
+                      }
+                      subtypeLabel={classifyDeal?.organizationSubtype?.label}
+                      size="md"
+                    />
                     <Chip styles={TOUR_STATUS_STYLES[tour.status]} label={TOUR_STATUS_LABELS[tour.status] || tour.status} />
                     <span className="font-semibold text-gray-800">{fmtTourDate(tour.date)}</span>
                     <span dir="ltr" className="tabular-nums">{tour.startTime}</span>
@@ -528,7 +545,7 @@ export default function TourPage() {
                 ) : (
                   <div className="space-y-2.5">
                     {relevantBookings.map((b) => (
-                      <CustomerCard key={b.id} booking={b} navigate={navigate} />
+                      <CustomerCard key={b.id} booking={b} />
                     ))}
                   </div>
                 )}

@@ -410,7 +410,15 @@ router.get(
                 status: true,
                 participants: true,
                 customerInfo: true,
-                organization: { select: { id: true, name: true } },
+                // Activity classification — read-through so the tour header can
+                // render the EXACT same activity badge as the Deal header
+                // (resolveActivityLabel: activityType + effective org-type + subtype).
+                activityType: true,
+                organizationType: { select: { label: true } },
+                organizationSubtype: { select: { label: true } },
+                organization: {
+                  select: { id: true, name: true, organizationType: { select: { label: true } } },
+                },
                 organizationUnit: { select: { id: true, name: true } },
                 contacts: {
                   orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],

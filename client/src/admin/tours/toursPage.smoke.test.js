@@ -243,6 +243,11 @@ test('Tour modal renders header, team chips and the participant cards', async ()
   assert.match(html, /חברת בדיקות/, 'the organization should render under the customer');
   assert.doesNotMatch(html, /דיל בדיקה קבוצתי/, 'the deal title must NOT be the card title');
   assert.match(html, /טופס שיחת תיאום/, 'the coordination-call placeholder should render inside the card');
+  // The header activity badge reuses the Deal's vocabulary — a group slot maps
+  // to activityType 'group' → "קבוצתי" (not the removed kind chip "עסקי").
+  assert.match(html, /קבוצתי/, 'the header should render the shared activity badge');
+  // Clicking the customer opens the Deal in a NEW tab — the tour stays open.
+  assert.match(html, /target="_blank"/, 'the deal link must open in a new browser tab');
   // Cancellation now lives on the Deal — the tour modal must not expose it.
   assert.doesNotMatch(html, /בטל סיור/, 'the cancel-tour action must be removed');
   await unmount();
