@@ -10,6 +10,7 @@ import {
 import {
   SortableContext,
   verticalListSortingStrategy,
+  rectSortingStrategy,
   useSortable,
   arrayMove,
 } from '@dnd-kit/sortable';
@@ -19,7 +20,13 @@ import { CSS } from '@dnd-kit/utilities';
 // codes label/labelEn inline editing), this one is render-prop based: the caller
 // draws each row and decides what edit UI to show. `onReorder(ids)` receives the
 // full id list in the new order. A drag handle is provided to the render fn.
-export default function ReorderableList({ items, onReorder, renderRow, emptyText }) {
+//
+// `horizontal`: chip-row mode. Items render inside `<ul class="contents">` so
+// they participate directly in the CALLER's flex-wrap container (the caller owns
+// the layout and can put siblings — e.g. an add button — on the same row). The
+// WHOLE item is draggable (no visible handle; renderRow gets handle=null);
+// clicks inside still work thanks to the 4px activation distance.
+export default function ReorderableList({ items, onReorder, renderRow, emptyText, horizontal = false }) {
   const [local, setLocal] = useState(items);
   useEffect(() => setLocal(items), [items]);
 
@@ -41,6 +48,7 @@ export default function ReorderableList({ items, onReorder, renderRow, emptyText
   }
 
   if (!local.length) {
+    if (horizontal) return null; // chip-row mode: the caller renders its own empty state
     return (
       <div className="px-3 py-12 text-center text-sm text-gray-400">{emptyText}</div>
     );
@@ -48,14 +56,47 @@ export default function ReorderableList({ items, onReorder, renderRow, emptyText
 
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-      <SortableContext items={local.map((i) => i.id)} strategy={verticalListSortingStrategy}>
-        <ul className="space-y-1">
-          {local.map((item) => (
-            <Row key={item.id} item={item} renderRow={renderRow} />
-          ))}
-        </ul>
+      <SortableContext
+        items={local.map((i) => i.id)}
+        strategy={horizontal ? rectSortingStrategy : verticalListSortingStrategy}
+      >
+        {horizontal ? (
+          <ul className="contents">
+            {local.map((item) => (
+              <ChipRow key={item.id} item={item} renderRow={renderRow} />
+            ))}
+          </ul>
+        ) : (
+          <ul className="space-y-1">
+            {local.map((item) => (
+              <Row key={item.id} item={item} renderRow={renderRow} />
+            ))}
+          </ul>
+        )}
       </SortableContext>
     </DndContext>
+  );
+}
+
+// Horizontal item: the whole chip drags (no handle). Buttons inside keep working
+// — the pointer sensor only starts a drag after 4px of movement.
+function ChipRow({ item, renderRow }) {
+  const s = useSortable({ id: item.id });
+  const style = {
+    transform: CSS.Transform.toString(s.transform),
+    transition: s.transition,
+    touchAction: 'none',
+  };
+  return (
+    <li
+      ref={s.setNodeRef}
+      style={style}
+      {...s.attributes}
+      {...s.listeners}
+      className={`list-none ${s.isDragging ? 'relative z-10 opacity-80' : ''}`}
+    >
+      {renderRow(item, { handle: null, isDragging: s.isDragging })}
+    </li>
   );
 }
 

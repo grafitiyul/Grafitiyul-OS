@@ -120,6 +120,7 @@ let ToursPage;
 let TourPage;
 let TimelineFeed;
 let TourComponents;
+let TourTeamEditor;
 let DealTourSummary;
 let VariantDefaultComponents;
 
@@ -188,7 +189,13 @@ before(async () => {
     let body;
     if (/^\/api\/tours\/tour1(\?|$)/.test(u)) body = TOUR_DETAIL;
     else if (u.startsWith('/api/tours')) body = toursList;
-    else if (u.startsWith('/api/people')) body = { people: [] };
+    else if (u.startsWith('/api/people'))
+      body = {
+        people: [
+          { id: 'p2', displayName: 'אבי כהן', status: 'active', profile: { imageUrl: null } },
+          { id: 'p3', displayName: 'דור לוי', status: 'active', profile: null },
+        ],
+      };
     else body = []; // timeline, products, …
     return {
       ok: true,
@@ -204,6 +211,7 @@ before(async () => {
   TourPage = await bundle(esbuild, 'TourPage.jsx');
   TimelineFeed = await bundle(esbuild, '../common/timeline/TimelineFeed.jsx');
   TourComponents = await bundle(esbuild, 'TourComponents.jsx');
+  TourTeamEditor = await bundle(esbuild, 'TourTeamEditor.jsx');
   DealTourSummary = await bundle(esbuild, 'DealTourSummary.jsx');
   VariantDefaultComponents = await bundle(esbuild, '../products/VariantDefaultComponents.jsx');
 
@@ -351,19 +359,21 @@ async function renderComponents(rows) {
   );
 }
 
-test('no workshop component → no workshop-location UI at all', async () => {
+test('no workshop component → no workshop-locations section at all', async () => {
   const { container, unmount } = await renderComponents([compRow('r1', AC('a', 'סיור גרפיטי', false))]);
   const html = container.innerHTML;
   assert.match(html, /סיור גרפיטי/);
-  assert.doesNotMatch(html, /חסר מיקום סדנה/, 'a non-workshop component must not show a location control');
+  assert.doesNotMatch(html, /מיקומי סדנה/, 'the workshop-locations section must not render');
   assert.equal(countSelects(html), 0, 'no location <select> for a non-workshop component');
   await unmount();
 });
 
-test('one workshop component → exactly one location control', async () => {
+test('one workshop component → locations section with exactly one selector, no warning', async () => {
   const { container, unmount } = await renderComponents([compRow('r1', AC('b', 'סדנת תקליטים', true))]);
   const html = container.innerHTML;
-  assert.match(html, /חסר מיקום סדנה/, 'an unset workshop shows the missing-location warning');
+  assert.match(html, /מיקומי סדנה/, 'the workshop-locations section renders below the chips');
+  assert.match(html, /בחירת מיקום סדנה/, 'an unset location shows a PLAIN placeholder (optional)');
+  assert.doesNotMatch(html, /חסר מיקום סדנה/, 'no red missing-location warning — location is optional');
   assert.equal(countSelects(html), 1, 'exactly one location control for one workshop');
   await unmount();
 });
@@ -375,6 +385,30 @@ test('two workshop components → two independent location controls', async () =
   ]);
   const html = container.innerHTML;
   assert.equal(countSelects(html), 2, 'each workshop gets its own location control');
+  await unmount();
+});
+
+// Multi-select team add (Gmail-recipients style): the popover stays open, staff
+// render as CHECKBOX rows, and one confirm button adds everyone at once.
+test('team add popover offers multi-select staff with a single confirm button', async () => {
+  const { container, unmount } = await render(
+    React.createElement(
+      MemoryRouter,
+      null,
+      React.createElement(TourTeamEditor, { tourId: 'tour1', assignments: [], onChanged: () => {} }),
+    ),
+  );
+  const plus = [...container.querySelectorAll('button')].find((b) => b.textContent.trim() === '+');
+  assert.ok(plus, 'the + trigger renders');
+  await act(async () => {
+    plus.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  });
+  const html = container.innerHTML;
+  assert.match(html, /אבי כהן/, 'staff render in the popover');
+  assert.match(html, /דור לוי/, 'all staff are listed at once');
+  const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+  assert.equal(checkboxes.length, 2, 'one checkbox per staff member');
+  assert.match(html, /הוספת/, 'a single confirm button adds the selection');
   await unmount();
 });
 

@@ -1,17 +1,14 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import ReorderableList from '../common/ReorderableList.jsx';
-import { componentToneStyle } from './config.js';
 
-// Tour modal → "מרכיבי הפעילות". The tour's DELIVERED components: add / remove /
-// reorder, and — for WORKSHOP components only — pick a Workshop Location (a tour
-// can hold several workshop components, each in a different place). Non-workshop
-// components never show a location control. Reads rows from the tour payload and
-// calls onChanged() after each write so the modal reflects server truth; reorder
-// is optimistic (ReorderableList) then persisted.
-const LOC_SELECT =
-  'h-7 rounded-md border px-2 text-[12px] focus:outline-none focus:ring-2 focus:ring-blue-200';
-
+// Tour modal → "מרכיבי הפעילות". The tour's DELIVERED components as a HORIZONTAL
+// row of NEUTRAL chips — the icon carries the identity, not a background color
+// (strong role colors belong to the Team section). Each chip carries its own ✕;
+// the whole chip drags to reorder. Workshop locations live in a separate block
+// BELOW the chips — one selector per workshop component, rendered only when at
+// least one workshop component exists. A location is OPTIONAL: the empty state
+// is a plain placeholder, never a warning.
 export default function TourComponents({ tourId, rows = [], onChanged }) {
   const [catalog, setCatalog] = useState([]); // active components (for add)
   const [locations, setLocations] = useState([]); // active workshop locations
@@ -25,6 +22,7 @@ export default function TourComponents({ tourId, rows = [], onChanged }) {
 
   const presentIds = new Set(rows.map((r) => r.activityComponentId));
   const available = catalog.filter((c) => !presentIds.has(c.id));
+  const workshopRows = rows.filter((r) => r.activityComponent?.isWorkshop);
 
   async function run(fn) {
     setBusy(true);
@@ -58,77 +56,32 @@ export default function TourComponents({ tourId, rows = [], onChanged }) {
 
   return (
     <div>
-      {rows.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-3 py-4 text-center text-[13px] text-gray-400">
-          עדיין לא הוגדרו מרכיבים לסיור.
-        </p>
-      ) : (
+      {/* Component chips + add — one horizontal, wrapping row. */}
+      <div className="flex flex-wrap items-center gap-1.5">
         <ReorderableList
+          horizontal
           items={rows}
           onReorder={reorder}
-          renderRow={(row, { handle }) => {
+          renderRow={(row) => {
             const c = row.activityComponent;
-            const isWorkshop = c?.isWorkshop;
-            const missingLoc = isWorkshop && !row.workshopLocationId;
-            // Include a deactivated-but-selected location so it still displays.
-            const locOptions = [...locations];
-            if (
-              row.workshopLocation &&
-              !locations.some((l) => l.id === row.workshopLocation.id)
-            ) {
-              locOptions.push(row.workshopLocation);
-            }
             return (
-              <div className="group flex items-center gap-2 rounded-lg px-1.5 py-1.5 hover:bg-gray-50">
-                {handle}
-                <span
-                  className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[12px] font-semibold ${componentToneStyle(
-                    c?.color,
-                  )}`}
-                >
-                  {c?.icon && <span aria-hidden>{c.icon}</span>}
-                  {c?.nameHe || '—'}
-                </span>
-
-                {isWorkshop && (
-                  <select
-                    value={row.workshopLocationId || ''}
-                    disabled={busy}
-                    onChange={(e) => setLocation(row.id, e.target.value)}
-                    className={`${LOC_SELECT} ${
-                      missingLoc
-                        ? 'border-red-300 bg-red-50 text-red-700'
-                        : 'border-gray-300 bg-white text-gray-700'
-                    }`}
-                    title="מיקום סדנה"
-                  >
-                    <option value="">📍 חסר מיקום סדנה</option>
-                    {locOptions.map((l) => (
-                      <option key={l.id} value={l.id}>
-                        {l.nameHe}
-                      </option>
-                    ))}
-                  </select>
-                )}
-
-                <div className="flex-1" />
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white py-1 ps-2.5 pe-1 text-[12.5px] font-medium text-gray-700 shadow-sm">
+                {c?.icon && <span aria-hidden>{c.icon}</span>}
+                {c?.nameHe || '—'}
                 <button
                   type="button"
                   onClick={() => remove(row.id)}
                   disabled={busy}
                   title="הסרת המרכיב"
-                  className="shrink-0 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md px-2 py-1 text-[13px] disabled:opacity-40"
+                  className="flex h-4 w-4 items-center justify-center rounded-full text-gray-300 hover:bg-gray-100 hover:text-red-600 disabled:opacity-40"
                 >
                   ✕
                 </button>
-              </div>
+              </span>
             );
           }}
         />
-      )}
 
-      {/* Add control */}
-      <div className="mt-2">
         {adding ? (
           <select
             autoFocus
@@ -136,10 +89,10 @@ export default function TourComponents({ tourId, rows = [], onChanged }) {
             disabled={busy}
             onChange={(e) => add(e.target.value)}
             onBlur={() => setAdding(false)}
-            className="h-8 w-full rounded-lg border border-gray-300 bg-white px-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-blue-200"
+            className="h-7 rounded-full border border-gray-300 bg-white px-2 text-[12.5px] focus:outline-none focus:ring-2 focus:ring-blue-200"
           >
             <option value="" disabled>
-              בחרו מרכיב להוספה…
+              בחרו מרכיב…
             </option>
             {available.map((c) => (
               <option key={c.id} value={c.id}>
@@ -154,12 +107,59 @@ export default function TourComponents({ tourId, rows = [], onChanged }) {
             type="button"
             onClick={() => setAdding(true)}
             disabled={busy || available.length === 0}
-            className="rounded-lg border border-dashed border-gray-300 px-3 py-1.5 text-[13px] font-medium text-gray-600 hover:border-blue-400 hover:text-blue-600 disabled:opacity-50"
+            title={available.length === 0 ? 'כל המרכיבים הפעילים כבר בסיור' : 'הוספת מרכיב'}
+            className="inline-flex items-center rounded-full border border-dashed border-gray-300 px-2.5 py-1 text-[12.5px] font-medium text-gray-500 hover:border-blue-400 hover:text-blue-600 disabled:opacity-40"
           >
-            {available.length === 0 ? 'כל המרכיבים הפעילים כבר בסיור' : '+ הוספת מרכיב'}
+            + מרכיב
           </button>
         )}
+
+        {rows.length === 0 && (
+          <span className="text-[12.5px] text-gray-400">עדיין לא הוגדרו מרכיבים לסיור.</span>
+        )}
       </div>
+
+      {/* Workshop locations — ONLY when a workshop component exists. One
+          selector per workshop component; empty = plain placeholder (optional). */}
+      {workshopRows.length > 0 && (
+        <div className="mt-3 border-t border-gray-100 pt-2.5">
+          <h3 className="mb-1.5 text-[11px] font-semibold tracking-wide text-gray-400">
+            מיקומי סדנה
+          </h3>
+          <div className="grid gap-x-5 gap-y-1.5 sm:grid-cols-2">
+            {workshopRows.map((row) => {
+              const c = row.activityComponent;
+              // Include a deactivated-but-selected location so it still displays.
+              const locOptions = [...locations];
+              if (row.workshopLocation && !locations.some((l) => l.id === row.workshopLocation.id)) {
+                locOptions.push(row.workshopLocation);
+              }
+              return (
+                <label key={row.id} className="flex items-center gap-2 text-[12.5px]">
+                  <span className="shrink-0 whitespace-nowrap text-gray-600">
+                    {c?.icon && <span aria-hidden>{c.icon} </span>}
+                    {c?.nameHe || '—'}
+                  </span>
+                  <select
+                    value={row.workshopLocationId || ''}
+                    disabled={busy}
+                    onChange={(e) => setLocation(row.id, e.target.value)}
+                    className="h-7 min-w-0 flex-1 rounded-md border border-gray-200 bg-white px-2 text-[12px] text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    title="מיקום סדנה"
+                  >
+                    <option value="">בחירת מיקום סדנה…</option>
+                    {locOptions.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.nameHe}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

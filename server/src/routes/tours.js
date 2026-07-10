@@ -397,7 +397,15 @@ router.get(
           orderBy: { createdAt: 'asc' },
           include: {
             personRef: {
-              select: { id: true, displayName: true, status: true, lifecycleHint: true },
+              select: {
+                id: true,
+                displayName: true,
+                status: true,
+                lifecycleHint: true,
+                // Staff photo for the team chips (read-through; PersonProfile
+                // is owned by the people module).
+                profile: { select: { imageUrl: true } },
+              },
             },
           },
         },

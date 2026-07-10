@@ -8,8 +8,7 @@ import CoordinationFormAction from './CoordinationFormAction.jsx';
 import TourSlotModal from './TourSlotModal.jsx';
 import TourComponents from './TourComponents.jsx';
 import TourTeamEditor from './TourTeamEditor.jsx';
-import ActivityBadgeChip from '../deals/ActivityBadgeChip.jsx';
-import { contactNameHe, dealPath } from '../deals/config.js';
+import { contactNameHe, dealPath, resolveActivityLabel } from '../deals/config.js';
 import {
   TOUR_STATUS_LABELS,
   TOUR_STATUS_STYLES,
@@ -37,6 +36,11 @@ function Chip({ styles, label }) {
       {label}
     </span>
   );
+}
+
+// Quiet metadata separator for the header line.
+function Dot() {
+  return <span className="text-gray-300">·</span>;
 }
 
 // Resolve the customer card's contacts from the deal's DealContact links.
@@ -253,6 +257,18 @@ export default function TourPage() {
   // (org-type + subtype) is read from that deal so the header shows the SAME
   // badge as the Deal header. Group slots have many deals → the broad "קבוצתי".
   const classifyDeal = !isSlot ? relevantBookings[0]?.deal || null : null;
+  // Same label source as the Deal header (resolveActivityLabel) — but rendered
+  // as plain header metadata, not a colored badge: in this modal color is
+  // reserved for meaning (status, team roles).
+  const activityLabel = tour
+    ? resolveActivityLabel({
+        activityType: KIND_TO_ACTIVITY[tour.kind] || null,
+        orgTypeLabel:
+          classifyDeal?.organizationType?.label ||
+          classifyDeal?.organization?.organizationType?.label,
+        subtypeLabel: classifyDeal?.organizationSubtype?.label,
+      })
+    : null;
   const assignmentCount = (tour?.assignments || []).length;
   const over = tour && tour.capacity != null && tour.activeSeats > tour.capacity;
 
@@ -287,25 +303,30 @@ export default function TourPage() {
                     {tour.product?.nameHe || 'סיור'}
                     {city && <span className="text-base font-medium text-gray-400">· {city}</span>}
                   </h1>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-gray-600">
-                    <ActivityBadgeChip
-                      activityType={KIND_TO_ACTIVITY[tour.kind] || null}
-                      orgTypeLabel={
-                        classifyDeal?.organizationType?.label ||
-                        classifyDeal?.organization?.organizationType?.label
-                      }
-                      subtypeLabel={classifyDeal?.organizationSubtype?.label}
-                      size="md"
-                    />
+                  {/* One quiet metadata line — STATUS is the only chip; the rest
+                      is plain operational information ("what is this tour?"). */}
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12.5px] text-gray-500">
                     <Chip styles={TOUR_STATUS_STYLES[tour.status]} label={TOUR_STATUS_LABELS[tour.status] || tour.status} />
-                    <span className="font-semibold text-gray-800">{fmtTourDate(tour.date)}</span>
-                    <span dir="ltr" className="tabular-nums">{tour.startTime}</span>
-                    {tour.tourLanguage && <span>· {TOUR_LANG_LABELS[tour.tourLanguage]}</span>}
-                    <span dir="ltr">
-                      · 👥 {tour.activeSeats}{tour.capacity != null ? ` / ${tour.capacity}` : ''}
+                    {activityLabel && (
+                      <span className="font-medium text-gray-700">{activityLabel}</span>
+                    )}
+                    <Dot />
+                    <span className="text-gray-700">{fmtTourDate(tour.date)}</span>
+                    <Dot />
+                    <span dir="ltr" className="tabular-nums text-gray-700">{tour.startTime}</span>
+                    {tour.tourLanguage && (
+                      <>
+                        <Dot />
+                        <span>{TOUR_LANG_LABELS[tour.tourLanguage]}</span>
+                      </>
+                    )}
+                    <Dot />
+                    <span dir="ltr" className="tabular-nums">
+                      👥 {tour.activeSeats}{tour.capacity != null ? ` / ${tour.capacity}` : ''}
                     </span>
                     {over && <span className="font-bold text-red-600">חריגה</span>}
-                    <span className="text-gray-400">· {assignmentCount} מדריכים</span>
+                    <Dot />
+                    <span>{assignmentCount} מדריכים</span>
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
@@ -365,19 +386,28 @@ export default function TourPage() {
 
             {/* Scrolling body. */}
             <div className="flex-1 space-y-3 overflow-y-auto p-3 sm:p-4">
-              {/* Assigned team — shared editor (same component the Deal uses). */}
-              <Section title="צוות משובץ">
-                <TourTeamEditor tourId={tour.id} assignments={tour.assignments || []} onChanged={refresh} />
-              </Section>
-
-              {/* Activity components — what this tour actually delivers. */}
-              <Section title="מרכיבי הפעילות" count={(tour.activityComponents || []).length}>
-                <TourComponents
-                  tourId={tour.id}
-                  rows={tour.activityComponents || []}
-                  onChanged={refresh}
-                />
-              </Section>
+              {/* ONE operational block: team → components → workshop locations
+                  (locations render inside TourComponents, only when relevant).
+                  Quiet sub-labels — the CONTENT carries the hierarchy: role
+                  colors on people, icons on components. */}
+              <section className="rounded-xl border border-gray-200 bg-white">
+                <div className="px-3.5 py-2.5">
+                  <h2 className="mb-2 text-[11px] font-semibold tracking-wide text-gray-400">
+                    צוות משובץ
+                  </h2>
+                  <TourTeamEditor tourId={tour.id} assignments={tour.assignments || []} onChanged={refresh} />
+                </div>
+                <div className="border-t border-gray-100 px-3.5 py-2.5">
+                  <h2 className="mb-2 text-[11px] font-semibold tracking-wide text-gray-400">
+                    מרכיבי הפעילות
+                  </h2>
+                  <TourComponents
+                    tourId={tour.id}
+                    rows={tour.activityComponents || []}
+                    onChanged={refresh}
+                  />
+                </div>
+              </section>
 
               {/* Participants — one card per booking, stacked vertically. */}
               <Section title="משתתפים" count={relevantBookings.length}>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
-import TourTeamEditor from './TourTeamEditor.jsx';
+import TourTeamEditor, { StaffAvatar } from './TourTeamEditor.jsx';
 import TourComponents from './TourComponents.jsx';
 import {
   fmtTourDate,
@@ -9,7 +9,6 @@ import {
   ASSIGNMENT_ROLES,
   ASSIGNMENT_ROLE_LABELS,
   ASSIGNMENT_ROLE_STYLES,
-  componentToneStyle,
 } from './config.js';
 
 // Deal workspace → live Tour summary + shared operational editor. The banner is
@@ -126,9 +125,13 @@ export default function DealTourSummary({ booking, onGroupSlot, canReplace, onRe
                       {assignments.map((a) => (
                         <span
                           key={a.id}
-                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[12px] font-semibold ${ASSIGNMENT_ROLE_STYLES[a.role]}`}
+                          className={`inline-flex items-center gap-1.5 rounded-full py-0.5 ps-1 pe-2 text-[12px] font-semibold ${ASSIGNMENT_ROLE_STYLES[a.role]}`}
                         >
-                          <span aria-hidden>👤</span>
+                          <StaffAvatar
+                            src={a.personRef?.profile?.imageUrl}
+                            name={a.personRef?.displayName || a.displayName}
+                            className="h-5 w-5"
+                          />
                           {a.personRef?.displayName || a.displayName || '?'}
                           <span className="opacity-75">· {ASSIGNMENT_ROLE_LABELS[a.role] || a.role}</span>
                         </span>
@@ -150,16 +153,15 @@ export default function DealTourSummary({ booking, onGroupSlot, canReplace, onRe
                         const c = row.activityComponent;
                         return (
                           <li key={row.id} className="flex items-center gap-2">
-                            <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[12px] font-semibold ${componentToneStyle(c?.color)}`}>
+                            {/* Neutral chip — the icon carries the identity;
+                                strong colors are reserved for team roles. */}
+                            <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[12px] font-medium text-gray-700">
                               {c?.icon && <span aria-hidden>{c.icon}</span>}
                               {c?.nameHe || '—'}
                             </span>
-                            {c?.isWorkshop &&
-                              (row.workshopLocation ? (
-                                <span className="text-[12px] text-gray-600">📍 {row.workshopLocation.nameHe}</span>
-                              ) : (
-                                <span className="text-[12px] font-semibold text-red-600">חסר מיקום סדנה</span>
-                              ))}
+                            {c?.isWorkshop && row.workshopLocation && (
+                              <span className="text-[12px] text-gray-600">📍 {row.workshopLocation.nameHe}</span>
+                            )}
                           </li>
                         );
                       })}
