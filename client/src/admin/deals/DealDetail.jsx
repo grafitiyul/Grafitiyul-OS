@@ -40,6 +40,7 @@ import { productContextFor, locationContextFor } from './tourContext.js';
 import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
 import Dialog from '../common/Dialog.jsx';
 import TourSlotPickerDialog from '../tours/TourSlotPickerDialog.jsx';
+import DealTourSummary from '../tours/DealTourSummary.jsx';
 import { fmtTourDate } from '../tours/config.js';
 import { notifyOrphansChanged } from '../../shell/OrphanToursIndicator.jsx';
 
@@ -605,29 +606,12 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
             {/* Live tour connection — WON created (private/business) or joined
                 (group). Group deals change tours ONLY via "החלף סיור". */}
             {activeBooking && (
-              <div className="flex items-center justify-between gap-2 rounded-lg bg-blue-50/70 ring-1 ring-inset ring-blue-100 px-3 py-2">
-                <div className="min-w-0 text-[13px] text-blue-900">
-                  <span className="me-1">🧭</span>
-                  <span className="font-semibold">
-                    {onGroupSlot ? 'משובץ לסיור קבוצתי' : 'סיור נוצר מהדיל'}
-                  </span>
-                  {' · '}
-                  {fmtTourDate(activeBooking.tourEvent.date)} ·{' '}
-                  <span dir="ltr" className="tabular-nums">{activeBooking.tourEvent.startTime}</span>
-                  {activeBooking.tourEvent.status === 'cancelled' && (
-                    <span className="ms-1 font-semibold text-red-600">(הסיור בוטל)</span>
-                  )}
-                </div>
-                {onGroupSlot && deal.status === 'won' && (
-                  <button
-                    type="button"
-                    onClick={() => setSlotPickerFor('assign')}
-                    className="shrink-0 rounded-lg border border-blue-200 bg-white px-2.5 py-1 text-[12px] font-semibold text-blue-700 hover:bg-blue-50"
-                  >
-                    החלף סיור
-                  </button>
-                )}
-              </div>
+              <DealTourSummary
+                booking={activeBooking}
+                onGroupSlot={onGroupSlot}
+                canReplace={onGroupSlot && deal.status === 'won'}
+                onReplace={() => setSlotPickerFor('assign')}
+              />
             )}
             {orphanedBooking && (
               <div className="rounded-lg bg-amber-50 ring-1 ring-inset ring-amber-200 px-3 py-2 text-[13px] text-amber-800">

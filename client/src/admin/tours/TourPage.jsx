@@ -1,20 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
 import TourSlotModal from './TourSlotModal.jsx';
 import TourComponents from './TourComponents.jsx';
+import TourTeamEditor from './TourTeamEditor.jsx';
 import ActivityBadgeChip from '../deals/ActivityBadgeChip.jsx';
 import { contactNameHe, dealPath } from '../deals/config.js';
 import {
   TOUR_STATUS_LABELS,
   TOUR_STATUS_STYLES,
   TOUR_LANG_LABELS,
-  ASSIGNMENT_ROLES,
-  ASSIGNMENT_ROLE_LABELS,
-  ASSIGNMENT_ROLE_STYLES,
-  ASSIGNMENT_ROLE_DOTS,
   fmtTourDate,
 } from './config.js';
 
@@ -48,130 +45,6 @@ function resolveCustomerContacts(dealContacts) {
   const primary = links.find((l) => l.isPrimary) || links[0] || null;
   const fieldRep = links.find((l) => (l.roles || []).includes('fieldRep')) || null;
   return { primary, fieldRep };
-}
-
-// A single assigned guide, shown as a compact role-colored chip. Clicking the
-// name opens the role picker (guide / lead / workshop assistant); the ✕ removes
-// the assignment. No separate edit UI — everything happens on the chip.
-function GuideChip({ a, onRoleChange, onRemove, busy }) {
-  const [menu, setMenu] = useState(false);
-  const gone = !a.personRef;
-  const name = a.personRef?.displayName || a.displayName || '?';
-  return (
-    <div className="relative">
-      <div
-        className={`inline-flex items-center gap-1.5 rounded-full py-1 ps-2.5 pe-1 text-[12px] font-semibold ${ASSIGNMENT_ROLE_STYLES[a.role]}`}
-      >
-        <button
-          type="button"
-          onClick={() => setMenu((m) => !m)}
-          disabled={busy}
-          title="שינוי תפקיד"
-          className="inline-flex items-center gap-1.5 disabled:opacity-50"
-        >
-          <span aria-hidden>👤</span>
-          <span className="whitespace-nowrap">{name}</span>
-          <span className="opacity-75">· {ASSIGNMENT_ROLE_LABELS[a.role] || a.role}</span>
-          {gone && <span className="opacity-70">(הוסר)</span>}
-        </button>
-        <button
-          type="button"
-          onClick={() => onRemove(a)}
-          disabled={busy}
-          title="הסרת השיבוץ"
-          className="flex h-4 w-4 items-center justify-center rounded-full text-current opacity-70 hover:bg-black/10 hover:opacity-100 disabled:opacity-40"
-        >
-          ✕
-        </button>
-      </div>
-      {menu && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setMenu(false)} />
-          <div className="absolute z-20 mt-1 w-40 rounded-lg border border-gray-200 bg-white p-1 shadow-lg">
-            {ASSIGNMENT_ROLES.map((r) => (
-              <button
-                key={r}
-                type="button"
-                onClick={() => {
-                  onRoleChange(a, r);
-                  setMenu(false);
-                }}
-                className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-right text-[13px] hover:bg-gray-50 ${
-                  r === a.role ? 'font-bold text-gray-900' : 'text-gray-700'
-                }`}
-              >
-                <span className={`h-2.5 w-2.5 rounded-full ${ASSIGNMENT_ROLE_DOTS[r]}`} />
-                {ASSIGNMENT_ROLE_LABELS[r]}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-// The "+" that opens a searchable popover of assignable staff. Picking a person
-// assigns them immediately (as a plain guide — the role is then tuned on the
-// chip).
-function AddGuideButton({ people, onPick, busy }) {
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState('');
-  const filtered = people.filter((p) =>
-    (p.displayName || '').toLowerCase().includes(q.trim().toLowerCase()),
-  );
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        disabled={busy}
-        title="הוספת איש צוות"
-        className="flex h-8 w-8 items-center justify-center rounded-full border border-dashed border-gray-300 text-lg leading-none text-gray-400 hover:border-blue-400 hover:text-blue-600 disabled:opacity-50"
-      >
-        +
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute z-20 mt-1 w-60 rounded-xl border border-gray-200 bg-white p-2 shadow-xl">
-            <input
-              autoFocus
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="חיפוש איש צוות…"
-              className="mb-1.5 h-8 w-full rounded-lg border border-gray-200 px-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-blue-200"
-            />
-            <div className="max-h-56 overflow-y-auto">
-              {filtered.length === 0 && (
-                <p className="px-2 py-3 text-center text-[12px] text-gray-400">אין אנשי צוות זמינים</p>
-              )}
-              {filtered.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => {
-                    onPick(p.id);
-                    setOpen(false);
-                    setQ('');
-                  }}
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-right text-[13px] hover:bg-blue-50"
-                >
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-100 text-[11px] font-bold text-gray-600">
-                    {(p.displayName || '?').slice(0, 1)}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">
-                    {p.displayName}
-                    {p.lifecycleHint === 'trainee' ? ' · מתלמד' : ''}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  );
 }
 
 // One booking = one customer card (group tours show several, stacked). Title is
@@ -309,8 +182,6 @@ export default function TourPage() {
   const [tour, setTour] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [people, setPeople] = useState([]);
-  const [busy, setBusy] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false); // collapsed by default
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -330,13 +201,6 @@ export default function TourPage() {
     refresh();
   }, [refresh]);
 
-  useEffect(() => {
-    api.people
-      .list()
-      .then((r) => setPeople((r.people || []).filter((p) => p.status !== 'blocked')))
-      .catch(() => {});
-  }, []);
-
   // Esc closes the modal.
   useEffect(() => {
     function onKey(e) {
@@ -348,54 +212,6 @@ export default function TourPage() {
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [close]);
-
-  const assignedIds = useMemo(
-    () => new Set((tour?.assignments || []).map((a) => a.personRefId).filter(Boolean)),
-    [tour],
-  );
-  const availablePeople = people.filter((p) => !assignedIds.has(p.id));
-
-  async function addAssignment(personRefId, role = 'guide') {
-    if (!personRefId) return;
-    setBusy(true);
-    try {
-      await api.tours.addAssignment(id, { personRefId, role });
-      await refresh();
-    } catch (e) {
-      alert(
-        e.payload?.error === 'already_assigned'
-          ? 'איש הצוות כבר משובץ לסיור הזה.'
-          : 'שגיאה: ' + (e.payload?.error || e.message),
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function changeRole(a, role) {
-    if (role === a.role) return;
-    setBusy(true);
-    try {
-      await api.tours.updateAssignment(a.id, { role });
-      await refresh();
-    } catch (e) {
-      alert('שגיאה: ' + (e.payload?.error || e.message));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function removeAssignment(a) {
-    setBusy(true);
-    try {
-      await api.tours.removeAssignment(a.id);
-      await refresh();
-    } catch (e) {
-      alert('שגיאה: ' + (e.payload?.error || e.message));
-    } finally {
-      setBusy(false);
-    }
-  }
 
   // Delete is the inverse of "create group slot" (Tours-module cleanup of an
   // EMPTY slot) — not customer cancellation, which lives on the Deal.
@@ -421,9 +237,7 @@ export default function TourPage() {
   // (org-type + subtype) is read from that deal so the header shows the SAME
   // badge as the Deal header. Group slots have many deals → the broad "קבוצתי".
   const classifyDeal = !isSlot ? relevantBookings[0]?.deal || null : null;
-  const sortedAssignments = [...(tour?.assignments || [])].sort(
-    (a, b) => ASSIGNMENT_ROLES.indexOf(a.role) - ASSIGNMENT_ROLES.indexOf(b.role),
-  );
+  const assignmentCount = (tour?.assignments || []).length;
   const over = tour && tour.capacity != null && tour.activeSeats > tour.capacity;
 
   return (
@@ -475,7 +289,7 @@ export default function TourPage() {
                       · 👥 {tour.activeSeats}{tour.capacity != null ? ` / ${tour.capacity}` : ''}
                     </span>
                     {over && <span className="font-bold text-red-600">חריגה</span>}
-                    <span className="text-gray-400">· {sortedAssignments.length} מדריכים</span>
+                    <span className="text-gray-400">· {assignmentCount} מדריכים</span>
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
@@ -524,17 +338,9 @@ export default function TourPage() {
 
             {/* Scrolling body. */}
             <div className="flex-1 space-y-3 overflow-y-auto p-3 sm:p-4">
-              {/* Assigned team — compact chips + add. */}
+              {/* Assigned team — shared editor (same component the Deal uses). */}
               <Section title="צוות משובץ">
-                <div className="flex flex-wrap items-center gap-2">
-                  {sortedAssignments.map((a) => (
-                    <GuideChip key={a.id} a={a} busy={busy} onRoleChange={changeRole} onRemove={removeAssignment} />
-                  ))}
-                  <AddGuideButton people={availablePeople} onPick={addAssignment} busy={busy} />
-                  {sortedAssignments.length === 0 && (
-                    <span className="text-[13px] text-gray-400">עדיין לא שובצו מדריכים — הוסיפו עם +</span>
-                  )}
-                </div>
+                <TourTeamEditor tourId={tour.id} assignments={tour.assignments || []} onChanged={refresh} />
               </Section>
 
               {/* Activity components — what this tour actually delivers. */}

@@ -44,7 +44,15 @@ const TOUR_ROW = {
 const TOUR_DETAIL = {
   ...TOUR_ROW,
   totalBookings: 1,
-  assignments: [],
+  assignments: [
+    {
+      id: 'as1',
+      role: 'lead_guide',
+      personRefId: 'p1',
+      personRef: { id: 'p1', displayName: 'דנה מדריכה' },
+      displayName: 'דנה מדריכה',
+    },
+  ],
   // A non-workshop component (no location UI) + a workshop component (with a
   // location) — the tour modal's "מרכיבי הפעילות" section.
   activityComponents: [
@@ -112,6 +120,7 @@ let ToursPage;
 let TourPage;
 let TimelineFeed;
 let TourComponents;
+let DealTourSummary;
 
 // Vite-only asset imports (css / ?url / emoji data) live deep inside the
 // TimelineFeed→RichEditor tree — irrelevant to a render smoke; stub them.
@@ -194,6 +203,7 @@ before(async () => {
   TourPage = await bundle(esbuild, 'TourPage.jsx');
   TimelineFeed = await bundle(esbuild, '../common/timeline/TimelineFeed.jsx');
   TourComponents = await bundle(esbuild, 'TourComponents.jsx');
+  DealTourSummary = await bundle(esbuild, 'DealTourSummary.jsx');
 
   React = (await import('react')).default ?? (await import('react'));
   ({ act } = await import('react'));
@@ -260,6 +270,10 @@ test('Tour modal renders header, team chips and the participant cards', async ()
   assert.match(html, /role="dialog"/, 'the tour should render as a modal dialog');
   assert.match(html, /סיור גרפיטי בדיקה/, 'header should show the product');
   assert.match(html, /צוות משובץ/, 'the renamed team section should render');
+  // The shared team editor renders the assigned guide + role (same component the
+  // Deal reuses).
+  assert.match(html, /דנה מדריכה/, 'the assigned guide renders via the shared team editor');
+  assert.match(html, /מדריך ראשי/, 'the guide role label renders');
   assert.match(html, /משתתפים/, 'the renamed participants section should render');
   // Card title is now the CUSTOMER (primary contact), with the org beneath —
   // no longer the deal title.
@@ -359,5 +373,40 @@ test('two workshop components → two independent location controls', async () =
   ]);
   const html = container.innerHTML;
   assert.equal(countSelects(html), 2, 'each workshop gets its own location control');
+  await unmount();
+});
+
+// Deal-side tour summary popover: shows LIVE staff / components / locations from
+// the same TourEvent, with role colors intact. Opening it fetches api.tours.get
+// (stubbed → TOUR_DETAIL). Proves the Deal reuses the same data + shared editor.
+test('Deal tour popover shows live staff, components and locations', async () => {
+  const booking = {
+    tourEventId: 'tour1',
+    tourEvent: { date: '2026-08-06', startTime: '17:00', status: 'scheduled' },
+  };
+  const { container, unmount } = await render(
+    React.createElement(
+      MemoryRouter,
+      null,
+      React.createElement(DealTourSummary, { booking, onGroupSlot: true, canReplace: false }),
+    ),
+  );
+  // Open the popover (click the banner trigger), then let the tour fetch resolve.
+  const trigger = [...container.querySelectorAll('button')].find((b) =>
+    /משובץ לסיור|סיור נוצר מהדיל/.test(b.textContent),
+  );
+  assert.ok(trigger, 'the banner trigger renders');
+  await act(async () => {
+    trigger.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  });
+  await act(async () => {});
+  const html = container.innerHTML;
+  assert.match(html, /דנה מדריכה/, 'popover shows the assigned guide');
+  assert.match(html, /מדריך ראשי/, 'popover shows the guide role');
+  assert.match(html, /bg-emerald-100/, 'lead-guide role color is intact');
+  assert.match(html, /סיור גרפיטי/, 'popover shows a component');
+  assert.match(html, /סדנת תקליטים/, 'popover shows the workshop component');
+  assert.match(html, /סטודיו תל אביב/, 'popover shows the workshop location');
+  assert.match(html, /פתח סיור/, 'popover offers an open-tour action');
   await unmount();
 });
