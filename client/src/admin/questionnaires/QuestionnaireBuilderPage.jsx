@@ -746,6 +746,7 @@ function QuestionInspector({ state, runtime, isDraft, versionId, lx, onClose, on
                   disabled={!isDraft}
                   onChange={(v) => save({ required: v })}
                   label="שאלת חובה"
+                  showLabel
                 />
               </div>
             </>
@@ -864,6 +865,7 @@ function OptionsEditor({ q, isDraft, lx, onMutate, saveConfig }) {
           disabled={!isDraft}
           onChange={(v) => saveConfig('allowOther', v || undefined)}
           label='לאפשר "אחר" עם טקסט חופשי'
+          showLabel
         />
       </div>
     </div>
