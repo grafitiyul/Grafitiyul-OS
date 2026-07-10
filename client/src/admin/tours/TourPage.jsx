@@ -8,6 +8,7 @@ import CoordinationFormAction from './CoordinationFormAction.jsx';
 import TourSlotModal from './TourSlotModal.jsx';
 import TourComponents from './TourComponents.jsx';
 import TourTeamEditor from './TourTeamEditor.jsx';
+import TourGalleryCard from './gallery/TourGalleryCard.jsx';
 import { contactNameHe, dealPath, resolveActivityLabel } from '../deals/config.js';
 import {
   TOUR_STATUS_LABELS,
@@ -408,6 +409,10 @@ export default function TourPage() {
                   />
                 </div>
               </section>
+
+              {/* Tour Gallery — compact summary; the full grid opens in a
+                  dedicated workspace modal (density of this page is sacred). */}
+              <TourGalleryCard tourEventId={tour.id} tourStatus={tour.status} />
 
               {/* Participants — one card per booking, stacked vertically. */}
               <Section title="משתתפים" count={relevantBookings.length}>

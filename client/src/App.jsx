@@ -63,6 +63,7 @@ import TourComponentsSettingsPage from './admin/tours/settings/TourComponentsSet
 import CoordinationSettingsPage from './admin/tours/settings/CoordinationSettingsPage.jsx';
 import TourSummarySettingsPage from './admin/tours/settings/TourSummarySettingsPage.jsx';
 import GuidePermissionsSettings from './admin/tours/settings/GuidePermissionsSettings.jsx';
+import GallerySettingsPage from './admin/tours/settings/GallerySettingsPage.jsx';
 import WhatsAppConnectionsPage from './admin/settings/WhatsAppConnectionsPage.jsx';
 import EmailPage from './admin/email/EmailPage.jsx';
 import CrmSettingsHome from './admin/settings/CrmSettingsHome.jsx';
@@ -209,6 +210,7 @@ export default function App() {
         <Route path="settings/tours/coordination" element={<CoordinationSettingsPage />} />
         <Route path="settings/tours/summary" element={<TourSummarySettingsPage />} />
         <Route path="settings/tours/guide-permissions" element={<GuidePermissionsSettings />} />
+        <Route path="settings/tours/gallery" element={<GallerySettingsPage />} />
         <Route path="settings/crm" element={<CrmSettingsHome />} />
         <Route
           path="settings/crm/organization-types"

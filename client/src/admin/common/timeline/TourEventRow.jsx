@@ -10,6 +10,19 @@ const EVENT_TEXT = {
   tour_joined: 'הדיל שובץ לסיור קבוצתי',
   tour_left: 'הדיל הוסר מהסיור',
   booking_orphaned: 'הסיור נשמר בנפרד מהדיל (orphan)',
+  // Tour Gallery lifecycle (batch-level — never one event per photo).
+  gallery_first_upload: 'הועלתה מדיה ראשונה לגלריית הסיור',
+  gallery_batch_uploaded: 'הועלתה מדיה לגלריית הסיור',
+  gallery_media_deleted: 'נמחקה מדיה מגלריית הסיור',
+  gallery_cover_changed: 'עודכן קאבר הגלריה',
+  gallery_link_created: 'נוצר קישור גלריה ללקוח',
+  gallery_link_rotated: 'הוחלף קישור הגלריה ללקוח',
+  gallery_link_revoked: 'בוטל קישור הגלריה ללקוח',
+  gallery_cleanup_scheduled: 'ניקוי גלריית הסיור תוזמן',
+  gallery_cleanup_completed: 'גלריית הסיור נמחקה מהאחסון',
+  gallery_cleanup_skipped: 'ניקוי הגלריה בוטל (הסיור חזר לפעיל)',
+  gallery_export_requested: 'התבקשה הורדת כל הגלריה',
+  gallery_export_completed: 'קובץ הורדת הגלריה מוכן',
 };
 
 const REASON_TEXT = {

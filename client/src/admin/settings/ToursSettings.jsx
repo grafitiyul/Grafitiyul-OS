@@ -50,6 +50,12 @@ export default function ToursSettings() {
           title="הרשאות מדריכים"
           description="מה מדריך משובץ רואה ועושה בסיורים שלו בפורטל המדריכים."
         />
+        <CategoryCard
+          to="/admin/settings/tours/gallery"
+          icon="📸"
+          title="גלריית סיורים"
+          description="הרשאות מחיקה ושיתוף למדריכים, העלאות לקוח ותוקף קובצי הורדה."
+        />
       </CategoryGrid>
     </div>
   );

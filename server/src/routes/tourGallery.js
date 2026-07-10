@@ -74,10 +74,14 @@ async function mediaToClient(m, { withUrls = true } = {}) {
     completedAt: m.completedAt,
     thumbUrl: null,
     posterUrl: null,
+    viewUrl: null,
   };
   if (withUrls && r2.isConfigured()) {
     if (m.thumbKey) out.thumbUrl = await r2.presignGet({ key: m.thumbKey, expiresIn: 3600 });
     if (m.posterKey) out.posterUrl = await r2.presignGet({ key: m.posterKey, expiresIn: 3600 });
+    // Original view URL — used ONLY by the lightbox/player on demand; the
+    // grid renders thumbs. Same 1h lifetime as the rest of the payload.
+    out.viewUrl = await r2.presignGet({ key: m.objectKey, expiresIn: 3600 });
   }
   return out;
 }

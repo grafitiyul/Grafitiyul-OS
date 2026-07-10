@@ -1070,6 +1070,54 @@ export const api = {
       request(`/api/documents/instances/${id}/finalize`, { method: 'POST' }),
   },
 
+  // Tour Gallery — per-TourEvent media on R2 (staff surface). Uploads go
+  // DIRECTLY to R2; these endpoints only authorize/record/verify.
+  tourGallery: {
+    settings: () => request('/api/tour-gallery/settings'),
+    updateSettings: (data) =>
+      request('/api/tour-gallery/settings', { method: 'PUT', body: JSON.stringify(data) }),
+    summary: (tourEventId) => request(`/api/tour-gallery/${tourEventId}/summary`),
+    get: (tourEventId) => request(`/api/tour-gallery/${tourEventId}`),
+    ensureLink: (tourEventId) =>
+      request(`/api/tour-gallery/${tourEventId}/link`, { method: 'POST', body: '{}' }),
+    rotateLink: (tourEventId) =>
+      request(`/api/tour-gallery/${tourEventId}/link/rotate`, { method: 'POST', body: '{}' }),
+    revokeLink: (tourEventId) =>
+      request(`/api/tour-gallery/${tourEventId}/link`, { method: 'DELETE' }),
+    setCover: (tourEventId, mediaId) =>
+      request(`/api/tour-gallery/${tourEventId}/cover`, {
+        method: 'PUT',
+        body: JSON.stringify({ mediaId }),
+      }),
+    initiateUploads: (tourEventId, files) =>
+      request(`/api/tour-gallery/${tourEventId}/uploads`, {
+        method: 'POST',
+        body: JSON.stringify({ files }),
+      }),
+    uploadUrls: (tourEventId, mediaId, body) =>
+      request(`/api/tour-gallery/${tourEventId}/uploads/${mediaId}/urls`, {
+        method: 'POST',
+        body: JSON.stringify(body || {}),
+      }),
+    completeUpload: (tourEventId, mediaId, body) =>
+      request(`/api/tour-gallery/${tourEventId}/uploads/${mediaId}/complete`, {
+        method: 'POST',
+        body: JSON.stringify(body || {}),
+      }),
+    abortUpload: (tourEventId, mediaId) =>
+      request(`/api/tour-gallery/${tourEventId}/uploads/${mediaId}/abort`, {
+        method: 'POST',
+        body: '{}',
+      }),
+    deleteMedia: (tourEventId, ids) =>
+      request(`/api/tour-gallery/${tourEventId}/media/delete`, {
+        method: 'POST',
+        body: JSON.stringify({ ids }),
+      }),
+    downloadPath: (tourEventId, mediaId) =>
+      `/api/tour-gallery/${tourEventId}/media/${mediaId}/download`,
+  },
+
   // Tours OPERATIONAL module ("סיורים") — TourEvent/Booking. Distinct from
   // tourContent below (training/route content).
   tours: {

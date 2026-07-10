@@ -26,6 +26,8 @@ export default function DealTourSummary({ booking, onGroupSlot, canReplace, onRe
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState(false);
   const [tour, setTour] = useState(null);
+  const [gallery, setGallery] = useState(null);
+  const [linkCopied, setLinkCopied] = useState(false);
   const [loading, setLoading] = useState(false);
   const anchorRef = useRef(null);
   const tourEventId = booking.tourEventId;
@@ -42,6 +44,13 @@ export default function DealTourSummary({ booking, onGroupSlot, canReplace, onRe
       /* transient — the banner stays usable */
     } finally {
       setLoading(false);
+    }
+    // Gallery summary — READ-THROUGH from the TourEvent (nothing stored on the
+    // Deal); quiet on failure, the popover stays usable.
+    try {
+      setGallery(await api.tourGallery.summary(tourEventId));
+    } catch {
+      setGallery(null);
     }
   }, [tourEventId]);
 
@@ -177,6 +186,43 @@ export default function DealTourSummary({ booking, onGroupSlot, canReplace, onRe
                       })}
                     </ul>
                   )}
+                </section>
+
+                {/* Gallery — read-through summary; the operational truth lives
+                    on the TourEvent (open the tour for the full workspace). */}
+                <section>
+                  <h4 className="mb-1.5 text-[12px] font-bold text-gray-500">גלריית הסיור</h4>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px]">
+                    {!gallery || (gallery.imageCount === 0 && gallery.videoCount === 0) ? (
+                      <span className="text-gray-400">אין עדיין מדיה.</span>
+                    ) : (
+                      <span className="text-gray-700">
+                        📸 {gallery.imageCount} תמונות
+                        {gallery.videoCount > 0 && ` · ${gallery.videoCount} סרטונים`}
+                      </span>
+                    )}
+                    {tour.status !== 'cancelled' && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const link =
+                              gallery?.link || (await api.tourGallery.ensureLink(tourEventId));
+                            await navigator.clipboard.writeText(
+                              `${window.location.origin}/g/${link.token}`,
+                            );
+                            setLinkCopied(true);
+                            setTimeout(() => setLinkCopied(false), 2000);
+                          } catch {
+                            /* quiet */
+                          }
+                        }}
+                        className="rounded-lg border border-gray-300 bg-white px-2 py-0.5 text-[12px] font-semibold text-gray-700 hover:bg-gray-50"
+                      >
+                        {linkCopied ? '✓ הועתק' : '🔗 קישור ללקוח'}
+                      </button>
+                    )}
+                  </div>
                 </section>
               </div>
             )}
