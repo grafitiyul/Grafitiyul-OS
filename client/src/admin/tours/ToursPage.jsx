@@ -458,6 +458,24 @@ function SummaryCard({ label, value, icon }) {
   );
 }
 
+// Row-action icon button (edit / cancel / restore / delete). Local atom like
+// SummaryCard/TabButton — no shared IconButton exists in the client yet; if
+// one lands in admin/common this should switch to it.
+function IconButton({ title, onClick, danger = false, children }) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      className={`h-8 w-8 rounded-md text-gray-400 transition-colors ${
+        danger ? 'hover:bg-red-50 hover:text-red-600' : 'hover:bg-blue-50 hover:text-blue-700'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
 function TabButton({ active, onClick, children }) {
   return (
     <button
