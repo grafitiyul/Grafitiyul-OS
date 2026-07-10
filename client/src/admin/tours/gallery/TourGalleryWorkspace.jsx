@@ -4,6 +4,7 @@ import { createGalleryUploader, getGalleryUploader } from '../../../lib/galleryU
 import GalleryGrid from '../../../gallery/GalleryGrid.jsx';
 import GalleryLightbox from '../../../gallery/GalleryLightbox.jsx';
 import UploadQueuePanel from '../../../gallery/UploadQueuePanel.jsx';
+import DownloadAllButton from '../../../gallery/DownloadAllButton.jsx';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 
 // Full staff gallery workspace — a large modal ABOVE the Tour page (z-[70]).
@@ -326,6 +327,16 @@ export default function TourGalleryWorkspace({ tourEventId, onClose, onChanged }
               </div>
             ) : (
               <div className="flex items-center gap-1.5">
+                {(data?.imageCount || 0) + (data?.videoCount || 0) > 0 && (
+                  <DownloadAllButton
+                    className="rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-gray-700 transition hover:bg-gray-50 disabled:opacity-60"
+                    endpoints={{
+                      request: () => api.tourGallery.requestExport(tourEventId),
+                      status: (id) => api.tourGallery.exportStatus(tourEventId, id),
+                      downloadHref: (id) => api.tourGallery.exportDownloadPath(tourEventId, id),
+                    }}
+                  />
+                )}
                 <ToolbarButton onClick={copyLink} disabled={linkBusy || data?.tourStatus === 'cancelled'}>
                   {copied ? '✓ הועתק' : '🔗 העתק קישור ללקוח'}
                 </ToolbarButton>

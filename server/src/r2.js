@@ -168,6 +168,68 @@ export async function headObject(key) {
   }
 }
 
+// Full object body as an async iterable of Buffers (streaming reads for the
+// export zipper — never buffers a whole file).
+export async function getObjectStream(key) {
+  const out = await client().send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: key }));
+  return out.Body;
+}
+
+// Server-side STREAMING upload via multipart: consumes an async iterable of
+// Buffers, accumulating fixed-size parts — memory stays at one part
+// (~32MB) regardless of total size. Aborts the multipart on any failure so
+// no invisible parts linger. Returns total bytes written.
+const STREAM_PART_SIZE = 32 * 1024 * 1024;
+
+export async function uploadStream({ key, contentType, body }) {
+  const uploadId = await createMultipartUpload({ key, contentType });
+  const parts = [];
+  let partNumber = 1;
+  let total = 0;
+  let buffered = [];
+  let bufferedBytes = 0;
+
+  async function flush() {
+    if (bufferedBytes === 0) return;
+    const chunk = Buffer.concat(buffered, bufferedBytes);
+    buffered = [];
+    bufferedBytes = 0;
+    const out = await client().send(
+      new UploadPartCommand({
+        Bucket: R2_BUCKET,
+        Key: key,
+        UploadId: uploadId,
+        PartNumber: partNumber,
+        Body: chunk,
+      }),
+    );
+    parts.push({ partNumber, etag: out.ETag });
+    partNumber += 1;
+  }
+
+  try {
+    for await (const raw of body) {
+      const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+      buffered.push(buf);
+      bufferedBytes += buf.length;
+      total += buf.length;
+      if (bufferedBytes >= STREAM_PART_SIZE) await flush();
+    }
+    await flush();
+    if (parts.length === 0) {
+      // Empty stream — fall back to a plain PUT of zero bytes.
+      await abortMultipartUpload({ key, uploadId });
+      await putObject({ key, body: Buffer.alloc(0), contentType });
+      return 0;
+    }
+    await completeMultipartUpload({ key, uploadId, parts });
+    return total;
+  } catch (e) {
+    await abortMultipartUpload({ key, uploadId }).catch(() => {});
+    throw e;
+  }
+}
+
 // First bytes of an object (magic-byte verification after direct uploads —
 // the server never trusts the browser's declared Content-Type).
 export async function getObjectRange(key, start, endInclusive) {

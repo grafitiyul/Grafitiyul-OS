@@ -1116,6 +1116,13 @@ export const api = {
       }),
     downloadPath: (tourEventId, mediaId) =>
       `/api/tour-gallery/${tourEventId}/media/${mediaId}/download`,
+    // "Download all" async export job.
+    requestExport: (tourEventId) =>
+      request(`/api/tour-gallery/${tourEventId}/export`, { method: 'POST', body: '{}' }),
+    exportStatus: (tourEventId, exportId) =>
+      request(`/api/tour-gallery/${tourEventId}/export/${exportId}`),
+    exportDownloadPath: (tourEventId, exportId) =>
+      `/api/tour-gallery/${tourEventId}/export/${exportId}/download`,
   },
 
   // Tours OPERATIONAL module ("סיורים") — TourEvent/Booking. Distinct from

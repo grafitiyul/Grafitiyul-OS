@@ -4,6 +4,7 @@ import { createGalleryUploader, getGalleryUploader } from '../lib/galleryUpload.
 import GalleryGrid from './GalleryGrid.jsx';
 import GalleryLightbox from './GalleryLightbox.jsx';
 import UploadQueuePanel from './UploadQueuePanel.jsx';
+import DownloadAllButton from './DownloadAllButton.jsx';
 
 // PUBLIC customer gallery — /g/:token. The visual standard here is a branded
 // event gallery, not an admin screen: full-bleed cover hero, generous type,
@@ -174,15 +175,28 @@ export default function CustomerGalleryPage() {
           {data.brandingText && (
             <p className="mt-2 text-[13px] text-white/45">{data.brandingText}</p>
           )}
-          {data.canUpload && (
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="mt-6 rounded-full bg-white px-6 py-2.5 text-[14px] font-bold text-gray-900 shadow-xl shadow-black/30 transition hover:bg-gray-100 active:scale-[0.98]"
-            >
-              📷 הוסיפו את התמונות שלכם
-            </button>
-          )}
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-2.5">
+            {data.canUpload && (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="rounded-full bg-white px-6 py-2.5 text-[14px] font-bold text-gray-900 shadow-xl shadow-black/30 transition hover:bg-gray-100 active:scale-[0.98]"
+              >
+                📷 הוסיפו את התמונות שלכם
+              </button>
+            )}
+            {media.length > 0 && (
+              <DownloadAllButton
+                className="rounded-full border border-white/25 bg-white/10 px-5 py-2.5 text-[13.5px] font-semibold text-white backdrop-blur-sm transition hover:bg-white/20 disabled:opacity-70"
+                endpoints={{
+                  request: () =>
+                    jsonFetch(`${base}/export`, { method: 'POST', body: '{}' }),
+                  status: (id) => jsonFetch(`${base}/export/${id}`),
+                  downloadHref: (id) => `${base}/export/${id}/download`,
+                }}
+              />
+            )}
+          </div>
         </div>
       </header>
 

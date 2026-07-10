@@ -21,6 +21,20 @@ import {
   getUploadTargets,
   initiateUploadBatch,
 } from '../tours/gallery/uploads.js';
+import { requestExport } from '../tours/gallery/exports.js';
+
+function exportToClient(job) {
+  return {
+    id: job.id,
+    status: job.status,
+    mediaCount: job.mediaCount,
+    byteSize: job.byteSize == null ? null : Number(job.byteSize),
+    error: job.error,
+    expiresAt: job.expiresAt,
+    createdAt: job.createdAt,
+    completedAt: job.completedAt,
+  };
+}
 
 // Staff/office Tour Gallery API — mounted at /api/tour-gallery behind
 // requireAdminAuth. Objects are PRIVATE (same contract as DealFile): no public
@@ -121,6 +135,87 @@ router.put(
       data,
     });
     res.json(updated);
+  }),
+);
+
+// ---------- ops diagnostics (storage/cleanup visibility) ----------
+// One honest pane: stuck cleanups (with errors), abandoned uploads waiting
+// for the sweep, export queue state. Registered BEFORE /:tourEventId.
+
+router.get(
+  '/diagnostics',
+  handle(async (_req, res) => {
+    const [cleanupPending, cleanupErrors, abandonedPending, exportsByStatus] = await Promise.all([
+      prisma.tourGalleryCleanupTask.count({ where: { status: { in: ['pending', 'running'] } } }),
+      prisma.tourGalleryCleanupTask.findMany({
+        where: { status: { in: ['pending', 'running'] }, lastError: { not: null } },
+        select: { id: true, tourEventId: true, attempts: true, lastError: true, notBefore: true },
+        orderBy: { updatedAt: 'desc' },
+        take: 20,
+      }),
+      prisma.tourMedia.count({ where: { uploadStatus: 'pending' } }),
+      prisma.tourGalleryExport.groupBy({ by: ['status'], _count: { id: true } }),
+    ]);
+    res.json({
+      r2Configured: r2.isConfigured(),
+      cleanupPending,
+      cleanupErrors,
+      pendingUploads: abandonedPending,
+      exports: Object.fromEntries(exportsByStatus.map((e) => [e.status, e._count.id])),
+    });
+  }),
+);
+
+// ---------- "download all" (async export job) ----------
+
+router.post(
+  '/:tourEventId/export',
+  handle(async (req, res) => {
+    const tour = await ensureTour(req, res);
+    if (!tour) return;
+    if (tour.status === 'cancelled') return res.status(409).json({ error: 'tour_cancelled' });
+    const gallery = await prisma.tourGallery.findUnique({ where: { tourEventId: tour.id } });
+    if (!gallery) return res.status(409).json({ error: 'gallery_empty' });
+    const result = await requestExport(prisma, {
+      tourEventId: tour.id,
+      gallery,
+      requestedBy: { type: 'office' },
+      origin: await userOrigin(req.adminAuth?.userId),
+    });
+    if (result.error) return res.status(result.status || 409).json({ error: result.error });
+    res.status(result.reused ? 200 : 201).json(exportToClient(result.export));
+  }),
+);
+
+router.get(
+  '/:tourEventId/export/:exportId',
+  handle(async (req, res) => {
+    const job = await prisma.tourGalleryExport.findFirst({
+      where: { id: req.params.exportId, tourEventId: req.params.tourEventId },
+    });
+    if (!job) return res.status(404).json({ error: 'not_found' });
+    res.set('Cache-Control', 'no-store');
+    res.json(exportToClient(job));
+  }),
+);
+
+router.get(
+  '/:tourEventId/export/:exportId/download',
+  handle(async (req, res) => {
+    const job = await prisma.tourGalleryExport.findFirst({
+      where: { id: req.params.exportId, tourEventId: req.params.tourEventId },
+    });
+    if (!job || job.status !== 'ready' || !job.archiveKey) {
+      return res.status(404).json({ error: 'not_ready' });
+    }
+    if (!r2.isConfigured()) return res.status(503).json({ error: 'storage_not_configured' });
+    const url = await r2.presignGet({
+      key: job.archiveKey,
+      expiresIn: 600,
+      downloadName: `tour-gallery-${req.params.tourEventId}.zip`,
+    });
+    res.set('Cache-Control', 'no-store');
+    res.redirect(302, url);
   }),
 );
 

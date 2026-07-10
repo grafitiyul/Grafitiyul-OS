@@ -1,6 +1,7 @@
 import { prisma } from '../../db.js';
 import * as r2 from '../../r2.js';
 import { emitTimelineEvent, systemOrigin } from '../../timeline/events.js';
+import { processExportJob, sweepExpiredExports } from './exports.js';
 
 // Async R2 purge for cancelled/deleted tour galleries + the abandoned-upload
 // sweep. Same conventions as the WhatsApp/email workers: 60s tick inside the
@@ -159,6 +160,20 @@ export function startTourGalleryCleanupWorker(log = console) {
       });
       for (const task of tasks) await processCleanupTask(deps, task);
       await sweepAbandonedUploads(deps);
+
+      // "Download all" exports — build queued archives (one per tick keeps
+      // the tick bounded; a big gallery zip is minutes of streaming), requeue
+      // stale running jobs (process died mid-build), expire old archives.
+      await prisma.tourGalleryExport.updateMany({
+        where: { status: 'running', updatedAt: { lt: new Date(Date.now() - STALE_RUNNING_MS) } },
+        data: { status: 'pending' },
+      });
+      const exportJob = await prisma.tourGalleryExport.findFirst({
+        where: { status: 'pending' },
+        orderBy: { createdAt: 'asc' },
+      });
+      if (exportJob) await processExportJob(deps, exportJob);
+      await sweepExpiredExports(deps);
     } catch (e) {
       log?.warn?.('[tour-gallery] worker tick failed:', e?.message);
     }

@@ -10,6 +10,7 @@ import {
   getUploadTargets,
   initiateUploadBatch,
 } from '../tours/gallery/uploads.js';
+import { requestExport } from '../tours/gallery/exports.js';
 
 // PUBLIC customer gallery — mounted at /api/gallery, NO admin auth. The
 // capability URL is the credential (same convention as quote/questionnaire
@@ -168,6 +169,72 @@ router.post(
     const result = await abortUpload(prisma, media);
     if (result.error) return res.status(result.status || 409).json({ error: result.error });
     res.status(204).end();
+  }),
+);
+
+// ---------- "download all" (async export, customer-facing status) ----------
+// The customer sees only { id, status, expiresAt } — no counts of pending
+// jobs, no errors beyond a generic failure.
+
+function exportToCustomer(job) {
+  return {
+    id: job.id,
+    status: ['pending', 'running'].includes(job.status)
+      ? 'preparing'
+      : job.status === 'ready'
+        ? 'ready'
+        : 'failed',
+    expiresAt: job.expiresAt,
+  };
+}
+
+router.post(
+  '/:token/export',
+  handle(async (req, res) => {
+    const access = await guard(req, res);
+    if (!access) return;
+    const result = await requestExport(prisma, {
+      tourEventId: access.tour.id,
+      gallery: access.gallery,
+      requestedBy: { type: 'customer', linkId: access.link.id },
+      origin: { actorType: 'api', actorLabel: 'לקוח (קישור גלריה)', createdBy: null, createdByName: null },
+    });
+    if (result.error) return res.status(result.status || 409).json({ error: result.error });
+    res.status(result.reused ? 200 : 201).json(exportToCustomer(result.export));
+  }),
+);
+
+router.get(
+  '/:token/export/:exportId',
+  handle(async (req, res) => {
+    const access = await guard(req, res);
+    if (!access) return;
+    const job = await prisma.tourGalleryExport.findFirst({
+      where: { id: req.params.exportId, galleryId: access.gallery.id },
+    });
+    if (!job) return res.status(404).json({ error: 'not_found' });
+    res.json(exportToCustomer(job));
+  }),
+);
+
+router.get(
+  '/:token/export/:exportId/download',
+  handle(async (req, res) => {
+    const access = await guard(req, res);
+    if (!access) return;
+    const job = await prisma.tourGalleryExport.findFirst({
+      where: { id: req.params.exportId, galleryId: access.gallery.id },
+    });
+    if (!job || job.status !== 'ready' || !job.archiveKey) {
+      return res.status(404).json({ error: 'not_ready' });
+    }
+    if (!r2.isConfigured()) return res.status(503).json({ error: 'storage_not_configured' });
+    const url = await r2.presignGet({
+      key: job.archiveKey,
+      expiresIn: 600,
+      downloadName: 'grafitiyul-gallery.zip',
+    });
+    res.redirect(302, url);
   }),
 );
 

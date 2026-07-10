@@ -3596,3 +3596,31 @@ model TourGallerySettings {
   archiveExpiryHours        Int      @default(72)
   updatedAt                 DateTime @updatedAt
 }
+
+// "Download all" export job — an async ZIP build (media streamed from R2
+// through a store-only zipper back into R2; the API process NEVER buffers a
+// gallery in memory and NEVER builds archives inside a request). The archive
+// object lives under the gallery prefix (archives/<exportId>.zip) so tour
+// cancellation cleanup purges it with everything else; expiry is enforced by
+// the gallery worker (TourGallerySettings.archiveExpiryHours).
+model TourGalleryExport {
+  id                String    @id @default(cuid())
+  tourEventId       String // loose — mirrors TourMedia.tourEventId
+  galleryId         String
+  requestedByType   String // office | guide | customer
+  requestedByLinkId String? // TourGalleryLink.id for customer requests
+  status            String    @default("pending") // pending | running | ready | failed | expired
+  archiveKey        String?
+  byteSize          BigInt?
+  mediaCount        Int?
+  attempts          Int       @default(0)
+  error             String?
+  expiresAt         DateTime?
+  createdAt         DateTime  @default(now())
+  completedAt       DateTime?
+  updatedAt         DateTime  @updatedAt
+
+  @@index([tourEventId, status])
+  @@index([status, updatedAt])
+  @@index([status, expiresAt])
+}
