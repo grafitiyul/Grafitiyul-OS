@@ -5,7 +5,6 @@ import { useDirtyWhen } from '../../lib/dirtyForms.js';
 import SettingsChrome from '../settings/SettingsChrome.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
 import { durationDisplay } from '../../lib/duration.js';
-import ProductDefaultComponents from './ProductDefaultComponents.jsx';
 
 const INPUT =
   'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
@@ -138,15 +137,6 @@ export default function ProductDetail() {
             </button>
           )}
         </div>
-      </Card>
-
-      {/* Default activity components (מרכיבי פעילות ברירת מחדל) */}
-      <Card title="מרכיבי פעילות (ברירת מחדל)">
-        <p className="-mt-1 mb-3 text-[12.5px] text-gray-500">
-          המרכיבים שמהם מורכב המוצר. הם נזרעים אוטומטית לכל סיור חדש של המוצר; לאחר
-          יצירת הסיור ניתן לשנות בו את המרכיבים בנפרד.
-        </p>
-        <ProductDefaultComponents productId={id} initial={product.activityComponents} />
       </Card>
 
       {/* Variants */}

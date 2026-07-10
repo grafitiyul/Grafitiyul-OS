@@ -570,20 +570,21 @@ router.delete(
   }),
 );
 
-// Reseed a tour's components from its CURRENT product's defaults — the explicit
-// "replace" path when the operator changes the product (spec §5). Replaces the
-// whole set; workshop-location choices are intentionally reset (new components).
+// Reseed a tour's components from its CURRENT variant's defaults — the explicit
+// "replace" path when the operator changes the product/variant (spec §5). The
+// selected VARIANT is authoritative for defaults. Replaces the whole set;
+// workshop-location choices are intentionally reset (new components).
 router.post(
   '/:id/components/reseed',
   handle(async (req, res) => {
     const tour = await prisma.tourEvent.findUnique({
       where: { id: req.params.id },
-      select: { id: true, productId: true },
+      select: { id: true, productVariantId: true },
     });
     if (!tour) return res.status(404).json({ error: 'not_found' });
     await prisma.$transaction(async (tx) => {
       await tx.tourEventActivityComponent.deleteMany({ where: { tourEventId: tour.id } });
-      await seedTourComponents(tx, tour.id, tour.productId);
+      await seedTourComponents(tx, tour.id, tour.productVariantId);
     });
     const rows = await prisma.tourEventActivityComponent.findMany({
       where: { tourEventId: tour.id },

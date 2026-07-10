@@ -700,14 +700,14 @@ export const api = {
     // Deletion preflight: relation counts + { blockers, canHardDelete, cascades }.
     relations: (id) => request(`/api/products/${id}/relations`),
     remove: (id) => request(`/api/products/${id}`, { method: 'DELETE' }),
-    // Default activity components — replace-all, ordered. body { componentIds: [...] }.
-    setActivityComponents: (id, componentIds) =>
-      request(`/api/products/${id}/activity-components`, {
+    addVariant: (id, data) => request(`/api/products/${id}/variants`, { method: 'POST', body: JSON.stringify(data) }),
+    updateVariant: (variantId, data) => request(`/api/products/variants/${variantId}`, { method: 'PUT', body: JSON.stringify(data) }),
+    // Default activity components for a VARIANT — replace-all, ordered. body { componentIds }.
+    setVariantActivityComponents: (variantId, componentIds) =>
+      request(`/api/products/variants/${variantId}/activity-components`, {
         method: 'PUT',
         body: JSON.stringify({ componentIds }),
       }),
-    addVariant: (id, data) => request(`/api/products/${id}/variants`, { method: 'POST', body: JSON.stringify(data) }),
-    updateVariant: (variantId, data) => request(`/api/products/variants/${variantId}`, { method: 'PUT', body: JSON.stringify(data) }),
     removeVariant: (variantId) => request(`/api/products/variants/${variantId}`, { method: 'DELETE' }),
     // Quote Image Library references — replace-all per variant.
     // positions: { hero: [quoteImageId…], slot1: […], slot2: […] } (order = display order).

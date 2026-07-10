@@ -1721,7 +1721,6 @@ model Product {
   quoteOffers     QuoteOffer[]
   tourEvents      TourEvent[]
   tourScheduleRules TourScheduleRule[]
-  activityComponents ProductActivityComponent[]
 
   @@index([sortOrder])
 }
@@ -1773,6 +1772,7 @@ model ProductVariant {
   quoteOffers           QuoteOffer[]
   tourEvents            TourEvent[]
   tourScheduleRules     TourScheduleRule[]
+  activityComponents    ProductVariantActivityComponent[]
 
   @@unique([productId, locationId])
   @@index([productId])
@@ -3090,9 +3090,10 @@ model TourAssignment {
 
 // ── Activity Components catalog ──────────────────────────────────────────────
 // A small, reusable catalog of the operational building blocks an activity is
-// made of (e.g. "סיור גרפיטי", "סדנת תקליטים", "טעימת אוכל"). A Product declares
-// its DEFAULT components (ProductActivityComponent); a TourEvent stores what is
-// actually being delivered (TourEventActivityComponent, seeded at creation).
+// made of (e.g. "סיור גרפיטי", "סדנת תקליטים", "טעימת אוכל"). A ProductVariant
+// declares its DEFAULT components (ProductVariantActivityComponent); a TourEvent
+// stores what is actually being delivered (TourEventActivityComponent, seeded at
+// creation from the selected variant).
 // Soft-delete convention (isActive), same as TaskType/OrganizationType: an entry
 // that was ever used is deactivated, never hard-deleted, so history stays valid.
 model ActivityComponent {
@@ -3107,29 +3108,31 @@ model ActivityComponent {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  productLinks   ProductActivityComponent[]
+  variantLinks   ProductVariantActivityComponent[]
   tourEventLinks TourEventActivityComponent[]
 
   @@index([sortOrder])
 }
 
-// Product DEFAULT components — which activity components a Product is composed
-// of by default, and in what order. Seeded onto a TourEvent at creation time
-// (Slice C); after that the tour owns its own components (no live link back).
-// onDelete Restrict on the component keeps a referenced catalog entry from being
-// hard-deleted (the API deactivates instead).
-model ProductActivityComponent {
+// ProductVariant DEFAULT components — which activity components a specific
+// VARIANT delivers by default, and in what order. Defaults belong to the variant
+// (not the product): the same product family can have a tour-only variant, a
+// tour+workshop variant, etc. Seeded onto a TourEvent at creation from the
+// SELECTED variant; after that the tour owns its own components (no live link
+// back). onDelete Restrict on the component keeps a referenced catalog entry
+// from being hard-deleted (the API deactivates instead).
+model ProductVariantActivityComponent {
   id                  String            @id @default(cuid())
-  product             Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
-  productId           String
+  productVariant      ProductVariant    @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
+  productVariantId    String
   activityComponent   ActivityComponent @relation(fields: [activityComponentId], references: [id], onDelete: Restrict)
   activityComponentId String
   sortOrder           Int               @default(0)
   createdAt           DateTime          @default(now())
   updatedAt           DateTime          @updatedAt
 
-  @@unique([productId, activityComponentId])
-  @@index([productId])
+  @@unique([productVariantId, activityComponentId])
+  @@index([productVariantId])
   @@index([activityComponentId])
 }
 

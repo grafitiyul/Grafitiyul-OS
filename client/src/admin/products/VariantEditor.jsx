@@ -7,6 +7,7 @@ import { minorToInput, toMinor } from '../../lib/money.js';
 import { durationDisplay } from '../../lib/duration.js';
 import VariantSharedContent from './VariantSharedContent.jsx';
 import VariantQuoteImages from './VariantQuoteImages.jsx';
+import VariantDefaultComponents from './VariantDefaultComponents.jsx';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Product Variant editor — a dedicated, full-page CMS-style workspace.
@@ -85,6 +86,7 @@ const SECTIONS = [
   { group: 'operational', key: 'duration', title: 'משך הסיור', sub: 'זמן משוער בשעות', track: true },
   { group: 'operational', key: 'shared', title: 'נקודת מפגש וסיום', sub: 'תוכן תפעולי מתוך הספרייה המשותפת', track: false },
   { group: 'operational', key: 'availability', title: 'זמינות לפי פורמט', sub: 'באילו פורמטים הוריאציה נמכרת', track: false },
+  { group: 'operational', key: 'components', title: 'מרכיבי פעילות (ברירת מחדל)', sub: 'המרכיבים שהוריאציה מספקת — נזרעים לכל סיור חדש', track: false },
   { group: 'operational', key: 'guidePay', title: 'תשלום למדריך', sub: 'תשלום בסיס ותשלום נסיעות', track: true },
   { group: 'advanced', key: 'status', title: 'סטטוס וניהול', sub: 'הפעלה / השבתה ומחיקת הוריאציה', track: false },
 ];
@@ -404,6 +406,8 @@ function SectionBody({ k, form, set, variant, locations, programTitle, slotTitle
           <Check label="עסקי" checked={form.availableBusiness} onChange={(c) => set('availableBusiness', c)} />
         </div>
       );
+    case 'components':
+      return <VariantDefaultComponents variantId={variant.id} initial={variant.activityComponents} />;
     case 'guidePay':
       return (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

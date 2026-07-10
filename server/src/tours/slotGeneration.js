@@ -81,7 +81,8 @@ export async function ensureGeneratedSlots(client) {
         generatedByRuleId: rule.id,
       });
     }
-    if (ruleDates.length) generatedByRule.push({ ruleId: rule.id, productId: rule.productId, dates: ruleDates });
+    if (ruleDates.length)
+      generatedByRule.push({ ruleId: rule.id, productVariantId: rule.productVariantId, dates: ruleDates });
     cursorPatches.push({ id: rule.id, generatedThrough: target });
   }
 
@@ -93,7 +94,7 @@ export async function ensureGeneratedSlots(client) {
     // defaults (Slice C). After createMany the ids aren't returned, so we look
     // the batch back up by (rule, date) inside the seeder.
     for (const g of generatedByRule) {
-      await seedSlotComponents(client, g.ruleId, g.productId, g.dates);
+      await seedSlotComponents(client, g.ruleId, g.productVariantId, g.dates);
     }
   }
   for (const p of cursorPatches) {

@@ -37,9 +37,9 @@ export function catalogDeletionVerdict(counts = {}, kinds = []) {
   return { canHardDelete: blockers.length === 0, blockers };
 }
 
-// ActivityComponent is referenced by Product defaults and by TourEvents.
+// ActivityComponent is referenced by ProductVariant defaults and by TourEvents.
 export function activityComponentDeletionVerdict(counts = {}) {
-  return catalogDeletionVerdict(counts, ['productLinks', 'tourEventLinks']);
+  return catalogDeletionVerdict(counts, ['variantLinks', 'tourEventLinks']);
 }
 
 // Sanitize a requested ordered list of component ids (Product defaults OR a
@@ -105,10 +105,11 @@ export function validateWorkshopLocationForComponent(isWorkshop, workshopLocatio
   return { ok: true, workshopLocationId: loc };
 }
 
-// When a tour's Product changes, the operator explicitly chooses (spec §5):
+// When a tour's VARIANT changes (the variant is authoritative for defaults), the
+// operator explicitly chooses (spec §5):
 //   'keep'    → leave the tour's current components untouched
-//   'replace' → reseed from the NEW product's defaults
+//   'replace' → reseed from the NEW variant's defaults
 // Never silent. Returns the resulting ordered component-id list.
-export function componentsAfterProductChange(mode, currentIds, newDefaultIds) {
+export function componentsAfterDefaultsChange(mode, currentIds, newDefaultIds) {
   return mode === 'replace' ? [...(newDefaultIds || [])] : [...(currentIds || [])];
 }

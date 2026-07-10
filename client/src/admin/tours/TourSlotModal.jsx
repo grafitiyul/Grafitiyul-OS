@@ -99,15 +99,17 @@ export default function TourSlotModal({ open, tour, onClose, onSaved }) {
         capacity: form.capacity === '' ? null : Number(form.capacity),
         notes: form.notes || null,
       };
-      const productChanged = isEdit && form.productId !== (tour.productId || '');
+      // The VARIANT is authoritative for default components — prompt when it
+      // changes on a tour that already carries components.
+      const variantChanged = isEdit && form.productVariantId !== (tour.productVariantId || '');
       const hasComponents = (tour?.activityComponents?.length || 0) > 0;
       const saved = isEdit
         ? await api.tours.update(tour.id, payload)
         : await api.tours.create(payload);
       onSaved?.(saved);
-      // Product changed on a tour that already carries components → let the
+      // Variant changed on a tour that already carries components → let the
       // operator decide (keep / replace). Otherwise close as usual.
-      if (productChanged && hasComponents) {
+      if (variantChanged && hasComponents) {
         setAskReseed(true);
       } else {
         onClose();
@@ -246,8 +248,8 @@ export default function TourSlotModal({ open, tour, onClose, onSaved }) {
 
       <ConfirmDialog
         open={askReseed}
-        title="המוצר של הסיור השתנה"
-        body="מרכיבי הפעילות הנוכחיים של הסיור נשמרו כפי שהם. להחליף אותם במרכיבי ברירת המחדל של המוצר החדש? הבחירות הנוכחיות (כולל מיקומי סדנה) יימחקו."
+        title="הוריאציה של הסיור השתנתה"
+        body="מרכיבי הפעילות הנוכחיים של הסיור נשמרו כפי שהם. להחליף אותם במרכיבי ברירת המחדל של הוריאציה החדשה? הבחירות הנוכחיות (כולל מיקומי סדנה) יימחקו."
         confirmLabel={reseedBusy ? 'מחליף…' : 'החלף מברירת המחדל'}
         cancelLabel="השאר כפי שהם"
         danger

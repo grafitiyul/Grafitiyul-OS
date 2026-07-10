@@ -141,9 +141,9 @@ export async function createTourForWonDeal(tx, deal, { targetTourEventId, origin
       tourLanguage: deal.tourLanguage,
     },
   });
-  // Seed the tour's components from the product's defaults (a copy — the tour
-  // owns them from here on). Same transaction so a failure rolls the tour back.
-  await seedTourComponents(tx, tourEvent.id, deal.productId);
+  // Seed the tour's components from the selected VARIANT's defaults (a copy —
+  // the tour owns them from here on). Same transaction so a failure rolls back.
+  await seedTourComponents(tx, tourEvent.id, deal.productVariantId);
   const booking = await tx.booking.create({
     data: { tourEventId: tourEvent.id, dealId: deal.id, seats, status: 'active' },
   });

@@ -34,6 +34,12 @@ const VARIANT_INCLUDE = {
     orderBy: [{ position: 'asc' }, { sortOrder: 'asc' }],
     include: { quoteImage: { include: { mediaFile: { select: { id: true, url: true } } } } },
   },
+  // Default Activity Components this variant delivers (ordered). Seeded onto a
+  // TourEvent at creation from the SELECTED variant.
+  activityComponents: {
+    orderBy: { sortOrder: 'asc' },
+    include: { activityComponent: true },
+  },
 };
 
 // Business invariant (permanent architecture rule): a Product is usable/sellable
@@ -139,61 +145,10 @@ router.get(
           orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
           include: VARIANT_INCLUDE,
         },
-        activityComponents: {
-          orderBy: { sortOrder: 'asc' },
-          include: { activityComponent: true },
-        },
       },
     });
     if (!product) return res.status(404).json({ error: 'not_found' });
     res.json(product);
-  }),
-);
-
-// Replace a Product's ORDERED default activity components. Idempotent full-set
-// write: the body is { componentIds: [...] } in the desired order. The set is
-// sanitized against the catalog (dedupe, drop unknown, block newly-adding an
-// inactive component — but keep an already-linked inactive one). Returns the
-// resulting ordered links.
-router.put(
-  '/:id/activity-components',
-  handle(async (req, res) => {
-    const productId = req.params.id;
-    const product = await prisma.product.findUnique({
-      where: { id: productId },
-      select: { id: true },
-    });
-    if (!product) return res.status(404).json({ error: 'not_found' });
-
-    const requested = Array.isArray(req.body?.componentIds) ? req.body.componentIds : [];
-    const [catalog, existing] = await Promise.all([
-      prisma.activityComponent.findMany({ select: { id: true, isActive: true } }),
-      prisma.productActivityComponent.findMany({
-        where: { productId },
-        select: { activityComponentId: true },
-      }),
-    ]);
-    const { ids } = sanitizeComponentSelection(requested, {
-      validIds: catalog.map((c) => c.id),
-      activeIds: catalog.filter((c) => c.isActive).map((c) => c.id),
-      existingIds: existing.map((e) => e.activityComponentId),
-    });
-
-    await prisma.$transaction(async (tx) => {
-      await tx.productActivityComponent.deleteMany({ where: { productId } });
-      for (let i = 0; i < ids.length; i++) {
-        await tx.productActivityComponent.create({
-          data: { productId, activityComponentId: ids[i], sortOrder: i },
-        });
-      }
-    });
-
-    const links = await prisma.productActivityComponent.findMany({
-      where: { productId },
-      orderBy: { sortOrder: 'asc' },
-      include: { activityComponent: true },
-    });
-    res.json(links);
   }),
 );
 
@@ -362,6 +317,53 @@ router.put(
       include: VARIANT_INCLUDE,
     });
     res.json(variant);
+  }),
+);
+
+// Replace a ProductVariant's ORDERED default activity components. Idempotent
+// full-set write: body { componentIds: [...] } in the desired order. The set is
+// sanitized against the catalog (dedupe, drop unknown, block newly-adding an
+// inactive component — but keep an already-linked inactive one). Returns the
+// resulting ordered links.
+router.put(
+  '/variants/:variantId/activity-components',
+  handle(async (req, res) => {
+    const variantId = req.params.variantId;
+    const variant = await prisma.productVariant.findUnique({
+      where: { id: variantId },
+      select: { id: true },
+    });
+    if (!variant) return res.status(404).json({ error: 'not_found' });
+
+    const requested = Array.isArray(req.body?.componentIds) ? req.body.componentIds : [];
+    const [catalog, existing] = await Promise.all([
+      prisma.activityComponent.findMany({ select: { id: true, isActive: true } }),
+      prisma.productVariantActivityComponent.findMany({
+        where: { productVariantId: variantId },
+        select: { activityComponentId: true },
+      }),
+    ]);
+    const { ids } = sanitizeComponentSelection(requested, {
+      validIds: catalog.map((c) => c.id),
+      activeIds: catalog.filter((c) => c.isActive).map((c) => c.id),
+      existingIds: existing.map((e) => e.activityComponentId),
+    });
+
+    await prisma.$transaction(async (tx) => {
+      await tx.productVariantActivityComponent.deleteMany({ where: { productVariantId: variantId } });
+      for (let i = 0; i < ids.length; i++) {
+        await tx.productVariantActivityComponent.create({
+          data: { productVariantId: variantId, activityComponentId: ids[i], sortOrder: i },
+        });
+      }
+    });
+
+    const links = await prisma.productVariantActivityComponent.findMany({
+      where: { productVariantId: variantId },
+      orderBy: { sortOrder: 'asc' },
+      include: { activityComponent: true },
+    });
+    res.json(links);
   }),
 );
 

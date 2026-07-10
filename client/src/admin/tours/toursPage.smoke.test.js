@@ -121,6 +121,7 @@ let TourPage;
 let TimelineFeed;
 let TourComponents;
 let DealTourSummary;
+let VariantDefaultComponents;
 
 // Vite-only asset imports (css / ?url / emoji data) live deep inside the
 // TimelineFeed→RichEditor tree — irrelevant to a render smoke; stub them.
@@ -204,6 +205,7 @@ before(async () => {
   TimelineFeed = await bundle(esbuild, '../common/timeline/TimelineFeed.jsx');
   TourComponents = await bundle(esbuild, 'TourComponents.jsx');
   DealTourSummary = await bundle(esbuild, 'DealTourSummary.jsx');
+  VariantDefaultComponents = await bundle(esbuild, '../products/VariantDefaultComponents.jsx');
 
   React = (await import('react')).default ?? (await import('react'));
   ({ act } = await import('react'));
@@ -408,5 +410,29 @@ test('Deal tour popover shows live staff, components and locations', async () =>
   assert.match(html, /סדנת תקליטים/, 'popover shows the workshop component');
   assert.match(html, /סטודיו תל אביב/, 'popover shows the workshop location');
   assert.match(html, /פתח סיור/, 'popover offers an open-tour action');
+  await unmount();
+});
+
+// Default components now belong to the VARIANT (not the Product). The variant
+// editor renders its ordered selection; two variants of the same product carry
+// their OWN sets (schema unique is per-variant), so different `initial` → different
+// content. Mounted directly (the variant surface uses RichEditor elsewhere).
+test('Variant default components render the variant-scoped ordered selection', async () => {
+  const initial = [
+    { activityComponentId: 'a', activityComponent: { id: 'a', nameHe: 'סיור גרפיטי', color: 'violet', isWorkshop: false, isActive: true } },
+    { activityComponentId: 'b', activityComponent: { id: 'b', nameHe: 'סדנת תקליטים', color: 'blue', isWorkshop: true, isActive: true } },
+  ];
+  const { container, unmount } = await render(
+    React.createElement(
+      MemoryRouter,
+      null,
+      React.createElement(VariantDefaultComponents, { variantId: 'v1', initial }),
+    ),
+  );
+  const html = container.innerHTML;
+  assert.match(html, /סיור גרפיטי/, 'renders the first default component');
+  assert.match(html, /סדנת תקליטים/, 'renders the workshop default component');
+  assert.match(html, /סדנה/, 'marks the workshop default');
+  assert.match(html, /הוספת מרכיב/, 'offers an add control');
   await unmount();
 });

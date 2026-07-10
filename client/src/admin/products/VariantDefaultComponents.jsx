@@ -1,28 +1,30 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { api } from '../../lib/api.js';
 import ReorderableList from '../common/ReorderableList.jsx';
 import { componentToneStyle } from '../tours/config.js';
 
-// Product editing → default Activity Components. Declares the ORDERED set of
-// components a Product is composed of by default; these are copied onto a
-// TourEvent at creation (Slice C) — this is defaults only, never a live link.
-// Each change persists immediately (replace-all, ordered) and reflects the
-// server's sanitized result. Reuses ReorderableList + the shared tone chips so a
-// component looks identical here, in the tour modal, and in the deal popover.
-export default function ProductDefaultComponents({ productId, initial }) {
-  // Local ordered selection = [{ componentId, component }]. Seeded from the
-  // product payload; kept in sync with the server's response on every write.
+// ProductVariant editing → default Activity Components. Declares the ORDERED set
+// of components THIS VARIANT delivers by default; copied onto a TourEvent at
+// creation (defaults only, no live link). Defaults belong to the variant, not the
+// product — the same product family may have a tour-only variant, a tour+workshop
+// variant, etc. Each change persists immediately (replace-all, ordered) and
+// reflects the server's sanitized result. Reuses the shared tone chips.
+export default function VariantDefaultComponents({ variantId, initial }) {
   const [selected, setSelected] = useState(() => fromLinks(initial));
   const [catalog, setCatalog] = useState([]);
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
-  useEffect(() => {
+  // Lazy-load the catalog on first interaction (keeps the variant editor light).
+  function ensureCatalog() {
+    if (loaded) return;
+    setLoaded(true);
     api.activityComponents
       .list(true)
       .then(setCatalog)
       .catch(() => {});
-  }, []);
+  }
 
   const selectedIds = useMemo(() => selected.map((s) => s.componentId), [selected]);
   const available = catalog.filter((c) => !selectedIds.includes(c.id));
@@ -30,7 +32,7 @@ export default function ProductDefaultComponents({ productId, initial }) {
   async function persist(ids) {
     setBusy(true);
     try {
-      const links = await api.products.setActivityComponents(productId, ids);
+      const links = await api.products.setVariantActivityComponents(variantId, ids);
       setSelected(fromLinks(links));
     } catch (e) {
       alert('שגיאה בשמירת מרכיבי הפעילות: ' + (e.payload?.error || e.message));
@@ -41,7 +43,7 @@ export default function ProductDefaultComponents({ productId, initial }) {
 
   const add = (id) => {
     setAdding(false);
-    persist([...selectedIds, id]);
+    if (id) persist([...selectedIds, id]);
   };
   const remove = (id) => persist(selectedIds.filter((x) => x !== id));
   const reorder = (ids) => persist(ids);
@@ -50,7 +52,7 @@ export default function ProductDefaultComponents({ productId, initial }) {
     <div>
       {selected.length === 0 ? (
         <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-6 text-center text-[13px] text-gray-400">
-          אין מרכיבי ברירת מחדל. הוסיפו מרכיבים שיוזרעו לכל סיור של המוצר הזה.
+          אין מרכיבי ברירת מחדל. הוסיפו מרכיבים שייזרעו לכל סיור של וריאציה זו.
         </div>
       ) : (
         <ReorderableList
@@ -92,7 +94,6 @@ export default function ProductDefaultComponents({ productId, initial }) {
         />
       )}
 
-      {/* Add control */}
       <div className="mt-2">
         {adding ? (
           <select
@@ -117,11 +118,14 @@ export default function ProductDefaultComponents({ productId, initial }) {
         ) : (
           <button
             type="button"
-            onClick={() => setAdding(true)}
-            disabled={busy || available.length === 0}
+            onClick={() => {
+              ensureCatalog();
+              setAdding(true);
+            }}
+            disabled={busy}
             className="rounded-lg border border-dashed border-gray-300 px-3 py-1.5 text-[13px] font-medium text-gray-600 hover:border-blue-400 hover:text-blue-600 disabled:opacity-50"
           >
-            {available.length === 0 ? 'כל המרכיבים הפעילים נבחרו' : '+ הוספת מרכיב'}
+            + הוספת מרכיב
           </button>
         )}
       </div>
