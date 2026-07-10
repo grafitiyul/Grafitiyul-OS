@@ -20,6 +20,7 @@ import { recordDealChanges, DEAL_DIFF_SELECT } from '../timeline/dealChangelog.j
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 import { validateWorkshopLocationForComponent } from '../tours/activityCatalog.js';
 import { seedTourComponents } from '../tours/tourComponents.js';
+import { scheduleGalleryCleanup } from '../tours/gallery/service.js';
 
 // TourEvent CRUD — the OPERATIONAL tours module ("סיורים"). Distinct from the
 // tour CONTENT routes (/api/tour-content). Ownership contract:
@@ -825,13 +826,19 @@ router.put(
       include: TOUR_INCLUDE,
     });
     if (data.status && data.status !== existing.status) {
+      const origin = await userOrigin(req.adminAuth?.userId);
       await emitTimelineEvent(prisma, {
         subjectType: 'tour_event',
         subjectId: tour.id,
         kind: 'tour',
         data: { event: 'status_changed', from: existing.status, to: data.status },
-        origin: await userOrigin(req.adminAuth?.userId),
+        origin,
       });
+      // Manual cancel joins the SAME gallery cleanup path as auto-cancel:
+      // links revoked now, R2 purged async after the grace window.
+      if (data.status === 'cancelled') {
+        await scheduleGalleryCleanup(prisma, tour.id, { reason: 'tour_cancelled', origin });
+      }
     }
     const occAfter = await occupancyFor(prisma, [tour.id]);
     res.json(toClientTour(tour, occAfter[tour.id]));
@@ -853,6 +860,12 @@ router.delete(
     if (existing._count.bookings > 0) {
       return res.status(409).json({ error: 'tour_has_bookings' });
     }
+    // BEFORE the delete (cascade wipes the gallery rows): schedule the R2
+    // purge — the task row has no FK and survives with the stored prefix.
+    await scheduleGalleryCleanup(prisma, existing.id, {
+      reason: 'tour_deleted',
+      origin: await userOrigin(req.adminAuth?.userId),
+    });
     await prisma.tourEvent.delete({ where: { id: req.params.id } });
     res.status(204).end();
   }),

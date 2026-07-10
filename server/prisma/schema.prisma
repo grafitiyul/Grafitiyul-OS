@@ -2981,6 +2981,7 @@ model TourEvent {
   bookings         Booking[]
   assignments      TourAssignment[]
   activityComponents TourEventActivityComponent[]
+  gallery          TourGallery?
 
   @@unique([generatedByRuleId, date])
   @@index([date, startTime])
@@ -3466,4 +3467,132 @@ model QuestionnairePurposeConfig {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ── Tour Gallery ──────────────────────────────────────────────────────────────
+// Per-TourEvent media gallery (photos/videos taken on the tour). The gallery is
+// OWNED by the TourEvent — Deal surfaces only read through. One lazy row per
+// tour (unique tourEventId), created on first touch; counts and status are
+// ALWAYS derived from TourMedia rows, never stored. Original bytes live in R2
+// under the immutable-ID prefix `tour-galleries/<tourEventId>/…` — display
+// titles are computed live from TourEvent data, so product/date/customer
+// changes never move storage objects.
+model TourGallery {
+  id                    String    @id @default(cuid())
+  tourEvent             TourEvent @relation(fields: [tourEventId], references: [id], onDelete: Cascade)
+  tourEventId           String    @unique
+  // Loose ref to the cover TourMedia (no FK — falls back to newest ready image
+  // when unset or when the referenced media is deleted).
+  coverMediaId          String?
+  customerUploadEnabled Boolean   @default(true)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  media                 TourMedia[]
+  links                 TourGalleryLink[]
+}
+
+// One uploaded photo/video. Bytes are NEVER stored in Postgres — objectKey
+// points at the R2 original; thumbKey/posterKey at client-generated
+// derivatives. uploadStatus: 'pending' (row created, direct-to-R2 upload in
+// flight) → 'ready' (completion verified server-side). Pending rows older than
+// the abandon window are swept (multipart aborted + objects deleted). Soft
+// delete (deletedAt) keeps attribution/audit while the R2 object is removed.
+model TourMedia {
+  id                    String      @id @default(cuid())
+  gallery               TourGallery @relation(fields: [galleryId], references: [id], onDelete: Cascade)
+  galleryId             String
+  // Denormalized owner id — matches the objectKey prefix, survives for cleanup
+  // queries, and keeps key building free of joins.
+  tourEventId           String
+  objectKey             String      @unique
+  thumbKey              String?
+  posterKey             String?
+  mediaType             String // 'image' | 'video'
+  mimeType              String
+  originalFileName      String
+  byteSize              BigInt?
+  width                 Int?
+  height                Int?
+  durationSeconds       Float?
+  capturedAt            DateTime?
+  checksum              String?
+  uploadStatus          String      @default("pending") // pending | ready
+  // R2 multipart upload id while a chunked upload is in flight (null for
+  // single-part). partSize is fixed at initiate so part numbers stay stable.
+  uploadId              String?
+  partSize              Int?
+  // Client upload batch — one timeline event per batch, not per photo.
+  batchId               String?
+  uploadedByType        String // 'office' | 'guide' | 'customer'
+  uploadedById          String? // AdminUser.id (office; loose)
+  uploadedByPersonRefId String? // PersonRef.id (guide; loose)
+  uploadedByLinkId      String? // TourGalleryLink.id (customer; loose)
+  uploadedByLabel       String? // display snapshot for the uploader chip
+  deletedAt             DateTime?
+  deletedById           String?
+  createdAt             DateTime    @default(now())
+  completedAt           DateTime?
+  updatedAt             DateTime    @updatedAt
+
+  @@index([galleryId, uploadStatus, deletedAt])
+  @@index([tourEventId])
+  @@index([uploadStatus, createdAt])
+  @@index([batchId])
+}
+
+// Secure customer access to ONE tour gallery. Capability-URL model (same
+// convention as QuestionnaireLink / portal tokens): 24-byte base64url token,
+// unique, stored as-is. Rotation = revoke old row + create a new one; tour
+// cancellation revokes all active links. The public routes derive the gallery
+// from the token — a client-supplied tour id is never trusted.
+model TourGalleryLink {
+  id            String      @id @default(cuid())
+  gallery       TourGallery @relation(fields: [galleryId], references: [id], onDelete: Cascade)
+  galleryId     String
+  token         String      @unique
+  status        String      @default("active") // active | revoked
+  createdById   String? // AdminUser.id (loose)
+  createdAt     DateTime    @default(now())
+  revokedAt     DateTime?
+  revokedReason String? // rotated | manual | tour_cancelled
+  @@index([galleryId, status])
+}
+
+// Durable R2 cleanup work for a gallery whose tour was cancelled or deleted.
+// Deliberately NO FK — the task must survive TourEvent deletion (cascade wipes
+// the gallery rows; this row still knows the R2 prefix to purge). Idempotent:
+// one pending task per tour, and purging a prefix twice is harmless. notBefore
+// gives a grace window so an accidental cancel that is immediately reverted
+// does not lose media; the worker re-checks tour status before deleting.
+model TourGalleryCleanupTask {
+  id             String    @id @default(cuid())
+  tourEventId    String
+  prefix         String // R2 prefix to purge (tour-galleries/<tourEventId>/)
+  reason         String // tour_cancelled | tour_deleted
+  status         String    @default("pending") // pending | running | done | skipped
+  attempts       Int       @default(0)
+  lastError      String?
+  deletedObjects Int?
+  notBefore      DateTime
+  createdAt      DateTime  @default(now())
+  completedAt    DateTime?
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status, notBefore])
+  @@index([tourEventId, status])
+}
+
+// Gallery behavior settings (singleton, same pattern as TourSettings). Only
+// switches that materially control current behavior — no speculative knobs.
+model TourGallerySettings {
+  id                        String   @id @default("singleton")
+  guideCanDelete            Boolean  @default(true)
+  guideCanShareCustomerLink Boolean  @default(true)
+  // Default for NEW galleries (each gallery keeps its own flag).
+  customerUploadEnabled     Boolean  @default(true)
+  // Optional subtitle line on the public customer gallery page.
+  publicBrandingText        String?
+  // How long a "download all" archive stays alive in R2.
+  archiveExpiryHours        Int      @default(72)
+  updatedAt                 DateTime @updatedAt
 }

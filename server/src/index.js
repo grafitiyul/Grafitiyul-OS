@@ -54,6 +54,7 @@ import timelineRouter from './routes/timeline.js';
 import sharedContentRouter from './routes/sharedContent.js';
 import tourContentRouter from './routes/tourContent.js';
 import toursRouter from './routes/tours.js';
+import tourGalleryRouter from './routes/tourGallery.js';
 import tourContentExportRouter from './routes/tourContentExport.js';
 import staffEventsRouter from './routes/staffEvents.js';
 import staffExportRouter from './routes/staffExport.js';
@@ -68,6 +69,7 @@ import emailRouter from './routes/email.js';
 import emailTrackingRouter from './routes/emailTracking.js';
 import { startScheduledWorker } from './whatsapp/scheduledWorker.js';
 import { startEmailSyncWorker } from './email/syncWorker.js';
+import { startTourGalleryCleanupWorker } from './tours/gallery/cleanupWorker.js';
 import questionnairesRouter from './routes/questionnaires.js';
 import publicQuestionnaireRouter from './routes/publicQuestionnaire.js';
 import { makeLegacyRedirect } from './legacyRedirect.js';
@@ -314,6 +316,10 @@ app.use('/api/tour-content', requireAdminAuth, tourContentRouter);
 // tour CONTENT routes above; see server/src/routes/tours.js for the ownership
 // contract (group slots managed here, private/business mirror their deal).
 app.use('/api/tours', requireAdminAuth, toursRouter);
+// Tour Gallery — per-TourEvent media (photos/videos) on R2. Staff surface;
+// objects are private (presigned GETs only). The public customer gallery is a
+// separate token-derived router mounted with the other public routes.
+app.use('/api/tour-gallery', requireAdminAuth, tourGalleryRouter);
 // Questionnaire Engine (generic — blueprint: docs/architecture/questionnaire-
 // engine-design.md). Admin builder + staff submission flows. Public
 // token-link routes are a separate, later-mounted public router (Slice 3).
@@ -529,4 +535,7 @@ app.listen(port, () => {
   // Gmail read-only sync mirror — 60s tick; no-op until GOOGLE_CLIENT_ID/SECRET
   // + EMAIL_TOKEN_KEY are configured and an account is connected.
   startEmailSyncWorker(console);
+  // Tour Gallery R2 purge (cancelled/deleted tours) + abandoned-upload sweep —
+  // claim-based 60s tick; verifies the prefix is empty before marking done.
+  startTourGalleryCleanupWorker(console);
 });

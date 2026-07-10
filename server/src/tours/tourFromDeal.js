@@ -1,6 +1,7 @@
 import { WON_REQUIRED_FIELDS, missingFields } from './requiredFields.js';
 import { emitTimelineEvent } from '../timeline/events.js';
 import { seedTourComponents } from './tourComponents.js';
+import { scheduleGalleryCleanup } from './gallery/service.js';
 
 // Deal⇄Tour lifecycle — the ONE module that creates/joins/leaves tours for a
 // deal. Called from the deals router inside a prisma transaction; never from
@@ -218,6 +219,9 @@ export async function cancelDealBooking(tx, booking, { reason, origin }) {
         data: { event: 'auto_cancelled_empty', reason },
         origin,
       });
+      // Same cleanup path as a manual cancel: revoke customer gallery links
+      // now, purge R2 async (idempotent; no-op when no gallery was touched).
+      await scheduleGalleryCleanup(tx, tour.id, { reason: 'tour_cancelled', origin });
     }
   }
 }

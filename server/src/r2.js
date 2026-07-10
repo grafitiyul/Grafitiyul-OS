@@ -4,7 +4,10 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   ListObjectsV2Command,
+  ListMultipartUploadsCommand,
+  AbortMultipartUploadCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
@@ -98,8 +101,20 @@ export async function putObject({ key, body, contentType }) {
 // Short-lived read URL for PRIVATE objects (e.g. WhatsApp chat media — customer
 // data that must never sit on a public URL). The admin-authed route mints one
 // per view; the link dies in minutes.
-export async function presignGet({ key, expiresIn = 300 }) {
-  const cmd = new GetObjectCommand({ Bucket: R2_BUCKET, Key: key });
+export async function presignGet({ key, expiresIn = 300, downloadName }) {
+  const cmd = new GetObjectCommand({
+    Bucket: R2_BUCKET,
+    Key: key,
+    // Friendly download filename WITHOUT renaming the stored object — the key
+    // stays immutable, the browser sees the display name.
+    ...(downloadName
+      ? {
+          ResponseContentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(
+            downloadName,
+          )}`,
+        }
+      : {}),
+  });
   return getSignedUrl(client(), cmd, { expiresIn });
 }
 
@@ -111,6 +126,64 @@ export async function deleteObject(key) {
     );
   } catch (e) {
     console.warn('[r2] delete failed for', key, e?.message);
+  }
+}
+
+// Batch delete (up to 1000 keys per call, paged here). THROWS if any key
+// failed to delete — destructive cleanup must know it was incomplete.
+export async function deleteObjects(keys) {
+  const all = [...keys];
+  while (all.length) {
+    const chunk = all.splice(0, 1000);
+    const out = await client().send(
+      new DeleteObjectsCommand({
+        Bucket: R2_BUCKET,
+        Delete: { Objects: chunk.map((Key) => ({ Key })), Quiet: true },
+      }),
+    );
+    const errors = out?.Errors || [];
+    if (errors.length) {
+      throw new Error(
+        `delete_objects_failed: ${errors.length} keys (first: ${errors[0]?.Key} ${errors[0]?.Code})`,
+      );
+    }
+  }
+}
+
+// In-flight multipart uploads under a prefix (paged). Used by gallery cleanup
+// and the abandoned-upload sweep so cancelled tours leave no hidden storage.
+export async function listMultipartUploads(prefix) {
+  const uploads = [];
+  let keyMarker;
+  let uploadIdMarker;
+  do {
+    const out = await client().send(
+      new ListMultipartUploadsCommand({
+        Bucket: R2_BUCKET,
+        Prefix: prefix,
+        KeyMarker: keyMarker,
+        UploadIdMarker: uploadIdMarker,
+      }),
+    );
+    for (const u of out.Uploads || []) {
+      if (u.Key && u.UploadId) uploads.push({ key: u.Key, uploadId: u.UploadId });
+    }
+    keyMarker = out.IsTruncated ? out.NextKeyMarker : undefined;
+    uploadIdMarker = out.IsTruncated ? out.NextUploadIdMarker : undefined;
+  } while (keyMarker || uploadIdMarker);
+  return uploads;
+}
+
+// Abort ONE multipart upload. Aborting an already-completed/aborted upload
+// returns NoSuchUpload — treated as success (idempotent cleanup).
+export async function abortMultipartUpload({ key, uploadId }) {
+  try {
+    await client().send(
+      new AbortMultipartUploadCommand({ Bucket: R2_BUCKET, Key: key, UploadId: uploadId }),
+    );
+  } catch (e) {
+    if (e?.name === 'NoSuchUpload' || e?.Code === 'NoSuchUpload') return;
+    throw e;
   }
 }
 
