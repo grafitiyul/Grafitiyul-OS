@@ -81,12 +81,13 @@ function computeMissingLanguages(runtime) {
 }
 
 const OPTION_TYPES = ['choice', 'dropdown', 'multi'];
-// Question types offered by the builder in this slice — must stay a subset of
-// the server registry (uploads/signature arrive with their renderers in S5).
+// Question types offered by the builder — a strict subset of the server type
+// registry, extended only together with a working runtime renderer.
 const BUILDER_TYPES = [
   'text', 'textarea', 'number', 'email', 'phone', 'url',
   'date', 'time', 'datetime', 'yesno',
-  'choice', 'dropdown', 'multi', 'scale', 'rating', 'slider', 'static_text',
+  'choice', 'dropdown', 'multi', 'scale', 'rating', 'slider',
+  'image_upload', 'file_upload', 'signature', 'static_text',
 ];
 
 export default function QuestionnaireBuilderPage() {
@@ -401,6 +402,46 @@ export default function QuestionnaireBuilderPage() {
           + הוספת מקטע
         </button>
       ) : null}
+
+      {/* Version history — every version, its state, publish date and note. */}
+      <section className="mt-5 bg-white border border-gray-200 rounded-2xl shadow-sm">
+        <div className="px-4 pt-3 pb-2 border-b border-gray-100">
+          <h2 className="text-[14px] font-semibold text-gray-900">היסטוריית גרסאות</h2>
+        </div>
+        <div className="divide-y divide-gray-100">
+          {template.versions.map((v) => (
+            <div key={v.id} className="flex items-center gap-3 px-4 py-2.5">
+              <button
+                type="button"
+                onClick={() => setVersionId(v.id)}
+                className={`shrink-0 rounded-full border px-2 py-0.5 text-[11.5px] ${
+                  v.id === versionId
+                    ? 'border-blue-400 bg-blue-50 text-blue-700 font-semibold'
+                    : 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                v{v.versionNo}
+              </button>
+              <span className="text-[12px] text-gray-500">
+                {VERSION_STATUS_LABELS[v.status] || v.status}
+                {v.publishedAt ? ` · פורסמה ${new Date(v.publishedAt).toLocaleDateString('he-IL')}` : ''}
+              </span>
+              {v.id === versionId && isDraft ? (
+                <InlineText
+                  value={v.notes || ''}
+                  placeholder="הערת גרסה (מה השתנה?)"
+                  allowEmpty
+                  className="flex-1 text-[12px] text-gray-600"
+                  onSave={(text) =>
+                    mutate(() => api.questionnaires.updateVersion(versionId, { notes: text || null }), { refreshTemplate: true })}
+                />
+              ) : v.notes ? (
+                <span className="flex-1 truncate text-[12px] text-gray-400">{v.notes}</span>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      </section>
 
       <QuestionInspector
         state={inspecting}

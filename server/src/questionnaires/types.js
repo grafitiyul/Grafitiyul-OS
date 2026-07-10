@@ -202,7 +202,40 @@ export const QUESTION_TYPES = {
     valueKind: 'none',
     validate: () => 'not_answerable',
   },
+  // Uploaded media (Slice 5). Value = { assetId, url, name, mime, size } —
+  // the asset itself lives in MediaAsset (unguessable cuid id, immutable
+  // serve); the answer stores only the reference.
+  image_upload: {
+    valueKind: 'object',
+    validate: (v) => validateUploadValue(v, ['image/']),
+  },
+  file_upload: {
+    valueKind: 'object',
+    validate: (v) => validateUploadValue(v, ['image/', 'application/pdf']),
+  },
+  // Drawn signature — PNG data URL, same storage convention as the public
+  // quote signing flow (QuoteSignature.signatureImage: no admin storage path
+  // for public signers). Size-capped server-side.
+  signature: {
+    valueKind: 'string',
+    validate: (v) => {
+      if (typeof v !== 'string') return 'invalid_type';
+      if (!v.startsWith('data:image/png;base64,')) return 'invalid_signature';
+      if (v.length > 400_000) return 'too_long';
+      return null;
+    },
+  },
 };
+
+function validateUploadValue(v, allowedMimePrefixes) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return 'invalid_type';
+  if (typeof v.assetId !== 'string' || !v.assetId.trim()) return 'invalid_upload';
+  if (typeof v.name !== 'string' || !v.name.trim()) return 'invalid_upload';
+  if (typeof v.mime !== 'string') return 'invalid_upload';
+  const ok = allowedMimePrefixes.some((p) =>
+    p.endsWith('/') ? v.mime.startsWith(p) : v.mime === p);
+  return ok ? null : 'unsupported_file_type';
+}
 
 export const QUESTION_TYPE_KEYS = Object.keys(QUESTION_TYPES);
 

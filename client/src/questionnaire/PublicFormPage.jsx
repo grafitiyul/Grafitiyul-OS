@@ -131,6 +131,7 @@ export default function PublicFormPage() {
             serverErrors={serverErrors}
             onChange={scheduleAutosave}
             onSubmit={submit}
+            uploader={(file) => api.questionnaires.publicForm.upload(token, file)}
           />
         )}
       </div>

@@ -131,7 +131,15 @@ export default function QuestionnaireFillDialog({
             <p className="mt-2 text-[14px] text-gray-700">{errorInfo?.message}</p>
             {['purpose_not_configured', 'no_published_version', 'template_not_active'].includes(errorInfo?.code) ? (
               <Link
-                to="/admin/settings/tours"
+                // Tours settings are category pages now — deep-link straight to
+                // the category that configures THIS purpose.
+                to={
+                  purpose === 'tour_summary'
+                    ? '/admin/settings/tours/summary'
+                    : purpose === 'coordination'
+                      ? '/admin/settings/tours/coordination'
+                      : '/admin/settings/tours'
+                }
                 className="mt-3 inline-block rounded-lg border border-gray-300 px-4 py-1.5 text-[13px] text-gray-700 hover:bg-gray-50"
               >
                 להגדרות סיורים
@@ -151,6 +159,7 @@ export default function QuestionnaireFillDialog({
               onSubmit={submit}
               submitLabel="הגשת הטופס"
               busyLabel="מגיש…"
+              uploader={(file) => api.questionnaires.uploadAnswerFile(file)}
             />
             <div className="mt-1.5 text-[11.5px] text-gray-400">
               {savedAt ? `טיוטה נשמרה ${savedAt.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })} ✓` : 'טיוטה נשמרת אוטומטית תוך כדי מילוי'}

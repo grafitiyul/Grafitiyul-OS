@@ -1,11 +1,13 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { handle } from '../asyncHandler.js';
 import {
   sendQError,
   publicFormPayload,
   publicSaveAnswers,
   publicSubmit,
+  resolvePublicLink,
 } from '../questionnaires/service.js';
+import { storeQuestionnaireUpload, MAX_UPLOAD_BYTES } from '../questionnaires/uploads.js';
 
 // PUBLIC (unauthenticated) questionnaire fill — token-gated, same philosophy
 // as the public quote page: the high-entropy QuestionnaireLink.token is the
@@ -35,6 +37,18 @@ router.get('/form/:token', qh(async (req, res) => {
 router.put('/form/:token/answers', qh(async (req, res) => {
   res.json(await publicSaveAnswers(req.params.token, req.body?.answers));
 }));
+
+// Answer upload — gated by a LIVE link token (resolve throws 404 otherwise),
+// images + PDF only, magic-byte sniffed, 15MB cap. The stored asset id is
+// unguessable and the answer merely references it.
+router.post(
+  '/form/:token/upload',
+  express.raw({ type: '*/*', limit: `${Math.ceil(MAX_UPLOAD_BYTES / 1024 / 1024) + 1}mb` }),
+  qh(async (req, res) => {
+    await resolvePublicLink(req.params.token); // capability check first
+    res.status(201).json(await storeQuestionnaireUpload(req.body, req.query.filename));
+  }),
+);
 
 // Final submit — full server-side validation; 422 problems render inline.
 // `language` records what the customer actually saw (manual switch mid-fill).

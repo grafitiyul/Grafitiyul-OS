@@ -15,7 +15,7 @@
 
 import { evaluateCondition, isEmptyAnswer } from '../../../shared/questionnaire/conditions.mjs';
 import { orderedSections } from './structure.js';
-import { validateAnswerValue, typeIsAnswerable } from './types.js';
+import { validateAnswerValue, typeIsAnswerable, QUESTION_TYPES } from './types.js';
 
 // Compute the visible question set for a given answer map. Sections evaluate
 // first — a hidden section hides all its questions regardless of their own
@@ -80,6 +80,13 @@ export function sanitizeDraftAnswers(structure, answers) {
       continue;
     }
     const t = typeof value;
+    // Plain objects are legal ONLY for object-valued types (uploads).
+    if (t === 'object' && !Array.isArray(value)) {
+      const kind = QUESTION_TYPES[known.get(key).type]?.valueKind;
+      if (kind !== 'object') continue;
+      accepted[key] = value;
+      continue;
+    }
     if (t !== 'string' && t !== 'number' && t !== 'boolean' && !Array.isArray(value)) continue;
     if (Array.isArray(value) && value.some((x) => typeof x !== 'string')) continue;
     accepted[key] = value;

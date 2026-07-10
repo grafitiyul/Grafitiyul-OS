@@ -1242,6 +1242,20 @@ export const api = {
     getOrCreateLink: (data) =>
       request('/api/questionnaires/links', { method: 'POST', body: JSON.stringify(data) }),
     rotateLink: (linkId) => request(`/api/questionnaires/links/${linkId}/rotate`, { method: 'POST' }),
+    // Answer uploads (images/PDF, raw body — NOT the JSON request helper).
+    uploadAnswerFile: async (file) => {
+      const res = await fetch(`/api/questionnaires/upload?filename=${encodeURIComponent(file.name)}`, {
+        method: 'POST',
+        cache: 'no-store',
+        body: file,
+      });
+      if (!res.ok) {
+        const err = new Error(`upload failed (${res.status})`);
+        err.status = res.status;
+        throw err;
+      }
+      return res.json();
+    },
     // Public fill (no auth — token IS the capability; used by /form/:token).
     publicForm: {
       get: (token) => request(`/api/public/form/${token}`),
@@ -1249,6 +1263,19 @@ export const api = {
         request(`/api/public/form/${token}/answers`, { method: 'PUT', body: JSON.stringify({ answers }) }),
       submit: (token, answers, language) =>
         request(`/api/public/form/${token}/submit`, { method: 'POST', body: JSON.stringify({ answers, language }) }),
+      upload: async (token, file) => {
+        const res = await fetch(`/api/public/form/${token}/upload?filename=${encodeURIComponent(file.name)}`, {
+          method: 'POST',
+          cache: 'no-store',
+          body: file,
+        });
+        if (!res.ok) {
+          const err = new Error(`upload failed (${res.status})`);
+          err.status = res.status;
+          throw err;
+        }
+        return res.json();
+      },
     },
   },
 };

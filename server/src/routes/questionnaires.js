@@ -1,5 +1,6 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { handle } from '../asyncHandler.js';
+import { storeQuestionnaireUpload, MAX_UPLOAD_BYTES } from '../questionnaires/uploads.js';
 import { listPurposes } from '../questionnaires/registry.js';
 import { QUESTION_TYPE_KEYS } from '../questionnaires/types.js';
 import {
@@ -65,6 +66,16 @@ router.post('/links/:id/rotate', qh(async (req, res) => {
   const link = await rotatePublicLink(req.params.id);
   res.json({ ...link, url: `${req.protocol}://${req.get('host')}/form/${link.token}` });
 }));
+
+// Answer upload (staff fill) — images + PDF, magic-byte sniffed, 15MB cap.
+// Returns the answer-value shape ({ assetId, url, name, mime, size }).
+router.post(
+  '/upload',
+  express.raw({ type: '*/*', limit: `${Math.ceil(MAX_UPLOAD_BYTES / 1024 / 1024) + 1}mb` }),
+  qh(async (req, res) => {
+    res.status(201).json(await storeQuestionnaireUpload(req.body, req.query.filename));
+  }),
+);
 
 // ── submissions ──────────────────────────────────────────────────────────────
 

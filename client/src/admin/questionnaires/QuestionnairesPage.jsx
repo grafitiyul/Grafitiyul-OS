@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import Dialog from '../common/Dialog.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
+import QuestionnaireSubmissionsView from './QuestionnaireSubmissionsView.jsx';
 import { purposeLabel, TEMPLATE_STATUS_LABELS } from '../../questionnaire/constants.js';
 
 // Questionnaire templates — list + create. Each row opens the builder. This
@@ -25,6 +26,7 @@ function StatusChip({ status }) {
 
 export default function QuestionnairesPage() {
   const navigate = useNavigate();
+  const [tab, setTab] = useState('templates'); // templates | submissions
   const [templates, setTemplates] = useState(null);
   const [purposes, setPurposes] = useState([]);
   const [createOpen, setCreateOpen] = useState(false);
@@ -78,6 +80,22 @@ export default function QuestionnairesPage() {
         </div>
       ) : null}
 
+      <div className="mb-4 flex gap-1 rounded-xl bg-gray-100 p-1 w-fit">
+        {[['templates', 'תבניות'], ['submissions', 'הגשות']].map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setTab(key)}
+            className={`rounded-lg px-4 py-1.5 text-[13px] font-medium ${
+              tab === key ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'submissions' ? <QuestionnaireSubmissionsView /> : (
       <section className="bg-white border border-gray-200 rounded-2xl shadow-sm divide-y divide-gray-100">
         {templates === null ? (
           <div className="px-4 py-10 text-center text-[13.5px] text-gray-400">טוען…</div>
@@ -129,6 +147,7 @@ export default function QuestionnairesPage() {
           ))
         )}
       </section>
+      )}
 
       <CreateTemplateDialog
         open={createOpen}

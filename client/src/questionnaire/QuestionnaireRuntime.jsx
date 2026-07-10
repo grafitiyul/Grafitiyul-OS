@@ -256,7 +256,131 @@ function SliderInput({ q, value, onChange }) {
   );
 }
 
-function QuestionInput({ q, value, onChange, lang, defLang, s }) {
+// Upload input (image_upload / file_upload). `uploader(file) → Promise<value>`
+// comes from the host surface (staff dialog / public page) so the runtime
+// stays transport-agnostic; preview passes none → uploads disabled with note.
+function UploadInput({ q, value, onChange, uploader, imageOnly, s }) {
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  if (!uploader) {
+    return <div className="text-[12.5px] text-gray-400">העלאת קבצים אינה זמינה בתצוגה מקדימה</div>;
+  }
+  if (value?.assetId) {
+    const isImage = (value.mime || '').startsWith('image/');
+    return (
+      <div className="flex items-center gap-3">
+        {isImage ? (
+          <img src={value.url} alt={value.name} className="h-20 w-20 rounded-lg border border-gray-200 object-cover" />
+        ) : (
+          <a href={value.url} target="_blank" rel="noreferrer noopener" className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[13px] text-blue-700 hover:underline" dir="ltr">
+            📎 {value.name}
+          </a>
+        )}
+        <button type="button" onClick={() => onChange(null)} className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-[12px] text-gray-600 hover:bg-gray-50">
+          ✕ הסרה
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <label className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-gray-400 px-4 py-2.5 text-[13px] text-gray-600 hover:bg-gray-50 ${busy ? 'opacity-50' : ''}`}>
+        <span aria-hidden>{imageOnly ? '📷' : '📎'}</span>
+        {busy ? '…' : imageOnly ? s.uploadImage || 'העלאת תמונה' : s.uploadFile || 'העלאת קובץ'}
+        <input
+          type="file"
+          accept={imageOnly ? 'image/*' : 'image/*,application/pdf'}
+          className="hidden"
+          disabled={busy}
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (!file) return;
+            setBusy(true);
+            setFailed(false);
+            try {
+              onChange(await uploader(file));
+            } catch {
+              setFailed(true);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+      </label>
+      {failed ? <p className="mt-1 text-[12px] text-red-600">{s.uploadFailed || 'ההעלאה נכשלה'}</p> : null}
+    </div>
+  );
+}
+
+// Drawn signature — canvas pad → PNG data URL (same convention as the public
+// quote signing flow). Pointer events cover mouse + touch.
+function SignatureInput({ value, onChange, s }) {
+  const canvasRef = useRef(null);
+  const drawing = useRef(false);
+
+  const pos = (e) => {
+    const rect = canvasRef.current.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
+  const start = (e) => {
+    drawing.current = true;
+    const ctx = canvasRef.current.getContext('2d');
+    const p = pos(e);
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+    canvasRef.current.setPointerCapture?.(e.pointerId);
+  };
+  const move = (e) => {
+    if (!drawing.current) return;
+    const ctx = canvasRef.current.getContext('2d');
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#1f2937';
+    const p = pos(e);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+  };
+  const end = () => {
+    if (!drawing.current) return;
+    drawing.current = false;
+    onChange(canvasRef.current.toDataURL('image/png'));
+  };
+  const clear = () => {
+    const c = canvasRef.current;
+    if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height);
+    onChange(null);
+  };
+
+  if (value && typeof value === 'string' && value.startsWith('data:image/png')) {
+    return (
+      <div className="flex items-center gap-3">
+        <img src={value} alt="חתימה" className="h-20 rounded-lg border border-gray-200 bg-white" />
+        <button type="button" onClick={clear} className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-[12px] text-gray-600 hover:bg-gray-50">
+          {s.signAgain || 'חתימה מחדש'}
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <canvas
+        ref={canvasRef}
+        width={320}
+        height={130}
+        className="w-full max-w-[320px] touch-none rounded-lg border border-gray-300 bg-white"
+        style={{ touchAction: 'none' }}
+        onPointerDown={start}
+        onPointerMove={move}
+        onPointerUp={end}
+        onPointerLeave={end}
+      />
+      <p className="mt-1 text-[11.5px] text-gray-400">{s.signHere || 'חתמו כאן בעזרת האצבע או העכבר'}</p>
+    </div>
+  );
+}
+
+function QuestionInput({ q, value, onChange, lang, defLang, s, uploader }) {
   switch (q.type) {
     case 'text':
       return <TextLikeInput q={q} value={value} onChange={onChange} />;
@@ -297,6 +421,12 @@ function QuestionInput({ q, value, onChange, lang, defLang, s }) {
       return <RatingInput q={q} value={value} onChange={onChange} />;
     case 'slider':
       return <SliderInput q={q} value={value} onChange={onChange} />;
+    case 'image_upload':
+      return <UploadInput q={q} value={value} onChange={onChange} uploader={uploader} imageOnly s={s} />;
+    case 'file_upload':
+      return <UploadInput q={q} value={value} onChange={onChange} uploader={uploader} s={s} />;
+    case 'signature':
+      return <SignatureInput value={value} onChange={onChange} s={s} />;
     default:
       return <div className="text-[13px] text-gray-400">סוג שאלה לא נתמך: {q.type}</div>;
   }
@@ -313,6 +443,18 @@ function DisplayValue({ q, value, lang, defLang, s }) {
     return opt ? resolveLocalized(opt.label, lang, defLang) : String(v);
   };
   if (q.type === 'yesno') return <span>{value ? s.yes : s.no}</span>;
+  if (q.type === 'signature' && typeof value === 'string' && value.startsWith('data:image/')) {
+    return <img src={value} alt="חתימה" className="h-16 rounded border border-gray-200 bg-white" />;
+  }
+  if ((q.type === 'image_upload' || q.type === 'file_upload') && value?.assetId) {
+    return (value.mime || '').startsWith('image/') ? (
+      <img src={value.url} alt={value.name} className="h-20 rounded-lg border border-gray-200 object-cover" />
+    ) : (
+      <a href={value.url} target="_blank" rel="noreferrer noopener" className="text-blue-700 hover:underline" dir="ltr">
+        📎 {value.name}
+      </a>
+    );
+  }
   if (Array.isArray(value)) return <span>{value.map(labelOf).join(', ')}</span>;
   if (q.options?.length) return <span>{labelOf(value)}</span>;
   return <span className="whitespace-pre-wrap">{String(value)}</span>;
@@ -329,6 +471,7 @@ export default function QuestionnaireRuntime({
   submitLabel,
   busyLabel,
   previewBadge = false,
+  uploader = null,
 }) {
   const defLang = runtime?.template?.defaultLanguage || 'he';
   const lang = language || defLang;
@@ -413,10 +556,130 @@ export default function QuestionnaireRuntime({
     }
   };
 
+  // Flat visible steps (question + its section) — powers step-by-step mode
+  // and the progress indicator. Conditions may add/remove steps live.
+  const flatSteps = useMemo(
+    () => visibleSections.flatMap((sec) => sec.questions.map((q) => ({ q, section: sec }))),
+    [visibleSections],
+  );
+  const answerable = flatSteps.filter(({ q }) => q.type !== 'static_text');
+  const answeredCount = answerable.filter(({ q }) => !isEmpty(answers[q.key])).length;
+
+  const stepMode = runtime?.version?.displayMode === 'step_by_step' && !readOnly && !!onSubmit;
+  const [stepIdx, setStepIdx] = useState(0);
+  useEffect(() => {
+    // Visibility changes can shrink the step list — clamp, never crash.
+    if (stepIdx > 0 && stepIdx >= flatSteps.length) setStepIdx(Math.max(0, flatSteps.length - 1));
+  }, [flatSteps.length, stepIdx]);
+
   if (!runtime) return null;
 
   const intro = r(runtime.version?.intro);
 
+  // ONE question renderer for both layouts.
+  const renderQuestion = (q) => {
+    if (q.type === 'static_text') {
+      return (
+        <div
+          key={q.id || q.key}
+          className="prose prose-sm max-w-none text-[13.5px] text-gray-700"
+          dangerouslySetInnerHTML={{ __html: r(q.label) }}
+        />
+      );
+    }
+    const err = errorFor(q.key);
+    const enriched = { ...q, placeholderText: r(q.placeholder) };
+    return (
+      <div key={q.id || q.key} data-qkey={q.key}>
+        <label className="block text-[13.5px] font-medium text-gray-800 mb-1">
+          {r(q.label)}
+          {q.required ? <span className="text-red-500 ms-1">*</span> : null}
+        </label>
+        {r(q.helpText) ? (
+          <p className="text-[12px] text-gray-500 mb-1.5">{r(q.helpText)}</p>
+        ) : null}
+        {readOnly ? (
+          <div className="text-[14px] text-gray-800 py-1">
+            <DisplayValue q={q} value={answers[q.key]} lang={lang} defLang={defLang} s={ui} />
+          </div>
+        ) : (
+          <QuestionInput q={enriched} value={answers[q.key]} onChange={(v) => setValue(q.key, v)} lang={lang} defLang={defLang} s={ui} uploader={uploader} />
+        )}
+        {err ? <p className="text-[12px] text-red-600 mt-1">{err}</p> : null}
+      </div>
+    );
+  };
+
+  const progressBar = !readOnly && answerable.length > 0 ? (
+    <div>
+      <div className="flex items-center justify-between text-[11.5px] text-gray-500">
+        <span>{answeredCount} / {answerable.length}</span>
+      </div>
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-gray-200">
+        <div
+          className="h-full rounded-full bg-blue-500 transition-all"
+          style={{ width: `${Math.round((answeredCount / answerable.length) * 100)}%` }}
+        />
+      </div>
+    </div>
+  ) : null;
+
+  // ── step-by-step layout: one question per screen, back/next, validated ────
+  if (stepMode) {
+    const current = flatSteps[Math.min(stepIdx, Math.max(0, flatSteps.length - 1))];
+    const isLast = stepIdx >= flatSteps.length - 1;
+    const goNext = async () => {
+      if (!current) return;
+      const { q } = current;
+      if (q.type !== 'static_text' && q.required && isEmpty(answers[q.key])) {
+        setClientErrors((prev) => ({ ...prev, [q.key]: 'required' }));
+        return;
+      }
+      if (isLast) await handleSubmit();
+      else setStepIdx((i) => i + 1);
+    };
+    return (
+      <div ref={rootRef} dir={dir} className="space-y-4">
+        {previewBadge ? (
+          <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[12.5px] text-amber-800">
+            {ui.previewNote}
+          </div>
+        ) : null}
+        {stepIdx === 0 && intro ? (
+          <div className="prose prose-sm max-w-none text-[14px] text-gray-700" dangerouslySetInnerHTML={{ __html: intro }} />
+        ) : null}
+        {progressBar}
+        {current ? (
+          <section className="bg-white border border-gray-200 rounded-2xl shadow-sm">
+            <div className="px-4 pt-3 pb-2 border-b border-gray-100">
+              <h3 className="text-[12.5px] font-medium text-gray-400">{r(current.section.title)}</h3>
+            </div>
+            <div className="px-4 py-5">{renderQuestion(current.q)}</div>
+          </section>
+        ) : null}
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            disabled={stepIdx === 0 || busy}
+            onClick={() => setStepIdx((i) => Math.max(0, i - 1))}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-[13.5px] text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+          >
+            {ui.back}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={goNext}
+            className="rounded-lg bg-blue-600 px-5 py-2.5 text-[14px] font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {isLast ? (busy ? (busyLabel || ui.submitting) : (submitLabel || ui.submit)) : ui.next}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── full-list layout ─────────────────────────────────────────────────────
   return (
     <div ref={rootRef} dir={dir} className="space-y-5">
       {previewBadge ? (
@@ -432,6 +695,8 @@ export default function QuestionnaireRuntime({
         />
       ) : null}
 
+      {progressBar}
+
       {visibleSections.map((s) => (
         <section key={s.id || s.key} className="bg-white border border-gray-200 rounded-2xl shadow-sm">
           <div className="px-4 pt-3 pb-2 border-b border-gray-100">
@@ -441,38 +706,7 @@ export default function QuestionnaireRuntime({
             ) : null}
           </div>
           <div className="px-4 py-3 space-y-4">
-            {s.questions.map((q) => {
-              if (q.type === 'static_text') {
-                return (
-                  <div
-                    key={q.id || q.key}
-                    className="prose prose-sm max-w-none text-[13.5px] text-gray-700"
-                    dangerouslySetInnerHTML={{ __html: r(q.label) }}
-                  />
-                );
-              }
-              const err = errorFor(q.key);
-              const enriched = { ...q, placeholderText: r(q.placeholder) };
-              return (
-                <div key={q.id || q.key} data-qkey={q.key}>
-                  <label className="block text-[13.5px] font-medium text-gray-800 mb-1">
-                    {r(q.label)}
-                    {q.required ? <span className="text-red-500 ms-1">*</span> : null}
-                  </label>
-                  {r(q.helpText) ? (
-                    <p className="text-[12px] text-gray-500 mb-1.5">{r(q.helpText)}</p>
-                  ) : null}
-                  {readOnly ? (
-                    <div className="text-[14px] text-gray-800 py-1">
-                      <DisplayValue q={q} value={answers[q.key]} lang={lang} defLang={defLang} s={ui} />
-                    </div>
-                  ) : (
-                    <QuestionInput q={enriched} value={answers[q.key]} onChange={(v) => setValue(q.key, v)} lang={lang} defLang={defLang} s={ui} />
-                  )}
-                  {err ? <p className="text-[12px] text-red-600 mt-1">{err}</p> : null}
-                </div>
-              );
-            })}
+            {s.questions.map((q) => renderQuestion(q))}
           </div>
         </section>
       ))}
