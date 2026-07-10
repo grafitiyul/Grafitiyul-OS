@@ -1,6 +1,7 @@
 import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { evaluateCondition } from '../../../shared/questionnaire/conditions.mjs';
 import { resolveLocalized, isRtl } from '../../../shared/questionnaire/localized.mjs';
+import { uiStrings, errorText } from '../../../shared/questionnaire/uiStrings.mjs';
 
 // Questionnaire fill runtime — ONE renderer for every consumer: builder
 // preview (Slice 1), staff fill (tour modal), public token fill. Consumers
@@ -30,27 +31,6 @@ function isEmpty(v) {
   if (Array.isArray(v)) return v.length === 0;
   return false;
 }
-
-const ERROR_TEXT = {
-  required: 'שדה חובה',
-  invalid_type: 'ערך לא תקין',
-  invalid_email: 'כתובת אימייל לא תקינה',
-  invalid_phone: 'מספר טלפון לא תקין',
-  invalid_url: 'כתובת לא תקינה',
-  invalid_date: 'תאריך לא תקין',
-  invalid_time: 'שעה לא תקינה',
-  invalid_datetime: 'תאריך ושעה לא תקינים',
-  unknown_option: 'בחירה לא תקינה',
-  other_text_required: 'יש למלא טקסט חופשי',
-  too_long: 'הטקסט ארוך מדי',
-  too_few_selections: 'יש לבחור עוד אפשרויות',
-  too_many_selections: 'נבחרו יותר מדי אפשרויות',
-  out_of_range: 'ערך מחוץ לטווח',
-  below_min: 'ערך נמוך מדי',
-  above_max: 'ערך גבוה מדי',
-  pattern_mismatch: 'פורמט לא תקין',
-  not_integer: 'יש להזין מספר שלם',
-};
 
 const inputCls =
   'w-full rounded-lg border border-gray-300 px-3 py-2 text-[14px] focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 bg-white';
@@ -87,7 +67,7 @@ function NumberInput({ q, value, onChange }) {
   );
 }
 
-function YesNoInput({ value, onChange }) {
+function YesNoInput({ value, onChange, s }) {
   const btn = (val, label) => (
     <button
       type="button"
@@ -103,13 +83,13 @@ function YesNoInput({ value, onChange }) {
   );
   return (
     <div className="flex gap-2">
-      {btn(true, 'כן')}
-      {btn(false, 'לא')}
+      {btn(true, s.yes)}
+      {btn(false, s.no)}
     </div>
   );
 }
 
-function ChoicePills({ q, value, onChange, multi, lang, defLang }) {
+function ChoicePills({ q, value, onChange, multi, lang, defLang, s }) {
   const selected = multi ? (Array.isArray(value) ? value : []) : value;
   const otherSelected = multi
     ? selected.some((v) => typeof v === 'string' && v.startsWith(OTHER_PREFIX))
@@ -172,7 +152,7 @@ function ChoicePills({ q, value, onChange, multi, lang, defLang }) {
                 : 'border-dashed border-gray-400 bg-white text-gray-600 hover:bg-gray-50'
             }`}
           >
-            אחר…
+            {s.other}
           </button>
         ) : null}
       </div>
@@ -180,7 +160,7 @@ function ChoicePills({ q, value, onChange, multi, lang, defLang }) {
         <input
           className={inputCls}
           value={otherText}
-          placeholder="פירוט…"
+          placeholder={s.otherDetail}
           onChange={(e) => setOther(e.target.value)}
         />
       ) : null}
@@ -188,14 +168,14 @@ function ChoicePills({ q, value, onChange, multi, lang, defLang }) {
   );
 }
 
-function DropdownInput({ q, value, onChange, lang, defLang }) {
+function DropdownInput({ q, value, onChange, lang, defLang, s }) {
   return (
     <select
       className={inputCls}
       value={typeof value === 'string' ? value : ''}
       onChange={(e) => onChange(e.target.value === '' ? null : e.target.value)}
     >
-      <option value="">בחירה…</option>
+      <option value="">{s.choose}</option>
       {q.options.map((o) => (
         <option key={o.id || o.value} value={o.value}>
           {resolveLocalized(o.label, lang, defLang)}
@@ -276,7 +256,7 @@ function SliderInput({ q, value, onChange }) {
   );
 }
 
-function QuestionInput({ q, value, onChange, lang, defLang }) {
+function QuestionInput({ q, value, onChange, lang, defLang, s }) {
   switch (q.type) {
     case 'text':
       return <TextLikeInput q={q} value={value} onChange={onChange} />;
@@ -304,13 +284,13 @@ function QuestionInput({ q, value, onChange, lang, defLang }) {
     case 'datetime':
       return <TextLikeInput q={q} value={value} onChange={onChange} type="datetime-local" dir="ltr" />;
     case 'yesno':
-      return <YesNoInput value={value} onChange={onChange} />;
+      return <YesNoInput value={value} onChange={onChange} s={s} />;
     case 'choice':
-      return <ChoicePills q={q} value={value} onChange={onChange} multi={false} lang={lang} defLang={defLang} />;
+      return <ChoicePills q={q} value={value} onChange={onChange} multi={false} lang={lang} defLang={defLang} s={s} />;
     case 'multi':
-      return <ChoicePills q={q} value={value} onChange={onChange} multi lang={lang} defLang={defLang} />;
+      return <ChoicePills q={q} value={value} onChange={onChange} multi lang={lang} defLang={defLang} s={s} />;
     case 'dropdown':
-      return <DropdownInput q={q} value={value} onChange={onChange} lang={lang} defLang={defLang} />;
+      return <DropdownInput q={q} value={value} onChange={onChange} lang={lang} defLang={defLang} s={s} />;
     case 'scale':
       return <ScaleInput q={q} value={value} onChange={onChange} />;
     case 'rating':
@@ -323,14 +303,16 @@ function QuestionInput({ q, value, onChange, lang, defLang }) {
 }
 
 // Read-only value rendering (completed submissions / review).
-function DisplayValue({ q, value, lang, defLang }) {
+function DisplayValue({ q, value, lang, defLang, s }) {
   if (isEmpty(value)) return <span className="text-gray-400">—</span>;
   const labelOf = (v) => {
-    if (typeof v === 'string' && v.startsWith(OTHER_PREFIX)) return `אחר: ${v.slice(OTHER_PREFIX.length)}`;
+    if (typeof v === 'string' && v.startsWith(OTHER_PREFIX)) {
+      return `${s.other.replace('…', '')}: ${v.slice(OTHER_PREFIX.length)}`;
+    }
     const opt = (q.options || []).find((o) => o.value === v);
     return opt ? resolveLocalized(opt.label, lang, defLang) : String(v);
   };
-  if (q.type === 'yesno') return <span>{value ? 'כן' : 'לא'}</span>;
+  if (q.type === 'yesno') return <span>{value ? s.yes : s.no}</span>;
   if (Array.isArray(value)) return <span>{value.map(labelOf).join(', ')}</span>;
   if (q.options?.length) return <span>{labelOf(value)}</span>;
   return <span className="whitespace-pre-wrap">{String(value)}</span>;
@@ -344,13 +326,15 @@ export default function QuestionnaireRuntime({
   serverErrors = null,
   onChange,
   onSubmit,
-  submitLabel = 'שליחה',
-  busyLabel = 'שולח…',
+  submitLabel,
+  busyLabel,
   previewBadge = false,
 }) {
   const defLang = runtime?.template?.defaultLanguage || 'he';
   const lang = language || defLang;
   const dir = isRtl(lang) ? 'rtl' : 'ltr';
+  // Named `ui` (not `s`) — the sections .map((s) => …) below would shadow it.
+  const ui = uiStrings(lang);
   const [answers, setAnswers] = useState(() => ({ ...(initialAnswers || {}) }));
   const [clientErrors, setClientErrors] = useState({});
   const [busy, setBusy] = useState(false);
@@ -400,8 +384,8 @@ export default function QuestionnaireRuntime({
 
   const errorFor = (key) => {
     const server = (serverErrors || []).find((e) => e.questionKey === key);
-    if (server) return ERROR_TEXT[server.code] || 'ערך לא תקין';
-    if (clientErrors[key]) return ERROR_TEXT[clientErrors[key]] || 'ערך לא תקין';
+    if (server) return errorText(lang, server.code);
+    if (clientErrors[key]) return errorText(lang, clientErrors[key]);
     return null;
   };
 
@@ -437,7 +421,7 @@ export default function QuestionnaireRuntime({
     <div ref={rootRef} dir={dir} className="space-y-5">
       {previewBadge ? (
         <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[12.5px] text-amber-800">
-          תצוגה מקדימה — התשובות אינן נשמרות
+          {ui.previewNote}
         </div>
       ) : null}
 
@@ -480,10 +464,10 @@ export default function QuestionnaireRuntime({
                   ) : null}
                   {readOnly ? (
                     <div className="text-[14px] text-gray-800 py-1">
-                      <DisplayValue q={q} value={answers[q.key]} lang={lang} defLang={defLang} />
+                      <DisplayValue q={q} value={answers[q.key]} lang={lang} defLang={defLang} s={ui} />
                     </div>
                   ) : (
-                    <QuestionInput q={enriched} value={answers[q.key]} onChange={(v) => setValue(q.key, v)} lang={lang} defLang={defLang} />
+                    <QuestionInput q={enriched} value={answers[q.key]} onChange={(v) => setValue(q.key, v)} lang={lang} defLang={defLang} s={ui} />
                   )}
                   {err ? <p className="text-[12px] text-red-600 mt-1">{err}</p> : null}
                 </div>
@@ -501,7 +485,7 @@ export default function QuestionnaireRuntime({
             onClick={handleSubmit}
             className="rounded-lg bg-blue-600 px-5 py-2.5 text-[14px] font-medium text-white hover:bg-blue-700 disabled:opacity-50"
           >
-            {busy ? busyLabel : submitLabel}
+            {busy ? (busyLabel || ui.submitting) : (submitLabel || ui.submit)}
           </button>
         </div>
       ) : null}

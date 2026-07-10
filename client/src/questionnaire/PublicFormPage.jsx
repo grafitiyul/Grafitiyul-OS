@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import QuestionnaireRuntime from './QuestionnaireRuntime.jsx';
+import LanguageSwitcher from './LanguageSwitcher.jsx';
 import { resolveLocalized, isRtl } from '../../../shared/questionnaire/localized.mjs';
 
 // PUBLIC customer form page — /form/:token. No login: the high-entropy link
@@ -18,6 +19,9 @@ export default function PublicFormPage() {
   const [notFound, setNotFound] = useState(false);
   const [serverErrors, setServerErrors] = useState(null);
   const [done, setDone] = useState(false);
+  // Manual language override — initial value comes from the link/subject
+  // resolution chain; the customer may switch among supportedLanguages.
+  const [langOverride, setLangOverride] = useState(null);
   const answersRef = useRef({});
   const saveTimer = useRef(null);
 
@@ -51,7 +55,8 @@ export default function PublicFormPage() {
     clearTimeout(saveTimer.current);
     setServerErrors(null);
     try {
-      await api.questionnaires.publicForm.submit(token, answers);
+      const langNow = langOverride || data?.language || null;
+      await api.questionnaires.publicForm.submit(token, answers, langNow);
       setDone(true);
       window.scrollTo({ top: 0 });
     } catch (e) {
@@ -82,8 +87,8 @@ export default function PublicFormPage() {
     );
   }
 
-  const lang = data.language || data.runtime.template.defaultLanguage;
   const defLang = data.runtime.template.defaultLanguage;
+  const lang = langOverride || data.language || defLang;
   const dir = isRtl(lang) ? 'rtl' : 'ltr';
   const title = resolveLocalized(data.runtime.template.title, lang, defLang);
   const outro = resolveLocalized(data.runtime.version.outro, lang, defLang);
@@ -92,7 +97,14 @@ export default function PublicFormPage() {
     <div dir={dir} className="min-h-screen bg-gray-100">
       <div className="mx-auto max-w-xl px-4 py-8 sm:py-12">
         <header className="mb-5">
-          <h1 className="text-xl font-bold tracking-tight text-gray-900">{title}</h1>
+          <div className="flex items-start justify-between gap-3">
+            <h1 className="text-xl font-bold tracking-tight text-gray-900">{title}</h1>
+            <LanguageSwitcher
+              languages={data.runtime.template.supportedLanguages}
+              value={lang}
+              onChange={setLangOverride}
+            />
+          </div>
           {data.subject?.title ? (
             <p className="mt-1 text-[13.5px] text-gray-500">
               {data.subject.title}
@@ -119,8 +131,6 @@ export default function PublicFormPage() {
             serverErrors={serverErrors}
             onChange={scheduleAutosave}
             onSubmit={submit}
-            submitLabel={isRtl(lang) ? 'שליחה' : 'Submit'}
-            busyLabel={isRtl(lang) ? 'שולח…' : 'Submitting…'}
           />
         )}
       </div>

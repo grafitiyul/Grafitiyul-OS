@@ -965,9 +965,22 @@ export async function publicSaveAnswers(token, answers) {
   return saveDraftAnswers(submission.id, answers);
 }
 
-export async function publicSubmit(token, answers) {
+export async function publicSubmit(token, answers, language) {
   const link = await resolvePublicLink(token);
   const submission = await activeSubmissionForLink(link);
+  // The customer may have switched language mid-fill — record the language
+  // they actually SAW so the frozen answer snapshots resolve to it.
+  if (
+    language &&
+    language !== submission.language &&
+    link.template.supportedLanguages.includes(language) &&
+    submission.status === 'draft'
+  ) {
+    await prisma.questionnaireSubmission.update({
+      where: { id: submission.id },
+      data: { language },
+    });
+  }
   const frozen = await submitSubmission(submission.id, {
     answers,
     actor: { type: 'public', ref: null, name: null },

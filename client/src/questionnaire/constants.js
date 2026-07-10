@@ -55,6 +55,17 @@ export const SUBMISSION_STATUS_LABELS = {
   void: 'בוטל',
 };
 
+// Language display names (native names — shown in switchers and builder tabs).
+export const LANGUAGE_LABELS = {
+  he: 'עברית',
+  en: 'English',
+  es: 'Español',
+  fr: 'Français',
+  ru: 'Русский',
+};
+
+export const languageLabel = (l) => LANGUAGE_LABELS[l] || l;
+
 export const CONDITION_OP_LABELS = {
   eq: 'שווה ל-',
   neq: 'שונה מ-',

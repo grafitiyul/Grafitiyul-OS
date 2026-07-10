@@ -1247,8 +1247,8 @@ export const api = {
       get: (token) => request(`/api/public/form/${token}`),
       saveAnswers: (token, answers) =>
         request(`/api/public/form/${token}/answers`, { method: 'PUT', body: JSON.stringify({ answers }) }),
-      submit: (token, answers) =>
-        request(`/api/public/form/${token}/submit`, { method: 'POST', body: JSON.stringify({ answers }) }),
+      submit: (token, answers, language) =>
+        request(`/api/public/form/${token}/submit`, { method: 'POST', body: JSON.stringify({ answers, language }) }),
     },
   },
 };

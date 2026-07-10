@@ -37,8 +37,9 @@ router.put('/form/:token/answers', qh(async (req, res) => {
 }));
 
 // Final submit — full server-side validation; 422 problems render inline.
+// `language` records what the customer actually saw (manual switch mid-fill).
 router.post('/form/:token/submit', qh(async (req, res) => {
-  await publicSubmit(req.params.token, req.body?.answers);
+  await publicSubmit(req.params.token, req.body?.answers, req.body?.language);
   res.json({ ok: true });
 }));
 

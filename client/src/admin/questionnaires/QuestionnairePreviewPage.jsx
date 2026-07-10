@@ -2,18 +2,21 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import QuestionnaireRuntime from '../../questionnaire/QuestionnaireRuntime.jsx';
-import { resolveLocalized } from '../../../../shared/questionnaire/localized.mjs';
+import LanguageSwitcher from '../../questionnaire/LanguageSwitcher.jsx';
+import { resolveLocalized, isRtl } from '../../../../shared/questionnaire/localized.mjs';
 
 // Builder preview — opens in a NEW WINDOW (product rule), renders the REAL
 // fill runtime against the requested version (draft included) and never saves
-// anything. Own top-level route (/q-preview/:versionId) so no admin shell
-// chrome wraps the form.
+// anything. Own top-level route (/preview/questionnaire/:versionId) so no
+// admin shell chrome wraps the form. The language picker previews any
+// supported language with the same fallback chain the customer gets.
 
 export default function QuestionnairePreviewPage() {
   const { versionId } = useParams();
   const [runtime, setRuntime] = useState(null);
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
+  const [lang, setLang] = useState(null);
 
   useEffect(() => {
     api.questionnaires.getVersion(versionId).then(setRuntime).catch((e) => setError(e.message));
@@ -26,14 +29,23 @@ export default function QuestionnairePreviewPage() {
     return <div className="p-10 text-center text-[14px] text-gray-400" dir="rtl">טוען תצוגה מקדימה…</div>;
   }
 
-  const lang = runtime.template.defaultLanguage;
-  const title = resolveLocalized(runtime.template.title, lang, lang);
-  const outro = resolveLocalized(runtime.version.outro, lang, lang);
+  const defLang = runtime.template.defaultLanguage;
+  const activeLang = lang && runtime.template.supportedLanguages.includes(lang) ? lang : defLang;
+  const dir = isRtl(activeLang) ? 'rtl' : 'ltr';
+  const title = resolveLocalized(runtime.template.title, activeLang, defLang);
+  const outro = resolveLocalized(runtime.version.outro, activeLang, defLang);
 
   return (
-    <div className="min-h-screen bg-gray-100" dir="rtl">
+    <div className="min-h-screen bg-gray-100" dir={dir}>
       <div className="mx-auto max-w-2xl px-4 py-8">
-        <h1 className="mb-4 text-xl font-bold text-gray-900">{title}</h1>
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <h1 className="text-xl font-bold text-gray-900">{title}</h1>
+          <LanguageSwitcher
+            languages={runtime.template.supportedLanguages}
+            value={activeLang}
+            onChange={setLang}
+          />
+        </div>
         {done ? (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-8 text-center">
             <div className="text-3xl">✅</div>
@@ -54,10 +66,9 @@ export default function QuestionnairePreviewPage() {
         ) : (
           <QuestionnaireRuntime
             runtime={runtime}
-            language={lang}
+            language={activeLang}
             previewBadge
             onSubmit={async () => setDone(true)}
-            submitLabel="שליחה (תצוגה מקדימה)"
           />
         )}
       </div>

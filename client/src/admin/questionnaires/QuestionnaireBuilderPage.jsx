@@ -5,20 +5,80 @@ import Dialog from '../common/Dialog.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import Toggle from '../common/Toggle.jsx';
 import ReorderableList from '../common/ReorderableList.jsx';
-import { resolveLocalized } from '../../../../shared/questionnaire/localized.mjs';
+import { resolveLocalized, KNOWN_LANGUAGES } from '../../../../shared/questionnaire/localized.mjs';
+import LanguageSwitcher from '../../questionnaire/LanguageSwitcher.jsx';
 import {
   typeLabel, QUESTION_TYPE_LABELS, CONDITION_OP_LABELS,
-  VERSION_STATUS_LABELS, PUBLISH_PROBLEM_LABELS, purposeLabel,
+  VERSION_STATUS_LABELS, PUBLISH_PROBLEM_LABELS, purposeLabel, languageLabel,
 } from '../../questionnaire/constants.js';
 
 // Questionnaire Builder — edits ONE draft version of a template. Published
 // versions are read-only here (the server refuses structural writes anyway);
 // editing a live form goes through "גרסה חדשה" which clones the published
-// structure into the next draft. Slice 1 authors the default language (he);
-// the language tabs land in Slice 4.
+// structure into the next draft.
+//
+// MULTILINGUAL EDITING (Slice 4): one global "editing language" tab bar; every
+// localized field edits THAT language's entry in its JSON map. Editing a
+// non-default language shows the default text as a placeholder hint, and a
+// field left empty is a visible gap (amber dot on the language tab). The
+// publish gate still only REQUIRES the default language.
 
-const HE = (map) => resolveLocalized(map, 'he', 'he');
-const L = (text) => ({ he: text }); // single-language write helper (Slice 1)
+const HE = (map) => resolveLocalized(map, 'he', 'he'); // display fallback
+
+// Language-aware read/merge helpers threaded to every editable field.
+function makeLx(editLang, defLang) {
+  return {
+    editLang,
+    defLang,
+    // Raw value for the editing language — NO fallback (gaps must be visible).
+    read: (map) => {
+      if (typeof map === 'string') return editLang === defLang ? map : '';
+      return map && typeof map === 'object' ? (map[editLang] ?? '') : '';
+    },
+    // Display with fallback (row labels, chips).
+    show: (map) => resolveLocalized(map, editLang, defLang),
+    // Placeholder hint while translating: the default-language text.
+    hint: (map) => (editLang === defLang ? '' : resolveLocalized(map, defLang, defLang)),
+    // Merge the edited text into the map, dropping empty entries.
+    merge: (map, text) => {
+      const base = map && typeof map === 'object' ? { ...map } : {};
+      const t = (text ?? '').trim();
+      if (t) base[editLang] = t;
+      else delete base[editLang];
+      return Object.keys(base).length ? base : null;
+    },
+    // New map for created items — text lands in the CURRENT editing language.
+    fresh: (text) => ({ [editLang]: text }),
+  };
+}
+
+// Which supported languages still have gaps (template title, section titles,
+// question labels, option labels; intro/outro count only if set in default).
+function computeMissingLanguages(runtime) {
+  const t = runtime.template;
+  const langs = (t.supportedLanguages || []).filter(Boolean);
+  const missing = new Set();
+  const check = (map, required = true) => {
+    if (!required) return;
+    for (const lang of langs) {
+      const has = map && typeof map === 'object' && typeof map[lang] === 'string' && map[lang].trim() !== '';
+      if (!has) missing.add(lang);
+    }
+  };
+  const defHas = (map) =>
+    map && typeof map === 'object' && typeof map[t.defaultLanguage] === 'string' && map[t.defaultLanguage].trim() !== '';
+  check(t.title);
+  check(runtime.version.intro, defHas(runtime.version.intro));
+  check(runtime.version.outro, defHas(runtime.version.outro));
+  for (const s of runtime.sections) {
+    check(s.title);
+    for (const q of s.questions) {
+      check(q.label, defHas(q.label));
+      for (const o of q.options || []) check(o.label, defHas(o.label));
+    }
+  }
+  return [...missing];
+}
 
 const OPTION_TYPES = ['choice', 'dropdown', 'multi'];
 // Question types offered by the builder in this slice — must stay a subset of
@@ -38,6 +98,7 @@ export default function QuestionnaireBuilderPage() {
   const [publishProblems, setPublishProblems] = useState(null);
   const [confirm, setConfirm] = useState(null); // { title, body, action }
   const [error, setError] = useState('');
+  const [editLang, setEditLang] = useState(null); // null → template default
 
   const loadTemplate = useCallback(async (preferVersionId) => {
     const t = await api.questionnaires.get(id);
@@ -122,8 +183,13 @@ export default function QuestionnaireBuilderPage() {
   }
 
   const hasDraft = template.versions.some((v) => v.status === 'draft');
+  const defLang = runtime.template.defaultLanguage;
+  const supportedLanguages = runtime.template.supportedLanguages || [defLang];
+  const lang = editLang && supportedLanguages.includes(editLang) ? editLang : defLang;
+  const lx = makeLx(lang, defLang);
+  const missingLangs = computeMissingLanguages(runtime);
   const questionLabelByKey = new Map(
-    runtime.sections.flatMap((s) => s.questions.map((q) => [q.key, HE(q.label) || q.key])),
+    runtime.sections.flatMap((s) => s.questions.map((q) => [q.key, lx.show(q.label) || q.key])),
   );
 
   return (
@@ -175,6 +241,22 @@ export default function QuestionnaireBuilderPage() {
             <span className="text-[12px] text-gray-500">קיימת טיוטה בעריכה — בחרו אותה כדי לערוך.</span>
           )}
         </div>
+        {supportedLanguages.length > 1 ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-[12px] text-gray-500">שפת עריכה:</span>
+            <LanguageSwitcher
+              languages={supportedLanguages}
+              value={lang}
+              onChange={setEditLang}
+              missing={missingLangs}
+            />
+            {lang !== defLang ? (
+              <span className="text-[11.5px] text-gray-400">
+                טקסט בשפת ברירת המחדל מוצג כרמז בשדות ריקים
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </header>
 
       {error ? (
@@ -208,13 +290,50 @@ export default function QuestionnaireBuilderPage() {
         </div>
         <div className="px-4 py-3 grid gap-4 sm:grid-cols-2">
           <div>
-            <label className="mb-1 block text-[12.5px] font-medium text-gray-600">כותרת ציבורית (מוצגת לממלא)</label>
+            <label className="mb-1 block text-[12.5px] font-medium text-gray-600">
+              כותרת ציבורית (מוצגת לממלא{supportedLanguages.length > 1 ? ` · ${languageLabel(lang)}` : ''})
+            </label>
             <InlineText
-              value={HE(runtime.template.title)}
+              value={lx.read(runtime.template.title)}
+              placeholder={lx.hint(runtime.template.title)}
               input
               disabled={false}
-              onSave={(v) => mutate(() => api.questionnaires.update(id, { title: L(v) }), { refreshTemplate: true })}
+              onSave={(v) =>
+                mutate(() => api.questionnaires.update(id, { title: lx.merge(runtime.template.title, v) }), { refreshTemplate: true })}
             />
+          </div>
+          <div>
+            <label className="mb-1 block text-[12.5px] font-medium text-gray-600">שפות הטופס</label>
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              {KNOWN_LANGUAGES.map((l) => {
+                const on = supportedLanguages.includes(l);
+                const isDefault = l === defLang;
+                return (
+                  <button
+                    key={l}
+                    type="button"
+                    title={isDefault ? 'שפת ברירת המחדל' : on ? 'הסרת שפה' : 'הוספת שפה'}
+                    onClick={() => {
+                      if (isDefault) return; // default can't be removed
+                      const next = on
+                        ? supportedLanguages.filter((x) => x !== l)
+                        : [...supportedLanguages, l];
+                      mutate(() => api.questionnaires.update(id, { supportedLanguages: next }), { refreshTemplate: true });
+                      if (!next.includes(lang)) setEditLang(null);
+                    }}
+                    className={`rounded-full border px-2.5 py-1 text-[12px] ${
+                      on
+                        ? isDefault
+                          ? 'border-blue-500 bg-blue-500 text-white'
+                          : 'border-blue-300 bg-blue-50 text-blue-700'
+                        : 'border-gray-300 bg-white text-gray-500 hover:bg-gray-50'
+                    }`}
+                  >
+                    {on ? '✓ ' : ''}{languageLabel(l)}{isDefault ? ' ★' : ''}
+                  </button>
+                );
+              })}
+            </div>
           </div>
           <div>
             <label className="mb-1 block text-[12.5px] font-medium text-gray-600">פריסת מילוי</label>
@@ -232,16 +351,18 @@ export default function QuestionnaireBuilderPage() {
             <label className="mb-1 block text-[12.5px] font-medium text-gray-600">פתיח (מוצג לפני השאלות)</label>
             <SavedTextarea
               disabled={!isDraft}
-              value={HE(runtime.version.intro)}
-              onSave={(v) => mutate(() => api.questionnaires.updateVersion(versionId, { intro: v ? L(v) : null }))}
+              value={lx.read(runtime.version.intro)}
+              placeholder={lx.hint(runtime.version.intro)}
+              onSave={(v) => mutate(() => api.questionnaires.updateVersion(versionId, { intro: lx.merge(runtime.version.intro, v) }))}
             />
           </div>
           <div>
             <label className="mb-1 block text-[12.5px] font-medium text-gray-600">סיום (מסך תודה)</label>
             <SavedTextarea
               disabled={!isDraft}
-              value={HE(runtime.version.outro)}
-              onSave={(v) => mutate(() => api.questionnaires.updateVersion(versionId, { outro: v ? L(v) : null }))}
+              value={lx.read(runtime.version.outro)}
+              placeholder={lx.hint(runtime.version.outro)}
+              onSave={(v) => mutate(() => api.questionnaires.updateVersion(versionId, { outro: lx.merge(runtime.version.outro, v) }))}
             />
           </div>
         </div>
@@ -258,13 +379,13 @@ export default function QuestionnaireBuilderPage() {
             handle={isDraft ? handle : null}
             isDraft={isDraft}
             versionId={versionId}
-            allSections={runtime.sections}
+            lx={lx}
             onMutate={mutate}
             onInspect={(question) => setInspecting({ sectionId: section.id, question })}
             onDelete={() =>
               setConfirm({
                 title: 'מחיקת מקטע',
-                body: `למחוק את המקטע "${HE(section.title)}" על כל שאלותיו?`,
+                body: `למחוק את המקטע "${lx.show(section.title)}" על כל שאלותיו?`,
                 action: () => mutate(() => api.questionnaires.removeSection(section.id)),
               })}
           />
@@ -286,12 +407,13 @@ export default function QuestionnaireBuilderPage() {
         runtime={runtime}
         isDraft={isDraft}
         versionId={versionId}
+        lx={lx}
         onClose={() => setInspecting(null)}
         onMutate={mutate}
         onDelete={(q) =>
           setConfirm({
             title: 'מחיקת שאלה',
-            body: `למחוק את השאלה "${HE(q.label) || 'ללא כותרת'}"?`,
+            body: `למחוק את השאלה "${lx.show(q.label) || 'ללא כותרת'}"?`,
             action: async () => {
               setInspecting(null);
               await mutate(() => api.questionnaires.removeQuestion(q.id));
@@ -316,13 +438,16 @@ export default function QuestionnaireBuilderPage() {
   );
 }
 
-// Inline-editable text (saves on blur / Enter).
-function InlineText({ value, onSave, className = '', input = false, disabled = false }) {
+// Inline-editable text (saves on blur / Enter). `allowEmpty` lets a translator
+// CLEAR a non-default language entry (the language-merge drops empty values);
+// legacy single-language fields keep the "revert on empty" behavior.
+function InlineText({ value, onSave, className = '', input = false, disabled = false, placeholder = '', allowEmpty = false }) {
   const [v, setV] = useState(value ?? '');
   useEffect(() => setV(value ?? ''), [value]);
   const commit = () => {
     const t = v.trim();
-    if (t && t !== (value ?? '')) onSave(t);
+    if (t === (value ?? '')) return;
+    if (t || allowEmpty) onSave(t);
     else setV(value ?? '');
   };
   return (
@@ -334,6 +459,7 @@ function InlineText({ value, onSave, className = '', input = false, disabled = f
       }
       value={v}
       disabled={disabled}
+      placeholder={placeholder}
       onChange={(e) => setV(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => e.key === 'Enter' && e.target.blur()}
@@ -341,7 +467,7 @@ function InlineText({ value, onSave, className = '', input = false, disabled = f
   );
 }
 
-function SavedTextarea({ value, onSave, disabled }) {
+function SavedTextarea({ value, onSave, disabled, placeholder = '' }) {
   const [v, setV] = useState(value ?? '');
   useEffect(() => setV(value ?? ''), [value]);
   return (
@@ -349,6 +475,7 @@ function SavedTextarea({ value, onSave, disabled }) {
       className="w-full min-h-[64px] rounded-lg border border-gray-300 px-3 py-2 text-[13px] focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-gray-50 disabled:text-gray-400"
       value={v}
       disabled={disabled}
+      placeholder={placeholder}
       onChange={(e) => setV(e.target.value)}
       onBlur={() => {
         if ((v ?? '') !== (value ?? '')) onSave(v.trim());
@@ -357,17 +484,19 @@ function SavedTextarea({ value, onSave, disabled }) {
   );
 }
 
-function SectionCard({ section, handle, isDraft, versionId, onMutate, onInspect, onDelete }) {
+function SectionCard({ section, handle, isDraft, versionId, lx, onMutate, onInspect, onDelete }) {
   const [addOpen, setAddOpen] = useState(false);
   return (
     <section className="mb-3 bg-white border border-gray-200 rounded-2xl shadow-sm">
       <div className="flex items-center gap-2 px-4 pt-3 pb-2 border-b border-gray-100">
         {handle}
         <InlineText
-          value={HE(section.title)}
+          value={lx.read(section.title)}
+          placeholder={lx.hint(section.title)}
+          allowEmpty={lx.editLang !== lx.defLang}
           className="text-[14.5px] font-semibold text-gray-900 flex-1"
           disabled={!isDraft}
-          onSave={(v) => onMutate(() => api.questionnaires.updateSection(section.id, { title: L(v) }))}
+          onSave={(v) => onMutate(() => api.questionnaires.updateSection(section.id, { title: lx.merge(section.title, v) }))}
         />
         {section.visibleWhen ? (
           <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-700" title="מוצג בתנאי">⚡ מותנה</span>
@@ -389,7 +518,9 @@ function SectionCard({ section, handle, isDraft, versionId, onMutate, onInspect,
               {isDraft ? qHandle : null}
               <button type="button" onClick={() => onInspect(q)} className="flex min-w-0 flex-1 items-center gap-2 text-right">
                 <span className="truncate text-[13.5px] text-gray-800">
-                  {HE(q.label) || <span className="text-gray-400">ללא כותרת</span>}
+                  {lx.read(q.label) || (lx.show(q.label)
+                    ? <span className="text-amber-500" title="חסר תרגום בשפה זו">{lx.show(q.label)} ⚠</span>
+                    : <span className="text-gray-400">ללא כותרת</span>)}
                 </span>
                 {q.required ? <span className="text-red-500">*</span> : null}
                 {q.visibleWhen ? <span title="מוצג בתנאי">⚡</span> : null}
@@ -404,6 +535,7 @@ function SectionCard({ section, handle, isDraft, versionId, onMutate, onInspect,
           addOpen ? (
             <AddQuestionRow
               sectionId={section.id}
+              lx={lx}
               onDone={() => setAddOpen(false)}
               onMutate={onMutate}
             />
@@ -422,12 +554,13 @@ function SectionCard({ section, handle, isDraft, versionId, onMutate, onInspect,
   );
 }
 
-function AddQuestionRow({ sectionId, onDone, onMutate }) {
+function AddQuestionRow({ sectionId, lx, onDone, onMutate }) {
   const [label, setLabel] = useState('');
   const [type, setType] = useState('text');
   const add = async () => {
     if (!label.trim()) return;
-    await onMutate(() => api.questionnaires.createQuestion(sectionId, { label: label.trim(), type }));
+    // The new label lands in the CURRENT editing language (localized map).
+    await onMutate(() => api.questionnaires.createQuestion(sectionId, { label: lx.fresh(label.trim()), type }));
     onDone();
   };
   return (
@@ -473,7 +606,7 @@ function earlierQuestions(runtime, { beforeQuestionId, beforeSectionId }) {
   return out;
 }
 
-function QuestionInspector({ state, runtime, isDraft, versionId, onClose, onMutate, onDelete }) {
+function QuestionInspector({ state, runtime, isDraft, versionId, lx, onClose, onMutate, onDelete }) {
   const question = state?.question || null;
   // Always re-resolve the question from the fresh runtime (post-mutation).
   const live = useMemo(() => {
@@ -500,11 +633,24 @@ function QuestionInspector({ state, runtime, isDraft, versionId, onClose, onMuta
           <div className="sm:col-span-2">
             <label className="mb-1 block text-[12.5px] font-medium text-gray-600">
               {q.type === 'static_text' ? 'תוכן (HTML מותר)' : 'נוסח השאלה'}
+              {lx.editLang !== lx.defLang ? ` · ${languageLabel(lx.editLang)}` : ''}
             </label>
             {q.type === 'static_text' ? (
-              <SavedTextarea disabled={!isDraft} value={HE(q.label)} onSave={(v) => save({ label: L(v) })} />
+              <SavedTextarea
+                disabled={!isDraft}
+                value={lx.read(q.label)}
+                placeholder={lx.hint(q.label)}
+                onSave={(v) => save({ label: lx.merge(q.label, v) })}
+              />
             ) : (
-              <InlineText input disabled={!isDraft} value={HE(q.label)} onSave={(v) => save({ label: L(v) })} />
+              <InlineText
+                input
+                disabled={!isDraft}
+                value={lx.read(q.label)}
+                placeholder={lx.hint(q.label)}
+                allowEmpty={lx.editLang !== lx.defLang}
+                onSave={(v) => save({ label: lx.merge(q.label, v) })}
+              />
             )}
           </div>
           <div>
@@ -536,7 +682,7 @@ function QuestionInspector({ state, runtime, isDraft, versionId, onClose, onMuta
               }}
             >
               {runtime.sections.map((s) => (
-                <option key={s.id} value={s.id}>{HE(s.title)}</option>
+                <option key={s.id} value={s.id}>{lx.show(s.title)}</option>
               ))}
             </select>
           </div>
@@ -544,7 +690,14 @@ function QuestionInspector({ state, runtime, isDraft, versionId, onClose, onMuta
             <>
               <div className="sm:col-span-2">
                 <label className="mb-1 block text-[12.5px] font-medium text-gray-600">טקסט עזרה (אופציונלי)</label>
-                <InlineText input disabled={!isDraft} value={HE(q.helpText)} onSave={(v) => save({ helpText: v ? L(v) : null })} />
+                <InlineText
+                  input
+                  disabled={!isDraft}
+                  value={lx.read(q.helpText)}
+                  placeholder={lx.hint(q.helpText)}
+                  allowEmpty
+                  onSave={(v) => save({ helpText: lx.merge(q.helpText, v) })}
+                />
               </div>
               <div className="flex items-center gap-2">
                 <Toggle
@@ -561,7 +714,7 @@ function QuestionInspector({ state, runtime, isDraft, versionId, onClose, onMuta
         <TypeConfigFields q={q} isDraft={isDraft} saveConfig={saveConfig} />
 
         {OPTION_TYPES.includes(q.type) ? (
-          <OptionsEditor q={q} isDraft={isDraft} onMutate={onMutate} saveConfig={saveConfig} />
+          <OptionsEditor q={q} isDraft={isDraft} lx={lx} onMutate={onMutate} saveConfig={saveConfig} />
         ) : null}
 
         <ConditionEditor
@@ -613,11 +766,11 @@ function TypeConfigFields({ q, isDraft, saveConfig }) {
   return <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{fields}</div>;
 }
 
-function OptionsEditor({ q, isDraft, onMutate, saveConfig }) {
+function OptionsEditor({ q, isDraft, lx, onMutate, saveConfig }) {
   const [newLabel, setNewLabel] = useState('');
   const add = async () => {
     if (!newLabel.trim()) return;
-    await onMutate(() => api.questionnaires.createOption(q.id, { label: newLabel.trim() }));
+    await onMutate(() => api.questionnaires.createOption(q.id, { label: lx.fresh(newLabel.trim()) }));
     setNewLabel('');
   };
   return (
@@ -631,10 +784,12 @@ function OptionsEditor({ q, isDraft, onMutate, saveConfig }) {
           <div className="flex items-center gap-2 rounded-lg bg-white border border-gray-200 px-2 py-1.5">
             {isDraft ? handle : null}
             <InlineText
-              value={HE(o.label)}
+              value={lx.read(o.label)}
+              placeholder={lx.hint(o.label)}
+              allowEmpty={lx.editLang !== lx.defLang}
               className="flex-1 text-[13px]"
               disabled={!isDraft}
-              onSave={(v) => onMutate(() => api.questionnaires.updateOption(o.id, { label: L(v) }))}
+              onSave={(v) => onMutate(() => api.questionnaires.updateOption(o.id, { label: lx.merge(o.label, v) }))}
             />
             {isDraft ? (
               <button
