@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import Dialog from '../common/Dialog.jsx';
+import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import { DateField, TimeField } from '../common/pickers/DateTimeFields.jsx';
 import { productContextFor } from '../deals/tourContext.js';
 import { TOUR_LANGS } from './config.js';
@@ -33,6 +34,10 @@ export default function TourSlotModal({ open, tour, onClose, onSaved }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [missing, setMissing] = useState([]);
+  // After a save that CHANGED the product on a tour that already has components,
+  // we never silently overwrite them — we ask keep vs. replace-from-defaults.
+  const [askReseed, setAskReseed] = useState(false);
+  const [reseedBusy, setReseedBusy] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -94,11 +99,19 @@ export default function TourSlotModal({ open, tour, onClose, onSaved }) {
         capacity: form.capacity === '' ? null : Number(form.capacity),
         notes: form.notes || null,
       };
+      const productChanged = isEdit && form.productId !== (tour.productId || '');
+      const hasComponents = (tour?.activityComponents?.length || 0) > 0;
       const saved = isEdit
         ? await api.tours.update(tour.id, payload)
         : await api.tours.create(payload);
       onSaved?.(saved);
-      onClose();
+      // Product changed on a tour that already carries components → let the
+      // operator decide (keep / replace). Otherwise close as usual.
+      if (productChanged && hasComponents) {
+        setAskReseed(true);
+      } else {
+        onClose();
+      }
     } catch (err) {
       if (err.payload?.error === 'missing_required_fields') {
         setMissing(err.payload.missing || []);
@@ -230,6 +243,32 @@ export default function TourSlotModal({ open, tour, onClose, onSaved }) {
           </div>
         )}
       </form>
+
+      <ConfirmDialog
+        open={askReseed}
+        title="המוצר של הסיור השתנה"
+        body="מרכיבי הפעילות הנוכחיים של הסיור נשמרו כפי שהם. להחליף אותם במרכיבי ברירת המחדל של המוצר החדש? הבחירות הנוכחיות (כולל מיקומי סדנה) יימחקו."
+        confirmLabel={reseedBusy ? 'מחליף…' : 'החלף מברירת המחדל'}
+        cancelLabel="השאר כפי שהם"
+        danger
+        onCancel={() => {
+          setAskReseed(false);
+          onClose();
+        }}
+        onConfirm={async () => {
+          setReseedBusy(true);
+          try {
+            await api.tours.reseedComponents(tour.id);
+            onSaved?.();
+          } catch (e) {
+            alert('שגיאה בהחלפת המרכיבים: ' + (e.payload?.error || e.message));
+          } finally {
+            setReseedBusy(false);
+            setAskReseed(false);
+            onClose();
+          }
+        }}
+      />
     </Dialog>
   );
 }

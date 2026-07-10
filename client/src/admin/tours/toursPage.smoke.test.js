@@ -45,6 +45,26 @@ const TOUR_DETAIL = {
   ...TOUR_ROW,
   totalBookings: 1,
   assignments: [],
+  // A non-workshop component (no location UI) + a workshop component (with a
+  // location) — the tour modal's "מרכיבי הפעילות" section.
+  activityComponents: [
+    {
+      id: 'tc1',
+      activityComponentId: 'ac1',
+      workshopLocationId: null,
+      sortOrder: 0,
+      activityComponent: { id: 'ac1', nameHe: 'סיור גרפיטי', icon: '🎨', color: 'violet', isWorkshop: false, isActive: true },
+      workshopLocation: null,
+    },
+    {
+      id: 'tc2',
+      activityComponentId: 'ac2',
+      workshopLocationId: 'wl1',
+      sortOrder: 1,
+      activityComponent: { id: 'ac2', nameHe: 'סדנת תקליטים', icon: '🎧', color: 'blue', isWorkshop: true, isActive: true },
+      workshopLocation: { id: 'wl1', nameHe: 'סטודיו תל אביב' },
+    },
+  ],
   bookings: [
     {
       id: 'bk1',
@@ -91,6 +111,7 @@ let act;
 let ToursPage;
 let TourPage;
 let TimelineFeed;
+let TourComponents;
 
 // Vite-only asset imports (css / ?url / emoji data) live deep inside the
 // TimelineFeed→RichEditor tree — irrelevant to a render smoke; stub them.
@@ -172,6 +193,7 @@ before(async () => {
   ToursPage = await bundle(esbuild, 'ToursPage.jsx');
   TourPage = await bundle(esbuild, 'TourPage.jsx');
   TimelineFeed = await bundle(esbuild, '../common/timeline/TimelineFeed.jsx');
+  TourComponents = await bundle(esbuild, 'TourComponents.jsx');
 
   React = (await import('react')).default ?? (await import('react'));
   ({ act } = await import('react'));
@@ -252,6 +274,11 @@ test('Tour modal renders header, team chips and the participant cards', async ()
   assert.match(html, /target="_blank"/, 'the deal link must open in a new browser tab');
   // The History accordion must be present (collapsed by default).
   assert.match(html, /היסטוריה/, 'the History accordion must render');
+  // Activity components section renders with both component names.
+  assert.match(html, /מרכיבי הפעילות/, 'the activity-components section must render');
+  assert.match(html, /סיור גרפיטי/, 'a non-workshop component renders');
+  assert.match(html, /סדנת תקליטים/, 'a workshop component renders');
+  assert.match(html, /סטודיו תל אביב/, 'the workshop component shows its location');
   // Cancellation now lives on the Deal — the tour modal must not expose it.
   assert.doesNotMatch(html, /בטל סיור/, 'the cancel-tour action must be removed');
   await unmount();
@@ -280,5 +307,57 @@ test('Tour timeline (tour_event) renders history only — no Deal CRM composer',
   assert.doesNotMatch(html, /אימייל/, 'the email tab must be absent');
   assert.doesNotMatch(html, /קובץ/, 'the file tab must be absent');
   assert.doesNotMatch(html, /בקרוב/, 'no "coming soon" composer placeholders may appear');
+  await unmount();
+});
+
+// Conditional workshop-location UI (spec §7): a location control appears ONLY on
+// workshop components — one independent control each. Mounting TourComponents
+// directly lets us vary the rows precisely. `<select>` count == workshop count
+// (the add affordance is a button, not a select, until clicked).
+const AC = (id, nameHe, isWorkshop) => ({ id, nameHe, icon: '•', color: 'slate', isWorkshop, isActive: true });
+const compRow = (id, comp, loc = null) => ({
+  id,
+  activityComponentId: comp.id,
+  workshopLocationId: loc,
+  sortOrder: 0,
+  activityComponent: comp,
+  workshopLocation: null,
+});
+const countSelects = (html) => (html.match(/<select/g) || []).length;
+
+async function renderComponents(rows) {
+  return render(
+    React.createElement(
+      MemoryRouter,
+      null,
+      React.createElement(TourComponents, { tourId: 'tour1', rows, onChanged: () => {} }),
+    ),
+  );
+}
+
+test('no workshop component → no workshop-location UI at all', async () => {
+  const { container, unmount } = await renderComponents([compRow('r1', AC('a', 'סיור גרפיטי', false))]);
+  const html = container.innerHTML;
+  assert.match(html, /סיור גרפיטי/);
+  assert.doesNotMatch(html, /חסר מיקום סדנה/, 'a non-workshop component must not show a location control');
+  assert.equal(countSelects(html), 0, 'no location <select> for a non-workshop component');
+  await unmount();
+});
+
+test('one workshop component → exactly one location control', async () => {
+  const { container, unmount } = await renderComponents([compRow('r1', AC('b', 'סדנת תקליטים', true))]);
+  const html = container.innerHTML;
+  assert.match(html, /חסר מיקום סדנה/, 'an unset workshop shows the missing-location warning');
+  assert.equal(countSelects(html), 1, 'exactly one location control for one workshop');
+  await unmount();
+});
+
+test('two workshop components → two independent location controls', async () => {
+  const { container, unmount } = await renderComponents([
+    compRow('r1', AC('b', 'סדנת תקליטים', true)),
+    compRow('r2', AC('c', 'סדנת ציור קיר', true)),
+  ]);
+  const html = container.innerHTML;
+  assert.equal(countSelects(html), 2, 'each workshop gets its own location control');
   await unmount();
 });

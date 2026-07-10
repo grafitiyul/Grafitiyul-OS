@@ -4,6 +4,7 @@ import { api } from '../../lib/api.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
 import TourSlotModal from './TourSlotModal.jsx';
+import TourComponents from './TourComponents.jsx';
 import ActivityBadgeChip from '../deals/ActivityBadgeChip.jsx';
 import { contactNameHe, dealPath } from '../deals/config.js';
 import {
@@ -534,6 +535,15 @@ export default function TourPage() {
                     <span className="text-[13px] text-gray-400">עדיין לא שובצו מדריכים — הוסיפו עם +</span>
                   )}
                 </div>
+              </Section>
+
+              {/* Activity components — what this tour actually delivers. */}
+              <Section title="מרכיבי הפעילות" count={(tour.activityComponents || []).length}>
+                <TourComponents
+                  tourId={tour.id}
+                  rows={tour.activityComponents || []}
+                  onChanged={refresh}
+                />
               </Section>
 
               {/* Participants — one card per booking, stacked vertically. */}
