@@ -89,44 +89,99 @@ function YesNoInput({ value, onChange, s }) {
   );
 }
 
-function ChoicePills({ q, value, onChange, multi, lang, defLang, s }) {
-  const selected = multi ? (Array.isArray(value) ? value : []) : value;
-  const otherSelected = multi
-    ? selected.some((v) => typeof v === 'string' && v.startsWith(OTHER_PREFIX))
-    : typeof selected === 'string' && selected.startsWith(OTHER_PREFIX);
-  const otherText = (() => {
-    const v = multi
-      ? selected.find((x) => typeof x === 'string' && x.startsWith(OTHER_PREFIX))
-      : selected;
-    return typeof v === 'string' && v.startsWith(OTHER_PREFIX) ? v.slice(OTHER_PREFIX.length) : '';
-  })();
+// Multi-select — a vertical CHECKBOX list (professional-form feel, not tag
+// chips). Native <input type="checkbox"> inside a full-row <label> is the GOS
+// checkbox idiom (see QuoteLayoutSettings etc.) — no custom checkbox: native
+// gives Space-to-toggle keyboard behavior and screen-reader checkbox
+// semantics for free. Green accent when checked; text stays normal; only a
+// whisper of row highlight. Selection logic/answer model untouched.
+function MultiCheckboxList({ q, value, onChange, lang, defLang, s }) {
+  const selected = Array.isArray(value) ? value : [];
+  const otherToken = selected.find((v) => typeof v === 'string' && v.startsWith(OTHER_PREFIX));
+  const otherSelected = otherToken !== undefined;
+  const otherText = otherSelected ? otherToken.slice(OTHER_PREFIX.length) : '';
 
   const toggle = (optValue) => {
-    if (multi) {
-      const next = selected.includes(optValue)
-        ? selected.filter((v) => v !== optValue)
-        : [...selected, optValue];
-      onChange(next.length ? next : null);
-    } else {
-      onChange(selected === optValue ? null : optValue);
-    }
+    const next = selected.includes(optValue)
+      ? selected.filter((v) => v !== optValue)
+      : [...selected, optValue];
+    onChange(next.length ? next : null);
   };
 
   const setOther = (text) => {
-    const token = `${OTHER_PREFIX}${text}`;
-    if (multi) {
-      const rest = selected.filter((v) => !(typeof v === 'string' && v.startsWith(OTHER_PREFIX)));
-      onChange(text === undefined ? (rest.length ? rest : null) : [...rest, token]);
-    } else {
-      onChange(text === undefined ? null : token);
-    }
+    const rest = selected.filter((v) => !(typeof v === 'string' && v.startsWith(OTHER_PREFIX)));
+    if (text === undefined) return onChange(rest.length ? rest : null);
+    return onChange([...rest, `${OTHER_PREFIX}${text}`]);
+  };
+
+  const rowCls = (on) =>
+    `flex min-h-[44px] cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 transition-colors ${
+      on ? 'bg-emerald-50/50' : 'hover:bg-gray-50'
+    }`;
+  const boxCls = 'h-[18px] w-[18px] shrink-0 cursor-pointer rounded accent-emerald-600';
+
+  return (
+    <div role="group" aria-label={resolveLocalized(q.label, lang, defLang)} className="space-y-0.5 -mx-3">
+      {q.options.map((o) => {
+        const on = selected.includes(o.value);
+        return (
+          <label key={o.id || o.value} className={rowCls(on)}>
+            <input
+              type="checkbox"
+              className={boxCls}
+              checked={on}
+              onChange={() => toggle(o.value)}
+            />
+            <span className="text-[14px] text-gray-800">{resolveLocalized(o.label, lang, defLang)}</span>
+          </label>
+        );
+      })}
+      {q.config?.allowOther ? (
+        <>
+          <label className={rowCls(otherSelected)}>
+            <input
+              type="checkbox"
+              className={boxCls}
+              checked={otherSelected}
+              onChange={() => (otherSelected ? setOther(undefined) : setOther(''))}
+            />
+            <span className="text-[14px] text-gray-800">{s.other}</span>
+          </label>
+          {otherSelected ? (
+            <div className="px-3 pb-1 ps-9">
+              <input
+                className={inputCls}
+                value={otherText}
+                placeholder={s.otherDetail}
+                onChange={(e) => setOther(e.target.value)}
+              />
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+// Single-choice pills (choice type only — multi moved to MultiCheckboxList).
+function ChoicePills({ q, value, onChange, lang, defLang, s }) {
+  const selected = value;
+  const otherSelected = typeof selected === 'string' && selected.startsWith(OTHER_PREFIX);
+  const otherText = otherSelected ? selected.slice(OTHER_PREFIX.length) : '';
+
+  const toggle = (optValue) => {
+    onChange(selected === optValue ? null : optValue);
+  };
+
+  const setOther = (text) => {
+    onChange(text === undefined ? null : `${OTHER_PREFIX}${text}`);
   };
 
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-2">
         {q.options.map((o) => {
-          const on = multi ? selected.includes(o.value) : selected === o.value;
+          const on = selected === o.value;
           return (
             <button
               key={o.id || o.value}
@@ -410,9 +465,9 @@ function QuestionInput({ q, value, onChange, lang, defLang, s, uploader }) {
     case 'yesno':
       return <YesNoInput value={value} onChange={onChange} s={s} />;
     case 'choice':
-      return <ChoicePills q={q} value={value} onChange={onChange} multi={false} lang={lang} defLang={defLang} s={s} />;
+      return <ChoicePills q={q} value={value} onChange={onChange} lang={lang} defLang={defLang} s={s} />;
     case 'multi':
-      return <ChoicePills q={q} value={value} onChange={onChange} multi lang={lang} defLang={defLang} s={s} />;
+      return <MultiCheckboxList q={q} value={value} onChange={onChange} lang={lang} defLang={defLang} s={s} />;
     case 'dropdown':
       return <DropdownInput q={q} value={value} onChange={onChange} lang={lang} defLang={defLang} s={s} />;
     case 'scale':
