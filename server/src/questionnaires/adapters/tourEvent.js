@@ -3,6 +3,11 @@
 
 import { prisma } from '../../db.js';
 import { emitTimelineEvent, systemOrigin } from '../../timeline/events.js';
+import { getPurpose } from '../registry.js';
+
+// Human-readable feed body — unknown kinds render through the generic
+// NoteCard, so the body carries the whole story.
+const formLabel = (purpose) => getPurpose(purpose)?.labelHe || purpose;
 
 export const tourEventAdapter = {
   async exists(subjectId) {
@@ -55,22 +60,21 @@ export const tourEventAdapter = {
     await emitTimelineEvent(tx, {
       subjectType: 'tour_event',
       subjectId,
-      kind: 'questionnaire_started',
-      data: { submissionId: submission.id, purpose: submission.purpose },
+      kind: 'questionnaire',
+      body: `📋 טופס "${formLabel(submission.purpose)}" — המילוי החל`,
+      data: { submissionId: submission.id, purpose: submission.purpose, event: 'started' },
       origin: systemOrigin(),
     });
   },
 
   async onSubmitted(subjectId, submission, tx) {
+    const by = submission.submittedByName ? ` על ידי ${submission.submittedByName}` : '';
     await emitTimelineEvent(tx, {
       subjectType: 'tour_event',
       subjectId,
-      kind: 'questionnaire_submitted',
-      data: {
-        submissionId: submission.id,
-        purpose: submission.purpose,
-        submittedByName: submission.submittedByName || null,
-      },
+      kind: 'questionnaire',
+      body: `📋 טופס "${formLabel(submission.purpose)}" הוגש${by}`,
+      data: { submissionId: submission.id, purpose: submission.purpose, event: 'submitted' },
       origin: systemOrigin(),
     });
   },

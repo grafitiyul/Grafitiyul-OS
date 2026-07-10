@@ -8,6 +8,7 @@ import { productContextFor } from '../deals/tourContext.js';
 import { TOUR_LANGS, TOUR_LANG_LABELS, WEEKDAY_LABELS } from '../tours/config.js';
 import ActivityComponentsSettings from '../tours/settings/ActivityComponentsSettings.jsx';
 import WorkshopLocationsSettings from '../tours/settings/WorkshopLocationsSettings.jsx';
+import QuestionnairePurposeCard from './QuestionnairePurposeCard.jsx';
 
 // Tours module settings — two sections:
 //   1. AUTOMATIC SCHEDULING (server-backed, live): global defaults + the
@@ -22,7 +23,7 @@ const GUIDE_PERMISSIONS = [
   { key: 'viewContactDetails', label: 'צפייה בפרטי איש הקשר', desc: 'טלפון ופרטי הקשר של איש הקשר בדיל, ליצירת קשר ביום הסיור.' },
   { key: 'viewCustomerNotes', label: 'צפייה במידע חשוב על הלקוח', desc: 'ההערות הפנימיות שנרשמו על הלקוח בדיל.' },
   { key: 'viewPaymentStatus', label: 'צפייה בסטטוס תשלום', desc: 'האם הסיור שולם, שולם חלקית או ממתין לגבייה.' },
-  { key: 'fillTourSummary', label: 'מילוי טופס סיכום סיור', desc: 'המדריך ממלא את טופס סיכום הסיור בסיום (הטופס עצמו ייבנה בהמשך).' },
+  { key: 'fillTourSummary', label: 'מילוי טופס סיכום סיור', desc: 'המדריך ממלא את טופס סיכום הסיור בסיום (הטופס מוגדר בכרטיס "סיכום סיור" למטה; הרשאת הפורטל תיאכף בהמשך).' },
 ];
 
 const INPUT =
@@ -315,6 +316,13 @@ export default function ToursSettings() {
 
       {/* ── Workshop Locations catalog (מיקומי סדנה) ── */}
       <WorkshopLocationsSettings />
+
+      {/* ── Tour Summary questionnaire (generic engine, purpose binding) ── */}
+      <QuestionnairePurposeCard
+        purpose="tour_summary"
+        title="סיכום סיור"
+        description="השאלון שצוות הסיור ממלא בסיום כל סיור. נבנה בבילדר השאלונים — כאן רק בוחרים איזו תבנית משמשת."
+      />
 
       {/* ── Guide permissions (approved placeholder) ── */}
       <section className="bg-white border border-gray-200 rounded-2xl shadow-sm">

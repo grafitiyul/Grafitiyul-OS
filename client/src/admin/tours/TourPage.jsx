@@ -3,6 +3,7 @@ import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
+import QuestionnaireFillDialog from '../../questionnaire/QuestionnaireFillDialog.jsx';
 import TourSlotModal from './TourSlotModal.jsx';
 import TourComponents from './TourComponents.jsx';
 import TourTeamEditor from './TourTeamEditor.jsx';
@@ -26,7 +27,8 @@ const KIND_TO_ACTIVITY = { private: 'private', business: 'business', group_slot:
 // data is READ-THROUGH from each booking's Deal — this page owns execution
 // (team assignments, group-slot fields); CRM writing (notes/tasks) and the
 // tour LIFECYCLE (cancellation) live on the Deal and are not exposed here.
-// "טופס שיחת תיאום" / "טופס סיכום סיור" are approved placeholders.
+// "טופס סיכום סיור" is live (generic questionnaire engine, purpose=
+// tour_summary); "טופס שיחת תיאום" is still an approved placeholder (Slice 3).
 
 function Chip({ styles, label }) {
   return (
@@ -185,6 +187,27 @@ export default function TourPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false); // collapsed by default
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Tour Summary form (generic questionnaire engine, purpose=tour_summary).
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [summaryStatus, setSummaryStatus] = useState(null); // null | draft | submitted | reviewed
+
+  const refreshSummaryStatus = useCallback(async () => {
+    try {
+      const list = await api.questionnaires.listSubmissions({
+        subjectType: 'tour_event',
+        subjectId: id,
+        purpose: 'tour_summary',
+      });
+      const active = list.find((s) => ['draft', 'submitted', 'reviewed'].includes(s.status));
+      setSummaryStatus(active?.status || null);
+    } catch {
+      setSummaryStatus(null); // status chip is cosmetic — never block the page
+    }
+  }, [id]);
+
+  useEffect(() => {
+    refreshSummaryStatus();
+  }, [refreshSummaryStatus]);
 
   const refresh = useCallback(async () => {
     try {
@@ -293,14 +316,25 @@ export default function TourPage() {
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  {/* Approved placeholder — tour-level form. */}
+                  {/* Tour Summary — one submission per TourEvent, via the
+                      generic questionnaire engine (purpose=tour_summary). */}
                   <button
                     type="button"
-                    disabled
-                    title="בקרוב"
-                    className="hidden cursor-not-allowed rounded-lg border border-gray-200 px-2.5 py-1.5 text-[12px] text-gray-400 sm:inline-block"
+                    onClick={() => setSummaryOpen(true)}
+                    className={`rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold sm:inline-block ${
+                      summaryStatus === 'submitted' || summaryStatus === 'reviewed'
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                        : summaryStatus === 'draft'
+                          ? 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
+                          : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                    }`}
                   >
-                    טופס סיכום סיור
+                    📋 טופס סיכום סיור
+                    {summaryStatus === 'submitted' || summaryStatus === 'reviewed'
+                      ? ' · הוגש'
+                      : summaryStatus === 'draft'
+                        ? ' · בתהליך'
+                        : ''}
                   </button>
                   {isSlot && tour.status !== 'cancelled' && (
                     <button
@@ -389,6 +423,19 @@ export default function TourPage() {
       </div>
 
       <TourSlotModal open={editOpen} tour={tour} onClose={() => setEditOpen(false)} onSaved={refresh} />
+
+      <QuestionnaireFillDialog
+        open={summaryOpen}
+        onClose={() => {
+          setSummaryOpen(false);
+          refreshSummaryStatus();
+        }}
+        purpose="tour_summary"
+        subjectType="tour_event"
+        subjectId={id}
+        title="טופס סיכום סיור"
+        onStatusChange={() => refreshSummaryStatus()}
+      />
 
       <ConfirmDialog
         open={confirmDelete}

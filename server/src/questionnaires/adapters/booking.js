@@ -9,6 +9,9 @@
 
 import { prisma } from '../../db.js';
 import { emitTimelineEvent, systemOrigin } from '../../timeline/events.js';
+import { getPurpose } from '../registry.js';
+
+const formLabel = (purpose) => getPurpose(purpose)?.labelHe || purpose;
 
 const BOOKING_SELECT = {
   id: true, status: true, seats: true,
@@ -122,8 +125,9 @@ export const bookingAdapter = {
     await emitTimelineEvent(tx, {
       subjectType: 'deal',
       subjectId: b.dealId,
-      kind: 'questionnaire_started',
-      data: { submissionId: submission.id, purpose: submission.purpose, bookingId: subjectId },
+      kind: 'questionnaire',
+      body: `📋 טופס "${formLabel(submission.purpose)}" — המילוי החל`,
+      data: { submissionId: submission.id, purpose: submission.purpose, bookingId: subjectId, event: 'started' },
       origin: systemOrigin(),
     });
   },
@@ -134,18 +138,22 @@ export const bookingAdapter = {
       select: { dealId: true, tourEventId: true },
     });
     if (!b) return;
+    const body = `📋 טופס "${formLabel(submission.purpose)}" הוגש`;
+    const data = { submissionId: submission.id, purpose: submission.purpose, bookingId: subjectId, event: 'submitted' };
     await emitTimelineEvent(tx, {
       subjectType: 'deal',
       subjectId: b.dealId,
-      kind: 'questionnaire_submitted',
-      data: { submissionId: submission.id, purpose: submission.purpose, bookingId: subjectId },
+      kind: 'questionnaire',
+      body,
+      data,
       origin: systemOrigin(),
     });
     await emitTimelineEvent(tx, {
       subjectType: 'tour_event',
       subjectId: b.tourEventId,
-      kind: 'questionnaire_submitted',
-      data: { submissionId: submission.id, purpose: submission.purpose, bookingId: subjectId },
+      kind: 'questionnaire',
+      body,
+      data,
       origin: systemOrigin(),
     });
   },
