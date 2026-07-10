@@ -489,6 +489,27 @@ export const api = {
     remove: (id) => request(`/api/task-types/${id}`, { method: 'DELETE' }),
     reorder: (ids) => request('/api/task-types/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
   },
+  // ── Tours catalogs (Settings → Tours) ────────────────────────────
+  activityComponents: {
+    list: (activeOnly = false) =>
+      request(`/api/activity-components${activeOnly ? '?activeOnly=1' : ''}`),
+    create: (data) => request('/api/activity-components', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) =>
+      request(`/api/activity-components/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/activity-components/${id}`, { method: 'DELETE' }),
+    reorder: (ids) =>
+      request('/api/activity-components/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
+  },
+  workshopLocations: {
+    list: (activeOnly = false) =>
+      request(`/api/workshop-locations${activeOnly ? '?activeOnly=1' : ''}`),
+    create: (data) => request('/api/workshop-locations', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) =>
+      request(`/api/workshop-locations/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/workshop-locations/${id}`, { method: 'DELETE' }),
+    reorder: (ids) =>
+      request('/api/workshop-locations/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
+  },
   // ── Deal Tasks (משימות) — future actions on a deal ───────────────
   dealTasks: {
     list: (dealId, status) => request(`/api/deals/${dealId}/tasks${qs({ status })}`),

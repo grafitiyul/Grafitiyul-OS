@@ -3085,3 +3085,41 @@ model TourAssignment {
   @@index([personRefId])
   @@index([externalPersonId])
 }
+
+// ── Activity Components catalog ──────────────────────────────────────────────
+// A small, reusable catalog of the operational building blocks an activity is
+// made of (e.g. "סיור גרפיטי", "סדנת תקליטים", "טעימת אוכל"). A Product declares
+// its DEFAULT components (ProductActivityComponent); a TourEvent stores what is
+// actually being delivered (TourEventActivityComponent, seeded at creation).
+// Soft-delete convention (isActive), same as TaskType/OrganizationType: an entry
+// that was ever used is deactivated, never hard-deleted, so history stays valid.
+model ActivityComponent {
+  id         String   @id @default(cuid())
+  nameHe     String
+  nameEn     String?
+  icon       String? // emoji or short glyph shown on the chip
+  color      String? // tone key from a fixed client palette (emerald|blue|…)
+  isWorkshop Boolean  @default(false) // workshop components carry a WorkshopLocation per tour
+  isActive   Boolean  @default(true)
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([sortOrder])
+}
+
+// Catalog of physical places a workshop component can take place in. Referenced
+// per TourEventActivityComponent row (a tour can hold several workshop
+// components, each in a different place). Same soft-delete convention.
+model WorkshopLocation {
+  id           String   @id @default(cuid())
+  nameHe       String
+  address      String?
+  instructions String? // access / parking / setup notes for the team
+  isActive     Boolean  @default(true)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([sortOrder])
+}

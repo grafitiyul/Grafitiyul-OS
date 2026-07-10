@@ -30,6 +30,8 @@ import dealTasksRouter from './routes/dealTasks.js';
 import dealFilesRouter from './routes/dealFiles.js';
 import icountDocsRouter from './routes/icountDocs.js';
 import taskTypesRouter from './routes/taskTypes.js';
+import activityComponentsRouter from './routes/activityComponents.js';
+import workshopLocationsRouter from './routes/workshopLocations.js';
 import mediaFilesRouter from './routes/mediaFiles.js';
 import locationsRouter from './routes/locations.js';
 import productsRouter from './routes/products.js';
@@ -261,6 +263,8 @@ app.use('/api/email', requireAdminAuth, emailRouter);
 app.use('/api/deal-stages', requireAdminAuth, dealStagesRouter);
 // CRM Task Types catalog (configurable task types behind the Deal task composer).
 app.use('/api/task-types', requireAdminAuth, taskTypesRouter);
+app.use('/api/activity-components', requireAdminAuth, activityComponentsRouter);
+app.use('/api/workshop-locations', requireAdminAuth, workshopLocationsRouter);
 // Quote Module — Slice 1 (quote document foundation). Admin-only. Draft
 // metadata only; no produce/render/public page/signature/PDF/delivery yet.
 app.use('/api/quote-documents', requireAdminAuth, quoteDocumentsRouter);

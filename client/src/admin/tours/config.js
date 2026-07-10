@@ -63,6 +63,36 @@ export const ASSIGNMENT_ROLE_DOTS = {
   workshop_assistant: 'bg-amber-500',
 };
 
+// Activity Component tone palette — the closed set of colors an ActivityComponent
+// can carry (server validates against the same keys in activityCatalog.js). Each
+// tone maps to a soft chip style + a solid dot for the color picker. Tailwind
+// can't generate class names dynamically, so the set is fixed on purpose. Used
+// EVERYWHERE a component chip renders (settings, product defaults, tour modal,
+// deal popover) so a component looks identical across the app.
+export const COMPONENT_TONES = ['slate', 'emerald', 'blue', 'amber', 'rose', 'violet', 'cyan'];
+
+export const COMPONENT_TONE_STYLES = {
+  slate: 'bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-200',
+  emerald: 'bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-200',
+  blue: 'bg-blue-100 text-blue-700 ring-1 ring-inset ring-blue-200',
+  amber: 'bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-200',
+  rose: 'bg-rose-100 text-rose-800 ring-1 ring-inset ring-rose-200',
+  violet: 'bg-violet-100 text-violet-800 ring-1 ring-inset ring-violet-200',
+  cyan: 'bg-cyan-100 text-cyan-800 ring-1 ring-inset ring-cyan-200',
+};
+
+export const COMPONENT_TONE_DOTS = {
+  slate: 'bg-slate-500',
+  emerald: 'bg-emerald-500',
+  blue: 'bg-blue-500',
+  amber: 'bg-amber-500',
+  rose: 'bg-rose-500',
+  violet: 'bg-violet-500',
+  cyan: 'bg-cyan-500',
+};
+
+export const componentToneStyle = (tone) => COMPONENT_TONE_STYLES[tone] || COMPONENT_TONE_STYLES.slate;
+
 // Weekday labels, index = TourScheduleRule.weekday (0=Sunday, JS convention).
 export const WEEKDAY_LABELS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
 

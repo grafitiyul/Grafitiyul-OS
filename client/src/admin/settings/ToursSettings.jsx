@@ -6,6 +6,8 @@ import { api } from '../../lib/api.js';
 import { TimeField } from '../common/pickers/DateTimeFields.jsx';
 import { productContextFor } from '../deals/tourContext.js';
 import { TOUR_LANGS, TOUR_LANG_LABELS, WEEKDAY_LABELS } from '../tours/config.js';
+import ActivityComponentsSettings from '../tours/settings/ActivityComponentsSettings.jsx';
+import WorkshopLocationsSettings from '../tours/settings/WorkshopLocationsSettings.jsx';
 
 // Tours module settings — two sections:
 //   1. AUTOMATIC SCHEDULING (server-backed, live): global defaults + the
@@ -307,6 +309,12 @@ export default function ToursSettings() {
           </>
         )}
       </section>
+
+      {/* ── Activity Components catalog (מרכיבי פעילות) ── */}
+      <ActivityComponentsSettings />
+
+      {/* ── Workshop Locations catalog (מיקומי סדנה) ── */}
+      <WorkshopLocationsSettings />
 
       {/* ── Guide permissions (approved placeholder) ── */}
       <section className="bg-white border border-gray-200 rounded-2xl shadow-sm">
