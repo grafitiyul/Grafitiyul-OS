@@ -42,6 +42,37 @@ export function activityComponentDeletionVerdict(counts = {}) {
   return catalogDeletionVerdict(counts, ['productLinks', 'tourEventLinks']);
 }
 
+// Sanitize a requested ordered list of component ids (Product defaults OR a
+// TourEvent's components) against the catalog. Rules (spec §11):
+//   • duplicates are collapsed, first occurrence wins (order preserved)
+//   • unknown ids are dropped
+//   • an INACTIVE component may not be NEWLY added, but one already present
+//     (existingIds) is kept so retiring a component never corrupts saved config
+// Returns { ids, rejected:[{id,reason}] }. Pure — the caller persists `ids`.
+export function sanitizeComponentSelection(requestedIds, { validIds, activeIds, existingIds = [] } = {}) {
+  const valid = new Set(validIds || []);
+  const active = new Set(activeIds || []);
+  const existing = new Set(existingIds || []);
+  const seen = new Set();
+  const ids = [];
+  const rejected = [];
+  for (const raw of requestedIds || []) {
+    const id = typeof raw === 'string' ? raw : null;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    if (!valid.has(id)) {
+      rejected.push({ id, reason: 'unknown' });
+      continue;
+    }
+    if (!active.has(id) && !existing.has(id)) {
+      rejected.push({ id, reason: 'inactive' });
+      continue;
+    }
+    ids.push(id);
+  }
+  return { ids, rejected };
+}
+
 // WorkshopLocation is referenced only by TourEvent component rows.
 export function workshopLocationDeletionVerdict(counts = {}) {
   return catalogDeletionVerdict(counts, ['tourEventLinks']);

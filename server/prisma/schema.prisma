@@ -1721,6 +1721,7 @@ model Product {
   quoteOffers     QuoteOffer[]
   tourEvents      TourEvent[]
   tourScheduleRules TourScheduleRule[]
+  activityComponents ProductActivityComponent[]
 
   @@index([sortOrder])
 }
@@ -3105,7 +3106,29 @@ model ActivityComponent {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  productLinks ProductActivityComponent[]
+
   @@index([sortOrder])
+}
+
+// Product DEFAULT components — which activity components a Product is composed
+// of by default, and in what order. Seeded onto a TourEvent at creation time
+// (Slice C); after that the tour owns its own components (no live link back).
+// onDelete Restrict on the component keeps a referenced catalog entry from being
+// hard-deleted (the API deactivates instead).
+model ProductActivityComponent {
+  id                  String            @id @default(cuid())
+  product             Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId           String
+  activityComponent   ActivityComponent @relation(fields: [activityComponentId], references: [id], onDelete: Restrict)
+  activityComponentId String
+  sortOrder           Int               @default(0)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  @@unique([productId, activityComponentId])
+  @@index([productId])
+  @@index([activityComponentId])
 }
 
 // Catalog of physical places a workshop component can take place in. Referenced

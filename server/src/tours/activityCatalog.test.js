@@ -7,6 +7,7 @@ import {
   DEFAULT_ACTIVITY_COMPONENTS,
   activityComponentDeletionVerdict,
   workshopLocationDeletionVerdict,
+  sanitizeComponentSelection,
 } from './activityCatalog.js';
 
 // Pure catalog logic (Slice A). No DB — same style as productDeletionVerdict.
@@ -47,4 +48,42 @@ test('workshop location used by a tour → blocked; unused → allowed', () => {
   assert.equal(workshopLocationDeletionVerdict({ tourEventLinks: 3 }).canHardDelete, false);
   assert.equal(workshopLocationDeletionVerdict({}).canHardDelete, true);
   assert.equal(workshopLocationDeletionVerdict().canHardDelete, true);
+});
+
+// ── sanitizeComponentSelection (Product defaults + Tour components) ──
+
+const CAT = { validIds: ['a', 'b', 'c'], activeIds: ['a', 'b'] };
+
+test('selection preserves requested order', () => {
+  assert.deepEqual(sanitizeComponentSelection(['b', 'a'], CAT).ids, ['b', 'a']);
+});
+
+test('selection collapses duplicates, first occurrence wins', () => {
+  assert.deepEqual(sanitizeComponentSelection(['a', 'b', 'a'], CAT).ids, ['a', 'b']);
+});
+
+test('selection drops unknown ids', () => {
+  const r = sanitizeComponentSelection(['a', 'zzz', 'b'], CAT);
+  assert.deepEqual(r.ids, ['a', 'b']);
+  assert.deepEqual(r.rejected, [{ id: 'zzz', reason: 'unknown' }]);
+});
+
+test('selection blocks NEWLY adding an inactive component', () => {
+  // c is valid but inactive and not already linked → rejected.
+  const r = sanitizeComponentSelection(['a', 'c'], CAT);
+  assert.deepEqual(r.ids, ['a']);
+  assert.deepEqual(r.rejected, [{ id: 'c', reason: 'inactive' }]);
+});
+
+test('selection keeps an inactive component that was ALREADY linked', () => {
+  // retiring a component must not corrupt saved config that already used it.
+  const r = sanitizeComponentSelection(['a', 'c'], { ...CAT, existingIds: ['c'] });
+  assert.deepEqual(r.ids, ['a', 'c']);
+  assert.deepEqual(r.rejected, []);
+});
+
+test('selection tolerates empty / non-array input', () => {
+  assert.deepEqual(sanitizeComponentSelection(undefined, CAT).ids, []);
+  assert.deepEqual(sanitizeComponentSelection([], CAT).ids, []);
+  assert.deepEqual(sanitizeComponentSelection([null, 1, {}], CAT).ids, []);
 });
