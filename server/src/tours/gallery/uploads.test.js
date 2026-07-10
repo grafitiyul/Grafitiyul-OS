@@ -306,6 +306,23 @@ test('bulk delete: soft-deletes rows, removes objects, clears cover, ONE event',
   assert.equal(state.events.length - before, 1, 'one batch event, not one per photo');
 });
 
+test('customer uploads: attribution preserved (type=customer + link id), no approval gate', async () => {
+  const { db, state } = fakeDb();
+  const storage = fakeStorage();
+  const res = await initiateUploadBatch(db, {
+    tour: TOUR,
+    uploader: { type: 'customer', linkId: 'link1', label: 'לקוח' },
+    files: [{ clientKey: 'a', fileName: 'guest.jpg', mimeType: 'image/jpeg', byteSize: 10 }],
+  });
+  const row = state.mediaRows.get(res.accepted[0].mediaId);
+  assert.equal(row.uploadedByType, 'customer');
+  assert.equal(row.uploadedByLinkId, 'link1');
+  // Completing makes it READY immediately — customer media never waits for
+  // any staff approval state.
+  const done = await completeUpload(db, row, {}, { storage, origin: {} });
+  assert.equal(done.media.uploadStatus, 'ready');
+});
+
 // ---------- sniffer ----------
 
 test('detectMime: HEIC/AVIF brands are stills, not mp4', () => {

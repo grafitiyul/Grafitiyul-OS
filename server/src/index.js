@@ -18,6 +18,7 @@ import peopleRouter from './routes/people.js';
 import exportsRouter from './routes/exports.js';
 import portalRouter from './routes/portal.js';
 import portalGalleryRouter from './routes/portalGallery.js';
+import publicGalleryRouter from './routes/publicGallery.js';
 import adminUsersRouter from './routes/adminUsers.js';
 import organizationsRouter from './routes/organizations.js';
 import organizationTypesRouter from './routes/organizationTypes.js';
@@ -184,6 +185,9 @@ app.use('/api/portal', portalRouter);
 // settings-gated delete/share). Same portal-token credential; separate router
 // so the task-feed router stays focused.
 app.use('/api/portal', portalGalleryRouter);
+// PUBLIC customer tour gallery — capability-URL token (/g/<token> page).
+// View/upload/download only; identity always derives from the token.
+app.use('/api/gallery', publicGalleryRouter);
 // Public customer quote page — token-gated (QuoteDocument.publicToken), no auth.
 app.use('/api/public', publicQuoteRouter);
 // Public questionnaire fill (coordination forms etc.) — token-gated

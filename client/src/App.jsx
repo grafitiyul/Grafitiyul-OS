@@ -18,6 +18,7 @@ import QuestionEditor from './admin/procedures/bank/QuestionEditor.jsx';
 import { FlowEntry, AttemptRuntime } from './learner/LearnerRuntime.jsx';
 import GuidePortal from './portal/GuidePortal.jsx';
 import GuideTourGallery from './portal/GuideTourGallery.jsx';
+import CustomerGalleryPage from './gallery/CustomerGalleryPage.jsx';
 import InstallGuidePage from './portal/InstallGuidePage.jsx';
 import DocumentsLayout from './admin/documents/DocumentsLayout.jsx';
 import DocumentsIndexPage from './admin/documents/index_/DocumentsIndexPage.jsx';
@@ -278,6 +279,8 @@ export default function App() {
       <Route path="/p/:token" element={<GuidePortal />} />
       {/* Guide Portal → one tour's gallery (mobile-first upload + grid). */}
       <Route path="/p/:token/tour/:tourEventId" element={<GuideTourGallery />} />
+      {/* PUBLIC customer tour gallery — capability URL, branded event page. */}
+      <Route path="/g/:token" element={<CustomerGalleryPage />} />
       {/* Public customer quote page — token-gated (QuoteDocument.publicToken),
           no admin auth. The customer-facing proposal viewer + signature flow. */}
       <Route path="/quote/:token" element={<CustomerQuoteView />} />
