@@ -14,6 +14,13 @@ import {
   rotateGalleryLink,
   revokeGalleryLinks,
 } from '../tours/gallery/service.js';
+import {
+  abortUpload,
+  completeUpload,
+  deleteMediaBatch,
+  getUploadTargets,
+  initiateUploadBatch,
+} from '../tours/gallery/uploads.js';
 
 // Staff/office Tour Gallery API — mounted at /api/tour-gallery behind
 // requireAdminAuth. Objects are PRIVATE (same contract as DealFile): no public
@@ -247,6 +254,104 @@ router.put(
       origin: await userOrigin(req.adminAuth?.userId),
     });
     res.json({ coverMediaId: mediaId });
+  }),
+);
+
+// ---------- direct-to-R2 uploads (office actor) ----------
+// Same engine the guide/customer surfaces use — only the resolved uploader
+// identity differs. Bytes never pass through this server.
+
+async function officeUploader(req) {
+  const u = await prisma.adminUser.findUnique({
+    where: { id: req.adminAuth?.userId || '' },
+    select: { username: true },
+  });
+  return { type: 'office', userId: req.adminAuth?.userId || null, label: u?.username || 'משרד' };
+}
+
+// POST /:tourEventId/uploads — { files: [{ clientKey, fileName, mimeType,
+// byteSize, capturedAt? }] } → pending rows + per-file upload plan.
+router.post(
+  '/:tourEventId/uploads',
+  handle(async (req, res) => {
+    const tour = await ensureTour(req, res);
+    if (!tour) return;
+    if (!r2.isConfigured()) return res.status(503).json({ error: 'r2_not_configured' });
+    const result = await initiateUploadBatch(prisma, {
+      tour,
+      uploader: await officeUploader(req),
+      files: req.body?.files,
+    });
+    if (result.error) return res.status(409).json({ error: result.error });
+    res.status(201).json(result);
+  }),
+);
+
+async function ensurePendingMedia(req, res) {
+  const media = await prisma.tourMedia.findFirst({
+    where: { id: req.params.mediaId, tourEventId: req.params.tourEventId, deletedAt: null },
+  });
+  if (!media) {
+    res.status(404).json({ error: 'not_found' });
+    return null;
+  }
+  return media;
+}
+
+// POST /:tourEventId/uploads/:mediaId/urls — fresh presigned target(s).
+router.post(
+  '/:tourEventId/uploads/:mediaId/urls',
+  handle(async (req, res) => {
+    const media = await ensurePendingMedia(req, res);
+    if (!media) return;
+    const out = await getUploadTargets(prisma, media, req.body || {});
+    if (out.error) return res.status(out.status || 409).json({ error: out.error });
+    res.set('Cache-Control', 'no-store');
+    res.json(out);
+  }),
+);
+
+// POST /:tourEventId/uploads/:mediaId/complete — verify + flip to ready.
+router.post(
+  '/:tourEventId/uploads/:mediaId/complete',
+  handle(async (req, res) => {
+    const media = await ensurePendingMedia(req, res);
+    if (!media) return;
+    const result = await completeUpload(prisma, media, req.body || {}, {
+      origin: await userOrigin(req.adminAuth?.userId),
+    });
+    if (result.error) return res.status(result.status || 409).json({ error: result.error });
+    res.json(await mediaToClient(result.media));
+  }),
+);
+
+// POST /:tourEventId/uploads/:mediaId/abort — drop a pending upload.
+router.post(
+  '/:tourEventId/uploads/:mediaId/abort',
+  handle(async (req, res) => {
+    const media = await ensurePendingMedia(req, res);
+    if (!media) return;
+    const result = await abortUpload(prisma, media);
+    if (result.error) return res.status(result.status || 409).json({ error: result.error });
+    res.status(204).end();
+  }),
+);
+
+// POST /:tourEventId/media/delete — bulk soft-delete + R2 removal.
+router.post(
+  '/:tourEventId/media/delete',
+  handle(async (req, res) => {
+    const tour = await ensureTour(req, res);
+    if (!tour) return;
+    const u = await officeUploader(req);
+    const result = await deleteMediaBatch(prisma, {
+      tourEventId: tour.id,
+      ids: req.body?.ids,
+      deletedById: req.adminAuth?.userId || null,
+      deletedByLabel: u.label,
+      origin: await userOrigin(req.adminAuth?.userId),
+    });
+    res.json(result);
   }),
 );
 

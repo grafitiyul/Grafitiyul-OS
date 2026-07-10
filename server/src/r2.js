@@ -3,9 +3,14 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   DeleteObjectCommand,
   DeleteObjectsCommand,
   ListObjectsV2Command,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  ListPartsCommand,
   ListMultipartUploadsCommand,
   AbortMultipartUploadCommand,
 } from '@aws-sdk/client-s3';
@@ -74,13 +79,108 @@ export function publicUrl(key) {
   return `${base}/${key}`;
 }
 
-export async function presignPut({ key, contentType }) {
+export async function presignPut({ key, contentType, expiresIn = 300 }) {
   const cmd = new PutObjectCommand({
     Bucket: R2_BUCKET,
     Key: key,
     ContentType: contentType,
   });
-  return getSignedUrl(client(), cmd, { expiresIn: 300 }); // 5 minutes
+  return getSignedUrl(client(), cmd, { expiresIn });
+}
+
+// ── Multipart (large direct-to-R2 uploads) ───────────────────────────────────
+// The GOS server only ORCHESTRATES: it creates the upload, presigns part URLs
+// on demand (long batches outlive any single URL's expiry), and completes.
+// Bytes always flow client → R2, never through Express.
+
+export async function createMultipartUpload({ key, contentType }) {
+  const out = await client().send(
+    new CreateMultipartUploadCommand({
+      Bucket: R2_BUCKET,
+      Key: key,
+      ContentType: contentType || 'application/octet-stream',
+    }),
+  );
+  return out.UploadId;
+}
+
+export async function presignUploadPart({ key, uploadId, partNumber, expiresIn = 3600 }) {
+  const cmd = new UploadPartCommand({
+    Bucket: R2_BUCKET,
+    Key: key,
+    UploadId: uploadId,
+    PartNumber: partNumber,
+  });
+  return getSignedUrl(client(), cmd, { expiresIn });
+}
+
+// Uploaded parts as R2 sees them (paged). Completion uses THIS list — the
+// client never needs to read ETag response headers (no CORS ExposeHeaders
+// dependency), and a lying client cannot fabricate parts.
+export async function listParts({ key, uploadId }) {
+  const parts = [];
+  let marker;
+  do {
+    const out = await client().send(
+      new ListPartsCommand({
+        Bucket: R2_BUCKET,
+        Key: key,
+        UploadId: uploadId,
+        PartNumberMarker: marker,
+      }),
+    );
+    for (const p of out.Parts || []) {
+      parts.push({ partNumber: p.PartNumber, etag: p.ETag, size: p.Size });
+    }
+    marker = out.IsTruncated ? out.NextPartNumberMarker : undefined;
+  } while (marker);
+  return parts;
+}
+
+export async function completeMultipartUpload({ key, uploadId, parts }) {
+  await client().send(
+    new CompleteMultipartUploadCommand({
+      Bucket: R2_BUCKET,
+      Key: key,
+      UploadId: uploadId,
+      MultipartUpload: {
+        Parts: parts
+          .slice()
+          .sort((a, b) => a.partNumber - b.partNumber)
+          .map((p) => ({ PartNumber: p.partNumber, ETag: p.etag })),
+      },
+    }),
+  );
+}
+
+// Object metadata, or null when the key doesn't exist.
+export async function headObject(key) {
+  try {
+    const out = await client().send(new HeadObjectCommand({ Bucket: R2_BUCKET, Key: key }));
+    return {
+      size: Number(out.ContentLength ?? 0),
+      contentType: out.ContentType || null,
+      etag: out.ETag || null,
+    };
+  } catch (e) {
+    if (e?.name === 'NotFound' || e?.$metadata?.httpStatusCode === 404) return null;
+    throw e;
+  }
+}
+
+// First bytes of an object (magic-byte verification after direct uploads —
+// the server never trusts the browser's declared Content-Type).
+export async function getObjectRange(key, start, endInclusive) {
+  const out = await client().send(
+    new GetObjectCommand({
+      Bucket: R2_BUCKET,
+      Key: key,
+      Range: `bytes=${start}-${endInclusive}`,
+    }),
+  );
+  const chunks = [];
+  for await (const chunk of out.Body) chunks.push(chunk);
+  return Buffer.concat(chunks);
 }
 
 // Server-side upload for bytes the SERVER already holds (e.g. email attachments

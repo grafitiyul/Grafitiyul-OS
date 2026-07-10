@@ -62,10 +62,13 @@ export function detectMime(buf) {
     return 'video/ogg';
   }
 
-  // ISO BMFF (MP4 / MOV / 3GP family): "ftyp" at offset 4, brand at offset 8.
+  // ISO BMFF ("ftyp" at offset 4, brand at offset 8) — the container family
+  // covers BOTH videos (MP4/MOV/3GP) and stills (HEIC/AVIF, iPhone originals).
   if (b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70) {
     const brand = String.fromCharCode(b[8], b[9], b[10], b[11]);
     if (brand.startsWith('qt')) return 'video/quicktime';
+    if (['heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1'].includes(brand)) return 'image/heic';
+    if (brand === 'avif' || brand === 'avis') return 'image/avif';
     // isom, iso2, mp41, mp42, avc1, dash, M4V, M4A, 3gp*, etc → treat as mp4.
     return 'video/mp4';
   }
