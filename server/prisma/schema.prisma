@@ -3178,3 +3178,292 @@ model TourEventActivityComponent {
   @@index([activityComponentId])
   @@index([workshopLocationId])
 }
+
+// ============================================================================
+// QUESTIONNAIRE ENGINE (generic, blueprint: docs/architecture/
+// questionnaire-engine-design.md)
+// ============================================================================
+// ONE generic engine; consumers supply (subjectType, subjectId, purpose).
+// Definition cluster (Template → Version → Section → Question → Option) is
+// FROZEN on publish; response cluster (Submission → Answer) is frozen forever.
+// This is a separate system from the Flow/learning engine — zero shared
+// tables, different semantics (one-shot subject-bound forms vs. attempt/
+// review learning).
+//
+// All human-facing strings are localized JSON maps { he, en, … } — a new
+// language never needs a schema change (§11).
+
+// The stable identity of a form across all its versions. Holds what KIND of
+// form this is — never its questions (those live on a version).
+model QuestionnaireTemplate {
+  id           String  @id @default(cuid())
+  // Stable machine slug (e.g. 'tour_coordination') — consumer-facing handle.
+  key          String  @unique
+  // Business purpose (registry-validated: tour_summary | coordination |
+  // general | future). Orthogonal to subject: purpose = WHY the form exists.
+  purpose      String
+  // Admin-facing name (list screens); public title is localized below.
+  internalName String
+  title        Json
+  description  Json?
+  // draft | active | archived — 'active' + a published version = live form.
+  status       String  @default("draft")
+  // public | staff | both — governs whether public links may be issued.
+  audience     String  @default("staff")
+
+  defaultLanguage    String   @default("he")
+  supportedLanguages String[] @default(["he"])
+
+  // One ACTIVE submission per (subjectType, subjectId, purpose) — enforced by
+  // QuestionnaireSubmission.singletonKey (unique, null = unbound/non-singleton).
+  singletonPerSubject Boolean @default(true)
+  // Policy when a filler resumes a draft whose version was superseded.
+  allowResumeOnOldVersion Boolean @default(true)
+
+  // The published version NEW submissions use. In-flight submissions keep the
+  // version they started on. SetNull can never fire in practice (published
+  // versions are undeletable via service guards) but keeps the FK honest.
+  currentVersionId String?               @unique
+  currentVersion   QuestionnaireVersion? @relation("TemplateCurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+
+  versions       QuestionnaireVersion[]       @relation("TemplateVersions")
+  submissions    QuestionnaireSubmission[]
+  links          QuestionnaireLink[]
+  purposeConfigs QuestionnairePurposeConfig[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([purpose, status])
+}
+
+// The frozen structural snapshot — versioning's heart (§6). A published
+// version is IMMUTABLE: the service refuses structural writes; editing a live
+// form auto-creates the next draft version. Old submissions keep pointing at
+// their old version, so "editing a template never changes previous answers"
+// is structurally impossible to get wrong.
+model QuestionnaireVersion {
+  id         String                @id @default(cuid())
+  template   QuestionnaireTemplate @relation("TemplateVersions", fields: [templateId], references: [id], onDelete: Cascade)
+  templateId String
+  versionNo  Int
+  // draft | published | archived
+  status      String    @default("draft")
+  publishedAt DateTime?
+  // Changelog note for the version-history panel.
+  notes       String?
+  // Localized rich intro (shown before section 1) and outro (thank-you).
+  intro Json?
+  outro Json?
+  // full_list | step_by_step — fill-runtime layout.
+  displayMode String @default("full_list")
+
+  sections    QuestionnaireSection[]
+  questions   QuestionnaireQuestion[]
+  submissions QuestionnaireSubmission[]
+  currentFor  QuestionnaireTemplate?    @relation("TemplateCurrentVersion")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([templateId, versionNo])
+  @@index([templateId, status])
+}
+
+// First-class ordered section (§2). `key` is stable across version clones —
+// it survives reorder and is the durable identity inside a template.
+model QuestionnaireSection {
+  id          String               @id @default(cuid())
+  version     QuestionnaireVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  versionId   String
+  key         String
+  title       Json
+  description Json?
+  sortOrder   Int     @default(0)
+  collapsible        Boolean @default(false)
+  collapsedByDefault Boolean @default(false)
+  // Conditional visibility (capped grammar, shared evaluator). May reference
+  // only questions from EARLIER sections — enforced at publish.
+  visibleWhen Json?
+
+  questions QuestionnaireQuestion[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([versionId, key])
+  @@index([versionId, sortOrder])
+}
+
+// A field. `key` is the identity answers + conditions bind to (stable across
+// versions); `type` comes from the server-side type registry
+// (server/src/questionnaires/types.js); `config` holds type-specific settings
+// (min/max, maxLength, allowOther, scaleMax, …).
+model QuestionnaireQuestion {
+  id        String               @id @default(cuid())
+  version   QuestionnaireVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  versionId String
+  section   QuestionnaireSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  sectionId String
+  key       String
+  type      String
+  label     Json
+  helpText    Json?
+  placeholder Json?
+  required  Boolean @default(false)
+  sortOrder Int     @default(0)
+  config    Json?
+  // Backward-only conditional visibility (enforced at publish → acyclic).
+  visibleWhen Json?
+
+  options QuestionnaireQuestionOption[]
+  answers QuestionnaireAnswer[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([versionId, key])
+  @@index([sectionId, sortOrder])
+  @@index([versionId])
+}
+
+model QuestionnaireQuestionOption {
+  id         String                @id @default(cuid())
+  question   QuestionnaireQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  questionId String
+  // Stable machine value stored in answers; label is the localized display.
+  value     String
+  label     Json
+  sortOrder Int    @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([questionId, value])
+  @@index([questionId, sortOrder])
+}
+
+// One response instance (§2). Pins the EXACT version it was filled against;
+// polymorphic subject (no FK — the Subject Adapter Registry validates
+// existence; subjectSnapshot preserves display context if the subject is
+// later deleted). Immutable after submit — answer writes are refused.
+model QuestionnaireSubmission {
+  id         String                @id @default(cuid())
+  template   QuestionnaireTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  templateId String
+  version    QuestionnaireVersion  @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  versionId  String
+
+  // Polymorphic subject binding (§4): booking | tour_event | future types.
+  // Null = unbound (anonymous survey, purpose must allow it).
+  subjectType String?
+  subjectId   String?
+  // Denormalized from the template for indexing/reporting without a join.
+  purpose     String
+
+  // draft | submitted | reviewed | void
+  status   String @default("draft")
+  // Language the responder actually filled in (snapshots resolve to it).
+  language String @default("he")
+
+  // Who filled: public (customer via token link) | staff | system. staff →
+  // submittedByRef = AdminUser.id (+ optional PersonRef handle in meta).
+  submittedByType String  @default("staff")
+  submittedByRef  String?
+  submittedByName String?
+
+  // The public link used (Slice 3+); survives link revocation via SetNull.
+  link   QuestionnaireLink? @relation(fields: [linkId], references: [id], onDelete: SetNull)
+  linkId String?
+
+  // Frozen display context of the subject at start time (survives deletion).
+  subjectSnapshot Json?
+  // UTM / channel / device etc. (reserved).
+  meta Json?
+
+  // DB-enforced one-active-submission-per-subject:
+  //   `${subjectType}:${subjectId}:${purpose}` while status is draft/
+  //   submitted/reviewed on a singleton template; NULL otherwise (Postgres
+  //   allows many NULLs). Cleared when a submission is voided.
+  singletonKey String? @unique
+
+  startedAt   DateTime  @default(now())
+  submittedAt DateTime?
+
+  answers QuestionnaireAnswer[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([subjectType, subjectId, purpose, status])
+  @@index([templateId, status])
+  @@index([versionId])
+}
+
+// One answer. `questionKey` + `questionSnapshot` make the row renderable
+// forever, independent of the version tree (§7 layer 2): snapshot freezes the
+// RESOLVED single-language view (label/options/config) the responder saw.
+// questionId is a soft link (SetNull) — history survives anything.
+model QuestionnaireAnswer {
+  id           String                  @id @default(cuid())
+  submission   QuestionnaireSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  submissionId String
+  question     QuestionnaireQuestion?  @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  questionId   String?
+  questionKey  String
+  // string | number | boolean | string[] — validated by the type registry.
+  value Json?
+  // Frozen at submit; null while the submission is a draft.
+  questionSnapshot Json?
+  // Render-order snapshot (document order at submit time).
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([submissionId, questionKey])
+  @@index([questionId])
+}
+
+// Public capability token (§12) — binds a URL to (subject, purpose, template).
+// GOS-native convention: high-entropy plaintext token, exact-match resolve,
+// no enumeration (same as QuoteDocument.publicToken / portalToken).
+model QuestionnaireLink {
+  id         String                @id @default(cuid())
+  template   QuestionnaireTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  templateId String
+
+  subjectType String?
+  subjectId   String?
+  purpose     String
+
+  token String @unique
+  // Force a language (e.g. from TourEvent.tourLanguage); null → resolve chain.
+  language String?
+  label    String?
+  expiresAt  DateTime?
+  singleUse  Boolean   @default(false)
+  isActive   Boolean   @default(true)
+  lastUsedAt DateTime?
+
+  submissions QuestionnaireSubmission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([subjectType, subjectId, purpose])
+  @@index([templateId])
+}
+
+// Which template serves a business purpose (settings surface: the tour
+// summary / coordination cards pick a template here). SetNull — deleting a
+// template leaves the purpose unconfigured, never dangling.
+model QuestionnairePurposeConfig {
+  id         String                 @id @default(cuid())
+  purpose    String                 @unique
+  template   QuestionnaireTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  templateId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

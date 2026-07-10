@@ -68,6 +68,7 @@ import emailRouter from './routes/email.js';
 import emailTrackingRouter from './routes/emailTracking.js';
 import { startScheduledWorker } from './whatsapp/scheduledWorker.js';
 import { startEmailSyncWorker } from './email/syncWorker.js';
+import questionnairesRouter from './routes/questionnaires.js';
 import { makeLegacyRedirect } from './legacyRedirect.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -309,6 +310,10 @@ app.use('/api/tour-content', requireAdminAuth, tourContentRouter);
 // tour CONTENT routes above; see server/src/routes/tours.js for the ownership
 // contract (group slots managed here, private/business mirror their deal).
 app.use('/api/tours', requireAdminAuth, toursRouter);
+// Questionnaire Engine (generic — blueprint: docs/architecture/questionnaire-
+// engine-design.md). Admin builder + staff submission flows. Public
+// token-link routes are a separate, later-mounted public router (Slice 3).
+app.use('/api/questionnaires', requireAdminAuth, questionnairesRouter);
 
 // Unknown /api/* paths get a real JSON 404 instead of falling through to
 // the SPA fallback (which would serve HTML for an API request).

@@ -50,6 +50,10 @@ import DealDetail from './admin/deals/DealDetail.jsx';
 import QuotePreviewCanvas from './admin/quote/QuotePreviewCanvas.jsx';
 import QuoteSnapshotView from './admin/quote/QuoteSnapshotView.jsx';
 import CustomerQuoteView from './quote/CustomerQuoteView.jsx';
+// Questionnaire Engine — template list + builder + new-tab preview.
+import QuestionnairesPage from './admin/questionnaires/QuestionnairesPage.jsx';
+import QuestionnaireBuilderPage from './admin/questionnaires/QuestionnaireBuilderPage.jsx';
+import QuestionnairePreviewPage from './admin/questionnaires/QuestionnairePreviewPage.jsx';
 // Global Settings module (low-frequency configuration).
 import SettingsHome from './admin/settings/SettingsHome.jsx';
 import ToursSettings from './admin/settings/ToursSettings.jsx';
@@ -171,6 +175,10 @@ export default function App() {
         <Route path="tours" element={<AdminToursPage />}>
           <Route path=":id" element={<TourEventPage />} />
         </Route>
+        {/* Questionnaire Engine — generic templates (tour summary /
+            coordination / future forms). List + per-template builder. */}
+        <Route path="questionnaires" element={<QuestionnairesPage />} />
+        <Route path="questionnaires/:id" element={<QuestionnaireBuilderPage />} />
         {/* Quote Preview Canvas (Slice 3) — internal admin draft workspace,
             opened from a Deal. NOT the public quote page. */}
         <Route path="quote/:dealId" element={<QuotePreviewCanvas />} />
@@ -272,6 +280,9 @@ export default function App() {
       {/* Read-only station preview (Tour Content) — opened in a new tab from the
           station editor. Uses the admin session; renders visible parts + media. */}
       <Route path="/preview/tour-station/:stationId" element={<TcStationPreview />} />
+      {/* Questionnaire builder preview — new tab, real fill runtime, never
+          saves. Data loads through the admin session (same as tour-station). */}
+      <Route path="/preview/questionnaire/:versionId" element={<QuestionnairePreviewPage />} />
       {/* TEMPORARY public-website foundation preview (Phase 1/2). Removed at
           Step 4 when the public site takes over root "/". */}
       <Route path="/__preview/public" element={<PublicApp />} />

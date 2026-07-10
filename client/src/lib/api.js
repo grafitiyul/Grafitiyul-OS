@@ -1187,4 +1187,55 @@ export const api = {
     reorderNotes: (stationId, order) =>
       request(`/api/tour-content/stations/${stationId}/notes/reorder`, { method: 'PUT', body: JSON.stringify({ order }) }),
   },
+
+  // Questionnaire Engine — generic templates/versions/sections/questions +
+  // submissions (blueprint: docs/architecture/questionnaire-engine-design.md).
+  questionnaires: {
+    list: (params) => request(`/api/questionnaires${qs(params)}`),
+    get: (id) => request(`/api/questionnaires/${id}`),
+    create: (data) => request('/api/questionnaires', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/api/questionnaires/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/questionnaires/${id}`, { method: 'DELETE' }),
+    purposes: () => request('/api/questionnaires/purposes'),
+    setPurposeConfig: (purpose, templateId) =>
+      request(`/api/questionnaires/purpose-config/${purpose}`, { method: 'PUT', body: JSON.stringify({ templateId }) }),
+    // Versions (draft-only writes; publish freezes)
+    getVersion: (versionId) => request(`/api/questionnaires/versions/${versionId}`),
+    updateVersion: (versionId, data) =>
+      request(`/api/questionnaires/versions/${versionId}`, { method: 'PUT', body: JSON.stringify(data) }),
+    publishVersion: (versionId) =>
+      request(`/api/questionnaires/versions/${versionId}/publish`, { method: 'POST' }),
+    createNextDraft: (templateId) =>
+      request(`/api/questionnaires/${templateId}/versions`, { method: 'POST' }),
+    updateLayout: (versionId, layout) =>
+      request(`/api/questionnaires/versions/${versionId}/layout`, { method: 'PUT', body: JSON.stringify(layout) }),
+    // Structure
+    createSection: (versionId, data) =>
+      request(`/api/questionnaires/versions/${versionId}/sections`, { method: 'POST', body: JSON.stringify(data) }),
+    updateSection: (sectionId, data) =>
+      request(`/api/questionnaires/sections/${sectionId}`, { method: 'PUT', body: JSON.stringify(data) }),
+    removeSection: (sectionId) => request(`/api/questionnaires/sections/${sectionId}`, { method: 'DELETE' }),
+    createQuestion: (sectionId, data) =>
+      request(`/api/questionnaires/sections/${sectionId}/questions`, { method: 'POST', body: JSON.stringify(data) }),
+    updateQuestion: (questionId, data) =>
+      request(`/api/questionnaires/questions/${questionId}`, { method: 'PUT', body: JSON.stringify(data) }),
+    removeQuestion: (questionId) => request(`/api/questionnaires/questions/${questionId}`, { method: 'DELETE' }),
+    createOption: (questionId, data) =>
+      request(`/api/questionnaires/questions/${questionId}/options`, { method: 'POST', body: JSON.stringify(data) }),
+    updateOption: (optionId, data) =>
+      request(`/api/questionnaires/options/${optionId}`, { method: 'PUT', body: JSON.stringify(data) }),
+    removeOption: (optionId) => request(`/api/questionnaires/options/${optionId}`, { method: 'DELETE' }),
+    reorderOptions: (questionId, ids) =>
+      request(`/api/questionnaires/questions/${questionId}/options/reorder`, { method: 'PUT', body: JSON.stringify({ ids }) }),
+    // Submissions (staff flows; public token flows arrive in Slice 3)
+    listSubmissions: (params) => request(`/api/questionnaires/submissions${qs(params)}`),
+    startSubmission: (data) =>
+      request('/api/questionnaires/submissions/start', { method: 'POST', body: JSON.stringify(data) }),
+    getSubmission: (id) => request(`/api/questionnaires/submissions/${id}`),
+    saveAnswers: (id, answers) =>
+      request(`/api/questionnaires/submissions/${id}/answers`, { method: 'PUT', body: JSON.stringify({ answers }) }),
+    submit: (id, answers) =>
+      request(`/api/questionnaires/submissions/${id}/submit`, { method: 'POST', body: JSON.stringify({ answers }) }),
+    voidSubmission: (id) => request(`/api/questionnaires/submissions/${id}/void`, { method: 'POST' }),
+  },
 };

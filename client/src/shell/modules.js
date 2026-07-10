@@ -33,6 +33,10 @@ export const BOTTOM_MODULES = [
   { key: 'tour-content', to: '/admin/tour-content', label: 'תוכן סיורים', glyph: '🗺️' },
   { key: 'documents', to: '/admin/documents', label: 'מסמכים', glyph: '📄' },
   { key: 'procedures', to: '/admin/procedures', label: 'נהלים', glyph: '☰' },
+  // Questionnaire Engine — generic form templates (tour summary, coordination,
+  // future CRM/HR forms). The builder + template list live here; consumers
+  // (tour modal, booking cards) open the fill runtime from their own screens.
+  { key: 'questionnaires', to: '/admin/questionnaires', label: 'שאלונים', glyph: '📋' },
   { key: 'settings', to: '/admin/settings', label: 'הגדרות', glyph: '⚙️' },
   { key: 'users', to: '/admin/users', label: 'משתמשים', glyph: '🔐' },
 ];
