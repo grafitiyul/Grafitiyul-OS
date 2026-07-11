@@ -21,6 +21,7 @@ import {
   orphanDealBooking,
   syncDealToTour,
   pendingTourUpdate,
+  copyTourStateToPlan,
   GROUP_LOCKED_FIELDS,
 } from '../tours/tourFromDeal.js';
 
@@ -533,8 +534,28 @@ router.put(
           }
         } else if (activeBooking && reopenTransition) {
           if (b.tourChoice === 'remove') {
+            // Return-to-planning: BEFORE the cancel, copy the tour's
+            // operational state (team/components/notes) back onto the deal's
+            // DealTourPlan — a future WON recreates the tour from it. Group
+            // slots are excluded (the slot and its state live on).
+            if (activeBooking.tourEvent.kind !== 'group_slot') {
+              const saved = await copyTourStateToPlan(tx, updated.id, activeBooking.tourEventId);
+              await emitTimelineEvent(tx, {
+                subjectType: 'deal',
+                subjectId: updated.id,
+                kind: 'tour',
+                data: {
+                  event: 'tour_state_saved_to_plan',
+                  tourEventId: activeBooking.tourEventId,
+                  ...saved,
+                },
+                origin,
+              });
+            }
             await cancelDealBooking(tx, activeBooking, { reason: 'deal_reopened', origin });
           } else {
+            // 'keep' — detach path (orphan). Deliberately KEPT in the
+            // architecture even though the UI currently exposes only cancel.
             await orphanDealBooking(tx, activeBooking, { origin });
           }
         } else if (activeBooking && lostTransition) {

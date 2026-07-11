@@ -44,7 +44,6 @@ import DealTourSummary from '../tours/DealTourSummary.jsx';
 import DealTourPlanning from '../tours/DealTourPlanning.jsx';
 import PendingTourUpdateBar from './PendingTourUpdateBar.jsx';
 import { fmtTourDate } from '../tours/config.js';
-import { notifyOrphansChanged } from '../../shell/OrphanToursIndicator.jsx';
 
 const INPUT =
   'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400';
@@ -127,11 +126,14 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   // fields, no draft tours) — these render the server's answers:
   //   • wonMissing: the 422 checklist ("להשלים לפני WON")
   //   • slotPickerFor: 'won' (first WON of a group deal) | 'assign' (שבץ/החלף)
-  //   • reopenChoiceTour: the 409 reopen choice (remove from tour / keep)
+  //   • reopenConfirmTour: REOPEN always cancels the tour (product decision) —
+  //     this is the explicit confirmation before it happens. The server keeps
+  //     the 'keep'/detach path internally; the UI deliberately exposes only
+  //     cancel for now.
   //   • lostPending: LOST needs explicit tour-cancel confirmation
   const [wonMissing, setWonMissing] = useState(null);
   const [slotPickerFor, setSlotPickerFor] = useState(null);
-  const [reopenChoiceTour, setReopenChoiceTour] = useState(null);
+  const [reopenConfirmTour, setReopenConfirmTour] = useState(null);
   const [lostPending, setLostPending] = useState(null);
   // Pending Tour Update actions + the leave-with-pending confirmation target.
   const [tourUpdateBusy, setTourUpdateBusy] = useState(false);
@@ -362,6 +364,18 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
       setLostOpen(true);
       return;
     }
+    // REOPEN of a deal with a live tour: confirm FIRST — reopening always
+    // cancels the tour (calendar invitations cancelled, guides lose access;
+    // the operational state is saved back to the plan). The confirm dialog
+    // re-enters here with tourChoice set.
+    if (status === 'open' && deal.status === 'won' && activeBooking && !extra.tourChoice) {
+      setReopenConfirmTour({
+        kind: activeBooking.tourEvent.kind,
+        date: activeBooking.tourEvent.date,
+        startTime: activeBooking.tourEvent.startTime,
+      });
+      return;
+    }
     try {
       await api.deals.update(id, { status, ...extra });
       await refresh();
@@ -377,7 +391,8 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
         return;
       }
       if (status === 'open' && code === 'tour_choice_required') {
-        setReopenChoiceTour(e.payload.tour || null);
+        // Fallback (client state was stale about the booking) — same confirm.
+        setReopenConfirmTour(e.payload.tour || null);
         return;
       }
       alert('שגיאה: ' + (code || e.message));
@@ -1031,55 +1046,68 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
         onPick={pickTourSlot}
       />
 
-      {/* Reopen choice — never disconnect automatically. */}
+      {/* REOPEN confirmation — reopening ALWAYS cancels the tour (product
+          decision). The detach/'keep' path stays supported server-side but is
+          deliberately NOT exposed here. */}
       <Dialog
-        open={!!reopenChoiceTour}
-        onClose={() => setReopenChoiceTour(null)}
-        title="לדיל יש סיור פעיל"
+        open={!!reopenConfirmTour}
+        onClose={() => setReopenConfirmTour(null)}
+        title="פתיחת הדיל מחדש תבטל את הסיור"
         size="sm"
         footer={
-          <button
-            type="button"
-            onClick={() => setReopenChoiceTour(null)}
-            className="rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-100"
-          >
-            ביטול
-          </button>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setReopenConfirmTour(null)}
+              className="rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-100"
+            >
+              ביטול
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setReopenConfirmTour(null);
+                setStatus('open', { tourChoice: 'remove' });
+              }}
+              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+            >
+              פתח מחדש ובטל את הסיור
+            </button>
+          </div>
         }
       >
         <p className="mb-3 text-sm text-gray-600">
           הדיל מחובר לסיור בתאריך{' '}
           <span className="font-semibold text-gray-900">
-            {reopenChoiceTour && fmtTourDate(reopenChoiceTour.date)}
+            {reopenConfirmTour && fmtTourDate(reopenConfirmTour.date)}
           </span>{' '}
-          בשעה <span dir="ltr" className="tabular-nums font-semibold text-gray-900">{reopenChoiceTour?.startTime}</span>.
-          מה לעשות עם הסיור בפתיחת הדיל מחדש?
+          בשעה{' '}
+          <span dir="ltr" className="tabular-nums font-semibold text-gray-900">
+            {reopenConfirmTour?.startTime}
+          </span>
+          .
         </p>
-        <div className="space-y-2">
-          <button
-            type="button"
-            onClick={() => { setReopenChoiceTour(null); setStatus('open', { tourChoice: 'remove' }); }}
-            className="w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-right text-sm hover:bg-red-100"
-          >
-            <span className="block font-semibold text-red-700">הסר את הדיל מהסיור</span>
-            <span className="block text-[12px] text-red-600">
-              ההזמנה תבוטל; סיור פרטי/עסקי שיישאר ריק יבוטל אוטומטית.
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setReopenChoiceTour(null);
-              setStatus('open', { tourChoice: 'keep' }).then(() => notifyOrphansChanged());
-            }}
-            className="w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-right text-sm hover:bg-amber-100"
-          >
-            <span className="block font-semibold text-amber-800">השאר את הסיור</span>
-            <span className="block text-[12px] text-amber-700">
-              הסיור יישמר כמנותק (orphan) ויוצג בהתראה הקבועה בכותרת המערכת עד לחיבור מחדש או ביטול.
-            </span>
-          </button>
-        </div>
+        {reopenConfirmTour?.kind === 'group_slot' ? (
+          <p className="text-sm text-gray-700">
+            הדיל יוסר מהסיור הקבוצתי. הסיור עצמו ממשיך להתקיים עבור שאר המשתתפים.
+          </p>
+        ) : (
+          <ul className="space-y-1.5 text-sm text-gray-700">
+            <li className="flex items-start gap-2">
+              <span aria-hidden>🚫</span> הסיור יבוטל.
+            </li>
+            <li className="flex items-start gap-2">
+              <span aria-hidden>📅</span> אירוע ה-Google Calendar יבוטל והמדריכים יקבלו הודעת ביטול.
+            </li>
+            <li className="flex items-start gap-2">
+              <span aria-hidden>👤</span> המדריכים יאבדו את הגישה לסיור בפורטל.
+            </li>
+            <li className="flex items-start gap-2">
+              <span aria-hidden>🗺️</span> הצוות, המרכיבים וההערות יישמרו בתכנון הסיור — WON עתידי ייצור את
+              הסיור מחדש מהם.
+            </li>
+          </ul>
+        )}
       </Dialog>
 
       {/* Leaving the deal with a PENDING tour update — make it a conscious

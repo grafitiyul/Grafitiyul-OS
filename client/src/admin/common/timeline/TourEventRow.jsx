@@ -11,6 +11,7 @@ const EVENT_TEXT = {
   tour_left: 'הדיל הוסר מהסיור',
   booking_orphaned: 'הסיור נשמר בנפרד מהדיל (orphan)',
   tour_update_applied: 'עדכון הסיור הוחל — הסיור עודכן לפי הדיל',
+  tour_state_saved_to_plan: 'הסיור בוטל בפתיחה מחדש — הצוות והמרכיבים נשמרו בתכנון',
   // Tour Gallery lifecycle (batch-level — never one event per photo).
   gallery_first_upload: 'הועלתה מדיה ראשונה לגלריית הסיור',
   gallery_batch_uploaded: 'הועלתה מדיה לגלריית הסיור',

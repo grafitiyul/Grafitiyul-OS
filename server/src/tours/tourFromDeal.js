@@ -297,6 +297,57 @@ export async function cancelDealBooking(tx, booking, { reason, origin }) {
   }
 }
 
+// Return-to-planning (reopen-with-cancel, private/business): preserve the
+// tour's OPERATIONAL state — team, components (+ workshop locations), notes —
+// back onto the deal's DealTourPlan before the tour is cancelled. The plan is
+// REPLACED (the tour is the operational truth at this moment), and
+// componentsCustomized is set: the copied list is authoritative, so a future
+// WON recreates the tour exactly as it was — nothing to configure again.
+export async function copyTourStateToPlan(tx, dealId, tourEventId) {
+  const [assignments, components, tour] = await Promise.all([
+    tx.tourAssignment.findMany({ where: { tourEventId }, orderBy: { createdAt: 'asc' } }),
+    tx.tourEventActivityComponent.findMany({
+      where: { tourEventId },
+      orderBy: { sortOrder: 'asc' },
+    }),
+    tx.tourEvent.findUnique({ where: { id: tourEventId }, select: { notes: true } }),
+  ]);
+  const plan = await tx.dealTourPlan.upsert({
+    where: { dealId },
+    create: { dealId },
+    update: {},
+  });
+  await tx.dealTourPlanAssignment.deleteMany({ where: { planId: plan.id } });
+  await tx.dealTourPlanActivityComponent.deleteMany({ where: { planId: plan.id } });
+  if (assignments.length) {
+    await tx.dealTourPlanAssignment.createMany({
+      data: assignments.map((a) => ({
+        planId: plan.id,
+        personRefId: a.personRefId,
+        externalPersonId: a.externalPersonId,
+        displayName: a.displayName,
+        role: a.role,
+        notes: a.notes,
+      })),
+    });
+  }
+  if (components.length) {
+    await tx.dealTourPlanActivityComponent.createMany({
+      data: components.map((c, i) => ({
+        planId: plan.id,
+        activityComponentId: c.activityComponentId,
+        workshopLocationId: c.workshopLocationId,
+        sortOrder: i,
+      })),
+    });
+  }
+  await tx.dealTourPlan.update({
+    where: { id: plan.id },
+    data: { notes: tour?.notes || null, componentsCustomized: true },
+  });
+  return { guides: assignments.length, components: components.length };
+}
+
 // Keep-the-tour path on reopen: the booking becomes an intentional ORPHAN —
 // disconnected operational work, surfaced by the global header warning until
 // reconnected or cancelled.
