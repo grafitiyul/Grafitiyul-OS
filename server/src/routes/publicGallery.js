@@ -11,6 +11,7 @@ import {
   initiateUploadBatch,
 } from '../tours/gallery/uploads.js';
 import { requestExport } from '../tours/gallery/exports.js';
+import { glog, maskToken } from '../tours/gallery/log.js';
 
 // PUBLIC customer gallery — mounted at /api/gallery, NO admin auth. The
 // capability URL is the credential (same convention as quote/questionnaire
@@ -30,6 +31,14 @@ const router = Router();
 async function guard(req, res) {
   const access = await resolveCustomerGalleryAccess(prisma, { token: req.params.token });
   if (!access.ok) {
+    // Masked token prefix only — enough to correlate a customer report with
+    // a link row, never the credential itself.
+    glog('customer_access_denied', {
+      token: maskToken(req.params.token),
+      status: access.status,
+      reason: access.error,
+      path: req.path.replace(req.params.token, '<token>'),
+    });
     res.status(access.status).json({ error: access.error });
     return null;
   }

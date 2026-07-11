@@ -17,6 +17,7 @@ import {
   getUploadTargets,
   initiateUploadBatch,
 } from '../tours/gallery/uploads.js';
+import { glog, maskToken } from '../tours/gallery/log.js';
 
 // Guide Portal → Tour Gallery. Mounted at /api/portal alongside the task
 // feed router; the portal token IS the credential (same V1 model). Every
@@ -72,6 +73,12 @@ async function guard(req, res) {
     tourEventId: req.params.tourEventId,
   });
   if (!access.ok) {
+    glog('guide_access_denied', {
+      token: maskToken(req.params.token),
+      tourEventId: req.params.tourEventId,
+      status: access.status,
+      reason: access.error,
+    });
     res.status(access.status).json({ error: access.error });
     return null;
   }

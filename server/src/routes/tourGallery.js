@@ -22,6 +22,7 @@ import {
   initiateUploadBatch,
 } from '../tours/gallery/uploads.js';
 import { requestExport } from '../tours/gallery/exports.js';
+import { uploadReadinessSelfTest } from '../tours/gallery/selfTest.js';
 
 function exportToClient(job) {
   return {
@@ -163,6 +164,18 @@ router.get(
       pendingUploads: abandonedPending,
       exports: Object.fromEntries(exportsByStatus.map((e) => [e.status, e._count.id])),
     });
+  }),
+);
+
+// POST /self-test — live upload-readiness probe (presign → server PUT →
+// browser-equivalent CORS preflight → GET). THE first thing to run when
+// uploads fail: it names the exact failing leg and the required action.
+router.post(
+  '/self-test',
+  handle(async (_req, res) => {
+    const result = await uploadReadinessSelfTest();
+    console.log('[tour-gallery] self-test', JSON.stringify(result));
+    res.json(result);
   }),
 );
 

@@ -4,6 +4,7 @@ import { detectMime, kindOfMime } from '../../media/detectMime.js';
 import { emitTimelineEvent } from '../../timeline/events.js';
 import { ensureGallery } from './service.js';
 import { originalKey, posterKey, thumbKey } from './keys.js';
+import { glog } from './log.js';
 
 // Direct-to-R2 upload engine for Tour Gallery. The GOS server never carries
 // media bytes — it authorizes, records metadata, and verifies. Flow per file:
@@ -115,6 +116,14 @@ export async function initiateUploadBatch(client, { tour, uploader, files }) {
       partCount: cls.partCount,
     });
   }
+  glog('upload_batch_initiated', {
+    tourEventId: tour.id,
+    batchId,
+    uploader: uploader.type,
+    accepted: accepted.length,
+    rejected: rejected.length,
+    rejectedReasons: rejected.map((r) => r.error),
+  });
   return { batchId, accepted, rejected };
 }
 
@@ -128,10 +137,15 @@ export async function getUploadTargets(client, media, body = {}) {
   if (media.partSize) {
     let uploadId = media.uploadId;
     if (!uploadId) {
-      uploadId = await r2.createMultipartUpload({
-        key: media.objectKey,
-        contentType: media.mimeType,
-      });
+      try {
+        uploadId = await r2.createMultipartUpload({
+          key: media.objectKey,
+          contentType: media.mimeType,
+        });
+      } catch (e) {
+        glog('multipart_create_failed', { mediaId: media.id, error: e?.message });
+        throw e;
+      }
       await client.tourMedia.update({ where: { id: media.id }, data: { uploadId } });
     } else {
       await client.tourMedia.update({ where: { id: media.id }, data: {} }); // touch updatedAt
@@ -223,11 +237,19 @@ export async function completeUpload(client, media, body = {}, { storage = r2, o
   if (verified.error === 'object_missing') {
     // Complete raced ahead of the PUT — recoverable; the row stays pending so
     // the client can finish the upload and complete again.
+    glog('upload_complete_object_missing', { mediaId: media.id, tourEventId: media.tourEventId });
     return { error: 'object_missing', status: 409 };
   }
   if (verified.error) {
     // Dishonest/broken content: remove the object AND the row so nothing
     // half-uploaded or mislabeled can ever surface as media.
+    glog('upload_verification_failed', {
+      mediaId: media.id,
+      tourEventId: media.tourEventId,
+      declaredMime: media.mimeType,
+      sniffed: verified.sniffed || null,
+      error: verified.error,
+    });
     await storage.deleteObject(media.objectKey);
     await client.tourMedia.delete({ where: { id: media.id } }).catch(() => {});
     return { error: verified.error, status: 422 };

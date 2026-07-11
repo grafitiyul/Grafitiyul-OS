@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { formatBytes } from './galleryFormat.js';
+import { uploadErrorLabel } from './uploadErrors.js';
 
 // Live view of the shared upload queue (lib/galleryUpload.js snapshots) —
 // same component on desktop admin, guide portal and the customer page. The
@@ -104,7 +105,11 @@ export default function UploadQueuePanel({ snapshot, uploader }) {
                   </div>
                 )}
                 {(it.status === 'failed' || it.status === 'rejected') && (
-                  <div className="mt-0.5 text-[11px] text-red-600" dir="ltr">{it.error}</div>
+                  // Readable reason for the user; the raw code stays in the
+                  // tooltip so QA can report the exact failure.
+                  <div className="mt-0.5 text-[11px] text-red-600" title={it.error || ''}>
+                    {uploadErrorLabel(it.error)}
+                  </div>
                 )}
               </div>
               <span

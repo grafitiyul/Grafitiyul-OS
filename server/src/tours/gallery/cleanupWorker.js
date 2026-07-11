@@ -2,6 +2,7 @@ import { prisma } from '../../db.js';
 import * as r2 from '../../r2.js';
 import { emitTimelineEvent, systemOrigin } from '../../timeline/events.js';
 import { processExportJob, sweepExpiredExports } from './exports.js';
+import { uploadReadinessSelfTest } from './selfTest.js';
 
 // Async R2 purge for cancelled/deleted tour galleries + the abandoned-upload
 // sweep. Same conventions as the WhatsApp/email workers: 60s tick inside the
@@ -180,4 +181,26 @@ export function startTourGalleryCleanupWorker(log = console) {
   };
   setInterval(tick, TICK_MS).unref?.();
   log?.log?.('[tour-gallery] cleanup worker started');
+
+  // Startup config validation: direct-to-R2 uploads DEPEND on the bucket's
+  // CORS policy (external manual config). Probe once, loudly — a missing
+  // policy otherwise fails silently in every user's browser.
+  if (r2.isConfigured()) {
+    uploadReadinessSelfTest()
+      .then((result) => {
+        if (result.ready) {
+          log?.log?.('[tour-gallery] upload readiness: OK');
+        } else {
+          log?.warn?.(
+            '[tour-gallery] ⚠️ UPLOADS WILL FAIL — ' +
+              JSON.stringify({
+                serverPut: result.serverPut,
+                corsPreflight: result.corsPreflight,
+                requiredAction: result.requiredAction,
+              }),
+          );
+        }
+      })
+      .catch((e) => log?.warn?.('[tour-gallery] upload readiness probe failed:', e?.message));
+  }
 }

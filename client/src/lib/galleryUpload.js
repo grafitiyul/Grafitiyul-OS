@@ -252,15 +252,18 @@ export function createGalleryUploader({ endpoints, concurrency = FILE_CONCURRENC
       item.derived = null; // release the blob
       setItem(item, { status: 'done', media });
     } catch (e) {
+      // Prefer the server's error CODE (payload.error) — the UI maps codes to
+      // human-readable reasons (gallery/uploadErrors.js).
+      const code = e?.payload?.error || e?.message || String(e);
       if (e?.aborted || item.canceled) {
         setItem(item, { status: 'canceled' });
         endpoints.abort(item.mediaId).catch(() => {});
       } else if (item.attempt < AUTO_RETRIES) {
         // Transient network blips retry silently with a short backoff.
-        setItem(item, { status: 'queued', error: String(e?.message || e) });
+        setItem(item, { status: 'queued', error: code });
         setTimeout(pump, 1500 * item.attempt);
       } else {
-        setItem(item, { status: 'failed', error: String(e?.message || e) });
+        setItem(item, { status: 'failed', error: code });
       }
     } finally {
       item.abort = null;
@@ -332,7 +335,8 @@ export function createGalleryUploader({ endpoints, concurrency = FILE_CONCURRENC
             }
           }
         } catch (e) {
-          for (const it of chunk) setItem(it, { status: 'failed', error: String(e?.message || e) });
+          const code = e?.payload?.error || e?.message || String(e);
+          for (const it of chunk) setItem(it, { status: 'failed', error: code });
         }
         pump();
       }
