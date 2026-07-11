@@ -9,7 +9,11 @@ import ReorderableList from '../common/ReorderableList.jsx';
 // BELOW the chips — one selector per workshop component, rendered only when at
 // least one workshop component exists. A location is OPTIONAL: the empty state
 // is a plain placeholder, never a warning.
-export default function TourComponents({ tourId, rows = [], onChanged }) {
+// `endpoints` adapts the SAME surface to another backend with identical method
+// shapes (addComponent / removeComponent / setComponentLocation /
+// reorderComponents) — used by the Deal tour-plan (api.dealTourPlan, where
+// `tourId` is the deal id). Default: the real TourEvent APIs.
+export default function TourComponents({ tourId, rows = [], onChanged, endpoints = api.tours }) {
   const [catalog, setCatalog] = useState([]); // active components (for add)
   const [locations, setLocations] = useState([]); // active workshop locations
   const [busy, setBusy] = useState(false);
@@ -38,15 +42,15 @@ export default function TourComponents({ tourId, rows = [], onChanged }) {
 
   const add = (componentId) => {
     setAdding(false);
-    if (componentId) run(() => api.tours.addComponent(tourId, { activityComponentId: componentId }));
+    if (componentId) run(() => endpoints.addComponent(tourId, { activityComponentId: componentId }));
   };
-  const remove = (rowId) => run(() => api.tours.removeComponent(rowId));
+  const remove = (rowId) => run(() => endpoints.removeComponent(rowId));
   const setLocation = (rowId, locId) =>
-    run(() => api.tours.setComponentLocation(rowId, locId || null));
+    run(() => endpoints.setComponentLocation(rowId, locId || null));
 
   async function reorder(ids) {
     try {
-      await api.tours.reorderComponents(tourId, ids);
+      await endpoints.reorderComponents(tourId, ids);
       await onChanged?.();
     } catch (e) {
       alert('שגיאה בשינוי הסדר: ' + (e.payload?.error || e.message));

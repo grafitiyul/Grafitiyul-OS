@@ -516,6 +516,7 @@ model PersonRef {
   profile          PersonProfile?
   flowTargets      FlowTargetPerson[]
   tourAssignments  TourAssignment[]
+  planAssignments  DealTourPlanAssignment[]
   stationAccess    GuideStationAccess[]
 
   @@index([teamRefId])
@@ -972,6 +973,8 @@ model Deal {
   // Tours: the ONLY Deal↔TourEvent relationship (see Booking). Never add a
   // direct tourEventId here.
   bookings              Booking[]
+  // Pre-WON tour PLANNING (team/components/notes) — see DealTourPlan.
+  tourPlan              DealTourPlan?
 
   @@index([organizationId])
   @@index([organizationUnitId])
@@ -3207,6 +3210,7 @@ model ActivityComponent {
 
   variantLinks   ProductVariantActivityComponent[]
   tourEventLinks TourEventActivityComponent[]
+  dealPlanLinks  DealTourPlanActivityComponent[]
 
   @@index([sortOrder])
 }
@@ -3247,6 +3251,7 @@ model WorkshopLocation {
   updatedAt    DateTime @updatedAt
 
   tourEventLinks TourEventActivityComponent[]
+  dealPlanLinks  DealTourPlanActivityComponent[]
 
   @@index([sortOrder])
 }
@@ -3272,6 +3277,83 @@ model TourEventActivityComponent {
 
   @@unique([tourEventId, activityComponentId])
   @@index([tourEventId])
+  @@index([activityComponentId])
+  @@index([workshopLocationId])
+}
+
+// ── Deal Tour PLANNING (pre-WON) ─────────────────────────────────────────────
+// The canonical PLANNING model for a private/business deal's future tour —
+// everything the operator prepares BEFORE the deal is WON that the Deal's own
+// planning scalars (product/variant/city/date/time/participants/language)
+// cannot hold: the planned team, the planned activity components + workshop
+// locations, and operational notes. STRICTLY internal: nothing here creates a
+// TourEvent, touches Google Calendar, invites guides, or shows in the Guide
+// Portal. At WON, tourFromDeal.js materializes the plan into the real
+// TourEvent/TourAssignment/TourEventActivityComponent rows (a copy — the tour
+// owns its state from then on); on reopen-with-cancel the tour's operational
+// state is copied BACK here so a future WON recreates it. There is never a
+// partially-real TourEvent.
+model DealTourPlan {
+  id     String @id @default(cuid())
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  dealId String @unique
+  // Planned operational notes → TourEvent.notes at materialization.
+  notes  String?
+  // FALSE = the component list still FOLLOWS the selected variant's live
+  // defaults (materialization seeds from the variant, exactly like a deal with
+  // no plan — today's behavior). TRUE = the operator customized the list; the
+  // plan's rows are authoritative, INCLUDING an intentionally-empty list.
+  // Without this flag "customized to empty" and "never touched" would be
+  // indistinguishable.
+  componentsCustomized Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignments        DealTourPlanAssignment[]
+  activityComponents DealTourPlanActivityComponent[]
+}
+
+// A PLANNED guide — deliberately NOT a TourAssignment: no calendar attendee,
+// no portal visibility, no invitation. Same shape as TourAssignment (snapshot
+// externalPersonId/displayName, role on the row) so materialization is a
+// mechanical copy. Eligibility (people/eligibility.js) gates creation exactly
+// like real assignments.
+model DealTourPlanAssignment {
+  id               String       @id @default(cuid())
+  plan             DealTourPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  planId           String
+  personRef        PersonRef?   @relation(fields: [personRefId], references: [id], onDelete: SetNull)
+  personRefId      String?
+  externalPersonId String
+  displayName      String
+  role             String // lead_guide | guide | workshop_assistant
+  notes            String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@unique([planId, externalPersonId])
+  @@index([planId])
+  @@index([personRefId])
+}
+
+// A PLANNED activity component (+ optional workshop location) — same shape as
+// TourEventActivityComponent for mechanical copy at materialization. Restrict
+// on catalog FKs mirrors the tour-row convention (catalog entries are
+// deactivated, never hard-deleted while referenced).
+model DealTourPlanActivityComponent {
+  id                  String            @id @default(cuid())
+  plan                DealTourPlan      @relation(fields: [planId], references: [id], onDelete: Cascade)
+  planId              String
+  activityComponent   ActivityComponent @relation(fields: [activityComponentId], references: [id], onDelete: Restrict)
+  activityComponentId String
+  workshopLocation    WorkshopLocation? @relation(fields: [workshopLocationId], references: [id], onDelete: Restrict)
+  workshopLocationId  String?
+  sortOrder           Int               @default(0)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  @@unique([planId, activityComponentId])
+  @@index([planId])
   @@index([activityComponentId])
   @@index([workshopLocationId])
 }

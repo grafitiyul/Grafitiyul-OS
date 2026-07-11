@@ -190,7 +190,11 @@ function AddGuidesButton({ people, onPickMany, busy }) {
   );
 }
 
-export default function TourTeamEditor({ tourId, assignments = [], onChanged }) {
+// `endpoints` adapts the SAME surface to another backend with identical method
+// shapes (addAssignment(subjectId, data) / updateAssignment(id, data) /
+// removeAssignment(id)) — used by the Deal tour-plan (api.dealTourPlan, where
+// `tourId` is the deal id). Default: the real TourEvent APIs.
+export default function TourTeamEditor({ tourId, assignments = [], onChanged, endpoints = api.tours }) {
   const [people, setPeople] = useState([]);
   const [busy, setBusy] = useState(false);
 
@@ -221,7 +225,7 @@ export default function TourTeamEditor({ tourId, assignments = [], onChanged }) 
     try {
       for (const personRefId of personRefIds) {
         try {
-          await api.tours.addAssignment(tourId, { personRefId, role: 'guide' });
+          await endpoints.addAssignment(tourId, { personRefId, role: 'guide' });
         } catch (e) {
           if (e.payload?.error !== 'already_assigned') throw e;
         }
@@ -242,7 +246,7 @@ export default function TourTeamEditor({ tourId, assignments = [], onChanged }) 
     if (role === a.role) return;
     setBusy(true);
     try {
-      await api.tours.updateAssignment(a.id, { role });
+      await endpoints.updateAssignment(a.id, { role });
       await onChanged?.();
     } catch (e) {
       alert('שגיאה: ' + (e.payload?.error || e.message));
@@ -253,7 +257,7 @@ export default function TourTeamEditor({ tourId, assignments = [], onChanged }) 
   async function removeAssignment(a) {
     setBusy(true);
     try {
-      await api.tours.removeAssignment(a.id);
+      await endpoints.removeAssignment(a.id);
       await onChanged?.();
     } catch (e) {
       alert('שגיאה: ' + (e.payload?.error || e.message));

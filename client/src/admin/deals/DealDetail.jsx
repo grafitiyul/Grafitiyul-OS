@@ -41,6 +41,7 @@ import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
 import Dialog from '../common/Dialog.jsx';
 import TourSlotPickerDialog from '../tours/TourSlotPickerDialog.jsx';
 import DealTourSummary from '../tours/DealTourSummary.jsx';
+import DealTourPlanning from '../tours/DealTourPlanning.jsx';
 import { fmtTourDate } from '../tours/config.js';
 import { notifyOrphansChanged } from '../../shell/OrphanToursIndicator.jsx';
 
@@ -613,6 +614,14 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
                 onReplace={() => setSlotPickerFor('assign')}
               />
             )}
+            {/* Pre-WON planning ("תכנון סיור") — the SAME card surface before a
+                real tour exists (private/business only). Internal planning; at
+                WON it materializes and the banner above takes over. */}
+            {!activeBooking &&
+              deal.status === 'open' &&
+              (deal.activityType === 'private' || deal.activityType === 'business') && (
+                <DealTourPlanning deal={deal} />
+              )}
             {orphanedBooking && (
               <div className="rounded-lg bg-amber-50 ring-1 ring-inset ring-amber-200 px-3 py-2 text-[13px] text-amber-800">
                 ⚠️ קיים סיור שנשמר בנפרד מהדיל (orphan) —{' '}

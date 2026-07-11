@@ -592,6 +592,35 @@ export const api = {
       });
     },
   },
+  // ── Deal Tour PLANNING (pre-WON) — internal planning layer; the WON
+  // transition materializes it into the real tour. Shapes mirror api.tours so
+  // the shared editors (TourTeamEditor / TourComponents) drive either surface.
+  dealTourPlan: {
+    get: (dealId) => request(`/api/deals/${dealId}/tour-plan`),
+    update: (dealId, data) =>
+      request(`/api/deals/${dealId}/tour-plan`, { method: 'PUT', body: JSON.stringify(data) }),
+    addAssignment: (dealId, data) =>
+      request(`/api/deals/${dealId}/tour-plan/assignments`, { method: 'POST', body: JSON.stringify(data) }),
+    updateAssignment: (assignmentId, data) =>
+      request(`/api/deals/tour-plan/assignments/${assignmentId}`, { method: 'PUT', body: JSON.stringify(data) }),
+    removeAssignment: (assignmentId) =>
+      request(`/api/deals/tour-plan/assignments/${assignmentId}`, { method: 'DELETE' }),
+    addComponent: (dealId, data) =>
+      request(`/api/deals/${dealId}/tour-plan/components`, { method: 'POST', body: JSON.stringify(data) }),
+    reorderComponents: (dealId, ids) =>
+      request(`/api/deals/${dealId}/tour-plan/components/reorder`, { method: 'PUT', body: JSON.stringify({ ids }) }),
+    setComponentLocation: (rowId, workshopLocationId) =>
+      request(`/api/deals/tour-plan/components/${rowId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ workshopLocationId }),
+      }),
+    removeComponent: (rowId) =>
+      request(`/api/deals/tour-plan/components/${rowId}`, { method: 'DELETE' }),
+    reseedComponents: (dealId) =>
+      request(`/api/deals/${dealId}/tour-plan/components/reseed`, { method: 'POST', body: '{}' }),
+    resetComponents: (dealId) =>
+      request(`/api/deals/${dealId}/tour-plan/components`, { method: 'DELETE' }),
+  },
   auth: {
     status: () => request('/api/auth/status'),
   },

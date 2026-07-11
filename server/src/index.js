@@ -36,6 +36,7 @@ import publicQuoteRouter from './routes/publicQuote.js';
 import dealStagesRouter from './routes/dealStages.js';
 import dealTasksRouter from './routes/dealTasks.js';
 import dealFilesRouter from './routes/dealFiles.js';
+import dealTourPlanRouter from './routes/dealTourPlan.js';
 import icountDocsRouter from './routes/icountDocs.js';
 import taskTypesRouter from './routes/taskTypes.js';
 import activityComponentsRouter from './routes/activityComponents.js';
@@ -278,6 +279,9 @@ app.use('/api/deals', requireAdminAuth, dealsRouter);
 // dealsRouter (no path overlap; deals owns /:id, these own /:id/tasks|files).
 app.use('/api/deals', requireAdminAuth, dealTasksRouter);
 app.use('/api/deals', requireAdminAuth, dealFilesRouter);
+// Deal Tour PLANNING (pre-WON) — /:id/tour-plan* (same nested pattern). The
+// internal planning layer; materialized into a real tour by the WON transition.
+app.use('/api/deals', requireAdminAuth, dealTourPlanRouter);
 // iCount accounting documents + custom payment links — /:id/icount/*,
 // /:id/custom-payment-links (same nested-under-deals pattern as tasks/files).
 app.use('/api/deals', requireAdminAuth, icountDocsRouter);
