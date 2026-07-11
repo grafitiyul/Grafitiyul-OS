@@ -547,6 +547,9 @@ model PersonProfile {
   //                        reserved for explicit currency columns)
   vatStatus           String?
   senioritySupplement Decimal? @db.Decimal(10, 2)
+  //   travelAllowance      "נסיעות" — same plain-decimal convention as
+  //                        senioritySupplement
+  travelAllowance     Decimal? @db.Decimal(10, 2)
   description String?
   notes       String?
   bankDetails Json?

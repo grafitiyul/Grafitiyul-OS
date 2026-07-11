@@ -986,6 +986,10 @@ function BankSection({ person, onChanged }) {
       person.profile?.senioritySupplement == null
         ? ''
         : String(person.profile.senioritySupplement),
+    travelAllowance:
+      person.profile?.travelAllowance == null
+        ? ''
+        : String(person.profile.travelAllowance),
   });
   const baseline = buildBaseline();
   const [form, setForm] = useState(baseline);
@@ -1009,17 +1013,21 @@ function BankSection({ person, onChanged }) {
 
   async function save() {
     const supplement = String(form.senioritySupplement || '').trim();
-    if (supplement && (!Number.isFinite(Number(supplement)) || Number(supplement) < 0)) {
-      window.alert('תוספת ותק חייבת להיות מספר אפס או חיובי.');
-      return;
+    const travel = String(form.travelAllowance || '').trim();
+    for (const [label, v] of [['תוספת ותק', supplement], ['נסיעות', travel]]) {
+      if (v && (!Number.isFinite(Number(v)) || Number(v) < 0)) {
+        window.alert(`${label} חייב להיות מספר אפס או חיובי.`);
+        return;
+      }
     }
     setSaving(true);
     try {
-      const { vatStatus, senioritySupplement, ...bankDetails } = form;
+      const { vatStatus, senioritySupplement, travelAllowance, ...bankDetails } = form;
       await api.people.updateProfile(person.id, {
         bankDetails,
         vatStatus: vatStatus || null,
         senioritySupplement: supplement || null,
+        travelAllowance: travel || null,
       });
       await onChanged();
     } catch (e) {
@@ -1061,6 +1069,18 @@ function BankSection({ person, onChanged }) {
             dir="ltr"
             value={form.senioritySupplement}
             onChange={(e) => setForm((f) => ({ ...f, senioritySupplement: e.target.value }))}
+            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+          />
+        </Field>
+        <Field label="נסיעות">
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            inputMode="decimal"
+            dir="ltr"
+            value={form.travelAllowance}
+            onChange={(e) => setForm((f) => ({ ...f, travelAllowance: e.target.value }))}
             className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
           />
         </Field>

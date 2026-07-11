@@ -20,6 +20,7 @@ export const PERSON_FIELD_LABELS = {
   trainingCohort: 'מחזור הכשרה',
   vatStatus: 'מע״מ',
   senioritySupplement: 'תוספת ותק',
+  travelAllowance: 'נסיעות',
   beneficiary: 'שם המוטב',
   bank: 'בנק',
   branch: 'סניף',
@@ -51,6 +52,7 @@ const FIELDS = [
   { key: 'trainingCohort' },
   { key: 'vatStatus', display: (v) => (v ? VAT_STATUS_LABELS[v] || v : null) },
   { key: 'senioritySupplement' },
+  { key: 'travelAllowance' },
   { key: 'beneficiary' },
   { key: 'bank', display: codeNameDisplay, eq: codeNameEq },
   { key: 'branch', display: codeNameDisplay, eq: codeNameEq },
@@ -97,6 +99,8 @@ export function personChangeSnapshot(person, profile) {
     // Prisma Decimal → plain string so diff/restore round-trip cleanly.
     senioritySupplement:
       profile?.senioritySupplement == null ? null : String(profile.senioritySupplement),
+    travelAllowance:
+      profile?.travelAllowance == null ? null : String(profile.travelAllowance),
     beneficiary: bank.beneficiary,
     bank: bank.bankCode || bank.bankName ? { code: bank.bankCode, name: bank.bankName } : null,
     branch:

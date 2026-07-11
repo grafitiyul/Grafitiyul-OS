@@ -21,6 +21,7 @@ const PROFILE_WITH_PAYROLL = {
   // Admin-only payroll facts deliberately present on the row:
   vatStatus: 'vat_18',
   senioritySupplement: '12.50',
+  travelAllowance: '30.00',
   // Internal admin fields that must also never leak:
   notes: 'הערה פנימית',
   description: 'תיאור',
@@ -30,11 +31,13 @@ test('guide profile DTO never contains admin payroll or internal fields', () => 
   const dto = profileDto(PERSON, PROFILE_WITH_PAYROLL, { editPersonalProfile: true });
   assert.equal('vatStatus' in dto, false);
   assert.equal('senioritySupplement' in dto, false);
+  assert.equal('travelAllowance' in dto, false);
   assert.equal('notes' in dto, false);
   assert.equal('description' in dto, false);
   // And not nested inside the bank object either.
   assert.equal('vatStatus' in dto.bank, false);
   assert.equal('senioritySupplement' in dto.bank, false);
+  assert.equal('travelAllowance' in dto.bank, false);
   // The whitelisted operational fields are still there.
   assert.equal(dto.displayName, 'דנה');
   assert.equal(dto.bank.bankCode, '10');

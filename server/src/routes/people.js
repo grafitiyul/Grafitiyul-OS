@@ -390,7 +390,17 @@ router.put(
       trainingCohort,
       vatStatus,
       senioritySupplement,
+      travelAllowance,
     } = req.body || {};
+
+    // Plain-decimal payroll amount: ≥ 0, two decimals (DECIMAL(10,2)).
+    // Returns { value } (null = cleared) or { error }.
+    function parsePayrollAmount(input) {
+      if (input === null || input === '') return { value: null };
+      const n = Number(input);
+      if (!Number.isFinite(n) || n < 0 || n > 99999999) return { error: true };
+      return { value: n.toFixed(2) };
+    }
     const data = {};
     if (imageUrl !== undefined) {
       data.imageUrl = imageUrl || null;
@@ -421,16 +431,18 @@ router.put(
       data.vatStatus = vatStatus || null;
     }
     if (senioritySupplement !== undefined) {
-      if (senioritySupplement === null || senioritySupplement === '') {
-        data.senioritySupplement = null;
-      } else {
-        const n = Number(senioritySupplement);
-        if (!Number.isFinite(n) || n < 0 || n > 99999999) {
-          return res.status(400).json({ error: 'invalid_seniority_supplement' });
-        }
-        // Two decimal places — matches the DECIMAL(10,2) column exactly.
-        data.senioritySupplement = n.toFixed(2);
+      const parsed = parsePayrollAmount(senioritySupplement);
+      if (parsed.error) {
+        return res.status(400).json({ error: 'invalid_seniority_supplement' });
       }
+      data.senioritySupplement = parsed.value;
+    }
+    if (travelAllowance !== undefined) {
+      const parsed = parsePayrollAmount(travelAllowance);
+      if (parsed.error) {
+        return res.status(400).json({ error: 'invalid_travel_allowance' });
+      }
+      data.travelAllowance = parsed.value;
     }
     // Every bank write is normalized to the ONE structured shape (legacy
     // free-form JSON degrades to nulls and gets replaced on first save).
@@ -447,6 +459,7 @@ router.put(
         trainingCohort: true,
         vatStatus: true,
         senioritySupplement: true,
+        travelAllowance: true,
       },
     });
     const profile = await prisma.personProfile.upsert({
@@ -470,6 +483,9 @@ router.put(
         ...(vatStatus !== undefined ? { vatStatus: afterSnap.vatStatus } : {}),
         ...(senioritySupplement !== undefined
           ? { senioritySupplement: afterSnap.senioritySupplement }
+          : {}),
+        ...(travelAllowance !== undefined
+          ? { travelAllowance: afterSnap.travelAllowance }
           : {}),
         ...(bankDetails !== undefined
           ? {
@@ -562,7 +578,8 @@ router.post(
       fieldKey === 'trainingStartDate' ||
       fieldKey === 'trainingCohort' ||
       fieldKey === 'vatStatus' ||
-      fieldKey === 'senioritySupplement'
+      fieldKey === 'senioritySupplement' ||
+      fieldKey === 'travelAllowance'
     ) {
       await prisma.personProfile.upsert({
         where: { personRefId: person.id },
