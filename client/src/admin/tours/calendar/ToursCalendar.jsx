@@ -152,8 +152,13 @@ export default function ToursCalendar({ search, kind, status, onOpenTour, view, 
       {/* Navigation header */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 px-3 py-2.5">
         <div className="flex items-center gap-1.5">
-          {/* RTL: back points right, forward points left (Hebrew calendar convention). */}
-          <NavButton onClick={() => navigate(-1)} label="הקודם">›</NavButton>
+          {/* RTL semantics: the grid's days run right→left, so PREVIOUS points
+              RIGHT and NEXT points LEFT (Hebrew calendar convention).
+              ❮/❯ (U+276E/F) are NOT bidi-mirrored, so they render exactly as
+              written; the previous ‹/› glyphs are Bidi_Mirrored=Yes — under
+              dir="rtl" the browser flipped them, making the visible icon
+              disagree with the action (the "reversed arrows" production bug). */}
+          <NavButton onClick={() => navigate(-1)} label="הקודם">❯</NavButton>
           <button
             type="button"
             onClick={() => setAnchor(todayIL())}
@@ -161,7 +166,7 @@ export default function ToursCalendar({ search, kind, status, onOpenTour, view, 
           >
             היום
           </button>
-          <NavButton onClick={() => navigate(1)} label="הבא">‹</NavButton>
+          <NavButton onClick={() => navigate(1)} label="הבא">❮</NavButton>
           <span className="ms-2 text-[15px] font-bold text-gray-900">{title}</span>
         </div>
         <div className="flex items-center rounded-lg border border-gray-300 p-0.5">

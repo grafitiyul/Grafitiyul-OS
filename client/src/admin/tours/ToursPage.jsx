@@ -267,7 +267,10 @@ export default function ToursPage() {
   }, [rows]);
 
   return (
-    <div className="mx-auto max-w-[1600px] px-5 lg:px-8 py-4">
+    // Calendar mode is an operational workspace — it takes the FULL available
+    // content width (only page padding remains). The table keeps its capped
+    // reading width; both stay centered under the cap when it applies.
+    <div className={`mx-auto px-5 lg:px-8 py-4 ${tab === 'calendar' ? 'max-w-none' : 'max-w-[1600px]'}`}>
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2.5">
