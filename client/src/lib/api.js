@@ -216,6 +216,13 @@ export const api = {
       return res.json();
     },
     procedures: (id) => request(`/api/people/${id}/procedures`),
+    // Immutable profile change history + restore (timeline kind='change').
+    changes: (id) => request(`/api/people/${id}/changes`),
+    restoreChange: (id, entryId, fieldKey) =>
+      request(`/api/people/${id}/changes/${entryId}/restore`, {
+        method: 'POST',
+        body: JSON.stringify({ fieldKey }),
+      }),
   },
   attempts: {
     create: (flowId, learnerName, workerIdentifier) =>
@@ -1068,6 +1075,12 @@ export const api = {
       ),
     finalize: (id) =>
       request(`/api/documents/instances/${id}/finalize`, { method: 'POST' }),
+  },
+
+  // Israeli bank catalog — static bundled dataset (bank codes/names for the
+  // profile bank-details autocomplete; public, shared with the guide portal).
+  bankCatalog: {
+    get: () => request('/api/bank-catalog'),
   },
 
   // Guide Portal permissions — server-backed singleton (Settings → Tours →

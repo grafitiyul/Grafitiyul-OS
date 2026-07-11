@@ -55,9 +55,16 @@ router.get(
       portalToken: req.params.token,
     });
     if (!access.ok) return fail(res, access);
+    const profile = await prisma.personProfile.findUnique({
+      where: { personRefId: access.person.id },
+      select: { imageUrl: true },
+    });
     res.set('Cache-Control', 'no-store');
     res.json({
-      person: { displayName: access.person.displayName },
+      person: {
+        displayName: access.person.displayName,
+        imageUrl: profile?.imageUrl || null,
+      },
       permissions: access.permissions,
     });
   }),

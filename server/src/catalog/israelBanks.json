@@ -1,0 +1,21 @@
+{
+  "_readme": "Israeli bank catalog for profile bank-details autocomplete. Static, bundled — no runtime external dependency (a broken third-party API must never break profile editing). Codes are the official Bank of Israel clearing codes. `branches` is per-bank and MAY be empty — the UI supports free typing when a branch isn't listed. To extend: add branch objects { code, name, city } under the bank, or regenerate from the Bank of Israel open dataset (data.gov.il 'snifim') and keep this file's shape.",
+  "banks": [
+    { "code": "4", "name": "בנק יהב", "branches": [] },
+    { "code": "9", "name": "בנק הדואר", "branches": [] },
+    { "code": "10", "name": "בנק לאומי", "branches": [] },
+    { "code": "11", "name": "בנק דיסקונט", "branches": [] },
+    { "code": "12", "name": "בנק הפועלים", "branches": [] },
+    { "code": "13", "name": "בנק אגוד (במיזוג עם מזרחי)", "branches": [] },
+    { "code": "14", "name": "בנק אוצר החייל", "branches": [] },
+    { "code": "17", "name": "בנק מרכנתיל דיסקונט", "branches": [] },
+    { "code": "18", "name": "וואן זירו (One Zero)", "branches": [] },
+    { "code": "20", "name": "בנק מזרחי טפחות", "branches": [] },
+    { "code": "22", "name": "סיטיבנק", "branches": [] },
+    { "code": "31", "name": "הבנק הבינלאומי", "branches": [] },
+    { "code": "46", "name": "בנק מסד", "branches": [] },
+    { "code": "52", "name": "בנק פאג\"י (פועלי אגודת ישראל)", "branches": [] },
+    { "code": "54", "name": "בנק ירושלים", "branches": [] },
+    { "code": "68", "name": "בנק מוניציפל", "branches": [] }
+  ]
+}

@@ -2,8 +2,16 @@ import crypto from 'node:crypto';
 import express, { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
-import { detectMime, kindOfMime } from '../media/detectMime.js';
 import { getRecruitmentSnapshot } from './recruitment.js';
+import { userOrigin } from '../timeline/events.js';
+import {
+  diffPersonFields,
+  normalizeBankDetails,
+  personChangeSnapshot,
+  recordPersonChanges,
+  PERSON_FIELD_LABELS,
+} from '../timeline/personChangelog.js';
+import { storeProfileImage } from '../people/profileImage.js';
 
 // Guide (PersonRef + PersonProfile) CRUD, portal token management, image
 // upload, and the categorized procedures endpoint that drives the admin
@@ -252,10 +260,26 @@ router.put(
       }
       data.status = status;
     }
+    const before = await prisma.personRef.findUnique({
+      where: { id: req.params.id },
+      select: { displayName: true, email: true, phone: true },
+    });
+    if (!before) return res.status(404).json({ error: 'not found' });
     const person = await prisma.personRef.update({
       where: { id: req.params.id },
       data,
       include: PERSON_INCLUDE,
+    });
+    // Identity edits are part of the immutable person changelog (admin source).
+    await recordPersonChanges(prisma, {
+      personRefId: person.id,
+      changes: diffPersonFields(before, {
+        displayName: data.displayName,
+        email: data.email,
+        phone: data.phone,
+      }),
+      origin: await userOrigin(req.adminAuth?.userId),
+      source: 'admin',
     });
     res.json(person);
   }),
@@ -271,14 +295,147 @@ router.put(
     if (imageUrl !== undefined) data.imageUrl = imageUrl || null;
     if (description !== undefined) data.description = description || null;
     if (notes !== undefined) data.notes = notes || null;
-    if (bankDetails !== undefined) data.bankDetails = bankDetails ?? undefined;
+    // Every bank write is normalized to the ONE structured shape (legacy
+    // free-form JSON degrades to nulls and gets replaced on first save).
+    if (bankDetails !== undefined) {
+      data.bankDetails = bankDetails === null ? normalizeBankDetails(null) : normalizeBankDetails(bankDetails);
+    }
 
+    const before = await prisma.personProfile.findUnique({
+      where: { personRefId: req.params.id },
+      select: { imageUrl: true, bankDetails: true },
+    });
     const profile = await prisma.personProfile.upsert({
       where: { personRefId: req.params.id },
       update: data,
       create: { personRefId: req.params.id, ...data },
     });
+    // Changelog for the tracked profile fields (imageUrl + bank). description
+    // and internal notes are deliberately untracked (admin working notes).
+    const beforeSnap = personChangeSnapshot(null, before);
+    const afterSnap = personChangeSnapshot(null, profile);
+    await recordPersonChanges(prisma, {
+      personRefId: req.params.id,
+      changes: diffPersonFields(beforeSnap, {
+        ...(imageUrl !== undefined ? { imageUrl: afterSnap.imageUrl } : {}),
+        ...(bankDetails !== undefined
+          ? {
+              beneficiary: afterSnap.beneficiary,
+              bank: afterSnap.bank,
+              branch: afterSnap.branch,
+              accountNumber: afterSnap.accountNumber,
+            }
+          : {}),
+      }),
+      origin: await userOrigin(req.adminAuth?.userId),
+      source: 'admin',
+    });
     res.json(profile);
+  }),
+);
+
+// ---------- Profile change history (immutable) + restore ----------
+//
+// One shared audit mechanism: TimelineEntry subjectType='person',
+// kind='change' (see timeline/personChangelog.js). Restore applies the OLD
+// value of one field as a brand-new audited change — history is never
+// rewritten or deleted.
+
+router.get(
+  '/:id/changes',
+  handle(async (req, res) => {
+    const entries = await prisma.timelineEntry.findMany({
+      where: { subjectType: 'person', subjectId: req.params.id, kind: 'change' },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      select: {
+        id: true,
+        createdAt: true,
+        actorType: true,
+        actorLabel: true,
+        createdByName: true,
+        data: true,
+      },
+    });
+    res.json({ entries });
+  }),
+);
+
+router.post(
+  '/:id/changes/:entryId/restore',
+  handle(async (req, res) => {
+    const fieldKey = String(req.body?.fieldKey || '');
+    if (!PERSON_FIELD_LABELS[fieldKey]) {
+      return res.status(400).json({ error: 'unknown_field' });
+    }
+    const entry = await prisma.timelineEntry.findFirst({
+      where: {
+        id: req.params.entryId,
+        subjectType: 'person',
+        subjectId: req.params.id,
+        kind: 'change',
+      },
+      select: { id: true, data: true },
+    });
+    if (!entry) return res.status(404).json({ error: 'entry_not_found' });
+    const change = (entry.data?.changes || []).find((c) => c.fieldKey === fieldKey);
+    if (!change) return res.status(404).json({ error: 'field_not_in_entry' });
+
+    const person = await prisma.personRef.findUnique({
+      where: { id: req.params.id },
+      include: { profile: true },
+    });
+    if (!person) return res.status(404).json({ error: 'not found' });
+    const beforeSnap = personChangeSnapshot(person, person.profile);
+    const restored = change.oldValue ?? null;
+
+    if (fieldKey === 'displayName' || fieldKey === 'email' || fieldKey === 'phone') {
+      if (fieldKey === 'displayName' && !String(restored || '').trim()) {
+        return res.status(400).json({ error: 'empty_name' });
+      }
+      await prisma.personRef.update({
+        where: { id: person.id },
+        data: { [fieldKey]: restored },
+      });
+    } else if (fieldKey === 'imageUrl') {
+      await prisma.personProfile.upsert({
+        where: { personRefId: person.id },
+        update: { imageUrl: restored },
+        create: { personRefId: person.id, imageUrl: restored },
+      });
+    } else {
+      // Bank family — merge the restored logical field into the structured
+      // bankDetails shape.
+      const bank = normalizeBankDetails(person.profile?.bankDetails);
+      if (fieldKey === 'beneficiary') bank.beneficiary = restored;
+      if (fieldKey === 'accountNumber') bank.accountNumber = restored;
+      if (fieldKey === 'bank') {
+        bank.bankCode = restored?.code ?? null;
+        bank.bankName = restored?.name ?? null;
+      }
+      if (fieldKey === 'branch') {
+        bank.branchCode = restored?.code ?? null;
+        bank.branchName = restored?.name ?? null;
+      }
+      await prisma.personProfile.upsert({
+        where: { personRefId: person.id },
+        update: { bankDetails: bank },
+        create: { personRefId: person.id, bankDetails: bank },
+      });
+    }
+
+    await recordPersonChanges(prisma, {
+      personRefId: person.id,
+      changes: diffPersonFields(beforeSnap, { [fieldKey]: restored }),
+      origin: await userOrigin(req.adminAuth?.userId),
+      source: 'admin',
+      restoredFromEntryId: entry.id,
+    });
+    const fresh = await prisma.personRef.findUnique({
+      where: { id: person.id },
+      include: PERSON_INCLUDE,
+    });
+    res.json(fresh);
   }),
 );
 
@@ -528,54 +685,24 @@ router.post(
 // caching, URL convention). The returned URL is what the client writes
 // into PersonProfile.imageUrl.
 
-const MAX_IMAGE = 10 * 1024 * 1024; // 10 MB is plenty for profile photos
-const ALLOWED_IMAGE = new Set(['image/jpeg', 'image/png', 'image/webp']);
-
 router.post(
   '/:id/image',
   express.raw({ type: '*/*', limit: '12mb' }),
   handle(async (req, res) => {
-    const body = req.body;
-    const filename = String(req.query.filename || 'profile').slice(0, 200);
-    if (!Buffer.isBuffer(body) || body.length === 0) {
-      return res.status(400).json({ error: 'empty_body' });
-    }
-    if (body.length > MAX_IMAGE) {
-      return res.status(413).json({ error: 'too_large' });
-    }
-    const mime = detectMime(body);
-    if (!mime || kindOfMime(mime) !== 'image' || !ALLOWED_IMAGE.has(mime)) {
-      return res
-        .status(400)
-        .json({ error: 'unsupported_or_corrupt_image' });
-    }
-
-    // Persist the image and update the profile in one transaction so a
-    // successful upload always leaves imageUrl pointing at a real asset.
-    const result = await prisma.$transaction(async (tx) => {
-      const asset = await tx.mediaAsset.create({
-        data: {
-          kind: 'image',
-          mimeType: mime,
-          filename,
-          byteSize: body.length,
-          bytes: body,
-        },
-        select: { id: true },
-      });
-      const url = `/api/media/${asset.id}`;
-      const profile = await tx.personProfile.upsert({
-        where: { personRefId: req.params.id },
-        update: { imageUrl: url },
-        create: { personRefId: req.params.id, imageUrl: url },
-      });
-      return { asset, profile };
+    // Shared pipeline with the guide-portal photo route (people/profileImage
+    // .js) — validate, store MediaAsset, repoint profile; old assets stay.
+    const result = await storeProfileImage(prisma, req.params.id, {
+      body: req.body,
+      filename: req.query.filename,
     });
-
-    res.status(201).json({
-      url: result.profile.imageUrl,
-      assetId: result.asset.id,
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    await recordPersonChanges(prisma, {
+      personRefId: req.params.id,
+      changes: diffPersonFields({ imageUrl: result.previousUrl }, { imageUrl: result.url }),
+      origin: await userOrigin(req.adminAuth?.userId),
+      source: 'admin',
     });
+    res.status(201).json({ url: result.url, assetId: result.assetId });
   }),
 );
 

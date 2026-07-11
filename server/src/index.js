@@ -19,6 +19,7 @@ import exportsRouter from './routes/exports.js';
 import portalRouter from './routes/portal.js';
 import portalToursRouter from './routes/portalTours.js';
 import portalProfileRouter from './routes/portalProfile.js';
+import bankCatalogRouter from './routes/bankCatalog.js';
 import portalGalleryRouter from './routes/portalGallery.js';
 import guidePortalSettingsRouter from './routes/guidePortalSettings.js';
 import publicGalleryRouter from './routes/publicGallery.js';
@@ -188,8 +189,10 @@ app.use('/api/portal', portalRouter);
 // Guide Portal → Tours (home bootstrap, upcoming/past feeds, tour detail).
 // Same portal-token credential; dedicated guide DTOs — no Deal payloads.
 app.use('/api/portal', portalToursRouter);
-// Guide Portal → פרטים אישיים (view + permission-gated phone/email edit).
+// Guide Portal → פרטים אישיים (view + permission-gated profile editing).
 app.use('/api/portal', portalProfileRouter);
+// Israeli bank catalog — static bundled data, public (admin + portal).
+app.use('/api/bank-catalog', bankCatalogRouter);
 // Guide Portal → Tour Gallery (assigned-tours list, direct-to-R2 uploads,
 // settings-gated delete/share). Same portal-token credential; separate router
 // so the task-feed router stays focused.

@@ -1,19 +1,29 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { resolveGuidePortalAccess } from '../tours/guidePortal/access.js';
+import {
+  diffPersonFields,
+  normalizeBankDetails,
+  personChangeSnapshot,
+  recordPersonChanges,
+} from '../timeline/personChangelog.js';
+import { storeProfileImage } from '../people/profileImage.js';
 
-// Guide Portal → פרטים אישיים. Same portal-token credential; a guide can
+// Guide Portal → פרטים אישיים. Same portal-token credential; the guide can
 // VIEW their own operational identity and — when the editPersonalProfile
-// permission is on — update their contact details.
+// permission is on — update name, photo, contact details and bank details.
 //
-// Deliberately narrow:
-//   * exposed: displayName, email, phone, profile image, role hint
-//   * editable: phone + email only (identity name stays office-managed)
-//   * NOT exposed: internal notes, bankDetails, admin-only profile fields
+// Product rules:
+//   * bank details are NOT secret (every admin may view them) but they are
+//     exposed ONLY here and in admin staff management — never in tour DTOs,
+//     never to other guides.
+//   * every change is recorded in the immutable person changelog
+//     (timeline/personChangelog.js, source='guide_portal').
+//   * internal admin notes are never exposed.
 //
 // Caveat (documented, accepted): PersonRef identity mirrors recruitment for
-// some staff — a later lifecycle push may refresh these fields.
+// some staff — a later lifecycle push may refresh name/email/phone.
 
 const router = Router();
 
@@ -27,6 +37,28 @@ const LIFECYCLE_LABELS = {
   evaluator: 'מעריך',
 };
 
+function guideOrigin(person) {
+  return {
+    actorType: 'api',
+    actorLabel: `מדריך · ${person.displayName}`,
+    createdBy: null,
+    createdByName: null,
+  };
+}
+
+function profileDto(person, profile, permissions) {
+  const bank = normalizeBankDetails(profile?.bankDetails);
+  return {
+    displayName: person.displayName,
+    email: person.email || null,
+    phone: person.phone || null,
+    imageUrl: profile?.imageUrl || null,
+    lifecycleLabel: LIFECYCLE_LABELS[person.lifecycleHint] || null,
+    bank,
+    canEdit: permissions.editPersonalProfile,
+  };
+}
+
 router.get(
   '/:token/profile',
   handle(async (req, res) => {
@@ -36,17 +68,10 @@ router.get(
     if (!access.ok) return fail(res, access);
     const profile = await prisma.personProfile.findUnique({
       where: { personRefId: access.person.id },
-      select: { imageUrl: true },
+      select: { imageUrl: true, bankDetails: true },
     });
     res.set('Cache-Control', 'no-store');
-    res.json({
-      displayName: access.person.displayName,
-      email: access.person.email || null,
-      phone: access.person.phone || null,
-      imageUrl: profile?.imageUrl || null,
-      lifecycleLabel: LIFECYCLE_LABELS[access.person.lifecycleHint] || null,
-      canEdit: access.permissions.editPersonalProfile,
-    });
+    res.json(profileDto(access.person, profile, access.permissions));
   }),
 );
 
@@ -60,30 +85,113 @@ router.put(
     if (!access.permissions.editPersonalProfile) {
       return res.status(403).json({ error: 'not_allowed' });
     }
-    const data = {};
-    if (req.body?.phone !== undefined) {
-      const phone = String(req.body.phone || '').trim();
+    const b = req.body || {};
+
+    // ---- identity fields (PersonRef) ----
+    const identity = {};
+    if (b.displayName !== undefined) {
+      const name = String(b.displayName || '').trim().slice(0, 120);
+      if (!name) return res.status(400).json({ error: 'empty_name' });
+      identity.displayName = name;
+    }
+    if (b.phone !== undefined) {
+      const phone = String(b.phone || '').trim();
       if (phone && !/^[+\d][\d\s\-()]{5,19}$/.test(phone)) {
         return res.status(400).json({ error: 'invalid_phone' });
       }
-      data.phone = phone || null;
+      identity.phone = phone || null;
     }
-    if (req.body?.email !== undefined) {
-      const email = String(req.body.email || '').trim();
+    if (b.email !== undefined) {
+      const email = String(b.email || '').trim();
       if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         return res.status(400).json({ error: 'invalid_email' });
       }
-      data.email = email || null;
+      identity.email = email || null;
     }
-    if (Object.keys(data).length === 0) {
+
+    // ---- bank details (PersonProfile.bankDetails, structured) ----
+    const bankTouched = b.bank !== undefined;
+    const bank = bankTouched ? normalizeBankDetails(b.bank) : null;
+
+    if (Object.keys(identity).length === 0 && !bankTouched) {
       return res.status(400).json({ error: 'no_valid_fields' });
     }
-    const updated = await prisma.personRef.update({
-      where: { id: access.person.id },
-      data,
-      select: { email: true, phone: true },
+
+    const profileBefore = await prisma.personProfile.findUnique({
+      where: { personRefId: access.person.id },
+      select: { imageUrl: true, bankDetails: true },
     });
-    res.json({ ok: true, ...updated });
+    const beforeSnap = personChangeSnapshot(access.person, profileBefore);
+
+    if (Object.keys(identity).length > 0) {
+      await prisma.personRef.update({ where: { id: access.person.id }, data: identity });
+    }
+    if (bankTouched) {
+      await prisma.personProfile.upsert({
+        where: { personRefId: access.person.id },
+        update: { bankDetails: bank },
+        create: { personRefId: access.person.id, bankDetails: bank },
+      });
+    }
+
+    const afterSnap = personChangeSnapshot(
+      { ...access.person, ...identity },
+      { ...profileBefore, ...(bankTouched ? { bankDetails: bank } : {}) },
+    );
+    await recordPersonChanges(prisma, {
+      personRefId: access.person.id,
+      changes: diffPersonFields(beforeSnap, {
+        ...(identity.displayName !== undefined ? { displayName: afterSnap.displayName } : {}),
+        ...(identity.phone !== undefined ? { phone: afterSnap.phone } : {}),
+        ...(identity.email !== undefined ? { email: afterSnap.email } : {}),
+        ...(bankTouched
+          ? {
+              beneficiary: afterSnap.beneficiary,
+              bank: afterSnap.bank,
+              branch: afterSnap.branch,
+              accountNumber: afterSnap.accountNumber,
+            }
+          : {}),
+      }),
+      origin: guideOrigin(access.person),
+      source: 'guide_portal',
+    });
+
+    const profile = await prisma.personProfile.findUnique({
+      where: { personRefId: access.person.id },
+      select: { imageUrl: true, bankDetails: true },
+    });
+    const person = await prisma.personRef.findUnique({ where: { id: access.person.id } });
+    res.json({ ok: true, ...profileDto(person, profile, access.permissions) });
+  }),
+);
+
+// Profile photo — same shared pipeline as the admin upload (crop happens
+// client-side in the shared crop tool; the server stores the final avatar
+// rendition; previous assets stay available through history).
+router.post(
+  '/:token/profile/photo',
+  express.raw({ type: '*/*', limit: '12mb' }),
+  handle(async (req, res) => {
+    const access = await resolveGuidePortalAccess(prisma, {
+      portalToken: req.params.token,
+    });
+    if (!access.ok) return fail(res, access);
+    if (!access.permissions.editPersonalProfile) {
+      return res.status(403).json({ error: 'not_allowed' });
+    }
+    const result = await storeProfileImage(prisma, access.person.id, {
+      body: req.body,
+      filename: req.query.filename,
+    });
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    await recordPersonChanges(prisma, {
+      personRefId: access.person.id,
+      changes: diffPersonFields({ imageUrl: result.previousUrl }, { imageUrl: result.url }),
+      origin: guideOrigin(access.person),
+      source: 'guide_portal',
+    });
+    res.status(201).json({ url: result.url });
   }),
 );
 
