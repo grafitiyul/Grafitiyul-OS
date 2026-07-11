@@ -225,6 +225,17 @@ export default function TourPage() {
     refresh();
   }, [refresh]);
 
+  // Calendar chip liveness: after a mutation the row is correctly 'pending' —
+  // the sync worker converges it within its next 60s tick, but nothing here
+  // re-fetched, so the chip stayed yellow until the modal was reopened. While
+  // pending, poll quietly (no-store fetch, no spinner) so the operator sees it
+  // turn green/red without reopening.
+  useEffect(() => {
+    if (tour?.gcalSyncStatus !== 'pending') return undefined;
+    const t = setInterval(refresh, 10_000);
+    return () => clearInterval(t);
+  }, [tour?.gcalSyncStatus, refresh]);
+
   // Esc closes the modal.
   useEffect(() => {
     function onKey(e) {
