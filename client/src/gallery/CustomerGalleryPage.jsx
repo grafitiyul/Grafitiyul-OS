@@ -6,11 +6,13 @@ import GalleryLightbox from './GalleryLightbox.jsx';
 import UploadQueuePanel from './UploadQueuePanel.jsx';
 import DownloadAllButton from './DownloadAllButton.jsx';
 
-// PUBLIC customer gallery — /g/:token. The visual standard here is a branded
-// event gallery, not an admin screen: full-bleed cover hero, generous type,
-// clean grid, smooth lightbox. Customers can view, add their own photos
-// (appear immediately) and download — no management controls exist on this
-// surface at all (and the server refuses them anyway).
+// PUBLIC customer gallery — /g/:token. Design direction (2026-07 redesign):
+// light, clean, photos-first. A COMPACT header (subtle branding, tour title,
+// date, count) with the two primary actions right under it — upload and
+// download-all — then the grid starts immediately. No oversized hero, no dark
+// canvas; the media itself is the visual hero. Mobile keeps a floating upload
+// pill once the header scrolls away. Permissions/security are untouched: the
+// token is the credential, customers can never delete or manage anything.
 
 async function jsonFetch(url, options = {}) {
   const res = await fetch(url, {
@@ -27,6 +29,7 @@ async function jsonFetch(url, options = {}) {
     }
     const err = new Error(payload?.error || `HTTP ${res.status}`);
     err.status = res.status;
+    err.payload = payload;
     throw err;
   }
   return res.status === 204 ? null : res.json();
@@ -39,10 +42,10 @@ function fmtDate(ymd) {
 
 function CenteredNote({ emoji, title, sub }) {
   return (
-    <div dir="rtl" className="flex min-h-screen flex-col items-center justify-center gap-3 bg-gray-950 px-6 text-center">
+    <div dir="rtl" className="flex min-h-screen flex-col items-center justify-center gap-3 bg-gray-50 px-6 text-center">
       <div className="text-4xl" aria-hidden>{emoji}</div>
-      <h1 className="text-lg font-bold text-white">{title}</h1>
-      {sub && <p className="max-w-sm text-[14px] leading-relaxed text-white/50">{sub}</p>}
+      <h1 className="text-lg font-bold text-gray-900">{title}</h1>
+      {sub && <p className="max-w-sm text-[14px] leading-relaxed text-gray-500">{sub}</p>}
     </div>
   );
 }
@@ -55,7 +58,9 @@ export default function CustomerGalleryPage() {
   const [phase, setPhase] = useState('loading'); // loading | ready | gone | error
   const [lightboxIndex, setLightboxIndex] = useState(null);
   const [queueSnap, setQueueSnap] = useState(null);
+  const [headerAway, setHeaderAway] = useState(false);
   const fileInputRef = useRef(null);
+  const actionsRef = useRef(null);
 
   const uploader = useMemo(
     () =>
@@ -115,12 +120,22 @@ export default function CustomerGalleryPage() {
     };
   }, [uploader, load]);
 
+  // Floating upload pill appears once the header actions scroll out of view
+  // (mobile-reachability: the primary action is never more than a thumb away).
+  useEffect(() => {
+    const el = actionsRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return undefined;
+    const obs = new IntersectionObserver(([entry]) => setHeaderAway(!entry.isIntersecting));
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [phase]);
+
   if (phase === 'loading') {
     return (
-      <div dir="rtl" className="flex min-h-screen items-center justify-center bg-gray-950">
+      <div dir="rtl" className="flex min-h-screen items-center justify-center bg-gray-50">
         <div className="flex flex-col items-center gap-3">
-          <span className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-white/70 border-t-transparent" aria-hidden />
-          <span className="text-[13px] text-white/50">טוען את הגלריה…</span>
+          <span className="inline-block h-7 w-7 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" aria-hidden />
+          <span className="text-[13px] text-gray-400">טוען את הגלריה…</span>
         </div>
       </div>
     );
@@ -140,57 +155,51 @@ export default function CustomerGalleryPage() {
 
   const media = data.media || [];
   const lightboxMedia = lightboxIndex != null ? media[lightboxIndex] : null;
+  const hasMedia = media.length > 0;
+
+  const uploadButton = (extra = '') => (
+    <button
+      type="button"
+      onClick={() => fileInputRef.current?.click()}
+      className={`inline-flex items-center justify-center gap-2 rounded-xl bg-gray-900 px-5 py-2.5 text-[14px] font-bold text-white shadow-sm transition hover:bg-gray-700 active:scale-[0.98] ${extra}`}
+    >
+      📷 העלאת תמונות וסרטונים
+    </button>
+  );
 
   return (
-    <div dir="rtl" className="min-h-screen bg-gray-950">
-      {/* Hero */}
-      <header className="relative overflow-hidden">
-        {data.coverUrl ? (
-          <>
-            <img
-              src={data.coverUrl}
-              alt=""
-              className="absolute inset-0 h-full w-full scale-105 object-cover blur-[2px]"
-              aria-hidden
-            />
-            <div className="absolute inset-0 bg-gradient-to-b from-gray-950/40 via-gray-950/60 to-gray-950" />
-          </>
-        ) : (
-          <div className="absolute inset-0 bg-gradient-to-br from-fuchsia-950 via-gray-950 to-indigo-950" />
-        )}
-        <div className="relative mx-auto flex min-h-[42vh] max-w-5xl flex-col items-center justify-end px-5 pb-10 pt-16 text-center sm:min-h-[48vh]">
-          <div className="text-[13px] font-bold tracking-[0.35em] text-white/60">GRAFITIYUL</div>
-          <h1 className="mt-3 text-3xl font-black leading-tight tracking-tight text-white sm:text-4xl">
+    <div dir="rtl" className="min-h-screen bg-gray-50">
+      {/* Compact header — branding is quiet, the tour is the headline. */}
+      <header className="border-b border-gray-200 bg-white">
+        <div className="mx-auto max-w-6xl px-4 pb-5 pt-6 sm:px-6">
+          <div className="text-[11px] font-bold tracking-[0.3em] text-gray-400">גרפיטיול</div>
+          <h1 className="mt-1.5 text-[22px] font-black leading-tight tracking-tight text-gray-900 sm:text-[26px]">
             {data.title}
           </h1>
-          <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[13.5px] text-white/60">
+          <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[13px] text-gray-500">
             {data.date && <span>{fmtDate(data.date)}</span>}
-            {media.length > 0 && (
+            {hasMedia && (
               <>
-                <span className="text-white/25">·</span>
-                <span>{media.length} רגעים מהסיור</span>
+                <span className="text-gray-300">·</span>
+                <span>{media.length} תמונות וסרטונים</span>
+              </>
+            )}
+            {data.brandingText && (
+              <>
+                <span className="text-gray-300">·</span>
+                <span className="text-gray-400">{data.brandingText}</span>
               </>
             )}
           </div>
-          {data.brandingText && (
-            <p className="mt-2 text-[13px] text-white/45">{data.brandingText}</p>
-          )}
-          <div className="mt-6 flex flex-wrap items-center justify-center gap-2.5">
-            {data.canUpload && (
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="rounded-full bg-white px-6 py-2.5 text-[14px] font-bold text-gray-900 shadow-xl shadow-black/30 transition hover:bg-gray-100 active:scale-[0.98]"
-              >
-                📷 הוסיפו את התמונות שלכם
-              </button>
-            )}
-            {media.length > 0 && (
+
+          {/* Primary actions — always visible at the top, never buried. */}
+          <div ref={actionsRef} className="mt-4 flex flex-wrap items-center gap-2">
+            {data.canUpload && uploadButton()}
+            {hasMedia && (
               <DownloadAllButton
-                className="rounded-full border border-white/25 bg-white/10 px-5 py-2.5 text-[13.5px] font-semibold text-white backdrop-blur-sm transition hover:bg-white/20 disabled:opacity-70"
+                className="inline-flex items-center justify-center rounded-xl border border-gray-300 bg-white px-5 py-2.5 text-[13.5px] font-semibold text-gray-700 transition hover:bg-gray-100 disabled:opacity-60"
                 endpoints={{
-                  request: () =>
-                    jsonFetch(`${base}/export`, { method: 'POST', body: '{}' }),
+                  request: () => jsonFetch(`${base}/export`, { method: 'POST', body: '{}' }),
                   status: (id) => jsonFetch(`${base}/export/${id}`),
                   downloadHref: (id) => `${base}/export/${id}/download`,
                 }}
@@ -200,31 +209,45 @@ export default function CustomerGalleryPage() {
         </div>
       </header>
 
-      {/* Body */}
-      <main className="mx-auto max-w-5xl px-3 pb-20 pt-6 sm:px-5">
+      {/* Body — the grid starts right away; media is the hero. */}
+      <main className="mx-auto max-w-6xl px-3 pb-24 pt-4 sm:px-5 sm:pt-5">
         {queueSnap?.totals?.total > 0 && (
           <div className="mb-4">
             <UploadQueuePanel snapshot={queueSnap} uploader={uploader} />
           </div>
         )}
 
-        {media.length === 0 ? (
-          <div className="rounded-3xl border border-white/10 bg-white/5 px-6 py-20 text-center">
-            <div className="text-4xl" aria-hidden>✨</div>
-            <h2 className="mt-3 text-[16px] font-bold text-white">הגלריה עוד מתמלאת</h2>
-            <p className="mt-1.5 text-[13.5px] leading-relaxed text-white/50">
-              התמונות והסרטונים מהסיור יופיעו כאן ברגע שיועלו.
-              {data.canUpload && ' יש לכם רגעים משלכם? העלו אותם עכשיו!'}
+        {!hasMedia ? (
+          <div className="mx-auto mt-6 max-w-md rounded-2xl border border-gray-200 bg-white px-6 py-10 text-center shadow-sm">
+            <div className="text-3xl" aria-hidden>🖼️</div>
+            <h2 className="mt-3 text-[16px] font-bold text-gray-900">הגלריה עדיין ריקה</h2>
+            <p className="mt-1.5 text-[13.5px] leading-relaxed text-gray-500">
+              התמונות והסרטונים מהסיור יופיעו כאן.
+              {data.canUpload && ' יש לכם תמונות משלכם? הוסיפו אותן עכשיו.'}
             </p>
+            {data.canUpload && <div className="mt-5">{uploadButton()}</div>}
           </div>
         ) : (
           <GalleryGrid media={media} onOpen={(i) => setLightboxIndex(i)} />
         )}
       </main>
 
-      <footer className="border-t border-white/5 py-6 text-center text-[12px] text-white/30">
+      <footer className="border-t border-gray-200 py-5 text-center text-[12px] text-gray-400">
         גרפיטיול · סיורי גרפיטי ואמנות רחוב
       </footer>
+
+      {/* Floating upload pill — appears when the header actions scroll away. */}
+      {data.canUpload && hasMedia && headerAway && (
+        <div className="fixed inset-x-0 bottom-4 z-20 flex justify-center px-4">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="inline-flex items-center gap-2 rounded-full bg-gray-900 px-5 py-3 text-[14px] font-bold text-white shadow-xl shadow-gray-900/20 active:scale-[0.98]"
+          >
+            📷 העלאת תמונות
+          </button>
+        </div>
+      )}
 
       <input
         ref={fileInputRef}
