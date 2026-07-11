@@ -1246,6 +1246,9 @@ export const api = {
     // + the manual "סמן סיור כהסתיים" transition.
     completionState: (id) => request(`/api/tours/${id}/completion-state`),
     complete: (id) => request(`/api/tours/${id}/complete`, { method: 'POST', body: '{}' }),
+    // Completion reversal ("החזר לעתידי") — completed → scheduled while the
+    // tour's date is still today/future.
+    reopen: (id) => request(`/api/tours/${id}/reopen`, { method: 'POST', body: '{}' }),
     // Guide assignments (role lives on the assignment; switching = update).
     addAssignment: (tourId, data) =>
       request(`/api/tours/${tourId}/assignments`, { method: 'POST', body: JSON.stringify(data) }),

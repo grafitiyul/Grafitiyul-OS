@@ -6,6 +6,7 @@ import {
   midnightAfterMs,
   summaryCompletionState,
   completeTour,
+  reopenTour,
 } from './completion.js';
 
 // ── business-timezone midnight (Asia/Jerusalem) ─────────────────────────────
@@ -72,20 +73,24 @@ test('a tour with NO required guides never auto-completes via summaries', async 
 
 // ── the ONE transition (fake client) ─────────────────────────────────────────
 
-function fakeTourClient(tour) {
-  const calls = { updates: [], timeline: [] };
+function fakeTourClient(tour, { bookings = [], frozenUpdates = [] } = {}) {
+  const calls = { updates: [], timeline: [], frozenUpdates };
   return {
     calls,
     tourEvent: {
       findUnique: async () => tour,
       update: async (args) => calls.updates.push(args),
     },
+    booking: { findMany: async () => bookings },
+    questionnaireSubmission: {
+      updateMany: async (args) => calls.frozenUpdates.push(args),
+    },
     timelineEntry: { create: async (args) => calls.timeline.push(args) },
   };
 }
 
-test('completeTour: scheduled → completed with reason + timeline event', async () => {
-  const client = fakeTourClient({ id: 't1', status: 'scheduled', date: '2026-07-10' });
+test('completeTour: scheduled → completed with reason + timeline event (manual, on tour day)', async () => {
+  const client = fakeTourClient({ id: 't1', status: 'scheduled', date: businessToday() });
   const res = await completeTour(client, 't1', { reason: 'manual', actorName: 'דורון' });
   assert.deepEqual(res, { ok: true, already: false });
   assert.equal(client.calls.updates[0].data.status, 'completed');
@@ -94,6 +99,38 @@ test('completeTour: scheduled → completed with reason + timeline event', async
   assert.equal(client.calls.timeline.length, 1);
   assert.match(client.calls.timeline[0].data.body, /הסתיים/);
   assert.match(client.calls.timeline[0].data.body, /דורון/);
+});
+
+test('completeTour: MANUAL completion is same-day only (business TZ)', async () => {
+  // Future tour — refused.
+  const future = await completeTour(
+    fakeTourClient({ id: 't1', status: 'scheduled', date: '2099-01-01' }),
+    't1',
+    { reason: 'manual' },
+  );
+  assert.deepEqual(future, { ok: false, error: 'not_tour_day' });
+
+  // Past tour — refused for MANUAL too (midnight owns overdue tours).
+  const past = await completeTour(
+    fakeTourClient({ id: 't1', status: 'scheduled', date: '2020-01-01' }),
+    't1',
+    { reason: 'manual' },
+  );
+  assert.deepEqual(past, { ok: false, error: 'not_tour_day' });
+
+  // The AUTOMATIC triggers are unaffected by the same-day rule.
+  const midnight = await completeTour(
+    fakeTourClient({ id: 't1', status: 'scheduled', date: '2020-01-01' }),
+    't1',
+    { reason: 'midnight' },
+  );
+  assert.equal(midnight.ok, true);
+  const summaries = await completeTour(
+    fakeTourClient({ id: 't1', status: 'scheduled', date: '2099-01-01' }),
+    't1',
+    { reason: 'summaries' },
+  );
+  assert.equal(summaries.ok, true);
 });
 
 test('completeTour: idempotent on completed, refuses cancelled and postponed', async () => {
@@ -113,4 +150,81 @@ test('completeTour: explicit completedAt (midnight sweep) is stamped as-is', asy
   const mid = new Date(midnightAfterMs('2026-07-10'));
   await completeTour(client, 't1', { reason: 'midnight', completedAt: mid });
   assert.equal(client.calls.updates[0].data.completedAt.getTime(), mid.getTime());
+});
+
+// ── the ONE completion reversal (fake client) ────────────────────────────────
+
+test('reopenTour: completed → scheduled, clears completion, unfreezes, records timeline', async () => {
+  const completedAt = new Date('2026-07-11T15:36:06Z');
+  const client = fakeTourClient(
+    {
+      id: 't1',
+      status: 'completed',
+      date: '2099-01-01',
+      completedAt,
+      completedReason: 'manual',
+    },
+    { bookings: [{ id: 'b1' }, { id: 'b2' }] },
+  );
+  const res = await reopenTour(client, 't1', { actorName: 'דורון' });
+  assert.deepEqual(res, { ok: true });
+
+  const patch = client.calls.updates[0].data;
+  assert.equal(patch.status, 'scheduled');
+  assert.equal(patch.completedAt, null);
+  assert.equal(patch.completedReason, null);
+  // Calendar reconciles the SAME event (dirty flag) — never a duplicate.
+  assert.equal(patch.gcalSyncStatus, 'pending');
+
+  // Unfreeze ONLY submissions frozen by THIS completion (frozenAt >= completedAt),
+  // on the tour itself AND its bookings' coordination forms.
+  assert.equal(client.calls.frozenUpdates.length, 1);
+  const where = client.calls.frozenUpdates[0].where;
+  assert.deepEqual(where.frozenAt, { gte: completedAt });
+  assert.deepEqual(where.OR, [
+    { subjectType: 'tour_event', subjectId: 't1' },
+    { subjectType: 'booking', subjectId: { in: ['b1', 'b2'] } },
+  ]);
+  assert.deepEqual(client.calls.frozenUpdates[0].data, { frozenAt: null });
+
+  assert.equal(client.calls.timeline.length, 1);
+  assert.match(client.calls.timeline[0].data.body, /הוחזר/);
+  assert.match(client.calls.timeline[0].data.body, /דורון/);
+  assert.equal(client.calls.timeline[0].data.data.event, 'reopened');
+  assert.equal(client.calls.timeline[0].data.data.previousCompletedReason, 'manual');
+});
+
+test('reopenTour: refuses non-completed tours and past dates', async () => {
+  const scheduled = await reopenTour(
+    fakeTourClient({ id: 't1', status: 'scheduled', date: '2099-01-01' }),
+    't1',
+  );
+  assert.deepEqual(scheduled, { ok: false, error: 'not_completed' });
+
+  const cancelled = await reopenTour(
+    fakeTourClient({ id: 't1', status: 'cancelled', date: '2099-01-01' }),
+    't1',
+  );
+  assert.deepEqual(cancelled, { ok: false, error: 'not_completed' });
+
+  const past = await reopenTour(
+    fakeTourClient({ id: 't1', status: 'completed', date: '2020-01-01', completedAt: new Date() }),
+    't1',
+  );
+  assert.deepEqual(past, { ok: false, error: 'date_passed' });
+
+  const dateless = await reopenTour(
+    fakeTourClient({ id: 't1', status: 'completed', date: null, completedAt: new Date() }),
+    't1',
+  );
+  assert.deepEqual(dateless, { ok: false, error: 'date_passed' });
+});
+
+test('reopenTour: reopening today keeps working (date == today is still current)', async () => {
+  const client = fakeTourClient(
+    { id: 't1', status: 'completed', date: businessToday(), completedAt: new Date(), completedReason: 'manual' },
+    { bookings: [] },
+  );
+  const res = await reopenTour(client, 't1');
+  assert.deepEqual(res, { ok: true });
 });

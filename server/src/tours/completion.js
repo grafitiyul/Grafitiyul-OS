@@ -12,6 +12,7 @@
 
 import { prisma } from '../db.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
+import { calendarPendingPatch } from './calendar/service.js';
 
 export const REQUIRED_SUMMARY_ROLES = ['lead_guide', 'guide'];
 
@@ -89,7 +90,7 @@ const REASON_BODY = {
 // The ONE completion transition. Idempotent on completed tours; refuses
 // cancelled ones. `client` may be a transaction (summary-submit trigger runs
 // inside the submit tx).
-export async function completeTour(client, tourEventId, { reason, actorName = null, completedAt = null } = {}) {
+export async function completeTour(client, tourEventId, { reason, actorName = null, completedAt = null, nowMs = Date.now() } = {}) {
   const tour = await client.tourEvent.findUnique({
     where: { id: tourEventId },
     select: { id: true, status: true, date: true },
@@ -100,6 +101,13 @@ export async function completeTour(client, tourEventId, { reason, actorName = nu
   // A postponed tour has no date — "over" is meaningless until it is
   // rescheduled (Apply Tour Update transitions it back to scheduled).
   if (tour.status === 'postponed') return { ok: false, error: 'tour_postponed' };
+  // MANUAL completion is a same-day operational action ONLY (business TZ).
+  // Before the tour day there is nothing to wrap up; after it the midnight
+  // sweep already completed the tour. Enforced here — not just UI visibility —
+  // so a crafted request cannot complete a future tour by accident.
+  if (reason === 'manual' && tour.date !== businessToday(nowMs)) {
+    return { ok: false, error: 'not_tour_day' };
+  }
 
   const stamp = completedAt || new Date();
   await client.tourEvent.update({
@@ -115,6 +123,66 @@ export async function completeTour(client, tourEventId, { reason, actorName = nu
     origin: systemOrigin(),
   });
   return { ok: true, already: false };
+}
+
+// The ONE completion REVERSAL — "החזר לעתידי" for an accidental manual
+// completion. Only a completed tour whose date context is still current
+// (today or future, business TZ) may return to 'scheduled': once the date
+// passed, the tour belongs to the past and the midnight sweep would just
+// re-complete it.
+//
+// Questionnaire lifecycle safety: the lazy structure-freeze stamps frozenAt
+// strictly AFTER completedAt, so `frozenAt >= completedAt` identifies exactly
+// the submissions frozen BECAUSE OF this completion. Clearing frozenAt
+// restores the live-version lifecycle (applyLifecycle re-syncs them to the
+// template's current published version on next read). Answers and their
+// snapshots are never touched — a later freeze rebuilds snapshots; history
+// entries are never mutated (the reversal is a NEW timeline event).
+export async function reopenTour(client, tourEventId, { actorName = null, nowMs = Date.now() } = {}) {
+  const tour = await client.tourEvent.findUnique({
+    where: { id: tourEventId },
+    select: { id: true, status: true, date: true, completedAt: true, completedReason: true },
+  });
+  if (!tour) return { ok: false, error: 'not_found' };
+  if (tour.status !== 'completed') return { ok: false, error: 'not_completed' };
+  if (!tour.date || tour.date < businessToday(nowMs)) return { ok: false, error: 'date_passed' };
+
+  const prevCompletedAt = tour.completedAt;
+  // gcal: the event was KEPT at completion (history is never cancelled), so
+  // marking pending reconciles the SAME gcalEventId — no duplicate event.
+  await client.tourEvent.update({
+    where: { id: tourEventId },
+    data: { status: 'scheduled', completedAt: null, completedReason: null, ...calendarPendingPatch() },
+  });
+
+  const bookings = await client.booking.findMany({
+    where: { tourEventId },
+    select: { id: true },
+  });
+  await client.questionnaireSubmission.updateMany({
+    where: {
+      frozenAt: prevCompletedAt ? { gte: prevCompletedAt } : { not: null },
+      OR: [
+        { subjectType: 'tour_event', subjectId: tourEventId },
+        { subjectType: 'booking', subjectId: { in: bookings.map((b) => b.id) } },
+      ],
+    },
+    data: { frozenAt: null },
+  });
+
+  await emitTimelineEvent(client, {
+    subjectType: 'tour_event',
+    subjectId: tourEventId,
+    kind: 'tour',
+    body: '↩️ הסיור הוחזר לסטטוס "מתוכנן"' + (actorName ? ` על ידי ${actorName}` : ''),
+    data: {
+      event: 'reopened',
+      previousCompletedAt: prevCompletedAt ? prevCompletedAt.toISOString() : null,
+      previousCompletedReason: tour.completedReason || null,
+    },
+    origin: systemOrigin(),
+  });
+  return { ok: true };
 }
 
 // Midnight sweep body (worker tick): every scheduled tour whose calendar date

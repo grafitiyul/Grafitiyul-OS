@@ -10,6 +10,7 @@ import TourSlotModal from './TourSlotModal.jsx';
 import TourComponents from './TourComponents.jsx';
 import TourTeamEditor from './TourTeamEditor.jsx';
 import TourGalleryCard from './gallery/TourGalleryCard.jsx';
+import { todayIL } from './calendar/dates.js';
 import { contactNameHe, dealPath, resolveActivityLabel } from '../deals/config.js';
 import {
   TOUR_STATUS_LABELS,
@@ -200,6 +201,8 @@ export default function TourPage() {
   // Manual "סמן סיור כהסתיים" — the confirm dialog lists required guides whose
   // summaries are still missing (completion happens anyway after confirm).
   const [confirmComplete, setConfirmComplete] = useState(null); // { missing: [...] } | null
+  // Completion reversal ("החזר לעתידי") — undo an accidental same-day completion.
+  const [confirmReopen, setConfirmReopen] = useState(false);
 
   const refreshSummaryStatus = useCallback(async () => {
     try {
@@ -278,10 +281,31 @@ export default function TourPage() {
       await refresh();
       refreshSummaryStatus();
     } catch (e) {
+      const code = e.payload?.error;
       alert(
-        e.payload?.error === 'tour_cancelled'
+        code === 'tour_cancelled'
           ? 'הסיור בוטל — אין מה לסמן כהסתיים.'
-          : 'שגיאה: ' + (e.payload?.error || e.message),
+          : code === 'not_tour_day'
+            ? 'ניתן לסמן סיור כהסתיים רק ביום הסיור עצמו.'
+            : 'שגיאה: ' + (code || e.message),
+      );
+    }
+  }
+
+  async function runReopen() {
+    setConfirmReopen(false);
+    try {
+      await api.tours.reopen(id);
+      await refresh();
+      refreshSummaryStatus();
+    } catch (e) {
+      const code = e.payload?.error;
+      alert(
+        code === 'date_passed'
+          ? 'תאריך הסיור כבר עבר — לא ניתן להחזיר אותו לעתידי.'
+          : code === 'not_completed'
+            ? 'הסיור אינו במצב "הסתיים".'
+            : 'שגיאה: ' + (code || e.message),
       );
     }
   }
@@ -400,18 +424,8 @@ export default function TourPage() {
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  {/* Tour Summary moved to the "סיכום סיור" section below —
-                      one hierarchy with the gallery, mirrored by the Guide
-                      Portal. */}
-                  {tour.status === 'scheduled' && (
-                    <button
-                      type="button"
-                      onClick={openCompleteConfirm}
-                      className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[12px] font-semibold text-emerald-700 hover:bg-emerald-100"
-                    >
-                      ✓ סמן סיור כהסתיים
-                    </button>
-                  )}
+                  {/* Completion actions live at the BOTTOM of the "סיכום סיור"
+                      section (operational wrap-up), not in the header. */}
                   {isSlot && tour.status !== 'cancelled' && (
                     <button
                       type="button"
@@ -544,6 +558,40 @@ export default function TourPage() {
                 {/* Tour Gallery — compact summary; the full grid opens in a
                     dedicated workspace modal (density of this page is sacred). */}
                 <TourGalleryCard tourEventId={tour.id} tourStatus={tour.status} />
+                {/* Completion — the tour's operational wrap-up, so it closes
+                    this section (below the gallery). Manual completion is a
+                    SAME-DAY action only (server-enforced too); the reversal
+                    appears only while the completed tour's date is still
+                    today/future. */}
+                {(() => {
+                  const today = todayIL();
+                  const canComplete = tour.status === 'scheduled' && tour.date === today;
+                  const canReopen =
+                    tour.status === 'completed' && !!tour.date && tour.date >= today;
+                  if (!canComplete && !canReopen) return null;
+                  return (
+                    <div className="mt-3 flex justify-end border-t border-gray-100 pt-3">
+                      {canComplete && (
+                        <button
+                          type="button"
+                          onClick={openCompleteConfirm}
+                          className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-[12.5px] font-semibold text-emerald-700 hover:bg-emerald-100"
+                        >
+                          ✓ סמן סיור כהסתיים
+                        </button>
+                      )}
+                      {canReopen && (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmReopen(true)}
+                          className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-[12.5px] font-semibold text-amber-700 hover:bg-amber-100"
+                        >
+                          ↩ החזר לעתידי
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
               </Section>
 
               {/* History — collapsed accordion. */}
@@ -640,6 +688,19 @@ export default function TourPage() {
         cancelLabel="חזרה"
         onCancel={() => setConfirmComplete(null)}
         onConfirm={runComplete}
+      />
+
+      {/* Completion reversal — undo an accidental completion while the tour's
+          date is still current. Answers/history are preserved; only the
+          completion state (and the freeze it caused) is reversed. */}
+      <ConfirmDialog
+        open={confirmReopen}
+        title="החזרת הסיור לעתידי"
+        body="הסיור יחזור לסטטוס מתוכנן: סימון ההסתיימות יבוטל, שאלוני הסיור יחזרו למחזור החי (כל התשובות נשמרות) והסיור יופיע שוב בסיורים הקרובים. הפעולה תתועד בהיסטוריה."
+        confirmLabel="החזר לעתידי"
+        cancelLabel="חזרה"
+        onCancel={() => setConfirmReopen(false)}
+        onConfirm={runReopen}
       />
     </div>
   );

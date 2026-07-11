@@ -21,7 +21,7 @@ import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 import { validateWorkshopLocationForComponent } from '../tours/activityCatalog.js';
 import { seedTourComponents } from '../tours/tourComponents.js';
 import { scheduleGalleryCleanup } from '../tours/gallery/service.js';
-import { summaryCompletionState, completeTour } from '../tours/completion.js';
+import { summaryCompletionState, completeTour, reopenTour } from '../tours/completion.js';
 import { isAssignableStaff } from '../people/eligibility.js';
 import { resolveTourGuideColor } from '../../../shared/guideColor.mjs';
 import {
@@ -557,7 +557,8 @@ router.get(
   }),
 );
 
-// Manual completion (trigger #3). Idempotent; refuses cancelled tours.
+// Manual completion (trigger #3). Idempotent; refuses cancelled tours and —
+// server-enforced — any day that is not the tour's own date (not_tour_day).
 router.post(
   '/:id/complete',
   handle(async (req, res) => {
@@ -570,6 +571,25 @@ router.post(
       return res.status(result.error === 'not_found' ? 404 : 409).json({ error: result.error });
     }
     res.json({ ok: true, already: !!result.already });
+  }),
+);
+
+// Completion REVERSAL ("החזר לעתידי") — completion.js is the ONE transition
+// pair. Only completed tours whose date is today/future may reopen; the
+// service also unfreezes the questionnaires this completion froze and marks
+// the calendar row pending (same gcalEventId — never a duplicate event).
+router.post(
+  '/:id/reopen',
+  handle(async (req, res) => {
+    const origin = await userOrigin(req.adminAuth?.userId);
+    const result = await reopenTour(prisma, req.params.id, {
+      actorName: origin.createdByName || null,
+    });
+    if (!result.ok) {
+      return res.status(result.error === 'not_found' ? 404 : 409).json({ error: result.error });
+    }
+    kickTourCalendarSync();
+    res.json({ ok: true });
   }),
 );
 
