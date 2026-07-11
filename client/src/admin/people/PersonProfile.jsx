@@ -7,6 +7,8 @@ import { useDirtyForm } from '../../lib/dirtyForms.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import AvatarCropDialog from '../../avatar/AvatarCropDialog.jsx';
 import BankDetailsFields from '../../profile/BankDetailsFields.jsx';
+import StaffColorPicker, { StaffColorSwatch } from '../../color/StaffColorPicker.jsx';
+import { staffColorNameHe } from '../../../../shared/staffColors.mjs';
 import {
   IDENTITY_SOURCES,
   PERSON_STATUS_LABELS,
@@ -124,6 +126,7 @@ function ProfileTabs({ person, teams, procedures, onChanged, onDeleted }) {
             <IdentitySection person={person} onChanged={onChanged} />
           )}
           <TrainingFactsSection person={person} onChanged={onChanged} />
+          <GuideColorSection person={person} onChanged={onChanged} />
           <TeamSection person={person} teams={teams} onChanged={onChanged} />
           {/* תיאור + הערות פנימיות — same fields/storage/save, technical home. */}
           <ProfileSection person={person} onChanged={onChanged} />
@@ -957,6 +960,58 @@ function ProfileSection({ person, onChanged }) {
   );
 }
 
+// ── צבע מדריך — personal identity color (shared canonical palette) ─────────
+// Saves through the existing profile update route → same validation, same
+// immutable changelog entry (old swatch ← new swatch), same restore.
+
+function GuideColorSection({ person, onChanged }) {
+  const current = person.profile?.displayColor || null;
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  async function pick(key) {
+    if (key === current) return setOpen(false);
+    setSaving(true);
+    try {
+      await api.people.updateProfile(person.id, { displayColor: key });
+      setOpen(false);
+      await onChanged();
+    } catch (e) {
+      window.alert('שמירת הצבע נכשלה: ' + (e.payload?.error || e.message));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Section title="צבע מדריך">
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          disabled={saving}
+          className="flex items-center gap-2.5 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        >
+          <StaffColorSwatch colorKey={current} className="h-6 w-6" />
+          {current ? staffColorNameHe(current) || current : 'ללא צבע'}
+          <span className="text-gray-400" aria-hidden>
+            {open ? '▴' : '▾'}
+          </span>
+        </button>
+        {saving && <span className="text-[12px] text-gray-400">שומר…</span>}
+      </div>
+      <p className="mt-1.5 text-[12px] text-gray-400">
+        צבע הזיהוי האישי — מופיע ברשימת הצוות ובכל תצוגות הסיורים של המדריך.
+      </p>
+      {open && (
+        <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
+          <StaffColorPicker value={current} onPick={pick} />
+        </div>
+      )}
+    </Section>
+  );
+}
+
 // ── Bank section ────────────────────────────────────────────────────────────
 // Flexible JSON per Slice 8 decision #4. Hidden by default per spec.
 // Edit-as-JSON for now — later we'll add a real form when the shape stabilizes.
@@ -1339,8 +1394,18 @@ function ChangesSection({ person, onChanged }) {
 }
 
 // Old/new value rendering — photos preview as small thumbnails (old assets
-// are never deleted, so the URLs keep working).
+// are never deleted, so the URLs keep working); colors render as swatches.
 function ChangeValue({ fieldKey, value, display, muted = false }) {
+  if (fieldKey === 'displayColor') {
+    return (
+      <span className={`inline-flex items-center gap-1.5 ${muted ? 'opacity-60' : ''}`}>
+        <StaffColorSwatch colorKey={value} className="h-[18px] w-[18px]" />
+        <span className={muted ? 'text-gray-400' : 'text-gray-900 font-medium'}>
+          {display || 'ללא צבע'}
+        </span>
+      </span>
+    );
+  }
   if (fieldKey === 'imageUrl') {
     return value ? (
       <img

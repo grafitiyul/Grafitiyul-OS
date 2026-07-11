@@ -1,4 +1,5 @@
 import { emitTimelineEvent } from './events.js';
+import { staffColorNameHe } from '../../../shared/staffColors.mjs';
 
 // Person/guide profile changelog — same architecture as dealChangelog.js:
 // ONE TimelineEntry (subjectType='person', kind='change') per save, carrying
@@ -21,6 +22,7 @@ export const PERSON_FIELD_LABELS = {
   vatStatus: 'מע״מ',
   senioritySupplement: 'תוספת ותק',
   travelAllowance: 'נסיעות',
+  displayColor: 'צבע מדריך',
   beneficiary: 'שם המוטב',
   bank: 'בנק',
   branch: 'סניף',
@@ -53,6 +55,9 @@ const FIELDS = [
   { key: 'vatStatus', display: (v) => (v ? VAT_STATUS_LABELS[v] || v : null) },
   { key: 'senioritySupplement' },
   { key: 'travelAllowance' },
+  // History shows the Hebrew color name; the UI renders the raw key as a
+  // swatch (the key is preserved in oldValue/newValue for restore).
+  { key: 'displayColor', display: (v) => (v ? staffColorNameHe(v) || v : 'ללא צבע') },
   { key: 'beneficiary' },
   { key: 'bank', display: codeNameDisplay, eq: codeNameEq },
   { key: 'branch', display: codeNameDisplay, eq: codeNameEq },
@@ -101,6 +106,7 @@ export function personChangeSnapshot(person, profile) {
       profile?.senioritySupplement == null ? null : String(profile.senioritySupplement),
     travelAllowance:
       profile?.travelAllowance == null ? null : String(profile.travelAllowance),
+    displayColor: profile?.displayColor ?? null,
     beneficiary: bank.beneficiary,
     bank: bank.bankCode || bank.bankName ? { code: bank.bankCode, name: bank.bankName } : null,
     branch:

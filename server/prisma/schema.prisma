@@ -550,6 +550,10 @@ model PersonProfile {
   //   travelAllowance      "נסיעות" — same plain-decimal convention as
   //                        senioritySupplement
   travelAllowance     Decimal? @db.Decimal(10, 2)
+  // Personal identity color — a stable key from the canonical palette
+  // (shared/staffColors.mjs). Admin-managed; tours DERIVE their display
+  // color from the assigned guide (never stored on TourEvent).
+  displayColor        String?
   description String?
   notes       String?
   bankDetails Json?

@@ -13,6 +13,7 @@ import {
 } from '../timeline/personChangelog.js';
 import { storeImageAsset, storeProfileImage } from '../people/profileImage.js';
 import { ASSIGNABLE_WHERE } from '../people/eligibility.js';
+import { isStaffColorKey } from '../../../shared/staffColors.mjs';
 
 // Guide (PersonRef + PersonProfile) CRUD, portal token management, image
 // upload, and the categorized procedures endpoint that drives the admin
@@ -391,6 +392,7 @@ router.put(
       vatStatus,
       senioritySupplement,
       travelAllowance,
+      displayColor,
     } = req.body || {};
 
     // Plain-decimal payroll amount: ≥ 0, two decimals (DECIMAL(10,2)).
@@ -444,6 +446,13 @@ router.put(
       }
       data.travelAllowance = parsed.value;
     }
+    // Identity color — a canonical palette key only (shared/staffColors.mjs).
+    if (displayColor !== undefined) {
+      if (displayColor !== null && displayColor !== '' && !isStaffColorKey(displayColor)) {
+        return res.status(400).json({ error: 'invalid_display_color' });
+      }
+      data.displayColor = displayColor || null;
+    }
     // Every bank write is normalized to the ONE structured shape (legacy
     // free-form JSON degrades to nulls and gets replaced on first save).
     if (bankDetails !== undefined) {
@@ -460,6 +469,7 @@ router.put(
         vatStatus: true,
         senioritySupplement: true,
         travelAllowance: true,
+        displayColor: true,
       },
     });
     const profile = await prisma.personProfile.upsert({
@@ -487,6 +497,7 @@ router.put(
         ...(travelAllowance !== undefined
           ? { travelAllowance: afterSnap.travelAllowance }
           : {}),
+        ...(displayColor !== undefined ? { displayColor: afterSnap.displayColor } : {}),
         ...(bankDetails !== undefined
           ? {
               beneficiary: afterSnap.beneficiary,
@@ -579,7 +590,8 @@ router.post(
       fieldKey === 'trainingCohort' ||
       fieldKey === 'vatStatus' ||
       fieldKey === 'senioritySupplement' ||
-      fieldKey === 'travelAllowance'
+      fieldKey === 'travelAllowance' ||
+      fieldKey === 'displayColor'
     ) {
       await prisma.personProfile.upsert({
         where: { personRefId: person.id },
