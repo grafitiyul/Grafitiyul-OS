@@ -66,22 +66,82 @@ export default function PersonProfile() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto p-4 lg:p-6 space-y-6">
+    <div className="max-w-4xl mx-auto p-4 lg:p-6 space-y-5">
       <BackLink />
-      {/* Read-first hero — identity at a glance. Editing lives below. */}
+      {/* Read-first hero — identity at a glance. Editing lives in the tabs. */}
       <ProfileHero person={person} onChanged={refresh} />
-      <IdentityAccessSection person={person} onChanged={refresh} onDeleted={() => navigate('/admin/people')} />
-      {/* Trainees (recruitment-mirrored) also get the read-only identity card. */}
-      {person.identitySource !== IDENTITY_SOURCES.MANAGEMENT && (
-        <IdentitySection person={person} onChanged={refresh} />
+      <ProfileTabs
+        person={person}
+        teams={teams}
+        procedures={procedures}
+        onChanged={refresh}
+        onDeleted={() => navigate('/admin/people')}
+      />
+    </div>
+  );
+}
+
+// ── Tabs — everything editable, organized (no logic changes) ────────────────
+//   פרטים טכניים    identity/access · training facts · team · bank · history
+//   נהלים           operational profile notes + procedure assignments
+//   הרשאות למערכי הדרכה   the existing station-permission chips, relocated
+
+const PROFILE_TABS = [
+  { key: 'technical', label: 'פרטים טכניים' },
+  { key: 'procedures', label: 'נהלים' },
+  { key: 'training', label: 'הרשאות למערכי הדרכה' },
+];
+
+function ProfileTabs({ person, teams, procedures, onChanged, onDeleted }) {
+  const [tab, setTab] = useState('technical');
+  return (
+    <div>
+      {/* Horizontal-scrollable tab bar (tablets) — underline marks the active tab. */}
+      <div className="mb-4 overflow-x-auto border-b border-gray-200">
+        <div className="flex min-w-max gap-1">
+          {PROFILE_TABS.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTab(t.key)}
+              className={`whitespace-nowrap px-4 py-2.5 text-[13.5px] font-semibold transition-colors ${
+                tab === t.key
+                  ? 'border-b-2 border-blue-600 text-blue-700'
+                  : 'border-b-2 border-transparent text-gray-500 hover:text-gray-800'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {tab === 'technical' && (
+        <div className="space-y-5">
+          <IdentityAccessSection person={person} onChanged={onChanged} onDeleted={onDeleted} />
+          {person.identitySource !== IDENTITY_SOURCES.MANAGEMENT && (
+            <IdentitySection person={person} onChanged={onChanged} />
+          )}
+          <TrainingFactsSection person={person} onChanged={onChanged} />
+          <TeamSection person={person} teams={teams} onChanged={onChanged} />
+          <BankSection person={person} onChanged={onChanged} />
+          {/* The immutable audit history closes the technical tab. */}
+          <ChangesSection person={person} onChanged={onChanged} />
+        </div>
       )}
-      <TrainingFactsSection person={person} onChanged={refresh} />
-      <TeamSection person={person} teams={teams} onChanged={refresh} />
-      <ProfileSection person={person} onChanged={refresh} />
-      <BankSection person={person} onChanged={refresh} />
-      <ProceduresSection procedures={procedures} onChanged={refresh} />
-      <StationAccessSection person={person} onChanged={refresh} />
-      <ChangesSection person={person} onChanged={refresh} />
+
+      {tab === 'procedures' && (
+        <div className="space-y-5">
+          <ProfileSection person={person} onChanged={onChanged} />
+          <ProceduresSection procedures={procedures} onChanged={onChanged} />
+        </div>
+      )}
+
+      {tab === 'training' && (
+        <div className="space-y-5">
+          <StationAccessSection person={person} onChanged={onChanged} />
+        </div>
+      )}
     </div>
   );
 }
