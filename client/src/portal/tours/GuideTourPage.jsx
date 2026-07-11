@@ -19,7 +19,8 @@ import QuestionnaireFillDialog from '../../questionnaire/QuestionnaireFillDialog
 // locations → participants) but adapted for guides:
 //   * everything comes from the guide detail DTO (server permission-gated)
 //   * no edit controls anywhere, no History, no CRM/commercial data
-//   * the Deal order number is DISPLAY ONLY — never a link
+//   * the Deal order number is an internal CRM identifier — admin-only,
+//     deliberately NOT rendered here (the DTO still ships it by contract)
 // The "סיכום סיור" section (summary questionnaire + gallery) is appended by
 // Slice D; until then the gallery keeps a plain entry row.
 
@@ -516,7 +517,8 @@ function ParticipantCard({ participant: p, coordinationEnabled, apiBase }) {
       <div className="flex items-start justify-between gap-3 p-3">
         <div className="min-w-0">
           {/* Hierarchy (mirrors the Admin CustomerCard): customer/contact →
-              organization line → "👥 N משתתפים". */}
+              organization line → "👥 N משתתפים". Unlike the admin card, the
+              Deal number is NOT shown — internal CRM identifier, admin-only. */}
           <div className="truncate text-[15px] font-semibold text-gray-900">{p.title}</div>
           {(p.customerName && p.customerName !== p.title) || p.organizationUnit ? (
             <div className="truncate text-[12.5px] text-gray-500">
@@ -529,21 +531,15 @@ function ParticipantCard({ participant: p, coordinationEnabled, apiBase }) {
             👥 {participantsLabel(p.seats)}
           </div>
         </div>
-        <div className="flex shrink-0 flex-col items-end gap-1.5">
-          {p.orderNo != null && (
-            // Display only — deliberately NOT a link (no Deal access from the portal).
-            <span className="text-[12px] font-medium tabular-nums text-gray-400">
-              דיל <span dir="ltr">#{p.orderNo}</span>
-            </span>
-          )}
-          {coordinationEnabled && (
+        {coordinationEnabled && (
+          <div className="flex shrink-0 flex-col items-end gap-1.5">
             <FormActionButton
               label="טופס שיחת תיאום"
               status={coordStatus}
               onClick={() => setCoordOpen(true)}
             />
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {(p.phone || p.email || p.fieldRepName) && (
