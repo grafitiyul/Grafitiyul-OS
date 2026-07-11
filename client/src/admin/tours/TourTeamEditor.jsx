@@ -195,9 +195,11 @@ export default function TourTeamEditor({ tourId, assignments = [], onChanged }) 
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    // Canonical assignable list (active guides/trainees only) — the server
+    // enforces the same rule on POST, so this filter is UX, not the gate.
     api.people
-      .list()
-      .then((r) => setPeople((r.people || []).filter((p) => p.status !== 'blocked')))
+      .assignable()
+      .then((r) => setPeople(r.people || []))
       .catch(() => {});
   }, []);
 
@@ -226,7 +228,11 @@ export default function TourTeamEditor({ tourId, assignments = [], onChanged }) 
       }
       await onChanged?.();
     } catch (e) {
-      alert('שגיאה: ' + (e.payload?.error || e.message));
+      alert(
+        e.payload?.error === 'person_not_assignable'
+          ? 'לא ניתן לשבץ: איש הצוות אינו פעיל במערכת (עזב, הושבת או שאינו בסטטוס מדריך/מתלמד).'
+          : 'שגיאה: ' + (e.payload?.error || e.message),
+      );
       await onChanged?.();
     } finally {
       setBusy(false);

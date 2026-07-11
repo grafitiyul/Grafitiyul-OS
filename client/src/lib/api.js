@@ -237,6 +237,8 @@ export const api = {
       return res.json();
     },
     procedures: (id) => request(`/api/people/${id}/procedures`),
+    // Canonical Tour-assignment eligibility list (active guides/trainees).
+    assignable: () => request('/api/people/assignable'),
     // Guide → training-Station permissions (chips UI).
     stationAccess: (id) => request(`/api/people/${id}/station-access`),
     updateStationAccess: (id, body) =>

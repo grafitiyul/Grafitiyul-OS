@@ -12,6 +12,7 @@ import {
   PERSON_FIELD_LABELS,
 } from '../timeline/personChangelog.js';
 import { storeImageAsset, storeProfileImage } from '../people/profileImage.js';
+import { ASSIGNABLE_WHERE } from '../people/eligibility.js';
 
 // Guide (PersonRef + PersonProfile) CRUD, portal token management, image
 // upload, and the categorized procedures endpoint that drives the admin
@@ -209,6 +210,31 @@ router.get(
     }));
 
     res.json({ people: withLinks, upstream });
+  }),
+);
+
+// ---------- Assignable staff (Tour team pickers) ----------
+// The canonical eligibility rule (people/eligibility.js) in list form —
+// every Tour-assignment surface reads THIS list, and the assignment
+// endpoint re-enforces the same rule on write.
+// NOTE: registered before '/:id' so the literal path wins.
+
+router.get(
+  '/assignable',
+  handle(async (_req, res) => {
+    const people = await prisma.personRef.findMany({
+      where: ASSIGNABLE_WHERE,
+      orderBy: { displayName: 'asc' },
+      select: {
+        id: true,
+        displayName: true,
+        status: true,
+        lifecycleHint: true,
+        profile: { select: { imageUrl: true } },
+        team: { select: { id: true, displayName: true } },
+      },
+    });
+    res.json({ people });
   }),
 );
 

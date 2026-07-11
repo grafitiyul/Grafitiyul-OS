@@ -21,6 +21,7 @@ import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 import { validateWorkshopLocationForComponent } from '../tours/activityCatalog.js';
 import { seedTourComponents } from '../tours/tourComponents.js';
 import { scheduleGalleryCleanup } from '../tours/gallery/service.js';
+import { isAssignableStaff } from '../people/eligibility.js';
 import {
   calendarPendingPatch,
   patchTouchesCalendar,
@@ -642,9 +643,21 @@ router.post(
     if (!tour) return res.status(404).json({ error: 'not_found' });
     const person = await prisma.personRef.findUnique({
       where: { id: String(b.personRefId || '') },
-      select: { id: true, externalPersonId: true, displayName: true },
+      select: {
+        id: true,
+        externalPersonId: true,
+        displayName: true,
+        status: true,
+        lifecycleHint: true,
+      },
     });
     if (!person) return res.status(400).json({ error: 'person_not_found' });
+    // Canonical eligibility gate (people/eligibility.js): only active
+    // guides/trainees may receive NEW assignments — a crafted request with a
+    // departed/blocked person's id is rejected here regardless of the UI.
+    if (!isAssignableStaff(person)) {
+      return res.status(422).json({ error: 'person_not_assignable' });
+    }
 
     let assignment;
     try {
