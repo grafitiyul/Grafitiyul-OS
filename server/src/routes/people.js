@@ -221,12 +221,44 @@ router.get(
       orderBy: [{ status: 'asc' }, { displayName: 'asc' }],
     });
 
+    // Derived list metrics — computed on read, never stored (same convention
+    // as tour occupancy): tour assignments per person + a compact training-
+    // content summary (granted stations, distinct training tours).
+    const [tourCounts, grants] = await Promise.all([
+      prisma.tourAssignment.groupBy({
+        by: ['externalPersonId'],
+        _count: { _all: true },
+      }),
+      prisma.guideStationAccess.findMany({
+        select: { personRefId: true, station: { select: { tourId: true } } },
+      }),
+    ]);
+    const toursByExt = Object.fromEntries(
+      tourCounts.map((t) => [t.externalPersonId, t._count._all]),
+    );
+    const trainingByPerson = new Map();
+    for (const g of grants) {
+      let t = trainingByPerson.get(g.personRefId);
+      if (!t) {
+        t = { stations: 0, tourIds: new Set() };
+        trainingByPerson.set(g.personRefId, t);
+      }
+      t.stations += 1;
+      if (g.station?.tourId) t.tourIds.add(g.station.tourId);
+    }
+
     // Attach the evaluator ("פורטל ממשב") portal URL read-through (guides only;
     // null when the guide has no active evaluator link or upstream is down).
-    const withLinks = people.map((p) => ({
-      ...p,
-      evaluatorPortalUrl: evaluatorPortalUrl(evaluatorTokens.get(p.externalPersonId)),
-    }));
+    const withLinks = people.map((p) => {
+      const training = trainingByPerson.get(p.id);
+      return {
+        ...p,
+        evaluatorPortalUrl: evaluatorPortalUrl(evaluatorTokens.get(p.externalPersonId)),
+        toursCount: toursByExt[p.externalPersonId] || 0,
+        trainingStations: training?.stations || 0,
+        trainingTours: training?.tourIds.size || 0,
+      };
+    });
 
     res.json({ people: withLinks, upstream });
   }),

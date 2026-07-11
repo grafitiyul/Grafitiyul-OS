@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { PERSON_STATUS_LABELS, PERSON_STATUSES } from './config.js';
+import { StaffAvatar } from '../tours/TourTeamEditor.jsx';
 
 // Unified "אנשים וגישה" surface.
 //
@@ -17,25 +18,10 @@ import { PERSON_STATUS_LABELS, PERSON_STATUSES } from './config.js';
 // data, same upstream sync, same per-person profile route — only the
 // admin surface evolved.
 
-// Display labels live here, in the client. The server stores stable
-// English values. New upstream lifecycles can be added by extending
-// this map + the filter list below.
-const LIFECYCLE_LABEL = {
-  trainee: 'מתלמד',
-  staff: 'צוות',
-  former: 'עזב', // GOS-owned: veteran staff who left. Hidden from the default view.
-  // No 'evaluator' here — recruitment doesn't currently expose
-  // "evaluator" as a stable lifecycle distinct from staff/guide.
-  // Treat evaluators as a role/permission concept (Phase 2), not a
-  // separate identity type. There is intentionally NO 'rejected' —
-  // rejected trainees are deleted, not stored.
-};
-const LIFECYCLE_PILL_CLS = {
-  trainee: 'bg-blue-100 text-blue-800 border-blue-200',
-  staff: 'bg-emerald-100 text-emerald-800 border-emerald-200',
-  former: 'bg-gray-200 text-gray-700 border-gray-300',
-};
-
+// Lifecycle stays a FILTER dimension (and lives in the three-dot menu); the
+// table itself no longer carries a "type" column — the roster reads by
+// person, not by classification. There is intentionally NO 'rejected' —
+// rejected trainees are deleted, not stored.
 const LIFECYCLE_FILTERS = [
   { key: 'all', label: 'פעילים' }, // active roster (trainee + staff); former hidden
   { key: 'trainee', label: 'מתלמדים' },
@@ -123,23 +109,35 @@ export default function PeopleList() {
   }, [people, search, lifecycleFilter, accessFilter]);
 
   return (
-    <div className="p-4 lg:p-6 max-w-6xl mx-auto">
-      <div className="flex items-center gap-3 mb-4">
-        <h1 className="text-lg font-semibold text-gray-900">צוות</h1>
-        <span className="text-[12px] text-gray-500">({people.length})</span>
+    <div className="p-4 lg:p-6 max-w-7xl mx-auto">
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight text-gray-900">צוות</h1>
+          <div className="text-[12.5px] text-gray-500">
+            {people.length === 1 ? 'איש צוות אחד' : `${people.length} אנשי צוות`}
+          </div>
+        </div>
         <div className="flex-1" />
-        <input
-          type="search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="חיפוש…"
-          className="border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
-        />
+        <div className="relative">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="חיפוש לפי שם, טלפון או אימייל…"
+            className="w-64 rounded-xl border border-gray-300 py-2 pe-9 ps-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+          />
+          <span className="pointer-events-none absolute inset-y-0 end-3 flex items-center text-gray-400" aria-hidden>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m21 21-4-4" />
+            </svg>
+          </span>
+        </div>
         <button
           onClick={forceRefresh}
           disabled={refreshing || loading}
           title="רענון מיידי מול מערכת הגיוס"
-          className="text-[12px] border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 rounded-md px-3 py-1.5 disabled:opacity-50"
+          className="rounded-xl border border-gray-300 bg-white px-3 py-2 text-[12.5px] text-gray-700 hover:bg-gray-50 disabled:opacity-50"
         >
           {refreshing ? 'מרענן…' : '⟳ רענון'}
         </button>
@@ -195,27 +193,133 @@ export default function PeopleList() {
       )}
 
       {!loading && !error && filtered.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-600">
-              <tr>
-                <Th>שם</Th>
-                <Th>סוג</Th>
-                <Th>גישה</Th>
-                <Th>צוות</Th>
-                <Th>סטטוס</Th>
-                <Th className="text-left">פעולות</Th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {filtered.map((p) => (
-                <PersonRow key={p.id} person={p} onChanged={refresh} />
+        <PeopleTable people={filtered} onChanged={refresh} />
+      )}
+    </div>
+  );
+}
+
+// ── the operational table ───────────────────────────────────────────────────
+// Human-first: avatar + name lead every row; numbers and dates stay compact;
+// the three-dot menu (unchanged behavior) is the only action. Client-side
+// pagination — the roster is small and already fully loaded.
+
+const PAGE_SIZES = [10, 25, 50];
+
+function PeopleTable({ people, onChanged }) {
+  const [pageSize, setPageSize] = useState(25);
+  const [page, setPage] = useState(1);
+  const pages = Math.max(1, Math.ceil(people.length / pageSize));
+  const safePage = Math.min(page, pages);
+  const rows = people.slice((safePage - 1) * pageSize, safePage * pageSize);
+
+  useEffect(() => {
+    setPage(1); // filters/search changed the underlying list
+  }, [people]);
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="border-b border-gray-100 bg-gray-50/70 text-gray-500">
+            <tr>
+              <Th>שם</Th>
+              <Th>טלפון</Th>
+              <Th>אימייל</Th>
+              <Th>צוות</Th>
+              <Th>סטטוס</Th>
+              <Th className="text-center">סיורים</Th>
+              <Th className="text-center">מערכי הדרכה</Th>
+              <Th>תחילת הדרכה</Th>
+              <Th>מחזור הכשרה</Th>
+              {/* Three-dot column — self-explanatory, no header title. */}
+              <Th aria-label="פעולות" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {rows.map((p) => (
+              <PersonRow key={p.id} person={p} onChanged={onChanged} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {(people.length > PAGE_SIZES[0] || pages > 1) && (
+        <div className="flex items-center gap-3 border-t border-gray-100 px-4 py-2.5 text-[12.5px] text-gray-600">
+          <label className="flex items-center gap-1.5">
+            לשורה
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value));
+                setPage(1);
+              }}
+              className="rounded-lg border border-gray-300 bg-white px-1.5 py-1"
+            >
+              {PAGE_SIZES.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
               ))}
-            </tbody>
-          </table>
+            </select>
+          </label>
+          <div className="flex-1" />
+          <div className="flex items-center gap-1" dir="ltr">
+            <button
+              type="button"
+              disabled={safePage <= 1}
+              onClick={() => setPage(safePage - 1)}
+              className="h-7 w-7 rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-30"
+              aria-label="עמוד קודם"
+            >
+              ‹
+            </button>
+            {Array.from({ length: pages }, (_, i) => i + 1).map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => setPage(n)}
+                className={`h-7 min-w-7 rounded-lg px-1.5 tabular-nums ${
+                  n === safePage
+                    ? 'bg-blue-600 font-semibold text-white'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                {n}
+              </button>
+            ))}
+            <button
+              type="button"
+              disabled={safePage >= pages}
+              onClick={() => setPage(safePage + 1)}
+              className="h-7 w-7 rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-30"
+              aria-label="עמוד הבא"
+            >
+              ›
+            </button>
+          </div>
         </div>
       )}
     </div>
+  );
+}
+
+// "12.03.2024" from the stored YYYY-MM-DD.
+function fmtDate(ymd) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd || '');
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : ymd || null;
+}
+
+// Compact training-content summary — "כמה חומר הדרכה פתוח למדריך הזה?"
+// without listing stations: station count + distinct training tours.
+function TrainingSummary({ stations, tours }) {
+  if (!stations) return <Muted>—</Muted>;
+  return (
+    <span className="tabular-nums">
+      <span className="font-semibold text-gray-800">{stations}</span>
+      <span className="text-gray-500"> תחנות</span>
+      {tours > 1 && <span className="text-[11.5px] text-gray-400"> · {tours} מערכים</span>}
+    </span>
   );
 }
 
@@ -272,25 +376,56 @@ function UpstreamStatus({ upstream }) {
 
 function PersonRow({ person, onChanged }) {
   return (
-    <tr className="hover:bg-gray-50">
+    <tr className="transition-colors hover:bg-gray-50/70">
+      {/* Avatar + name — the row's identity leads (photo, initials fallback:
+          same StaffAvatar the tour surfaces use). */}
       <Td>
         <Link
           to={`/admin/people/${person.id}`}
-          className="text-blue-700 hover:underline font-medium"
+          className="group flex items-center gap-2.5"
         >
-          {person.displayName}
+          <StaffAvatar
+            src={person.profile?.imageUrl}
+            name={person.displayName}
+            className="h-9 w-9"
+          />
+          <span className="font-semibold text-gray-900 group-hover:text-blue-700">
+            {person.displayName}
+          </span>
         </Link>
       </Td>
       <Td>
-        <LifecyclePill hint={person.lifecycleHint} />
+        {person.phone ? (
+          <span dir="ltr" className="tabular-nums text-gray-600">
+            {person.phone}
+          </span>
+        ) : (
+          <Muted>—</Muted>
+        )}
       </Td>
-      <Td>
-        <AccessPill enabled={person.portalEnabled} />
+      <Td className="max-w-[180px]">
+        {person.email ? (
+          <span dir="ltr" className="block truncate text-gray-600" title={person.email}>
+            {person.email}
+          </span>
+        ) : (
+          <Muted>—</Muted>
+        )}
       </Td>
       <Td>{person.team?.displayName || <Muted>—</Muted>}</Td>
       <Td>
         <StatusChip status={person.status} />
       </Td>
+      <Td className="text-center tabular-nums text-gray-800">
+        {person.toursCount > 0 ? person.toursCount : <Muted>—</Muted>}
+      </Td>
+      <Td>
+        <TrainingSummary stations={person.trainingStations} tours={person.trainingTours} />
+      </Td>
+      <Td className="tabular-nums text-gray-600">
+        {fmtDate(person.profile?.trainingStartDate) || <Muted>—</Muted>}
+      </Td>
+      <Td className="text-gray-600">{person.profile?.trainingCohort || <Muted>—</Muted>}</Td>
       <Td className="text-left">
         <ActionsMenu person={person} onChanged={onChanged} />
       </Td>
@@ -568,45 +703,15 @@ function IconGrant() {
   return <svg {...SVG}><circle cx="12" cy="12" r="9" /><path d="m8.5 12 2.4 2.4 4.6-4.8" /></svg>;
 }
 
-function LifecyclePill({ hint }) {
-  if (!hint) {
-    return <span className="text-[11px] text-gray-400">—</span>;
-  }
-  const label = LIFECYCLE_LABEL[hint] || hint;
-  const cls = LIFECYCLE_PILL_CLS[hint] || 'bg-gray-100 text-gray-800 border-gray-200';
-  return (
-    <span className={`inline-flex items-center text-[11px] px-2 py-0.5 rounded-full border ${cls}`}>
-      {label}
-    </span>
-  );
-}
-
-function AccessPill({ enabled }) {
-  if (enabled) {
-    return (
-      <span className="inline-flex items-center text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
-        יש גישה
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center text-[11px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 border border-gray-200">
-      אין גישה
-    </span>
-  );
-}
-
 function Th({ children, className = '' }) {
   return (
-    <th
-      className={`text-right text-[11px] uppercase tracking-wide font-semibold px-3 py-2 ${className}`}
-    >
+    <th className={`px-3 py-2.5 text-right text-[11.5px] font-semibold ${className}`}>
       {children}
     </th>
   );
 }
 function Td({ children, className = '' }) {
-  return <td className={`px-3 py-2 ${className}`}>{children}</td>;
+  return <td className={`px-3 py-2.5 align-middle ${className}`}>{children}</td>;
 }
 function Muted({ children }) {
   return <span className="text-gray-400">{children}</span>;
