@@ -92,9 +92,23 @@ router.get(
       const key = cover.thumbKey || cover.posterKey || cover.objectKey;
       coverUrl = await r2.presignGet({ key, expiresIn: 3600 });
     }
+    // Display context for the header — the SAME exposure class as `title`
+    // (which already carries product + customer): organization name (or deal
+    // title), tour time/location, and the tour kind. Nothing else.
+    const activeBookings = (access.tour.bookings || []).filter((b) => b.status === 'active');
+    const customerLabel =
+      access.tour.kind === 'group_slot' && activeBookings.length > 1
+        ? null
+        : activeBookings[0]?.deal?.organization?.name || activeBookings[0]?.deal?.title || null;
     res.json({
       title: buildGalleryTitle(access.tour),
+      productName: access.tour.product?.nameHe || 'סיור',
+      customerLabel,
+      kind: access.tour.kind,
       date: access.tour.date,
+      startTime: access.tour.startTime,
+      locationName:
+        access.tour.location?.nameHe || access.tour.productVariant?.location?.nameHe || null,
       brandingText: settings.publicBrandingText || null,
       canUpload: access.permissions.canUpload,
       coverUrl,

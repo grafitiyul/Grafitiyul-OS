@@ -5,14 +5,52 @@ import GalleryGrid from './GalleryGrid.jsx';
 import GalleryLightbox from './GalleryLightbox.jsx';
 import UploadQueuePanel from './UploadQueuePanel.jsx';
 import DownloadAllButton from './DownloadAllButton.jsx';
+import GrafitiyulHeroLogo from '../quote/GrafitiyulHeroLogo.jsx';
+import Icon, { WhatsAppGlyph } from '../public/components/Icon.jsx';
 
-// PUBLIC customer gallery — /g/:token. Design direction (2026-07 redesign):
-// light, clean, photos-first. A COMPACT header (subtle branding, tour title,
-// date, count) with the two primary actions right under it — upload and
-// download-all — then the grid starts immediately. No oversized hero, no dark
-// canvas; the media itself is the visual hero. Mobile keeps a floating upload
-// pill once the header scrolls away. Permissions/security are untouched: the
-// token is the credential, customers can never delete or manage anything.
+// PUBLIC customer gallery — /g/:token. Design direction (2026-07 polish):
+// premium, minimal, branded — photos are the hero. A slim dark-navy brand
+// band carries the official white Grafitiyul lockup (GrafitiyulHeroLogo, the
+// shared SVG brand mark); below it, on white: the tour headline
+// (product · organization-or-customer), ONE metadata row (count · time ·
+// date · location), a soft tour-kind chip, and the two actions with a clear
+// hierarchy (brand-teal upload dominates; ZIP download is a quiet outline).
+// The grid starts immediately after. Footer is a contact block ("להזמנת
+// פעילויות דומות") with clickable WhatsApp / email / site. Mobile keeps a
+// floating upload pill once the header scrolls away. Permissions/security
+// are untouched: the token is the credential, customers never delete/manage.
+
+const BRAND_TEAL = '#10a99b';
+const BRAND_NAVY = '#1b2540';
+
+const KIND_LABELS = { private: 'פרטי', business: 'עסקי', group_slot: 'קבוצתי' };
+
+const CONTACT = {
+  whatsappDisplay: '055-6638970',
+  whatsappHref: 'https://wa.me/972556638970',
+  email: 'info@grafitiyul.co.il',
+  site: 'grafitiyul.co.il',
+  siteHref: 'https://grafitiyul.co.il',
+};
+
+function PhotosIcon({ className = 'h-4 w-4' }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className={className} aria-hidden>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <circle cx="9" cy="10" r="1.6" />
+      <path d="M3 16.5 8 12l4 3.5 3.5-3L21 16" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function UploadCloudIcon({ className = 'h-5 w-5' }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className={className} aria-hidden>
+      <path d="M7 17a4.5 4.5 0 0 1-.4-8.98 6 6 0 0 1 11.6 1.6A3.7 3.7 0 0 1 17.5 17" strokeLinecap="round" />
+      <path d="M12 20v-7m0 0-3 3m3-3 3 3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
 
 async function jsonFetch(url, options = {}) {
   const res = await fetch(url, {
@@ -157,47 +195,97 @@ export default function CustomerGalleryPage() {
   const lightboxMedia = lightboxIndex != null ? media[lightboxIndex] : null;
   const hasMedia = media.length > 0;
 
+  // Headline per product rule: organization name when one exists, otherwise
+  // the customer's name (customerLabel resolves that server-side).
+  const headline = [data.productName || data.title, data.customerLabel]
+    .filter(Boolean)
+    .join(' · ');
+  const kindLabel = KIND_LABELS[data.kind] || null;
+
+  const metaParts = [
+    hasMedia && {
+      key: 'count',
+      icon: <PhotosIcon className="h-4 w-4" />,
+      text: `${media.length} תמונות וסרטונים`,
+    },
+    data.startTime && {
+      key: 'time',
+      icon: <Icon name="clock" className="h-4 w-4" />,
+      text: data.startTime,
+      ltr: true,
+    },
+    data.date && {
+      key: 'date',
+      icon: <Icon name="calendar" className="h-4 w-4" />,
+      text: fmtDate(data.date),
+      ltr: true,
+    },
+    data.locationName && {
+      key: 'loc',
+      icon: <Icon name="pin" className="h-4 w-4" />,
+      text: data.locationName,
+    },
+  ].filter(Boolean);
+
   const uploadButton = (extra = '') => (
     <button
       type="button"
       onClick={() => fileInputRef.current?.click()}
-      className={`inline-flex items-center justify-center gap-2 rounded-xl bg-gray-900 px-5 py-2.5 text-[14px] font-bold text-white shadow-sm transition hover:bg-gray-700 active:scale-[0.98] ${extra}`}
+      style={{ backgroundColor: BRAND_TEAL }}
+      className={`inline-flex items-center justify-center gap-2 rounded-xl px-7 py-3 text-[15px] font-bold text-white shadow-md shadow-teal-900/10 transition hover:brightness-95 active:scale-[0.98] ${extra}`}
     >
-      📷 העלאת תמונות וסרטונים
+      <UploadCloudIcon className="h-5 w-5" />
+      העלאת תמונות וסרטונים
     </button>
   );
 
   return (
     <div dir="rtl" className="min-h-screen bg-gray-50">
-      {/* Compact header — branding is quiet, the tour is the headline. */}
+      {/* Brand band — slim, dark navy, the official white lockup. Part of the
+          brand, not a hero: the page's real content starts right below. */}
+      <div
+        className="flex justify-center px-4 py-5 sm:py-6"
+        style={{ background: `linear-gradient(180deg, #141b2d 0%, ${BRAND_NAVY} 100%)` }}
+      >
+        <GrafitiyulHeroLogo height={56} title="גרפיטיול" />
+      </div>
+
+      {/* Header — tour headline + ONE metadata row + actions. */}
       <header className="border-b border-gray-200 bg-white">
-        <div className="mx-auto max-w-6xl px-4 pb-5 pt-6 sm:px-6">
-          <div className="text-[11px] font-bold tracking-[0.3em] text-gray-400">גרפיטיול</div>
-          <h1 className="mt-1.5 text-[22px] font-black leading-tight tracking-tight text-gray-900 sm:text-[26px]">
-            {data.title}
+        <div className="mx-auto max-w-6xl px-4 pb-6 pt-7 text-center sm:px-6">
+          <h1 className="text-[23px] font-black leading-tight tracking-tight text-gray-900 sm:text-[27px]">
+            {headline}
           </h1>
-          <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[13px] text-gray-500">
-            {data.date && <span>{fmtDate(data.date)}</span>}
-            {hasMedia && (
-              <>
-                <span className="text-gray-300">·</span>
-                <span>{media.length} תמונות וסרטונים</span>
-              </>
-            )}
-            {data.brandingText && (
-              <>
-                <span className="text-gray-300">·</span>
-                <span className="text-gray-400">{data.brandingText}</span>
-              </>
-            )}
+
+          <div className="mt-2.5 flex flex-wrap items-center justify-center gap-x-2 gap-y-1.5 text-[13.5px] text-gray-500">
+            {metaParts.map((p, i) => (
+              <span key={p.key} className="inline-flex items-center gap-1.5">
+                {i > 0 && <span className="me-2 text-gray-200">|</span>}
+                <span className="text-gray-400">{p.icon}</span>
+                <span dir={p.ltr ? 'ltr' : undefined} className={p.ltr ? 'tabular-nums' : ''}>
+                  {p.text}
+                </span>
+              </span>
+            ))}
           </div>
 
-          {/* Primary actions — always visible at the top, never buried. */}
-          <div ref={actionsRef} className="mt-4 flex flex-wrap items-center gap-2">
+          {(kindLabel || data.brandingText) && (
+            <div className="mt-2.5 flex flex-wrap items-center justify-center gap-2 text-[12.5px]">
+              {kindLabel && (
+                <span className="rounded-full bg-violet-50 px-3 py-1 font-semibold text-violet-700">
+                  {kindLabel}
+                </span>
+              )}
+              {data.brandingText && <span className="text-gray-400">{data.brandingText}</span>}
+            </div>
+          )}
+
+          {/* Actions — the upload is the star; download is the quiet option. */}
+          <div ref={actionsRef} className="mt-5 flex flex-wrap items-center justify-center gap-2.5">
             {data.canUpload && uploadButton()}
             {hasMedia && (
               <DownloadAllButton
-                className="inline-flex items-center justify-center rounded-xl border border-gray-300 bg-white px-5 py-2.5 text-[13.5px] font-semibold text-gray-700 transition hover:bg-gray-100 disabled:opacity-60"
+                className="inline-flex items-center justify-center rounded-xl border border-gray-300 bg-white px-5 py-3 text-[13.5px] font-semibold text-gray-600 transition hover:bg-gray-100 disabled:opacity-60"
                 endpoints={{
                   request: () => jsonFetch(`${base}/export`, { method: 'POST', body: '{}' }),
                   status: (id) => jsonFetch(`${base}/export/${id}`),
@@ -232,8 +320,48 @@ export default function CustomerGalleryPage() {
         )}
       </main>
 
-      <footer className="border-t border-gray-200 py-5 text-center text-[12px] text-gray-400">
-        גרפיטיול · סיורי גרפיטי ואמנות רחוב
+      {/* Footer — quiet brand block + real contact actions, all clickable. */}
+      <footer className="border-t border-gray-200 bg-white">
+        <div className="mx-auto flex max-w-6xl flex-col items-center gap-4 px-4 py-8 sm:px-6">
+          <GrafitiyulHeroLogo height={44} color={BRAND_NAVY} title="גרפיטיול" />
+          <div className="text-[14px] font-semibold text-gray-700">להזמנת פעילויות דומות:</div>
+          <div className="flex flex-col items-center gap-3 sm:flex-row sm:gap-0">
+            <a
+              href={CONTACT.whatsappHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 text-[14px] font-medium text-gray-700 transition hover:text-gray-900"
+            >
+              <WhatsAppGlyph className="h-5 w-5 text-[#25d366]" />
+              <span dir="ltr" className="tabular-nums">{CONTACT.whatsappDisplay}</span>
+            </a>
+            <span className="hidden px-5 text-gray-200 sm:inline">|</span>
+            <a
+              href={`mailto:${CONTACT.email}`}
+              className="inline-flex items-center gap-2 text-[14px] font-medium text-gray-700 transition hover:text-gray-900"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5 text-gray-400" aria-hidden>
+                <rect x="3" y="5" width="18" height="14" rx="2" />
+                <path d="m4 7 8 6 8-6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span dir="ltr">{CONTACT.email}</span>
+            </a>
+            <span className="hidden px-5 text-gray-200 sm:inline">|</span>
+            <a
+              href={CONTACT.siteHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 text-[14px] font-medium text-gray-700 transition hover:text-gray-900"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5 text-gray-400" aria-hidden>
+                <circle cx="12" cy="12" r="9" />
+                <path d="M3 12h18M12 3c2.5 2.4 3.8 5.5 3.8 9S14.5 18.6 12 21c-2.5-2.4-3.8-5.5-3.8-9S9.5 5.4 12 3Z" />
+              </svg>
+              <span dir="ltr">{CONTACT.site}</span>
+            </a>
+          </div>
+          <div className="text-[12px] text-gray-400">גרפיטיול · סיורי גרפיטי ואמנות רחוב</div>
+        </div>
       </footer>
 
       {/* Floating upload pill — appears when the header actions scroll away. */}
@@ -242,9 +370,11 @@ export default function CustomerGalleryPage() {
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="inline-flex items-center gap-2 rounded-full bg-gray-900 px-5 py-3 text-[14px] font-bold text-white shadow-xl shadow-gray-900/20 active:scale-[0.98]"
+            style={{ backgroundColor: BRAND_TEAL }}
+            className="inline-flex items-center gap-2 rounded-full px-5 py-3 text-[14px] font-bold text-white shadow-xl shadow-teal-900/25 active:scale-[0.98]"
           >
-            📷 העלאת תמונות
+            <UploadCloudIcon className="h-5 w-5" />
+            העלאת תמונות
           </button>
         </div>
       )}

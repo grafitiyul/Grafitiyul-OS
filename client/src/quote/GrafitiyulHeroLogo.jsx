@@ -15,7 +15,14 @@
 
 const TEAL = '#10a99b';
 
-export default function GrafitiyulHeroLogo({ height = 120, className = '', title = 'Grafitiyul' }) {
+// `color` controls the wordmark/can ink (currentColor) — white by default for
+// dark covers; the customer gallery footer renders it in brand navy.
+export default function GrafitiyulHeroLogo({
+  height = 120,
+  className = '',
+  title = 'Grafitiyul',
+  color = '#ffffff',
+}) {
   const VB_W = 660;
   const VB_H = 210;
   const width = (height * VB_W) / VB_H;
@@ -28,7 +35,7 @@ export default function GrafitiyulHeroLogo({ height = 120, className = '', title
       height={height}
       viewBox={`0 0 ${VB_W} ${VB_H}`}
       className={className}
-      style={{ color: '#ffffff', overflow: 'visible' }}
+      style={{ color, overflow: 'visible' }}
       fill="none"
     >
       <title>{title}</title>

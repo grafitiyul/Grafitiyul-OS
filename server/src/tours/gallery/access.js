@@ -57,6 +57,8 @@ export async function resolveCustomerGalleryAccess(client, { token }) {
     where: { id: link.gallery.tourEventId },
     include: {
       product: { select: { nameHe: true, nameEn: true } },
+      location: { select: { nameHe: true } },
+      productVariant: { select: { location: { select: { nameHe: true } } } },
       bookings: {
         where: { status: 'active' },
         select: {
