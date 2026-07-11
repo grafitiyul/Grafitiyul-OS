@@ -608,17 +608,36 @@ export default function TourPage() {
         onConfirm={runDelete}
       />
 
+      {/* Manual completion — THIS tour only (never a same-day list). All
+          summaries in → a simple confirmation; missing summaries → a warning
+          that names the missing guides. No reminder actions here by product
+          rule (a future reminders module owns nudging). */}
       <ConfirmDialog
         open={!!confirmComplete}
         title="סמן סיור כהסתיים"
         body={
-          confirmComplete?.missing?.length
-            ? `עדיין חסרים סיכומי סיור של: ${confirmComplete.missing
-                .map((m) => m.displayName)
-                .join(', ')}. לסמן את הסיור כהסתיים בכל זאת? טופס שיחת התיאום יינעל, וסיכומי הסיור יישארו פתוחים לעדכון 48 שעות.`
-            : 'לסמן את הסיור כהסתיים? טופס שיחת התיאום יינעל, וסיכומי הסיור יישארו פתוחים לעדכון 48 שעות.'
+          confirmComplete?.missing?.length ? (
+            <div className="text-sm text-gray-800">
+              <p className="font-semibold">חסרים סיכומי סיור מהמדריכים הבאים:</p>
+              <ul className="mt-2 space-y-1">
+                {confirmComplete.missing.map((m, i) => (
+                  <li key={i} className="flex items-center gap-2">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden />
+                    <span className="font-medium">{m.displayName}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-3 leading-relaxed text-gray-600">
+                סימון הסיור כהסתיים לא ימחק את הטיוטות, אך מבנה השאלונים יוקפא
+                והסיור יעבור לסיורי עבר. סיכומי הסיור יישארו פתוחים לעדכון 48 שעות.
+              </p>
+            </div>
+          ) : (
+            'האם לסמן את הסיור כהסתיים?'
+          )
         }
-        confirmLabel="סמן כהסתיים"
+        confirmLabel="סמן סיור כהסתיים"
+        cancelLabel="חזרה"
         onCancel={() => setConfirmComplete(null)}
         onConfirm={runComplete}
       />
