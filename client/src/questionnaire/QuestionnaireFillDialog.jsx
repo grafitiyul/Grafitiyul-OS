@@ -8,11 +8,14 @@ import RichText from '../editor/RichText.jsx';
 import { SUBMISSION_STATUS_LABELS } from './constants.js';
 
 // Staff-side questionnaire fill dialog — the ONE component every internal
-// consumer opens (tour modal "טופס סיכום סיור"; the Guide Portal summary the
-// same way). It owns the whole submission lifecycle against the generic
-// engine:
-//   start/resume (purpose+subject) → draft autosave → submit (422 errors
-//   inline) → completed read-only view (+ מילוי מחדש via void).
+// consumer opens (tour modal "טופס סיכום סיור" + "טופס שיחת תיאום"; the Guide
+// Portal opens both the same way). It owns the whole submission lifecycle
+// against the generic engine, driven by the server-computed `lifecycle`:
+//   start/resume → autosave while working → "שלח" (422 errors inline) →
+//   still editable after submit (tour-operational purposes) → frozen
+//   read-only once the tour closes (historical record).
+// Classic purposes (no lifecycle.editableAfterSubmit) keep the old
+// submit-once behavior with מילוי מחדש via void.
 // Not-configured / not-published states render honest empty states with a
 // link to the builder — never a broken form.
 //
@@ -68,10 +71,14 @@ export default function QuestionnaireFillDialog({
     try {
       const full = await tRef.current.load();
       setData(full);
-      const draftAnswers = Object.fromEntries((full.submission.answers || []).map((a) => [a.questionKey, a.value]));
-      // Prefill fills only what the draft hasn't answered yet.
-      answersRef.current = { ...(full.prefill || {}), ...draftAnswers };
-      setPhase(full.submission.status === 'draft' ? 'fill' : 'view');
+      const savedAnswers = Object.fromEntries((full.submission.answers || []).map((a) => [a.questionKey, a.value]));
+      // Prefill fills only what hasn't been answered yet.
+      answersRef.current = { ...(full.prefill || {}), ...savedAnswers };
+      // Server-computed lifecycle decides editability (submitted stays
+      // editable for tour-operational purposes). Legacy payloads without a
+      // lifecycle keep the classic draft-only rule.
+      const editable = full.lifecycle ? full.lifecycle.editable : full.submission.status === 'draft';
+      setPhase(editable ? 'fill' : 'view');
     } catch (e) {
       const code = e.payload?.error;
       const messages = {
@@ -80,6 +87,8 @@ export default function QuestionnaireFillDialog({
         template_not_active: 'תבנית השאלון אינה פעילה.',
         subject_not_found: 'הישות שהטופס נקשר אליה לא נמצאה.',
         tour_cancelled: 'הסיור בוטל — לא נפתח טופס סיכום חדש.',
+        subject_closed: 'הסיור הסתיים — לא נפתח טופס חדש.',
+        submission_frozen: 'הסיור הסתיים — הטופס נעול כתיעוד היסטורי.',
       };
       setErrorInfo({ code, message: messages[code] || e.message });
       setPhase('error');
@@ -178,6 +187,16 @@ export default function QuestionnaireFillDialog({
 
         {phase === 'fill' && data ? (
           <>
+            {data.submission.status !== 'draft' ? (
+              <div className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[13px] text-emerald-800">
+                ✅ הטופס הוגש
+                {data.submission.submittedAt
+                  ? ` · ${new Date(data.submission.submittedAt).toLocaleDateString('he-IL')}`
+                  : ''}
+                {data.submission.submittedByName ? ` · ${data.submission.submittedByName}` : ''}
+                {' — אפשר להמשיך לעדכן תשובות עד לסגירת הסיור.'}
+              </div>
+            ) : null}
             <QuestionnaireRuntime
               runtime={data.runtime}
               language={lang}
@@ -185,12 +204,12 @@ export default function QuestionnaireFillDialog({
               serverErrors={serverErrors}
               onChange={scheduleAutosave}
               onSubmit={submit}
-              submitLabel="הגשת הטופס"
-              busyLabel="מגיש…"
+              submitLabel="שלח"
+              busyLabel="שולח…"
               uploader={(file) => tRef.current.uploadAnswerFile(file)}
             />
             <div className="mt-1.5 text-[11.5px] text-gray-400">
-              {savedAt ? `טיוטה נשמרה ${savedAt.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })} ✓` : 'טיוטה נשמרת אוטומטית תוך כדי מילוי'}
+              {savedAt ? `נשמר אוטומטית ${savedAt.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })} ✓` : 'התשובות נשמרות אוטומטית תוך כדי מילוי'}
             </div>
           </>
         ) : null}
@@ -201,37 +220,58 @@ export default function QuestionnaireFillDialog({
             {outro ? (
               <RichText html={outro} dir={isRtl(lang) ? 'rtl' : 'ltr'} className="mt-3" />
             ) : (
-              <p className="mt-3 text-[15px] font-semibold text-gray-800">הטופס הוגש בהצלחה</p>
+              <p className="mt-3 text-[15px] font-semibold text-gray-800">הטופס נשלח בהצלחה</p>
             )}
-            <button
-              type="button"
-              onClick={onClose}
-              className="mt-4 rounded-lg bg-gray-900 px-5 py-2 text-[13.5px] text-white hover:bg-gray-800"
-            >
-              סגירה
-            </button>
+            <div className="mt-4 flex items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg bg-gray-900 px-5 py-2 text-[13.5px] text-white hover:bg-gray-800"
+              >
+                סגירה
+              </button>
+              {data?.lifecycle?.editableAfterSubmit ? (
+                <button
+                  type="button"
+                  onClick={load}
+                  className="rounded-lg border border-gray-300 px-4 py-2 text-[13.5px] text-gray-700 hover:bg-gray-50"
+                >
+                  חזרה לעריכה
+                </button>
+              ) : null}
+            </div>
           </div>
         ) : null}
 
         {phase === 'view' && data ? (
           <>
-            <div className="mb-3 flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
-              <span className="text-[13px] text-emerald-800">
-                ✅ {SUBMISSION_STATUS_LABELS[data.submission.status] || data.submission.status}
+            {data.lifecycle?.frozen ? (
+              <div className="mb-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[13px] text-gray-600">
+                📁 הסיור הסתיים — הטופס נשמר כתיעוד היסטורי ואינו ניתן לעריכה.
                 {data.submission.submittedAt
-                  ? ` · ${new Date(data.submission.submittedAt).toLocaleDateString('he-IL')}`
+                  ? ` הוגש ב-${new Date(data.submission.submittedAt).toLocaleDateString('he-IL')}`
                   : ''}
                 {data.submission.submittedByName ? ` · ${data.submission.submittedByName}` : ''}
-              </span>
-              <button
-                type="button"
-                onClick={redo}
-                className="rounded-lg border border-emerald-300 px-2.5 py-1 text-[12px] text-emerald-800 hover:bg-emerald-100"
-                title="ביטול ההגשה הקיימת ופתיחת טופס חדש (ההיסטוריה נשמרת)"
-              >
-                מילוי מחדש
-              </button>
-            </div>
+              </div>
+            ) : (
+              <div className="mb-3 flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                <span className="text-[13px] text-emerald-800">
+                  ✅ {SUBMISSION_STATUS_LABELS[data.submission.status] || data.submission.status}
+                  {data.submission.submittedAt
+                    ? ` · ${new Date(data.submission.submittedAt).toLocaleDateString('he-IL')}`
+                    : ''}
+                  {data.submission.submittedByName ? ` · ${data.submission.submittedByName}` : ''}
+                </span>
+                <button
+                  type="button"
+                  onClick={redo}
+                  className="rounded-lg border border-emerald-300 px-2.5 py-1 text-[12px] text-emerald-800 hover:bg-emerald-100"
+                  title="ביטול ההגשה הקיימת ופתיחת טופס חדש (ההיסטוריה נשמרת)"
+                >
+                  מילוי מחדש
+                </button>
+              </div>
+            )}
             <QuestionnaireRuntime
               runtime={data.runtime}
               language={lang}

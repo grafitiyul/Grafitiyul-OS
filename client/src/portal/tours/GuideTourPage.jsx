@@ -237,7 +237,7 @@ function TourSummarySection({ token, tour, apiBase, permissions, status, onStatu
                 status?.summary?.status === 'draft'
                   ? 'המשך מילוי'
                   : status?.summary
-                  ? 'צפייה בטופס'
+                  ? 'פתיחת הטופס'
                   : 'מילוי הטופס'
               }
               status={status?.summary?.status || null}

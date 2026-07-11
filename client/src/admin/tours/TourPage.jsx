@@ -450,7 +450,7 @@ export default function TourPage() {
                       summaryStatus === 'draft'
                         ? 'המשך מילוי'
                         : summaryStatus
-                          ? 'צפייה בטופס'
+                          ? 'פתיחת הטופס'
                           : 'מילוי הטופס'
                     }
                     status={summaryStatus}

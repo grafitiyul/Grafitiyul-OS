@@ -302,7 +302,7 @@ test('staff fill dialog thank-you: outro renders rich after submit', async () =>
     React.createElement(MemoryRouter, null,
       React.createElement(QuestionnaireFillDialog, { open: true, purpose: 'general', subjectType: null, subjectId: null })),
   );
-  const submitBtn = [...container.querySelectorAll('button')].find((b) => b.textContent.trim() === 'הגשת הטופס');
+  const submitBtn = [...container.querySelectorAll('button')].find((b) => b.textContent.trim() === 'שלח');
   assert.ok(submitBtn, 'dialog submit button');
   await click(submitBtn);
   const outroProse = [...container.querySelectorAll('.gos-prose')].find((p) => /תודה רבה על המילוי/.test(p.textContent));

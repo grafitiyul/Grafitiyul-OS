@@ -50,7 +50,7 @@ const TPL_SUMMARY = {
 
 // Mutable server-state knobs (each test arranges its scenario).
 let purposeConfigTemplate = null; // template object | null
-let startBehavior = 'draft'; // 'draft' | 'submitted' | 'not_configured'
+let startBehavior = 'draft'; // 'draft' | 'submitted' | 'frozen' | 'not_configured'
 let submissionAnswers = [];
 let templatesForPurpose = [];
 let tourSummaryList = [];
@@ -145,18 +145,34 @@ before(async () => {
         status = 409;
         body = { error: 'purpose_not_configured' };
       } else {
-        body = { ...SUBMISSION_BASE, status: startBehavior, answers: submissionAnswers };
+        body = {
+          ...SUBMISSION_BASE,
+          status: startBehavior === 'frozen' ? 'submitted' : startBehavior,
+          answers: submissionAnswers,
+        };
       }
     } else if (u.startsWith('/api/questionnaires/submissions/sub1')) {
+      // Server-computed lifecycle (tour-operational): submitted stays
+      // editable; frozen = the tour closed, everything read-only.
+      const frozen = startBehavior === 'frozen';
+      const subStatus = frozen ? 'submitted' : startBehavior;
       body = {
         submission: {
           ...SUBMISSION_BASE,
-          status: startBehavior,
-          submittedAt: startBehavior === 'submitted' ? '2026-07-10T11:00:00Z' : null,
+          status: subStatus,
+          submittedAt: subStatus === 'submitted' ? '2026-07-10T11:00:00Z' : null,
+          frozenAt: frozen ? '2026-07-11T00:00:00Z' : null,
           answers: submissionAnswers,
         },
         runtime: RUNTIME,
         prefill: {},
+        lifecycle: {
+          liveVersion: true,
+          editableAfterSubmit: true,
+          frozen,
+          editable: !frozen,
+          frozenAt: frozen ? '2026-07-11T00:00:00Z' : null,
+        },
         rendered: null,
       };
     } else if (u.startsWith('/api/questionnaires/submissions')) {
@@ -269,12 +285,12 @@ test('fill dialog: draft → runtime renders questions + subject context + autos
   );
   assert.match(container.innerHTML, /איך היה הסיור\?/);
   assert.match(container.innerHTML, /סיור גרפיטי · 2026-08-06/); // subjectSnapshot context
-  assert.match(container.innerHTML, /טיוטה נשמרת אוטומטית/);
-  assert.match(container.innerHTML, /הגשת הטופס/);
+  assert.match(container.innerHTML, /נשמרות אוטומטית/);
+  assert.match(container.innerHTML, /שלח/); // the ONE primary action
   await unmount();
 });
 
-test('fill dialog: completed submission → read-only view with answers + redo', async () => {
+test('fill dialog: SUBMITTED stays editable (tour-operational lifecycle) — banner + inputs + שלח', async () => {
   startBehavior = 'submitted';
   submissionAnswers = [
     { id: 'a1', questionKey: 'q_how', value: 'היה מצוין, קבוצה נהדרת', questionSnapshot: { label: 'איך היה הסיור?', type: 'textarea' }, sortOrder: 0 },
@@ -286,10 +302,32 @@ test('fill dialog: completed submission → read-only view with answers + redo',
         subjectType: 'tour_event', subjectId: 'tour1', title: 'טופס סיכום סיור',
       })),
   );
+  assert.match(container.innerHTML, /הטופס הוגש/); // submitted banner
+  assert.match(container.innerHTML, /להמשיך לעדכן/);
+  assert.ok(container.querySelectorAll('textarea').length > 0, 'still editable');
+  const ta = [...container.querySelectorAll('textarea')].find((t) => t.value === 'היה מצוין, קבוצה נהדרת');
+  assert.ok(ta, 'existing answer loaded into the editable input');
+  assert.match(container.innerHTML, /שלח/);
+  assert.doesNotMatch(container.innerHTML, /מילוי מחדש/); // no void/redo in this lifecycle
+  await unmount();
+});
+
+test('fill dialog: FROZEN (tour closed) → immutable historical view, no redo', async () => {
+  startBehavior = 'frozen';
+  submissionAnswers = [
+    { id: 'a1', questionKey: 'q_how', value: 'היה מצוין, קבוצה נהדרת', questionSnapshot: { label: 'איך היה הסיור?', type: 'textarea' }, sortOrder: 0 },
+  ];
+  const { container, unmount } = await render(
+    React.createElement(MemoryRouter, null,
+      React.createElement(QuestionnaireFillDialog, {
+        open: true, onClose: () => {}, purpose: 'tour_summary',
+        subjectType: 'tour_event', subjectId: 'tour1', title: 'טופס סיכום סיור',
+      })),
+  );
+  assert.match(container.innerHTML, /תיעוד היסטורי/);
   assert.match(container.innerHTML, /היה מצוין, קבוצה נהדרת/);
-  assert.match(container.innerHTML, /מילוי מחדש/);
-  assert.match(container.innerHTML, /dorko/); // attribution
   assert.equal(container.querySelectorAll('textarea').length, 0); // read-only
+  assert.doesNotMatch(container.innerHTML, /מילוי מחדש/); // history cannot be voided
   await unmount();
 });
 
@@ -307,8 +345,8 @@ test('tour page: summary button is ACTIVE and shows the submitted status chip', 
   assert.match(html, /סיכום סיור/);
   assert.match(html, /טופס סיכום סיור/);
   assert.match(html, /הוגש/); // status chip from listSubmissions
-  const btn = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('צפייה בטופס'));
-  assert.ok(btn, 'summary button exists (submitted → view label)');
+  const btn = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('פתיחת הטופס'));
+  assert.ok(btn, 'summary button exists (submitted → still openable/editable)');
   assert.equal(btn.disabled, false, 'summary button is enabled');
   await unmount();
 });
