@@ -443,6 +443,12 @@ export const api = {
         body: JSON.stringify(data),
       }),
     remove: (id) => request(`/api/deals/${id}`, { method: 'DELETE' }),
+    // Pending Tour Update — apply (the ONE tour-update orchestration) /
+    // discard (restore deal fields to the currently-applied tour values).
+    applyTourUpdate: (id) =>
+      request(`/api/deals/${id}/apply-tour-update`, { method: 'POST', body: '{}' }),
+    discardTourUpdate: (id) =>
+      request(`/api/deals/${id}/discard-tour-update`, { method: 'POST', body: '{}' }),
     addContact: (id, data) =>
       request(`/api/deals/${id}/contacts`, {
         method: 'POST',

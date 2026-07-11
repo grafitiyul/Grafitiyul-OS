@@ -42,6 +42,7 @@ import Dialog from '../common/Dialog.jsx';
 import TourSlotPickerDialog from '../tours/TourSlotPickerDialog.jsx';
 import DealTourSummary from '../tours/DealTourSummary.jsx';
 import DealTourPlanning from '../tours/DealTourPlanning.jsx';
+import PendingTourUpdateBar from './PendingTourUpdateBar.jsx';
 import { fmtTourDate } from '../tours/config.js';
 import { notifyOrphansChanged } from '../../shell/OrphanToursIndicator.jsx';
 
@@ -132,6 +133,9 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   const [slotPickerFor, setSlotPickerFor] = useState(null);
   const [reopenChoiceTour, setReopenChoiceTour] = useState(null);
   const [lostPending, setLostPending] = useState(null);
+  // Pending Tour Update actions + the leave-with-pending confirmation target.
+  const [tourUpdateBusy, setTourUpdateBusy] = useState(false);
+  const [leaveHref, setLeaveHref] = useState(null);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -239,6 +243,30 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   //   • the inline title editor while open and changed.
   useDirtyWhen(form, originalForm, { active: !!form && !!originalForm });
   useDirtyForm(editingTitle && titleDraft.trim() !== (deal?.title || ''));
+
+  // Leave guard while a TOUR UPDATE is pending (deal.tourUpdatePending — the
+  // server-derived diff, so nothing is ever lost on reload; this guard only
+  // makes leaving a conscious choice). BrowserRouter has no useBlocker, so
+  // in-app navigation is intercepted at the anchor level in CAPTURE phase —
+  // react-router's Link honors defaultPrevented. New-tab/external/self links
+  // pass through untouched.
+  const hasPendingTour = (deal?.tourUpdatePending || []).length > 0;
+  useEffect(() => {
+    if (!hasPendingTour || dealIdProp) return undefined;
+    const onClickCapture = (e) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const a = e.target?.closest?.('a[href]');
+      if (!a || (a.target && a.target !== '_self')) return;
+      const href = a.getAttribute('href') || '';
+      if (!href.startsWith('/')) return;
+      if (href.startsWith(dealPath(deal))) return; // staying on this deal
+      e.preventDefault();
+      e.stopPropagation();
+      setLeaveHref(href);
+    };
+    document.addEventListener('click', onClickCapture, true);
+    return () => document.removeEventListener('click', onClickCapture, true);
+  }, [hasPendingTour, dealIdProp, deal]);
 
   // Catalogs for the Product selector + activity-type mapping. Loaded once.
   useEffect(() => {
@@ -395,6 +423,36 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
     }
   }
 
+  // Pending Tour Update — the two bar actions. Apply = the ONE server
+  // orchestration (tour + calendar + future workflows); discard = restore the
+  // deal's planning fields to the applied tour values (nothing operational).
+  async function applyTourUpdate() {
+    setTourUpdateBusy(true);
+    try {
+      await api.deals.applyTourUpdate(id);
+      await refresh();
+      return true;
+    } catch (e) {
+      alert('שגיאה: ' + (e.payload?.error || e.message));
+      return false;
+    } finally {
+      setTourUpdateBusy(false);
+    }
+  }
+  async function discardTourUpdate() {
+    setTourUpdateBusy(true);
+    try {
+      await api.deals.discardTourUpdate(id);
+      await refresh();
+      return true;
+    } catch (e) {
+      alert('שגיאה: ' + (e.payload?.error || e.message));
+      return false;
+    } finally {
+      setTourUpdateBusy(false);
+    }
+  }
+
   async function copyDealUrl() {
     const url = `${window.location.origin}${dealPath(deal)}`;
     try {
@@ -531,6 +589,8 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   const activeBooking = (deal.bookings || []).find((bk) => bk.status === 'active') || null;
   const orphanedBooking = (deal.bookings || []).find((bk) => bk.status === 'orphaned') || null;
   const onGroupSlot = activeBooking?.tourEvent?.kind === 'group_slot';
+  // Pending Tour Update — the server-derived deal-vs-tour diff (never stored).
+  const pendingTour = deal.tourUpdatePending || [];
   const GROUP_LOCK_MSG = 'לא ניתן לשנות זמנים בדיל של סיור קבוצתי.';
   // Full-color emoji field icons — secondary to the values, small but clearly
   // recognisable. The value remains the strongest visual element.
@@ -692,6 +752,15 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
                 העיר שנבחרה אינה מוגדרת כוריאנט של המוצר. ייתכן שיידרש תיאום מחיר ידני בבונה המחיר.
               </p>
             )}
+
+            {/* Pending Tour Update — full-width action bar ABOVE the customer
+                info. Rendered only while the deal differs from its live tour. */}
+            <PendingTourUpdateBar
+              pending={pendingTour}
+              busy={tourUpdateBusy}
+              onApply={applyTourUpdate}
+              onDiscard={discardTourUpdate}
+            />
 
             {/* Important customer information — collapsed to ~3 formatted lines
                 by default, with a "show more" control. */}
@@ -1009,6 +1078,58 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
             <span className="block text-[12px] text-amber-700">
               הסיור יישמר כמנותק (orphan) ויוצג בהתראה הקבועה בכותרת המערכת עד לחיבור מחדש או ביטול.
             </span>
+          </button>
+        </div>
+      </Dialog>
+
+      {/* Leaving the deal with a PENDING tour update — make it a conscious
+          choice: apply, discard, or stay. Nothing is lost either way (the
+          pending diff is server-derived), but an un-applied tour must never
+          be forgotten silently. */}
+      <Dialog
+        open={!!leaveHref}
+        onClose={() => setLeaveHref(null)}
+        title="שינויים שטרם הוחלו על הסיור"
+        size="sm"
+        footer={
+          <button
+            type="button"
+            onClick={() => setLeaveHref(null)}
+            className="rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-100"
+          >
+            הישאר בדיל
+          </button>
+        }
+      >
+        <p className="mb-3 text-sm text-gray-600">
+          יש שינויים בדיל שעדיין לא הוחלו על הסיור. מה לעשות לפני היציאה?
+        </p>
+        <div className="space-y-2">
+          <button
+            type="button"
+            disabled={tourUpdateBusy}
+            onClick={async () => {
+              const target = leaveHref;
+              const ok = await applyTourUpdate();
+              setLeaveHref(null);
+              if (ok) navigate(target);
+            }}
+            className="w-full rounded-lg bg-yellow-400 px-3 py-2.5 text-right text-sm font-bold text-gray-900 hover:bg-yellow-500 disabled:opacity-50"
+          >
+            עדכון הסיור ויציאה
+          </button>
+          <button
+            type="button"
+            disabled={tourUpdateBusy}
+            onClick={async () => {
+              const target = leaveHref;
+              const ok = await discardTourUpdate();
+              setLeaveHref(null);
+              if (ok) navigate(target);
+            }}
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-right text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            ביטול השינויים ויציאה
           </button>
         </div>
       </Dialog>

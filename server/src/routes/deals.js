@@ -20,6 +20,7 @@ import {
   cancelDealBooking,
   orphanDealBooking,
   syncDealToTour,
+  pendingTourUpdate,
   GROUP_LOCKED_FIELDS,
 } from '../tours/tourFromDeal.js';
 
@@ -159,6 +160,11 @@ const DEAL_INCLUDE = {
           startTime: true,
           capacity: true,
           tourLanguage: true,
+          // Scalar FKs feed pendingTourUpdate (deal-vs-tour diff) — the
+          // APPLIED side of the pending-update concept.
+          productId: true,
+          productVariantId: true,
+          locationId: true,
           product: { select: { id: true, nameHe: true } },
           location: { select: { id: true, nameHe: true } },
         },
@@ -181,6 +187,15 @@ function tourChoicePayload(booking) {
 
 async function loadDeal(id) {
   return prisma.deal.findUnique({ where: { id }, include: DEAL_INCLUDE });
+}
+
+// Attach the DERIVED pending-tour-update diff (deal = desired vs tour =
+// applied; see tourFromDeal.js) to a workspace deal payload. Computed on read
+// from data already in DEAL_INCLUDE — nothing stored, nothing to go stale.
+function withTourUpdatePending(deal) {
+  if (!deal) return deal;
+  const booking = (deal.bookings || []).find((bk) => bk.status === 'active') || null;
+  return { ...deal, tourUpdatePending: pendingTourUpdate(deal, booking) };
 }
 
 // "מספר הזמנה" URL support — every /:id route on this router accepts EITHER the
@@ -250,7 +265,7 @@ router.get(
   handle(async (req, res) => {
     const deal = await loadDeal(req.params.id);
     if (!deal) return res.status(404).json({ error: 'not_found' });
-    res.json(deal);
+    res.json(withTourUpdatePending(deal));
   }),
 );
 
@@ -524,11 +539,15 @@ router.put(
           }
         } else if (activeBooking && lostTransition) {
           await cancelDealBooking(tx, activeBooking, { reason: 'deal_lost', origin });
-        } else if (activeBooking) {
-          // Regular save while on a tour: the Deal is the planning source —
-          // mirror it mechanically (private/business fields + seats).
+        } else if (activeBooking && activeBooking.tourEvent.kind === 'group_slot') {
+          // Group save: the slot owns planning (fields are locked above); only
+          // the seats↔participants mirror runs.
           await syncDealToTour(tx, updated, activeBooking, { origin });
         }
+        // private/business with a live tour: NO auto-sync. Deal saves
+        // accumulate as a PENDING tour update (pendingTourUpdate — the derived
+        // deal-vs-tour diff); the operator applies explicitly via
+        // POST /:id/apply-tour-update ("עדכון סיור").
         return updated;
       });
     } catch (e) {
@@ -560,7 +579,72 @@ router.put(
         origin,
       });
     }
-    res.json(deal);
+    res.json(withTourUpdatePending(deal));
+  }),
+);
+
+// "עדכון סיור" — apply the PENDING tour update: the ONE business action that
+// converges the live tour onto the deal's desired state. One orchestration:
+// syncDealToTour updates the TourEvent (date/time/variant/language/city) +
+// seats and marks the Google Calendar mirror dirty — the sync worker then
+// converges the event (duration via variant, location line, attendee updates)
+// asynchronously. Future tour-affecting workflows join HERE, never scattered.
+router.post(
+  '/:id/apply-tour-update',
+  handle(async (req, res) => {
+    const deal = await prisma.deal.findUnique({ where: { id: req.params.id } });
+    if (!deal) return res.status(404).json({ error: 'not_found' });
+    const booking = await activeBookingFor(prisma, deal.id);
+    if (!booking || booking.tourEvent.kind === 'group_slot') {
+      return res.status(409).json({ error: 'no_updatable_tour' });
+    }
+    const pending = pendingTourUpdate(deal, booking);
+    if (pending.length) {
+      const origin = await userOrigin(req.adminAuth?.userId);
+      await prisma.$transaction(async (tx) => {
+        await syncDealToTour(tx, deal, booking, { origin });
+        await emitTimelineEvent(tx, {
+          subjectType: 'deal',
+          subjectId: deal.id,
+          kind: 'tour',
+          data: {
+            event: 'tour_update_applied',
+            tourEventId: booking.tourEventId,
+            fields: pending.map((p) => p.field),
+          },
+          origin,
+        });
+      });
+    }
+    res.json(withTourUpdatePending(await loadDeal(deal.id)));
+  }),
+);
+
+// "ביטול שינויים" — discard the pending update: restore the deal's planning
+// fields back to the CURRENTLY-APPLIED tour values. Nothing operational
+// happens — no tour mutation, no calendar mark, and INTENTIONALLY no changelog
+// / timeline entry (restoring the applied state is not a business change).
+router.post(
+  '/:id/discard-tour-update',
+  handle(async (req, res) => {
+    const deal = await prisma.deal.findUnique({ where: { id: req.params.id } });
+    if (!deal) return res.status(404).json({ error: 'not_found' });
+    const booking = await activeBookingFor(prisma, deal.id);
+    if (!booking || booking.tourEvent.kind === 'group_slot') {
+      return res.status(409).json({ error: 'no_updatable_tour' });
+    }
+    const tour = booking.tourEvent;
+    const data = {
+      tourDate: tour.date,
+      tourTime: tour.startTime,
+      tourLanguage: tour.tourLanguage,
+      productId: tour.productId,
+      productVariantId: tour.productVariantId,
+      locationId: tour.locationId,
+    };
+    if (Number.isInteger(booking.seats) && booking.seats >= 1) data.participants = booking.seats;
+    await prisma.deal.update({ where: { id: deal.id }, data });
+    res.json(withTourUpdatePending(await loadDeal(deal.id)));
   }),
 );
 

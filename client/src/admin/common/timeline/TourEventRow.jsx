@@ -10,6 +10,7 @@ const EVENT_TEXT = {
   tour_joined: 'הדיל שובץ לסיור קבוצתי',
   tour_left: 'הדיל הוסר מהסיור',
   booking_orphaned: 'הסיור נשמר בנפרד מהדיל (orphan)',
+  tour_update_applied: 'עדכון הסיור הוחל — הסיור עודכן לפי הדיל',
   // Tour Gallery lifecycle (batch-level — never one event per photo).
   gallery_first_upload: 'הועלתה מדיה ראשונה לגלריית הסיור',
   gallery_batch_uploaded: 'הועלתה מדיה לגלריית הסיור',

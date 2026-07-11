@@ -1,4 +1,4 @@
-import { WON_REQUIRED_FIELDS, missingFields } from './requiredFields.js';
+import { WON_REQUIRED_FIELDS, FIELD_LABELS_HE, missingFields } from './requiredFields.js';
 import { emitTimelineEvent } from '../timeline/events.js';
 import { seedTourComponents } from './tourComponents.js';
 import { splitPlanAssignments, planComponentRows } from './planMaterialize.js';
@@ -386,10 +386,44 @@ export async function reconnectOrphanBooking(tx, booking, { origin }) {
   return { dealSync: null };
 }
 
-// Mechanical Deal→Tour mirror for private/business tours. The DEAL is the
-// planning source of truth after WON; this runs in the SAME transaction as
-// every deal save so the two can never drift. Returns true when the tour row
-// actually changed.
+// ── Pending Tour Update (the ONE concept) ────────────────────────────────────
+// After a private/business tour exists, the Deal's planning fields are the
+// DESIRED state and the TourEvent/Booking are the APPLIED state. The pending
+// update is simply their DIFF — derived, never stored, so it can never go
+// stale, and any future tour-affecting field joins by appearing here (and in
+// syncDealToTour, which is what "apply" runs). Group slots never have pending
+// updates: their planning fields are slot-owned and locked on the deal.
+// Mirrors syncDealToTour's semantics exactly (e.g. a cleared deal date/time is
+// never synced, so it is never "pending") — applying must always empty this
+// list. Returns [{ field, labelHe, dealValue, tourValue }].
+export function pendingTourUpdate(deal, booking) {
+  if (!deal || !booking || booking.status !== 'active') return [];
+  const tour = booking.tourEvent;
+  if (!tour || tour.kind === 'group_slot' || tour.status !== 'scheduled') return [];
+  const diffs = [];
+  const push = (field, dealValue, tourValue) =>
+    diffs.push({ field, labelHe: FIELD_LABELS_HE[field] || field, dealValue, tourValue });
+  if (deal.tourDate && deal.tourDate !== tour.date) push('tourDate', deal.tourDate, tour.date);
+  if (deal.tourTime && deal.tourTime !== tour.startTime) push('tourTime', deal.tourTime, tour.startTime);
+  if ((deal.tourLanguage || null) !== (tour.tourLanguage || null))
+    push('tourLanguage', deal.tourLanguage || null, tour.tourLanguage || null);
+  if ((deal.productId || null) !== (tour.productId || null))
+    push('productId', deal.productId || null, tour.productId || null);
+  if ((deal.productVariantId || null) !== (tour.productVariantId || null))
+    push('productVariantId', deal.productVariantId || null, tour.productVariantId || null);
+  if ((deal.locationId || null) !== (tour.locationId || null))
+    push('locationId', deal.locationId || null, tour.locationId || null);
+  const seats = Number(deal.participants);
+  if (Number.isInteger(seats) && seats >= 1 && seats !== booking.seats)
+    push('participants', seats, booking.seats);
+  return diffs;
+}
+
+// Mechanical Deal→Tour mirror for private/business tours (+ seats for both
+// kinds). The DEAL is the desired state; since the pending-update flow this is
+// invoked by the EXPLICIT "עדכון סיור" orchestration (and by group saves for
+// the seats mirror / orphan reconnect) — no longer by every deal save.
+// Returns true when the tour row actually changed.
 export async function syncDealToTour(tx, deal, booking, { origin }) {
   const tour = booking.tourEvent;
 
