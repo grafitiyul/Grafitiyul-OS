@@ -29,6 +29,10 @@ import UploadPrimaryButton, {
 // badge is "קבוצתי" — a group tour genuinely has no single customer.
 const KIND_LABELS = { group_slot: 'קבוצתי' };
 
+// ONE brand band background — header and footer share it verbatim so the
+// page always reads as wrapped by the brand (they can never drift apart).
+const BRAND_BAND_BG = `linear-gradient(180deg, #141b2d 0%, ${BRAND_NAVY} 100%)`;
+
 const CONTACT = {
   whatsappDisplay: '055-6638970',
   whatsappHref: 'https://wa.me/972556638970',
@@ -237,10 +241,7 @@ export default function CustomerGalleryPage() {
     <div dir="rtl" className="min-h-screen bg-gray-50">
       {/* Brand band — slim, dark navy, the official white lockup. Part of the
           brand, not a hero: the page's real content starts right below. */}
-      <div
-        className="flex justify-center px-4 py-5 sm:py-6"
-        style={{ background: `linear-gradient(180deg, #141b2d 0%, ${BRAND_NAVY} 100%)` }}
-      >
+      <div className="flex justify-center px-4 py-5 sm:py-6" style={{ background: BRAND_BAND_BG }}>
         <BrandLogo logoUrl={data.logoUrl} height={56} />
       </div>
 
@@ -314,47 +315,49 @@ export default function CustomerGalleryPage() {
         )}
       </main>
 
-      {/* Footer — quiet brand block + real contact actions, all clickable. */}
-      <footer className="border-t border-gray-200 bg-white">
-        <div className="mx-auto flex max-w-6xl flex-col items-center gap-4 px-4 py-8 sm:px-6">
-          <GrafitiyulHeroLogo height={44} color={BRAND_NAVY} title="גרפיטיול" />
-          <div className="text-[14px] font-semibold text-gray-700">להזמנת פעילויות דומות:</div>
-          <div className="flex flex-col items-center gap-3 sm:flex-row sm:gap-0">
-            <a
-              href={CONTACT.whatsappHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 text-[14px] font-medium text-gray-700 transition hover:text-gray-900"
-            >
-              <WhatsAppGlyph className="h-5 w-5 text-[#25d366]" />
-              <span dir="ltr" className="tabular-nums">{CONTACT.whatsappDisplay}</span>
-            </a>
-            <span className="hidden px-5 text-gray-200 sm:inline">|</span>
-            <a
-              href={`mailto:${CONTACT.email}`}
-              className="inline-flex items-center gap-2 text-[14px] font-medium text-gray-700 transition hover:text-gray-900"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5 text-gray-400" aria-hidden>
-                <rect x="3" y="5" width="18" height="14" rx="2" />
-                <path d="m4 7 8 6 8-6" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              <span dir="ltr">{CONTACT.email}</span>
-            </a>
-            <span className="hidden px-5 text-gray-200 sm:inline">|</span>
+      {/* Footer — the header's mirror: same navy band, same white logo (one
+          source), so the page is wrapped by the brand. Minimal: logo →
+          headline → contact row; no borders, no cards. */}
+      <footer style={{ background: BRAND_BAND_BG }}>
+        <div className="mx-auto flex max-w-6xl flex-col items-center gap-5 px-4 py-9 sm:px-6 sm:py-10">
+          <BrandLogo logoUrl={data.logoUrl} height={48} />
+          <div className="text-[15px] font-semibold text-white">להזמנת פעילויות דומות:</div>
+          <div className="flex flex-col items-center gap-4 sm:flex-row sm:gap-0">
             <a
               href={CONTACT.siteHref}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 text-[14px] font-medium text-gray-700 transition hover:text-gray-900"
+              className="inline-flex items-center gap-2 text-[14px] font-medium text-white/80 transition hover:text-white"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5 text-gray-400" aria-hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5 text-white/50" aria-hidden>
                 <circle cx="12" cy="12" r="9" />
                 <path d="M3 12h18M12 3c2.5 2.4 3.8 5.5 3.8 9S14.5 18.6 12 21c-2.5-2.4-3.8-5.5-3.8-9S9.5 5.4 12 3Z" />
               </svg>
               <span dir="ltr">{CONTACT.site}</span>
             </a>
+            <span className="hidden px-6 text-white/15 sm:inline">|</span>
+            <a
+              href={`mailto:${CONTACT.email}`}
+              className="inline-flex items-center gap-2 text-[14px] font-medium text-white/80 transition hover:text-white"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5 text-white/50" aria-hidden>
+                <rect x="3" y="5" width="18" height="14" rx="2" />
+                <path d="m4 7 8 6 8-6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span dir="ltr">{CONTACT.email}</span>
+            </a>
+            <span className="hidden px-6 text-white/15 sm:inline">|</span>
+            <a
+              href={CONTACT.whatsappHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 text-[14px] font-medium text-white/80 transition hover:text-white"
+            >
+              <WhatsAppGlyph className="h-5 w-5 text-[#25d366]" />
+              <span dir="ltr" className="tabular-nums">{CONTACT.whatsappDisplay}</span>
+            </a>
           </div>
-          <div className="text-[12px] text-gray-400">גרפיטיול · סיורי גרפיטי ואמנות רחוב</div>
+          <div className="text-[12px] text-white/40">גרפיטיול · סיורי גרפיטי ואמנות רחוב</div>
         </div>
       </footer>
 
