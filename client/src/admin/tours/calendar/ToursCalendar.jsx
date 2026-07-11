@@ -17,7 +17,7 @@ import {
   timeToMinutes,
   todayIL,
 } from './dates.js';
-import { calendarEventVisual, isUnassignedScheduled } from './eventVisuals.js';
+import { calendarEventVisual, isUnassignedScheduled, eventCity } from './eventVisuals.js';
 
 // לוח שנה — the Admin Tours calendar. STRICTLY a second VIEW of the same
 // TourEvent data as the table: same status filter vocabulary, same Tour modal
@@ -306,9 +306,12 @@ function MonthEvent({ ev, onOpen }) {
       {ev.status === 'completed' && <span aria-hidden>✓ </span>}
       {ev.status === 'cancelled' && <span aria-hidden>✕ </span>}
       <span className="tabular-nums font-semibold" dir="ltr">{ev.startTime}</span>{' '}
+      {/* PRODUCT always first · city only outside the Home Location · customer. */}
       <span className={`font-semibold ${ev.status === 'cancelled' ? 'line-through' : ''}`}>
         {ev.productName || 'סיור'}
       </span>
+      {eventCity(ev) && <span> · {eventCity(ev)}</span>}
+      {ev.customerDisplayName && <span className="opacity-90"> · {ev.customerDisplayName}</span>}
       {ev.participants > 0 && <span className="text-[10px] opacity-80"> · {ev.participants}</span>}
     </button>
   );
@@ -420,10 +423,12 @@ function DayColumn({ day, hours, events, isToday, onOpenTour, detailed }) {
               {ev.startTime}
               {endTimeOf(ev.startTime, ev.durationHours) ? `–${endTimeOf(ev.startTime, ev.durationHours)}` : ''}
             </div>
+            {/* PRODUCT first; city only outside the Home Location; customer next. */}
             <div className={`truncate font-bold ${ev.status === 'cancelled' ? 'line-through' : ''}`}>
               {ev.productName || 'סיור'}
             </div>
-            {ev.city && <div className="truncate">{ev.city}</div>}
+            {eventCity(ev) && <div className="truncate">{eventCity(ev)}</div>}
+            {ev.customerDisplayName && <div className="truncate">{ev.customerDisplayName}</div>}
             <div className="truncate opacity-85">
               {ev.participants > 0 && <>👥 {ev.participants}{ev.capacity != null ? `/${ev.capacity}` : ''} </>}
               {ev.leadGuideName || (ev.teamCount > 0 ? `${ev.teamCount} מדריכים` : '')}
@@ -446,9 +451,12 @@ function DayColumn({ day, hours, events, isToday, onOpenTour, detailed }) {
 }
 
 function eventTooltip(ev) {
+  // The tooltip is the UN-truncated truth: city always appears here (even at
+  // the Home Location), so the compact pill never hides information for good.
   return [
     `${ev.productName || 'סיור'}${ev.city ? ` · ${ev.city}` : ''}`,
     `${fmtTourDate(ev.date)} · ${ev.startTime || ''}`,
+    ev.customerDisplayName ? `לקוח: ${ev.customerDisplayName}` : null,
     `סטטוס: ${TOUR_STATUS_LABELS[ev.status] || ev.status}`,
     ev.participants > 0 ? `משתתפים: ${ev.participants}${ev.capacity != null ? ` / ${ev.capacity}` : ''}` : null,
     ev.leadGuideName ? `מדריך ראשי: ${ev.leadGuideName}` : null,

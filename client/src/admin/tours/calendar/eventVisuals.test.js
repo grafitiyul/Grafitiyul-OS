@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calendarEventVisual, isUnassignedScheduled } from './eventVisuals.js';
+import { calendarEventVisual, isUnassignedScheduled, eventCity } from './eventVisuals.js';
 import { staffColorHex } from '../../../../../shared/staffColors.mjs';
 
 // Calendar event layering — full guide color for scheduled, black for
@@ -64,4 +64,13 @@ test('completed + guide color → muted identity (lighter than the raw hex), rea
   // the muted treatment still runs through the same path.
   const done = calendarEventVisual(ev({ status: 'completed', guideColorSource: 'unassigned' }));
   assert.notEqual(done.style.backgroundColor, '#111827');
+});
+
+test('eventCity: shown only OUTSIDE the Home Location; missing flag fails open (city shows)', () => {
+  assert.equal(eventCity({ city: 'חיפה', atHomeLocation: false }), 'חיפה');
+  assert.equal(eventCity({ city: 'תל אביב', atHomeLocation: true }), null, 'home city is redundant');
+  // No flag on the payload (or no home location configured) → SHOW the city.
+  assert.equal(eventCity({ city: 'חיפה' }), 'חיפה');
+  assert.equal(eventCity({ atHomeLocation: false }), null, 'no city → nothing to show');
+  assert.equal(eventCity(null), null);
 });

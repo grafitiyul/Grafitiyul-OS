@@ -79,3 +79,13 @@ export function calendarEventVisual(ev) {
 export function isUnassignedScheduled(ev) {
   return (ev?.status || 'scheduled') === 'scheduled' && ev?.guideColorSource === 'unassigned';
 }
+
+// ── event content semantics ─────────────────────────────────────────────────
+// The PRODUCT is always shown first; the city is ADDED context only when the
+// tour is outside the configured Home Location (server-derived
+// `atHomeLocation`, stable location-id comparison). A payload without the
+// flag (or with no home location configured) shows the city — showing a
+// redundant city is safe, hiding a real one is not.
+export function eventCity(ev) {
+  return ev?.city && !ev?.atHomeLocation ? ev.city : null;
+}

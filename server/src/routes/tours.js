@@ -24,6 +24,7 @@ import { scheduleGalleryCleanup } from '../tours/gallery/service.js';
 import { summaryCompletionState, completeTour, reopenTour } from '../tours/completion.js';
 import { isAssignableStaff } from '../people/eligibility.js';
 import { resolveTourGuideColor, resolveTourGuideColorInfo } from '../../../shared/guideColor.mjs';
+import { bookingsCustomerSummary } from '../tours/customerDisplay.js';
 import {
   calendarPendingPatch,
   patchTouchesCalendar,
@@ -70,6 +71,37 @@ function toColorAssignments(assignments) {
     color: a.personRef?.profile?.displayColor || null,
   }));
 }
+
+// Lean bookings include for the compact customer label (customerDisplay.js):
+// active bookings ordered createdAt asc (deterministic multi-booking
+// summary), deal whitelisted to LABEL fields only — no Deal payloads ever
+// ride a list/calendar response.
+const CUSTOMER_LABEL_BOOKINGS_INCLUDE = {
+  where: { status: 'active' },
+  orderBy: { createdAt: 'asc' },
+  select: {
+    deal: {
+      select: {
+        title: true,
+        organization: { select: { name: true } },
+        contacts: {
+          orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+          take: 1,
+          select: {
+            contact: {
+              select: {
+                firstNameHe: true,
+                lastNameHe: true,
+                firstNameEn: true,
+                lastNameEn: true,
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
 
 // Minimal select for deriving guideColor without shipping profiles.
 const GUIDE_COLOR_ASSIGNMENT_SELECT = {
@@ -222,11 +254,15 @@ router.get(
       where,
       select: {
         id: true, kind: true, status: true, date: true, startTime: true,
-        tourLanguage: true, capacity: true, notes: true,
+        tourLanguage: true, capacity: true, notes: true, locationId: true,
         product: { select: { nameHe: true } },
         location: { select: { nameHe: true } },
         productVariant: {
-          select: { durationHours: true, location: { select: { nameHe: true } } },
+          select: {
+            durationHours: true,
+            locationId: true,
+            location: { select: { nameHe: true } },
+          },
         },
         assignments: {
           select: {
@@ -239,10 +275,19 @@ router.get(
           orderBy: { sortOrder: 'asc' },
           select: { activityComponent: { select: { nameHe: true, icon: true } } },
         },
+        bookings: CUSTOMER_LABEL_BOOKINGS_INCLUDE,
       },
       orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
     });
-    const occ = await occupancyFor(prisma, tours.map((t) => t.id));
+    // Home Location = the canonical Location.isHomeLocation singleton
+    // (Settings → מוצרים → מיקומים). Comparison is by STABLE location id
+    // (tour's explicit location, else the variant's) — never by city string.
+    // No home location configured → atHomeLocation stays false for every
+    // tour, so the calendar SHOWS cities rather than wrongly hiding them.
+    const [occ, homeLocation] = await Promise.all([
+      occupancyFor(prisma, tours.map((t) => t.id)),
+      prisma.location.findFirst({ where: { isHomeLocation: true }, select: { id: true } }),
+    ]);
     res.set('Cache-Control', 'no-store');
     res.json({
       events: tours.map((t) => {
@@ -252,6 +297,7 @@ router.get(
         // semantics: 'unassigned' (no relevant guide at all) renders black on
         // the calendar; 'neutral' (guides exist, no single color) stays default.
         const colorInfo = resolveTourGuideColorInfo(toColorAssignments(t.assignments));
+        const tourLocationId = t.locationId || t.productVariant?.locationId || null;
         return {
           id: t.id,
           kind: t.kind,
@@ -261,6 +307,12 @@ router.get(
           durationHours: t.productVariant?.durationHours ?? null,
           productName: t.product?.nameHe || null,
           city: t.location?.nameHe || t.productVariant?.location?.nameHe || null,
+          // City is redundant at the Home Location — the client shows it only
+          // when this is false (product ALWAYS shows; city is added context).
+          atHomeLocation: !!(homeLocation && tourLocationId && tourLocationId === homeLocation.id),
+          // One resolved compact label (org → primary contact → deal title;
+          // multi-booking → "first +N"). Never a Deal payload.
+          customerDisplayName: bookingsCustomerSummary(t.bookings),
           tourLanguage: t.tourLanguage,
           participants: o.activeSeats,
           capacity: t.capacity,
