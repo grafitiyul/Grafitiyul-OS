@@ -79,6 +79,7 @@ export default function PersonProfile() {
       <ProfileSection person={person} onChanged={refresh} />
       <BankSection person={person} onChanged={refresh} />
       <ProceduresSection procedures={procedures} onChanged={refresh} />
+      <StationAccessSection person={person} />
       <ChangesSection person={person} onChanged={refresh} />
     </div>
   );
@@ -768,6 +769,117 @@ function BankSection({ person, onChanged }) {
         >
           {saving ? 'שומר…' : 'שמירה'}
         </button>
+      </div>
+    </Section>
+  );
+}
+
+// ── הרשאות למערכי הדרכה — guide → Station permission chips ─────────────────
+//
+// Explicit per-station rows are the ONE truth (Gmail-selection semantics):
+// "בחר הכל" / "נקה הכל" per tour are bulk conveniences that create/delete
+// rows, and individual chips keep toggling freely afterwards. Green = has
+// access, grey = doesn't. Enforcement is server-side on the portal routes.
+
+function StationAccessSection({ person }) {
+  const [tours, setTours] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const loadAccess = useCallback(() => {
+    api.people
+      .stationAccess(person.id)
+      .then((r) => setTours(r.tours || []))
+      .catch(() => setTours([]));
+  }, [person.id]);
+
+  useEffect(() => {
+    loadAccess();
+  }, [loadAccess]);
+
+  async function apply(body) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await api.people.updateStationAccess(person.id, body);
+      loadAccess();
+    } catch (e) {
+      window.alert('עדכון ההרשאות נכשל: ' + e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (tours === null) {
+    return (
+      <Section title="הרשאות למערכי הדרכה">
+        <div className="text-sm text-gray-400">טוען…</div>
+      </Section>
+    );
+  }
+  if (tours.length === 0) {
+    return (
+      <Section title="הרשאות למערכי הדרכה">
+        <div className="text-sm text-gray-500 italic">
+          אין עדיין מערכי הדרכה פעילים עם תחנות.
+        </div>
+      </Section>
+    );
+  }
+
+  return (
+    <Section title="הרשאות למערכי הדרכה">
+      <div className="space-y-4">
+        {tours.map((tour) => {
+          const grantedCount = tour.stations.filter((s) => s.granted).length;
+          return (
+            <div key={tour.id}>
+              <div className="mb-1.5 flex items-center gap-2">
+                <h3 className="text-[13.5px] font-semibold text-gray-800">{tour.titleHe}</h3>
+                <span className="text-[11.5px] text-gray-400">
+                  {grantedCount}/{tour.stations.length} תחנות
+                </span>
+                <span className="flex-1" />
+                <button
+                  type="button"
+                  disabled={busy || grantedCount === tour.stations.length}
+                  onClick={() => apply({ grant: tour.stations.map((s) => s.id) })}
+                  className="rounded px-2 py-0.5 text-[11.5px] font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-40"
+                >
+                  בחר הכל
+                </button>
+                <button
+                  type="button"
+                  disabled={busy || grantedCount === 0}
+                  onClick={() => apply({ revoke: tour.stations.map((s) => s.id) })}
+                  className="rounded px-2 py-0.5 text-[11.5px] font-semibold text-gray-500 hover:bg-gray-100 disabled:opacity-40"
+                >
+                  נקה הכל
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {tour.stations.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      apply(s.granted ? { revoke: [s.id] } : { grant: [s.id] })
+                    }
+                    title={s.granted ? 'לחיצה תסיר גישה' : 'לחיצה תעניק גישה'}
+                    className={`rounded-full border px-2.5 py-1 text-[12px] font-medium transition disabled:opacity-50 ${
+                      s.granted
+                        ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                        : 'border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100'
+                    }`}
+                  >
+                    {s.granted ? '✓ ' : ''}
+                    {s.titleHe}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </Section>
   );

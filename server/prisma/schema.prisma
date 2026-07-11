@@ -516,6 +516,7 @@ model PersonRef {
   profile          PersonProfile?
   flowTargets      FlowTargetPerson[]
   tourAssignments  TourAssignment[]
+  stationAccess    GuideStationAccess[]
 
   @@index([teamRefId])
 }
@@ -537,6 +538,23 @@ model PersonProfile {
   bankDetails Json?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+}
+
+// Guide → training-content Station permission (מערכי הדרכה). EXPLICIT rows
+// are the ONE source of truth — "select all stations in a tour" is only a
+// bulk convenience that creates rows, "clear all" deletes them, and single
+// stations toggle freely afterwards (Gmail-selection semantics). There is
+// deliberately NO stored "whole tour" rule: one truth, no exclusions logic.
+// Enforced server-side on the guide portal training routes.
+model GuideStationAccess {
+  station     TourStation @relation(fields: [stationId], references: [id], onDelete: Cascade)
+  stationId   String
+  personRef   PersonRef   @relation(fields: [personRefId], references: [id], onDelete: Cascade)
+  personRefId String
+  grantedAt   DateTime    @default(now())
+
+  @@id([stationId, personRefId])
+  @@index([personRefId])
 }
 
 // Flow → teams assignment. The WHERE for "flows visible to team T" indexes
@@ -2693,6 +2711,7 @@ model TourStation {
 
   steps TourStep[]
   notes TourStationNote[]
+  guideAccess GuideStationAccess[]
 
   @@index([tourId, sortOrder])
 }

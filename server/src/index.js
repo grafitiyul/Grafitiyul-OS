@@ -20,6 +20,8 @@ import portalRouter from './routes/portal.js';
 import portalToursRouter from './routes/portalTours.js';
 import portalProfileRouter from './routes/portalProfile.js';
 import bankCatalogRouter from './routes/bankCatalog.js';
+import portalTrainingRouter from './routes/portalTraining.js';
+import guideStationAccessRouter from './routes/guideStationAccess.js';
 import portalGalleryRouter from './routes/portalGallery.js';
 import guidePortalSettingsRouter from './routes/guidePortalSettings.js';
 import publicGalleryRouter from './routes/publicGallery.js';
@@ -191,6 +193,9 @@ app.use('/api/portal', portalRouter);
 app.use('/api/portal', portalToursRouter);
 // Guide Portal → פרטים אישיים (view + permission-gated profile editing).
 app.use('/api/portal', portalProfileRouter);
+// Guide Portal → מערכי הדרכה (permitted training stations; double server
+// gate: viewTraining permission + explicit GuideStationAccess rows).
+app.use('/api/portal', portalTrainingRouter);
 // Israeli bank catalog — static bundled data, public (admin + portal).
 app.use('/api/bank-catalog', bankCatalogRouter);
 // Guide Portal → Tour Gallery (assigned-tours list, direct-to-R2 uploads,
@@ -249,6 +254,9 @@ app.use('/api/signers', requireAdminAuth, signersRouter);
 app.use('/api/documents', requireAdminAuth, documentsRouter);
 app.use('/api/teams', requireAdminAuth, teamsRouter);
 app.use('/api/people', requireAdminAuth, peopleRouter);
+// Guide → training-Station permissions (הרשאות למערכי הדרכה) — explicit
+// per-station grant rows; same /api/people surface, separate router.
+app.use('/api/people', requireAdminAuth, guideStationAccessRouter);
 app.use('/api/exports', requireAdminAuth, exportsRouter);
 app.use('/api/admin-users', requireAdminAuth, adminUsersRouter);
 

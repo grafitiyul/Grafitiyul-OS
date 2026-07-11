@@ -237,6 +237,13 @@ export const api = {
       return res.json();
     },
     procedures: (id) => request(`/api/people/${id}/procedures`),
+    // Guide → training-Station permissions (chips UI).
+    stationAccess: (id) => request(`/api/people/${id}/station-access`),
+    updateStationAccess: (id, body) =>
+      request(`/api/people/${id}/station-access`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
     // Immutable profile change history + restore (timeline kind='change').
     changes: (id) => request(`/api/people/${id}/changes`),
     restoreChange: (id, entryId, fieldKey) =>
