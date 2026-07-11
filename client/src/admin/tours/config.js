@@ -43,6 +43,17 @@ export const TOUR_STATUS_STYLES = {
   postponed: 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200',
 };
 
+// Calendar event visuals — SAME status semantics as the table chips (the two
+// views must read identically): subtle tinted background + a stronger status
+// edge on the start side, readable text. Cancelled additionally renders
+// muted (it appears only when explicitly requested by the filter).
+export const TOUR_STATUS_EVENT_STYLES = {
+  scheduled: 'bg-blue-50 border-blue-500 text-blue-950 hover:bg-blue-100',
+  completed: 'bg-emerald-50/80 border-emerald-400 text-emerald-900 hover:bg-emerald-100/80',
+  cancelled: 'bg-red-50 border-red-400 text-red-800 opacity-75 hover:bg-red-100',
+  postponed: 'bg-amber-50 border-amber-400 text-amber-900 hover:bg-amber-100',
+};
+
 // Status filter vocabulary — shared by the table AND the calendar view (the
 // two are views of the same TourEvent data and must never show different
 // datasets under the same filter). 'active' = operationally-live tours (the

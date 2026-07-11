@@ -4,6 +4,7 @@ import { api } from '../../lib/api.js';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../common/tableColumns.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import TourSlotModal from './TourSlotModal.jsx';
+import ToursCalendar from './calendar/ToursCalendar.jsx';
 import {
   TOUR_KIND_LABELS,
   TOUR_KIND_STYLES,
@@ -264,60 +265,60 @@ export default function ToursPage() {
         <SummaryCard label="משתתפים רשומים" value={summary.seats} icon="🎟️" />
       </div>
 
-      {/* Tabs: table | calendar placeholder */}
+      {/* Tabs: table | calendar — two VIEWS of the same TourEvent data. */}
       <div className="mb-3 flex items-center gap-1 border-b border-gray-200">
         <TabButton active={tab === 'table'} onClick={() => setTab('table')}>טבלה</TabButton>
         <TabButton active={tab === 'calendar'} onClick={() => setTab('calendar')}>לוח שנה</TabButton>
       </div>
 
-      {tab === 'calendar' ? (
-        <div className="bg-white border border-gray-200 rounded-xl shadow-sm py-20 text-center max-w-lg mx-auto">
-          <div className="text-5xl mb-4 opacity-70">📅</div>
-          <h3 className="text-lg font-semibold text-gray-900 mb-1">תצוגת לוח שנה</h3>
-          <p className="text-sm text-gray-500 leading-relaxed">
-            תצוגות יומן (חודשי / שבועי / יומי) יתווספו בשלב הבא.
-            <br />
-            בינתיים כל הסיורים זמינים בתצוגת הטבלה.
-          </p>
+      {/* Filter bar — SHARED by both views: switching טבלה ⇄ לוח שנה never
+          resets search/kind/status, and both views obey the same filters. */}
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-2.5 mb-3">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="relative flex-[2] min-w-[260px]">
+            <span className="absolute inset-y-0 right-3 flex items-center text-gray-400">🔍</span>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="חיפוש לפי מוצר, עיר או הערות…"
+              className="h-11 w-full rounded-lg border border-gray-300 bg-gray-50/60 pr-10 pl-3 text-[15px] focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+            />
+          </div>
+          <select
+            value={kind}
+            onChange={(e) => setKind(e.target.value)}
+            className="h-10 min-w-[8rem] rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+          >
+            {KIND_FILTERS.map(([val, lbl]) => (
+              <option key={val} value={val}>{lbl}</option>
+            ))}
+          </select>
+          <select
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+            className="h-10 min-w-[8rem] rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+          >
+            {STATUS_FILTERS.map(([val, lbl]) => (
+              <option key={val} value={val}>{lbl}</option>
+            ))}
+          </select>
+          {tab === 'table' && (
+            <div className="ms-auto">
+              <ColumnPicker columns={orderedColumns} colKeys={colKeys} onToggle={toggleCol} />
+            </div>
+          )}
         </div>
+      </div>
+
+      {tab === 'calendar' ? (
+        <ToursCalendar
+          search={search}
+          kind={kind}
+          status={status}
+          onOpenTour={(id) => navigate(`/admin/tours/${id}`)}
+        />
       ) : (
         <>
-          {/* Filter bar */}
-          <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-2.5 mb-3">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <div className="relative flex-[2] min-w-[260px]">
-                <span className="absolute inset-y-0 right-3 flex items-center text-gray-400">🔍</span>
-                <input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="חיפוש לפי מוצר, עיר או הערות…"
-                  className="h-11 w-full rounded-lg border border-gray-300 bg-gray-50/60 pr-10 pl-3 text-[15px] focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
-                />
-              </div>
-              <select
-                value={kind}
-                onChange={(e) => setKind(e.target.value)}
-                className="h-10 min-w-[8rem] rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
-              >
-                {KIND_FILTERS.map(([val, lbl]) => (
-                  <option key={val} value={val}>{lbl}</option>
-                ))}
-              </select>
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-                className="h-10 min-w-[8rem] rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
-              >
-                {STATUS_FILTERS.map(([val, lbl]) => (
-                  <option key={val} value={val}>{lbl}</option>
-                ))}
-              </select>
-              <div className="ms-auto">
-                <ColumnPicker columns={orderedColumns} colKeys={colKeys} onToggle={toggleCol} />
-              </div>
-            </div>
-          </div>
-
           {/* Table */}
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
             {loading ? (

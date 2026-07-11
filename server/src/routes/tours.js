@@ -134,6 +134,91 @@ router.get(
   }),
 );
 
+// ---------- calendar (read-only date-range view) ----------
+// The Admin calendar is a VIEW of the same TourEvents as the table — one lean
+// DTO per event derived from existing relations. No Deal payloads, no N+1
+// (occupancy is one groupBy; team/components ride the include), and only the
+// VISIBLE range is queried (≤ one month grid incl. leading/trailing days).
+// Status filter shares the table's vocabulary; cancelled is excluded unless
+// explicitly requested. Postponed tours have no date, so they never occupy a
+// dated slot by construction. Registered before '/:id'.
+
+const CALENDAR_MAX_SPAN_DAYS = 62;
+
+router.get(
+  '/calendar',
+  handle(async (req, res) => {
+    try {
+      await ensureGeneratedSlots(prisma); // same sync-on-read as the list
+    } catch (e) {
+      console.error('[tours] slot generation failed', e);
+    }
+    const from = String(req.query.from || '');
+    const to = String(req.query.to || '');
+    if (!DATE_RE.test(from) || !DATE_RE.test(to) || to < from) {
+      return res.status(400).json({ error: 'invalid_range' });
+    }
+    if ((Date.parse(to) - Date.parse(from)) / 86_400_000 > CALENDAR_MAX_SPAN_DAYS) {
+      return res.status(400).json({ error: 'range_too_large' });
+    }
+    const where = { date: { gte: from, lte: to } };
+    const status = String(req.query.status || 'active');
+    if (status === 'active') where.status = { in: ['scheduled', 'postponed'] };
+    else if (status !== 'all') {
+      if (!TOUR_EVENT_STATUSES.includes(status)) {
+        return res.status(400).json({ error: 'invalid_status' });
+      }
+      where.status = status;
+    }
+    if (req.query.kind) where.kind = String(req.query.kind);
+    const tours = await prisma.tourEvent.findMany({
+      where,
+      select: {
+        id: true, kind: true, status: true, date: true, startTime: true,
+        tourLanguage: true, capacity: true, notes: true,
+        product: { select: { nameHe: true } },
+        location: { select: { nameHe: true } },
+        productVariant: {
+          select: { durationHours: true, location: { select: { nameHe: true } } },
+        },
+        assignments: { select: { displayName: true, role: true } },
+        activityComponents: {
+          orderBy: { sortOrder: 'asc' },
+          select: { activityComponent: { select: { nameHe: true, icon: true } } },
+        },
+      },
+      orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
+    });
+    const occ = await occupancyFor(prisma, tours.map((t) => t.id));
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      events: tours.map((t) => {
+        const o = occ[t.id] || { activeSeats: 0, activeBookings: 0 };
+        const lead = t.assignments.find((a) => a.role === 'lead_guide');
+        return {
+          id: t.id,
+          kind: t.kind,
+          status: t.status,
+          date: t.date,
+          startTime: t.startTime,
+          durationHours: t.productVariant?.durationHours ?? null,
+          productName: t.product?.nameHe || null,
+          city: t.location?.nameHe || t.productVariant?.location?.nameHe || null,
+          tourLanguage: t.tourLanguage,
+          participants: o.activeSeats,
+          capacity: t.capacity,
+          notes: t.notes,
+          leadGuideName: lead?.displayName || null,
+          teamCount: t.assignments.length,
+          components: t.activityComponents
+            .map((c) => c.activityComponent?.nameHe)
+            .filter(Boolean),
+        };
+      }),
+    });
+  }),
+);
+
 // ---------- scheduling (Settings → Tours) ----------
 // Global settings singleton + recurring weekly rules. Registered BEFORE
 // '/:id'. Rule mutations trigger immediate generation so the tours list

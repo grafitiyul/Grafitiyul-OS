@@ -1222,6 +1222,8 @@ export const api = {
         body: JSON.stringify({ tourEventId }),
       }),
     list: (params = {}) => request('/api/tours' + qs(params)),
+    // Calendar view — lean date-range DTO (same TourEvents, no Deal payloads).
+    calendar: (params = {}) => request('/api/tours/calendar' + qs(params)),
     // Scheduling (Settings → Tours): global settings + recurring weekly rules.
     scheduling: () => request('/api/tours/scheduling'),
     updateSchedulingSettings: (data) =>
