@@ -396,9 +396,10 @@ router.post(
 );
 
 // ---------- tour summary (questionnaire engine, purpose=tour_summary) ------
-// The submission is ALWAYS resolved server-side from (tour_event, tourId) —
-// the client never sends a submission id, so a token can only ever touch its
-// own tour's summary.
+// PER-GUIDE: every summary belongs to ONE guide (actorScope = the guide's
+// externalPersonId). The submission is ALWAYS resolved server-side from
+// (tour_event, tourId, THIS portal's person) — the client never sends a
+// submission id, so a token can only ever touch its OWN summary.
 
 function guideActor(person) {
   return { type: 'staff', ref: null, name: `מדריך · ${person.displayName}` };
@@ -420,12 +421,13 @@ async function summaryAccess(req, res) {
   return access;
 }
 
-async function activeSummarySubmission(tourEventId) {
+async function activeSummarySubmission(tourEventId, actorScope) {
   return prisma.questionnaireSubmission.findFirst({
     where: {
       subjectType: 'tour_event',
       subjectId: tourEventId,
       purpose: 'tour_summary',
+      actorScope,
       status: { in: ['draft', 'submitted', 'reviewed'] },
     },
     select: { id: true, status: true, submittedAt: true },
@@ -442,7 +444,7 @@ router.get(
     if (!access) return;
     try {
       // (Cancelled tours never reach here — the access resolver 403s them.)
-      const existing = await activeSummarySubmission(access.tour.id);
+      const existing = await activeSummarySubmission(access.tour.id, access.person.externalPersonId);
       const { submission } = existing
         ? { submission: existing }
         : await startSubmission({
@@ -450,6 +452,7 @@ router.get(
             subjectType: 'tour_event',
             subjectId: access.tour.id,
             actor: guideActor(access.person),
+            actorScope: access.person.externalPersonId,
           });
       res.set('Cache-Control', 'no-store');
       res.json(await getSubmission(submission.id));
@@ -464,7 +467,7 @@ router.put(
   handle(async (req, res) => {
     const access = await summaryAccess(req, res);
     if (!access) return;
-    const existing = await activeSummarySubmission(access.tour.id);
+    const existing = await activeSummarySubmission(access.tour.id, access.person.externalPersonId);
     if (!existing) return res.status(404).json({ error: 'submission_not_found' });
     try {
       res.json(await saveDraftAnswers(existing.id, req.body?.answers));
@@ -479,7 +482,7 @@ router.post(
   handle(async (req, res) => {
     const access = await summaryAccess(req, res);
     if (!access) return;
-    const existing = await activeSummarySubmission(access.tour.id);
+    const existing = await activeSummarySubmission(access.tour.id, access.person.externalPersonId);
     if (!existing) return res.status(404).json({ error: 'submission_not_found' });
     try {
       const updated = await submitSubmission(existing.id, {
@@ -499,7 +502,7 @@ router.post(
   handle(async (req, res) => {
     const access = await summaryAccess(req, res);
     if (!access) return;
-    const existing = await activeSummarySubmission(access.tour.id);
+    const existing = await activeSummarySubmission(access.tour.id, access.person.externalPersonId);
     if (!existing) return res.status(404).json({ error: 'submission_not_found' });
     try {
       res.json(await voidSubmission(existing.id));
@@ -536,7 +539,7 @@ router.get(
     if (!access.ok) return fail(res, access);
     const [summary, gallery] = await Promise.all([
       access.permissions.fillTourSummary
-        ? activeSummarySubmission(access.tour.id)
+        ? activeSummarySubmission(access.tour.id, access.person.externalPersonId)
         : Promise.resolve(null),
       access.permissions.useTourGallery
         ? gallerySummary(prisma, access.tour.id)

@@ -101,7 +101,10 @@ export function cloneStructureForNewVersion(structure) {
 // Singleton identity of an active submission (blueprint §2): DB-unique via
 // QuestionnaireSubmission.singletonKey. Set only when the template enforces
 // one-active-per-subject; cleared when a submission is voided.
-export function buildSingletonKey({ subjectType, subjectId, purpose }) {
+export function buildSingletonKey({ subjectType, subjectId, purpose, actorScope }) {
   if (!subjectType || !subjectId) return null;
-  return `${subjectType}:${subjectId}:${purpose}`;
+  const base = `${subjectType}:${subjectId}:${purpose}`;
+  // perActor purposes (tour_summary): one active submission per subject PER
+  // GUIDE — the scope joins the key so guides never collide.
+  return actorScope ? `${base}:${actorScope}` : base;
 }

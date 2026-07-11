@@ -68,7 +68,13 @@ const TOUR_DETAIL = {
   id: 'tour1', kind: 'group_slot', status: 'scheduled', date: '2026-08-06',
   startTime: '17:00', tourLanguage: 'he', capacity: 30, activeSeats: 0,
   totalBookings: 0, notes: null, product: { nameHe: 'סיור גרפיטי' },
-  productVariant: null, location: { nameHe: 'תל אביב' }, bookings: [], assignments: [],
+  productVariant: null, location: { nameHe: 'תל אביב' }, bookings: [],
+  // Per-guide summaries: the section renders one row per REQUIRED guide
+  // (lead_guide / guide) — the workshop assistant must not get a row.
+  assignments: [
+    { id: 'as1', role: 'lead_guide', displayName: 'דנה לוי', externalPersonId: 'xp1', personRef: null },
+    { id: 'as2', role: 'workshop_assistant', displayName: 'יוסי כהן', externalPersonId: 'xp2', personRef: null },
+  ],
 };
 
 let React;
@@ -331,22 +337,23 @@ test('fill dialog: FROZEN (tour closed) → immutable historical view, no redo',
   await unmount();
 });
 
-test('tour page: summary button is ACTIVE and shows the submitted status chip', async () => {
+test('tour page: per-guide summary rows — required guide gets a row with status chip, assistant does not', async () => {
   startBehavior = 'draft';
-  tourSummaryList = [{ ...SUBMISSION_BASE, status: 'submitted', template: { id: 'tpl1', internalName: 'סיכום סיור', purpose: 'tour_summary' }, version: { versionNo: 1 } }];
+  tourSummaryList = [{ ...SUBMISSION_BASE, status: 'submitted', actorScope: 'xp1', template: { id: 'tpl1', internalName: 'סיכום סיור', purpose: 'tour_summary' }, version: { versionNo: 1 } }];
   const { container, unmount } = await render(
     React.createElement(MemoryRouter, { initialEntries: ['/admin/tours/tour1'] },
       React.createElement(Routes, null,
         React.createElement(Route, { path: '/admin/tours/:id', element: React.createElement(TourPage) }))),
   );
   const html = container.innerHTML;
-  // The summary action now lives inside the "סיכום סיור" section (shared
-  // hierarchy with the gallery), as a real FormActionButton.
+  // The summary section renders ONE row per REQUIRED guide (per-guide model).
   assert.match(html, /סיכום סיור/);
-  assert.match(html, /טופס סיכום סיור/);
-  assert.match(html, /הוגש/); // status chip from listSubmissions
-  const btn = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('פתיחת הטופס'));
-  assert.ok(btn, 'summary button exists (submitted → still openable/editable)');
-  assert.equal(btn.disabled, false, 'summary button is enabled');
+  assert.match(html, /דנה לוי/); // required guide row
+  assert.match(html, /הוגש/); // her status chip from listSubmissions (actorScope xp1)
+  const openButtons = [...container.querySelectorAll('button')].filter((b) =>
+    b.textContent.includes('פתיחת הטופס') || b.textContent.includes('מילוי הטופס'),
+  );
+  assert.equal(openButtons.length, 1, 'exactly one summary row — the workshop assistant gets none');
+  assert.equal(openButtons[0].disabled, false, 'summary button is enabled');
   await unmount();
 });

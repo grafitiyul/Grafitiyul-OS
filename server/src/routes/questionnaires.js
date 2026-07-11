@@ -85,9 +85,9 @@ router.get('/submissions', qh(async (req, res) => {
 }));
 
 router.post('/submissions/start', qh(async (req, res) => {
-  const { templateId, purpose, subjectType, subjectId } = req.body || {};
+  const { templateId, purpose, subjectType, subjectId, actorScope } = req.body || {};
   const { submission, created } = await startSubmission({
-    templateId, purpose, subjectType, subjectId,
+    templateId, purpose, subjectType, subjectId, actorScope,
     actor: await staffActor(req),
   });
   res.status(created ? 201 : 200).json(submission);

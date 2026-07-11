@@ -3565,10 +3565,15 @@ model QuestionnaireSubmission {
   // UTM / channel / device etc. (reserved).
   meta Json?
 
+  // Per-actor singleton scope (perActor purposes — tour_summary): the guide's
+  // externalPersonId this submission belongs to. Joins the singleton key so
+  // each required guide files their OWN summary. NULL elsewhere.
+  actorScope String?
+
   // DB-enforced one-active-submission-per-subject:
-  //   `${subjectType}:${subjectId}:${purpose}` while status is draft/
-  //   submitted/reviewed on a singleton template; NULL otherwise (Postgres
-  //   allows many NULLs). Cleared when a submission is voided.
+  //   `${subjectType}:${subjectId}:${purpose}[:${actorScope}]` while status is
+  //   draft/submitted/reviewed on a singleton template; NULL otherwise
+  //   (Postgres allows many NULLs). Cleared when a submission is voided.
   singletonKey String? @unique
 
   startedAt   DateTime  @default(now())

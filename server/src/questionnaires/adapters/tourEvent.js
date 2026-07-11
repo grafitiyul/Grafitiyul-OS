@@ -52,6 +52,16 @@ export const tourEventAdapter = {
     return t?.tourLanguage || null;
   },
 
+  // perActor scope (tour_summary): the scope is a guide's externalPersonId
+  // and must be an actual assignee of THIS tour.
+  async validateActorScope(subjectId, actorScope) {
+    const a = await prisma.tourAssignment.findFirst({
+      where: { tourEventId: subjectId, externalPersonId: actorScope },
+      select: { id: true },
+    });
+    return !!a;
+  },
+
   // Tour-operational freeze trigger: locked once the tour is closed
   // (terminal status, or ended past the grace window).
   async isLocked(subjectId) {

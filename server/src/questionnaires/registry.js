@@ -22,13 +22,16 @@
 // (lifecyclePolicy.js): live definition + editable after submit until the
 // subject's tour closes, then a single historical freeze (frozenAt).
 const PURPOSES = {
-  // Staff debrief after a tour — one active submission per TourEvent.
+  // Guide debrief after a tour — PER-GUIDE: every required guide (lead_guide /
+  // guide) files their OWN summary; actorScope (the guide's externalPersonId)
+  // joins the singleton key. Tour completion condition #1 counts these.
   tour_summary: {
     key: 'tour_summary',
     labelHe: 'סיכום סיור',
     subjectTypes: ['tour_event'],
     audience: 'staff',
     singleton: true,
+    perActor: true,
     tourOperational: true,
   },
   // Internal coordination-call form — one active submission per Booking.

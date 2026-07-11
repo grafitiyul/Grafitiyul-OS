@@ -27,10 +27,10 @@ import { SUBMISSION_STATUS_LABELS } from './constants.js';
 
 const AUTOSAVE_MS = 800;
 
-function adminTransport({ purpose, subjectType, subjectId }) {
+function adminTransport({ purpose, subjectType, subjectId, actorScope }) {
   return {
     load: async () => {
-      const started = await api.questionnaires.startSubmission({ purpose, subjectType, subjectId });
+      const started = await api.questionnaires.startSubmission({ purpose, subjectType, subjectId, actorScope });
       return api.questionnaires.getSubmission(started.id);
     },
     saveAnswers: (id, answers) => api.questionnaires.saveAnswers(id, answers),
@@ -46,6 +46,7 @@ export default function QuestionnaireFillDialog({
   purpose,
   subjectType,
   subjectId,
+  actorScope = null, // perActor purposes (tour_summary): WHOSE submission
   title,
   onStatusChange, // notify host screen (chip refresh) on submit/void
   transport = null,
@@ -60,7 +61,7 @@ export default function QuestionnaireFillDialog({
   const saveTimer = useRef(null);
   // Keep a stable transport for the dialog's lifetime — the default admin
   // transport is rebuilt from props on each load call.
-  const t = transport || adminTransport({ purpose, subjectType, subjectId });
+  const t = transport || adminTransport({ purpose, subjectType, subjectId, actorScope });
   const tRef = useRef(t);
   tRef.current = t;
 

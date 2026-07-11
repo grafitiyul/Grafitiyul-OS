@@ -612,7 +612,7 @@ async function resolveSubjectOrThrow({ purpose, subjectType, subjectId }) {
 
 // Get-or-create the active submission for a subject+purpose (§14). Resume is
 // the default: an existing draft/submitted submission is returned as-is.
-export async function startSubmission({ templateId, purpose, subjectType, subjectId, actor, linkId }) {
+export async function startSubmission({ templateId, purpose, subjectType, subjectId, actor, linkId, actorScope }) {
   let template;
   if (templateId) {
     template = await prisma.questionnaireTemplate.findUnique({ where: { id: templateId } });
@@ -631,12 +631,25 @@ export async function startSubmission({ templateId, purpose, subjectType, subjec
     subjectId: subjectId || null,
   });
 
+  // perActor purposes (tour_summary): the submission belongs to ONE guide.
+  // The scope is mandatory and must be a real assignee of the subject — the
+  // adapter validates so the engine stays subject-agnostic.
+  const perActor = !!getPurpose(template.purpose)?.perActor;
+  const scope = perActor ? String(actorScope || '') : null;
+  if (perActor) {
+    if (!scope) throw new QError(400, 'actor_scope_required');
+    if (adapter?.validateActorScope && !(await adapter.validateActorScope(subjectId, scope))) {
+      throw new QError(400, 'invalid_actor_scope');
+    }
+  }
+
   // Resume path — the singleton's active submission wins.
   if (template.singletonPerSubject && subjectType && subjectId) {
     const existing = await prisma.questionnaireSubmission.findFirst({
       where: {
         subjectType, subjectId,
         purpose: template.purpose,
+        ...(perActor ? { actorScope: scope } : {}),
         status: { in: ['draft', 'submitted', 'reviewed'] },
       },
       include: SUBMISSION_INCLUDE,
@@ -679,8 +692,9 @@ export async function startSubmission({ templateId, purpose, subjectType, subjec
         submittedByName: actor?.name || null,
         linkId: linkId || null,
         subjectSnapshot: subjectSnapshot || undefined,
+        actorScope: scope,
         singletonKey: template.singletonPerSubject
-          ? buildSingletonKey({ subjectType, subjectId, purpose: template.purpose })
+          ? buildSingletonKey({ subjectType, subjectId, purpose: template.purpose, actorScope: scope })
           : null,
       },
       include: SUBMISSION_INCLUDE,
@@ -689,7 +703,12 @@ export async function startSubmission({ templateId, purpose, subjectType, subjec
     if (e?.code === 'P2002') {
       // Concurrent start won the singleton race — return the winner.
       const winner = await prisma.questionnaireSubmission.findFirst({
-        where: { subjectType, subjectId, purpose: template.purpose, status: { in: ['draft', 'submitted', 'reviewed'] } },
+        where: {
+          subjectType, subjectId,
+          purpose: template.purpose,
+          ...(perActor ? { actorScope: scope } : {}),
+          status: { in: ['draft', 'submitted', 'reviewed'] },
+        },
         include: SUBMISSION_INCLUDE,
       });
       if (winner) return { submission: winner, created: false };

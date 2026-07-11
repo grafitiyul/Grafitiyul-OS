@@ -17,6 +17,7 @@ import {
   TOUR_LANG_LABELS,
   CALENDAR_SYNC_LABELS,
   CALENDAR_SYNC_STYLES,
+  ASSIGNMENT_ROLE_LABELS,
   calendarSyncTooltip,
   fmtTourDate,
 } from './config.js';
@@ -188,9 +189,14 @@ export default function TourPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false); // collapsed by default
   const [confirmDelete, setConfirmDelete] = useState(false);
-  // Tour Summary form (generic questionnaire engine, purpose=tour_summary).
-  const [summaryOpen, setSummaryOpen] = useState(false);
-  const [summaryStatus, setSummaryStatus] = useState(null); // null | draft | submitted | reviewed
+  // Tour Summary forms (generic questionnaire engine, purpose=tour_summary).
+  // PER-GUIDE: each required guide (lead_guide / guide) files their own
+  // summary; `summaryOpen` targets one guide's form ({ actorScope, title }).
+  // A legacy shared summary (actorScope null, pre per-guide model) still
+  // renders as its own row so old data stays reachable.
+  const [summaryOpen, setSummaryOpen] = useState(null); // { actorScope, title, legacyId? } | null
+  const [summaryByScope, setSummaryByScope] = useState({}); // actorScope → status
+  const [legacySummary, setLegacySummary] = useState(null); // { id, status } | null
 
   const refreshSummaryStatus = useCallback(async () => {
     try {
@@ -199,10 +205,15 @@ export default function TourPage() {
         subjectId: id,
         purpose: 'tour_summary',
       });
-      const active = list.find((s) => ['draft', 'submitted', 'reviewed'].includes(s.status));
-      setSummaryStatus(active?.status || null);
+      const active = list.filter((s) => ['draft', 'submitted', 'reviewed'].includes(s.status));
+      setSummaryByScope(
+        Object.fromEntries(active.filter((s) => s.actorScope).map((s) => [s.actorScope, s.status])),
+      );
+      const legacy = active.find((s) => !s.actorScope);
+      setLegacySummary(legacy ? { id: legacy.id, status: legacy.status } : null);
     } catch {
-      setSummaryStatus(null); // status chip is cosmetic — never block the page
+      setSummaryByScope({}); // status chips are cosmetic — never block the page
+      setLegacySummary(null);
     }
   }, [id]);
 
@@ -443,20 +454,57 @@ export default function TourPage() {
                   summary questionnaire + media gallery. Mirrors the Guide
                   Portal's section; admin capabilities unchanged. */}
               <Section title="סיכום סיור">
-                <div className="mb-2.5 flex items-center justify-between gap-2">
-                  <div className="text-[13px] text-gray-600">טופס סיכום סיור</div>
-                  <FormActionButton
-                    label={
-                      summaryStatus === 'draft'
-                        ? 'המשך מילוי'
-                        : summaryStatus
-                          ? 'פתיחת הטופס'
-                          : 'מילוי הטופס'
-                    }
-                    status={summaryStatus}
-                    onClick={() => setSummaryOpen(true)}
-                  />
-                </div>
+                {(() => {
+                  const requiredGuides = (tour.assignments || []).filter((a) =>
+                    ['lead_guide', 'guide'].includes(a.role),
+                  );
+                  return (
+                    <div className="mb-2.5 space-y-2">
+                      {requiredGuides.length === 0 && !legacySummary ? (
+                        <div className="text-[12.5px] text-gray-400">
+                          אין מדריכים משובצים — טופס סיכום נפתח לכל מדריך משובץ.
+                        </div>
+                      ) : null}
+                      {requiredGuides.map((a) => {
+                        const st = summaryByScope[a.externalPersonId] || null;
+                        return (
+                          <div key={a.id} className="flex items-center justify-between gap-2">
+                            <div className="min-w-0 truncate text-[13px] text-gray-600">
+                              {a.displayName}
+                              <span className="ms-1 text-[11.5px] text-gray-400">
+                                · {ASSIGNMENT_ROLE_LABELS[a.role] || a.role}
+                              </span>
+                            </div>
+                            <FormActionButton
+                              label={st === 'draft' ? 'המשך מילוי' : st ? 'פתיחת הטופס' : 'מילוי הטופס'}
+                              status={st}
+                              onClick={() =>
+                                setSummaryOpen({
+                                  actorScope: a.externalPersonId,
+                                  title: `טופס סיכום סיור · ${a.displayName}`,
+                                })
+                              }
+                            />
+                          </div>
+                        );
+                      })}
+                      {legacySummary ? (
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0 truncate text-[13px] text-gray-500">
+                            טופס משותף (מהמודל הישן)
+                          </div>
+                          <FormActionButton
+                            label="פתיחת הטופס"
+                            status={legacySummary.status}
+                            onClick={() =>
+                              setSummaryOpen({ legacyId: legacySummary.id, title: 'טופס סיכום סיור' })
+                            }
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })()}
                 {/* Tour Gallery — compact summary; the full grid opens in a
                     dedicated workspace modal (density of this page is sacred). */}
                 <TourGalleryCard tourEventId={tour.id} tourStatus={tour.status} />
@@ -485,18 +533,34 @@ export default function TourPage() {
 
       <TourSlotModal open={editOpen} tour={tour} onClose={() => setEditOpen(false)} onSaved={refresh} />
 
-      <QuestionnaireFillDialog
-        open={summaryOpen}
-        onClose={() => {
-          setSummaryOpen(false);
-          refreshSummaryStatus();
-        }}
-        purpose="tour_summary"
-        subjectType="tour_event"
-        subjectId={id}
-        title="טופס סיכום סיור"
-        onStatusChange={() => refreshSummaryStatus()}
-      />
+      {summaryOpen ? (
+        <QuestionnaireFillDialog
+          open={!!summaryOpen}
+          onClose={() => {
+            setSummaryOpen(null);
+            refreshSummaryStatus();
+          }}
+          purpose="tour_summary"
+          subjectType="tour_event"
+          subjectId={id}
+          actorScope={summaryOpen.actorScope || null}
+          title={summaryOpen.title}
+          onStatusChange={() => refreshSummaryStatus()}
+          // Legacy shared summary (pre per-guide): resolved by id — a perActor
+          // start would refuse it, so the transport loads it directly.
+          transport={
+            summaryOpen.legacyId
+              ? {
+                  load: () => api.questionnaires.getSubmission(summaryOpen.legacyId),
+                  saveAnswers: (sid, answers) => api.questionnaires.saveAnswers(sid, answers),
+                  submit: (sid, answers) => api.questionnaires.submit(sid, answers),
+                  voidSubmission: (sid) => api.questionnaires.voidSubmission(sid),
+                  uploadAnswerFile: (file) => api.questionnaires.uploadAnswerFile(file),
+                }
+              : null
+          }
+        />
+      ) : null}
 
       <ConfirmDialog
         open={confirmDelete}
