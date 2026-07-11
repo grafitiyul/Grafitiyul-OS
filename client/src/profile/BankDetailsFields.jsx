@@ -7,11 +7,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 // value shape (the server-normalized SSOT):
 //   { beneficiary, bankCode, bankName, branchCode, branchName, accountNumber }
 //
-// Bank: combobox searchable by number or name; options render "10 — בנק
-// לאומי"; picking stores BOTH the code and a name snapshot. Branch: enabled
-// after a bank is chosen; suggestions (when the catalog has them) filter by
-// number/name/city; manual typing is always allowed — the catalog is an
-// accelerator, never a gate.
+// Bank: ONE combobox searchable by number or name; options render "10 — בנק
+// לאומי"; picking stores BOTH the code and a name snapshot. Branch: ONE
+// field, enabled after a bank is chosen; suggestions (when the catalog has
+// them, filtered to the selected bank) search by number/name/city and store
+// code + name snapshot; manual typing simply stores the branch number — the
+// catalog is an accelerator, never a gate, and there are no duplicate
+// number/name inputs.
 
 export default function BankDetailsFields({ value, onChange, banks = [], disabled = false }) {
   const v = value || {};
@@ -46,28 +48,20 @@ export default function BankDetailsFields({ value, onChange, banks = [], disable
         />
       </Field>
 
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="מספר סניף">
-          <BranchNumberInput
-            branches={bank?.branches || []}
-            code={v.branchCode}
-            disabled={disabled || !v.bankCode}
-            onChange={(code) => onChange({ branchCode: code || null })}
-            onPick={(br) => onChange({ branchCode: br.code, branchName: br.name || null })}
-          />
-        </Field>
-        <Field label="שם סניף">
-          <input
-            type="text"
-            value={v.branchName || ''}
-            disabled={disabled || !v.bankCode}
-            onChange={(e) => onChange({ branchName: e.target.value || null })}
-            className={inputCls}
-          />
-        </Field>
-      </div>
+      <Field label="סניף">
+        <BranchCombobox
+          branches={bank?.branches || []}
+          code={v.branchCode}
+          name={v.branchName}
+          disabled={disabled || !v.bankCode}
+          onPick={(br) => onChange({ branchCode: br.code, branchName: br.name || null })}
+          onManual={(digits) =>
+            onChange({ branchCode: digits || null, branchName: null })
+          }
+        />
+      </Field>
       {!v.bankCode && (
-        <p className="-mt-1.5 text-[11.5px] text-gray-400">בחרו בנק כדי למלא פרטי סניף.</p>
+        <p className="-mt-1.5 text-[11.5px] text-gray-400">בחרו בנק כדי למלא את הסניף.</p>
       )}
 
       <Field label="מספר חשבון">
@@ -177,11 +171,23 @@ function BankCombobox({ banks, code, name, disabled, onPick, onManual }) {
   );
 }
 
-// ── branch number input with suggestions ─────────────────────────────
+// ── branch combobox (ONE field) ──────────────────────────────────────
+//
+// Displays "936 — פלורנטין" when picked from the catalog; free typing stores
+// the branch NUMBER only (digits extracted on blur, no name snapshot).
 
-function BranchNumberInput({ branches, code, disabled, onChange, onPick }) {
+function branchLabel(code, name) {
+  return [code, name].filter(Boolean).join(' — ');
+}
+
+function BranchCombobox({ branches, code, name, disabled, onPick, onManual }) {
+  const [text, setText] = useState(branchLabel(code, name));
   const [openList, setOpenList] = useState(false);
   const boxRef = useRef(null);
+
+  useEffect(() => {
+    setText(branchLabel(code, name));
+  }, [code, name]);
 
   useEffect(() => {
     function onDocClick(e) {
@@ -191,7 +197,7 @@ function BranchNumberInput({ branches, code, disabled, onChange, onPick }) {
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
 
-  const q = String(code || '').trim();
+  const q = text.trim();
   const matches = useMemo(() => {
     if (!branches.length) return [];
     if (!q) return branches.slice(0, 30);
@@ -200,7 +206,8 @@ function BranchNumberInput({ branches, code, disabled, onChange, onPick }) {
         (br) =>
           String(br.code).startsWith(q) ||
           (br.name || '').includes(q) ||
-          (br.city || '').includes(q),
+          (br.city || '').includes(q) ||
+          branchLabel(br.code, br.name).includes(q),
       )
       .slice(0, 30);
   }, [branches, q]);
@@ -210,18 +217,24 @@ function BranchNumberInput({ branches, code, disabled, onChange, onPick }) {
       <input
         type="text"
         inputMode="numeric"
-        dir="ltr"
-        value={code || ''}
+        value={text}
         disabled={disabled}
+        placeholder="מספר סניף…"
         onChange={(e) => {
-          onChange(e.target.value);
+          setText(e.target.value);
           setOpenList(true);
         }}
         onFocus={() => setOpenList(true)}
+        onBlur={() => {
+          const t = text.trim();
+          if (t === branchLabel(code, name)) return; // untouched
+          const digits = (t.match(/\d+/) || [null])[0];
+          onManual(digits); // number only; empty/no digits clears the branch
+        }}
         className={inputCls}
       />
       {openList && !disabled && matches.length > 0 && (
-        <ul className="absolute z-20 mt-1 max-h-56 w-64 overflow-y-auto rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
+        <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
           {matches.map((br) => (
             <li key={br.code}>
               <button
@@ -229,6 +242,7 @@ function BranchNumberInput({ branches, code, disabled, onChange, onPick }) {
                 onMouseDown={(e) => {
                   e.preventDefault();
                   onPick(br);
+                  setText(branchLabel(br.code, br.name));
                   setOpenList(false);
                 }}
                 className="w-full px-3 py-2 text-right text-[13.5px] text-gray-800 hover:bg-blue-50"
