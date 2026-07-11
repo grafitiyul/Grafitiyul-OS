@@ -16,7 +16,11 @@ import BankIndexView from './admin/procedures/bank/BankIndexView.jsx';
 import ContentEditor from './admin/procedures/bank/ContentEditor.jsx';
 import QuestionEditor from './admin/procedures/bank/QuestionEditor.jsx';
 import { FlowEntry, AttemptRuntime } from './learner/LearnerRuntime.jsx';
-import GuidePortal from './portal/GuidePortal.jsx';
+import PortalShell from './portal/PortalShell.jsx';
+import UpcomingToursPage from './portal/tours/UpcomingToursPage.jsx';
+import PastToursPage from './portal/tours/PastToursPage.jsx';
+import ProceduresPage from './portal/ProceduresPage.jsx';
+import PlaceholderPage from './portal/PlaceholderPage.jsx';
 import GuideTourGallery from './portal/GuideTourGallery.jsx';
 import CustomerGalleryPage from './gallery/CustomerGalleryPage.jsx';
 import InstallGuidePage from './portal/InstallGuidePage.jsx';
@@ -275,8 +279,55 @@ export default function App() {
       </Route>
       <Route path="/flow/:id" element={<FlowEntry />} />
       <Route path="/attempt/:attemptId" element={<AttemptRuntime />} />
-      {/* Guide portal — token-gated, mobile-first task feed. */}
-      <Route path="/p/:token" element={<GuidePortal />} />
+      {/* Guide portal — token-gated, mobile-first app shell: bottom nav
+          (סיורים / סיורי עבר / שכר) + hamburger (משובים / נהלים / מערכי
+          הדרכה / פרטים אישיים). Tab visibility follows server permissions;
+          enforcement is ALWAYS server-side. */}
+      <Route path="/p/:token" element={<PortalShell />}>
+        <Route index element={<UpcomingToursPage />} />
+        <Route path="past" element={<PastToursPage />} />
+        <Route
+          path="pay"
+          element={
+            <PlaceholderPage
+              icon="💰"
+              title="שכר"
+              description="נתוני השכר עדיין לא מנוהלים במערכת. כשמודל השכר ייבנה, כאן יופיע פירוט התשלומים לפי סיורים."
+            />
+          }
+        />
+        <Route path="procedures" element={<ProceduresPage />} />
+        <Route
+          path="feedback"
+          element={
+            <PlaceholderPage
+              icon="💬"
+              title="משובים"
+              description="מודול המשובים עדיין לא זמין בפורטל. כשייבנה, כאן יופיעו משובים על הסיורים שלך."
+            />
+          }
+        />
+        <Route
+          path="training"
+          element={
+            <PlaceholderPage
+              icon="🎓"
+              title="מערכי הדרכה"
+              description="מערכי ההדרכה עדיין לא זמינים בפורטל. כשהמודול ייפתח, תוכן ההדרכה יופיע כאן."
+            />
+          }
+        />
+        <Route
+          path="profile"
+          element={
+            <PlaceholderPage
+              icon="👤"
+              title="פרטים אישיים"
+              description="צפייה ועדכון פרטים אישיים מהפורטל יתווספו בקרוב."
+            />
+          }
+        />
+      </Route>
       {/* Guide Portal → one tour's gallery (mobile-first upload + grid). */}
       <Route path="/p/:token/tour/:tourEventId" element={<GuideTourGallery />} />
       {/* PUBLIC customer tour gallery — capability URL, branded event page. */}

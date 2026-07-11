@@ -1,80 +1,27 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import GuideToursSection from './GuideToursSection.jsx';
+import { useNavigate, useOutletContext } from 'react-router-dom';
 
-// Guide Portal — token-gated, mobile-first task feed.
-//
-// V1 only renders procedure tasks, but the UI is built around a generic
-// `Task` shape returned by the server, so future task types
-// (training_plan, tour, feedback, payment) drop into the same list
-// without UI changes — only `iconForType` and the click handler need
-// new branches when their runtime arrives.
-//
-// Auth: the URL token IS the credential. There's no login form.
-// Server enforces `portalEnabled` and returns 403 if disabled.
+// נהלים — the procedures task feed, now a page inside the portal shell
+// (hamburger → נהלים). The feed logic (5-bucket model, correction-priority
+// gate, silent polling) moved VERBATIM from the old single-page GuidePortal;
+// the shell now owns the header, token persistence and 404/403 gating.
 
 const KIND_NOUN = {
   procedure: 'נוהל',
-  // training_plan: 'מערך הדרכה',
-  // tour: 'סיור',
-  // feedback: 'משוב',
-  // payment: 'תשלום',
 };
 
-export default function GuidePortal() {
-  const { token } = useParams();
+export default function ProceduresPage() {
+  const { token } = useOutletContext();
   const navigate = useNavigate();
 
   const [state, setState] = useState({ phase: 'loading' });
   const [startingId, setStartingId] = useState(null);
   const [startError, setStartError] = useState(null);
-  // Correction-priority gate. When the guide taps המשך on a procedure
-  // that has rejected answers, we DON'T just resume the attempt — we
-  // first surface a small notice and ask for explicit confirmation.
-  // The runtime will then enter correction mode at the first rejected
-  // step (signalled via sessionStorage so the URL stays clean and
-  // bookmarks don't accidentally re-trigger correction).
+  // Correction-priority gate — see CorrectionPrompt below.
   const [correctionPrompt, setCorrectionPrompt] = useState(null);
 
-  // Stash the portal token in BOTH session and local storage:
-  //
-  //   * sessionStorage — tab-scoped fallback for the runtime's home
-  //     button when the user lands on /attempt/:id without the ?p
-  //     query param.
-  //   * localStorage   — persistent on the same origin. Helps the
-  //     `/` Landing component when storage IS shared between browser
-  //     and PWA. Belt-and-braces only: the AUTHORITATIVE persistence
-  //     is the dynamic manifest below — it bakes the token directly
-  //     into start_url, which the browser captures at install time
-  //     and replays on every PWA launch. That works even on
-  //     platforms where the installed PWA has its own isolated
-  //     storage container (the original failure mode).
-  useEffect(() => {
-    if (!token) return;
-    try {
-      sessionStorage.setItem('gos.portalToken', token);
-    } catch {
-      /* ignore */
-    }
-    try {
-      localStorage.setItem('gos.portalToken', token);
-    } catch {
-      /* ignore */
-    }
-  }, [token]);
-
-  // (Manifest link is now rewritten server-side in the SPA fallback —
-  // see server/src/index.js. The earlier post-mount JS rewrite was
-  // ineffective on iOS, which fetches the manifest at HTML parse time
-  // and ignores subsequent href mutations.)
-
-  // Two load modes:
-  //   loud (default) — used on mount and explicit retry; toggles the
-  //     'loading' phase so the page shows "טוען…".
-  //   silent         — used by polling and by focus/visibility
-  //     refresh; updates `state.data` in place without flashing the
-  //     loading screen, so the user's scroll position and any open
-  //     mid-tap state survive the refresh.
+  // Two load modes: loud (mount/retry) vs silent (poll/focus) — silent keeps
+  // the last good data so scroll position and mid-tap state survive.
   const load = useCallback(
     async ({ silent = false } = {}) => {
       if (!silent) setState({ phase: 'loading' });
@@ -82,42 +29,13 @@ export default function GuidePortal() {
         const res = await fetch(`/api/portal/${encodeURIComponent(token)}`, {
           cache: 'no-store',
         });
-        if (res.status === 404) {
-          if (!silent) setState({ phase: 'not_found' });
-          return;
-        }
-        if (res.status === 403) {
-          if (!silent) setState({ phase: 'disabled' });
-          return;
-        }
         if (!res.ok) {
           const txt = await res.text();
           throw new Error(`HTTP ${res.status} ${txt}`);
         }
         const data = await res.json();
-        // Diagnostic — easy way to confirm in DevTools whether the
-        // server is returning the new 5-bucket model. If every task
-        // has bucket: 'done' (the old name), the server is stale and
-        // we'll fall through the compatibility map below; if buckets
-        // are correct, any visibility issue is purely client/CSS.
-        try {
-          // eslint-disable-next-line no-console
-          console.log(
-            '[guide portal] tasks',
-            (data?.tasks || []).map((t) => ({
-              id: t.id,
-              bucket: t.bucket,
-              status: t.status,
-              rejectedCount: t.metadata?.rejectedCount || 0,
-            })),
-          );
-        } catch {
-          /* ignore */
-        }
         setState((prev) =>
-          silent && prev.phase !== 'ready'
-            ? prev
-            : { phase: 'ready', data },
+          silent && prev.phase !== 'ready' ? prev : { phase: 'ready', data },
         );
       } catch (e) {
         if (!silent) {
@@ -135,9 +53,7 @@ export default function GuidePortal() {
   }, [load]);
 
   // Soft polling so admin reviews / new published flows surface
-  // automatically. 15s matches the admin-side approvals poll. Also
-  // refresh on focus/visibility so the guide who tabs back to the
-  // portal sees current state without a manual reload.
+  // automatically; refresh on focus/visibility too.
   useEffect(() => {
     if (!token) return undefined;
     const t = setInterval(() => load({ silent: true }), 15000);
@@ -154,16 +70,6 @@ export default function GuidePortal() {
     };
   }, [token, load]);
 
-  // Update the tab title with the guide's name once loaded.
-  useEffect(() => {
-    if (state.phase === 'ready') {
-      const name = state.data?.person?.displayName;
-      document.title = name ? `${name} · גרפיטיול` : 'גרפיטיול';
-    } else {
-      document.title = 'גרפיטיול';
-    }
-  }, [state]);
-
   const startTask = useCallback(
     async (task, { correctionMode = false } = {}) => {
       if (startingId) return;
@@ -179,14 +85,9 @@ export default function GuidePortal() {
         if (!attemptId) throw new Error('missing_attempt_id');
         if (correctionMode) {
           // Tab-scoped flag — the runtime reads it on first load, jumps
-          // to the first rejected step, then clears it. Per-attempt key
-          // so opening a different attempt in another tab doesn't pick
-          // up the same signal.
+          // to the first rejected step, then clears it.
           try {
-            sessionStorage.setItem(
-              `gos.enterCorrection.${attemptId}`,
-              '1',
-            );
+            sessionStorage.setItem(`gos.enterCorrection.${attemptId}`, '1');
           } catch {
             /* private mode — runtime falls back to natural rendering */
           }
@@ -204,10 +105,7 @@ export default function GuidePortal() {
     async (task) => {
       if (task.type !== 'procedure') return;
       if (startingId) return; // double-tap guard
-      // Corrections take priority over normal continuation. If the
-      // task has any rejected answers, we surface a confirmation
-      // notice INSTEAD of immediately starting — the actual launch
-      // happens after the guide picks "מעבר לתיקונים".
+      // Corrections take priority over normal continuation.
       const rejectedCount = task.metadata?.rejectedCount || 0;
       if (rejectedCount > 0) {
         setCorrectionPrompt({ task, rejectedCount });
@@ -218,47 +116,38 @@ export default function GuidePortal() {
     [startingId, startTask],
   );
 
-  if (state.phase === 'loading') return <CenteredMessage text="טוען…" />;
-  if (state.phase === 'not_found') return <NotFoundScreen />;
-  if (state.phase === 'disabled') return <DisabledScreen />;
+  if (state.phase === 'loading') {
+    return <div className="py-10 text-center text-sm text-gray-500">טוען…</div>;
+  }
   if (state.phase === 'error') {
     return (
-      <CenteredMessage
-        text="שגיאה בטעינת המסך."
-        sub={state.message}
-        onRetry={load}
-      />
+      <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center">
+        <div className="mb-1 text-base font-semibold text-gray-800">שגיאה בטעינת הנהלים</div>
+        <div className="mb-2 text-[12px] font-mono text-gray-400" dir="ltr">
+          {state.message}
+        </div>
+        <button
+          type="button"
+          onClick={() => load()}
+          className="mt-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 active:bg-gray-100"
+        >
+          נסה שוב
+        </button>
+      </div>
     );
   }
 
-  // Defensive destructuring — a server response that's missing
-  // `tasks` (older schema, transient deploy artifact) shouldn't blow
-  // up the page. EmptyState is the right outcome for that data.
-  const person = state.data?.person || null;
   const tasks = Array.isArray(state.data?.tasks) ? state.data.tasks : [];
   return (
-    <div
-      className="min-h-screen bg-gray-50"
-      dir="rtl"
-      data-page="guide-portal"
-    >
-      <Header displayName={person?.displayName} />
-      <main className="max-w-2xl mx-auto px-3 sm:px-6 py-4 sm:py-6 pb-12">
-        {startError && (
-          <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">
-            {startError}
-          </div>
-        )}
-        <PortalSummary tasks={tasks} />
-        {/* Assigned tours + gallery access — fails quiet, renders nothing
-            when the guide has no tours. */}
-        <GuideToursSection token={token} />
-        <Sections
-          tasks={tasks}
-          startingId={startingId}
-          onOpen={handleOpen}
-        />
-      </main>
+    <div>
+      <h1 className="mb-3 px-1 text-[17px] font-bold text-gray-900">נהלים</h1>
+      {startError && (
+        <div className="mb-3 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">
+          {startError}
+        </div>
+      )}
+      <PortalSummary tasks={tasks} />
+      <Sections tasks={tasks} startingId={startingId} onOpen={handleOpen} />
       {correctionPrompt && (
         <CorrectionPrompt
           task={correctionPrompt.task}
@@ -271,11 +160,6 @@ export default function GuidePortal() {
             startTask(t, { correctionMode: true });
           }}
           onSkip={() => {
-            // "המשך ללמידה בכל זאת" — opens the runtime WITHOUT
-            // setting the correction-mode flag, so the user lands on
-            // the natural screen for the attempt's status (waiting /
-            // approved / etc.) and can decide for themselves when to
-            // pick up the corrections via the review-status modal.
             const t = correctionPrompt.task;
             setCorrectionPrompt(null);
             startTask(t, { correctionMode: false });
@@ -288,19 +172,9 @@ export default function GuidePortal() {
 
 // ── CorrectionPrompt ──────────────────────────────────────────────
 //
-// Bottom sheet (mobile) / centered modal (desktop) shown when the
-// guide taps המשך on a procedure that has rejected answers. The
-// notice is intentionally short — the goal is to set context, NOT
-// to render a full task list. The detailed per-question correction
-// happens inside the runtime once they confirm.
-function CorrectionPrompt({
-  task,
-  rejectedCount,
-  starting,
-  onCancel,
-  onConfirm,
-  onSkip,
-}) {
+// Bottom sheet (mobile) / centered modal (desktop) shown when the guide taps
+// המשך on a procedure that has rejected answers.
+function CorrectionPrompt({ task, rejectedCount, starting, onCancel, onConfirm, onSkip }) {
   return (
     <div
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4"
@@ -381,22 +255,7 @@ function CorrectionPrompt({
   );
 }
 
-// ── Section grouping ──────────────────────────────────────────────
-//
-// Tasks come back from the server already tagged with a `bucket`:
-//   todo      — needs the guide's attention (in-progress + mandatory
-//                not-started + corrections-required)
-//   available — visible but optional and untouched (the "shelf")
-//   done      — completed from the guide's POV (waiting / approved)
-//
-// Empty sections are hidden so the page stays compact. If ALL three
-// are empty, we fall back to the EmptyState — that's the case where
-// the guide has nothing visible at all (no published flows reach them).
-//
-// Five sections matching the server's 5-bucket task model. Order is
-// deliberate: the first thing the guide should see is anything that's
-// blocked on them ("דורש תיקון"), then their open queue, then optional
-// reading material, then status feedback for what's already submitted.
+// ── Section grouping (5-bucket model) ─────────────────────────────
 const SECTIONS = [
   {
     key: 'correction',
@@ -426,28 +285,14 @@ const SECTIONS = [
   },
 ];
 
-// Legacy-server-compatibility shim. If the server hasn't redeployed
-// yet (e.g., Railway still has the previous build), the response
-// carries the old 3-bucket model — `todo`, `available`, `done` —
-// with rejection/pending state encoded in `task.badge`. We upgrade
-// each task in place so the new sectioned UI works regardless of
-// which server is currently live.
-//
-// IMPORTANT — order matters. The old server returns `bucket: 'todo'`
-// AND `badge.tone: 'warning'` for needs-correction items. We MUST
-// check that combination BEFORE accepting `todo` as the modern
-// bucket; otherwise rejected items collapse into the regular לביצוע
-// section and the admin's reject action never produces a visible
-// דורש תיקון card.
+// Legacy-server-compatibility shim (old 3-bucket model → 5 buckets).
 function resolveBucket(task) {
   const b = task.bucket;
-  // Old-server compatibility — must be evaluated first.
   if (b === 'todo' && task.badge?.tone === 'warning') return 'correction';
   if (b === 'done') {
     if (task.badge?.label === 'ממתין לאישור') return 'pending_review';
     return 'approved';
   }
-  // Modern five-bucket model.
   if (
     b === 'correction' ||
     b === 'todo' ||
@@ -460,12 +305,7 @@ function resolveBucket(task) {
   return 'todo';
 }
 
-// Compact 3-pill summary above the task list. Mirrors the per-attempt
-// review-status bar in the runtime so the guide sees the same shape
-// in both places. Counts are PROCEDURE-LEVEL here (not per-question):
-// "ממתין" = procedures awaiting admin review, "אושר" = procedures
-// fully approved, "לתיקון" = procedures with at least one rejected
-// answer.
+// Compact 3-pill summary above the task list (procedure-level counts).
 function PortalSummary({ tasks }) {
   let pending = 0;
   let approved = 0;
@@ -483,9 +323,7 @@ function PortalSummary({ tasks }) {
       role="status"
       aria-label="סיכום סטטוס נהלים"
     >
-      <span className="text-[10px] uppercase tracking-wide text-gray-500">
-        סיכום
-      </span>
+      <span className="text-[10px] uppercase tracking-wide text-gray-500">סיכום</span>
       <span className="flex-1" />
       <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-900 rounded-full px-2 py-0.5">
         <span className="w-1.5 h-1.5 rounded-full bg-amber-500" aria-hidden />
@@ -497,15 +335,11 @@ function PortalSummary({ tasks }) {
       </span>
       <span
         className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 ${
-          correction > 0
-            ? 'bg-red-100 text-red-900'
-            : 'bg-gray-100 text-gray-600'
+          correction > 0 ? 'bg-red-100 text-red-900' : 'bg-gray-100 text-gray-600'
         }`}
       >
         <span
-          className={`w-1.5 h-1.5 rounded-full ${
-            correction > 0 ? 'bg-red-500' : 'bg-gray-400'
-          }`}
+          className={`w-1.5 h-1.5 rounded-full ${correction > 0 ? 'bg-red-500' : 'bg-gray-400'}`}
           aria-hidden
         />
         לתיקון {correction}
@@ -525,19 +359,13 @@ function Sections({ tasks, startingId, onOpen }) {
     };
     for (const t of tasks) {
       const b = resolveBucket(t);
-      // Normalise task.bucket to the resolved value so per-bucket
-      // card styling (border, ring, CTA) matches the section it's
-      // rendered in even when the server returned a legacy bucket.
       const normalised = t.bucket === b ? t : { ...t, bucket: b };
       (out[b] || out.todo).push(normalised);
     }
     return out;
   }, [tasks]);
 
-  const totalVisible = SECTIONS.reduce(
-    (n, s) => n + (grouped[s.key]?.length || 0),
-    0,
-  );
+  const totalVisible = SECTIONS.reduce((n, s) => n + (grouped[s.key]?.length || 0), 0);
   if (totalVisible === 0) return <EmptyState />;
 
   return (
@@ -545,8 +373,7 @@ function Sections({ tasks, startingId, onOpen }) {
       {SECTIONS.map((s) => {
         const items = grouped[s.key];
         if (!items || items.length === 0) return null;
-        const titleColor =
-          s.accent === 'red' ? 'text-red-800' : 'text-gray-900';
+        const titleColor = s.accent === 'red' ? 'text-red-800' : 'text-gray-900';
         return (
           <section key={s.key}>
             <div className="px-1 mb-2">
@@ -577,29 +404,7 @@ function Sections({ tasks, startingId, onOpen }) {
   );
 }
 
-function Header({ displayName }) {
-  return (
-    <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-      <div className="max-w-2xl mx-auto px-4 py-3 sm:py-4 flex items-center gap-3">
-        <div className="w-9 h-9 rounded-full bg-blue-600 text-white flex items-center justify-center font-semibold text-sm shrink-0">
-          {(displayName || '?').slice(0, 1)}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-[12px] text-gray-500 leading-tight">
-            שלום
-          </div>
-          <div className="font-semibold text-gray-900 truncate text-base sm:text-lg">
-            {displayName || 'אורח'}
-          </div>
-        </div>
-      </div>
-    </header>
-  );
-}
-
-// Per-bucket card styling. Cards re-use the same base layout but the
-// bucket controls the border tint, the icon ring, the status pill,
-// and the CTA copy/color.
+// Per-bucket card styling.
 function bucketStyle(bucket) {
   switch (bucket) {
     case 'correction':
@@ -651,9 +456,6 @@ function bucketStyle(bucket) {
   }
 }
 
-// Decide CTA text from bucket + whether the attempt has been started.
-// `bucketStyle` returns the default; this overrides it for the
-// not-yet-started case in the `todo` bucket.
 function ctaForTask(task, style) {
   if (task.bucket === 'todo' && !task.metadata?.attemptId) return 'התחל';
   return style.cta;
@@ -663,15 +465,10 @@ function TaskCard({ task, starting, disabled, onOpen }) {
   const bucket = task.bucket || 'todo';
   const style = bucketStyle(bucket);
   const cta = ctaForTask(task, style);
-  const isCompleted =
-    bucket === 'approved' || bucket === 'pending_review';
+  const isCompleted = bucket === 'approved' || bucket === 'pending_review';
   const isCorrection = bucket === 'correction';
   const rejectionComment = task.metadata?.rejectionComment;
   const rejectedCount = task.metadata?.rejectedCount || 0;
-  // Prominent prefix used by the correction-card to communicate the
-  // count BEFORE the user enters runtime — matches the spec phrase
-  // "X תיקונים נדרשים" so the visual cue lines up with the prompt
-  // they'll see after they tap המשך.
   const correctionPrefixLabel =
     rejectedCount === 1 ? 'תיקון אחד נדרש' : `${rejectedCount} תיקונים נדרשים`;
 
@@ -700,17 +497,9 @@ function TaskCard({ task, starting, disabled, onOpen }) {
           {task.title}
         </div>
         {task.description && !isCorrection && (
-          <div className="text-sm text-gray-600 mt-1 line-clamp-2">
-            {task.description}
-          </div>
+          <div className="text-sm text-gray-600 mt-1 line-clamp-2">{task.description}</div>
         )}
 
-        {/* Correction surface — only on cards that need fixing.
-            Leads with the spec-mandated "X תיקונים נדרשים" so the
-            count reads at a glance, then the most recent admin
-            comment so the guide arrives at the runtime already
-            knowing what to fix. The runtime correction-detour flow
-            owns the actual per-question editing once they tap. */}
         {isCorrection && (
           <div className="mt-2 bg-red-50 border border-red-300 rounded-md p-3">
             <div className="flex items-center gap-2 mb-1">
@@ -741,9 +530,7 @@ function TaskCard({ task, starting, disabled, onOpen }) {
               className={`text-sm font-semibold inline-flex items-center gap-1 ${style.ctaCls}`}
             >
               {starting ? 'פותח…' : cta}
-              {/* SVG chevron — drawn explicitly so it doesn't get
-                  mirrored or reordered by the bidi resolver. In RTL,
-                  forward / proceed = LEFT, hence ChevronLeft. */}
+              {/* In RTL, forward / proceed = LEFT, hence ChevronLeft. */}
               {!starting && <ChevronLeftCta />}
             </span>
           )}
@@ -788,62 +575,10 @@ function EmptyState() {
   );
 }
 
-function CenteredMessage({ text, sub, onRetry }) {
-  return (
-    <div
-      className="min-h-screen bg-gray-50 flex items-center justify-center p-6"
-      dir="rtl"
-    >
-      <div className="text-center max-w-sm">
-        <div className="text-base text-gray-700">{text}</div>
-        {sub && (
-          <div className="text-[12px] text-gray-500 mt-1 font-mono" dir="ltr">
-            {sub}
-          </div>
-        )}
-        {onRetry && (
-          <button
-            onClick={onRetry}
-            className="mt-3 text-sm border border-gray-300 rounded px-3 py-1.5 hover:bg-white"
-          >
-            נסה שוב
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function NotFoundScreen() {
-  return (
-    <div
-      className="min-h-screen bg-gray-50 flex items-center justify-center p-6"
-      dir="rtl"
-    >
-      <div className="bg-white rounded-xl border border-gray-200 p-6 max-w-sm w-full text-center">
-        <div className="text-3xl mb-2">🔒</div>
-        <div className="text-base font-semibold text-gray-900 mb-1">
-          הקישור אינו תקף
-        </div>
-        <div className="text-sm text-gray-600">
-          הקישור שגוי או פג. פנה למנהל לקבלת קישור מעודכן.
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Direction-explicit chevron — SVG, never mirrored by the bidi
-// resolver. Used in the task card's "התחל / המשך" CTA.
+// Direction-explicit chevron — SVG, never mirrored by the bidi resolver.
 function ChevronLeftCta() {
   return (
-    <svg
-      viewBox="0 0 16 16"
-      width="14"
-      height="14"
-      fill="none"
-      aria-hidden
-    >
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden>
       <path
         d="M10 4l-4 4 4 4"
         stroke="currentColor"
@@ -852,24 +587,5 @@ function ChevronLeftCta() {
         strokeLinejoin="round"
       />
     </svg>
-  );
-}
-
-function DisabledScreen() {
-  return (
-    <div
-      className="min-h-screen bg-gray-50 flex items-center justify-center p-6"
-      dir="rtl"
-    >
-      <div className="bg-white rounded-xl border border-gray-200 p-6 max-w-sm w-full text-center">
-        <div className="text-3xl mb-2">⛔</div>
-        <div className="text-base font-semibold text-gray-900 mb-1">
-          הגישה לפורטל סגורה
-        </div>
-        <div className="text-sm text-gray-600">
-          המנהל סגר את הגישה שלך לפורטל. ניתן לפנות אליו לפרטים נוספים.
-        </div>
-      </div>
-    </div>
   );
 }

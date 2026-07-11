@@ -539,7 +539,7 @@ export function AttemptRuntime() {
             </button>
             {portalToken && (
               <a
-                href={`/p/${encodeURIComponent(portalToken)}`}
+                href={`/p/${encodeURIComponent(portalToken)}/procedures`}
                 className="text-sm bg-blue-600 text-white rounded px-3 py-1.5 hover:bg-blue-700"
               >
                 חזרה לפורטל
@@ -565,7 +565,10 @@ export function AttemptRuntime() {
     reviewStatus,
     onOpenReviewModal: () => setReviewModalOpen(true),
   };
-  const homeHref = portalToken ? `/p/${encodeURIComponent(portalToken)}` : null;
+  // Procedure attempts come from the portal's נהלים page — return there.
+  const homeHref = portalToken
+    ? `/p/${encodeURIComponent(portalToken)}/procedures`
+    : null;
 
   // ── Correction-mode local navigation ─────────────────────────────
   //
