@@ -14,6 +14,9 @@ import {
   TOUR_STATUS_LABELS,
   TOUR_STATUS_STYLES,
   TOUR_LANG_LABELS,
+  CALENDAR_SYNC_LABELS,
+  CALENDAR_SYNC_STYLES,
+  calendarSyncTooltip,
   fmtTourDate,
 } from './config.js';
 
@@ -328,6 +331,23 @@ export default function TourPage() {
                     {over && <span className="font-bold text-red-600">חריגה</span>}
                     <Dot />
                     <span>{assignmentCount} מדריכים</span>
+                    {/* Google Calendar mirror status — automatic, no manual
+                        sync button by product rule. Tooltip: last sync, last
+                        error/warning, event id. */}
+                    {tour.gcalSyncStatus && CALENDAR_SYNC_LABELS[tour.gcalSyncStatus] && (
+                      <>
+                        <Dot />
+                        <span title={calendarSyncTooltip(tour)} className="cursor-default">
+                          <Chip
+                            styles={CALENDAR_SYNC_STYLES[tour.gcalSyncStatus]}
+                            label={
+                              CALENDAR_SYNC_LABELS[tour.gcalSyncStatus] +
+                              (tour.gcalSyncStatus === 'synced' && tour.gcalSyncWarning ? ' ⚠' : '')
+                            }
+                          />
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">

@@ -38,6 +38,34 @@ export const TOUR_STATUS_STYLES = {
   cancelled: 'bg-red-50 text-red-600 ring-1 ring-inset ring-red-200',
 };
 
+// Google Calendar mirror status (server: TourEvent.gcalSyncStatus). null =
+// the tour was never considered for sync (past/cancelled before the feature
+// shipped) — no chip is rendered. Fully automatic: there is no manual sync
+// button by product rule; the status is read-only truth from the worker.
+export const CALENDAR_SYNC_LABELS = {
+  synced: '🟢 מסונכרן ליומן',
+  pending: '🟡 ממתין לסנכרון יומן',
+  failed: '🔴 שגיאת סנכרון יומן',
+};
+
+export const CALENDAR_SYNC_STYLES = {
+  synced: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
+  pending: 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200',
+  failed: 'bg-red-50 text-red-600 ring-1 ring-inset ring-red-200',
+};
+
+// Native-title tooltip content: last sync, last error/warning, event id.
+export function calendarSyncTooltip(t) {
+  const lines = [];
+  if (t.gcalSyncedAt) {
+    lines.push(`סנכרון אחרון: ${new Date(t.gcalSyncedAt).toLocaleString('he-IL')}`);
+  }
+  if (t.gcalSyncError) lines.push(`שגיאה: ${t.gcalSyncError}`);
+  if (t.gcalSyncWarning) lines.push(`אזהרה: ${t.gcalSyncWarning}`);
+  if (t.gcalEventId) lines.push(`Event ID: ${t.gcalEventId}`);
+  return lines.join('\n') || 'טרם סונכרן';
+}
+
 // Guide assignment roles — ordered by visual hierarchy (lead first).
 export const ASSIGNMENT_ROLES = ['lead_guide', 'guide', 'workshop_assistant'];
 
