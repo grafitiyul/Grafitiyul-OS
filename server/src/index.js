@@ -72,6 +72,7 @@ import emailTrackingRouter from './routes/emailTracking.js';
 import { startScheduledWorker } from './whatsapp/scheduledWorker.js';
 import { startEmailSyncWorker } from './email/syncWorker.js';
 import { startTourGalleryCleanupWorker } from './tours/gallery/cleanupWorker.js';
+import { startTourCalendarSyncWorker } from './tours/calendar/syncWorker.js';
 import questionnairesRouter from './routes/questionnaires.js';
 import publicQuestionnaireRouter from './routes/publicQuestionnaire.js';
 import { makeLegacyRedirect } from './legacyRedirect.js';
@@ -547,4 +548,8 @@ app.listen(port, () => {
   // Tour Gallery R2 purge (cancelled/deleted tours) + abandoned-upload sweep —
   // claim-based 60s tick; verifies the prefix is empty before marking done.
   startTourGalleryCleanupWorker(console);
+  // Tours → Google Calendar mirror — 60s tick; reconciles pending tours to
+  // the org account's calendar (TourEvent stays the SSOT). No-op until the
+  // Google account is connected with the calendar scope.
+  startTourCalendarSyncWorker(console);
 });

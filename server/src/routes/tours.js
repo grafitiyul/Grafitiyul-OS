@@ -21,6 +21,12 @@ import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 import { validateWorkshopLocationForComponent } from '../tours/activityCatalog.js';
 import { seedTourComponents } from '../tours/tourComponents.js';
 import { scheduleGalleryCleanup } from '../tours/gallery/service.js';
+import {
+  calendarPendingPatch,
+  patchTouchesCalendar,
+  markTourCalendarPending,
+  scheduleCalendarTombstone,
+} from '../tours/calendar/service.js';
 
 // TourEvent CRUD — the OPERATIONAL tours module ("סיורים"). Distinct from the
 // tour CONTENT routes (/api/tour-content). Ownership contract:
@@ -510,6 +516,8 @@ router.post(
         },
         include: TOUR_COMPONENT_INCLUDE,
       });
+      // Only a workshop WITH a location changes the calendar's location line.
+      if (row.workshopLocationId) await markTourCalendarPending(prisma, tour.id);
       res.status(201).json(row);
     } catch (e) {
       if (e.code === 'P2002') return res.status(409).json({ error: 'component_already_on_tour' });
@@ -539,6 +547,9 @@ router.put(
           prisma.tourEventActivityComponent.update({ where: { id }, data: { sortOrder: i } }),
         ),
     );
+    // Component order drives the order of workshop locations in the calendar
+    // event's location line (harmless no-op reconcile otherwise).
+    await markTourCalendarPending(prisma, req.params.id);
     res.json({ ok: true });
   }),
 );
@@ -562,6 +573,9 @@ router.put(
       data: { workshopLocationId: loc.workshopLocationId },
       include: TOUR_COMPONENT_INCLUDE,
     });
+    if ((row.workshopLocationId || null) !== (loc.workshopLocationId || null)) {
+      await markTourCalendarPending(prisma, row.tourEventId);
+    }
     res.json(updated);
   }),
 );
@@ -571,10 +585,11 @@ router.delete(
   handle(async (req, res) => {
     const row = await prisma.tourEventActivityComponent.findUnique({
       where: { id: req.params.rowId },
-      select: { id: true },
+      select: { id: true, tourEventId: true, workshopLocationId: true },
     });
     if (!row) return res.status(404).json({ error: 'not_found' });
     await prisma.tourEventActivityComponent.delete({ where: { id: row.id } });
+    if (row.workshopLocationId) await markTourCalendarPending(prisma, row.tourEventId);
     res.status(204).end();
   }),
 );
@@ -594,6 +609,8 @@ router.post(
     await prisma.$transaction(async (tx) => {
       await tx.tourEventActivityComponent.deleteMany({ where: { tourEventId: tour.id } });
       await seedTourComponents(tx, tour.id, tour.productVariantId);
+      // Reseed resets workshop-location choices → calendar location changes.
+      await markTourCalendarPending(tx, tour.id);
     });
     const rows = await prisma.tourEventActivityComponent.findMany({
       where: { tourEventId: tour.id },
@@ -651,6 +668,9 @@ router.post(
       data: { event: 'guide_assigned', name: person.displayName, role: b.role },
       origin: await userOrigin(req.adminAuth?.userId),
     });
+    // New attendee — Google will invite ONLY the added guide. Role changes
+    // (PUT below) deliberately do NOT mark: roles never affect the calendar.
+    await markTourCalendarPending(prisma, tour.id);
     res.status(201).json(assignment);
   }),
 );
@@ -701,6 +721,8 @@ router.delete(
       data: { event: 'guide_removed', name: existing.displayName, role: existing.role },
       origin: await userOrigin(req.adminAuth?.userId),
     });
+    // Removed attendee — Google sends the cancellation ONLY to that guide.
+    await markTourCalendarPending(prisma, existing.tourEventId);
     res.status(204).end();
   }),
 );
@@ -731,6 +753,8 @@ router.post(
     data.productId = b.productId;
     data.productVariantId = variant.id;
     data.locationId = variant.locationId;
+    // New slot → Google Calendar event (the sync worker creates it async).
+    Object.assign(data, calendarPendingPatch());
 
     const tour = await prisma.tourEvent.create({ data, include: TOUR_INCLUDE });
     await emitTimelineEvent(prisma, {
@@ -820,6 +844,10 @@ router.put(
       data.cancelledAt = b.status === 'cancelled' ? new Date() : null;
     }
 
+    // Calendar-visible change (date/time/variant/language/status) → mark the
+    // mirror dirty; the sync worker converges the Google event asynchronously.
+    if (patchTouchesCalendar(data)) Object.assign(data, calendarPendingPatch());
+
     const tour = await prisma.tourEvent.update({
       where: { id: existing.id },
       data,
@@ -854,7 +882,12 @@ router.delete(
   handle(async (req, res) => {
     const existing = await prisma.tourEvent.findUnique({
       where: { id: req.params.id },
-      select: { id: true, _count: { select: { bookings: true } } },
+      select: {
+        id: true,
+        gcalEventId: true,
+        gcalAccountId: true,
+        _count: { select: { bookings: true } },
+      },
     });
     if (!existing) return res.status(404).json({ error: 'not_found' });
     if (existing._count.bookings > 0) {
@@ -866,6 +899,9 @@ router.delete(
       reason: 'tour_deleted',
       origin: await userOrigin(req.adminAuth?.userId),
     });
+    // Same pattern for the Google event: the row is about to disappear, so its
+    // event identity moves to a tombstone the calendar worker cancels async.
+    await scheduleCalendarTombstone(prisma, existing);
     await prisma.tourEvent.delete({ where: { id: req.params.id } });
     res.status(204).end();
   }),
