@@ -1,0 +1,392 @@
+import { useCallback, useEffect, useState } from 'react';
+import { Link, useNavigate, useOutletContext, useParams } from 'react-router-dom';
+import {
+  ACTIVITY_LABELS,
+  ROLE_LABELS,
+  ROLE_STYLES,
+  TOUR_LANG_LABELS,
+  fmtDayLineHe,
+  isToday,
+  participantsLabel,
+} from '../format.js';
+import { FeedError } from './feedStates.jsx';
+import RichText from '../../editor/RichText.jsx';
+
+// Guide Tour Detail — the read-only operational view of ONE tour, mirroring
+// the Admin Tour modal's hierarchy (header → team → components → workshop
+// locations → participants) but adapted for guides:
+//   * everything comes from the guide detail DTO (server permission-gated)
+//   * no edit controls anywhere, no History, no CRM/commercial data
+//   * the Deal order number is DISPLAY ONLY — never a link
+// The "סיכום סיור" section (summary questionnaire + gallery) is appended by
+// Slice D; until then the gallery keeps a plain entry row.
+
+export default function GuideTourPage() {
+  const { token, person, permissions } = useOutletContext();
+  const { tourEventId } = useParams();
+  const navigate = useNavigate();
+  const [state, setState] = useState({ phase: 'loading' });
+
+  const load = useCallback(async () => {
+    setState({ phase: 'loading' });
+    try {
+      const res = await fetch(
+        `/api/portal/${encodeURIComponent(token)}/tours/${encodeURIComponent(tourEventId)}/detail`,
+        { cache: 'no-store' },
+      );
+      if (res.status === 403 || res.status === 404) {
+        return setState({ phase: 'blocked' });
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setState({ phase: 'ready', tour: await res.json() });
+    } catch (e) {
+      setState({ phase: 'error', message: e?.message || 'שגיאה' });
+    }
+  }, [token, tourEventId]);
+
+  useEffect(() => {
+    load();
+    window.scrollTo(0, 0);
+  }, [load]);
+
+  if (state.phase === 'loading') {
+    return <div className="py-10 text-center text-sm text-gray-500">טוען…</div>;
+  }
+  if (state.phase === 'blocked') {
+    return (
+      <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center">
+        <div className="mb-2 text-3xl">🔒</div>
+        <div className="text-sm text-gray-600">
+          הסיור אינו זמין — ייתכן שאינך משובץ לסיור זה.
+        </div>
+        <button
+          type="button"
+          onClick={() => navigate(`/p/${encodeURIComponent(token)}`)}
+          className="mt-3 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700"
+        >
+          חזרה לסיורים
+        </button>
+      </div>
+    );
+  }
+  if (state.phase === 'error') return <FeedError message={state.message} onRetry={load} />;
+
+  const tour = state.tour;
+  const cancelled = tour.status === 'cancelled';
+  const workshopComponents = (tour.components || []).filter((c) => c.isWorkshop);
+
+  return (
+    <div>
+      <BackRow token={token} title={tour.variantName} />
+
+      {cancelled && (
+        <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[14px] font-semibold text-red-700">
+          הסיור בוטל
+        </div>
+      )}
+
+      <HeaderCard tour={tour} />
+
+      {tour.team && tour.team.length > 0 && (
+        <SectionCard title="הצוות בסיור">
+          <div className="space-y-2.5">
+            {tour.team.map((m) => (
+              <TeamRow key={m.id} member={m} isMe={m.displayName === person?.displayName} />
+            ))}
+          </div>
+        </SectionCard>
+      )}
+
+      {(tour.components || []).length > 0 && (
+        <SectionCard title="מרכיבי הפעילות">
+          <div className="flex flex-wrap gap-1.5">
+            {tour.components.map((c) => (
+              <ComponentChip key={c.id} component={c} />
+            ))}
+          </div>
+        </SectionCard>
+      )}
+
+      {workshopComponents.length > 0 && (
+        <SectionCard title="מיקומי סדנאות">
+          <div className="space-y-2.5">
+            {workshopComponents.map((c) => (
+              <WorkshopLocationRow key={c.id} component={c} />
+            ))}
+          </div>
+        </SectionCard>
+      )}
+
+      <SectionCard title={`משתתפים · ${participantsLabel(tour.participantsTotal)}`}>
+        {(tour.participants || []).length === 0 ? (
+          <div className="py-2 text-center text-sm text-gray-500">
+            אין עדיין נרשמים לסיור.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {tour.participants.map((p) => (
+              <ParticipantCard key={p.bookingId} participant={p} />
+            ))}
+          </div>
+        )}
+      </SectionCard>
+
+      {/* Gallery entry — replaced by the full סיכום סיור section in Slice D. */}
+      {permissions.useTourGallery && (
+        <Link
+          to={`/p/${encodeURIComponent(token)}/tour/${encodeURIComponent(tour.id)}/gallery`}
+          className="mt-3 flex items-center gap-3 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm active:bg-gray-50"
+        >
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-xl" aria-hidden>
+            📸
+          </span>
+          <span className="flex-1 text-[14px] font-semibold text-gray-800">
+            גלריית הסיור
+          </span>
+          <span className="text-gray-300">‹</span>
+        </Link>
+      )}
+    </div>
+  );
+}
+
+function BackRow({ token, title }) {
+  return (
+    <div className="mb-3 flex items-center gap-2">
+      <Link
+        to={`/p/${encodeURIComponent(token)}`}
+        aria-label="חזרה לסיורים"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-lg text-gray-500 active:bg-gray-100"
+      >
+        →
+      </Link>
+      <h1 className="min-w-0 flex-1 truncate text-[17px] font-bold text-gray-900">{title}</h1>
+    </div>
+  );
+}
+
+function HeaderCard({ tour }) {
+  const today = isToday(tour.date) && tour.status !== 'cancelled';
+  const facts = [
+    {
+      icon: '📅',
+      label: (
+        <>
+          {fmtDayLineHe(tour.date)} ·{' '}
+          <span dir="ltr" className="tabular-nums font-semibold">
+            {tour.startTime}
+          </span>
+          {tour.durationHours ? ` · ${tour.durationHours} שעות` : ''}
+        </>
+      ),
+    },
+    tour.locationName && { icon: '📍', label: tour.locationName },
+    TOUR_LANG_LABELS[tour.tourLanguage] && {
+      icon: '🌐',
+      label: TOUR_LANG_LABELS[tour.tourLanguage],
+    },
+    { icon: '👥', label: participantsLabel(tour.participantsTotal) },
+  ].filter(Boolean);
+
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {today && (
+          <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[11px] font-bold text-white">
+            היום
+          </span>
+        )}
+        {ACTIVITY_LABELS[tour.activityType] && (
+          <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+            {ACTIVITY_LABELS[tour.activityType]}
+          </span>
+        )}
+        {ROLE_LABELS[tour.viewerRole] && (
+          <span
+            className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+              ROLE_STYLES[tour.viewerRole] || 'bg-gray-100 text-gray-700'
+            }`}
+          >
+            התפקיד שלך: {ROLE_LABELS[tour.viewerRole]}
+          </span>
+        )}
+      </div>
+      <div className="mt-3 space-y-1.5">
+        {facts.map((f, i) => (
+          <div key={i} className="flex items-center gap-2 text-[13.5px] text-gray-700">
+            <span className="w-5 text-center" aria-hidden>
+              {f.icon}
+            </span>
+            <span className="min-w-0">{f.label}</span>
+          </div>
+        ))}
+      </div>
+      {tour.notes && (
+        <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-[13px] leading-relaxed text-amber-900">
+          <span className="font-semibold">הערות: </span>
+          {tour.notes}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SectionCard({ title, children }) {
+  return (
+    <section className="mt-3 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+      <h2 className="mb-3 text-[13px] font-bold text-gray-500">{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+// ── team ─────────────────────────────────────────────────────────────
+
+function TeamRow({ member, isMe }) {
+  return (
+    <div className="flex items-center gap-3">
+      {member.imageUrl ? (
+        <img
+          src={member.imageUrl}
+          alt=""
+          className="h-10 w-10 shrink-0 rounded-full border border-gray-200 object-cover"
+        />
+      ) : (
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-100 text-sm font-semibold text-gray-500">
+          {(member.displayName || '?').slice(0, 1)}
+        </div>
+      )}
+      <div className="min-w-0 flex-1 text-[14px] font-medium text-gray-900">
+        {member.displayName}
+        {isMe && <span className="ms-1 text-[11px] font-semibold text-blue-600">(את/ה)</span>}
+      </div>
+      <span
+        className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+          ROLE_STYLES[member.role] || 'bg-gray-100 text-gray-700'
+        }`}
+      >
+        {ROLE_LABELS[member.role] || member.role}
+      </span>
+    </div>
+  );
+}
+
+// ── activity components ──────────────────────────────────────────────
+
+// Tone map — static class strings (Tailwind can't see dynamic names).
+const COMPONENT_TONES = {
+  emerald: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  blue: 'bg-blue-50 text-blue-800 border-blue-200',
+  amber: 'bg-amber-50 text-amber-800 border-amber-200',
+  rose: 'bg-rose-50 text-rose-800 border-rose-200',
+  violet: 'bg-violet-50 text-violet-800 border-violet-200',
+  cyan: 'bg-cyan-50 text-cyan-800 border-cyan-200',
+  slate: 'bg-slate-50 text-slate-800 border-slate-200',
+};
+
+function ComponentChip({ component }) {
+  const tone = COMPONENT_TONES[component.color] || COMPONENT_TONES.slate;
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[12.5px] font-semibold ${tone}`}
+    >
+      {component.icon && <span aria-hidden>{component.icon}</span>}
+      {component.nameHe}
+    </span>
+  );
+}
+
+// ── workshop locations ───────────────────────────────────────────────
+
+function WorkshopLocationRow({ component }) {
+  const loc = component.workshopLocation;
+  return (
+    <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5">
+      <div className="text-[12px] font-semibold text-gray-500">
+        {component.icon && <span aria-hidden>{component.icon} </span>}
+        {component.nameHe}
+      </div>
+      {loc ? (
+        <>
+          <div className="mt-0.5 text-[14px] font-semibold text-gray-900">{loc.nameHe}</div>
+          {loc.address && <div className="text-[12.5px] text-gray-600">{loc.address}</div>}
+          {loc.instructions && (
+            <div className="mt-1 text-[12.5px] leading-relaxed text-gray-600">
+              {loc.instructions}
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="mt-0.5 text-[13px] text-gray-400">טרם נקבע מיקום</div>
+      )}
+    </div>
+  );
+}
+
+// ── participants ─────────────────────────────────────────────────────
+
+function ParticipantCard({ participant: p }) {
+  const [infoOpen, setInfoOpen] = useState(true); // operationally important → open
+  return (
+    <div className="overflow-hidden rounded-xl border border-gray-200">
+      <div className="flex items-start justify-between gap-3 p-3">
+        <div className="min-w-0">
+          <div className="truncate text-[15px] font-semibold text-gray-900">{p.title}</div>
+          <div className="mt-0.5 text-[13px] font-medium text-gray-700">
+            {participantsLabel(p.seats)}
+          </div>
+          {(p.customerName && p.customerName !== p.title) || p.organizationUnit ? (
+            <div className="truncate text-[12.5px] text-gray-500">
+              {[p.customerName !== p.title ? p.customerName : null, p.organizationUnit]
+                .filter(Boolean)
+                .join(' · ')}
+            </div>
+          ) : null}
+        </div>
+        {p.orderNo != null && (
+          // Display only — deliberately NOT a link (no Deal access from the portal).
+          <span className="shrink-0 text-[12px] font-medium tabular-nums text-gray-400">
+            דיל <span dir="ltr">#{p.orderNo}</span>
+          </span>
+        )}
+      </div>
+
+      {(p.phone || p.email || p.fieldRepName) && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-gray-100 px-3 py-2 text-[13px]">
+          {p.phone && (
+            <a href={`tel:${p.phone}`} dir="ltr" className="tabular-nums text-blue-700 active:underline">
+              📞 {p.phone}
+            </a>
+          )}
+          {p.email && (
+            <a href={`mailto:${p.email}`} dir="ltr" className="break-all text-blue-700 active:underline">
+              ✉ {p.email}
+            </a>
+          )}
+          {p.fieldRepName && (
+            <span className="text-gray-600">
+              נציג בשטח: <span className="font-medium text-gray-800">{p.fieldRepName}</span>
+            </span>
+          )}
+        </div>
+      )}
+
+      {p.customerInfo && (
+        <div className="border-t border-gray-100 px-3 py-2">
+          <button
+            type="button"
+            onClick={() => setInfoOpen((o) => !o)}
+            className="flex w-full items-center justify-between text-[13px] font-semibold text-gray-700"
+          >
+            <span>מידע חשוב על הלקוח</span>
+            <span className="text-xs text-gray-400">{infoOpen ? '▾' : '▸'}</span>
+          </button>
+          {/* Admin-authored rich HTML — rendered through the canonical
+              RichText path (CLAUDE.md §16), same trusted origin as the
+              admin card. */}
+          {infoOpen && <RichText html={p.customerInfo} className="mt-1.5" />}
+        </div>
+      )}
+    </div>
+  );
+}

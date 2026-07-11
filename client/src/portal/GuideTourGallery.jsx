@@ -172,8 +172,11 @@ export default function GuideTourGallery() {
         <p className="text-[14px] text-gray-600">
           {phase === 'blocked' ? 'הגלריה אינה זמינה — ייתכן שאינך משובץ לסיור זה.' : 'שגיאה בטעינת הגלריה.'}
         </p>
-        <Link to={`/p/${encodeURIComponent(token)}`} className="text-[13px] font-semibold text-blue-700">
-          ← חזרה לפורטל
+        <Link
+          to={`/p/${encodeURIComponent(token)}/tour/${encodeURIComponent(tourEventId)}`}
+          className="text-[13px] font-semibold text-blue-700"
+        >
+          ← חזרה לסיור
         </Link>
       </div>
     );
@@ -188,8 +191,8 @@ export default function GuideTourGallery() {
       <header className="sticky top-0 z-10 border-b border-gray-200 bg-white/95 px-3 py-2.5 backdrop-blur">
         <div className="mx-auto flex max-w-2xl items-center gap-2.5">
           <Link
-            to={`/p/${encodeURIComponent(token)}`}
-            aria-label="חזרה לפורטל"
+            to={`/p/${encodeURIComponent(token)}/tour/${encodeURIComponent(tourEventId)}`}
+            aria-label="חזרה לסיור"
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-lg text-gray-500 hover:bg-gray-100"
           >
             →

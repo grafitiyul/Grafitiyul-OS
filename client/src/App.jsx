@@ -20,6 +20,7 @@ import PortalShell from './portal/PortalShell.jsx';
 import UpcomingToursPage from './portal/tours/UpcomingToursPage.jsx';
 import PastToursPage from './portal/tours/PastToursPage.jsx';
 import ProceduresPage from './portal/ProceduresPage.jsx';
+import GuideTourPage from './portal/tours/GuideTourPage.jsx';
 import PlaceholderPage from './portal/PlaceholderPage.jsx';
 import GuideTourGallery from './portal/GuideTourGallery.jsx';
 import CustomerGalleryPage from './gallery/CustomerGalleryPage.jsx';
@@ -327,9 +328,13 @@ export default function App() {
             />
           }
         />
+        {/* Tour detail — read-only operational view (admin-modal hierarchy,
+            guide-safe DTO). Lives inside the shell so the bottom nav stays. */}
+        <Route path="tour/:tourEventId" element={<GuideTourPage />} />
       </Route>
-      {/* Guide Portal → one tour's gallery (mobile-first upload + grid). */}
-      <Route path="/p/:token/tour/:tourEventId" element={<GuideTourGallery />} />
+      {/* Guide Portal → one tour's gallery (mobile-first upload + grid).
+          Full-screen on purpose — media browsing wants the whole viewport. */}
+      <Route path="/p/:token/tour/:tourEventId/gallery" element={<GuideTourGallery />} />
       {/* PUBLIC customer tour gallery — capability URL, branded event page. */}
       <Route path="/g/:token" element={<CustomerGalleryPage />} />
       {/* Public customer quote page — token-gated (QuoteDocument.publicToken),
