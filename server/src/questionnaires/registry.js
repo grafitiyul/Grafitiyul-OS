@@ -32,11 +32,13 @@ const PURPOSES = {
     tourOperational: true,
   },
   // Internal coordination-call form — one active submission per Booking.
+  // Staff-only BY PRODUCT DECISION: the operator/guide fills it during the
+  // coordination call. No customer links, no public fill surface.
   coordination: {
     key: 'coordination',
     labelHe: 'שיחת תיאום',
     subjectTypes: ['booking'],
-    audience: 'public',
+    audience: 'staff',
     singleton: true,
     tourOperational: true,
   },

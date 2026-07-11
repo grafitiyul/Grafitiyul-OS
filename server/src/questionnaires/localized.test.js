@@ -44,7 +44,10 @@ test('RTL detection', () => {
 
 test('purpose registry: tour_summary + coordination + general with correct binding rules', () => {
   assert.equal(getPurpose('tour_summary').singleton, true);
-  assert.equal(getPurpose('coordination').audience, 'public');
+  // Coordination turned internal-only (staff fills it during the call) —
+  // no public links, no customer surface.
+  assert.equal(getPurpose('coordination').audience, 'staff');
+  assert.equal(getPurpose('coordination').tourOperational, true);
   assert.ok(listPurposes().map((p) => p.key).includes('general'));
 
   assert.equal(purposeAllowsSubject('tour_summary', 'tour_event'), true);

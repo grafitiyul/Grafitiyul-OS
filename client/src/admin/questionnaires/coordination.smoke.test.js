@@ -5,11 +5,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
 
-// Slice 3 smoke — Coordination form (public, per Booking):
-//   • PublicFormPage: fill state (prefill applied), thank-you state after the
-//     link was already submitted, invalid-token state
-//   • CoordinationFormAction (customer card): active button + status chip,
-//     link actions dialog (copy/open/internal fill), not-configured warning
+// Coordination smoke:
+//   • PublicFormPage (the GENERIC public form surface — coordination itself
+//     is internal-only now, but the page still serves public purposes):
+//     fill state (prefill applied), thank-you state, invalid-token state
+//   • CoordinationFormAction (customer card): INTERNAL operational form —
+//     the button opens the staff fill dialog DIRECTLY. No link popup, no
+//     copy/send actions, honest not-configured state.
 //
 // Cross-booking isolation is server-structural (the subject comes from the
 // link row, never from the client) — asserted here by the payload contract:
@@ -44,8 +46,15 @@ const RUNTIME = {
 // Mutable knobs
 let publicStatus = 'draft'; // 'draft' | 'submitted' | 'invalid'
 let coordinationList = [];
-let linkBehavior = 'ok'; // 'ok' | 'purpose_not_configured'
+let startBehavior = 'ok'; // 'ok' | 'purpose_not_configured'
 const writes = []; // capture public write payloads (isolation contract)
+
+const COORD_SUBMISSION = {
+  id: 'sub9', templateId: 'tpl2', versionId: 'ver2',
+  subjectType: 'booking', subjectId: 'bk1', purpose: 'coordination',
+  status: 'draft', language: 'he', submittedByType: 'staff',
+  subjectSnapshot: { title: 'משפחת כהן' }, answers: [],
+};
 
 let React;
 let MemoryRouter;
@@ -124,13 +133,21 @@ before(async () => {
           outroOnly: publicStatus === 'submitted',
         };
       }
-    } else if (u.startsWith('/api/questionnaires/links')) {
-      if (linkBehavior === 'ok') {
-        body = { id: 'lnk1', token: 'tok123', url: 'http://localhost/form/tok123', purpose: 'coordination' };
-      } else {
+    } else if (u.startsWith('/api/questionnaires/submissions/start')) {
+      if (startBehavior === 'purpose_not_configured') {
         status = 409;
         body = { error: 'purpose_not_configured' };
+      } else {
+        body = { ...COORD_SUBMISSION };
       }
+    } else if (u.startsWith('/api/questionnaires/submissions/sub9')) {
+      body = {
+        submission: { ...COORD_SUBMISSION },
+        runtime: RUNTIME,
+        prefill: {},
+        lifecycle: { liveVersion: true, editableAfterSubmit: true, frozen: false, editable: true, frozenAt: null },
+        rendered: null,
+      };
     } else if (u.startsWith('/api/questionnaires/submissions')) {
       body = coordinationList;
     } else {
@@ -211,32 +228,31 @@ test('public writes carry ONLY token + answers — no subject/booking ids (isola
   }
 });
 
-test('coordination action: button active with submitted chip, dialog offers link actions', async () => {
-  linkBehavior = 'ok';
-  coordinationList = [{ id: 'sub9', status: 'submitted' }];
+test('coordination action: internal-only — the button opens the fill dialog DIRECTLY, no link popup', async () => {
+  startBehavior = 'ok';
+  coordinationList = [{ id: 'sub9', status: 'draft' }];
   const { container, unmount } = await render(
     React.createElement(MemoryRouter, null,
       React.createElement(CoordinationFormAction, { bookingId: 'bk1' })),
   );
   assert.match(container.innerHTML, /טופס שיחת תיאום/);
-  // Status chip inside the shared FormActionButton (the "· " prefix belonged
-  // to the old plain-text action).
-  assert.match(container.innerHTML, /הוגש/);
+  assert.match(container.innerHTML, /בתהליך/); // status chip on the button
   const btn = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('טופס שיחת תיאום'));
   assert.equal(btn.disabled, false);
-  // Open the actions dialog → link + actions appear.
   await act(async () => btn.click());
   await act(async () => {});
   const html = container.innerHTML;
-  assert.match(html, /form\/tok123/); // the customer URL
-  assert.match(html, /העתקת קישור/);
-  assert.match(html, /פתיחה בטאב חדש/);
-  assert.match(html, /צפייה בתשובות/); // submitted → view, not fill
+  // The questionnaire itself opened — no intermediate popup, no customer flow.
+  assert.match(html, /שם מלא/);
+  assert.match(html, /משפחת כהן/); // subject context
+  assert.doesNotMatch(html, /העתקת קישור/);
+  assert.doesNotMatch(html, /פתיחה בטאב חדש/);
+  assert.doesNotMatch(html, /form\/tok123/);
   await unmount();
 });
 
-test('coordination action: purpose not configured → honest warning in dialog', async () => {
-  linkBehavior = 'purpose_not_configured';
+test('coordination action: purpose not configured → honest warning in the fill dialog', async () => {
+  startBehavior = 'purpose_not_configured';
   coordinationList = [];
   const { container, unmount } = await render(
     React.createElement(MemoryRouter, null,
@@ -245,6 +261,7 @@ test('coordination action: purpose not configured → honest warning in dialog',
   const btn = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('טופס שיחת תיאום'));
   await act(async () => btn.click());
   await act(async () => {});
-  assert.match(container.innerHTML, /לא נבחרה תבנית לשיחת תיאום/);
+  assert.match(container.innerHTML, /עדיין לא נבחרה תבנית שאלון/);
+  assert.match(container.innerHTML, /להגדרות סיורים/);
   await unmount();
 });

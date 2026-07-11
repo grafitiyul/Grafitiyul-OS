@@ -948,6 +948,9 @@ function newPublicToken() {
 // Get-or-create the ONE active public link for (subject, purpose). Idempotent:
 // the operator can copy the same URL again and again; rotation = revoke+mint.
 export async function getOrCreatePublicLink({ purpose, subjectType, subjectId }) {
+  // Registry is the SSOT for who a purpose serves — staff-only purposes
+  // (coordination) never mint public links, whatever the template says.
+  if (getPurpose(purpose)?.audience === 'staff') throw new QError(409, 'purpose_internal_only');
   const cfg = await prisma.questionnairePurposeConfig.findUnique({ where: { purpose } });
   if (!cfg?.templateId) throw new QError(409, 'purpose_not_configured');
   const template = await prisma.questionnaireTemplate.findUnique({ where: { id: cfg.templateId } });
@@ -1006,6 +1009,9 @@ export async function resolvePublicLink(token) {
   if (link.template.status !== 'active' || !link.template.currentVersionId) {
     throw new QError(404, 'not_found');
   }
+  // Legacy links of purposes that turned staff-only die generically — the
+  // public surface must not expose internal operational questionnaires.
+  if (getPurpose(link.purpose)?.audience === 'staff') throw new QError(404, 'not_found');
   return link;
 }
 

@@ -164,7 +164,6 @@ export default function GuideTourPage() {
                 participant={p}
                 coordinationEnabled={permissions.useCoordinationForms}
                 apiBase={apiBase}
-                navigate={navigate}
               />
             ))}
           </div>
@@ -480,26 +479,37 @@ function WorkshopLocationRow({ component }) {
 
 // ── participants ─────────────────────────────────────────────────────
 
-function ParticipantCard({ participant: p, coordinationEnabled, apiBase, navigate }) {
+function ParticipantCard({ participant: p, coordinationEnabled, apiBase }) {
   const [infoOpen, setInfoOpen] = useState(true); // operationally important → open
-  const [coordBusy, setCoordBusy] = useState(false);
+  const [coordOpen, setCoordOpen] = useState(false);
+  const [coordStatus, setCoordStatus] = useState(p.coordinationStatus || null);
 
-  // The guide fills/views the coordination form through the SAME public form
-  // the customer uses — the server mints the capability URL for this booking.
-  async function openCoordination() {
-    if (coordBusy) return;
-    setCoordBusy(true);
-    try {
-      const { url } = await portalJson(
-        `${apiBase}/bookings/${encodeURIComponent(p.bookingId)}/coordination-link`,
-        { method: 'POST' },
-      );
-      navigate(url);
-    } catch (e) {
-      alert('שגיאה בפתיחת טופס התיאום: ' + (e.payload?.error || e.message));
-      setCoordBusy(false);
-    }
-  }
+  // Internal operational questionnaire — opens the SAME staff fill dialog the
+  // Tour Summary uses, over portal-token endpoints. No public link, no popup.
+  const coordBase = `${apiBase}/bookings/${encodeURIComponent(p.bookingId)}/coordination`;
+  const coordTransport = {
+    load: () => portalJson(coordBase),
+    saveAnswers: (_id, answers) =>
+      portalJson(`${coordBase}/answers`, {
+        method: 'PUT',
+        body: JSON.stringify({ answers }),
+      }),
+    submit: (_id, answers) =>
+      portalJson(`${coordBase}/submit`, {
+        method: 'POST',
+        body: JSON.stringify({ answers }),
+      }),
+    voidSubmission: () => portalJson(`${coordBase}/void`, { method: 'POST' }),
+    uploadAnswerFile: async (file) => {
+      const res = await fetch(`${coordBase}/upload?filename=${encodeURIComponent(file.name)}`, {
+        method: 'POST',
+        cache: 'no-store',
+        body: file,
+      });
+      if (!res.ok) throw await portalError(res);
+      return res.json();
+    },
+  };
 
   return (
     <div className="overflow-hidden rounded-xl border border-gray-200">
@@ -526,10 +536,9 @@ function ParticipantCard({ participant: p, coordinationEnabled, apiBase, navigat
           )}
           {coordinationEnabled && (
             <FormActionButton
-              label="טופס תיאום"
-              status={p.coordinationStatus}
-              busy={coordBusy}
-              onClick={openCoordination}
+              label="טופס שיחת תיאום"
+              status={coordStatus}
+              onClick={() => setCoordOpen(true)}
             />
           )}
         </div>
@@ -570,6 +579,17 @@ function ParticipantCard({ participant: p, coordinationEnabled, apiBase, navigat
               admin card. */}
           {infoOpen && <RichText html={p.customerInfo} className="mt-1.5" />}
         </div>
+      )}
+
+      {coordOpen && (
+        <QuestionnaireFillDialog
+          open={coordOpen}
+          onClose={() => setCoordOpen(false)}
+          title="טופס שיחת תיאום"
+          transport={coordTransport}
+          adminLinks={false}
+          onStatusChange={(s) => setCoordStatus(s || null)}
+        />
       )}
     </div>
   );

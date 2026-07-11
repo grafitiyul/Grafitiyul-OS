@@ -9,7 +9,6 @@ import {
   saveDraftAnswers,
   submitSubmission,
   voidSubmission,
-  getOrCreatePublicLink,
   sendQError,
 } from '../questionnaires/service.js';
 import {
@@ -265,37 +264,131 @@ async function coordinationStatuses(bookingIds) {
   return Object.fromEntries(rows.map((r) => [r.subjectId, r.status]));
 }
 
-// ---------- coordination form (per booking) ----------
-// The guide opens the SAME public form the customer uses (audience=public) —
-// one engine, one flow. This route only mints/returns the capability URL for
-// a booking that belongs to a tour the guide is assigned to.
+// ---------- coordination form (per booking, INTERNAL) ----------
+// The coordination form is an internal operational questionnaire — the guide
+// fills it in the SAME staff fill dialog the Tour Summary uses (no public
+// links, no customer flow). Submission is ALWAYS resolved server-side from
+// (booking, coordination); the booking must belong to a tour the guide is
+// assigned to, so a token can only ever touch its own tour's bookings.
+
+async function coordinationAccess(req, res) {
+  const access = await resolveGuideTourAccess(prisma, {
+    portalToken: req.params.token,
+    tourEventId: req.params.tourEventId,
+  });
+  if (!access.ok) {
+    fail(res, access);
+    return null;
+  }
+  if (!access.permissions.useCoordinationForms) {
+    res.status(403).json({ error: 'not_allowed' });
+    return null;
+  }
+  const booking = await prisma.booking.findFirst({
+    where: { id: String(req.params.bookingId || ''), tourEventId: access.tour.id },
+    select: { id: true },
+  });
+  if (!booking) {
+    res.status(404).json({ error: 'not_found' });
+    return null;
+  }
+  return { ...access, booking };
+}
+
+async function activeCoordinationSubmission(bookingId) {
+  return prisma.questionnaireSubmission.findFirst({
+    where: {
+      subjectType: 'booking',
+      subjectId: bookingId,
+      purpose: 'coordination',
+      status: { in: ['draft', 'submitted', 'reviewed'] },
+    },
+    select: { id: true, status: true, submittedAt: true },
+  });
+}
+
+// Start-or-resume + full fill payload (same shape the staff dialog reads).
+router.get(
+  '/:token/tours/:tourEventId/bookings/:bookingId/coordination',
+  handle(async (req, res) => {
+    const access = await coordinationAccess(req, res);
+    if (!access) return;
+    try {
+      const existing = await activeCoordinationSubmission(access.booking.id);
+      const { submission } = existing
+        ? { submission: existing }
+        : await startSubmission({
+            purpose: 'coordination',
+            subjectType: 'booking',
+            subjectId: access.booking.id,
+            actor: guideActor(access.person),
+          });
+      res.set('Cache-Control', 'no-store');
+      res.json(await getSubmission(submission.id));
+    } catch (e) {
+      return sendQError(res, e);
+    }
+  }),
+);
+
+router.put(
+  '/:token/tours/:tourEventId/bookings/:bookingId/coordination/answers',
+  handle(async (req, res) => {
+    const access = await coordinationAccess(req, res);
+    if (!access) return;
+    const existing = await activeCoordinationSubmission(access.booking.id);
+    if (!existing) return res.status(404).json({ error: 'submission_not_found' });
+    try {
+      res.json(await saveDraftAnswers(existing.id, req.body?.answers));
+    } catch (e) {
+      return sendQError(res, e);
+    }
+  }),
+);
 
 router.post(
-  '/:token/tours/:tourEventId/bookings/:bookingId/coordination-link',
+  '/:token/tours/:tourEventId/bookings/:bookingId/coordination/submit',
   handle(async (req, res) => {
-    const access = await resolveGuideTourAccess(prisma, {
-      portalToken: req.params.token,
-      tourEventId: req.params.tourEventId,
-    });
-    if (!access.ok) return fail(res, access);
-    if (!access.permissions.useCoordinationForms) {
-      return res.status(403).json({ error: 'not_allowed' });
-    }
-    // The booking must belong to THIS tour — the token can never mint links
-    // for other tours' bookings.
-    const booking = await prisma.booking.findFirst({
-      where: { id: String(req.params.bookingId || ''), tourEventId: access.tour.id },
-      select: { id: true },
-    });
-    if (!booking) return res.status(404).json({ error: 'not_found' });
+    const access = await coordinationAccess(req, res);
+    if (!access) return;
+    const existing = await activeCoordinationSubmission(access.booking.id);
+    if (!existing) return res.status(404).json({ error: 'submission_not_found' });
     try {
-      const link = await getOrCreatePublicLink({
-        purpose: 'coordination',
-        subjectType: 'booking',
-        subjectId: booking.id,
+      const updated = await submitSubmission(existing.id, {
+        answers: req.body?.answers,
+        actor: guideActor(access.person),
       });
-      res.set('Cache-Control', 'no-store');
-      res.json({ url: `/form/${link.token}` });
+      res.json({ ok: true, status: updated.status });
+    } catch (e) {
+      return sendQError(res, e);
+    }
+  }),
+);
+
+// Redo — same engine semantics as the summary (frozen submissions refuse).
+router.post(
+  '/:token/tours/:tourEventId/bookings/:bookingId/coordination/void',
+  handle(async (req, res) => {
+    const access = await coordinationAccess(req, res);
+    if (!access) return;
+    const existing = await activeCoordinationSubmission(access.booking.id);
+    if (!existing) return res.status(404).json({ error: 'submission_not_found' });
+    try {
+      res.json(await voidSubmission(existing.id));
+    } catch (e) {
+      return sendQError(res, e);
+    }
+  }),
+);
+
+router.post(
+  '/:token/tours/:tourEventId/bookings/:bookingId/coordination/upload',
+  express.raw({ type: '*/*', limit: `${Math.ceil(MAX_UPLOAD_BYTES / 1024 / 1024) + 1}mb` }),
+  handle(async (req, res) => {
+    const access = await coordinationAccess(req, res);
+    if (!access) return;
+    try {
+      res.status(201).json(await storeQuestionnaireUpload(req.body, req.query.filename));
     } catch (e) {
       return sendQError(res, e);
     }
