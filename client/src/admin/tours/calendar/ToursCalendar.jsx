@@ -214,7 +214,10 @@ const MONTH_CELL_MAX_EVENTS = 3;
 function MonthView({ weeks, monthStart, byDate, today, onOpenTour, onOpenDay }) {
   const nextMonth = addMonths(monthStart, 1);
   return (
-    <div>
+    // Wide grid scrolls inside its own container on narrow screens — the page
+    // body never scrolls horizontally.
+    <div className="overflow-x-auto">
+      <div className="min-w-[640px]">
       <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50/70 text-center text-[11.5px] font-semibold text-gray-500">
         {WEEKDAY_HEADERS.map((d) => (
           <div key={d} className="py-1.5">{d}</div>
@@ -265,6 +268,7 @@ function MonthView({ weeks, monthStart, byDate, today, onOpenTour, onOpenDay }) 
           })}
         </div>
       ))}
+      </div>
     </div>
   );
 }

@@ -25,6 +25,10 @@ import {
 
 const COLUMNS_KEY = 'tours.columns.v1';
 const FILTERS_KEY = 'tours.filters.v1';
+// Last selected view (טבלה/לוח שנה + calendar חודש/שבוע/יום) — same
+// localStorage convention as the filters/columns keys. The anchor DATE is
+// deliberately session-only: reopening the module always starts at today.
+const VIEW_KEY = 'tours.view.v1';
 
 const dash = <span className="text-gray-400">—</span>;
 
@@ -38,6 +42,20 @@ function loadFilters() {
 function saveFilters(f) {
   try {
     localStorage.setItem(FILTERS_KEY, JSON.stringify(f));
+  } catch {
+    /* storage unavailable — non-fatal */
+  }
+}
+function loadView() {
+  try {
+    return JSON.parse(localStorage.getItem(VIEW_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+function saveView(v) {
+  try {
+    localStorage.setItem(VIEW_KEY, JSON.stringify(v));
   } catch {
     /* storage unavailable — non-fatal */
   }
@@ -116,7 +134,14 @@ const STATUS_FILTERS = STATUS_FILTER_OPTIONS;
 
 export default function ToursPage() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState('table');
+  const [savedView] = useState(loadView);
+  const [tab, setTab] = useState(savedView.tab === 'calendar' ? 'calendar' : 'table');
+  // Calendar view state lives HERE (not in ToursCalendar) so switching
+  // טבלה ⇄ לוח שנה preserves the selected month/week/day and date context.
+  const [calView, setCalView] = useState({
+    mode: ['month', 'week', 'day'].includes(savedView.calMode) ? savedView.calMode : 'month',
+    anchor: null, // null → ToursCalendar starts at today (Asia/Jerusalem)
+  });
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -135,6 +160,10 @@ export default function ToursPage() {
   useEffect(() => {
     saveFilters({ search, kind, status });
   }, [search, kind, status]);
+
+  useEffect(() => {
+    saveView({ tab, calMode: calView.mode });
+  }, [tab, calView.mode]);
 
   const { colKeys, toggleCol, moveCol, setColWidth, widths, visibleCols, orderedColumns } =
     useTableColumns(COLUMNS_KEY, COLUMNS);
@@ -315,6 +344,8 @@ export default function ToursPage() {
           search={search}
           kind={kind}
           status={status}
+          view={calView}
+          onViewState={setCalView}
           onOpenTour={(id) => navigate(`/admin/tours/${id}`)}
         />
       ) : (
