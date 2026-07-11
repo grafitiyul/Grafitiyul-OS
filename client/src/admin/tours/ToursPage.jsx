@@ -10,6 +10,8 @@ import {
   TOUR_STATUS_LABELS,
   TOUR_STATUS_STYLES,
   TOUR_LANG_LABELS,
+  STATUS_FILTER_OPTIONS,
+  statusFilterMatches,
   fmtTourDate,
 } from './config.js';
 
@@ -108,12 +110,7 @@ const KIND_FILTERS = [
   ['business', TOUR_KIND_LABELS.business],
 ];
 
-const STATUS_FILTERS = [
-  ['scheduled', TOUR_STATUS_LABELS.scheduled],
-  ['completed', TOUR_STATUS_LABELS.completed],
-  ['cancelled', TOUR_STATUS_LABELS.cancelled],
-  ['all', 'כל הסטטוסים'],
-];
+const STATUS_FILTERS = STATUS_FILTER_OPTIONS;
 
 export default function ToursPage() {
   const navigate = useNavigate();
@@ -125,7 +122,7 @@ export default function ToursPage() {
   const [saved] = useState(loadFilters);
   const [search, setSearch] = useState(saved.search ?? '');
   const [kind, setKind] = useState(saved.kind ?? 'all');
-  const [status, setStatus] = useState(saved.status ?? 'scheduled');
+  const [status, setStatus] = useState(saved.status ?? 'active');
   // Upcoming first — the operational default.
   const [sort, setSort] = useState({ key: 'date', dir: 'asc' });
 
@@ -160,7 +157,7 @@ export default function ToursPage() {
     const q = search.trim().toLowerCase();
     let out = rows.filter((t) => {
       if (kind !== 'all' && t.kind !== kind) return false;
-      if (status !== 'all' && t.status !== status) return false;
+      if (!statusFilterMatches(status, t.status)) return false;
       if (q) {
         const hay = [
           t.product?.nameHe,
@@ -432,7 +429,7 @@ export default function ToursPage() {
           confirmAction?.type === 'delete'
             ? 'למחוק את הסיור? רק סיורים ריקים (ללא הזמנות) ניתנים למחיקה. לא ניתן לבטל פעולה זו.'
             : confirmAction?.type === 'restore'
-              ? 'להחזיר את הסיור לסטטוס מתוכנן?'
+              ? 'להחזיר את הסיור לסטטוס עתידי?'
               : 'לבטל את הסיור? הסיור יישאר בהיסטוריה בסטטוס "בוטל".'
         }
         confirmLabel={

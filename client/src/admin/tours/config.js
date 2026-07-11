@@ -24,11 +24,14 @@ export const TOUR_KIND_STYLES = {
   group_slot: 'bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-200',
 };
 
+// Canonical Tour status vocabulary — mirrors the server's TOUR_EVENT_STATUSES
+// (server/src/tours/requiredFields.js). ONE label + style mapping for every
+// admin surface (table chips, modal, calendar) — never scatter raw strings.
 export const TOUR_STATUSES = ['scheduled', 'completed', 'cancelled'];
 
 export const TOUR_STATUS_LABELS = {
-  scheduled: 'מתוכנן',
-  completed: 'התקיים',
+  scheduled: 'עתידי',
+  completed: 'הסתיים',
   cancelled: 'בוטל',
 };
 
@@ -37,6 +40,26 @@ export const TOUR_STATUS_STYLES = {
   completed: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
   cancelled: 'bg-red-50 text-red-600 ring-1 ring-inset ring-red-200',
 };
+
+// Status filter vocabulary — shared by the table AND the calendar view (the
+// two are views of the same TourEvent data and must never show different
+// datasets under the same filter). 'active' = operationally-live tours (the
+// default); cancelled tours appear only when explicitly requested.
+export const ACTIVE_STATUSES = ['scheduled'];
+
+export const STATUS_FILTER_OPTIONS = [
+  ['active', 'פעילים'],
+  ['scheduled', 'עתידיים'],
+  ['completed', 'הסתיימו'],
+  ['cancelled', 'בוטלו'],
+  ['all', 'הכול'],
+];
+
+export function statusFilterMatches(filter, tourStatus) {
+  if (filter === 'all') return true;
+  if (filter === 'active') return ACTIVE_STATUSES.includes(tourStatus);
+  return tourStatus === filter;
+}
 
 // Google Calendar mirror status (server: TourEvent.gcalSyncStatus). null =
 // the tour was never considered for sync (past/cancelled before the feature

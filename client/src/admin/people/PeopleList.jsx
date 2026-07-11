@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
-import { PERSON_STATUS_LABELS, PERSON_STATUSES, VAT_LABELS } from './config.js';
+// VAT_OPTIONS feeds the inline VAT editor + the bulk-edit dialog; VAT_LABELS
+// renders the read-only column. ONE canonical export (people/config.js).
+import { PERSON_STATUS_LABELS, PERSON_STATUSES, VAT_LABELS, VAT_OPTIONS } from './config.js';
 import { StaffAvatar } from '../tours/TourTeamEditor.jsx';
 import {
   useTableColumns,

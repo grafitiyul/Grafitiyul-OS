@@ -8,9 +8,8 @@ import { getGallerySettings } from '../gallery/service.js';
 //   * resolveGuidePortalAccess  — token → PersonRef + effective permissions.
 //     Used by list/nav endpoints that are not scoped to one tour.
 //   * resolveGuideTourAccess    — the above PLUS a TourAssignment on THIS
-//     tour. Unlike the gallery resolver, a CANCELLED tour still resolves —
-//     the guide may open it read-only with a clear cancelled state (galleries
-//     keep their own stricter rule).
+//     tour. A CANCELLED tour never resolves (product decision 2026-07): it
+//     disappears from every guide surface, direct URLs included.
 //
 // Failures return { ok: false, status, error } so routes translate 1:1 to
 // HTTP. 404 (not 403) for unknown tokens — no enumeration signal.
@@ -45,7 +44,8 @@ export function buildGuidePermissions(settings, gallerySettings) {
     deleteGalleryMedia: !!gallerySettings.guideCanDelete,
     shareGalleryCustomerLink: !!gallerySettings.guideCanShareCustomerLink,
     useCoordinationForms: !!settings.useCoordinationForms,
-    viewPastTours: !!settings.viewPastTours,
+    // NOTE deliberately no viewPastTours: "סיורי עבר" is a permanent portal
+    // tab — a completed tour stays visible to its (still-assigned) guides.
     viewPay: !!settings.viewPay,
     viewProcedures: !!settings.viewProcedures,
     viewTraining: !!settings.viewTraining,

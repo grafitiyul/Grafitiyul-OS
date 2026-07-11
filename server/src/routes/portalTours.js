@@ -112,9 +112,8 @@ function sortKey(card) {
   return `${card.date} ${card.startTime}`;
 }
 
-// Upcoming = not ended yet (a tour running right now still shows). Includes
-// cancelled future tours — the client renders them with a clear cancelled
-// state instead of silently dropping them from the guide's plan.
+// Upcoming = not ended yet (a tour running right now still shows). Cancelled
+// tours are already excluded by loadAssignedTours (guideVisibleTourWhere).
 router.get(
   '/:token/tours/upcoming',
   handle(async (req, res) => {
@@ -135,7 +134,9 @@ router.get(
   }),
 );
 
-// Past = end time in the past. Newest first. Server-gated on viewPastTours.
+// Past = end time in the past. Newest first. A permanent tab (product
+// decision 2026-07, not permission-gated): a completed tour moves here and
+// stays visible to its assigned guides — access follows the TourAssignment.
 router.get(
   '/:token/tours/past',
   handle(async (req, res) => {
@@ -143,9 +144,6 @@ router.get(
       portalToken: req.params.token,
     });
     if (!access.ok) return fail(res, access);
-    if (!access.permissions.viewPastTours) {
-      return res.status(403).json({ error: 'not_allowed' });
-    }
     const now = Date.now();
     const assignments = (await loadAssignedTours(access.person)).filter((a) => {
       const end = tourEndMs(a.tourEvent);
@@ -161,7 +159,7 @@ router.get(
 
 // ---------- tour detail ----------
 // The guide's read-only operational view. Requires an assignment on THIS
-// tour; cancelled/past tours still resolve (clear state, summary, gallery).
+// tour; past tours still resolve (summary, gallery) — cancelled tours 403.
 
 router.get(
   '/:token/tours/:tourEventId/detail',
@@ -171,7 +169,6 @@ router.get(
       tourEventId: req.params.tourEventId,
     });
     if (!access.ok) return fail(res, access);
-    // Past tours are reachable directly by URL — same permission as the tab.
     const tour = await prisma.tourEvent.findUnique({
       where: { id: access.tour.id },
       include: {
@@ -229,9 +226,6 @@ router.get(
       },
     });
     if (!tour) return res.status(404).json({ error: 'not_found' });
-    if (tourEndMs(tour) < Date.now() && !access.permissions.viewPastTours) {
-      return res.status(403).json({ error: 'not_allowed' });
-    }
     const occ = await occupancyFor(prisma, [tour.id]);
     const coordinationStatusByBooking = access.permissions.useCoordinationForms
       ? await coordinationStatuses(tour.bookings.map((b) => b.id))

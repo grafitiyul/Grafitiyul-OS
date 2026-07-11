@@ -3175,7 +3175,6 @@ model GuidePortalSettings {
   fillTourSummary      Boolean  @default(true)
   useTourGallery       Boolean  @default(true)
   useCoordinationForms Boolean  @default(true)
-  viewPastTours        Boolean  @default(true)
   viewPay              Boolean  @default(true)
   viewProcedures       Boolean  @default(true)
   viewTraining         Boolean  @default(true)

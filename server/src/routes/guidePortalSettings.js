@@ -18,7 +18,6 @@ const BOOL_KEYS = [
   'fillTourSummary',
   'useTourGallery',
   'useCoordinationForms',
-  'viewPastTours',
   'viewPay',
   'viewProcedures',
   'viewTraining',

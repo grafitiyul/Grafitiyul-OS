@@ -142,11 +142,9 @@ function BottomNav({ token, permissions, onMenu }) {
   const base = `/p/${encodeURIComponent(token)}`;
   const tabs = [
     { to: base, end: true, label: 'סיורים', icon: <CompassIcon /> },
-    permissions.viewPastTours && {
-      to: `${base}/past`,
-      label: 'סיורי עבר',
-      icon: <HistoryIcon />,
-    },
+    // סיורי עבר is a permanent tab (product decision 2026-07) — completed
+    // tours move here for their assigned guides; never permission-gated.
+    { to: `${base}/past`, label: 'סיורי עבר', icon: <HistoryIcon /> },
     permissions.viewPay && { to: `${base}/pay`, label: 'שכר', icon: <WalletIcon /> },
   ].filter(Boolean);
 

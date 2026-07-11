@@ -3,9 +3,9 @@ import TourCard from './TourCard.jsx';
 import useToursFeed from './useToursFeed.js';
 import { FeedSkeleton, FeedError } from './feedStates.jsx';
 
-// סיורי עבר — tours whose end time has passed, newest first. Server-gated on
-// the viewPastTours permission (403 → quiet "not available" state, since the
-// tab itself is hidden when the permission is off).
+// סיורי עבר — tours whose end time has passed, newest first. A permanent tab:
+// completed tours move here for their assigned guides (not permission-gated).
+// The forbidden state below covers portal-level 403s only (portal disabled).
 
 export default function PastToursPage() {
   const { token } = useOutletContext();

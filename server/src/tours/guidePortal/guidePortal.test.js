@@ -24,7 +24,6 @@ const ALL_ON = {
   fillTourSummary: true,
   useTourGallery: true,
   useCoordinationForms: true,
-  viewPastTours: true,
   viewPay: true,
   viewProcedures: true,
   viewTraining: true,
@@ -156,13 +155,14 @@ test('cancelled tour is INVISIBLE to guides — 403 even with a live assignment'
 
 test('buildGuidePermissions maps every settings switch', () => {
   const perms = buildGuidePermissions(
-    { ...ALL_ON, viewPay: false, viewPastTours: false },
+    { ...ALL_ON, viewPay: false },
     { guideCanDelete: true, guideCanShareCustomerLink: false },
   );
   assert.equal(perms.viewPay, false);
-  assert.equal(perms.viewPastTours, false);
   assert.equal(perms.deleteGalleryMedia, true);
   assert.equal(perms.shareGalleryCustomerLink, false);
+  // "סיורי עבר" is a permanent tab — past-tour visibility is NOT a permission.
+  assert.equal('viewPastTours' in perms, false);
 });
 
 // ── DTOs ────────────────────────────────────────────────────────────
