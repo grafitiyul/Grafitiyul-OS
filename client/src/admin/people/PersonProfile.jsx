@@ -5,6 +5,8 @@ import { useFileDrop } from '../common/useFileDrop.js';
 import { api } from '../../lib/api.js';
 import { useDirtyForm } from '../../lib/dirtyForms.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
+import AvatarCropDialog from '../../avatar/AvatarCropDialog.jsx';
+import BankDetailsFields from '../../profile/BankDetailsFields.jsx';
 import {
   IDENTITY_SOURCES,
   PERSON_STATUS_LABELS,
@@ -77,6 +79,7 @@ export default function PersonProfile() {
       <ProfileSection person={person} onChanged={refresh} />
       <BankSection person={person} onChanged={refresh} />
       <ProceduresSection procedures={procedures} onChanged={refresh} />
+      <ChangesSection person={person} onChanged={refresh} />
     </div>
   );
 }
@@ -397,12 +400,32 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
 
 function ProfileImage({ person, onChanged }) {
   const [busy, setBusy] = useState(false);
+  // { src, originalFile?, originalUrl?, initialCrop? } — shared crop flow.
+  const [cropState, setCropState] = useState(null);
   const src = person.profile?.imageUrl || null;
+  const originalUrl = person.profile?.imageOriginalUrl || null;
 
-  async function upload(files) {
+  // A picked/dropped file opens the SHARED crop tool (same component the
+  // guide portal uses) instead of uploading as-is.
+  function onFiles(files) {
+    const file = files?.[0];
+    if (!file) return;
+    setCropState({ src: URL.createObjectURL(file), originalFile: file });
+  }
+
+  async function saveCrop(blob, crop) {
     setBusy(true);
     try {
-      await api.people.uploadImage(person.id, files[0]);
+      let oUrl = cropState.originalUrl || null;
+      if (cropState.originalFile) {
+        oUrl = (await api.people.uploadImageOriginal(person.id, cropState.originalFile)).url;
+      }
+      await api.people.uploadImage(person.id, blob, {
+        filename: 'avatar.webp',
+        originalUrl: oUrl,
+        crop,
+      });
+      setCropState(null);
       await onChanged();
     } catch (err) {
       window.alert('העלאת תמונה נכשלה: ' + err.message);
@@ -411,10 +434,9 @@ function ProfileImage({ person, onChanged }) {
     }
   }
 
-  // Click the ✎ button OR drag a photo onto the avatar — same upload path.
   const { dragOver, open, dropProps, inputProps } = useFileDrop({
     accept: 'image/jpeg,image/png,image/webp',
-    onFiles: upload,
+    onFiles,
     disabled: busy,
     onReject: () => window.alert('קובץ לא נתמך — יש לבחור תמונה (JPG/PNG/WebP).'),
   });
@@ -450,7 +472,33 @@ function ProfileImage({ person, onChanged }) {
       >
         {busy ? '…' : '✎'}
       </button>
+      {originalUrl && !busy && (
+        <button
+          type="button"
+          onClick={() =>
+            setCropState({
+              src: originalUrl,
+              originalUrl,
+              initialCrop: person.profile?.imageCrop || null,
+            })
+          }
+          className="absolute -bottom-1 -right-1 bg-white border border-gray-300 rounded-full shadow-sm text-[11px] px-2 py-0.5 hover:bg-gray-50"
+          title="מיקום מחדש של התמונה הקיימת"
+        >
+          ⤢
+        </button>
+      )}
       <input {...inputProps} />
+      {cropState && (
+        <AvatarCropDialog
+          open
+          src={cropState.src}
+          initialCrop={cropState.initialCrop || null}
+          saving={busy}
+          onCancel={() => !busy && setCropState(null)}
+          onSave={saveCrop}
+        />
+      )}
     </div>
   );
 }
@@ -655,122 +703,207 @@ function ProfileSection({ person, onChanged }) {
 // Flexible JSON per Slice 8 decision #4. Hidden by default per spec.
 // Edit-as-JSON for now — later we'll add a real form when the shape stabilizes.
 
+// Structured bank details — the shared BankDetailsFields form (same component
+// the Guide Portal uses) instead of the old free-form JSON editor. Bank
+// details are not secret in this product: every admin sees them (no extra
+// permission toggle). The server normalizes and records changes in history.
 function BankSection({ person, onChanged }) {
-  const [visible, setVisible] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [raw, setRaw] = useState(() =>
-    JSON.stringify(person.profile?.bankDetails || {}, null, 2),
-  );
+  const stored = person.profile?.bankDetails || {};
+  const baseline = {
+    beneficiary: stored.beneficiary || null,
+    bankCode: stored.bankCode || null,
+    bankName: stored.bankName || null,
+    branchCode: stored.branchCode || null,
+    branchName: stored.branchName || null,
+    accountNumber: stored.accountNumber || null,
+  };
+  const [form, setForm] = useState(baseline);
+  const [banks, setBanks] = useState([]);
   const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState(null);
 
   useEffect(() => {
-    setRaw(JSON.stringify(person.profile?.bankDetails || {}, null, 2));
-    setEditing(false);
-    setErr(null);
+    setForm({
+      beneficiary: stored.beneficiary || null,
+      bankCode: stored.bankCode || null,
+      bankName: stored.bankName || null,
+      branchCode: stored.branchCode || null,
+      branchName: stored.branchName || null,
+      accountNumber: stored.accountNumber || null,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [person]);
 
-  // Unsaved-work guard (auto-update): dirty while editing bank details and changed.
-  useDirtyForm(
-    editing && raw !== JSON.stringify(person.profile?.bankDetails || {}, null, 2),
-  );
+  useEffect(() => {
+    api.bankCatalog
+      .get()
+      .then((r) => setBanks(r.banks || []))
+      .catch(() => setBanks([])); // catalog failure never blocks editing
+  }, []);
+
+  const dirty = JSON.stringify(form) !== JSON.stringify(baseline);
+  useDirtyForm(dirty);
 
   async function save() {
-    setErr(null);
-    let parsed;
-    try {
-      parsed = raw.trim() ? JSON.parse(raw) : null;
-    } catch {
-      setErr('JSON לא תקין');
-      return;
-    }
     setSaving(true);
     try {
-      await api.people.updateProfile(person.id, { bankDetails: parsed });
+      await api.people.updateProfile(person.id, { bankDetails: form });
       await onChanged();
-      setEditing(false);
     } finally {
       setSaving(false);
     }
   }
 
-  const hasData =
-    person.profile?.bankDetails &&
-    Object.keys(person.profile.bankDetails || {}).length > 0;
+  return (
+    <Section title="פרטי בנק">
+      <BankDetailsFields
+        value={form}
+        banks={banks}
+        onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+      />
+      <div className="flex justify-end pt-3">
+        <button
+          onClick={save}
+          disabled={saving || !dirty}
+          className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md font-medium disabled:opacity-50"
+        >
+          {saving ? 'שומר…' : 'שמירה'}
+        </button>
+      </div>
+    </Section>
+  );
+}
+
+// ── Profile change history (immutable) + restore ────────────────────────────
+//
+// Reads the shared person changelog (TimelineEntry kind='change'). Every row
+// shows old → new (photos as thumbnails), who changed it, from which surface
+// (admin / guide portal), and offers a one-click restore — which is itself a
+// new audited change; the original record never mutates.
+
+const CHANGE_SOURCE_LABELS = {
+  guide_portal: 'פורטל המדריך',
+  admin: 'אדמין',
+};
+
+function ChangesSection({ person, onChanged }) {
+  const [entries, setEntries] = useState(null);
+  const [busyKey, setBusyKey] = useState(null);
+
+  const loadChanges = useCallback(() => {
+    api.people
+      .changes(person.id)
+      .then((r) => setEntries(r.entries || []))
+      .catch(() => setEntries([]));
+  }, [person.id]);
+
+  useEffect(() => {
+    loadChanges();
+  }, [loadChanges, person]);
+
+  async function restore(entryId, fieldKey) {
+    const key = `${entryId}:${fieldKey}`;
+    if (busyKey) return;
+    if (!window.confirm('לשחזר את הערך הקודם? הפעולה תירשם כשינוי חדש בהיסטוריה.')) return;
+    setBusyKey(key);
+    try {
+      await api.people.restoreChange(person.id, entryId, fieldKey);
+      await onChanged();
+      loadChanges();
+    } catch (e) {
+      window.alert('השחזור נכשל: ' + e.message);
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  if (entries === null) {
+    return (
+      <Section title="היסטוריית שינויים">
+        <div className="text-sm text-gray-400">טוען…</div>
+      </Section>
+    );
+  }
+  if (entries.length === 0) {
+    return (
+      <Section title="היסטוריית שינויים">
+        <div className="text-sm text-gray-500 italic">אין עדיין שינויים מתועדים.</div>
+      </Section>
+    );
+  }
 
   return (
-    <Section
-      title="פרטי בנק"
-      headerRight={
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setVisible((v) => !v)}
-            className="text-[12px] text-gray-600 hover:bg-gray-100 rounded px-2 py-0.5"
-          >
-            {visible ? 'הסתר' : 'הצג'}
-          </button>
-        </div>
-      }
-    >
-      {!visible && (
-        <div className="text-sm text-gray-500 italic">
-          {hasData ? 'פרטי בנק מוסתרים. לחצו "הצג".' : 'אין פרטי בנק.'}
-        </div>
-      )}
-      {visible && !editing && (
-        <>
-          <pre
-            className="text-[12px] bg-gray-50 border border-gray-200 rounded p-3 overflow-x-auto"
-            dir="ltr"
-          >
-            {hasData
-              ? JSON.stringify(person.profile.bankDetails, null, 2)
-              : '{}'}
-          </pre>
-          <button
-            onClick={() => setEditing(true)}
-            className="mt-2 text-[12px] text-blue-700 hover:bg-blue-50 rounded px-2 py-1"
-          >
-            עריכה
-          </button>
-        </>
-      )}
-      {visible && editing && (
-        <>
-          <textarea
-            value={raw}
-            onChange={(e) => setRaw(e.target.value)}
-            rows={10}
-            dir="ltr"
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-[12px] font-mono focus:outline-none focus:ring-2 focus:ring-blue-200"
-            spellCheck={false}
-          />
-          {err && <div className="text-sm text-red-600 mt-1">{err}</div>}
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              onClick={() => {
-                setEditing(false);
-                setRaw(
-                  JSON.stringify(person.profile?.bankDetails || {}, null, 2),
-                );
-                setErr(null);
-              }}
-              disabled={saving}
-              className="px-3 py-1.5 text-sm border border-gray-300 rounded-md"
-            >
-              ביטול
-            </button>
-            <button
-              onClick={save}
-              disabled={saving}
-              className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md font-medium disabled:opacity-50"
-            >
-              {saving ? 'שומר…' : 'שמור'}
-            </button>
-          </div>
-        </>
-      )}
+    <Section title="היסטוריית שינויים">
+      <ol className="space-y-3">
+        {entries.map((entry) => (
+          <li key={entry.id} className="rounded-lg border border-gray-200 p-3">
+            <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-gray-500">
+              <span className="font-medium text-gray-700">
+                {entry.createdByName || entry.actorLabel || 'מערכת'}
+              </span>
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-600">
+                {CHANGE_SOURCE_LABELS[entry.data?.source] || 'מערכת'}
+              </span>
+              {entry.data?.restoredFromEntryId && (
+                <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+                  שחזור
+                </span>
+              )}
+              <span className="ms-auto tabular-nums" dir="ltr">
+                {new Date(entry.createdAt).toLocaleString('he-IL', {
+                  day: '2-digit',
+                  month: '2-digit',
+                  year: '2-digit',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+              </span>
+            </div>
+            <ul className="space-y-1.5">
+              {(entry.data?.changes || []).map((c, i) => (
+                <li key={i} className="flex items-center gap-2 text-[13px]">
+                  <span className="shrink-0 font-semibold text-gray-700">{c.labelHe}:</span>
+                  <ChangeValue fieldKey={c.fieldKey} value={c.oldValue} display={c.oldDisplay} muted />
+                  <span className="text-gray-400" aria-hidden>
+                    ←
+                  </span>
+                  <ChangeValue fieldKey={c.fieldKey} value={c.newValue} display={c.newDisplay} />
+                  <button
+                    type="button"
+                    onClick={() => restore(entry.id, c.fieldKey)}
+                    disabled={!!busyKey}
+                    title="שחזור הערך הקודם"
+                    className="ms-auto shrink-0 rounded px-2 py-0.5 text-[11.5px] font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-40"
+                  >
+                    {busyKey === `${entry.id}:${c.fieldKey}` ? 'משחזר…' : '↩ שחזור'}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ol>
     </Section>
+  );
+}
+
+// Old/new value rendering — photos preview as small thumbnails (old assets
+// are never deleted, so the URLs keep working).
+function ChangeValue({ fieldKey, value, display, muted = false }) {
+  if (fieldKey === 'imageUrl') {
+    return value ? (
+      <img
+        src={value}
+        alt={display || ''}
+        className={`h-9 w-9 rounded-full border border-gray-200 object-cover ${muted ? 'opacity-60' : ''}`}
+      />
+    ) : (
+      <span className={`text-[12px] ${muted ? 'text-gray-400' : 'text-gray-600'}`}>ללא תמונה</span>
+    );
+  }
+  return (
+    <span className={`truncate ${muted ? 'text-gray-400 line-through' : 'text-gray-900 font-medium'}`}>
+      {display || '—'}
+    </span>
   );
 }
 

@@ -11,7 +11,7 @@ import {
   recordPersonChanges,
   PERSON_FIELD_LABELS,
 } from '../timeline/personChangelog.js';
-import { storeProfileImage } from '../people/profileImage.js';
+import { storeImageAsset, storeProfileImage } from '../people/profileImage.js';
 
 // Guide (PersonRef + PersonProfile) CRUD, portal token management, image
 // upload, and the categorized procedures endpoint that drives the admin
@@ -685,15 +685,38 @@ router.post(
 // caching, URL convention). The returned URL is what the client writes
 // into PersonProfile.imageUrl.
 
+// Step 1 of the crop flow — store the untouched original (profile untouched).
+router.post(
+  '/:id/image/original',
+  express.raw({ type: '*/*', limit: '12mb' }),
+  handle(async (req, res) => {
+    const result = await storeImageAsset(prisma, {
+      body: req.body,
+      filename: req.query.filename,
+    });
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    res.status(201).json({ url: result.url });
+  }),
+);
+
 router.post(
   '/:id/image',
   express.raw({ type: '*/*', limit: '12mb' }),
   handle(async (req, res) => {
     // Shared pipeline with the guide-portal photo route (people/profileImage
     // .js) — validate, store MediaAsset, repoint profile; old assets stay.
+    // `originalUrl` + `crop` come from the shared crop tool (recrop support).
+    let crop = null;
+    try {
+      crop = req.query.crop ? JSON.parse(String(req.query.crop)) : null;
+    } catch {
+      /* malformed crop metadata is cosmetic — ignore */
+    }
     const result = await storeProfileImage(prisma, req.params.id, {
       body: req.body,
       filename: req.query.filename,
+      originalUrl: req.query.originalUrl ? String(req.query.originalUrl) : null,
+      crop,
     });
     if (result.error) return res.status(result.status).json({ error: result.error });
     await recordPersonChanges(prisma, {

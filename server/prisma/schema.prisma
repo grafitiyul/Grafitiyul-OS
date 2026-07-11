@@ -527,6 +527,11 @@ model PersonProfile {
   personRef   PersonRef @relation(fields: [personRefId], references: [id], onDelete: Cascade)
   personRefId String    @id
   imageUrl    String?
+  // Avatar recrop support: the untouched original upload + the crop metadata
+  // ({x, y, zoom}) that produced imageUrl. Recropping re-reads the original —
+  // no forced re-upload. Old assets are never deleted (history previews).
+  imageOriginalUrl String?
+  imageCrop        Json?
   description String?
   notes       String?
   bankDetails Json?

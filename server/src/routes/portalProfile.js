@@ -8,7 +8,7 @@ import {
   personChangeSnapshot,
   recordPersonChanges,
 } from '../timeline/personChangelog.js';
-import { storeProfileImage } from '../people/profileImage.js';
+import { storeImageAsset, storeProfileImage } from '../people/profileImage.js';
 
 // Guide Portal → פרטים אישיים. Same portal-token credential; the guide can
 // VIEW their own operational identity and — when the editPersonalProfile
@@ -53,6 +53,10 @@ function profileDto(person, profile, permissions) {
     email: person.email || null,
     phone: person.phone || null,
     imageUrl: profile?.imageUrl || null,
+    // Recrop support — the untouched original + the crop that produced the
+    // current avatar (prefills the shared crop tool).
+    imageOriginalUrl: profile?.imageOriginalUrl || null,
+    imageCrop: profile?.imageCrop || null,
     lifecycleLabel: LIFECYCLE_LABELS[person.lifecycleHint] || null,
     bank,
     canEdit: permissions.editPersonalProfile,
@@ -68,7 +72,7 @@ router.get(
     if (!access.ok) return fail(res, access);
     const profile = await prisma.personProfile.findUnique({
       where: { personRefId: access.person.id },
-      select: { imageUrl: true, bankDetails: true },
+      select: { imageUrl: true, imageOriginalUrl: true, imageCrop: true, bankDetails: true },
     });
     res.set('Cache-Control', 'no-store');
     res.json(profileDto(access.person, profile, access.permissions));
@@ -119,7 +123,7 @@ router.put(
 
     const profileBefore = await prisma.personProfile.findUnique({
       where: { personRefId: access.person.id },
-      select: { imageUrl: true, bankDetails: true },
+      select: { imageUrl: true, imageOriginalUrl: true, imageCrop: true, bankDetails: true },
     });
     const beforeSnap = personChangeSnapshot(access.person, profileBefore);
 
@@ -159,16 +163,37 @@ router.put(
 
     const profile = await prisma.personProfile.findUnique({
       where: { personRefId: access.person.id },
-      select: { imageUrl: true, bankDetails: true },
+      select: { imageUrl: true, imageOriginalUrl: true, imageCrop: true, bankDetails: true },
     });
     const person = await prisma.personRef.findUnique({ where: { id: access.person.id } });
     res.json({ ok: true, ...profileDto(person, profile, access.permissions) });
   }),
 );
 
-// Profile photo — same shared pipeline as the admin upload (crop happens
-// client-side in the shared crop tool; the server stores the final avatar
-// rendition; previous assets stay available through history).
+// Profile photo — same shared pipeline as the admin upload (the shared crop
+// tool renders the avatar client-side; the original + crop metadata are kept
+// for recrop; previous assets stay available through history).
+
+router.post(
+  '/:token/profile/photo/original',
+  express.raw({ type: '*/*', limit: '12mb' }),
+  handle(async (req, res) => {
+    const access = await resolveGuidePortalAccess(prisma, {
+      portalToken: req.params.token,
+    });
+    if (!access.ok) return fail(res, access);
+    if (!access.permissions.editPersonalProfile) {
+      return res.status(403).json({ error: 'not_allowed' });
+    }
+    const result = await storeImageAsset(prisma, {
+      body: req.body,
+      filename: req.query.filename,
+    });
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    res.status(201).json({ url: result.url });
+  }),
+);
+
 router.post(
   '/:token/profile/photo',
   express.raw({ type: '*/*', limit: '12mb' }),
@@ -180,9 +205,17 @@ router.post(
     if (!access.permissions.editPersonalProfile) {
       return res.status(403).json({ error: 'not_allowed' });
     }
+    let crop = null;
+    try {
+      crop = req.query.crop ? JSON.parse(String(req.query.crop)) : null;
+    } catch {
+      /* malformed crop metadata is cosmetic — ignore */
+    }
     const result = await storeProfileImage(prisma, access.person.id, {
       body: req.body,
       filename: req.query.filename,
+      originalUrl: req.query.originalUrl ? String(req.query.originalUrl) : null,
+      crop,
     });
     if (result.error) return res.status(result.status).json({ error: result.error });
     await recordPersonChanges(prisma, {

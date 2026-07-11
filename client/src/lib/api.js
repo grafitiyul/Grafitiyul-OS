@@ -199,8 +199,29 @@ export const api = {
     // triggers recruitment (token store); returns { ok, url } with the fresh link.
     rotateEvaluatorToken: (id) =>
       request(`/api/people/${id}/evaluator-portal/rotate`, { method: 'POST' }),
-    uploadImage: async (id, file) => {
+    // Step 1 of the shared crop flow — stores the untouched original only.
+    uploadImageOriginal: async (id, file) => {
       const q = qs({ filename: file.name });
+      const res = await fetch(`/api/people/${id}/image/original${q}`, {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        body: file,
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        const err = new Error(`${res.status} ${text}`);
+        err.status = res.status;
+        throw err;
+      }
+      return res.json();
+    },
+    uploadImage: async (id, file, { filename, originalUrl, crop } = {}) => {
+      const q = qs({
+        filename: filename || file.name || 'avatar.webp',
+        ...(originalUrl ? { originalUrl } : {}),
+        ...(crop ? { crop: JSON.stringify(crop) } : {}),
+      });
       const res = await fetch(`/api/people/${id}/image${q}`, {
         method: 'POST',
         cache: 'no-store',

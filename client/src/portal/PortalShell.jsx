@@ -37,20 +37,27 @@ export default function PortalShell() {
     }
   }, [token]);
 
-  const load = useCallback(async () => {
-    setState({ phase: 'loading' });
-    try {
-      const res = await fetch(`/api/portal/${encodeURIComponent(token)}/home`, {
-        cache: 'no-store',
-      });
-      if (res.status === 404) return setState({ phase: 'not_found' });
-      if (res.status === 403) return setState({ phase: 'disabled' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setState({ phase: 'ready', data: await res.json() });
-    } catch (e) {
-      setState({ phase: 'error', message: e?.message || 'שגיאה' });
-    }
-  }, [token]);
+  const load = useCallback(
+    async ({ silent = false } = {}) => {
+      if (!silent) setState({ phase: 'loading' });
+      try {
+        const res = await fetch(`/api/portal/${encodeURIComponent(token)}/home`, {
+          cache: 'no-store',
+        });
+        if (res.status === 404) return setState({ phase: 'not_found' });
+        if (res.status === 403) return setState({ phase: 'disabled' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        setState({ phase: 'ready', data: await res.json() });
+      } catch (e) {
+        if (!silent) setState({ phase: 'error', message: e?.message || 'שגיאה' });
+      }
+    },
+    [token],
+  );
+
+  // Pages call this after profile edits so the header (name/photo) updates
+  // immediately without a full reload.
+  const refreshHome = useCallback(() => load({ silent: true }), [load]);
 
   useEffect(() => {
     load();
@@ -78,10 +85,14 @@ export default function PortalShell() {
 
   return (
     <div className="min-h-screen bg-gray-50" dir="rtl" data-page="guide-portal">
-      <Header displayName={person.displayName} />
+      <Header
+        displayName={person.displayName}
+        imageUrl={person.imageUrl}
+        token={token}
+      />
       {/* pb clears the fixed bottom nav (h-16 + safe area). */}
       <main className="mx-auto max-w-2xl px-3 pb-28 pt-4 sm:px-6">
-        <Outlet context={{ token, person, permissions }} />
+        <Outlet context={{ token, person, permissions, refreshHome }} />
       </main>
       <BottomNav token={token} permissions={permissions} onMenu={() => setMenuOpen(true)} />
       {menuOpen && (
@@ -91,19 +102,34 @@ export default function PortalShell() {
   );
 }
 
-function Header({ displayName }) {
+function Header({ displayName, imageUrl, token }) {
   return (
     <header className="sticky top-0 z-30 border-b border-gray-200 bg-white/95 backdrop-blur">
       <div className="mx-auto flex max-w-2xl items-center gap-3 px-4 py-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-semibold text-white">
-          {(displayName || '?').slice(0, 1)}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-[11px] leading-tight text-gray-500">שלום</div>
-          <div className="truncate text-[15px] font-semibold text-gray-900">
-            {displayName || 'אורח'}
+        {/* Photo + name open פרטים אישיים (product rule). */}
+        <NavLink
+          to={`/p/${encodeURIComponent(token)}/profile`}
+          className="flex min-w-0 flex-1 items-center gap-3"
+          aria-label="פרטים אישיים"
+        >
+          {imageUrl ? (
+            <img
+              src={imageUrl}
+              alt=""
+              className="h-9 w-9 shrink-0 rounded-full border border-gray-200 object-cover"
+            />
+          ) : (
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-semibold text-white">
+              {(displayName || '?').slice(0, 1)}
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="text-[11px] leading-tight text-gray-500">שלום</div>
+            <div className="truncate text-[15px] font-semibold text-gray-900">
+              {displayName || 'אורח'}
+            </div>
           </div>
-        </div>
+        </NavLink>
         <div className="text-[12px] font-bold tracking-tight text-gray-300">גרפיטיול</div>
       </div>
     </header>
