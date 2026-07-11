@@ -94,8 +94,10 @@ export async function findActiveAssignment(client, person, tourEventId) {
 }
 
 export function guideVisibleTourWhere() {
-  // Feed-query twin of resolveGuideTourAccess's status rule.
-  return { status: { not: 'cancelled' } };
+  // Feed-query twin of resolveGuideTourAccess's status rule. Postponed tours
+  // (no active date) are hidden from the portal until rescheduled — the
+  // assignment stays, so visibility returns the moment a new date is applied.
+  return { status: { notIn: ['cancelled', 'postponed'] } };
 }
 
 export async function resolveGuideTourAccess(client, { portalToken, tourEventId }) {
@@ -109,6 +111,9 @@ export async function resolveGuideTourAccess(client, { portalToken, tourEventId 
   if (!tour) return { ok: false, status: 404, error: 'not_found' };
   if (tour.status === 'cancelled') {
     return { ok: false, status: 403, error: 'tour_cancelled' };
+  }
+  if (tour.status === 'postponed') {
+    return { ok: false, status: 403, error: 'tour_postponed' };
   }
   const assignment = await findActiveAssignment(client, base.person, tour.id);
   if (!assignment) return { ok: false, status: 403, error: 'not_assigned' };

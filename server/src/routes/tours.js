@@ -893,6 +893,13 @@ router.put(
       if (!TOUR_EVENT_STATUSES.includes(b.status)) {
         return res.status(400).json({ error: 'invalid_status' });
       }
+      // 'postponed' is entered/exited ONLY by the Deal's Apply Tour Update
+      // orchestration (which also clears/sets the date) — never by manual
+      // PATCH, so a scheduled tour can't silently lose its date here and a
+      // postponed (dateless) tour can't be flipped scheduled without one.
+      if (b.status === 'postponed' || existing.status === 'postponed') {
+        return res.status(409).json({ error: 'postponed_via_deal_only' });
+      }
       if (b.status === 'cancelled' && activeBookings > 0) {
         return res.status(409).json({ error: 'tour_has_active_bookings' });
       }

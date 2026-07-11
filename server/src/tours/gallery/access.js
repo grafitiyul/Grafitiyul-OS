@@ -28,10 +28,13 @@ export async function resolveGuideGalleryAccess(client, { portalToken, tourEvent
   });
   if (!tour) return { ok: false, status: 404, error: 'not_found' };
   // Same rules as every other guide tour surface (guidePortal/access.js):
-  // cancelled tours are invisible to guides, and no current assignment means
-  // no access.
+  // cancelled/postponed tours are invisible to guides, and no current
+  // assignment means no access.
   if (tour.status === 'cancelled') {
     return { ok: false, status: 403, error: 'tour_cancelled' };
+  }
+  if (tour.status === 'postponed') {
+    return { ok: false, status: 403, error: 'tour_postponed' };
   }
   const assignment = await findActiveAssignment(client, person, tour.id);
   if (!assignment) return { ok: false, status: 403, error: 'not_assigned' };

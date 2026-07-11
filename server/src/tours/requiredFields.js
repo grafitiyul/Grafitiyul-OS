@@ -6,7 +6,11 @@
 // [{ field, labelHe }], which the client renders verbatim as a checklist.
 
 export const TOUR_EVENT_KINDS = ['private', 'business', 'group_slot'];
-export const TOUR_EVENT_STATUSES = ['scheduled', 'completed', 'cancelled'];
+// Canonical Tour status vocabulary. 'postponed' = the Deal removed the
+// applied date without a replacement (same TourEvent, no date, everything
+// operational preserved) — entered/exited ONLY by the Apply Tour Update
+// orchestration (tourFromDeal.syncDealToTour), never by manual PATCH.
+export const TOUR_EVENT_STATUSES = ['scheduled', 'completed', 'cancelled', 'postponed'];
 // Same vocabulary as Deal.tourLanguage (deals.js VALID_TOUR_LANGS) — the two
 // fields sync at WON, so the value space must be identical.
 export const TOUR_LANGS = ['he', 'en', 'es', 'fr', 'ru'];

@@ -3003,14 +3003,20 @@ model EmailEngagement {
 model TourEvent {
   id               String          @id @default(cuid())
   kind             String // 'private' | 'business' | 'group_slot'
-  status           String          @default("scheduled") // scheduled | completed | cancelled
+  status           String          @default("scheduled") // scheduled | completed | cancelled | postponed
   // Explicit business completion (tours/completion.js is the ONE transition):
   // when + why the tour completed. completedAt drives the tour summary's
   // post-completion edit window. reason: summaries | midnight | manual.
   completedAt     DateTime?
   completedReason String?
-  date             String // "YYYY-MM-DD"
-  startTime        String // "HH:MM"
+  // date/startTime are null ONLY while status='postponed' (the tour is not
+  // happening as scheduled and no replacement date was chosen yet — the SAME
+  // TourEvent keeps its team/components/notes/gallery and returns to
+  // 'scheduled' when the Deal applies a new date). Scheduled/completed/
+  // cancelled tours always carry both (group slots gate on required fields;
+  // deal tours are validated at WON).
+  date             String? // "YYYY-MM-DD"
+  startTime        String? // "HH:MM"
   product          Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
   productId        String?
   productVariant   ProductVariant? @relation(fields: [productVariantId], references: [id], onDelete: SetNull)

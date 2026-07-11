@@ -97,6 +97,9 @@ export async function completeTour(client, tourEventId, { reason, actorName = nu
   if (!tour) return { ok: false, error: 'not_found' };
   if (tour.status === 'completed') return { ok: true, already: true };
   if (tour.status === 'cancelled') return { ok: false, error: 'tour_cancelled' };
+  // A postponed tour has no date — "over" is meaningless until it is
+  // rescheduled (Apply Tour Update transitions it back to scheduled).
+  if (tour.status === 'postponed') return { ok: false, error: 'tour_postponed' };
 
   const stamp = completedAt || new Date();
   await client.tourEvent.update({

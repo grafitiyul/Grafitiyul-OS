@@ -11,6 +11,8 @@ import {
   SortableHeaderRow,
   TableCell,
 } from '../common/tableColumns.jsx';
+import StaffColorPicker, { StaffColorSwatch } from '../../color/StaffColorPicker.jsx';
+import { rowTintStyle } from '../../color/staffColorUi.js';
 
 // Column definitions — the shared tableColumns infra owns visibility, order
 // and persistence (localStorage per table per browser profile — the app's
@@ -19,6 +21,7 @@ import {
 // but start hidden. New columns added here appear in the picker automatically.
 const STAFF_COLUMNS = [
   { key: 'name', label: 'שם', def: true },
+  { key: 'color', label: 'צבע', def: true, align: 'center' },
   { key: 'phone', label: 'טלפון', def: true },
   { key: 'email', label: 'אימייל', def: true, cls: 'max-w-[180px]' },
   { key: 'team', label: 'צוות', def: true },
@@ -254,6 +257,7 @@ const BULK_FIELDS = [
   { key: 'travelAllowance', label: 'נסיעות', type: 'number' },
   { key: 'trainingCohort', label: 'מחזור הכשרה', type: 'text' },
   { key: 'teamRefId', label: 'צוות', type: 'team' },
+  { key: 'displayColor', label: 'צבע', type: 'color' },
 ];
 
 function BulkEditDialog({ people, teams, onClose, onDone }) {
@@ -329,7 +333,19 @@ function BulkEditDialog({ people, teams, onClose, onDone }) {
                 aria-label={`עדכון ${f.label}`}
               />
               <span className="w-24 shrink-0 text-[13px] font-medium text-gray-700">{f.label}</span>
-              {f.type === 'select' || f.type === 'team' ? (
+              {f.type === 'color' ? (
+                // Shared canonical picker — enabled + "ללא צבע" clears.
+                <div className={`flex-1 ${enabled[f.key] ? '' : 'pointer-events-none opacity-40'}`}>
+                  <div className="flex items-center gap-2">
+                    <StaffColorSwatch colorKey={values[f.key] || null} className="h-6 w-6" />
+                    <StaffColorPicker
+                      compact
+                      value={values[f.key] || null}
+                      onPick={(key) => setValues((s) => ({ ...s, [f.key]: key || '' }))}
+                    />
+                  </div>
+                </div>
+              ) : f.type === 'select' || f.type === 'team' ? (
                 <select
                   disabled={!enabled[f.key]}
                   value={values[f.key] ?? ''}
@@ -679,6 +695,13 @@ const INLINE_FIELDS = {
     get: (p) => p.teamRefId || '',
     save: (p, v) => api.people.update(p.id, { teamRefId: v || null }),
   },
+  // The SAME shared picker as the profile editor — clicking the swatch opens
+  // it in a small popover; picking saves immediately.
+  color: {
+    type: 'color',
+    get: (p) => p.profile?.displayColor || '',
+    save: (p, v) => api.people.updateProfile(p.id, { displayColor: v || null }),
+  },
 };
 
 const INLINE_ERROR_MESSAGES = {
@@ -702,6 +725,24 @@ function InlineCell({ person, colKey, teams, onChanged, children }) {
     setError(null);
     cancelled.current = false;
     setEditing(true);
+  }
+
+  // Color flow commits an explicit picked value (no blur-input involved).
+  async function commitValue(next) {
+    setEditing(false);
+    if (next === field.get(person)) return;
+    setSaving(true);
+    try {
+      await field.save(person, next);
+      setFlash(true);
+      setTimeout(() => setFlash(false), 1200);
+      await onChanged();
+    } catch (e) {
+      setError(INLINE_ERROR_MESSAGES[e.payload?.error] || 'השמירה נכשלה');
+      setTimeout(() => setError(null), 2500);
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function commit() {
@@ -728,6 +769,23 @@ function InlineCell({ person, colKey, teams, onChanged, children }) {
     } finally {
       setSaving(false);
     }
+  }
+
+  if (editing && field.type === 'color') {
+    return (
+      <div className="relative">
+        {/* click-away closes without saving */}
+        <div className="fixed inset-0 z-10" onClick={() => setEditing(false)} />
+        <div className="absolute z-20 mt-1 rounded-xl border border-gray-200 bg-white p-3 shadow-xl">
+          <StaffColorPicker
+            compact
+            value={field.get(person) || null}
+            onPick={(key) => commitValue(key || '')}
+          />
+        </div>
+        <StaffColorSwatch colorKey={field.get(person) || null} className="mx-auto h-6 w-6" />
+      </div>
+    );
   }
 
   if (editing) {
@@ -801,6 +859,13 @@ function InlineCell({ person, colKey, teams, onChanged, children }) {
 // persistence come from the shared infra automatically.
 function renderCell(key, person) {
   switch (key) {
+    case 'color':
+      return (
+        <StaffColorSwatch
+          colorKey={person.profile?.displayColor || null}
+          className="mx-auto h-6 w-6"
+        />
+      );
     case 'name':
       // Avatar + name — the row's identity leads (photo, initials fallback:
       // same StaffAvatar the tour surfaces use).
@@ -874,8 +939,15 @@ function renderCell(key, person) {
 }
 
 function PersonRow({ person, visibleCols, teams, selected, onToggleSelect, onChanged }) {
+  // Personal color = subtle full-row tint + saturated start-edge stripe
+  // (shared helper). Selection keeps its blue wash — only the stripe stays.
+  const tint = rowTintStyle(person.profile?.displayColor);
+  const rowStyle = selected ? { boxShadow: tint.boxShadow } : tint;
   return (
-    <tr className={`transition-colors ${selected ? 'bg-blue-50/40' : 'hover:bg-gray-50/70'}`}>
+    <tr
+      style={rowStyle}
+      className={`transition-colors ${selected ? 'bg-blue-50/40' : 'hover:bg-gray-50/70'}`}
+    >
       <TableCell col={{}} stopClick className="w-10">
         <input
           type="checkbox"

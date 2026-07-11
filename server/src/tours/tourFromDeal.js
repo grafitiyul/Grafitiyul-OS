@@ -271,7 +271,9 @@ export async function cancelDealBooking(tx, booking, { reason, origin }) {
   });
 
   const tour = booking.tourEvent;
-  if (tour.kind !== 'group_slot' && tour.status === 'scheduled') {
+  // Postponed tours auto-cancel too: a deal leaving its undated tour leaves
+  // nothing operational to keep alive (same reopen/LOST/replace semantics).
+  if (tour.kind !== 'group_slot' && (tour.status === 'scheduled' || tour.status === 'postponed')) {
     const remaining = await tx.booking.count({
       where: { tourEventId: tour.id, status: 'active' },
     });
@@ -444,18 +446,33 @@ export async function reconnectOrphanBooking(tx, booking, { origin }) {
 // stale, and any future tour-affecting field joins by appearing here (and in
 // syncDealToTour, which is what "apply" runs). Group slots never have pending
 // updates: their planning fields are slot-owned and locked on the deal.
-// Mirrors syncDealToTour's semantics exactly (e.g. a cleared deal date/time is
-// never synced, so it is never "pending") — applying must always empty this
-// list. Returns [{ field, labelHe, dealValue, tourValue }].
+// Mirrors syncDealToTour's semantics exactly — applying must always empty
+// this list. Date/time semantics (postpone / reschedule — see syncDealToTour):
+//   * scheduled tour + CLEARED deal date → pends as a postpone;
+//   * postponed tour + deal date AND time set → pends as a reschedule
+//     (a date without a time never pends — scheduling needs both);
+//   * otherwise a cleared deal time alone never syncs, so never pends.
+// Returns [{ field, labelHe, dealValue, tourValue }].
 export function pendingTourUpdate(deal, booking) {
   if (!deal || !booking || booking.status !== 'active') return [];
   const tour = booking.tourEvent;
-  if (!tour || tour.kind === 'group_slot' || tour.status !== 'scheduled') return [];
+  if (!tour || tour.kind === 'group_slot') return [];
+  if (tour.status !== 'scheduled' && tour.status !== 'postponed') return [];
   const diffs = [];
   const push = (field, dealValue, tourValue) =>
     diffs.push({ field, labelHe: FIELD_LABELS_HE[field] || field, dealValue, tourValue });
-  if (deal.tourDate && deal.tourDate !== tour.date) push('tourDate', deal.tourDate, tour.date);
-  if (deal.tourTime && deal.tourTime !== tour.startTime) push('tourTime', deal.tourTime, tour.startTime);
+  if (tour.status === 'postponed') {
+    if (deal.tourDate && deal.tourTime) {
+      push('tourDate', deal.tourDate, tour.date);
+      push('tourTime', deal.tourTime, tour.startTime);
+    }
+  } else if (!deal.tourDate) {
+    push('tourDate', null, tour.date);
+    if (tour.startTime) push('tourTime', null, tour.startTime);
+  } else {
+    if (deal.tourDate !== tour.date) push('tourDate', deal.tourDate, tour.date);
+    if (deal.tourTime && deal.tourTime !== tour.startTime) push('tourTime', deal.tourTime, tour.startTime);
+  }
   if ((deal.tourLanguage || null) !== (tour.tourLanguage || null))
     push('tourLanguage', deal.tourLanguage || null, tour.tourLanguage || null);
   if ((deal.productId || null) !== (tour.productId || null))
@@ -474,6 +491,17 @@ export function pendingTourUpdate(deal, booking) {
 // kinds). The DEAL is the desired state; since the pending-update flow this is
 // invoked by the EXPLICIT "עדכון סיור" orchestration (and by group saves for
 // the seats mirror / orphan reconnect) — no longer by every deal save.
+//
+// Postpone / reschedule (the ONLY writers of status='postponed'):
+//   * scheduled tour + CLEARED deal date → the tour is not happening as
+//     scheduled and no replacement was chosen: SAME TourEvent, date/time
+//     cleared, status='postponed'. Team/components/notes/questionnaires/
+//     gallery/booking all stay. The calendar mark makes the sync worker
+//     delete the Google event (guides get Google's cancellation email).
+//   * postponed tour + deal date AND time set → back to 'scheduled'; the
+//     worker creates a fresh Google event with the current guides.
+// This is NOT deal-reopen: reopen cancels the tour and copies state to the
+// plan; postpone keeps the operational tour alive without a date.
 // Returns true when the tour row actually changed.
 export async function syncDealToTour(tx, deal, booking, { origin }) {
   const tour = booking.tourEvent;
@@ -487,8 +515,20 @@ export async function syncDealToTour(tx, deal, booking, { origin }) {
   if (tour.kind === 'group_slot') return false; // slot planning is slot-owned
 
   const patch = {};
-  if (deal.tourDate && deal.tourDate !== tour.date) patch.date = deal.tourDate;
-  if (deal.tourTime && deal.tourTime !== tour.startTime) patch.startTime = deal.tourTime;
+  const postpone = tour.status === 'scheduled' && !deal.tourDate;
+  const reschedule = tour.status === 'postponed' && !!deal.tourDate && !!deal.tourTime;
+  if (postpone) {
+    patch.date = null;
+    patch.startTime = null;
+    patch.status = 'postponed';
+  } else if (reschedule) {
+    patch.date = deal.tourDate;
+    patch.startTime = deal.tourTime;
+    patch.status = 'scheduled';
+  } else {
+    if (deal.tourDate && deal.tourDate !== tour.date) patch.date = deal.tourDate;
+    if (deal.tourTime && deal.tourTime !== tour.startTime) patch.startTime = deal.tourTime;
+  }
   if ((deal.tourLanguage || null) !== tour.tourLanguage) patch.tourLanguage = deal.tourLanguage || null;
   if ((deal.productId || null) !== tour.productId) patch.productId = deal.productId || null;
   if ((deal.productVariantId || null) !== tour.productVariantId)
@@ -496,7 +536,7 @@ export async function syncDealToTour(tx, deal, booking, { origin }) {
   if ((deal.locationId || null) !== tour.locationId) patch.locationId = deal.locationId || null;
 
   if (!Object.keys(patch).length) return false;
-  // Deal-driven date/time/variant/language changes are calendar-visible.
+  // Deal-driven date/time/variant/language/status changes are calendar-visible.
   const calendarDirty = patchTouchesCalendar(patch);
   if (calendarDirty) Object.assign(patch, calendarPendingPatch());
   await tx.tourEvent.update({ where: { id: tour.id }, data: patch });
@@ -508,5 +548,24 @@ export async function syncDealToTour(tx, deal, booking, { origin }) {
     data: { event: 'synced_from_deal', dealId: deal.id, fields: Object.keys(patch) },
     origin,
   });
+  if (patch.status === 'postponed') {
+    await emitTimelineEvent(tx, {
+      subjectType: 'tour_event',
+      subjectId: tour.id,
+      kind: 'tour',
+      body: '⏸️ הסיור נדחה — המועד הוסר וטרם נקבע מועד חדש',
+      data: { event: 'postponed', previousDate: tour.date, previousStartTime: tour.startTime },
+      origin,
+    });
+  } else if (patch.status === 'scheduled') {
+    await emitTimelineEvent(tx, {
+      subjectType: 'tour_event',
+      subjectId: tour.id,
+      kind: 'tour',
+      body: `🗓️ נקבע מועד חדש לסיור נדחה — ${patch.date} · ${patch.startTime}`,
+      data: { event: 'rescheduled', date: patch.date, startTime: patch.startTime },
+      origin,
+    });
+  }
   return true;
 }
