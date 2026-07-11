@@ -145,7 +145,11 @@ before(async () => {
         submission: { ...COORD_SUBMISSION },
         runtime: RUNTIME,
         prefill: {},
-        lifecycle: { liveVersion: true, editableAfterSubmit: true, frozen: false, editable: true, frozenAt: null },
+        lifecycle: {
+          liveVersion: true, editableAfterSubmit: true,
+          structureFrozen: false, answersLocked: false, editable: true,
+          closedAt: null, lockAt: null, frozenAt: null,
+        },
         rendered: null,
       };
     } else if (u.startsWith('/api/questionnaires/submissions')) {

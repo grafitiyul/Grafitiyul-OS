@@ -4,7 +4,6 @@
 import { prisma } from '../../db.js';
 import { emitTimelineEvent, systemOrigin } from '../../timeline/events.js';
 import { getPurpose } from '../registry.js';
-import { tourQuestionnairesLocked } from '../../tours/lifecycle.js';
 import { summaryCompletionState, completeTour } from '../../tours/completion.js';
 
 // Human-readable feed body — unknown kinds render through the generic
@@ -63,17 +62,18 @@ export const tourEventAdapter = {
     return !!a;
   },
 
-  // Tour-operational freeze trigger: locked once the tour is closed
-  // (terminal status, or ended past the grace window).
-  async isLocked(subjectId) {
+  // Tour-operational anchor: WHEN did this tour close? (explicit business
+  // completion / cancellation — lifecyclePolicy derives structure freeze and
+  // answer lock from this one timestamp.)
+  async closedAt(subjectId) {
     const t = await prisma.tourEvent.findUnique({
       where: { id: subjectId },
-      select: {
-        status: true, date: true, startTime: true,
-        productVariant: { select: { durationHours: true } },
-      },
+      select: { status: true, completedAt: true, cancelledAt: true, updatedAt: true },
     });
-    return tourQuestionnairesLocked(t);
+    if (!t) return null;
+    if (t.status === 'completed') return t.completedAt || t.updatedAt;
+    if (t.status === 'cancelled') return t.cancelledAt || t.updatedAt;
+    return null;
   },
 
   // Staff-side subject: any authenticated admin may open it.

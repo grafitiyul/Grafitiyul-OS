@@ -175,8 +175,11 @@ before(async () => {
         lifecycle: {
           liveVersion: true,
           editableAfterSubmit: true,
-          frozen,
+          structureFrozen: frozen,
+          answersLocked: frozen,
           editable: !frozen,
+          closedAt: frozen ? '2026-07-11T00:00:00Z' : null,
+          lockAt: frozen ? '2026-07-13T00:00:00Z' : null,
           frozenAt: frozen ? '2026-07-11T00:00:00Z' : null,
         },
         rendered: null,

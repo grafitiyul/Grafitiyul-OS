@@ -657,11 +657,13 @@ export async function startSubmission({ templateId, purpose, subjectType, subjec
     if (existing) return { submission: existing, created: false };
   }
 
-  // A closed tour never gets a NEW tour-operational submission — existing
-  // ones resolve above (and freeze lazily on read); creating a fresh draft
-  // for a finished tour would only mint an empty "historical" record.
-  if (getPurpose(template.purpose)?.tourOperational && adapter?.isLocked && subjectId) {
-    if (await adapter.isLocked(subjectId)) throw new QError(409, 'subject_closed');
+  // No NEW tour-operational submission once its answers would already be
+  // locked (closedAt + the purpose's grace). Within the tour summary's 48h
+  // post-completion window a guide who hasn't started yet MAY still start.
+  if (getPurpose(template.purpose)?.tourOperational && adapter?.closedAt && subjectId) {
+    const closedAt = await adapter.closedAt(subjectId);
+    const probe = submissionLifecycle({ purpose: template.purpose, status: 'draft', frozenAt: null }, closedAt);
+    if (probe.answersLocked) throw new QError(409, 'subject_closed');
   }
 
   // Staff-audience purposes are INTERNAL forms — they render in the
@@ -729,8 +731,11 @@ export async function startSubmission({ templateId, purpose, subjectType, subjec
 // ── tour-operational lifecycle (live-until-frozen) ──────────────────────────
 // For tourOperational purposes the stored versionId is only "last resolved":
 // until frozenAt is set the submission follows template.currentVersionId, and
-// the freeze (version pin + per-answer snapshots) happens ONCE — lazily, the
-// first time the submission is touched after its tour closed.
+// the STRUCTURE FREEZE (version pin + per-answer snapshots) happens ONCE —
+// lazily, the first time the submission is touched after its tour closed.
+// The ANSWER LOCK is a separate, derived concept: closedAt + the purpose's
+// answerLockGraceMs (lifecyclePolicy) — a structure-frozen tour summary stays
+// answer-editable through its 48h post-completion window.
 
 // Pin the historical record: snapshot every answer against the (already
 // synced) version, then stamp frozenAt. Answers whose question no longer
@@ -767,42 +772,46 @@ async function freezeSubmission(submission) {
 }
 
 // Resolve the CURRENT lifecycle state of a loaded submission row and apply
-// its side effects: sync to the live published version, or freeze if the
-// subject's tour has closed. Returns the (possibly updated) row + lifecycle.
-// Row needs: id, templateId, versionId, purpose, status, frozenAt, language,
-// subjectType, subjectId.
+// its side effects: sync to the live published version while the tour is
+// open, or structure-freeze once it closed. Returns the (possibly updated)
+// row + lifecycle. Row needs: id, templateId, versionId, purpose, status,
+// frozenAt, language, subjectType, subjectId.
 async function applyLifecycle(submission) {
-  let lifecycle = submissionLifecycle(submission);
-  if (!lifecycle.liveVersion || submission.frozenAt) return { submission, lifecycle };
+  const base = submissionLifecycle(submission);
+  if (!base.liveVersion) return { submission, lifecycle: base };
+
+  const adapter = submission.subjectType ? getSubjectAdapter(submission.subjectType) : null;
+  const closedAt = adapter?.closedAt ? await adapter.closedAt(submission.subjectId) : null;
 
   let out = submission;
-  const template = await prisma.questionnaireTemplate.findUnique({
-    where: { id: out.templateId },
-    select: { currentVersionId: true, defaultLanguage: true },
-  });
-  const sync = {};
-  if (template?.currentVersionId && template.currentVersionId !== out.versionId) {
-    sync.versionId = template.currentVersionId;
+  if (!out.frozenAt) {
+    if (closedAt) {
+      // Tour closed → structure freeze NOW (version pin + snapshots). Answers
+      // may still be editable within the purpose's post-completion window.
+      await freezeSubmission(out);
+      out = { ...out, frozenAt: new Date() };
+    } else {
+      // Tour still open → follow the CURRENT published version, and normalize
+      // legacy rows that inherited the tour/customer language to the
+      // template's own language (internal forms render RTL Hebrew).
+      const template = await prisma.questionnaireTemplate.findUnique({
+        where: { id: out.templateId },
+        select: { currentVersionId: true, defaultLanguage: true },
+      });
+      const sync = {};
+      if (template?.currentVersionId && template.currentVersionId !== out.versionId) {
+        sync.versionId = template.currentVersionId;
+      }
+      if (template?.defaultLanguage && out.language !== template.defaultLanguage) {
+        sync.language = template.defaultLanguage;
+      }
+      if (Object.keys(sync).length) {
+        await prisma.questionnaireSubmission.update({ where: { id: out.id }, data: sync });
+        out = { ...out, ...sync };
+      }
+    }
   }
-  // Live tour-operational submissions are internal forms — normalize legacy
-  // rows that inherited the tour/customer language to the template's own
-  // language (the RTL fix, applied to pre-existing submissions on read).
-  if (template?.defaultLanguage && out.language !== template.defaultLanguage) {
-    sync.language = template.defaultLanguage;
-  }
-  if (Object.keys(sync).length) {
-    await prisma.questionnaireSubmission.update({ where: { id: out.id }, data: sync });
-    out = { ...out, ...sync };
-  }
-
-  const adapter = out.subjectType ? getSubjectAdapter(out.subjectType) : null;
-  if (adapter?.isLocked && (await adapter.isLocked(out.subjectId))) {
-    await freezeSubmission(out);
-    out = { ...out, frozenAt: new Date() };
-    lifecycle = submissionLifecycle(out);
-    return { submission: out, lifecycle };
-  }
-  return { submission: out, lifecycle: submissionLifecycle(out) };
+  return { submission: out, lifecycle: submissionLifecycle(out, closedAt) };
 }
 
 export async function getSubmission(submissionId) {
@@ -835,7 +844,7 @@ export async function saveDraftAnswers(submissionId, answers) {
   });
   if (!loaded) throw new QError(404, 'submission_not_found');
   const { submission, lifecycle } = await applyLifecycle(loaded);
-  if (lifecycle.frozen) throw new QError(409, 'submission_frozen');
+  if (lifecycle.answersLocked) throw new QError(409, 'submission_frozen');
   if (!lifecycle.editable) throw new QError(409, 'submission_immutable');
 
   const version = await loadVersion(submission.versionId);
@@ -869,7 +878,7 @@ export async function submitSubmission(submissionId, { answers, actor } = {}) {
   });
   if (!loaded) throw new QError(404, 'submission_not_found');
   const { submission, lifecycle } = await applyLifecycle(loaded);
-  if (lifecycle.frozen) throw new QError(409, 'submission_frozen');
+  if (lifecycle.answersLocked) throw new QError(409, 'submission_frozen');
   if (!lifecycle.editable) throw new QError(409, 'submission_immutable');
 
   const version = await loadVersion(submission.versionId);

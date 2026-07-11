@@ -10,7 +10,6 @@
 import { prisma } from '../../db.js';
 import { emitTimelineEvent, systemOrigin } from '../../timeline/events.js';
 import { getPurpose } from '../registry.js';
-import { tourQuestionnairesLocked } from '../../tours/lifecycle.js';
 
 const formLabel = (purpose) => getPurpose(purpose)?.labelHe || purpose;
 
@@ -117,21 +116,22 @@ export const bookingAdapter = {
     return !!auth?.userId;
   },
 
-  // Tour-operational freeze trigger — a booking's questionnaires close with
-  // ITS tour. A booking not yet attached to a tour never locks.
-  async isLocked(subjectId) {
+  // Tour-operational anchor — a booking's questionnaires close with ITS tour.
+  // A booking not yet attached to a tour never closes.
+  async closedAt(subjectId) {
     const b = await prisma.booking.findUnique({
       where: { id: subjectId },
       select: {
         tourEvent: {
-          select: {
-            status: true, date: true, startTime: true,
-            productVariant: { select: { durationHours: true } },
-          },
+          select: { status: true, completedAt: true, cancelledAt: true, updatedAt: true },
         },
       },
     });
-    return tourQuestionnairesLocked(b?.tourEvent);
+    const t = b?.tourEvent;
+    if (!t) return null;
+    if (t.status === 'completed') return t.completedAt || t.updatedAt;
+    if (t.status === 'cancelled') return t.cancelledAt || t.updatedAt;
+    return null;
   },
 
   async onStarted(subjectId, submission, tx) {

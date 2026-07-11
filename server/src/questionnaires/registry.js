@@ -19,8 +19,17 @@
 // registered by ./adapters/index.js, so pure logic stays unit-testable.
 
 // tourOperational purposes follow the tour-operational lifecycle
-// (lifecyclePolicy.js): live definition + editable after submit until the
-// subject's tour closes, then a single historical freeze (frozenAt).
+// (lifecyclePolicy.js). TWO independent freeze concepts, both anchored on the
+// tour's explicit completion (TourEvent.completedAt / cancelledAt):
+//   • STRUCTURE FREEZE — at tour completion: the version pins (frozenAt) and
+//     definition changes stop appearing.
+//   • ANSWER LOCK — completion + answerLockGraceMs: answers become immutable.
+// Coordination locks immediately; the tour summary keeps a post-completion
+// edit window (guides remember details the next day).
+
+// The ONE configurable constant for the tour summary's post-completion window.
+export const SUMMARY_POST_COMPLETION_EDIT_MS = 48 * 60 * 60 * 1000;
+
 const PURPOSES = {
   // Guide debrief after a tour — PER-GUIDE: every required guide (lead_guide /
   // guide) files their OWN summary; actorScope (the guide's externalPersonId)
@@ -33,6 +42,7 @@ const PURPOSES = {
     singleton: true,
     perActor: true,
     tourOperational: true,
+    answerLockGraceMs: SUMMARY_POST_COMPLETION_EDIT_MS,
   },
   // Internal coordination-call form — one active submission per Booking.
   // Staff-only BY PRODUCT DECISION: the operator/guide fills it during the
@@ -44,6 +54,7 @@ const PURPOSES = {
     audience: 'staff',
     singleton: true,
     tourOperational: true,
+    answerLockGraceMs: 0,
   },
   // Unbound generic questionnaires (surveys, internal forms). No subject
   // required; multiple submissions allowed.

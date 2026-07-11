@@ -195,7 +195,20 @@ export default function QuestionnaireFillDialog({
                   ? ` · ${new Date(data.submission.submittedAt).toLocaleDateString('he-IL')}`
                   : ''}
                 {data.submission.submittedByName ? ` · ${data.submission.submittedByName}` : ''}
-                {' — אפשר להמשיך לעדכן תשובות עד לסגירת הסיור.'}
+                {' — אפשר להמשיך לעדכן תשובות.'}
+              </div>
+            ) : null}
+            {data.lifecycle?.structureFrozen && !data.lifecycle?.answersLocked ? (
+              // The tour completed: definition is pinned, answers stay open
+              // through the purpose's post-completion window (summary: 48h).
+              <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] text-amber-800">
+                ⏳ הסיור הסתיים — אפשר עדיין לעדכן את התשובות
+                {data.lifecycle.lockAt
+                  ? ` עד ${new Date(data.lifecycle.lockAt).toLocaleString('he-IL', {
+                      day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+                    })}`
+                  : ''}
+                .
               </div>
             ) : null}
             <QuestionnaireRuntime
@@ -246,7 +259,7 @@ export default function QuestionnaireFillDialog({
 
         {phase === 'view' && data ? (
           <>
-            {data.lifecycle?.frozen ? (
+            {data.lifecycle?.liveVersion && data.lifecycle?.answersLocked ? (
               <div className="mb-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[13px] text-gray-600">
                 📁 הסיור הסתיים — הטופס נשמר כתיעוד היסטורי ואינו ניתן לעריכה.
                 {data.submission.submittedAt
