@@ -299,7 +299,21 @@ router.get(
       include: PERSON_INCLUDE,
     });
     if (!person) return res.status(404).json({ error: 'not found' });
-    res.json(person);
+    // Same derived metrics as the list (computed, never stored) — the
+    // profile hero shows tours worked + open training content.
+    const [toursCount, grants] = await Promise.all([
+      prisma.tourAssignment.count({ where: { externalPersonId: person.externalPersonId } }),
+      prisma.guideStationAccess.findMany({
+        where: { personRefId: person.id },
+        select: { station: { select: { tourId: true } } },
+      }),
+    ]);
+    res.json({
+      ...person,
+      toursCount,
+      trainingStations: grants.length,
+      trainingTours: new Set(grants.map((g) => g.station?.tourId).filter(Boolean)).size,
+    });
   }),
 );
 
@@ -367,7 +381,8 @@ router.put(
 router.put(
   '/:id/profile',
   handle(async (req, res) => {
-    const { imageUrl, description, notes, bankDetails } = req.body || {};
+    const { imageUrl, description, notes, bankDetails, trainingStartDate, trainingCohort } =
+      req.body || {};
     const data = {};
     if (imageUrl !== undefined) {
       data.imageUrl = imageUrl || null;
@@ -380,6 +395,16 @@ router.put(
     }
     if (description !== undefined) data.description = description || null;
     if (notes !== undefined) data.notes = notes || null;
+    if (trainingStartDate !== undefined) {
+      const d = String(trainingStartDate || '').trim();
+      if (d && !/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+        return res.status(400).json({ error: 'invalid_training_start_date' });
+      }
+      data.trainingStartDate = d || null;
+    }
+    if (trainingCohort !== undefined) {
+      data.trainingCohort = String(trainingCohort || '').trim().slice(0, 80) || null;
+    }
     // Every bank write is normalized to the ONE structured shape (legacy
     // free-form JSON degrades to nulls and gets replaced on first save).
     if (bankDetails !== undefined) {
@@ -388,21 +413,31 @@ router.put(
 
     const before = await prisma.personProfile.findUnique({
       where: { personRefId: req.params.id },
-      select: { imageUrl: true, bankDetails: true },
+      select: {
+        imageUrl: true,
+        bankDetails: true,
+        trainingStartDate: true,
+        trainingCohort: true,
+      },
     });
     const profile = await prisma.personProfile.upsert({
       where: { personRefId: req.params.id },
       update: data,
       create: { personRefId: req.params.id, ...data },
     });
-    // Changelog for the tracked profile fields (imageUrl + bank). description
-    // and internal notes are deliberately untracked (admin working notes).
+    // Changelog for the tracked profile fields (imageUrl, training facts,
+    // bank). description and internal notes are deliberately untracked
+    // (admin working notes).
     const beforeSnap = personChangeSnapshot(null, before);
     const afterSnap = personChangeSnapshot(null, profile);
     await recordPersonChanges(prisma, {
       personRefId: req.params.id,
       changes: diffPersonFields(beforeSnap, {
         ...(imageUrl !== undefined ? { imageUrl: afterSnap.imageUrl } : {}),
+        ...(trainingStartDate !== undefined
+          ? { trainingStartDate: afterSnap.trainingStartDate }
+          : {}),
+        ...(trainingCohort !== undefined ? { trainingCohort: afterSnap.trainingCohort } : {}),
         ...(bankDetails !== undefined
           ? {
               beneficiary: afterSnap.beneficiary,
@@ -489,11 +524,15 @@ router.post(
         where: { id: person.id },
         data: { [fieldKey]: restored },
       });
-    } else if (fieldKey === 'imageUrl') {
+    } else if (
+      fieldKey === 'imageUrl' ||
+      fieldKey === 'trainingStartDate' ||
+      fieldKey === 'trainingCohort'
+    ) {
       await prisma.personProfile.upsert({
         where: { personRefId: person.id },
-        update: { imageUrl: restored },
-        create: { personRefId: person.id, imageUrl: restored },
+        update: { [fieldKey]: restored },
+        create: { personRefId: person.id, [fieldKey]: restored },
       });
     } else {
       // Bank family — merge the restored logical field into the structured

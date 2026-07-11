@@ -68,13 +68,14 @@ export default function PersonProfile() {
   return (
     <div className="max-w-4xl mx-auto p-4 lg:p-6 space-y-6">
       <BackLink />
-      <ProfileHeader person={person} onChanged={refresh} onDeleted={() => navigate('/admin/people')} />
-      {/* Staff (management) edit identity INLINE in the header above — it is the
-          single primary identity editor. Only trainees (recruitment-mirrored)
-          get the read-only identity card here. */}
+      {/* Read-first hero — identity at a glance. Editing lives below. */}
+      <ProfileHero person={person} onChanged={refresh} />
+      <IdentityAccessSection person={person} onChanged={refresh} onDeleted={() => navigate('/admin/people')} />
+      {/* Trainees (recruitment-mirrored) also get the read-only identity card. */}
       {person.identitySource !== IDENTITY_SOURCES.MANAGEMENT && (
         <IdentitySection person={person} onChanged={refresh} />
       )}
+      <TrainingFactsSection person={person} onChanged={refresh} />
       <TeamSection person={person} teams={teams} onChanged={refresh} />
       <ProfileSection person={person} onChanged={refresh} />
       <BankSection person={person} onChanged={refresh} />
@@ -89,9 +90,111 @@ function BackLink() {
   return <BackButton onClick={() => window.history.back()} label="חזרה לרשימה" />;
 }
 
-// ── Header ──────────────────────────────────────────────────────────────────
+// ── Hero — display-first header ("This is Avi", not "this is a form") ──────
+//
+// The first screen SHOWS the person: photo, name, role, status, contact and
+// the key operational facts. Everything editable moved down into the tabs
+// (IdentityAccessSection there keeps the exact same logic — relocated only).
 
-function ProfileHeader({ person, onChanged, onDeleted }) {
+const LIFECYCLE_ROLE_LABELS = {
+  staff: 'מדריך',
+  trainee: 'מתלמד',
+  former: 'עזב',
+};
+
+function fmtDateHe(ymd) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd || '');
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : null;
+}
+
+function ProfileHero({ person, onChanged }) {
+  const facts = [
+    { label: 'תחילת הדרכות', value: fmtDateHe(person.profile?.trainingStartDate) },
+    { label: 'מחזור הכשרה', value: person.profile?.trainingCohort },
+    {
+      label: 'מערכי הדרכה פתוחים',
+      value: person.trainingStations > 0 ? String(person.trainingStations) : null,
+      sub: person.trainingTours > 0 ? `ב־${person.trainingTours} מערכים` : 'תחנות',
+    },
+    {
+      label: 'סיורים',
+      value: person.toursCount > 0 ? String(person.toursCount) : null,
+      sub: 'סה״כ שיבוצים',
+    },
+  ];
+
+  return (
+    <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm lg:p-6">
+      <div className="flex flex-wrap items-start gap-5">
+        {/* The avatar stays the shared editable one — clicking opens the crop
+            editor; that's identity care, not form-editing. */}
+        <ProfileImage person={person} onChanged={onChanged} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-bold tracking-tight text-gray-900">
+              {person.displayName}
+            </h1>
+            <StatusChip status={person.status} />
+          </div>
+          <div className="mt-0.5 text-[14px] text-gray-500">
+            {LIFECYCLE_ROLE_LABELS[person.lifecycleHint] || 'ללא סיווג'}
+            {person.team?.displayName ? ` · ${person.team.displayName}` : ''}
+          </div>
+          <div className="mt-3 flex flex-col gap-1.5 text-[13.5px] text-gray-700">
+            {person.email && (
+              <div className="flex items-center gap-2">
+                <HeroIcon d="M4 6h16v12H4z M4 7l8 6 8-6" />
+                <span dir="ltr">{person.email}</span>
+              </div>
+            )}
+            {person.phone && (
+              <div className="flex items-center gap-2">
+                <HeroIcon d="M6 3h4l1.5 5-2.5 1.5a12 12 0 0 0 5.5 5.5L16 12.5l5 1.5v4a2 2 0 0 1-2 2A16 16 0 0 1 4 5a2 2 0 0 1 2-2" />
+                <span dir="ltr" className="tabular-nums">{person.phone}</span>
+              </div>
+            )}
+            {person.profile?.trainingStartDate && (
+              <div className="flex items-center gap-2 text-gray-500">
+                <HeroIcon d="M7 3v3M17 3v3M4 8h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" />
+                חבר צוות מאז: {fmtDateHe(person.profile.trainingStartDate)}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Key operational facts — quiet stat tiles, list-scan friendly. */}
+      <div className="mt-5 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+        {facts.map((f) => (
+          <div key={f.label} className="rounded-xl border border-gray-100 bg-gray-50/60 px-3.5 py-3">
+            <div className="text-[11.5px] font-medium text-gray-500">{f.label}</div>
+            <div className="mt-0.5 truncate text-[17px] font-bold text-gray-900">
+              {f.value || <span className="font-normal text-gray-300">—</span>}
+            </div>
+            {f.value && f.sub && (
+              <div className="text-[11px] text-gray-400">{f.sub}</div>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function HeroIcon({ d }) {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-gray-400" aria-hidden>
+      <path d={d} />
+    </svg>
+  );
+}
+
+// ── Identity + access management (was the header) ───────────────────────────
+// The exact editing/portal/lifecycle controls that used to dominate the
+// header — logic untouched, relocated below the hero (into the technical
+// tab). Renders WITHOUT the avatar (the hero owns it now).
+
+function IdentityAccessSection({ person, onChanged, onDeleted }) {
   const portalUrl = `${window.location.origin}/p/${person.portalToken}`;
   const [copied, setCopied] = useState(false);
   const [rotating, setRotating] = useState(false);
@@ -214,9 +317,8 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
   }
 
   return (
-    <section>
-      <div className="bg-white border border-gray-200 rounded-lg p-4 flex items-start gap-4">
-        <ProfileImage person={person} onChanged={onChanged} />
+    <Section title="זהות וגישה">
+      <div className="flex items-start gap-4">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             {isManagement ? (
@@ -226,20 +328,14 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
                 onChange={(e) => setIdForm({ ...idForm, displayName: e.target.value })}
                 placeholder="שם מלא"
                 aria-label="שם מלא"
-                className="text-xl font-semibold text-gray-900 bg-transparent border-b border-dashed border-gray-300 hover:border-gray-400 focus:border-emerald-500 focus:outline-none px-0.5 min-w-[8rem] flex-1"
+                className="text-lg font-semibold text-gray-900 bg-transparent border-b border-dashed border-gray-300 hover:border-gray-400 focus:border-emerald-500 focus:outline-none px-0.5 min-w-[8rem] flex-1"
               />
             ) : (
-              <h1 className="text-xl font-semibold text-gray-900 truncate">
+              <div className="text-lg font-semibold text-gray-900 truncate">
                 {person.displayName}
-              </h1>
+              </div>
             )}
-            <StatusChip status={person.status} />
             <LifecycleChip lifecycle={person.lifecycleHint} />
-            {person.team && (
-              <span className="text-[11px] bg-gray-100 text-gray-700 rounded px-2 py-0.5">
-                {person.team.displayName}
-              </span>
-            )}
           </div>
           <div className="mt-1 text-[12px] text-gray-500 font-mono" dir="ltr">
             {person.externalPersonId}
@@ -370,7 +466,7 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
         </div>
       </div>
 
-      <div className="mt-2 text-[12px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+      <div className="mt-3 text-[12px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2">
         הטוקן = גישה. אל תשתפו בפומבי, החליפו אם דלף.
       </div>
 
@@ -395,7 +491,80 @@ function ProfileHeader({ person, onChanged, onDeleted }) {
           onConfirm={confirmAcceptToTeam}
         />
       )}
-    </section>
+    </Section>
+  );
+}
+
+// ── Training onboarding facts (תחילת הדרכה / מחזור הכשרה) ───────────────────
+// Two management-owned fields on PersonProfile; changes land in the person
+// changelog like every other tracked profile field.
+
+function TrainingFactsSection({ person, onChanged }) {
+  const stored = person.profile || {};
+  const baseline = {
+    trainingStartDate: stored.trainingStartDate || '',
+    trainingCohort: stored.trainingCohort || '',
+  };
+  const [form, setForm] = useState(baseline);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    setForm({
+      trainingStartDate: stored.trainingStartDate || '',
+      trainingCohort: stored.trainingCohort || '',
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [person]);
+  const dirty =
+    form.trainingStartDate !== baseline.trainingStartDate ||
+    form.trainingCohort !== baseline.trainingCohort;
+  useDirtyForm(dirty);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await api.people.updateProfile(person.id, {
+        trainingStartDate: form.trainingStartDate || null,
+        trainingCohort: form.trainingCohort || null,
+      });
+      await onChanged();
+    } catch (e) {
+      window.alert('שמירה נכשלה: ' + (e.payload?.error || e.message));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Section title="הכשרה">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="תאריך תחילת הדרכות">
+          <input
+            type="date"
+            value={form.trainingStartDate}
+            onChange={(e) => setForm((f) => ({ ...f, trainingStartDate: e.target.value }))}
+            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+          />
+        </Field>
+        <Field label="מחזור הכשרה">
+          <input
+            type="text"
+            value={form.trainingCohort}
+            placeholder='למשל: "מרץ 2026" או "מחזור 14"'
+            onChange={(e) => setForm((f) => ({ ...f, trainingCohort: e.target.value }))}
+            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+          />
+        </Field>
+      </div>
+      <div className="flex justify-end pt-3">
+        <button
+          onClick={save}
+          disabled={saving || !dirty}
+          className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-md font-medium disabled:opacity-50"
+        >
+          {saving ? 'שומר…' : 'שמירה'}
+        </button>
+      </div>
+    </Section>
   );
 }
 
