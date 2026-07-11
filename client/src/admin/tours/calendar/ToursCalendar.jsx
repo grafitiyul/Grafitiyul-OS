@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../../lib/api.js';
 import {
-  TOUR_STATUS_EVENT_STYLES,
   TOUR_STATUS_LABELS,
   statusFilterMatches,
   fmtTourDate,
@@ -18,7 +17,7 @@ import {
   timeToMinutes,
   todayIL,
 } from './dates.js';
-import { staffColorHex } from '../../../../../shared/staffColors.mjs';
+import { calendarEventVisual, isUnassignedScheduled } from './eventVisuals.js';
 
 // לוח שנה — the Admin Tours calendar. STRICTLY a second VIEW of the same
 // TourEvent data as the table: same status filter vocabulary, same Tour modal
@@ -26,35 +25,11 @@ import { staffColorHex } from '../../../../../shared/staffColors.mjs';
 // click-to-create, no date editing anywhere (dates change only through the
 // Deal's Pending Tour Update flow). Data comes from the lean
 // /api/tours/calendar range DTO — only the visible range is ever fetched.
+//
+// Event coloring lives in eventVisuals.js (calendar-specific FULL-color
+// intensity of the one canonical guide-color rule + status layering).
 
 const WEEKDAY_HEADERS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
-
-// Event coloring — guide identity vs. status are LAYERED, never merged:
-//   * scheduled  → guide color owns the event (tinted bg + saturated start
-//                  edge); no color → the status style as before.
-//   * completed  → guide identity stays recognizable but muted (lighter
-//                  tint) + the existing "הסתיים" label line.
-//   * cancelled / postponed → the STATUS style stays fully dominant (red /
-//                  amber) regardless of any guide color.
-// `ev.guideColor` is the server-derived canonical value (one resolver rule
-// for every surface); this helper only translates it to a visual.
-function eventAccent(ev) {
-  const hex = staffColorHex(ev.guideColor);
-  if (!hex || ev.status === 'cancelled' || ev.status === 'postponed') {
-    return {
-      cls: TOUR_STATUS_EVENT_STYLES[ev.status] || TOUR_STATUS_EVENT_STYLES.scheduled,
-      style: undefined,
-    };
-  }
-  const muted = ev.status === 'completed';
-  return {
-    cls: 'text-gray-800 hover:brightness-[0.97]',
-    style: {
-      backgroundColor: `${hex}${muted ? '0D' : '1F'}`,
-      borderInlineStartColor: hex,
-    },
-  };
-}
 
 // Time-grid window (week/day views). Tours are daytime work; events outside
 // the window are clamped into it rather than hidden.
@@ -313,18 +288,28 @@ function MonthView({ weeks, monthStart, byDate, today, onOpenTour, onOpenDay }) 
 }
 
 function MonthEvent({ ev, onOpen }) {
-  const accent = eventAccent(ev);
+  const visual = calendarEventVisual(ev);
   return (
     <button
       type="button"
       onClick={onOpen}
       title={eventTooltip(ev)}
-      style={accent.style}
-      className={`block w-full truncate rounded border-s-2 px-1 py-0.5 text-right text-[11px] leading-tight ${accent.cls}`}
+      style={visual.style}
+      // Full-color pill (solid) or the shared status style (start-edge
+      // border). Dense on purpose: minimal padding, nearly full cell width,
+      // truncation instead of wrapping — the tooltip carries the full text.
+      className={`block w-full truncate rounded-md px-1.5 py-0.5 text-right text-[11px] leading-[1.4] ${
+        visual.fg ? '' : 'border-s-2'
+      } ${visual.cls}`}
     >
+      {/* Status must never rely on color alone: ✓ = completed, ✕ = cancelled. */}
+      {ev.status === 'completed' && <span aria-hidden>✓ </span>}
+      {ev.status === 'cancelled' && <span aria-hidden>✕ </span>}
       <span className="tabular-nums font-semibold" dir="ltr">{ev.startTime}</span>{' '}
-      <span className="font-medium">{ev.productName || 'סיור'}</span>
-      {ev.participants > 0 && <span className="text-[10px] opacity-75"> · {ev.participants}</span>}
+      <span className={`font-semibold ${ev.status === 'cancelled' ? 'line-through' : ''}`}>
+        {ev.productName || 'סיור'}
+      </span>
+      {ev.participants > 0 && <span className="text-[10px] opacity-80"> · {ev.participants}</span>}
     </button>
   );
 }
@@ -413,16 +398,18 @@ function DayColumn({ day, hours, events, isToday, onOpenTour, detailed }) {
         const top = ((start - GRID_START_MIN) / GRID_TOTAL_MIN) * 100;
         const height = Math.max(((end - start) / GRID_TOTAL_MIN) * 100, 3.5);
         const width = 100 / lanes;
-        const accent = eventAccent(ev);
+        const visual = calendarEventVisual(ev);
         return (
           <button
             key={ev.id}
             type="button"
             onClick={() => onOpenTour(ev.id)}
             title={eventTooltip(ev)}
-            className={`absolute overflow-hidden rounded-md border-s-[3px] p-1 text-right text-[11px] leading-tight shadow-sm ${accent.cls}`}
+            className={`absolute overflow-hidden rounded-md p-1 text-right text-[11px] leading-tight shadow-sm ${
+              visual.fg ? '' : 'border-s-[3px]'
+            } ${visual.cls}`}
             style={{
-              ...accent.style,
+              ...visual.style,
               top: `${top}%`,
               height: `${height}%`,
               right: `${lane * width}%`,
@@ -433,14 +420,20 @@ function DayColumn({ day, hours, events, isToday, onOpenTour, detailed }) {
               {ev.startTime}
               {endTimeOf(ev.startTime, ev.durationHours) ? `–${endTimeOf(ev.startTime, ev.durationHours)}` : ''}
             </div>
-            <div className="truncate font-bold">{ev.productName || 'סיור'}</div>
+            <div className={`truncate font-bold ${ev.status === 'cancelled' ? 'line-through' : ''}`}>
+              {ev.productName || 'סיור'}
+            </div>
             {ev.city && <div className="truncate">{ev.city}</div>}
-            <div className="truncate opacity-80">
+            <div className="truncate opacity-85">
               {ev.participants > 0 && <>👥 {ev.participants}{ev.capacity != null ? `/${ev.capacity}` : ''} </>}
               {ev.leadGuideName || (ev.teamCount > 0 ? `${ev.teamCount} מדריכים` : '')}
             </div>
             {detailed && ev.components?.length > 0 && (
-              <div className="truncate opacity-70">{ev.components.join(' · ')}</div>
+              <div className="truncate opacity-75">{ev.components.join(' · ')}</div>
+            )}
+            {/* Black ≠ cancelled: an unassigned scheduled tour says so in text. */}
+            {isUnassignedScheduled(ev) && (
+              <div className="mt-0.5 text-[10px] font-bold opacity-90">לא משובץ</div>
             )}
             {ev.status !== 'scheduled' && (
               <div className="mt-0.5 text-[10px] font-bold">{TOUR_STATUS_LABELS[ev.status]}</div>
@@ -459,6 +452,7 @@ function eventTooltip(ev) {
     `סטטוס: ${TOUR_STATUS_LABELS[ev.status] || ev.status}`,
     ev.participants > 0 ? `משתתפים: ${ev.participants}${ev.capacity != null ? ` / ${ev.capacity}` : ''}` : null,
     ev.leadGuideName ? `מדריך ראשי: ${ev.leadGuideName}` : null,
+    isUnassignedScheduled(ev) ? 'לא משובץ מדריך' : null,
     ev.components?.length ? `פעילויות: ${ev.components.join(', ')}` : null,
   ]
     .filter(Boolean)

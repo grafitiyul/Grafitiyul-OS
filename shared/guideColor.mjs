@@ -14,11 +14,24 @@
 // person's canonical palette key (or null). Output: palette key | null.
 
 export function resolveTourGuideColor(assignments) {
+  return resolveTourGuideColorInfo(assignments).color;
+}
+
+// Same rule, with SEMANTIC metadata — the calendar needs to distinguish
+// "no relevant guide at all" (source: 'unassigned' → black event) from
+// "relevant guides exist but no single color wins" (source: 'neutral' →
+// the existing default look). Assistant-only teams count as unassigned.
+//   → { color: paletteKey|null, source: 'guide'|'neutral'|'unassigned' }
+export function resolveTourGuideColorInfo(assignments) {
   const relevant = (assignments || []).filter(
     (a) => a && (a.role === 'lead_guide' || a.role === 'guide'),
   );
-  if (relevant.length === 0) return null;
-  if (relevant.length === 1) return relevant[0].color || null;
-  const lead = relevant.find((a) => a.role === 'lead_guide');
-  return lead ? lead.color || null : null;
+  if (relevant.length === 0) return { color: null, source: 'unassigned' };
+  let color = null;
+  if (relevant.length === 1) color = relevant[0].color || null;
+  else {
+    const lead = relevant.find((a) => a.role === 'lead_guide');
+    color = lead ? lead.color || null : null;
+  }
+  return { color, source: color ? 'guide' : 'neutral' };
 }

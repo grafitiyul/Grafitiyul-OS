@@ -23,7 +23,7 @@ import { seedTourComponents } from '../tours/tourComponents.js';
 import { scheduleGalleryCleanup } from '../tours/gallery/service.js';
 import { summaryCompletionState, completeTour, reopenTour } from '../tours/completion.js';
 import { isAssignableStaff } from '../people/eligibility.js';
-import { resolveTourGuideColor } from '../../../shared/guideColor.mjs';
+import { resolveTourGuideColor, resolveTourGuideColorInfo } from '../../../shared/guideColor.mjs';
 import {
   calendarPendingPatch,
   patchTouchesCalendar,
@@ -248,6 +248,10 @@ router.get(
       events: tours.map((t) => {
         const o = occ[t.id] || { activeSeats: 0, activeBookings: 0 };
         const lead = t.assignments.find((a) => a.role === 'lead_guide');
+        // Guide identity accent — canonical rule (shared/guideColor.mjs) WITH
+        // semantics: 'unassigned' (no relevant guide at all) renders black on
+        // the calendar; 'neutral' (guides exist, no single color) stays default.
+        const colorInfo = resolveTourGuideColorInfo(toColorAssignments(t.assignments));
         return {
           id: t.id,
           kind: t.kind,
@@ -263,8 +267,8 @@ router.get(
           notes: t.notes,
           leadGuideName: lead?.displayName || null,
           teamCount: t.assignments.length,
-          // Guide identity accent — canonical rule (shared/guideColor.mjs).
-          guideColor: resolveTourGuideColor(toColorAssignments(t.assignments)),
+          guideColor: colorInfo.color,
+          guideColorSource: colorInfo.source,
           components: t.activityComponents
             .map((c) => c.activityComponent?.nameHe)
             .filter(Boolean),
