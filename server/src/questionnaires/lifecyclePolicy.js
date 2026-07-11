@@ -33,6 +33,23 @@ export function purposeLifecycle(purposeKey) {
   };
 }
 
+// Live-version follow (tour-operational, NOT yet frozen): the ONE decision of
+// what an open submission syncs to on read — the template's CURRENT published
+// version, and the template's own language (internal staff forms render in
+// the template language; legacy rows that inherited a customer language are
+// normalized). Returns a (possibly empty) patch; answers are never part of it
+// — they are keyed by questionKey and survive version syncs untouched.
+export function liveVersionSyncPatch(row, template) {
+  const patch = {};
+  if (template?.currentVersionId && template.currentVersionId !== row.versionId) {
+    patch.versionId = template.currentVersionId;
+  }
+  if (template?.defaultLanguage && row.language !== template.defaultLanguage) {
+    patch.language = template.defaultLanguage;
+  }
+  return patch;
+}
+
 // row: { purpose, status, frozenAt } + closedAt (Date|null — when the tour
 // completed/cancelled; null while it is still live).
 export function submissionLifecycle(row, closedAt = null, nowMs = Date.now()) {

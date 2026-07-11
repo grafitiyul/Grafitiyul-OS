@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { purposeLifecycle, submissionLifecycle } from './lifecyclePolicy.js';
+import { purposeLifecycle, submissionLifecycle, liveVersionSyncPatch } from './lifecyclePolicy.js';
 import { SUMMARY_POST_COMPLETION_EDIT_MS } from './registry.js';
 
 // The decision table behind the lifecycle families. Tour-operational purposes
@@ -87,4 +87,50 @@ test('unknown purpose falls back to the classic lifecycle', () => {
   const p = purposeLifecycle('does_not_exist');
   assert.equal(p.liveVersion, false);
   assert.equal(p.editableAfterSubmit, false);
+});
+
+// ── live-version follow (the current-version resolution for open drafts) ────
+// Regression for the "one-question Tour Summary" production gap: a draft
+// started on an OLD version must resolve to the template's CURRENT published
+// version on load, as long as the tour has not reached the structure freeze.
+// (Answers are keyed by questionKey and are never part of the sync patch —
+// compatible answers survive the upgrade by construction.)
+
+test('draft on an old version follows the current published version while the tour is open', () => {
+  const row = { versionId: 'v1', language: 'he' };
+  const template = { currentVersionId: 'v2', defaultLanguage: 'he' };
+  assert.deepEqual(liveVersionSyncPatch(row, template), { versionId: 'v2' });
+
+  // Already current → nothing to sync (no writes on a clean read).
+  assert.deepEqual(
+    liveVersionSyncPatch({ versionId: 'v2', language: 'he' }, template),
+    {},
+  );
+});
+
+test('legacy customer-language rows normalize to the template language on the same sync', () => {
+  const patch = liveVersionSyncPatch(
+    { versionId: 'v1', language: 'en' },
+    { currentVersionId: 'v2', defaultLanguage: 'he' },
+  );
+  assert.deepEqual(patch, { versionId: 'v2', language: 'he' });
+});
+
+test('a template without a published version never produces a version sync', () => {
+  assert.deepEqual(
+    liveVersionSyncPatch({ versionId: 'v1', language: 'he' }, { currentVersionId: null, defaultLanguage: 'he' }),
+    {},
+  );
+  assert.deepEqual(liveVersionSyncPatch({ versionId: 'v1', language: 'he' }, null), {});
+});
+
+test('after the structure freeze the lifecycle reports frozen — sync is not consulted', () => {
+  // applyLifecycle only calls liveVersionSyncPatch while frozenAt is null;
+  // this asserts the flag that gates it.
+  const lc = submissionLifecycle(
+    { purpose: 'tour_summary', status: 'draft', frozenAt: new Date(NOW - 1000) },
+    hoursAgo(1),
+    NOW,
+  );
+  assert.equal(lc.structureFrozen, true);
 });

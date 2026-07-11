@@ -191,13 +191,12 @@ export default function TourPage() {
   const [historyOpen, setHistoryOpen] = useState(false); // collapsed by default
   const [confirmDelete, setConfirmDelete] = useState(false);
   // Tour Summary forms (generic questionnaire engine, purpose=tour_summary).
-  // PER-GUIDE: each required guide (lead_guide / guide) files their own
+  // PER-GUIDE ONLY: each required guide (lead_guide / guide) files their own
   // summary; `summaryOpen` targets one guide's form ({ actorScope, title }).
-  // A legacy shared summary (actorScope null, pre per-guide model) still
-  // renders as its own row so old data stays reachable.
-  const [summaryOpen, setSummaryOpen] = useState(null); // { actorScope, title, legacyId? } | null
+  // The pre-per-guide shared summary (actorScope null) is retired — the engine
+  // refuses to create one and the UI no longer renders one.
+  const [summaryOpen, setSummaryOpen] = useState(null); // { actorScope, title } | null
   const [summaryByScope, setSummaryByScope] = useState({}); // actorScope → status
-  const [legacySummary, setLegacySummary] = useState(null); // { id, status } | null
   // Manual "סמן סיור כהסתיים" — the confirm dialog lists required guides whose
   // summaries are still missing (completion happens anyway after confirm).
   const [confirmComplete, setConfirmComplete] = useState(null); // { missing: [...] } | null
@@ -215,11 +214,8 @@ export default function TourPage() {
       setSummaryByScope(
         Object.fromEntries(active.filter((s) => s.actorScope).map((s) => [s.actorScope, s.status])),
       );
-      const legacy = active.find((s) => !s.actorScope);
-      setLegacySummary(legacy ? { id: legacy.id, status: legacy.status } : null);
     } catch {
       setSummaryByScope({}); // status chips are cosmetic — never block the page
-      setLegacySummary(null);
     }
   }, [id]);
 
@@ -510,7 +506,7 @@ export default function TourPage() {
                   );
                   return (
                     <div className="mb-2.5 space-y-2">
-                      {requiredGuides.length === 0 && !legacySummary ? (
+                      {requiredGuides.length === 0 ? (
                         <div className="text-[12.5px] text-gray-400">
                           אין מדריכים משובצים — טופס סיכום נפתח לכל מדריך משובץ.
                         </div>
@@ -538,20 +534,6 @@ export default function TourPage() {
                           </div>
                         );
                       })}
-                      {legacySummary ? (
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="min-w-0 truncate text-[13px] text-gray-500">
-                            טופס משותף (מהמודל הישן)
-                          </div>
-                          <FormActionButton
-                            label="פתיחת הטופס"
-                            status={legacySummary.status}
-                            onClick={() =>
-                              setSummaryOpen({ legacyId: legacySummary.id, title: 'טופס סיכום סיור' })
-                            }
-                          />
-                        </div>
-                      ) : null}
                     </div>
                   );
                 })()}
@@ -630,19 +612,6 @@ export default function TourPage() {
           actorScope={summaryOpen.actorScope || null}
           title={summaryOpen.title}
           onStatusChange={() => refreshSummaryStatus()}
-          // Legacy shared summary (pre per-guide): resolved by id — a perActor
-          // start would refuse it, so the transport loads it directly.
-          transport={
-            summaryOpen.legacyId
-              ? {
-                  load: () => api.questionnaires.getSubmission(summaryOpen.legacyId),
-                  saveAnswers: (sid, answers) => api.questionnaires.saveAnswers(sid, answers),
-                  submit: (sid, answers) => api.questionnaires.submit(sid, answers),
-                  voidSubmission: (sid) => api.questionnaires.voidSubmission(sid),
-                  uploadAnswerFile: (file) => api.questionnaires.uploadAnswerFile(file),
-                }
-              : null
-          }
         />
       ) : null}
 

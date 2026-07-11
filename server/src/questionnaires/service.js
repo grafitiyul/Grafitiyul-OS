@@ -27,7 +27,7 @@ import { isKnownType, typeHasOptions } from './types.js';
 import { validateVersionForPublish } from './publishRules.js';
 import { validateSubmissionAnswers, sanitizeDraftAnswers } from './validation.js';
 import { getPurpose, isValidPurpose, purposeAllowsSubject, getSubjectAdapter } from './registry.js';
-import { submissionLifecycle } from './lifecyclePolicy.js';
+import { submissionLifecycle, liveVersionSyncPatch } from './lifecyclePolicy.js';
 import { buildAnswerChanges } from './answerDiff.js';
 
 // Typed service error → routes translate to HTTP without string-matching.
@@ -794,18 +794,13 @@ async function applyLifecycle(submission) {
     } else {
       // Tour still open → follow the CURRENT published version, and normalize
       // legacy rows that inherited the tour/customer language to the
-      // template's own language (internal forms render RTL Hebrew).
+      // template's own language (internal forms render RTL Hebrew). The
+      // decision itself is the pure liveVersionSyncPatch (lifecyclePolicy).
       const template = await prisma.questionnaireTemplate.findUnique({
         where: { id: out.templateId },
         select: { currentVersionId: true, defaultLanguage: true },
       });
-      const sync = {};
-      if (template?.currentVersionId && template.currentVersionId !== out.versionId) {
-        sync.versionId = template.currentVersionId;
-      }
-      if (template?.defaultLanguage && out.language !== template.defaultLanguage) {
-        sync.language = template.defaultLanguage;
-      }
+      const sync = liveVersionSyncPatch(out, template);
       if (Object.keys(sync).length) {
         await prisma.questionnaireSubmission.update({ where: { id: out.id }, data: sync });
         out = { ...out, ...sync };
