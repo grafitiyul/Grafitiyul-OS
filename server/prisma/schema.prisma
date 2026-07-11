@@ -3102,6 +3102,30 @@ model TourSettings {
   updatedAt         DateTime @updatedAt
 }
 
+// Guide Portal permissions — a singleton row (id='singleton'), created lazily
+// on first read (same convention as TourSettings / TourGallerySettings).
+// These are SERVER-ENFORCED: every guide-facing /api/portal route resolves
+// them and gates data/actions on the server, never by hiding buttons.
+// Gallery delete/share stay on TourGallerySettings (the gallery SSOT) —
+// deliberately NOT duplicated here.
+model GuidePortalSettings {
+  id                   String   @id @default("singleton")
+  viewTeam             Boolean  @default(true)
+  viewParticipantPhone Boolean  @default(true)
+  viewParticipantEmail Boolean  @default(true)
+  viewCustomerInfo     Boolean  @default(true)
+  viewFieldRep         Boolean  @default(true)
+  fillTourSummary      Boolean  @default(true)
+  useTourGallery       Boolean  @default(true)
+  useCoordinationForms Boolean  @default(true)
+  viewPastTours        Boolean  @default(true)
+  viewPay              Boolean  @default(true)
+  viewProcedures       Boolean  @default(true)
+  viewTraining         Boolean  @default(true)
+  editPersonalProfile  Boolean  @default(true)
+  updatedAt            DateTime @updatedAt
+}
+
 // Guide assignment — a staff member (PersonRef, the GOS staff SSOT) working a
 // specific TourEvent. The ROLE lives on the assignment, not the person: the
 // same guide can lead on Tuesday and assist on Thursday. Role changes UPDATE

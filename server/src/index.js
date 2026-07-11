@@ -17,7 +17,9 @@ import teamsRouter from './routes/teams.js';
 import peopleRouter from './routes/people.js';
 import exportsRouter from './routes/exports.js';
 import portalRouter from './routes/portal.js';
+import portalToursRouter from './routes/portalTours.js';
 import portalGalleryRouter from './routes/portalGallery.js';
+import guidePortalSettingsRouter from './routes/guidePortalSettings.js';
 import publicGalleryRouter from './routes/publicGallery.js';
 import adminUsersRouter from './routes/adminUsers.js';
 import organizationsRouter from './routes/organizations.js';
@@ -182,6 +184,9 @@ app.use('/api/auth', buildAuthRoutes(express));
 // existing public guide link, which is exactly what the spec calls
 // out as forbidden.
 app.use('/api/portal', portalRouter);
+// Guide Portal → Tours (home bootstrap, upcoming/past feeds, tour detail).
+// Same portal-token credential; dedicated guide DTOs — no Deal payloads.
+app.use('/api/portal', portalToursRouter);
 // Guide Portal → Tour Gallery (assigned-tours list, direct-to-R2 uploads,
 // settings-gated delete/share). Same portal-token credential; separate router
 // so the task-feed router stays focused.
@@ -330,6 +335,9 @@ app.use('/api/tours', requireAdminAuth, toursRouter);
 // objects are private (presigned GETs only). The public customer gallery is a
 // separate token-derived router mounted with the other public routes.
 app.use('/api/tour-gallery', requireAdminAuth, tourGalleryRouter);
+// Guide Portal permissions — the server-backed singleton behind Settings →
+// Tours → הרשאות מדריכים. Enforced by the /api/portal guide routes.
+app.use('/api/guide-portal-settings', requireAdminAuth, guidePortalSettingsRouter);
 // Questionnaire Engine (generic — blueprint: docs/architecture/questionnaire-
 // engine-design.md). Admin builder + staff submission flows. Public
 // token-link routes are a separate, later-mounted public router (Slice 3).

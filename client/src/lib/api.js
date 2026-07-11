@@ -1070,6 +1070,14 @@ export const api = {
       request(`/api/documents/instances/${id}/finalize`, { method: 'POST' }),
   },
 
+  // Guide Portal permissions — server-backed singleton (Settings → Tours →
+  // הרשאות מדריכים). Enforced by the /api/portal guide routes.
+  guidePortalSettings: {
+    get: () => request('/api/guide-portal-settings'),
+    update: (data) =>
+      request('/api/guide-portal-settings', { method: 'PUT', body: JSON.stringify(data) }),
+  },
+
   // Tour Gallery — per-TourEvent media on R2 (staff surface). Uploads go
   // DIRECTLY to R2; these endpoints only authorize/record/verify.
   tourGallery: {
