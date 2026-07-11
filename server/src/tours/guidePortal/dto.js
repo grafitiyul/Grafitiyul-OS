@@ -56,9 +56,12 @@ export function variantDisplayName(tour) {
 
 // ---------- list card ----------
 
-export function guideTourCardDto({ tour, assignment, occupancy }) {
+export function guideTourCardDto({ tour, assignment, occupancy, guideColor = null }) {
   const occ = occupancy || { activeSeats: 0, activeBookings: 0 };
   return {
+    // Derived identity accent (canonical resolver, computed by the route) —
+    // only the palette key ships, never other guides' profile data.
+    guideColor,
     id: tour.id,
     date: tour.date,
     startTime: tour.startTime,

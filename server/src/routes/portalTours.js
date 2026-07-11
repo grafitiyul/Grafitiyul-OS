@@ -15,6 +15,7 @@ import {
   storeQuestionnaireUpload,
   MAX_UPLOAD_BYTES,
 } from '../questionnaires/uploads.js';
+import { resolveTourGuideColor } from '../../../shared/guideColor.mjs';
 import {
   guideVisibleTourWhere,
   resolveGuidePortalAccess,
@@ -99,11 +100,33 @@ async function loadAssignedTours(person) {
 async function cardsFor(assignments) {
   const ids = assignments.map((a) => a.tourEventId);
   const occ = ids.length ? await occupancyFor(prisma, ids) : {};
+  // Guide identity accent — the DERIVED palette key only (canonical resolver
+  // over the tour's full team); no other guide's profile data reaches the
+  // portal payload.
+  const teamRows = ids.length
+    ? await prisma.tourAssignment.findMany({
+        where: { tourEventId: { in: ids } },
+        select: {
+          tourEventId: true,
+          role: true,
+          personRef: { select: { profile: { select: { displayColor: true } } } },
+        },
+      })
+    : [];
+  const teamByTour = new Map();
+  for (const r of teamRows) {
+    if (!teamByTour.has(r.tourEventId)) teamByTour.set(r.tourEventId, []);
+    teamByTour.get(r.tourEventId).push({
+      role: r.role,
+      color: r.personRef?.profile?.displayColor || null,
+    });
+  }
   return assignments.map((a) =>
     guideTourCardDto({
       tour: a.tourEvent,
       assignment: a,
       occupancy: occ[a.tourEventId],
+      guideColor: resolveTourGuideColor(teamByTour.get(a.tourEventId)),
     }),
   );
 }

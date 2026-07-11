@@ -23,6 +23,7 @@ import { seedTourComponents } from '../tours/tourComponents.js';
 import { scheduleGalleryCleanup } from '../tours/gallery/service.js';
 import { summaryCompletionState, completeTour } from '../tours/completion.js';
 import { isAssignableStaff } from '../people/eligibility.js';
+import { resolveTourGuideColor } from '../../../shared/guideColor.mjs';
 import {
   calendarPendingPatch,
   patchTouchesCalendar,
@@ -59,6 +60,42 @@ const TOUR_INCLUDE = {
 function toClientTour(t, occ) {
   const o = occ || { activeSeats: 0, activeBookings: 0, totalBookings: 0 };
   return { ...t, ...o };
+}
+
+// Assignment rows → the { role, color } shape the canonical guide-color
+// resolver consumes (shared/guideColor.mjs — ONE rule for every surface).
+function toColorAssignments(assignments) {
+  return (assignments || []).map((a) => ({
+    role: a.role,
+    color: a.personRef?.profile?.displayColor || null,
+  }));
+}
+
+// Minimal select for deriving guideColor without shipping profiles.
+const GUIDE_COLOR_ASSIGNMENT_SELECT = {
+  tourEventId: true,
+  role: true,
+  personRef: { select: { profile: { select: { displayColor: true } } } },
+};
+
+// One query for a set of tours → { [tourEventId]: paletteKey | null }.
+async function guideColorsFor(tourEventIds) {
+  const ids = [...new Set(tourEventIds)].filter(Boolean);
+  if (!ids.length) return {};
+  const rows = await prisma.tourAssignment.findMany({
+    where: { tourEventId: { in: ids } },
+    select: GUIDE_COLOR_ASSIGNMENT_SELECT,
+  });
+  const byTour = new Map();
+  for (const r of rows) {
+    if (!byTour.has(r.tourEventId)) byTour.set(r.tourEventId, []);
+    byTour.get(r.tourEventId).push(r);
+  }
+  const out = {};
+  for (const id of ids) {
+    out[id] = resolveTourGuideColor(toColorAssignments(byTour.get(id)));
+  }
+  return out;
 }
 
 // Shared field validation for create/update of group slots. Mutates `data`
@@ -129,8 +166,18 @@ router.get(
       include: TOUR_INCLUDE,
       orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
     });
-    const occ = await occupancyFor(prisma, tours.map((t) => t.id));
-    res.json(tours.map((t) => toClientTour(t, occ[t.id])));
+    const [occ, guideColors] = await Promise.all([
+      occupancyFor(prisma, tours.map((t) => t.id)),
+      guideColorsFor(tours.map((t) => t.id)),
+    ]);
+    res.json(
+      tours.map((t) => ({
+        ...toClientTour(t, occ[t.id]),
+        // Derived guide identity accent (canonical rule) — no assignment
+        // rows or profiles ride the list payload.
+        guideColor: guideColors[t.id] || null,
+      })),
+    );
   }),
 );
 
@@ -181,7 +228,13 @@ router.get(
         productVariant: {
           select: { durationHours: true, location: { select: { nameHe: true } } },
         },
-        assignments: { select: { displayName: true, role: true } },
+        assignments: {
+          select: {
+            displayName: true,
+            role: true,
+            personRef: { select: { profile: { select: { displayColor: true } } } },
+          },
+        },
         activityComponents: {
           orderBy: { sortOrder: 'asc' },
           select: { activityComponent: { select: { nameHe: true, icon: true } } },
@@ -210,6 +263,8 @@ router.get(
           notes: t.notes,
           leadGuideName: lead?.displayName || null,
           teamCount: t.assignments.length,
+          // Guide identity accent — canonical rule (shared/guideColor.mjs).
+          guideColor: resolveTourGuideColor(toColorAssignments(t.assignments)),
           components: t.activityComponents
             .map((c) => c.activityComponent?.nameHe)
             .filter(Boolean),
@@ -537,9 +592,9 @@ router.get(
                 displayName: true,
                 status: true,
                 lifecycleHint: true,
-                // Staff photo for the team chips (read-through; PersonProfile
-                // is owned by the people module).
-                profile: { select: { imageUrl: true } },
+                // Staff photo + identity color for the team chips
+                // (read-through; PersonProfile is owned by the people module).
+                profile: { select: { imageUrl: true, displayColor: true } },
               },
             },
           },
@@ -595,7 +650,12 @@ router.get(
     });
     if (!tour) return res.status(404).json({ error: 'not_found' });
     const occ = await occupancyFor(prisma, [tour.id]);
-    res.json(toClientTour(tour, occ[tour.id]));
+    res.json({
+      ...toClientTour(tour, occ[tour.id]),
+      // Same canonical derivation as the list/calendar — clients never
+      // compute their own guide-color rule.
+      guideColor: resolveTourGuideColor(toColorAssignments(tour.assignments)),
+    });
   }),
 );
 

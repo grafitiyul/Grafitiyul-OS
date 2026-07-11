@@ -344,6 +344,20 @@ test('tour card DTO — operational card fields', () => {
   assert.equal(dto.participantsTotal, 25);
   assert.equal(dto.role, 'guide');
   assert.equal(dto.activityType, 'business');
+  assert.equal(dto.guideColor, null); // absent unless the route derives one
+});
+
+test('tour card DTO carries the derived guideColor key only', () => {
+  const dto = guideTourCardDto({
+    tour: TOUR,
+    assignment: { role: 'guide' },
+    occupancy: { activeSeats: 25 },
+    guideColor: 'coral',
+  });
+  assert.equal(dto.guideColor, 'coral');
+  // Only the palette key — no team/profile payloads sneak into the card.
+  assert.equal('team' in dto, false);
+  assert.equal('assignments' in dto, false);
 });
 
 test('tourEndMs — end = start + variant duration (fallback 3h)', () => {

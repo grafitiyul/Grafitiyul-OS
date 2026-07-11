@@ -18,6 +18,7 @@ import {
   timeToMinutes,
   todayIL,
 } from './dates.js';
+import { staffColorHex } from '../../../../../shared/staffColors.mjs';
 
 // לוח שנה — the Admin Tours calendar. STRICTLY a second VIEW of the same
 // TourEvent data as the table: same status filter vocabulary, same Tour modal
@@ -27,6 +28,33 @@ import {
 // /api/tours/calendar range DTO — only the visible range is ever fetched.
 
 const WEEKDAY_HEADERS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+
+// Event coloring — guide identity vs. status are LAYERED, never merged:
+//   * scheduled  → guide color owns the event (tinted bg + saturated start
+//                  edge); no color → the status style as before.
+//   * completed  → guide identity stays recognizable but muted (lighter
+//                  tint) + the existing "הסתיים" label line.
+//   * cancelled / postponed → the STATUS style stays fully dominant (red /
+//                  amber) regardless of any guide color.
+// `ev.guideColor` is the server-derived canonical value (one resolver rule
+// for every surface); this helper only translates it to a visual.
+function eventAccent(ev) {
+  const hex = staffColorHex(ev.guideColor);
+  if (!hex || ev.status === 'cancelled' || ev.status === 'postponed') {
+    return {
+      cls: TOUR_STATUS_EVENT_STYLES[ev.status] || TOUR_STATUS_EVENT_STYLES.scheduled,
+      style: undefined,
+    };
+  }
+  const muted = ev.status === 'completed';
+  return {
+    cls: 'text-gray-800 hover:brightness-[0.97]',
+    style: {
+      backgroundColor: `${hex}${muted ? '0D' : '1F'}`,
+      borderInlineStartColor: hex,
+    },
+  };
+}
 
 // Time-grid window (week/day views). Tours are daytime work; events outside
 // the window are clamped into it rather than hidden.
@@ -274,13 +302,14 @@ function MonthView({ weeks, monthStart, byDate, today, onOpenTour, onOpenDay }) 
 }
 
 function MonthEvent({ ev, onOpen }) {
-  const style = TOUR_STATUS_EVENT_STYLES[ev.status] || TOUR_STATUS_EVENT_STYLES.scheduled;
+  const accent = eventAccent(ev);
   return (
     <button
       type="button"
       onClick={onOpen}
       title={eventTooltip(ev)}
-      className={`block w-full truncate rounded border-s-2 px-1 py-0.5 text-right text-[11px] leading-tight ${style}`}
+      style={accent.style}
+      className={`block w-full truncate rounded border-s-2 px-1 py-0.5 text-right text-[11px] leading-tight ${accent.cls}`}
     >
       <span className="tabular-nums font-semibold" dir="ltr">{ev.startTime}</span>{' '}
       <span className="font-medium">{ev.productName || 'סיור'}</span>
@@ -373,15 +402,16 @@ function DayColumn({ day, hours, events, isToday, onOpenTour, detailed }) {
         const top = ((start - GRID_START_MIN) / GRID_TOTAL_MIN) * 100;
         const height = Math.max(((end - start) / GRID_TOTAL_MIN) * 100, 3.5);
         const width = 100 / lanes;
-        const style = TOUR_STATUS_EVENT_STYLES[ev.status] || TOUR_STATUS_EVENT_STYLES.scheduled;
+        const accent = eventAccent(ev);
         return (
           <button
             key={ev.id}
             type="button"
             onClick={() => onOpenTour(ev.id)}
             title={eventTooltip(ev)}
-            className={`absolute overflow-hidden rounded-md border-s-[3px] p-1 text-right text-[11px] leading-tight shadow-sm ${style}`}
+            className={`absolute overflow-hidden rounded-md border-s-[3px] p-1 text-right text-[11px] leading-tight shadow-sm ${accent.cls}`}
             style={{
+              ...accent.style,
               top: `${top}%`,
               height: `${height}%`,
               right: `${lane * width}%`,

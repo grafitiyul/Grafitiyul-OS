@@ -3,6 +3,7 @@ import { Outlet, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../common/tableColumns.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
+import { rowTintStyle } from '../../color/staffColorUi.js';
 import TourSlotModal from './TourSlotModal.jsx';
 import ToursCalendar from './calendar/ToursCalendar.jsx';
 import {
@@ -388,6 +389,9 @@ export default function ToursPage() {
                     {filtered.map((t) => (
                       <tr
                         key={t.id}
+                        // Guide identity accent — subtle tint + start-edge
+                        // stripe (shared helper); status stays on its chip.
+                        style={rowTintStyle(t.guideColor)}
                         className={`group transition-colors hover:bg-blue-50/40 cursor-pointer ${
                           t.status === 'cancelled' ? 'opacity-60' : ''
                         }`}

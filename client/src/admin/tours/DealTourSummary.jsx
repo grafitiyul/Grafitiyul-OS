@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
+import { edgeAccentStyle } from '../../color/staffColorUi.js';
 import TourTeamEditor, { StaffAvatar } from './TourTeamEditor.jsx';
 import TourComponents from './TourComponents.jsx';
 import ComponentChipList from './ComponentChips.jsx';
@@ -55,6 +56,12 @@ export default function DealTourSummary({ booking, onGroupSlot, canReplace, onRe
     }
   }, [tourEventId]);
 
+  // Load once on mount (so the banner carries the guide-identity accent
+  // immediately) and refresh on every open (live data for the popover).
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     if (open) load();
   }, [open, load]);
@@ -66,7 +73,12 @@ export default function DealTourSummary({ booking, onGroupSlot, canReplace, onRe
 
   return (
     <div>
-      <div className="flex items-center justify-between gap-2 rounded-lg bg-blue-50/70 ring-1 ring-inset ring-blue-100 px-3 py-2">
+      <div
+        // Guide identity accent — start-edge stripe from the server-derived
+        // canonical color; status text stays its own signal.
+        style={edgeAccentStyle(tour?.guideColor)}
+        className="flex items-center justify-between gap-2 rounded-lg bg-blue-50/70 ring-1 ring-inset ring-blue-100 px-3 py-2"
+      >
         <button
           ref={anchorRef}
           type="button"
