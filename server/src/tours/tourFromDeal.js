@@ -1,6 +1,7 @@
 import { WON_REQUIRED_FIELDS, missingFields } from './requiredFields.js';
 import { emitTimelineEvent } from '../timeline/events.js';
 import { seedTourComponents } from './tourComponents.js';
+import { splitPlanAssignments, planComponentRows } from './planMaterialize.js';
 import { scheduleGalleryCleanup } from './gallery/service.js';
 import {
   calendarPendingPatch,
@@ -134,7 +135,21 @@ export async function createTourForWonDeal(tx, deal, { targetTourEventId, origin
     };
   }
 
-  // private / business — the deal's own tour, seeded from its planning fields.
+  // private / business — the deal's own tour, seeded from its planning fields
+  // + the DealTourPlan (the pre-WON planning layer). THE materialization point:
+  // planned guides/components/notes become real HERE, exactly once, in the same
+  // transaction as the tour itself. The plan row survives untouched — dormant
+  // while the tour lives, refreshed from the tour if a reopen cancels it.
+  const plan = await tx.dealTourPlan.findUnique({
+    where: { dealId: deal.id },
+    include: {
+      assignments: {
+        orderBy: { createdAt: 'asc' },
+        include: { personRef: { select: { id: true, status: true, lifecycleHint: true } } },
+      },
+      activityComponents: { orderBy: { sortOrder: 'asc' } },
+    },
+  });
   const tourEvent = await tx.tourEvent.create({
     data: {
       kind: deal.activityType,
@@ -145,16 +160,59 @@ export async function createTourForWonDeal(tx, deal, { targetTourEventId, origin
       productVariantId: deal.productVariantId,
       locationId: deal.locationId,
       tourLanguage: deal.tourLanguage,
+      notes: plan?.notes || null,
       // New tour → Google Calendar event (created async by the sync worker).
+      // Planned guides become assignments in THIS transaction, so the initial
+      // Google event already carries them as attendees — one invitation wave.
       ...calendarPendingPatch(),
     },
   });
   // Kick fires after the caller's transaction commits (1.5s debounce); the
   // periodic tick covers the rare slower commit.
   kickTourCalendarSync();
-  // Seed the tour's components from the selected VARIANT's defaults (a copy —
-  // the tour owns them from here on). Same transaction so a failure rolls back.
-  await seedTourComponents(tx, tourEvent.id, deal.productVariantId);
+  // Components: a CUSTOMIZED plan is authoritative (copy, locations included);
+  // otherwise seed from the selected VARIANT's defaults exactly as before the
+  // planning layer existed. Either way a copy — the tour owns them from here on.
+  const componentRows = planComponentRows(plan, tourEvent.id);
+  if (componentRows) {
+    if (componentRows.length) {
+      await tx.tourEventActivityComponent.createMany({ data: componentRows, skipDuplicates: true });
+    }
+  } else {
+    await seedTourComponents(tx, tourEvent.id, deal.productVariantId);
+  }
+  // Planned team → REAL TourAssignments. Eligibility re-applies at this moment:
+  // a guide who departed since planning is skipped (reported below), never
+  // silently invited.
+  const { create: plannedGuides, skipped: skippedGuides } = splitPlanAssignments(plan?.assignments);
+  if (plannedGuides.length) {
+    await tx.tourAssignment.createMany({
+      data: plannedGuides.map((a) => ({
+        tourEventId: tourEvent.id,
+        personRefId: a.personRefId,
+        externalPersonId: a.externalPersonId,
+        displayName: a.displayName,
+        role: a.role,
+        notes: a.notes,
+      })),
+      skipDuplicates: true,
+    });
+  }
+  if (plan && (plannedGuides.length || skippedGuides.length || plan.componentsCustomized || plan.notes)) {
+    await emitTimelineEvent(tx, {
+      subjectType: 'tour_event',
+      subjectId: tourEvent.id,
+      kind: 'tour',
+      data: {
+        event: 'plan_materialized',
+        dealId: deal.id,
+        guides: plannedGuides.map((a) => a.displayName),
+        skippedGuides: skippedGuides.map((a) => a.displayName),
+        componentsCustomized: plan.componentsCustomized,
+      },
+      origin,
+    });
+  }
   const booking = await tx.booking.create({
     data: { tourEventId: tourEvent.id, dealId: deal.id, seats, status: 'active' },
   });
