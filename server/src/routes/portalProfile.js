@@ -194,6 +194,37 @@ router.post(
   }),
 );
 
+// Remove the current photo — the profile pointer clears (original + crop
+// included); the stored assets remain for history previews.
+router.delete(
+  '/:token/profile/photo',
+  handle(async (req, res) => {
+    const access = await resolveGuidePortalAccess(prisma, {
+      portalToken: req.params.token,
+    });
+    if (!access.ok) return fail(res, access);
+    if (!access.permissions.editPersonalProfile) {
+      return res.status(403).json({ error: 'not_allowed' });
+    }
+    const before = await prisma.personProfile.findUnique({
+      where: { personRefId: access.person.id },
+      select: { imageUrl: true },
+    });
+    await prisma.personProfile.upsert({
+      where: { personRefId: access.person.id },
+      update: { imageUrl: null, imageOriginalUrl: null, imageCrop: null },
+      create: { personRefId: access.person.id },
+    });
+    await recordPersonChanges(prisma, {
+      personRefId: access.person.id,
+      changes: diffPersonFields({ imageUrl: before?.imageUrl || null }, { imageUrl: null }),
+      origin: guideOrigin(access.person),
+      source: 'guide_portal',
+    });
+    res.json({ ok: true });
+  }),
+);
+
 router.post(
   '/:token/profile/photo',
   express.raw({ type: '*/*', limit: '12mb' }),

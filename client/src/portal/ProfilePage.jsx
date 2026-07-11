@@ -89,14 +89,36 @@ export default function ProfilePage() {
     setCropState({ src: URL.createObjectURL(file), originalFile: file });
   }
 
-  function recrop() {
+  // Clicking the avatar opens the EDITOR when a photo exists (recrop the
+  // stored original, or the current rendition for legacy photos), otherwise
+  // the file picker.
+  function openEditor() {
     const p = state.data;
-    if (!p?.imageOriginalUrl) return;
-    setCropState({
-      src: p.imageOriginalUrl,
-      originalUrl: p.imageOriginalUrl,
-      initialCrop: p.imageCrop || null,
-    });
+    if (photoBusy || !p?.canEdit) return;
+    if (p.imageUrl) {
+      setCropState(
+        p.imageOriginalUrl
+          ? { src: p.imageOriginalUrl, originalUrl: p.imageOriginalUrl, initialCrop: p.imageCrop || null }
+          : { src: p.imageUrl, originalUrl: null, initialCrop: null },
+      );
+    } else {
+      fileInput.current?.click();
+    }
+  }
+
+  async function removePhoto() {
+    setPhotoBusy(true);
+    try {
+      const res = await fetch(`${apiBase}/photo`, { method: 'DELETE', cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setCropState(null);
+      await load();
+      refreshHome?.();
+    } catch (e) {
+      alert('הסרת התמונה נכשלה: ' + e.message);
+    } finally {
+      setPhotoBusy(false);
+    }
   }
 
   async function saveCrop(blob, crop) {
@@ -110,6 +132,10 @@ export default function ProfilePage() {
         );
         if (!up.ok) throw new Error(`HTTP ${up.status}`);
         originalUrl = (await up.json()).url;
+      } else if (!originalUrl && cropState.src) {
+        // Legacy photo (no stored original) — the current rendition becomes
+        // the original going forward.
+        originalUrl = cropState.src;
       }
       const q = new URLSearchParams({
         filename: 'avatar.webp',
@@ -163,9 +189,9 @@ export default function ProfilePage() {
           <button
             type="button"
             disabled={!canEdit || photoBusy}
-            onClick={() => fileInput.current?.click()}
+            onClick={openEditor}
             className="relative shrink-0"
-            aria-label="החלפת תמונת פרופיל"
+            aria-label="עריכת תמונת פרופיל"
           >
             {p.imageUrl ? (
               <img
@@ -189,14 +215,14 @@ export default function ProfilePage() {
             {p.lifecycleLabel && (
               <div className="text-[12.5px] text-gray-500">{p.lifecycleLabel} · גרפיטיול</div>
             )}
-            {canEdit && p.imageOriginalUrl && (
+            {canEdit && p.imageUrl && (
               <button
                 type="button"
-                onClick={recrop}
+                onClick={openEditor}
                 disabled={photoBusy}
                 className="mt-1 text-[12px] font-semibold text-blue-700 active:underline"
               >
-                מיקום מחדש של התמונה
+                עריכת התמונה
               </button>
             )}
           </div>
@@ -270,12 +296,15 @@ export default function ProfilePage() {
 
       {cropState && (
         <AvatarCropDialog
+          key={cropState.src}
           open
           src={cropState.src}
           initialCrop={cropState.initialCrop || null}
           saving={photoBusy}
           onCancel={() => !photoBusy && setCropState(null)}
           onSave={saveCrop}
+          onPickNew={pickNewPhoto}
+          onRemove={p.imageUrl ? removePhoto : null}
         />
       )}
     </div>

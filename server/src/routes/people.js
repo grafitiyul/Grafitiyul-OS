@@ -318,7 +318,15 @@ router.put(
   handle(async (req, res) => {
     const { imageUrl, description, notes, bankDetails } = req.body || {};
     const data = {};
-    if (imageUrl !== undefined) data.imageUrl = imageUrl || null;
+    if (imageUrl !== undefined) {
+      data.imageUrl = imageUrl || null;
+      // Removing the photo also drops the recrop state (original + crop) —
+      // the assets themselves stay in MediaAsset for history previews.
+      if (!imageUrl) {
+        data.imageOriginalUrl = null;
+        data.imageCrop = null;
+      }
+    }
     if (description !== undefined) data.description = description || null;
     if (notes !== undefined) data.notes = notes || null;
     // Every bank write is normalized to the ONE structured shape (legacy

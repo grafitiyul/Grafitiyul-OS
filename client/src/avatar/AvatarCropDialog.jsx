@@ -20,7 +20,11 @@ export default function AvatarCropDialog({
   saving = false,
   onCancel,
   onSave, // (blob, crop) => void
+  onPickNew = null, // (file) => void — "upload a different photo" inside the editor
+  onRemove = null, // () => void — remove the current photo (confirmed inline)
 }) {
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const pickRef = useRef(null);
   const [img, setImg] = useState(null); // HTMLImageElement, loaded
   const [zoom, setZoom] = useState(initialCrop?.zoom || 1);
   // Offset of the image center from the viewport center, in css px.
@@ -194,6 +198,66 @@ export default function AvatarCropDialog({
             </>
           )}
         </div>
+
+        {/* secondary actions — replace / remove the current photo */}
+        {(onPickNew || onRemove) && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3">
+            {onPickNew && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => pickRef.current?.click()}
+                  disabled={saving}
+                  className="rounded-lg border border-gray-300 px-3 py-1.5 text-[12.5px] font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  ⬆ העלאת תמונה אחרת
+                </button>
+                <input
+                  ref={pickRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = '';
+                    if (f) onPickNew(f);
+                  }}
+                />
+              </>
+            )}
+            {onRemove &&
+              (confirmRemove ? (
+                <span className="inline-flex items-center gap-2 text-[12.5px]">
+                  <span className="text-red-700">להסיר את התמונה?</span>
+                  <button
+                    type="button"
+                    onClick={onRemove}
+                    disabled={saving}
+                    className="rounded-lg bg-red-600 px-3 py-1.5 font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                  >
+                    הסרה
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmRemove(false)}
+                    disabled={saving}
+                    className="rounded-lg px-2 py-1.5 text-gray-500 hover:bg-gray-100"
+                  >
+                    ביטול
+                  </button>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmRemove(true)}
+                  disabled={saving}
+                  className="rounded-lg border border-red-200 px-3 py-1.5 text-[12.5px] font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                >
+                  🗑 הסרת תמונה
+                </button>
+              ))}
+          </div>
+        )}
 
         <div className="mt-4 flex items-center justify-end gap-2">
           <button

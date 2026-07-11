@@ -414,12 +414,32 @@ function ProfileImage({ person, onChanged }) {
     setCropState({ src: URL.createObjectURL(file), originalFile: file });
   }
 
+  // Clicking the AVATAR ITSELF opens the editor: recrop the current photo
+  // when one exists (the stored original when available, else the current
+  // rendition), otherwise straight to the file picker.
+  function openEditor() {
+    if (busy) return;
+    if (src) {
+      setCropState(
+        originalUrl
+          ? { src: originalUrl, originalUrl, initialCrop: person.profile?.imageCrop || null }
+          : { src, originalUrl: null, initialCrop: null },
+      );
+    } else {
+      open();
+    }
+  }
+
   async function saveCrop(blob, crop) {
     setBusy(true);
     try {
       let oUrl = cropState.originalUrl || null;
       if (cropState.originalFile) {
         oUrl = (await api.people.uploadImageOriginal(person.id, cropState.originalFile)).url;
+      } else if (!oUrl && cropState.src) {
+        // Recropping a legacy photo (no stored original): the current
+        // rendition becomes the original going forward.
+        oUrl = cropState.src;
       }
       await api.people.uploadImage(person.id, blob, {
         filename: 'avatar.webp',
@@ -435,6 +455,19 @@ function ProfileImage({ person, onChanged }) {
     }
   }
 
+  async function removePhoto() {
+    setBusy(true);
+    try {
+      await api.people.updateProfile(person.id, { imageUrl: null });
+      setCropState(null);
+      await onChanged();
+    } catch (err) {
+      window.alert('הסרת התמונה נכשלה: ' + err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const { dragOver, open, dropProps, inputProps } = useFileDrop({
     accept: 'image/jpeg,image/png,image/webp',
     onFiles,
@@ -443,10 +476,14 @@ function ProfileImage({ person, onChanged }) {
   });
 
   return (
-    <div className="relative shrink-0" {...dropProps} title="לחצו או גררו תמונה">
-      <div
+    <div className="relative shrink-0" {...dropProps} title="לחצו לעריכת התמונה, או גררו תמונה חדשה">
+      <button
+        type="button"
+        onClick={openEditor}
+        disabled={busy}
+        aria-label="עריכת תמונת פרופיל"
         className={`w-20 h-20 rounded-full bg-gray-100 border overflow-hidden flex items-center justify-center text-gray-400 text-2xl transition ${
-          dragOver ? 'border-blue-400 ring-2 ring-blue-300' : 'border-gray-200'
+          dragOver ? 'border-blue-400 ring-2 ring-blue-300' : 'border-gray-200 hover:ring-2 hover:ring-blue-200'
         }`}
       >
         {src ? (
@@ -458,7 +495,7 @@ function ProfileImage({ person, onChanged }) {
         ) : (
           initials(person.displayName)
         )}
-      </div>
+      </button>
       {dragOver && (
         <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full bg-blue-500/10 text-[10px] font-medium text-blue-700">
           שחררו כאן
@@ -466,38 +503,27 @@ function ProfileImage({ person, onChanged }) {
       )}
       <button
         type="button"
-        onClick={open}
+        onClick={openEditor}
         disabled={busy}
         className="absolute -bottom-1 -left-1 bg-white border border-gray-300 rounded-full shadow-sm text-[11px] px-2 py-0.5 hover:bg-gray-50 disabled:opacity-50"
-        title="העלאת תמונה"
+        title="עריכת תמונה"
       >
         {busy ? '…' : '✎'}
       </button>
-      {originalUrl && !busy && (
-        <button
-          type="button"
-          onClick={() =>
-            setCropState({
-              src: originalUrl,
-              originalUrl,
-              initialCrop: person.profile?.imageCrop || null,
-            })
-          }
-          className="absolute -bottom-1 -right-1 bg-white border border-gray-300 rounded-full shadow-sm text-[11px] px-2 py-0.5 hover:bg-gray-50"
-          title="מיקום מחדש של התמונה הקיימת"
-        >
-          ⤢
-        </button>
-      )}
       <input {...inputProps} />
       {cropState && (
         <AvatarCropDialog
+          key={cropState.src}
           open
           src={cropState.src}
           initialCrop={cropState.initialCrop || null}
           saving={busy}
           onCancel={() => !busy && setCropState(null)}
           onSave={saveCrop}
+          onPickNew={(file) =>
+            setCropState({ src: URL.createObjectURL(file), originalFile: file })
+          }
+          onRemove={src ? removePhoto : null}
         />
       )}
     </div>
