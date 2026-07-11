@@ -116,6 +116,28 @@ test('legacy customer-language rows normalize to the template language on the sa
   assert.deepEqual(patch, { versionId: 'v2', language: 'he' });
 });
 
+test('freeze-path sync (includeVersion:false) normalizes ONLY the language — the version pin never jumps', () => {
+  // RTL regression: a legacy 'en' internal form read for the FIRST time after
+  // the tour closed must still normalize to the template language before its
+  // snapshots freeze — but must NOT jump to a version published while open.
+  const patch = liveVersionSyncPatch(
+    { versionId: 'v1', language: 'en' },
+    { currentVersionId: 'v2', defaultLanguage: 'he' },
+    { includeVersion: false },
+  );
+  assert.deepEqual(patch, { language: 'he' });
+
+  // Correct-language row at freeze time → nothing to write.
+  assert.deepEqual(
+    liveVersionSyncPatch(
+      { versionId: 'v1', language: 'he' },
+      { currentVersionId: 'v2', defaultLanguage: 'he' },
+      { includeVersion: false },
+    ),
+    {},
+  );
+});
+
 test('a template without a published version never produces a version sync', () => {
   assert.deepEqual(
     liveVersionSyncPatch({ versionId: 'v1', language: 'he' }, { currentVersionId: null, defaultLanguage: 'he' }),

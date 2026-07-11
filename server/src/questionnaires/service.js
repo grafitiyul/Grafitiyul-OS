@@ -786,9 +786,22 @@ async function applyLifecycle(submission) {
 
   let out = submission;
   if (!out.frozenAt) {
+    const template = await prisma.questionnaireTemplate.findUnique({
+      where: { id: out.templateId },
+      select: { currentVersionId: true, defaultLanguage: true },
+    });
     if (closedAt) {
       // Tour closed → structure freeze NOW (version pin + snapshots). Answers
       // may still be editable within the purpose's post-completion window.
+      // The LANGUAGE normalizes first (language-only patch — the version pin
+      // stays "last resolved"): a legacy customer-language row must never
+      // freeze LTR with wrongly-localized snapshots (internal forms render in
+      // the template's language, RTL Hebrew).
+      const sync = liveVersionSyncPatch(out, template, { includeVersion: false });
+      if (Object.keys(sync).length) {
+        await prisma.questionnaireSubmission.update({ where: { id: out.id }, data: sync });
+        out = { ...out, ...sync };
+      }
       await freezeSubmission(out);
       out = { ...out, frozenAt: new Date() };
     } else {
@@ -796,10 +809,6 @@ async function applyLifecycle(submission) {
       // legacy rows that inherited the tour/customer language to the
       // template's own language (internal forms render RTL Hebrew). The
       // decision itself is the pure liveVersionSyncPatch (lifecyclePolicy).
-      const template = await prisma.questionnaireTemplate.findUnique({
-        where: { id: out.templateId },
-        select: { currentVersionId: true, defaultLanguage: true },
-      });
       const sync = liveVersionSyncPatch(out, template);
       if (Object.keys(sync).length) {
         await prisma.questionnaireSubmission.update({ where: { id: out.id }, data: sync });

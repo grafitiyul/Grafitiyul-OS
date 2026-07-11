@@ -257,6 +257,66 @@ test('coordination action: internal-only — the button opens the fill dialog DI
   await unmount();
 });
 
+test('coordination staff fill flow renders RTL: every question, label and helper sits under dir="rtl"', async () => {
+  startBehavior = 'ok';
+  coordinationList = [{ id: 'sub9', status: 'draft' }];
+  const { container, unmount } = await render(
+    React.createElement(MemoryRouter, null,
+      React.createElement(CoordinationFormAction, { bookingId: 'bk1' })),
+  );
+  const btn = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('טופס שיחת תיאום'));
+  await act(async () => btn.click());
+  await act(async () => {});
+
+  // The runtime root computes dir from the submission language ('he' → rtl).
+  // The nearest [dir] ancestor is what the browser uses for text alignment —
+  // assert it for the question label, the section title and the inputs.
+  const textNodes = [...container.querySelectorAll('label, h3')].filter((el) =>
+    /שם מלא|פרטי הלקוח|הערות הגעה/.test(el.textContent),
+  );
+  assert.ok(textNodes.length >= 2, 'question labels + section title rendered');
+  for (const el of textNodes) {
+    assert.equal(el.closest('[dir]')?.getAttribute('dir'), 'rtl', `${el.textContent} must inherit RTL`);
+  }
+
+  // Free-text answers inherit RTL; machine-format fields (phone) are the
+  // intentional LTR exceptions.
+  const textarea = container.querySelector('textarea');
+  assert.equal(textarea.closest('[dir]')?.getAttribute('dir'), 'rtl', 'textarea inherits RTL');
+  const phone = container.querySelector('input[type="tel"]');
+  assert.equal(phone.getAttribute('dir'), 'ltr', 'phone input is an explicit LTR exception');
+
+  // The dialog chrome itself is RTL (no LTR wrapper may sneak between it and
+  // the runtime).
+  const runtimeRoot = textNodes[0].closest('[dir]');
+  assert.equal(runtimeRoot.getAttribute('dir'), 'rtl');
+  await unmount();
+});
+
+test('an English public form still renders LTR (direction follows the submission language)', async () => {
+  // Guards the other side of the contract: dir is DERIVED, not hard-coded —
+  // the staff-form guarantee lives on the server (template language).
+  publicStatus = 'draft';
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const res = await original(url, options);
+    const body = await res.json();
+    if (String(url).startsWith('/api/public/form/tok123') && body && body.language) {
+      return { ...res, json: async () => ({ ...body, language: 'en' }), text: async () => '' };
+    }
+    return { ...res, json: async () => body, text: async () => JSON.stringify(body) };
+  };
+  try {
+    const { container, unmount } = await renderPublic();
+    const label = [...container.querySelectorAll('label')].find((el) => /Full|שם מלא/.test(el.textContent));
+    assert.ok(label, 'question label rendered');
+    assert.equal(label.closest('[dir]')?.getAttribute('dir'), 'ltr', 'English form renders LTR');
+    await unmount();
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test('coordination action: purpose not configured → honest warning in the fill dialog', async () => {
   startBehavior = 'purpose_not_configured';
   coordinationList = [];

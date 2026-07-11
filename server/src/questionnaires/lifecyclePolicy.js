@@ -39,9 +39,14 @@ export function purposeLifecycle(purposeKey) {
 // the template language; legacy rows that inherited a customer language are
 // normalized). Returns a (possibly empty) patch; answers are never part of it
 // — they are keyed by questionKey and survive version syncs untouched.
-export function liveVersionSyncPatch(row, template) {
+//
+// includeVersion:false is the FREEZE-path variant: at the structure freeze
+// the version pin must stay "last resolved" (never jump on the closing read),
+// but the language still normalizes — otherwise a legacy customer-language
+// row would freeze LTR with wrongly-localized answer snapshots forever.
+export function liveVersionSyncPatch(row, template, { includeVersion = true } = {}) {
   const patch = {};
-  if (template?.currentVersionId && template.currentVersionId !== row.versionId) {
+  if (includeVersion && template?.currentVersionId && template.currentVersionId !== row.versionId) {
     patch.versionId = template.currentVersionId;
   }
   if (template?.defaultLanguage && row.language !== template.defaultLanguage) {
