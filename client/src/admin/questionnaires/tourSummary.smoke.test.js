@@ -362,7 +362,7 @@ test('fill dialog: FROZEN (tour closed) → immutable historical view, no redo',
   await unmount();
 });
 
-test('tour page: participant card — "25 משתתפים" under the customer, "דיל #27000" in the corner', async () => {
+test('tour page: participant card — customer → organization → "👥 25 משתתפים", "דיל #27000" in the corner', async () => {
   startBehavior = 'draft';
   tourSummaryList = [];
   tourDetail = { ...TOUR_DETAIL, bookings: [BOOKING] };
@@ -372,18 +372,20 @@ test('tour page: participant card — "25 משתתפים" under the customer, "�
         React.createElement(Route, { path: '/admin/tours/:id', element: React.createElement(TourPage) }))),
   );
   const html = container.innerHTML;
-  // Identity area: customer title → full-Hebrew participant count → org line.
-  assert.match(html, /רות לוי/);
-  assert.match(html, /25 משתתפים/);
-  assert.match(html, /שכבת ט/);
+  // Identity hierarchy IN ORDER: customer title → org line → participants
+  // line (icon + full Hebrew count) directly below the organization.
+  const identity = container.querySelector('a[title="פתיחת הדיל בכרטיסייה חדשה"]');
+  assert.ok(identity, 'identity area links to the Deal (existing admin navigation)');
+  const rows = [...identity.children].map((el) => el.textContent.trim());
+  assert.equal(rows.length, 3, 'identity area has exactly customer/org/participants rows');
+  assert.match(rows[0], /רות לוי/);
+  assert.match(rows[1], /אורט ישראל · שכבת ט/);
+  assert.match(rows[2], /^👥 25 משתתפים$/);
   // Corner: "דיל #27000" (never the bare number / icon+number).
   const dealRef = [...container.querySelectorAll('span')].find((s) => s.textContent.trim() === 'דיל #27000');
   assert.ok(dealRef, 'corner shows "דיל #27000"');
-  // The old corner form (👥 + bare seats) is gone from the card.
-  assert.doesNotMatch(html, /👥 25/);
   // The order number no longer trails the organization line.
-  const orgLine = [...container.querySelectorAll('div')].find((d) => d.textContent.includes('שכבת ט') && d.className.includes('text-[12.5px]'));
-  assert.ok(orgLine && !orgLine.textContent.includes('27000'), 'org line carries no deal number');
+  assert.ok(!rows[1].includes('27000'), 'org line carries no deal number');
   // Coordination action stays in the card header.
   assert.match(html, /טופס שיחת תיאום/);
   await unmount();

@@ -515,10 +515,9 @@ function ParticipantCard({ participant: p, coordinationEnabled, apiBase }) {
     <div className="overflow-hidden rounded-xl border border-gray-200">
       <div className="flex items-start justify-between gap-3 p-3">
         <div className="min-w-0">
+          {/* Hierarchy (mirrors the Admin CustomerCard): customer/contact →
+              organization line → "👥 N משתתפים". */}
           <div className="truncate text-[15px] font-semibold text-gray-900">{p.title}</div>
-          <div className="mt-0.5 text-[13px] font-medium text-gray-700">
-            {participantsLabel(p.seats)}
-          </div>
           {(p.customerName && p.customerName !== p.title) || p.organizationUnit ? (
             <div className="truncate text-[12.5px] text-gray-500">
               {[p.customerName !== p.title ? p.customerName : null, p.organizationUnit]
@@ -526,6 +525,9 @@ function ParticipantCard({ participant: p, coordinationEnabled, apiBase }) {
                 .join(' · ')}
             </div>
           ) : null}
+          <div className="mt-0.5 text-[13px] font-medium text-gray-700">
+            👥 {participantsLabel(p.seats)}
+          </div>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1.5">
           {p.orderNo != null && (

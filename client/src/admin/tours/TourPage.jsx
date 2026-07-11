@@ -81,8 +81,8 @@ function CustomerCard({ booking }) {
   return (
     <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
       {/* Header hierarchy — IDENTICAL to the Guide Portal ParticipantCard:
-          identity (title → "N משתתפים" → organization) on the leading side,
-          "דיל #NNNNN" in the opposite corner. Admin keeps its existing
+          identity (customer → organization → "👥 N משתתפים") on the leading
+          side, "דיל #NNNNN" in the opposite corner. Admin keeps its existing
           navigation: the identity area opens the Deal in a NEW tab. */}
       <div className="flex items-start justify-between gap-3 p-3">
         <a
@@ -95,12 +95,12 @@ function CustomerCard({ booking }) {
           <div className="truncate text-[15px] font-semibold text-gray-900 hover:text-blue-700">
             {customerName}
           </div>
-          <div className="mt-0.5 text-[13px] font-medium text-gray-700">
-            {participantsLabel(booking.seats)}
-          </div>
           <div className="truncate text-[12.5px] text-gray-500">
             {deal.organization?.name || 'לקוח פרטי'}
             {deal.organizationUnit?.name && ` · ${deal.organizationUnit.name}`}
+          </div>
+          <div className="mt-0.5 text-[13px] font-medium text-gray-700">
+            👥 {participantsLabel(booking.seats)}
           </div>
         </a>
         <div className="flex shrink-0 flex-col items-end gap-1.5">

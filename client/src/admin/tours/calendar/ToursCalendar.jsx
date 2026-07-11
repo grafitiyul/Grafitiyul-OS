@@ -154,10 +154,13 @@ export default function ToursCalendar({ search, kind, status, onOpenTour, view, 
         <div className="flex items-center gap-1.5">
           {/* RTL semantics: the grid's days run right→left, so PREVIOUS points
               RIGHT and NEXT points LEFT (Hebrew calendar convention).
-              ❮/❯ (U+276E/F) are NOT bidi-mirrored, so they render exactly as
-              written; the previous ‹/› glyphs are Bidi_Mirrored=Yes — under
-              dir="rtl" the browser flipped them, making the visible icon
-              disagree with the action (the "reversed arrows" production bug). */}
+              BOTH chevron families (‹/› U+2039/A AND ❮/❯ U+276E/F) are
+              Bidi_Mirrored=Yes per Unicode BidiMirroring.txt — inside a
+              dir="rtl" context the browser flips the glyph, so the visible
+              icon disagrees with the action (the "reversed arrows" production
+              bug, twice). NavButton therefore bidi-ISOLATES its glyph in a
+              dir="ltr" span: the character always renders exactly as written,
+              independent of any codepoint's mirroring property. */}
           <NavButton onClick={() => navigate(-1)} label="הקודם">❯</NavButton>
           <button
             type="button"
@@ -235,7 +238,10 @@ function NavButton({ onClick, label, children }) {
       title={label}
       className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-300 bg-white text-lg text-gray-600 hover:bg-gray-50"
     >
-      {children}
+      {/* dir="ltr" bidi-isolates the glyph: chevron characters are
+          Bidi_Mirrored and would flip inside the page's RTL context —
+          the icon must always point exactly as authored. */}
+      <span dir="ltr" aria-hidden>{children}</span>
     </button>
   );
 }
