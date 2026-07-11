@@ -12,6 +12,19 @@ import {
 } from '../tours/gallery/uploads.js';
 import { requestExport } from '../tours/gallery/exports.js';
 import { glog, maskToken } from '../tours/gallery/log.js';
+import { getQuoteTemplate } from '../quote/quoteTemplate.js';
+
+// The ONE brand logo source (same as the Quote cover): the official asset
+// uploaded in Quote Structure (hero.logo.url); null → client renders the
+// bundled SVG lockup — identical precedence to the quote renderer.
+async function brandLogoUrl() {
+  try {
+    const template = await getQuoteTemplate(prisma);
+    return template?.hero?.logo?.url || null;
+  } catch {
+    return null; // branding must never break the gallery
+  }
+}
 
 // PUBLIC customer gallery — mounted at /api/gallery, NO admin auth. The
 // capability URL is the credential (same convention as quote/questionnaire
@@ -102,6 +115,7 @@ router.get(
         : activeBookings[0]?.deal?.organization?.name || activeBookings[0]?.deal?.title || null;
     res.json({
       title: buildGalleryTitle(access.tour),
+      logoUrl: await brandLogoUrl(),
       productName: access.tour.product?.nameHe || 'סיור',
       customerLabel,
       kind: access.tour.kind,

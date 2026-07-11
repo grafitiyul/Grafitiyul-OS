@@ -5,6 +5,7 @@ import GalleryGrid from '../../../gallery/GalleryGrid.jsx';
 import GalleryLightbox from '../../../gallery/GalleryLightbox.jsx';
 import UploadQueuePanel from '../../../gallery/UploadQueuePanel.jsx';
 import DownloadAllButton from '../../../gallery/DownloadAllButton.jsx';
+import UploadPrimaryButton from '../../../gallery/UploadPrimaryButton.jsx';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 
 // Full staff gallery workspace — a large modal ABOVE the Tour page (z-[70]).
@@ -266,15 +267,9 @@ export default function TourGalleryWorkspace({ tourEventId, onClose, onChanged }
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
-              {canUpload && (
-                <button
-                  type="button"
-                  onClick={pickFiles}
-                  className="rounded-lg bg-blue-600 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-blue-700"
-                >
-                  ⬆ העלאת תמונות וסרטונים
-                </button>
-              )}
+              {/* SAME primary upload button as the customer gallery — one
+                  component, identical wording/color/icon/weight. */}
+              {canUpload && <UploadPrimaryButton onClick={pickFiles} />}
               <button
                 type="button"
                 onClick={onClose}

@@ -7,6 +7,11 @@ import UploadQueuePanel from './UploadQueuePanel.jsx';
 import DownloadAllButton from './DownloadAllButton.jsx';
 import GrafitiyulHeroLogo from '../quote/GrafitiyulHeroLogo.jsx';
 import Icon, { WhatsAppGlyph } from '../public/components/Icon.jsx';
+import UploadPrimaryButton, {
+  BRAND_NAVY,
+  BRAND_TEAL,
+  UploadCloudIcon,
+} from './UploadPrimaryButton.jsx';
 
 // PUBLIC customer gallery — /g/:token. Design direction (2026-07 polish):
 // premium, minimal, branded — photos are the hero. A slim dark-navy brand
@@ -20,10 +25,9 @@ import Icon, { WhatsAppGlyph } from '../public/components/Icon.jsx';
 // floating upload pill once the header scrolls away. Permissions/security
 // are untouched: the token is the credential, customers never delete/manage.
 
-const BRAND_TEAL = '#10a99b';
-const BRAND_NAVY = '#1b2540';
-
-const KIND_LABELS = { private: 'פרטי', business: 'עסקי', group_slot: 'קבוצתי' };
+// Customers never see internal CRM classifications (פרטי/עסקי). The ONLY
+// badge is "קבוצתי" — a group tour genuinely has no single customer.
+const KIND_LABELS = { group_slot: 'קבוצתי' };
 
 const CONTACT = {
   whatsappDisplay: '055-6638970',
@@ -43,13 +47,12 @@ function PhotosIcon({ className = 'h-4 w-4' }) {
   );
 }
 
-function UploadCloudIcon({ className = 'h-5 w-5' }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" className={className} aria-hidden>
-      <path d="M7 17a4.5 4.5 0 0 1-.4-8.98 6 6 0 0 1 11.6 1.6A3.7 3.7 0 0 1 17.5 17" strokeLinecap="round" />
-      <path d="M12 20v-7m0 0-3 3m3-3 3 3" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
+// The brand mark — SAME source of truth as the Quote cover: the official
+// uploaded asset (Quote Structure hero.logo) when configured, else the
+// bundled SVG lockup. Identical precedence to QuoteBlockRenderer.
+function BrandLogo({ logoUrl, height, color }) {
+  if (logoUrl) return <img src={logoUrl} alt="Grafitiyul" style={{ height }} className="w-auto" />;
+  return <GrafitiyulHeroLogo height={height} color={color} title="גרפיטיול" />;
 }
 
 async function jsonFetch(url, options = {}) {
@@ -202,17 +205,12 @@ export default function CustomerGalleryPage() {
     .join(' · ');
   const kindLabel = KIND_LABELS[data.kind] || null;
 
+  // Reading order the customer expects: where → when (date, time) → how much.
   const metaParts = [
-    hasMedia && {
-      key: 'count',
-      icon: <PhotosIcon className="h-4 w-4" />,
-      text: `${media.length} תמונות וסרטונים`,
-    },
-    data.startTime && {
-      key: 'time',
-      icon: <Icon name="clock" className="h-4 w-4" />,
-      text: data.startTime,
-      ltr: true,
+    data.locationName && {
+      key: 'loc',
+      icon: <Icon name="pin" className="h-4 w-4" />,
+      text: data.locationName,
     },
     data.date && {
       key: 'date',
@@ -220,24 +218,20 @@ export default function CustomerGalleryPage() {
       text: fmtDate(data.date),
       ltr: true,
     },
-    data.locationName && {
-      key: 'loc',
-      icon: <Icon name="pin" className="h-4 w-4" />,
-      text: data.locationName,
+    data.startTime && {
+      key: 'time',
+      icon: <Icon name="clock" className="h-4 w-4" />,
+      text: data.startTime,
+      ltr: true,
+    },
+    hasMedia && {
+      key: 'count',
+      icon: <PhotosIcon className="h-4 w-4" />,
+      text: `${media.length} תמונות וסרטונים`,
     },
   ].filter(Boolean);
 
-  const uploadButton = (extra = '') => (
-    <button
-      type="button"
-      onClick={() => fileInputRef.current?.click()}
-      style={{ backgroundColor: BRAND_TEAL }}
-      className={`inline-flex items-center justify-center gap-2 rounded-xl px-7 py-3 text-[15px] font-bold text-white shadow-md shadow-teal-900/10 transition hover:brightness-95 active:scale-[0.98] ${extra}`}
-    >
-      <UploadCloudIcon className="h-5 w-5" />
-      העלאת תמונות וסרטונים
-    </button>
-  );
+  const uploadButton = () => <UploadPrimaryButton onClick={() => fileInputRef.current?.click()} />;
 
   return (
     <div dir="rtl" className="min-h-screen bg-gray-50">
@@ -247,7 +241,7 @@ export default function CustomerGalleryPage() {
         className="flex justify-center px-4 py-5 sm:py-6"
         style={{ background: `linear-gradient(180deg, #141b2d 0%, ${BRAND_NAVY} 100%)` }}
       >
-        <GrafitiyulHeroLogo height={56} title="גרפיטיול" />
+        <BrandLogo logoUrl={data.logoUrl} height={56} />
       </div>
 
       {/* Header — tour headline + ONE metadata row + actions. */}
