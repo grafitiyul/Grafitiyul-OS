@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../common/tableColumns.jsx';
+import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import { rowTintStyle } from '../../color/staffColorUi.js';
 import { StaffAvatar } from './TourTeamEditor.jsx';
@@ -474,31 +475,11 @@ export default function ToursPage() {
                             {t.kind === 'group_slot' && t.status !== 'cancelled' && (
                               <IconButton title="עריכה" onClick={() => openEdit(t)}>✎</IconButton>
                             )}
-                            {t.status === 'scheduled' && (
-                              <IconButton
-                                title="ביטול סיור"
-                                onClick={() => setConfirmAction({ type: 'cancel', tour: t })}
-                              >
-                                ⏸
-                              </IconButton>
-                            )}
-                            {t.status === 'cancelled' && (
-                              <IconButton
-                                title="החזרה לתכנון"
-                                onClick={() => setConfirmAction({ type: 'restore', tour: t })}
-                              >
-                                ↩
-                              </IconButton>
-                            )}
-                            {t.totalBookings === 0 && (
-                              <IconButton
-                                title="מחיקה (סיור ריק בלבד)"
-                                danger
-                                onClick={() => setConfirmAction({ type: 'delete', tour: t })}
-                              >
-                                🗑
-                              </IconButton>
-                            )}
+                            {/* Destructive actions (cancel/restore/delete) live
+                                behind a deliberate ⋯ menu — never a one-click
+                                button on every row. Each still runs through the
+                                same ConfirmDialog + canonical service. */}
+                            <RowActionsMenu tour={t} onAction={setConfirmAction} />
                           </div>
                         </td>
                       </tr>
@@ -558,6 +539,71 @@ function SummaryCard({ label, value, icon }) {
         <div className="text-[11px] text-gray-500">{label}</div>
       </div>
     </div>
+  );
+}
+
+// ⋯ row menu — the ONLY path to destructive row actions. Cancelling a tour is
+// a critical, uncommon operation: it must take a deliberate menu-open plus the
+// existing confirmation dialog, never a single misclick at the row edge. The
+// menu renders nothing when the tour offers no such action (e.g. a completed
+// tour with bookings). Business logic is untouched — items only open the same
+// ConfirmDialog → canonical cancel/restore/delete services as before.
+function RowActionsMenu({ tour, onAction }) {
+  const btnRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const items = [];
+  if (tour.status === 'scheduled') {
+    items.push({ type: 'cancel', label: 'ביטול סיור', danger: true });
+  }
+  if (tour.status === 'cancelled') {
+    items.push({ type: 'restore', label: 'החזרה לתכנון', danger: false });
+  }
+  if (tour.totalBookings === 0) {
+    items.push({ type: 'delete', label: 'מחיקת סיור (ריק בלבד)', danger: true });
+  }
+  if (!items.length) return null;
+  const safe = items.filter((i) => !i.danger);
+  const destructive = items.filter((i) => i.danger);
+  const Item = ({ item }) => (
+    <button
+      type="button"
+      onClick={() => {
+        setOpen(false);
+        onAction({ type: item.type, tour });
+      }}
+      className={`w-full px-3 py-2 text-right text-[13px] ${
+        item.danger ? 'font-semibold text-red-600 hover:bg-red-50' : 'text-gray-700 hover:bg-gray-50'
+      }`}
+    >
+      {item.label}
+    </button>
+  );
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        title="פעולות נוספות"
+        aria-label="פעולות נוספות"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="h-8 w-8 rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+      >
+        ⋯
+      </button>
+      <AnchoredMenu anchorRef={btnRef} open={open} onClose={() => setOpen(false)} width={200}>
+        {safe.map((i) => (
+          <Item key={i.type} item={i} />
+        ))}
+        {safe.length > 0 && destructive.length > 0 && (
+          <div className="my-1 border-t border-gray-100" />
+        )}
+        {destructive.map((i) => (
+          <Item key={i.type} item={i} />
+        ))}
+      </AnchoredMenu>
+    </>
   );
 }
 

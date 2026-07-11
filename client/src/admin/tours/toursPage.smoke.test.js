@@ -263,7 +263,7 @@ test('Tours list renders the empty state with 0 tours', async () => {
   await unmount();
 });
 
-test('Tours list renders a populated row incl. the row-action buttons', async () => {
+test('Tours list renders a populated row; destructive actions live ONLY behind the ⋯ menu', async () => {
   toursList = [TOUR_ROW];
   const { container, unmount } = await render(
     React.createElement(MemoryRouter, null, React.createElement(ToursPage)),
@@ -272,13 +272,37 @@ test('Tours list renders a populated row incl. the row-action buttons', async ()
   // The row itself (would be absent if the fetch/table path broke).
   assert.match(html, /סיור גרפיטי בדיקה/, 'tour row should render the product name');
   assert.match(html, /תל אביב/, 'tour row should render the city');
-  // THE regression: the row-actions cell (IconButton) — edit + cancel for a
-  // scheduled group slot, delete for an empty tour.
+  // Edit is a safe action — it stays a direct icon.
   assert.match(html, /title="עריכה"/, 'edit action must render');
-  assert.match(html, /title="ביטול סיור"/, 'cancel action must render');
-  assert.match(html, /מחיקה \(סיור ריק בלבד\)/, 'delete action must render for an empty tour');
+  // SAFETY RULE: no one-click cancel/delete on the row — only the ⋯ trigger.
+  assert.doesNotMatch(html, /title="ביטול סיור"/, 'direct cancel button must NOT render');
+  assert.doesNotMatch(html, /מחיקה \(סיור ריק בלבד\)/, 'direct delete button must NOT render');
+  assert.match(html, /title="פעולות נוספות"/, 'the ⋯ actions menu trigger must render');
+  // Opening the menu (portal → assert against body) reveals cancel + delete,
+  // which still run through the ConfirmDialog flow.
+  const kebab = [...container.querySelectorAll('button')].find(
+    (b) => b.getAttribute('title') === 'פעולות נוספות',
+  );
+  await act(async () => {
+    kebab.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  });
+  const body = document.body.innerHTML;
+  assert.match(body, /ביטול סיור/, 'cancel lives inside the deliberate menu');
+  assert.match(body, /מחיקת סיור \(ריק בלבד\)/, 'delete lives inside the deliberate menu');
+  // Choosing cancel opens the CONFIRMATION dialog — never a direct mutation.
+  const cancelItem = [...document.body.querySelectorAll('button')].find(
+    (b) => b.textContent.trim() === 'ביטול סיור',
+  );
+  await act(async () => {
+    cancelItem.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  });
+  assert.match(
+    document.body.innerHTML,
+    /לבטל את הסיור\? הסיור יישאר בהיסטוריה בסטטוס "בוטל"/,
+    'the confirmation dialog must gate cancellation',
+  );
   // And the empty state must NOT be showing.
-  assert.doesNotMatch(html, /אין סיורים עדיין/);
+  assert.doesNotMatch(container.innerHTML, /אין סיורים עדיין/);
   await unmount();
 });
 
