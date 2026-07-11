@@ -79,7 +79,7 @@ export default function PersonProfile() {
       <ProfileSection person={person} onChanged={refresh} />
       <BankSection person={person} onChanged={refresh} />
       <ProceduresSection procedures={procedures} onChanged={refresh} />
-      <StationAccessSection person={person} />
+      <StationAccessSection person={person} onChanged={refresh} />
       <ChangesSection person={person} onChanged={refresh} />
     </div>
   );
@@ -807,7 +807,7 @@ function BankSection({ person, onChanged }) {
 // rows, and individual chips keep toggling freely afterwards. Green = has
 // access, grey = doesn't. Enforcement is server-side on the portal routes.
 
-function StationAccessSection({ person }) {
+function StationAccessSection({ person, onChanged }) {
   const [tours, setTours] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -828,6 +828,7 @@ function StationAccessSection({ person }) {
     try {
       await api.people.updateStationAccess(person.id, body);
       loadAccess();
+      onChanged?.(); // refreshes the person → the history section reloads too
     } catch (e) {
       window.alert('עדכון ההרשאות נכשל: ' + e.message);
     } finally {
@@ -921,6 +922,7 @@ function StationAccessSection({ person }) {
 const CHANGE_SOURCE_LABELS = {
   guide_portal: 'פורטל המדריך',
   admin: 'אדמין',
+  recruitment_sync: 'סנכרון גיוס',
 };
 
 function ChangesSection({ person, onChanged }) {
@@ -996,27 +998,45 @@ function ChangesSection({ person, onChanged }) {
                 })}
               </span>
             </div>
-            <ul className="space-y-1.5">
-              {(entry.data?.changes || []).map((c, i) => (
-                <li key={i} className="flex items-center gap-2 text-[13px]">
-                  <span className="shrink-0 font-semibold text-gray-700">{c.labelHe}:</span>
-                  <ChangeValue fieldKey={c.fieldKey} value={c.oldValue} display={c.oldDisplay} muted />
-                  <span className="text-gray-400" aria-hidden>
-                    ←
-                  </span>
-                  <ChangeValue fieldKey={c.fieldKey} value={c.newValue} display={c.newDisplay} />
-                  <button
-                    type="button"
-                    onClick={() => restore(entry.id, c.fieldKey)}
-                    disabled={!!busyKey}
-                    title="שחזור הערך הקודם"
-                    className="ms-auto shrink-0 rounded px-2 py-0.5 text-[11.5px] font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-40"
-                  >
-                    {busyKey === `${entry.id}:${c.fieldKey}` ? 'משחזר…' : '↩ שחזור'}
-                  </button>
-                </li>
-              ))}
-            </ul>
+            {entry.kind === 'station_access' ? (
+              // Training-permission audit — immutable, no restore action.
+              <ul className="space-y-1 text-[13px]">
+                {(entry.data?.granted || []).length > 0 && (
+                  <li className="text-emerald-800">
+                    <span className="font-semibold">הוענקה גישה: </span>
+                    {entry.data.granted.join(', ')}
+                  </li>
+                )}
+                {(entry.data?.revoked || []).length > 0 && (
+                  <li className="text-red-700">
+                    <span className="font-semibold">הוסרה גישה: </span>
+                    {entry.data.revoked.join(', ')}
+                  </li>
+                )}
+              </ul>
+            ) : (
+              <ul className="space-y-1.5">
+                {(entry.data?.changes || []).map((c, i) => (
+                  <li key={i} className="flex items-center gap-2 text-[13px]">
+                    <span className="shrink-0 font-semibold text-gray-700">{c.labelHe}:</span>
+                    <ChangeValue fieldKey={c.fieldKey} value={c.oldValue} display={c.oldDisplay} muted />
+                    <span className="text-gray-400" aria-hidden>
+                      ←
+                    </span>
+                    <ChangeValue fieldKey={c.fieldKey} value={c.newValue} display={c.newDisplay} />
+                    <button
+                      type="button"
+                      onClick={() => restore(entry.id, c.fieldKey)}
+                      disabled={!!busyKey}
+                      title="שחזור הערך הקודם"
+                      className="ms-auto shrink-0 rounded px-2 py-0.5 text-[11.5px] font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-40"
+                    >
+                      {busyKey === `${entry.id}:${c.fieldKey}` ? 'משחזר…' : '↩ שחזור'}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </li>
         ))}
       </ol>

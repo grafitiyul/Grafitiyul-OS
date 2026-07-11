@@ -83,7 +83,7 @@ async function syncFromUpstream() {
 
     const existing = await prisma.personRef.findUnique({
       where: { externalPersonId },
-      select: { id: true, identitySource: true },
+      select: { id: true, identitySource: true, displayName: true, email: true, phone: true },
     });
     if (existing) {
       // Phase G: GOS OWNS identity for identitySource='management' rows (staff /
@@ -105,6 +105,25 @@ async function syncFromUpstream() {
       };
       if (p.portalToken) data.portalToken = p.portalToken;
       await prisma.personRef.update({ where: { externalPersonId }, data });
+      // Silent-change guard: identity values the pull actually CHANGED are
+      // recorded in the person changelog, attributed to the sync. The pull
+      // runs on every list read, so we diff first — an unchanged mirror
+      // writes no history noise.
+      await recordPersonChanges(prisma, {
+        personRefId: existing.id,
+        changes: diffPersonFields(existing, {
+          displayName: data.displayName,
+          email: data.email,
+          phone: data.phone,
+        }),
+        origin: {
+          actorType: 'automation',
+          actorLabel: 'סנכרון גיוס',
+          createdBy: null,
+          createdByName: null,
+        },
+        source: 'recruitment_sync',
+      });
       updated += 1;
     } else {
       // Slice E: GOS no longer DERIVES the roster from recruitment. People enter
@@ -379,11 +398,18 @@ router.get(
   '/:id/changes',
   handle(async (req, res) => {
     const entries = await prisma.timelineEntry.findMany({
-      where: { subjectType: 'person', subjectId: req.params.id, kind: 'change' },
+      // 'change' = profile fields (restorable); 'station_access' = training
+      // permission grants/revokes (immutable audit, no restore).
+      where: {
+        subjectType: 'person',
+        subjectId: req.params.id,
+        kind: { in: ['change', 'station_access'] },
+      },
       orderBy: { createdAt: 'desc' },
       take: 200,
       select: {
         id: true,
+        kind: true,
         createdAt: true,
         actorType: true,
         actorLabel: true,

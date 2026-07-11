@@ -2,6 +2,16 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
+import { diffPersonFields, recordPersonChanges } from '../timeline/personChangelog.js';
+
+// Recruitment-driven identity writes are attributed explicitly in the person
+// changelog — nothing changes silently.
+const RECRUITMENT_ORIGIN = {
+  actorType: 'automation',
+  actorLabel: 'סנכרון גיוס',
+  createdBy: null,
+  createdByName: null,
+};
 
 // ── Staff lifecycle events (recruitment → GOS ingest) ────────────────────────────
 //
@@ -75,6 +85,18 @@ router.post('/', handle(async (req, res) => {
       where: { externalPersonId: ext },
       data,
       select: { id: true, lifecycleHint: true },
+    });
+    // No profile field changes silently: identity updates pushed by
+    // recruitment land in the same immutable person changelog admins see.
+    await recordPersonChanges(prisma, {
+      personRefId: existing.id,
+      changes: diffPersonFields(existing, {
+        ...(identity.displayName !== undefined ? { displayName: identity.displayName } : {}),
+        ...(identity.email !== undefined ? { email: identity.email } : {}),
+        ...(identity.phone !== undefined ? { phone: identity.phone } : {}),
+      }),
+      origin: RECRUITMENT_ORIGIN,
+      source: 'recruitment_sync',
     });
     return res.json({ ok: true, event, created: false, lifecycleHint: person.lifecycleHint });
   }

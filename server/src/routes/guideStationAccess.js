@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
+import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 
 // Admin management of guide → Station permissions (מערכי הדרכה). Mounted at
 // /api/people behind requireAdminAuth, alongside the people router.
@@ -71,28 +72,72 @@ router.put(
       return res.status(400).json({ error: 'no_station_ids' });
     }
 
-    let grantedCount = 0;
+    const stationLabel = (s) =>
+      s.tour?.titleHe ? `${s.titleHe} (${s.tour.titleHe})` : s.titleHe;
+
+    // Grants: resolve which VALID stations are actually NEW (so history
+    // records only real changes, not re-grants).
+    let grantedStations = [];
     if (grant.length > 0) {
       const valid = await prisma.tourStation.findMany({
         where: { id: { in: grant }, active: true },
-        select: { id: true },
+        select: { id: true, titleHe: true, tour: { select: { titleHe: true } } },
       });
       if (valid.length > 0) {
-        const created = await prisma.guideStationAccess.createMany({
-          data: valid.map((s) => ({ stationId: s.id, personRefId: person.id })),
-          skipDuplicates: true,
+        const already = await prisma.guideStationAccess.findMany({
+          where: { personRefId: person.id, stationId: { in: valid.map((s) => s.id) } },
+          select: { stationId: true },
         });
-        grantedCount = created.count;
+        const alreadySet = new Set(already.map((r) => r.stationId));
+        grantedStations = valid.filter((s) => !alreadySet.has(s.id));
+        if (grantedStations.length > 0) {
+          await prisma.guideStationAccess.createMany({
+            data: grantedStations.map((s) => ({ stationId: s.id, personRefId: person.id })),
+            skipDuplicates: true,
+          });
+        }
       }
     }
-    let revokedCount = 0;
+
+    // Revokes: capture the rows that actually exist before deleting.
+    let revokedStations = [];
     if (revoke.length > 0) {
-      const deleted = await prisma.guideStationAccess.deleteMany({
+      const rows = await prisma.guideStationAccess.findMany({
         where: { personRefId: person.id, stationId: { in: revoke } },
+        select: {
+          station: { select: { id: true, titleHe: true, tour: { select: { titleHe: true } } } },
+        },
       });
-      revokedCount = deleted.count;
+      revokedStations = rows.map((r) => r.station);
+      if (revokedStations.length > 0) {
+        await prisma.guideStationAccess.deleteMany({
+          where: { personRefId: person.id, stationId: { in: revokedStations.map((s) => s.id) } },
+        });
+      }
     }
-    res.json({ ok: true, granted: grantedCount, revoked: revokedCount });
+
+    // Immutable audit: who granted/removed which stations, when, from where.
+    // Same shared timeline mechanism as the profile changelog (kind is
+    // 'station_access'; the admin history section renders both).
+    if (grantedStations.length > 0 || revokedStations.length > 0) {
+      await emitTimelineEvent(prisma, {
+        subjectType: 'person',
+        subjectId: person.id,
+        kind: 'station_access',
+        data: {
+          source: 'admin',
+          granted: grantedStations.map(stationLabel),
+          revoked: revokedStations.map(stationLabel),
+        },
+        origin: await userOrigin(req.adminAuth?.userId),
+      });
+    }
+
+    res.json({
+      ok: true,
+      granted: grantedStations.length,
+      revoked: revokedStations.length,
+    });
   }),
 );
 
