@@ -219,7 +219,9 @@ test('coordination action: button active with submitted chip, dialog offers link
       React.createElement(CoordinationFormAction, { bookingId: 'bk1' })),
   );
   assert.match(container.innerHTML, /טופס שיחת תיאום/);
-  assert.match(container.innerHTML, /· הוגש/);
+  // Status chip inside the shared FormActionButton (the "· " prefix belonged
+  // to the old plain-text action).
+  assert.match(container.innerHTML, /הוגש/);
   const btn = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('טופס שיחת תיאום'));
   assert.equal(btn.disabled, false);
   // Open the actions dialog → link + actions appear.

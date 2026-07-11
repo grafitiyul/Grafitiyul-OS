@@ -75,7 +75,7 @@ export function guideTourCardDto({ tour, assignment, occupancy }) {
 
 // ---------- participant (booking) card ----------
 
-export function guideParticipantDto(booking, permissions) {
+export function guideParticipantDto(booking, permissions, { coordinationStatus = null } = {}) {
   const deal = booking.deal;
   if (!deal) return null;
   const { primary, fieldRep } = resolveCustomerContacts(deal.contacts);
@@ -102,12 +102,21 @@ export function guideParticipantDto(booking, permissions) {
     fieldRepName: showFieldRep ? contactNameHe(fieldRep.contact) || null : null,
     // Admin-authored rich HTML (same trusted origin as the admin card).
     customerInfo: permissions.viewCustomerInfo ? deal.customerInfo || null : null,
+    // Coordination questionnaire state for THIS booking — null when the
+    // permission is off (the button simply doesn't render).
+    coordinationStatus: permissions.useCoordinationForms ? coordinationStatus : null,
   };
 }
 
 // ---------- tour detail ----------
 
-export function guideTourDetailDto({ tour, assignment, occupancy, permissions }) {
+export function guideTourDetailDto({
+  tour,
+  assignment,
+  occupancy,
+  permissions,
+  coordinationStatusByBooking = {},
+}) {
   const occ = occupancy || { activeSeats: 0, activeBookings: 0 };
   return {
     id: tour.id,
@@ -147,7 +156,11 @@ export function guideTourDetailDto({ tour, assignment, occupancy, permissions })
     })),
     participants: (tour.bookings || [])
       .filter((b) => b.status !== 'cancelled')
-      .map((b) => guideParticipantDto(b, permissions))
+      .map((b) =>
+        guideParticipantDto(b, permissions, {
+          coordinationStatus: coordinationStatusByBooking[b.id] || null,
+        }),
+      )
       .filter(Boolean),
   };
 }

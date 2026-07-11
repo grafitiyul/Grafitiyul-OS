@@ -8,15 +8,34 @@ import RichText from '../editor/RichText.jsx';
 import { SUBMISSION_STATUS_LABELS } from './constants.js';
 
 // Staff-side questionnaire fill dialog — the ONE component every internal
-// consumer opens (tour modal "טופס סיכום סיור" now; any future staff form the
+// consumer opens (tour modal "טופס סיכום סיור"; the Guide Portal summary the
 // same way). It owns the whole submission lifecycle against the generic
 // engine:
 //   start/resume (purpose+subject) → draft autosave → submit (422 errors
 //   inline) → completed read-only view (+ מילוי מחדש via void).
 // Not-configured / not-published states render honest empty states with a
 // link to the builder — never a broken form.
+//
+// `transport` swaps the HTTP layer WITHOUT duplicating the flow: the default
+// is the admin-session API; the Guide Portal passes portal-token endpoints.
+// Shape: { load(), saveAnswers(id, answers), submit(id, answers),
+//          voidSubmission(id), uploadAnswerFile(file) }.
+// `adminLinks=false` hides the settings deep-links (guides can't open them).
 
 const AUTOSAVE_MS = 800;
+
+function adminTransport({ purpose, subjectType, subjectId }) {
+  return {
+    load: async () => {
+      const started = await api.questionnaires.startSubmission({ purpose, subjectType, subjectId });
+      return api.questionnaires.getSubmission(started.id);
+    },
+    saveAnswers: (id, answers) => api.questionnaires.saveAnswers(id, answers),
+    submit: (id, answers) => api.questionnaires.submit(id, answers),
+    voidSubmission: (id) => api.questionnaires.voidSubmission(id),
+    uploadAnswerFile: (file) => api.questionnaires.uploadAnswerFile(file),
+  };
+}
 
 export default function QuestionnaireFillDialog({
   open,
@@ -26,6 +45,8 @@ export default function QuestionnaireFillDialog({
   subjectId,
   title,
   onStatusChange, // notify host screen (chip refresh) on submit/void
+  transport = null,
+  adminLinks = true,
 }) {
   const [phase, setPhase] = useState('loading'); // loading | error | fill | done | view
   const [errorInfo, setErrorInfo] = useState(null); // { code, message }
@@ -34,14 +55,18 @@ export default function QuestionnaireFillDialog({
   const [savedAt, setSavedAt] = useState(null);
   const answersRef = useRef({});
   const saveTimer = useRef(null);
+  // Keep a stable transport for the dialog's lifetime — the default admin
+  // transport is rebuilt from props on each load call.
+  const t = transport || adminTransport({ purpose, subjectType, subjectId });
+  const tRef = useRef(t);
+  tRef.current = t;
 
   const load = useCallback(async () => {
     setPhase('loading');
     setServerErrors(null);
     setErrorInfo(null);
     try {
-      const started = await api.questionnaires.startSubmission({ purpose, subjectType, subjectId });
-      const full = await api.questionnaires.getSubmission(started.id);
+      const full = await tRef.current.load();
       setData(full);
       const draftAnswers = Object.fromEntries((full.submission.answers || []).map((a) => [a.questionKey, a.value]));
       // Prefill fills only what the draft hasn't answered yet.
@@ -54,6 +79,7 @@ export default function QuestionnaireFillDialog({
         no_published_version: 'לתבנית שנבחרה אין גרסה מפורסמת — יש לפרסם אותה בבילדר.',
         template_not_active: 'תבנית השאלון אינה פעילה.',
         subject_not_found: 'הישות שהטופס נקשר אליה לא נמצאה.',
+        tour_cancelled: 'הסיור בוטל — לא נפתח טופס סיכום חדש.',
       };
       setErrorInfo({ code, message: messages[code] || e.message });
       setPhase('error');
@@ -70,7 +96,7 @@ export default function QuestionnaireFillDialog({
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       try {
-        await api.questionnaires.saveAnswers(data.submission.id, answers);
+        await tRef.current.saveAnswers(data.submission.id, answers);
         setSavedAt(new Date());
       } catch {
         /* autosave is best-effort; submit re-sends everything */
@@ -82,7 +108,7 @@ export default function QuestionnaireFillDialog({
     clearTimeout(saveTimer.current);
     setServerErrors(null);
     try {
-      await api.questionnaires.submit(data.submission.id, answers);
+      await tRef.current.submit(data.submission.id, answers);
       setPhase('done');
       onStatusChange?.('submitted');
     } catch (e) {
@@ -96,7 +122,7 @@ export default function QuestionnaireFillDialog({
   };
 
   const redo = async () => {
-    await api.questionnaires.voidSubmission(data.submission.id);
+    await tRef.current.voidSubmission(data.submission.id);
     onStatusChange?.('draft');
     await load();
   };
@@ -130,7 +156,8 @@ export default function QuestionnaireFillDialog({
           <div className="py-10 text-center">
             <div className="text-3xl">📋</div>
             <p className="mt-2 text-[14px] text-gray-700">{errorInfo?.message}</p>
-            {['purpose_not_configured', 'no_published_version', 'template_not_active'].includes(errorInfo?.code) ? (
+            {adminLinks &&
+            ['purpose_not_configured', 'no_published_version', 'template_not_active'].includes(errorInfo?.code) ? (
               <Link
                 // Tours settings are category pages now — deep-link straight to
                 // the category that configures THIS purpose.
@@ -160,7 +187,7 @@ export default function QuestionnaireFillDialog({
               onSubmit={submit}
               submitLabel="הגשת הטופס"
               busyLabel="מגיש…"
-              uploader={(file) => api.questionnaires.uploadAnswerFile(file)}
+              uploader={(file) => tRef.current.uploadAnswerFile(file)}
             />
             <div className="mt-1.5 text-[11.5px] text-gray-400">
               {savedAt ? `טיוטה נשמרה ${savedAt.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })} ✓` : 'טיוטה נשמרת אוטומטית תוך כדי מילוי'}

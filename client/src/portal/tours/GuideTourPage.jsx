@@ -11,6 +11,8 @@ import {
 } from '../format.js';
 import { FeedError } from './feedStates.jsx';
 import RichText from '../../editor/RichText.jsx';
+import FormActionButton from '../../questionnaire/FormActionButton.jsx';
+import QuestionnaireFillDialog from '../../questionnaire/QuestionnaireFillDialog.jsx';
 
 // Guide Tour Detail — the read-only operational view of ONE tour, mirroring
 // the Admin Tour modal's hierarchy (header → team → components → workshop
@@ -26,14 +28,14 @@ export default function GuideTourPage() {
   const { tourEventId } = useParams();
   const navigate = useNavigate();
   const [state, setState] = useState({ phase: 'loading' });
+  const [sectionStatus, setSectionStatus] = useState(null); // summary-status payload
+
+  const apiBase = `/api/portal/${encodeURIComponent(token)}/tours/${encodeURIComponent(tourEventId)}`;
 
   const load = useCallback(async () => {
     setState({ phase: 'loading' });
     try {
-      const res = await fetch(
-        `/api/portal/${encodeURIComponent(token)}/tours/${encodeURIComponent(tourEventId)}/detail`,
-        { cache: 'no-store' },
-      );
+      const res = await fetch(`${apiBase}/detail`, { cache: 'no-store' });
       if (res.status === 403 || res.status === 404) {
         return setState({ phase: 'blocked' });
       }
@@ -42,12 +44,22 @@ export default function GuideTourPage() {
     } catch (e) {
       setState({ phase: 'error', message: e?.message || 'שגיאה' });
     }
-  }, [token, tourEventId]);
+  }, [apiBase]);
+
+  const loadSectionStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiBase}/summary-status`, { cache: 'no-store' });
+      if (res.ok) setSectionStatus(await res.json());
+    } catch {
+      /* fails quiet — the section renders without status chips */
+    }
+  }, [apiBase]);
 
   useEffect(() => {
     load();
+    loadSectionStatus();
     window.scrollTo(0, 0);
-  }, [load]);
+  }, [load, loadSectionStatus]);
 
   if (state.phase === 'loading') {
     return <div className="py-10 text-center text-sm text-gray-500">טוען…</div>;
@@ -125,29 +137,150 @@ export default function GuideTourPage() {
         ) : (
           <div className="space-y-3">
             {tour.participants.map((p) => (
-              <ParticipantCard key={p.bookingId} participant={p} />
+              <ParticipantCard
+                key={p.bookingId}
+                participant={p}
+                coordinationEnabled={permissions.useCoordinationForms}
+                apiBase={apiBase}
+                navigate={navigate}
+              />
             ))}
           </div>
         )}
       </SectionCard>
 
-      {/* Gallery entry — replaced by the full סיכום סיור section in Slice D. */}
-      {permissions.useTourGallery && (
-        <Link
-          to={`/p/${encodeURIComponent(token)}/tour/${encodeURIComponent(tour.id)}/gallery`}
-          className="mt-3 flex items-center gap-3 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm active:bg-gray-50"
-        >
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-xl" aria-hidden>
-            📸
-          </span>
-          <span className="flex-1 text-[14px] font-semibold text-gray-800">
-            גלריית הסיור
-          </span>
-          <span className="text-gray-300">‹</span>
-        </Link>
-      )}
+      <TourSummarySection
+        token={token}
+        tour={tour}
+        apiBase={apiBase}
+        permissions={permissions}
+        status={sectionStatus}
+        onStatusChange={loadSectionStatus}
+      />
     </div>
   );
+}
+
+// ── סיכום סיור — summary questionnaire + gallery, one dedicated card ─
+
+function TourSummarySection({ token, tour, apiBase, permissions, status, onStatusChange }) {
+  const [summaryOpen, setSummaryOpen] = useState(false);
+
+  const showSummary = permissions.fillTourSummary;
+  const showGallery = permissions.useTourGallery;
+  if (!showSummary && !showGallery) return null;
+
+  const gallery = status?.gallery;
+  const galleryCountLabel = gallery
+    ? [
+        gallery.imageCount > 0 ? `${gallery.imageCount} תמונות` : null,
+        gallery.videoCount > 0 ? `${gallery.videoCount} סרטונים` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ') || 'הגלריה ריקה'
+    : null;
+
+  // Guide transport — same fill dialog, portal-token endpoints. The server
+  // resolves the submission from (tour, purpose); no ids from the client.
+  const transport = {
+    load: () => portalJson(`${apiBase}/summary`),
+    saveAnswers: (_id, answers) =>
+      portalJson(`${apiBase}/summary/answers`, {
+        method: 'PUT',
+        body: JSON.stringify({ answers }),
+      }),
+    submit: (_id, answers) =>
+      portalJson(`${apiBase}/summary/submit`, {
+        method: 'POST',
+        body: JSON.stringify({ answers }),
+      }),
+    voidSubmission: () => portalJson(`${apiBase}/summary/void`, { method: 'POST' }),
+    uploadAnswerFile: async (file) => {
+      const res = await fetch(
+        `${apiBase}/summary/upload?filename=${encodeURIComponent(file.name)}`,
+        { method: 'POST', cache: 'no-store', body: file },
+      );
+      if (!res.ok) throw await portalError(res);
+      return res.json();
+    },
+  };
+
+  return (
+    <SectionCard title="סיכום סיור">
+      <div className="space-y-2.5">
+        {showSummary && (
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0 text-[13.5px] text-gray-700">טופס סיכום סיור</div>
+            <FormActionButton
+              label={
+                status?.summary?.status === 'draft'
+                  ? 'המשך מילוי'
+                  : status?.summary
+                  ? 'צפייה בטופס'
+                  : 'מילוי הטופס'
+              }
+              status={status?.summary?.status || null}
+              onClick={() => setSummaryOpen(true)}
+            />
+          </div>
+        )}
+        {showGallery && (
+          <div className="flex items-center justify-between gap-2 border-t border-gray-100 pt-2.5 first:border-t-0 first:pt-0">
+            <div className="min-w-0 text-[13.5px] text-gray-700">
+              גלריית תמונות וסרטונים
+              {galleryCountLabel && (
+                <span className="ms-1 text-[12px] text-gray-400">· {galleryCountLabel}</span>
+              )}
+            </div>
+            <Link
+              to={`/p/${encodeURIComponent(token)}/tour/${encodeURIComponent(tour.id)}/gallery`}
+              className="inline-flex min-h-[38px] shrink-0 items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-[12.5px] font-semibold text-indigo-800 shadow-sm active:scale-[0.99]"
+            >
+              <span aria-hidden>📸</span>
+              פתיחת הגלריה
+            </Link>
+          </div>
+        )}
+      </div>
+      {summaryOpen && (
+        <QuestionnaireFillDialog
+          open={summaryOpen}
+          onClose={() => {
+            setSummaryOpen(false);
+            onStatusChange?.();
+          }}
+          title="טופס סיכום סיור"
+          transport={transport}
+          adminLinks={false}
+          onStatusChange={() => onStatusChange?.()}
+        />
+      )}
+    </SectionCard>
+  );
+}
+
+async function portalError(res) {
+  const text = await res.text();
+  let payload = null;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    /* not json */
+  }
+  const err = new Error(`${res.status} ${text}`);
+  err.status = res.status;
+  err.payload = payload;
+  return err;
+}
+
+async function portalJson(url, options = {}) {
+  const res = await fetch(url, {
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  });
+  if (!res.ok) throw await portalError(res);
+  return res.json();
 }
 
 function BackRow({ token, title }) {
@@ -325,8 +458,27 @@ function WorkshopLocationRow({ component }) {
 
 // ── participants ─────────────────────────────────────────────────────
 
-function ParticipantCard({ participant: p }) {
+function ParticipantCard({ participant: p, coordinationEnabled, apiBase, navigate }) {
   const [infoOpen, setInfoOpen] = useState(true); // operationally important → open
+  const [coordBusy, setCoordBusy] = useState(false);
+
+  // The guide fills/views the coordination form through the SAME public form
+  // the customer uses — the server mints the capability URL for this booking.
+  async function openCoordination() {
+    if (coordBusy) return;
+    setCoordBusy(true);
+    try {
+      const { url } = await portalJson(
+        `${apiBase}/bookings/${encodeURIComponent(p.bookingId)}/coordination-link`,
+        { method: 'POST' },
+      );
+      navigate(url);
+    } catch (e) {
+      alert('שגיאה בפתיחת טופס התיאום: ' + (e.payload?.error || e.message));
+      setCoordBusy(false);
+    }
+  }
+
   return (
     <div className="overflow-hidden rounded-xl border border-gray-200">
       <div className="flex items-start justify-between gap-3 p-3">
@@ -343,12 +495,22 @@ function ParticipantCard({ participant: p }) {
             </div>
           ) : null}
         </div>
-        {p.orderNo != null && (
-          // Display only — deliberately NOT a link (no Deal access from the portal).
-          <span className="shrink-0 text-[12px] font-medium tabular-nums text-gray-400">
-            דיל <span dir="ltr">#{p.orderNo}</span>
-          </span>
-        )}
+        <div className="flex shrink-0 flex-col items-end gap-1.5">
+          {p.orderNo != null && (
+            // Display only — deliberately NOT a link (no Deal access from the portal).
+            <span className="text-[12px] font-medium tabular-nums text-gray-400">
+              דיל <span dir="ltr">#{p.orderNo}</span>
+            </span>
+          )}
+          {coordinationEnabled && (
+            <FormActionButton
+              label="טופס תיאום"
+              status={p.coordinationStatus}
+              busy={coordBusy}
+              onClick={openCoordination}
+            />
+          )}
+        </div>
       </div>
 
       {(p.phone || p.email || p.fieldRepName) && (

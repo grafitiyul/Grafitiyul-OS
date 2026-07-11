@@ -302,11 +302,13 @@ test('tour page: summary button is ACTIVE and shows the submitted status chip', 
         React.createElement(Route, { path: '/admin/tours/:id', element: React.createElement(TourPage) }))),
   );
   const html = container.innerHTML;
+  // The summary action now lives inside the "סיכום סיור" section (shared
+  // hierarchy with the gallery), as a real FormActionButton.
+  assert.match(html, /סיכום סיור/);
   assert.match(html, /טופס סיכום סיור/);
-  assert.doesNotMatch(html, /בקרוב[^ה]*טופס סיכום סיור/); // header button no longer a placeholder
-  assert.match(html, /· הוגש/); // status chip from listSubmissions
-  const btn = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('טופס סיכום סיור'));
-  assert.ok(btn, 'summary button exists');
+  assert.match(html, /הוגש/); // status chip from listSubmissions
+  const btn = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('צפייה בטופס'));
+  assert.ok(btn, 'summary button exists (submitted → view label)');
   assert.equal(btn.disabled, false, 'summary button is enabled');
   await unmount();
 });

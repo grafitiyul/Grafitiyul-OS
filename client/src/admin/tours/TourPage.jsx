@@ -4,6 +4,7 @@ import { api } from '../../lib/api.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
 import QuestionnaireFillDialog from '../../questionnaire/QuestionnaireFillDialog.jsx';
+import FormActionButton from '../../questionnaire/FormActionButton.jsx';
 import CoordinationFormAction from './CoordinationFormAction.jsx';
 import TourSlotModal from './TourSlotModal.jsx';
 import TourComponents from './TourComponents.jsx';
@@ -94,7 +95,7 @@ function CustomerCard({ booking }) {
             )}
           </div>
         </a>
-        <div className="shrink-0 text-left text-[12px]">
+        <div className="flex shrink-0 flex-col items-end gap-1.5 text-left text-[12px]">
           <div className="tabular-nums font-medium text-gray-700" dir="ltr">
             👥 {booking.seats}
           </div>
@@ -103,6 +104,11 @@ function CustomerCard({ booking }) {
               {booking.status === 'orphaned' ? 'orphan' : 'בוטל'}
             </span>
           )}
+          {/* Coordination form — belongs to the participant (one independent
+              form per Booking, generic engine purpose=coordination). Rendered
+              as a REAL button in the card's top row (spec alignment with the
+              Guide Portal). */}
+          <CoordinationFormAction bookingId={booking.id} />
         </div>
       </div>
 
@@ -125,12 +131,6 @@ function CustomerCard({ booking }) {
           )}
         </div>
       )}
-
-      {/* Coordination form — belongs to the participant (one independent
-          form per Booking, generic engine purpose=coordination). */}
-      <div className="border-t border-gray-100 px-3 py-2">
-        <CoordinationFormAction bookingId={booking.id} />
-      </div>
 
       {deal.customerInfo && (
         <div className="border-t border-gray-100 px-3 py-2">
@@ -362,26 +362,9 @@ export default function TourPage() {
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  {/* Tour Summary — one submission per TourEvent, via the
-                      generic questionnaire engine (purpose=tour_summary). */}
-                  <button
-                    type="button"
-                    onClick={() => setSummaryOpen(true)}
-                    className={`rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold sm:inline-block ${
-                      summaryStatus === 'submitted' || summaryStatus === 'reviewed'
-                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                        : summaryStatus === 'draft'
-                          ? 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
-                          : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
-                    }`}
-                  >
-                    📋 טופס סיכום סיור
-                    {summaryStatus === 'submitted' || summaryStatus === 'reviewed'
-                      ? ' · הוגש'
-                      : summaryStatus === 'draft'
-                        ? ' · בתהליך'
-                        : ''}
-                  </button>
+                  {/* Tour Summary moved to the "סיכום סיור" section below —
+                      one hierarchy with the gallery, mirrored by the Guide
+                      Portal. */}
                   {isSlot && tour.status !== 'cancelled' && (
                     <button
                       type="button"
@@ -441,10 +424,6 @@ export default function TourPage() {
                 </div>
               </section>
 
-              {/* Tour Gallery — compact summary; the full grid opens in a
-                  dedicated workspace modal (density of this page is sacred). */}
-              <TourGalleryCard tourEventId={tour.id} tourStatus={tour.status} />
-
               {/* Participants — one card per booking, stacked vertically. */}
               <Section title="משתתפים" count={relevantBookings.length}>
                 {relevantBookings.length === 0 ? (
@@ -458,6 +437,29 @@ export default function TourPage() {
                     ))}
                   </div>
                 )}
+              </Section>
+
+              {/* סיכום סיור — the tour's closing artifacts in ONE place:
+                  summary questionnaire + media gallery. Mirrors the Guide
+                  Portal's section; admin capabilities unchanged. */}
+              <Section title="סיכום סיור">
+                <div className="mb-2.5 flex items-center justify-between gap-2">
+                  <div className="text-[13px] text-gray-600">טופס סיכום סיור</div>
+                  <FormActionButton
+                    label={
+                      summaryStatus === 'draft'
+                        ? 'המשך מילוי'
+                        : summaryStatus
+                          ? 'צפייה בטופס'
+                          : 'מילוי הטופס'
+                    }
+                    status={summaryStatus}
+                    onClick={() => setSummaryOpen(true)}
+                  />
+                </div>
+                {/* Tour Gallery — compact summary; the full grid opens in a
+                    dedicated workspace modal (density of this page is sacred). */}
+                <TourGalleryCard tourEventId={tour.id} tourStatus={tour.status} />
               </Section>
 
               {/* History — collapsed accordion. */}

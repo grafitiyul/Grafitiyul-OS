@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import Dialog from '../common/Dialog.jsx';
 import QuestionnaireFillDialog from '../../questionnaire/QuestionnaireFillDialog.jsx';
+import FormActionButton from '../../questionnaire/FormActionButton.jsx';
 
 // "טופס שיחת תיאום" — the per-Booking coordination form action inside the
 // tour modal's customer card. Every Booking gets its OWN independent form
@@ -82,15 +83,9 @@ export default function CoordinationFormAction({ bookingId }) {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={openActions}
-        className="flex w-full items-center gap-2 text-[13px] text-gray-700 hover:text-gray-900"
-      >
-        <span aria-hidden>📋</span>
-        טופס שיחת תיאום
-        {chip ? <span className={`text-[11.5px] font-semibold ${chip.cls}`}>{chip.text}</span> : null}
-      </button>
+      {/* A REAL button (shared FormActionButton) — lives in the customer
+          card's top row, same visual as the Guide Portal action. */}
+      <FormActionButton label="טופס שיחת תיאום" status={status} onClick={openActions} />
 
       <Dialog open={open} onClose={() => setOpen(false)} title="טופס שיחת תיאום" size="md">
         <div dir="rtl" className="space-y-4 p-1">

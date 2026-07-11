@@ -194,6 +194,28 @@ test('participant DTO respects permission switches', () => {
   assert.equal(dto.seats, 25); // participant count is always operational
 });
 
+test('coordination status rides the DTO only when the permission is on', () => {
+  const withStatus = guideParticipantDto(BOOKING, ALL_ON, { coordinationStatus: 'draft' });
+  assert.equal(withStatus.coordinationStatus, 'draft');
+  const off = guideParticipantDto(
+    BOOKING,
+    { ...ALL_ON, useCoordinationForms: false },
+    { coordinationStatus: 'draft' },
+  );
+  assert.equal(off.coordinationStatus, null);
+});
+
+test('detail DTO stamps coordination status per booking', () => {
+  const dto = guideTourDetailDto({
+    tour: TOUR,
+    assignment: null,
+    occupancy: null,
+    permissions: ALL_ON,
+    coordinationStatusByBooking: { b1: 'submitted' },
+  });
+  assert.equal(dto.participants[0].coordinationStatus, 'submitted');
+});
+
 test('participant title falls back to customer name without an organization', () => {
   const noOrg = {
     ...BOOKING,
