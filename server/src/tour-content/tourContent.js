@@ -171,7 +171,18 @@ export async function getStation(prisma, id) {
       heroImage: true,
       steps: {
         orderBy: { sortOrder: 'asc' },
-        include: { contentBlock: { include: { assets: { orderBy: { sortOrder: 'asc' } } } } },
+        include: {
+          contentBlock: {
+            include: {
+              // media carries the R2 URL — the read surfaces (editor media
+              // section, preview, portal) render image assets from it.
+              assets: {
+                orderBy: { sortOrder: 'asc' },
+                include: { media: { select: { url: true } } },
+              },
+            },
+          },
+        },
       },
       notes: { orderBy: { sortOrder: 'asc' } },
     },

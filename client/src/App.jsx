@@ -23,6 +23,8 @@ import ProceduresPage from './portal/ProceduresPage.jsx';
 import GuideTourPage from './portal/tours/GuideTourPage.jsx';
 import ProfilePage from './portal/ProfilePage.jsx';
 import PayPage from './portal/PayPage.jsx';
+import TrainingPage, { TrainingTourPage } from './portal/training/TrainingPage.jsx';
+import TrainingStationPage from './portal/training/TrainingStationPage.jsx';
 import PlaceholderPage from './portal/PlaceholderPage.jsx';
 import GuideTourGallery from './portal/GuideTourGallery.jsx';
 import CustomerGalleryPage from './gallery/CustomerGalleryPage.jsx';
@@ -301,16 +303,12 @@ export default function App() {
             />
           }
         />
-        <Route
-          path="training"
-          element={
-            <PlaceholderPage
-              icon="🎓"
-              title="מערכי הדרכה"
-              description="מערכי ההדרכה עדיין לא זמינים בפורטל. כשהמודול ייפתח, תוכן ההדרכה יופיע כאן."
-            />
-          }
-        />
+        {/* מערכי הדרכה — permitted training content (server double-gated:
+            viewTraining permission + explicit per-station grants). One
+            permitted tour lands straight on its stations. */}
+        <Route path="training" element={<TrainingPage />} />
+        <Route path="training/tours/:tourId" element={<TrainingTourPage />} />
+        <Route path="training/stations/:stationId" element={<TrainingStationPage />} />
         <Route path="profile" element={<ProfilePage />} />
         {/* Tour detail — read-only operational view (admin-modal hierarchy,
             guide-safe DTO). Lives inside the shell so the bottom nav stays. */}
