@@ -82,10 +82,11 @@ export async function reconcileTour(deps, account, tourId) {
   };
 
   try {
-    // Cancelled → the Google event goes away; guests get Google's
+    // Cancelled/postponed → the Google event goes away; guests get Google's
     // cancellation email. Clearing gcalEventId means a later restore
-    // (scheduled again) creates a brand-new event, per spec.
-    if (tour.status === 'cancelled') {
+    // (scheduled again — for postponed: the Deal applying a new date) creates
+    // a brand-new event with the then-current guides, per spec.
+    if (tour.status === 'cancelled' || tour.status === 'postponed') {
       if (tour.gcalEventId) {
         try {
           await cal.deleteEvent(db, account, tour.gcalEventId);

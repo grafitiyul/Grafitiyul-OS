@@ -27,30 +27,33 @@ export const TOUR_KIND_STYLES = {
 // Canonical Tour status vocabulary — mirrors the server's TOUR_EVENT_STATUSES
 // (server/src/tours/requiredFields.js). ONE label + style mapping for every
 // admin surface (table chips, modal, calendar) — never scatter raw strings.
-export const TOUR_STATUSES = ['scheduled', 'completed', 'cancelled'];
+export const TOUR_STATUSES = ['scheduled', 'completed', 'cancelled', 'postponed'];
 
 export const TOUR_STATUS_LABELS = {
   scheduled: 'עתידי',
   completed: 'הסתיים',
   cancelled: 'בוטל',
+  postponed: 'נדחה',
 };
 
 export const TOUR_STATUS_STYLES = {
   scheduled: 'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200',
   completed: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
   cancelled: 'bg-red-50 text-red-600 ring-1 ring-inset ring-red-200',
+  postponed: 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200',
 };
 
 // Status filter vocabulary — shared by the table AND the calendar view (the
 // two are views of the same TourEvent data and must never show different
 // datasets under the same filter). 'active' = operationally-live tours (the
 // default); cancelled tours appear only when explicitly requested.
-export const ACTIVE_STATUSES = ['scheduled'];
+export const ACTIVE_STATUSES = ['scheduled', 'postponed'];
 
 export const STATUS_FILTER_OPTIONS = [
   ['active', 'פעילים'],
   ['scheduled', 'עתידיים'],
   ['completed', 'הסתיימו'],
+  ['postponed', 'נדחו'],
   ['cancelled', 'בוטלו'],
   ['all', 'הכול'],
 ];

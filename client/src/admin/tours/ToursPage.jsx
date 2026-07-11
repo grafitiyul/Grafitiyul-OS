@@ -73,11 +73,12 @@ function Occupancy({ t }) {
 }
 
 const COLUMNS = [
-  { key: 'date', label: 'תאריך', def: true, sortVal: (t) => `${t.date} ${t.startTime}`,
+  // Postponed tours have no date/time — they sort last and render "—".
+  { key: 'date', label: 'תאריך', def: true, sortVal: (t) => `${t.date || '9999'} ${t.startTime || ''}`,
     cls: 'font-semibold text-gray-900',
     render: (t) => fmtTourDate(t.date) },
-  { key: 'startTime', label: 'שעה', def: true, dir: 'ltr', sortVal: (t) => t.startTime,
-    cls: 'tabular-nums text-gray-700', render: (t) => t.startTime },
+  { key: 'startTime', label: 'שעה', def: true, dir: 'ltr', sortVal: (t) => t.startTime || '',
+    cls: 'tabular-nums text-gray-700', render: (t) => t.startTime || dash },
   { key: 'kind', label: 'סוג', def: true, sortVal: (t) => t.kind,
     render: (t) => <Chip styles={TOUR_KIND_STYLES[t.kind]} label={TOUR_KIND_LABELS[t.kind] || t.kind} /> },
   { key: 'product', label: 'מוצר', def: true, sortVal: (t) => t.product?.nameHe || '',

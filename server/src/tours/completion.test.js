@@ -96,12 +96,16 @@ test('completeTour: scheduled → completed with reason + timeline event', async
   assert.match(client.calls.timeline[0].data.body, /דורון/);
 });
 
-test('completeTour: idempotent on completed, refuses cancelled', async () => {
+test('completeTour: idempotent on completed, refuses cancelled and postponed', async () => {
   const done = await completeTour(fakeTourClient({ id: 't1', status: 'completed' }), 't1', { reason: 'midnight' });
   assert.deepEqual(done, { ok: true, already: true });
 
   const cancelled = await completeTour(fakeTourClient({ id: 't1', status: 'cancelled' }), 't1', { reason: 'manual' });
   assert.deepEqual(cancelled, { ok: false, error: 'tour_cancelled' });
+
+  // A postponed tour has no date — nothing to complete until rescheduled.
+  const postponed = await completeTour(fakeTourClient({ id: 't1', status: 'postponed' }), 't1', { reason: 'manual' });
+  assert.deepEqual(postponed, { ok: false, error: 'tour_postponed' });
 });
 
 test('completeTour: explicit completedAt (midnight sweep) is stamped as-is', async () => {

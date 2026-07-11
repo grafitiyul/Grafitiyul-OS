@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildGuidePermissions,
+  guideVisibleTourWhere,
   resolveGuidePortalAccess,
   resolveGuideTourAccess,
 } from './access.js';
@@ -151,6 +152,28 @@ test('cancelled tour is INVISIBLE to guides — 403 even with a live assignment'
     { ok: res.ok, status: res.status, error: res.error },
     { ok: false, status: 403, error: 'tour_cancelled' },
   );
+});
+
+test('postponed tour is hidden from guides until rescheduled — 403 with a live assignment', async () => {
+  // The assignment stays (visibility returns the moment a new date is
+  // applied), but while the tour has no active date the portal shows nothing.
+  const client = fakeClient({
+    person: GUIDE,
+    tour: { id: 't1', status: 'postponed' },
+    assignment: { id: 'a1', role: 'guide' },
+  });
+  const res = await resolveGuideTourAccess(client, {
+    portalToken: 'tok',
+    tourEventId: 't1',
+  });
+  assert.deepEqual(
+    { ok: res.ok, status: res.status, error: res.error },
+    { ok: false, status: 403, error: 'tour_postponed' },
+  );
+});
+
+test('feed where-clause excludes cancelled AND postponed (twin of the detail rule)', () => {
+  assert.deepEqual(guideVisibleTourWhere(), { status: { notIn: ['cancelled', 'postponed'] } });
 });
 
 test('buildGuidePermissions maps every settings switch', () => {

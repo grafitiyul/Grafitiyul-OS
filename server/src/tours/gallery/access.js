@@ -83,7 +83,9 @@ export async function resolveCustomerGalleryAccess(client, { token }) {
     },
   });
   // A cancelled (or deleted) tour behaves as if the link never existed.
-  if (!tour || tour.status === 'cancelled') {
+  // Postponed tours pause customer links the same way — the gallery data is
+  // preserved and the link resumes if the tour is rescheduled.
+  if (!tour || tour.status === 'cancelled' || tour.status === 'postponed') {
     return { ok: false, status: 404, error: 'not_found' };
   }
   return {

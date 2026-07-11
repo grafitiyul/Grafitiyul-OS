@@ -79,8 +79,9 @@ export default function DealTourSummary({ booking, onGroupSlot, canReplace, onRe
             {onGroupSlot ? 'משובץ לסיור קבוצתי' : 'סיור נוצר מהדיל'}
           </span>
           {' · '}
-          {fmtTourDate(te.date)} · <span dir="ltr" className="tabular-nums">{te.startTime}</span>
+          {fmtTourDate(te.date)} · <span dir="ltr" className="tabular-nums">{te.startTime || '—'}</span>
           {te.status === 'cancelled' && <span className="ms-1 font-semibold text-red-600">(הסיור בוטל)</span>}
+          {te.status === 'postponed' && <span className="ms-1 font-semibold text-amber-600">(הסיור נדחה — טרם נקבע מועד)</span>}
           <span className="ms-1 text-blue-500">{open ? '▴' : '▾'}</span>
         </button>
         {canReplace && (

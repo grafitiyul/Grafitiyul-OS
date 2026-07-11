@@ -127,6 +127,18 @@ test('cancelled tour whose event is already gone on Google → still synced', as
   assert.equal(await reconcileTour({ db, cal }, ACCOUNT, tour.id), 'synced');
 });
 
+test('postponed tour with an event → delete + id cleared (reschedule creates anew)', async () => {
+  const tour = makeTour({ status: 'postponed', date: null, startTime: null, gcalEventId: 'ev1' });
+  const db = makeDb(tour);
+  const cal = makeCal();
+  const res = await reconcileTour({ db, cal }, ACCOUNT, tour.id);
+  assert.equal(res, 'synced');
+  assert.deepEqual(cal.calls.map((c) => c.name), ['deleteEvent']);
+  const w = db.writes.at(-1);
+  assert.equal(w.data.gcalEventId, null);
+  assert.equal(w.data.gcalSyncStatus, 'synced');
+});
+
 test('completed tour → calendar untouched (history is never cancelled)', async () => {
   const tour = makeTour({ status: 'completed', gcalEventId: 'ev1' });
   const db = makeDb(tour);

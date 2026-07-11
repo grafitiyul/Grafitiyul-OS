@@ -86,9 +86,45 @@ test('pending: every changed tour-affecting field is reported with its Hebrew la
   for (const d of diff) assert.equal(typeof d.labelHe, 'string');
 });
 
-test('pending: mirrors sync semantics — a CLEARED deal date/time never syncs, so never pends', () => {
+test('pending: a CLEARED deal date pends as a POSTPONE (date+time removal)', () => {
   const deal = { ...FULL_PRIVATE, tourDate: null, tourTime: '' };
+  const diff = pendingTourUpdate(deal, APPLIED_BOOKING);
+  assert.deepEqual(diff.map((d) => d.field).sort(), ['tourDate', 'tourTime']);
+  const date = diff.find((d) => d.field === 'tourDate');
+  assert.equal(date.dealValue, null);
+  assert.equal(date.tourValue, '2026-08-01');
+});
+
+test('pending: a cleared deal TIME alone never syncs, so never pends', () => {
+  const deal = { ...FULL_PRIVATE, tourTime: null };
   assert.deepEqual(pendingTourUpdate(deal, APPLIED_BOOKING), []);
+});
+
+const POSTPONED_TOUR = { ...APPLIED_TOUR, status: 'postponed', date: null, startTime: null };
+const POSTPONED_BOOKING = { ...APPLIED_BOOKING, tourEvent: POSTPONED_TOUR };
+
+test('pending: postponed tour + deal date AND time → pends as a RESCHEDULE', () => {
+  const deal = { ...FULL_PRIVATE, tourDate: '2026-09-01', tourTime: '10:00' };
+  const diff = pendingTourUpdate(deal, POSTPONED_BOOKING);
+  assert.deepEqual(diff.map((d) => d.field).sort(), ['tourDate', 'tourTime']);
+});
+
+test('pending: postponed tour — a date WITHOUT a time never pends (scheduling needs both)', () => {
+  assert.deepEqual(
+    pendingTourUpdate({ ...FULL_PRIVATE, tourDate: '2026-09-01', tourTime: null }, POSTPONED_BOOKING),
+    [],
+  );
+  // and a fully-cleared deal on a postponed tour is already in sync.
+  assert.deepEqual(
+    pendingTourUpdate({ ...FULL_PRIVATE, tourDate: null, tourTime: null }, POSTPONED_BOOKING),
+    [],
+  );
+});
+
+test('pending: postponed tour — non-date fields (language/variant) still pend', () => {
+  const deal = { ...FULL_PRIVATE, tourDate: null, tourTime: null, tourLanguage: 'en' };
+  const diff = pendingTourUpdate(deal, POSTPONED_BOOKING);
+  assert.deepEqual(diff.map((d) => d.field), ['tourLanguage']);
 });
 
 test('pending: group slots never pend (slot-owned planning, fields locked on the deal)', () => {
@@ -101,10 +137,12 @@ test('pending: group slots never pend (slot-owned planning, fields locked on the
 
 test('pending: cancelled/completed tours and non-active bookings never pend', () => {
   const changed = { ...FULL_PRIVATE, tourDate: '2026-08-02' };
-  assert.deepEqual(
-    pendingTourUpdate(changed, { ...APPLIED_BOOKING, tourEvent: { ...APPLIED_TOUR, status: 'cancelled' } }),
-    [],
-  );
+  for (const status of ['cancelled', 'completed']) {
+    assert.deepEqual(
+      pendingTourUpdate(changed, { ...APPLIED_BOOKING, tourEvent: { ...APPLIED_TOUR, status } }),
+      [],
+    );
+  }
   assert.deepEqual(pendingTourUpdate(changed, { ...APPLIED_BOOKING, status: 'orphaned' }), []);
   assert.deepEqual(pendingTourUpdate(changed, null), []);
 });
