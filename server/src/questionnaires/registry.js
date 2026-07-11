@@ -43,6 +43,9 @@ const PURPOSES = {
     perActor: true,
     tourOperational: true,
     answerLockGraceMs: SUMMARY_POST_COMPLETION_EDIT_MS,
+    // Primary action: first press officially submits; later presses save a
+    // meaningful update (one history entry each).
+    submitLabels: { first: 'שלח סיכום סיור', update: 'שמור עדכון' },
   },
   // Internal coordination-call form — one active submission per Booking.
   // Staff-only BY PRODUCT DECISION: the operator/guide fills it during the
@@ -55,6 +58,7 @@ const PURPOSES = {
     singleton: true,
     tourOperational: true,
     answerLockGraceMs: 0,
+    submitLabels: { first: 'בוצעה שיחת תיאום', update: 'שמור עדכון' },
   },
   // Unbound generic questionnaires (surveys, internal forms). No subject
   // required; multiple submissions allowed.

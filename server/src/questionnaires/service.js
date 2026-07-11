@@ -28,6 +28,7 @@ import { validateVersionForPublish } from './publishRules.js';
 import { validateSubmissionAnswers, sanitizeDraftAnswers } from './validation.js';
 import { getPurpose, isValidPurpose, purposeAllowsSubject, getSubjectAdapter } from './registry.js';
 import { submissionLifecycle } from './lifecyclePolicy.js';
+import { buildAnswerChanges } from './answerDiff.js';
 
 // Typed service error → routes translate to HTTP without string-matching.
 export class QError extends Error {
@@ -898,6 +899,15 @@ export async function submitSubmission(submissionId, { answers, actor } = {}) {
   const byKey = new Map(questionsInOrder.map((q) => [q.key, q]));
 
   const isFirstSubmit = submission.status === 'draft';
+  // ONE immutable history entry per meaningful press (first submit = from
+  // empty; updates = actual per-question old → new). Autosave never diffs.
+  const changes = buildAnswerChanges({
+    prev: Object.fromEntries(submission.answers.map((a) => [a.questionKey, a.value])),
+    next: Object.fromEntries(cleanAnswers.map((c) => [c.key, c.value])),
+    questions: questionsInOrder,
+    lang: submission.language,
+    defLang: defaultLanguage,
+  });
   const updated = await prisma.$transaction(async (tx) => {
     // Rewrite only keys the current structure knows. Answers to questions
     // that were removed from the definition are PRESERVED with their old
@@ -930,12 +940,13 @@ export async function submitSubmission(submissionId, { answers, actor } = {}) {
       },
       include: SUBMISSION_INCLUDE,
     });
-    // Timeline event only on the FIRST submit — re-submits after reopening
-    // (tour-operational lifecycle) update answers/submittedAt without
-    // spamming the deal/tour feeds.
-    if (isFirstSubmit && frozen.subjectType) {
+    // The adapter turns every meaningful press into history (first submit /
+    // update-with-changes) and skips no-op updates — the engine just reports.
+    if (frozen.subjectType) {
       const adapter = getSubjectAdapter(frozen.subjectType);
-      if (adapter?.onSubmitted) await adapter.onSubmitted(frozen.subjectId, frozen, tx);
+      if (adapter?.onSubmitted) {
+        await adapter.onSubmitted(frozen.subjectId, frozen, tx, { firstSubmit: isFirstSubmit, changes });
+      }
     }
     return frozen;
   });

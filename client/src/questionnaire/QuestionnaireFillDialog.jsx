@@ -218,7 +218,7 @@ export default function QuestionnaireFillDialog({
               serverErrors={serverErrors}
               onChange={scheduleAutosave}
               onSubmit={submit}
-              submitLabel="שלח"
+              submitLabel={data.lifecycle?.submitLabel || 'שלח'}
               busyLabel="שולח…"
               uploader={(file) => tRef.current.uploadAnswerFile(file)}
             />

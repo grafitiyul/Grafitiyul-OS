@@ -92,25 +92,40 @@ export const tourEventAdapter = {
     });
   },
 
-  async onSubmitted(subjectId, submission, tx) {
-    const by = submission.submittedByName ? ` על ידי ${submission.submittedByName}` : '';
+  // Every MEANINGFUL press (first submit / update-with-changes) becomes ONE
+  // immutable history entry — TimelineEntry kind='change', the same
+  // mechanism + expandable renderer the Deal changelog uses. No-op updates
+  // and autosaves never reach history.
+  async onSubmitted(subjectId, submission, tx, { firstSubmit = true, changes = [] } = {}) {
+    if (!firstSubmit && changes.length === 0) return;
+    const by = submission.submittedByName || null;
+    const title = firstSubmit
+      ? `📋 טופס "${formLabel(submission.purpose)}" הוגש${by ? ` על ידי ${by}` : ''}`
+      : `📋 טופס "${formLabel(submission.purpose)}" עודכן${by ? ` על ידי ${by}` : ''}`;
     await emitTimelineEvent(tx, {
       subjectType: 'tour_event',
       subjectId,
-      kind: 'questionnaire',
-      body: `📋 טופס "${formLabel(submission.purpose)}" הוגש${by}`,
-      data: { submissionId: submission.id, purpose: submission.purpose, event: 'submitted' },
-      origin: systemOrigin(),
+      kind: 'change',
+      body: title,
+      data: {
+        title,
+        changes,
+        submissionId: submission.id,
+        purpose: submission.purpose,
+        source: 'questionnaire',
+        event: firstSubmit ? 'submitted' : 'updated',
+      },
+      origin: { actorType: 'system', actorLabel: by || 'מערכת', createdBy: null, createdByName: by },
     });
     // Completion trigger #1: this submit may have been the LAST required
     // guide's summary — if so the tour completes right now, atomically with
     // the submit (same tx).
-    if (submission.purpose === 'tour_summary') {
+    if (firstSubmit && submission.purpose === 'tour_summary') {
       const state = await summaryCompletionState(tx, subjectId);
       if (state.allSubmitted) {
         await completeTour(tx, subjectId, {
           reason: 'summaries',
-          actorName: submission.submittedByName || null,
+          actorName: by,
         });
       }
     }

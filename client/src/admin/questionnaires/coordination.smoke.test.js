@@ -149,6 +149,7 @@ before(async () => {
           liveVersion: true, editableAfterSubmit: true,
           structureFrozen: false, answersLocked: false, editable: true,
           closedAt: null, lockAt: null, frozenAt: null,
+          submitLabel: 'בוצעה שיחת תיאום',
         },
         rendered: null,
       };
@@ -249,6 +250,7 @@ test('coordination action: internal-only — the button opens the fill dialog DI
   // The questionnaire itself opened — no intermediate popup, no customer flow.
   assert.match(html, /שם מלא/);
   assert.match(html, /משפחת כהן/); // subject context
+  assert.match(html, /בוצעה שיחת תיאום/); // purpose-specific primary action
   assert.doesNotMatch(html, /העתקת קישור/);
   assert.doesNotMatch(html, /פתיחה בטאב חדש/);
   assert.doesNotMatch(html, /form\/tok123/);

@@ -181,6 +181,7 @@ before(async () => {
           closedAt: frozen ? '2026-07-11T00:00:00Z' : null,
           lockAt: frozen ? '2026-07-13T00:00:00Z' : null,
           frozenAt: frozen ? '2026-07-11T00:00:00Z' : null,
+          submitLabel: subStatus === 'draft' ? 'שלח סיכום סיור' : 'שמור עדכון',
         },
         rendered: null,
       };
@@ -295,7 +296,7 @@ test('fill dialog: draft → runtime renders questions + subject context + autos
   assert.match(container.innerHTML, /איך היה הסיור\?/);
   assert.match(container.innerHTML, /סיור גרפיטי · 2026-08-06/); // subjectSnapshot context
   assert.match(container.innerHTML, /נשמרות אוטומטית/);
-  assert.match(container.innerHTML, /שלח/); // the ONE primary action
+  assert.match(container.innerHTML, /שלח סיכום סיור/); // purpose-specific primary action
   await unmount();
 });
 
@@ -316,7 +317,7 @@ test('fill dialog: SUBMITTED stays editable (tour-operational lifecycle) — ban
   assert.ok(container.querySelectorAll('textarea').length > 0, 'still editable');
   const ta = [...container.querySelectorAll('textarea')].find((t) => t.value === 'היה מצוין, קבוצה נהדרת');
   assert.ok(ta, 'existing answer loaded into the editable input');
-  assert.match(container.innerHTML, /שלח/);
+  assert.match(container.innerHTML, /שמור עדכון/); // update action after first submit
   assert.doesNotMatch(container.innerHTML, /מילוי מחדש/); // no void/redo in this lifecycle
   await unmount();
 });

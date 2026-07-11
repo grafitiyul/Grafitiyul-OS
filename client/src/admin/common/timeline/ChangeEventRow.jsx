@@ -61,7 +61,11 @@ export default function ChangeEventRow({ entry }) {
   const changes = Array.isArray(entry.data?.changes) ? entry.data.changes : [];
   const when = entry.createdAt ? new Date(entry.createdAt) : null;
   const actor = entry.createdByName || entry.actorLabel || 'מערכת';
-  const multi = changes.length > 1;
+  // Titled entries (questionnaire history: "טופס X הוגש/עודכן") keep the
+  // title as the header and expand ALL changes below it; untitled entries
+  // (deal/person changelog) keep the original compact behavior.
+  const title = entry.data?.title || null;
+  const multi = title ? changes.length > 0 : changes.length > 1;
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white px-3 py-2" dir="rtl">
@@ -71,7 +75,9 @@ export default function ChangeEventRow({ entry }) {
           עדכון
         </span>
         <span className="min-w-0 flex-1 truncate text-[13px] text-gray-800">
-          {multi ? (
+          {title ? (
+            <span className="font-medium">{title}</span>
+          ) : changes.length > 1 ? (
             <span className="font-medium">{changes.length} שינויים בפרטי הדיל</span>
           ) : changes.length === 1 ? (
             <ChangeLine c={changes[0]} />

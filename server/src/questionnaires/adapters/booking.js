@@ -150,29 +150,45 @@ export const bookingAdapter = {
     });
   },
 
-  async onSubmitted(subjectId, submission, tx) {
+  // ONE immutable history entry per meaningful press (kind='change' — the
+  // Deal changelog mechanism), on BOTH the deal and the tour feeds. No-op
+  // updates and autosaves never reach history.
+  async onSubmitted(subjectId, submission, tx, { firstSubmit = true, changes = [] } = {}) {
+    if (!firstSubmit && changes.length === 0) return;
     const b = await prisma.booking.findUnique({
       where: { id: subjectId },
       select: { dealId: true, tourEventId: true },
     });
     if (!b) return;
-    const body = `📋 טופס "${formLabel(submission.purpose)}" הוגש`;
-    const data = { submissionId: submission.id, purpose: submission.purpose, bookingId: subjectId, event: 'submitted' };
+    const by = submission.submittedByName || null;
+    const title = firstSubmit
+      ? `📋 בוצעה שיחת תיאום — הטופס הוגש${by ? ` על ידי ${by}` : ''}`
+      : `📋 טופס "${formLabel(submission.purpose)}" עודכן${by ? ` על ידי ${by}` : ''}`;
+    const data = {
+      title,
+      changes,
+      submissionId: submission.id,
+      purpose: submission.purpose,
+      bookingId: subjectId,
+      source: 'questionnaire',
+      event: firstSubmit ? 'submitted' : 'updated',
+    };
+    const origin = { actorType: 'system', actorLabel: by || 'מערכת', createdBy: null, createdByName: by };
     await emitTimelineEvent(tx, {
       subjectType: 'deal',
       subjectId: b.dealId,
-      kind: 'questionnaire',
-      body,
+      kind: 'change',
+      body: title,
       data,
-      origin: systemOrigin(),
+      origin,
     });
     await emitTimelineEvent(tx, {
       subjectType: 'tour_event',
       subjectId: b.tourEventId,
-      kind: 'questionnaire',
-      body,
+      kind: 'change',
+      body: title,
       data,
-      origin: systemOrigin(),
+      origin,
     });
   },
 };

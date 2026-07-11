@@ -29,13 +29,20 @@ export function purposeLifecycle(purposeKey) {
     // Answer writes + re-submit allowed while status is submitted/reviewed.
     editableAfterSubmit: tourOperational,
     answerLockGraceMs: tourOperational ? (p.answerLockGraceMs ?? 0) : 0,
+    submitLabels: tourOperational ? p.submitLabels || null : null,
   };
 }
 
 // row: { purpose, status, frozenAt } + closedAt (Date|null — when the tour
 // completed/cancelled; null while it is still live).
 export function submissionLifecycle(row, closedAt = null, nowMs = Date.now()) {
-  const { liveVersion, editableAfterSubmit, answerLockGraceMs } = purposeLifecycle(row.purpose);
+  const { liveVersion, editableAfterSubmit, answerLockGraceMs, submitLabels } =
+    purposeLifecycle(row.purpose);
+  // The primary action for the CURRENT state: first press submits, later
+  // presses save an update. Null → the client keeps its generic label.
+  const submitLabel = submitLabels
+    ? (row.status === 'draft' ? submitLabels.first : submitLabels.update)
+    : null;
 
   if (!liveVersion) {
     // Classic family: pinned at start, immutable after submit.
@@ -44,7 +51,7 @@ export function submissionLifecycle(row, closedAt = null, nowMs = Date.now()) {
       liveVersion, editableAfterSubmit,
       structureFrozen: row.status !== 'draft',
       answersLocked: row.status !== 'draft',
-      editable, closedAt: null, lockAt: null,
+      editable, closedAt: null, lockAt: null, submitLabel,
     };
   }
 
@@ -63,5 +70,6 @@ export function submissionLifecycle(row, closedAt = null, nowMs = Date.now()) {
     editable: !answersLocked && statusEditable,
     closedAt: closedMs != null ? new Date(closedMs) : null,
     lockAt: lockAtMs != null ? new Date(lockAtMs) : null,
+    submitLabel,
   };
 }
