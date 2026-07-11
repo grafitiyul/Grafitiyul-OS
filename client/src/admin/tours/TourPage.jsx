@@ -12,6 +12,9 @@ import TourTeamEditor from './TourTeamEditor.jsx';
 import TourGalleryCard from './gallery/TourGalleryCard.jsx';
 import { todayIL } from './calendar/dates.js';
 import { contactNameHe, dealPath, resolveActivityLabel } from '../deals/config.js';
+// ONE Hebrew pluralization source for "N משתתפים" — shared with the Guide
+// Portal ParticipantCard so both surfaces render the identical hierarchy.
+import { participantsLabel } from '../../portal/format.js';
 import {
   TOUR_STATUS_LABELS,
   TOUR_STATUS_STYLES,
@@ -77,8 +80,11 @@ function CustomerCard({ booking }) {
 
   return (
     <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+      {/* Header hierarchy — IDENTICAL to the Guide Portal ParticipantCard:
+          identity (title → "N משתתפים" → organization) on the leading side,
+          "דיל #NNNNN" in the opposite corner. Admin keeps its existing
+          navigation: the identity area opens the Deal in a NEW tab. */}
       <div className="flex items-start justify-between gap-3 p-3">
-        {/* Opens the Deal in a NEW tab — the operational tour stays open here. */}
         <a
           href={dealPath(deal)}
           target="_blank"
@@ -89,20 +95,22 @@ function CustomerCard({ booking }) {
           <div className="truncate text-[15px] font-semibold text-gray-900 hover:text-blue-700">
             {customerName}
           </div>
+          <div className="mt-0.5 text-[13px] font-medium text-gray-700">
+            {participantsLabel(booking.seats)}
+          </div>
           <div className="truncate text-[12.5px] text-gray-500">
             {deal.organization?.name || 'לקוח פרטי'}
             {deal.organizationUnit?.name && ` · ${deal.organizationUnit.name}`}
-            {deal.orderNo && (
-              <span dir="ltr" className="ms-1 tabular-nums text-gray-400">#{deal.orderNo}</span>
-            )}
           </div>
         </a>
-        <div className="flex shrink-0 flex-col items-end gap-1.5 text-left text-[12px]">
-          <div className="tabular-nums font-medium text-gray-700" dir="ltr">
-            👥 {booking.seats}
-          </div>
+        <div className="flex shrink-0 flex-col items-end gap-1.5">
+          {deal.orderNo != null && (
+            <span className="text-[12px] font-medium tabular-nums text-gray-400">
+              דיל <span dir="ltr">#{deal.orderNo}</span>
+            </span>
+          )}
           {booking.status !== 'active' && (
-            <span className="font-semibold text-amber-600">
+            <span className="text-[12px] font-semibold text-amber-600">
               {booking.status === 'orphaned' ? 'orphan' : 'בוטל'}
             </span>
           )}

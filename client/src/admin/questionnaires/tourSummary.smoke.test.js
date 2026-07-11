@@ -77,6 +77,27 @@ const TOUR_DETAIL = {
   ],
 };
 
+// One customer booking for the participant-card layout test.
+const BOOKING = {
+  id: 'bk1', status: 'active', seats: 25,
+  deal: {
+    id: 'd1', orderNo: 27000, title: 'אורט ישראל', status: 'won', participants: 25,
+    customerInfo: null, activityType: 'business',
+    organizationType: null, organizationSubtype: null,
+    organization: { id: 'o1', name: 'אורט ישראל', organizationType: null },
+    organizationUnit: { id: 'u1', name: 'שכבת ט' },
+    contacts: [{
+      roles: [], isPrimary: true,
+      contact: {
+        id: 'c1', firstNameHe: 'רות', lastNameHe: 'לוי', firstNameEn: null, lastNameEn: null,
+        phones: [{ value: '0501111111' }], emails: [],
+      },
+    }],
+  },
+};
+
+let tourDetail = TOUR_DETAIL; // per-test override (reset by each test)
+
 let React;
 let MemoryRouter;
 let Routes;
@@ -190,7 +211,7 @@ before(async () => {
     } else if (u.startsWith('/api/questionnaires?') || u === '/api/questionnaires') {
       body = templatesForPurpose;
     } else if (u.startsWith('/api/tours/tour1')) {
-      body = TOUR_DETAIL;
+      body = tourDetail;
     } else if (u.startsWith('/api/tours')) {
       body = [];
     } else {
@@ -341,8 +362,36 @@ test('fill dialog: FROZEN (tour closed) → immutable historical view, no redo',
   await unmount();
 });
 
+test('tour page: participant card — "25 משתתפים" under the customer, "דיל #27000" in the corner', async () => {
+  startBehavior = 'draft';
+  tourSummaryList = [];
+  tourDetail = { ...TOUR_DETAIL, bookings: [BOOKING] };
+  const { container, unmount } = await render(
+    React.createElement(MemoryRouter, { initialEntries: ['/admin/tours/tour1'] },
+      React.createElement(Routes, null,
+        React.createElement(Route, { path: '/admin/tours/:id', element: React.createElement(TourPage) }))),
+  );
+  const html = container.innerHTML;
+  // Identity area: customer title → full-Hebrew participant count → org line.
+  assert.match(html, /רות לוי/);
+  assert.match(html, /25 משתתפים/);
+  assert.match(html, /שכבת ט/);
+  // Corner: "דיל #27000" (never the bare number / icon+number).
+  const dealRef = [...container.querySelectorAll('span')].find((s) => s.textContent.trim() === 'דיל #27000');
+  assert.ok(dealRef, 'corner shows "דיל #27000"');
+  // The old corner form (👥 + bare seats) is gone from the card.
+  assert.doesNotMatch(html, /👥 25/);
+  // The order number no longer trails the organization line.
+  const orgLine = [...container.querySelectorAll('div')].find((d) => d.textContent.includes('שכבת ט') && d.className.includes('text-[12.5px]'));
+  assert.ok(orgLine && !orgLine.textContent.includes('27000'), 'org line carries no deal number');
+  // Coordination action stays in the card header.
+  assert.match(html, /טופס שיחת תיאום/);
+  await unmount();
+});
+
 test('tour page: per-guide summary rows — required guide gets a row with status chip, assistant does not', async () => {
   startBehavior = 'draft';
+  tourDetail = TOUR_DETAIL;
   tourSummaryList = [{ ...SUBMISSION_BASE, status: 'submitted', actorScope: 'xp1', template: { id: 'tpl1', internalName: 'סיכום סיור', purpose: 'tour_summary' }, version: { versionNo: 1 } }];
   const { container, unmount } = await render(
     React.createElement(MemoryRouter, { initialEntries: ['/admin/tours/tour1'] },
