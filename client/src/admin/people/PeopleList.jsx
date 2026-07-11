@@ -73,6 +73,14 @@ export default function PeopleList() {
   const [lifecycleFilter, setLifecycleFilter] = useState('all');
   const [accessFilter, setAccessFilter] = useState('all');
   const cols = useTableColumns('people.columns', STAFF_COLUMNS);
+  // Teams feed the inline team editor (same list the profile uses).
+  const [teams, setTeams] = useState([]);
+  useEffect(() => {
+    api.teams
+      .list()
+      .then((t) => setTeams(t || []))
+      .catch(() => setTeams([]));
+  }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -227,7 +235,7 @@ export default function PeopleList() {
       )}
 
       {!loading && !error && filtered.length > 0 && (
-        <PeopleTable people={filtered} cols={cols} onChanged={refresh} />
+        <PeopleTable people={filtered} cols={cols} teams={teams} onChanged={refresh} />
       )}
     </div>
   );
@@ -240,7 +248,7 @@ export default function PeopleList() {
 
 const PAGE_SIZES = [10, 25, 50];
 
-function PeopleTable({ people, cols, onChanged }) {
+function PeopleTable({ people, cols, teams, onChanged }) {
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(1);
   const pages = Math.max(1, Math.ceil(people.length / pageSize));
@@ -264,7 +272,13 @@ function PeopleTable({ people, cols, onChanged }) {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {rows.map((p) => (
-              <PersonRow key={p.id} person={p} visibleCols={cols.visibleCols} onChanged={onChanged} />
+              <PersonRow
+                key={p.id}
+                person={p}
+                visibleCols={cols.visibleCols}
+                teams={teams}
+                onChanged={onChanged}
+              />
             ))}
           </tbody>
         </table>
@@ -400,6 +414,164 @@ function UpstreamStatus({ upstream }) {
   );
 }
 
+// ── Inline editing ──────────────────────────────────────────────────────────
+// Operational fields edit straight from the table: click → editor → autosave
+// on blur/Enter (Escape cancels) → small ✓ flash. Saves go through the SAME
+// endpoints the profile uses (updateProfile / update), so validation and the
+// immutable changelog are identical — no second editor or history pipeline.
+// Status is deliberately NOT inline-editable (lifecycle transitions carry
+// business events — accept-to-team confirms, recruitment writes — that need
+// the explicit menu/profile flows).
+
+const INLINE_FIELDS = {
+  vat: {
+    type: 'select',
+    get: (p) => p.profile?.vatStatus || '',
+    save: (p, v) => api.people.updateProfile(p.id, { vatStatus: v || null }),
+  },
+  seniority: {
+    type: 'number',
+    get: (p) =>
+      p.profile?.senioritySupplement == null ? '' : String(p.profile.senioritySupplement),
+    save: (p, v) => api.people.updateProfile(p.id, { senioritySupplement: v === '' ? null : v }),
+  },
+  travel: {
+    type: 'number',
+    get: (p) => (p.profile?.travelAllowance == null ? '' : String(p.profile.travelAllowance)),
+    save: (p, v) => api.people.updateProfile(p.id, { travelAllowance: v === '' ? null : v }),
+  },
+  trainingStart: {
+    type: 'date',
+    get: (p) => p.profile?.trainingStartDate || '',
+    save: (p, v) => api.people.updateProfile(p.id, { trainingStartDate: v || null }),
+  },
+  trainingCohort: {
+    type: 'text',
+    get: (p) => p.profile?.trainingCohort || '',
+    save: (p, v) => api.people.updateProfile(p.id, { trainingCohort: v || null }),
+  },
+  team: {
+    type: 'team',
+    get: (p) => p.teamRefId || '',
+    save: (p, v) => api.people.update(p.id, { teamRefId: v || null }),
+  },
+};
+
+const INLINE_ERROR_MESSAGES = {
+  invalid_vat_status: 'ערך מע״מ לא חוקי',
+  invalid_seniority_supplement: 'מספר אפס או חיובי בלבד',
+  invalid_travel_allowance: 'מספר אפס או חיובי בלבד',
+  invalid_training_start_date: 'תאריך לא תקין',
+};
+
+function InlineCell({ person, colKey, teams, onChanged, children }) {
+  const field = INLINE_FIELDS[colKey];
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [flash, setFlash] = useState(false);
+  const [error, setError] = useState(null);
+  const cancelled = useRef(false);
+
+  function begin() {
+    setValue(field.get(person));
+    setError(null);
+    cancelled.current = false;
+    setEditing(true);
+  }
+
+  async function commit() {
+    if (cancelled.current) return;
+    setEditing(false);
+    const next = typeof value === 'string' ? value.trim() : value;
+    if (next === field.get(person)) return; // untouched
+    if (field.type === 'number' && next !== '' && (!Number.isFinite(Number(next)) || Number(next) < 0)) {
+      setError('מספר אפס או חיובי בלבד');
+      setTimeout(() => setError(null), 2500);
+      return; // previous value stays — nothing was sent
+    }
+    setSaving(true);
+    try {
+      await field.save(person, next);
+      setFlash(true);
+      setTimeout(() => setFlash(false), 1200);
+      await onChanged();
+    } catch (e) {
+      // Validation failure → previous value is restored (we never applied
+      // it locally) + a short inline error.
+      setError(INLINE_ERROR_MESSAGES[e.payload?.error] || 'השמירה נכשלה');
+      setTimeout(() => setError(null), 2500);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (editing) {
+    const commonProps = {
+      autoFocus: true,
+      value,
+      onChange: (e) => setValue(e.target.value),
+      onBlur: commit,
+      onKeyDown: (e) => {
+        if (e.key === 'Enter') e.target.blur();
+        if (e.key === 'Escape') {
+          cancelled.current = true;
+          setEditing(false);
+        }
+      },
+      className:
+        'w-full min-w-[7rem] rounded-md border border-blue-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 bg-white',
+    };
+    if (field.type === 'select' || field.type === 'team') {
+      const options =
+        field.type === 'team'
+          ? [{ value: '', label: '—' }, ...teams.map((t) => ({ value: t.id, label: t.displayName }))]
+          : VAT_OPTIONS;
+      return (
+        <select {...commonProps}>
+          {options.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      );
+    }
+    return (
+      <input
+        {...commonProps}
+        type={field.type === 'number' ? 'number' : field.type}
+        {...(field.type === 'number' ? { min: 0, step: 0.01, inputMode: 'decimal', dir: 'ltr' } : {})}
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={begin}
+      disabled={saving}
+      title="לחיצה לעריכה"
+      className={`group/edit -mx-1 flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-right hover:bg-blue-50/60 ${
+        error ? 'ring-1 ring-red-300' : ''
+      }`}
+    >
+      <span className="min-w-0 flex-1">{children}</span>
+      {saving ? (
+        <span className="shrink-0 text-[11px] text-gray-400">שומר…</span>
+      ) : flash ? (
+        <span className="shrink-0 text-[11px] font-semibold text-emerald-600">✓ נשמר</span>
+      ) : error ? (
+        <span className="shrink-0 text-[11px] text-red-600">{error}</span>
+      ) : (
+        <span className="shrink-0 text-gray-300 opacity-0 transition group-hover/edit:opacity-100" aria-hidden>
+          ✎
+        </span>
+      )}
+    </button>
+  );
+}
+
 // One cell per column key — the render side of STAFF_COLUMNS. Adding a
 // column = one entry here + one definition above; the picker, ordering and
 // persistence come from the shared infra automatically.
@@ -477,12 +649,18 @@ function renderCell(key, person) {
   }
 }
 
-function PersonRow({ person, visibleCols, onChanged }) {
+function PersonRow({ person, visibleCols, teams, onChanged }) {
   return (
     <tr className="transition-colors hover:bg-gray-50/70">
       {visibleCols.map((col) => (
         <TableCell key={col.key} col={col}>
-          {renderCell(col.key, person)}
+          {INLINE_FIELDS[col.key] ? (
+            <InlineCell person={person} colKey={col.key} teams={teams} onChanged={onChanged}>
+              {renderCell(col.key, person)}
+            </InlineCell>
+          ) : (
+            renderCell(col.key, person)
+          )}
         </TableCell>
       ))}
       <TableCell col={{ align: 'left' }} stopClick>
