@@ -47,6 +47,17 @@ export const PROCEDURE_STATE_COLORS = {
   [PROCEDURE_STATES.APPROVED]: 'bg-green-100 text-green-800',
 };
 
+// VAT status (payroll) — ONE options list for the profile editor, the list
+// column, inline editing and bulk editing. Values match the server enum.
+export const VAT_OPTIONS = [
+  { value: '', label: '—' },
+  { value: 'exempt', label: 'פטור ממע״מ' },
+  { value: 'vat_18', label: '18% מע״מ' },
+];
+export const VAT_LABELS = Object.fromEntries(
+  VAT_OPTIONS.filter((o) => o.value).map((o) => [o.value, o.label]),
+);
+
 export const PEOPLE_TABS = [
   { key: 'guides', path: '', label: 'מדריכים', glyph: '👥' },
   { key: 'teams', path: 'teams', label: 'צוותים', glyph: '🏷️' },

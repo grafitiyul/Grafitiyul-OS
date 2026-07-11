@@ -1,8 +1,34 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
-import { PERSON_STATUS_LABELS, PERSON_STATUSES } from './config.js';
+import { PERSON_STATUS_LABELS, PERSON_STATUSES, VAT_LABELS } from './config.js';
 import { StaffAvatar } from '../tours/TourTeamEditor.jsx';
+import {
+  useTableColumns,
+  ColumnPicker,
+  SortableHeaderRow,
+  TableCell,
+} from '../common/tableColumns.jsx';
+
+// Column definitions — the shared tableColumns infra owns visibility, order
+// and persistence (localStorage per table per browser profile — the app's
+// standard personal-preference layer, so every manager keeps their own
+// layout). `def` marks the default-visible set; the payroll columns exist
+// but start hidden. New columns added here appear in the picker automatically.
+const STAFF_COLUMNS = [
+  { key: 'name', label: 'שם', def: true },
+  { key: 'phone', label: 'טלפון', def: true },
+  { key: 'email', label: 'אימייל', def: true, cls: 'max-w-[180px]' },
+  { key: 'team', label: 'צוות', def: true },
+  { key: 'status', label: 'סטטוס', def: true },
+  { key: 'tours', label: 'סיורים', def: true, align: 'center' },
+  { key: 'training', label: 'מערכי הדרכה', def: true },
+  { key: 'trainingStart', label: 'תחילת הדרכה', def: true },
+  { key: 'trainingCohort', label: 'מחזור הכשרה', def: true },
+  { key: 'vat', label: 'מע״מ' },
+  { key: 'seniority', label: 'תוספת ותק' },
+  { key: 'travel', label: 'נסיעות' },
+];
 
 // Unified "אנשים וגישה" surface.
 //
@@ -46,6 +72,7 @@ export default function PeopleList() {
 
   const [lifecycleFilter, setLifecycleFilter] = useState('all');
   const [accessFilter, setAccessFilter] = useState('all');
+  const cols = useTableColumns('people.columns', STAFF_COLUMNS);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -133,6 +160,13 @@ export default function PeopleList() {
             </svg>
           </span>
         </div>
+        <ColumnPicker
+          columns={cols.orderedColumns}
+          colKeys={cols.colKeys}
+          onToggle={cols.toggleCol}
+          onMove={cols.moveCol}
+          onReset={cols.resetCols}
+        />
         <button
           onClick={forceRefresh}
           disabled={refreshing || loading}
@@ -193,7 +227,7 @@ export default function PeopleList() {
       )}
 
       {!loading && !error && filtered.length > 0 && (
-        <PeopleTable people={filtered} onChanged={refresh} />
+        <PeopleTable people={filtered} cols={cols} onChanged={refresh} />
       )}
     </div>
   );
@@ -206,7 +240,7 @@ export default function PeopleList() {
 
 const PAGE_SIZES = [10, 25, 50];
 
-function PeopleTable({ people, onChanged }) {
+function PeopleTable({ people, cols, onChanged }) {
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(1);
   const pages = Math.max(1, Math.ceil(people.length / pageSize));
@@ -222,23 +256,15 @@ function PeopleTable({ people, onChanged }) {
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="border-b border-gray-100 bg-gray-50/70 text-gray-500">
-            <tr>
-              <Th>שם</Th>
-              <Th>טלפון</Th>
-              <Th>אימייל</Th>
-              <Th>צוות</Th>
-              <Th>סטטוס</Th>
-              <Th className="text-center">סיורים</Th>
-              <Th className="text-center">מערכי הדרכה</Th>
-              <Th>תחילת הדרכה</Th>
-              <Th>מחזור הכשרה</Th>
-              {/* Three-dot column — self-explanatory, no header title. */}
-              <Th aria-label="פעולות" />
-            </tr>
+            {/* Shared drag-reorderable header (RTL-correct rects). The
+                trailing ⋮ spacer rides as the non-sortable child. */}
+            <SortableHeaderRow cols={cols.visibleCols} onMove={cols.moveCol}>
+              <th aria-label="פעולות" />
+            </SortableHeaderRow>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {rows.map((p) => (
-              <PersonRow key={p.id} person={p} onChanged={onChanged} />
+              <PersonRow key={p.id} person={p} visibleCols={cols.visibleCols} onChanged={onChanged} />
             ))}
           </tbody>
         </table>
@@ -374,16 +400,16 @@ function UpstreamStatus({ upstream }) {
   );
 }
 
-function PersonRow({ person, onChanged }) {
-  return (
-    <tr className="transition-colors hover:bg-gray-50/70">
-      {/* Avatar + name — the row's identity leads (photo, initials fallback:
-          same StaffAvatar the tour surfaces use). */}
-      <Td>
-        <Link
-          to={`/admin/people/${person.id}`}
-          className="group flex items-center gap-2.5"
-        >
+// One cell per column key — the render side of STAFF_COLUMNS. Adding a
+// column = one entry here + one definition above; the picker, ordering and
+// persistence come from the shared infra automatically.
+function renderCell(key, person) {
+  switch (key) {
+    case 'name':
+      // Avatar + name — the row's identity leads (photo, initials fallback:
+      // same StaffAvatar the tour surfaces use).
+      return (
+        <Link to={`/admin/people/${person.id}`} className="group flex items-center gap-2.5">
           <StaffAvatar
             src={person.profile?.imageUrl}
             name={person.displayName}
@@ -393,42 +419,75 @@ function PersonRow({ person, onChanged }) {
             {person.displayName}
           </span>
         </Link>
-      </Td>
-      <Td>
-        {person.phone ? (
-          <span dir="ltr" className="tabular-nums text-gray-600">
-            {person.phone}
-          </span>
-        ) : (
-          <Muted>—</Muted>
-        )}
-      </Td>
-      <Td className="max-w-[180px]">
-        {person.email ? (
-          <span dir="ltr" className="block truncate text-gray-600" title={person.email}>
-            {person.email}
-          </span>
-        ) : (
-          <Muted>—</Muted>
-        )}
-      </Td>
-      <Td>{person.team?.displayName || <Muted>—</Muted>}</Td>
-      <Td>
-        <StatusChip status={person.status} />
-      </Td>
-      <Td className="text-center tabular-nums text-gray-800">
-        {person.toursCount > 0 ? person.toursCount : <Muted>—</Muted>}
-      </Td>
-      <Td>
-        <TrainingSummary stations={person.trainingStations} tours={person.trainingTours} />
-      </Td>
-      <Td className="tabular-nums text-gray-600">
-        {fmtDate(person.profile?.trainingStartDate) || <Muted>—</Muted>}
-      </Td>
-      <Td className="text-gray-600">{person.profile?.trainingCohort || <Muted>—</Muted>}</Td>
-      <Td className="text-left">
+      );
+    case 'phone':
+      return person.phone ? (
+        <span dir="ltr" className="tabular-nums text-gray-600">{person.phone}</span>
+      ) : (
+        <Muted>—</Muted>
+      );
+    case 'email':
+      return person.email ? (
+        <span dir="ltr" className="block truncate text-gray-600" title={person.email}>
+          {person.email}
+        </span>
+      ) : (
+        <Muted>—</Muted>
+      );
+    case 'team':
+      return person.team?.displayName || <Muted>—</Muted>;
+    case 'status':
+      return <StatusChip status={person.status} />;
+    case 'tours':
+      return person.toursCount > 0 ? (
+        <span className="tabular-nums text-gray-800">{person.toursCount}</span>
+      ) : (
+        <Muted>—</Muted>
+      );
+    case 'training':
+      return <TrainingSummary stations={person.trainingStations} tours={person.trainingTours} />;
+    case 'trainingStart':
+      return (
+        <span className="tabular-nums text-gray-600">
+          {fmtDate(person.profile?.trainingStartDate) || <Muted>—</Muted>}
+        </span>
+      );
+    case 'trainingCohort':
+      return person.profile?.trainingCohort || <Muted>—</Muted>;
+    case 'vat':
+      return VAT_LABELS[person.profile?.vatStatus] || <Muted>—</Muted>;
+    case 'seniority':
+      return person.profile?.senioritySupplement != null ? (
+        <span dir="ltr" className="tabular-nums text-gray-700">
+          {String(person.profile.senioritySupplement)}
+        </span>
+      ) : (
+        <Muted>—</Muted>
+      );
+    case 'travel':
+      return person.profile?.travelAllowance != null ? (
+        <span dir="ltr" className="tabular-nums text-gray-700">
+          {String(person.profile.travelAllowance)}
+        </span>
+      ) : (
+        <Muted>—</Muted>
+      );
+    default:
+      return null;
+  }
+}
+
+function PersonRow({ person, visibleCols, onChanged }) {
+  return (
+    <tr className="transition-colors hover:bg-gray-50/70">
+      {visibleCols.map((col) => (
+        <TableCell key={col.key} col={col}>
+          {renderCell(col.key, person)}
+        </TableCell>
+      ))}
+      <TableCell col={{ align: 'left' }} stopClick>
         <ActionsMenu person={person} onChanged={onChanged} />
-      </Td>
+      </TableCell>
     </tr>
   );
 }
@@ -703,16 +762,6 @@ function IconGrant() {
   return <svg {...SVG}><circle cx="12" cy="12" r="9" /><path d="m8.5 12 2.4 2.4 4.6-4.8" /></svg>;
 }
 
-function Th({ children, className = '' }) {
-  return (
-    <th className={`px-3 py-2.5 text-right text-[11.5px] font-semibold ${className}`}>
-      {children}
-    </th>
-  );
-}
-function Td({ children, className = '' }) {
-  return <td className={`px-3 py-2.5 align-middle ${className}`}>{children}</td>;
-}
 function Muted({ children }) {
   return <span className="text-gray-400">{children}</span>;
 }

@@ -14,6 +14,7 @@ import {
   PROCEDURE_STATE_COLORS,
   PROCEDURE_STATE_LABELS,
   PROCEDURE_STATES,
+  VAT_OPTIONS,
 } from './config.js';
 
 // Full guide profile — header + Identity + Profile + Bank + Procedures.
@@ -964,12 +965,6 @@ function ProfileSection({ person, onChanged }) {
 // the Guide Portal uses) instead of the old free-form JSON editor. Bank
 // details are not secret in this product: every admin sees them (no extra
 // permission toggle). The server normalizes and records changes in history.
-const VAT_OPTIONS = [
-  { value: '', label: '—' },
-  { value: 'exempt', label: 'פטור ממע״מ' },
-  { value: 'vat_18', label: '18% מע״מ' },
-];
-
 function BankSection({ person, onChanged }) {
   const stored = person.profile?.bankDetails || {};
   const buildBaseline = () => ({

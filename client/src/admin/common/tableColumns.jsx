@@ -6,7 +6,12 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
-import { SortableContext, rectSortingStrategy, useSortable } from '@dnd-kit/sortable';
+import {
+  SortableContext,
+  rectSortingStrategy,
+  verticalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import AnchoredMenu from './AnchoredMenu.jsx';
 import {
@@ -70,11 +75,17 @@ export function useTableColumns(storageKey, columns) {
   function setColWidth(key, px, min) {
     setState((s) => ({ ...s, widths: setKeyWidth(s.widths, key, px, min) }));
   }
+  // "איפוס לברירת מחדל" — back to the canonical order + default visibility
+  // (and fluid widths), exactly as a first visit.
+  function resetCols() {
+    setState(normalizeColumnState(null, canonicalKeys, defaults));
+  }
   return {
     colKeys: state.visible,
     toggleCol,
     moveCol,
     setColWidth,
+    resetCols,
     widths: state.widths,
     visibleCols,
     orderedColumns,
@@ -82,10 +93,18 @@ export function useTableColumns(storageKey, columns) {
 }
 
 // "עמודות" picker — toggles which columns the table shows. Portal-anchored menu
-// so a long list is never clipped.
-export function ColumnPicker({ columns, colKeys, onToggle, label = 'עמודות' }) {
+// so a long list is never clipped. Optional extras (opt-in, so existing
+// screens are unchanged until they pass the props):
+//   onMove(fromKey, toKey) — rows become drag-reorderable (handle + dnd-kit
+//     vertical list; pass `columns` in the USER's order, e.g. orderedColumns)
+//   onReset()             — renders "איפוס לברירת מחדל" at the bottom
+export function ColumnPicker({ columns, colKeys, onToggle, onMove, onReset, label = 'עמודות' }) {
   const btnRef = useRef(null);
   const [open, setOpen] = useState(false);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const rows = columns.map((c) => (
+    <PickerRow key={c.key} col={c} checked={colKeys.includes(c.key)} onToggle={onToggle} draggable={!!onMove} />
+  ));
   return (
     <div onClick={(e) => e.stopPropagation()}>
       <button
@@ -98,32 +117,75 @@ export function ColumnPicker({ columns, colKeys, onToggle, label = 'עמודות
         <span aria-hidden>⚙️</span>
         {label}
       </button>
-      <AnchoredMenu anchorRef={btnRef} open={open} onClose={() => setOpen(false)} width={236} align="end">
-        <div className="px-3 py-1.5 text-[11px] font-semibold text-gray-400">בחירת עמודות</div>
-        <div className="max-h-[60vh] overflow-y-auto py-0.5">
-          {columns.map((c) => {
-            const checked = colKeys.includes(c.key);
-            return (
-              <label
-                key={c.key}
-                className={`flex items-center gap-2 px-3 py-1.5 text-sm ${
-                  c.disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer hover:bg-gray-50'
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  disabled={c.disabled}
-                  onChange={() => onToggle(c.key)}
-                  className="accent-blue-600"
-                />
-                <span className="text-gray-700">{c.label}</span>
-                {c.disabled && <span className="text-[10px] text-gray-400">(בקרוב)</span>}
-              </label>
-            );
-          })}
+      <AnchoredMenu anchorRef={btnRef} open={open} onClose={() => setOpen(false)} width={252} align="end">
+        <div className="px-3 py-1.5 text-[11px] font-semibold text-gray-400">
+          {onMove ? 'בחירת עמודות וסדר' : 'בחירת עמודות'}
         </div>
+        <div className="max-h-[60vh] overflow-y-auto py-0.5">
+          {onMove ? (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={({ active, over }) => {
+                if (over && active.id !== over.id) onMove(active.id, over.id);
+              }}
+            >
+              <SortableContext items={columns.map((c) => c.key)} strategy={verticalListSortingStrategy}>
+                {rows}
+              </SortableContext>
+            </DndContext>
+          ) : (
+            rows
+          )}
+        </div>
+        {onReset && (
+          <div className="border-t border-gray-100 p-1">
+            <button
+              type="button"
+              onClick={onReset}
+              className="w-full rounded-md px-3 py-1.5 text-right text-[12.5px] text-gray-500 hover:bg-gray-50 hover:text-gray-800"
+            >
+              ↺ איפוס לברירת מחדל
+            </button>
+          </div>
+        )}
       </AnchoredMenu>
+    </div>
+  );
+}
+
+function PickerRow({ col, checked, onToggle, draggable }) {
+  const s = useSortable({ id: col.key, disabled: !draggable });
+  return (
+    <div
+      ref={s.setNodeRef}
+      style={{ transform: CSS.Transform.toString(s.transform), transition: s.transition }}
+      className={`flex items-center gap-2 px-2 py-1.5 text-sm ${
+        s.isDragging ? 'z-10 rounded-md bg-blue-50 shadow-sm' : ''
+      } ${col.disabled ? 'cursor-not-allowed opacity-40' : 'hover:bg-gray-50'}`}
+    >
+      {draggable && (
+        <button
+          type="button"
+          {...s.attributes}
+          {...s.listeners}
+          aria-label={`גרירה לשינוי מיקום ${col.label}`}
+          className="cursor-grab touch-none px-0.5 text-gray-300 hover:text-gray-500 active:cursor-grabbing"
+        >
+          ⠿
+        </button>
+      )}
+      <label className={`flex flex-1 items-center gap-2 ${col.disabled ? '' : 'cursor-pointer'}`}>
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={col.disabled}
+          onChange={() => onToggle(col.key)}
+          className="accent-blue-600"
+        />
+        <span className="text-gray-700">{col.label}</span>
+        {col.disabled && <span className="text-[10px] text-gray-400">(בקרוב)</span>}
+      </label>
     </div>
   );
 }
