@@ -18,6 +18,9 @@ const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 export const GMAIL_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
 
 export const GMAIL_MODIFY_SCOPE = 'https://www.googleapis.com/auth/gmail.modify';
+// Tours→Google Calendar mirror (events CRUD on the org account's calendar —
+// not full calendar management; see src/tours/calendar/).
+export const CALENDAR_EVENTS_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
 
 export const GMAIL_SCOPES = [
   'openid',
@@ -25,12 +28,20 @@ export const GMAIL_SCOPES = [
   'profile',
   GMAIL_MODIFY_SCOPE,
   'https://www.googleapis.com/auth/gmail.send',
+  CALENDAR_EVENTS_SCOPE,
 ];
 
 // Does THIS account's granted-scopes snapshot include gmail.modify? Accounts
 // connected before the scope upgrade return false until reconnected.
 export function accountHasModifyScope(account) {
   return String(account?.scopes || '').includes('gmail.modify');
+}
+
+// Same per-account gate for the calendar scope: accounts connected before the
+// tours-calendar feature keep working for email, but calendar sync stays
+// pending (with a clear warning) until a re-consent reconnect grants it.
+export function accountHasCalendarScope(account) {
+  return String(account?.scopes || '').includes('calendar.events');
 }
 
 export function emailIntegrationConfigured() {

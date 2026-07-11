@@ -2976,6 +2976,24 @@ model TourEvent {
   // rules are config). Together with `date` it makes generation idempotent.
   generatedByRuleId String?
   cancelledAt      DateTime?
+  // ── Google Calendar mirror (sync TARGET only — TourEvent stays the SSOT) ──
+  // One Google event per tour, owned by the org account (loose ref to the
+  // EmailAccount that created it — updates/deletes must use the same account).
+  // gcalSyncStatus: null = never considered (past/cancelled before the feature)
+  // | 'pending' (dirty — the sync worker reconciles) | 'synced' | 'failed'
+  // (retries exhausted; any later mutation re-marks pending). The worker
+  // derives the ENTIRE desired event state from this row at sync time — no
+  // scheduling data is ever duplicated here beyond the event identity.
+  gcalEventId      String?
+  gcalAccountId    String?
+  gcalSyncStatus   String?
+  gcalSyncError    String?
+  // Non-fatal sync warnings (e.g. assigned guides without an email) — the rest
+  // of the tour still syncs; surfaced in the Tour modal status tooltip.
+  gcalSyncWarning  String?
+  gcalSyncedAt     DateTime?
+  gcalAttempts     Int             @default(0)
+  gcalNextRetryAt  DateTime?
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
   bookings         Booking[]
@@ -2989,6 +3007,27 @@ model TourEvent {
   @@index([productId])
   @@index([productVariantId])
   @@index([locationId])
+  @@index([gcalSyncStatus, gcalNextRetryAt])
+}
+
+// Deleting a TourEvent that already owns a Google Calendar event must still
+// cancel that event (attendees get Google's cancellation email) — but the tour
+// row is gone, so the outbox flag can't live there. A tombstone survives the
+// delete and the calendar sync worker processes it asynchronously (idempotent:
+// a 404/410 from Google counts as done). No FK by design.
+model TourCalendarTombstone {
+  id            String   @id @default(cuid())
+  tourEventId   String // loose ref, for logs only
+  gcalEventId   String
+  gcalAccountId String?
+  status        String   @default("pending") // pending | done | failed
+  attempts      Int      @default(0)
+  nextRetryAt   DateTime @default(now())
+  lastError     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([status, nextRetryAt])
 }
 
 // The ONE relationship layer between Deal (commercial) and TourEvent
