@@ -5,12 +5,17 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
 
-// Guide Portal tour page smoke — the participant card must NOT render the
-// Deal order number ("דיל #NNNNN"). It is an internal CRM identifier and is
-// admin-only; the guide DTO still ships orderNo by contract (display-only,
-// never required), so this test feeds it in and asserts the portal chooses
-// not to render it while the rest of the hierarchy stays intact:
-//   customer/contact → organization → "👥 N משתתפים" → phone/coordination.
+// Guide Portal tour page smoke — the participant card renders through the
+// SHARED ParticipantCardView (one presentation with the admin Tour modal):
+//   * hierarchy: customer/contact → organization (· unit) → "👥 N משתתפים"
+//     (the DTO ships title = organization-first; the card inverts it —
+//     presentation only, the DTO contract is unchanged)
+//   * "מידע חשוב על הלקוח" renders through RichText's TIGHT face
+//     (gos-prose-tight — the display parity partner of the compact note
+//     editor the field is authored in), not the full document rhythm
+//   * the Deal order number ("דיל #NNNNN") is an internal CRM identifier and
+//     admin-only — the DTO still ships orderNo by contract, the portal must
+//     not render it
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const clientRoot = path.resolve(here, '..', '..', '..');
@@ -28,7 +33,7 @@ const TOUR_DETAIL = {
     title: 'אורט ישראל', customerName: 'רות לוי', organizationUnit: 'שכבת ט',
     orderNo: 27000,
     phone: '0501111111', email: null, fieldRepName: null,
-    customerInfo: null, coordinationStatus: null,
+    customerInfo: '<p>שימו לב: אלרגיה לבוטנים</p>', coordinationStatus: null,
   }],
 };
 
@@ -154,11 +159,29 @@ test('participant card: NO deal number — even when the DTO ships orderNo', asy
   assert.doesNotMatch(html, /דיל/, 'the "דיל" label must not render in the portal');
   assert.doesNotMatch(html, /27000/, 'the order number must not render in the portal');
 
-  // The hierarchy stays intact: title → customer/org line → participants line.
-  assert.match(html, /אורט ישראל/);
-  assert.match(html, /רות לוי · שכבת ט/);
-  assert.match(html, /👥 25 משתתפים/);
+  // Hierarchy IN ORDER — identical to the admin card: customer name row,
+  // organization (· unit) row, participants row. Three DISTINCT rows.
+  const seatsRow = [...container.querySelectorAll('div')].find(
+    (d) => d.textContent.trim() === '👥 25 משתתפים',
+  );
+  assert.ok(seatsRow, 'participants row renders');
+  const rows = [...seatsRow.parentElement.children].map((el) => el.textContent.trim());
+  assert.equal(rows.length, 3, 'identity block has exactly customer/org/participants rows');
+  assert.equal(rows[0], 'רות לוי', 'row 1 is the customer name');
+  assert.equal(rows[1], 'אורט ישראל · שכבת ט', 'row 2 is the organization (· unit)');
+  assert.equal(rows[2], '👥 25 משתתפים');
   assert.match(html, /0501111111/);
+
+  // "מידע חשוב על הלקוח" renders through the canonical TIGHT RichText face —
+  // the same presentation as the admin card and the Deal page note view.
+  assert.match(html, /מידע חשוב על הלקוח/);
+  const info = container.querySelector('.gos-prose');
+  assert.ok(info, 'customerInfo renders through RichText (.gos-prose)');
+  assert.ok(
+    info.className.includes('gos-prose-tight'),
+    'customerInfo uses the tight note face, not the full document rhythm',
+  );
+  assert.match(info.innerHTML, /אלרגיה לבוטנים/);
 
   // Layout balance: the corner column still carries the coordination action.
   assert.match(html, /טופס שיחת תיאום/);

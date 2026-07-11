@@ -82,7 +82,7 @@ const BOOKING = {
   id: 'bk1', status: 'active', seats: 25,
   deal: {
     id: 'd1', orderNo: 27000, title: 'אורט ישראל', status: 'won', participants: 25,
-    customerInfo: null, activityType: 'business',
+    customerInfo: '<p>שימו לב: אלרגיה לבוטנים</p>', activityType: 'business',
     organizationType: null, organizationSubtype: null,
     organization: { id: 'o1', name: 'אורט ישראל', organizationType: null },
     organizationUnit: { id: 'u1', name: 'שכבת ט' },
@@ -388,6 +388,13 @@ test('tour page: participant card — customer → organization → "👥 25 מ�
   assert.ok(!rows[1].includes('27000'), 'org line carries no deal number');
   // Coordination action stays in the card header.
   assert.match(html, /טופס שיחת תיאום/);
+  // "מידע חשוב על הלקוח" renders through the SHARED tight RichText face
+  // (same presentation as the Guide Portal card and the Deal page note view).
+  assert.match(html, /מידע חשוב על הלקוח/);
+  const info = container.querySelector('.gos-prose');
+  assert.ok(info, 'customerInfo renders through RichText (.gos-prose)');
+  assert.ok(info.className.includes('gos-prose-tight'), 'customerInfo uses the tight note face');
+  assert.match(info.innerHTML, /אלרגיה לבוטנים/);
   await unmount();
 });
 

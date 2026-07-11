@@ -17,15 +17,20 @@ import { richHtmlForDisplay } from './htmlNormalize.js';
 //   • per-language direction via the dir prop (RTL default; the
 //     .gos-prose[dir] rules make the attribute win over the class default)
 //
+// `tight` opts into the compact note face (.gos-prose-tight — margin-0
+// blocks, 15px): the display parity partner of the compact composer
+// (.rt-editor-compact), for content authored in note-style editors
+// (timeline notes, Deal fields like customerInfo).
+//
 // `className` is for LAYOUT (margins, width) only — never for typography;
 // the content styling contract belongs to .gos-prose alone.
-export default function RichText({ html, dir, className = '' }) {
+export default function RichText({ html, dir, tight = false, className = '' }) {
   const rendered = richHtmlForDisplay(html || '');
   if (!rendered) return null;
   return (
     <div
       dir={dir}
-      className={`gos-prose ${className}`.trim()}
+      className={['gos-prose', tight ? 'gos-prose-tight' : '', className].filter(Boolean).join(' ')}
       dangerouslySetInnerHTML={{ __html: rendered }}
     />
   );

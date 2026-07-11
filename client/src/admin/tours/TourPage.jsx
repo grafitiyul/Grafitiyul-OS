@@ -12,9 +12,9 @@ import TourTeamEditor from './TourTeamEditor.jsx';
 import TourGalleryCard from './gallery/TourGalleryCard.jsx';
 import { todayIL } from './calendar/dates.js';
 import { contactNameHe, dealPath, resolveActivityLabel } from '../deals/config.js';
-// ONE Hebrew pluralization source for "N משתתפים" — shared with the Guide
-// Portal ParticipantCard so both surfaces render the identical hierarchy.
-import { participantsLabel } from '../../portal/format.js';
+// ONE participant-card presentation, shared with the Guide Portal — hierarchy,
+// typography and spacing (incl. the customerInfo tight face) live there.
+import ParticipantCardView from '../../tours/ParticipantCardView.jsx';
 import {
   TOUR_STATUS_LABELS,
   TOUR_STATUS_STYLES,
@@ -64,13 +64,13 @@ function resolveCustomerContacts(dealContacts) {
   return { primary, fieldRep };
 }
 
-// One booking = one customer card (group tours show several, stacked). Title is
-// the CUSTOMER (primary contact), with the organization beneath. The
-// coordination-call form and the "important info" accordion belong to the
-// participant and live inside the card.
+// One booking = one customer card (group tours show several, stacked).
+// Presentation lives in the SHARED ParticipantCardView (one visual source of
+// truth with the Guide Portal); this wrapper owns the admin-only concerns:
+// contact resolution from the deal, the Deal link on the identity block, and
+// the corner content ("דיל #NNNNN", booking-status badge, coordination form).
 function CustomerCard({ booking }) {
   const deal = booking.deal;
-  const [infoOpen, setInfoOpen] = useState(true); // operationally important → open by default
   if (!deal) return null;
   const { primary, fieldRep } = resolveCustomerContacts(deal.contacts);
   const customerName = (primary?.contact && contactNameHe(primary.contact)) || deal.title;
@@ -79,31 +79,21 @@ function CustomerCard({ booking }) {
   const showFieldRep = fieldRep && fieldRep !== primary && fieldRep.contact;
 
   return (
-    <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-      {/* Header hierarchy — IDENTICAL to the Guide Portal ParticipantCard:
-          identity (customer → organization → "👥 N משתתפים") on the leading
-          side, "דיל #NNNNN" in the opposite corner. Admin keeps its existing
-          navigation: the identity area opens the Deal in a NEW tab. */}
-      <div className="flex items-start justify-between gap-3 p-3">
-        <a
-          href={dealPath(deal)}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="min-w-0 text-right"
-          title="פתיחת הדיל בכרטיסייה חדשה"
-        >
-          <div className="truncate text-[15px] font-semibold text-gray-900 hover:text-blue-700">
-            {customerName}
-          </div>
-          <div className="truncate text-[12.5px] text-gray-500">
-            {deal.organization?.name || 'לקוח פרטי'}
-            {deal.organizationUnit?.name && ` · ${deal.organizationUnit.name}`}
-          </div>
-          <div className="mt-0.5 text-[13px] font-medium text-gray-700">
-            👥 {participantsLabel(booking.seats)}
-          </div>
-        </a>
-        <div className="flex shrink-0 flex-col items-end gap-1.5">
+    <ParticipantCardView
+      customerName={customerName}
+      organizationLine={
+        (deal.organization?.name || 'לקוח פרטי') +
+        (deal.organizationUnit?.name ? ` · ${deal.organizationUnit.name}` : '')
+      }
+      seats={booking.seats}
+      identityHref={dealPath(deal)}
+      identityTitle="פתיחת הדיל בכרטיסייה חדשה"
+      phone={phone}
+      email={email}
+      fieldRepName={showFieldRep ? contactNameHe(fieldRep.contact) : null}
+      customerInfo={deal.customerInfo}
+      corner={
+        <>
           {deal.orderNo != null && (
             <span className="text-[12px] font-medium tabular-nums text-gray-400">
               דיל <span dir="ltr">#{deal.orderNo}</span>
@@ -115,54 +105,11 @@ function CustomerCard({ booking }) {
             </span>
           )}
           {/* Coordination form — belongs to the participant (one independent
-              form per Booking, generic engine purpose=coordination). Rendered
-              as a REAL button in the card's top row (spec alignment with the
-              Guide Portal). */}
+              form per Booking, generic engine purpose=coordination). */}
           <CoordinationFormAction bookingId={booking.id} />
-        </div>
-      </div>
-
-      {(phone || email || showFieldRep) && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-gray-100 px-3 py-2 text-[13px]">
-          {phone && (
-            <a href={`tel:${phone}`} dir="ltr" className="tabular-nums text-blue-700 hover:underline">
-              📞 {phone}
-            </a>
-          )}
-          {email && (
-            <a href={`mailto:${email}`} dir="ltr" className="text-blue-700 hover:underline break-all">
-              ✉ {email}
-            </a>
-          )}
-          {showFieldRep && (
-            <span className="text-gray-600">
-              נציג בשטח: <span className="font-medium text-gray-800">{contactNameHe(fieldRep.contact)}</span>
-            </span>
-          )}
-        </div>
-      )}
-
-      {deal.customerInfo && (
-        <div className="border-t border-gray-100 px-3 py-2">
-          <button
-            type="button"
-            onClick={() => setInfoOpen((o) => !o)}
-            className="flex w-full items-center justify-between text-[13px] font-semibold text-gray-700 hover:text-gray-900"
-          >
-            <span>מידע חשוב על הלקוח</span>
-            <span className="text-xs text-gray-400">{infoOpen ? '▾' : '▸'}</span>
-          </button>
-          {infoOpen && (
-            <div
-              className="prose prose-sm mt-1.5 max-w-none text-[13px] leading-relaxed text-gray-800 [&_a]:text-blue-700"
-              // Deal.customerInfo is trusted rich HTML authored in the admin
-              // (same rendering as the Deal workspace note).
-              dangerouslySetInnerHTML={{ __html: deal.customerInfo }}
-            />
-          )}
-        </div>
-      )}
-    </div>
+        </>
+      }
+    />
   );
 }
 

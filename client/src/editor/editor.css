@@ -40,6 +40,15 @@
   margin-top: 0;
 }
 
+/* The tight face IS the 15px note face — every surface that uses it
+   (NoteCard, CollapsibleNote, the tour participant cards) renders notes
+   at 15px. Historically each surface forced text-[15px] alongside the
+   class; defining it here makes the face self-contained so RichText's
+   `tight` prop yields the full contract without per-surface overrides. */
+.gos-prose.gos-prose-tight {
+  font-size: 15px;
+}
+
 /* Sibling gap between block-level children. With line-height now at
    1.55 (~25px), a 1.25em (~20px) inter-block margin gives a paragraph
    break of ~45px baseline-to-baseline vs ~25px for a soft <br> line

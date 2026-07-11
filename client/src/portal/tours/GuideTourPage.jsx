@@ -10,7 +10,9 @@ import {
   participantsLabel,
 } from '../format.js';
 import { FeedError } from './feedStates.jsx';
-import RichText from '../../editor/RichText.jsx';
+// ONE participant-card presentation, shared with the admin Tour modal —
+// hierarchy, typography and spacing (incl. the customerInfo tight face).
+import ParticipantCardView from '../../tours/ParticipantCardView.jsx';
 import FormActionButton from '../../questionnaire/FormActionButton.jsx';
 import QuestionnaireFillDialog from '../../questionnaire/QuestionnaireFillDialog.jsx';
 
@@ -481,7 +483,6 @@ function WorkshopLocationRow({ component }) {
 // ── participants ─────────────────────────────────────────────────────
 
 function ParticipantCard({ participant: p, coordinationEnabled, apiBase }) {
-  const [infoOpen, setInfoOpen] = useState(true); // operationally important → open
   const [coordOpen, setCoordOpen] = useState(false);
   const [coordStatus, setCoordStatus] = useState(p.coordinationStatus || null);
 
@@ -512,73 +513,37 @@ function ParticipantCard({ participant: p, coordinationEnabled, apiBase }) {
     },
   };
 
+  // Presentation-only inversion of the DTO's title precedence: the DTO ships
+  // title = organization || customer (unchanged contract); the card hierarchy
+  // is customer first, organization beneath — identical to the admin card.
+  const customerName = p.customerName || p.title;
+  const organizationLine =
+    p.title && p.title !== p.customerName
+      ? [p.title, p.organizationUnit].filter(Boolean).join(' · ')
+      : p.organizationUnit || 'לקוח פרטי';
+
   return (
-    <div className="overflow-hidden rounded-xl border border-gray-200">
-      <div className="flex items-start justify-between gap-3 p-3">
-        <div className="min-w-0">
-          {/* Hierarchy (mirrors the Admin CustomerCard): customer/contact →
-              organization line → "👥 N משתתפים". Unlike the admin card, the
-              Deal number is NOT shown — internal CRM identifier, admin-only. */}
-          <div className="truncate text-[15px] font-semibold text-gray-900">{p.title}</div>
-          {(p.customerName && p.customerName !== p.title) || p.organizationUnit ? (
-            <div className="truncate text-[12.5px] text-gray-500">
-              {[p.customerName !== p.title ? p.customerName : null, p.organizationUnit]
-                .filter(Boolean)
-                .join(' · ')}
-            </div>
-          ) : null}
-          <div className="mt-0.5 text-[13px] font-medium text-gray-700">
-            👥 {participantsLabel(p.seats)}
-          </div>
-        </div>
-        {coordinationEnabled && (
-          <div className="flex shrink-0 flex-col items-end gap-1.5">
-            <FormActionButton
-              label="טופס שיחת תיאום"
-              status={coordStatus}
-              onClick={() => setCoordOpen(true)}
-            />
-          </div>
-        )}
-      </div>
-
-      {(p.phone || p.email || p.fieldRepName) && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-gray-100 px-3 py-2 text-[13px]">
-          {p.phone && (
-            <a href={`tel:${p.phone}`} dir="ltr" className="tabular-nums text-blue-700 active:underline">
-              📞 {p.phone}
-            </a>
-          )}
-          {p.email && (
-            <a href={`mailto:${p.email}`} dir="ltr" className="break-all text-blue-700 active:underline">
-              ✉ {p.email}
-            </a>
-          )}
-          {p.fieldRepName && (
-            <span className="text-gray-600">
-              נציג בשטח: <span className="font-medium text-gray-800">{p.fieldRepName}</span>
-            </span>
-          )}
-        </div>
-      )}
-
-      {p.customerInfo && (
-        <div className="border-t border-gray-100 px-3 py-2">
-          <button
-            type="button"
-            onClick={() => setInfoOpen((o) => !o)}
-            className="flex w-full items-center justify-between text-[13px] font-semibold text-gray-700"
-          >
-            <span>מידע חשוב על הלקוח</span>
-            <span className="text-xs text-gray-400">{infoOpen ? '▾' : '▸'}</span>
-          </button>
-          {/* Admin-authored rich HTML — rendered through the canonical
-              RichText path (CLAUDE.md §16), same trusted origin as the
-              admin card. */}
-          {infoOpen && <RichText html={p.customerInfo} className="mt-1.5" />}
-        </div>
-      )}
-
+    // Shared presentation (one visual source of truth with the admin card).
+    // Portal-only choices: no identity link (no Deal access from the portal),
+    // no Deal number in the corner (internal CRM identifier, admin-only).
+    <ParticipantCardView
+      customerName={customerName}
+      organizationLine={organizationLine}
+      seats={p.seats}
+      phone={p.phone}
+      email={p.email}
+      fieldRepName={p.fieldRepName}
+      customerInfo={p.customerInfo}
+      corner={
+        coordinationEnabled ? (
+          <FormActionButton
+            label="טופס שיחת תיאום"
+            status={coordStatus}
+            onClick={() => setCoordOpen(true)}
+          />
+        ) : null
+      }
+    >
       {coordOpen && (
         <QuestionnaireFillDialog
           open={coordOpen}
@@ -589,6 +554,6 @@ function ParticipantCard({ participant: p, coordinationEnabled, apiBase }) {
           onStatusChange={(s) => setCoordStatus(s || null)}
         />
       )}
-    </div>
+    </ParticipantCardView>
   );
 }
