@@ -78,6 +78,24 @@ test('diff: identical values produce no change; photo displays as תמונה/ל�
   assert.equal(c.newValue, '/api/media/x9'); // raw URL preserved → history preview
 });
 
+test('VAT history shows Hebrew labels, never raw enum values', () => {
+  const before = { vatStatus: 'exempt' };
+  const [c] = diffPersonFields(before, { vatStatus: 'vat_18' });
+  assert.equal(c.labelHe, 'מע״מ');
+  assert.equal(c.oldDisplay, 'פטור ממע״מ');
+  assert.equal(c.newDisplay, '18% מע״מ');
+  assert.equal(c.oldValue, 'exempt'); // raw value preserved for restore
+});
+
+test('seniority supplement: snapshot normalizes Decimal to string; diff shows old → new', () => {
+  const snap = personChangeSnapshot(null, { senioritySupplement: 12.5 });
+  assert.equal(snap.senioritySupplement, '12.5');
+  const [c] = diffPersonFields({ senioritySupplement: '12.50' }, { senioritySupplement: '15.00' });
+  assert.equal(c.labelHe, 'תוספת ותק');
+  assert.equal(c.oldDisplay, '12.50');
+  assert.equal(c.newDisplay, '15.00');
+});
+
 test('diff: bank equality is structural (same code+name → no change)', () => {
   const before = personChangeSnapshot(null, {
     bankDetails: { bankCode: '10', bankName: 'בנק לאומי' },

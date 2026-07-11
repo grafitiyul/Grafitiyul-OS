@@ -197,6 +197,9 @@ export default function TourPage() {
   const [summaryOpen, setSummaryOpen] = useState(null); // { actorScope, title, legacyId? } | null
   const [summaryByScope, setSummaryByScope] = useState({}); // actorScope → status
   const [legacySummary, setLegacySummary] = useState(null); // { id, status } | null
+  // Manual "סמן סיור כהסתיים" — the confirm dialog lists required guides whose
+  // summaries are still missing (completion happens anyway after confirm).
+  const [confirmComplete, setConfirmComplete] = useState(null); // { missing: [...] } | null
 
   const refreshSummaryStatus = useCallback(async () => {
     try {
@@ -258,6 +261,30 @@ export default function TourPage() {
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [close]);
+
+  async function openCompleteConfirm() {
+    try {
+      const state = await api.tours.completionState(id);
+      setConfirmComplete({ missing: state.missing || [] });
+    } catch {
+      setConfirmComplete({ missing: [] }); // preview is advisory — never block
+    }
+  }
+
+  async function runComplete() {
+    setConfirmComplete(null);
+    try {
+      await api.tours.complete(id);
+      await refresh();
+      refreshSummaryStatus();
+    } catch (e) {
+      alert(
+        e.payload?.error === 'tour_cancelled'
+          ? 'הסיור בוטל — אין מה לסמן כהסתיים.'
+          : 'שגיאה: ' + (e.payload?.error || e.message),
+      );
+    }
+  }
 
   // Delete is the inverse of "create group slot" (Tours-module cleanup of an
   // EMPTY slot) — not customer cancellation, which lives on the Deal.
@@ -376,6 +403,15 @@ export default function TourPage() {
                   {/* Tour Summary moved to the "סיכום סיור" section below —
                       one hierarchy with the gallery, mirrored by the Guide
                       Portal. */}
+                  {tour.status === 'scheduled' && (
+                    <button
+                      type="button"
+                      onClick={openCompleteConfirm}
+                      className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[12px] font-semibold text-emerald-700 hover:bg-emerald-100"
+                    >
+                      ✓ סמן סיור כהסתיים
+                    </button>
+                  )}
                   {isSlot && tour.status !== 'cancelled' && (
                     <button
                       type="button"
@@ -570,6 +606,21 @@ export default function TourPage() {
         danger
         onCancel={() => setConfirmDelete(false)}
         onConfirm={runDelete}
+      />
+
+      <ConfirmDialog
+        open={!!confirmComplete}
+        title="סמן סיור כהסתיים"
+        body={
+          confirmComplete?.missing?.length
+            ? `עדיין חסרים סיכומי סיור של: ${confirmComplete.missing
+                .map((m) => m.displayName)
+                .join(', ')}. לסמן את הסיור כהסתיים בכל זאת? טופס שיחת התיאום יינעל, וסיכומי הסיור יישארו פתוחים לעדכון 48 שעות.`
+            : 'לסמן את הסיור כהסתיים? טופס שיחת התיאום יינעל, וסיכומי הסיור יישארו פתוחים לעדכון 48 שעות.'
+        }
+        confirmLabel="סמן כהסתיים"
+        onCancel={() => setConfirmComplete(null)}
+        onConfirm={runComplete}
       />
     </div>
   );

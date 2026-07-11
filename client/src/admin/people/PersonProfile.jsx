@@ -124,6 +124,8 @@ function ProfileTabs({ person, teams, procedures, onChanged, onDeleted }) {
           )}
           <TrainingFactsSection person={person} onChanged={onChanged} />
           <TeamSection person={person} teams={teams} onChanged={onChanged} />
+          {/* תיאור + הערות פנימיות — same fields/storage/save, technical home. */}
+          <ProfileSection person={person} onChanged={onChanged} />
           <BankSection person={person} onChanged={onChanged} />
           {/* The immutable audit history closes the technical tab. */}
           <ChangesSection person={person} onChanged={onChanged} />
@@ -132,7 +134,6 @@ function ProfileTabs({ person, teams, procedures, onChanged, onDeleted }) {
 
       {tab === 'procedures' && (
         <div className="space-y-5">
-          <ProfileSection person={person} onChanged={onChanged} />
           <ProceduresSection procedures={procedures} onChanged={onChanged} />
         </div>
       )}
@@ -963,29 +964,36 @@ function ProfileSection({ person, onChanged }) {
 // the Guide Portal uses) instead of the old free-form JSON editor. Bank
 // details are not secret in this product: every admin sees them (no extra
 // permission toggle). The server normalizes and records changes in history.
+const VAT_OPTIONS = [
+  { value: '', label: '—' },
+  { value: 'exempt', label: 'פטור ממע״מ' },
+  { value: 'vat_18', label: '18% מע״מ' },
+];
+
 function BankSection({ person, onChanged }) {
   const stored = person.profile?.bankDetails || {};
-  const baseline = {
+  const buildBaseline = () => ({
     beneficiary: stored.beneficiary || null,
     bankCode: stored.bankCode || null,
     bankName: stored.bankName || null,
     branchCode: stored.branchCode || null,
     branchName: stored.branchName || null,
     accountNumber: stored.accountNumber || null,
-  };
+    // Admin-only payroll facts — own PersonProfile columns (never inside the
+    // bankDetails Json, never in any portal payload).
+    vatStatus: person.profile?.vatStatus || '',
+    senioritySupplement:
+      person.profile?.senioritySupplement == null
+        ? ''
+        : String(person.profile.senioritySupplement),
+  });
+  const baseline = buildBaseline();
   const [form, setForm] = useState(baseline);
   const [banks, setBanks] = useState([]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    setForm({
-      beneficiary: stored.beneficiary || null,
-      bankCode: stored.bankCode || null,
-      bankName: stored.bankName || null,
-      branchCode: stored.branchCode || null,
-      branchName: stored.branchName || null,
-      accountNumber: stored.accountNumber || null,
-    });
+    setForm(buildBaseline());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [person]);
 
@@ -1000,10 +1008,22 @@ function BankSection({ person, onChanged }) {
   useDirtyForm(dirty);
 
   async function save() {
+    const supplement = String(form.senioritySupplement || '').trim();
+    if (supplement && (!Number.isFinite(Number(supplement)) || Number(supplement) < 0)) {
+      window.alert('תוספת ותק חייבת להיות מספר אפס או חיובי.');
+      return;
+    }
     setSaving(true);
     try {
-      await api.people.updateProfile(person.id, { bankDetails: form });
+      const { vatStatus, senioritySupplement, ...bankDetails } = form;
+      await api.people.updateProfile(person.id, {
+        bankDetails,
+        vatStatus: vatStatus || null,
+        senioritySupplement: supplement || null,
+      });
       await onChanged();
+    } catch (e) {
+      window.alert('שמירה נכשלה: ' + (e.payload?.error || e.message));
     } finally {
       setSaving(false);
     }
@@ -1016,6 +1036,36 @@ function BankSection({ person, onChanged }) {
         banks={banks}
         onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
       />
+
+      {/* Payroll facts — admin-only (structurally excluded from the portal). */}
+      <div className="mt-3 grid grid-cols-1 gap-3 border-t border-gray-100 pt-3 sm:grid-cols-2">
+        <Field label="מע״מ">
+          <select
+            value={form.vatStatus}
+            onChange={(e) => setForm((f) => ({ ...f, vatStatus: e.target.value }))}
+            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+          >
+            {VAT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="תוספת ותק">
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            inputMode="decimal"
+            dir="ltr"
+            value={form.senioritySupplement}
+            onChange={(e) => setForm((f) => ({ ...f, senioritySupplement: e.target.value }))}
+            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+          />
+        </Field>
+      </div>
+
       <div className="flex justify-end pt-3">
         <button
           onClick={save}

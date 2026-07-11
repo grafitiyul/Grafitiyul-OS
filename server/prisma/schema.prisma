@@ -539,6 +539,14 @@ model PersonProfile {
   // label (free text — "מרץ 2026", "מחזור 14").
   trainingStartDate String?
   trainingCohort    String?
+  // Admin-only payroll facts (NEVER exposed to the guide portal — the portal
+  // profile DTO whitelists its fields explicitly):
+  //   vatStatus            'exempt' | 'vat_18' (validated scalar, Hebrew in UI)
+  //   senioritySupplement  plain decimal amount (no currency semantics baked
+  //                        in — the payroll convention of minor-unit BigInt is
+  //                        reserved for explicit currency columns)
+  vatStatus           String?
+  senioritySupplement Decimal? @db.Decimal(10, 2)
   description String?
   notes       String?
   bankDetails Json?
@@ -2989,6 +2997,11 @@ model TourEvent {
   id               String          @id @default(cuid())
   kind             String // 'private' | 'business' | 'group_slot'
   status           String          @default("scheduled") // scheduled | completed | cancelled
+  // Explicit business completion (tours/completion.js is the ONE transition):
+  // when + why the tour completed. completedAt drives the tour summary's
+  // post-completion edit window. reason: summaries | midnight | manual.
+  completedAt     DateTime?
+  completedReason String?
   date             String // "YYYY-MM-DD"
   startTime        String // "HH:MM"
   product          Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)

@@ -1240,6 +1240,10 @@ export const api = {
     cancelOrphan: (bookingId) =>
       request(`/api/tours/orphans/${bookingId}/cancel`, { method: 'POST', body: '{}' }),
     get: (id) => request(`/api/tours/${id}`),
+    // Explicit tour completion: dialog payload (missing required summaries)
+    // + the manual "סמן סיור כהסתיים" transition.
+    completionState: (id) => request(`/api/tours/${id}/completion-state`),
+    complete: (id) => request(`/api/tours/${id}/complete`, { method: 'POST', body: '{}' }),
     // Guide assignments (role lives on the assignment; switching = update).
     addAssignment: (tourId, data) =>
       request(`/api/tours/${tourId}/assignments`, { method: 'POST', body: JSON.stringify(data) }),

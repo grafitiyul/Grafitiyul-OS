@@ -80,6 +80,7 @@ import { startScheduledWorker } from './whatsapp/scheduledWorker.js';
 import { startEmailSyncWorker } from './email/syncWorker.js';
 import { startTourGalleryCleanupWorker } from './tours/gallery/cleanupWorker.js';
 import { startTourCalendarSyncWorker } from './tours/calendar/syncWorker.js';
+import { startTourCompletionWorker } from './tours/completionWorker.js';
 import questionnairesRouter from './routes/questionnaires.js';
 import publicQuestionnaireRouter from './routes/publicQuestionnaire.js';
 import { makeLegacyRedirect } from './legacyRedirect.js';
@@ -578,4 +579,7 @@ app.listen(port, () => {
   // the org account's calendar (TourEvent stays the SSOT). No-op until the
   // Google account is connected with the calendar scope.
   startTourCalendarSyncWorker(console);
+  // Tour completion sweep — flips scheduled tours whose date passed (business
+  // TZ midnight) into the explicit Completed state; 5m tick, idempotent.
+  startTourCompletionWorker(console);
 });

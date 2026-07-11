@@ -5,6 +5,7 @@ import { prisma } from '../../db.js';
 import { emitTimelineEvent, systemOrigin } from '../../timeline/events.js';
 import { getPurpose } from '../registry.js';
 import { tourQuestionnairesLocked } from '../../tours/lifecycle.js';
+import { summaryCompletionState, completeTour } from '../../tours/completion.js';
 
 // Human-readable feed body — unknown kinds render through the generic
 // NoteCard, so the body carries the whole story.
@@ -101,5 +102,17 @@ export const tourEventAdapter = {
       data: { submissionId: submission.id, purpose: submission.purpose, event: 'submitted' },
       origin: systemOrigin(),
     });
+    // Completion trigger #1: this submit may have been the LAST required
+    // guide's summary — if so the tour completes right now, atomically with
+    // the submit (same tx).
+    if (submission.purpose === 'tour_summary') {
+      const state = await summaryCompletionState(tx, subjectId);
+      if (state.allSubmitted) {
+        await completeTour(tx, subjectId, {
+          reason: 'summaries',
+          actorName: submission.submittedByName || null,
+        });
+      }
+    }
   },
 };

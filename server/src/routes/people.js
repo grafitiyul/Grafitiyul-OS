@@ -381,8 +381,16 @@ router.put(
 router.put(
   '/:id/profile',
   handle(async (req, res) => {
-    const { imageUrl, description, notes, bankDetails, trainingStartDate, trainingCohort } =
-      req.body || {};
+    const {
+      imageUrl,
+      description,
+      notes,
+      bankDetails,
+      trainingStartDate,
+      trainingCohort,
+      vatStatus,
+      senioritySupplement,
+    } = req.body || {};
     const data = {};
     if (imageUrl !== undefined) {
       data.imageUrl = imageUrl || null;
@@ -405,6 +413,25 @@ router.put(
     if (trainingCohort !== undefined) {
       data.trainingCohort = String(trainingCohort || '').trim().slice(0, 80) || null;
     }
+    // Admin-only payroll facts — validated scalars, never portal-exposed.
+    if (vatStatus !== undefined) {
+      if (vatStatus !== null && vatStatus !== '' && !['exempt', 'vat_18'].includes(vatStatus)) {
+        return res.status(400).json({ error: 'invalid_vat_status' });
+      }
+      data.vatStatus = vatStatus || null;
+    }
+    if (senioritySupplement !== undefined) {
+      if (senioritySupplement === null || senioritySupplement === '') {
+        data.senioritySupplement = null;
+      } else {
+        const n = Number(senioritySupplement);
+        if (!Number.isFinite(n) || n < 0 || n > 99999999) {
+          return res.status(400).json({ error: 'invalid_seniority_supplement' });
+        }
+        // Two decimal places — matches the DECIMAL(10,2) column exactly.
+        data.senioritySupplement = n.toFixed(2);
+      }
+    }
     // Every bank write is normalized to the ONE structured shape (legacy
     // free-form JSON degrades to nulls and gets replaced on first save).
     if (bankDetails !== undefined) {
@@ -418,6 +445,8 @@ router.put(
         bankDetails: true,
         trainingStartDate: true,
         trainingCohort: true,
+        vatStatus: true,
+        senioritySupplement: true,
       },
     });
     const profile = await prisma.personProfile.upsert({
@@ -438,6 +467,10 @@ router.put(
           ? { trainingStartDate: afterSnap.trainingStartDate }
           : {}),
         ...(trainingCohort !== undefined ? { trainingCohort: afterSnap.trainingCohort } : {}),
+        ...(vatStatus !== undefined ? { vatStatus: afterSnap.vatStatus } : {}),
+        ...(senioritySupplement !== undefined
+          ? { senioritySupplement: afterSnap.senioritySupplement }
+          : {}),
         ...(bankDetails !== undefined
           ? {
               beneficiary: afterSnap.beneficiary,
@@ -527,7 +560,9 @@ router.post(
     } else if (
       fieldKey === 'imageUrl' ||
       fieldKey === 'trainingStartDate' ||
-      fieldKey === 'trainingCohort'
+      fieldKey === 'trainingCohort' ||
+      fieldKey === 'vatStatus' ||
+      fieldKey === 'senioritySupplement'
     ) {
       await prisma.personProfile.upsert({
         where: { personRefId: person.id },

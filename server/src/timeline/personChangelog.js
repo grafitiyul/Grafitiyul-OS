@@ -18,6 +18,8 @@ export const PERSON_FIELD_LABELS = {
   imageUrl: 'תמונת פרופיל',
   trainingStartDate: 'תחילת הדרכה',
   trainingCohort: 'מחזור הכשרה',
+  vatStatus: 'מע״מ',
+  senioritySupplement: 'תוספת ותק',
   beneficiary: 'שם המוטב',
   bank: 'בנק',
   branch: 'סניף',
@@ -34,6 +36,12 @@ function codeNameEq(a, b) {
   return (a?.code || null) === (b?.code || null) && (a?.name || null) === (b?.name || null);
 }
 
+// Human labels for the VAT scalar — history shows Hebrew, never raw enums.
+export const VAT_STATUS_LABELS = {
+  exempt: 'פטור ממע״מ',
+  vat_18: '18% מע״מ',
+};
+
 const FIELDS = [
   { key: 'displayName' },
   { key: 'email' },
@@ -41,6 +49,8 @@ const FIELDS = [
   { key: 'imageUrl', display: (v) => (v ? 'תמונה' : 'ללא תמונה') },
   { key: 'trainingStartDate' },
   { key: 'trainingCohort' },
+  { key: 'vatStatus', display: (v) => (v ? VAT_STATUS_LABELS[v] || v : null) },
+  { key: 'senioritySupplement' },
   { key: 'beneficiary' },
   { key: 'bank', display: codeNameDisplay, eq: codeNameEq },
   { key: 'branch', display: codeNameDisplay, eq: codeNameEq },
@@ -83,6 +93,10 @@ export function personChangeSnapshot(person, profile) {
     imageUrl: profile?.imageUrl ?? null,
     trainingStartDate: profile?.trainingStartDate ?? null,
     trainingCohort: profile?.trainingCohort ?? null,
+    vatStatus: profile?.vatStatus ?? null,
+    // Prisma Decimal → plain string so diff/restore round-trip cleanly.
+    senioritySupplement:
+      profile?.senioritySupplement == null ? null : String(profile.senioritySupplement),
     beneficiary: bank.beneficiary,
     bank: bank.bankCode || bank.bankName ? { code: bank.bankCode, name: bank.bankName } : null,
     branch:

@@ -46,7 +46,10 @@ function guideOrigin(person) {
   };
 }
 
-function profileDto(person, profile, permissions) {
+// Exported for tests: the guide-profile DTO is an explicit whitelist — the
+// admin-only payroll facts (vatStatus, senioritySupplement) and every other
+// unlisted PersonProfile column can never reach the portal, structurally.
+export function profileDto(person, profile, permissions) {
   const bank = normalizeBankDetails(profile?.bankDetails);
   return {
     displayName: person.displayName,

@@ -21,6 +21,7 @@ import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 import { validateWorkshopLocationForComponent } from '../tours/activityCatalog.js';
 import { seedTourComponents } from '../tours/tourComponents.js';
 import { scheduleGalleryCleanup } from '../tours/gallery/service.js';
+import { summaryCompletionState, completeTour } from '../tours/completion.js';
 import { isAssignableStaff } from '../people/eligibility.js';
 import {
   calendarPendingPatch,
@@ -389,6 +390,46 @@ router.post(
       await cancelDealBooking(tx, booking, { reason: 'orphan_cancelled', origin });
     });
     res.json({ ok: true });
+  }),
+);
+
+// ── explicit tour completion (tours/completion.js is the ONE transition) ────
+
+// Confirmation-dialog payload for "סמן סיור כהסתיים": which required guides
+// (lead_guide/guide) still owe their summary. Also feeds the summary section.
+router.get(
+  '/:id/completion-state',
+  handle(async (req, res) => {
+    const tour = await prisma.tourEvent.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, status: true, completedAt: true, completedReason: true },
+    });
+    if (!tour) return res.status(404).json({ error: 'not_found' });
+    const state = await summaryCompletionState(prisma, tour.id);
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      status: tour.status,
+      completedAt: tour.completedAt,
+      completedReason: tour.completedReason,
+      required: state.required,
+      missing: state.missing.map((m) => ({ displayName: m.displayName, role: m.role })),
+    });
+  }),
+);
+
+// Manual completion (trigger #3). Idempotent; refuses cancelled tours.
+router.post(
+  '/:id/complete',
+  handle(async (req, res) => {
+    const origin = await userOrigin(req.adminAuth?.userId);
+    const result = await completeTour(prisma, req.params.id, {
+      reason: 'manual',
+      actorName: origin.createdByName || null,
+    });
+    if (!result.ok) {
+      return res.status(result.error === 'not_found' ? 404 : 409).json({ error: result.error });
+    }
+    res.json({ ok: true, already: !!result.already });
   }),
 );
 
