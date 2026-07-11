@@ -28,7 +28,11 @@ export default function StationPreview() {
   const visibleSteps = station.steps.filter((s) => s.isVisible !== false);
   const parts = visibleSteps
     .filter((s) => s.roleHint !== MEDIA_ROLE)
-    .map((s) => ({ title: s.contentBlock?.titleHe || null, body: s.contentBlock?.bodyHe || '' }));
+    .map((s) => ({
+      roleHint: s.roleHint || null,
+      title: s.contentBlock?.titleHe || null,
+      body: s.contentBlock?.bodyHe || '',
+    }));
   const mediaStep = visibleSteps.find((s) => s.roleHint === MEDIA_ROLE);
   const media = (mediaStep?.contentBlock?.assets || [])
     .filter((a) => a.active)

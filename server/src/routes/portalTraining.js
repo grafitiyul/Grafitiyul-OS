@@ -140,8 +140,11 @@ router.get(
       heroImageTitle: station.heroImageTitle || null,
       tour: { id: station.tour.id, titleHe: station.tour.titleHe },
       // Ordered content parts — rich HTML rendered by the canonical stack.
-      // internalNote / station notes are admin-only and NEVER shipped here.
+      // roleHint drives the accordion grouping (build_up / curiosity_hook /
+      // content / punchline). internalNote / station notes are admin-only
+      // and NEVER shipped here.
       parts: contentSteps.map((s) => ({
+        roleHint: s.roleHint || null,
         title: s.contentBlock?.titleHe || null,
         body: s.contentBlock?.bodyHe || '',
       })),

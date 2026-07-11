@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import RichText from '../editor/RichText.jsx';
 
 // THE shared learner-facing Station renderer — used by the admin preview
@@ -5,12 +6,28 @@ import RichText from '../editor/RichText.jsx';
 // two surfaces can never drift (product rule: no duplicated Station
 // presentation logic). Pure presentation:
 //
-//   { tourTitle, title, description, heroImageUrl, parts: [{ title, body }],
-//     media: [{ assetType, title, url }] }
+//   { tourTitle, title, description, heroImageUrl,
+//     parts: [{ roleHint, title, body }], media: [{ assetType, title, url }] }
 //
-// Rich bodies render through the canonical RichText path (CLAUDE.md §16).
+// Parts are grouped by roleHint into four accordion sections (בילד־אפ /
+// סקרנות / תוכן / פואנטה), all COLLAPSED by default — the guide opens only
+// what they need right now. Parts without a hint land under תוכן. The part
+// rendering itself (numbered heading + canonical RichText, CLAUDE.md §16) is
+// unchanged — the accordion is a grouping wrapper only.
 
 const ASSET_ICONS = { link: '🔗', file: '📄', video: '▶', image: '🖼' };
+
+// Same vocabulary as the admin editor's role chips (tour-content kit).
+const ROLE_GROUPS = [
+  { key: 'build_up', label: 'בילד־אפ', icon: '🧱' },
+  { key: 'curiosity_hook', label: 'סקרנות', icon: '✨' },
+  { key: 'content', label: 'תוכן', icon: '📖' },
+  { key: 'punchline', label: 'פואנטה', icon: '🎯' },
+];
+
+function groupKeyFor(roleHint) {
+  return ROLE_GROUPS.some((g) => g.key === roleHint) ? roleHint : 'content';
+}
 
 export default function StationContentView({
   tourTitle,
@@ -20,6 +37,20 @@ export default function StationContentView({
   parts = [],
   media = [],
 }) {
+  const [openGroups, setOpenGroups] = useState(() => new Set()); // all collapsed
+
+  const grouped = new Map(ROLE_GROUPS.map((g) => [g.key, []]));
+  for (const p of parts) grouped.get(groupKeyFor(p.roleHint)).push(p);
+
+  function toggle(key) {
+    setOpenGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   return (
     <div>
       {tourTitle && <div className="mb-1 text-[12px] text-gray-400">{tourTitle}</div>}
@@ -34,28 +65,58 @@ export default function StationContentView({
       )}
       {description && <p className="mb-6 text-gray-600">{description}</p>}
 
-      <div className="space-y-5">
+      <div className="space-y-3">
         {parts.length === 0 && (
           <div className="py-8 text-center text-gray-400">אין חלקים בתחנה זו.</div>
         )}
-        {parts.map((p, i) => (
-          <section
-            key={i}
-            className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm sm:p-6"
-          >
-            <div className="mb-2 flex items-center gap-2">
-              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-blue-600 text-[12px] font-bold tabular-nums text-white">
-                {i + 1}
-              </span>
-              <h2 className="text-[16px] font-semibold">{p.title || ''}</h2>
-            </div>
-            {p.body ? (
-              <RichText html={p.body} className="text-gray-800" />
-            ) : (
-              <p className="text-gray-400">— ללא תוכן —</p>
-            )}
-          </section>
-        ))}
+        {ROLE_GROUPS.map((g) => {
+          const groupParts = grouped.get(g.key);
+          if (!groupParts || groupParts.length === 0) return null;
+          const open = openGroups.has(g.key);
+          return (
+            <section
+              key={g.key}
+              className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm"
+            >
+              <button
+                type="button"
+                onClick={() => toggle(g.key)}
+                aria-expanded={open}
+                className="flex w-full items-center gap-2.5 px-5 py-3.5 text-right hover:bg-gray-50"
+              >
+                <span className="text-lg" aria-hidden>
+                  {g.icon}
+                </span>
+                <span className="flex-1 text-[15.5px] font-bold text-gray-900">{g.label}</span>
+                <span className="text-[11.5px] font-medium text-gray-400">
+                  {groupParts.length === 1 ? 'חלק אחד' : `${groupParts.length} חלקים`}
+                </span>
+                <span className="text-gray-400" aria-hidden>
+                  {open ? '▾' : '◂'}
+                </span>
+              </button>
+              {open && (
+                <div className="space-y-5 border-t border-gray-100 p-5 sm:p-6">
+                  {groupParts.map((p, i) => (
+                    <section key={i}>
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-blue-600 text-[12px] font-bold tabular-nums text-white">
+                          {i + 1}
+                        </span>
+                        <h2 className="text-[16px] font-semibold">{p.title || ''}</h2>
+                      </div>
+                      {p.body ? (
+                        <RichText html={p.body} className="text-gray-800" />
+                      ) : (
+                        <p className="text-gray-400">— ללא תוכן —</p>
+                      )}
+                    </section>
+                  ))}
+                </div>
+              )}
+            </section>
+          );
+        })}
       </div>
 
       {media.length > 0 && (
