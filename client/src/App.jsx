@@ -21,6 +21,7 @@ import UpcomingToursPage from './portal/tours/UpcomingToursPage.jsx';
 import PastToursPage from './portal/tours/PastToursPage.jsx';
 import ProceduresPage from './portal/ProceduresPage.jsx';
 import GuideTourPage from './portal/tours/GuideTourPage.jsx';
+import ProfilePage from './portal/ProfilePage.jsx';
 import PlaceholderPage from './portal/PlaceholderPage.jsx';
 import GuideTourGallery from './portal/GuideTourGallery.jsx';
 import CustomerGalleryPage from './gallery/CustomerGalleryPage.jsx';
@@ -318,16 +319,7 @@ export default function App() {
             />
           }
         />
-        <Route
-          path="profile"
-          element={
-            <PlaceholderPage
-              icon="👤"
-              title="פרטים אישיים"
-              description="צפייה ועדכון פרטים אישיים מהפורטל יתווספו בקרוב."
-            />
-          }
-        />
+        <Route path="profile" element={<ProfilePage />} />
         {/* Tour detail — read-only operational view (admin-modal hierarchy,
             guide-safe DTO). Lives inside the shell so the bottom nav stays. */}
         <Route path="tour/:tourEventId" element={<GuideTourPage />} />
