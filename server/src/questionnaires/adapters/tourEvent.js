@@ -4,6 +4,7 @@
 import { prisma } from '../../db.js';
 import { emitTimelineEvent, systemOrigin } from '../../timeline/events.js';
 import { getPurpose } from '../registry.js';
+import { tourQuestionnairesLocked } from '../../tours/lifecycle.js';
 
 // Human-readable feed body — unknown kinds render through the generic
 // NoteCard, so the body carries the whole story.
@@ -49,6 +50,19 @@ export const tourEventAdapter = {
       select: { tourLanguage: true },
     });
     return t?.tourLanguage || null;
+  },
+
+  // Tour-operational freeze trigger: locked once the tour is closed
+  // (terminal status, or ended past the grace window).
+  async isLocked(subjectId) {
+    const t = await prisma.tourEvent.findUnique({
+      where: { id: subjectId },
+      select: {
+        status: true, date: true, startTime: true,
+        productVariant: { select: { durationHours: true } },
+      },
+    });
+    return tourQuestionnairesLocked(t);
   },
 
   // Staff-side subject: any authenticated admin may open it.

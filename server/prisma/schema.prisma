@@ -3568,6 +3568,11 @@ model QuestionnaireSubmission {
 
   startedAt   DateTime  @default(now())
   submittedAt DateTime?
+  // Tour-operational lifecycle: while NULL the submission follows the
+  // template's CURRENT published version and stays editable (even after
+  // submit). Set once when the subject's tour closes — from then on the
+  // version pin + answer snapshots are the immutable historical record.
+  frozenAt DateTime?
 
   answers QuestionnaireAnswer[]
 

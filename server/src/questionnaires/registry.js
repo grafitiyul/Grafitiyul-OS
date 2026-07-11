@@ -18,6 +18,9 @@
 // This module is deliberately DB-free: adapters live in ./adapters/ and are
 // registered by ./adapters/index.js, so pure logic stays unit-testable.
 
+// tourOperational purposes follow the tour-operational lifecycle
+// (lifecyclePolicy.js): live definition + editable after submit until the
+// subject's tour closes, then a single historical freeze (frozenAt).
 const PURPOSES = {
   // Staff debrief after a tour — one active submission per TourEvent.
   tour_summary: {
@@ -26,14 +29,16 @@ const PURPOSES = {
     subjectTypes: ['tour_event'],
     audience: 'staff',
     singleton: true,
+    tourOperational: true,
   },
-  // Customer coordination form — one active submission per Booking.
+  // Internal coordination-call form — one active submission per Booking.
   coordination: {
     key: 'coordination',
     labelHe: 'שיחת תיאום',
     subjectTypes: ['booking'],
     audience: 'public',
     singleton: true,
+    tourOperational: true,
   },
   // Unbound generic questionnaires (surveys, internal forms). No subject
   // required; multiple submissions allowed.

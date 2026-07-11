@@ -10,6 +10,7 @@
 import { prisma } from '../../db.js';
 import { emitTimelineEvent, systemOrigin } from '../../timeline/events.js';
 import { getPurpose } from '../registry.js';
+import { tourQuestionnairesLocked } from '../../tours/lifecycle.js';
 
 const formLabel = (purpose) => getPurpose(purpose)?.labelHe || purpose;
 
@@ -114,6 +115,23 @@ export const bookingAdapter = {
 
   authorize(_subjectId, auth) {
     return !!auth?.userId;
+  },
+
+  // Tour-operational freeze trigger — a booking's questionnaires close with
+  // ITS tour. A booking not yet attached to a tour never locks.
+  async isLocked(subjectId) {
+    const b = await prisma.booking.findUnique({
+      where: { id: subjectId },
+      select: {
+        tourEvent: {
+          select: {
+            status: true, date: true, startTime: true,
+            productVariant: { select: { durationHours: true } },
+          },
+        },
+      },
+    });
+    return tourQuestionnairesLocked(b?.tourEvent);
   },
 
   async onStarted(subjectId, submission, tx) {

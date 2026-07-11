@@ -27,6 +27,7 @@ import { isKnownType, typeHasOptions } from './types.js';
 import { validateVersionForPublish } from './publishRules.js';
 import { validateSubmissionAnswers, sanitizeDraftAnswers } from './validation.js';
 import { getPurpose, isValidPurpose, purposeAllowsSubject, getSubjectAdapter } from './registry.js';
+import { submissionLifecycle } from './lifecyclePolicy.js';
 
 // Typed service error → routes translate to HTTP without string-matching.
 export class QError extends Error {
@@ -643,6 +644,13 @@ export async function startSubmission({ templateId, purpose, subjectType, subjec
     if (existing) return { submission: existing, created: false };
   }
 
+  // A closed tour never gets a NEW tour-operational submission — existing
+  // ones resolve above (and freeze lazily on read); creating a fresh draft
+  // for a finished tour would only mint an empty "historical" record.
+  if (getPurpose(template.purpose)?.tourOperational && adapter?.isLocked && subjectId) {
+    if (await adapter.isLocked(subjectId)) throw new QError(409, 'subject_closed');
+  }
+
   const language =
     (adapter && (await adapter.resolveLanguage?.(subjectId))) || template.defaultLanguage || 'he';
   const subjectSnapshot = adapter ? await adapter.displayContext?.(subjectId, language) : null;
@@ -691,27 +699,110 @@ export async function startSubmission({ templateId, purpose, subjectType, subjec
   return { submission, created: true };
 }
 
+// ── tour-operational lifecycle (live-until-frozen) ──────────────────────────
+// For tourOperational purposes the stored versionId is only "last resolved":
+// until frozenAt is set the submission follows template.currentVersionId, and
+// the freeze (version pin + per-answer snapshots) happens ONCE — lazily, the
+// first time the submission is touched after its tour closed.
+
+// Pin the historical record: snapshot every answer against the (already
+// synced) version, then stamp frozenAt. Answers whose question no longer
+// exists keep whatever snapshot they had — data is never dropped by a freeze.
+async function freezeSubmission(submission) {
+  const answers = await prisma.questionnaireAnswer.findMany({
+    where: { submissionId: submission.id },
+  });
+  const version = await loadVersion(submission.versionId);
+  const structure = structureOf(version);
+  const questions = flatQuestions(structure);
+  const byKey = new Map(questions.map((q) => [q.key, q]));
+  const orderOf = new Map(questions.map((q, i) => [q.key, i]));
+  const defaultLanguage = version.template.defaultLanguage;
+  await prisma.$transaction(async (tx) => {
+    for (const a of answers) {
+      const q = byKey.get(a.questionKey);
+      await tx.questionnaireAnswer.update({
+        where: { id: a.id },
+        data: {
+          questionId: q?.id || null,
+          questionSnapshot: q
+            ? buildQuestionSnapshot(q, submission.language, defaultLanguage)
+            : a.questionSnapshot,
+          sortOrder: orderOf.get(a.questionKey) ?? a.sortOrder ?? 0,
+        },
+      });
+    }
+    await tx.questionnaireSubmission.update({
+      where: { id: submission.id },
+      data: { frozenAt: new Date() },
+    });
+  });
+}
+
+// Resolve the CURRENT lifecycle state of a loaded submission row and apply
+// its side effects: sync to the live published version, or freeze if the
+// subject's tour has closed. Returns the (possibly updated) row + lifecycle.
+// Row needs: id, templateId, versionId, purpose, status, frozenAt, language,
+// subjectType, subjectId.
+async function applyLifecycle(submission) {
+  let lifecycle = submissionLifecycle(submission);
+  if (!lifecycle.liveVersion || submission.frozenAt) return { submission, lifecycle };
+
+  let out = submission;
+  const template = await prisma.questionnaireTemplate.findUnique({
+    where: { id: out.templateId },
+    select: { currentVersionId: true },
+  });
+  if (template?.currentVersionId && template.currentVersionId !== out.versionId) {
+    await prisma.questionnaireSubmission.update({
+      where: { id: out.id },
+      data: { versionId: template.currentVersionId },
+    });
+    out = { ...out, versionId: template.currentVersionId };
+  }
+
+  const adapter = out.subjectType ? getSubjectAdapter(out.subjectType) : null;
+  if (adapter?.isLocked && (await adapter.isLocked(out.subjectId))) {
+    await freezeSubmission(out);
+    out = { ...out, frozenAt: new Date() };
+    lifecycle = submissionLifecycle(out);
+    return { submission: out, lifecycle };
+  }
+  return { submission: out, lifecycle: submissionLifecycle(out) };
+}
+
 export async function getSubmission(submissionId) {
-  const submission = await prisma.questionnaireSubmission.findUnique({
+  const loaded = await prisma.questionnaireSubmission.findUnique({
     where: { id: submissionId },
     include: SUBMISSION_INCLUDE,
   });
-  if (!submission) throw new QError(404, 'submission_not_found');
+  if (!loaded) throw new QError(404, 'submission_not_found');
+  const { submission, lifecycle } = await applyLifecycle(loaded);
   const version = await loadVersion(submission.versionId);
   const prefill =
     submission.status === 'draft' && submission.subjectType
       ? (await getSubjectAdapter(submission.subjectType)?.prefill?.(submission.subjectId, submission.language)) || {}
       : {};
-  return { submission, runtime: runtimePayload(version), prefill };
+  return {
+    submission,
+    runtime: runtimePayload(version),
+    prefill,
+    lifecycle: { ...lifecycle, frozenAt: submission.frozenAt || null },
+  };
 }
 
 export async function saveDraftAnswers(submissionId, answers) {
-  const submission = await prisma.questionnaireSubmission.findUnique({
+  const loaded = await prisma.questionnaireSubmission.findUnique({
     where: { id: submissionId },
-    select: { id: true, status: true, versionId: true },
+    select: {
+      id: true, templateId: true, versionId: true, purpose: true,
+      status: true, frozenAt: true, language: true, subjectType: true, subjectId: true,
+    },
   });
-  if (!submission) throw new QError(404, 'submission_not_found');
-  if (submission.status !== 'draft') throw new QError(409, 'submission_immutable');
+  if (!loaded) throw new QError(404, 'submission_not_found');
+  const { submission, lifecycle } = await applyLifecycle(loaded);
+  if (lifecycle.frozen) throw new QError(409, 'submission_frozen');
+  if (!lifecycle.editable) throw new QError(409, 'submission_immutable');
 
   const version = await loadVersion(submission.versionId);
   const structure = structureOf(version);
@@ -738,12 +829,14 @@ export async function saveDraftAnswers(submissionId, answers) {
 // per-question snapshots → status flip → subject onSubmitted hook (atomic
 // with the freeze — timeline is local DB).
 export async function submitSubmission(submissionId, { answers, actor } = {}) {
-  const submission = await prisma.questionnaireSubmission.findUnique({
+  const loaded = await prisma.questionnaireSubmission.findUnique({
     where: { id: submissionId },
     include: { answers: true },
   });
-  if (!submission) throw new QError(404, 'submission_not_found');
-  if (submission.status !== 'draft') throw new QError(409, 'submission_immutable');
+  if (!loaded) throw new QError(404, 'submission_not_found');
+  const { submission, lifecycle } = await applyLifecycle(loaded);
+  if (lifecycle.frozen) throw new QError(409, 'submission_frozen');
+  if (!lifecycle.editable) throw new QError(409, 'submission_immutable');
 
   const version = await loadVersion(submission.versionId);
   const structure = structureOf(version);
@@ -761,8 +854,15 @@ export async function submitSubmission(submissionId, { answers, actor } = {}) {
   const orderOf = new Map(questionsInOrder.map((q, i) => [q.key, i]));
   const byKey = new Map(questionsInOrder.map((q) => [q.key, q]));
 
+  const isFirstSubmit = submission.status === 'draft';
   const updated = await prisma.$transaction(async (tx) => {
-    await tx.questionnaireAnswer.deleteMany({ where: { submissionId } });
+    // Rewrite only keys the current structure knows. Answers to questions
+    // that were removed from the definition are PRESERVED with their old
+    // snapshots — historical data is never dropped by a definition change.
+    const structureKeys = questionsInOrder.map((q) => q.key);
+    await tx.questionnaireAnswer.deleteMany({
+      where: { submissionId, questionKey: { in: structureKeys } },
+    });
     for (const { key, value } of cleanAnswers) {
       const q = byKey.get(key);
       await tx.questionnaireAnswer.create({
@@ -787,7 +887,10 @@ export async function submitSubmission(submissionId, { answers, actor } = {}) {
       },
       include: SUBMISSION_INCLUDE,
     });
-    if (frozen.subjectType) {
+    // Timeline event only on the FIRST submit — re-submits after reopening
+    // (tour-operational lifecycle) update answers/submittedAt without
+    // spamming the deal/tour feeds.
+    if (isFirstSubmit && frozen.subjectType) {
       const adapter = getSubjectAdapter(frozen.subjectType);
       if (adapter?.onSubmitted) await adapter.onSubmitted(frozen.subjectId, frozen, tx);
     }
@@ -800,10 +903,13 @@ export async function submitSubmission(submissionId, { answers, actor } = {}) {
 export async function voidSubmission(submissionId) {
   const s = await prisma.questionnaireSubmission.findUnique({
     where: { id: submissionId },
-    select: { id: true, status: true },
+    select: { id: true, status: true, frozenAt: true },
   });
   if (!s) throw new QError(404, 'submission_not_found');
   if (s.status === 'void') return { ok: true };
+  // A frozen submission is the tour's historical record — it cannot be
+  // voided out of the singleton slot anymore.
+  if (s.frozenAt) throw new QError(409, 'submission_frozen');
   await prisma.questionnaireSubmission.update({
     where: { id: submissionId },
     data: { status: 'void', singletonKey: null },

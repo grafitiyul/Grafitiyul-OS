@@ -94,11 +94,12 @@ router.post('/submissions/start', qh(async (req, res) => {
 }));
 
 router.get('/submissions/:id', qh(async (req, res) => {
-  const { submission, runtime, prefill } = await getSubmission(req.params.id);
+  const { submission, runtime, prefill, lifecycle } = await getSubmission(req.params.id);
   res.json({
     submission,
     runtime,
     prefill,
+    lifecycle,
     rendered: submission.status !== 'draft' ? renderSubmissionAnswers(submission) : null,
   });
 }));
