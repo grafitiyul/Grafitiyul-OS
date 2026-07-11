@@ -29,3 +29,17 @@ test('key validation + lookups', () => {
   assert.equal(staffColorHex('nope'), null);
   assert.equal(staffColorNameHe('teal'), 'טורקיז כהה');
 });
+
+test('yellow — a plain recognizable yellow, added as a NEW key', () => {
+  // Server validation (people routes) accepts it via isStaffColorKey.
+  assert.equal(isStaffColorKey('yellow'), true);
+  assert.equal(staffColorHex('yellow'), '#FACC15');
+  assert.equal(staffColorNameHe('yellow'), 'צהוב');
+  // Nothing was repurposed: the neighboring warm keys all still exist with
+  // their own hex — saved colors keep their meaning without a migration.
+  assert.equal(staffColorHex('amber'), '#F59E0B');
+  assert.equal(staffColorHex('gold'), '#D9A404');
+  assert.equal(staffColorHex('mustard'), '#B8860B');
+  assert.equal(staffColorHex('lime'), '#84CC16');
+  assert.equal(staffColorHex('orange'), '#F97316');
+});

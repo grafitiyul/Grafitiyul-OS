@@ -87,6 +87,20 @@ test('VAT history shows Hebrew labels, never raw enum values', () => {
   assert.equal(c.oldValue, 'exempt'); // raw value preserved for restore
 });
 
+test('displayColor history shows Hebrew color names; raw keys preserved for restore', () => {
+  const before = { displayColor: 'coral' };
+  const [c] = diffPersonFields(before, { displayColor: 'yellow' });
+  assert.equal(c.labelHe, 'צבע מדריך');
+  assert.equal(c.oldDisplay, 'אלמוג');
+  assert.equal(c.newDisplay, 'צהוב');
+  assert.equal(c.oldValue, 'coral'); // restore round-trips the stable key
+  assert.equal(c.newValue, 'yellow');
+  // clearing renders "ללא צבע"
+  const [cleared] = diffPersonFields({ displayColor: 'yellow' }, { displayColor: null });
+  assert.equal(cleared.oldDisplay, 'צהוב');
+  assert.equal(cleared.newDisplay, 'ללא צבע');
+});
+
 test('seniority supplement: snapshot normalizes Decimal to string; diff shows old → new', () => {
   const snap = personChangeSnapshot(null, { senioritySupplement: 12.5 });
   assert.equal(snap.senioritySupplement, '12.5');

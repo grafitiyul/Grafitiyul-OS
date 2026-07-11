@@ -13,6 +13,7 @@ import {
 } from '../common/tableColumns.jsx';
 import StaffColorPicker, { StaffColorSwatch } from '../../color/StaffColorPicker.jsx';
 import { rowTintStyle } from '../../color/staffColorUi.js';
+import AnchoredMenu from '../common/AnchoredMenu.jsx';
 
 // Column definitions — the shared tableColumns infra owns visibility, order
 // and persistence (localStorage per table per browser profile — the app's
@@ -719,6 +720,7 @@ function InlineCell({ person, colKey, teams, onChanged, children }) {
   const [flash, setFlash] = useState(false);
   const [error, setError] = useState(null);
   const cancelled = useRef(false);
+  const anchorRef = useRef(null); // the color popover anchors to the cell trigger
 
   function begin() {
     setValue(field.get(person));
@@ -771,24 +773,7 @@ function InlineCell({ person, colKey, teams, onChanged, children }) {
     }
   }
 
-  if (editing && field.type === 'color') {
-    return (
-      <div className="relative">
-        {/* click-away closes without saving */}
-        <div className="fixed inset-0 z-10" onClick={() => setEditing(false)} />
-        <div className="absolute z-20 mt-1 rounded-xl border border-gray-200 bg-white p-3 shadow-xl">
-          <StaffColorPicker
-            compact
-            value={field.get(person) || null}
-            onPick={(key) => commitValue(key || '')}
-          />
-        </div>
-        <StaffColorSwatch colorKey={field.get(person) || null} className="mx-auto h-6 w-6" />
-      </div>
-    );
-  }
-
-  if (editing) {
+  if (editing && field.type !== 'color') {
     const commonProps = {
       autoFocus: true,
       value,
@@ -828,8 +813,9 @@ function InlineCell({ person, colKey, teams, onChanged, children }) {
     );
   }
 
-  return (
+  const trigger = (
     <button
+      ref={anchorRef}
       type="button"
       onClick={begin}
       disabled={saving}
@@ -852,6 +838,35 @@ function InlineCell({ person, colKey, teams, onChanged, children }) {
       )}
     </button>
   );
+
+  if (field.type === 'color') {
+    // The palette opens through the shared AnchoredMenu — a portal on <body> —
+    // so the table card's overflow-hidden / overflow-x-auto can never clip it.
+    // Flip-above, viewport clamping, scroll/resize tracking, Escape and
+    // outside-click all come from the one shared implementation.
+    return (
+      <>
+        {trigger}
+        <AnchoredMenu
+          anchorRef={anchorRef}
+          open={editing}
+          onClose={() => setEditing(false)}
+          width={282}
+          align="end"
+        >
+          <div className="p-3">
+            <StaffColorPicker
+              compact
+              value={field.get(person) || null}
+              onPick={(key) => commitValue(key || '')}
+            />
+          </div>
+        </AnchoredMenu>
+      </>
+    );
+  }
+
+  return trigger;
 }
 
 // One cell per column key — the render side of STAFF_COLUMNS. Adding a

@@ -42,7 +42,8 @@ export const STAFF_COLORS = [
   { key: 'mint', hex: '#34D399', nameHe: 'מנטה' },
   { key: 'lime', hex: '#84CC16', nameHe: 'ליים' },
   { key: 'olive', hex: '#7C8A2E', nameHe: 'זית' },
-  // golds / browns
+  // yellows / golds / browns
+  { key: 'yellow', hex: '#FACC15', nameHe: 'צהוב' },
   { key: 'gold', hex: '#D9A404', nameHe: 'זהב' },
   { key: 'amber', hex: '#F59E0B', nameHe: 'ענבר' },
   { key: 'mustard', hex: '#B8860B', nameHe: 'חרדל' },
