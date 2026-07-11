@@ -109,6 +109,28 @@ test('tour access requires an assignment on THIS tour', async () => {
   );
 });
 
+test('REVOCATION: removed assignment blocks the tour in EVERY state — no historical access', async () => {
+  // Assignment row hard-deleted by the admin → findFirst returns null. The
+  // guide must get 403 for scheduled, completed (past) and cancelled tours
+  // alike, direct URLs included.
+  for (const status of ['scheduled', 'completed', 'cancelled']) {
+    const client = fakeClient({
+      person: GUIDE,
+      tour: { id: 't1', status },
+      assignment: null,
+    });
+    const res = await resolveGuideTourAccess(client, {
+      portalToken: 'tok',
+      tourEventId: 't1',
+    });
+    assert.deepEqual(
+      { ok: res.ok, status: res.status, error: res.error },
+      { ok: false, status: 403, error: 'not_assigned' },
+      `tour status=${status} must be blocked after removal`,
+    );
+  }
+});
+
 test('cancelled tour still resolves for viewing (unlike gallery access)', async () => {
   const client = fakeClient({
     person: GUIDE,

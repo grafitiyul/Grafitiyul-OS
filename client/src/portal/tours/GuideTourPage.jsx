@@ -32,19 +32,26 @@ export default function GuideTourPage() {
 
   const apiBase = `/api/portal/${encodeURIComponent(token)}/tours/${encodeURIComponent(tourEventId)}`;
 
-  const load = useCallback(async () => {
-    setState({ phase: 'loading' });
-    try {
-      const res = await fetch(`${apiBase}/detail`, { cache: 'no-store' });
-      if (res.status === 403 || res.status === 404) {
-        return setState({ phase: 'blocked' });
+  const load = useCallback(
+    async ({ silent = false } = {}) => {
+      if (!silent) setState({ phase: 'loading' });
+      try {
+        const res = await fetch(`${apiBase}/detail`, { cache: 'no-store' });
+        if (res.status === 403 || res.status === 404) {
+          // Access revoked (assignment removed) — replace the page even on a
+          // SILENT refresh. Nothing of the tour may stay visible.
+          return setState({ phase: 'blocked' });
+        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        setState({ phase: 'ready', tour: await res.json() });
+      } catch (e) {
+        // Transient network failure on a silent refresh keeps the last good
+        // data; the next poll retries. Loud loads surface the error.
+        if (!silent) setState({ phase: 'error', message: e?.message || 'שגיאה' });
       }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setState({ phase: 'ready', tour: await res.json() });
-    } catch (e) {
-      setState({ phase: 'error', message: e?.message || 'שגיאה' });
-    }
-  }, [apiBase]);
+    },
+    [apiBase],
+  );
 
   const loadSectionStatus = useCallback(async () => {
     try {
@@ -59,6 +66,26 @@ export default function GuideTourPage() {
     load();
     loadSectionStatus();
     window.scrollTo(0, 0);
+  }, [load, loadSectionStatus]);
+
+  // Live revalidation — an admin removing this guide's assignment must make
+  // the tour disappear WITHOUT a manual reload: poll softly and re-check on
+  // focus/visibility (same convention as the feeds).
+  useEffect(() => {
+    const t = setInterval(() => load({ silent: true }), 45000);
+    const onVis = () => {
+      if (document.visibilityState === 'visible') {
+        load({ silent: true });
+        loadSectionStatus();
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onVis);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onVis);
+    };
   }, [load, loadSectionStatus]);
 
   if (state.phase === 'loading') {

@@ -74,6 +74,19 @@ export async function resolveGuidePortalAccess(client, { portalToken }) {
   };
 }
 
+// THE access rule for every per-tour guide surface (detail, participants,
+// summary, coordination, gallery): a guide reaches a tour ONLY while a
+// TourAssignment row for (this tour, this person) currently exists. Removal
+// hard-deletes the row (tours.js DELETE /assignments/:id), so revocation is
+// immediate and absolute — there is no historical-access exception, for
+// past and cancelled tours included. Both resolvers below and the gallery
+// resolver share this ONE lookup.
+export async function findActiveAssignment(client, person, tourEventId) {
+  return client.tourAssignment.findFirst({
+    where: { tourEventId, externalPersonId: person.externalPersonId },
+  });
+}
+
 export async function resolveGuideTourAccess(client, { portalToken, tourEventId }) {
   const base = await resolveGuidePortalAccess(client, { portalToken });
   if (!base.ok) return base;
@@ -83,9 +96,7 @@ export async function resolveGuideTourAccess(client, { portalToken, tourEventId 
     select: { id: true, status: true },
   });
   if (!tour) return { ok: false, status: 404, error: 'not_found' };
-  const assignment = await client.tourAssignment.findFirst({
-    where: { tourEventId: tour.id, externalPersonId: base.person.externalPersonId },
-  });
+  const assignment = await findActiveAssignment(client, base.person, tour.id);
   if (!assignment) return { ok: false, status: 403, error: 'not_assigned' };
   return { ...base, tour, assignment };
 }

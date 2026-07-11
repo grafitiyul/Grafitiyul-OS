@@ -1,5 +1,5 @@
 import { getGallerySettings } from './service.js';
-import { getGuidePortalSettings } from '../guidePortal/access.js';
+import { findActiveAssignment, getGuidePortalSettings } from '../guidePortal/access.js';
 
 // Server-side permission resolution for every gallery surface. UI hiding is
 // never the enforcement layer — each route resolves access here first.
@@ -27,9 +27,9 @@ export async function resolveGuideGalleryAccess(client, { portalToken, tourEvent
     select: { id: true, status: true },
   });
   if (!tour) return { ok: false, status: 404, error: 'not_found' };
-  const assignment = await client.tourAssignment.findFirst({
-    where: { tourEventId: tour.id, externalPersonId: person.externalPersonId },
-  });
+  // Same active-assignment rule as every other guide tour surface — the ONE
+  // shared lookup (guidePortal/access.js): no current assignment, no access.
+  const assignment = await findActiveAssignment(client, person, tour.id);
   if (!assignment) return { ok: false, status: 403, error: 'not_assigned' };
   // Portal-wide switch (Settings → Tours → הרשאות מדריכים): when gallery use
   // is off for guides, every gallery route answers 403 — not just hidden UI.
