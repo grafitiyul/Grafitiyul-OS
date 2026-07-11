@@ -3,6 +3,7 @@ import { api } from '../../lib/api.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import TourTeamEditor, { StaffAvatar } from './TourTeamEditor.jsx';
 import TourComponents from './TourComponents.jsx';
+import ComponentChipList from './ComponentChips.jsx';
 import {
   fmtTourDate,
   TOUR_STATUS_LABELS,
@@ -164,27 +165,10 @@ export default function DealTourSummary({ booking, onGroupSlot, canReplace, onRe
                   <h4 className="mb-1.5 text-[12px] font-bold text-gray-500">מרכיבי הפעילות</h4>
                   {edit ? (
                     <TourComponents tourId={tourEventId} rows={tour.activityComponents || []} onChanged={load} />
-                  ) : components.length === 0 ? (
-                    <p className="text-[12.5px] text-gray-400">לא הוגדרו מרכיבים.</p>
                   ) : (
-                    <ul className="space-y-1">
-                      {components.map((row) => {
-                        const c = row.activityComponent;
-                        return (
-                          <li key={row.id} className="flex items-center gap-2">
-                            {/* Neutral chip — the icon carries the identity;
-                                strong colors are reserved for team roles. */}
-                            <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[12px] font-medium text-gray-700">
-                              {c?.icon && <span aria-hidden>{c.icon}</span>}
-                              {c?.nameHe || '—'}
-                            </span>
-                            {c?.isWorkshop && row.workshopLocation && (
-                              <span className="text-[12px] text-gray-600">📍 {row.workshopLocation.nameHe}</span>
-                            )}
-                          </li>
-                        );
-                      })}
-                    </ul>
+                    /* Read mode: compact INLINE chips (flex-wrap) — the shared
+                       renderer; edit mode keeps the reorder-friendly editor. */
+                    <ComponentChipList rows={components} />
                   )}
                 </section>
 
