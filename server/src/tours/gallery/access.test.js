@@ -11,6 +11,7 @@ function fakeClient({
   tour = null,
   assignment = null,
   settings = { guideCanDelete: true, guideCanShareCustomerLink: true, customerUploadEnabled: true },
+  portalSettings = { useTourGallery: true },
   link = null,
   customerTour = null,
 } = {}) {
@@ -23,6 +24,10 @@ function fakeClient({
     tourGallerySettings: {
       findUnique: async () => ({ id: 'singleton', ...settings }),
       upsert: async () => ({ id: 'singleton', ...settings }),
+    },
+    guidePortalSettings: {
+      findUnique: async () => ({ id: 'singleton', ...portalSettings }),
+      upsert: async () => ({ id: 'singleton', ...portalSettings }),
     },
     tourGalleryLink: { findUnique: async () => link },
   };
@@ -44,6 +49,20 @@ test('assigned guide with enabled portal gets access + settings-based permission
   assert.equal(res.permissions.canUpload, true);
   assert.equal(res.permissions.canDelete, true);
   assert.equal(res.permissions.canShareCustomerLink, true);
+});
+
+test('portal-wide useTourGallery=false blocks every gallery route (403)', async () => {
+  const client = fakeClient({
+    person: GUIDE,
+    tour: TOUR,
+    assignment: { id: 'a1' },
+    portalSettings: { useTourGallery: false },
+  });
+  const res = await resolveGuideGalleryAccess(client, { portalToken: 'tok', tourEventId: 't1' });
+  assert.deepEqual(
+    { ok: res.ok, status: res.status, error: res.error },
+    { ok: false, status: 403, error: 'not_allowed' },
+  );
 });
 
 test('settings switches gate guide delete/share', async () => {

@@ -22,6 +22,7 @@ import PastToursPage from './portal/tours/PastToursPage.jsx';
 import ProceduresPage from './portal/ProceduresPage.jsx';
 import GuideTourPage from './portal/tours/GuideTourPage.jsx';
 import ProfilePage from './portal/ProfilePage.jsx';
+import PayPage from './portal/PayPage.jsx';
 import PlaceholderPage from './portal/PlaceholderPage.jsx';
 import GuideTourGallery from './portal/GuideTourGallery.jsx';
 import CustomerGalleryPage from './gallery/CustomerGalleryPage.jsx';
@@ -288,16 +289,7 @@ export default function App() {
       <Route path="/p/:token" element={<PortalShell />}>
         <Route index element={<UpcomingToursPage />} />
         <Route path="past" element={<PastToursPage />} />
-        <Route
-          path="pay"
-          element={
-            <PlaceholderPage
-              icon="💰"
-              title="שכר"
-              description="נתוני השכר עדיין לא מנוהלים במערכת. כשמודל השכר ייבנה, כאן יופיע פירוט התשלומים לפי סיורים."
-            />
-          }
-        />
+        <Route path="pay" element={<PayPage />} />
         <Route path="procedures" element={<ProceduresPage />} />
         <Route
           path="feedback"

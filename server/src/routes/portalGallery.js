@@ -86,64 +86,8 @@ async function guard(req, res) {
   return access;
 }
 
-// ---------- assigned tours list ----------
-// The guide's operational tours (recent past + upcoming) with gallery counts.
-
-router.get(
-  '/:token/tours',
-  handle(async (req, res) => {
-    const person = await prisma.personRef.findUnique({
-      where: { portalToken: String(req.params.token || '') },
-    });
-    if (!person) return res.status(404).json({ error: 'not_found' });
-    if (!person.portalEnabled || person.status === 'blocked') {
-      return res.status(403).json({ error: 'portal_disabled' });
-    }
-    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const assignments = await prisma.tourAssignment.findMany({
-      where: {
-        externalPersonId: person.externalPersonId,
-        tourEvent: { date: { gte: since }, status: { not: 'cancelled' } },
-      },
-      include: {
-        tourEvent: {
-          include: {
-            product: { select: { nameHe: true } },
-            location: { select: { nameHe: true } },
-            productVariant: { select: { location: { select: { nameHe: true } } } },
-          },
-        },
-      },
-    });
-    const tourIds = assignments.map((a) => a.tourEventId);
-    // Gallery counts (derived, one grouped query — no stored counters).
-    const counts = tourIds.length
-      ? await prisma.tourMedia.groupBy({
-          by: ['tourEventId'],
-          where: { tourEventId: { in: tourIds }, uploadStatus: 'ready', deletedAt: null },
-          _count: { id: true },
-        })
-      : [];
-    const countByTour = Object.fromEntries(counts.map((c) => [c.tourEventId, c._count.id]));
-    const tours = assignments
-      .map((a) => {
-        const t = a.tourEvent;
-        return {
-          id: t.id,
-          date: t.date,
-          startTime: t.startTime,
-          status: t.status,
-          role: a.role,
-          productName: t.product?.nameHe || 'סיור',
-          locationName: t.location?.nameHe || t.productVariant?.location?.nameHe || null,
-          mediaCount: countByTour[t.id] || 0,
-        };
-      })
-      .sort((x, y) => (x.date + x.startTime < y.date + y.startTime ? 1 : -1));
-    res.set('Cache-Control', 'no-store');
-    res.json({ tours });
-  }),
-);
+// (The old "/:token/tours" assigned-tours list lived here until the portal
+// grew real tour feeds — see routes/portalTours.js for upcoming/past.)
 
 // ---------- gallery view ----------
 

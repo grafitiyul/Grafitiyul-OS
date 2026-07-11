@@ -1,4 +1,5 @@
 import { getGallerySettings } from './service.js';
+import { getGuidePortalSettings } from '../guidePortal/access.js';
 
 // Server-side permission resolution for every gallery surface. UI hiding is
 // never the enforcement layer — each route resolves access here first.
@@ -30,6 +31,12 @@ export async function resolveGuideGalleryAccess(client, { portalToken, tourEvent
     where: { tourEventId: tour.id, externalPersonId: person.externalPersonId },
   });
   if (!assignment) return { ok: false, status: 403, error: 'not_assigned' };
+  // Portal-wide switch (Settings → Tours → הרשאות מדריכים): when gallery use
+  // is off for guides, every gallery route answers 403 — not just hidden UI.
+  const portalSettings = await getGuidePortalSettings(client);
+  if (!portalSettings.useTourGallery) {
+    return { ok: false, status: 403, error: 'not_allowed' };
+  }
   const settings = await getGallerySettings(client);
   return {
     ok: true,
