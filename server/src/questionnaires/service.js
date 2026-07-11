@@ -651,8 +651,16 @@ export async function startSubmission({ templateId, purpose, subjectType, subjec
     if (await adapter.isLocked(subjectId)) throw new QError(409, 'subject_closed');
   }
 
+  // Staff-audience purposes are INTERNAL forms — they render in the
+  // template's own language (typically Hebrew → RTL), never the tour/customer
+  // language the adapter resolves. That customer-language leak is what made
+  // internal Hebrew questionnaires render left-aligned LTR on English tours.
   const language =
-    (adapter && (await adapter.resolveLanguage?.(subjectId))) || template.defaultLanguage || 'he';
+    (getPurpose(template.purpose)?.audience === 'staff'
+      ? template.defaultLanguage
+      : adapter && (await adapter.resolveLanguage?.(subjectId))) ||
+    template.defaultLanguage ||
+    'he';
   const subjectSnapshot = adapter ? await adapter.displayContext?.(subjectId, language) : null;
 
   let submission;
@@ -751,14 +759,21 @@ async function applyLifecycle(submission) {
   let out = submission;
   const template = await prisma.questionnaireTemplate.findUnique({
     where: { id: out.templateId },
-    select: { currentVersionId: true },
+    select: { currentVersionId: true, defaultLanguage: true },
   });
+  const sync = {};
   if (template?.currentVersionId && template.currentVersionId !== out.versionId) {
-    await prisma.questionnaireSubmission.update({
-      where: { id: out.id },
-      data: { versionId: template.currentVersionId },
-    });
-    out = { ...out, versionId: template.currentVersionId };
+    sync.versionId = template.currentVersionId;
+  }
+  // Live tour-operational submissions are internal forms — normalize legacy
+  // rows that inherited the tour/customer language to the template's own
+  // language (the RTL fix, applied to pre-existing submissions on read).
+  if (template?.defaultLanguage && out.language !== template.defaultLanguage) {
+    sync.language = template.defaultLanguage;
+  }
+  if (Object.keys(sync).length) {
+    await prisma.questionnaireSubmission.update({ where: { id: out.id }, data: sync });
+    out = { ...out, ...sync };
   }
 
   const adapter = out.subjectType ? getSubjectAdapter(out.subjectType) : null;
