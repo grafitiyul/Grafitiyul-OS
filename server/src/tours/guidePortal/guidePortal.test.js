@@ -112,8 +112,13 @@ test('tour access requires an assignment on THIS tour', async () => {
 test('REVOCATION: removed assignment blocks the tour in EVERY state — no historical access', async () => {
   // Assignment row hard-deleted by the admin → findFirst returns null. The
   // guide must get 403 for scheduled, completed (past) and cancelled tours
-  // alike, direct URLs included.
-  for (const status of ['scheduled', 'completed', 'cancelled']) {
+  // alike, direct URLs included. Cancelled tours 403 on status BEFORE the
+  // assignment lookup (they are invisible to guides regardless).
+  for (const [status, error] of [
+    ['scheduled', 'not_assigned'],
+    ['completed', 'not_assigned'],
+    ['cancelled', 'tour_cancelled'],
+  ]) {
     const client = fakeClient({
       person: GUIDE,
       tour: { id: 't1', status },
@@ -125,13 +130,15 @@ test('REVOCATION: removed assignment blocks the tour in EVERY state — no histo
     });
     assert.deepEqual(
       { ok: res.ok, status: res.status, error: res.error },
-      { ok: false, status: 403, error: 'not_assigned' },
+      { ok: false, status: 403, error },
       `tour status=${status} must be blocked after removal`,
     );
   }
 });
 
-test('cancelled tour still resolves for viewing (unlike gallery access)', async () => {
+test('cancelled tour is INVISIBLE to guides — 403 even with a live assignment', async () => {
+  // Product decision (2026-07): deal-reopen auto-cancels the tour but keeps
+  // the assignment rows for plan restore. Those rows must not grant access.
   const client = fakeClient({
     person: GUIDE,
     tour: { id: 't1', status: 'cancelled' },
@@ -141,8 +148,10 @@ test('cancelled tour still resolves for viewing (unlike gallery access)', async 
     portalToken: 'tok',
     tourEventId: 't1',
   });
-  assert.equal(res.ok, true);
-  assert.equal(res.tour.status, 'cancelled');
+  assert.deepEqual(
+    { ok: res.ok, status: res.status, error: res.error },
+    { ok: false, status: 403, error: 'tour_cancelled' },
+  );
 });
 
 test('buildGuidePermissions maps every settings switch', () => {

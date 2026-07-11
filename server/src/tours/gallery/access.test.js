@@ -102,15 +102,19 @@ test('disabled/blocked portal is refused; unknown token is a plain 404', async (
   assert.equal(unknown.status, 404, 'no enumeration signal');
 });
 
-test('cancelled tour: guide can still view but canUpload=false', async () => {
+test('cancelled tour: guide gallery access is fully blocked (403)', async () => {
+  // Same portal-wide rule as tour detail — a cancelled tour is invisible to
+  // guides (deal-reopen keeps assignment rows on the cancelled twin).
   const client = fakeClient({
     person: GUIDE,
     tour: { id: 't1', status: 'cancelled' },
     assignment: { id: 'a1' },
   });
   const res = await resolveGuideGalleryAccess(client, { portalToken: 'tok', tourEventId: 't1' });
-  assert.equal(res.ok, true);
-  assert.equal(res.permissions.canUpload, false);
+  assert.deepEqual(
+    { ok: res.ok, status: res.status, error: res.error },
+    { ok: false, status: 403, error: 'tour_cancelled' },
+  );
 });
 
 // ---------- customer link ----------

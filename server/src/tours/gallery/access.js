@@ -27,8 +27,12 @@ export async function resolveGuideGalleryAccess(client, { portalToken, tourEvent
     select: { id: true, status: true },
   });
   if (!tour) return { ok: false, status: 404, error: 'not_found' };
-  // Same active-assignment rule as every other guide tour surface — the ONE
-  // shared lookup (guidePortal/access.js): no current assignment, no access.
+  // Same rules as every other guide tour surface (guidePortal/access.js):
+  // cancelled tours are invisible to guides, and no current assignment means
+  // no access.
+  if (tour.status === 'cancelled') {
+    return { ok: false, status: 403, error: 'tour_cancelled' };
+  }
   const assignment = await findActiveAssignment(client, person, tour.id);
   if (!assignment) return { ok: false, status: 403, error: 'not_assigned' };
   // Portal-wide switch (Settings → Tours → הרשאות מדריכים): when gallery use

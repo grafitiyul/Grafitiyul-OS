@@ -111,19 +111,14 @@ export default function GuideTourPage() {
   if (state.phase === 'error') return <FeedError message={state.message} onRetry={load} />;
 
   const tour = state.tour;
-  const cancelled = tour.status === 'cancelled';
   const workshopComponents = (tour.components || []).filter((c) => c.isWorkshop);
 
   return (
     <div>
       <BackRow token={token} title={tour.variantName} />
 
-      {cancelled && (
-        <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[14px] font-semibold text-red-700">
-          הסיור בוטל
-        </div>
-      )}
-
+      {/* Cancelled tours never render — the server 403s them and the
+          silent revalidation flips this page to the blocked state. */}
       <HeaderCard tour={tour} />
 
       {tour.team && tour.team.length > 0 && (

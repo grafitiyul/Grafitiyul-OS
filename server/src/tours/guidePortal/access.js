@@ -75,16 +75,27 @@ export async function resolveGuidePortalAccess(client, { portalToken }) {
 }
 
 // THE access rule for every per-tour guide surface (detail, participants,
-// summary, coordination, gallery): a guide reaches a tour ONLY while a
-// TourAssignment row for (this tour, this person) currently exists. Removal
-// hard-deletes the row (tours.js DELETE /assignments/:id), so revocation is
-// immediate and absolute — there is no historical-access exception, for
-// past and cancelled tours included. Both resolvers below and the gallery
-// resolver share this ONE lookup.
+// summary, coordination, gallery): a guide reaches a tour ONLY while
+//   1. a TourAssignment row for (this tour, this person) currently exists
+//      (removal hard-deletes the row → revocation is immediate and absolute,
+//      direct URLs included), AND
+//   2. the tour is NOT cancelled.
+// Rule 2 is a product decision (2026-07): a cancelled TourEvent disappears
+// from the guide portal entirely — no "בוטל" card, no team/customer data.
+// This matters because deal-reopen AUTO-cancels the tour while deliberately
+// KEEPING its TourAssignment rows (tourFromDeal.js copies them back onto the
+// DealTourPlan so a future WON restores the team) — those live rows must not
+// grant portal access to the cancelled twin. Both resolvers below and the
+// gallery resolver share this one lookup.
 export async function findActiveAssignment(client, person, tourEventId) {
   return client.tourAssignment.findFirst({
     where: { tourEventId, externalPersonId: person.externalPersonId },
   });
+}
+
+export function guideVisibleTourWhere() {
+  // Feed-query twin of resolveGuideTourAccess's status rule.
+  return { status: { not: 'cancelled' } };
 }
 
 export async function resolveGuideTourAccess(client, { portalToken, tourEventId }) {
@@ -96,6 +107,9 @@ export async function resolveGuideTourAccess(client, { portalToken, tourEventId 
     select: { id: true, status: true },
   });
   if (!tour) return { ok: false, status: 404, error: 'not_found' };
+  if (tour.status === 'cancelled') {
+    return { ok: false, status: 403, error: 'tour_cancelled' };
+  }
   const assignment = await findActiveAssignment(client, base.person, tour.id);
   if (!assignment) return { ok: false, status: 403, error: 'not_assigned' };
   return { ...base, tour, assignment };

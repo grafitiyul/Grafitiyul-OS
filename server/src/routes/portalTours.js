@@ -17,6 +17,7 @@ import {
   MAX_UPLOAD_BYTES,
 } from '../questionnaires/uploads.js';
 import {
+  guideVisibleTourWhere,
   resolveGuidePortalAccess,
   resolveGuideTourAccess,
 } from '../tours/guidePortal/access.js';
@@ -84,8 +85,14 @@ const CARD_TOUR_INCLUDE = {
 };
 
 async function loadAssignedTours(person) {
+  // Cancelled tours are invisible in the portal (same rule the detail
+  // resolver enforces) — deal-reopen keeps assignment rows on the cancelled
+  // twin for plan restore, and those must never surface here.
   return prisma.tourAssignment.findMany({
-    where: { externalPersonId: person.externalPersonId },
+    where: {
+      externalPersonId: person.externalPersonId,
+      tourEvent: guideVisibleTourWhere(),
+    },
     include: { tourEvent: { include: CARD_TOUR_INCLUDE } },
   });
 }
@@ -341,10 +348,8 @@ router.get(
     const access = await summaryAccess(req, res);
     if (!access) return;
     try {
+      // (Cancelled tours never reach here — the access resolver 403s them.)
       const existing = await activeSummarySubmission(access.tour.id);
-      if (!existing && access.tour.status === 'cancelled') {
-        return res.status(409).json({ error: 'tour_cancelled' });
-      }
       const { submission } = existing
         ? { submission: existing }
         : await startSubmission({

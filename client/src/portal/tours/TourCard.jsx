@@ -9,30 +9,22 @@ import {
 } from '../format.js';
 
 // One tour card — shared by the upcoming and past feeds. Pure presentation:
-// everything shown comes from the guide tour-card DTO.
+// everything shown comes from the guide tour-card DTO. Cancelled tours never
+// reach the portal (server rule) so there is no cancelled styling here.
 
 export default function TourCard({ token, tour }) {
-  const cancelled = tour.status === 'cancelled';
-  const today = !cancelled && isToday(tour.date);
+  const today = isToday(tour.date);
 
   return (
     <Link
       to={`/p/${encodeURIComponent(token)}/tour/${encodeURIComponent(tour.id)}`}
       className={`block rounded-2xl border bg-white p-4 shadow-sm transition active:bg-gray-50 ${
-        cancelled
-          ? 'border-red-200'
-          : today
-          ? 'border-blue-300 ring-1 ring-blue-100'
-          : 'border-gray-200 hover:border-gray-300'
+        today ? 'border-blue-300 ring-1 ring-blue-100' : 'border-gray-200 hover:border-gray-300'
       }`}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div
-            className={`text-[16px] font-bold leading-snug ${
-              cancelled ? 'text-gray-400 line-through' : 'text-gray-900'
-            }`}
-          >
+          <div className="text-[16px] font-bold leading-snug text-gray-900">
             {tour.variantName}
           </div>
           <div className="mt-1 text-[13px] text-gray-600">
@@ -46,11 +38,6 @@ export default function TourCard({ token, tour }) {
           {today && (
             <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[11px] font-bold text-white">
               היום
-            </span>
-          )}
-          {cancelled && (
-            <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-bold text-red-700">
-              בוטל
             </span>
           )}
         </div>
