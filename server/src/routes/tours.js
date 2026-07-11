@@ -26,6 +26,7 @@ import {
   patchTouchesCalendar,
   markTourCalendarPending,
   scheduleCalendarTombstone,
+  kickTourCalendarSync,
 } from '../tours/calendar/service.js';
 
 // TourEvent CRUD — the OPERATIONAL tours module ("סיורים"). Distinct from the
@@ -757,6 +758,7 @@ router.post(
     Object.assign(data, calendarPendingPatch());
 
     const tour = await prisma.tourEvent.create({ data, include: TOUR_INCLUDE });
+    kickTourCalendarSync();
     await emitTimelineEvent(prisma, {
       subjectType: 'tour_event',
       subjectId: tour.id,
@@ -853,6 +855,7 @@ router.put(
       data,
       include: TOUR_INCLUDE,
     });
+    if (data.gcalSyncStatus === 'pending') kickTourCalendarSync();
     if (data.status && data.status !== existing.status) {
       const origin = await userOrigin(req.adminAuth?.userId);
       await emitTimelineEvent(prisma, {

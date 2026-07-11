@@ -2,7 +2,11 @@ import { WON_REQUIRED_FIELDS, missingFields } from './requiredFields.js';
 import { emitTimelineEvent } from '../timeline/events.js';
 import { seedTourComponents } from './tourComponents.js';
 import { scheduleGalleryCleanup } from './gallery/service.js';
-import { calendarPendingPatch, patchTouchesCalendar } from './calendar/service.js';
+import {
+  calendarPendingPatch,
+  patchTouchesCalendar,
+  kickTourCalendarSync,
+} from './calendar/service.js';
 
 // Deal⇄Tour lifecycle — the ONE module that creates/joins/leaves tours for a
 // deal. Called from the deals router inside a prisma transaction; never from
@@ -145,6 +149,9 @@ export async function createTourForWonDeal(tx, deal, { targetTourEventId, origin
       ...calendarPendingPatch(),
     },
   });
+  // Kick fires after the caller's transaction commits (1.5s debounce); the
+  // periodic tick covers the rare slower commit.
+  kickTourCalendarSync();
   // Seed the tour's components from the selected VARIANT's defaults (a copy —
   // the tour owns them from here on). Same transaction so a failure rolls back.
   await seedTourComponents(tx, tourEvent.id, deal.productVariantId);
@@ -217,6 +224,7 @@ export async function cancelDealBooking(tx, booking, { reason, origin }) {
         // the sync worker deletes the Google event → guides get cancellations.
         data: { status: 'cancelled', cancelledAt: new Date(), ...calendarPendingPatch() },
       });
+      kickTourCalendarSync();
       await emitTimelineEvent(tx, {
         subjectType: 'tour_event',
         subjectId: tour.id,
@@ -346,8 +354,10 @@ export async function syncDealToTour(tx, deal, booking, { origin }) {
 
   if (!Object.keys(patch).length) return false;
   // Deal-driven date/time/variant/language changes are calendar-visible.
-  if (patchTouchesCalendar(patch)) Object.assign(patch, calendarPendingPatch());
+  const calendarDirty = patchTouchesCalendar(patch);
+  if (calendarDirty) Object.assign(patch, calendarPendingPatch());
   await tx.tourEvent.update({ where: { id: tour.id }, data: patch });
+  if (calendarDirty) kickTourCalendarSync();
   await emitTimelineEvent(tx, {
     subjectType: 'tour_event',
     subjectId: tour.id,

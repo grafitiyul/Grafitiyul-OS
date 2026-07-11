@@ -20,12 +20,26 @@ function makeTour(overrides = {}) {
     gcalAccountId: null,
     gcalSyncStatus: 'pending',
     gcalAttempts: 0,
+    gcalLastSummary: null,
+    gcalLastDescription: null,
+    gcalLastColorId: null,
     updatedAt: new Date('2026-07-11T08:00:00Z'),
     product: { nameHe: 'סיור גרפיטי', nameEn: 'Graffiti Tour' },
     productVariant: { durationHours: 2 },
+    location: null,
     assignments: [{ displayName: 'דנה', personRef: { email: 'dana@x.com' } }],
     activityComponents: [],
     ...overrides,
+  };
+}
+
+// Baselines matching a tour that was already fully GOS-synced once.
+function syncedBaselines(tour) {
+  const { event } = buildDesiredEvent(tour);
+  return {
+    gcalLastSummary: event.summary,
+    gcalLastDescription: event.description,
+    gcalLastColorId: event.colorId,
   };
 }
 
@@ -88,6 +102,10 @@ test('scheduled tour without an event → insert + synced with event id', async 
   assert.equal(w.data.gcalAccountId, 'acc1');
   assert.equal(w.data.gcalSyncStatus, 'synced');
   assert.equal(w.data.gcalSyncError, null);
+  // Presentation baselines recorded at insert — the write-echo that later
+  // distinguishes GOS-owned values from manual Google edits.
+  assert.match(w.data.gcalLastSummary, /סיור גרפיטי \| 20\.07\.2026 \| 10:00/);
+  assert.equal(w.data.gcalLastColorId, '6');
 });
 
 test('cancelled tour with an event → delete + id cleared (restore creates anew)', async () => {
@@ -119,13 +137,15 @@ test('completed tour → calendar untouched (history is never cancelled)', async
 });
 
 test('existing event already matching → GET only, no write to Google', async () => {
-  const tour = makeTour({ gcalEventId: 'ev1' });
+  const base = makeTour({ gcalEventId: 'ev1' });
+  const tour = { ...base, ...syncedBaselines(base) };
   const { event: desired } = buildDesiredEvent(tour);
   const googleSide = {
     id: 'ev1',
     status: 'confirmed',
     summary: desired.summary,
     description: desired.description,
+    colorId: desired.colorId,
     location: desired.location,
     start: { dateTime: new Date(wallTimeToEpoch('2026-07-20', '10:00')).toISOString() },
     end: { dateTime: new Date(wallTimeToEpoch('2026-07-20', '12:00')).toISOString() },
@@ -156,7 +176,38 @@ test('existing event with drift → minimal patch', async () => {
   await reconcileTour({ db, cal }, ACCOUNT, tour.id);
   const patchCall = cal.calls.find((c) => c.name === 'patchEvent');
   assert.ok(patchCall);
-  assert.equal(patchCall.args[1].summary, 'סיור גרפיטי');
+  // No stored baseline (legacy row) → GOS adopts title + color to the new
+  // derived defaults.
+  assert.equal(patchCall.args[1].summary, 'סיור גרפיטי | 20.07.2026 | 10:00');
+  assert.equal(patchCall.args[1].colorId, '6');
+});
+
+test('manual Google title survives an operational change (worker path)', async () => {
+  const base = makeTour({ gcalEventId: 'ev1' });
+  const tour = { ...base, ...syncedBaselines(base) };
+  const { event: desired } = buildDesiredEvent(tour);
+  const db = makeDb(tour);
+  const cal = makeCal({
+    getEvent: () => ({
+      id: 'ev1',
+      status: 'confirmed',
+      summary: 'כותרת שהמפעיל שינה ביד', // differs from the stored baseline
+      description: desired.description,
+      colorId: desired.colorId,
+      location: desired.location,
+      start: { dateTime: new Date(wallTimeToEpoch('2026-07-20', '10:00')).toISOString() },
+      end: { dateTime: new Date(wallTimeToEpoch('2026-07-20', '12:00')).toISOString() },
+      attendees: [], // guide was added in GOS → attendees must converge
+      extendedProperties: desired.extendedProperties,
+    }),
+  });
+  await reconcileTour({ db, cal }, ACCOUNT, tour.id);
+  const patchCall = cal.calls.find((c) => c.name === 'patchEvent');
+  assert.ok(patchCall);
+  assert.deepEqual(patchCall.args[1].attendees, [{ email: 'dana@x.com' }]);
+  assert.equal(patchCall.args[1].summary, undefined); // manual title preserved
+  // Baseline stays the OLD GOS value so a manual revert restores ownership.
+  assert.equal(db.writes.at(-1).data.gcalLastSummary, tour.gcalLastSummary);
 });
 
 test('event deleted on Google side → adopt-or-recreate path', async () => {
@@ -181,6 +232,7 @@ test('lost-id insert is adopted via the gosTourEventId stamp (no duplicate event
       status: 'confirmed',
       summary: desired.summary,
       description: desired.description,
+      colorId: desired.colorId,
       location: desired.location,
       start: { dateTime: new Date(wallTimeToEpoch('2026-07-20', '10:00')).toISOString() },
       end: { dateTime: new Date(wallTimeToEpoch('2026-07-20', '12:00')).toISOString() },

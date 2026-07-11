@@ -1,7 +1,15 @@
+import { kickTourCalendarSync } from './syncWorker.js';
+
 // Calendar-sync outbox helpers — the ONLY writers of gcalSyncStatus outside
 // the sync worker. Route/service code never talks to Google directly: a
 // mutation just marks the tour dirty ('pending') and the worker derives the
-// full desired event state from the TourEvent row (the SSOT) on its next tick.
+// full desired event state from the TourEvent row (the SSOT) — immediately
+// via the kick below, with the 60s tick as the recovery fallback.
+
+// Re-exported so callers that spread calendarPendingPatch() into their own
+// prisma write (tours routes, deal→tour sync) can trigger the immediate run
+// AFTER their write/transaction without importing the worker directly.
+export { kickTourCalendarSync };
 
 // Patch fragment for updates that already build a `data` object (tour routes,
 // deal→tour sync). Resets the retry ladder so a fresh mutation gets fresh
@@ -33,6 +41,7 @@ export async function markTourCalendarPending(client, tourEventId) {
     where: { id: tourEventId },
     data: calendarPendingPatch(),
   });
+  kickTourCalendarSync();
 }
 
 // Called BEFORE deleting a TourEvent row: the Google event must still be
@@ -47,4 +56,5 @@ export async function scheduleCalendarTombstone(client, tour) {
       gcalAccountId: tour.gcalAccountId,
     },
   });
+  kickTourCalendarSync();
 }

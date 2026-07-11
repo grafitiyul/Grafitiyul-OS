@@ -20,6 +20,14 @@ export const CALENDAR_TIMEZONE = 'Asia/Jerusalem';
 // time; flagged as a warning so operations can fix the variant.
 export const DEFAULT_DURATION_HOURS = 2;
 
+// Default event color: "Tangerine" (orange, #ffb878) from Google's FIXED event
+// color palette (colors.get → event map; ids 1-11, identical for every Google
+// account — this is the API's event palette, not a UI CSS guess). Reading the
+// palette live needs calendar.readonly, which we deliberately don't request;
+// the id is stable API surface. Presentation default only — a manual color
+// change in Google Calendar is preserved (see diffEvent ownership rules).
+export const EVENT_COLOR_ID = '6';
+
 export const DESCRIPTION_HE =
   'כל המידע על הפעילות נמצא באפליקציית המדריכים של גרפיטיול.\n\n' +
   'זימון זה ביומן הוא רק בשביל הנוחות - אם יש אי התאמה בין היומן לבין האפליקציה - האפליקציה קובעת!';
@@ -90,14 +98,37 @@ export function epochToWallTime(epochMs, timeZone = CALENDAR_TIMEZONE) {
 
 // ── Desired event ─────────────────────────────────────────────────────────────
 
+// "04.08.2026" from "2026-08-04" — the title's date segment.
+function fmtDateDots(dateStr) {
+  const [y, m, d] = String(dateStr).split('-');
+  return `${d}.${m}.${y}`;
+}
+
+// The variant's FULL display identity. A ProductVariant has no name of its own
+// anywhere in GOS — it IS Product×Location, and every surface (Tour modal
+// header, slot picker, tours table) renders it as "product · city". The title
+// resolves the same pair in the tour's language.
+function variantDisplayName(tour, he) {
+  const product = he
+    ? tour.product?.nameHe
+    : tour.product?.nameEn || tour.product?.nameHe;
+  const loc = tour.location || tour.productVariant?.location || null;
+  const city = he ? loc?.nameHe : loc?.nameEn || loc?.nameHe;
+  return [product, city].filter(Boolean).join(' · ');
+}
+
+// Title = full variant name + date + time, e.g.
+// "סיור וסדנת גרפיטי · תל אביב | 04.08.2026 | 12:00". Derived on every
+// reconcile, so a date/time/variant change updates it automatically (unless
+// the operator manually renamed the event in Google — ownership rules below).
 function eventTitle(tour, warnings) {
   const he = isHebrewTour(tour.tourLanguage);
-  const nameHe = tour.product?.nameHe || null;
-  const nameEn = tour.product?.nameEn || null;
-  const title = he ? nameHe : nameEn || nameHe;
-  if (title) return title;
-  warnings.push('לסיור אין מוצר משויך — הזימון נוצר עם כותרת כללית');
-  return he ? 'פעילות גרפיטיול' : 'Grafitiyul Activity';
+  let name = variantDisplayName(tour, he);
+  if (!name) {
+    warnings.push('לסיור אין מוצר משויך — הזימון נוצר עם כותרת כללית');
+    name = he ? 'פעילות גרפיטיול' : 'Grafitiyul Activity';
+  }
+  return `${name} | ${fmtDateDots(tour.date)} | ${tour.startTime}`;
 }
 
 function eventLocation(tour) {
@@ -151,6 +182,7 @@ export function buildDesiredEvent(tour) {
   const event = {
     summary: eventTitle(tour, warnings),
     description: he ? DESCRIPTION_HE : DESCRIPTION_EN,
+    colorId: EVENT_COLOR_ID,
     location: eventLocation(tour),
     start: { dateTime: `${tour.date}T${tour.startTime}:00`, timeZone: CALENDAR_TIMEZONE },
     end: { dateTime: epochToWallTime(endEpoch), timeZone: CALENDAR_TIMEZONE },
@@ -166,8 +198,23 @@ export function buildDesiredEvent(tour) {
 
 // ── Diff (existing Google event → minimal PATCH) ─────────────────────────────
 // Update-in-place is the product rule (one stable invitation per guide);
-// a null return means the event already matches and NO API write happens —
+// a null patch means the event already matches and NO API write happens —
 // that's what makes role-only changes and re-marks free of guest spam.
+//
+// FIELD OWNERSHIP:
+//   * OPERATIONAL fields — start/end, attendees, location, the gosTourEventId
+//     stamp — are GOS-owned unconditionally: they always converge to the
+//     derived state, whatever was done to the event in Google.
+//   * PRESENTATION fields — summary/description/colorId — GOS supplies the
+//     derived default, but a manual edit made in Google Calendar is respected.
+//     Detection uses the write-echo baseline (`lastWritten` = what GOS last
+//     wrote, persisted on the TourEvent row): current == baseline → still
+//     GOS-owned, follow the new default (so date changes keep updating the
+//     title's date segment); current != baseline → manual override, preserved
+//     until the operator manually restores the baseline value.
+//   * lastWritten of null (legacy events synced before baselines existed)
+//     counts as GOS-owned — the next reconcile adopts the field and records a
+//     baseline. This is what rolls the new title format out automatically.
 
 function attendeeEmails(list) {
   return new Set(
@@ -188,11 +235,29 @@ function sameInstant(existingTime, desiredDateStr) {
   return existingEpoch === desiredEpoch;
 }
 
-export function diffEvent(existing, desired) {
-  const patch = {};
+export const PRESENTATION_FIELDS = ['summary', 'description', 'colorId'];
 
-  if ((existing.summary || '') !== desired.summary) patch.summary = desired.summary;
-  if ((existing.description || '') !== desired.description) patch.description = desired.description;
+// → { patch: object|null, written: {summary, description, colorId} }
+// `written` is the baseline to persist after the write lands: the desired
+// value where GOS owns the field, the UNCHANGED old baseline where a manual
+// override was preserved (so a later manual revert hands ownership back).
+export function diffEvent(existing, desired, lastWritten = {}) {
+  const patch = {};
+  const written = {};
+
+  for (const key of PRESENTATION_FIELDS) {
+    const cur = existing[key] || '';
+    const want = desired[key] || '';
+    const baseline = lastWritten[key];
+    const manuallyEdited = baseline != null && cur !== baseline;
+    if (manuallyEdited) {
+      written[key] = baseline; // preserve the operator's edit; keep baseline
+    } else {
+      if (cur !== want) patch[key] = desired[key];
+      written[key] = want;
+    }
+  }
+
   if ((existing.location || '') !== (desired.location || '')) patch.location = desired.location;
 
   if (!sameInstant(existing.start, desired.start.dateTime)) patch.start = desired.start;
@@ -217,5 +282,5 @@ export function diffEvent(existing, desired) {
     patch.extendedProperties = desired.extendedProperties;
   }
 
-  return Object.keys(patch).length ? patch : null;
+  return { patch: Object.keys(patch).length ? patch : null, written };
 }

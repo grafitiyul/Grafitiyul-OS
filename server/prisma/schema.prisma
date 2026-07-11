@@ -2994,6 +2994,15 @@ model TourEvent {
   gcalSyncedAt     DateTime?
   gcalAttempts     Int             @default(0)
   gcalNextRetryAt  DateTime?
+  // Field-ownership baselines for PRESENTATION fields (title/description/
+  // color): the value GOS last wrote to Google. While Google's current value
+  // equals this baseline the field is GOS-owned and follows the derived
+  // default; a divergent value is a manual edit made in Google Calendar and is
+  // preserved (operational fields — times/attendees/location — always sync).
+  // NOT a second source of truth for the tour: purely write-echo bookkeeping.
+  gcalLastSummary     String?
+  gcalLastDescription String?
+  gcalLastColorId     String?
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
   bookings         Booking[]

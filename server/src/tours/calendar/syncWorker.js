@@ -33,7 +33,10 @@ function backoffMs(attempts) {
 
 const TOUR_SYNC_INCLUDE = {
   product: { select: { nameHe: true, nameEn: true } },
-  productVariant: { select: { durationHours: true } },
+  productVariant: {
+    select: { durationHours: true, location: { select: { nameHe: true, nameEn: true } } },
+  },
+  location: { select: { nameHe: true, nameEn: true } },
   assignments: {
     orderBy: { createdAt: 'asc' },
     include: { personRef: { select: { email: true } } },
@@ -100,6 +103,13 @@ export async function reconcileTour(deps, account, tourId) {
     }
 
     const { event: desired, warnings } = buildDesiredEvent(tour);
+    // Write-echo baselines that make GOS-vs-manual detection possible for the
+    // presentation fields (see diffEvent ownership rules).
+    const desiredBaselines = {
+      gcalLastSummary: desired.summary,
+      gcalLastDescription: desired.description,
+      gcalLastColorId: desired.colorId,
+    };
 
     let eventId = tour.gcalEventId;
     let existing = null;
@@ -133,12 +143,29 @@ export async function reconcileTour(deps, account, tourId) {
       } else {
         created = await cal.insertEvent(db, account, desired);
       }
-      return await markSynced({ gcalEventId: created.id, gcalAccountId: account.id }, warnings);
+      return await markSynced(
+        { gcalEventId: created.id, gcalAccountId: account.id, ...desiredBaselines },
+        warnings,
+      );
     }
 
-    const patch = diffEvent(existing, desired);
+    const lastWritten = {
+      summary: tour.gcalLastSummary,
+      description: tour.gcalLastDescription,
+      colorId: tour.gcalLastColorId,
+    };
+    const { patch, written } = diffEvent(existing, desired, lastWritten);
     if (patch) await cal.patchEvent(db, account, eventId, patch);
-    return await markSynced({ gcalEventId: eventId, gcalAccountId: account.id }, warnings);
+    return await markSynced(
+      {
+        gcalEventId: eventId,
+        gcalAccountId: account.id,
+        gcalLastSummary: written.summary,
+        gcalLastDescription: written.description,
+        gcalLastColorId: written.colorId,
+      },
+      warnings,
+    );
   } catch (e) {
     const attempts = (tour.gcalAttempts || 0) + 1;
     const exhausted = attempts >= MAX_ATTEMPTS;
@@ -220,6 +247,32 @@ async function parkPending(db, where, reason) {
 
 let started = false;
 let inFlight = false;
+let runTick = null; // set by start; lets mutations kick a run without waiting
+let kickTimer = null;
+let kickAgain = false;
+
+// Immediate-sync path for user-triggered mutations (assign/remove guide,
+// date/time change, cancel/restore): the mutation still ONLY marks the tour
+// dirty — this just runs the SAME reconciler tick right away instead of
+// waiting for the 60s interval, which remains as the recovery/backfill
+// fallback. Safe by construction: the tick is re-entrancy-guarded, every
+// reconcile re-checks 'pending' and claims via guarded writes, and a kick
+// while a tick is mid-flight re-arms one follow-up run so the fresh mutation
+// is never missed. The short delay debounces bursts (e.g. assigning several
+// guides) into one run and lets the caller's transaction commit first.
+export function kickTourCalendarSync(delayMs = 1500) {
+  if (!runTick) return; // worker not started (tests / one-off scripts)
+  if (inFlight) {
+    kickAgain = true;
+    return;
+  }
+  if (kickTimer) return; // already armed — debounce
+  kickTimer = setTimeout(() => {
+    kickTimer = null;
+    runTick();
+  }, delayMs);
+  kickTimer.unref?.();
+}
 
 export function startTourCalendarSyncWorker(log = console) {
   if (started) return;
@@ -278,9 +331,16 @@ export function startTourCalendarSyncWorker(log = console) {
       log?.warn?.('[tour-calendar] worker tick failed:', e?.message);
     } finally {
       inFlight = false;
+      // A mutation arrived while this run was mid-flight — run once more so
+      // it reconciles now instead of waiting for the next interval.
+      if (kickAgain) {
+        kickAgain = false;
+        kickTourCalendarSync(500);
+      }
     }
   };
 
+  runTick = tick;
   setInterval(tick, TICK_MS).unref?.();
   log?.log?.('[tour-calendar] sync worker started');
 }
