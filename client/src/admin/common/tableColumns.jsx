@@ -335,6 +335,7 @@ export function SortableHeaderRow({
   onSort,
   widths,
   onResize,
+  leading = null, // optional utility cell(s) BEFORE the sortable columns (e.g. row-selection checkbox)
   children,
 }) {
   const rowRef = useRef(null);
@@ -391,6 +392,7 @@ export function SortableHeaderRow({
     >
       <SortableContext items={cols.map((c) => c.key)} strategy={rectSortingStrategy}>
         <tr ref={rowRef} className={trClassName}>
+          {leading}
           {cols.map((c) => (
             <SortableTh
               key={c.key}

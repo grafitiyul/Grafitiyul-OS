@@ -241,6 +241,158 @@ export default function PeopleList() {
   );
 }
 
+// ── Bulk edit — one action, many staff members ──────────────────────────────
+// Each field opts in with its עדכון checkbox (enabled + empty = clear). The
+// apply loop calls the SAME per-person endpoints as inline/profile editing,
+// so every affected profile gets its own immutable history entry.
+
+const BULK_FIELDS = [
+  { key: 'vatStatus', label: 'מע״מ', type: 'select' },
+  { key: 'senioritySupplement', label: 'תוספת ותק', type: 'number' },
+  { key: 'travelAllowance', label: 'נסיעות', type: 'number' },
+  { key: 'trainingCohort', label: 'מחזור הכשרה', type: 'text' },
+  { key: 'teamRefId', label: 'צוות', type: 'team' },
+];
+
+function BulkEditDialog({ people, teams, onClose, onDone }) {
+  const [enabled, setEnabled] = useState({});
+  const [values, setValues] = useState({});
+  const [progress, setProgress] = useState(null); // { done, total }
+  const [failures, setFailures] = useState([]);
+
+  const anyEnabled = BULK_FIELDS.some((f) => enabled[f.key]);
+
+  async function apply() {
+    // Validate the numeric fields once, up front.
+    for (const f of BULK_FIELDS) {
+      if (!enabled[f.key] || f.type !== 'number') continue;
+      const v = String(values[f.key] ?? '').trim();
+      if (v && (!Number.isFinite(Number(v)) || Number(v) < 0)) {
+        window.alert(`${f.label}: מספר אפס או חיובי בלבד.`);
+        return;
+      }
+    }
+    const profilePatch = {};
+    let teamPatch;
+    for (const f of BULK_FIELDS) {
+      if (!enabled[f.key]) continue;
+      const raw = String(values[f.key] ?? '').trim();
+      if (f.key === 'teamRefId') teamPatch = { teamRefId: raw || null };
+      else profilePatch[f.key] = raw || null;
+    }
+    const fails = [];
+    setProgress({ done: 0, total: people.length });
+    for (let i = 0; i < people.length; i += 1) {
+      const p = people[i];
+      try {
+        if (Object.keys(profilePatch).length > 0) {
+          await api.people.updateProfile(p.id, profilePatch);
+        }
+        if (teamPatch) await api.people.update(p.id, teamPatch);
+      } catch (e) {
+        fails.push(`${p.displayName}: ${e.payload?.error || e.message}`);
+      }
+      setProgress({ done: i + 1, total: people.length });
+    }
+    setFailures(fails);
+    if (fails.length === 0) onDone();
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      role="dialog"
+      aria-modal="true"
+      dir="rtl"
+      onClick={progress ? undefined : onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="mb-1 text-[16px] font-bold text-gray-900">עריכה קבוצתית</h2>
+        <p className="mb-4 text-[12.5px] text-gray-500">
+          {people.length === 1 ? 'איש צוות אחד נבחר' : `${people.length} אנשי צוות נבחרו`} · רק
+          שדות מסומנים יעודכנו; שדה מסומן וריק — ינוקה.
+        </p>
+
+        <div className="space-y-2.5">
+          {BULK_FIELDS.map((f) => (
+            <div key={f.key} className="flex items-center gap-2.5">
+              <input
+                type="checkbox"
+                checked={!!enabled[f.key]}
+                onChange={(e) => setEnabled((s) => ({ ...s, [f.key]: e.target.checked }))}
+                className="accent-blue-600"
+                aria-label={`עדכון ${f.label}`}
+              />
+              <span className="w-24 shrink-0 text-[13px] font-medium text-gray-700">{f.label}</span>
+              {f.type === 'select' || f.type === 'team' ? (
+                <select
+                  disabled={!enabled[f.key]}
+                  value={values[f.key] ?? ''}
+                  onChange={(e) => setValues((s) => ({ ...s, [f.key]: e.target.value }))}
+                  className="flex-1 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                >
+                  {(f.type === 'team'
+                    ? [{ value: '', label: '—' }, ...teams.map((t) => ({ value: t.id, label: t.displayName }))]
+                    : VAT_OPTIONS
+                  ).map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type={f.type === 'number' ? 'number' : 'text'}
+                  {...(f.type === 'number' ? { min: 0, step: 0.01, dir: 'ltr' } : {})}
+                  disabled={!enabled[f.key]}
+                  value={values[f.key] ?? ''}
+                  onChange={(e) => setValues((s) => ({ ...s, [f.key]: e.target.value }))}
+                  className="flex-1 rounded-md border border-gray-300 px-2 py-1.5 text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                />
+              )}
+            </div>
+          ))}
+        </div>
+
+        {progress && (
+          <div className="mt-4 text-[12.5px] text-gray-600">
+            מעדכן {progress.done}/{progress.total}…
+          </div>
+        )}
+        {failures.length > 0 && (
+          <div className="mt-3 max-h-28 overflow-y-auto rounded-lg border border-red-200 bg-red-50 p-2 text-[12px] text-red-700">
+            {failures.map((f, i) => (
+              <div key={i}>{f}</div>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={failures.length > 0 ? onDone : onClose}
+            disabled={!!progress && progress.done < progress.total}
+            className="rounded-lg px-4 py-2 text-[13.5px] font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+          >
+            {failures.length > 0 ? 'סגירה' : 'ביטול'}
+          </button>
+          <button
+            type="button"
+            onClick={apply}
+            disabled={!anyEnabled || !!progress}
+            className="rounded-lg bg-blue-600 px-5 py-2 text-[13.5px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            עדכון {people.length === 1 ? '' : `${people.length} אנשים`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── the operational table ───────────────────────────────────────────────────
 // Human-first: avatar + name lead every row; numbers and dates stay compact;
 // the three-dot menu (unchanged behavior) is the only action. Client-side
@@ -251,22 +403,77 @@ const PAGE_SIZES = [10, 25, 50];
 function PeopleTable({ people, cols, teams, onChanged }) {
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(1);
+  const [selected, setSelected] = useState(() => new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
   const pages = Math.max(1, Math.ceil(people.length / pageSize));
   const safePage = Math.min(page, pages);
   const rows = people.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   useEffect(() => {
     setPage(1); // filters/search changed the underlying list
+    setSelected(new Set()); // stale selection must not survive a re-filter
   }, [people]);
+
+  const allSelected = people.length > 0 && people.every((p) => selected.has(p.id));
+  function toggleAll() {
+    setSelected(allSelected ? new Set() : new Set(people.map((p) => p.id)));
+  }
+  function toggleOne(id) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  const selectedPeople = people.filter((p) => selected.has(p.id));
 
   return (
     <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+      {/* Selection bar — appears once anything is checked. */}
+      {selected.size > 0 && (
+        <div className="flex items-center gap-3 border-b border-blue-100 bg-blue-50/70 px-4 py-2 text-[13px]">
+          <span className="font-semibold text-blue-900">
+            {selected.size === 1 ? 'אחד נבחר' : `${selected.size} נבחרו`}
+          </span>
+          <button
+            type="button"
+            onClick={() => setBulkOpen(true)}
+            className="rounded-lg bg-blue-600 px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-blue-700"
+          >
+            עריכה קבוצתית
+          </button>
+          <span className="flex-1" />
+          <button
+            type="button"
+            onClick={() => setSelected(new Set())}
+            className="text-[12.5px] text-gray-500 hover:text-gray-800"
+          >
+            ניקוי בחירה
+          </button>
+        </div>
+      )}
+
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="border-b border-gray-100 bg-gray-50/70 text-gray-500">
             {/* Shared drag-reorderable header (RTL-correct rects). The
-                trailing ⋮ spacer rides as the non-sortable child. */}
-            <SortableHeaderRow cols={cols.visibleCols} onMove={cols.moveCol}>
+                selection checkbox leads; the ⋮ spacer trails. */}
+            <SortableHeaderRow
+              cols={cols.visibleCols}
+              onMove={cols.moveCol}
+              leading={
+                <th className="w-10 px-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={toggleAll}
+                    className="accent-blue-600"
+                    aria-label="בחירת כולם"
+                  />
+                </th>
+              }
+            >
               <th aria-label="פעולות" />
             </SortableHeaderRow>
           </thead>
@@ -277,12 +484,27 @@ function PeopleTable({ people, cols, teams, onChanged }) {
                 person={p}
                 visibleCols={cols.visibleCols}
                 teams={teams}
+                selected={selected.has(p.id)}
+                onToggleSelect={() => toggleOne(p.id)}
                 onChanged={onChanged}
               />
             ))}
           </tbody>
         </table>
       </div>
+
+      {bulkOpen && (
+        <BulkEditDialog
+          people={selectedPeople}
+          teams={teams}
+          onClose={() => setBulkOpen(false)}
+          onDone={async () => {
+            setBulkOpen(false);
+            setSelected(new Set());
+            await onChanged();
+          }}
+        />
+      )}
 
       {(people.length > PAGE_SIZES[0] || pages > 1) && (
         <div className="flex items-center gap-3 border-t border-gray-100 px-4 py-2.5 text-[12.5px] text-gray-600">
@@ -649,9 +871,18 @@ function renderCell(key, person) {
   }
 }
 
-function PersonRow({ person, visibleCols, teams, onChanged }) {
+function PersonRow({ person, visibleCols, teams, selected, onToggleSelect, onChanged }) {
   return (
-    <tr className="transition-colors hover:bg-gray-50/70">
+    <tr className={`transition-colors ${selected ? 'bg-blue-50/40' : 'hover:bg-gray-50/70'}`}>
+      <TableCell col={{}} stopClick className="w-10">
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onToggleSelect}
+          className="accent-blue-600"
+          aria-label={`בחירת ${person.displayName}`}
+        />
+      </TableCell>
       {visibleCols.map((col) => (
         <TableCell key={col.key} col={col}>
           {INLINE_FIELDS[col.key] ? (
