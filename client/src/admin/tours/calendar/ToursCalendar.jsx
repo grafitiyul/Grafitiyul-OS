@@ -88,7 +88,7 @@ export default function ToursCalendar({ search, kind, status, onOpenTour, view, 
     return (events || []).filter((ev) => {
       if (!statusFilterMatches(status, ev.status)) return false;
       if (!q) return true;
-      return [ev.productName, ev.city, ev.notes, ev.date]
+      return [ev.productName, ev.city, ev.notes, ev.date, ev.customerDisplayName]
         .filter(Boolean)
         .join(' ')
         .toLowerCase()

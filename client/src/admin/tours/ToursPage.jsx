@@ -4,6 +4,7 @@ import { api } from '../../lib/api.js';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../common/tableColumns.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import { rowTintStyle } from '../../color/staffColorUi.js';
+import { StaffAvatar } from './TourTeamEditor.jsx';
 import TourSlotModal from './TourSlotModal.jsx';
 import ToursCalendar from './calendar/ToursCalendar.jsx';
 import {
@@ -92,6 +93,31 @@ function Occupancy({ t }) {
   );
 }
 
+// Compact staff cell — one person: avatar + name (same StaffAvatar the team
+// editor and staff list use).
+function StaffCell({ s }) {
+  if (!s) return dash;
+  return (
+    <span className="inline-flex max-w-[180px] items-center gap-1.5">
+      <StaffAvatar src={s.imageUrl} name={s.name} className="h-6 w-6" />
+      <span className="truncate">{s.name}</span>
+    </span>
+  );
+}
+
+// Compact multi-staff cell — first two names + "+N"; the full list lives in
+// the native title tooltip (rows must stay one line tall).
+function StaffListCell({ list }) {
+  if (!list?.length) return dash;
+  const names = list.map((s) => s.name);
+  return (
+    <span title={names.join(', ')} className="inline-block max-w-[200px] truncate align-middle">
+      {names.slice(0, 2).join(', ')}
+      {names.length > 2 && <span className="text-gray-400"> +{names.length - 2}</span>}
+    </span>
+  );
+}
+
 const COLUMNS = [
   // Postponed tours have no date/time — they sort last and render "—".
   { key: 'date', label: 'תאריך', def: true, sortVal: (t) => `${t.date || '9999'} ${t.startTime || ''}`,
@@ -113,6 +139,40 @@ const COLUMNS = [
     render: (t) => TOUR_LANG_LABELS[t.tourLanguage] || dash },
   { key: 'occupancy', label: 'משתתפים', def: true, sortVal: (t) => t.activeSeats,
     render: (t) => <Occupancy t={t} /> },
+  // Staff/customer columns — compact server summaries (tourListExtrasFor),
+  // never profiles or Deal payloads. Lead guide + customer show by default;
+  // the rest are picker opt-ins.
+  { key: 'leadGuide', label: 'מדריך ראשי', def: true, sortVal: (t) => t.leadGuide?.name || '',
+    render: (t) => <StaffCell s={t.leadGuide} /> },
+  { key: 'guides', label: 'מדריכים', def: false, sortVal: (t) => t.guides?.length || 0,
+    cls: 'text-gray-700',
+    render: (t) => <StaffListCell list={t.guides} /> },
+  { key: 'workshopAssistants', label: 'עוזרי סדנה', def: false,
+    sortVal: (t) => t.workshopAssistants?.length || 0,
+    cls: 'text-gray-700',
+    render: (t) => <StaffListCell list={t.workshopAssistants} /> },
+  { key: 'team', label: 'צוות משובץ', def: false, sortVal: (t) => t.team?.length || 0,
+    cls: 'text-gray-700',
+    render: (t) =>
+      t.team?.length ? (
+        <span title={t.team.map((s) => s.name).join(', ')} className="tabular-nums">
+          {t.team.length} אנשי צוות
+        </span>
+      ) : (
+        dash
+      ) },
+  { key: 'customer', label: 'שם הלקוח', def: true, sortVal: (t) => t.customerDisplayName || '',
+    cls: 'text-gray-800 max-w-[220px] truncate',
+    render: (t) =>
+      t.customerDisplayName ? <span title={t.customerDisplayName}>{t.customerDisplayName}</span> : dash },
+  { key: 'organization', label: 'ארגון', def: false, sortVal: (t) => t.organizationDisplayName || '',
+    cls: 'text-gray-700 max-w-[220px] truncate',
+    render: (t) =>
+      t.organizationDisplayName ? (
+        <span title={t.organizationDisplayName}>{t.organizationDisplayName}</span>
+      ) : (
+        dash
+      ) },
   { key: 'status', label: 'סטטוס', def: true, sortVal: (t) => t.status,
     render: (t) => <Chip styles={TOUR_STATUS_STYLES[t.status]} label={TOUR_STATUS_LABELS[t.status] || t.status} /> },
   { key: 'notes', label: 'הערות', def: false, sortable: false,
@@ -198,6 +258,8 @@ export default function ToursPage() {
           t.productVariant?.location?.nameHe,
           t.notes,
           t.date,
+          t.customerDisplayName,
+          t.organizationDisplayName,
         ]
           .filter(Boolean)
           .join(' ')
@@ -267,10 +329,10 @@ export default function ToursPage() {
   }, [rows]);
 
   return (
-    // Calendar mode is an operational workspace — it takes the FULL available
-    // content width (only page padding remains). The table keeps its capped
-    // reading width; both stay centered under the cap when it applies.
-    <div className={`mx-auto px-5 lg:px-8 py-4 ${tab === 'calendar' ? 'max-w-none' : 'max-w-[1600px]'}`}>
+    // BOTH views are operational workspaces — they take the FULL available
+    // content width (only page padding remains); wide column selections
+    // scroll inside the table's own overflow-x container.
+    <div className="mx-auto max-w-none px-5 lg:px-8 py-4">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2.5">
@@ -313,7 +375,7 @@ export default function ToursPage() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="חיפוש לפי מוצר, עיר או הערות…"
+              placeholder="חיפוש לפי מוצר, עיר, לקוח או הערות…"
               className="h-11 w-full rounded-lg border border-gray-300 bg-gray-50/60 pr-10 pl-3 text-[15px] focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
             />
           </div>

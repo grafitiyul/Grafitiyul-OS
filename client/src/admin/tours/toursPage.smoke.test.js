@@ -37,6 +37,19 @@ const TOUR_ROW = {
   activeSeats: 12,
   activeBookings: 2,
   totalBookings: 0,
+  // Compact list extras (tourListExtrasFor) — staff summaries + resolved
+  // customer/organization labels, exactly the lean shapes the server ships.
+  guideColor: null,
+  guideColorSource: 'guide',
+  leadGuide: { name: 'דנה מדריכה', imageUrl: null },
+  guides: [{ name: 'אבי כהן', imageUrl: null }],
+  workshopAssistants: [],
+  team: [
+    { name: 'דנה מדריכה', imageUrl: null },
+    { name: 'אבי כהן', imageUrl: null },
+  ],
+  customerDisplayName: 'חברת בדיקות',
+  organizationDisplayName: 'חברת בדיקות',
 };
 
 // Tour page payload — one active booking with the customer read-through shape
@@ -266,6 +279,31 @@ test('Tours list renders a populated row incl. the row-action buttons', async ()
   assert.match(html, /מחיקה \(סיור ריק בלבד\)/, 'delete action must render for an empty tour');
   // And the empty state must NOT be showing.
   assert.doesNotMatch(html, /אין סיורים עדיין/);
+  await unmount();
+});
+
+// The staff/customer columns: lead guide + customer render by DEFAULT, and the
+// column picker lists every new operational column for opt-in.
+test('Tours table renders lead guide + customer by default and offers all new columns', async () => {
+  toursList = [TOUR_ROW];
+  const { container, unmount } = await render(
+    React.createElement(MemoryRouter, null, React.createElement(ToursPage)),
+  );
+  const html = container.innerHTML;
+  assert.match(html, /דנה מדריכה/, 'the default lead-guide column renders the name');
+  assert.match(html, /חברת בדיקות/, 'the default customer column renders the resolved label');
+  // Open the column picker (portal → assert against document.body).
+  const pickerBtn = [...container.querySelectorAll('button')].find((b) =>
+    b.textContent.includes('עמודות'),
+  );
+  assert.ok(pickerBtn, 'the column picker trigger renders');
+  await act(async () => {
+    pickerBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  });
+  const body = document.body.innerHTML;
+  for (const label of ['מדריך ראשי', 'מדריכים', 'עוזרי סדנה', 'צוות משובץ', 'שם הלקוח', 'ארגון']) {
+    assert.match(body, new RegExp(label), `column picker offers "${label}"`);
+  }
   await unmount();
 });
 

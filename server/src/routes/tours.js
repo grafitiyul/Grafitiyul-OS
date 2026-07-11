@@ -24,7 +24,10 @@ import { scheduleGalleryCleanup } from '../tours/gallery/service.js';
 import { summaryCompletionState, completeTour, reopenTour } from '../tours/completion.js';
 import { isAssignableStaff } from '../people/eligibility.js';
 import { resolveTourGuideColor, resolveTourGuideColorInfo } from '../../../shared/guideColor.mjs';
-import { bookingsCustomerSummary } from '../tours/customerDisplay.js';
+import {
+  bookingsCustomerSummary,
+  bookingsOrganizationSummary,
+} from '../tours/customerDisplay.js';
 import {
   calendarPendingPatch,
   patchTouchesCalendar,
@@ -103,29 +106,85 @@ const CUSTOMER_LABEL_BOOKINGS_INCLUDE = {
   },
 };
 
-// Minimal select for deriving guideColor without shipping profiles.
-const GUIDE_COLOR_ASSIGNMENT_SELECT = {
-  tourEventId: true,
-  role: true,
-  personRef: { select: { profile: { select: { displayColor: true } } } },
-};
-
-// One query for a set of tours → { [tourEventId]: paletteKey | null }.
-async function guideColorsFor(tourEventIds) {
+// TWO batch queries for the whole visible list (assignments + active
+// bookings) → per-tour compact extras for the table columns: staff summaries
+// by role, the derived guide color, and the resolved customer/organization
+// labels. NEVER full profiles, Deals, Contacts or Organizations — names and
+// avatar URLs only. Zero N+1 by construction.
+async function tourListExtrasFor(tourEventIds) {
   const ids = [...new Set(tourEventIds)].filter(Boolean);
   if (!ids.length) return {};
-  const rows = await prisma.tourAssignment.findMany({
-    where: { tourEventId: { in: ids } },
-    select: GUIDE_COLOR_ASSIGNMENT_SELECT,
-  });
-  const byTour = new Map();
-  for (const r of rows) {
-    if (!byTour.has(r.tourEventId)) byTour.set(r.tourEventId, []);
-    byTour.get(r.tourEventId).push(r);
+  const [assignmentRows, bookingRows] = await Promise.all([
+    prisma.tourAssignment.findMany({
+      where: { tourEventId: { in: ids } },
+      orderBy: { createdAt: 'asc' }, // stable chip order everywhere
+      select: {
+        tourEventId: true,
+        role: true,
+        displayName: true,
+        personRef: {
+          select: { profile: { select: { displayColor: true, imageUrl: true } } },
+        },
+      },
+    }),
+    prisma.booking.findMany({
+      where: { tourEventId: { in: ids }, status: 'active' },
+      orderBy: { createdAt: 'asc' }, // deterministic "first +N" summaries
+      select: {
+        tourEventId: true,
+        deal: {
+          select: {
+            title: true,
+            organization: { select: { name: true } },
+            contacts: {
+              orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+              take: 1,
+              select: {
+                contact: {
+                  select: {
+                    firstNameHe: true,
+                    lastNameHe: true,
+                    firstNameEn: true,
+                    lastNameEn: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    }),
+  ]);
+  const assignmentsByTour = new Map();
+  for (const r of assignmentRows) {
+    if (!assignmentsByTour.has(r.tourEventId)) assignmentsByTour.set(r.tourEventId, []);
+    assignmentsByTour.get(r.tourEventId).push(r);
   }
+  const bookingsByTour = new Map();
+  for (const b of bookingRows) {
+    if (!bookingsByTour.has(b.tourEventId)) bookingsByTour.set(b.tourEventId, []);
+    bookingsByTour.get(b.tourEventId).push(b);
+  }
+  const staff = (a) => ({
+    name: a.displayName,
+    imageUrl: a.personRef?.profile?.imageUrl || null,
+  });
   const out = {};
   for (const id of ids) {
-    out[id] = resolveTourGuideColor(toColorAssignments(byTour.get(id)));
+    const rows = assignmentsByTour.get(id) || [];
+    const bookings = bookingsByTour.get(id) || [];
+    const colorInfo = resolveTourGuideColorInfo(toColorAssignments(rows));
+    const lead = rows.find((a) => a.role === 'lead_guide');
+    out[id] = {
+      guideColor: colorInfo.color,
+      guideColorSource: colorInfo.source,
+      leadGuide: lead ? staff(lead) : null,
+      guides: rows.filter((a) => a.role === 'guide').map(staff),
+      workshopAssistants: rows.filter((a) => a.role === 'workshop_assistant').map(staff),
+      team: rows.map(staff),
+      customerDisplayName: bookingsCustomerSummary(bookings),
+      organizationDisplayName: bookingsOrganizationSummary(bookings),
+    };
   }
   return out;
 }
@@ -198,16 +257,16 @@ router.get(
       include: TOUR_INCLUDE,
       orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
     });
-    const [occ, guideColors] = await Promise.all([
+    const [occ, extras] = await Promise.all([
       occupancyFor(prisma, tours.map((t) => t.id)),
-      guideColorsFor(tours.map((t) => t.id)),
+      tourListExtrasFor(tours.map((t) => t.id)),
     ]);
     res.json(
       tours.map((t) => ({
         ...toClientTour(t, occ[t.id]),
-        // Derived guide identity accent (canonical rule) — no assignment
-        // rows or profiles ride the list payload.
-        guideColor: guideColors[t.id] || null,
+        // Derived compact extras (guide color + staff/customer summaries) —
+        // no assignment rows, profiles or Deal payloads ride the list.
+        ...(extras[t.id] || {}),
       })),
     );
   }),
