@@ -15,7 +15,9 @@ const router = Router();
 // Subjects the timeline may attach to. Extend as modules adopt it (contact /
 // organization are ready for when their pages embed the same component).
 // 'tour_event' — the operational Tours module (tour lifecycle events + notes).
-const VALID_SUBJECTS = ['deal', 'contact', 'organization', 'tour_event'];
+// 'payroll_activity' — payroll history/audit events (read via this API;
+// writes happen server-side through payroll/service.js only).
+const VALID_SUBJECTS = ['deal', 'contact', 'organization', 'tour_event', 'payroll_activity'];
 // Creatable kinds in V1. The schema/feed already tolerate more.
 const VALID_KINDS = ['note'];
 

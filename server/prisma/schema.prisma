@@ -518,6 +518,7 @@ model PersonRef {
   tourAssignments  TourAssignment[]
   planAssignments  DealTourPlanAssignment[]
   stationAccess    GuideStationAccess[]
+  payrollEntries   PayrollEntry[]
 
   @@index([teamRefId])
 }
@@ -3067,6 +3068,7 @@ model TourEvent {
   assignments      TourAssignment[]
   activityComponents TourEventActivityComponent[]
   gallery          TourGallery?
+  payrollActivity  PayrollActivity?
 
   @@unique([generatedByRuleId, date])
   @@index([date, startTime])
@@ -3841,4 +3843,179 @@ model TourGalleryExport {
   @@index([tourEventId, status])
   @@index([status, updatedAt])
   @@index([status, expiresAt])
+}
+
+// ═══════════════ Payroll module (שכר צוות) ═══════════════
+// One PayrollEntry per person per activity — a tour assignment or a general
+// activity participant. The office matrix, guide portal, and reports are all
+// views over the same entries. Money is BigInt agorot (system convention).
+//
+// Approval model (ONE truth each):
+//   • Office approval lives on PayrollActivity ONLY — one action covers every
+//     entry in the activity. Entries never carry a second office-approval flag.
+//   • Guide approval is inherently per-entry (each guide answers for their own
+//     pay): PayrollEntry.guideStatus pending | approved | inquiry (בבירור).
+// Entries are NEVER technically immutable — no status blocks office edits.
+// History rides the immutable Timeline (subjectType 'payroll_activity').
+
+// The payroll component catalog — nothing is hardcoded. System rows (isSystem)
+// are seeded with stable ids and drive the engine's auto rules; office-defined
+// rows are manual. Amounts on lines are stored POSITIVE; `sign` decides the
+// direction of the contribution (deductions are sign=-1).
+model PayrollComponent {
+  id       String  @id @default(cuid())
+  key      String? @unique // stable key for system components; null for custom
+  nameHe   String
+  kind     String  @default("manual") // 'auto' | 'manual'
+  autoRule String? // base | weekend_holiday | participant_bonus | seniority | travel | general_quantity
+  sign     Int     @default(1) // +1 payment, -1 deduction
+  // VAT semantics per component, mapped onto splitVat modes:
+  //   'net'   → amount is before VAT; VAT added for vat_18 guides (excluded)
+  //   'gross' → amount already includes VAT (included)
+  //   'none'  → never carries VAT, e.g. expense reimbursements (exempt)
+  vatMode String @default("net")
+  // Which activity source the component belongs to: 'all' | 'tour' | 'general'.
+  scope String @default("all")
+  // Office matrix renders this row even when every value is zero (the "enter
+  // one value quickly" rows). The guide portal NEVER shows zero rows.
+  officeAlways Boolean @default(false)
+  guideVisible Boolean @default(true)
+  // autoRule parameters (e.g. weekend { amountMinor }, participant bonus
+  // { fromParticipants, perExtraMinor }). Interpreted by payroll/engine.js.
+  config    Json?
+  isSystem  Boolean  @default(false)
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines PayrollEntryLine[]
+}
+
+// Catalog of general (non-tour) activity kinds: team meeting, office work,
+// training, photo day… Quantity is generic UNITS, not necessarily hours.
+model GeneralActivityType {
+  id                    String   @id @default(cuid())
+  nameHe                String
+  defaultUnitPriceMinor BigInt   @default(0)
+  defaultQuantity       Decimal  @default(1) @db.Decimal(10, 2)
+  defaultNotes          String?
+  active                Boolean  @default(true)
+  sortOrder             Int      @default(0)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  activities GeneralActivity[]
+}
+
+// One occurrence of a general activity. MUST belong to a payroll month; the
+// specific day is optional (a dateless activity still belongs to its month).
+model GeneralActivity {
+  id           String              @id @default(cuid())
+  type         GeneralActivityType @relation(fields: [typeId], references: [id], onDelete: Restrict)
+  typeId       String
+  titleHe      String // snapshot of the type name at creation (editable)
+  payrollMonth String // "YYYY-MM" — REQUIRED
+  date         String? // "YYYY-MM-DD" — optional
+  notes        String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  payrollActivity PayrollActivity?
+
+  @@index([payrollMonth])
+}
+
+// The office-approval SSOT and the drawer subject — exactly one per completed
+// tour (unique tourEventId) or per general activity. Payroll history must
+// outlive its source: tour deletion SetNulls the link and titleHe keeps the
+// display name. Cancellation/reopen NEVER deletes — state flips to 'cancelled'.
+model PayrollActivity {
+  id                String           @id @default(cuid())
+  sourceType        String // 'tour_event' | 'general'
+  tourEvent         TourEvent?       @relation(fields: [tourEventId], references: [id], onDelete: SetNull)
+  tourEventId       String?          @unique
+  generalActivity   GeneralActivity? @relation(fields: [generalActivityId], references: [id], onDelete: Restrict)
+  generalActivityId String?          @unique
+  titleHe           String // display snapshot (product/variant or activity title)
+  payrollMonth      String // "YYYY-MM" (tours: derived from the tour date)
+  date              String? // "YYYY-MM-DD" (null only for month-level general)
+  state             String           @default("active") // active | cancelled
+  // Office approval — activity level ONLY (one action for all entries).
+  status            String           @default("draft") // draft | office_approved
+  officeApprovedAt  DateTime?
+  officeApprovedBy  String? // AdminUser username snapshot
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  entries PayrollEntry[]
+
+  @@index([payrollMonth])
+  @@index([date])
+  @@index([state, status])
+}
+
+// One person's pay for one activity. Person identity follows the
+// TourAssignment convention: stable externalPersonId + displayName snapshot +
+// soft personRefId link, so payroll history survives staff deletion.
+// vatStatus/vatRate are SNAPSHOTS stamped at calculation time — future system
+// changes never rewrite old payroll; office edits always can.
+model PayrollEntry {
+  id                String          @id @default(cuid())
+  activity          PayrollActivity @relation(fields: [activityId], references: [id], onDelete: Restrict)
+  activityId        String
+  personRef         PersonRef?      @relation(fields: [personRefId], references: [id], onDelete: SetNull)
+  personRefId       String?
+  externalPersonId  String
+  displayName       String
+  role              String? // lead_guide | guide | workshop_assistant | null (general)
+  tourAssignmentId  String? // loose ref — assignments may be deleted/recreated
+  state             String          @default("active") // active | cancelled
+  // Guide side of the approval flow (meaningful once the activity is
+  // office-approved): pending | approved | inquiry (בבירור).
+  guideStatus       String          @default("pending")
+  guideApprovedAt   DateTime?
+  vatStatusSnapshot String          @default("exempt") // exempt | vat_18
+  vatRateSnapshot   Int             @default(18)
+  // Latest calculation inputs (versioned via Timeline events, not by mutating
+  // this): { engineVersion, at, inputs } — enough to reproduce every
+  // calculatedMinor on the lines forever.
+  calcSnapshot      Json?
+  engineVersion     Int             @default(1)
+  notes             String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  lines PayrollEntryLine[]
+
+  @@unique([activityId, externalPersonId])
+  @@index([externalPersonId])
+  @@index([personRefId])
+}
+
+// One component row inside one entry. Calculated value, override, and final
+// value are SEPARATE concepts: final = overrideMinor ?? calculatedMinor ?? 0,
+// contribution = sign × final. The calculation is never replaced by an edit.
+// Component name/sign/vatMode are snapshotted so catalog edits never rewrite
+// history; componentId keeps Restrict so catalog rows with history can't go.
+model PayrollEntryLine {
+  id              String           @id @default(cuid())
+  entry           PayrollEntry     @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  entryId         String
+  component       PayrollComponent @relation(fields: [componentId], references: [id], onDelete: Restrict)
+  componentId     String
+  componentNameHe String // snapshot
+  sign            Int              @default(1) // snapshot
+  vatMode         String           @default("net") // snapshot
+  quantity        Decimal?         @db.Decimal(10, 2) // generic units
+  unitPriceMinor  BigInt?
+  calculatedMinor BigInt? // engine result (null for pure-manual rows)
+  overrideMinor   BigInt? // office override — stored separately, never replaces
+  note            String?
+  sortOrder       Int              @default(0)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@unique([entryId, componentId])
+  @@index([entryId])
 }

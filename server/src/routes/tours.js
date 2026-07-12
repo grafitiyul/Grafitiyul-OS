@@ -22,6 +22,7 @@ import { validateWorkshopLocationForComponent } from '../tours/activityCatalog.j
 import { seedTourComponents } from '../tours/tourComponents.js';
 import { scheduleGalleryCleanup } from '../tours/gallery/service.js';
 import { summaryCompletionState, completeTour, reopenTour } from '../tours/completion.js';
+import { cancelTourPayroll } from '../payroll/service.js';
 import { isAssignableStaff } from '../people/eligibility.js';
 import { resolveTourGuideColor, resolveTourGuideColorInfo } from '../../../shared/guideColor.mjs';
 import {
@@ -1234,6 +1235,9 @@ router.put(
       // links revoked now, R2 purged async after the grace window.
       if (data.status === 'cancelled') {
         await scheduleGalleryCleanup(prisma, tour.id, { reason: 'tour_cancelled', origin });
+        // Payroll history survives — the activity/entries park as 'cancelled'
+        // (no-op when the tour never generated payroll).
+        await cancelTourPayroll(prisma, tour.id, 'tour_cancelled');
       }
     }
     const occAfter = await occupancyFor(prisma, [tour.id]);

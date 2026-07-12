@@ -13,6 +13,7 @@
 import { prisma } from '../db.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
 import { calendarPendingPatch } from './calendar/service.js';
+import { ensureTourPayroll, cancelTourPayroll } from '../payroll/service.js';
 
 export const REQUIRED_SUMMARY_ROLES = ['lead_guide', 'guide'];
 
@@ -122,6 +123,18 @@ export async function completeTour(client, tourEventId, { reason, actorName = nu
     data: { event: 'completed', reason, completedAt: stamp.toISOString() },
     origin: systemOrigin(),
   });
+  // Completion makes the tour available for payroll. Best-effort ONLY outside
+  // a transaction: a failed statement would poison an outer tx (Postgres
+  // aborts the whole tx), and the summary-submit trigger runs inside one. The
+  // payroll day screen/drawer lazily ensure the same rows idempotently, so a
+  // skipped or failed hook self-heals on first payroll read.
+  if (client === prisma) {
+    try {
+      await ensureTourPayroll(client, tourEventId);
+    } catch (e) {
+      console.warn('[payroll] ensureTourPayroll on completion failed:', e.message);
+    }
+  }
   return { ok: true, already: false };
 }
 
@@ -169,6 +182,17 @@ export async function reopenTour(client, tourEventId, { actorName = null, nowMs 
     },
     data: { frozenAt: null },
   });
+
+  // Payroll history is preserved — entries flip to 'cancelled', never deleted.
+  // Re-completion reactivates them (ensureTourPayroll). Same tx-safety rule as
+  // the completion hook.
+  if (client === prisma) {
+    try {
+      await cancelTourPayroll(client, tourEventId, 'tour_reopened');
+    } catch (e) {
+      console.warn('[payroll] cancelTourPayroll on reopen failed:', e.message);
+    }
+  }
 
   await emitTimelineEvent(client, {
     subjectType: 'tour_event',
