@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import { formatMinor } from '../../../lib/money.js';
+import { usePayrollRealtime } from '../../../lib/payrollRealtime.js';
 import { DateField, fmtDate } from '../../common/pickers/DateTimeFields.jsx';
 import { ACTIVITY_STATUS_META } from './payrollConfig.js';
 import { shiftDay, DAY_NAV, CHEVRON_POINTS } from './dayNav.js';
@@ -47,14 +48,17 @@ export default function PayrollDayPage() {
   const [error, setError] = useState(null);
   const [openActivityId, setOpenActivityId] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
+  // Real-time refresh signal for the open drawer (a change counter, never data).
+  const [refreshTick, setRefreshTick] = useState(0);
 
-  const load = useCallback(async () => {
-    setError(null);
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setError(null);
     try {
       const { activities, monthActivities } = await api.payroll.day(date);
       setRows(activities);
       setMonthRows(monthActivities || []);
     } catch (e) {
+      if (silent) return; // background refresh must never blank a working list
       setError(e.message);
       setRows([]);
       setMonthRows([]);
@@ -65,6 +69,15 @@ export default function PayrollDayPage() {
     setRows(null);
     load();
   }, [load]);
+
+  // ONE stream for the Daily surface: any payroll change (guide approval,
+  // inquiry, message, office edit from another tab/device) silently refreshes
+  // the visible day AND the open activity drawer — filters/date/scroll and the
+  // drawer itself stay put. Burst edits are debounced inside the listener.
+  usePayrollRealtime('/api/payroll/events', () => {
+    load({ silent: true });
+    setRefreshTick((t) => t + 1);
+  });
 
   return (
     <div className="relative h-full flex flex-col">
@@ -147,6 +160,7 @@ export default function PayrollDayPage() {
       {openActivityId && (
         <PayrollActivityDrawer
           activityId={openActivityId}
+          refreshTick={refreshTick}
           onClose={() => {
             setOpenActivityId(null);
             load();

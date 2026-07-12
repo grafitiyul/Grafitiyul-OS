@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import { formatMinor } from '../../../lib/money.js';
+import { usePayrollRealtime } from '../../../lib/payrollRealtime.js';
 import {
   useTableColumns,
   ColumnPicker,
@@ -73,6 +74,8 @@ export default function PayrollReportPage() {
   // Reports open ONE person's entry (focused editor) — the full activity
   // matrix stays the Daily tab's flow.
   const [openEntryId, setOpenEntryId] = useState(null);
+  // Real-time refresh signal for the open drawer (a change counter, never data).
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     localStorage.setItem(FILTERS_KEY, JSON.stringify({ years, months, guides }));
@@ -101,11 +104,12 @@ export default function PayrollReportPage() {
     [guides, guideOptions],
   );
 
-  const load = useCallback(async () => {
-    setError(null);
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setError(null);
     try {
       setData(await api.payroll.report(monthList, guideParam));
     } catch (e) {
+      if (silent) return; // background refresh must never blank the table
       setError(e.message);
       setData(null);
     }
@@ -114,6 +118,16 @@ export default function PayrollReportPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // ONE stream for the Reports surface: guide approvals/inquiries/messages
+  // and office edits from other tabs/devices silently refresh the table,
+  // totals and the open focused drawer — selected years/months/guides,
+  // column layout and scroll are untouched (server-side filters re-applied
+  // on the same params).
+  usePayrollRealtime('/api/payroll/events', () => {
+    load({ silent: true });
+    setRefreshTick((t) => t + 1);
+  });
 
   const { colKeys, toggleCol, moveCol, setColWidth, resetCols, widths, visibleCols, orderedColumns } =
     useTableColumns(COLUMNS_KEY, COLUMNS);
@@ -297,6 +311,7 @@ export default function PayrollReportPage() {
       {openEntryId && (
         <PayrollEntryDrawer
           entryId={openEntryId}
+          refreshTick={refreshTick}
           onClose={() => {
             setOpenEntryId(null);
             load();

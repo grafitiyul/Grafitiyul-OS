@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../../lib/api.js';
 import { formatMinor, toMinor, minorToInput } from '../../../lib/money.js';
 import { fmtDate } from '../../common/pickers/DateTimeFields.jsx';
@@ -20,7 +20,7 @@ function lineFinal(l) {
   return 0;
 }
 
-export default function PayrollEntryDrawer({ entryId, onClose }) {
+export default function PayrollEntryDrawer({ entryId, onClose, refreshTick = 0 }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -34,22 +34,44 @@ export default function PayrollEntryDrawer({ entryId, onClose }) {
   const [officeNote, setOfficeNote] = useState('');
   const [replyText, setReplyText] = useState('');
 
-  const load = useCallback(async () => {
+  // Last-seen SERVER values — lets a silent refresh distinguish "operator is
+  // mid-typing" (local ≠ previous server truth → keep local) from "untouched"
+  // (adopt the fresh server value).
+  const serverEntryRef = useRef(null);
+
+  const load = useCallback(async ({ silent = false } = {}) => {
     try {
       const payload = await api.payroll.entry(entryId);
+      const prevEntry = serverEntryRef.current;
+      serverEntryRef.current = payload.entry;
       setData(payload);
-      setNotes(payload.entry.notes || '');
-      setOfficeNote(payload.entry.officeNote || '');
-      setOverrideDrafts({});
+      if (!silent || !prevEntry) {
+        setNotes(payload.entry.notes || '');
+        setOfficeNote(payload.entry.officeNote || '');
+        setOverrideDrafts({});
+      } else {
+        // Silent real-time refresh: conversation/status/lines update; unsent
+        // text and uncommitted override drafts are NEVER clobbered.
+        setNotes((cur) => (cur === (prevEntry.notes || '') ? payload.entry.notes || '' : cur));
+        setOfficeNote((cur) =>
+          cur === (prevEntry.officeNote || '') ? payload.entry.officeNote || '' : cur,
+        );
+      }
       setError(null);
     } catch (e) {
-      setError(e.message);
+      if (!silent) setError(e.message); // background refresh stays quiet
     }
   }, [entryId]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Real-time signal from the page-level stream (the drawer owns no
+  // EventSource of its own).
+  useEffect(() => {
+    if (refreshTick > 0) load({ silent: true });
+  }, [refreshTick, load]);
 
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose();

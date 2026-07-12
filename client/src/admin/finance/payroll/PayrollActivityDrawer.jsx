@@ -141,7 +141,7 @@ function QuantityCell({ line, disabled, onCommit }) {
   );
 }
 
-export default function PayrollActivityDrawer({ activityId, onClose }) {
+export default function PayrollActivityDrawer({ activityId, onClose, refreshTick = 0 }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -151,18 +151,25 @@ export default function PayrollActivityDrawer({ activityId, onClose }) {
   // בבירור chip → that person's focused entry editor (inquiry workspace).
   const [openEntryId, setOpenEntryId] = useState(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ silent = false } = {}) => {
     try {
       setData(await api.payroll.activity(activityId));
       setError(null);
     } catch (e) {
-      setError(e.message);
+      if (!silent) setError(e.message); // background refresh stays quiet
     }
   }, [activityId]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Real-time signal from the page-level stream (ONE EventSource per surface
+  // — the drawer never opens its own): silently re-pull the matrix without
+  // closing the drawer or dropping scroll.
+  useEffect(() => {
+    if (refreshTick > 0) load({ silent: true });
+  }, [refreshTick, load]);
 
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose();
@@ -500,6 +507,7 @@ export default function PayrollActivityDrawer({ activityId, onClose }) {
       {openEntryId && (
         <PayrollEntryDrawer
           entryId={openEntryId}
+          refreshTick={refreshTick}
           onClose={() => {
             setOpenEntryId(null);
             load();
