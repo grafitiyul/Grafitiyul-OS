@@ -170,7 +170,16 @@ async function tourListExtrasFor(tourEventIds) {
   const staff = (a) => ({
     name: a.displayName,
     imageUrl: a.personRef?.profile?.imageUrl || null,
+    role: a.role,
   });
+  // Role-ordered combined team: lead → guide → assistant, stable within a role
+  // (rows arrive in assignment createdAt order; the sort is stable).
+  const ROLE_ORDER = { lead_guide: 0, guide: 1, workshop_assistant: 2 };
+  const orderedTeam = (rows) =>
+    rows
+      .map((a, i) => ({ a, i }))
+      .sort((x, y) => (ROLE_ORDER[x.a.role] ?? 9) - (ROLE_ORDER[y.a.role] ?? 9) || x.i - y.i)
+      .map(({ a }) => staff(a));
   const out = {};
   for (const id of ids) {
     const rows = assignmentsByTour.get(id) || [];
@@ -184,7 +193,10 @@ async function tourListExtrasFor(tourEventIds) {
       leadGuide: lead ? staff(lead) : null,
       guides: rows.filter((a) => a.role === 'guide').map(staff),
       workshopAssistants: rows.filter((a) => a.role === 'workshop_assistant').map(staff),
-      team: rows.map(staff),
+      // Combined team, role-ordered (lead → guide → assistant), stable within
+      // a role (assignment createdAt order). SAME rows/order the role-specific
+      // columns use — the four columns can never disagree.
+      team: orderedTeam(rows),
       // Explicit customer identity — three separately-meaningful labels +
       // a multi-booking count (client renders "value +N"). No Deal payloads.
       contactDisplayName: identity.contactDisplayName,

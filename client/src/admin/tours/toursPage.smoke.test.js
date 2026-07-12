@@ -309,6 +309,31 @@ test('Tours list renders a populated row; destructive actions live ONLY behind t
   await unmount();
 });
 
+// The "צוות משובץ" column shows the ACTUAL role-ordered names (not "N אנשי
+// צוות"), each in its role color, with a role-labelled tooltip.
+test('צוות משובץ column renders real names, role-ordered and role-colored', async () => {
+  toursList = [TOUR_ROW];
+  // Make the (opt-in) team column visible for this render.
+  localStorage.setItem(
+    'tours.columns.v1',
+    JSON.stringify({ visible: ['date', 'team'], order: ['date', 'team'], widths: {} }),
+  );
+  const { container, unmount } = await render(
+    React.createElement(MemoryRouter, null, React.createElement(ToursPage)),
+  );
+  const html = container.innerHTML;
+  assert.match(html, /דנה מדריכה/, 'the lead guide name renders');
+  assert.match(html, /אבי כהן/, 'the guide name renders');
+  assert.doesNotMatch(html, /\d+ אנשי צוות/, 'the bare count is gone');
+  // Role colors: lead=emerald, guide=blue (role, not identity color).
+  assert.match(html, /text-emerald-700[^>]*>דנה מדריכה/, 'lead is green');
+  assert.match(html, /text-blue-700[^>]*>אבי כהן/, 'guide is blue');
+  // Tooltip carries the full list with role labels.
+  assert.match(html, /דנה מדריכה \(מדריך ראשי\), אבי כהן \(מדריך\)/, 'title tooltip has the ordered team with roles');
+  localStorage.removeItem('tours.columns.v1');
+  await unmount();
+});
+
 // Immediate cross-screen refresh: a `gos:tour-changed` signal (emitted by the
 // Deal's "עדכון סיור") must make an already-mounted Tours table silently
 // re-fetch — no manual browser refresh. Here the list turns empty after the

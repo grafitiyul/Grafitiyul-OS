@@ -128,6 +128,16 @@ export const ASSIGNMENT_ROLE_DOTS = {
   workshop_assistant: 'bg-amber-500',
 };
 
+// Role TEXT color — the SAME hue family as the chips/dots above (lead=green,
+// guide=blue, assistant=amber), for plain role-colored names in dense cells
+// (the "צוות משובץ" column). This is ROLE color, never a guide's personal
+// identity color. Kept at the -700 step so it stays readable on white.
+export const ASSIGNMENT_ROLE_TEXT = {
+  lead_guide: 'text-emerald-700',
+  guide: 'text-blue-700',
+  workshop_assistant: 'text-amber-700',
+};
+
 // Activity Component tone palette — the closed set of colors an ActivityComponent
 // can carry (server validates against the same keys in activityCatalog.js). Each
 // tone maps to a soft chip style + a solid dot for the color picker. Tailwind

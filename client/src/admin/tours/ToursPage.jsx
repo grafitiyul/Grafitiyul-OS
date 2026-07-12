@@ -18,6 +18,8 @@ import {
   TOUR_STATUS_STYLES,
   TOUR_LANG_LABELS,
   STATUS_FILTER_OPTIONS,
+  ASSIGNMENT_ROLE_TEXT,
+  ASSIGNMENT_ROLE_LABELS,
   statusFilterMatches,
   fmtTourDate,
 } from './config.js';
@@ -120,6 +122,27 @@ function StaffListCell({ list }) {
   );
 }
 
+// "צוות משובץ" — the FULL ordered team as plain comma-separated names, each in
+// its ROLE color (lead=green, guide=blue, assistant=amber; NOT the guide's
+// personal identity color). The server already orders lead → guide →
+// assistant. Truncates on a narrow column; the title tooltip always carries
+// the complete list WITH role labels so information is never lost to "N אנשי
+// צוות".
+function TeamNames({ team }) {
+  if (!team?.length) return dash;
+  const tooltip = team.map((s) => `${s.name} (${ASSIGNMENT_ROLE_LABELS[s.role] || ''})`.trim()).join(', ');
+  return (
+    <span title={tooltip} className="inline-block max-w-full truncate align-middle">
+      {team.map((s, i) => (
+        <span key={i}>
+          {i > 0 && <span className="text-gray-400">, </span>}
+          <span className={ASSIGNMENT_ROLE_TEXT[s.role] || 'text-gray-700'}>{s.name}</span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
 const COLUMNS = [
   // Postponed tours have no date/time — they sort last and render "—".
   { key: 'date', label: 'תאריך', def: true, sortVal: (t) => `${t.date || '9999'} ${t.startTime || ''}`,
@@ -154,15 +177,8 @@ const COLUMNS = [
     cls: 'text-gray-700',
     render: (t) => <StaffListCell list={t.workshopAssistants} /> },
   { key: 'team', label: 'צוות משובץ', def: false, sortVal: (t) => t.team?.length || 0,
-    cls: 'text-gray-700',
-    render: (t) =>
-      t.team?.length ? (
-        <span title={t.team.map((s) => s.name).join(', ')} className="tabular-nums">
-          {t.team.length} אנשי צוות
-        </span>
-      ) : (
-        dash
-      ) },
+    cls: 'text-gray-700 max-w-[280px]',
+    render: (t) => <TeamNames team={t.team} /> },
   // Customer identity — THREE distinct columns from the canonical resolver:
   // איש קשר (person only), ארגון (org only), מזמין (combined "contact ·
   // organization"). Multi-booking tours append "+N" via CustomerCell.
