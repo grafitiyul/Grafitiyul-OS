@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { formatMinor } from '../lib/money.js';
+import { usePayrollRealtime } from '../lib/payrollRealtime.js';
 import { waitingLabel } from './payText.js';
 
 // שכר — the guide's payroll view. Server truth only (viewPay-gated,
@@ -217,7 +218,7 @@ export default function PayPage() {
   const [month, setMonth] = useState(null); // null → server default (current month)
   const [state, setState] = useState({ phase: 'loading', data: null });
 
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ silent = false } = {}) => {
     try {
       const q = month ? `?month=${encodeURIComponent(month)}` : '';
       const res = await fetch(`/api/portal/${encodeURIComponent(token)}/pay${q}`, { cache: 'no-store' });
@@ -225,13 +226,27 @@ export default function PayPage() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setState({ phase: 'ready', data: await res.json() });
     } catch (e) {
-      setState({ phase: 'error', data: null, message: e?.message });
+      // A failed BACKGROUND refresh never blanks a working page — the stream/
+      // focus recovery will try again; the visible data stays server truth.
+      setState((prev) =>
+        silent && prev.data ? prev : { phase: 'error', data: null, message: e?.message },
+      );
     }
   }, [token, month]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Real-time: ONE stream for the whole Pay page. Any payroll change touching
+  // this guide (amount edit, office reply, inquiry resolution, office note,
+  // approval, void…) arrives as an invalidation hint → silent refetch of the
+  // visible month + totals. Scroll and open composers are preserved (cards
+  // are keyed by entry id; no phase change on refresh).
+  usePayrollRealtime(
+    state.phase === 'forbidden' ? null : `/api/portal/${encodeURIComponent(token)}/pay/events`,
+    () => load({ silent: true }),
+  );
 
   if (state.phase === 'loading' && !state.data) {
     return <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center text-sm text-gray-400">טוען…</div>;
