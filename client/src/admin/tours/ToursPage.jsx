@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../common/tableColumns.jsx';
+import { migrateStoredColumnKey } from '../common/tableColumnsCore.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import { rowTintStyle } from '../../color/staffColorUi.js';
@@ -92,6 +93,20 @@ function StaffCell({ s }) {
   );
 }
 
+// One-line customer identity cell — the resolved value + "+N" for extra
+// bookings, with a title tooltip carrying the full (untruncated) value.
+function CustomerCell({ value, extra = 0 }) {
+  if (!value) return dash;
+  const suffix = extra > 0 ? ` +${extra}` : '';
+  const full = extra > 0 ? `${value} (ועוד ${extra} הזמנות)` : value;
+  return (
+    <span title={full}>
+      {value}
+      {suffix && <span className="text-gray-400">{suffix}</span>}
+    </span>
+  );
+}
+
 // Compact multi-staff cell — first two names + "+N"; the full list lives in
 // the native title tooltip (rows must stay one line tall).
 function StaffListCell({ list }) {
@@ -148,18 +163,18 @@ const COLUMNS = [
       ) : (
         dash
       ) },
-  { key: 'customer', label: 'שם הלקוח', def: true, sortVal: (t) => t.customerDisplayName || '',
-    cls: 'text-gray-800 max-w-[220px] truncate',
-    render: (t) =>
-      t.customerDisplayName ? <span title={t.customerDisplayName}>{t.customerDisplayName}</span> : dash },
+  // Customer identity — THREE distinct columns from the canonical resolver:
+  // איש קשר (person only), ארגון (org only), מזמין (combined "contact ·
+  // organization"). Multi-booking tours append "+N" via CustomerCell.
+  { key: 'contact', label: 'איש קשר', def: false, sortVal: (t) => t.contactDisplayName || '',
+    cls: 'text-gray-700 max-w-[200px] truncate',
+    render: (t) => <CustomerCell value={t.contactDisplayName} extra={t.additionalBookingCount} /> },
   { key: 'organization', label: 'ארגון', def: false, sortVal: (t) => t.organizationDisplayName || '',
-    cls: 'text-gray-700 max-w-[220px] truncate',
-    render: (t) =>
-      t.organizationDisplayName ? (
-        <span title={t.organizationDisplayName}>{t.organizationDisplayName}</span>
-      ) : (
-        dash
-      ) },
+    cls: 'text-gray-700 max-w-[200px] truncate',
+    render: (t) => <CustomerCell value={t.organizationDisplayName} extra={t.additionalBookingCount} /> },
+  { key: 'booker', label: 'מזמין', def: true, sortVal: (t) => t.bookerDisplayName || '',
+    cls: 'text-gray-800 max-w-[240px] truncate',
+    render: (t) => <CustomerCell value={t.bookerDisplayName} extra={t.additionalBookingCount} /> },
   { key: 'status', label: 'סטטוס', def: true, sortVal: (t) => t.status,
     render: (t) => <Chip styles={TOUR_STATUS_STYLES[t.status]} label={TOUR_STATUS_LABELS[t.status] || t.status} /> },
   { key: 'notes', label: 'הערות', def: false, sortable: false,
@@ -182,6 +197,15 @@ const STATUS_FILTERS = STATUS_FILTER_OPTIONS;
 
 export default function ToursPage() {
   const navigate = useNavigate();
+  // One-time saved-layout migration: the old "customer" column (which actually
+  // showed the organization) became the semantic "booker" column. Rename the
+  // stored key IN PLACE so the user keeps its position/visibility/width instead
+  // of it vanishing and a default reappearing. Runs before useTableColumns
+  // reads localStorage; idempotent on remount.
+  useState(() => {
+    migrateStoredColumnKey(COLUMNS_KEY, 'customer', 'booker');
+    return null;
+  });
   const [savedView] = useState(loadToursView);
   const [tab, setTab] = useState(savedView.tab);
   // Calendar view state lives HERE (not in ToursCalendar) so switching
@@ -253,8 +277,9 @@ export default function ToursPage() {
           t.productVariant?.location?.nameHe,
           t.notes,
           t.date,
-          t.customerDisplayName,
+          t.contactDisplayName,
           t.organizationDisplayName,
+          t.bookerDisplayName,
         ]
           .filter(Boolean)
           .join(' ')

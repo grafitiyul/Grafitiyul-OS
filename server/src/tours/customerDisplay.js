@@ -1,7 +1,14 @@
-// Compact customer labels for tour LIST/CALENDAR DTOs — the resolution rule
-// is the SAME one the guide portal card uses (guidePortal/dto.js):
-//   organization name → primary contact's name → deal title.
-// These helpers exist so list surfaces ship ONE resolved string instead of
+// Customer identity for tour LIST/CALENDAR DTOs — ONE canonical resolver, no
+// competing rules. It returns THREE explicit, separately-meaningful fields so
+// no client surface has to guess:
+//   - contactDisplayName      the primary person's name only  ("דור קורן")
+//   - organizationDisplayName the organization name only       ("IBM")
+//   - bookerDisplayName        the combined operational label  ("דור קורן · IBM")
+//
+// This deliberately REPLACES the old "customerDisplayName" that prioritized the
+// organization and mislabeled it as the customer.
+//
+// These exist so list surfaces ship compact resolved STRINGS, never
 // Deal/Contact/Organization payloads. Pure functions — unit-testable.
 
 export function contactDisplayNameHe(c) {
@@ -11,35 +18,55 @@ export function contactDisplayNameHe(c) {
   return `${c.firstNameEn || ''} ${c.lastNameEn || ''}`.trim();
 }
 
-// One deal → one compact label. Expects the lean select the tour routes use:
-// { title, organization: { name }, contacts: [{ contact: {…names} }] } where
-// contacts is already ordered primary-first (isPrimary desc, createdAt asc).
-export function dealCustomerLabel(deal) {
-  if (!deal) return null;
-  if (deal.organization?.name) return deal.organization.name;
-  const name = contactDisplayNameHe(deal.contacts?.[0]?.contact);
-  return name || deal.title || null;
+// Per-deal fields. Expects the lean select the tour routes use:
+// { title, organization: { name }, contacts: [{ contact: {…names} }] } with
+// contacts already ordered primary-first.
+export function dealContactName(deal) {
+  return deal ? contactDisplayNameHe(deal.contacts?.[0]?.contact) : '';
 }
 
-// Multi-booking tours (group slots) → one deterministic compact summary:
-// the FIRST booking's label (bookings ordered createdAt asc — stable) plus a
-// "+N" for the rest. Never an arbitrary pick, never a payload.
-export function bookingsCustomerSummary(bookings) {
-  const labels = (bookings || []).map((b) => dealCustomerLabel(b.deal)).filter(Boolean);
-  if (labels.length === 0) return null;
-  if (labels.length === 1) return labels[0];
-  return `${labels[0]} +${labels.length - 1}`;
+export function dealOrganizationName(deal) {
+  return deal?.organization?.name || '';
 }
 
-// Organization column (table): DISTINCT organization names across active
-// bookings, same first+N compaction. Null when no booking has an org.
-export function bookingsOrganizationSummary(bookings) {
-  const names = [];
-  for (const b of bookings || []) {
-    const n = b.deal?.organization?.name;
-    if (n && !names.includes(n)) names.push(n);
-  }
-  if (names.length === 0) return null;
-  if (names.length === 1) return names[0];
-  return `${names[0]} +${names.length - 1}`;
+// The combined booker: "contact · organization", degrading to whichever exists.
+// Last-resort deal title only when neither a contact nor an organization is
+// present (a bare deal). Returns null when nothing at all resolves.
+export function dealBookerLabel(deal) {
+  const contact = dealContactName(deal);
+  const org = dealOrganizationName(deal);
+  if (contact && org) return `${contact} · ${org}`;
+  return contact || org || deal?.title || null;
+}
+
+// Multi-booking tours → ONE deterministic identity. The caller passes bookings
+// in a STABLE order (createdAt asc, id asc); the "primary" for each field is
+// the FIRST booking that yields a non-empty value in that order (so a first
+// booking missing a contact doesn't blank the column). additionalBookingCount
+// = other bookings beyond the first, surfaced by the UI as "+N".
+//   → { contactDisplayName, organizationDisplayName, bookerDisplayName,
+//       additionalBookingCount }
+export function resolveBookingsCustomerIdentity(bookings) {
+  const list = (bookings || []).filter((b) => b && b.deal);
+  const firstNonEmpty = (fn) => {
+    for (const b of list) {
+      const v = fn(b.deal);
+      if (v) return v;
+    }
+    return null;
+  };
+  return {
+    contactDisplayName: firstNonEmpty(dealContactName),
+    organizationDisplayName: firstNonEmpty(dealOrganizationName),
+    bookerDisplayName: firstNonEmpty(dealBookerLabel),
+    additionalBookingCount: Math.max(0, list.length - 1),
+  };
+}
+
+// "value +N" (or just "value", or null) — the ONE compaction the +N surfaces
+// share, so the calendar (server-composed) and the table columns (client-
+// composed) read identically.
+export function withBookingCount(value, additionalBookingCount) {
+  if (!value) return null;
+  return additionalBookingCount > 0 ? `${value} +${additionalBookingCount}` : value;
 }

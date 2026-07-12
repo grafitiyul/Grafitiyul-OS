@@ -6,6 +6,7 @@ import {
   moveKey,
   orderedVisibleColumns,
   setKeyWidth,
+  renameColumnKeyInState,
   MIN_COL_WIDTH,
 } from './tableColumnsCore.js';
 
@@ -97,4 +98,38 @@ test('per-table isolation: normalizing one table state never depends on another'
   assert.deepEqual(dealsState.order, ['b', 'a']);
   assert.deepEqual(orgsState.order, ['x', 'y']);
   assert.deepEqual(orgsState.visible, ['x']);
+});
+
+test('renameColumnKeyInState: v2 object — swaps key in visible/order/widths, keeps place', () => {
+  const raw = {
+    visible: ['date', 'customer', 'status'],
+    order: ['date', 'customer', 'status', 'organization'],
+    widths: { customer: 220, status: 120 },
+  };
+  const next = renameColumnKeyInState(raw, 'customer', 'booker');
+  assert.deepEqual(next.visible, ['date', 'booker', 'status']);
+  assert.deepEqual(next.order, ['date', 'booker', 'status', 'organization']);
+  assert.deepEqual(next.widths, { booker: 220, status: 120 }, 'width carries to the new key');
+});
+
+test('renameColumnKeyInState: legacy array form', () => {
+  assert.deepEqual(
+    renameColumnKeyInState(['date', 'customer', 'status'], 'customer', 'booker'),
+    ['date', 'booker', 'status'],
+  );
+});
+
+test('renameColumnKeyInState: target already present → just drop the old key', () => {
+  const raw = { visible: ['customer', 'booker'], order: ['customer', 'booker'], widths: { booker: 200 } };
+  const next = renameColumnKeyInState(raw, 'customer', 'booker');
+  assert.deepEqual(next.visible, ['booker']);
+  assert.deepEqual(next.order, ['booker']);
+  assert.deepEqual(next.widths, { booker: 200 }, 'existing target width is not overwritten');
+});
+
+test('renameColumnKeyInState: absent source is a content no-op', () => {
+  const raw = { visible: ['date'], order: ['date', 'status'], widths: {} };
+  const next = renameColumnKeyInState(raw, 'customer', 'booker');
+  assert.deepEqual(next.visible, ['date']);
+  assert.deepEqual(next.order, ['date', 'status']);
 });

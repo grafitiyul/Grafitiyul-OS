@@ -25,8 +25,8 @@ import { summaryCompletionState, completeTour, reopenTour } from '../tours/compl
 import { isAssignableStaff } from '../people/eligibility.js';
 import { resolveTourGuideColor, resolveTourGuideColorInfo } from '../../../shared/guideColor.mjs';
 import {
-  bookingsCustomerSummary,
-  bookingsOrganizationSummary,
+  resolveBookingsCustomerIdentity,
+  withBookingCount,
 } from '../tours/customerDisplay.js';
 import {
   calendarPendingPatch,
@@ -81,7 +81,8 @@ function toColorAssignments(assignments) {
 // ride a list/calendar response.
 const CUSTOMER_LABEL_BOOKINGS_INCLUDE = {
   where: { status: 'active' },
-  orderBy: { createdAt: 'asc' },
+  // Stable order for the deterministic multi-booking "first +N" rule.
+  orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
   select: {
     deal: {
       select: {
@@ -129,7 +130,8 @@ async function tourListExtrasFor(tourEventIds) {
     }),
     prisma.booking.findMany({
       where: { tourEventId: { in: ids }, status: 'active' },
-      orderBy: { createdAt: 'asc' }, // deterministic "first +N" summaries
+      // Stable order for the deterministic multi-booking "first +N" rule.
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       select: {
         tourEventId: true,
         deal: {
@@ -175,6 +177,7 @@ async function tourListExtrasFor(tourEventIds) {
     const bookings = bookingsByTour.get(id) || [];
     const colorInfo = resolveTourGuideColorInfo(toColorAssignments(rows));
     const lead = rows.find((a) => a.role === 'lead_guide');
+    const identity = resolveBookingsCustomerIdentity(bookings);
     out[id] = {
       guideColor: colorInfo.color,
       guideColorSource: colorInfo.source,
@@ -182,8 +185,12 @@ async function tourListExtrasFor(tourEventIds) {
       guides: rows.filter((a) => a.role === 'guide').map(staff),
       workshopAssistants: rows.filter((a) => a.role === 'workshop_assistant').map(staff),
       team: rows.map(staff),
-      customerDisplayName: bookingsCustomerSummary(bookings),
-      organizationDisplayName: bookingsOrganizationSummary(bookings),
+      // Explicit customer identity — three separately-meaningful labels +
+      // a multi-booking count (client renders "value +N"). No Deal payloads.
+      contactDisplayName: identity.contactDisplayName,
+      organizationDisplayName: identity.organizationDisplayName,
+      bookerDisplayName: identity.bookerDisplayName,
+      additionalBookingCount: identity.additionalBookingCount,
     };
   }
   return out;
@@ -357,6 +364,7 @@ router.get(
         // the calendar; 'neutral' (guides exist, no single color) stays default.
         const colorInfo = resolveTourGuideColorInfo(toColorAssignments(t.assignments));
         const tourLocationId = t.locationId || t.productVariant?.locationId || null;
+        const identity = resolveBookingsCustomerIdentity(t.bookings);
         return {
           id: t.id,
           kind: t.kind,
@@ -369,9 +377,13 @@ router.get(
           // City is redundant at the Home Location — the client shows it only
           // when this is false (product ALWAYS shows; city is added context).
           atHomeLocation: !!(homeLocation && tourLocationId && tourLocationId === homeLocation.id),
-          // One resolved compact label (org → primary contact → deal title;
-          // multi-booking → "first +N"). Never a Deal payload.
-          customerDisplayName: bookingsCustomerSummary(t.bookings),
+          // ONE compact BOOKER label ("contact · organization", "+N" for
+          // extra bookings), from the same canonical resolver as the table.
+          // Never a Deal payload.
+          customerDisplayName: withBookingCount(
+            identity.bookerDisplayName,
+            identity.additionalBookingCount,
+          ),
           tourLanguage: t.tourLanguage,
           participants: o.activeSeats,
           capacity: t.capacity,

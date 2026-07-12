@@ -80,3 +80,41 @@ export function orderedVisibleColumns(columns, { visible, order }) {
   const byKey = new Map(columns.map((c) => [c.key, c]));
   return order.map((k) => byKey.get(k)).filter((c) => c && visible.includes(c.key));
 }
+
+// Rename a persisted column key in place (visible/order/widths) so a RENAMED
+// column keeps the user's position, visibility and width instead of vanishing
+// (unknown keys are dropped on load) and reappearing at the end as a default.
+// Pure over the RAW stored value → returns the migrated value (or the input
+// unchanged when `from` is absent or `to` already exists). Idempotent.
+export function renameColumnKeyInState(raw, from, to) {
+  if (!raw || from === to) return raw;
+  const swapArr = (arr) =>
+    Array.isArray(arr)
+      ? arr.includes(to)
+        ? arr.filter((k) => k !== from) // target already there → just drop old
+        : arr.map((k) => (k === from ? to : k))
+      : arr;
+  if (Array.isArray(raw)) return swapArr(raw); // legacy array-of-visible-keys
+  if (typeof raw !== 'object') return raw;
+  const next = { ...raw, visible: swapArr(raw.visible), order: swapArr(raw.order) };
+  if (raw.widths && typeof raw.widths === 'object' && from in raw.widths) {
+    const widths = { ...raw.widths };
+    if (!(to in widths)) widths[to] = widths[from];
+    delete widths[from];
+    next.widths = widths;
+  }
+  return next;
+}
+
+// localStorage wrapper for the above — reads the stored layout, renames the
+// key, writes it back. No-op on parse errors / unavailable storage.
+export function migrateStoredColumnKey(storageKey, from, to) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(storageKey));
+    if (raw == null) return;
+    const next = renameColumnKeyInState(raw, from, to);
+    if (next !== raw) localStorage.setItem(storageKey, JSON.stringify(next));
+  } catch {
+    /* corrupt/unavailable — normalizeColumnState will fall back to defaults */
+  }
+}

@@ -2,13 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   contactDisplayNameHe,
-  dealCustomerLabel,
-  bookingsCustomerSummary,
-  bookingsOrganizationSummary,
+  dealContactName,
+  dealOrganizationName,
+  dealBookerLabel,
+  resolveBookingsCustomerIdentity,
+  withBookingCount,
 } from './customerDisplay.js';
 
-// Compact customer labels for tour list/calendar DTOs — org → primary
-// contact → deal title, deterministic "+N" summaries for multi-booking tours.
+// The canonical customer identity: three explicit fields (contact / org /
+// booker), a deterministic multi-booking rule, and one "+N" compaction.
 
 const contact = (over = {}) => ({
   firstNameHe: 'דור',
@@ -17,86 +19,94 @@ const contact = (over = {}) => ({
   lastNameEn: 'Koren',
   ...over,
 });
+const deal = (over = {}) => ({ title: 'דיל', organization: null, contacts: [], ...over });
 
 test('contact name: Hebrew wins, English fallback, empty-safe', () => {
   assert.equal(contactDisplayNameHe(contact()), 'דור קורן');
-  assert.equal(
-    contactDisplayNameHe(contact({ firstNameHe: '', lastNameHe: null })),
-    'Dor Koren',
-  );
+  assert.equal(contactDisplayNameHe(contact({ firstNameHe: '', lastNameHe: null })), 'Dor Koren');
   assert.equal(contactDisplayNameHe(null), '');
   assert.equal(contactDisplayNameHe({}), '');
 });
 
-test('deal label: organization name first', () => {
-  assert.equal(
-    dealCustomerLabel({
-      title: 'דיל',
-      organization: { name: 'IBM' },
-      contacts: [{ contact: contact() }],
-    }),
-    'IBM',
-  );
+test('contact column: the person only, never the organization', () => {
+  const d = deal({ organization: { name: 'IBM' }, contacts: [{ contact: contact() }] });
+  assert.equal(dealContactName(d), 'דור קורן');
+  assert.equal(dealContactName(deal()), '', 'no contact → empty');
 });
 
-test('deal label: primary contact when no organization', () => {
+test('organization column: the org only, never the contact', () => {
+  const d = deal({ organization: { name: 'IBM' }, contacts: [{ contact: contact() }] });
+  assert.equal(dealOrganizationName(d), 'IBM');
+  assert.equal(dealOrganizationName(deal()), '', 'no org → empty');
+});
+
+test('booker: "contact · organization", degrading each way', () => {
   assert.equal(
-    dealCustomerLabel({ title: 'דיל', organization: null, contacts: [{ contact: contact() }] }),
+    dealBookerLabel(deal({ organization: { name: 'IBM' }, contacts: [{ contact: contact() }] })),
+    'דור קורן · IBM',
+  );
+  assert.equal(
+    dealBookerLabel(deal({ organization: null, contacts: [{ contact: contact() }] })),
     'דור קורן',
+    'no org → contact only',
   );
-});
-
-test('deal label: deal title as the last resort; null-safe', () => {
-  assert.equal(dealCustomerLabel({ title: 'סיור חברת היי-טק', contacts: [] }), 'סיור חברת היי-טק');
-  assert.equal(dealCustomerLabel({ title: null, contacts: [] }), null);
-  assert.equal(dealCustomerLabel(null), null);
-});
-
-test('bookings summary: 0 → null, 1 → the label, N → deterministic "first +N-1"', () => {
-  assert.equal(bookingsCustomerSummary([]), null);
-  assert.equal(bookingsCustomerSummary(null), null);
   assert.equal(
-    bookingsCustomerSummary([{ deal: { organization: { name: 'IBM' }, contacts: [] } }]),
+    dealBookerLabel(deal({ organization: { name: 'IBM' }, contacts: [] })),
     'IBM',
+    'no contact → org only',
   );
   assert.equal(
-    bookingsCustomerSummary([
-      { deal: { organization: { name: 'IBM' }, contacts: [] } },
-      { deal: { organization: null, contacts: [{ contact: contact() }] } },
-      { deal: { title: 'עוד דיל', contacts: [] } },
-    ]),
-    'IBM +2',
+    dealBookerLabel(deal({ title: 'סיור מיוחד', organization: null, contacts: [] })),
+    'סיור מיוחד',
+    'neither → deal title',
   );
-  // A booking whose deal resolves to no label is skipped, not counted.
-  assert.equal(
-    bookingsCustomerSummary([
-      { deal: { title: null, contacts: [] } },
-      { deal: { organization: { name: 'אינטל' }, contacts: [] } },
-    ]),
-    'אינטל',
-  );
+  assert.equal(dealBookerLabel(deal({ title: null })), null);
+  assert.equal(dealBookerLabel(null), null);
 });
 
-test('organization summary: distinct org names only, "+N" compaction, null when none', () => {
-  assert.equal(bookingsOrganizationSummary([]), null);
-  assert.equal(
-    bookingsOrganizationSummary([{ deal: { organization: null } }, { deal: null }]),
-    null,
-  );
-  assert.equal(
-    bookingsOrganizationSummary([
-      { deal: { organization: { name: 'IBM' } } },
-      { deal: { organization: { name: 'IBM' } } },
-    ]),
-    'IBM',
-    'duplicate orgs collapse',
-  );
-  assert.equal(
-    bookingsOrganizationSummary([
-      { deal: { organization: { name: 'IBM' } } },
-      { deal: { organization: null } },
-      { deal: { organization: { name: 'אינטל' } } },
-    ]),
-    'IBM +1',
-  );
+test('multi-booking: first non-empty per field (stable order), additionalBookingCount = others', () => {
+  const bookings = [
+    // first booking: org only, no contact
+    { deal: deal({ organization: { name: 'IBM' }, contacts: [] }) },
+    // second: a contact, different org
+    { deal: deal({ organization: { name: 'אינטל' }, contacts: [{ contact: contact() }] }) },
+    { deal: deal({ title: 'שלישי' }) },
+  ];
+  const id = resolveBookingsCustomerIdentity(bookings);
+  assert.equal(id.contactDisplayName, 'דור קורן', 'first NON-EMPTY contact, not blank from booking #1');
+  assert.equal(id.organizationDisplayName, 'IBM', 'first non-empty org');
+  assert.equal(id.bookerDisplayName, 'IBM', 'first booking already yields a booker');
+  assert.equal(id.additionalBookingCount, 2);
+});
+
+test('multi-booking: empty / single / all-empty', () => {
+  assert.deepEqual(resolveBookingsCustomerIdentity([]), {
+    contactDisplayName: null,
+    organizationDisplayName: null,
+    bookerDisplayName: null,
+    additionalBookingCount: 0,
+  });
+  const single = resolveBookingsCustomerIdentity([
+    { deal: deal({ organization: { name: 'IBM' }, contacts: [{ contact: contact() }] }) },
+  ]);
+  assert.deepEqual(single, {
+    contactDisplayName: 'דור קורן',
+    organizationDisplayName: 'IBM',
+    bookerDisplayName: 'דור קורן · IBM',
+    additionalBookingCount: 0,
+  });
+  // Bookings present but resolving to nothing → null fields, count still counts.
+  const empty = resolveBookingsCustomerIdentity([
+    { deal: deal({ title: null }) },
+    { deal: deal({ title: null }) },
+  ]);
+  assert.equal(empty.bookerDisplayName, null);
+  assert.equal(empty.additionalBookingCount, 1);
+});
+
+test('withBookingCount: "value +N" compaction', () => {
+  assert.equal(withBookingCount('דור קורן', 0), 'דור קורן');
+  assert.equal(withBookingCount('דור קורן', 2), 'דור קורן +2');
+  assert.equal(withBookingCount('IBM', 1), 'IBM +1');
+  assert.equal(withBookingCount(null, 3), null, 'no base value → null, never "+N" alone');
 });

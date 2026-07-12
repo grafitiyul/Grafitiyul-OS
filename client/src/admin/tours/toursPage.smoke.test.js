@@ -45,11 +45,14 @@ const TOUR_ROW = {
   guides: [{ name: 'אבי כהן', imageUrl: null }],
   workshopAssistants: [],
   team: [
-    { name: 'דנה מדריכה', imageUrl: null },
-    { name: 'אבי כהן', imageUrl: null },
+    { name: 'דנה מדריכה', imageUrl: null, role: 'lead_guide' },
+    { name: 'אבי כהן', imageUrl: null, role: 'guide' },
   ],
-  customerDisplayName: 'חברת בדיקות',
+  // Explicit customer identity (contact / org / booker) + multi-booking count.
+  contactDisplayName: 'ישראל ישראלי',
   organizationDisplayName: 'חברת בדיקות',
+  bookerDisplayName: 'ישראל ישראלי · חברת בדיקות',
+  additionalBookingCount: 0,
 };
 
 // Tour page payload — one active booking with the customer read-through shape
@@ -326,16 +329,17 @@ test('Tours table silently re-fetches on a gos:tour-changed signal', async () =>
   await unmount();
 });
 
-// The staff/customer columns: lead guide + customer render by DEFAULT, and the
-// column picker lists every new operational column for opt-in.
-test('Tours table renders lead guide + customer by default and offers all new columns', async () => {
+// The staff/customer columns: lead guide + booker render by DEFAULT, and the
+// column picker lists every operational column (incl. the split contact/org/
+// booker identity) for opt-in — the misleading "שם הלקוח" is gone.
+test('Tours table renders lead guide + booker by default and offers the split identity columns', async () => {
   toursList = [TOUR_ROW];
   const { container, unmount } = await render(
     React.createElement(MemoryRouter, null, React.createElement(ToursPage)),
   );
   const html = container.innerHTML;
   assert.match(html, /דנה מדריכה/, 'the default lead-guide column renders the name');
-  assert.match(html, /חברת בדיקות/, 'the default customer column renders the resolved label');
+  assert.match(html, /ישראל ישראלי · חברת בדיקות/, 'the default מזמין column renders the combined booker');
   // Open the column picker (portal → assert against document.body).
   const pickerBtn = [...container.querySelectorAll('button')].find((b) =>
     b.textContent.includes('עמודות'),
@@ -345,9 +349,10 @@ test('Tours table renders lead guide + customer by default and offers all new co
     pickerBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   });
   const body = document.body.innerHTML;
-  for (const label of ['מדריך ראשי', 'מדריכים', 'עוזרי סדנה', 'צוות משובץ', 'שם הלקוח', 'ארגון']) {
+  for (const label of ['מדריך ראשי', 'מדריכים', 'עוזרי סדנה', 'צוות משובץ', 'איש קשר', 'ארגון', 'מזמין']) {
     assert.match(body, new RegExp(label), `column picker offers "${label}"`);
   }
+  assert.doesNotMatch(body, /שם הלקוח/, 'the misleading "שם הלקוח" column is removed');
   await unmount();
 });
 
