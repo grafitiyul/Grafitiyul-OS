@@ -114,7 +114,10 @@ export default function GuideTourPage() {
   if (state.phase === 'error') return <FeedError message={state.message} onRetry={load} />;
 
   const tour = state.tour;
-  const workshopComponents = (tour.components || []).filter((c) => c.isWorkshop);
+  // Read-only: show a workshop row ONLY when a real location is assigned. The
+  // DTO already pre-filters to located workshops; this guards defensively so a
+  // future/loosened payload can never surface an empty row or placeholder.
+  const workshopLocations = (tour.workshopLocations || []).filter((w) => w.location);
 
   return (
     <div>
@@ -144,11 +147,11 @@ export default function GuideTourPage() {
         </SectionCard>
       )}
 
-      {workshopComponents.length > 0 && (
+      {workshopLocations.length > 0 && (
         <SectionCard title="מיקומי סדנאות">
           <div className="space-y-2.5">
-            {workshopComponents.map((c) => (
-              <WorkshopLocationRow key={c.id} component={c} />
+            {workshopLocations.map((w) => (
+              <WorkshopLocationRow key={w.id} component={w} />
             ))}
           </div>
         </SectionCard>
@@ -456,25 +459,18 @@ function ComponentChip({ component }) {
 // ── workshop locations ───────────────────────────────────────────────
 
 function WorkshopLocationRow({ component }) {
-  const loc = component.workshopLocation;
+  const loc = component.location;
+  if (!loc) return null; // defensive — the section only passes located rows
   return (
     <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5">
       <div className="text-[12px] font-semibold text-gray-500">
         {component.icon && <span aria-hidden>{component.icon} </span>}
         {component.nameHe}
       </div>
-      {loc ? (
-        <>
-          <div className="mt-0.5 text-[14px] font-semibold text-gray-900">{loc.nameHe}</div>
-          {loc.address && <div className="text-[12.5px] text-gray-600">{loc.address}</div>}
-          {loc.instructions && (
-            <div className="mt-1 text-[12.5px] leading-relaxed text-gray-600">
-              {loc.instructions}
-            </div>
-          )}
-        </>
-      ) : (
-        <div className="mt-0.5 text-[13px] text-gray-400">טרם נקבע מיקום</div>
+      <div className="mt-0.5 text-[14px] font-semibold text-gray-900">{loc.nameHe}</div>
+      {loc.address && <div className="text-[12.5px] text-gray-600">{loc.address}</div>}
+      {loc.instructions && (
+        <div className="mt-1 text-[12.5px] leading-relaxed text-gray-600">{loc.instructions}</div>
       )}
     </div>
   );

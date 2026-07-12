@@ -143,20 +143,33 @@ export function guideTourDetailDto({
           imageUrl: a.personRef?.profile?.imageUrl || null,
         }))
       : null, // null = hidden by permissions (client renders nothing)
+    // ALL activity components — drive the "מרכיבי הפעילות" chips (workshop or
+    // not). Location is NOT carried here; the portal reads it from the
+    // dedicated workshopLocations list below.
     components: (tour.activityComponents || []).map((row) => ({
       id: row.id,
       nameHe: row.activityComponent?.nameHe || '',
       icon: row.activityComponent?.icon || null,
       color: row.activityComponent?.color || null,
       isWorkshop: !!row.activityComponent?.isWorkshop,
-      workshopLocation: row.workshopLocation
-        ? {
-            nameHe: row.workshopLocation.nameHe,
-            address: row.workshopLocation.address || null,
-            instructions: row.workshopLocation.instructions || null,
-          }
-        : null,
     })),
+    // ONLY workshop components that have a real assigned location — the portal
+    // is read-only, so a workshop still awaiting an admin location has nothing
+    // to show and must produce no row/placeholder. "בחירת מיקום…" is an admin
+    // editing affordance and never reaches the portal. The client re-applies
+    // this filter defensively.
+    workshopLocations: (tour.activityComponents || [])
+      .filter((row) => row.activityComponent?.isWorkshop && row.workshopLocation)
+      .map((row) => ({
+        id: row.id,
+        nameHe: row.activityComponent?.nameHe || '',
+        icon: row.activityComponent?.icon || null,
+        location: {
+          nameHe: row.workshopLocation.nameHe,
+          address: row.workshopLocation.address || null,
+          instructions: row.workshopLocation.instructions || null,
+        },
+      })),
     participants: (tour.bookings || [])
       .filter((b) => b.status !== 'cancelled')
       .map((b) =>

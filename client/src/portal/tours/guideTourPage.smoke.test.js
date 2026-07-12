@@ -22,12 +22,12 @@ const clientRoot = path.resolve(here, '..', '..', '..');
 const cacheDir = path.join(clientRoot, 'node_modules', '.cache', 'guide-tour-smoke');
 
 // Guide detail DTO (guideTourDetailDto shape) — orderNo DELIBERATELY present.
-const TOUR_DETAIL = {
+const BASE_DETAIL = {
   id: 'tour1', date: '2026-08-06', startTime: '17:00', durationHours: 3,
   status: 'scheduled', activityType: 'business', tourLanguage: 'he',
   variantName: 'סיור גרפיטי · תל אביב', productName: 'סיור גרפיטי',
   locationName: 'תל אביב', notes: null, viewerRole: 'lead_guide',
-  participantsTotal: 25, team: [], components: [],
+  participantsTotal: 25, team: [], components: [], workshopLocations: [],
   participants: [{
     bookingId: 'bk1', status: 'active', seats: 25,
     title: 'אורט ישראל', customerName: 'רות לוי', organizationUnit: 'שכבת ט',
@@ -36,6 +36,9 @@ const TOUR_DETAIL = {
     customerInfo: '<p>שימו לב: אלרגיה לבוטנים</p>', coordinationStatus: null,
   }],
 };
+
+// Per-test detail payload (reset by each test that varies it).
+let tourDetail = BASE_DETAIL;
 
 let React;
 let MemoryRouter;
@@ -96,7 +99,7 @@ before(async () => {
   globalThis.fetch = async (url) => {
     const u = String(url);
     let body = {};
-    if (u.includes('/tours/tour1/detail')) body = TOUR_DETAIL;
+    if (u.includes('/tours/tour1/detail')) body = tourDetail;
     else if (u.includes('/summary-status')) body = {};
     return {
       ok: true,
@@ -148,6 +151,7 @@ async function renderTourPage(permissions) {
 }
 
 test('participant card: NO deal number — even when the DTO ships orderNo', async () => {
+  tourDetail = BASE_DETAIL;
   const { container, unmount } = await renderTourPage({
     useCoordinationForms: true, fillTourSummary: false, useTourGallery: false,
     viewTeam: true,
@@ -189,6 +193,7 @@ test('participant card: NO deal number — even when the DTO ships orderNo', asy
 });
 
 test('participant card: coordination off → the corner column disappears entirely', async () => {
+  tourDetail = BASE_DETAIL;
   const { container, unmount } = await renderTourPage({
     useCoordinationForms: false, fillTourSummary: false, useTourGallery: false,
     viewTeam: true,
@@ -202,5 +207,57 @@ test('participant card: coordination off → the corner column disappears entire
   );
   assert.ok(header, 'participant card header renders');
   assert.equal(header.children.length, 1, 'only the identity block remains in the header row');
+  await unmount();
+});
+
+const WORKSHOP_PERMS = {
+  useCoordinationForms: false, fillTourSummary: false, useTourGallery: false,
+  viewTeam: true,
+};
+
+test('workshop locations: none assigned → section absent, no placeholder, no empty card', async () => {
+  tourDetail = { ...BASE_DETAIL, workshopLocations: [] };
+  const { container, unmount } = await renderTourPage(WORKSHOP_PERMS);
+  const html = container.innerHTML;
+  // No section title, no read-only placeholder, no admin editing affordance.
+  assert.doesNotMatch(html, /מיקומי סדנאות/, 'section title is absent');
+  assert.doesNotMatch(html, /טרם נקבע מיקום/, 'no "location not set" placeholder');
+  assert.doesNotMatch(html, /בחירת מיקום|בחר מיקום/, 'no admin selector leaks in');
+  await unmount();
+});
+
+test('workshop locations: one assigned + one empty → only the assigned row renders', async () => {
+  // The DTO already excludes located-less workshops; the client filter guards
+  // defensively. Feed BOTH to prove no empty row survives.
+  tourDetail = {
+    ...BASE_DETAIL,
+    workshopLocations: [
+      { id: 'c1', nameHe: 'סדנת גרפיטי', icon: '🎨', location: { nameHe: 'גג הסטודיו', address: 'רח׳ העם 1', instructions: null } },
+      { id: 'c2', nameHe: 'סדנת סטנסיל', icon: '🖌️', location: null }, // defensive: must be dropped
+    ],
+  };
+  const { container, unmount } = await renderTourPage(WORKSHOP_PERMS);
+  const html = container.innerHTML;
+  assert.match(html, /מיקומי סדנאות/, 'section renders');
+  assert.match(html, /גג הסטודיו/, 'the assigned location is shown');
+  assert.doesNotMatch(html, /טרם נקבע מיקום/, 'no placeholder for the empty one');
+  // The located-less workshop produced no row at all.
+  assert.doesNotMatch(html, /סדנת סטנסיל/, 'the location-less workshop has no row');
+  await unmount();
+});
+
+test('workshop locations: all assigned → all rows render', async () => {
+  tourDetail = {
+    ...BASE_DETAIL,
+    workshopLocations: [
+      { id: 'c1', nameHe: 'סדנת גרפיטי', icon: '🎨', location: { nameHe: 'גג הסטודיו', address: null, instructions: null } },
+      { id: 'c2', nameHe: 'סדנת סטנסיל', icon: '🖌️', location: { nameHe: 'מרתף הגלריה', address: null, instructions: 'להביא כפפות' } },
+    ],
+  };
+  const { container, unmount } = await renderTourPage(WORKSHOP_PERMS);
+  const html = container.innerHTML;
+  assert.match(html, /גג הסטודיו/);
+  assert.match(html, /מרתף הגלריה/);
+  assert.match(html, /להביא כפפות/, 'instructions render for the assigned row');
   await unmount();
 });

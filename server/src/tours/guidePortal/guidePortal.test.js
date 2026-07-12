@@ -303,6 +303,19 @@ const TOUR = {
       activityComponent: { nameHe: 'סדנת גרפיטי', icon: '🎨', color: 'emerald', isWorkshop: true },
       workshopLocation: { nameHe: 'גג הסטודיו', address: 'רח׳ העם 1', instructions: null },
     },
+    // A workshop component with NO location assigned — appears as a chip but
+    // must NOT produce a workshop-location row (read-only portal).
+    {
+      id: 'c2',
+      activityComponent: { nameHe: 'סדנת סטנסיל', icon: '🖌️', color: 'blue', isWorkshop: true },
+      workshopLocation: null,
+    },
+    // A non-workshop component — chip only, never a location row.
+    {
+      id: 'c3',
+      activityComponent: { nameHe: 'סיור רגלי', icon: '🚶', color: 'slate', isWorkshop: false },
+      workshopLocation: null,
+    },
   ],
   bookings: [BOOKING, { ...BOOKING, id: 'b2', status: 'cancelled' }],
 };
@@ -320,8 +333,36 @@ test('tour detail DTO — full shape, cancelled bookings dropped', () => {
   assert.equal(dto.viewerRole, 'lead_guide');
   assert.equal(dto.team.length, 1);
   assert.equal(dto.team[0].imageUrl, '/api/media/x');
-  assert.equal(dto.components[0].workshopLocation.nameHe, 'גג הסטודיו');
+  // Chips: ALL components (workshop + non-workshop), no location field carried.
+  assert.equal(dto.components.length, 3);
+  assert.equal(dto.components[0].workshopLocation, undefined);
+  // Workshop-location rows: ONLY workshops WITH an assigned location. The
+  // located-less workshop (c2) and the non-workshop (c3) are excluded.
+  assert.equal(dto.workshopLocations.length, 1);
+  assert.equal(dto.workshopLocations[0].id, 'c1');
+  assert.equal(dto.workshopLocations[0].nameHe, 'סדנת גרפיטי');
+  assert.equal(dto.workshopLocations[0].location.nameHe, 'גג הסטודיו');
   assert.equal(dto.participants.length, 1); // cancelled booking dropped
+});
+
+test('tour detail DTO — no located workshops → workshopLocations is empty', () => {
+  const dto = guideTourDetailDto({
+    tour: {
+      ...TOUR,
+      activityComponents: [
+        {
+          id: 'c2',
+          activityComponent: { nameHe: 'סדנת סטנסיל', icon: '🖌️', isWorkshop: true },
+          workshopLocation: null,
+        },
+      ],
+    },
+    assignment: { role: 'lead_guide' },
+    occupancy: { activeSeats: 25, activeBookings: 1 },
+    permissions: ALL_ON,
+  });
+  assert.equal(dto.workshopLocations.length, 0); // section will not render
+  assert.equal(dto.components.length, 1); // still a chip
 });
 
 test('tour detail DTO hides team when viewTeam is off', () => {
