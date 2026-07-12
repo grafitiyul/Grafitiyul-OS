@@ -4,6 +4,7 @@ import { formatMinor, toMinor, minorToInput } from '../../../lib/money.js';
 import { fmtDate } from '../../common/pickers/DateTimeFields.jsx';
 import { ACTIVITY_STATUS_META, ROLE_LABELS, entryStatusMeta } from './payrollConfig.js';
 import CardKebabMenu from '../../common/CardKebabMenu.jsx';
+import PayrollEntryDrawer from './PayrollEntryDrawer.jsx';
 
 // The payroll activity drawer — DealDrawer pattern (absolute inset-0 slide-in
 // over the day screen). Top: activity summary. Body: the Excel-like matrix —
@@ -147,6 +148,8 @@ export default function PayrollActivityDrawer({ activityId, onClose }) {
   const [showHistory, setShowHistory] = useState(false);
   // Per-column approval feedback ("סכום אפס" etc.) — keyed by entry id.
   const [entryErrors, setEntryErrors] = useState({});
+  // בבירור chip → that person's focused entry editor (inquiry workspace).
+  const [openEntryId, setOpenEntryId] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -288,9 +291,20 @@ export default function PayrollActivityDrawer({ activityId, onClose }) {
                         <th key={e.id} className="text-center px-2 py-2 border-b border-gray-200 min-w-[130px]">
                           <div className="text-[13px] font-semibold text-gray-900">{e.displayName}</div>
                           <div className="text-[11px] text-gray-500">{ROLE_LABELS[e.role] || 'כללי'}</div>
-                          <span className={`inline-block mt-0.5 px-1.5 rounded-full text-[10px] ${entryStatusMeta(e).cls}`}>
-                            {entryStatusMeta(e).label}
-                          </span>
+                          {e.inquiryStatus === 'open' ? (
+                            <button
+                              type="button"
+                              onClick={() => setOpenEntryId(e.id)}
+                              className={`inline-block mt-0.5 px-1.5 rounded-full text-[10px] underline decoration-dotted ${entryStatusMeta(e).cls}`}
+                              title="פתיחת הבירור של איש צוות זה"
+                            >
+                              {entryStatusMeta(e).label}
+                            </button>
+                          ) : (
+                            <span className={`inline-block mt-0.5 px-1.5 rounded-full text-[10px] ${entryStatusMeta(e).cls}`}>
+                              {entryStatusMeta(e).label}
+                            </span>
+                          )}
                         </th>
                       ))}
                     </tr>
@@ -482,6 +496,16 @@ export default function PayrollActivityDrawer({ activityId, onClose }) {
           </>
         )}
       </div>
+
+      {openEntryId && (
+        <PayrollEntryDrawer
+          entryId={openEntryId}
+          onClose={() => {
+            setOpenEntryId(null);
+            load();
+          }}
+        />
+      )}
     </div>
   );
 }

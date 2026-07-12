@@ -679,6 +679,10 @@ export const api = {
       request(`/api/payroll/entries/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     replyEntry: (id, text) =>
       request(`/api/payroll/entries/${id}/reply`, { method: 'POST', body: JSON.stringify({ text }) }),
+    acceptInquiry: (id) =>
+      request(`/api/payroll/entries/${id}/inquiry/accept`, { method: 'POST' }),
+    rejectInquiry: (id, note) =>
+      request(`/api/payroll/entries/${id}/inquiry/reject`, { method: 'POST', body: JSON.stringify({ note }) }),
     changeEntryGuide: (id, externalPersonId) =>
       request(`/api/payroll/entries/${id}/change-guide`, {
         method: 'POST',

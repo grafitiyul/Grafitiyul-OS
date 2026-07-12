@@ -20,12 +20,20 @@ export const GUIDE_STATUS_META = {
 };
 
 // Full per-entry status (matrix column chips + focused editor header) —
-// derives from state + officeStatus + guideStatus, one place.
+// ONE derivation from state + officeStatus + guideStatus + inquiryStatus.
+// Approval and inquiry resolution stay separate fields; only the DISPLAY
+// combines them.
 export function entryStatusMeta(entry) {
   if (entry.state !== 'active') return { key: 'voided', label: 'בוטל', cls: 'bg-gray-100 text-gray-400' };
   if (entry.officeStatus !== 'approved') return { key: 'draft', label: 'טיוטה', cls: 'bg-amber-50 text-amber-700' };
-  if (entry.guideStatus === 'inquiry') return { key: 'inquiry', label: 'בבירור', cls: 'bg-orange-50 text-orange-700' };
+  if (entry.inquiryStatus === 'open') return { key: 'inquiry', label: 'בבירור', cls: 'bg-orange-50 text-orange-700' };
   if (entry.guideStatus === 'approved') return { key: 'guide_approved', label: 'אושר על ידי המדריך', cls: 'bg-emerald-50 text-emerald-700' };
+  if (entry.inquiryStatus === 'accepted') {
+    return { key: 'inquiry_accepted', label: 'ההערה התקבלה — ממתין לאישור מחדש', cls: 'bg-emerald-50 text-emerald-700' };
+  }
+  if (entry.inquiryStatus === 'rejected') {
+    return { key: 'inquiry_rejected', label: 'ההערה נדחתה — ממתין לאישור מחדש', cls: 'bg-rose-50 text-rose-700' };
+  }
   return { key: 'office_approved', label: 'ממתין לאישור מדריך', cls: 'bg-blue-50 text-blue-700' };
 }
 

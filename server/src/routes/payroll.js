@@ -48,7 +48,7 @@ export function activityDisplayStatus(activity, entries) {
   if (activity.state !== 'active') return 'cancelled';
   const active = (entries || []).filter((e) => e.state === 'active');
   if (active.length === 0) return 'missing';
-  if (active.some((e) => e.officeStatus === 'approved' && e.guideStatus === 'inquiry')) return 'inquiry';
+  if (active.some((e) => e.officeStatus === 'approved' && e.inquiryStatus === 'open')) return 'inquiry';
   const officeState = deriveOfficeState(active);
   if (officeState === 'draft') return 'draft';
   if (officeState === 'partially_approved') return 'partially_approved';
@@ -78,6 +78,9 @@ function entryPayload(e) {
     officeApprovedBy: e.officeApprovedBy,
     guideStatus: e.guideStatus,
     guideApprovedAt: e.guideApprovedAt,
+    inquiryStatus: e.inquiryStatus,
+    inquiryResolvedAt: e.inquiryResolvedAt,
+    inquiryResolvedBy: e.inquiryResolvedBy,
     vatStatus: e.vatStatusSnapshot,
     vatRate: e.vatRateSnapshot,
     notes: e.notes,
@@ -221,10 +224,10 @@ router.get(
       const officeApproved = e.officeStatus === 'approved';
       const status = !officeApproved
         ? 'draft'
-        : e.guideStatus === 'approved'
-          ? 'completed'
-          : e.guideStatus === 'inquiry'
-            ? 'inquiry'
+        : e.inquiryStatus === 'open'
+          ? 'inquiry'
+          : e.guideStatus === 'approved'
+            ? 'completed'
             : 'waiting_guide';
 
       let g = byGuide.get(e.externalPersonId);
@@ -238,7 +241,7 @@ router.get(
           t.officeApprovedMinor += totals.totalMinor;
           if (e.guideStatus === 'approved') t.guideApprovedMinor += totals.totalMinor;
           else t.waitingMinor += totals.totalMinor;
-          if (e.guideStatus === 'inquiry') t.inquiryMinor += totals.totalMinor;
+          if (e.inquiryStatus === 'open') t.inquiryMinor += totals.totalMinor;
         } else {
           t.draftMinor += totals.totalMinor;
         }
@@ -644,8 +647,8 @@ router.patch(
         data: { event: 'line_changed', entryId: entry.id, lineId: line.id, component: line.componentNameHe, changes },
         origin,
       });
-      // Office edit after guide approval/inquiry → the guide must approve again.
-      if (entry.guideStatus === 'approved' || entry.guideStatus === 'inquiry') {
+      // Office edit after guide approval → the guide must approve again.
+      if (entry.guideStatus === 'approved') {
         await prisma.payrollEntry.update({
           where: { id: entry.id },
           data: { guideStatus: 'pending', guideApprovedAt: null },
@@ -722,7 +725,7 @@ const ENTRY_ROLES = ['lead_guide', 'guide', 'workshop_assistant'];
 // approval — they must approve again (product rule H).
 async function resetGuideApproval(entry, origin) {
   if (entry.officeStatus !== 'approved') return;
-  if (entry.guideStatus !== 'approved' && entry.guideStatus !== 'inquiry') return;
+  if (entry.guideStatus !== 'approved') return;
   await prisma.payrollEntry.update({
     where: { id: entry.id },
     data: { guideStatus: 'pending', guideApprovedAt: null },
@@ -791,6 +794,47 @@ router.get(
     });
   }),
 );
+
+// ---------- inquiry resolution (accept / reject) ----------
+// Explicit office decision on an OPEN inquiry. Both outcomes preserve the
+// full conversation, stamp the resolution, and return the entry to "waiting
+// for guide approval" — the guide reviews the decision (and any correction)
+// and approves again. Resolution and approval are separate concepts.
+async function resolveInquiry(req, res, resolution) {
+  const entry = await prisma.payrollEntry.findUnique({ where: { id: req.params.id } });
+  if (!entry) return res.status(404).json({ error: 'not_found' });
+  if (entry.inquiryStatus !== 'open') return res.status(409).json({ error: 'inquiry_not_open' });
+  const origin = await userOrigin(req.adminAuth?.userId);
+  const note = req.body?.note ? String(req.body.note).trim().slice(0, 2000) : null;
+  await prisma.payrollEntry.update({
+    where: { id: entry.id },
+    data: {
+      inquiryStatus: resolution,
+      inquiryResolvedAt: new Date(),
+      inquiryResolvedBy: origin.createdByName || null,
+      guideStatus: 'pending',
+      guideApprovedAt: null,
+      // An official explanation may ride the decision (esp. on rejection).
+      ...(note ? { officeNote: note } : {}),
+    },
+  });
+  await emitTimelineEvent(prisma, {
+    subjectType: PAYROLL_SUBJECT,
+    subjectId: entry.activityId,
+    kind: 'payroll',
+    body:
+      resolution === 'accepted'
+        ? `✅ ההערה של ${entry.displayName} התקבלה`
+        : `⛔ ההערה של ${entry.displayName} נדחתה${note ? ` — ${note}` : ''}`,
+    data: { event: resolution === 'accepted' ? 'inquiry_accepted' : 'inquiry_rejected', entryId: entry.id, note },
+    origin,
+  });
+  const fresh = await prisma.payrollEntry.findUnique({ where: { id: entry.id }, include: { lines: true } });
+  res.json({ ok: true, entry: entryPayload(fresh) });
+}
+
+router.post('/entries/:id/inquiry/accept', handle((req, res) => resolveInquiry(req, res, 'accepted')));
+router.post('/entries/:id/inquiry/reject', handle((req, res) => resolveInquiry(req, res, 'rejected')));
 
 // POST /entries/:id/reply — an office message into the entry's conversation
 // thread (immutable; distinct from the official office note).
@@ -1113,7 +1157,7 @@ router.post(
         data: { event: 'maintenance_recalculated', entryId: entry.id, changes },
         origin,
       });
-      if (entry.guideStatus === 'approved' || entry.guideStatus === 'inquiry') {
+      if (entry.guideStatus === 'approved') {
         await prisma.payrollEntry.update({
           where: { id: entry.id },
           data: { guideStatus: 'pending', guideApprovedAt: null },

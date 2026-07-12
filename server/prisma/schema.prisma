@@ -3983,9 +3983,17 @@ model PayrollEntry {
   officeApprovedAt  DateTime?
   officeApprovedBy  String? // AdminUser username snapshot
   // Guide side of the approval flow (meaningful once THIS entry is
-  // office-approved): pending | approved | inquiry (בבירור).
+  // office-approved): pending | approved. Inquiry is a SEPARATE canonical
+  // concept below — approval and inquiry resolution are never collapsed
+  // into one field.
   guideStatus       String          @default("pending")
   guideApprovedAt   DateTime?
+  // The inquiry lifecycle: none | open (בבירור) | accepted | rejected.
+  // Resolution never touches the conversation (immutable timeline) and never
+  // implies guide approval — after accept/reject the guide approves again.
+  inquiryStatus     String          @default("none")
+  inquiryResolvedAt DateTime?
+  inquiryResolvedBy String? // AdminUser username snapshot
   vatStatusSnapshot String          @default("exempt") // exempt | vat_18
   vatRateSnapshot   Int             @default(18)
   // Latest calculation inputs (versioned via Timeline events, not by mutating

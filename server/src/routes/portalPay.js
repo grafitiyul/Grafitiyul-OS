@@ -169,13 +169,20 @@ router.post(
     if (!entry) return;
     const text = String(req.body?.text || '').trim().slice(0, 2000);
     if (!text) return res.status(400).json({ error: 'text_required' });
-    // First comment OPENS the inquiry; further messages while it is active
-    // just extend the conversation (no status churn, no duplicate events).
-    const opensInquiry = entry.guideStatus !== 'inquiry';
+    // First comment OPENS the inquiry (a comment after a resolution REopens
+    // it); further messages while it is open just extend the conversation —
+    // no status churn, no duplicate events. Approval stays a separate field.
+    const opensInquiry = entry.inquiryStatus !== 'open';
     if (opensInquiry) {
       await prisma.payrollEntry.update({
         where: { id: entry.id },
-        data: { guideStatus: 'inquiry', guideApprovedAt: null },
+        data: {
+          inquiryStatus: 'open',
+          inquiryResolvedAt: null,
+          inquiryResolvedBy: null,
+          guideStatus: 'pending',
+          guideApprovedAt: null,
+        },
       });
     }
     await emitTimelineEvent(prisma, {

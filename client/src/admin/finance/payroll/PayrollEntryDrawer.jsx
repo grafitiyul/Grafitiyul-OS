@@ -339,10 +339,43 @@ export default function PayrollEntryDrawer({ entryId, onClose }) {
 
             {/* Inquiry area: the guide↔office CONVERSATION (immutable thread)
                 — distinct from the official office note below. */}
-            {(data.conversation?.length > 0 || entry.guideStatus === 'inquiry') && (
+            {(data.conversation?.length > 0 || entry.inquiryStatus !== 'none') && (
               <div className="border border-orange-200 rounded-lg overflow-hidden">
-                <div className="px-3 py-1.5 bg-orange-50 text-[12px] font-medium text-orange-800">
-                  שיחה עם המדריך {entry.guideStatus === 'inquiry' ? '· בבירור' : ''}
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-orange-50 text-[12px] font-medium text-orange-800">
+                  <span className="flex-1">
+                    שיחה עם המדריך
+                    {entry.inquiryStatus === 'open' && ' · בבירור'}
+                    {entry.inquiryStatus === 'accepted' && ' · ✅ ההערה התקבלה'}
+                    {entry.inquiryStatus === 'rejected' && ' · ⛔ ההערה נדחתה'}
+                    {entry.inquiryResolvedBy && entry.inquiryStatus !== 'open' ? ` (${entry.inquiryResolvedBy})` : ''}
+                  </span>
+                  {entry.inquiryStatus === 'open' && (
+                    <>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => run(() => api.payroll.acceptInquiry(entry.id))}
+                        className="px-2.5 py-0.5 rounded-md bg-emerald-600 text-white text-[11px] hover:bg-emerald-700"
+                        title="קבלת ההערה — הרשומה תחזור לאישור המדריך"
+                      >
+                        ✓ אשר את ההערה
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => {
+                          const note = window.prompt('הסבר רשמי לדחייה (יוצג למדריך כהערת המשרד):', officeNote || '');
+                          if (note === null) return;
+                          if (!note.trim() && !window.confirm('לדחות ללא הסבר רשמי? מומלץ לצרף הסבר.')) return;
+                          run(() => api.payroll.rejectInquiry(entry.id, note.trim() || null));
+                        }}
+                        className="px-2.5 py-0.5 rounded-md bg-rose-600 text-white text-[11px] hover:bg-rose-700"
+                        title="דחיית ההערה — עם הסבר רשמי"
+                      >
+                        ⛔ דחה את ההערה
+                      </button>
+                    </>
+                  )}
                 </div>
                 <div className="p-3 space-y-1.5">
                   {(data.conversation || []).map((m) => (

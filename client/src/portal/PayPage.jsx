@@ -9,11 +9,26 @@ import { formatMinor } from '../lib/money.js';
 // Guide totals count entries approved by BOTH office and guide; everything
 // else office-approved shows as ממתין לאישורך.
 
-const STATUS_META = {
-  pending: { label: 'ממתין לאישורך', cls: 'bg-blue-50 text-blue-700' },
-  approved: { label: 'אושר ✓', cls: 'bg-emerald-50 text-emerald-700' },
-  inquiry: { label: 'בבירור', cls: 'bg-orange-50 text-orange-700' },
-};
+// Combined display state: approval (pending|approved) and inquiry
+// (none|open|accepted|rejected) are separate server truths — only the chip
+// combines them.
+function entryChip(entry) {
+  if (entry.guideStatus === 'approved') return { label: 'אושר ✓', cls: 'bg-emerald-50 text-emerald-700' };
+  if (entry.inquiryStatus === 'open') return { label: 'בבירור', cls: 'bg-orange-50 text-orange-700' };
+  if (entry.inquiryStatus === 'accepted') return { label: 'ההערה התקבלה — ממתין לאישורך', cls: 'bg-emerald-50 text-emerald-700' };
+  if (entry.inquiryStatus === 'rejected') return { label: 'ההערה נדחתה — ממתין לאישורך', cls: 'bg-rose-50 text-rose-700' };
+  return { label: 'ממתין לאישורך', cls: 'bg-blue-50 text-blue-700' };
+}
+
+// Blocked / no-entry icon — an explicit symbol, never color alone.
+function NoEntryIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <line x1="5.5" y1="5.5" x2="18.5" y2="18.5" />
+    </svg>
+  );
+}
 
 function monthLabel(m) {
   const [y, mm] = String(m).split('-');
@@ -25,7 +40,7 @@ function EntryCard({ token, entry, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [commenting, setCommenting] = useState(false);
   const [text, setText] = useState('');
-  const meta = STATUS_META[entry.guideStatus];
+  const meta = entryChip(entry);
 
   const post = async (path, body) => {
     setBusy(true);
@@ -94,6 +109,24 @@ function EntryCard({ token, entry, onChanged }) {
         )}
       </div>
 
+      {/* Inquiry resolution — explicit icon + label, never color alone. */}
+      {entry.inquiryStatus === 'accepted' && (
+        <div className="mt-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[13px] font-medium text-emerald-800">
+          <span className="text-emerald-600">✓</span> ההערה התקבלה
+          {entry.guideStatus !== 'approved' && (
+            <span className="font-normal text-emerald-700">— בדקו את הסכום המעודכן ואשרו</span>
+          )}
+        </div>
+      )}
+      {entry.inquiryStatus === 'rejected' && (
+        <div className="mt-3 flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[13px] font-medium text-rose-800">
+          <span className="text-rose-600"><NoEntryIcon /></span> ההערה נדחתה
+          {entry.guideStatus !== 'approved' && (
+            <span className="font-normal text-rose-700">— ראו את הסבר המשרד ואשרו</span>
+          )}
+        </div>
+      )}
+
       {/* Official office note — distinct from the conversation. */}
       {entry.officeNote && (
         <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
@@ -140,7 +173,7 @@ function EntryCard({ token, entry, onChanged }) {
                 onClick={() => setCommenting(true)}
                 className="flex-1 h-10 rounded-xl border border-gray-300 text-gray-700 text-[13px] hover:bg-gray-50"
               >
-                {entry.guideStatus === 'inquiry' ? 'הוסף הודעה' : 'יש הערה? לחץ כאן'}
+                {entry.inquiryStatus === 'open' || entry.conversation?.length > 0 ? 'הוסף הודעה' : 'יש הערה? לחץ כאן'}
               </button>
             </div>
           ) : (

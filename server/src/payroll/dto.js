@@ -52,8 +52,11 @@ export function guidePayEntryDto(entry, activity, componentById, conversation = 
     date: activity.date,
     payrollMonth: activity.payrollMonth,
     role: entry.role,
-    guideStatus: entry.guideStatus, // pending | approved | inquiry (בבירור)
+    guideStatus: entry.guideStatus, // pending | approved
     guideApprovedAt: entry.guideApprovedAt,
+    // Inquiry lifecycle — separate from approval: none | open | accepted | rejected.
+    inquiryStatus: entry.inquiryStatus || 'none',
+    inquiryResolvedAt: entry.inquiryResolvedAt || null,
     vatStatus: entry.vatStatusSnapshot, // exempt → the UI shows a flat total only
     vatRate: entry.vatRateSnapshot,
     lines: visibleLines.map((l) => ({
