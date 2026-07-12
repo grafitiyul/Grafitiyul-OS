@@ -32,7 +32,7 @@ import {
   kickPayrollReconcile,
   monthOf,
 } from '../payroll/service.js';
-import { entryTotals, deriveOfficeState, autoAmountMinor } from '../payroll/engine.js';
+import { entryTotals, deriveOfficeState, autoAmountMinor, reportTotals } from '../payroll/engine.js';
 import { emitPayrollChanged, openPayrollStream } from '../payroll/events.js';
 import { guideConversationDto } from '../payroll/dto.js';
 import { isAssignableStaff } from '../people/eligibility.js';
@@ -227,8 +227,13 @@ router.get(
     });
     const summary = zero();
     const byGuide = new Map();
+    // Footer totals sum the EXACT row set returned below (drafts included —
+    // the table shows them; voided/cancelled never reach here). Aggregated
+    // server-side (engine reportTotals): the client only formats.
+    const footerRows = [];
     for (const e of entries) {
       const totals = entryTotals(e.lines, { vatStatus: e.vatStatusSnapshot, vatRate: e.vatRateSnapshot });
+      footerRows.push({ personRefId: e.personRefId, externalPersonId: e.externalPersonId, totals });
       // Entry-level office approval — THE truth (activity state is derived).
       const officeApproved = e.officeStatus === 'approved';
       const status = !officeApproved
@@ -285,7 +290,7 @@ router.get(
     for (const g of guides) {
       g.entries.sort((a, b) => String(a.date || a.payrollMonth).localeCompare(String(b.date || b.payrollMonth)));
     }
-    res.json({ months, guides, guideOptions, summary });
+    res.json({ months, guides, guideOptions, summary, totals: reportTotals(footerRows) });
   }),
 );
 

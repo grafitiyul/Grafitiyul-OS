@@ -25,22 +25,29 @@ import PayrollEntryDrawer from './PayrollEntryDrawer.jsx';
 // list turned restrictive when the option set grew — the general-additions
 // incident). Selections are now stored in canonical form (multiSelectCore).
 const FILTERS_KEY = 'payroll.report.filters.v3';
-const COLUMNS_KEY = 'payroll.report.columns.v2';
+// v3: one-time reset — layouts saved while the picker was broken (body cells
+// ignored visibility, and no column carried `def`, so the default-visible
+// set was empty) are untrustworthy.
+const COLUMNS_KEY = 'payroll.report.columns.v3';
 
 const MONTH_NAMES = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
 
+// Every column is default-visible (def) — hiding is an explicit user choice
+// through the shared picker. rowNum is display-only ordinal numbering over
+// the current filtered/sorted result (never a database id, never payroll data).
 const COLUMNS = [
-  { key: 'date', label: 'תאריך', minWidth: 84 },
-  { key: 'month', label: 'חודש שכר', minWidth: 76 },
-  { key: 'guide', label: 'מדריך', minWidth: 110 },
-  { key: 'activity', label: 'פעילות', minWidth: 150 },
-  { key: 'kind', label: 'סוג', minWidth: 60 },
-  { key: 'role', label: 'תפקיד', minWidth: 88 },
-  { key: 'components', label: 'רכיבים', minWidth: 200 },
-  { key: 'officeAmount', label: 'אושר משרד', minWidth: 92 },
-  { key: 'guideAmount', label: 'אושר מדריך', minWidth: 92 },
-  { key: 'status', label: 'סטטוס', minWidth: 104 },
-  { key: 'actions', label: '', minWidth: 44, maxWidth: 60 },
+  { key: 'rowNum', label: '#', def: true, minWidth: 40, maxWidth: 56 },
+  { key: 'date', label: 'תאריך', def: true, minWidth: 84 },
+  { key: 'month', label: 'חודש שכר', def: true, minWidth: 76 },
+  { key: 'guide', label: 'מדריך', def: true, minWidth: 110 },
+  { key: 'activity', label: 'פעילות', def: true, minWidth: 150 },
+  { key: 'kind', label: 'סוג', def: true, minWidth: 60 },
+  { key: 'role', label: 'תפקיד', def: true, minWidth: 88 },
+  { key: 'components', label: 'רכיבים', def: true, minWidth: 200 },
+  { key: 'officeAmount', label: 'אושר משרד', def: true, minWidth: 92 },
+  { key: 'guideAmount', label: 'אושר מדריך', def: true, minWidth: 92 },
+  { key: 'status', label: 'סטטוס', def: true, minWidth: 104 },
+  { key: 'actions', label: '', def: true, minWidth: 44, maxWidth: 60 },
 ];
 
 // Confirmation + optional short reason for the destructive void action.
@@ -144,8 +151,10 @@ export default function PayrollReportPage() {
     );
   }, [data]);
 
-  const renderCell = (col, e) => {
+  const renderCell = (col, e, rowIndex) => {
     switch (col.key) {
+      case 'rowNum':
+        return <span className="tabular-nums text-gray-400">{rowIndex + 1}</span>;
       case 'date':
         // Dateless general additions belong to their payrollMonth — say so
         // explicitly instead of a dash that reads like missing data.
@@ -259,23 +268,6 @@ export default function PayrollReportPage() {
           <div className="text-sm text-gray-400 p-6">טוען…</div>
         ) : (
           <>
-            <div className="mb-4 flex flex-wrap gap-3">
-              {[
-                ['סה״כ מאושר משרד', data.summary.officeApprovedMinor, 'text-gray-900'],
-                ['מאושר ע״י מדריכים', data.summary.guideApprovedMinor, 'text-emerald-700'],
-                ['ממתין לאישור מדריך', data.summary.waitingMinor, 'text-blue-700'],
-                ['מתוכו בבירור', data.summary.inquiryMinor, 'text-orange-700'],
-                ['טיוטות', data.summary.draftMinor, 'text-amber-700'],
-              ].map(([label, v, cls]) => (
-                <div key={label} className="bg-white border border-gray-200 rounded-lg px-4 py-2">
-                  <div className="text-[11px] text-gray-500">{label}</div>
-                  <div className={`text-[15px] font-bold ${cls}`}>
-                    <Money minor={v} />
-                  </div>
-                </div>
-              ))}
-            </div>
-
             {rows.length === 0 ? (
               <div className="text-sm text-gray-500 bg-white border border-gray-200 rounded-lg p-6 text-center">
                 אין רשומות שכר בטווח שנבחר.
@@ -293,7 +285,7 @@ export default function PayrollReportPage() {
                     />
                   </thead>
                   <tbody>
-                    {rows.map((e) => (
+                    {rows.map((e, rowIndex) => (
                       <tr
                         key={e.id}
                         onClick={() => setOpenEntryId(e.id)}
@@ -305,7 +297,7 @@ export default function PayrollReportPage() {
                             picker only ever "hid" headers. */}
                         {visibleCols.map((col) => (
                           <TableCell key={col.key} col={col} className="px-3 py-0" stopClick={col.key === 'actions'}>
-                            {renderCell(col, e)}
+                            {renderCell(col, e, rowIndex)}
                           </TableCell>
                         ))}
                       </tr>
@@ -317,6 +309,26 @@ export default function PayrollReportPage() {
           </>
         )}
       </div>
+
+      {/* Sticky totals footer — pinned BELOW the scroll area (never covers the
+          last row, unaffected by the table's horizontal scroll). Values are
+          server-computed over the exact filtered row set (reportTotals);
+          the client only formats. RTL layout, money rendered LTR. */}
+      {data !== null && data.totals && rows.length > 0 && (
+        <div className="shrink-0 flex flex-wrap items-center gap-x-6 gap-y-1 border-t border-gray-200 bg-white px-4 py-2.5 text-[13px] text-gray-700 shadow-[0_-2px_6px_rgba(0,0,0,0.05)]">
+          <span className="text-gray-500 tabular-nums">{data.totals.rowCount} שורות</span>
+          <span className="text-gray-500 tabular-nums">{data.totals.distinctGuidesCount} מדריכים שונים</span>
+          <span>
+            לפני מע״מ: <b className="text-gray-900"><Money minor={data.totals.beforeVatMinor} /></b>
+          </span>
+          <span>
+            מע״מ: <b className="text-gray-900"><Money minor={data.totals.vatMinor} /></b>
+          </span>
+          <span className="text-[14px] font-bold text-gray-900">
+            סה״כ לתשלום: <Money minor={data.totals.totalMinor} />
+          </span>
+        </div>
+      )}
 
       {openEntryId && (
         <PayrollEntryDrawer

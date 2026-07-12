@@ -7,6 +7,7 @@ import {
   lineFinalMinor,
   entryTotals,
   sumTotals,
+  reportTotals,
   deriveOfficeState,
   entryApprovable,
 } from './engine.js';
@@ -200,6 +201,55 @@ test('vat_18 deduction reduces net and VAT symmetrically', () => {
 
 test('sumTotals blends gross totals across mixed VAT statuses (admin totals)', () => {
   assert.equal(sumTotals([{ totalMinor: 42000 }, { totalMinor: 26600 }, null]), 68600);
+});
+
+// ── Reports footer totals (reportTotals) ─────────────────────────────────────
+
+test('reportTotals sums stored per-entry totals — never one global VAT rate', () => {
+  const rows = [
+    // exempt guide: net = total, VAT 0
+    { personRefId: 'p1', externalPersonId: 'guide:1', totals: { netMinor: 35000, vatMinor: 0, totalMinor: 35000 } },
+    // vat_18 guide: stored split respected as-is
+    { personRefId: 'p2', externalPersonId: 'guide:2', totals: { netMinor: 23000, vatMinor: 3600, totalMinor: 26600 } },
+  ];
+  const t = reportTotals(rows);
+  assert.equal(t.beforeVatMinor, 58000);
+  assert.equal(t.vatMinor, 3600);
+  assert.equal(t.totalMinor, 61600);
+  assert.equal(t.rowCount, 2);
+  assert.equal(t.distinctGuidesCount, 2);
+});
+
+test('reportTotals: the same person across many activities counts ONCE', () => {
+  const dor = (n) => ({ personRefId: 'p-dor', externalPersonId: 'guide:13', totals: { netMinor: n, vatMinor: 0, totalMinor: n } });
+  const elinoy = (n) => ({ personRefId: 'p-eli', externalPersonId: 'guide:3', totals: { netMinor: n, vatMinor: 0, totalMinor: n } });
+  const t = reportTotals([dor(100), dor(200), dor(300), dor(400), dor(500), elinoy(10), elinoy(20), elinoy(30)]);
+  assert.equal(t.rowCount, 8);
+  assert.equal(t.distinctGuidesCount, 2, 'דור in 5 activities + אלינוי in 3 = 2 distinct guides');
+  assert.equal(t.totalMinor, 1560);
+});
+
+test('reportTotals: identity is personRefId first, externalPersonId snapshot fallback', () => {
+  const t = reportTotals([
+    // Same personRefId under two externalPersonIds (identity migration) → one person.
+    { personRefId: 'p1', externalPersonId: 'guide:1', totals: { netMinor: 100, vatMinor: 0, totalMinor: 100 } },
+    { personRefId: 'p1', externalPersonId: 'legacy:9', totals: { netMinor: 100, vatMinor: 0, totalMinor: 100 } },
+    // No personRef (deleted person) → externalPersonId snapshot keeps it countable.
+    { personRefId: null, externalPersonId: 'candidate:596', totals: { netMinor: 100, vatMinor: 0, totalMinor: 100 } },
+    { personRefId: null, externalPersonId: 'candidate:596', totals: { netMinor: 100, vatMinor: 0, totalMinor: 100 } },
+  ]);
+  assert.equal(t.distinctGuidesCount, 2);
+  assert.equal(t.rowCount, 4);
+});
+
+test('reportTotals: empty row set → all zeros (matches an empty report)', () => {
+  assert.deepEqual(reportTotals([]), {
+    beforeVatMinor: 0,
+    vatMinor: 0,
+    totalMinor: 0,
+    distinctGuidesCount: 0,
+    rowCount: 0,
+  });
 });
 
 // ── selective office approval: derived state, single truth ──────────────────

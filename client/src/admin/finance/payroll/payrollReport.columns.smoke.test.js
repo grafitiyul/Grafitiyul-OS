@@ -16,9 +16,9 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const clientRoot = path.resolve(here, '..', '..', '..', '..');
 const cacheDir = path.join(clientRoot, 'node_modules', '.cache', 'payroll-report-smoke');
 
-const COLUMNS_KEY = 'payroll.report.columns.v2';
+const COLUMNS_KEY = 'payroll.report.columns.v3';
 const ALL_KEYS = [
-  'date', 'month', 'guide', 'activity', 'kind', 'role',
+  'rowNum', 'date', 'month', 'guide', 'activity', 'kind', 'role',
   'components', 'officeAmount', 'guideAmount', 'status', 'actions',
 ];
 
@@ -29,6 +29,7 @@ const REPORT = {
     { value: 'guide:11', label: 'אביה סדי' },
   ],
   summary: { officeApprovedMinor: 0, guideApprovedMinor: 0, waitingMinor: 0, draftMinor: 0, inquiryMinor: 0 },
+  totals: { beforeVatMinor: 47000, vatMinor: 0, totalMinor: 47000, distinctGuidesCount: 2, rowCount: 2 },
   guides: [
     {
       externalPersonId: 'guide:13',
@@ -209,5 +210,45 @@ test('all columns visible → full parity, and a general addition renders as a r
   assert.ok(bodyText.includes('ישיבת צוות'), 'general addition row renders');
   assert.ok(bodyText.includes('תוספת כללית'), 'source label uses the new terminology');
   assert.ok(bodyText.includes('ללא תאריך'), 'dateless addition shows ללא תאריך, never vanishes');
+  await unmount();
+});
+
+test('fresh visitor (no saved layout) → every column default-visible', async () => {
+  window.localStorage.removeItem(COLUMNS_KEY);
+  window.localStorage.removeItem('payroll.report.filters.v3');
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  await act(async () =>
+    root.render(React.createElement(MemoryRouter, null, React.createElement(PayrollReportPage))),
+  );
+  await act(async () => {});
+  assert.equal(
+    container.querySelectorAll('thead th').length,
+    ALL_KEYS.length,
+    'def flags make the whole column set visible by default',
+  );
+  await act(async () => root.unmount());
+  container.remove();
+});
+
+test('row numbers follow the displayed (filtered+sorted) order — 1, 2, …', async () => {
+  const { container, unmount } = await renderWithColumns(ALL_KEYS);
+  const firstCells = [...container.querySelectorAll('tbody tr')].map(
+    (tr) => tr.querySelector('td').textContent.trim(),
+  );
+  assert.deepEqual(firstCells, ['1', '2'], 'ordinal numbering, not database ids');
+  await unmount();
+});
+
+test('old summary cards are gone; sticky footer shows the server totals', async () => {
+  const { container, unmount } = await renderWithColumns(ALL_KEYS);
+  const html = container.innerHTML;
+  assert.ok(!html.includes('סה״כ מאושר משרד'), 'summary cards removed');
+  assert.ok(!html.includes('מתוכו בבירור'), 'summary cards removed');
+  assert.match(html, /2 שורות/);
+  assert.match(html, /2 מדריכים שונים/);
+  assert.match(html, /לפני מע״מ/);
+  assert.match(html, /סה״כ לתשלום/);
   await unmount();
 });

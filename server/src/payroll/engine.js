@@ -163,6 +163,29 @@ export function sumTotals(perEntryTotals) {
   return (perEntryTotals || []).reduce((acc, t) => acc + (Number(t?.totalMinor) || 0), 0);
 }
 
+// Footer totals for the Reports table — sums the EXACT displayed row set,
+// each row through its own entryTotals result (per-entry VAT snapshots; an
+// exempt guide contributes net=total, vat=0 — never one global VAT rate over
+// the report). Distinct people count by canonical stable identity:
+// personRefId when present, otherwise the externalPersonId snapshot — the
+// same person across many activities counts ONCE.
+export function reportTotals(rows) {
+  const distinct = new Set();
+  let beforeVatMinor = 0;
+  let vatMinor = 0;
+  let totalMinor = 0;
+  let rowCount = 0;
+  for (const r of rows || []) {
+    if (!r) continue;
+    rowCount += 1;
+    beforeVatMinor += Number(r.totals?.netMinor) || 0;
+    vatMinor += Number(r.totals?.vatMinor) || 0;
+    totalMinor += Number(r.totals?.totalMinor) || 0;
+    distinct.add(r.personRefId ? `ref:${r.personRefId}` : `ext:${r.externalPersonId}`);
+  }
+  return { beforeVatMinor, vatMinor, totalMinor, distinctGuidesCount: distinct.size, rowCount };
+}
+
 // ── Office approval derivation (selective approval model) ───────────────────
 // Office approval is persisted PER ENTRY (PayrollEntry.officeStatus). The
 // activity office-state is DERIVED — never stored — so a second, conflicting
