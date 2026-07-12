@@ -4,3 +4,4 @@
 // dashboard, API and lifecycle never change.
 
 import './gallery.js';
+import './whatsapp.js';

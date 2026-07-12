@@ -18,4 +18,20 @@ export function apiActionHandler(issueType, actionKey) {
   return HANDLERS.get(`${issueType}:${actionKey}`) || null;
 }
 
-// (Per-module handlers register below as their slices land.)
+// ── WhatsApp: skipped / failed scheduled messages ───────────────────────────
+// Reuse the EXISTING scheduled-message endpoints; never re-implement them here.
+
+// "קבע מועד חדש" — first invocation asks for a date+time (needsInput), the
+// second (with the picked payload) reschedules the existing message.
+registerApiAction('whatsapp_scheduled_stuck', 'reschedule', async (issue, payload) => {
+  if (!payload) return { needsInput: 'reschedule' };
+  const { api } = await import('../../lib/api.js');
+  const scheduledAt = new Date(`${payload.date}T${payload.time}:00`).toISOString();
+  await api.whatsapp.updateScheduled(issue.data.messageId, { scheduledAt });
+});
+
+// "בטל לצמיתות" — cancel the scheduled message (moves any linked task too).
+registerApiAction('whatsapp_scheduled_stuck', 'cancel', async (issue) => {
+  const { api } = await import('../../lib/api.js');
+  await api.whatsapp.cancelScheduled(issue.data.messageId);
+});
