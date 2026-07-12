@@ -22,6 +22,7 @@ import {
   deriveOfficeState,
   entryApprovable,
 } from './engine.js';
+import { emitPayrollChanged } from './events.js';
 
 export const PAYROLL_SUBJECT = 'payroll_activity';
 
@@ -96,6 +97,19 @@ function participantsTotal(bookings) {
   return active.reduce((n, b) => n + (Number(b.deal?.participants) || 0), 0);
 }
 
+// Internal lifecycle/reconcile timeline events → real-time invalidation
+// reasons. Only meaningful changes reach emitPayrollEvent (the callers guard
+// on actual change), so piggybacking the realtime hint here keeps the
+// "no-op emits nothing" rule for free.
+const REALTIME_REASON = {
+  created: 'activity_created',
+  reactivated: 'entry_updated',
+  entry_reactivated: 'entry_updated',
+  entry_cancelled: 'entry_updated',
+  draft_auto_recalculated: 'entry_updated',
+  cancelled: 'activity_cancelled',
+};
+
 async function emitPayrollEvent(client, activityId, body, data, origin = null) {
   await emitTimelineEvent(client, {
     subjectType: PAYROLL_SUBJECT,
@@ -105,6 +119,14 @@ async function emitPayrollEvent(client, activityId, body, data, origin = null) {
     data,
     origin: origin || systemOrigin(),
   });
+  const reason = REALTIME_REASON[data?.event];
+  if (reason) {
+    emitPayrollChanged(client, {
+      activityId,
+      externalPersonId: data?.externalPersonId || null,
+      reason,
+    });
+  }
 }
 
 function snapshotOf(source, inputs) {
@@ -412,7 +434,7 @@ export async function approveEntries(client, { activityId, entryIds = null, orig
       where: { id: e.id },
       data: { officeStatus: 'approved', officeApprovedAt: new Date(), officeApprovedBy: by },
     });
-    approved.push({ entryId: e.id, displayName: e.displayName });
+    approved.push({ entryId: e.id, displayName: e.displayName, externalPersonId: e.externalPersonId });
   }
   if (approved.length) {
     await emitTimelineEvent(client, {
@@ -422,6 +444,11 @@ export async function approveEntries(client, { activityId, entryIds = null, orig
       body: `✅ אושר שכר במשרד עבור: ${approved.map((a) => a.displayName).join(', ')}`,
       data: { event: 'office_approved_entries', entryIds: approved.map((a) => a.entryId) },
       origin: origin || systemOrigin(),
+    });
+    emitPayrollChanged(client, {
+      activityId: activity.id,
+      externalPersonIds: approved.map((a) => a.externalPersonId),
+      reason: 'office_approved',
     });
   }
   return { approved, skipped };
@@ -454,6 +481,12 @@ export async function unapproveEntry(client, { entryId, origin = null }) {
     data: { event: 'office_unapproved_entry', entryId: entry.id },
     origin: origin || systemOrigin(),
   });
+  emitPayrollChanged(client, {
+    activityId: entry.activityId,
+    entryId: entry.id,
+    externalPersonId: entry.externalPersonId,
+    reason: 'office_unapproved',
+  });
   return { ok: true };
 }
 
@@ -474,6 +507,12 @@ export async function voidEntry(client, { entryId, reason = null, origin = null 
     body: `🗑️ רשומת השכר של ${entry.displayName} בוטלה${reason ? ` — ${reason}` : ''}`,
     data: { event: 'entry_voided', entryId: entry.id, reason },
     origin: origin || systemOrigin(),
+  });
+  emitPayrollChanged(client, {
+    activityId: entry.activityId,
+    entryId: entry.id,
+    externalPersonId: entry.externalPersonId,
+    reason: 'entry_voided',
   });
   return { ok: true };
 }
@@ -501,6 +540,7 @@ export async function voidActivity(client, { activityId, reason = null, origin =
     data: { event: 'activity_voided', reason, entryCount: activity.entries.length },
     origin: origin || systemOrigin(),
   });
+  emitPayrollChanged(client, { activityId: activity.id, reason: 'activity_voided' });
   return { ok: true };
 }
 
@@ -802,6 +842,11 @@ export async function createGeneralActivity(client, { typeId, payrollMonth, date
     body: `🧾 נוצרה פעילות כללית: ${type.nameHe} (${deduped.length} אנשי צוות)`,
     data: { event: 'created', sourceType: 'general', generalActivityId: general.id },
     origin: origin || systemOrigin(),
+  });
+  emitPayrollChanged(client, {
+    activityId: activity.id,
+    externalPersonIds: deduped.map((r) => String(r.externalPersonId)),
+    reason: 'activity_created',
   });
   return { activityId: activity.id };
 }

@@ -13,6 +13,7 @@ import { handle } from '../asyncHandler.js';
 import { resolveGuidePortalAccess } from '../tours/guidePortal/access.js';
 import { emitTimelineEvent } from '../timeline/events.js';
 import { PAYROLL_SUBJECT } from '../payroll/service.js';
+import { emitPayrollChanged, openPayrollStream } from '../payroll/events.js';
 import { guidePayEntryDto, guideConversationDto } from '../payroll/dto.js';
 import { entryTotals } from '../payroll/engine.js';
 import { businessToday } from '../tours/completion.js';
@@ -66,6 +67,24 @@ async function ownEntry(req, res, access) {
   }
   return entry;
 }
+
+// GET /api/portal/:token/pay/events — the guide's real-time invalidation
+// stream (SSE). Access is the canonical resolveGuidePortalAccess flow
+// (portalEnabled/status + viewPay), and the subscription scope is pinned to
+// the RESOLVED externalPersonId — a guide cannot subscribe to anyone else's
+// events by crafting parameters. Events carry no amounts/comments/identities;
+// the portal refetches its permission-gated DTO on receipt.
+router.get(
+  '/:token/pay/events',
+  handle(async (req, res) => {
+    const access = await payAccess(req, res);
+    if (!access) return;
+    openPayrollStream(req, res, {
+      scope: 'guide',
+      externalPersonId: access.person.externalPersonId,
+    });
+  }),
+);
 
 // GET /api/portal/:token/pay?month=YYYY-MM
 router.get(
@@ -161,6 +180,12 @@ router.post(
       data: { event: 'guide_approved', entryId: entry.id },
       origin: guideOrigin(access.person),
     });
+    emitPayrollChanged(prisma, {
+      activityId: entry.activityId,
+      entryId: entry.id,
+      externalPersonId: entry.externalPersonId,
+      reason: 'guide_approved',
+    });
     res.json({ ok: true });
   }),
 );
@@ -200,6 +225,12 @@ router.post(
       body: `💬 ${opensInquiry ? 'הערת מדריך' : 'הודעת מדריך'} (${entry.displayName}): ${text}`,
       data: { event: opensInquiry ? 'guide_inquiry' : 'guide_message', entryId: entry.id, text },
       origin: guideOrigin(access.person),
+    });
+    emitPayrollChanged(prisma, {
+      activityId: entry.activityId,
+      entryId: entry.id,
+      externalPersonId: entry.externalPersonId,
+      reason: opensInquiry ? 'inquiry_opened' : 'guide_message',
     });
     res.json({ ok: true });
   }),

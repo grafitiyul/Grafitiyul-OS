@@ -33,11 +33,20 @@ import {
   monthOf,
 } from '../payroll/service.js';
 import { entryTotals, deriveOfficeState, autoAmountMinor } from '../payroll/engine.js';
+import { emitPayrollChanged, openPayrollStream } from '../payroll/events.js';
 import { guideConversationDto } from '../payroll/dto.js';
 import { isAssignableStaff } from '../people/eligibility.js';
 import { businessToday } from '../tours/completion.js';
 
 const router = Router();
+
+// ---------- real-time invalidation stream (Admin) ----------
+// GET /api/payroll/events — Server-Sent Events. Admin session enforced by the
+// router-level requireAdminAuth mount (index.js). Events are invalidation
+// hints only; every truth stays in the REST DTOs below.
+router.get('/events', (req, res) => {
+  openPayrollStream(req, res, { scope: 'admin' });
+});
 
 const ROLE_ORDER = { lead_guide: 0, guide: 1, workshop_assistant: 2 };
 
@@ -663,6 +672,14 @@ router.patch(
         });
       }
     }
+    // Real-time invalidation — data was persisted (the no-op path returned
+    // earlier), so both sides refetch.
+    emitPayrollChanged(prisma, {
+      activityId: entry.activityId,
+      entryId: entry.id,
+      externalPersonId: entry.externalPersonId,
+      reason: 'entry_updated',
+    });
     res.json({ ok: true, line: { id: updated.id, overrideMinor: updated.overrideMinor, calculatedMinor: updated.calculatedMinor, quantity: updated.quantity != null ? Number(updated.quantity) : null, unitPriceMinor: updated.unitPriceMinor, note: updated.note } });
   }),
 );
@@ -829,6 +846,12 @@ async function resolveInquiry(req, res, resolution) {
     data: { event: resolution === 'accepted' ? 'inquiry_accepted' : 'inquiry_rejected', entryId: entry.id, note },
     origin,
   });
+  emitPayrollChanged(prisma, {
+    activityId: entry.activityId,
+    entryId: entry.id,
+    externalPersonId: entry.externalPersonId,
+    reason: resolution === 'accepted' ? 'inquiry_accepted' : 'inquiry_rejected',
+  });
   const fresh = await prisma.payrollEntry.findUnique({ where: { id: entry.id }, include: { lines: true } });
   res.json({ ok: true, entry: entryPayload(fresh) });
 }
@@ -853,6 +876,12 @@ router.post(
       body: `💬 תגובת המשרד ל${entry.displayName}: ${text}`,
       data: { event: 'office_reply', entryId: entry.id, text },
       origin,
+    });
+    emitPayrollChanged(prisma, {
+      activityId: entry.activityId,
+      entryId: entry.id,
+      externalPersonId: entry.externalPersonId,
+      reason: 'office_reply',
     });
     res.json({ ok: true });
   }),
@@ -920,6 +949,13 @@ router.patch(
       await resetGuideApproval(entry, origin);
       kickPayrollReconcile('tour', (await prisma.payrollActivity.findUnique({ where: { id: entry.activityId }, select: { tourEventId: true } }))?.tourEventId || null);
     }
+    const noteOnly = changes.length === 1 && changes[0].field === 'officeNote';
+    emitPayrollChanged(prisma, {
+      activityId: entry.activityId,
+      entryId: entry.id,
+      externalPersonId: entry.externalPersonId,
+      reason: noteOnly ? 'office_note_changed' : 'entry_updated',
+    });
     const fresh = await prisma.payrollEntry.findUnique({ where: { id: entry.id }, include: { lines: true } });
     res.json({ ok: true, entry: entryPayload(fresh) });
   }),
@@ -980,6 +1016,14 @@ router.post(
     const act = await prisma.payrollActivity.findUnique({ where: { id: entry.activityId }, select: { tourEventId: true } });
     if (act?.tourEventId) kickPayrollReconcile('tour', act.tourEventId);
     else kickPayrollReconcile('personRef', person.id);
+    // Both sides of the transfer: the previous guide's portal drops the card,
+    // the new guide's view stays correct (they see it only after approval).
+    emitPayrollChanged(prisma, {
+      activityId: entry.activityId,
+      entryId: entry.id,
+      externalPersonIds: [entry.externalPersonId, ext],
+      reason: 'entry_updated',
+    });
     res.json({ ok: true });
   }),
 );
@@ -1049,6 +1093,12 @@ router.post(
       origin,
     });
     await resetGuideApproval(entry, origin);
+    emitPayrollChanged(prisma, {
+      activityId: entry.activityId,
+      entryId: entry.id,
+      externalPersonId: entry.externalPersonId,
+      reason: 'entry_updated',
+    });
     const fresh = await prisma.payrollEntry.findUnique({ where: { id: entry.id }, include: { lines: true } });
     res.json({ ok: true, changed: changes.length, entry: entryPayload(fresh) });
   }),
@@ -1086,6 +1136,7 @@ router.patch(
       data: { event: 'schedule_changed', from: { payrollMonth: activity.payrollMonth, date: activity.date }, to: data },
       origin,
     });
+    emitPayrollChanged(prisma, { activityId: activity.id, reason: 'entry_updated' });
     res.json({ ok: true });
   }),
 );
@@ -1163,6 +1214,12 @@ router.post(
           data: { guideStatus: 'pending', guideApprovedAt: null },
         });
       }
+      emitPayrollChanged(prisma, {
+        activityId: entry.activityId,
+        entryId: entry.id,
+        externalPersonId: entry.externalPersonId,
+        reason: 'entry_updated',
+      });
     }
     const fresh = await prisma.payrollEntry.findUnique({ where: { id: entry.id }, include: { lines: true } });
     res.json({ ok: true, changed: changes.length, entry: entryPayload(fresh) });
