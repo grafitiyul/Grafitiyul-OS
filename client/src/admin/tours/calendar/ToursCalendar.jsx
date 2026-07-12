@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../../lib/api.js';
 import {
   TOUR_STATUS_LABELS,
-  statusFilterMatches,
+  normalizeStatusFilter,
   fmtTourDate,
 } from '../config.js';
 import {
@@ -39,7 +39,13 @@ const GRID_END_MIN = 23 * 60;
 const GRID_TOTAL_MIN = GRID_END_MIN - GRID_START_MIN;
 const DEFAULT_DURATION_HOURS = 2;
 
-export default function ToursCalendar({ search, kind, status, onOpenTour, view, onViewState }) {
+export default function ToursCalendar({ search, kind, statuses, status, onOpenTour, view, onViewState }) {
+  // Canonical multi-select set; the legacy single `status` prop still
+  // normalizes through the ONE shared helper (old callers/tests keep working).
+  const statusList = useMemo(
+    () => normalizeStatusFilter(statuses ?? status),
+    [statuses, status],
+  );
   const [mode, setMode] = useState(view?.mode || 'month'); // 'month' | 'week' | 'day'
   const [anchor, setAnchor] = useState(view?.anchor || todayIL());
   const [events, setEvents] = useState(null); // null = loading
@@ -67,11 +73,12 @@ export default function ToursCalendar({ search, kind, status, onOpenTour, view, 
     onViewState?.({ mode, anchor });
   }, [mode, anchor, onViewState]);
 
+  const statusesParam = statusList.join(',');
   useEffect(() => {
     let alive = true;
     setError(null);
     api.tours
-      .calendar({ from, to, status, ...(kind && kind !== 'all' ? { kind } : {}) })
+      .calendar({ from, to, statuses: statusesParam, ...(kind && kind !== 'all' ? { kind } : {}) })
       .then((res) => {
         if (alive) setEvents(res.events || []);
       })
@@ -84,7 +91,7 @@ export default function ToursCalendar({ search, kind, status, onOpenTour, view, 
     return () => {
       alive = false;
     };
-  }, [from, to, status, kind, reloadKey]);
+  }, [from, to, statusesParam, kind, reloadKey]);
 
   // Same free-text semantics as the table (product / city / notes / date) and
   // a client-side re-check of the status filter so the two views can never
@@ -92,7 +99,7 @@ export default function ToursCalendar({ search, kind, status, onOpenTour, view, 
   const visible = useMemo(() => {
     const q = (search || '').trim().toLowerCase();
     return (events || []).filter((ev) => {
-      if (!statusFilterMatches(status, ev.status)) return false;
+      if (!statusList.includes(ev.status)) return false;
       if (!q) return true;
       return [ev.productName, ev.city, ev.notes, ev.date, ev.customerDisplayName]
         .filter(Boolean)
@@ -100,7 +107,7 @@ export default function ToursCalendar({ search, kind, status, onOpenTour, view, 
         .toLowerCase()
         .includes(q);
     });
-  }, [events, search, status]);
+  }, [events, search, statusList]);
 
   const byDate = useMemo(() => {
     const map = new Map();

@@ -54,25 +54,37 @@ export const TOUR_STATUS_EVENT_STYLES = {
   postponed: 'bg-amber-50 border-amber-400 text-amber-900 hover:bg-amber-100',
 };
 
-// Status filter vocabulary — shared by the table AND the calendar view (the
-// two are views of the same TourEvent data and must never show different
-// datasets under the same filter). 'active' = operationally-live tours (the
-// default); cancelled tours appear only when explicitly requested.
+// Status filter vocabulary — ONE canonical MULTI-SELECT state shared by the
+// table AND the calendar view (two views of the same TourEvent data — they
+// must never show different datasets under the same filter).
+//
+// Semantics (documented product decision):
+//   • the filter value is an ARRAY of canonical statuses
+//   • default = עתידי + נדחה (operationally-live tours)
+//   • clearing to NONE resets to the default — cancelled tours appear ONLY
+//     when בוטל is explicitly checked, never as a side effect of an empty
+//     selection (so the MultiSelectFilter "[] = unrestricted" convention is
+//     deliberately NOT used here)
 export const ACTIVE_STATUSES = ['scheduled', 'postponed'];
+export const DEFAULT_STATUS_FILTER = ACTIVE_STATUSES;
 
-export const STATUS_FILTER_OPTIONS = [
-  ['active', 'פעילים'],
-  ['scheduled', 'עתידיים'],
-  ['completed', 'הסתיימו'],
-  ['postponed', 'נדחו'],
-  ['cancelled', 'בוטלו'],
-  ['all', 'הכול'],
-];
+export const STATUS_FILTER_CHOICES = TOUR_STATUSES.map((s) => ({
+  value: s,
+  label: TOUR_STATUS_LABELS[s],
+}));
 
-export function statusFilterMatches(filter, tourStatus) {
-  if (filter === 'all') return true;
-  if (filter === 'active') return ACTIVE_STATUSES.includes(tourStatus);
-  return tourStatus === filter;
+// THE normalizer/migrator: accepts the new array shape, the LEGACY persisted
+// single-select value ('active' | 'all' | one status), or garbage — always
+// returns a valid non-empty canonical array.
+export function normalizeStatusFilter(input) {
+  if (Array.isArray(input)) {
+    const valid = [...new Set(input.filter((s) => TOUR_STATUSES.includes(s)))];
+    return valid.length ? valid : DEFAULT_STATUS_FILTER;
+  }
+  if (input === 'active') return DEFAULT_STATUS_FILTER;
+  if (input === 'all') return [...TOUR_STATUSES];
+  if (TOUR_STATUSES.includes(input)) return [input];
+  return DEFAULT_STATUS_FILTER;
 }
 
 // Google Calendar mirror status (server: TourEvent.gcalSyncStatus). null =

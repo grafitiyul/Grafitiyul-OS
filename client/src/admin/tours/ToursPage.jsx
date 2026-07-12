@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../common/tableColumns.jsx';
@@ -11,16 +11,17 @@ import { loadToursView, saveToursView } from './viewPrefs.js';
 import { useTourChanged, useTourMidnightRefresh } from './tourEvents.js';
 import TourSlotModal from './TourSlotModal.jsx';
 import ToursCalendar from './calendar/ToursCalendar.jsx';
+import MultiSelectFilter from '../common/filters/MultiSelectFilter.jsx';
 import {
   TOUR_KIND_LABELS,
   TOUR_KIND_STYLES,
   TOUR_STATUS_LABELS,
   TOUR_STATUS_STYLES,
   TOUR_LANG_LABELS,
-  STATUS_FILTER_OPTIONS,
+  STATUS_FILTER_CHOICES,
   ASSIGNMENT_ROLE_TEXT,
   ASSIGNMENT_ROLE_LABELS,
-  statusFilterMatches,
+  normalizeStatusFilter,
   fmtTourDate,
 } from './config.js';
 
@@ -209,8 +210,6 @@ const KIND_FILTERS = [
   ['business', TOUR_KIND_LABELS.business],
 ];
 
-const STATUS_FILTERS = STATUS_FILTER_OPTIONS;
-
 export default function ToursPage() {
   const navigate = useNavigate();
   // One-time saved-layout migration: the old "customer" column (which actually
@@ -238,7 +237,12 @@ export default function ToursPage() {
   const [saved] = useState(loadFilters);
   const [search, setSearch] = useState(saved.search ?? '');
   const [kind, setKind] = useState(saved.kind ?? 'all');
-  const [status, setStatus] = useState(saved.status ?? 'active');
+  // ONE canonical multi-select status set for BOTH views. Migrates the legacy
+  // single-select preference (saved.status: 'active'/'all'/one status) in
+  // place; default = עתידי + נדחה, cancelled only when explicitly checked.
+  const [statuses, setStatuses] = useState(() =>
+    normalizeStatusFilter(saved.statuses ?? saved.status),
+  );
   // Upcoming first — the operational default.
   const [sort, setSort] = useState({ key: 'date', dir: 'asc' });
 
@@ -247,8 +251,8 @@ export default function ToursPage() {
   const [confirmAction, setConfirmAction] = useState(null); // { type: 'cancel'|'delete'|'restore', tour }
 
   useEffect(() => {
-    saveFilters({ search, kind, status });
-  }, [search, kind, status]);
+    saveFilters({ search, kind, statuses });
+  }, [search, kind, statuses]);
 
   useEffect(() => {
     // Persist the FULL calendar context — the anchor too, so a refresh
@@ -259,9 +263,11 @@ export default function ToursPage() {
   const { colKeys, toggleCol, moveCol, setColWidth, resetCols, widths, visibleCols, orderedColumns } =
     useTableColumns(COLUMNS_KEY, COLUMNS);
 
-  async function refresh() {
+  // Status filtering is SERVER-side (the exact selected set rides the query —
+  // same parser as the calendar endpoint) so the two views can never diverge.
+  const refresh = useCallback(async () => {
     try {
-      const tours = await api.tours.list();
+      const tours = await api.tours.list({ statuses: statuses.join(',') });
       setRows(tours);
       setError(null);
     } catch (e) {
@@ -269,11 +275,11 @@ export default function ToursPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [statuses]);
 
   useEffect(() => {
     refresh();
-  }, []);
+  }, [refresh]);
 
   // A tour changed elsewhere (e.g. a Deal's "עדכון סיור", even in another tab)
   // → silently re-fetch the list. refresh() keeps the current rows visible
@@ -290,7 +296,9 @@ export default function ToursPage() {
     const q = search.trim().toLowerCase();
     let out = rows.filter((t) => {
       if (kind !== 'all' && t.kind !== kind) return false;
-      if (!statusFilterMatches(status, t.status)) return false;
+      // Defensive re-check of the server-side status filter (same rule the
+      // calendar applies) — the two views can never show different datasets.
+      if (!statuses.includes(t.status)) return false;
       if (q) {
         const hay = [
           t.product?.nameHe,
@@ -322,7 +330,7 @@ export default function ToursPage() {
       });
     }
     return out;
-  }, [rows, search, kind, status, sort]);
+  }, [rows, search, kind, statuses, sort]);
 
   function onSort(key) {
     setSort((s) => (s.key === key ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'asc' }));
@@ -430,15 +438,20 @@ export default function ToursPage() {
               <option key={val} value={val}>{lbl}</option>
             ))}
           </select>
-          <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className="h-10 min-w-[8rem] rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
-          >
-            {STATUS_FILTERS.map(([val, lbl]) => (
-              <option key={val} value={val}>{lbl}</option>
-            ))}
-          </select>
+          {/* Multi-select status — the shared MultiSelectFilter (same component
+              as the payroll report filters). "נקה הכול" resets to the documented
+              default (עתידי + נדחה) via normalizeStatusFilter — an empty
+              selection never silently means "everything", so cancelled tours
+              stay hidden unless בוטל is explicitly checked. */}
+          <MultiSelectFilter
+            label="סטטוס"
+            options={STATUS_FILTER_CHOICES}
+            values={statuses}
+            onChange={(next) => setStatuses(normalizeStatusFilter(next))}
+            allLabel="הכול"
+            noun={{ one: 'סטטוס', many: 'סטטוסים' }}
+            width={200}
+          />
           {tab === 'table' && (
             <div className="ms-auto">
               <ColumnPicker
@@ -457,7 +470,7 @@ export default function ToursPage() {
         <ToursCalendar
           search={search}
           kind={kind}
-          status={status}
+          statuses={statuses}
           view={calView}
           onViewState={setCalView}
           onOpenTour={(id) => navigate(`/admin/tours/${id}`)}

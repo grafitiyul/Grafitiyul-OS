@@ -11,6 +11,7 @@ import {
   missingFields,
 } from '../tours/requiredFields.js';
 import { ensureGeneratedSlots, getTourSettings } from '../tours/slotGeneration.js';
+import { tourStatusWhere } from '../tours/statusFilter.js';
 import { occupancyFor } from '../tours/occupancy.js';
 import {
   cancelDealBooking,
@@ -265,7 +266,12 @@ router.get(
     }
     const where = {};
     if (req.query.kind) where.kind = String(req.query.kind);
-    if (req.query.status) where.status = String(req.query.status);
+    // Multi-select statuses (canonical) / legacy single status — ONE parser
+    // shared with the calendar. No saved preference → everything (unchanged
+    // default for untouched API consumers).
+    const statusFilter = tourStatusWhere(req.query, { fallback: null });
+    if (!statusFilter.ok) return res.status(400).json({ error: statusFilter.error });
+    if (statusFilter.where != null) where.status = statusFilter.where;
     if (req.query.dateFrom || req.query.dateTo) {
       where.date = {
         ...(req.query.dateFrom ? { gte: String(req.query.dateFrom) } : {}),
@@ -320,14 +326,11 @@ router.get(
       return res.status(400).json({ error: 'range_too_large' });
     }
     const where = { date: { gte: from, lte: to } };
-    const status = String(req.query.status || 'active');
-    if (status === 'active') where.status = { in: ['scheduled', 'postponed'] };
-    else if (status !== 'all') {
-      if (!TOUR_EVENT_STATUSES.includes(status)) {
-        return res.status(400).json({ error: 'invalid_status' });
-      }
-      where.status = status;
-    }
+    // Same parser as the list — multi-select statuses / legacy status. The
+    // calendar keeps its historical default: no filter → active tours only.
+    const statusFilter = tourStatusWhere(req.query, { fallback: 'active' });
+    if (!statusFilter.ok) return res.status(400).json({ error: statusFilter.error });
+    if (statusFilter.where != null) where.status = statusFilter.where;
     if (req.query.kind) where.kind = String(req.query.kind);
     const tours = await prisma.tourEvent.findMany({
       where,
