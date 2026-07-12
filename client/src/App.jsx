@@ -58,6 +58,7 @@ import DealsList from './admin/deals/DealsList.jsx';
 import FinanceLayout from './admin/finance/FinanceLayout.jsx';
 import FinancePlaceholder from './admin/finance/FinancePlaceholder.jsx';
 import PayrollDayPage from './admin/finance/payroll/PayrollDayPage.jsx';
+import PayrollReportPage from './admin/finance/payroll/PayrollReportPage.jsx';
 import CollectionPage from './admin/collection/CollectionPage.jsx';
 // Aliased: ToursPage is taken by the PUBLIC tours page import below.
 import AdminToursPage from './admin/tours/ToursPage.jsx';
@@ -198,6 +199,7 @@ export default function App() {
           <Route index element={<Navigate to="/admin/finance/collection" replace />} />
           <Route path="collection" element={<CollectionPage />} />
           <Route path="payroll" element={<PayrollDayPage />} />
+          <Route path="payroll/reports" element={<PayrollReportPage />} />
           <Route
             path="management"
             element={

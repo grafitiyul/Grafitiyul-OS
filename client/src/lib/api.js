@@ -669,6 +669,8 @@ export const api = {
     recalcEntry: (id) =>
       request(`/api/payroll/entries/${id}/recalc`, { method: 'POST' }),
     staff: () => request('/api/payroll/staff'),
+    report: (months) =>
+      request(`/api/payroll/report?months=${encodeURIComponent(months.join(','))}`),
     createGeneralActivity: (data) =>
       request('/api/payroll/general-activities', { method: 'POST', body: JSON.stringify(data) }),
     components: {

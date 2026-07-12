@@ -150,6 +150,90 @@ router.get(
   }),
 );
 
+// ---------- report (grouped by guide) ----------
+// GET /api/payroll/report?months=YYYY-MM,YYYY-MM,…
+// The client composes the month set from the year/month multi-select — one
+// year, several years, whole years, cross-year comparisons: all just a list.
+// Admin totals include office-approved entries IMMEDIATELY (guide approval is
+// not required); guide-approved and waiting are broken out alongside.
+router.get(
+  '/report',
+  handle(async (req, res) => {
+    const months = String(req.query.months || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => /^\d{4}-\d{2}$/.test(s));
+    if (months.length === 0) return res.status(400).json({ error: 'months_required' });
+
+    const entries = await prisma.payrollEntry.findMany({
+      where: { state: 'active', activity: { state: 'active', payrollMonth: { in: months } } },
+      include: { activity: true, lines: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const zero = () => ({ officeApprovedMinor: 0, guideApprovedMinor: 0, waitingMinor: 0, draftMinor: 0 });
+    const summary = zero();
+    const byGuide = new Map();
+    for (const e of entries) {
+      const totals = entryTotals(e.lines, { vatStatus: e.vatStatusSnapshot, vatRate: e.vatRateSnapshot });
+      const officeApproved = e.activity.status === 'office_approved';
+      const status = !officeApproved
+        ? 'draft'
+        : e.guideStatus === 'approved'
+          ? 'completed'
+          : e.guideStatus === 'inquiry'
+            ? 'inquiry'
+            : 'waiting_guide';
+
+      let g = byGuide.get(e.externalPersonId);
+      if (!g) {
+        g = { externalPersonId: e.externalPersonId, displayName: e.displayName, entries: [], totals: zero() };
+        byGuide.set(e.externalPersonId, g);
+      }
+      g.displayName = e.displayName; // latest snapshot wins for the header
+      for (const t of [g.totals, summary]) {
+        if (officeApproved) {
+          t.officeApprovedMinor += totals.totalMinor;
+          if (e.guideStatus === 'approved') t.guideApprovedMinor += totals.totalMinor;
+          else t.waitingMinor += totals.totalMinor;
+        } else {
+          t.draftMinor += totals.totalMinor;
+        }
+      }
+      g.entries.push({
+        id: e.id,
+        activityId: e.activityId,
+        activityTitle: e.activity.titleHe,
+        sourceType: e.activity.sourceType,
+        date: e.activity.date,
+        payrollMonth: e.activity.payrollMonth,
+        role: e.role,
+        status,
+        guideStatus: e.guideStatus,
+        vatStatus: e.vatStatusSnapshot,
+        hasOverride: e.lines.some((l) => l.overrideMinor != null),
+        notes: e.notes,
+        officeApprovedBy: e.activity.officeApprovedBy,
+        lines: e.lines
+          .filter((l) => (l.overrideMinor ?? l.calculatedMinor) != null && Number(l.overrideMinor ?? l.calculatedMinor) !== 0)
+          .sort((a, b) => a.sortOrder - b.sortOrder)
+          .map((l) => ({
+            name: l.componentNameHe,
+            sign: l.sign,
+            amountMinor: Number(l.overrideMinor ?? l.calculatedMinor),
+            overridden: l.overrideMinor != null,
+          })),
+        totals,
+      });
+    }
+    const guides = [...byGuide.values()].sort((a, b) => a.displayName.localeCompare(b.displayName, 'he'));
+    for (const g of guides) {
+      g.entries.sort((a, b) => String(a.date || a.payrollMonth).localeCompare(String(b.date || b.payrollMonth)));
+    }
+    res.json({ months, guides, summary });
+  }),
+);
+
 // ---------- staff picker (light — no upstream sync) ----------
 router.get(
   '/staff',

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import { formatMinor } from '../../../lib/money.js';
 import { DateField, fmtDate } from '../../common/pickers/DateTimeFields.jsx';
@@ -63,6 +64,12 @@ export default function PayrollDayPage() {
     <div className="relative h-full flex flex-col">
       <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-200 bg-white flex-wrap">
         <h1 className="text-base font-semibold text-gray-900">שכר צוות</h1>
+        <div className="flex items-center rounded-lg border border-gray-200 overflow-hidden text-[12px]">
+          <span className="px-2.5 py-1 bg-blue-50 text-blue-700 font-medium">יומי</span>
+          <Link to="/admin/finance/payroll/reports" className="px-2.5 py-1 text-gray-600 hover:bg-gray-50">
+            דוחות
+          </Link>
+        </div>
         <div className="flex items-center gap-1">
           <button
             type="button"
