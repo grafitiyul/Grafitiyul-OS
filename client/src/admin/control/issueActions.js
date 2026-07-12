@@ -35,3 +35,18 @@ registerApiAction('whatsapp_scheduled_stuck', 'cancel', async (issue) => {
   const { api } = await import('../../lib/api.js');
   await api.whatsapp.cancelScheduled(issue.data.messageId);
 });
+
+// ── Deal ↔ Tour out of sync ──────────────────────────────────────────────────
+// Reuse the ONE tour-update orchestration (apply) and the discard restore.
+
+// "עדכן סיור" — converge the live tour onto the deal's desired state.
+registerApiAction('deal_tour_out_of_sync', 'apply', async (issue) => {
+  const { api } = await import('../../lib/api.js');
+  await api.deals.applyTourUpdate(issue.data.dealId);
+});
+
+// "בטל שינויי דיל" — restore the deal's planning fields to the applied tour.
+registerApiAction('deal_tour_out_of_sync', 'discard', async (issue) => {
+  const { api } = await import('../../lib/api.js');
+  await api.deals.discardTourUpdate(issue.data.dealId);
+});
