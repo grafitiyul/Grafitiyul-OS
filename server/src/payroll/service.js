@@ -15,7 +15,13 @@ import { isAssignableStaff } from '../people/eligibility.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
 import { sabbathHolidayWindow } from '../pricing/engine.js';
 import { vatRatePercent } from '../icountDocs.js';
-import { ENGINE_VERSION, WEEKEND_MULTIPLIER, buildEntryLines } from './engine.js';
+import {
+  ENGINE_VERSION,
+  WEEKEND_MULTIPLIER,
+  buildEntryLines,
+  deriveOfficeState,
+  entryApprovable,
+} from './engine.js';
 
 export const PAYROLL_SUBJECT = 'payroll_activity';
 
@@ -263,15 +269,21 @@ export async function ensureTourPayroll(client, tourEventId) {
     }
   }
 
-  // DRAFT auto-recalculation (product rule): while the activity has not been
-  // office-approved, business changes (variant rates, profile supplements,
-  // participants, שבת/חג settings) flow into the calculated values
-  // automatically — overrides always preserved. From office approval onward
-  // NOTHING recalculates automatically; only manual edits (and the month-gated
-  // maintenance recalc) touch an approved activity.
-  if (activity.status === 'draft' && activity.state === 'active') {
-    // Draft attributes follow the tour (date moves, product/location rename):
-    // the activity is a projection of the tour until office approval freezes it.
+  // DRAFT auto-recalculation (product rule): a DRAFT entry is an automatically
+  // maintained projection — business changes (variant rates, profile
+  // supplements, participants, שבת/חג settings) flow into its calculated
+  // values, overrides always preserved. Approval is PER ENTRY: in a partially
+  // approved activity only the still-draft entries sync; office-approved
+  // entries never recalculate automatically (manual edits and the month-gated
+  // maintenance recalc only).
+  const currentEntries = await client.payrollEntry.findMany({
+    where: { activityId: activity.id },
+    select: { state: true, officeStatus: true },
+  });
+  const officeState = deriveOfficeState(currentEntries);
+  if (activity.state === 'active' && officeState !== 'office_approved') {
+    // Draft-era attributes follow the tour (date moves, product/location
+    // rename): the activity is a projection until fully office-approved.
     const desired = { titleHe: tourTitle(tour), date: tour.date, payrollMonth: monthOf(tour.date) };
     if (
       activity.titleHe !== desired.titleHe ||
@@ -280,9 +292,13 @@ export async function ensureTourPayroll(client, tourEventId) {
     ) {
       await client.payrollActivity.update({ where: { id: activity.id }, data: desired });
     }
+  }
+  if (activity.state === 'active') {
     const fresh = await client.payrollActivity.findUnique({
       where: { id: activity.id },
-      include: { entries: { where: { state: 'active' }, include: { lines: true } } },
+      include: {
+        entries: { where: { state: 'active', officeStatus: 'draft' }, include: { lines: true } },
+      },
     });
     let totalChanges = 0;
     for (const entry of fresh.entries) {
@@ -363,6 +379,81 @@ export async function syncEntryLines(client, entry, freshLines) {
   return changes;
 }
 
+// ═══ Office approval (selective, entry-level truth) ═══
+// THE approval write path. Bulk "אשר שכר" and the per-person control both go
+// through here — one service, one truth (PayrollEntry.officeStatus). Entries
+// with nothing to pay (all-zero finals) are never silently approved: they are
+// reported back as skipped and stay draft.
+export async function approveEntries(client, { activityId, entryIds = null, origin = null }) {
+  const activity = await client.payrollActivity.findUnique({
+    where: { id: activityId },
+    include: { entries: { include: { lines: true } } },
+  });
+  if (!activity) return { error: 'not_found' };
+  if (activity.state !== 'active') return { error: 'activity_cancelled' };
+  const candidates = activity.entries.filter(
+    (e) =>
+      e.state === 'active' &&
+      e.officeStatus !== 'approved' &&
+      (entryIds == null || entryIds.includes(e.id)),
+  );
+  const approved = [];
+  const skipped = [];
+  const by = origin?.createdByName || null;
+  for (const e of candidates) {
+    if (!entryApprovable(e.lines)) {
+      skipped.push({ entryId: e.id, displayName: e.displayName, reason: 'zero_total' });
+      continue;
+    }
+    await client.payrollEntry.update({
+      where: { id: e.id },
+      data: { officeStatus: 'approved', officeApprovedAt: new Date(), officeApprovedBy: by },
+    });
+    approved.push({ entryId: e.id, displayName: e.displayName });
+  }
+  if (approved.length) {
+    await emitTimelineEvent(client, {
+      subjectType: PAYROLL_SUBJECT,
+      subjectId: activity.id,
+      kind: 'payroll',
+      body: `✅ אושר שכר במשרד עבור: ${approved.map((a) => a.displayName).join(', ')}`,
+      data: { event: 'office_approved_entries', entryIds: approved.map((a) => a.entryId) },
+      origin: origin || systemOrigin(),
+    });
+  }
+  return { approved, skipped };
+}
+
+// Remove office approval from ONE entry (hides it from the guide again).
+// The guide-side state resets — a stale guide approval must not survive.
+export async function unapproveEntry(client, { entryId, origin = null }) {
+  const entry = await client.payrollEntry.findUnique({
+    where: { id: entryId },
+    include: { activity: true },
+  });
+  if (!entry) return { error: 'not_found' };
+  if (entry.officeStatus !== 'approved') return { already: true };
+  await client.payrollEntry.update({
+    where: { id: entry.id },
+    data: {
+      officeStatus: 'draft',
+      officeApprovedAt: null,
+      officeApprovedBy: null,
+      guideStatus: 'pending',
+      guideApprovedAt: null,
+    },
+  });
+  await emitTimelineEvent(client, {
+    subjectType: PAYROLL_SUBJECT,
+    subjectId: entry.activityId,
+    kind: 'payroll',
+    body: `↩️ הוסר אישור המשרד עבור ${entry.displayName}`,
+    data: { event: 'office_unapproved_entry', entryId: entry.id },
+    origin: origin || systemOrigin(),
+  });
+  return { ok: true };
+}
+
 // ═══ Push-based DRAFT reconciliation ═══
 // The rule: whenever a payroll-relevant mutation SUCCEEDS, the affected DRAFT
 // activities reconcile immediately in the background — payroll is an
@@ -394,9 +485,10 @@ export function kickPayrollReconcile(scope, ref = null) {
 // General (non-tour) draft entries reconcile per entry via recalcEntry —
 // same engine, same snapshot rules — with the same aggregate history event
 // the tour draft-sync emits (and only when something actually changed).
+// Approval is per entry: only still-draft entries sync.
 async function reconcileGeneralDraftActivity(client, activity) {
   const entries = await client.payrollEntry.findMany({
-    where: { activityId: activity.id, state: 'active' },
+    where: { activityId: activity.id, state: 'active', officeStatus: 'draft' },
     select: { id: true },
   });
   let totalChanges = 0;
@@ -425,7 +517,8 @@ export async function reconcileDraftsForPersonRef(client, personRefId) {
     where: {
       externalPersonId: person.externalPersonId,
       state: 'active',
-      activity: { state: 'active', status: 'draft' },
+      officeStatus: 'draft',
+      activity: { state: 'active' },
     },
     select: { activity: { select: { id: true, sourceType: true, tourEventId: true } } },
   });
@@ -447,9 +540,9 @@ export async function reconcileDraftsForVariant(client, productVariantId) {
   const activities = await client.payrollActivity.findMany({
     where: {
       state: 'active',
-      status: 'draft',
       sourceType: 'tour_event',
       tourEvent: { productVariantId },
+      entries: { some: { state: 'active', officeStatus: 'draft' } },
     },
     select: { tourEventId: true },
   });
@@ -463,7 +556,7 @@ export async function reconcileDraftsForVariant(client, productVariantId) {
 // by construction; the limit is a runaway backstop, not an operating bound.
 export async function reconcileAllDrafts(client, { limit = 500 } = {}) {
   const drafts = await client.payrollActivity.findMany({
-    where: { state: 'active', status: 'draft' },
+    where: { state: 'active', entries: { some: { state: 'active', officeStatus: 'draft' } } },
     select: { id: true, sourceType: true, tourEventId: true },
     orderBy: { createdAt: 'desc' },
     take: limit,

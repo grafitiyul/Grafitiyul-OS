@@ -662,10 +662,17 @@ export const api = {
     activity: (id) => request(`/api/payroll/activities/${id}`),
     updateLine: (id, data) =>
       request(`/api/payroll/lines/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
-    approveActivity: (id) =>
-      request(`/api/payroll/activities/${id}/approve`, { method: 'POST' }),
-    unapproveActivity: (id) =>
-      request(`/api/payroll/activities/${id}/unapprove`, { method: 'POST' }),
+    // Bulk "אשר שכר" — approves every currently-unapproved VALID entry
+    // (optionally a subset via entryIds). Entry-level truth on the server.
+    approveActivity: (id, entryIds = null) =>
+      request(`/api/payroll/activities/${id}/approve`, {
+        method: 'POST',
+        body: JSON.stringify(entryIds ? { entryIds } : {}),
+      }),
+    officeApproveEntry: (id) =>
+      request(`/api/payroll/entries/${id}/office-approve`, { method: 'POST' }),
+    officeUnapproveEntry: (id) =>
+      request(`/api/payroll/entries/${id}/office-unapprove`, { method: 'POST' }),
     report: (months, guides = []) =>
       request(
         `/api/payroll/report?months=${encodeURIComponent(months.join(','))}${

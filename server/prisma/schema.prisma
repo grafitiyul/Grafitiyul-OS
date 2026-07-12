@@ -3940,11 +3940,16 @@ model PayrollActivity {
   titleHe           String // display snapshot (product/variant or activity title)
   payrollMonth      String // "YYYY-MM" (tours: derived from the tour date)
   date              String? // "YYYY-MM-DD" (null only for month-level general)
-  state             String           @default("active") // active | cancelled
-  // Office approval — activity level ONLY (one action for all entries).
-  status            String           @default("draft") // draft | office_approved
+  state             String           @default("active") // active | cancelled | voided
+  // DEPRECATED (2026-07 selective-approval refinement): office approval moved
+  // to PayrollEntry.officeStatus — THE single approval truth. The activity
+  // office-state (draft | partially_approved | office_approved) is DERIVED
+  // from its entries (engine deriveOfficeState) and never persisted. These
+  // three columns are frozen: never read, never written (kept only because
+  // migrations are additive).
+  status            String           @default("draft")
   officeApprovedAt  DateTime?
-  officeApprovedBy  String? // AdminUser username snapshot
+  officeApprovedBy  String?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 
@@ -3970,8 +3975,14 @@ model PayrollEntry {
   displayName       String
   role              String? // lead_guide | guide | workshop_assistant | null (general)
   tourAssignmentId  String? // loose ref — assignments may be deleted/recreated
-  state             String          @default("active") // active | cancelled
-  // Guide side of the approval flow (meaningful once the activity is
+  state             String          @default("active") // active | cancelled | voided
+  // Office approval — THE single source of truth, PER ENTRY (selective
+  // approval inside a multi-person activity). The activity-level "אשר שכר"
+  // is only a bulk operation over these fields, never a second truth.
+  officeStatus      String          @default("draft") // draft | approved
+  officeApprovedAt  DateTime?
+  officeApprovedBy  String? // AdminUser username snapshot
+  // Guide side of the approval flow (meaningful once THIS entry is
   // office-approved): pending | approved | inquiry (בבירור).
   guideStatus       String          @default("pending")
   guideApprovedAt   DateTime?

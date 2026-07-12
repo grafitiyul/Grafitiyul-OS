@@ -46,7 +46,9 @@ function guideOrigin(person) {
 }
 
 // Own-entry resolution used by both actions: the entry must belong to this
-// guide, be active, and its activity must be office-approved and active.
+// guide, be active, and be OFFICE-APPROVED — the entry-level truth. In a
+// partially approved activity each guide sees exactly their own approved
+// entry and nothing about anyone else's approval state.
 async function ownEntry(req, res, access) {
   const entry = await prisma.payrollEntry.findUnique({
     where: { id: req.params.entryId },
@@ -56,8 +58,8 @@ async function ownEntry(req, res, access) {
     !entry ||
     entry.externalPersonId !== access.person.externalPersonId ||
     entry.state !== 'active' ||
-    entry.activity.state !== 'active' ||
-    entry.activity.status !== 'office_approved'
+    entry.officeStatus !== 'approved' ||
+    entry.activity.state !== 'active'
   ) {
     res.status(404).json({ error: 'not_found' });
     return null;
@@ -79,7 +81,8 @@ router.get(
       where: {
         externalPersonId: access.person.externalPersonId,
         state: 'active',
-        activity: { state: 'active', status: 'office_approved', payrollMonth: month },
+        officeStatus: 'approved', // entry-level office approval — THE gate
+        activity: { state: 'active', payrollMonth: month },
       },
       include: { activity: true, lines: true },
       orderBy: { createdAt: 'asc' },
@@ -102,7 +105,8 @@ router.get(
       where: {
         externalPersonId: access.person.externalPersonId,
         state: 'active',
-        activity: { state: 'active', status: 'office_approved' },
+        officeStatus: 'approved',
+        activity: { state: 'active' },
       },
       select: { activity: { select: { payrollMonth: true } } },
     });

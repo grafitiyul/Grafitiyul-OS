@@ -25,23 +25,29 @@ import {
   ensureTourPayroll,
   createGeneralActivity,
   recalcEntry,
+  approveEntries,
+  unapproveEntry,
   kickPayrollReconcile,
   monthOf,
 } from '../payroll/service.js';
-import { entryTotals } from '../payroll/engine.js';
+import { entryTotals, deriveOfficeState } from '../payroll/engine.js';
 import { businessToday } from '../tours/completion.js';
 
 const router = Router();
 
 const ROLE_ORDER = { lead_guide: 0, guide: 1, workshop_assistant: 2 };
 
-// Derived display status — one derivation, used by day list + drawer + portal.
+// Derived display status — one derivation, used by day list + drawer + report.
+// Office approval truth is PER ENTRY; the activity state is derived
+// (deriveOfficeState) and never persisted.
 export function activityDisplayStatus(activity, entries) {
-  if (activity.state === 'cancelled') return 'cancelled';
+  if (activity.state !== 'active') return 'cancelled';
   const active = (entries || []).filter((e) => e.state === 'active');
   if (active.length === 0) return 'missing';
-  if (activity.status !== 'office_approved') return 'draft';
-  if (active.some((e) => e.guideStatus === 'inquiry')) return 'inquiry';
+  if (active.some((e) => e.officeStatus === 'approved' && e.guideStatus === 'inquiry')) return 'inquiry';
+  const officeState = deriveOfficeState(active);
+  if (officeState === 'draft') return 'draft';
+  if (officeState === 'partially_approved') return 'partially_approved';
   if (active.every((e) => e.guideStatus === 'approved')) return 'completed';
   return 'waiting_guide';
 }
@@ -63,6 +69,9 @@ function entryPayload(e) {
     externalPersonId: e.externalPersonId,
     role: e.role,
     state: e.state,
+    officeStatus: e.officeStatus,
+    officeApprovedAt: e.officeApprovedAt,
+    officeApprovedBy: e.officeApprovedBy,
     guideStatus: e.guideStatus,
     guideApprovedAt: e.guideApprovedAt,
     vatStatus: e.vatStatusSnapshot,
@@ -91,6 +100,7 @@ function activitySummary(a) {
     (n, e) => n + entryTotals(e.lines || [], { vatStatus: e.vatStatusSnapshot, vatRate: e.vatRateSnapshot }).totalMinor,
     0,
   );
+  const approvedEntries = activeEntries.filter((e) => e.officeStatus === 'approved');
   return {
     id: a.id,
     sourceType: a.sourceType,
@@ -100,9 +110,9 @@ function activitySummary(a) {
     payrollMonth: a.payrollMonth,
     date: a.date,
     state: a.state,
-    status: a.status,
-    officeApprovedAt: a.officeApprovedAt,
-    officeApprovedBy: a.officeApprovedBy,
+    // DERIVED from the entries — the activity has no persisted approval.
+    status: deriveOfficeState(activeEntries),
+    approvedCount: approvedEntries.length,
     displayStatus: activityDisplayStatus(a, a.entries),
     entryCount: activeEntries.length,
     officeTotalMinor,
@@ -189,12 +199,21 @@ router.get(
       ? allEntries.filter((e) => guideFilter.includes(e.externalPersonId))
       : allEntries;
 
-    const zero = () => ({ officeApprovedMinor: 0, guideApprovedMinor: 0, waitingMinor: 0, draftMinor: 0 });
+    const zero = () => ({
+      officeApprovedMinor: 0,
+      guideApprovedMinor: 0,
+      waitingMinor: 0,
+      draftMinor: 0,
+      // Inquiry stays INSIDE the office-approved commitment, broken out for
+      // visibility (product rule).
+      inquiryMinor: 0,
+    });
     const summary = zero();
     const byGuide = new Map();
     for (const e of entries) {
       const totals = entryTotals(e.lines, { vatStatus: e.vatStatusSnapshot, vatRate: e.vatRateSnapshot });
-      const officeApproved = e.activity.status === 'office_approved';
+      // Entry-level office approval — THE truth (activity state is derived).
+      const officeApproved = e.officeStatus === 'approved';
       const status = !officeApproved
         ? 'draft'
         : e.guideStatus === 'approved'
@@ -214,6 +233,7 @@ router.get(
           t.officeApprovedMinor += totals.totalMinor;
           if (e.guideStatus === 'approved') t.guideApprovedMinor += totals.totalMinor;
           else t.waitingMinor += totals.totalMinor;
+          if (e.guideStatus === 'inquiry') t.inquiryMinor += totals.totalMinor;
         } else {
           t.draftMinor += totals.totalMinor;
         }
@@ -231,7 +251,7 @@ router.get(
         vatStatus: e.vatStatusSnapshot,
         hasOverride: e.lines.some((l) => l.overrideMinor != null),
         notes: e.notes,
-        officeApprovedBy: e.activity.officeApprovedBy,
+        officeApprovedBy: e.officeApprovedBy,
         lines: e.lines
           .filter((l) => (l.overrideMinor ?? l.calculatedMinor) != null && Number(l.overrideMinor ?? l.calculatedMinor) !== 0)
           .sort((a, b) => a.sortOrder - b.sortOrder)
@@ -639,60 +659,50 @@ router.patch(
   }),
 );
 
-// ---------- office approval (activity-level, ONE action) ----------
+// ---------- office approval (entry-level truth, ONE service) ----------
+// POST /activities/:id/approve — the bulk "אשר שכר" action: approve every
+// currently-unapproved VALID entry (optionally restricted to body.entryIds).
+// Entries with nothing to pay are skipped and reported, never silently
+// approved. The per-person control uses the SAME service via the entry
+// endpoints below — no second approval source.
 router.post(
   '/activities/:id/approve',
   handle(async (req, res) => {
-    const activity = await prisma.payrollActivity.findUnique({
-      where: { id: req.params.id },
-      include: { entries: true },
-    });
-    if (!activity) return res.status(404).json({ error: 'not_found' });
-    if (activity.state !== 'active') return res.status(409).json({ error: 'activity_cancelled' });
-    if (activity.status === 'office_approved') return res.json({ ok: true, already: true });
     const origin = await userOrigin(req.adminAuth?.userId);
-    const updated = await prisma.payrollActivity.update({
-      where: { id: activity.id },
-      data: {
-        status: 'office_approved',
-        officeApprovedAt: new Date(),
-        officeApprovedBy: origin.createdByName || null,
-      },
-      include: ACTIVITY_INCLUDE,
-    });
-    await emitTimelineEvent(prisma, {
-      subjectType: PAYROLL_SUBJECT,
-      subjectId: activity.id,
-      kind: 'payroll',
-      body: '✅ פעילות השכר אושרה על ידי המשרד',
-      data: { event: 'office_approved' },
-      origin,
-    });
-    res.json({ ok: true, activity: activitySummary(updated) });
+    const entryIds = Array.isArray(req.body?.entryIds) ? req.body.entryIds : null;
+    const result = await approveEntries(prisma, { activityId: req.params.id, entryIds, origin });
+    if (result.error) {
+      return res.status(result.error === 'not_found' ? 404 : 409).json({ error: result.error });
+    }
+    const fresh = await prisma.payrollActivity.findUnique({ where: { id: req.params.id }, include: ACTIVITY_INCLUDE });
+    res.json({ ok: true, approved: result.approved, skipped: result.skipped, activity: activitySummary(fresh) });
   }),
 );
 
 router.post(
-  '/activities/:id/unapprove',
+  '/entries/:id/office-approve',
   handle(async (req, res) => {
-    const activity = await prisma.payrollActivity.findUnique({ where: { id: req.params.id }, include: ACTIVITY_INCLUDE });
-    if (!activity) return res.status(404).json({ error: 'not_found' });
-    if (activity.status !== 'office_approved') return res.json({ ok: true, already: true });
+    const entry = await prisma.payrollEntry.findUnique({ where: { id: req.params.id }, select: { activityId: true } });
+    if (!entry) return res.status(404).json({ error: 'not_found' });
     const origin = await userOrigin(req.adminAuth?.userId);
-    const updated = await prisma.payrollActivity.update({
-      where: { id: activity.id },
-      data: { status: 'draft', officeApprovedAt: null, officeApprovedBy: null },
-      include: ACTIVITY_INCLUDE,
-    });
-    await emitTimelineEvent(prisma, {
-      subjectType: PAYROLL_SUBJECT,
-      subjectId: activity.id,
-      kind: 'payroll',
-      body: '↩️ אישור המשרד הוסר — הפעילות חזרה לטיוטה',
-      data: { event: 'office_unapproved' },
+    const result = await approveEntries(prisma, {
+      activityId: entry.activityId,
+      entryIds: [req.params.id],
       origin,
     });
-    res.json({ ok: true, activity: activitySummary(updated) });
+    if (result.error) return res.status(409).json({ error: result.error });
+    if (result.skipped.length) return res.status(422).json({ error: 'zero_total', skipped: result.skipped });
+    res.json({ ok: true });
+  }),
+);
+
+router.post(
+  '/entries/:id/office-unapprove',
+  handle(async (req, res) => {
+    const origin = await userOrigin(req.adminAuth?.userId);
+    const result = await unapproveEntry(prisma, { entryId: req.params.id, origin });
+    if (result.error) return res.status(404).json({ error: result.error });
+    res.json({ ok: true, already: result.already === true });
   }),
 );
 

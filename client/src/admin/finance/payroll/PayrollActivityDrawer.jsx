@@ -213,33 +213,24 @@ export default function PayrollActivityDrawer({ activityId, onClose }) {
         {statusMeta && (
           <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${statusMeta.cls}`}>{statusMeta.label}</span>
         )}
-        {activity && activity.state === 'active' && (
-          activity.status === 'office_approved' ? (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                try { await api.payroll.unapproveActivity(activity.id); await load(); } finally { setBusy(false); }
-              }}
-              className="px-3 py-1.5 text-[12px] rounded-md border border-gray-300 text-gray-600 hover:bg-gray-100"
-              title={activity.officeApprovedBy ? `אושר על ידי ${activity.officeApprovedBy}` : undefined}
-            >
-              הסר אישור משרד
-            </button>
-          ) : (
-            <button
-              type="button"
-              disabled={busy || entries.length === 0}
-              onClick={async () => {
-                setBusy(true);
-                try { await api.payroll.approveActivity(activity.id); await load(); } finally { setBusy(false); }
-              }}
-              className="px-3 py-1.5 text-[12px] rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
-            >
-              אשר פעילות
-            </button>
-          )
+        {activity && activity.state === 'active' && activity.status !== 'office_approved' && (
+          <button
+            type="button"
+            disabled={busy || entries.length === 0}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                const r = await api.payroll.approveActivity(activity.id);
+                if (r.skipped?.length) {
+                  setError(`לא אושרו (סכום אפס): ${r.skipped.map((s) => s.displayName).join(', ')}`);
+                }
+                await load();
+              } finally { setBusy(false); }
+            }}
+            className="px-3 py-1.5 text-[12px] rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
+          >
+            {activity.status === 'partially_approved' ? 'אשר את הנותרים' : 'אשר שכר'}
+          </button>
         )}
       </div>
 
@@ -290,7 +281,7 @@ export default function PayrollActivityDrawer({ activityId, onClose }) {
                         <th key={e.id} className="text-center px-2 py-2 border-b border-gray-200 min-w-[130px]">
                           <div className="text-[13px] font-semibold text-gray-900">{e.displayName}</div>
                           <div className="text-[11px] text-gray-500">{ROLE_LABELS[e.role] || 'כללי'}</div>
-                          {activity.status === 'office_approved' && (
+                          {e.officeStatus === 'approved' && (
                             <span className={`inline-block mt-0.5 px-1.5 rounded-full text-[10px] ${GUIDE_STATUS_META[e.guideStatus]?.cls || ''}`}>
                               {GUIDE_STATUS_META[e.guideStatus]?.label}
                             </span>

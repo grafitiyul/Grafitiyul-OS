@@ -212,6 +212,7 @@ export default function PayrollReportPage() {
                 ['סה״כ מאושר משרד', data.summary.officeApprovedMinor, 'text-gray-900'],
                 ['מאושר ע״י מדריכים', data.summary.guideApprovedMinor, 'text-emerald-700'],
                 ['ממתין לאישור מדריך', data.summary.waitingMinor, 'text-blue-700'],
+                ['מתוכו בבירור', data.summary.inquiryMinor, 'text-orange-700'],
                 ['טיוטות', data.summary.draftMinor, 'text-amber-700'],
               ].map(([label, v, cls]) => (
                 <div key={label} className="bg-white border border-gray-200 rounded-lg px-4 py-2">

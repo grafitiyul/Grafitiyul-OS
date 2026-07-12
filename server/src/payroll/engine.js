@@ -162,3 +162,23 @@ export function entryTotals(lines, { vatStatus, vatRate = 18 } = {}) {
 export function sumTotals(perEntryTotals) {
   return (perEntryTotals || []).reduce((acc, t) => acc + (Number(t?.totalMinor) || 0), 0);
 }
+
+// ── Office approval derivation (selective approval model) ───────────────────
+// Office approval is persisted PER ENTRY (PayrollEntry.officeStatus). The
+// activity office-state is DERIVED — never stored — so a second, conflicting
+// truth cannot exist.
+export function deriveOfficeState(entries) {
+  const active = (entries || []).filter((e) => e.state === 'active');
+  if (active.length === 0) return 'draft';
+  const approved = active.filter((e) => e.officeStatus === 'approved').length;
+  if (approved === 0) return 'draft';
+  if (approved < active.length) return 'partially_approved';
+  return 'office_approved';
+}
+
+// Is an entry ready for office approval? An entry with nothing to pay
+// (every final resolves to 0 — e.g. an assistant whose base was never
+// entered) is NOT silently approved; the caller reports it instead.
+export function entryApprovable(lines) {
+  return (lines || []).some((l) => lineFinalMinor(l) !== 0);
+}

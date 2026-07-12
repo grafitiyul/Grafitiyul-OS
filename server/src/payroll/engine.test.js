@@ -7,6 +7,8 @@ import {
   lineFinalMinor,
   entryTotals,
   sumTotals,
+  deriveOfficeState,
+  entryApprovable,
 } from './engine.js';
 
 // ── ilsToMinor (Decimal-shekels boundary) ────────────────────────────────────
@@ -198,4 +200,23 @@ test('vat_18 deduction reduces net and VAT symmetrically', () => {
 
 test('sumTotals blends gross totals across mixed VAT statuses (admin totals)', () => {
   assert.equal(sumTotals([{ totalMinor: 42000 }, { totalMinor: 26600 }, null]), 68600);
+});
+
+// ── selective office approval: derived state, single truth ──────────────────
+
+test('deriveOfficeState: none → draft, some → partially_approved, all → office_approved', () => {
+  const e = (officeStatus, state = 'active') => ({ officeStatus, state });
+  assert.equal(deriveOfficeState([]), 'draft');
+  assert.equal(deriveOfficeState([e('draft'), e('draft')]), 'draft');
+  assert.equal(deriveOfficeState([e('approved'), e('draft')]), 'partially_approved');
+  assert.equal(deriveOfficeState([e('approved'), e('approved')]), 'office_approved');
+  // Cancelled/voided entries never affect the derivation.
+  assert.equal(deriveOfficeState([e('approved'), e('draft', 'voided')]), 'office_approved');
+  assert.equal(deriveOfficeState([e('draft', 'cancelled')]), 'draft');
+});
+
+test('entryApprovable: an all-zero entry is not silently approvable', () => {
+  assert.equal(entryApprovable([{ calculatedMinor: 0 }, { calculatedMinor: null }]), false);
+  assert.equal(entryApprovable([{ calculatedMinor: 0 }, { overrideMinor: 5000 }]), true);
+  assert.equal(entryApprovable([]), false);
 });
