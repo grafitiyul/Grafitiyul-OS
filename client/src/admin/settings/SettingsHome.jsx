@@ -40,7 +40,7 @@ export default function SettingsHome() {
           to="/admin/settings/finance"
           icon="💰"
           title="כספים"
-          description="רכיבי שכר, סוגי פעילות כללית והגדרות מודול הכספים."
+          description="רכיבי שכר, סוגי תוספת כללית והגדרות מודול הכספים."
         />
         <CategoryCard
           to="/admin/settings/tours"

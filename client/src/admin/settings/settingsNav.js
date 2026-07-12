@@ -34,7 +34,7 @@ export const SETTINGS_TREE = {
   '/admin/settings/crm/shared-content': { label: 'ספריית תוכן משותף', parent: '/admin/settings/crm' },
   '/admin/settings/finance': { label: 'הגדרות כספים', parent: '/admin/settings' },
   '/admin/settings/finance/payroll-components': { label: 'רכיבי שכר', parent: '/admin/settings/finance' },
-  '/admin/settings/finance/activity-types': { label: 'סוגי פעילות כללית', parent: '/admin/settings/finance' },
+  '/admin/settings/finance/activity-types': { label: 'סוגי תוספת כללית', parent: '/admin/settings/finance' },
   '/admin/settings/tours': { label: 'הגדרות סיורים', parent: '/admin/settings' },
   '/admin/settings/tours/group-tours': { label: 'סיורים קבוצתיים', parent: '/admin/settings/tours' },
   '/admin/settings/tours/components': { label: 'מרכיבי הפעילות ומיקומי הסדנה', parent: '/admin/settings/tours' },

@@ -4,8 +4,8 @@ import { toMinor, minorToInput } from '../../../lib/money.js';
 import { DateField } from '../../common/pickers/DateTimeFields.jsx';
 import { StaffAvatar } from '../../tours/TourTeamEditor.jsx';
 
-// Add General Activity — two steps:
-//   1. פעילות + חודש שכר (חובה) + יום (אופציונלי) + בחירת צוות
+// Add General Addition (תוספת כללית; internal model: GeneralActivity) — two steps:
+//   1. סוג תוספת + חודש שכר (חובה) + יום (אופציונלי) + בחירת צוות
 //      (אף אחד לא מסומן מראש; "בחר הכל" זמין)
 //   2. שורה לכל איש צוות עם ברירות המחדל של הפעילות — מחיר ליחידה, כמות
 //      (יחידות גנריות), תוספת/ניכוי מהירים והערה
@@ -96,7 +96,7 @@ export default function AddGeneralActivityDialog({ defaultDate, onClose, onCreat
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col">
         <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-200">
           <h2 className="text-base font-semibold text-gray-900 flex-1">
-            פעילות כללית חדשה {step === 2 && type ? `— ${type.nameHe}` : ''}
+            תוספת כללית חדשה {step === 2 && type ? `— ${type.nameHe}` : ''}
           </h2>
           <button type="button" onClick={onClose} className="w-7 h-7 rounded hover:bg-gray-100 text-gray-500 text-lg">
             ×
@@ -112,9 +112,9 @@ export default function AddGeneralActivityDialog({ defaultDate, onClose, onCreat
             <div className="space-y-4">
               <div className="flex flex-wrap gap-4 items-end">
                 <label className="block">
-                  <span className="block text-[12px] text-gray-500 mb-1">פעילות</span>
+                  <span className="block text-[12px] text-gray-500 mb-1">סוג תוספת</span>
                   <select value={typeId} onChange={(e) => setTypeId(e.target.value)} className={`${inputCls} min-w-[14rem]`}>
-                    <option value="">בחרו פעילות…</option>
+                    <option value="">בחרו סוג…</option>
                     {types.map((t) => (
                       <option key={t.id} value={t.id}>{t.nameHe}</option>
                     ))}

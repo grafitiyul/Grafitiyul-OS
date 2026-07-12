@@ -1,21 +1,23 @@
 import { useMemo, useRef, useState } from 'react';
 import AnchoredMenu from '../AnchoredMenu.jsx';
+import { isUnrestricted, toggleValue } from './multiSelectCore.js';
 
 // THE shared multi-select filter dropdown — one implementation for every
-// multi-select filter surface (payroll report years/months/guides, future
-// screens). Compact trigger with a summary; AnchoredMenu popover with
+// multi-select filter surface (payroll report years/months/guides, tours,
+// future screens). Compact trigger with a summary; AnchoredMenu popover with
 // optional search, checkbox per option, בחר הכל / נקה הכול, selected count.
 // RTL-correct via the shared menu.
 //
-// Selection semantics (one convention for all consumers):
+// Selection semantics live in multiSelectCore.js (pure, unit-tested):
 //   • values = the explicitly checked option values.
 //   • [] (nothing checked) OR every option checked ⇒ UNRESTRICTED — the
 //     summary shows `allLabel` and consumers apply no filtering.
 //     Use isUnrestricted(values, options) instead of re-deriving.
+//   • an exhaustive selection is COLLAPSED to [] on every write, so a
+//     persisted "all checked" can never turn into a stale restrictive filter
+//     when the option set grows later (the general-additions incident).
 
-export function isUnrestricted(values, options) {
-  return values.length === 0 || values.length >= options.length;
-}
+export { isUnrestricted };
 
 export default function MultiSelectFilter({
   label,
@@ -45,10 +47,7 @@ export default function MultiSelectFilter({
   }, [options, query]);
 
   const toggle = (value) => {
-    const next = new Set(selected);
-    if (next.has(value)) next.delete(value);
-    else next.add(value);
-    onChange([...next]);
+    onChange(toggleValue(values, options, value));
   };
 
   const restricted = !isUnrestricted(values, options);
@@ -91,7 +90,7 @@ export default function MultiSelectFilter({
           <span className="flex gap-2.5">
             <button
               type="button"
-              onClick={() => onChange(options.map((o) => o.value))}
+              onClick={() => onChange([])}
               className="text-blue-600 hover:underline"
             >
               בחר הכל

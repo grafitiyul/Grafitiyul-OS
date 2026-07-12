@@ -9,7 +9,7 @@ export default function FinanceSettingsHome() {
       <header className="mb-8">
         <h1 className="text-2xl font-bold tracking-tight text-gray-900">הגדרות כספים</h1>
         <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed">
-          קטלוגים והגדרות של מודול הכספים — רכיבי שכר ופעילויות כלליות.
+          קטלוגים והגדרות של מודול הכספים — רכיבי שכר ותוספות כלליות.
         </p>
       </header>
       <CategoryGrid>
@@ -22,7 +22,7 @@ export default function FinanceSettingsHome() {
         <CategoryCard
           to="/admin/settings/finance/activity-types"
           icon="📋"
-          title="סוגי פעילות כללית"
+          title="סוגי תוספת כללית"
           description="ישיבת צוות, עבודה משרדית, הדרכה… ברירות מחדל למחיר וכמות."
         />
       </CategoryGrid>

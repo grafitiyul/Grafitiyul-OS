@@ -11,7 +11,7 @@ import { formatMinor, toMinor, minorToInput } from '../../../lib/money.js';
 // including the auto-rule config (weekend amount, participant bonus).
 
 const VAT_LABELS = { net: 'לפני מע״מ', gross: 'כולל מע״מ', none: 'ללא מע״מ' };
-const SCOPE_LABELS = { all: 'הכל', tour: 'סיורים', general: 'פעילות כללית' };
+const SCOPE_LABELS = { all: 'הכל', tour: 'סיורים', general: 'תוספת כללית' };
 
 const selectCls =
   'h-10 rounded-lg border border-gray-300 bg-white px-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-200';
@@ -163,7 +163,7 @@ export default function PayrollComponentsSettings() {
               >
                 <option value="all">כל הפעילויות</option>
                 <option value="tour">סיורים בלבד</option>
-                <option value="general">פעילות כללית בלבד</option>
+                <option value="general">תוספת כללית בלבד</option>
               </select>
               <label className={checkCls}>
                 <input

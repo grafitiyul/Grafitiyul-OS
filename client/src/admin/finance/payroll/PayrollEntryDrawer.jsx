@@ -120,7 +120,7 @@ export default function PayrollEntryDrawer({ entryId, onClose, refreshTick = 0 }
             <div className="text-[11px] text-gray-500">
               {data.activity.date ? fmtDate(data.activity.date) : `חודש ${data.activity.payrollMonth}`}
               {' · '}חודש שכר {data.activity.payrollMonth}
-              {' · '}{data.activity.sourceType === 'tour_event' ? 'סיור' : 'פעילות כללית'}
+              {' · '}{data.activity.sourceType === 'tour_event' ? 'סיור' : 'תוספת כללית'}
               {entry.role ? ` · ${ROLE_LABELS[entry.role] || entry.role}` : ''}
             </div>
           )}

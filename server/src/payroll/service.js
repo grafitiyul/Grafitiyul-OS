@@ -839,7 +839,7 @@ export async function createGeneralActivity(client, { typeId, payrollMonth, date
     subjectType: PAYROLL_SUBJECT,
     subjectId: activity.id,
     kind: 'payroll',
-    body: `🧾 נוצרה פעילות כללית: ${type.nameHe} (${deduped.length} אנשי צוות)`,
+    body: `🧾 נוצרה תוספת כללית: ${type.nameHe} (${deduped.length} אנשי צוות)`,
     data: { event: 'created', sourceType: 'general', generalActivityId: general.id },
     origin: origin || systemOrigin(),
   });

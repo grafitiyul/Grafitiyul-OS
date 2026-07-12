@@ -129,7 +129,7 @@ export default function PayrollDayPage() {
           onClick={() => setAddOpen(true)}
           className="px-3 py-1.5 text-[13px] rounded-md bg-blue-600 text-white hover:bg-blue-700"
         >
-          + פעילות כללית
+          + תוספת כללית
         </button>
       </div>
 
@@ -150,7 +150,7 @@ export default function PayrollDayPage() {
         {monthRows.length > 0 && (
           <div className="mt-6">
             <h2 className="text-[13px] font-medium text-gray-500 mb-2">
-              פעילויות החודש ללא תאריך ({date.slice(0, 7)})
+              תוספות כלליות ללא תאריך ({date.slice(0, 7)})
             </h2>
             <ActivityList rows={monthRows} onOpen={setOpenActivityId} />
           </div>
@@ -199,7 +199,7 @@ function ActivityList({ rows, onOpen }) {
           <span className="flex-1 min-w-0">
             <span className="block text-sm font-medium text-gray-900 truncate">{a.titleHe}</span>
             <span className="block text-[12px] text-gray-500">
-              {a.sourceType === 'tour_event' ? 'סיור' : 'פעילות כללית'} · {a.entryCount} אנשי צוות
+              {a.sourceType === 'tour_event' ? 'סיור' : 'תוספת כללית'} · {a.entryCount} אנשי צוות
             </span>
           </span>
           <span className="text-sm text-gray-700 tabular-nums shrink-0">

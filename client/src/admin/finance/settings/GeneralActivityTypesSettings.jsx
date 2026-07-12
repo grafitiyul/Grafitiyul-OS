@@ -38,14 +38,14 @@ export default function GeneralActivityTypesSettings() {
     <div className="px-5 py-8 lg:px-10 max-w-4xl mx-auto">
       <SettingsChrome />
       <header className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight text-gray-900">סוגי פעילות כללית</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-gray-900">סוגי תוספת כללית</h1>
         <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed max-w-2xl">
-          פעילויות שכר שאינן סיור. הכמות היא יחידות גנריות — לא בהכרח שעות.
+          תוספות שכר שאינן סיור. הכמות היא יחידות גנריות — לא בהכרח שעות.
         </p>
       </header>
 
       <SettingsCard
-        title="קטלוג הפעילויות"
+        title="קטלוג התוספות"
         footer={
           <form
             className="flex flex-wrap items-center gap-2"
@@ -65,7 +65,7 @@ export default function GeneralActivityTypesSettings() {
             <input
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
-              placeholder="פעילות חדשה (ישיבת צוות, יום צילום…)"
+              placeholder="סוג תוספת חדש (ישיבת צוות, יום צילום…)"
               className="flex-1 min-w-[12rem] h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
             />
             <button
@@ -73,14 +73,14 @@ export default function GeneralActivityTypesSettings() {
               disabled={busy || !newName.trim()}
               className="h-10 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
-              הוסף פעילות
+              הוסף סוג
             </button>
           </form>
         }
       >
         <SortableList
           items={items}
-          emptyText="אין סוגי פעילות — הוסיפו את הראשון למטה."
+          emptyText="אין סוגי תוספות — הוסיפו את הראשון למטה."
           onReorder={async (ids) => {
             await api.payroll.activityTypes.reorder(ids);
             await load();
@@ -91,7 +91,7 @@ export default function GeneralActivityTypesSettings() {
               await api.payroll.activityTypes.remove(item.id);
               await load();
             } catch (e) {
-              alert(e.payload?.error === 'type_in_use' ? 'לסוג יש פעילויות קיימות — לא ניתן למחוק (אפשר להפוך ללא פעיל).' : e.message);
+              alert(e.payload?.error === 'type_in_use' ? 'לסוג יש תוספות קיימות — לא ניתן למחוק (אפשר להפוך ללא פעיל).' : e.message);
             }
           }}
           renderMeta={(item) => (

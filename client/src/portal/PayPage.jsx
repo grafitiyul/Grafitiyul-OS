@@ -68,7 +68,7 @@ function EntryCard({ token, entry, onChanged }) {
           <div className="text-[15px] font-semibold text-gray-900 truncate">{entry.activityTitle}</div>
           <div className="text-[12px] text-gray-500">
             {entry.date ? entry.date.split('-').reverse().join('/') : monthLabel(entry.payrollMonth)}
-            {entry.sourceType === 'tour_event' ? ' · סיור' : ' · פעילות'}
+            {entry.sourceType === 'tour_event' ? ' · סיור' : ' · תוספת כללית'}
           </div>
         </div>
         {meta && (

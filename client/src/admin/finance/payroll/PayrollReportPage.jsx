@@ -20,7 +20,11 @@ import PayrollEntryDrawer from './PayrollEntryDrawer.jsx';
 // Column layout rides the shared tableColumns infra (chooser/drag/resize/
 // persist). All money server-computed and rendered LTR.
 
-const FILTERS_KEY = 'payroll.report.filters.v2';
+// v3: one-time reset that heals filter state saved before the multi-select
+// collapse fix (an exhaustive guides selection persisted as an explicit id
+// list turned restrictive when the option set grew — the general-additions
+// incident). Selections are now stored in canonical form (multiSelectCore).
+const FILTERS_KEY = 'payroll.report.filters.v3';
 const COLUMNS_KEY = 'payroll.report.columns.v2';
 
 const MONTH_NAMES = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
@@ -151,7 +155,7 @@ export default function PayrollReportPage() {
       case 'activity':
         return e.activityTitle;
       case 'kind':
-        return e.sourceType === 'tour_event' ? 'סיור' : 'כללית';
+        return e.sourceType === 'tour_event' ? 'סיור' : 'תוספת כללית';
       case 'role':
         return e.role ? ROLE_LABELS[e.role] || e.role : '—';
       case 'components':
