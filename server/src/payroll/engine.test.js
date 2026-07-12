@@ -28,11 +28,64 @@ test('base: guiding roles get the variant base pay; assistants get null (no rate
   assert.equal(autoAmountMinor(c, { role: 'workshop_assistant', baseGuidePaymentMinor: 42000 }), null);
 });
 
-test('weekend_holiday: config amount only when the date is in a שבת/חג window', () => {
-  const c = { autoRule: 'weekend_holiday', config: { amountMinor: 5000 } };
-  assert.equal(autoAmountMinor(c, { isWeekendHoliday: true }), 5000);
-  assert.equal(autoAmountMinor(c, { isWeekendHoliday: false }), 0);
-  assert.equal(autoAmountMinor({ autoRule: 'weekend_holiday', config: {} }, { isWeekendHoliday: true }), 0);
+// ── weekend/holiday = 50% of the entry's calculated base ────────────────────
+// Canonical rule: weekend_holiday_percent_of_base, multiplier 0.5, applied
+// only when the existing שבת/חג detector qualified the tour. No fixed sum,
+// no second calendar.
+
+const WEEKEND = { autoRule: 'weekend_holiday_percent_of_base', config: { multiplier: 0.5 } };
+const GUIDE_400 = { role: 'guide', baseGuidePaymentMinor: 40000 };
+
+test('weekend rule 1 — normal weekday: base 400₪ → weekend line 0', () => {
+  assert.equal(autoAmountMinor(WEEKEND, { ...GUIDE_400, isWeekendHoliday: false }), 0);
+});
+
+test('weekend rule 2 — שבת/חג: base 400₪ → weekend 200₪, subtotal before other components 600₪', () => {
+  const base = autoAmountMinor({ autoRule: 'base' }, GUIDE_400);
+  const weekend = autoAmountMinor(WEEKEND, { ...GUIDE_400, isWeekendHoliday: true });
+  assert.equal(base, 40000);
+  assert.equal(weekend, 20000);
+  assert.equal(base + weekend, 60000); // 150% of base before bonuses/travel/etc.
+});
+
+test('weekend rule 3 — different base: 350₪ → weekend 175₪', () => {
+  assert.equal(
+    autoAmountMinor(WEEKEND, { role: 'lead_guide', baseGuidePaymentMinor: 35000, isWeekendHoliday: true }),
+    17500,
+  );
+});
+
+test('weekend rule 4 — override wins: calculated 200₪, override 250₪ → final 250₪', () => {
+  const line = { calculatedMinor: 20000, overrideMinor: 25000 };
+  assert.equal(lineFinalMinor(line), 25000);
+});
+
+test('weekend rule 5 — engine is pure: a stored calculation never changes when the base changes later', () => {
+  // The stored line keeps the value calculated at its time; a fresh engine run
+  // with today's (different) base yields a different number ONLY when someone
+  // explicitly recalculates — nothing mutates the stored value by itself.
+  const storedLine = { calculatedMinor: 20000, overrideMinor: null }; // from base 400₪
+  const freshRun = autoAmountMinor(WEEKEND, { role: 'guide', baseGuidePaymentMinor: 50000, isWeekendHoliday: true });
+  assert.equal(freshRun, 25000); // current rules would say 250₪…
+  assert.equal(lineFinalMinor(storedLine), 20000); // …but the stored payroll stays 200₪
+});
+
+test('weekend rule 6 — workshop assistant with no base: no automatic 50% amount', () => {
+  assert.equal(
+    autoAmountMinor(WEEKEND, { role: 'workshop_assistant', baseGuidePaymentMinor: 40000, isWeekendHoliday: true }),
+    null,
+  );
+});
+
+test('weekend rule 7 — the detector stays the ONLY calendar: the engine reacts to the isWeekendHoliday flag alone', () => {
+  // Date-like fields must have zero effect — the שבת/חג decision is made by
+  // sabbathHolidayWindow (CRM settings) upstream and passed in as a boolean.
+  const saturdayLooking = { ...GUIDE_400, isWeekendHoliday: false, date: '2026-07-11', weekday: 6 };
+  assert.equal(autoAmountMinor(WEEKEND, saturdayLooking), 0);
+  // Legacy catalog key maps to the SAME percent rule — a stale fixed-amount
+  // config can never resurrect a configured sum.
+  const legacy = { autoRule: 'weekend_holiday', config: { amountMinor: 99900 } };
+  assert.equal(autoAmountMinor(legacy, { ...GUIDE_400, isWeekendHoliday: true }), 20000);
 });
 
 test('participant_bonus: per-extra above threshold; unconfigured → 0', () => {

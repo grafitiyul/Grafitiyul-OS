@@ -16,9 +16,23 @@
 
 import { splitVat } from '../pricing/engine.js';
 
-export const ENGINE_VERSION = 1;
+export const ENGINE_VERSION = 2;
+
+// Canonical weekend/holiday rule: 50% of the entry's calculated base payment.
+// NOT a configured fixed sum — the multiplier is the business rule.
+export const WEEKEND_MULTIPLIER = 0.5;
 
 const num = (v) => (v == null ? null : Number(v));
+
+// The base-payment basis for a role. Variant base pay applies to the guiding
+// roles; workshop assistants have no rate source in the system yet → null
+// (office enters manually; percent rules have no basis either).
+function baseBasisMinor(inputs = {}) {
+  if (inputs.role === 'lead_guide' || inputs.role === 'guide') {
+    return num(inputs.baseGuidePaymentMinor) ?? 0;
+  }
+  return null;
+}
 
 // Plain-decimal shekels (Prisma Decimal | string | number) → integer agorot.
 export function ilsToMinor(ils) {
@@ -35,16 +49,22 @@ export function ilsToMinor(ils) {
 export function autoAmountMinor(component, inputs = {}) {
   const cfg = component.config || {};
   switch (component.autoRule) {
-    case 'base': {
-      // Variant base pay applies to the guiding roles. Workshop assistants
-      // have no rate source in the system yet → null (office enters manually).
-      if (inputs.role === 'lead_guide' || inputs.role === 'guide') {
-        return num(inputs.baseGuidePaymentMinor) ?? 0;
-      }
-      return null;
-    }
+    case 'base':
+      return baseBasisMinor(inputs);
+    // Weekend/holiday = base × multiplier (canonically 50%), applied ONLY when
+    // the existing שבת/חג detector (sabbathHolidayWindow — the ONE source of
+    // truth, fed to the engine as inputs.isWeekendHoliday) says the tour
+    // qualifies. The engine has NO calendar of its own. The legacy
+    // 'weekend_holiday' key maps to the same rule so a lagging catalog row can
+    // never resurrect a fixed-amount behavior.
     case 'weekend_holiday':
-      return inputs.isWeekendHoliday ? (num(cfg.amountMinor) ?? 0) : 0;
+    case 'weekend_holiday_percent_of_base': {
+      if (!inputs.isWeekendHoliday) return 0;
+      const basis = baseBasisMinor(inputs);
+      if (basis == null) return null; // no base → no automatic 50% (assistants)
+      const multiplier = num(cfg.multiplier) ?? WEEKEND_MULTIPLIER;
+      return Math.round(basis * multiplier);
+    }
     case 'participant_bonus': {
       const from = num(cfg.fromParticipants);
       const per = num(cfg.perExtraMinor) ?? 0;

@@ -364,25 +364,6 @@ export default function PayrollActivityDrawer({ activityId, onClose }) {
                         </td>
                       ))}
                     </tr>
-                    <tr>
-                      <td className="sticky right-0 bg-white px-3 py-1" />
-                      {entries.map((e) => (
-                        <td key={e.id} className="text-center py-1">
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={async () => {
-                              setBusy(true);
-                              try { await api.payroll.recalcEntry(e.id); await load(); } finally { setBusy(false); }
-                            }}
-                            className="text-[11px] text-gray-400 hover:text-blue-600"
-                            title="חישוב מחדש לפי התעריפים הנוכחיים (דריסות נשמרות)"
-                          >
-                            🔄 חשב מחדש
-                          </button>
-                        </td>
-                      ))}
-                    </tr>
                   </tbody>
                 </table>
               </div>

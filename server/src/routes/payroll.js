@@ -9,8 +9,11 @@
 //     again — and appends a Timeline event. Only meaningful changes create
 //     history: a PATCH that changes nothing writes nothing.
 //   • Calculated / override / final stay separate: cells write overrideMinor
-//     (or clear it back to the calculation); calculatedMinor changes ONLY via
-//     the explicit recalc action, which re-snapshots inputs.
+//     (or clear it back to the calculation). calculatedMinor changes
+//     automatically ONLY while the activity is DRAFT (ensureTourPayroll's
+//     auto-sync); after office approval nothing recalculates automatically —
+//     the sole exception is the month-gated admin MAINTENANCE recalc below,
+//     which normal UI never exposes.
 
 import { Router } from 'express';
 import { prisma } from '../db.js';
@@ -21,12 +24,11 @@ import {
   ensureDayPayroll,
   ensureTourPayroll,
   createGeneralActivity,
-  loadComponents,
-  isWeekendHoliday,
+  recalcEntry,
   monthOf,
 } from '../payroll/service.js';
-import { ENGINE_VERSION, buildEntryLines, entryTotals, autoAmountMinor } from '../payroll/engine.js';
-import { vatRatePercent } from '../icountDocs.js';
+import { entryTotals } from '../payroll/engine.js';
+import { businessToday } from '../tours/completion.js';
 
 const router = Router();
 
@@ -685,118 +687,42 @@ router.post(
   }),
 );
 
-// ---------- explicit recalculation ----------
-// POST /api/payroll/entries/:id/recalc — re-runs the engine with CURRENT
-// rates/rules, writes a NEW calc snapshot, updates calculatedMinor per line
-// (overrides untouched), and adds catalog components that didn't exist when
-// the entry was created. This is the ONLY path that changes calculations.
+// ---------- admin MAINTENANCE recalculation ----------
+// POST /api/payroll/entries/:id/maintenance-recalc — a true recalculation
+// from CURRENT business rules (e.g. after fixing the payroll engine). NOT a
+// normal operation and never exposed as a UI button: drafts already
+// auto-sync, approved activities change only by manual edit. Gated to the
+// CURRENT and IMMEDIATELY PREVIOUS payroll month (business TZ) — older
+// payroll never recalculates. Overrides preserved; guide re-approval
+// enforced on change.
 router.post(
-  '/entries/:id/recalc',
+  '/entries/:id/maintenance-recalc',
   handle(async (req, res) => {
     const entry = await prisma.payrollEntry.findUnique({
       where: { id: req.params.id },
-      include: { lines: true, activity: true },
+      include: { activity: true },
     });
     if (!entry) return res.status(404).json({ error: 'not_found' });
-    const activity = entry.activity;
 
-    const person = await prisma.personRef.findUnique({
-      where: { externalPersonId: entry.externalPersonId },
-      include: { profile: true },
-    });
-    let inputs;
-    let source;
-    if (activity.sourceType === 'tour_event' && activity.tourEventId) {
-      const tour = await prisma.tourEvent.findUnique({
-        where: { id: activity.tourEventId },
-        include: {
-          productVariant: { select: { baseGuidePaymentMinor: true, travelPaymentMinor: true } },
-          bookings: { select: { status: true, seats: true, deal: { select: { participants: true } } } },
-        },
-      });
-      if (!tour) return res.status(409).json({ error: 'tour_missing' });
-      const activeBookings = tour.bookings.filter((b) => b.status === 'active');
-      const seats = activeBookings.reduce((n, b) => n + (Number(b.seats) || 0), 0);
-      source = 'tour';
-      inputs = {
-        role: entry.role,
-        baseGuidePaymentMinor: tour.productVariant?.baseGuidePaymentMinor ?? null,
-        variantTravelMinor: tour.productVariant?.travelPaymentMinor ?? null,
-        participants: seats > 0 ? seats : activeBookings.reduce((n, b) => n + (Number(b.deal?.participants) || 0), 0),
-        isWeekendHoliday: await isWeekendHoliday(prisma, tour.date, tour.startTime),
-        seniorityIls: person?.profile?.senioritySupplement ?? null,
-        travelAllowanceIls: person?.profile?.travelAllowance ?? null,
-      };
-    } else {
-      // General entries: the quantity line's own unit/qty are the inputs.
-      const qtyLine = entry.lines.find((l) => l.quantity != null || l.unitPriceMinor != null);
-      source = 'general';
-      inputs = {
-        unitPriceMinor: qtyLine ? Number(qtyLine.unitPriceMinor) : 0,
-        quantity: qtyLine ? Number(qtyLine.quantity) : 1,
-        seniorityIls: person?.profile?.senioritySupplement ?? null,
-        travelAllowanceIls: person?.profile?.travelAllowance ?? null,
-      };
+    const currentMonth = businessToday().slice(0, 7);
+    const [y, m] = currentMonth.split('-').map(Number);
+    const previousMonth = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+    if (![currentMonth, previousMonth].includes(entry.activity.payrollMonth)) {
+      return res.status(409).json({ error: 'month_locked_for_recalc' });
     }
 
-    const components = await loadComponents(prisma);
-    const freshLines = buildEntryLines({ source, components, inputs });
-    const byComponent = new Map(entry.lines.map((l) => [l.componentId, l]));
-    const changes = [];
-    for (const fresh of freshLines) {
-      const existing = byComponent.get(fresh.componentId);
-      if (!existing) {
-        await prisma.payrollEntryLine.create({
-          data: {
-            entryId: entry.id,
-            componentId: fresh.componentId,
-            componentNameHe: fresh.componentNameHe,
-            sign: fresh.sign,
-            vatMode: fresh.vatMode,
-            quantity: fresh.quantity,
-            unitPriceMinor: fresh.unitPriceMinor,
-            calculatedMinor: fresh.calculatedMinor,
-            sortOrder: fresh.sortOrder,
-          },
-        });
-        changes.push({ component: fresh.componentNameHe, from: null, to: fresh.calculatedMinor, added: true });
-        continue;
-      }
-      const cur = existing.calculatedMinor == null ? null : Number(existing.calculatedMinor);
-      const next = fresh.calculatedMinor == null ? null : Number(fresh.calculatedMinor);
-      if (cur !== next) {
-        await prisma.payrollEntryLine.update({
-          where: { id: existing.id },
-          data: { calculatedMinor: next },
-        });
-        changes.push({ component: existing.componentNameHe, from: cur, to: next });
-      }
-    }
-
-    const vatStatus = person?.profile?.vatStatus === 'vat_18' ? 'vat_18' : entry.vatStatusSnapshot;
-    await prisma.payrollEntry.update({
-      where: { id: entry.id },
-      data: {
-        vatStatusSnapshot: vatStatus,
-        vatRateSnapshot: vatRatePercent(),
-        engineVersion: ENGINE_VERSION,
-        calcSnapshot: {
-          engineVersion: ENGINE_VERSION,
-          at: new Date().toISOString(),
-          source,
-          inputs: JSON.parse(JSON.stringify(inputs, (k, v) => (typeof v === 'bigint' ? Number(v) : v))),
-        },
-      },
-    });
+    const result = await recalcEntry(prisma, entry.id);
+    if (result.error) return res.status(409).json({ error: result.error });
+    const changes = result.changes;
 
     const origin = await userOrigin(req.adminAuth?.userId);
     if (changes.length) {
       await emitTimelineEvent(prisma, {
         subjectType: PAYROLL_SUBJECT,
-        subjectId: activity.id,
+        subjectId: entry.activityId,
         kind: 'payroll',
-        body: `🔄 חושב מחדש עבור ${entry.displayName} (${changes.length} רכיבים עודכנו)`,
-        data: { event: 'recalculated', entryId: entry.id, changes },
+        body: `🛠️ חישוב תחזוקה מחדש עבור ${entry.displayName} (${changes.length} רכיבים עודכנו)`,
+        data: { event: 'maintenance_recalculated', entryId: entry.id, changes },
         origin,
       });
       if (entry.guideStatus === 'approved' || entry.guideStatus === 'inquiry') {

@@ -114,8 +114,8 @@ export default function PayrollComponentsSettings() {
               {item.sign === -1 && <Pill>ניכוי</Pill>}
               <Pill>{VAT_LABELS[item.vatMode]}</Pill>
               {item.scope !== 'all' && <Pill>{SCOPE_LABELS[item.scope]}</Pill>}
-              {item.autoRule === 'weekend_holiday' && (
-                <Pill>{formatMinor(item.config?.amountMinor || 0)}</Pill>
+              {(item.autoRule === 'weekend_holiday_percent_of_base' || item.autoRule === 'weekend_holiday') && (
+                <Pill>{Math.round((Number(item.config?.multiplier) || 0.5) * 100)}% מהבסיס בשבת/חג</Pill>
               )}
               {item.autoRule === 'participant_bonus' && item.config?.fromParticipants != null && (
                 <Pill>מ-{item.config.fromParticipants} · {formatMinor(item.config?.perExtraMinor || 0)}</Pill>
@@ -132,7 +132,6 @@ export default function PayrollComponentsSettings() {
             active: item.active,
             autoRule: item.autoRule,
             isSystem: item.isSystem,
-            weekendAmount: item.autoRule === 'weekend_holiday' ? minorToInput(item.config?.amountMinor || 0) : '',
             bonusFrom: item.autoRule === 'participant_bonus' ? String(item.config?.fromParticipants ?? '') : '',
             bonusPer: item.autoRule === 'participant_bonus' ? minorToInput(item.config?.perExtraMinor || 0) : '',
           })}
@@ -190,16 +189,11 @@ export default function PayrollComponentsSettings() {
                 />
                 פעיל
               </label>
-              {draft.autoRule === 'weekend_holiday' && (
-                <label className={checkCls}>
-                  תוספת שבת/חג (₪):
-                  <input
-                    value={draft.weekendAmount}
-                    onChange={(e) => setDraft((d) => ({ ...d, weekendAmount: e.target.value }))}
-                    dir="ltr"
-                    className="w-24 h-10 rounded-lg border border-gray-300 px-2 text-sm"
-                  />
-                </label>
+              {(draft.autoRule === 'weekend_holiday_percent_of_base' || draft.autoRule === 'weekend_holiday') && (
+                <span className="text-[12px] text-gray-500">
+                  הסכום אינו קבוע: 50% מתשלום הבסיס של הרשומה, לפי הגדרת שבת/חג
+                  הקנונית (הגדרות CRM ← שעות שבת וחג).
+                </span>
               )}
               {draft.autoRule === 'participant_bonus' && (
                 <>
@@ -234,9 +228,6 @@ export default function PayrollComponentsSettings() {
               guideVisible: draft.guideVisible,
               active: draft.active,
             };
-            if (draft.autoRule === 'weekend_holiday') {
-              patch.config = { amountMinor: toMinor(draft.weekendAmount) || 0 };
-            }
             if (draft.autoRule === 'participant_bonus') {
               const from = Number(draft.bonusFrom);
               patch.config = {

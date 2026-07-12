@@ -14,7 +14,7 @@ import { prisma } from '../db.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
 import { sabbathHolidayWindow } from '../pricing/engine.js';
 import { vatRatePercent } from '../icountDocs.js';
-import { ENGINE_VERSION, buildEntryLines } from './engine.js';
+import { ENGINE_VERSION, WEEKEND_MULTIPLIER, buildEntryLines } from './engine.js';
 
 export const PAYROLL_SUBJECT = 'payroll_activity';
 
@@ -32,12 +32,13 @@ export async function loadComponents(client = prisma) {
 }
 
 // שבת/חג decision for a tour date+time — fed by the ONE detector
-// (pricing/engine.js sabbathHolidayWindow) and the global rules, exactly like
-// pricingCalc. Never re-implemented.
-export async function isWeekendHoliday(client, dateISO, startTime) {
-  if (!dateISO) return false;
+// (pricing/engine.js sabbathHolidayWindow) and the global CRM-settings rules,
+// exactly like pricingCalc. Never re-implemented. Returns the FULL window
+// result so the calc snapshot can record which rule/window matched.
+export async function sabbathHolidayInfo(client, dateISO, startTime) {
+  if (!dateISO) return { applies: false, matched: [] };
   const dt = new Date(`${dateISO}T00:00:00Z`);
-  if (Number.isNaN(dt.getTime())) return false;
+  if (Number.isNaN(dt.getTime())) return { applies: false, matched: [] };
   const weekday = dt.getUTCDay();
   let minuteOfDay = 0;
   if (startTime) {
@@ -48,7 +49,30 @@ export async function isWeekendHoliday(client, dateISO, startTime) {
     client.sabbathWeeklyRule.findMany({ where: { active: true } }),
     client.holidayRule.findMany({ where: { active: true, status: 'approved' } }),
   ]);
-  return sabbathHolidayWindow({ weekday, minuteOfDay, dateISO }, { weekly, holidays }).applies;
+  return sabbathHolidayWindow({ weekday, minuteOfDay, dateISO }, { weekly, holidays });
+}
+
+// The engine inputs for a tour's entries, incl. the calc-snapshot context the
+// weekend rule requires: the base used, the multiplier, and WHICH שבת/חג
+// window matched (rule identity) — so every stored calculation is
+// reproducible forever without today's settings.
+async function buildTourInputs(client, tour, components) {
+  const sabbath = await sabbathHolidayInfo(client, tour.date, tour.startTime);
+  const weekendComponent = (components || []).find(
+    (c) => c.autoRule === 'weekend_holiday_percent_of_base' || c.autoRule === 'weekend_holiday',
+  );
+  return {
+    baseGuidePaymentMinor: tour.productVariant?.baseGuidePaymentMinor ?? null,
+    variantTravelMinor: tour.productVariant?.travelPaymentMinor ?? null,
+    participants: participantsTotal(tour.bookings),
+    isWeekendHoliday: sabbath.applies === true,
+    sabbathHoliday: {
+      applies: sabbath.applies === true,
+      type: sabbath.type || null,
+      label: sabbath.label || null,
+    },
+    weekendMultiplier: Number(weekendComponent?.config?.multiplier) || WEEKEND_MULTIPLIER,
+  };
 }
 
 function tourTitle(tour) {
@@ -76,6 +100,15 @@ async function emitPayrollEvent(client, activityId, body, data, origin = null) {
   });
 }
 
+function snapshotOf(source, inputs) {
+  return {
+    engineVersion: ENGINE_VERSION,
+    at: new Date().toISOString(),
+    source,
+    inputs: JSON.parse(JSON.stringify(inputs, (k, v) => (typeof v === 'bigint' ? Number(v) : v))),
+  };
+}
+
 // Create one entry (+ engine lines) for a person on an activity.
 async function createEntry(client, { activity, source, person, role, tourAssignmentId, components, inputs }) {
   const vatStatus = person.profile?.vatStatus === 'vat_18' ? 'vat_18' : 'exempt';
@@ -98,12 +131,7 @@ async function createEntry(client, { activity, source, person, role, tourAssignm
       vatStatusSnapshot: vatStatus,
       vatRateSnapshot: vatRate,
       engineVersion: ENGINE_VERSION,
-      calcSnapshot: {
-        engineVersion: ENGINE_VERSION,
-        at: new Date().toISOString(),
-        source,
-        inputs: JSON.parse(JSON.stringify(fullInputs, (k, v) => (typeof v === 'bigint' ? Number(v) : v))),
-      },
+      calcSnapshot: snapshotOf(source, fullInputs),
       lines: {
         create: lines.map((l) => ({
           componentId: l.componentId,
@@ -184,12 +212,7 @@ export async function ensureTourPayroll(client, tourEventId) {
     : [];
   const personByExt = new Map(persons.map((p) => [p.externalPersonId, p]));
   const entryByExt = new Map(activity.entries.map((e) => [e.externalPersonId, e]));
-  const tourInputs = {
-    baseGuidePaymentMinor: tour.productVariant?.baseGuidePaymentMinor ?? null,
-    variantTravelMinor: tour.productVariant?.travelPaymentMinor ?? null,
-    participants: participantsTotal(tour.bookings),
-    isWeekendHoliday: await isWeekendHoliday(client, tour.date, tour.startTime),
-  };
+  const tourInputs = await buildTourInputs(client, tour, components);
 
   let changed = false;
   for (const a of tour.assignments) {
@@ -239,14 +262,155 @@ export async function ensureTourPayroll(client, tourEventId) {
     }
   }
 
-  if (!changed && activity.entries.length === 0 && tour.assignments.length === 0) {
-    // A completed tour with no staff at all still has an activity (status
-    // "חסר שכר" derives from having no active entries).
+  // DRAFT auto-recalculation (product rule): while the activity has not been
+  // office-approved, business changes (variant rates, profile supplements,
+  // participants, שבת/חג settings) flow into the calculated values
+  // automatically — overrides always preserved. From office approval onward
+  // NOTHING recalculates automatically; only manual edits (and the month-gated
+  // maintenance recalc) touch an approved activity.
+  if (activity.status === 'draft' && activity.state === 'active') {
+    const fresh = await client.payrollActivity.findUnique({
+      where: { id: activity.id },
+      include: { entries: { where: { state: 'active' }, include: { lines: true } } },
+    });
+    let totalChanges = 0;
+    for (const entry of fresh.entries) {
+      const person = personByExt.get(entry.externalPersonId);
+      const fullInputs = {
+        ...tourInputs,
+        role: entry.role,
+        seniorityIls: person?.profile?.senioritySupplement ?? null,
+        travelAllowanceIls: person?.profile?.travelAllowance ?? null,
+      };
+      const freshLines = buildEntryLines({ source: 'tour', components, inputs: fullInputs });
+      const lineChanges = await syncEntryLines(client, entry, freshLines);
+      if (lineChanges.length) {
+        totalChanges += lineChanges.length;
+        await client.payrollEntry.update({
+          where: { id: entry.id },
+          data: {
+            vatStatusSnapshot: person?.profile?.vatStatus === 'vat_18' ? 'vat_18' : 'exempt',
+            vatRateSnapshot: vatRatePercent(),
+            engineVersion: ENGINE_VERSION,
+            calcSnapshot: snapshotOf('tour', fullInputs),
+          },
+        });
+      }
+    }
+    // One aggregate history event, and only when something actually changed —
+    // idle drawer opens never flood the audit trail.
+    if (totalChanges > 0) {
+      await emitPayrollEvent(client, activity.id, `🔄 חישובי הטיוטה עודכנו אוטומטית (${totalChanges} רכיבים)`, {
+        event: 'draft_auto_recalculated',
+        changedLines: totalChanges,
+      });
+    }
   }
+
   return client.payrollActivity.findUnique({
     where: { id: activity.id },
     include: { entries: { include: { lines: true } } },
   });
+}
+
+// Bring an entry's lines to the engine's fresh output: update calculatedMinor
+// where it drifted, ADD lines for catalog components that didn't exist when
+// the entry was created. Overrides and notes are never touched. Returns the
+// change list (empty → nothing persisted).
+export async function syncEntryLines(client, entry, freshLines) {
+  const byComponent = new Map((entry.lines || []).map((l) => [l.componentId, l]));
+  const changes = [];
+  for (const fresh of freshLines) {
+    const existing = byComponent.get(fresh.componentId);
+    if (!existing) {
+      await client.payrollEntryLine.create({
+        data: {
+          entryId: entry.id,
+          componentId: fresh.componentId,
+          componentNameHe: fresh.componentNameHe,
+          sign: fresh.sign,
+          vatMode: fresh.vatMode,
+          quantity: fresh.quantity,
+          unitPriceMinor: fresh.unitPriceMinor,
+          calculatedMinor: fresh.calculatedMinor,
+          sortOrder: fresh.sortOrder,
+        },
+      });
+      changes.push({ component: fresh.componentNameHe, from: null, to: fresh.calculatedMinor, added: true });
+      continue;
+    }
+    const cur = existing.calculatedMinor == null ? null : Number(existing.calculatedMinor);
+    const next = fresh.calculatedMinor == null ? null : Number(fresh.calculatedMinor);
+    if (cur !== next) {
+      await client.payrollEntryLine.update({
+        where: { id: existing.id },
+        data: { calculatedMinor: next },
+      });
+      changes.push({ component: existing.componentNameHe, from: cur, to: next });
+    }
+  }
+  return changes;
+}
+
+// TRUE recalculation from CURRENT business rules — the admin MAINTENANCE
+// action (e.g. after fixing the payroll engine). Not exposed in normal UI;
+// the route gates it to the current + previous payroll month. Emits no events
+// itself — the caller owns attribution and guide-reapproval consequences.
+export async function recalcEntry(client, entryId) {
+  const entry = await client.payrollEntry.findUnique({
+    where: { id: entryId },
+    include: { lines: true, activity: true },
+  });
+  if (!entry) return { error: 'not_found' };
+  const activity = entry.activity;
+  const person = await client.personRef.findUnique({
+    where: { externalPersonId: entry.externalPersonId },
+    include: { profile: true },
+  });
+  const components = await loadComponents(client);
+
+  let source;
+  let inputs;
+  if (activity.sourceType === 'tour_event' && activity.tourEventId) {
+    const tour = await client.tourEvent.findUnique({
+      where: { id: activity.tourEventId },
+      include: {
+        productVariant: { select: { baseGuidePaymentMinor: true, travelPaymentMinor: true } },
+        bookings: { select: { status: true, seats: true, deal: { select: { participants: true } } } },
+      },
+    });
+    if (!tour) return { error: 'tour_missing' };
+    source = 'tour';
+    inputs = {
+      ...(await buildTourInputs(client, tour, components)),
+      role: entry.role,
+      seniorityIls: person?.profile?.senioritySupplement ?? null,
+      travelAllowanceIls: person?.profile?.travelAllowance ?? null,
+    };
+  } else {
+    // General entries: the quantity line's own unit/qty are the inputs.
+    const qtyLine = entry.lines.find((l) => l.quantity != null || l.unitPriceMinor != null);
+    source = 'general';
+    inputs = {
+      unitPriceMinor: qtyLine ? Number(qtyLine.unitPriceMinor) : 0,
+      quantity: qtyLine ? Number(qtyLine.quantity) : 1,
+      seniorityIls: person?.profile?.senioritySupplement ?? null,
+      travelAllowanceIls: person?.profile?.travelAllowance ?? null,
+    };
+  }
+
+  const freshLines = buildEntryLines({ source, components, inputs });
+  const changes = await syncEntryLines(client, entry, freshLines);
+  await client.payrollEntry.update({
+    where: { id: entry.id },
+    data: {
+      vatStatusSnapshot: person?.profile?.vatStatus === 'vat_18' ? 'vat_18' : entry.vatStatusSnapshot,
+      vatRateSnapshot: vatRatePercent(),
+      engineVersion: ENGINE_VERSION,
+      calcSnapshot: snapshotOf(source, inputs),
+    },
+  });
+  return { changes, entry };
 }
 
 // Reopen/cancel path — the tour is no longer completed; payroll history is
