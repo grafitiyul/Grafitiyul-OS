@@ -53,6 +53,10 @@ import ContactDetail from './admin/crm/contacts/ContactDetail.jsx';
 import CrmSettingsPage from './admin/crm/settings/CrmSettingsPage.jsx';
 // Deal module (commercial core) — deals + pipeline.
 import DealsList from './admin/deals/DealsList.jsx';
+// כספים (Finance) hub — collection (existing, unchanged) + payroll + finance
+// management under one tabbed layout.
+import FinanceLayout from './admin/finance/FinanceLayout.jsx';
+import FinancePlaceholder from './admin/finance/FinancePlaceholder.jsx';
 import CollectionPage from './admin/collection/CollectionPage.jsx';
 // Aliased: ToursPage is taken by the PUBLIC tours page import below.
 import AdminToursPage from './admin/tours/ToursPage.jsx';
@@ -182,10 +186,36 @@ export default function App() {
           <Route path="organizations" element={<OrganizationsList />} />
           <Route path="organizations/:id" element={<OrganizationDetail />} />
         </Route>
-        {/* Collection (גבייה) — WON deals that still owe money. Rows open the
-            regular Deal workspace; numbers come from the server Collection
-            service. */}
-        <Route path="collection" element={<CollectionPage />} />
+        {/* כספים — the finance hub. Collection (גבייה מלקוחות) is the existing
+            module, unchanged besides its navigation home; payroll (שכר צוות)
+            and finance management (ניהול פיננסי) are honest placeholders until
+            their slices land. */}
+        <Route path="finance" element={<FinanceLayout />}>
+          <Route index element={<Navigate to="/admin/finance/collection" replace />} />
+          <Route path="collection" element={<CollectionPage />} />
+          <Route
+            path="payroll"
+            element={
+              <FinancePlaceholder
+                icon="🧾"
+                title="שכר צוות"
+                description="מודול השכר בבנייה. כאן ינוהלו רשומות השכר של הצוות — סיורים ופעילויות כלליות."
+              />
+            }
+          />
+          <Route
+            path="management"
+            element={
+              <FinancePlaceholder
+                icon="📊"
+                title="ניהול פיננסי"
+                description="אזור הניהול הפיננסי עדיין לא נבנה. כשייבנה, כאן יופיעו כלי הניהול הפיננסיים של העסק."
+              />
+            }
+          />
+        </Route>
+        {/* Old collection URL keeps working for existing links/bookmarks. */}
+        <Route path="collection" element={<Navigate to="/admin/finance/collection" replace />} />
         {/* Tours — the operational tours module (TourEvent/Booking): table of
             upcoming tours + group slot management. Calendar views come later. */}
         {/* The tour opens as a modal on top of the list — nested so the list

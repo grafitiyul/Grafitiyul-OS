@@ -27,8 +27,9 @@ export const TOP_MODULES = [
 // משתמשים. "צוות" (the people/access module) moved here — it reflects its real
 // purpose as the staff/team surface; route (/admin/people) unchanged.
 export const BOTTOM_MODULES = [
-  // Collection — WON deals that still owe money (server Collection service).
-  { key: 'collection', to: '/admin/collection', label: 'גבייה', glyph: '💰' },
+  // כספים — the finance hub: גבייה מלקוחות (the Collection service), שכר צוות
+  // (payroll), and ניהול פיננסי. Same icon the collection module carried.
+  { key: 'finance', to: '/admin/finance', label: 'כספים', glyph: '💰' },
   { key: 'people', to: '/admin/people', label: 'צוות', glyph: '👥' },
   { key: 'tour-content', to: '/admin/tour-content', label: 'תוכן סיורים', glyph: '🗺️' },
   { key: 'documents', to: '/admin/documents', label: 'מסמכים', glyph: '📄' },
