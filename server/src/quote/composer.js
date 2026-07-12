@@ -21,6 +21,7 @@
 import { DEFAULT_QUOTE_BLOCKS, reconcileKeyOrder } from './quoteBlocks.js';
 import { getQuoteTemplate, SECTION_TITLE_DEFAULTS } from './quoteTemplate.js';
 import { resolveVariantSharedContent } from '../shared-content/sharedContent.js';
+import { effectiveOrgType, effectiveOrgTypeId } from '../deals/classification.js';
 export { DEFAULT_QUOTE_BLOCKS };
 
 const isFilled = (v) => typeof v === 'string' && v.trim() !== '';
@@ -134,7 +135,7 @@ export function editTargetFor(type, deal, lang) {
       const subActive = !!(sub && isFilled(pickLang(sub.quoteContentHe, sub.quoteContentEn, lang)));
       return subActive
         ? { kind: 'orgSubtype', label: 'ערוך תוכן “למה גרפיטיול” (תת-סוג הארגון)', id: deal?.organizationSubtypeId || sub?.id || null }
-        : { kind: 'orgType', label: 'ערוך תוכן “למה גרפיטיול” (סוג הארגון)', id: deal?.organizationTypeId || deal?.organization?.organizationTypeId || null };
+        : { kind: 'orgType', label: 'ערוך תוכן “למה גרפיטיול” (סוג הארגון)', id: effectiveOrgTypeId(deal) };
     }
     case 'faq': return { kind: 'quoteSections', label: 'ערוך שאלות נפוצות', category: 'faq' };
     case 'cancellation': return { kind: 'quoteSections', label: 'ערוך מדיניות ביטול', category: 'cancellation' };
@@ -410,11 +411,13 @@ function buildCityContent({ deal, lang }) {
 }
 
 // "למה גרפיטיול?" — TITLE from the Quote Template; CONTENT from the Organization
-// Subtype (override) → the Organization Type. This is the single source of truth for
-// this section's copy — it is NOT duplicated on deals or variants. Empty → skipped.
+// Subtype (override) → the EFFECTIVE Organization Type (the linked org's type
+// when an org is attached, else the deal's own — see deals/classification.js).
+// This is the single source of truth for this section's copy — it is NOT
+// duplicated on deals or variants. Empty → skipped.
 function buildWhyGrafitiyul({ deal, lang, template }) {
   const sub = deal?.organizationSubtype;
-  const type = deal?.organizationType || deal?.organization?.organizationType;
+  const type = effectiveOrgType(deal);
   const html = pickLang(sub?.quoteContentHe, sub?.quoteContentEn, lang) || pickLang(type?.quoteContentHe, type?.quoteContentEn, lang);
   const warnings = [];
   if ((sub || type) && !html) {

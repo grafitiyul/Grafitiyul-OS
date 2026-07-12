@@ -590,8 +590,9 @@ router.get(
           })
         : [];
       // Resolve the SPECIFIC classification labels the same way the Deal header
-      // does: effective org type = the deal's own type OR its organization's
-      // default. Batched id-lookups only (no nested relation includes).
+      // does: effective org type = the linked ORGANIZATION's type when an org is
+      // attached (the org is the SSOT — deals/classification.js), else the
+      // deal's own manual type. Batched id-lookups only (no nested includes).
       const orgIds = [...new Set(deals.map((d) => d.organizationId).filter(Boolean))];
       const orgs = orgIds.length
         ? await prisma.organization.findMany({
@@ -600,7 +601,8 @@ router.get(
           })
         : [];
       const orgTypeIdByOrg = new Map(orgs.map((o) => [o.id, o.organizationTypeId]));
-      const effTypeIdFor = (d) => d.organizationTypeId || orgTypeIdByOrg.get(d.organizationId) || null;
+      const effTypeIdFor = (d) =>
+        d.organizationId ? orgTypeIdByOrg.get(d.organizationId) || null : d.organizationTypeId || null;
       const typeIds = [...new Set(deals.map(effTypeIdFor).filter(Boolean))];
       const subtypeIds = [...new Set(deals.map((d) => d.organizationSubtypeId).filter(Boolean))];
       const [types, subtypes] = await Promise.all([

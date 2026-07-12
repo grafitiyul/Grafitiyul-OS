@@ -11,6 +11,7 @@ import {
 import { createParallelOffer, activateOffer, setPrimaryOffer, removeOrArchiveOffer, unarchiveOffer, buildWonQuoteRef, splitBuilderPatch, updateOfferContext } from '../quote/quoteOffers.js';
 import { ensurePaymentToken, paymentUrlFor, resolvePublicOrigin } from '../dealPayment.js';
 import { recordDealChanges, recordDealContactChange, DEAL_DIFF_SELECT } from '../timeline/dealChangelog.js';
+import { normalizeClassification } from '../deals/classification.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 import { kickPayrollReconcile } from '../payroll/service.js';
 import { sendSimpleEmail } from '../email/simpleSend.js';
@@ -108,6 +109,38 @@ function applyTourFields(b, data) {
   if (b.customerInfo !== undefined) data.customerInfo = b.customerInfo ? String(b.customerInfo) : null;
   // quoteEmailIntro — plain text (commercial card). Empty normalises to null.
   if (b.quoteEmailIntro !== undefined) data.quoteEmailIntro = b.quoteEmailIntro ? String(b.quoteEmailIntro) : null;
+  return null;
+}
+
+// Deal ↔ Organization classification — the ONE server-side enforcement point
+// (both create and update call this; the rule itself is the pure
+// normalizeClassification, see ../deals/classification.js). Given the RESULTING
+// link/classification (incoming value if sent, else the existing one), it
+// forces the trio onto `data`: linked org ⇒ business + org's type effective
+// (deal-level type force-nulled) + subtype only if it belongs to that type.
+// Returns an error code when the linked organization does not exist.
+async function reconcileClassification(data, resulting) {
+  let orgTypeId = null;
+  let subtypeTypeId = null;
+  if (resulting.organizationId) {
+    const org = await prisma.organization.findUnique({
+      where: { id: resulting.organizationId },
+      select: { organizationTypeId: true },
+    });
+    if (!org) return 'organization_not_found';
+    orgTypeId = org.organizationTypeId;
+    if (resulting.organizationSubtypeId) {
+      const st = await prisma.organizationSubtype.findUnique({
+        where: { id: resulting.organizationSubtypeId },
+        select: { organizationTypeId: true },
+      });
+      subtypeTypeId = st?.organizationTypeId || null;
+    }
+  }
+  const norm = normalizeClassification({ ...resulting, orgTypeId, subtypeTypeId });
+  data.activityType = norm.activityType;
+  data.organizationTypeId = norm.organizationTypeId;
+  data.organizationSubtypeId = norm.organizationSubtypeId;
   return null;
 }
 
@@ -297,8 +330,9 @@ router.post(
       }
       activityType = b.activityType;
     }
-    // Deal.organizationTypeId = this deal's quote/business classification, kept
-    // independently of any linked organization (which only supplies a default type).
+    // Deal.organizationTypeId = this deal's classification ONLY while no
+    // organization is linked; reconcileClassification below force-clears it
+    // (and forces business) whenever an organization is attached.
     const organizationTypeId = b.organizationTypeId || null;
 
     const data = {
@@ -328,6 +362,15 @@ router.post(
     };
     const tourErr = applyTourFields(b, data);
     if (tourErr) return res.status(400).json({ error: tourErr });
+
+    // Linked organization ⇒ business + the ORG's type is the effective type.
+    const classErr = await reconcileClassification(data, {
+      organizationId: data.organizationId,
+      activityType: data.activityType,
+      organizationTypeId: data.organizationTypeId,
+      organizationSubtypeId: data.organizationSubtypeId,
+    });
+    if (classErr) return res.status(400).json({ error: classErr });
 
     const deal = await prisma.deal.create({ data, include: DEAL_INCLUDE });
     res.status(201).json(deal);
@@ -381,11 +424,10 @@ router.put(
       }
       data.activityType = b.activityType || null;
     }
-    // Deal.organizationTypeId = THIS deal's quote/business classification. It is
-    // independent of any linked organization: the organization's own type is only a
-    // DEFAULT, and a deal may override it for the quote context (the composer reads
-    // deal.organizationType first, org type as fallback). So it is persisted exactly
-    // as sent — NOT force-cleared when an organization is linked.
+    // Deal.organizationTypeId = the deal's classification ONLY while no
+    // organization is linked. reconcileClassification (below, after all fields
+    // are collected) force-clears it whenever the RESULTING state has an
+    // organization — the org's own type is the single effective type then.
     if (b.organizationTypeId !== undefined)
       data.organizationTypeId = b.organizationTypeId || null;
     if (b.valueMinor !== undefined) data.valueMinor = toMinor(b.valueMinor) ?? 0n;
@@ -403,6 +445,26 @@ router.put(
     // "פרטי הסיור" working fields (partial — only present keys are touched).
     const tourErr = applyTourFields(b, data);
     if (tourErr) return res.status(400).json({ error: tourErr });
+
+    // Classification SSOT — reconcile against the RESULTING organization link
+    // (sent value if present, else the existing one), so attach, replace and
+    // detach all converge through the one rule: linked org ⇒ business, org's
+    // type effective (deal-level copy force-nulled), subtype must belong.
+    const classErr = await reconcileClassification(data, {
+      organizationId:
+        b.organizationId !== undefined ? data.organizationId : existing.organizationId,
+      activityType:
+        b.activityType !== undefined ? data.activityType : existing.activityType,
+      organizationTypeId:
+        b.organizationTypeId !== undefined
+          ? data.organizationTypeId
+          : existing.organizationTypeId,
+      organizationSubtypeId:
+        b.organizationSubtypeId !== undefined
+          ? data.organizationSubtypeId
+          : existing.organizationSubtypeId,
+    });
+    if (classErr) return res.status(400).json({ error: classErr });
 
     // Outcome status transitions stamp/clear wonAt/lostAt. LOST now stores
     // STRUCTURED data: a required lostReasonId (FK to the LostReason catalog)

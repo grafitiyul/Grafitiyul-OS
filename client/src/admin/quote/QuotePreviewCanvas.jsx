@@ -4,7 +4,7 @@ import { api } from '../../lib/api.js';
 import { QuoteBlock, TEAL } from '../../quote/QuoteBlockRenderer.jsx';
 import PriceBuilderDialog from '../deals/PriceBuilderDialog.jsx';
 import GroupTicketBuilderDialog from '../deals/GroupTicketBuilderDialog.jsx';
-import { resolveFinanceWorkspace, FINANCE_WORKSPACE } from '../deals/config.js';
+import { resolveFinanceWorkspace, FINANCE_WORKSPACE, effectiveOrgTypeId } from '../deals/config.js';
 
 // Quote Preview Canvas — Phase 1 (premium document-first workspace).
 //
@@ -171,7 +171,7 @@ export default function QuotePreviewCanvas() {
       productId: deal.productId || null,
       productVariantId: deal.productVariantId || null,
       activityTypeId: activityTypes.find((a) => a.key === k)?.id || null,
-      organizationTypeId: deal.organizationTypeId || deal.organization?.organizationTypeId || null,
+      organizationTypeId: effectiveOrgTypeId(deal),
       organizationSubtypeId: deal.organizationSubtypeId || null,
       participantCount: deal.participants ?? 0,
     };

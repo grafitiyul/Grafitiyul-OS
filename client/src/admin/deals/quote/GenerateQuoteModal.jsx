@@ -7,6 +7,7 @@ import RichEditor from '../../../editor/RichEditor.jsx';
 import OfferContextBar from './OfferContextBar.jsx';
 import PriceBuilderDialog from '../PriceBuilderDialog.jsx';
 import { priceContextFor } from '../tourContext.js';
+import { effectiveOrgTypeId } from '../config.js';
 
 // "הפק הצעת מחיר" — the quote GENERATION modal (the operator's main flow).
 //
@@ -475,7 +476,7 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated, o
         productVariantId: f.productVariantId,
         participants: f.participants,
         activityType: deal?.activityType,
-        organizationTypeId: deal?.organizationTypeId || deal?.organization?.organizationTypeId,
+        organizationTypeId: effectiveOrgTypeId(deal),
         organizationSubtypeId: deal?.organizationSubtypeId,
       },
       activityTypes,

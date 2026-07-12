@@ -10,12 +10,15 @@ import { useDirtyWhen } from '../../lib/dirtyForms.js';
 // APIs and links out to the full Organization page for deep editing (units,
 // finance, contacts).
 //
-// Source-of-truth rules (mirrored on the backend):
+// Source-of-truth rules (ENFORCED on the backend — deals/classification.js):
+//   • Linking an organization forces the deal to activityType='business' and
+//     force-nulls any deal-level organizationTypeId (server-side, automatic).
 //   • Organization type
 //       – org linked  → edits the ORGANIZATION's own type (api.organizations.update);
 //                        every deal of that org reflects it. (No deal-level copy.)
 //       – no org      → stored on the DEAL (Deal.organizationTypeId).
-//   • Subtype  → always on the Deal (Deal.organizationSubtypeId).
+//   • Subtype  → always on the Deal (Deal.organizationSubtypeId); the server
+//                clears it if it does not belong to the linked org's type.
 //   • Unit     → on the Deal (Deal.organizationUnitId).
 //
 // Nothing autosaves — there is one explicit "שמור" button.

@@ -24,12 +24,33 @@ export const ACTIVITY_TYPE_LABELS = {
   business: 'עסקי',
 };
 
+// The deal's EFFECTIVE organization type — the ONE derived read, mirroring the
+// server rule (server/src/deals/classification.js): a linked Organization is
+// the source of truth for the type (even when that org has no type — a stale
+// deal-level value must never contradict it); without an org, the deal's own
+// manual classification applies. Every surface must resolve through these —
+// never hand-roll `deal.organizationTypeId || organization…` precedence.
+export function effectiveOrgTypeId(deal) {
+  return (
+    (deal?.organization ? deal.organization.organizationTypeId : deal?.organizationTypeId) ||
+    null
+  );
+}
+
+export function effectiveOrgTypeLabel(deal) {
+  return (
+    (deal?.organization
+      ? deal.organization.organizationType?.label
+      : deal?.organizationType?.label) || null
+  );
+}
+
 // The SINGLE source of truth for the activity-badge text — used by both the
 // Deal header (ActivityBadge) and the WhatsApp inbox row badge, so they can
 // never diverge. For a business deal it shows the SPECIFIC classification (the
 // effective org-type + subtype labels), falling back to the broad "עסקי" only
-// when no specific type exists. `orgTypeLabel` is the deal's own org-type
-// label OR the linked organization's default; `subtypeLabel` is the subtype's.
+// when no specific type exists. `orgTypeLabel` comes from effectiveOrgTypeLabel
+// (linked org's type, else the deal's own); `subtypeLabel` is the subtype's.
 // Returns null when no activity type is set (callers supply their own affordance).
 export function resolveActivityLabel({ activityType, orgTypeLabel, subtypeLabel } = {}) {
   if (!activityType) return null;

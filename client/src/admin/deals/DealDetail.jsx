@@ -22,6 +22,8 @@ import {
   ACTIVITY_BADGE_TONE,
   ACTIVITY_BADGE_NEUTRAL,
   resolveActivityLabel,
+  effectiveOrgTypeId,
+  effectiveOrgTypeLabel,
   ROLE_LABELS,
   TOUR_LANGS,
   contactNameHe,
@@ -324,9 +326,10 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
             productId: form.productId || null,
             productVariantId: form.productVariantId || null,
             activityTypeId: resolveActivityTypeId(form.activityType),
-            // Deal classification wins: the deal's own type overrides the linked
-            // organization's default (same precedence the quote composer uses).
-            organizationTypeId: deal?.organizationTypeId || orgType?.id || null,
+            // Canonical effective type: the linked ORGANIZATION's type when an
+            // org is attached, else the deal's own (same rule everywhere —
+            // effectiveOrgTypeId mirrors server/src/deals/classification.js).
+            organizationTypeId: effectiveOrgTypeId(deal),
             organizationSubtypeId: deal?.organizationSubtypeId || null,
             participantCount: form.participants === '' ? 0 : Number(form.participants),
           }
@@ -337,7 +340,7 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
       form?.productVariantId,
       form?.activityType,
       form?.participants,
-      orgType?.id,
+      deal?.organization?.organizationTypeId,
       deal?.organizationTypeId,
       deal?.organizationSubtypeId,
       activityTypes,
@@ -891,7 +894,9 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
               onActivityType={(v) => updateDeal({ activityType: v || null })}
               // Changing the org type ALWAYS clears the previous subtype — a
               // subtype must belong to the currently selected type (no stale
-              // "<new type> <old subtype>" badge).
+              // "<new type> <old subtype>" badge). Deal-level type writes only
+              // happen without a linked org (the editor locks the step otherwise);
+              // the server force-nulls the field for org-linked deals regardless.
               onDealOrgType={(v) => updateDeal({ organizationTypeId: v || null, organizationSubtypeId: null })}
               // Selecting a subtype also stamps its parent Organization Type, so the
               // deal's type/subtype can never diverge. For an org-linked deal the
@@ -1364,11 +1369,11 @@ function ActivityBadge({ deal, types, subtypes, onActivityType, onDealOrgType, o
 
   const at = deal.activityType;
   const hasOrg = !!deal.organization;
-  // The deal's effective classification: its OWN organization type if set (the
-  // per-deal override), otherwise the linked organization's default. The selector
-  // can freely change it for THIS deal, regardless of the linked organization.
-  const effTypeId = deal.organizationTypeId || deal.organization?.organizationTypeId || '';
-  const effTypeLabel = deal.organizationType?.label || deal.organization?.organizationType?.label;
+  // The deal's effective classification — the canonical derived read
+  // (effectiveOrgTypeId/Label): the linked ORGANIZATION's type when an org is
+  // attached (the org is the SSOT), else the deal's own manual type.
+  const effTypeId = effectiveOrgTypeId(deal) || '';
+  const effTypeLabel = effectiveOrgTypeLabel(deal) || undefined;
   const subtypeLabel = deal.organizationSubtype?.label;
 
   // Shared resolver — the WhatsApp inbox badge uses the exact same function.
@@ -1416,13 +1421,15 @@ function ActivityBadge({ deal, types, subtypes, onActivityType, onDealOrgType, o
 //
 //   activity ─click "עסקי"→ orgType ⇄ subtype   (back always returns to orgType)
 //
-// Group/Private finish in one click. For business it always lands on the type step:
-//   • deal-level (no org) → the deal owns the type, so the full type list is
-//     selectable; picking a type clears the old subtype, then goes to its subtypes.
-//   • org-linked → the ORGANIZATION owns the type (SSOT): the step shows it
-//     read-only with an edit-org link, plus a shortcut into the deal-owned subtype.
+// Group/Private finish in one click. For business it always lands on the type step.
+// Ownership follows the classification SSOT (server/src/deals/classification.js):
+//   • no org linked → the DEAL owns the type: the full type list is selectable;
+//     picking a type clears the old subtype, then continues to its subtypes.
+//   • org linked → the ORGANIZATION owns the classification: the deal is business
+//     by definition (group/private are disabled), the type step shows the org's
+//     type read-only with an edit-org link, and only the subtype stays editable.
 // Because back from 'subtype' returns to 'orgType' (never to 'activity'), a subtype
-// never traps the user — the parent type is always reachable. The popover remounts
+// never traps the user — the parent step is always reachable. The popover remounts
 // on open, so we always start at the first step.
 function ActivityEditor({ deal, types, subtypes, effTypeId, effTypeLabel, hasOrg, onActivityType, onDealOrgType, onSubtype, onOpenOrgDialog, close }) {
   const [step, setStep] = useState('activity'); // 'activity' | 'orgType' | 'subtype'
@@ -1433,12 +1440,11 @@ function ActivityEditor({ deal, types, subtypes, effTypeId, effTypeLabel, hasOrg
     subtypes.filter((s) => !s.organizationTypeId || s.organizationTypeId === tId);
 
   function pickActivity(v) {
+    // Org-linked deals are business by definition — the buttons are disabled,
+    // this guard is just belt-and-braces (the server enforces it regardless).
+    if (hasOrg && v !== 'business') return;
     if (v === 'business') {
       if (deal.activityType !== 'business') onActivityType('business');
-      // Always advance to the FULL, editable type list — for every deal, org-linked
-      // or not. The type chosen here is THIS deal's quote classification (it may
-      // differ from the linked organization's default), so the parent type is always
-      // reachable and a subtype can never trap the user in subtype-only.
       setStep('orgType');
       return;
     }
@@ -1460,9 +1466,29 @@ function ActivityEditor({ deal, types, subtypes, effTypeId, effTypeLabel, hasOrg
   }
 
   if (step === 'orgType') {
-    // The FULL Organization Type list, always selectable — this sets THIS deal's
-    // classification. A linked organization does NOT restrict the choice; its own
-    // type is only a default. (Master org data is edited elsewhere, not here.)
+    if (hasOrg) {
+      // The ORGANIZATION owns the type — shown read-only; editing routes to the
+      // org dialog (changing it there affects every deal of that organization).
+      const orgSubtypes = subtypesFor(effTypeId);
+      return (
+        <StepShell title="סוג ארגון" onBack={() => setStep('activity')}>
+          <div className="px-2.5 pt-1 text-sm font-semibold text-gray-800">
+            {effTypeLabel || 'לארגון אין סוג מוגדר'}
+          </div>
+          <p className="px-2.5 pb-1.5 text-[11px] text-gray-400">
+            נקבע לפי הארגון המקושר ({deal.organization?.name}).
+          </p>
+          <RowBtn onClick={() => { close(); onOpenOrgDialog(); }}>עריכת הארגון…</RowBtn>
+          {orgSubtypes.length > 0 && (
+            <RowBtn muted onClick={() => { setTypeId(effTypeId); setStep('subtype'); }}>
+              בחירת תת-סוג ‹
+            </RowBtn>
+          )}
+        </StepShell>
+      );
+    }
+    // No org → the FULL Organization Type list, selectable — this sets THIS
+    // deal's own classification (authoritative only while no org is linked).
     return (
       <StepShell title="סוג ארגון (לצורך ההצעה)" onBack={() => setStep('activity')}>
         {types.length === 0 && <div className="px-2.5 py-2 text-[12px] text-gray-400">אין סוגי ארגון</div>}
@@ -1494,20 +1520,29 @@ function ActivityEditor({ deal, types, subtypes, effTypeId, effTypeLabel, hasOrg
       <div className="flex gap-1.5 px-1">
         {ACTIVITY_TYPES.map((v) => {
           const on = deal.activityType === v;
+          // Org-linked → business by definition; group/private are not offerable.
+          const locked = hasOrg && v !== 'business';
           return (
             <button
               key={v}
               type="button"
               onClick={() => pickActivity(v)}
+              disabled={locked}
+              title={locked ? 'דיל עם ארגון מקושר הוא עסקי' : undefined}
               className={`flex-1 rounded-lg px-2 py-1.5 text-[12px] font-medium border transition ${
                 on ? ACTIVITY_OPTION_ON[v] : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-              }`}
+              } disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white`}
             >
               {ACTIVITY_TYPE_LABELS[v]}
             </button>
           );
         })}
       </div>
+      {hasOrg && (
+        <p className="px-1 pt-1.5 text-[11px] text-gray-400">
+          מקושר ארגון — הדיל עסקי בהגדרה. להסרה: עריכת הארגון בכותרת.
+        </p>
+      )}
     </div>
   );
 }

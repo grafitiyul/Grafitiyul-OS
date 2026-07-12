@@ -12,7 +12,7 @@ import TourTeamEditor from './TourTeamEditor.jsx';
 import TourGalleryCard from './gallery/TourGalleryCard.jsx';
 import { todayIL } from './calendar/dates.js';
 import { useTourChanged } from './tourEvents.js';
-import { contactNameHe, dealPath, resolveActivityLabel } from '../deals/config.js';
+import { contactNameHe, dealPath, resolveActivityLabel, effectiveOrgTypeLabel } from '../deals/config.js';
 // ONE participant-card presentation, shared with the Guide Portal — hierarchy,
 // typography and spacing (incl. the customerInfo tight face) live there.
 import ParticipantCardView from '../../tours/ParticipantCardView.jsx';
@@ -299,9 +299,7 @@ export default function TourPage() {
   const activityLabel = tour
     ? resolveActivityLabel({
         activityType: KIND_TO_ACTIVITY[tour.kind] || null,
-        orgTypeLabel:
-          classifyDeal?.organizationType?.label ||
-          classifyDeal?.organization?.organizationType?.label,
+        orgTypeLabel: effectiveOrgTypeLabel(classifyDeal),
         subtypeLabel: classifyDeal?.organizationSubtype?.label,
       })
     : null;

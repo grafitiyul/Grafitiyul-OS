@@ -221,7 +221,19 @@ test('composer: every block carries source metadata; displayProductName override
 
 // ── edit-at-source targets (v2 redesign) ─────────────────────────────────────
 test('composer: each block carries a contextual editTarget (route to source)', () => {
-  const model = compose({ deal: baseDeal({ productId: 'p1', locationId: 'loc1', organizationTypeId: 'ot1' }) });
+  // Org-linked deal → the ORGANIZATION's type is the effective classification
+  // (deal-level organizationTypeId is force-nulled by the API for linked deals).
+  const model = compose({
+    deal: baseDeal({
+      productId: 'p1',
+      locationId: 'loc1',
+      organization: {
+        name: 'בית ספר X',
+        organizationTypeId: 'ot1',
+        organizationType: { quoteContentHe: '<p>בתי ספר</p>', quoteContentEn: '<p>schools</p>' },
+      },
+    }),
+  });
   assert.deepEqual(blockByKey(model, 'pricing').editTarget, { kind: 'builder', label: 'ערוך תמחור', dialog: true });
   assert.equal(blockByKey(model, 'tour_details').editTarget.kind, 'deal');
   assert.equal(blockByKey(model, 'tour_details').editTarget.label, 'ערוך פרטי הסיור');
@@ -403,12 +415,14 @@ test('composer: duration resolves from the variant; deal override wins; absent w
 });
 
 // ── Why Grafitiyul: content from Org Subtype → Org Type; single source of truth ─
+// Deal-level org type is authoritative only WITHOUT a linked organization, so
+// these org-less deals exercise the deal-owned classification path.
 test('composer: Why Grafitiyul — subtype overrides type; type fallback; empty skips', () => {
-  const both = baseDeal({ organization: {}, organizationSubtype: { quoteContentHe: '<p>תת-סוג</p>' }, organizationType: { quoteContentHe: '<p>סוג</p>' } });
+  const both = baseDeal({ organization: null, organizationSubtype: { quoteContentHe: '<p>תת-סוג</p>' }, organizationType: { quoteContentHe: '<p>סוג</p>' } });
   assert.equal(blockByKey(compose({ deal: both }), 'why_grafitiyul').data.html, '<p>תת-סוג</p>', 'subtype overrides type');
-  const typeOnly = baseDeal({ organization: {}, organizationSubtype: null, organizationType: { quoteContentHe: '<p>סוג</p>' } });
+  const typeOnly = baseDeal({ organization: null, organizationSubtype: null, organizationType: { quoteContentHe: '<p>סוג</p>' } });
   assert.equal(blockByKey(compose({ deal: typeOnly }), 'why_grafitiyul').data.html, '<p>סוג</p>', 'type fallback');
-  const neither = baseDeal({ organization: {}, organizationSubtype: null, organizationType: null });
+  const neither = baseDeal({ organization: null, organizationSubtype: null, organizationType: null });
   assert.equal(blockByKey(compose({ deal: neither }), 'why_grafitiyul').data.html, null, 'empty → skip');
 });
 
@@ -428,11 +442,11 @@ test('composer: every heading section gets a default title (no template → buil
 
 // ── "Edit at source" targets the ACTIVE Why-Grafitiyul source ─────────────────
 test('composer: Why-Grafitiyul edit target follows the active source (subtype vs type)', () => {
-  const subActive = baseDeal({ organization: {}, organizationSubtypeId: 'sub1', organizationSubtype: { quoteContentHe: '<p>x</p>' }, organizationTypeId: 'ot1', organizationType: { quoteContentHe: '<p>y</p>' } });
+  const subActive = baseDeal({ organization: null, organizationSubtypeId: 'sub1', organizationSubtype: { quoteContentHe: '<p>x</p>' }, organizationTypeId: 'ot1', organizationType: { quoteContentHe: '<p>y</p>' } });
   const et1 = blockByKey(compose({ deal: subActive }), 'why_grafitiyul').editTarget;
   assert.equal(et1.kind, 'orgSubtype', 'subtype provides content → edit subtype');
   assert.equal(et1.id, 'sub1');
-  const typeActive = baseDeal({ organization: {}, organizationSubtypeId: 'sub1', organizationSubtype: { quoteContentHe: '' }, organizationTypeId: 'ot1', organizationType: { quoteContentHe: '<p>y</p>' } });
+  const typeActive = baseDeal({ organization: null, organizationSubtypeId: 'sub1', organizationSubtype: { quoteContentHe: '' }, organizationTypeId: 'ot1', organizationType: { quoteContentHe: '<p>y</p>' } });
   const et2 = blockByKey(compose({ deal: typeActive }), 'why_grafitiyul').editTarget;
   assert.equal(et2.kind, 'orgType', 'subtype empty → edit type');
   assert.equal(et2.id, 'ot1');
@@ -538,26 +552,29 @@ test('isLockedStatus: finalised statuses lock; draft and produced do not', () =>
   assert.equal(isLockedStatus(undefined), false);
 });
 
-// ── Deal-level organization type OVERRIDES the linked org's default ──────────
-// The quote's org-type-dependent content ("why_us") must follow THIS deal's
-// classification, not the linked organization's default type.
-test('composer: deal.organizationType overrides the linked org type for why_us', () => {
+// ── The linked ORGANIZATION's type is the effective classification ───────────
+// Business rule (deals/classification.js): once an organization is attached,
+// its type is the single source of truth for org-type-dependent content
+// ("why_us") — a stale deal-level value must never contradict it. The API
+// force-nulls Deal.organizationTypeId for org-linked deals; this proves the
+// composer resolves the org even if a stale copy somehow survives.
+test('composer: the linked org type wins over a stale deal-level type for why_us', () => {
   const deal = baseDeal({
     organizationSubtype: null,
-    organizationType: { quoteContentHe: '<p>מפיקים</p>', quoteContentEn: '<p>producers</p>' }, // deal override
-    organization: { name: 'X', organizationType: { quoteContentHe: '<p>בתי ספר</p>', quoteContentEn: '<p>schools</p>' } }, // org default
+    organizationType: { quoteContentHe: '<p>מפיקים</p>', quoteContentEn: '<p>producers</p>' }, // stale copy
+    organization: { name: 'X', organizationType: { quoteContentHe: '<p>בתי ספר</p>', quoteContentEn: '<p>schools</p>' } }, // the SSOT
   });
   const why = blockByKey(compose({ deal }), 'why_grafitiyul').data;
-  assert.match(why.html, /מפיקים/, 'uses the deal classification content');
-  assert.doesNotMatch(why.html, /בתי ספר/, 'not the linked org default');
+  assert.match(why.html, /בתי ספר/, 'uses the linked organization type');
+  assert.doesNotMatch(why.html, /מפיקים/, 'never the stale deal-level copy');
 });
 
-test('composer: with no deal-level type, why_us falls back to the linked org type', () => {
+test('composer: without an organization, why_us uses the deal-level type', () => {
   const deal = baseDeal({
     organizationSubtype: null,
-    organizationType: null, // no override
-    organization: { name: 'X', organizationType: { quoteContentHe: '<p>בתי ספר</p>', quoteContentEn: '<p>schools</p>' } },
+    organizationType: { quoteContentHe: '<p>מפיקים</p>', quoteContentEn: '<p>producers</p>' },
+    organization: null,
   });
   const why = blockByKey(compose({ deal }), 'why_grafitiyul').data;
-  assert.match(why.html, /בתי ספר/, 'falls back to the org default');
+  assert.match(why.html, /מפיקים/, 'deal owns the classification when no org is linked');
 });
