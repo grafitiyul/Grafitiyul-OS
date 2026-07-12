@@ -57,6 +57,7 @@ import DealsList from './admin/deals/DealsList.jsx';
 // management under one tabbed layout.
 import FinanceLayout from './admin/finance/FinanceLayout.jsx';
 import FinancePlaceholder from './admin/finance/FinancePlaceholder.jsx';
+import PayrollDayPage from './admin/finance/payroll/PayrollDayPage.jsx';
 import CollectionPage from './admin/collection/CollectionPage.jsx';
 // Aliased: ToursPage is taken by the PUBLIC tours page import below.
 import AdminToursPage from './admin/tours/ToursPage.jsx';
@@ -193,16 +194,7 @@ export default function App() {
         <Route path="finance" element={<FinanceLayout />}>
           <Route index element={<Navigate to="/admin/finance/collection" replace />} />
           <Route path="collection" element={<CollectionPage />} />
-          <Route
-            path="payroll"
-            element={
-              <FinancePlaceholder
-                icon="🧾"
-                title="שכר צוות"
-                description="מודול השכר בבנייה. כאן ינוהלו רשומות השכר של הצוות — סיורים ופעילויות כלליות."
-              />
-            }
-          />
+          <Route path="payroll" element={<PayrollDayPage />} />
           <Route
             path="management"
             element={

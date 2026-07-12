@@ -654,6 +654,21 @@ export const api = {
   collection: {
     deals: () => request('/api/collection/deals'),
   },
+  // ── Payroll (שכר צוות) — day screen + activity drawer ─────────────
+  // All numbers are server-computed (payroll engine); the client never
+  // does financial math.
+  payroll: {
+    day: (date) => request(`/api/payroll/day?date=${encodeURIComponent(date)}`),
+    activity: (id) => request(`/api/payroll/activities/${id}`),
+    updateLine: (id, data) =>
+      request(`/api/payroll/lines/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    approveActivity: (id) =>
+      request(`/api/payroll/activities/${id}/approve`, { method: 'POST' }),
+    unapproveActivity: (id) =>
+      request(`/api/payroll/activities/${id}/unapprove`, { method: 'POST' }),
+    recalcEntry: (id) =>
+      request(`/api/payroll/entries/${id}/recalc`, { method: 'POST' }),
+  },
   // ── WhatsApp module — connections admin (Slice 1) ────────────────
   // Accounts come from the DB; live status/actions proxy to the
   // per-number bridge services.

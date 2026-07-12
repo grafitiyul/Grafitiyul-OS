@@ -73,6 +73,7 @@ import payRouter from './routes/pay.js';
 import paymentRouter from './routes/payment.js';
 import touristPaymentRouter from './routes/touristPayment.js';
 import { dealCollectionRouter, collectionRouter } from './routes/collection.js';
+import payrollRouter from './routes/payroll.js';
 import whatsappRouter from './routes/whatsapp.js';
 import emailRouter from './routes/email.js';
 import emailTrackingRouter from './routes/emailTracking.js';
@@ -293,6 +294,9 @@ app.use('/api/deals', requireAdminAuth, touristPaymentRouter);
 // /:id/collection (Deal card) + /api/collection/deals (Collection screen).
 app.use('/api/deals', requireAdminAuth, dealCollectionRouter);
 app.use('/api/collection', requireAdminAuth, collectionRouter);
+// Payroll (שכר צוות) — day screen + activity drawer. Math lives in
+// payroll/engine.js (pure), writes in payroll/service.js.
+app.use('/api/payroll', requireAdminAuth, payrollRouter);
 // WhatsApp module — account/connection admin (proxies live actions to the
 // per-number bridge services over Railway's private network).
 app.use('/api/whatsapp', requireAdminAuth, whatsappRouter);
