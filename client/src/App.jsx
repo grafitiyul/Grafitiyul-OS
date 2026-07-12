@@ -62,6 +62,7 @@ import PayrollReportPage from './admin/finance/payroll/PayrollReportPage.jsx';
 import CollectionPage from './admin/collection/CollectionPage.jsx';
 // Aliased: ToursPage is taken by the PUBLIC tours page import below.
 import AdminToursPage from './admin/tours/ToursPage.jsx';
+import ControlPage from './admin/control/ControlPage.jsx';
 import TourEventPage from './admin/tours/TourPage.jsx';
 import DealDetail from './admin/deals/DealDetail.jsx';
 import QuotePreviewCanvas from './admin/quote/QuotePreviewCanvas.jsx';
@@ -157,7 +158,10 @@ export default function App() {
           </AdminGuard>
         }
       >
-        <Route index element={<Navigate to="/admin/procedures/flows" replace />} />
+        {/* בקרה is the admin landing page — the first thing an admin sees is
+            "מה דורש טיפול עכשיו?", not a module picked by history. */}
+        <Route index element={<Navigate to="/admin/control" replace />} />
+        <Route path="control" element={<ControlPage />} />
         <Route path="procedures" element={<ProceduresLayout />}>
           <Route index element={<Navigate to="flows" replace />} />
           <Route path="flows" element={<FlowsHome />}>

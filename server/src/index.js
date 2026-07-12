@@ -85,6 +85,9 @@ import { startTourCalendarSyncWorker } from './tours/calendar/syncWorker.js';
 import { startTourCompletionWorker } from './tours/completionWorker.js';
 import questionnairesRouter from './routes/questionnaires.js';
 import publicQuestionnaireRouter from './routes/publicQuestionnaire.js';
+import controlRouter from './routes/control.js';
+import { startControlSweepWorker } from './control/sweepWorker.js';
+import './control/detectors/index.js';
 import { makeLegacyRedirect } from './legacyRedirect.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -369,6 +372,10 @@ app.use('/api/guide-portal-settings', requireAdminAuth, guidePortalSettingsRoute
 // engine-design.md). Admin builder + staff submission flows. Public
 // token-link routes are a separate, later-mounted public router (Slice 3).
 app.use('/api/questionnaires', requireAdminAuth, questionnairesRouter);
+// בקרה (Operations Control) — THE canonical operational-issue surface. Every
+// subsystem reports problems into OperationalIssue (server/src/control/);
+// this router serves the dashboard + acknowledge/recheck/server actions.
+app.use('/api/control', requireAdminAuth, controlRouter);
 
 // Unknown /api/* paths get a real JSON 404 instead of falling through to
 // the SPA fallback (which would serve HTML for an API request).
@@ -590,4 +597,7 @@ app.listen(port, () => {
   // Tour completion sweep — flips scheduled tours whose date passed (business
   // TZ midnight) into the explicit Completed state; 5m tick, idempotent.
   startTourCompletionWorker(console);
+  // בקרה detectors — re-derive operational issues from live domain state
+  // (raise missing, auto-resolve fixed); 60s tick.
+  startControlSweepWorker(console);
 });

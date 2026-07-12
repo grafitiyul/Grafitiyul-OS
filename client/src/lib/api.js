@@ -1529,4 +1529,19 @@ export const api = {
       },
     },
   },
+  // בקרה (Operations Control) — the canonical operational-issue surface.
+  // Mutations that already have endpoints (whatsapp.scheduledCancel,
+  // deals.applyTourUpdate…) are called directly by the dashboard's action
+  // runner, followed by recheck() so the card resolves immediately.
+  control: {
+    issues: () => request('/api/control/issues'),
+    acknowledge: (id) => request(`/api/control/issues/${id}/acknowledge`, { method: 'POST' }),
+    unacknowledge: (id) => request(`/api/control/issues/${id}/unacknowledge`, { method: 'POST' }),
+    recheck: (id) => request(`/api/control/issues/${id}/recheck`, { method: 'POST' }),
+    action: (id, key, data) =>
+      request(`/api/control/issues/${id}/actions/${key}`, {
+        method: 'POST',
+        body: JSON.stringify(data || {}),
+      }),
+  },
 };

@@ -10,6 +10,9 @@ import WhatsAppLogo from '../admin/common/WhatsAppLogo.jsx';
 import GmailIcon from '../admin/common/icons/GmailIcon.jsx';
 
 export const TOP_MODULES = [
+  // בקרה — the operations control center and the admin LANDING page. Answers
+  // "מה דורש טיפול עכשיו?" from the canonical OperationalIssue list.
+  { key: 'control', to: '/admin/control', label: 'בקרה', glyph: '🚨' },
   // CRM is the operational hub: Deals (primary tab) + Contacts + Organizations.
   { key: 'crm', to: '/admin/crm', label: 'CRM', glyph: '🏢' },
   // Tours — the OPERATIONAL execution module (TourEvent/Booking). Daily working

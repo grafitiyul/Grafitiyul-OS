@@ -4052,3 +4052,53 @@ model PayrollEntryLine {
   @@unique([entryId, componentId])
   @@index([entryId])
 }
+
+// ── בקרה (Operations Control) ────────────────────────────────────────────────
+// THE canonical operational-issue record. Every subsystem that detects an
+// operational problem (gallery cleanup awaiting approval, skipped WhatsApp
+// messages, deal↔tour drift, future: calendar/email/payment failures) reports
+// through this ONE model — no module owns its own warning system. Issues are
+// raised/auto-resolved by detectors that always re-derive from live domain
+// state (server/src/control/) so a fixed problem disappears on its own.
+model OperationalIssue {
+  id           String @id @default(cuid())
+  // Registry key (server/src/control/registry.js) — decides rendering + actions.
+  type         String
+  severity     String // 'critical' | 'warning' | 'info'
+  sourceModule String // 'tours' | 'gallery' | 'whatsapp' | 'deals' | …
+
+  // One NON-RESOLVED issue per real-world problem: `${type}:${entity id}`.
+  // Deliberately not DB-unique — the lifecycle allows a resolved issue to
+  // recur later as a NEW row; the service layer (raiseIssue) enforces
+  // single-active per key.
+  dedupeKey String
+
+  title       String
+  explanation String
+  // Loose entity refs (no FKs — issues must survive entity deletion):
+  // [{ type: 'tour_event'|'deal'|…, id, orderNo?, label? }]
+  entityRefs  Json   @default("[]")
+  // Type-specific payload for rendering + actions (diff lists, task ids, …).
+  data        Json?
+
+  // Lifecycle: open → acknowledged (operator saw it, keeps it out of the way)
+  //            → resolved (fixed — by an action, or auto when the detector
+  //            observes the underlying condition is gone).
+  status         String    @default("open")
+  detectedAt     DateTime  @default(now())
+  lastSeenAt     DateTime  @default(now())
+  acknowledgedAt DateTime?
+  acknowledgedBy String? // AdminUser.id (loose)
+  resolvedAt     DateTime?
+  resolvedBy     String? // AdminUser.id (loose); null = auto-resolved
+  resolvedByName String?
+  resolution     String? // 'auto' | action key that resolved it
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, severity, detectedAt])
+  @@index([dedupeKey, status])
+  @@index([sourceModule, status])
+  @@index([type, status])
+}
