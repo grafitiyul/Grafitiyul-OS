@@ -19,6 +19,7 @@ import exportsRouter from './routes/exports.js';
 import portalRouter from './routes/portal.js';
 import portalToursRouter from './routes/portalTours.js';
 import portalProfileRouter from './routes/portalProfile.js';
+import portalPayRouter from './routes/portalPay.js';
 import bankCatalogRouter from './routes/bankCatalog.js';
 import portalTrainingRouter from './routes/portalTraining.js';
 import guideStationAccessRouter from './routes/guideStationAccess.js';
@@ -196,6 +197,9 @@ app.use('/api/portal', portalRouter);
 app.use('/api/portal', portalToursRouter);
 // Guide Portal → פרטים אישיים (view + permission-gated profile editing).
 app.use('/api/portal', portalProfileRouter);
+// Guide Portal → שכר (viewPay-gated: office-approved entries, per-entry guide
+// approval, inquiry comments → בבירור).
+app.use('/api/portal', portalPayRouter);
 // Guide Portal → מערכי הדרכה (permitted training stations; double server
 // gate: viewTraining permission + explicit GuideStationAccess rows).
 app.use('/api/portal', portalTrainingRouter);
