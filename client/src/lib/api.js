@@ -1,3 +1,5 @@
+import { emitTourChanged } from '../admin/tours/tourEvents.js';
+
 async function request(path, options = {}) {
   const res = await fetch(path, {
     ...options,
@@ -29,6 +31,19 @@ function qs(obj) {
       ([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`
     );
   return parts.length ? `?${parts.join('&')}` : '';
+}
+
+// THE single seam that ties every tour mutation to the one canonical
+// tour-changed signal. Any API call that changes a TourEvent's visible state
+// is wrapped here, so on success it emits emitTourChanged() exactly once and
+// every open Tours surface (table / calendar / drawer, incl. other tabs)
+// re-fetches — with ZERO per-component wiring. One event, one mechanism, every
+// mutation path covered. Failures never emit (the promise rejects through).
+function tourMutation(promise) {
+  return promise.then((res) => {
+    emitTourChanged();
+    return res;
+  });
 }
 
 export const api = {
@@ -437,16 +452,21 @@ export const api = {
     get: (id) => request(`/api/deals/${id}`),
     create: (data) =>
       request('/api/deals', { method: 'POST', body: JSON.stringify(data) }),
-    update: (id, data) =>
-      request(`/api/deals/${id}`, {
-        method: 'PUT',
-        body: JSON.stringify(data),
-      }),
+    update: (id, data) => {
+      const p = request(`/api/deals/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+      // A deal status change (WON creates/joins a tour · LOST cancels it ·
+      // WON→open reopens/cancels it) or a slot assignment mutates a tour;
+      // plain field/stage edits do not. Emit only for the tour-affecting ones.
+      return data && (data.status !== undefined || data.tourEventId !== undefined)
+        ? tourMutation(p)
+        : p;
+    },
     remove: (id) => request(`/api/deals/${id}`, { method: 'DELETE' }),
-    // Pending Tour Update — apply (the ONE tour-update orchestration) /
-    // discard (restore deal fields to the currently-applied tour values).
+    // Pending Tour Update — apply (the ONE tour-update orchestration, which
+    // mutates the tour → emits) / discard (restores deal fields to the
+    // currently-applied tour values → NOT a tour change, no emit).
     applyTourUpdate: (id) =>
-      request(`/api/deals/${id}/apply-tour-update`, { method: 'POST', body: '{}' }),
+      tourMutation(request(`/api/deals/${id}/apply-tour-update`, { method: 'POST', body: '{}' })),
     discardTourUpdate: (id) =>
       request(`/api/deals/${id}/discard-tour-update`, { method: 'POST', body: '{}' }),
     addContact: (id, data) =>
@@ -1214,66 +1234,74 @@ export const api = {
   // Tours OPERATIONAL module ("סיורים") — TourEvent/Booking. Distinct from
   // tourContent below (training/route content).
   tours: {
+    // Every mutation below is wrapped in tourMutation() so a success emits the
+    // ONE canonical tour-changed signal (see the helper above). READS (list /
+    // calendar / get / scheduling / orphans / completionState) are NOT wrapped.
     // "שבץ לסיור" / "החלף סיור" — attach a WON group deal to a slot (replaces
     // its current booking when one exists). Lives on the deals router.
     assignDeal: (dealId, tourEventId) =>
-      request(`/api/deals/${dealId}/tour-booking`, {
-        method: 'POST',
-        body: JSON.stringify({ tourEventId }),
-      }),
+      tourMutation(
+        request(`/api/deals/${dealId}/tour-booking`, {
+          method: 'POST',
+          body: JSON.stringify({ tourEventId }),
+        }),
+      ),
     list: (params = {}) => request('/api/tours' + qs(params)),
     // Calendar view — lean date-range DTO (same TourEvents, no Deal payloads).
     calendar: (params = {}) => request('/api/tours/calendar' + qs(params)),
     // Scheduling (Settings → Tours): global settings + recurring weekly rules.
+    // Rule/settings changes materialize or remove group slots → tour change.
     scheduling: () => request('/api/tours/scheduling'),
     updateSchedulingSettings: (data) =>
-      request('/api/tours/scheduling/settings', { method: 'PUT', body: JSON.stringify(data) }),
+      tourMutation(request('/api/tours/scheduling/settings', { method: 'PUT', body: JSON.stringify(data) })),
     createScheduleRule: (data) =>
-      request('/api/tours/scheduling/rules', { method: 'POST', body: JSON.stringify(data) }),
+      tourMutation(request('/api/tours/scheduling/rules', { method: 'POST', body: JSON.stringify(data) })),
     updateScheduleRule: (id, data) =>
-      request(`/api/tours/scheduling/rules/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+      tourMutation(request(`/api/tours/scheduling/rules/${id}`, { method: 'PUT', body: JSON.stringify(data) })),
     removeScheduleRule: (id) =>
-      request(`/api/tours/scheduling/rules/${id}`, { method: 'DELETE' }),
+      tourMutation(request(`/api/tours/scheduling/rules/${id}`, { method: 'DELETE' })),
     // Orphaned bookings — tours intentionally kept when their deal left WON.
     orphans: () => request('/api/tours/orphans'),
     orphansCount: () => request('/api/tours/orphans/count'),
     reconnectOrphan: (bookingId) =>
-      request(`/api/tours/orphans/${bookingId}/reconnect`, { method: 'POST', body: '{}' }),
+      tourMutation(request(`/api/tours/orphans/${bookingId}/reconnect`, { method: 'POST', body: '{}' })),
     cancelOrphan: (bookingId) =>
-      request(`/api/tours/orphans/${bookingId}/cancel`, { method: 'POST', body: '{}' }),
+      tourMutation(request(`/api/tours/orphans/${bookingId}/cancel`, { method: 'POST', body: '{}' })),
     get: (id) => request(`/api/tours/${id}`),
     // Explicit tour completion: dialog payload (missing required summaries)
     // + the manual "סמן סיור כהסתיים" transition.
     completionState: (id) => request(`/api/tours/${id}/completion-state`),
-    complete: (id) => request(`/api/tours/${id}/complete`, { method: 'POST', body: '{}' }),
+    complete: (id) => tourMutation(request(`/api/tours/${id}/complete`, { method: 'POST', body: '{}' })),
     // Completion reversal ("החזר לעתידי") — completed → scheduled while the
     // tour's date is still today/future.
-    reopen: (id) => request(`/api/tours/${id}/reopen`, { method: 'POST', body: '{}' }),
+    reopen: (id) => tourMutation(request(`/api/tours/${id}/reopen`, { method: 'POST', body: '{}' })),
     // Guide assignments (role lives on the assignment; switching = update).
     addAssignment: (tourId, data) =>
-      request(`/api/tours/${tourId}/assignments`, { method: 'POST', body: JSON.stringify(data) }),
+      tourMutation(request(`/api/tours/${tourId}/assignments`, { method: 'POST', body: JSON.stringify(data) })),
     updateAssignment: (assignmentId, data) =>
-      request(`/api/tours/assignments/${assignmentId}`, { method: 'PUT', body: JSON.stringify(data) }),
+      tourMutation(request(`/api/tours/assignments/${assignmentId}`, { method: 'PUT', body: JSON.stringify(data) })),
     removeAssignment: (assignmentId) =>
-      request(`/api/tours/assignments/${assignmentId}`, { method: 'DELETE' }),
+      tourMutation(request(`/api/tours/assignments/${assignmentId}`, { method: 'DELETE' })),
     // Activity components (per tour; seeded from the product, then tour-owned).
     addComponent: (tourId, data) =>
-      request(`/api/tours/${tourId}/components`, { method: 'POST', body: JSON.stringify(data) }),
+      tourMutation(request(`/api/tours/${tourId}/components`, { method: 'POST', body: JSON.stringify(data) })),
     reorderComponents: (tourId, ids) =>
-      request(`/api/tours/${tourId}/components/reorder`, { method: 'PUT', body: JSON.stringify({ ids }) }),
+      tourMutation(request(`/api/tours/${tourId}/components/reorder`, { method: 'PUT', body: JSON.stringify({ ids }) })),
     setComponentLocation: (rowId, workshopLocationId) =>
-      request(`/api/tours/components/${rowId}`, {
-        method: 'PUT',
-        body: JSON.stringify({ workshopLocationId }),
-      }),
-    removeComponent: (rowId) => request(`/api/tours/components/${rowId}`, { method: 'DELETE' }),
+      tourMutation(
+        request(`/api/tours/components/${rowId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ workshopLocationId }),
+        }),
+      ),
+    removeComponent: (rowId) => tourMutation(request(`/api/tours/components/${rowId}`, { method: 'DELETE' })),
     reseedComponents: (tourId) =>
-      request(`/api/tours/${tourId}/components/reseed`, { method: 'POST', body: '{}' }),
+      tourMutation(request(`/api/tours/${tourId}/components/reseed`, { method: 'POST', body: '{}' })),
     // Creates a group Tour Slot (private/business tours are created only by
     // the deal WON transition, never from here).
-    create: (data) => request('/api/tours', { method: 'POST', body: JSON.stringify(data) }),
-    update: (id, data) => request(`/api/tours/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-    remove: (id) => request(`/api/tours/${id}`, { method: 'DELETE' }),
+    create: (data) => tourMutation(request('/api/tours', { method: 'POST', body: JSON.stringify(data) })),
+    update: (id, data) => tourMutation(request(`/api/tours/${id}`, { method: 'PUT', body: JSON.stringify(data) })),
+    remove: (id) => tourMutation(request(`/api/tours/${id}`, { method: 'DELETE' })),
   },
 
   // Tour Content (GOS source of truth). Tour → Station → ordered Step →
