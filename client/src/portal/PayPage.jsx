@@ -15,7 +15,7 @@ import { waitingLabel } from './payText.js';
 // (none|open|accepted|rejected) are separate server truths — only the chip
 // combines them.
 function entryChip(entry) {
-  if (entry.guideStatus === 'approved') return { label: 'אושר ✓', cls: 'bg-emerald-50 text-emerald-700' };
+  if (entry.guideStatus === 'approved') return { label: 'אושר על ידך ✓', cls: 'bg-emerald-50 text-emerald-700' };
   if (entry.inquiryStatus === 'open') return { label: 'בבירור', cls: 'bg-orange-50 text-orange-700' };
   if (entry.inquiryStatus === 'accepted') return { label: 'ההערה התקבלה — ממתין לאישורך', cls: 'bg-emerald-50 text-emerald-700' };
   if (entry.inquiryStatus === 'rejected') return { label: 'ההערה נדחתה — ממתין לאישורך', cls: 'bg-rose-50 text-rose-700' };
@@ -43,6 +43,13 @@ function EntryCard({ token, entry, onChanged }) {
   const [commenting, setCommenting] = useState(false);
   const [text, setText] = useState('');
   const meta = entryChip(entry);
+  // Accordion (presentation only — approval state/API untouched): entries the
+  // guide already approved need no action, so they rest COLLAPSED; anything
+  // waiting/inquiry stays fully expanded and prominent. Approving mid-session
+  // collapses the card; an office edit that resets approval re-expands it.
+  const approved = entry.guideStatus === 'approved';
+  const [open, setOpen] = useState(!approved);
+  useEffect(() => setOpen(!approved), [approved]);
 
   const post = async (path, body) => {
     setBusy(true);
@@ -61,20 +68,58 @@ function EntryCard({ token, entry, onChanged }) {
     }
   };
 
+  const header = (
+    <div className="flex items-start gap-2">
+      <div className="flex-1 min-w-0 text-right">
+        <div className="text-[15px] font-semibold text-gray-900 truncate">{entry.activityTitle}</div>
+        <div className="text-[12px] text-gray-500">
+          {entry.date ? entry.date.split('-').reverse().join('/') : monthLabel(entry.payrollMonth)}
+          {entry.sourceType === 'tour_event' ? ' · סיור' : ' · תוספת כללית'}
+          {approved && !open && entry.officeNote ? ' · 📌 הערת משרד' : ''}
+        </div>
+      </div>
+      {approved && !open && (
+        <span className="shrink-0 text-[14px] font-bold text-gray-900 tabular-nums pt-0.5">
+          {formatMinor(entry.totals.totalMinor)}
+        </span>
+      )}
+      {meta && (
+        <span className={`shrink-0 px-2 py-0.5 rounded-full text-[11px] font-medium ${meta.cls}`}>{meta.label}</span>
+      )}
+      {approved && (
+        <svg
+          width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+          strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+          className={`shrink-0 mt-1 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      )}
+    </div>
+  );
+
+  if (approved && !open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-expanded={false}
+        className="block w-full rounded-2xl border border-gray-200 bg-white p-4 text-right hover:bg-gray-50 transition"
+      >
+        {header}
+      </button>
+    );
+  }
+
   return (
     <div className="rounded-2xl border border-gray-200 bg-white p-4">
-      <div className="flex items-start gap-2">
-        <div className="flex-1 min-w-0">
-          <div className="text-[15px] font-semibold text-gray-900 truncate">{entry.activityTitle}</div>
-          <div className="text-[12px] text-gray-500">
-            {entry.date ? entry.date.split('-').reverse().join('/') : monthLabel(entry.payrollMonth)}
-            {entry.sourceType === 'tour_event' ? ' · סיור' : ' · תוספת כללית'}
-          </div>
-        </div>
-        {meta && (
-          <span className={`shrink-0 px-2 py-0.5 rounded-full text-[11px] font-medium ${meta.cls}`}>{meta.label}</span>
-        )}
-      </div>
+      {approved ? (
+        <button type="button" onClick={() => setOpen(false)} aria-expanded className="block w-full text-right">
+          {header}
+        </button>
+      ) : (
+        header
+      )}
 
       <div className="mt-3 space-y-1">
         {entry.lines.map((l, i) => (
@@ -154,6 +199,13 @@ function EntryCard({ token, entry, onChanged }) {
               {m.text}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Approval details — expanded view of an approved entry. */}
+      {approved && entry.guideApprovedAt && (
+        <div className="mt-3 border-t border-gray-100 pt-2 text-[11px] text-gray-400">
+          אושר על ידך · {new Date(entry.guideApprovedAt).toLocaleString('he-IL')}
         </div>
       )}
 
