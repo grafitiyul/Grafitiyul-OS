@@ -10,7 +10,7 @@ import {
 } from '../../common/tableColumns.jsx';
 import MultiSelectFilter, { isUnrestricted } from '../../common/filters/MultiSelectFilter.jsx';
 import { ACTIVITY_STATUS_META, ROLE_LABELS } from './payrollConfig.js';
-import PayrollActivityDrawer from './PayrollActivityDrawer.jsx';
+import PayrollEntryDrawer from './PayrollEntryDrawer.jsx';
 
 // דוחות שכר — ONE symmetric full-width working table over all entries in the
 // selected range. Filters are the shared MultiSelectFilter (years, months,
@@ -60,7 +60,9 @@ export default function PayrollReportPage() {
   const [guides, setGuides] = useState(() => (Array.isArray(saved.guides) ? saved.guides : []));
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
-  const [openActivityId, setOpenActivityId] = useState(null);
+  // Reports open ONE person's entry (focused editor) — the full activity
+  // matrix stays the Daily tab's flow.
+  const [openEntryId, setOpenEntryId] = useState(null);
 
   useEffect(() => {
     localStorage.setItem(FILTERS_KEY, JSON.stringify({ years, months, guides }));
@@ -244,7 +246,7 @@ export default function PayrollReportPage() {
                     {rows.map((e) => (
                       <tr
                         key={e.id}
-                        onClick={() => setOpenActivityId(e.activityId)}
+                        onClick={() => setOpenEntryId(e.id)}
                         className="h-11 border-b border-gray-50 hover:bg-blue-50/40 cursor-pointer align-middle"
                       >
                         {orderedColumns.map((col) => (
@@ -262,11 +264,11 @@ export default function PayrollReportPage() {
         )}
       </div>
 
-      {openActivityId && (
-        <PayrollActivityDrawer
-          activityId={openActivityId}
+      {openEntryId && (
+        <PayrollEntryDrawer
+          entryId={openEntryId}
           onClose={() => {
-            setOpenActivityId(null);
+            setOpenEntryId(null);
             load();
           }}
         />

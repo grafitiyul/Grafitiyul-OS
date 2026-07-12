@@ -673,6 +673,22 @@ export const api = {
       request(`/api/payroll/entries/${id}/office-approve`, { method: 'POST' }),
     officeUnapproveEntry: (id) =>
       request(`/api/payroll/entries/${id}/office-unapprove`, { method: 'POST' }),
+    // Focused single-entry editor (Reports flow) — payroll corrections only.
+    entry: (id) => request(`/api/payroll/entries/${id}`),
+    updateEntry: (id, data) =>
+      request(`/api/payroll/entries/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    changeEntryGuide: (id, externalPersonId) =>
+      request(`/api/payroll/entries/${id}/change-guide`, {
+        method: 'POST',
+        body: JSON.stringify({ externalPersonId }),
+      }),
+    setEntryPayrollContext: (id, productVariantId) =>
+      request(`/api/payroll/entries/${id}/payroll-context`, {
+        method: 'POST',
+        body: JSON.stringify({ productVariantId }),
+      }),
+    updateActivitySchedule: (id, data) =>
+      request(`/api/payroll/activities/${id}/schedule`, { method: 'PATCH', body: JSON.stringify(data) }),
     report: (months, guides = []) =>
       request(
         `/api/payroll/report?months=${encodeURIComponent(months.join(','))}${

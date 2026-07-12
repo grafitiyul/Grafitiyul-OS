@@ -30,7 +30,8 @@ import {
   kickPayrollReconcile,
   monthOf,
 } from '../payroll/service.js';
-import { entryTotals, deriveOfficeState } from '../payroll/engine.js';
+import { entryTotals, deriveOfficeState, autoAmountMinor } from '../payroll/engine.js';
+import { isAssignableStaff } from '../people/eligibility.js';
 import { businessToday } from '../tours/completion.js';
 
 const router = Router();
@@ -703,6 +704,300 @@ router.post(
     const result = await unapproveEntry(prisma, { entryId: req.params.id, origin });
     if (result.error) return res.status(404).json({ error: result.error });
     res.json({ ok: true, already: result.already === true });
+  }),
+);
+
+// ---------- focused single-entry editor ----------
+// The Reports flow: one row = one person's PayrollEntry. Everything here is a
+// PAYROLL correction only — it never touches the Deal, the TourEvent, Tour
+// assignments, the ProductVariant master record, or the PersonProfile.
+
+const ENTRY_ROLES = ['lead_guide', 'guide', 'workshop_assistant'];
+
+// A meaningful office edit on an approved entry invalidates the guide's
+// approval — they must approve again (product rule H).
+async function resetGuideApproval(entry, origin) {
+  if (entry.officeStatus !== 'approved') return;
+  if (entry.guideStatus !== 'approved' && entry.guideStatus !== 'inquiry') return;
+  await prisma.payrollEntry.update({
+    where: { id: entry.id },
+    data: { guideStatus: 'pending', guideApprovedAt: null },
+  });
+  await emitTimelineEvent(prisma, {
+    subjectType: PAYROLL_SUBJECT,
+    subjectId: entry.activityId,
+    kind: 'payroll',
+    body: `🔁 נדרש אישור מחדש של ${entry.displayName} (הרשומה עודכנה לאחר אישור)`,
+    data: { event: 'guide_reapproval_required', entryId: entry.id },
+    origin,
+  });
+}
+
+router.get(
+  '/entries/:id',
+  handle(async (req, res) => {
+    const entry = await prisma.payrollEntry.findUnique({
+      where: { id: req.params.id },
+      include: { lines: true },
+    });
+    if (!entry) return res.status(404).json({ error: 'not_found' });
+    const activity = await prisma.payrollActivity.findUnique({
+      where: { id: entry.activityId },
+      include: ACTIVITY_INCLUDE,
+    });
+    let tour = null;
+    if (activity.tourEventId) {
+      const t = await prisma.tourEvent.findUnique({
+        where: { id: activity.tourEventId },
+        select: {
+          id: true,
+          date: true,
+          startTime: true,
+          product: { select: { nameHe: true } },
+          location: { select: { nameHe: true } },
+          productVariantId: true,
+        },
+      });
+      if (t) {
+        tour = {
+          id: t.id,
+          date: t.date,
+          startTime: t.startTime,
+          productName: t.product?.nameHe || null,
+          locationName: t.location?.nameHe || null,
+          productVariantId: t.productVariantId,
+        };
+      }
+    }
+    const history = await prisma.timelineEntry.findMany({
+      where: { subjectType: PAYROLL_SUBJECT, subjectId: entry.activityId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      include: { comments: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' } } },
+    });
+    res.json({
+      entry: entryPayload(entry),
+      activity: activitySummary(activity),
+      tour,
+      calcContext: entry.calcSnapshot?.inputs
+        ? { contextVariantId: entry.calcSnapshot.contextVariantId || null }
+        : null,
+      history,
+    });
+  }),
+);
+
+// PATCH /entries/:id — payroll-only header corrections: role, VAT snapshot,
+// notes. Only meaningful changes persist + create history.
+router.patch(
+  '/entries/:id',
+  handle(async (req, res) => {
+    const entry = await prisma.payrollEntry.findUnique({ where: { id: req.params.id } });
+    if (!entry) return res.status(404).json({ error: 'not_found' });
+    const b = req.body || {};
+    const data = {};
+    const changes = [];
+    if ('role' in b) {
+      const role = b.role === null ? null : String(b.role);
+      if (role !== null && !ENTRY_ROLES.includes(role)) return res.status(400).json({ error: 'invalid_role' });
+      if (role !== entry.role) {
+        data.role = role;
+        changes.push({ field: 'role', from: entry.role, to: role });
+      }
+    }
+    if ('vatStatus' in b) {
+      const vat = String(b.vatStatus);
+      if (!['exempt', 'vat_18'].includes(vat)) return res.status(400).json({ error: 'invalid_vat_status' });
+      if (vat !== entry.vatStatusSnapshot) {
+        data.vatStatusSnapshot = vat;
+        changes.push({ field: 'vatStatus', from: entry.vatStatusSnapshot, to: vat });
+      }
+    }
+    if ('notes' in b) {
+      const notes = b.notes ? String(b.notes) : null;
+      if ((entry.notes || null) !== notes) data.notes = notes; // quiet — no audit noise
+    }
+    if (Object.keys(data).length === 0) return res.json({ ok: true, unchanged: true });
+    await prisma.payrollEntry.update({ where: { id: entry.id }, data });
+    const origin = await userOrigin(req.adminAuth?.userId);
+    if (changes.length) {
+      await emitTimelineEvent(prisma, {
+        subjectType: PAYROLL_SUBJECT,
+        subjectId: entry.activityId,
+        kind: 'payroll',
+        body: `✏️ עודכנה רשומת השכר של ${entry.displayName} (${changes.map((c) => c.field).join(', ')})`,
+        data: { event: 'entry_changed', entryId: entry.id, changes },
+        origin,
+      });
+      await resetGuideApproval(entry, origin);
+      kickPayrollReconcile('tour', (await prisma.payrollActivity.findUnique({ where: { id: entry.activityId }, select: { tourEventId: true } }))?.tourEventId || null);
+    }
+    const fresh = await prisma.payrollEntry.findUnique({ where: { id: entry.id }, include: { lines: true } });
+    res.json({ ok: true, entry: entryPayload(fresh) });
+  }),
+);
+
+// POST /entries/:id/change-guide — correct a wrongly-assigned entry. Payroll
+// correction ONLY: the TourAssignment is never touched. The entry returns to
+// draft — the previous guide loses portal access immediately, the new guide
+// sees it only after office approval.
+router.post(
+  '/entries/:id/change-guide',
+  handle(async (req, res) => {
+    const entry = await prisma.payrollEntry.findUnique({ where: { id: req.params.id } });
+    if (!entry) return res.status(404).json({ error: 'not_found' });
+    const ext = String(req.body?.externalPersonId || '');
+    if (!ext) return res.status(400).json({ error: 'person_required' });
+    if (ext === entry.externalPersonId) return res.json({ ok: true, unchanged: true });
+    const person = await prisma.personRef.findUnique({
+      where: { externalPersonId: ext },
+      select: { id: true, externalPersonId: true, displayName: true, status: true, lifecycleHint: true },
+    });
+    if (!person || !isAssignableStaff(person)) {
+      return res.status(422).json({ error: 'person_not_assignable' });
+    }
+    const conflict = await prisma.payrollEntry.findFirst({
+      where: { activityId: entry.activityId, externalPersonId: ext, id: { not: entry.id } },
+      select: { id: true, state: true },
+    });
+    if (conflict) return res.status(409).json({ error: 'person_already_in_activity' });
+
+    const origin = await userOrigin(req.adminAuth?.userId);
+    const previousName = entry.displayName;
+    await prisma.payrollEntry.update({
+      where: { id: entry.id },
+      data: {
+        personRefId: person.id,
+        externalPersonId: person.externalPersonId,
+        displayName: person.displayName,
+        // Back to draft: previous guide loses access NOW; the new guide gets
+        // it only after office approval. Previous approvals are invalidated.
+        officeStatus: 'draft',
+        officeApprovedAt: null,
+        officeApprovedBy: null,
+        guideStatus: 'pending',
+        guideApprovedAt: null,
+      },
+    });
+    await emitTimelineEvent(prisma, {
+      subjectType: PAYROLL_SUBJECT,
+      subjectId: entry.activityId,
+      kind: 'payroll',
+      body: `👤 רשומת השכר הועברה מ־${previousName} אל ${person.displayName} (תיקון שכר בלבד — השיבוץ בסיור לא השתנה)`,
+      data: { event: 'guide_changed', entryId: entry.id, from: entry.externalPersonId, to: ext },
+      origin,
+    });
+    // Draft again → the projection reconciles with the NEW person's payroll
+    // facts (VAT/seniority/travel) through the normal draft path.
+    const act = await prisma.payrollActivity.findUnique({ where: { id: entry.activityId }, select: { tourEventId: true } });
+    if (act?.tourEventId) kickPayrollReconcile('tour', act.tourEventId);
+    else kickPayrollReconcile('personRef', person.id);
+    res.json({ ok: true });
+  }),
+);
+
+// POST /entries/:id/payroll-context — recalc base/travel from ANOTHER
+// variant's rates, as a payroll-only context correction. The tour keeps its
+// real variant; only this entry's calculation context changes (snapshotted).
+router.post(
+  '/entries/:id/payroll-context',
+  handle(async (req, res) => {
+    const entry = await prisma.payrollEntry.findUnique({
+      where: { id: req.params.id },
+      include: { lines: true, activity: true },
+    });
+    if (!entry) return res.status(404).json({ error: 'not_found' });
+    if (entry.activity.sourceType !== 'tour_event') return res.status(409).json({ error: 'tour_entries_only' });
+    const variant = await prisma.productVariant.findUnique({
+      where: { id: String(req.body?.productVariantId || '') },
+      select: {
+        id: true,
+        baseGuidePaymentMinor: true,
+        travelPaymentMinor: true,
+        product: { select: { nameHe: true } },
+        location: { select: { nameHe: true } },
+      },
+    });
+    if (!variant) return res.status(404).json({ error: 'variant_not_found' });
+
+    const origin = await userOrigin(req.adminAuth?.userId);
+    const snapshot = entry.calcSnapshot || {};
+    const inputs = {
+      ...(snapshot.inputs || {}),
+      role: entry.role,
+      baseGuidePaymentMinor: Number(variant.baseGuidePaymentMinor),
+      variantTravelMinor: variant.travelPaymentMinor == null ? null : Number(variant.travelPaymentMinor),
+    };
+    const changes = [];
+    for (const line of entry.lines) {
+      const component = await prisma.payrollComponent.findUnique({ where: { id: line.componentId } });
+      if (!component || component.kind !== 'auto') continue;
+      if (!['base', 'travel', 'weekend_holiday', 'weekend_holiday_percent_of_base'].includes(component.autoRule)) continue;
+      const next = autoAmountMinor(component, inputs);
+      const cur = line.calculatedMinor == null ? null : Number(line.calculatedMinor);
+      if (cur !== next) {
+        await prisma.payrollEntryLine.update({ where: { id: line.id }, data: { calculatedMinor: next } });
+        changes.push({ component: line.componentNameHe, from: cur, to: next });
+      }
+    }
+    await prisma.payrollEntry.update({
+      where: { id: entry.id },
+      data: {
+        calcSnapshot: {
+          ...snapshot,
+          contextVariantId: variant.id,
+          inputs: JSON.parse(JSON.stringify(inputs, (k, v) => (typeof v === 'bigint' ? Number(v) : v))),
+          at: new Date().toISOString(),
+        },
+      },
+    });
+    const variantLabel = `${variant.product?.nameHe || ''} · ${variant.location?.nameHe || ''}`.trim();
+    await emitTimelineEvent(prisma, {
+      subjectType: PAYROLL_SUBJECT,
+      subjectId: entry.activityId,
+      kind: 'payroll',
+      body: `🛠️ עודכן הקשר מוצר לשכר של ${entry.displayName} → ${variantLabel} (משפיע על רשומת השכר בלבד)`,
+      data: { event: 'payroll_context_changed', entryId: entry.id, productVariantId: variant.id, changes },
+      origin,
+    });
+    await resetGuideApproval(entry, origin);
+    const fresh = await prisma.payrollEntry.findUnique({ where: { id: entry.id }, include: { lines: true } });
+    res.json({ ok: true, changed: changes.length, entry: entryPayload(fresh) });
+  }),
+);
+
+// PATCH /activities/:id/schedule — payroll month / optional day for GENERAL
+// activities only (tour activities derive both from the tour).
+router.patch(
+  '/activities/:id/schedule',
+  handle(async (req, res) => {
+    const activity = await prisma.payrollActivity.findUnique({ where: { id: req.params.id } });
+    if (!activity) return res.status(404).json({ error: 'not_found' });
+    if (activity.sourceType !== 'general') return res.status(409).json({ error: 'general_only' });
+    const b = req.body || {};
+    const data = {};
+    if ('payrollMonth' in b) {
+      if (!/^\d{4}-\d{2}$/.test(String(b.payrollMonth))) return res.status(400).json({ error: 'invalid_month' });
+      data.payrollMonth = String(b.payrollMonth);
+    }
+    if ('date' in b) {
+      if (b.date != null && !/^\d{4}-\d{2}-\d{2}$/.test(String(b.date))) return res.status(400).json({ error: 'invalid_date' });
+      data.date = b.date || null;
+    }
+    if (Object.keys(data).length === 0) return res.json({ ok: true, unchanged: true });
+    await prisma.payrollActivity.update({ where: { id: activity.id }, data });
+    if (activity.generalActivityId) {
+      await prisma.generalActivity.update({ where: { id: activity.generalActivityId }, data }).catch(() => null);
+    }
+    const origin = await userOrigin(req.adminAuth?.userId);
+    await emitTimelineEvent(prisma, {
+      subjectType: PAYROLL_SUBJECT,
+      subjectId: activity.id,
+      kind: 'payroll',
+      body: `🗓 עודכן שיוך הפעילות (חודש שכר/תאריך)`,
+      data: { event: 'schedule_changed', from: { payrollMonth: activity.payrollMonth, date: activity.date }, to: data },
+      origin,
+    });
+    res.json({ ok: true });
   }),
 );
 
