@@ -11,6 +11,7 @@ import TourComponents from './TourComponents.jsx';
 import TourTeamEditor from './TourTeamEditor.jsx';
 import TourGalleryCard from './gallery/TourGalleryCard.jsx';
 import { todayIL } from './calendar/dates.js';
+import { useTourChanged } from './tourEvents.js';
 import { contactNameHe, dealPath, resolveActivityLabel } from '../deals/config.js';
 // ONE participant-card presentation, shared with the Guide Portal — hierarchy,
 // typography and spacing (incl. the customerInfo tight face) live there.
@@ -192,6 +193,13 @@ export default function TourPage() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // This tour changed elsewhere (a Deal's "עדכון סיור", possibly another tab)
+  // → silently re-fetch. refresh() swaps in the new tour without a spinner, so
+  // an open modal reflects the new date/time/product/city/status immediately.
+  useTourChanged((detail) => {
+    if (!detail?.tourEventId || detail.tourEventId === id) refresh();
+  });
 
   // Calendar chip liveness: after a mutation the row is correctly 'pending' —
   // the sync worker converges it within its next 60s tick, but nothing here

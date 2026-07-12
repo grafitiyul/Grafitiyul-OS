@@ -7,6 +7,7 @@ import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import { rowTintStyle } from '../../color/staffColorUi.js';
 import { StaffAvatar } from './TourTeamEditor.jsx';
 import { loadToursView, saveToursView } from './viewPrefs.js';
+import { useTourChanged } from './tourEvents.js';
 import TourSlotModal from './TourSlotModal.jsx';
 import ToursCalendar from './calendar/ToursCalendar.jsx';
 import {
@@ -233,6 +234,11 @@ export default function ToursPage() {
   useEffect(() => {
     refresh();
   }, []);
+
+  // A tour changed elsewhere (e.g. a Deal's "עדכון סיור", even in another tab)
+  // → silently re-fetch the list. refresh() keeps the current rows visible
+  // until the response lands, so the table never blanks.
+  useTourChanged(() => refresh());
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

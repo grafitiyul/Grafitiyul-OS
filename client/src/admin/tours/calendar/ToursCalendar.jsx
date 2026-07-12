@@ -18,6 +18,7 @@ import {
   todayIL,
 } from './dates.js';
 import { calendarEventVisual, isUnassignedScheduled, eventCity } from './eventVisuals.js';
+import { useTourChanged } from '../tourEvents.js';
 
 // לוח שנה — the Admin Tours calendar. STRICTLY a second VIEW of the same
 // TourEvent data as the table: same status filter vocabulary, same Tour modal
@@ -43,6 +44,11 @@ export default function ToursCalendar({ search, kind, status, onOpenTour, view, 
   const [anchor, setAnchor] = useState(view?.anchor || todayIL());
   const [events, setEvents] = useState(null); // null = loading
   const [error, setError] = useState(null);
+  // Bumped by a tour-changed signal to force a silent re-fetch of the visible
+  // range (a date MOVE is self-correcting: the tour leaves the old range and
+  // joins the new one because we re-query rather than patch a row).
+  const [reloadKey, setReloadKey] = useState(0);
+  useTourChanged(() => setReloadKey((k) => k + 1));
 
   // Visible range per mode (month includes leading/trailing grid days).
   const { from, to, weeks } = useMemo(() => {
@@ -78,7 +84,7 @@ export default function ToursCalendar({ search, kind, status, onOpenTour, view, 
     return () => {
       alive = false;
     };
-  }, [from, to, status, kind]);
+  }, [from, to, status, kind, reloadKey]);
 
   // Same free-text semantics as the table (product / city / notes / date) and
   // a client-side re-check of the status filter so the two views can never

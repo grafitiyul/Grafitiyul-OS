@@ -306,6 +306,26 @@ test('Tours list renders a populated row; destructive actions live ONLY behind t
   await unmount();
 });
 
+// Immediate cross-screen refresh: a `gos:tour-changed` signal (emitted by the
+// Deal's "עדכון סיור") must make an already-mounted Tours table silently
+// re-fetch — no manual browser refresh. Here the list turns empty after the
+// signal, proving the table re-queried rather than kept its stale row.
+test('Tours table silently re-fetches on a gos:tour-changed signal', async () => {
+  toursList = [TOUR_ROW];
+  const { container, unmount } = await render(
+    React.createElement(MemoryRouter, null, React.createElement(ToursPage)),
+  );
+  assert.match(container.innerHTML, /סיור גרפיטי בדיקה/, 'the row is present before the signal');
+  // The tour is now gone server-side; fire the canonical signal.
+  toursList = [];
+  await act(async () => {
+    window.dispatchEvent(new window.CustomEvent('gos:tour-changed', { detail: {} }));
+  });
+  await act(async () => {});
+  assert.match(container.innerHTML, /אין סיורים עדיין/, 'the table re-fetched and reflects the change');
+  await unmount();
+});
+
 // The staff/customer columns: lead guide + customer render by DEFAULT, and the
 // column picker lists every new operational column for opt-in.
 test('Tours table renders lead guide + customer by default and offers all new columns', async () => {

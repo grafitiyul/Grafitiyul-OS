@@ -40,6 +40,7 @@ import { productContextFor, locationContextFor } from './tourContext.js';
 import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
 import Dialog from '../common/Dialog.jsx';
 import TourSlotPickerDialog from '../tours/TourSlotPickerDialog.jsx';
+import { emitTourChanged } from '../tours/tourEvents.js';
 import DealTourSummary from '../tours/DealTourSummary.jsx';
 import DealTourPlanning from '../tours/DealTourPlanning.jsx';
 import PendingTourUpdateBar from './PendingTourUpdateBar.jsx';
@@ -445,6 +446,10 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
     setTourUpdateBusy(true);
     try {
       await api.deals.applyTourUpdate(id);
+      // The tour's live state just changed — tell every mounted Tours surface
+      // (table / calendar range / open Tour modal, incl. other tabs) to
+      // silently re-fetch. No manual refresh, no polling.
+      emitTourChanged({ tourEventId: activeBooking?.tourEventId || null, dealId: id });
       await refresh();
       return true;
     } catch (e) {
