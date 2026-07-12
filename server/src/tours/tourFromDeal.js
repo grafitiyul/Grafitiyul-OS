@@ -150,23 +150,61 @@ export async function createTourForWonDeal(tx, deal, { targetTourEventId, origin
       activityComponents: { orderBy: { sortOrder: 'asc' } },
     },
   });
-  const tourEvent = await tx.tourEvent.create({
-    data: {
-      kind: deal.activityType,
-      status: 'scheduled',
-      date: deal.tourDate,
-      startTime: deal.tourTime,
-      productId: deal.productId,
-      productVariantId: deal.productVariantId,
-      locationId: deal.locationId,
-      tourLanguage: deal.tourLanguage,
-      notes: plan?.notes || null,
-      // New tour → Google Calendar event (created async by the sync worker).
-      // Planned guides become assignments in THIS transaction, so the initial
-      // Google event already carries them as attendees — one invitation wave.
-      ...calendarPendingPatch(),
+
+  // ONE real-world tour = ONE TourEvent (2026-07 lifecycle fix): a re-WON
+  // after reopen/LOST REACTIVATES the deal's auto-cancelled tour instead of
+  // creating a cancelled twin. The same row keeps its id — gallery,
+  // questionnaires, payroll linkage, timeline and (when the sync worker
+  // hasn't purged it yet) the Google event identity all survive. A NEW row
+  // is created only when no reactivatable prior tour exists (first WON, or
+  // the prior tour is completed / a group slot / a marked twin).
+  const priorBooking = await tx.booking.findFirst({
+    where: {
+      dealId: deal.id,
+      status: 'cancelled',
+      tourEvent: {
+        kind: { in: ['private', 'business'] },
+        status: 'cancelled',
+        supersededByTourEventId: null,
+      },
     },
+    orderBy: { cancelledAt: 'desc' },
+    include: { tourEvent: true },
   });
+
+  const coreData = {
+    kind: deal.activityType,
+    status: 'scheduled',
+    date: deal.tourDate,
+    startTime: deal.tourTime,
+    productId: deal.productId,
+    productVariantId: deal.productVariantId,
+    locationId: deal.locationId,
+    tourLanguage: deal.tourLanguage,
+    notes: plan?.notes || null,
+    // Scheduled (again) → the sync worker creates/patches the Google event.
+    // Planned guides become assignments in THIS transaction, so the event
+    // already carries them as attendees — one invitation wave.
+    ...calendarPendingPatch(),
+  };
+
+  const reactivating = !!priorBooking;
+  let tourEvent;
+  if (reactivating) {
+    tourEvent = await tx.tourEvent.update({
+      where: { id: priorBooking.tourEventId },
+      data: { ...coreData, cancelledAt: null, completedAt: null, completedReason: null },
+    });
+    // Converge the row's operational children onto the PLAN (the plan holds
+    // the reopen-time copy plus any later edits — it is the desired state).
+    // TourAssignment ids are loose refs from payroll (re-linked by person on
+    // completion), so replace-all is safe and keeps the logic identical to
+    // the create path.
+    await tx.tourEventActivityComponent.deleteMany({ where: { tourEventId: tourEvent.id } });
+    await tx.tourAssignment.deleteMany({ where: { tourEventId: tourEvent.id } });
+  } else {
+    tourEvent = await tx.tourEvent.create({ data: coreData });
+  }
   // Kick fires after the caller's transaction commits (1.5s debounce); the
   // periodic tick covers the rare slower commit.
   kickTourCalendarSync();
@@ -213,22 +251,27 @@ export async function createTourForWonDeal(tx, deal, { targetTourEventId, origin
       origin,
     });
   }
+  // History stays append-only: the cancelled booking row is preserved and a
+  // fresh ACTIVE booking is created (the partial unique allows exactly one).
   const booking = await tx.booking.create({
     data: { tourEventId: tourEvent.id, dealId: deal.id, seats, status: 'active' },
   });
+  const createdEvent = reactivating ? 'tour_reactivated' : 'tour_created';
   await emitTimelineEvent(tx, {
     subjectType: 'tour_event',
     subjectId: tourEvent.id,
     kind: 'tour',
-    data: { event: 'tour_created', dealId: deal.id, dealOrderNo: deal.orderNo, seats },
+    body: reactivating ? '♻️ הסיור הוחזר לפעיל — הדיל נסגר מחדש (אותו סיור, ללא כפילות)' : undefined,
+    data: { event: createdEvent, dealId: deal.id, dealOrderNo: deal.orderNo, seats },
     origin,
   });
   await emitTimelineEvent(tx, {
     subjectType: 'deal',
     subjectId: deal.id,
     kind: 'tour',
+    body: reactivating ? '♻️ הסיור הקיים הוחזר לפעיל (ללא יצירת סיור חדש)' : undefined,
     data: {
-      event: 'tour_created',
+      event: createdEvent,
       tourEventId: tourEvent.id,
       kind: tourEvent.kind,
       date: tourEvent.date,

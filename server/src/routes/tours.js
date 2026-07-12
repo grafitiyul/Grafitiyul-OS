@@ -264,7 +264,10 @@ router.get(
     } catch (e) {
       console.error('[tours] slot generation failed', e);
     }
-    const where = {};
+    // Superseded rows (erroneous reopen→re-WON twins, marked by the guarded
+    // backfill) are hidden from EVERY view — they are not genuine business
+    // cancellations and must not surface under the בוטל filter.
+    const where = { supersededByTourEventId: null };
     if (req.query.kind) where.kind = String(req.query.kind);
     // Multi-select statuses (canonical) / legacy single status — ONE parser
     // shared with the calendar. No saved preference → everything (unchanged
@@ -325,7 +328,8 @@ router.get(
     if ((Date.parse(to) - Date.parse(from)) / 86_400_000 > CALENDAR_MAX_SPAN_DAYS) {
       return res.status(400).json({ error: 'range_too_large' });
     }
-    const where = { date: { gte: from, lte: to } };
+    // Superseded twins hidden here too — same rule as the list.
+    const where = { date: { gte: from, lte: to }, supersededByTourEventId: null };
     // Same parser as the list — multi-select statuses / legacy status. The
     // calendar keeps its historical default: no filter → active tours only.
     const statusFilter = tourStatusWhere(req.query, { fallback: 'active' });

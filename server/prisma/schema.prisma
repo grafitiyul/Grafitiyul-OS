@@ -3035,6 +3035,14 @@ model TourEvent {
   // rules are config). Together with `date` it makes generation idempotent.
   generatedByRuleId String?
   cancelledAt      DateTime?
+  // Loose ref (no FK) to the TourEvent that superseded this row. Set ONLY on
+  // proven erroneous replacement duplicates (historical reopen→re-WON twins —
+  // the 2026-07 lifecycle bug). Superseded rows are HIDDEN from every list/
+  // calendar view (even under the בוטל filter: they are not genuine business
+  // cancellations) and are never reactivation candidates. Going forward,
+  // re-WON REACTIVATES the deal's auto-cancelled tour instead of creating a
+  // twin, so this stays a historical/backstop marker.
+  supersededByTourEventId String?
   // ── Google Calendar mirror (sync TARGET only — TourEvent stays the SSOT) ──
   // One Google event per tour, owned by the org account (loose ref to the
   // EmailAccount that created it — updates/deletes must use the same account).
