@@ -666,8 +666,12 @@ export const api = {
       request(`/api/payroll/activities/${id}/approve`, { method: 'POST' }),
     unapproveActivity: (id) =>
       request(`/api/payroll/activities/${id}/unapprove`, { method: 'POST' }),
-    report: (months) =>
-      request(`/api/payroll/report?months=${encodeURIComponent(months.join(','))}`),
+    report: (months, guides = []) =>
+      request(
+        `/api/payroll/report?months=${encodeURIComponent(months.join(','))}${
+          guides.length ? `&guides=${encodeURIComponent(guides.join(','))}` : ''
+        }`,
+      ),
     createGeneralActivity: (data) =>
       request('/api/payroll/general-activities', { method: 'POST', body: JSON.stringify(data) }),
     components: {

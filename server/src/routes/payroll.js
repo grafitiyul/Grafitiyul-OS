@@ -167,12 +167,27 @@ router.get(
       .map((s) => s.trim())
       .filter((s) => /^\d{4}-\d{2}$/.test(s));
     if (months.length === 0) return res.status(400).json({ error: 'months_required' });
+    const guideFilter = String(req.query.guides || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
 
-    const entries = await prisma.payrollEntry.findMany({
+    const allEntries = await prisma.payrollEntry.findMany({
       where: { state: 'active', activity: { state: 'active', payrollMonth: { in: months } } },
       include: { activity: true, lines: true },
       orderBy: { createdAt: 'asc' },
     });
+    // Guide options come from the UNfiltered month set (so the dropdown keeps
+    // showing everyone in range); totals/rows below honor the filter — the
+    // summary numbers stay server-owned under any selection.
+    const guideOptions = [
+      ...new Map(allEntries.map((e) => [e.externalPersonId, e.displayName])).entries(),
+    ]
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'he'));
+    const entries = guideFilter.length
+      ? allEntries.filter((e) => guideFilter.includes(e.externalPersonId))
+      : allEntries;
 
     const zero = () => ({ officeApprovedMinor: 0, guideApprovedMinor: 0, waitingMinor: 0, draftMinor: 0 });
     const summary = zero();
@@ -233,7 +248,7 @@ router.get(
     for (const g of guides) {
       g.entries.sort((a, b) => String(a.date || a.payrollMonth).localeCompare(String(b.date || b.payrollMonth)));
     }
-    res.json({ months, guides, summary });
+    res.json({ months, guides, guideOptions, summary });
   }),
 );
 
