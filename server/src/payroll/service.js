@@ -173,6 +173,9 @@ export async function ensureTourPayroll(client, tourEventId) {
   if (!tour || tour.status !== 'completed' || !tour.date) return null;
 
   let activity = tour.payrollActivity;
+  // A VOIDED activity is a deliberate human decision — reconciliation never
+  // resurrects it (unlike 'cancelled', which reopen/re-complete reactivates).
+  if (activity && activity.state === 'voided') return activity;
   if (!activity) {
     activity = await client.payrollActivity.create({
       data: {
@@ -449,6 +452,53 @@ export async function unapproveEntry(client, { entryId, origin = null }) {
     kind: 'payroll',
     body: `↩️ הוסר אישור המשרד עבור ${entry.displayName}`,
     data: { event: 'office_unapproved_entry', entryId: entry.id },
+    origin: origin || systemOrigin(),
+  });
+  return { ok: true };
+}
+
+// ═══ Void (accidental rows) — destructive-looking, never destructive ═══
+// Nothing is ever deleted: state flips to 'voided', which every total /
+// report / portal query already excludes (they all filter state='active').
+// Lines, snapshots, comments and timeline stay intact; the event records who
+// voided, when, and why.
+export async function voidEntry(client, { entryId, reason = null, origin = null }) {
+  const entry = await client.payrollEntry.findUnique({ where: { id: entryId } });
+  if (!entry) return { error: 'not_found' };
+  if (entry.state === 'voided') return { already: true };
+  await client.payrollEntry.update({ where: { id: entry.id }, data: { state: 'voided' } });
+  await emitTimelineEvent(client, {
+    subjectType: PAYROLL_SUBJECT,
+    subjectId: entry.activityId,
+    kind: 'payroll',
+    body: `🗑️ רשומת השכר של ${entry.displayName} בוטלה${reason ? ` — ${reason}` : ''}`,
+    data: { event: 'entry_voided', entryId: entry.id, reason },
+    origin: origin || systemOrigin(),
+  });
+  return { ok: true };
+}
+
+// Void a whole activity (an accidentally-created General Activity, or a tour
+// payroll that should never pay) — voids every non-voided entry through the
+// SAME semantics, one canonical service.
+export async function voidActivity(client, { activityId, reason = null, origin = null }) {
+  const activity = await client.payrollActivity.findUnique({
+    where: { id: activityId },
+    include: { entries: { select: { id: true, state: true } } },
+  });
+  if (!activity) return { error: 'not_found' };
+  if (activity.state === 'voided') return { already: true };
+  await client.payrollActivity.update({ where: { id: activity.id }, data: { state: 'voided' } });
+  await client.payrollEntry.updateMany({
+    where: { activityId: activity.id, state: { not: 'voided' } },
+    data: { state: 'voided' },
+  });
+  await emitTimelineEvent(client, {
+    subjectType: PAYROLL_SUBJECT,
+    subjectId: activity.id,
+    kind: 'payroll',
+    body: `🗑️ פעילות השכר בוטלה${reason ? ` — ${reason}` : ''}`,
+    data: { event: 'activity_voided', reason, entryCount: activity.entries.length },
     origin: origin || systemOrigin(),
   });
   return { ok: true };

@@ -9,6 +9,7 @@ import {
   TableCell,
 } from '../../common/tableColumns.jsx';
 import MultiSelectFilter, { isUnrestricted } from '../../common/filters/MultiSelectFilter.jsx';
+import CardKebabMenu from '../../common/CardKebabMenu.jsx';
 import { ACTIVITY_STATUS_META, ROLE_LABELS } from './payrollConfig.js';
 import PayrollEntryDrawer from './PayrollEntryDrawer.jsx';
 
@@ -34,7 +35,16 @@ const COLUMNS = [
   { key: 'officeAmount', label: 'אושר משרד', minWidth: 92 },
   { key: 'guideAmount', label: 'אושר מדריך', minWidth: 92 },
   { key: 'status', label: 'סטטוס', minWidth: 104 },
+  { key: 'actions', label: '', minWidth: 44, maxWidth: 60 },
 ];
+
+// Confirmation + optional short reason for the destructive void action.
+function askVoidReason(what) {
+  if (!window.confirm(`לבטל ${what}? הרשומה תוסתר מהסכומים ומפורטל המדריך; ההיסטוריה נשמרת.`)) return undefined;
+  const reason = window.prompt('סיבת הביטול (אופציונלי):', '');
+  if (reason === null) return undefined; // second chance to abort
+  return reason.trim() || null;
+}
 
 function loadFilters() {
   try {
@@ -156,6 +166,26 @@ export default function PayrollReportPage() {
           <span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-medium ${meta.cls}`}>{meta.label}</span>
         ) : null;
       }
+      case 'actions':
+        return (
+          <CardKebabMenu ariaLabel="פעולות רשומה">
+            {(close) => (
+              <button
+                type="button"
+                onClick={async () => {
+                  close();
+                  const reason = askVoidReason(`את רשומת השכר של ${e.guideName}`);
+                  if (reason === undefined) return;
+                  await api.payroll.voidEntry(e.id, reason);
+                  load();
+                }}
+                className="block w-full text-right px-3 py-1.5 text-[13px] text-red-600 hover:bg-red-50"
+              >
+                🗑️ בטל רשומת שכר
+              </button>
+            )}
+          </CardKebabMenu>
+        );
       default:
         return null;
     }
@@ -250,7 +280,7 @@ export default function PayrollReportPage() {
                         className="h-11 border-b border-gray-50 hover:bg-blue-50/40 cursor-pointer align-middle"
                       >
                         {orderedColumns.map((col) => (
-                          <TableCell key={col.key} col={col} className="px-3 py-0">
+                          <TableCell key={col.key} col={col} className="px-3 py-0" stopClick={col.key === 'actions'}>
                             {renderCell(col, e)}
                           </TableCell>
                         ))}

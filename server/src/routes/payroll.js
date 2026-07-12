@@ -27,6 +27,8 @@ import {
   recalcEntry,
   approveEntries,
   unapproveEntry,
+  voidEntry,
+  voidActivity,
   kickPayrollReconcile,
   monthOf,
 } from '../payroll/service.js';
@@ -998,6 +1000,35 @@ router.patch(
       origin,
     });
     res.json({ ok: true });
+  }),
+);
+
+// ---------- void (accidental rows — never physical deletion) ----------
+router.post(
+  '/entries/:id/void',
+  handle(async (req, res) => {
+    const origin = await userOrigin(req.adminAuth?.userId);
+    const result = await voidEntry(prisma, {
+      entryId: req.params.id,
+      reason: req.body?.reason ? String(req.body.reason).slice(0, 500) : null,
+      origin,
+    });
+    if (result.error) return res.status(404).json({ error: result.error });
+    res.json({ ok: true, already: result.already === true });
+  }),
+);
+
+router.post(
+  '/activities/:id/void',
+  handle(async (req, res) => {
+    const origin = await userOrigin(req.adminAuth?.userId);
+    const result = await voidActivity(prisma, {
+      activityId: req.params.id,
+      reason: req.body?.reason ? String(req.body.reason).slice(0, 500) : null,
+      origin,
+    });
+    if (result.error) return res.status(404).json({ error: result.error });
+    res.json({ ok: true, already: result.already === true });
   }),
 );
 

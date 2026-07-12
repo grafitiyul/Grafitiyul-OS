@@ -3,6 +3,7 @@ import { api } from '../../../lib/api.js';
 import { formatMinor, toMinor, minorToInput } from '../../../lib/money.js';
 import { fmtDate } from '../../common/pickers/DateTimeFields.jsx';
 import { ACTIVITY_STATUS_META, ROLE_LABELS, entryStatusMeta } from './payrollConfig.js';
+import CardKebabMenu from '../../common/CardKebabMenu.jsx';
 
 // The payroll activity drawer — DealDrawer pattern (absolute inset-0 slide-in
 // over the day screen). Top: activity summary. Body: the Excel-like matrix —
@@ -214,6 +215,29 @@ export default function PayrollActivityDrawer({ activityId, onClose }) {
         </div>
         {statusMeta && (
           <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${statusMeta.cls}`}>{statusMeta.label}</span>
+        )}
+        {activity && activity.state === 'active' && (
+          <CardKebabMenu ariaLabel="פעולות פעילות">
+            {(close) => (
+              <button
+                type="button"
+                onClick={async () => {
+                  close();
+                  if (!window.confirm('לבטל את כל פעילות השכר? כל הרשומות יוסתרו מהסכומים ומפורטל המדריכים; ההיסטוריה נשמרת.')) return;
+                  const reason = window.prompt('סיבת הביטול (אופציונלי):', '');
+                  if (reason === null) return;
+                  setBusy(true);
+                  try {
+                    await api.payroll.voidActivity(activity.id, reason.trim() || null);
+                    onClose();
+                  } finally { setBusy(false); }
+                }}
+                className="block w-full text-right px-3 py-1.5 text-[13px] text-red-600 hover:bg-red-50"
+              >
+                🗑️ בטל פעילות שכר
+              </button>
+            )}
+          </CardKebabMenu>
         )}
       </div>
 

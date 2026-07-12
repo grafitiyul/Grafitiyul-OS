@@ -334,6 +334,25 @@ export default function PayrollEntryDrawer({ entryId, onClose }) {
               />
             </div>
 
+            {/* Void — destructive-looking, never destructive (history kept) */}
+            {entry.state === 'active' && (
+              <div className="border-t border-gray-100 pt-3">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    if (!window.confirm(`לבטל את רשומת השכר של ${entry.displayName}? הרשומה תוסתר מהסכומים ומפורטל המדריך; ההיסטוריה נשמרת.`)) return;
+                    const reason = window.prompt('סיבת הביטול (אופציונלי):', '');
+                    if (reason === null) return;
+                    run(() => api.payroll.voidEntry(entry.id, reason.trim() || null)).then(onClose);
+                  }}
+                  className="text-[12px] text-red-600 hover:underline"
+                >
+                  🗑️ בטל רשומת שכר
+                </button>
+              </div>
+            )}
+
             {/* History + inquiry comments */}
             <div>
               <button

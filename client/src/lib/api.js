@@ -689,6 +689,10 @@ export const api = {
       }),
     updateActivitySchedule: (id, data) =>
       request(`/api/payroll/activities/${id}/schedule`, { method: 'PATCH', body: JSON.stringify(data) }),
+    voidEntry: (id, reason) =>
+      request(`/api/payroll/entries/${id}/void`, { method: 'POST', body: JSON.stringify({ reason }) }),
+    voidActivity: (id, reason) =>
+      request(`/api/payroll/activities/${id}/void`, { method: 'POST', body: JSON.stringify({ reason }) }),
     report: (months, guides = []) =>
       request(
         `/api/payroll/report?months=${encodeURIComponent(months.join(','))}${
