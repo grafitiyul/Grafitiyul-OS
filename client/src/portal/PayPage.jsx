@@ -94,6 +94,14 @@ function EntryCard({ token, entry, onChanged }) {
         )}
       </div>
 
+      {/* Official office note — distinct from the conversation. */}
+      {entry.officeNote && (
+        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+          <div className="text-[10px] font-semibold text-amber-700">הערת המשרד</div>
+          <div className="text-[12px] text-gray-800">{entry.officeNote}</div>
+        </div>
+      )}
+
       {/* Conversation — the guide's own thread for THIS entry. Submitted
           messages stay visible (refresh-proof: they come from the server). */}
       {entry.conversation?.length > 0 && (

@@ -677,6 +677,8 @@ export const api = {
     entry: (id) => request(`/api/payroll/entries/${id}`),
     updateEntry: (id, data) =>
       request(`/api/payroll/entries/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    replyEntry: (id, text) =>
+      request(`/api/payroll/entries/${id}/reply`, { method: 'POST', body: JSON.stringify({ text }) }),
     changeEntryGuide: (id, externalPersonId) =>
       request(`/api/payroll/entries/${id}/change-guide`, {
         method: 'POST',

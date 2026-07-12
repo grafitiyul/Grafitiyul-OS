@@ -64,5 +64,8 @@ export function guidePayEntryDto(entry, activity, componentById, conversation = 
     totals,
     // The guide's own conversation for THIS entry — never anyone else's.
     conversation,
+    // The OFFICIAL office note ("הערת המשרד") — shown with the entry, never
+    // rendered as a chat bubble.
+    officeNote: entry.officeNote || null,
   };
 }

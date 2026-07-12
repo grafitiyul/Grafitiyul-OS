@@ -31,12 +31,15 @@ export default function PayrollEntryDrawer({ entryId, onClose }) {
   const [variants, setVariants] = useState(null);
   const [overrideDrafts, setOverrideDrafts] = useState({});
   const [notes, setNotes] = useState('');
+  const [officeNote, setOfficeNote] = useState('');
+  const [replyText, setReplyText] = useState('');
 
   const load = useCallback(async () => {
     try {
       const payload = await api.payroll.entry(entryId);
       setData(payload);
       setNotes(payload.entry.notes || '');
+      setOfficeNote(payload.entry.officeNote || '');
       setOverrideDrafts({});
       setError(null);
     } catch (e) {
@@ -331,6 +334,76 @@ export default function PayrollEntryDrawer({ entryId, onClose }) {
                 }}
                 rows={2}
                 className="w-full rounded-lg border border-gray-200 p-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-blue-100"
+              />
+            </div>
+
+            {/* Inquiry area: the guide↔office CONVERSATION (immutable thread)
+                — distinct from the official office note below. */}
+            {(data.conversation?.length > 0 || entry.guideStatus === 'inquiry') && (
+              <div className="border border-orange-200 rounded-lg overflow-hidden">
+                <div className="px-3 py-1.5 bg-orange-50 text-[12px] font-medium text-orange-800">
+                  שיחה עם המדריך {entry.guideStatus === 'inquiry' ? '· בבירור' : ''}
+                </div>
+                <div className="p-3 space-y-1.5">
+                  {(data.conversation || []).map((m) => (
+                    <div
+                      key={m.id}
+                      className={`rounded-lg px-2.5 py-1.5 text-[12px] ${
+                        m.byGuide ? 'bg-orange-50/60 text-gray-800' : 'bg-blue-50/60 text-gray-800'
+                      }`}
+                    >
+                      <span className="block text-[10px] text-gray-400">
+                        {m.byGuide ? entry.displayName : 'המשרד'} · {new Date(m.at).toLocaleString('he-IL')}
+                      </span>
+                      {m.text}
+                    </div>
+                  ))}
+                  <div className="flex gap-2 pt-1">
+                    <input
+                      value={replyText}
+                      disabled={busy}
+                      onChange={(e) => setReplyText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && replyText.trim()) {
+                          run(() => api.payroll.replyEntry(entry.id, replyText.trim())).then(() => setReplyText(''));
+                        }
+                      }}
+                      placeholder="תגובת המשרד…"
+                      className="flex-1 h-8 rounded-lg border border-gray-300 px-2 text-[12px] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                    />
+                    <button
+                      type="button"
+                      disabled={busy || !replyText.trim()}
+                      onClick={() =>
+                        run(() => api.payroll.replyEntry(entry.id, replyText.trim())).then(() => setReplyText(''))
+                      }
+                      className="px-3 h-8 rounded-lg bg-blue-600 text-white text-[12px] hover:bg-blue-700 disabled:opacity-40"
+                    >
+                      שלח
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Official office note — a SEPARATE concept from the chat: the
+                formal explanation shown to the guide with the entry. */}
+            <div>
+              <div className="text-[12px] text-gray-500 mb-1">
+                הערת המשרד <span className="text-gray-400">(רשמית — מוצגת למדריך עם הרשומה)</span>
+              </div>
+              <textarea
+                value={officeNote}
+                disabled={busy}
+                onChange={(e) => setOfficeNote(e.target.value)}
+                onBlur={() => {
+                  if ((entry.officeNote || '') !== officeNote) {
+                    run(() => api.payroll.updateEntry(entry.id, { officeNote }));
+                  }
+                }}
+                rows={2}
+                placeholder="למשל: הנסיעות עודכנו לפי הקבלה שצורפה"
+                className="w-full rounded-lg border border-amber-200 bg-amber-50/40 p-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-amber-100"
               />
             </div>
 

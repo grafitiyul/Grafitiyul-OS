@@ -33,6 +33,7 @@ import {
   monthOf,
 } from '../payroll/service.js';
 import { entryTotals, deriveOfficeState, autoAmountMinor } from '../payroll/engine.js';
+import { guideConversationDto } from '../payroll/dto.js';
 import { isAssignableStaff } from '../people/eligibility.js';
 import { businessToday } from '../tours/completion.js';
 
@@ -80,6 +81,7 @@ function entryPayload(e) {
     vatStatus: e.vatStatusSnapshot,
     vatRate: e.vatRateSnapshot,
     notes: e.notes,
+    officeNote: e.officeNote,
     lines: lines.map((l) => ({
       id: l.id,
       componentId: l.componentId,
@@ -783,8 +785,32 @@ router.get(
       calcContext: entry.calcSnapshot?.inputs
         ? { contextVariantId: entry.calcSnapshot.contextVariantId || null }
         : null,
+      // The guide↔office thread for THIS entry (same mapper the portal uses).
+      conversation: guideConversationDto(history, entry.id),
       history,
     });
+  }),
+);
+
+// POST /entries/:id/reply — an office message into the entry's conversation
+// thread (immutable; distinct from the official office note).
+router.post(
+  '/entries/:id/reply',
+  handle(async (req, res) => {
+    const entry = await prisma.payrollEntry.findUnique({ where: { id: req.params.id } });
+    if (!entry) return res.status(404).json({ error: 'not_found' });
+    const text = String(req.body?.text || '').trim().slice(0, 2000);
+    if (!text) return res.status(400).json({ error: 'text_required' });
+    const origin = await userOrigin(req.adminAuth?.userId);
+    await emitTimelineEvent(prisma, {
+      subjectType: PAYROLL_SUBJECT,
+      subjectId: entry.activityId,
+      kind: 'payroll',
+      body: `💬 תגובת המשרד ל${entry.displayName}: ${text}`,
+      data: { event: 'office_reply', entryId: entry.id, text },
+      origin,
+    });
+    res.json({ ok: true });
   }),
 );
 
@@ -818,16 +844,33 @@ router.patch(
       const notes = b.notes ? String(b.notes) : null;
       if ((entry.notes || null) !== notes) data.notes = notes; // quiet — no audit noise
     }
+    // The OFFICIAL office note — guide-facing communication: history records
+    // old→new, and the canonical re-approval rule applies (a changed official
+    // communication after guide approval requires the guide to approve again).
+    if ('officeNote' in b) {
+      const officeNote = b.officeNote ? String(b.officeNote).slice(0, 2000) : null;
+      if ((entry.officeNote || null) !== officeNote) {
+        data.officeNote = officeNote;
+        changes.push({ field: 'officeNote', from: entry.officeNote || null, to: officeNote });
+      }
+    }
     if (Object.keys(data).length === 0) return res.json({ ok: true, unchanged: true });
     await prisma.payrollEntry.update({ where: { id: entry.id }, data });
     const origin = await userOrigin(req.adminAuth?.userId);
     if (changes.length) {
+      const noteChange = changes.find((c) => c.field === 'officeNote');
       await emitTimelineEvent(prisma, {
         subjectType: PAYROLL_SUBJECT,
         subjectId: entry.activityId,
         kind: 'payroll',
-        body: `✏️ עודכנה רשומת השכר של ${entry.displayName} (${changes.map((c) => c.field).join(', ')})`,
-        data: { event: 'entry_changed', entryId: entry.id, changes },
+        body: noteChange
+          ? `📌 עודכנה הערת המשרד עבור ${entry.displayName}`
+          : `✏️ עודכנה רשומת השכר של ${entry.displayName} (${changes.map((c) => c.field).join(', ')})`,
+        data: {
+          event: noteChange && changes.length === 1 ? 'office_note_changed' : 'entry_changed',
+          entryId: entry.id,
+          changes,
+        },
         origin,
       });
       await resetGuideApproval(entry, origin);

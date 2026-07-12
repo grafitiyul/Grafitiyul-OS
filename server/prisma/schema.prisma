@@ -3994,6 +3994,11 @@ model PayrollEntry {
   calcSnapshot      Json?
   engineVersion     Int             @default(1)
   notes             String?
+  // The OFFICIAL office note — admin-only editable, shown to the guide with
+  // the entry ("הערת המשרד"). NOT part of the conversation thread and NOT a
+  // line note: it explains the final calculation / a correction / a decision.
+  // Old→new recorded in the timeline on every change.
+  officeNote        String?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
