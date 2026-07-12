@@ -20,7 +20,11 @@ import { businessToday } from '../tours/completion.js';
 const router = Router();
 
 async function payAccess(req, res) {
-  const access = await resolveGuidePortalAccess(req.params.token);
+  // Signature matters: resolveGuidePortalAccess(client, { portalToken }) —
+  // the other portal routers' exact call shape. Passing the token positionally
+  // made the resolver throw before ANY payroll query ran (the "שגיאה בטעינת
+  // נתוני השכר" bug after office approval).
+  const access = await resolveGuidePortalAccess(prisma, { portalToken: req.params.token });
   if (!access.ok) {
     res.status(access.status).json({ error: access.error });
     return null;

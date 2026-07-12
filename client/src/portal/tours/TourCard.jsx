@@ -1,5 +1,4 @@
 import { Link } from 'react-router-dom';
-import { edgeAccentStyle } from '../../color/staffColorUi.js';
 import {
   ACTIVITY_LABELS,
   ROLE_LABELS,
@@ -19,9 +18,6 @@ export default function TourCard({ token, tour }) {
   return (
     <Link
       to={`/p/${encodeURIComponent(token)}/tour/${encodeURIComponent(tour.id)}`}
-      // Guide identity accent — server-derived canonical color (the tour's
-      // lead/single guide), rendered as a start-edge stripe.
-      style={edgeAccentStyle(tour.guideColor)}
       className={`block rounded-2xl border bg-white p-4 shadow-sm transition active:bg-gray-50 ${
         today ? 'border-blue-300 ring-1 ring-blue-100' : 'border-gray-200 hover:border-gray-300'
       }`}
