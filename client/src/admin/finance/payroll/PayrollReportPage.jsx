@@ -147,7 +147,9 @@ export default function PayrollReportPage() {
   const renderCell = (col, e) => {
     switch (col.key) {
       case 'date':
-        return e.date ? e.date.split('-').reverse().join('/') : '—';
+        // Dateless general additions belong to their payrollMonth — say so
+        // explicitly instead of a dash that reads like missing data.
+        return e.date ? e.date.split('-').reverse().join('/') : 'ללא תאריך';
       case 'month':
         return e.payrollMonth;
       case 'guide':
@@ -248,7 +250,7 @@ export default function PayrollReportPage() {
           width={260}
         />
         <div className="flex-1" />
-        <ColumnPicker columns={COLUMNS} colKeys={colKeys} onToggle={toggleCol} onMove={moveCol} onReset={resetCols} />
+        <ColumnPicker columns={orderedColumns} colKeys={colKeys} onToggle={toggleCol} onMove={moveCol} onReset={resetCols} />
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto p-4">
@@ -297,7 +299,11 @@ export default function PayrollReportPage() {
                         onClick={() => setOpenEntryId(e.id)}
                         className="h-11 border-b border-gray-50 hover:bg-blue-50/40 cursor-pointer align-middle"
                       >
-                        {orderedColumns.map((col) => (
+                        {/* Body cells MUST render the same column set as the
+                            header (visibleCols) — rendering orderedColumns
+                            here left hidden columns' cells in the DOM, so the
+                            picker only ever "hid" headers. */}
+                        {visibleCols.map((col) => (
                           <TableCell key={col.key} col={col} className="px-3 py-0" stopClick={col.key === 'actions'}>
                             {renderCell(col, e)}
                           </TableCell>
