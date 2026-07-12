@@ -21,6 +21,7 @@ import {
   orderedVisibleColumns,
   setKeyWidth,
   MIN_COL_WIDTH,
+  MAX_COL_WIDTH,
 } from './tableColumnsCore.js';
 
 // Reusable table-column infrastructure, shared by the CRM list screens
@@ -72,8 +73,8 @@ export function useTableColumns(storageKey, columns) {
     setState((s) => ({ ...s, order: moveKey(s.order, fromKey, toKey) }));
   }
   // Committed once per resize drag (on release), then persisted like the rest.
-  function setColWidth(key, px, min) {
-    setState((s) => ({ ...s, widths: setKeyWidth(s.widths, key, px, min) }));
+  function setColWidth(key, px, min, max) {
+    setState((s) => ({ ...s, widths: setKeyWidth(s.widths, key, px, min, max) }));
   }
   // "איפוס לברירת מחדל" — back to the canonical order + default visibility
   // (and fluid widths), exactly as a first visit.
@@ -258,9 +259,10 @@ function SortableTh({ col, className, sort, onSort, width, resizable, onResizeEn
     table.style.width = `${startTableW}px`;
     const rtl = getComputedStyle(th).direction === 'rtl';
     const min = col.minWidth || MIN_COL_WIDTH;
+    const max = col.maxWidth || MAX_COL_WIDTH;
     function onMove(ev) {
       const delta = rtl ? startX - ev.clientX : ev.clientX - startX;
-      const w = Math.max(min, Math.round(startW + delta));
+      const w = Math.min(max, Math.max(min, Math.round(startW + delta)));
       th.style.width = `${w}px`;
       table.style.width = `${startTableW + (w - startW)}px`;
     }
@@ -353,8 +355,10 @@ export function SortableHeaderRow({
     if (!tr || !onResize) return;
     for (const th of tr.querySelectorAll('th[data-colkey]')) {
       const key = th.dataset.colkey;
-      const min = cols.find((c) => c.key === key)?.minWidth || MIN_COL_WIDTH;
-      onResize(key, th.offsetWidth, min);
+      const col = cols.find((c) => c.key === key);
+      const min = col?.minWidth || MIN_COL_WIDTH;
+      const max = col?.maxWidth || MAX_COL_WIDTH;
+      onResize(key, th.offsetWidth, min, max);
     }
   }
 

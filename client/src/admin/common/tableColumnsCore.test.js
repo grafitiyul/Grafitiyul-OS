@@ -8,6 +8,7 @@ import {
   setKeyWidth,
   renameColumnKeyInState,
   MIN_COL_WIDTH,
+  MAX_COL_WIDTH,
 } from './tableColumnsCore.js';
 
 const KEYS = ['a', 'b', 'c', 'd'];
@@ -88,6 +89,19 @@ test('setKeyWidth clamps to min (default and per-column) and rounds', () => {
   assert.deepEqual(setKeyWidth({ a: 240 }, 'a', 5), { a: MIN_COL_WIDTH });
   assert.deepEqual(setKeyWidth({}, 'a', 90, 120), { a: 120 }); // col.minWidth wins
   assert.deepEqual(setKeyWidth({ a: 240 }, 'a', NaN), { a: 240 }); // garbage → unchanged
+});
+
+test('setKeyWidth clamps to max (default and per-column)', () => {
+  assert.deepEqual(setKeyWidth({}, 'a', 9999), { a: MAX_COL_WIDTH }); // default cap
+  assert.deepEqual(setKeyWidth({}, 'a', 500, 60, 300), { a: 300 }); // col.maxWidth caps
+  assert.deepEqual(setKeyWidth({}, 'a', 200, 60, 300), { a: 200 }); // within range untouched
+  // A pathological min > max never yields a value below min.
+  assert.deepEqual(setKeyWidth({}, 'a', 10, 400, 100), { a: 400 });
+});
+
+test('reset (normalizeColumnState with null) restores default widths (empty map)', () => {
+  const s = normalizeColumnState(null, KEYS, DEFAULTS);
+  assert.deepEqual(s.widths, {}, 'איפוס לברירת מחדל clears persisted widths too');
 });
 
 test('per-table isolation: normalizing one table state never depends on another', () => {

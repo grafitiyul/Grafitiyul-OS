@@ -378,6 +378,8 @@ test('Tours table renders lead guide + booker by default and offers the split id
     assert.match(body, new RegExp(label), `column picker offers "${label}"`);
   }
   assert.doesNotMatch(body, /שם הלקוח/, 'the misleading "שם הלקוח" column is removed');
+  // Reset control is wired now (restores default columns AND widths).
+  assert.match(body, /איפוס לברירת מחדל/, 'the column picker offers reset-to-default');
   await unmount();
 });
 

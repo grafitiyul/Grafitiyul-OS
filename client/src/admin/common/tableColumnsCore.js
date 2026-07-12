@@ -6,6 +6,10 @@
 
 // Columns may not collapse below this (a column's `minWidth` can raise it).
 export const MIN_COL_WIDTH = 60;
+// …nor grow past this, so one dragged column can't swallow the whole table (a
+// column's `maxWidth` can lower it). Generous enough that no existing layout
+// is disturbed on load — only fresh resize commits are clamped.
+export const MAX_COL_WIDTH = 720;
 
 // Normalize whatever localStorage holds into a valid { visible, order }:
 // unknown keys are dropped, columns added to the app since the save are
@@ -51,11 +55,12 @@ export function normalizeColumnState(raw, canonicalKeys, defaultVisible) {
   return { visible, order, widths };
 }
 
-// Commit a header-edge drag: clamp to the column's minimum and round to px.
-export function setKeyWidth(widths, key, px, min = MIN_COL_WIDTH) {
+// Commit a header-edge drag: clamp to the column's [min, max] and round to px.
+export function setKeyWidth(widths, key, px, min = MIN_COL_WIDTH, max = MAX_COL_WIDTH) {
   const v = Number(px);
   if (!Number.isFinite(v)) return widths;
-  return { ...widths, [key]: Math.max(min, Math.round(v)) };
+  const clamped = Math.min(Math.max(Math.round(v), min), Math.max(min, max));
+  return { ...widths, [key]: clamped };
 }
 
 // Toggle a column's visibility. Never allows hiding the last visible column.

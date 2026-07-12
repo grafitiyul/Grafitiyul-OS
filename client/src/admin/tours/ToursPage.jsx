@@ -256,7 +256,7 @@ export default function ToursPage() {
     saveToursView({ tab, calMode: calView.mode, calAnchor: calView.anchor });
   }, [tab, calView.mode, calView.anchor]);
 
-  const { colKeys, toggleCol, moveCol, setColWidth, widths, visibleCols, orderedColumns } =
+  const { colKeys, toggleCol, moveCol, setColWidth, resetCols, widths, visibleCols, orderedColumns } =
     useTableColumns(COLUMNS_KEY, COLUMNS);
 
   async function refresh() {
@@ -435,7 +435,13 @@ export default function ToursPage() {
           </select>
           {tab === 'table' && (
             <div className="ms-auto">
-              <ColumnPicker columns={orderedColumns} colKeys={colKeys} onToggle={toggleCol} />
+              <ColumnPicker
+                columns={orderedColumns}
+                colKeys={colKeys}
+                onToggle={toggleCol}
+                onMove={moveCol}
+                onReset={resetCols}
+              />
             </div>
           )}
         </div>
