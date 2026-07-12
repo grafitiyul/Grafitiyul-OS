@@ -668,6 +668,28 @@ export const api = {
       request(`/api/payroll/activities/${id}/unapprove`, { method: 'POST' }),
     recalcEntry: (id) =>
       request(`/api/payroll/entries/${id}/recalc`, { method: 'POST' }),
+    staff: () => request('/api/payroll/staff'),
+    createGeneralActivity: (data) =>
+      request('/api/payroll/general-activities', { method: 'POST', body: JSON.stringify(data) }),
+    components: {
+      list: () => request('/api/payroll/components'),
+      create: (data) => request('/api/payroll/components', { method: 'POST', body: JSON.stringify(data) }),
+      update: (id, data) =>
+        request(`/api/payroll/components/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+      remove: (id) => request(`/api/payroll/components/${id}`, { method: 'DELETE' }),
+      reorder: (ids) =>
+        request('/api/payroll/components/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
+    },
+    activityTypes: {
+      list: () => request('/api/payroll/activity-types'),
+      create: (data) =>
+        request('/api/payroll/activity-types', { method: 'POST', body: JSON.stringify(data) }),
+      update: (id, data) =>
+        request(`/api/payroll/activity-types/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+      remove: (id) => request(`/api/payroll/activity-types/${id}`, { method: 'DELETE' }),
+      reorder: (ids) =>
+        request('/api/payroll/activity-types/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
+    },
   },
   // ── WhatsApp module — connections admin (Slice 1) ────────────────
   // Accounts come from the DB; live status/actions proxy to the

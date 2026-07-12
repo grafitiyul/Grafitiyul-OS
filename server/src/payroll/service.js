@@ -273,6 +273,91 @@ export async function cancelTourPayroll(client, tourEventId, reason) {
   return activity.id;
 }
 
+// Create a General Activity + its PayrollActivity + one entry per selected
+// staff member. Rows carry the per-person dialog values (unit price, generic
+// quantity units, quick addition/deduction, note). Created as DRAFT — office
+// approval stays ONE activity-level action in the drawer.
+export async function createGeneralActivity(client, { typeId, payrollMonth, date = null, notes = null, rows = [], origin = null }) {
+  const type = await client.generalActivityType.findUnique({ where: { id: typeId } });
+  if (!type) return { error: 'type_not_found' };
+  if (!/^\d{4}-\d{2}$/.test(String(payrollMonth || ''))) return { error: 'invalid_month' };
+  if (date != null && !/^\d{4}-\d{2}-\d{2}$/.test(String(date))) return { error: 'invalid_date' };
+  const deduped = [...new Map(rows.map((r) => [String(r.externalPersonId), r])).values()];
+  if (deduped.length === 0) return { error: 'no_rows' };
+
+  const general = await client.generalActivity.create({
+    data: { typeId: type.id, titleHe: type.nameHe, payrollMonth, date, notes },
+  });
+  const activity = await client.payrollActivity.create({
+    data: {
+      sourceType: 'general',
+      generalActivityId: general.id,
+      titleHe: type.nameHe,
+      payrollMonth,
+      date,
+    },
+  });
+
+  const components = await loadComponents(client);
+  const persons = await client.personRef.findMany({
+    where: { externalPersonId: { in: deduped.map((r) => String(r.externalPersonId)) } },
+    include: { profile: true },
+  });
+  const personByExt = new Map(persons.map((p) => [p.externalPersonId, p]));
+
+  for (const row of deduped) {
+    const ext = String(row.externalPersonId);
+    const person = personByExt.get(ext);
+    const entry = await createEntry(client, {
+      activity,
+      source: 'general',
+      person: {
+        personRefId: person?.id || null,
+        externalPersonId: ext,
+        displayName: person?.displayName || String(row.displayName || ext),
+        profile: person?.profile || null,
+      },
+      role: null,
+      tourAssignmentId: null,
+      components,
+      inputs: {
+        unitPriceMinor: Math.round(Number(row.unitPriceMinor) || 0),
+        quantity: Number(row.quantity) || 0,
+      },
+    });
+    // Quick manual values from the dialog land as OVERRIDES on the system
+    // manual rows (same semantics as editing the matrix afterwards).
+    const overridesByKey = new Map();
+    if (Number(row.additionMinor) > 0) overridesByKey.set('addition', Math.round(Number(row.additionMinor)));
+    if (Number(row.deductionMinor) > 0) overridesByKey.set('deduction', Math.round(Number(row.deductionMinor)));
+    if (overridesByKey.size) {
+      const keyByComponentId = new Map(components.map((c) => [c.id, c.key]));
+      for (const line of entry.lines) {
+        const key = keyByComponentId.get(line.componentId);
+        if (key && overridesByKey.has(key)) {
+          await client.payrollEntryLine.update({
+            where: { id: line.id },
+            data: { overrideMinor: overridesByKey.get(key) },
+          });
+        }
+      }
+    }
+    if (row.note) {
+      await client.payrollEntry.update({ where: { id: entry.id }, data: { notes: String(row.note) } });
+    }
+  }
+
+  await emitTimelineEvent(client, {
+    subjectType: PAYROLL_SUBJECT,
+    subjectId: activity.id,
+    kind: 'payroll',
+    body: `🧾 נוצרה פעילות כללית: ${type.nameHe} (${deduped.length} אנשי צוות)`,
+    data: { event: 'created', sourceType: 'general', generalActivityId: general.id },
+    origin: origin || systemOrigin(),
+  });
+  return { activityId: activity.id };
+}
+
 // Ensure payroll exists for every completed tour on a calendar day — the day
 // screen's lazy materialisation (also the backfill path for tours completed
 // before the module existed).

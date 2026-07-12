@@ -4,6 +4,7 @@ import { formatMinor } from '../../../lib/money.js';
 import { DateField, fmtDate } from '../../common/pickers/DateTimeFields.jsx';
 import { ACTIVITY_STATUS_META } from './payrollConfig.js';
 import PayrollActivityDrawer from './PayrollActivityDrawer.jsx';
+import AddGeneralActivityDialog from './AddGeneralActivityDialog.jsx';
 
 // שכר צוות — the main payroll screen. The workflow starts from ACTIVITIES:
 // pick a day, see that day's activities with their payroll status, click one
@@ -35,17 +36,21 @@ function StatusChip({ statusKey }) {
 export default function PayrollDayPage() {
   const [date, setDate] = useState(todayISO());
   const [rows, setRows] = useState(null);
+  const [monthRows, setMonthRows] = useState([]);
   const [error, setError] = useState(null);
   const [openActivityId, setOpenActivityId] = useState(null);
+  const [addOpen, setAddOpen] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const { activities } = await api.payroll.day(date);
+      const { activities, monthActivities } = await api.payroll.day(date);
       setRows(activities);
+      setMonthRows(monthActivities || []);
     } catch (e) {
       setError(e.message);
       setRows([]);
+      setMonthRows([]);
     }
   }, [date]);
 
@@ -86,6 +91,14 @@ export default function PayrollDayPage() {
             היום
           </button>
         </div>
+        <div className="flex-1" />
+        <button
+          type="button"
+          onClick={() => setAddOpen(true)}
+          className="px-3 py-1.5 text-[13px] rounded-md bg-blue-600 text-white hover:bg-blue-700"
+        >
+          + פעילות כללית
+        </button>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto p-4">
@@ -99,29 +112,15 @@ export default function PayrollDayPage() {
             אין פעילויות שכר בתאריך {fmtDate(date)} — סיורים מופיעים כאן לאחר שהושלמו.
           </div>
         ) : (
-          <div className="bg-white border border-gray-200 rounded-lg divide-y divide-gray-100">
-            {rows.map((a) => (
-              <button
-                key={a.id}
-                type="button"
-                onClick={() => setOpenActivityId(a.id)}
-                className="w-full flex items-center gap-4 px-4 py-3 text-right hover:bg-gray-50 transition"
-              >
-                <span className="text-[13px] text-gray-500 w-12 shrink-0 tabular-nums">
-                  {a.startTime || '—'}
-                </span>
-                <span className="flex-1 min-w-0">
-                  <span className="block text-sm font-medium text-gray-900 truncate">{a.titleHe}</span>
-                  <span className="block text-[12px] text-gray-500">
-                    {a.sourceType === 'tour_event' ? 'סיור' : 'פעילות כללית'} · {a.entryCount} אנשי צוות
-                  </span>
-                </span>
-                <span className="text-sm text-gray-700 tabular-nums shrink-0">
-                  {a.entryCount > 0 ? formatMinor(a.officeTotalMinor) : ''}
-                </span>
-                <StatusChip statusKey={a.displayStatus} />
-              </button>
-            ))}
+          <ActivityList rows={rows} onOpen={setOpenActivityId} />
+        )}
+
+        {monthRows.length > 0 && (
+          <div className="mt-6">
+            <h2 className="text-[13px] font-medium text-gray-500 mb-2">
+              פעילויות החודש ללא תאריך ({date.slice(0, 7)})
+            </h2>
+            <ActivityList rows={monthRows} onOpen={setOpenActivityId} />
           </div>
         )}
       </div>
@@ -135,6 +134,47 @@ export default function PayrollDayPage() {
           }}
         />
       )}
+      {addOpen && (
+        <AddGeneralActivityDialog
+          defaultDate={date}
+          onClose={() => setAddOpen(false)}
+          onCreated={(activityId) => {
+            setAddOpen(false);
+            load();
+            setOpenActivityId(activityId);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ActivityList({ rows, onOpen }) {
+  if (!rows.length) return null;
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg divide-y divide-gray-100">
+      {rows.map((a) => (
+        <button
+          key={a.id}
+          type="button"
+          onClick={() => onOpen(a.id)}
+          className="w-full flex items-center gap-4 px-4 py-3 text-right hover:bg-gray-50 transition"
+        >
+          <span className="text-[13px] text-gray-500 w-12 shrink-0 tabular-nums">
+            {a.startTime || '—'}
+          </span>
+          <span className="flex-1 min-w-0">
+            <span className="block text-sm font-medium text-gray-900 truncate">{a.titleHe}</span>
+            <span className="block text-[12px] text-gray-500">
+              {a.sourceType === 'tour_event' ? 'סיור' : 'פעילות כללית'} · {a.entryCount} אנשי צוות
+            </span>
+          </span>
+          <span className="text-sm text-gray-700 tabular-nums shrink-0">
+            {a.entryCount > 0 ? formatMinor(a.officeTotalMinor) : ''}
+          </span>
+          <StatusChip statusKey={a.displayStatus} />
+        </button>
+      ))}
     </div>
   );
 }

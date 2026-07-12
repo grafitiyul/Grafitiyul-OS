@@ -20,6 +20,7 @@ import {
   PAYROLL_SUBJECT,
   ensureDayPayroll,
   ensureTourPayroll,
+  createGeneralActivity,
   loadComponents,
   isWeekendHoliday,
   monthOf,
@@ -134,7 +135,231 @@ router.get(
     const rows = activities
       .map((a) => ({ ...activitySummary(a), startTime: a.tourEventId ? timeByTour.get(a.tourEventId) || null : null }))
       .sort((x, y) => String(x.startTime || '99').localeCompare(String(y.startTime || '99')));
-    res.json({ date, activities: rows });
+    // Month-level general activities (no specific day) belong to the month —
+    // shown in their own section of the day screen.
+    const monthActivities = await prisma.payrollActivity.findMany({
+      where: { payrollMonth: monthOf(date), date: null },
+      include: ACTIVITY_INCLUDE,
+      orderBy: { createdAt: 'asc' },
+    });
+    res.json({
+      date,
+      activities: rows,
+      monthActivities: monthActivities.map((a) => ({ ...activitySummary(a), startTime: null })),
+    });
+  }),
+);
+
+// ---------- staff picker (light — no upstream sync) ----------
+router.get(
+  '/staff',
+  handle(async (req, res) => {
+    const people = await prisma.personRef.findMany({
+      where: { status: 'active' },
+      select: { externalPersonId: true, displayName: true, lifecycleHint: true },
+      orderBy: { displayName: 'asc' },
+    });
+    res.json({ people });
+  }),
+);
+
+// ---------- general activities ----------
+router.post(
+  '/general-activities',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const origin = await userOrigin(req.adminAuth?.userId);
+    const result = await createGeneralActivity(prisma, {
+      typeId: String(b.typeId || ''),
+      payrollMonth: String(b.payrollMonth || ''),
+      date: b.date || null,
+      notes: b.notes ? String(b.notes) : null,
+      rows: Array.isArray(b.rows) ? b.rows : [],
+      origin,
+    });
+    if (result.error) return res.status(400).json({ error: result.error });
+    res.json({ ok: true, activityId: result.activityId });
+  }),
+);
+
+// ---------- catalogs (settings) ----------
+// Component catalog — nothing is hardcoded. System rows keep their identity
+// (key/kind/autoRule/isSystem immutable); everything display/behavioral is
+// editable, including auto-rule config (weekend amount, participant bonus).
+const COMPONENT_EDITABLE = ['nameHe', 'sign', 'vatMode', 'scope', 'officeAlways', 'guideVisible', 'active', 'config'];
+const VAT_MODES = ['net', 'gross', 'none'];
+const SCOPES = ['all', 'tour', 'general'];
+
+router.get(
+  '/components',
+  handle(async (req, res) => {
+    const components = await prisma.payrollComponent.findMany({
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    });
+    res.json({ components });
+  }),
+);
+
+router.post(
+  '/components',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const nameHe = String(b.nameHe || '').trim();
+    if (!nameHe) return res.status(400).json({ error: 'name_required' });
+    const max = await prisma.payrollComponent.aggregate({ _max: { sortOrder: true } });
+    const component = await prisma.payrollComponent.create({
+      data: {
+        nameHe,
+        kind: 'manual',
+        sign: Number(b.sign) === -1 ? -1 : 1,
+        vatMode: VAT_MODES.includes(b.vatMode) ? b.vatMode : 'net',
+        scope: SCOPES.includes(b.scope) ? b.scope : 'all',
+        officeAlways: b.officeAlways !== false,
+        guideVisible: b.guideVisible !== false,
+        sortOrder: (max._max.sortOrder || 0) + 10,
+      },
+    });
+    res.json({ component });
+  }),
+);
+
+router.patch(
+  '/components/:id',
+  handle(async (req, res) => {
+    const existing = await prisma.payrollComponent.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: 'not_found' });
+    const b = req.body || {};
+    const data = {};
+    for (const k of COMPONENT_EDITABLE) {
+      if (!(k in b)) continue;
+      if (k === 'nameHe') {
+        const v = String(b.nameHe || '').trim();
+        if (!v) return res.status(400).json({ error: 'name_required' });
+        data.nameHe = v;
+      } else if (k === 'sign') data.sign = Number(b.sign) === -1 ? -1 : 1;
+      else if (k === 'vatMode') {
+        if (!VAT_MODES.includes(b.vatMode)) return res.status(400).json({ error: 'invalid_vat_mode' });
+        data.vatMode = b.vatMode;
+      } else if (k === 'scope') {
+        if (!SCOPES.includes(b.scope)) return res.status(400).json({ error: 'invalid_scope' });
+        data.scope = b.scope;
+      } else if (k === 'config') {
+        data.config = b.config && typeof b.config === 'object' ? b.config : undefined;
+      } else data[k] = !!b[k];
+    }
+    const component = await prisma.payrollComponent.update({ where: { id: existing.id }, data });
+    res.json({ component });
+  }),
+);
+
+router.delete(
+  '/components/:id',
+  handle(async (req, res) => {
+    const existing = await prisma.payrollComponent.findUnique({
+      where: { id: req.params.id },
+      include: { _count: { select: { lines: true } } },
+    });
+    if (!existing) return res.status(404).json({ error: 'not_found' });
+    if (existing.isSystem) return res.status(409).json({ error: 'system_component' });
+    if (existing._count.lines > 0) return res.status(409).json({ error: 'component_in_use' });
+    await prisma.payrollComponent.delete({ where: { id: existing.id } });
+    res.json({ ok: true });
+  }),
+);
+
+router.put(
+  '/components/reorder',
+  handle(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    await Promise.all(
+      ids.map((id, i) =>
+        prisma.payrollComponent.update({ where: { id }, data: { sortOrder: (i + 1) * 10 } }).catch(() => null),
+      ),
+    );
+    res.json({ ok: true });
+  }),
+);
+
+// General activity types catalog.
+router.get(
+  '/activity-types',
+  handle(async (req, res) => {
+    const types = await prisma.generalActivityType.findMany({
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    });
+    res.json({ types });
+  }),
+);
+
+router.post(
+  '/activity-types',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const nameHe = String(b.nameHe || '').trim();
+    if (!nameHe) return res.status(400).json({ error: 'name_required' });
+    const max = await prisma.generalActivityType.aggregate({ _max: { sortOrder: true } });
+    const type = await prisma.generalActivityType.create({
+      data: {
+        nameHe,
+        defaultUnitPriceMinor: Math.round(Number(b.defaultUnitPriceMinor) || 0),
+        defaultQuantity: Number.isFinite(Number(b.defaultQuantity)) && Number(b.defaultQuantity) >= 0 ? Number(b.defaultQuantity) : 1,
+        defaultNotes: b.defaultNotes ? String(b.defaultNotes) : null,
+        sortOrder: (max._max.sortOrder || 0) + 10,
+      },
+    });
+    res.json({ type });
+  }),
+);
+
+router.patch(
+  '/activity-types/:id',
+  handle(async (req, res) => {
+    const existing = await prisma.generalActivityType.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: 'not_found' });
+    const b = req.body || {};
+    const data = {};
+    if ('nameHe' in b) {
+      const v = String(b.nameHe || '').trim();
+      if (!v) return res.status(400).json({ error: 'name_required' });
+      data.nameHe = v;
+    }
+    if ('defaultUnitPriceMinor' in b) data.defaultUnitPriceMinor = Math.round(Number(b.defaultUnitPriceMinor) || 0);
+    if ('defaultQuantity' in b) {
+      const q = Number(b.defaultQuantity);
+      if (!Number.isFinite(q) || q < 0) return res.status(400).json({ error: 'invalid_quantity' });
+      data.defaultQuantity = q;
+    }
+    if ('defaultNotes' in b) data.defaultNotes = b.defaultNotes ? String(b.defaultNotes) : null;
+    if ('active' in b) data.active = !!b.active;
+    const type = await prisma.generalActivityType.update({ where: { id: existing.id }, data });
+    res.json({ type });
+  }),
+);
+
+router.delete(
+  '/activity-types/:id',
+  handle(async (req, res) => {
+    const existing = await prisma.generalActivityType.findUnique({
+      where: { id: req.params.id },
+      include: { _count: { select: { activities: true } } },
+    });
+    if (!existing) return res.status(404).json({ error: 'not_found' });
+    if (existing._count.activities > 0) return res.status(409).json({ error: 'type_in_use' });
+    await prisma.generalActivityType.delete({ where: { id: existing.id } });
+    res.json({ ok: true });
+  }),
+);
+
+router.put(
+  '/activity-types/reorder',
+  handle(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    await Promise.all(
+      ids.map((id, i) =>
+        prisma.generalActivityType.update({ where: { id }, data: { sortOrder: (i + 1) * 10 } }).catch(() => null),
+      ),
+    );
+    res.json({ ok: true });
   }),
 );
 

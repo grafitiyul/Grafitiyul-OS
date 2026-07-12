@@ -37,10 +37,10 @@ export default function SettingsHome() {
           description="תיבת השיחות, חיבור מספרי WhatsApp, מצב חיבור ופעולות ניהול."
         />
         <CategoryCard
+          to="/admin/settings/finance"
           icon="💰"
           title="כספים"
-          description="תנאי תשלום, חיבור iCount, הצעות מחיר וקבלות."
-          comingSoon
+          description="רכיבי שכר, סוגי פעילות כללית והגדרות מודול הכספים."
         />
         <CategoryCard
           to="/admin/settings/tours"
