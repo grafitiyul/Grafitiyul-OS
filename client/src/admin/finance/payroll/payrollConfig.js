@@ -19,6 +19,16 @@ export const GUIDE_STATUS_META = {
   inquiry: { label: 'בבירור', cls: 'bg-orange-50 text-orange-700' },
 };
 
+// Full per-entry status (matrix column chips + focused editor header) —
+// derives from state + officeStatus + guideStatus, one place.
+export function entryStatusMeta(entry) {
+  if (entry.state !== 'active') return { key: 'voided', label: 'בוטל', cls: 'bg-gray-100 text-gray-400' };
+  if (entry.officeStatus !== 'approved') return { key: 'draft', label: 'טיוטה', cls: 'bg-amber-50 text-amber-700' };
+  if (entry.guideStatus === 'inquiry') return { key: 'inquiry', label: 'בבירור', cls: 'bg-orange-50 text-orange-700' };
+  if (entry.guideStatus === 'approved') return { key: 'guide_approved', label: 'אושר על ידי המדריך', cls: 'bg-emerald-50 text-emerald-700' };
+  return { key: 'office_approved', label: 'ממתין לאישור מדריך', cls: 'bg-blue-50 text-blue-700' };
+}
+
 export const ROLE_LABELS = {
   lead_guide: 'מדריך ראשי',
   guide: 'מדריך',

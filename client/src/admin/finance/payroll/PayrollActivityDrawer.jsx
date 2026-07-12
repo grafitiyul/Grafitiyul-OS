@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../../lib/api.js';
 import { formatMinor, toMinor, minorToInput } from '../../../lib/money.js';
 import { fmtDate } from '../../common/pickers/DateTimeFields.jsx';
-import { ACTIVITY_STATUS_META, GUIDE_STATUS_META, ROLE_LABELS } from './payrollConfig.js';
+import { ACTIVITY_STATUS_META, ROLE_LABELS, entryStatusMeta } from './payrollConfig.js';
 
 // The payroll activity drawer — DealDrawer pattern (absolute inset-0 slide-in
 // over the day screen). Top: activity summary. Body: the Excel-like matrix —
@@ -144,6 +144,8 @@ export default function PayrollActivityDrawer({ activityId, onClose }) {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  // Per-column approval feedback ("סכום אפס" etc.) — keyed by entry id.
+  const [entryErrors, setEntryErrors] = useState({});
 
   const load = useCallback(async () => {
     try {
@@ -213,25 +215,6 @@ export default function PayrollActivityDrawer({ activityId, onClose }) {
         {statusMeta && (
           <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${statusMeta.cls}`}>{statusMeta.label}</span>
         )}
-        {activity && activity.state === 'active' && activity.status !== 'office_approved' && (
-          <button
-            type="button"
-            disabled={busy || entries.length === 0}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                const r = await api.payroll.approveActivity(activity.id);
-                if (r.skipped?.length) {
-                  setError(`לא אושרו (סכום אפס): ${r.skipped.map((s) => s.displayName).join(', ')}`);
-                }
-                await load();
-              } finally { setBusy(false); }
-            }}
-            className="px-3 py-1.5 text-[12px] rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
-          >
-            {activity.status === 'partially_approved' ? 'אשר את הנותרים' : 'אשר שכר'}
-          </button>
-        )}
       </div>
 
       {error && <div className="px-4 py-2 bg-red-50 text-red-700 text-sm">{error}</div>}
@@ -281,11 +264,9 @@ export default function PayrollActivityDrawer({ activityId, onClose }) {
                         <th key={e.id} className="text-center px-2 py-2 border-b border-gray-200 min-w-[130px]">
                           <div className="text-[13px] font-semibold text-gray-900">{e.displayName}</div>
                           <div className="text-[11px] text-gray-500">{ROLE_LABELS[e.role] || 'כללי'}</div>
-                          {e.officeStatus === 'approved' && (
-                            <span className={`inline-block mt-0.5 px-1.5 rounded-full text-[10px] ${GUIDE_STATUS_META[e.guideStatus]?.cls || ''}`}>
-                              {GUIDE_STATUS_META[e.guideStatus]?.label}
-                            </span>
-                          )}
+                          <span className={`inline-block mt-0.5 px-1.5 rounded-full text-[10px] ${entryStatusMeta(e).cls}`}>
+                            {entryStatusMeta(e).label}
+                          </span>
                         </th>
                       ))}
                     </tr>
@@ -355,8 +336,94 @@ export default function PayrollActivityDrawer({ activityId, onClose }) {
                         </td>
                       ))}
                     </tr>
+                    {/* Office approval — PER PERSON, visually attached to the
+                        column. The bulk button below runs the SAME service. */}
+                    <tr className="border-t border-gray-200 bg-gray-50/50">
+                      <td className="sticky right-0 bg-white px-3 py-2 text-[12px] text-gray-500">
+                        אישור משרד
+                      </td>
+                      {entries.map((e) => (
+                        <td key={e.id} className="text-center py-2 align-top">
+                          {e.officeStatus === 'approved' ? (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={async () => {
+                                if (!window.confirm(`להסיר את אישור המשרד של ${e.displayName}? הרשומה תוסתר מהמדריך.`)) return;
+                                setBusy(true);
+                                try { await api.payroll.officeUnapproveEntry(e.id); await load(); } finally { setBusy(false); }
+                              }}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[11px] font-semibold hover:bg-emerald-200"
+                              title={`אושר${e.officeApprovedBy ? ` על ידי ${e.officeApprovedBy}` : ''} — לחיצה מסירה את האישור`}
+                            >
+                              ✓ אושר
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={async () => {
+                                setBusy(true);
+                                setEntryErrors((m) => ({ ...m, [e.id]: null }));
+                                try {
+                                  await api.payroll.officeApproveEntry(e.id);
+                                  await load();
+                                } catch (err) {
+                                  setEntryErrors((m) => ({
+                                    ...m,
+                                    [e.id]: err.payload?.error === 'zero_total'
+                                      ? 'סכום אפס — אין מה לאשר'
+                                      : err.payload?.error || err.message,
+                                  }));
+                                } finally { setBusy(false); }
+                              }}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-gray-300 text-gray-500 text-[11px] hover:border-blue-400 hover:text-blue-600"
+                              title="אשר את הרשומה של איש צוות זה בלבד"
+                            >
+                              ☐ אשר
+                            </button>
+                          )}
+                          {entryErrors[e.id] && (
+                            <div className="mt-1 text-[10px] text-red-600 max-w-[130px] mx-auto">{entryErrors[e.id]}</div>
+                          )}
+                        </td>
+                      ))}
+                    </tr>
                   </tbody>
                 </table>
+
+                {/* Matrix footer — counts + the bulk action (same service as
+                    the per-person control; never a second approval truth). */}
+                {activity.state === 'active' && (
+                  <div className="mt-3 flex items-center gap-3 flex-wrap border-t border-gray-100 pt-3">
+                    <span className="text-[12px] text-gray-600">
+                      {entries.filter((e) => e.officeStatus === 'approved').length} מתוך {entries.length} אושרו במשרד
+                      {entries.some((e) => e.officeStatus !== 'approved') &&
+                        ` · ${entries.filter((e) => e.officeStatus !== 'approved').length} נותרו`}
+                    </span>
+                    <div className="flex-1" />
+                    {entries.some((e) => e.officeStatus !== 'approved') && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={async () => {
+                          setBusy(true);
+                          setError(null);
+                          try {
+                            const r = await api.payroll.approveActivity(activity.id);
+                            if (r.skipped?.length) {
+                              setError(`לא אושרו (סכום אפס): ${r.skipped.map((s) => s.displayName).join(', ')}`);
+                            }
+                            await load();
+                          } finally { setBusy(false); }
+                        }}
+                        className="px-4 py-1.5 text-[13px] rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
+                      >
+                        {entries.some((e) => e.officeStatus === 'approved') ? 'אשר את הנותרים' : 'אשר שכר'}
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
