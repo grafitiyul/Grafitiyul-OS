@@ -269,6 +269,16 @@ export async function ensureTourPayroll(client, tourEventId) {
   // NOTHING recalculates automatically; only manual edits (and the month-gated
   // maintenance recalc) touch an approved activity.
   if (activity.status === 'draft' && activity.state === 'active') {
+    // Draft attributes follow the tour (date moves, product/location rename):
+    // the activity is a projection of the tour until office approval freezes it.
+    const desired = { titleHe: tourTitle(tour), date: tour.date, payrollMonth: monthOf(tour.date) };
+    if (
+      activity.titleHe !== desired.titleHe ||
+      activity.date !== desired.date ||
+      activity.payrollMonth !== desired.payrollMonth
+    ) {
+      await client.payrollActivity.update({ where: { id: activity.id }, data: desired });
+    }
     const fresh = await client.payrollActivity.findUnique({
       where: { id: activity.id },
       include: { entries: { where: { state: 'active' }, include: { lines: true } } },
@@ -350,6 +360,120 @@ export async function syncEntryLines(client, entry, freshLines) {
     }
   }
   return changes;
+}
+
+// ═══ Push-based DRAFT reconciliation ═══
+// The rule: whenever a payroll-relevant mutation SUCCEEDS, the affected DRAFT
+// activities reconcile immediately in the background — payroll is an
+// automatically maintained projection of tour state, correct BEFORE anyone
+// opens the screen. Office-approved activities are never touched (values
+// change only by manual edit). ensureTourPayroll stays the ONE reconcile
+// implementation; these are only scoped dispatchers around it. The lazy
+// reconcile on the day screen / drawer remains as a safety net for old data
+// and unhooked edge paths — under normal operation it finds nothing to do.
+
+// Fire-and-forget kick for route handlers: runs AFTER the mutation's own DB
+// writes, on the root prisma client (never inside the caller's transaction),
+// and never throws into the request.
+export function kickPayrollReconcile(scope, ref = null) {
+  const run = async () => {
+    if (scope === 'tour' && ref) {
+      await ensureTourPayroll(prisma, ref);
+    } else if (scope === 'personRef' && ref) {
+      await reconcileDraftsForPersonRef(prisma, ref);
+    } else if (scope === 'variant' && ref) {
+      await reconcileDraftsForVariant(prisma, ref);
+    } else if (scope === 'all') {
+      await reconcileAllDrafts(prisma);
+    }
+  };
+  run().catch((e) => console.warn(`[payroll] reconcile(${scope}) failed:`, e.message));
+}
+
+// General (non-tour) draft entries reconcile per entry via recalcEntry —
+// same engine, same snapshot rules — with the same aggregate history event
+// the tour draft-sync emits (and only when something actually changed).
+async function reconcileGeneralDraftActivity(client, activity) {
+  const entries = await client.payrollEntry.findMany({
+    where: { activityId: activity.id, state: 'active' },
+    select: { id: true },
+  });
+  let totalChanges = 0;
+  for (const e of entries) {
+    const result = await recalcEntry(client, e.id);
+    if (!result.error) totalChanges += result.changes.length;
+  }
+  if (totalChanges > 0) {
+    await emitPayrollEvent(client, activity.id, `🔄 חישובי הטיוטה עודכנו אוטומטית (${totalChanges} רכיבים)`, {
+      event: 'draft_auto_recalculated',
+      changedLines: totalChanges,
+    });
+  }
+  return totalChanges;
+}
+
+// A person's payroll facts changed (vatStatus / ותק / נסיעות) → reconcile
+// every DRAFT activity that has an entry for them.
+export async function reconcileDraftsForPersonRef(client, personRefId) {
+  const person = await client.personRef.findUnique({
+    where: { id: personRefId },
+    select: { externalPersonId: true },
+  });
+  if (!person) return;
+  const entries = await client.payrollEntry.findMany({
+    where: {
+      externalPersonId: person.externalPersonId,
+      state: 'active',
+      activity: { state: 'active', status: 'draft' },
+    },
+    select: { activity: { select: { id: true, sourceType: true, tourEventId: true } } },
+  });
+  const seen = new Set();
+  for (const { activity } of entries) {
+    if (seen.has(activity.id)) continue;
+    seen.add(activity.id);
+    if (activity.sourceType === 'tour_event' && activity.tourEventId) {
+      await ensureTourPayroll(client, activity.tourEventId);
+    } else {
+      await reconcileGeneralDraftActivity(client, activity);
+    }
+  }
+}
+
+// A variant's pay rates changed → reconcile every DRAFT tour activity whose
+// tour uses that variant.
+export async function reconcileDraftsForVariant(client, productVariantId) {
+  const activities = await client.payrollActivity.findMany({
+    where: {
+      state: 'active',
+      status: 'draft',
+      sourceType: 'tour_event',
+      tourEvent: { productVariantId },
+    },
+    select: { tourEventId: true },
+  });
+  for (const a of activities) {
+    if (a.tourEventId) await ensureTourPayroll(client, a.tourEventId);
+  }
+}
+
+// A global rule changed (component catalog, שבת/חג settings) → reconcile every
+// DRAFT activity. Drafts are the current working period, so this set is small
+// by construction; the limit is a runaway backstop, not an operating bound.
+export async function reconcileAllDrafts(client, { limit = 500 } = {}) {
+  const drafts = await client.payrollActivity.findMany({
+    where: { state: 'active', status: 'draft' },
+    select: { id: true, sourceType: true, tourEventId: true },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+  });
+  for (const a of drafts) {
+    if (a.sourceType === 'tour_event' && a.tourEventId) {
+      await ensureTourPayroll(client, a.tourEventId);
+    } else {
+      await reconcileGeneralDraftActivity(client, a);
+    }
+  }
 }
 
 // TRUE recalculation from CURRENT business rules — the admin MAINTENANCE

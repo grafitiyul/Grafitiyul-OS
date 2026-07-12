@@ -22,7 +22,7 @@ import { validateWorkshopLocationForComponent } from '../tours/activityCatalog.j
 import { seedTourComponents } from '../tours/tourComponents.js';
 import { scheduleGalleryCleanup } from '../tours/gallery/service.js';
 import { summaryCompletionState, completeTour, reopenTour } from '../tours/completion.js';
-import { cancelTourPayroll } from '../payroll/service.js';
+import { cancelTourPayroll, kickPayrollReconcile } from '../payroll/service.js';
 import { isAssignableStaff } from '../people/eligibility.js';
 import { resolveTourGuideColor, resolveTourGuideColorInfo } from '../../../shared/guideColor.mjs';
 import {
@@ -1031,6 +1031,8 @@ router.post(
     // New attendee — Google will invite ONLY the added guide. Role changes
     // (PUT below) deliberately do NOT mark: roles never affect the calendar.
     await markTourCalendarPending(prisma, tour.id);
+    // Draft payroll is a maintained projection — reconcile now, not on open.
+    kickPayrollReconcile('tour', tour.id);
     res.status(201).json(assignment);
   }),
 );
@@ -1061,6 +1063,8 @@ router.put(
         data: { event: 'guide_role_changed', name: existing.displayName, from: existing.role, to: data.role },
         origin: await userOrigin(req.adminAuth?.userId),
       });
+      // Role drives the base/weekend rules — reconcile the draft projection.
+      kickPayrollReconcile('tour', existing.tourEventId);
     }
     res.json(updated);
   }),
@@ -1083,6 +1087,7 @@ router.delete(
     });
     // Removed attendee — Google sends the cancellation ONLY to that guide.
     await markTourCalendarPending(prisma, existing.tourEventId);
+    kickPayrollReconcile('tour', existing.tourEventId);
     res.status(204).end();
   }),
 );
@@ -1241,6 +1246,9 @@ router.put(
       }
     }
     const occAfter = await occupancyFor(prisma, [tour.id]);
+    // Any tour patch may move payroll inputs (date → weekend rule + month,
+    // variant → rates); the draft projection reconciles in the background.
+    kickPayrollReconcile('tour', tour.id);
     res.json(toClientTour(tour, occAfter[tour.id]));
   }),
 );

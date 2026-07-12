@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { fetchHolidayRows } from '../services/hebcal.js';
 import { markPatch, planImport, ruleFromRow, normalizeHolidayKey } from '../services/holidayClassify.js';
+import { kickPayrollReconcile } from '../payroll/service.js';
 
 // שעות שבת וחג — the source of truth for when a date/time counts as שבת / חג /
 // ערב חג. Weekly recurring windows + dated holiday rows (imported via Hebcal or
@@ -10,6 +11,18 @@ import { markPatch, planImport, ruleFromRow, normalizeHolidayKey } from '../serv
 // Admin-only.
 
 const router = Router();
+
+// Every successful mutation here can flip the weekend/holiday verdict for
+// tours — DRAFT payroll reconciles in the background (one middleware instead
+// of per-handler wiring, so future routes in this file are covered too).
+router.use((req, res, next) => {
+  if (req.method !== 'GET') {
+    res.on('finish', () => {
+      if (res.statusCode < 400) kickPayrollReconcile('all');
+    });
+  }
+  next();
+});
 
 const HOLIDAY_TYPES = ['erev_chag', 'chag', 'other'];
 

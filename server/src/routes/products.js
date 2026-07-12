@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { QUOTE_IMAGE_POSITIONS } from './quoteImages.js';
 import { sanitizeComponentSelection } from '../tours/activityCatalog.js';
+import { kickPayrollReconcile } from '../payroll/service.js';
 
 // Product catalog + Product Variants (Product × Location) + variant gallery.
 // Products own bilingual name + rich marketing descriptions (no pricing). The
@@ -316,6 +317,9 @@ router.put(
       data: variantData(req.body || {}),
       include: VARIANT_INCLUDE,
     });
+    // Pay rates (baseGuidePayment/travelPayment) may have moved — DRAFT
+    // payroll activities on this variant's tours reconcile in the background.
+    kickPayrollReconcile('variant', variant.id);
     res.json(variant);
   }),
 );

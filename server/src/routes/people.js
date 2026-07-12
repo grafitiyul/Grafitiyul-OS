@@ -4,6 +4,7 @@ import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { getRecruitmentSnapshot } from './recruitment.js';
 import { userOrigin } from '../timeline/events.js';
+import { kickPayrollReconcile } from '../payroll/service.js';
 import {
   diffPersonFields,
   normalizeBankDetails,
@@ -510,6 +511,11 @@ router.put(
       origin: await userOrigin(req.adminAuth?.userId),
       source: 'admin',
     });
+    // Payroll facts changed → the person's DRAFT payroll entries reconcile in
+    // the background (approved entries never move automatically).
+    if (vatStatus !== undefined || senioritySupplement !== undefined || travelAllowance !== undefined) {
+      kickPayrollReconcile('personRef', req.params.id);
+    }
     res.json(profile);
   }),
 );
@@ -626,6 +632,9 @@ router.post(
       source: 'admin',
       restoredFromEntryId: entry.id,
     });
+    if (['vatStatus', 'senioritySupplement', 'travelAllowance'].includes(fieldKey)) {
+      kickPayrollReconcile('personRef', person.id);
+    }
     const fresh = await prisma.personRef.findUnique({
       where: { id: person.id },
       include: PERSON_INCLUDE,

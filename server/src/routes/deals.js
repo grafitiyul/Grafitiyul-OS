@@ -12,6 +12,7 @@ import { createParallelOffer, activateOffer, setPrimaryOffer, removeOrArchiveOff
 import { ensurePaymentToken, paymentUrlFor, resolvePublicOrigin } from '../dealPayment.js';
 import { recordDealChanges, recordDealContactChange, DEAL_DIFF_SELECT } from '../timeline/dealChangelog.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
+import { kickPayrollReconcile } from '../payroll/service.js';
 import { sendSimpleEmail } from '../email/simpleSend.js';
 import {
   wonGate,
@@ -636,6 +637,9 @@ router.post(
           origin,
         });
       });
+      // AFTER the tx commits: draft payroll reconciles as a projection of the
+      // new tour state (date/variant/seats all feed the engine).
+      kickPayrollReconcile('tour', booking.tourEventId);
     }
     res.json(withTourUpdatePending(await loadDeal(deal.id)));
   }),

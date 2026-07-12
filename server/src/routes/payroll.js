@@ -25,6 +25,7 @@ import {
   ensureTourPayroll,
   createGeneralActivity,
   recalcEntry,
+  kickPayrollReconcile,
   monthOf,
 } from '../payroll/service.js';
 import { entryTotals } from '../payroll/engine.js';
@@ -305,6 +306,8 @@ router.post(
         sortOrder: (max._max.sortOrder || 0) + 10,
       },
     });
+    // Existing DRAFT entries gain the new component row in the background.
+    kickPayrollReconcile('all');
     res.json({ component });
   }),
 );
@@ -334,6 +337,8 @@ router.patch(
       } else data[k] = !!b[k];
     }
     const component = await prisma.payrollComponent.update({ where: { id: existing.id }, data });
+    // Rule config / activation changes flow into DRAFT calculations only.
+    kickPayrollReconcile('all');
     res.json({ component });
   }),
 );
