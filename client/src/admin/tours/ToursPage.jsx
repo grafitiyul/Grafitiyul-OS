@@ -6,6 +6,7 @@ import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import { rowTintStyle } from '../../color/staffColorUi.js';
 import { StaffAvatar } from './TourTeamEditor.jsx';
+import { loadToursView, saveToursView } from './viewPrefs.js';
 import TourSlotModal from './TourSlotModal.jsx';
 import ToursCalendar from './calendar/ToursCalendar.jsx';
 import {
@@ -28,10 +29,8 @@ import {
 
 const COLUMNS_KEY = 'tours.columns.v1';
 const FILTERS_KEY = 'tours.filters.v1';
-// Last selected view (טבלה/לוח שנה + calendar חודש/שבוע/יום) — same
-// localStorage convention as the filters/columns keys. The anchor DATE is
-// deliberately session-only: reopening the module always starts at today.
-const VIEW_KEY = 'tours.view.v1';
+// View prefs (tab + calendar mode + calendar ANCHOR date) live in viewPrefs.js
+// — one persisted contract, unit-tested. The anchor now survives refresh.
 
 const dash = <span className="text-gray-400">—</span>;
 
@@ -45,20 +44,6 @@ function loadFilters() {
 function saveFilters(f) {
   try {
     localStorage.setItem(FILTERS_KEY, JSON.stringify(f));
-  } catch {
-    /* storage unavailable — non-fatal */
-  }
-}
-function loadView() {
-  try {
-    return JSON.parse(localStorage.getItem(VIEW_KEY)) || {};
-  } catch {
-    return {};
-  }
-}
-function saveView(v) {
-  try {
-    localStorage.setItem(VIEW_KEY, JSON.stringify(v));
   } catch {
     /* storage unavailable — non-fatal */
   }
@@ -196,13 +181,14 @@ const STATUS_FILTERS = STATUS_FILTER_OPTIONS;
 
 export default function ToursPage() {
   const navigate = useNavigate();
-  const [savedView] = useState(loadView);
-  const [tab, setTab] = useState(savedView.tab === 'calendar' ? 'calendar' : 'table');
+  const [savedView] = useState(loadToursView);
+  const [tab, setTab] = useState(savedView.tab);
   // Calendar view state lives HERE (not in ToursCalendar) so switching
   // טבלה ⇄ לוח שנה preserves the selected month/week/day and date context.
+  // The anchor is restored from storage (validated) — null → today.
   const [calView, setCalView] = useState({
-    mode: ['month', 'week', 'day'].includes(savedView.calMode) ? savedView.calMode : 'month',
-    anchor: null, // null → ToursCalendar starts at today (Asia/Jerusalem)
+    mode: savedView.calMode,
+    anchor: savedView.calAnchor, // null → ToursCalendar starts at today (Asia/Jerusalem)
   });
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -224,8 +210,10 @@ export default function ToursPage() {
   }, [search, kind, status]);
 
   useEffect(() => {
-    saveView({ tab, calMode: calView.mode });
-  }, [tab, calView.mode]);
+    // Persist the FULL calendar context — the anchor too, so a refresh
+    // restores the exact month/week/day (and "היום" persists today).
+    saveToursView({ tab, calMode: calView.mode, calAnchor: calView.anchor });
+  }, [tab, calView.mode, calView.anchor]);
 
   const { colKeys, toggleCol, moveCol, setColWidth, widths, visibleCols, orderedColumns } =
     useTableColumns(COLUMNS_KEY, COLUMNS);
