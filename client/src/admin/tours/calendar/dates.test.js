@@ -10,6 +10,7 @@ import {
   monthTitle,
   timeToMinutes,
   endTimeOf,
+  msUntilNextIsraelMidnight,
 } from './dates.js';
 
 // Calendar navigation math — the helpers behind navigate(dir):
@@ -90,4 +91,47 @@ test('time helpers: minutes conversion and event end label', () => {
   assert.equal(endTimeOf('10:00', 2.5), '12:30');
   assert.equal(endTimeOf('23:30', 3), '23:59'); // clamped to end of day
   assert.equal(endTimeOf(null, 2), null);
+});
+
+// msUntilNextIsraelMidnight — Israel wall-clock countdown to 00:00 IL. Verified
+// timezone-correctly: now + result must LAND on IL midnight (00:00:00),
+// regardless of the browser's own timezone or DST offset. Deterministic given
+// a fixed `now`; non-DST-transition dates used on purpose.
+const IL_HMS = (d) =>
+  new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Jerusalem', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).format(d);
+
+test('msUntilNextIsraelMidnight lands exactly on the next IL midnight (summer, IDT +3)', () => {
+  // 2026-07-12T21:30:00Z = 00:30 IDT on 2026-07-13.
+  const now = new Date('2026-07-12T21:30:00Z');
+  const ms = msUntilNextIsraelMidnight(now);
+  assert.ok(ms > 0 && ms <= 24 * 3600 * 1000);
+  assert.equal(IL_HMS(new Date(now.getTime() + ms)), '00:00:00');
+  // 00:30 → next midnight is 23h30m away.
+  assert.equal(Math.round(ms / 1000), 23 * 3600 + 30 * 60);
+});
+
+test('msUntilNextIsraelMidnight lands on midnight (winter, IST +2)', () => {
+  // 2026-01-12T21:30:00Z = 23:30 IST on 2026-01-12 → 30m to midnight.
+  const now = new Date('2026-01-12T21:30:00Z');
+  const ms = msUntilNextIsraelMidnight(now);
+  assert.equal(IL_HMS(new Date(now.getTime() + ms)), '00:00:00');
+  assert.equal(Math.round(ms / 1000), 30 * 60);
+});
+
+test('msUntilNextIsraelMidnight just after midnight → ~24h, never negative', () => {
+  // 2026-07-12T21:00:01Z = 00:00:01 IDT → ~24h minus 1s to the following midnight.
+  const now = new Date('2026-07-12T21:00:01Z');
+  const ms = msUntilNextIsraelMidnight(now);
+  assert.ok(ms > 0);
+  assert.equal(IL_HMS(new Date(now.getTime() + ms)), '00:00:00');
+  assert.equal(Math.round(ms / 1000), 24 * 3600 - 1);
+});
+
+test('msUntilNextIsraelMidnight is always at least 1s (exactly at midnight → full day)', () => {
+  const now = new Date('2026-07-11T21:00:00Z'); // 00:00:00 IDT
+  const ms = msUntilNextIsraelMidnight(now);
+  assert.ok(ms >= 1000);
+  assert.equal(Math.round(ms / 1000), 24 * 3600);
 });

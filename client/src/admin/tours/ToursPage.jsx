@@ -8,7 +8,7 @@ import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import { rowTintStyle } from '../../color/staffColorUi.js';
 import { StaffAvatar } from './TourTeamEditor.jsx';
 import { loadToursView, saveToursView } from './viewPrefs.js';
-import { useTourChanged } from './tourEvents.js';
+import { useTourChanged, useTourMidnightRefresh } from './tourEvents.js';
 import TourSlotModal from './TourSlotModal.jsx';
 import ToursCalendar from './calendar/ToursCalendar.jsx';
 import {
@@ -279,6 +279,12 @@ export default function ToursPage() {
   // → silently re-fetch the list. refresh() keeps the current rows visible
   // until the response lands, so the table never blanks.
   useTourChanged(() => refresh());
+
+  // ONE Israel-midnight timer for the whole module: at IL midnight it emits the
+  // canonical tour-changed signal, so the table, calendar and any open drawer
+  // pick up the server-side automatic completion — no reload, no spinner. Also
+  // recovers on tab-visibility when the day rolled over while hidden/asleep.
+  useTourMidnightRefresh();
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

@@ -20,6 +20,28 @@ export function todayIL() {
   return IL_DATE.format(new Date()); // "YYYY-MM-DD"
 }
 
+// Israel wall-clock time components at `now` (NOT the browser timezone).
+const IL_CLOCK = new Intl.DateTimeFormat('en-GB', {
+  timeZone: TOUR_TZ,
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hourCycle: 'h23', // 00..23 (midnight is 00, never 24)
+});
+
+// Milliseconds from `now` until the NEXT Asia/Jerusalem midnight (00:00 IL).
+// Uses Israel wall-clock, not the browser's. Assumes a 24h day, so on the two
+// DST-transition days a year it can be ±1h off — the tab-visibility date-change
+// recovery corrects any such drift. Never returns ≤ 0 (min 1s) so a timer is
+// always scheduled forward, even when called exactly at midnight.
+export function msUntilNextIsraelMidnight(now = new Date()) {
+  const parts = IL_CLOCK.formatToParts(now);
+  const val = (t) => Number(parts.find((p) => p.type === t)?.value) || 0;
+  const secondsIntoDay = (val('hour') % 24) * 3600 + val('minute') * 60 + val('second');
+  const ms = (24 * 3600 - secondsIntoDay) * 1000 - now.getMilliseconds();
+  return Math.max(1000, ms);
+}
+
 export function addDays(dateStr, n) {
   const d = new Date(`${dateStr}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
