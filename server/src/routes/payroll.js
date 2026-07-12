@@ -237,20 +237,9 @@ router.get(
   }),
 );
 
-// ---------- staff picker (light — no upstream sync) ----------
-router.get(
-  '/staff',
-  handle(async (req, res) => {
-    const people = await prisma.personRef.findMany({
-      where: { status: 'active' },
-      select: { externalPersonId: true, displayName: true, lifecycleHint: true },
-      orderBy: { displayName: 'asc' },
-    });
-    res.json({ people });
-  }),
-);
-
 // ---------- general activities ----------
+// Staff picking reuses the canonical /api/people/assignable endpoint (the
+// SAME eligibility rule Tour assignment uses) — no payroll-local staff list.
 router.post(
   '/general-activities',
   handle(async (req, res) => {

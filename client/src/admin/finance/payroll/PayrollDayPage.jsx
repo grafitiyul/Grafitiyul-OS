@@ -4,6 +4,7 @@ import { api } from '../../../lib/api.js';
 import { formatMinor } from '../../../lib/money.js';
 import { DateField, fmtDate } from '../../common/pickers/DateTimeFields.jsx';
 import { ACTIVITY_STATUS_META } from './payrollConfig.js';
+import { shiftDay, DAY_NAV, CHEVRON_POINTS } from './dayNav.js';
 import PayrollActivityDrawer from './PayrollActivityDrawer.jsx';
 import AddGeneralActivityDialog from './AddGeneralActivityDialog.jsx';
 
@@ -18,10 +19,15 @@ function todayISO() {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-function shiftDay(dateISO, days) {
-  const d = new Date(`${dateISO}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
+// Bidi-safe chevron — explicit SVG path, never a mirrored Unicode character
+// (dayNav.js owns the RTL semantics; regression-tested in dayNav.test.js).
+function Chevron({ points }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points={points} />
+    </svg>
+  );
 }
 
 function StatusChip({ statusKey }) {
@@ -71,25 +77,31 @@ export default function PayrollDayPage() {
           </Link>
         </div>
         <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => setDate((d) => shiftDay(d, 1))}
-            className="px-2 py-1 text-sm rounded hover:bg-gray-100 text-gray-500"
-            title="יום קדימה"
-          >
-            ›
-          </button>
+          {DAY_NAV.slice(0, 1).map((nav) => (
+            <button
+              key={nav.key}
+              type="button"
+              onClick={() => setDate((d) => shiftDay(d, nav.delta))}
+              className="px-2 py-1.5 rounded hover:bg-gray-100 text-gray-500"
+              title={nav.title}
+            >
+              <Chevron points={CHEVRON_POINTS[nav.points]} />
+            </button>
+          ))}
           <div className="w-44">
             <DateField value={date} onChange={(v) => v && setDate(v)} />
           </div>
-          <button
-            type="button"
-            onClick={() => setDate((d) => shiftDay(d, -1))}
-            className="px-2 py-1 text-sm rounded hover:bg-gray-100 text-gray-500"
-            title="יום אחורה"
-          >
-            ‹
-          </button>
+          {DAY_NAV.slice(1).map((nav) => (
+            <button
+              key={nav.key}
+              type="button"
+              onClick={() => setDate((d) => shiftDay(d, nav.delta))}
+              className="px-2 py-1.5 rounded hover:bg-gray-100 text-gray-500"
+              title={nav.title}
+            >
+              <Chevron points={CHEVRON_POINTS[nav.points]} />
+            </button>
+          ))}
           <button
             type="button"
             onClick={() => setDate(todayISO())}

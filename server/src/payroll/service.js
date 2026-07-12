@@ -11,6 +11,7 @@
 // `client` may be the root prisma or a transaction, same as tours/completion.
 
 import { prisma } from '../db.js';
+import { isAssignableStaff } from '../people/eligibility.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
 import { sabbathHolidayWindow } from '../pricing/engine.js';
 import { vatRatePercent } from '../icountDocs.js';
@@ -572,6 +573,22 @@ export async function createGeneralActivity(client, { typeId, payrollMonth, date
   if (date != null && !/^\d{4}-\d{2}-\d{2}$/.test(String(date))) return { error: 'invalid_date' };
   const deduped = [...new Map(rows.map((r) => [String(r.externalPersonId), r])).values()];
   if (deduped.length === 0) return { error: 'no_rows' };
+
+  // Canonical eligibility gate (people/eligibility.js — the SAME rule Tour
+  // assignment enforces): only active staff/trainees may receive payroll
+  // entries. A crafted request naming a departed person is rejected here
+  // regardless of the UI.
+  const eligibilityRows = await client.personRef.findMany({
+    where: { externalPersonId: { in: deduped.map((r) => String(r.externalPersonId)) } },
+    select: { externalPersonId: true, status: true, lifecycleHint: true },
+  });
+  const eligibleByExt = new Map(eligibilityRows.map((p) => [p.externalPersonId, p]));
+  for (const row of deduped) {
+    const person = eligibleByExt.get(String(row.externalPersonId));
+    if (!person || !isAssignableStaff(person)) {
+      return { error: 'person_not_assignable' };
+    }
+  }
 
   const general = await client.generalActivity.create({
     data: { typeId: type.id, titleHe: type.nameHe, payrollMonth, date, notes },

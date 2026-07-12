@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../../lib/api.js';
 import { toMinor, minorToInput } from '../../../lib/money.js';
 import { DateField } from '../../common/pickers/DateTimeFields.jsx';
+import { StaffAvatar } from '../../tours/TourTeamEditor.jsx';
 
 // Add General Activity — two steps:
 //   1. פעילות + חודש שכר (חובה) + יום (אופציונלי) + בחירת צוות
@@ -28,9 +29,11 @@ export default function AddGeneralActivityDialog({ defaultDate, onClose, onCreat
 
   useEffect(() => {
     (async () => {
+      // Canonical assignable list (active staff/trainees only) — the SAME
+      // resolver Tour assignment uses; the server re-enforces on create.
       const [{ types: t }, { people }] = await Promise.all([
         api.payroll.activityTypes.list(),
-        api.payroll.staff(),
+        api.people.assignable(),
       ]);
       setTypes(t.filter((x) => x.active));
       setStaff(people);
@@ -77,7 +80,11 @@ export default function AddGeneralActivityDialog({ defaultDate, onClose, onCreat
       });
       onCreated(activityId);
     } catch (e) {
-      setError(e.payload?.error || e.message);
+      setError(
+        e.payload?.error === 'person_not_assignable'
+          ? 'אחד מאנשי הצוות שנבחרו אינו פעיל במערכת (עזב, הושבת או שאינו בסטטוס צוות/מתלמד).'
+          : e.payload?.error || e.message,
+      );
       setBusy(false);
     }
   };
@@ -147,24 +154,45 @@ export default function AddGeneralActivityDialog({ defaultDate, onClose, onCreat
                     </button>
                   )}
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1 max-h-64 overflow-y-auto border border-gray-200 rounded-lg p-2">
-                  {staff.map((p) => (
-                    <label key={p.externalPersonId} className="flex items-center gap-2 text-[13px] text-gray-800 px-1.5 py-1 rounded hover:bg-gray-50 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(p.externalPersonId)}
-                        onChange={(e) => {
-                          setSelected((s) => {
-                            const next = new Set(s);
-                            if (e.target.checked) next.add(p.externalPersonId);
-                            else next.delete(p.externalPersonId);
-                            return next;
-                          });
-                        }}
-                      />
-                      <span className="truncate">{p.displayName}</span>
-                    </label>
-                  ))}
+                <div className="max-h-72 overflow-y-auto border border-gray-200 rounded-lg p-2 space-y-3">
+                  {/* Two clear groups: צוות (staff + legacy pre-lifecycle rows)
+                      and מתלמדים — same grouping rule as the tour team editor. */}
+                  {[
+                    ['צוות', staff.filter((p) => p.lifecycleHint !== 'trainee')],
+                    ['מתלמדים', staff.filter((p) => p.lifecycleHint === 'trainee')],
+                  ].map(([label, group]) =>
+                    group.length === 0 ? null : (
+                      <div key={label}>
+                        <div className="px-1 pb-1 text-[11px] font-semibold text-gray-400">{label}</div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                          {group.map((p) => (
+                            <label
+                              key={p.externalPersonId}
+                              className="flex items-center gap-2 text-[13px] text-gray-800 px-1.5 py-1 rounded hover:bg-gray-50 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selected.has(p.externalPersonId)}
+                                onChange={(e) => {
+                                  setSelected((s) => {
+                                    const next = new Set(s);
+                                    if (e.target.checked) next.add(p.externalPersonId);
+                                    else next.delete(p.externalPersonId);
+                                    return next;
+                                  });
+                                }}
+                              />
+                              <StaffAvatar src={p.profile?.imageUrl} name={p.displayName} />
+                              <span className="truncate">{p.displayName}</span>
+                              {p.team?.displayName && (
+                                <span className="text-[11px] text-gray-400 truncate">· {p.team.displayName}</span>
+                              )}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    ),
+                  )}
                 </div>
               </div>
             </div>

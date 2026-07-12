@@ -280,6 +280,9 @@ router.get(
       orderBy: { displayName: 'asc' },
       select: {
         id: true,
+        // Stable staff handle — payroll (general-activity picker) keys its
+        // entries on this, same convention as TourAssignment.
+        externalPersonId: true,
         displayName: true,
         status: true,
         lifecycleHint: true,
