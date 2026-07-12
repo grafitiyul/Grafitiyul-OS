@@ -101,12 +101,20 @@ router.get(
         })
       : [];
 
+    // Summary semantics (product rule): the top card never aggregates
+    // UNapproved amounts — it shows the NUMBER of activities awaiting the
+    // guide's action (incl. entries in inquiry/re-review). Amounts join
+    // "אושר על ידך" only after the guide approves. Per-entry amounts remain
+    // visible inside each card — the guide reviews them there.
     let approvedMinor = 0;
-    let waitingMinor = 0;
+    let pendingCount = 0;
     for (const e of entries) {
-      const t = entryTotals(e.lines, { vatStatus: e.vatStatusSnapshot, vatRate: e.vatRateSnapshot });
-      if (e.guideStatus === 'approved') approvedMinor += t.totalMinor;
-      else waitingMinor += t.totalMinor;
+      if (e.guideStatus === 'approved') {
+        const t = entryTotals(e.lines, { vatStatus: e.vatStatusSnapshot, vatRate: e.vatRateSnapshot });
+        approvedMinor += t.totalMinor;
+      } else {
+        pendingCount += 1; // one per payroll activity entry, never per line
+      }
     }
 
     // Months that have anything to show — drives the picker.
@@ -124,7 +132,7 @@ router.get(
     res.json({
       month,
       months,
-      totals: { approvedMinor, waitingMinor },
+      totals: { approvedMinor, pendingCount },
       entries: entries
         .sort((a, b) => String(a.activity.date || '9999').localeCompare(String(b.activity.date || '9999')))
         .map((e) => guidePayEntryDto(e, e.activity, componentById, guideConversationDto(timelineRows, e.id))),

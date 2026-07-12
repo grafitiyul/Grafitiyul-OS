@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { formatMinor } from '../lib/money.js';
+import { waitingLabel } from './payText.js';
 
 // שכר — the guide's payroll view. Server truth only (viewPay-gated,
 // office-approved entries): the guide sees ONLY components that actually
@@ -270,13 +271,17 @@ export default function PayPage() {
       </div>
 
       <div className="mb-4 grid grid-cols-2 gap-2">
+        {/* Amount appears here ONLY after the guide approves (both-sides truth). */}
         <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3 text-center">
           <div className="text-[11px] text-emerald-700">אושר על ידך</div>
           <div className="text-[17px] font-bold text-emerald-800 tabular-nums">{formatMinor(data.totals.approvedMinor)}</div>
         </div>
+        {/* Count, not money — unapproved amounts are never aggregated here. */}
         <div className="rounded-2xl border border-blue-100 bg-blue-50 p-3 text-center">
           <div className="text-[11px] text-blue-700">ממתין לאישורך</div>
-          <div className="text-[17px] font-bold text-blue-800 tabular-nums">{formatMinor(data.totals.waitingMinor)}</div>
+          <div className="text-[13px] font-bold text-blue-800 leading-snug pt-1">
+            {waitingLabel(data.totals.pendingCount)}
+          </div>
         </div>
       </div>
 
