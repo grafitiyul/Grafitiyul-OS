@@ -6,7 +6,32 @@
 
 import { entryTotals, lineFinalMinor } from './engine.js';
 
-export function guidePayEntryDto(entry, activity, componentById) {
+// The message events that form one entry's guide↔office conversation
+// (immutable TimelineEntry rows on the activity, filtered by data.entryId).
+export const CONVERSATION_EVENTS = ['guide_inquiry', 'guide_message', 'office_reply'];
+
+// Map an activity's timeline rows to ONE entry's conversation, guide-safe:
+// only this entry's messages, only text/sender/time — no admin metadata.
+export function guideConversationDto(timelineRows, entryId) {
+  return (timelineRows || [])
+    .filter(
+      (t) =>
+        t.kind === 'payroll' &&
+        t.data &&
+        CONVERSATION_EVENTS.includes(t.data.event) &&
+        t.data.entryId === entryId &&
+        t.data.text,
+    )
+    .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+    .map((t) => ({
+      id: t.id,
+      text: t.data.text,
+      byGuide: t.data.event !== 'office_reply',
+      at: t.createdAt,
+    }));
+}
+
+export function guidePayEntryDto(entry, activity, componentById, conversation = []) {
   const visibleLines = (entry.lines || [])
     .filter((l) => {
       const component = componentById.get(l.componentId);
@@ -37,5 +62,7 @@ export function guidePayEntryDto(entry, activity, componentById) {
       amountMinor: lineFinalMinor(l),
     })),
     totals,
+    // The guide's own conversation for THIS entry — never anyone else's.
+    conversation,
   };
 }

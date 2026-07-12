@@ -13,7 +13,7 @@ import { handle } from '../asyncHandler.js';
 import { resolveGuidePortalAccess } from '../tours/guidePortal/access.js';
 import { emitTimelineEvent } from '../timeline/events.js';
 import { PAYROLL_SUBJECT } from '../payroll/service.js';
-import { guidePayEntryDto } from '../payroll/dto.js';
+import { guidePayEntryDto, guideConversationDto } from '../payroll/dto.js';
 import { entryTotals } from '../payroll/engine.js';
 import { businessToday } from '../tours/completion.js';
 
@@ -91,6 +91,15 @@ router.get(
       select: { id: true, guideVisible: true },
     });
     const componentById = new Map(components.map((c) => [c.id, c]));
+    // Conversation rows for the guide's own entries (one query; the DTO
+    // filters strictly per entryId — no other staff member's thread leaks).
+    const activityIds = [...new Set(entries.map((e) => e.activityId))];
+    const timelineRows = activityIds.length
+      ? await prisma.timelineEntry.findMany({
+          where: { subjectType: 'payroll_activity', subjectId: { in: activityIds }, kind: 'payroll', deletedAt: null },
+          select: { id: true, kind: true, data: true, createdAt: true },
+        })
+      : [];
 
     let approvedMinor = 0;
     let waitingMinor = 0;
@@ -118,7 +127,7 @@ router.get(
       totals: { approvedMinor, waitingMinor },
       entries: entries
         .sort((a, b) => String(a.activity.date || '9999').localeCompare(String(b.activity.date || '9999')))
-        .map((e) => guidePayEntryDto(e, e.activity, componentById)),
+        .map((e) => guidePayEntryDto(e, e.activity, componentById, guideConversationDto(timelineRows, e.id))),
     });
   }),
 );
@@ -160,16 +169,21 @@ router.post(
     if (!entry) return;
     const text = String(req.body?.text || '').trim().slice(0, 2000);
     if (!text) return res.status(400).json({ error: 'text_required' });
-    await prisma.payrollEntry.update({
-      where: { id: entry.id },
-      data: { guideStatus: 'inquiry', guideApprovedAt: null },
-    });
+    // First comment OPENS the inquiry; further messages while it is active
+    // just extend the conversation (no status churn, no duplicate events).
+    const opensInquiry = entry.guideStatus !== 'inquiry';
+    if (opensInquiry) {
+      await prisma.payrollEntry.update({
+        where: { id: entry.id },
+        data: { guideStatus: 'inquiry', guideApprovedAt: null },
+      });
+    }
     await emitTimelineEvent(prisma, {
       subjectType: PAYROLL_SUBJECT,
       subjectId: entry.activityId,
       kind: 'payroll',
-      body: `💬 הערת מדריך (${entry.displayName}): ${text}`,
-      data: { event: 'guide_inquiry', entryId: entry.id, text },
+      body: `💬 ${opensInquiry ? 'הערת מדריך' : 'הודעת מדריך'} (${entry.displayName}): ${text}`,
+      data: { event: opensInquiry ? 'guide_inquiry' : 'guide_message', entryId: entry.id, text },
       origin: guideOrigin(access.person),
     });
     res.json({ ok: true });

@@ -94,6 +94,26 @@ function EntryCard({ token, entry, onChanged }) {
         )}
       </div>
 
+      {/* Conversation — the guide's own thread for THIS entry. Submitted
+          messages stay visible (refresh-proof: they come from the server). */}
+      {entry.conversation?.length > 0 && (
+        <div className="mt-3 space-y-1.5 border-t border-gray-100 pt-2.5">
+          {entry.conversation.map((m) => (
+            <div
+              key={m.id}
+              className={`rounded-xl px-2.5 py-1.5 text-[12px] ${
+                m.byGuide ? 'bg-orange-50 text-gray-800' : 'bg-gray-100 text-gray-800'
+              }`}
+            >
+              <span className="block text-[10px] text-gray-400">
+                {m.byGuide ? 'אתה' : 'המשרד'} · {new Date(m.at).toLocaleString('he-IL')}
+              </span>
+              {m.text}
+            </div>
+          ))}
+        </div>
+      )}
+
       {entry.guideStatus !== 'approved' && (
         <div className="mt-3 flex flex-col gap-2">
           {!commenting ? (
@@ -112,7 +132,7 @@ function EntryCard({ token, entry, onChanged }) {
                 onClick={() => setCommenting(true)}
                 className="flex-1 h-10 rounded-xl border border-gray-300 text-gray-700 text-[13px] hover:bg-gray-50"
               >
-                יש הערה? לחץ כאן
+                {entry.guideStatus === 'inquiry' ? 'הוסף הודעה' : 'יש הערה? לחץ כאן'}
               </button>
             </div>
           ) : (
