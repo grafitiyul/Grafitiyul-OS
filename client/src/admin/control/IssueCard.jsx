@@ -17,12 +17,14 @@ export default function IssueCard({ issue, onChanged, onNeedsInput }) {
   const sev = SEVERITY_BY_KEY[issue.severity] || SEVERITY_BY_KEY.info;
   const [busyKey, setBusyKey] = useState(null);
   const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null);
   const [showDiffs, setShowDiffs] = useState(false);
   const diffs = Array.isArray(issue.data?.diffs) ? issue.data.diffs : null;
   const acknowledged = issue.status === 'acknowledged';
 
   async function runAction(action) {
     setError(null);
+    setNotice(null);
     if (action.kind === 'link') {
       const href = entityHref(action.target);
       if (href) navigate(href);
@@ -32,7 +34,8 @@ export default function IssueCard({ issue, onChanged, onNeedsInput }) {
     setBusyKey(action.key);
     try {
       if (action.kind === 'server') {
-        await api.control.action(issue.id, action.key);
+        const res = await api.control.action(issue.id, action.key);
+        if (res?.message) setNotice(res.message);
       } else if (action.kind === 'api') {
         const handler = apiActionHandler(issue.type, action.key);
         if (!handler) throw new Error('פעולה לא מוכרת');
@@ -107,6 +110,11 @@ export default function IssueCard({ issue, onChanged, onNeedsInput }) {
       {error && (
         <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[12.5px] text-red-700">
           {error}
+        </div>
+      )}
+      {notice && (
+        <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[12.5px] text-emerald-700">
+          {notice}
         </div>
       )}
 

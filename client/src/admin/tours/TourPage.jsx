@@ -281,7 +281,9 @@ export default function TourPage() {
       alert(
         code === 'tour_has_bookings'
           ? 'לא ניתן למחוק סיור שיש לו הזמנות.'
-          : 'שגיאה: ' + (code || e.message),
+          : code === 'gallery_has_media'
+            ? 'לא ניתן למחוק סיור שבגלריה שלו יש מדיה — יש לטפל בגלריה קודם (מסך הבקרה או הגלריה עצמה).'
+            : 'שגיאה: ' + (code || e.message),
       );
     }
   }

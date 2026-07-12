@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { processCleanupTask, sweepAbandonedUploads } from './cleanupWorker.js';
 
-function fakeDeps({ tour, listPages, listFails = false, multiparts = [] } = {}) {
+function fakeDeps({ tour, listPages, listFails = false, multiparts = [], liveMedia = 0 } = {}) {
   const state = {
     claimedUpdates: [],
     taskUpdates: [],
@@ -28,6 +28,7 @@ function fakeDeps({ tour, listPages, listFails = false, multiparts = [] } = {}) 
       findUnique: async () => tour ?? null,
     },
     tourMedia: {
+      count: async () => liveMedia,
       updateMany: async (args) => {
         state.mediaUpdates.push(args);
         return { count: 1 };
@@ -136,6 +137,43 @@ test('R2 outage: task stays pending with the error recorded', async () => {
   const result = await processCleanupTask(deps, TASK);
   assert.equal(result, 'failed');
   assert.match(state.taskUpdates.at(-1).data.lastError, /r2_down/);
+});
+
+// ── SAFETY INVARIANT (בקרה): live media never purges without approval ──────
+
+test('unapproved task with LIVE media is demoted to awaiting_approval — nothing deleted', async () => {
+  const { deps, state } = fakeDeps({
+    tour: { id: 'tour1', status: 'cancelled' },
+    listPages: [['k1'], []],
+    liveMedia: 4,
+  });
+  const result = await processCleanupTask(deps, TASK);
+  assert.equal(result, 'awaiting_approval');
+  assert.equal(state.deletedKeys.length, 0, 'no R2 object touched');
+  assert.equal(state.mediaUpdates.length, 0, 'no media row touched');
+  const update = state.taskUpdates.at(-1);
+  assert.equal(update.data.status, 'awaiting_approval');
+});
+
+test('APPROVED task with live media purges (explicit admin approval)', async () => {
+  const { deps, state } = fakeDeps({
+    tour: { id: 'tour1', status: 'cancelled' },
+    listPages: [['k1', 'k2'], []],
+    liveMedia: 4,
+  });
+  const result = await processCleanupTask(deps, { ...TASK, approvedAt: new Date() });
+  assert.equal(result, 'done');
+  assert.deepEqual(state.deletedKeys, ['k1', 'k2']);
+});
+
+test('un-cancelled tour wins over the media gate — task skipped, media stays', async () => {
+  const { deps, state } = fakeDeps({
+    tour: { id: 'tour1', status: 'scheduled' },
+    liveMedia: 4,
+  });
+  const result = await processCleanupTask(deps, TASK);
+  assert.equal(result, 'skipped');
+  assert.equal(state.deletedKeys.length, 0);
 });
 
 test('abandoned pending uploads: multipart aborted, objects removed, row deleted', async () => {

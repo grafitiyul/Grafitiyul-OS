@@ -1280,6 +1280,17 @@ router.delete(
     if (existing._count.bookings > 0) {
       return res.status(409).json({ error: 'tour_has_bookings' });
     }
+    // SAFETY INVARIANT (בקרה): a tour whose gallery still holds live media is
+    // never hard-deleted — the cascade would wipe the gallery rows the
+    // approval flow needs (view / archive / approve). The operator resolves
+    // the gallery first (or cancels the tour, which routes the media through
+    // the awaiting-approval flow).
+    const liveMedia = await prisma.tourMedia.count({
+      where: { tourEventId: existing.id, deletedAt: null, uploadStatus: 'ready' },
+    });
+    if (liveMedia > 0) {
+      return res.status(409).json({ error: 'gallery_has_media', mediaCount: liveMedia });
+    }
     // BEFORE the delete (cascade wipes the gallery rows): schedule the R2
     // purge — the task row has no FK and survives with the stored prefix.
     await scheduleGalleryCleanup(prisma, existing.id, {

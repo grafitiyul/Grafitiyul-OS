@@ -3,4 +3,4 @@
 // Adding a module to בקרה = one detector file + one import line here; the
 // dashboard, API and lifecycle never change.
 
-// (Detectors land per module slice: gallery, whatsapp, deal↔tour sync, …)
+import './gallery.js';

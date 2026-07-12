@@ -362,7 +362,9 @@ export default function ToursPage() {
           ? 'לא ניתן לבטל סיור עם דילים פעילים — יש להסיר או להעביר אותם קודם.'
           : code === 'tour_has_bookings'
             ? 'לא ניתן למחוק סיור שיש לו הזמנות — ניתן רק לבטל אותו.'
-            : 'שגיאה: ' + e.message,
+            : code === 'gallery_has_media'
+              ? 'לא ניתן למחוק סיור שבגלריה שלו יש מדיה — יש לטפל בגלריה קודם (מסך הבקרה או הגלריה עצמה).'
+              : 'שגיאה: ' + e.message,
       );
     } finally {
       setConfirmAction(null);

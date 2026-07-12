@@ -62,6 +62,24 @@ export async function processCleanupTask(deps, task) {
       return 'skipped';
     }
 
+    // SAFETY INVARIANT (בקרה): NEVER purge a gallery that still contains live
+    // media without explicit admin approval. Checked HERE — at the enforcement
+    // point — so a legacy pending task (pre-approval-era) or any mis-created
+    // task is demoted to 'awaiting_approval' instead of deleting media. The
+    // בקרה detector raises the matching OperationalIssue on its next sweep.
+    if (!task.approvedAt) {
+      const liveMedia = await db.tourMedia.count({
+        where: { tourEventId: task.tourEventId, deletedAt: null, uploadStatus: 'ready' },
+      });
+      if (liveMedia > 0) {
+        await db.tourGalleryCleanupTask.update({
+          where: { id: task.id },
+          data: { status: 'awaiting_approval', attempts: { decrement: 1 } },
+        });
+        return 'awaiting_approval';
+      }
+    }
+
     let deletedObjects = 0;
     if (storage.isConfigured()) {
       // Abort in-flight multipart uploads first so their parts don't linger.

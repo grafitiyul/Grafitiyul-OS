@@ -3790,19 +3790,28 @@ model TourGalleryLink {
 // Durable R2 cleanup work for a gallery whose tour was cancelled or deleted.
 // Deliberately NO FK — the task must survive TourEvent deletion (cascade wipes
 // the gallery rows; this row still knows the R2 prefix to purge). Idempotent:
-// one pending task per tour, and purging a prefix twice is harmless. notBefore
+// one active task per tour, and purging a prefix twice is harmless. notBefore
 // gives a grace window so an accidental cancel that is immediately reverted
 // does not lose media; the worker re-checks tour status before deleting.
+//
+// SAFETY INVARIANT (בקרה): a gallery that still contains live media is NEVER
+// purged automatically. Such a task is created as (or demoted to)
+// 'awaiting_approval' + an OperationalIssue; only an explicit admin approval
+// (approvedAt/approvedBy) moves it to 'pending'. Empty galleries purge
+// automatically as before. The worker re-checks this on every claim.
 model TourGalleryCleanupTask {
   id             String    @id @default(cuid())
   tourEventId    String
   prefix         String // R2 prefix to purge (tour-galleries/<tourEventId>/)
   reason         String // tour_cancelled | tour_deleted
-  status         String    @default("pending") // pending | running | done | skipped
+  status         String    @default("pending") // awaiting_approval | pending | running | done | skipped
   attempts       Int       @default(0)
   lastError      String?
   deletedObjects Int?
   notBefore      DateTime
+  // Explicit admin approval to purge a gallery WITH media (loose AdminUser.id).
+  approvedAt     DateTime?
+  approvedBy     String?
   createdAt      DateTime  @default(now())
   completedAt    DateTime?
   updatedAt      DateTime  @updatedAt

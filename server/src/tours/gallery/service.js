@@ -106,7 +106,7 @@ export async function gallerySummary(client, tourEventId) {
       select: { completedAt: true },
     }),
     client.tourGalleryCleanupTask.findFirst({
-      where: { tourEventId, status: { in: ['pending', 'running'] } },
+      where: { tourEventId, status: { in: ['awaiting_approval', 'pending', 'running'] } },
       select: { status: true, attempts: true, lastError: true, notBefore: true },
     }),
   ]);
@@ -223,6 +223,13 @@ export async function revokeGalleryLinks(client, galleryId, reason) {
 // deletion. Idempotent: safe to call repeatedly. Immediate effects (link
 // revocation, upload rejection via tour status) happen here; R2 purge happens
 // in the async worker after the grace window.
+//
+// SAFETY INVARIANT (בקרה): a gallery with LIVE media never purges
+// automatically — the task is created as 'awaiting_approval' and an
+// OperationalIssue asks the admin to decide (approve / keep / archive).
+// Only an empty gallery (no ready, undeleted media) gets an auto 'pending'
+// task. The worker enforces the same check on claim, so even a legacy or
+// mis-created pending task can never silently delete media.
 export async function scheduleGalleryCleanup(client, tourEventId, { reason, origin }) {
   const gallery = await client.tourGallery.findUnique({
     where: { tourEventId },
@@ -239,15 +246,20 @@ export async function scheduleGalleryCleanup(client, tourEventId, { reason, orig
   const mediaCount = await client.tourMedia.count({ where: { galleryId: gallery.id } });
   let task = null;
   if (mediaCount > 0) {
+    const liveCount = await client.tourMedia.count({
+      where: { galleryId: gallery.id, ...MEDIA_LIVE },
+    });
     task = await client.tourGalleryCleanupTask.findFirst({
-      where: { tourEventId, status: { in: ['pending', 'running'] } },
+      where: { tourEventId, status: { in: ['awaiting_approval', 'pending', 'running'] } },
     });
     if (!task) {
+      const needsApproval = liveCount > 0;
       task = await client.tourGalleryCleanupTask.create({
         data: {
           tourEventId,
           prefix: galleryPrefix(tourEventId),
           reason,
+          status: needsApproval ? 'awaiting_approval' : 'pending',
           // Deletion (tour row gone) leaves nothing to revert to — purge asap.
           notBefore: new Date(Date.now() + (reason === 'tour_deleted' ? 0 : CLEANUP_GRACE_MS)),
         },
@@ -256,10 +268,30 @@ export async function scheduleGalleryCleanup(client, tourEventId, { reason, orig
         subjectType: 'tour_event',
         subjectId: tourEventId,
         kind: 'tour',
-        data: { event: 'gallery_cleanup_scheduled', reason, mediaCount, revokedLinks: revoked },
+        data: {
+          event: needsApproval ? 'gallery_cleanup_awaiting_approval' : 'gallery_cleanup_scheduled',
+          reason,
+          mediaCount,
+          revokedLinks: revoked,
+        },
         origin,
       });
+      if (needsApproval) {
+        await raiseGalleryCleanupIssue(client, { tourEventId, task, liveCount });
+      }
     }
   }
   return { revokedLinks: revoked, task };
+}
+
+// Raise the canonical OperationalIssue for a media-holding gallery whose tour
+// was cancelled/deleted. Kept here (next to the ONE cleanup path) so the gate
+// and its report can never drift; the בקרה detector re-derives the same key
+// on every sweep, which also auto-resolves it when the task leaves
+// awaiting_approval.
+export async function raiseGalleryCleanupIssue(client, { tourEventId, task, liveCount }) {
+  const { raiseIssue } = await import('../../control/issueService.js');
+  const { galleryIssuePayload } = await import('../../control/detectors/gallery.js');
+  const payload = await galleryIssuePayload(client, { tourEventId, task, liveCount });
+  return raiseIssue(client, payload);
 }

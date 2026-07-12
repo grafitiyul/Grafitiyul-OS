@@ -77,11 +77,12 @@ test('gallery tokens are high-entropy base64url (project convention)', () => {
 
 // ---------- cancellation cleanup scheduling ----------
 
-function fakeClient({ gallery, mediaCount, existingTask } = {}) {
+function fakeClient({ gallery, mediaCount, liveCount, existingTask } = {}) {
   const state = {
     revoked: [],
     createdTasks: [],
     events: [],
+    issues: [],
   };
   const client = {
     tourGallery: {
@@ -94,7 +95,9 @@ function fakeClient({ gallery, mediaCount, existingTask } = {}) {
       },
     },
     tourMedia: {
-      count: async () => mediaCount ?? 0,
+      // The service counts ALL rows first, then LIVE (ready, undeleted) rows.
+      count: async ({ where }) =>
+        where?.uploadStatus === 'ready' ? (liveCount ?? mediaCount ?? 0) : (mediaCount ?? 0),
     },
     tourGalleryCleanupTask: {
       findFirst: async () => existingTask ?? null,
@@ -102,6 +105,16 @@ function fakeClient({ gallery, mediaCount, existingTask } = {}) {
         const task = { id: 'task1', ...data };
         state.createdTasks.push(task);
         return task;
+      },
+    },
+    tourEvent: {
+      findUnique: async () => null,
+    },
+    operationalIssue: {
+      findFirst: async () => null,
+      create: async ({ data }) => {
+        state.issues.push(data);
+        return { id: 'issue1', ...data };
       },
     },
     timelineEntry: {
@@ -124,9 +137,23 @@ test('cancel with media: revokes links, creates ONE cleanup task, emits event', 
   assert.equal(state.createdTasks.length, 1);
   assert.equal(state.createdTasks[0].prefix, 'tour-galleries/tour1/');
   assert.ok(state.createdTasks[0].notBefore > new Date(), 'grace window applies to cancels');
+  // SAFETY INVARIANT: live media → the task parks for approval + issue raised.
+  assert.equal(state.createdTasks[0].status, 'awaiting_approval');
   assert.equal(state.events.length, 1);
-  assert.equal(state.events[0].data.event, 'gallery_cleanup_scheduled');
+  assert.equal(state.events[0].data.event, 'gallery_cleanup_awaiting_approval');
+  assert.equal(state.issues.length, 1);
+  assert.equal(state.issues[0].type, 'gallery_cleanup_approval');
+  assert.equal(state.issues[0].dedupeKey, 'gallery_cleanup_approval:tour1');
   assert.equal(res.revokedLinks, 2);
+});
+
+test('cancel with only leftover rows (no LIVE media): auto pending task, no issue', async () => {
+  const { client, state } = fakeClient({ gallery: { id: 'g1' }, mediaCount: 3, liveCount: 0 });
+  await scheduleGalleryCleanup(client, 'tour1', { reason: 'tour_cancelled', origin: {} });
+  assert.equal(state.createdTasks.length, 1);
+  assert.equal(state.createdTasks[0].status, 'pending');
+  assert.equal(state.events[0].data.event, 'gallery_cleanup_scheduled');
+  assert.equal(state.issues.length, 0);
 });
 
 test('repeated cancel is idempotent — existing pending task, no duplicate', async () => {
@@ -157,9 +184,17 @@ test('empty gallery (no media ever): links revoked but no purge task', async () 
   assert.equal(res.task, null);
 });
 
-test('tour deletion purges immediately (no grace window to revert to)', async () => {
-  const { client, state } = fakeClient({ gallery: { id: 'g1' }, mediaCount: 3 });
+test('tour deletion with only leftover rows purges immediately (no grace window)', async () => {
+  const { client, state } = fakeClient({ gallery: { id: 'g1' }, mediaCount: 3, liveCount: 0 });
   await scheduleGalleryCleanup(client, 'tour1', { reason: 'tour_deleted', origin: {} });
   assert.equal(state.createdTasks.length, 1);
+  assert.equal(state.createdTasks[0].status, 'pending');
   assert.ok(state.createdTasks[0].notBefore <= new Date());
+});
+
+test('tour deletion with LIVE media still parks for approval (defence in depth)', async () => {
+  const { client, state } = fakeClient({ gallery: { id: 'g1' }, mediaCount: 3, liveCount: 3 });
+  await scheduleGalleryCleanup(client, 'tour1', { reason: 'tour_deleted', origin: {} });
+  assert.equal(state.createdTasks[0].status, 'awaiting_approval');
+  assert.equal(state.issues.length, 1);
 });
