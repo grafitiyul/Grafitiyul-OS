@@ -995,6 +995,9 @@ model Deal {
   // Tours: the ONLY Deal↔TourEvent relationship (see Booking). Never add a
   // direct tourEventId here.
   bookings              Booking[]
+  // Canonical ticket registrations linked to this deal (CRM context only; seat
+  // truth is the TicketRegistration itself, not the Booking).
+  ticketRegistrations   TicketRegistration[]
   // Pre-WON tour PLANNING (team/components/notes) — see DealTourPlan.
   tourPlan              DealTourPlan?
 
@@ -1745,6 +1748,7 @@ model Location {
   // Quote Image Library items tagged as applicable to this location.
   quoteImageLinks       QuoteImageLocation[]
   tourEvents            TourEvent[]
+  openTourTemplates     OpenTourTemplate[]
 
   @@index([sortOrder])
   @@index([defaultMeetingPointId])
@@ -1821,6 +1825,8 @@ model ProductVariant {
   tourEvents            TourEvent[]
   tourScheduleRules     TourScheduleRule[]
   activityComponents    ProductVariantActivityComponent[]
+  openTourTemplateProducts OpenTourTemplateProduct[]
+  ticketRegistrations   TicketRegistration[]
 
   @@unique([productId, locationId])
   @@index([productId])
@@ -3034,7 +3040,16 @@ model TourEvent {
   notes            String?
   // Loose ref to the future auto-generation rule that minted this slot (no FK —
   // rules are config). Together with `date` it makes generation idempotent.
+  // For Open Tours this holds the OpenTourScheduleRule id (or a synthetic id for
+  // one-off `add` exceptions); openTourTemplateId records the parent template.
   generatedByRuleId String?
+  // Loose ref (no FK — templates are config) to the OpenTourTemplate that minted
+  // this slot. Null for legacy/manual slots and deal tours.
+  openTourTemplateId String?
+  // When true the operator manually pinned this slot's operational product and
+  // the registration-driven derivation must NOT overwrite productVariantId /
+  // activity components. Cleared when the manual override is removed.
+  productManualOverride Boolean @default(false)
   cancelledAt      DateTime?
   // Loose ref (no FK) to the TourEvent that superseded this row. Set ONLY on
   // proven erroneous replacement duplicates (historical reopen→re-WON twins —
@@ -3076,6 +3091,7 @@ model TourEvent {
   bookings         Booking[]
   assignments      TourAssignment[]
   activityComponents TourEventActivityComponent[]
+  ticketRegistrations TicketRegistration[]
   gallery          TourGallery?
   payrollActivity  PayrollActivity?
 
@@ -3085,6 +3101,7 @@ model TourEvent {
   @@index([productId])
   @@index([productVariantId])
   @@index([locationId])
+  @@index([openTourTemplateId, date])
   @@index([gcalSyncStatus, gcalNextRetryAt])
 }
 
@@ -3135,6 +3152,9 @@ model Booking {
   notes       String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  // Canonical ticket allocation rows this deal booking produced (source='deal').
+  // Seat/product truth lives on TicketRegistration — Booking is CRM linkage.
+  ticketRegistrations TicketRegistration[]
 
   @@index([tourEventId, status])
   @@index([dealId, status])
@@ -3178,6 +3198,175 @@ model TourSettings {
   defaultCapacity   Int      @default(30)
   generateDaysAhead Int      @default(60)
   updatedAt         DateTime @updatedAt
+}
+
+// ── Open Tours ───────────────────────────────────────────────────────────────
+// A generic recurring open-tour architecture. NOTHING here encodes a product
+// name/id: an open tour offers whichever Pricing Cards are flagged sellable
+// (PriceRule.availableForGroupTickets), each mapped to its operational
+// ProductVariant. The variant's activity components (incl. any isWorkshop
+// component) are the ONLY source of operational capability — "workshop vs plain"
+// is derived from active registrations, never selected.
+//
+// An OpenTourTemplate is the reusable "what" (where, how long, capacity, close
+// rule, guide requirement, offered ticket products). OpenTourScheduleRule is the
+// "when" (recurring weekday+time within a validity window / season).
+// OpenTourScheduleException handles one-offs. The generation engine materializes
+// real TourEvents (kind='group_slot') from template × rules − exceptions.
+model OpenTourTemplate {
+  id             String    @id @default(cuid())
+  nameHe         String
+  nameEn         String?
+  // Where it runs. locationId is the city/venue (catalog); meetingPoint is
+  // free-text muster instructions carried onto generated slots' notes context.
+  location       Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  locationId     String?
+  meetingPoint   String?
+  tourLanguage   String    @default("he") // default language for generated slots
+  // Operational duration: null = derive from the operational product's variant
+  // (durationHours); a positive value forces a fixed duration on the slot.
+  durationHoursOverride Float?
+  // Soft capacity ceiling seeded onto generated slots (warnings only, like
+  // TourEvent.capacity). Null → TourSettings.defaultCapacity.
+  capacity       Int?
+  // Registration close rule: minutes before startTime after which new
+  // registrations are refused. Null = no automatic close.
+  registrationCloseMinutes Int?
+  // Default guide requirement (operational staffing hint; not DB-enforced).
+  defaultLeadGuides Int    @default(1)
+  active         Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  products      OpenTourTemplateProduct[]
+  scheduleRules OpenTourScheduleRule[]
+  exceptions    OpenTourScheduleException[]
+
+  @@index([active])
+  @@index([locationId])
+}
+
+// The sellable ticket products an OpenTourTemplate offers. Each row references
+// the operational ProductVariant a ticket delivers (the generic capability
+// source). priceRuleId/cardGroupId are loose refs to the Pricing Card that
+// prices it (config; gated by availableForGroupTickets). Exactly one row SHOULD
+// be isDefault — the base operational product for a slot with zero active
+// registrations — enforced at the API, not the DB.
+model OpenTourTemplateProduct {
+  id               String           @id @default(cuid())
+  template         OpenTourTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  templateId       String
+  productVariant   ProductVariant?  @relation(fields: [productVariantId], references: [id], onDelete: SetNull)
+  productVariantId String?
+  priceRuleId      String? // loose ref to a representative sellable PriceRule
+  cardGroupId      String? // loose ref to the Pricing Card identity (sibling rules)
+  isDefault        Boolean          @default(false)
+  sortOrder        Int              @default(0)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([templateId])
+  @@index([productVariantId])
+}
+
+// The "when": a recurring weekly slot for a template, bounded by an optional
+// validity window and tagged with an optional season label (so summer/winter
+// schedules coexist and toggle). Same idempotency contract as the retired
+// TourScheduleRule — rules are the recipe, slots are the truth: editing a rule
+// never mutates already-created slots. generatedThrough is the forward cursor.
+model OpenTourScheduleRule {
+  id         String           @id @default(cuid())
+  template   OpenTourTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  templateId String
+  weekday    Int // 0=ראשון … 6=שבת (JS getDay convention)
+  startTime  String // "HH:MM"
+  validFrom  String? // "YYYY-MM-DD" inclusive; null = unbounded
+  validUntil String? // "YYYY-MM-DD" inclusive; null = unbounded
+  season     String? // optional label, e.g. "קיץ 2026" — grouping/toggle only
+  active     Boolean          @default(true)
+  generatedThrough String? // "YYYY-MM-DD" forward generation cursor
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  @@index([templateId, active, weekday])
+}
+
+// One-off exceptions layered on a template's recurring rules, keyed by date:
+//   add           — create an extra occurrence on this date (time or default)
+//   cancel        — suppress the occurrence that would fall on this date
+//   time_override — the occurrence on this date runs at `time` instead
+// (a "move" = cancel(oldDate) + add(newDate)). Applied by the generation engine.
+model OpenTourScheduleException {
+  id         String           @id @default(cuid())
+  template   OpenTourTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  templateId String
+  date       String // "YYYY-MM-DD"
+  type       String // add | cancel | time_override
+  time       String? // "HH:MM" for add / time_override
+  note       String?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  @@unique([templateId, date, type])
+  @@index([templateId, date])
+}
+
+// ── Canonical ticket registration (SSOT for ticket allocation) ───────────────
+// The single source of truth for WHO holds seats on a TourEvent and WHICH
+// sellable product they bought — source-agnostic by design. Admin/Deal bookings,
+// WooCommerce webhooks, and future channels ALL write here; nothing else stores
+// ticket-seat truth. Occupancy = SUM(quantity WHERE status='active'), and the
+// tour's operational product is derived ONLY from active rows here.
+//
+// productVariantId is the operational identity (drives derivation — its activity
+// components, incl. any isWorkshop, decide the tour's operational product).
+// priceRuleId/cardGroupId are loose refs to the Pricing Card that priced it.
+// bookingId/dealId link CRM context where applicable (SetNull — history
+// survives). For external sources, external order/line ids give idempotent
+// upsert. status is the ALLOCATION state (active counts; cancelled/refunded do
+// not); paymentStatus is the separate money state.
+model TicketRegistration {
+  id          String    @id @default(cuid())
+  tourEvent   TourEvent @relation(fields: [tourEventId], references: [id], onDelete: Restrict)
+  tourEventId String
+  // Operational product identity (SetNull preserves the registration if the
+  // variant catalog entry is later removed; derivation simply ignores null).
+  productVariant   ProductVariant? @relation(fields: [productVariantId], references: [id], onDelete: SetNull)
+  productVariantId String?
+  priceRuleId String? // loose ref — the sellable PriceRule (pricing is config)
+  cardGroupId String? // loose ref — the Pricing Card identity
+  quantity    Int       @default(1)
+  // Where this registration originated: admin | deal | woocommerce | …
+  // (validated in code, no Postgres enum — project convention).
+  source      String    @default("admin")
+  // CRM linkage where applicable (SetNull — registration outlives the booking).
+  booking     Booking?  @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  bookingId   String?
+  deal        Deal?     @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  dealId      String?
+  // External source identifiers (e.g. WooCommerce order/line) for idempotent
+  // ingest. Nulls are distinct in Postgres, so admin rows never collide.
+  externalOrderId String?
+  externalLineId  String?
+  // Customer identity snapshot for non-Deal sources (WooCommerce/public).
+  customerName  String?
+  customerEmail String?
+  customerPhone String?
+  // Allocation state: active | cancelled | refunded (only active counts).
+  status      String    @default("active")
+  // Money state (independent of allocation): pending | paid | refunded | comp | …
+  paymentStatus String?
+  cancelledAt DateTime?
+  refundedAt  DateTime?
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([source, externalOrderId, externalLineId])
+  @@index([tourEventId, status])
+  @@index([productVariantId])
+  @@index([bookingId])
+  @@index([dealId])
 }
 
 // Guide Portal permissions — a singleton row (id='singleton'), created lazily
