@@ -8,3 +8,4 @@ import './whatsapp.js';
 import './dealTourSync.js';
 import './heldExpired.js';
 import './overCapacity.js';
+import './wooSync.js';

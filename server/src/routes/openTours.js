@@ -15,8 +15,10 @@ import {
   clearManualProduct,
 } from '../tours/occurrenceOverrides.js';
 import { markCardSlotsPending } from '../tours/woo/mapping.js';
-import { kickWooSync } from '../tours/woo/service.js';
-import { woo, wooConfigured } from '../tours/woo/wooClient.js';
+import { kickWooSync, markTourWooPending } from '../tours/woo/service.js';
+import { woo, wooConfigured, wooSyncActive, wooSyncBulkEnabled } from '../tours/woo/wooClient.js';
+import { occupancyFor } from '../tours/occupancy.js';
+import { israelToday } from '../tours/slotGeneration.js';
 
 // Open Tours admin API (/api/open-tours) — CRUD for recurring tour TEMPLATES
 // (the "what"), their offered sellable products, weekly SCHEDULE RULES (the
@@ -411,6 +413,74 @@ router.get(
       });
     }
     res.json({ productId, name: product.name, type: product.type, status: product.status, attributes });
+  }),
+);
+
+// ── Controlled sync: gate status + candidates + single-occurrence trigger ────
+// Operational visibility for the corrected Woo model. `gate` reports the two
+// switches so the admin can see why nothing is syncing. `candidates` lists the
+// nearest FUTURE sellable slots of a card with their live sync status + links.
+router.get(
+  '/woo/gate',
+  handle(async (_req, res) => {
+    res.json({
+      configured: wooConfigured(),
+      writeEnabled: wooSyncActive(), // creds AND WOO_SYNC_ENABLED
+      bulkEnabled: wooSyncBulkEnabled(), // WOO_SYNC_BULK_ENABLED (sweep)
+    });
+  }),
+);
+
+router.get(
+  '/woo/candidates/:cardGroupId',
+  handle(async (req, res) => {
+    const cardGroupId = String(req.params.cardGroupId || '');
+    const take = Math.min(Number(req.query.limit) || 20, 100);
+    const products = await prisma.openTourTemplateProduct.findMany({
+      where: { cardGroupId },
+      select: { templateId: true },
+    });
+    const templateIds = [...new Set(products.map((p) => p.templateId))];
+    if (!templateIds.length) return res.json({ candidates: [] });
+    const tours = await prisma.tourEvent.findMany({
+      where: { openTourTemplateId: { in: templateIds }, kind: 'group_slot', date: { gte: israelToday() } },
+      orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
+      take,
+      select: {
+        id: true, date: true, startTime: true, capacity: true, status: true,
+        wooSyncStatus: true, wooSyncError: true, wooSyncedAt: true,
+        wooVariationLinks: {
+          where: { cardGroupId },
+          select: { variantKey: true, ticketTypeId: true, wooProductId: true, wooVariationId: true, status: true, lastError: true },
+        },
+      },
+    });
+    const occ = await occupancyFor(prisma, tours.map((t) => t.id));
+    res.json({
+      candidates: tours.map((t) => ({
+        ...t,
+        activeSeats: occ[t.id]?.activeSeats || 0,
+        remaining: t.capacity == null ? null : Math.max(0, t.capacity - (occ[t.id]?.activeSeats || 0)),
+      })),
+    });
+  }),
+);
+
+// Mark EXACTLY ONE tour pending (never a sweep). Safe regardless of the gate: it
+// only writes GOS state; the worker syncs it iff WOO_SYNC_ENABLED is set. This is
+// the controlled single-occurrence trigger.
+router.post(
+  '/woo/sync-one/:tourEventId',
+  handle(async (req, res) => {
+    const tourEventId = String(req.params.tourEventId || '');
+    const tour = await prisma.tourEvent.findUnique({
+      where: { id: tourEventId },
+      select: { id: true, kind: true },
+    });
+    if (!tour) return res.status(404).json({ error: 'not_found' });
+    if (tour.kind !== 'group_slot') return res.status(400).json({ error: 'not_a_group_slot' });
+    await markTourWooPending(prisma, tourEventId);
+    res.json({ ok: true, tourEventId, writeEnabled: wooSyncActive() });
   }),
 );
 

@@ -50,3 +50,11 @@ registerApiAction('deal_tour_out_of_sync', 'discard', async (issue) => {
   const { api } = await import('../../lib/api.js');
   await api.deals.discardTourUpdate(issue.data.dealId);
 });
+
+// ── WooCommerce sync failed ─────────────────────────────────────────────────
+// "נסה סנכרון שוב" — requeue THIS occurrence through the controlled single-sync
+// trigger (never a bulk sweep). The worker retries iff WOO_SYNC_ENABLED is set.
+registerApiAction('woo_sync_failed', 'retry', async (issue) => {
+  const { api } = await import('../../lib/api.js');
+  await api.openTours.wooSyncOne(issue.data.tourEventId);
+});

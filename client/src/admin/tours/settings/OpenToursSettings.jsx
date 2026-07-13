@@ -582,14 +582,20 @@ function WooMappingsSection() {
   const [savingCard, setSavingCard] = useState(null);
   const [structure, setStructure] = useState({}); // cardGroupId → discovery result
   const [inspecting, setInspecting] = useState(null);
+  const [gate, setGate] = useState(null); // { configured, writeEnabled, bulkEnabled }
+  const [candidates, setCandidates] = useState({}); // cardGroupId → slot list
+  const [loadingCand, setLoadingCand] = useState(null);
+  const [syncingTour, setSyncingTour] = useState(null);
 
   async function load() {
     try {
-      const [sellable, mappings] = await Promise.all([
+      const [sellable, mappings, g] = await Promise.all([
         api.openTours.sellableProducts().catch(() => ({ cards: [] })),
         api.openTours.wooMappings().catch(() => []),
+        api.openTours.wooGate().catch(() => null),
       ]);
       setCards(sellable.cards || []);
+      setGate(g);
       const map = {};
       for (const m of mappings) {
         map[m.cardGroupId] = {
@@ -601,6 +607,30 @@ function WooMappingsSection() {
       setByCard(map);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadCandidates(card) {
+    setLoadingCand(card.cardGroupId);
+    try {
+      const { candidates: list } = await api.openTours.wooCandidates(card.cardGroupId, 20);
+      setCandidates((m) => ({ ...m, [card.cardGroupId]: list || [] }));
+    } catch (e) {
+      alert(errText(e));
+    } finally {
+      setLoadingCand(null);
+    }
+  }
+
+  async function syncOne(card, tourEventId) {
+    setSyncingTour(tourEventId);
+    try {
+      await api.openTours.wooSyncOne(tourEventId);
+      await loadCandidates(card); // refresh status
+    } catch (e) {
+      alert(errText(e));
+    } finally {
+      setSyncingTour(null);
     }
   }
 
@@ -687,6 +717,13 @@ function WooMappingsSection() {
           הוא מקור האמת — הסנכרון בפועל פועל רק כשמוגדרים פרטי החיבור <span dir="ltr">WOOCOMMERCE_*</span>{' '}
           וגם דגל ההפעלה <span dir="ltr">WOO_SYNC_ENABLED</span>.
         </p>
+        {gate && (
+          <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+            <GateChip on={gate.configured} label="חיבור מוגדר" />
+            <GateChip on={gate.writeEnabled} label="כתיבה מאופשרת (WOO_SYNC_ENABLED)" />
+            <GateChip on={gate.bulkEnabled} label="סנכרון מלא (WOO_SYNC_BULK_ENABLED)" warnOff={false} />
+          </div>
+        )}
       </div>
       {loading ? (
         <div className="px-5 py-6 text-center text-sm text-gray-400">טוען…</div>
@@ -760,6 +797,13 @@ function WooMappingsSection() {
                     rows={6}
                     className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-[11px] focus:outline-none focus:ring-2 focus:ring-blue-200"
                   />
+                  {/* This card's ticket types — the ids for the ticketAge map. */}
+                  {(c.rows || []).length > 0 && (
+                    <div className="mt-1 text-[11px] text-gray-500" dir="ltr">
+                      ticket types:{' '}
+                      {c.rows.map((r) => `${r.label}=${r.ticketTypeId} (₪${(r.unitPriceMinor / 100).toFixed(0)})`).join('  |  ')}
+                    </div>
+                  )}
                 </details>
 
                 {s && (
@@ -780,11 +824,83 @@ function WooMappingsSection() {
                     </ul>
                   </div>
                 )}
+
+                {/* Controlled sync + status: nearest future occurrences of this card */}
+                {mapped && (
+                  <details className="mt-2" onToggle={(e) => e.currentTarget.open && !candidates[c.cardGroupId] && loadCandidates(c)}>
+                    <summary className="cursor-pointer text-[12px] text-gray-500 hover:text-gray-700">
+                      מועדים קרובים וסטטוס סנכרון
+                    </summary>
+                    {loadingCand === c.cardGroupId ? (
+                      <div className="mt-1 text-[12px] text-gray-400">טוען…</div>
+                    ) : (candidates[c.cardGroupId] || []).length === 0 ? (
+                      <div className="mt-1 text-[12px] text-gray-400">אין מועדים עתידיים.</div>
+                    ) : (
+                      <div className="mt-1 divide-y divide-gray-100 rounded-lg border border-gray-200">
+                        {candidates[c.cardGroupId].map((t) => (
+                          <div key={t.id} className="flex flex-wrap items-center gap-2 px-2.5 py-1.5 text-[12px]">
+                            <span className="tabular-nums text-gray-700" dir="ltr">
+                              {fmtTourDate(t.date)} {t.startTime}
+                            </span>
+                            <span className="text-gray-400">
+                              {t.status} · {t.remaining == null ? '∞' : t.remaining}/{t.capacity ?? '—'} מקומות
+                            </span>
+                            <SyncStatusChip status={t.wooSyncStatus} error={t.wooSyncError} />
+                            {(t.wooVariationLinks || []).length > 0 && (
+                              <span className="text-gray-400" dir="ltr" title="variation ids">
+                                {t.wooVariationLinks.map((l) => `${l.variantKey.slice(0, 6)}→${l.wooVariationId ?? '—'}`).join(' ')}
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              disabled={syncingTour === t.id}
+                              onClick={() => syncOne(c, t.id)}
+                              className="ms-auto h-7 rounded-md px-2 text-[12px] font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50"
+                              title="סימון סנכרון מבוקר של מועד זה בלבד"
+                            >
+                              {syncingTour === t.id ? 'מסמן…' : 'סנכרן מועד זה'}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </details>
+                )}
               </div>
             );
           })}
         </div>
       )}
     </section>
+  );
+}
+
+function GateChip({ on, label }) {
+  return (
+    <span
+      className={
+        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium ' +
+        (on ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500')
+      }
+    >
+      <span className={'h-1.5 w-1.5 rounded-full ' + (on ? 'bg-green-500' : 'bg-gray-400')} />
+      {label}
+    </span>
+  );
+}
+
+const SYNC_CHIP = {
+  synced: 'bg-green-50 text-green-700',
+  pending: 'bg-amber-50 text-amber-700',
+  failed: 'bg-red-50 text-red-700',
+  skipped: 'bg-gray-100 text-gray-500',
+};
+const SYNC_LABEL = { synced: 'מסונכרן', pending: 'ממתין', failed: 'נכשל', skipped: 'לא נמכר' };
+function SyncStatusChip({ status, error }) {
+  if (!status) return <span className="rounded-full bg-gray-100 px-2 py-0.5 text-gray-400">—</span>;
+  return (
+    <span className={'rounded-full px-2 py-0.5 font-medium ' + (SYNC_CHIP[status] || 'bg-gray-100 text-gray-500')} title={error || ''}>
+      {SYNC_LABEL[status] || status}
+    </span>
   );
 }

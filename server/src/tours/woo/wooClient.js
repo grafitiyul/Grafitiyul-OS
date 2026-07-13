@@ -40,6 +40,16 @@ export function wooSyncActive() {
   return wooConfigured() && wooSyncEnabled();
 }
 
+// SECOND, independent gate for BULK behaviour: the backfill SWEEP (marking every
+// unmapped-NULL future slot pending) and mapping-wide auto-resync. With writes
+// enabled but this OFF, only EXPLICITLY-marked tours sync — so a controlled
+// single-occurrence activation can never fan out to every future tour. Bulk
+// activation is a deliberate second switch a human flips AFTER the controlled
+// occurrence is verified.
+export function wooSyncBulkEnabled() {
+  return /^(1|true|yes|on)$/i.test(String(process.env.WOO_SYNC_BULK_ENABLED || '').trim());
+}
+
 async function wooFetch(path, { method = 'GET', query, body } = {}) {
   const url = new URL(`${STORE_URL()}/wp-json/wc/v3${path}`);
   for (const [k, v] of Object.entries(query || {})) {

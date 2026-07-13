@@ -5,6 +5,7 @@
 
 import { deriveTicketRows } from '../../pricing/groupTicketCards.js';
 import { israelToday } from '../slotGeneration.js';
+import { wooSyncBulkEnabled } from './wooClient.js';
 
 // A sellable card's FULL per-ticket-type price rows (each ticket type keeps its
 // own canonical price — adult/child are distinct Woo variations, so there is NO
@@ -58,6 +59,10 @@ export async function resolveSellableCards(client, templateId) {
 // card's mapping (or price) changes, so existing variations refresh in place.
 // Marks even already-synced tours pending (not just NULL).
 export async function markCardSlotsPending(client, cardGroupId, { today = israelToday() } = {}) {
+  // Marking a whole card's future slots is BULK behaviour — a no-op unless bulk
+  // is explicitly enabled, so configuring a mapping during a controlled
+  // activation never fans out to every future occurrence.
+  if (!wooSyncBulkEnabled()) return 0;
   const products = await client.openTourTemplateProduct.findMany({
     where: { cardGroupId },
     select: { templateId: true },

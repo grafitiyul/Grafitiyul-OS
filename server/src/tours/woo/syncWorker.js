@@ -1,7 +1,7 @@
 import { prisma } from '../../db.js';
 import { israelToday } from '../slotGeneration.js';
 import { occupancyFor } from '../occupancy.js';
-import { woo as realWoo, wooSyncActive, WOO_DATE_ATTRIBUTE } from './wooClient.js';
+import { woo as realWoo, wooSyncActive, wooSyncBulkEnabled, WOO_DATE_ATTRIBUTE } from './wooClient.js';
 import {
   buildVariationPayload,
   buildOccurrenceVariations,
@@ -358,8 +358,13 @@ export function startWooSyncWorker(log = console) {
     try {
       if (!wooSyncActive()) return; // inert until creds AND WOO_SYNC_ENABLED are set
 
-      const swept = await sweepUnsyncedWooTours(prisma);
-      if (swept) log?.log?.(`[woo-sync] backfill: marked ${swept} tours pending`);
+      // The backfill sweep is BULK behaviour — gated behind the second switch so a
+      // controlled single-occurrence activation never fans out. Tours pending via
+      // explicit sync-one or a single-tour edit are still processed below.
+      if (wooSyncBulkEnabled()) {
+        const swept = await sweepUnsyncedWooTours(prisma);
+        if (swept) log?.log?.(`[woo-sync] backfill: marked ${swept} tours pending`);
+      }
 
       const due = {
         wooSyncStatus: 'pending',

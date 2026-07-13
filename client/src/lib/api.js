@@ -1349,6 +1349,12 @@ export const api = {
     // Read-only: inspect a live Woo product's attributes/terms to build a config.
     wooProductStructure: (productId) =>
       request(`/api/open-tours/woo/products/${productId}/structure`),
+    // Controlled activation: gate status, candidate slots, single-occurrence sync.
+    wooGate: () => request('/api/open-tours/woo/gate'),
+    wooCandidates: (cardGroupId, limit = 20) =>
+      request(`/api/open-tours/woo/candidates/${cardGroupId}?limit=${limit}`),
+    wooSyncOne: (tourEventId) =>
+      request(`/api/open-tours/woo/sync-one/${tourEventId}`, { method: 'POST' }),
   },
   tours: {
     // Every mutation below is wrapped in tourMutation() so a success emits the

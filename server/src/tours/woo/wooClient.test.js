@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { wooConfigured, wooSyncEnabled, wooSyncActive } from './wooClient.js';
+import { wooConfigured, wooSyncEnabled, wooSyncActive, wooSyncBulkEnabled } from './wooClient.js';
 
 // The env-var contract + the explicit activation gate. wooConfigured() only asks
 // "do we have credentials"; wooSyncActive() additionally requires a human to have
@@ -31,6 +31,7 @@ const CLEAR = {
   WOO_CONSUMER_KEY: undefined,
   WOO_CONSUMER_SECRET: undefined,
   WOO_SYNC_ENABLED: undefined,
+  WOO_SYNC_BULK_ENABLED: undefined,
 };
 
 test('wooConfigured reads the WOOCOMMERCE_* names (live convention)', () => {
@@ -87,4 +88,26 @@ test('activation gate: only an explicit truthy WOO_SYNC_ENABLED activates', () =
   for (const v of ['false', '0', 'no', '', 'maybe']) {
     withEnv({ ...base, WOO_SYNC_ENABLED: v }, () => assert.equal(wooSyncActive(), false, `"${v}" stays inert`));
   }
+});
+
+test('bulk gate is a SECOND, independent switch (write on ≠ bulk on)', () => {
+  const base = {
+    ...CLEAR,
+    WOOCOMMERCE_BASE_URL: 'https://shop.example',
+    WOOCOMMERCE_CONSUMER_KEY: 'ck',
+    WOOCOMMERCE_CONSUMER_SECRET: 'cs',
+    WOO_SYNC_ENABLED: 'true',
+  };
+  // Writes enabled but bulk NOT — controlled single-occurrence mode.
+  withEnv(base, () => {
+    assert.equal(wooSyncActive(), true);
+    assert.equal(wooSyncBulkEnabled(), false);
+  });
+  withEnv({ ...base, WOO_SYNC_BULK_ENABLED: 'true' }, () => assert.equal(wooSyncBulkEnabled(), true));
+  // Bulk without the write gate is meaningless — the worker tick still guards on
+  // wooSyncActive() first, so bulk alone never writes.
+  withEnv({ ...CLEAR, WOO_SYNC_BULK_ENABLED: 'true' }, () => {
+    assert.equal(wooSyncActive(), false);
+    assert.equal(wooSyncBulkEnabled(), true);
+  });
 });
