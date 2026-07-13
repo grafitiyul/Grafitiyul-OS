@@ -70,16 +70,20 @@ function Occupancy({ t }) {
   }
   const over = t.capacity != null && t.activeSeats > t.capacity;
   const full = t.capacity != null && !over && t.activeSeats === t.capacity;
+  // Over capacity → one simple inline value, entire value red, regular table
+  // typography, no fragments and no separate "חריגה" label.
+  if (over) {
+    return <span className="text-red-600">{t.activeSeats} מתוך {t.capacity}</span>;
+  }
   return (
     <span className="inline-flex items-center gap-1.5 tabular-nums" dir="ltr">
-      <span className={over ? 'font-bold text-red-600' : full ? 'font-bold text-amber-600' : 'font-medium text-gray-800'}>
+      <span className={full ? 'font-bold text-amber-600' : 'font-medium text-gray-800'}>
         {t.activeSeats}
       </span>
       <span className="text-gray-400">/ {t.capacity ?? '—'}</span>
       {t.activeBookings > 0 && (
         <span className="text-[11px] text-gray-400">· {t.activeBookings} דילים</span>
       )}
-      {over && <span className="text-[11px] font-semibold text-red-600">חריגה</span>}
     </span>
   );
 }
@@ -106,6 +110,32 @@ function CustomerCell({ value, extra = 0 }) {
     <span title={full}>
       {value}
       {suffix && <span className="text-gray-400">{suffix}</span>}
+    </span>
+  );
+}
+
+// ALL customer/organization names on a tour (canonical active registrations).
+// Every name is shown (wrapping), never "first +N". A very long list is bounded
+// to the first few with an accessible "+N נוספים" whose tooltip carries the rest
+// — so no customer is ever hidden behind the first one.
+function CustomerNamesCell({ names }) {
+  if (!names?.length) return dash;
+  const MAX = 4;
+  const shown = names.slice(0, MAX);
+  const rest = names.length - shown.length;
+  return (
+    <span className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5" title={names.join('\n')}>
+      {shown.map((n, i) => (
+        <span key={i}>
+          {n}
+          {i < shown.length - 1 || rest > 0 ? <span className="text-gray-300">·</span> : null}
+        </span>
+      ))}
+      {rest > 0 && (
+        <span className="text-gray-400" title={names.slice(MAX).join('\n')}>
+          +{rest} נוספים
+        </span>
+      )}
     </span>
   );
 }
@@ -189,9 +219,14 @@ const COLUMNS = [
   { key: 'organization', label: 'ארגון', def: false, sortVal: (t) => t.organizationDisplayName || '',
     cls: 'text-gray-700 max-w-[200px] truncate',
     render: (t) => <CustomerCell value={t.organizationDisplayName} extra={t.additionalBookingCount} /> },
-  { key: 'booker', label: 'מזמין', def: true, sortVal: (t) => t.bookerDisplayName || '',
-    cls: 'text-gray-800 max-w-[240px] truncate',
-    render: (t) => <CustomerCell value={t.bookerDisplayName} extra={t.additionalBookingCount} /> },
+  { key: 'booker', label: 'מזמין', def: true, sortVal: (t) => (t.customerNames?.[0] || t.bookerDisplayName || ''),
+    cls: 'text-gray-800 max-w-[280px] align-top',
+    render: (t) =>
+      t.customerNames?.length ? (
+        <CustomerNamesCell names={t.customerNames} />
+      ) : (
+        <CustomerCell value={t.bookerDisplayName} extra={t.additionalBookingCount} />
+      ) },
   { key: 'status', label: 'סטטוס', def: true, sortVal: (t) => t.status,
     render: (t) => <Chip styles={TOUR_STATUS_STYLES[t.status]} label={TOUR_STATUS_LABELS[t.status] || t.status} /> },
   { key: 'notes', label: 'הערות', def: false, sortable: false,

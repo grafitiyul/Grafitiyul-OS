@@ -29,6 +29,7 @@ import { resolveTourGuideColor, resolveTourGuideColorInfo } from '../../../share
 import {
   resolveBookingsCustomerIdentity,
   withBookingCount,
+  dealBookerLabel,
 } from '../tours/customerDisplay.js';
 import {
   calendarPendingPatch,
@@ -118,7 +119,7 @@ const CUSTOMER_LABEL_BOOKINGS_INCLUDE = {
 async function tourListExtrasFor(tourEventIds) {
   const ids = [...new Set(tourEventIds)].filter(Boolean);
   if (!ids.length) return {};
-  const [assignmentRows, bookingRows] = await Promise.all([
+  const [assignmentRows, bookingRows, registrationRows] = await Promise.all([
     prisma.tourAssignment.findMany({
       where: { tourEventId: { in: ids } },
       orderBy: { createdAt: 'asc' }, // stable chip order everywhere
@@ -159,6 +160,31 @@ async function tourListExtrasFor(tourEventIds) {
         },
       },
     }),
+    // Canonical customer names come from ACTIVE TicketRegistrations (the seat
+    // SSOT — includes deal AND future website registrations), not bookings.
+    prisma.ticketRegistration.findMany({
+      where: { tourEventId: { in: ids }, status: 'active' },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: {
+        tourEventId: true,
+        customerName: true,
+        deal: {
+          select: {
+            title: true,
+            organization: { select: { name: true } },
+            contacts: {
+              orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+              take: 1,
+              select: {
+                contact: {
+                  select: { firstNameHe: true, lastNameHe: true, firstNameEn: true, lastNameEn: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    }),
   ]);
   const assignmentsByTour = new Map();
   for (const r of assignmentRows) {
@@ -169,6 +195,16 @@ async function tourListExtrasFor(tourEventIds) {
   for (const b of bookingRows) {
     if (!bookingsByTour.has(b.tourEventId)) bookingsByTour.set(b.tourEventId, []);
     bookingsByTour.get(b.tourEventId).push(b);
+  }
+  // Distinct customer labels per tour from active registrations (deal booker
+  // "contact · org", or the registration's own customerName for website rows).
+  const namesByTour = new Map();
+  for (const r of registrationRows) {
+    const label = dealBookerLabel(r.deal) || (r.customerName || '').trim() || null;
+    if (!label) continue;
+    if (!namesByTour.has(r.tourEventId)) namesByTour.set(r.tourEventId, []);
+    const list = namesByTour.get(r.tourEventId);
+    if (!list.includes(label)) list.push(label);
   }
   const staff = (a) => ({
     name: a.displayName,
@@ -206,6 +242,9 @@ async function tourListExtrasFor(tourEventIds) {
       organizationDisplayName: identity.organizationDisplayName,
       bookerDisplayName: identity.bookerDisplayName,
       additionalBookingCount: identity.additionalBookingCount,
+      // ALL distinct customer/org names on the tour (canonical registrations) —
+      // the table renders every one, never "first +N".
+      customerNames: namesByTour.get(id) || [],
     };
   }
   return out;

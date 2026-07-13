@@ -84,14 +84,24 @@ export function planTemplateGeneration(template, { today, target }) {
   return { rows, cursorPatches };
 }
 
-// Resolve a template's BASE operational product (isDefault, else first) into the
-// product/variant/location a generated slot is stamped with. Returns null when
-// the template offers no product (the slot is created productless and later
-// derived from registrations).
+// Resolve a template's PLAIN BASE operational product into the product/variant/
+// location a freshly generated (zero-registration) slot is stamped with. Base =
+// the offered variant with NO isWorkshop component (0 workshop tickets → plain
+// tour), preferring isDefault among those; only if EVERY offered product is a
+// workshop one does it fall back to isDefault/first. Returns null when the
+// template offers no product. Mirrors resolveBaseVariantId (derivation) so a
+// generated slot and its derived empty-state agree.
 function baseProductOf(template) {
-  const products = (template.products || []).slice().sort((a, b) => a.sortOrder - b.sortOrder);
-  const chosen = products.find((p) => p.isDefault && p.productVariantId) || products.find((p) => p.productVariantId) || null;
-  if (!chosen || !chosen.productVariant) return null;
+  const products = (template.products || [])
+    .slice()
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .filter((p) => p.productVariantId && p.productVariant);
+  if (!products.length) return null;
+  const hasWorkshop = (p) =>
+    (p.productVariant.activityComponents || []).some((c) => c.activityComponent?.isWorkshop);
+  const plain = products.filter((p) => !hasWorkshop(p));
+  const pool = plain.length ? plain : products;
+  const chosen = pool.find((p) => p.isDefault) || pool[0];
   return {
     productVariantId: chosen.productVariantId,
     productId: chosen.productVariant.productId || null,
@@ -108,7 +118,16 @@ export async function ensureOpenTourSlots(client) {
       scheduleRules: { where: { active: true } },
       exceptions: true,
       products: {
-        include: { productVariant: { select: { productId: true, locationId: true } } },
+        include: {
+          productVariant: {
+            select: {
+              productId: true,
+              locationId: true,
+              // isWorkshop of each default component → pick the PLAIN base.
+              activityComponents: { select: { activityComponent: { select: { isWorkshop: true } } } },
+            },
+          },
+        },
       },
     },
   });

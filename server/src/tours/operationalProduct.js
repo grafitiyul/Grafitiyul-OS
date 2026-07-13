@@ -78,6 +78,36 @@ export function deriveOperational(variants) {
   };
 }
 
+// The template's PLAIN BASE variant — the operational product of a slot with no
+// workshop (0 workshop tickets → Graffiti Tour). It is the offered product whose
+// variant carries NO isWorkshop component, preferring the isDefault among those.
+// Falls back to isDefault/first only if EVERY offered product is a workshop one.
+// This is the fix for the "empty/plain slot shows Workshop" bug: `isDefault` is
+// merely "the first/flagged product" and can be the workshop variant, so the
+// base must be chosen by CAPABILITY (no workshop), not by the flag alone.
+export async function resolveBaseVariantId(client, templateId) {
+  if (!templateId) return null;
+  const products = await client.openTourTemplateProduct.findMany({
+    where: { templateId, productVariantId: { not: null } },
+    orderBy: { sortOrder: 'asc' },
+    select: {
+      isDefault: true,
+      productVariantId: true,
+      productVariant: {
+        select: {
+          activityComponents: { select: { activityComponent: { select: { isWorkshop: true } } } },
+        },
+      },
+    },
+  });
+  if (!products.length) return null;
+  const hasWorkshop = (p) =>
+    (p.productVariant?.activityComponents || []).some((c) => c.activityComponent?.isWorkshop);
+  const plain = products.filter((p) => !hasWorkshop(p));
+  const pool = plain.length ? plain : products;
+  return (pool.find((p) => p.isDefault) || pool[0]).productVariantId;
+}
+
 // Reconcile a tour's delivered components to `componentIds`, PRESERVING the
 // workshopLocationId (operator-assigned) on components that stay. Returns true
 // when the row set changed.
@@ -133,20 +163,13 @@ export async function recomputeTourOperationalProduct(client, tourEventId) {
   });
   let variantIds = [...new Set(regs.map((r) => r.productVariantId))];
 
-  // Zero active registrations → revert to the template's base (isDefault)
-  // product, so a slot that briefly carried a workshop ticket returns to plain.
+  // No active registration resolves to a variant (empty slot, OR the only
+  // registrations are card-priced group deals with a null variant) → the slot is
+  // its PLAIN base (0 workshop tickets). Resolved by capability, NOT by the
+  // isDefault flag, so a plain-only slot never derives to Workshop.
   if (!variantIds.length && tour.openTourTemplateId) {
-    const base =
-      (await client.openTourTemplateProduct.findFirst({
-        where: { templateId: tour.openTourTemplateId, isDefault: true, productVariantId: { not: null } },
-        select: { productVariantId: true },
-      })) ||
-      (await client.openTourTemplateProduct.findFirst({
-        where: { templateId: tour.openTourTemplateId, productVariantId: { not: null } },
-        orderBy: { sortOrder: 'asc' },
-        select: { productVariantId: true },
-      }));
-    if (base?.productVariantId) variantIds = [base.productVariantId];
+    const baseVariantId = await resolveBaseVariantId(client, tour.openTourTemplateId);
+    if (baseVariantId) variantIds = [baseVariantId];
   }
   if (!variantIds.length) return null; // nothing to derive from — leave as-is
 

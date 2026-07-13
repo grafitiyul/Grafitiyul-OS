@@ -600,9 +600,10 @@ export async function syncDealToTour(tx, deal, booking, { origin }) {
   if (tour.kind === 'group_slot') {
     // Group: the deal's chosen sellable variant (Group Ticket Builder) drives
     // the registration → the slot's derived operational product. This is how a
-    // builder change (plain → workshop) propagates. Fall back to the tour's
-    // current variant only when the deal has no product selected yet.
-    await syncRegistration(deal.productVariantId ?? tour.productVariantId);
+    // builder change (plain → workshop) propagates. A deal with NO product stays
+    // null — never stamped with the slot's base variant (which may be workshop),
+    // so a plain group deal can never make the slot derive to Workshop.
+    await syncRegistration(deal.productVariantId || null);
     return false; // slot scheduling is slot-owned; product is registration-derived
   }
 

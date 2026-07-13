@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deriveOperational } from './operationalProduct.js';
+import { deriveOperational, resolveBaseVariantId, recomputeTourOperationalProduct } from './operationalProduct.js';
 
 // The generic, capability-based operational-product rule. These tests use
 // ABSTRACT component ids (c_tour, c_workshop, c_food) and variant ids — there is
@@ -71,4 +71,65 @@ test('a third sellable product with a NEW capability needs no code change', () =
 test('empty input derives to null (nothing to derive from)', () => {
   assert.equal(deriveOperational([]), null);
   assert.equal(deriveOperational(null), null);
+});
+
+// ── Regression: plain-only slot must NOT derive to Workshop (the reported bug) ─
+// Root cause: the base fallback used isDefault (which can be the workshop
+// product), and card-priced group deals register a NULL variant that the
+// derivation filter drops. The base must be the PLAIN product (no isWorkshop).
+
+test('resolveBaseVariantId picks the PLAIN offered product even when workshop is isDefault', async () => {
+  const client = {
+    openTourTemplateProduct: {
+      findMany: async () => [
+        { isDefault: true, productVariantId: 'workshop', productVariant: { activityComponents: [{ activityComponent: { isWorkshop: true } }] } },
+        { isDefault: false, productVariantId: 'plain', productVariant: { activityComponents: [{ activityComponent: { isWorkshop: false } }] } },
+      ],
+    },
+  };
+  assert.equal(await resolveBaseVariantId(client, 'tpl1'), 'plain');
+});
+
+test('resolveBaseVariantId falls back to isDefault when EVERY offered product is a workshop', async () => {
+  const client = {
+    openTourTemplateProduct: {
+      findMany: async () => [
+        { isDefault: false, productVariantId: 'w1', productVariant: { activityComponents: [{ activityComponent: { isWorkshop: true } }] } },
+        { isDefault: true, productVariantId: 'w2', productVariant: { activityComponents: [{ activityComponent: { isWorkshop: true } }] } },
+      ],
+    },
+  };
+  assert.equal(await resolveBaseVariantId(client, 'tpl1'), 'w2');
+});
+
+test('recompute: a slot with only null-variant (card-priced) plain regs derives to PLAIN, not Workshop', async () => {
+  const updates = [];
+  const client = {
+    tourEvent: {
+      findUnique: async () => ({
+        id: 'slot1', kind: 'group_slot', status: 'scheduled', productManualOverride: false,
+        openTourTemplateId: 'tpl1', productId: 'pW', productVariantId: 'workshop', // stale workshop base
+      }),
+      update: async ({ data }) => { updates.push(data); return {}; },
+    },
+    // Active registrations exist but carry a null variant → filtered out here.
+    ticketRegistration: { findMany: async () => [] },
+    openTourTemplateProduct: {
+      findMany: async () => [
+        { isDefault: true, productVariantId: 'workshop', productVariant: { activityComponents: [{ activityComponent: { isWorkshop: true } }] } },
+        { isDefault: false, productVariantId: 'plain', productVariant: { activityComponents: [{ activityComponent: { isWorkshop: false } }] } },
+      ],
+    },
+    productVariant: {
+      findMany: async () => [{ id: 'plain', productId: 'pP', durationHours: 2, activityComponents: [{ activityComponentId: 'c_tour' }] }],
+    },
+    tourEventActivityComponent: {
+      findMany: async () => [{ id: 'te1', activityComponentId: 'c_workshop' }], // lingering workshop row
+      deleteMany: async () => ({ count: 1 }),
+      createMany: async () => ({ count: 1 }),
+    },
+  };
+  const result = await recomputeTourOperationalProduct(client, 'slot1');
+  assert.equal(result.displayVariantId, 'plain');
+  assert.equal(updates[0].productVariantId, 'plain'); // slot flips workshop → plain
 });
