@@ -261,6 +261,8 @@ function OpenTourEditor({ templateId, onClose }) {
   const [excDraft, setExcDraft] = useState(EMPTY_EXC);
   const [editingRuleId, setEditingRuleId] = useState(null);
   const [ruleEdit, setRuleEdit] = useState(EMPTY_RULE);
+  const [editingExcId, setEditingExcId] = useState(null);
+  const [excEdit, setExcEdit] = useState(EMPTY_EXC);
 
   async function load() {
     try {
@@ -446,6 +448,32 @@ function OpenTourEditor({ templateId, onClose }) {
     }
   }
 
+  function startEditException(x) {
+    setEditingExcId(x.id);
+    setExcEdit({ date: x.date, type: x.type, time: x.time || '11:00' });
+  }
+
+  // Save the SAME exception row. Impact summary first; registered occurrences
+  // require explicit confirm (the server also enforces it).
+  async function saveExceptionEdit(exceptionId) {
+    const body = { date: excEdit.date, type: excEdit.type, time: excEdit.type === 'cancel' ? null : excEdit.time };
+    try {
+      const imp = await api.openTours.exceptionImpact(exceptionId, body);
+      const parts = [];
+      if (imp.willRetime) parts.push(`יעודכנו ${imp.willRetime}`);
+      if (imp.willCancel) parts.push(`יבוטלו ${imp.willCancel}`);
+      const reg = imp.requiresConfirmation?.length || 0;
+      let msg = 'השפעת העריכה: ' + (parts.join(' · ') || 'אין שינוי במועדים קיימים') + '.';
+      if (reg) msg += `\n⚠️ ${reg} מועדים עם רישומי לקוחות — יידרש עדכון לקוחות (ייפתח כרטיס בקרה).`;
+      if ((parts.length || reg) && !window.confirm(msg + '\nלהמשיך?')) return;
+      await api.openTours.updateExceptionRaw(exceptionId, { ...body, confirmRegistered: reg > 0 });
+      setEditingExcId(null);
+      await reloadTpl();
+    } catch (e) {
+      alert(errText(e));
+    }
+  }
+
   return (
     <Dialog open onClose={onClose} title="עריכת תבנית סיור פתוח" size="2xl">
       {loading || !scalars ? (
@@ -602,15 +630,34 @@ function OpenTourEditor({ templateId, onClose }) {
               {(tpl.exceptions || []).length === 0 ? (
                 <p className="px-3 py-3 text-center text-[12.5px] text-gray-400">אין חריגים.</p>
               ) : (
-                tpl.exceptions.map((x) => (
-                  <div key={x.id} className="flex items-center gap-2 px-3 py-2 text-[13px]">
-                    <span className="flex-1 text-gray-800">
-                      {EXCEPTION_TYPE_LABELS[x.type] || x.type} · {fmtTourDate(x.date)}
-                      {x.time && <span dir="ltr" className="tabular-nums text-gray-500"> · {x.time}</span>}
-                    </span>
-                    <button type="button" onClick={() => removeException(x.id)} className="h-7 w-7 rounded text-gray-400 hover:bg-red-50 hover:text-red-600">🗑</button>
-                  </div>
-                ))
+                tpl.exceptions.map((x) =>
+                  editingExcId === x.id ? (
+                    <div key={x.id} className="grid grid-cols-2 gap-2 px-3 py-2 sm:grid-cols-4">
+                      <select value={excEdit.type} onChange={(e) => setExcEdit((d) => ({ ...d, type: e.target.value }))} className={INPUT + ' bg-white'}>
+                        {Object.entries(EXCEPTION_TYPE_LABELS).map(([k, label]) => (
+                          <option key={k} value={k}>{label}</option>
+                        ))}
+                      </select>
+                      <DateField value={excEdit.date} onChange={(v) => setExcEdit((d) => ({ ...d, date: v }))} placeholder="תאריך" />
+                      {excEdit.type !== 'cancel' && (
+                        <TimeField value={excEdit.time} onChange={(v) => setExcEdit((d) => ({ ...d, time: v }))} clearable={false} />
+                      )}
+                      <div className="flex gap-1">
+                        <button type="button" onClick={() => saveExceptionEdit(x.id)} className={PRIMARY + ' flex-1'}>שמור</button>
+                        <button type="button" onClick={() => setEditingExcId(null)} className="h-10 rounded-lg px-2 text-[13px] text-gray-500 hover:bg-gray-100">ביטול</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div key={x.id} className="flex items-center gap-2 px-3 py-2 text-[13px]">
+                      <span className="flex-1 text-gray-800">
+                        {EXCEPTION_TYPE_LABELS[x.type] || x.type} · {fmtTourDate(x.date)}
+                        {x.time && <span dir="ltr" className="tabular-nums text-gray-500"> · {x.time}</span>}
+                      </span>
+                      <button type="button" onClick={() => startEditException(x)} title="עריכת החריג" className="h-7 w-7 rounded text-gray-400 hover:bg-blue-50 hover:text-blue-600">✎</button>
+                      <button type="button" onClick={() => removeException(x.id)} className="h-7 w-7 rounded text-gray-400 hover:bg-red-50 hover:text-red-600">🗑</button>
+                    </div>
+                  ),
+                )
               )}
             </div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">

@@ -1345,6 +1345,10 @@ export const api = {
     removeRule: (ruleId) => tourMutation(request(`/api/open-tours/rules/${ruleId}`, { method: 'DELETE' })),
     createException: (id, data) =>
       tourMutation(request(`/api/open-tours/${id}/exceptions`, { method: 'POST', body: JSON.stringify(data) })),
+    exceptionImpact: (exceptionId, data) =>
+      request(`/api/open-tours/exceptions/${exceptionId}/impact`, { method: 'POST', body: JSON.stringify(data) }),
+    updateExceptionRaw: (exceptionId, data) =>
+      request(`/api/open-tours/exceptions/${exceptionId}`, { method: 'PUT', body: JSON.stringify(data) }),
     removeException: (exceptionId) =>
       tourMutation(request(`/api/open-tours/exceptions/${exceptionId}`, { method: 'DELETE' })),
     // Occurrence override: manually pin a generated slot's operational product

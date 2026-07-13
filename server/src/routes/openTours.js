@@ -22,6 +22,7 @@ import { occupancyFor } from '../tours/occupancy.js';
 import { israelToday, addDays, getTourSettings } from '../tours/slotGeneration.js';
 import { suggestWooConfig } from '../tours/woo/suggestConfig.js';
 import { planRuleReconcile, classifyRulePlan } from '../tours/ruleEdit.js';
+import { planExceptionReconcile, classifyExceptionPlan } from '../tours/exceptionEdit.js';
 import { emitTourChangeImpact } from '../tours/changeImpact.js';
 import { calendarPendingPatch, kickTourCalendarSync } from '../tours/calendar/service.js';
 import { wooPendingPatch } from '../tours/woo/service.js';
@@ -381,6 +382,97 @@ router.delete(
   handle(async (req, res) => {
     await clearManualProduct(prisma, req.params.tourEventId);
     res.json({ ok: true, productManualOverride: false });
+  }),
+);
+
+// Scheduled slots materialized on a given date for a template (with seats), used
+// by the exception-edit impact preview + apply.
+async function slotsOnDate(templateId, date) {
+  const rows = await prisma.tourEvent.findMany({
+    where: { openTourTemplateId: templateId, date, status: 'scheduled', kind: 'group_slot' },
+    select: { id: true, startTime: true },
+  });
+  const occ = await occupancyFor(prisma, rows.map((s) => s.id));
+  return rows.map((s) => ({ id: s.id, startTime: s.startTime, seats: occ[s.id]?.activeSeats || 0 }));
+}
+
+// Impact PREVIEW of an exception edit (dry run), before saving.
+router.post(
+  '/exceptions/:exceptionId/impact',
+  handle(async (req, res) => {
+    const existing = await prisma.openTourScheduleException.findUnique({ where: { id: req.params.exceptionId } });
+    if (!existing) return res.status(404).json({ error: 'not_found' });
+    const { data, error } = buildExceptionPatch({ ...existing, ...req.body });
+    if (error) return res.status(400).json({ error });
+    const slots = await slotsOnDate(existing.templateId, data.date);
+    const plan = planExceptionReconcile(data, slots);
+    const { summary } = classifyExceptionPlan(plan);
+    res.json(summary);
+  }),
+);
+
+// EDIT the SAME exception row (never delete+recreate) and reconcile its
+// materialized TourEvent(s): cancel/retime per the new exception, protecting
+// registered occurrences (explicit confirm) and emitting a canonical impact
+// record for each registered occurrence actually cancelled/retimed. Idempotent.
+router.put(
+  '/exceptions/:exceptionId',
+  handle(async (req, res) => {
+    const existing = await prisma.openTourScheduleException.findUnique({ where: { id: req.params.exceptionId } });
+    if (!existing) return res.status(404).json({ error: 'not_found' });
+    const { data, error } = buildExceptionPatch({ ...existing, ...req.body });
+    if (error) return res.status(400).json({ error });
+
+    // The (template, date, type) unique — moving onto another exception's slot is
+    // a conflict, surfaced rather than silently clobbered.
+    const clash = await prisma.openTourScheduleException.findFirst({
+      where: { templateId: existing.templateId, date: data.date, type: data.type, id: { not: existing.id } },
+    });
+    if (clash) return res.status(409).json({ error: 'exception_conflict' });
+
+    const confirmRegistered = req.body.confirmRegistered === true;
+    const slots = await slotsOnDate(existing.templateId, data.date);
+    const plan = planExceptionReconcile(data, slots);
+    const { summary, apply } = classifyExceptionPlan(plan, { confirmRegistered });
+    if (summary.requiresConfirmation.length && !confirmRegistered) {
+      return res.status(409).json({ error: 'exception_edit_requires_confirm', summary });
+    }
+
+    // Update the SAME row (canonical identity preserved).
+    const exception = await prisma.openTourScheduleException.update({
+      where: { id: existing.id },
+      data: { date: data.date, type: data.type, time: data.time, note: data.note },
+    });
+    await regenerate(); // materializes an 'add' occurrence on the (new) date
+
+    for (const s of apply.retime) {
+      await prisma.tourEvent.update({
+        where: { id: s.id },
+        data: { startTime: s.toTime, ...calendarPendingPatch(), ...wooPendingPatch() },
+      });
+    }
+    for (const s of apply.cancel) {
+      await prisma.tourEvent.update({
+        where: { id: s.id },
+        data: { status: 'cancelled', cancelledAt: new Date(), ...calendarPendingPatch(), ...wooPendingPatch() },
+      });
+    }
+    for (const a of apply.impacted) {
+      await emitTourChangeImpact(prisma, {
+        tourEventId: a.id,
+        impactType: a.action === 'cancel' ? 'tour_cancelled' : 'tour_time_changed',
+        before: { date: data.date, startTime: a.startTime },
+        after: { date: data.date, startTime: a.action === 'cancel' ? a.startTime : a.toTime },
+        note: 'exception edit',
+      }).catch((e) => console.error('[open-tours] impact emit failed', e));
+    }
+    kickTourCalendarSync();
+    kickWooSync();
+
+    res.json({
+      ...exception,
+      applied: { retimed: apply.retime.length, cancelled: apply.cancel.length, impacted: apply.impacted.length },
+    });
   }),
 );
 
