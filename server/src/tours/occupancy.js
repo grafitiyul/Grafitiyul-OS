@@ -3,17 +3,27 @@
 // every screen that shows seats goes through this helper. Capacity is a soft
 // ceiling used for warnings only — comparison/warning logic belongs to the
 // callers, this module only reports the truth.
+//
+// SEATS are the SUM of ACTIVE TicketRegistrations (the canonical, source-agnostic
+// allocation SSOT — deal bookings, WooCommerce, future channels all count here).
+// Booking counts stay from Booking as CRM metadata (how many deals are on the
+// tour) — Booking is NO LONGER the seat source of truth.
 
-// Sum of active seats + booking counts for a set of TourEvents.
+import { mergeOccupancy } from './registrations.js';
+
 // Returns { [tourEventId]: { activeSeats, activeBookings, totalBookings } }.
 export async function occupancyFor(client, tourEventIds) {
   const ids = [...new Set(tourEventIds)].filter(Boolean);
   if (!ids.length) return {};
-  const [active, total] = await Promise.all([
+  const [seatRows, activeBk, totalBk] = await Promise.all([
+    client.ticketRegistration.groupBy({
+      by: ['tourEventId'],
+      where: { tourEventId: { in: ids }, status: 'active' },
+      _sum: { quantity: true },
+    }),
     client.booking.groupBy({
       by: ['tourEventId'],
       where: { tourEventId: { in: ids }, status: 'active' },
-      _sum: { seats: true },
       _count: { _all: true },
     }),
     client.booking.groupBy({
@@ -22,15 +32,5 @@ export async function occupancyFor(client, tourEventIds) {
       _count: { _all: true },
     }),
   ]);
-  const out = Object.fromEntries(
-    ids.map((id) => [id, { activeSeats: 0, activeBookings: 0, totalBookings: 0 }]),
-  );
-  for (const row of active) {
-    out[row.tourEventId].activeSeats = row._sum.seats || 0;
-    out[row.tourEventId].activeBookings = row._count._all;
-  }
-  for (const row of total) {
-    out[row.tourEventId].totalBookings = row._count._all;
-  }
-  return out;
+  return mergeOccupancy(ids, seatRows, activeBk, totalBk);
 }

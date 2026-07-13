@@ -3,6 +3,7 @@ import { emitTimelineEvent } from '../timeline/events.js';
 import { seedTourComponents } from './tourComponents.js';
 import { splitPlanAssignments, planComponentRows } from './planMaterialize.js';
 import { scheduleGalleryCleanup } from './gallery/service.js';
+import { syncDealRegistration } from './registrations.js';
 import {
   calendarPendingPatch,
   patchTouchesCalendar,
@@ -99,6 +100,8 @@ export async function createTourForWonDeal(tx, deal, { targetTourEventId, origin
     const booking = await tx.booking.create({
       data: { tourEventId: slot.id, dealId: deal.id, seats, status: 'active' },
     });
+    // Canonical allocation row (source='deal') — the seat SSOT.
+    await syncDealRegistration(tx, booking, slot);
     await emitTimelineEvent(tx, {
       subjectType: 'tour_event',
       subjectId: slot.id,
@@ -256,6 +259,8 @@ export async function createTourForWonDeal(tx, deal, { targetTourEventId, origin
   const booking = await tx.booking.create({
     data: { tourEventId: tourEvent.id, dealId: deal.id, seats, status: 'active' },
   });
+  // Canonical allocation row (source='deal') — the seat SSOT.
+  await syncDealRegistration(tx, booking, tourEvent);
   const createdEvent = reactivating ? 'tour_reactivated' : 'tour_created';
   await emitTimelineEvent(tx, {
     subjectType: 'tour_event',
@@ -291,6 +296,8 @@ export async function cancelDealBooking(tx, booking, { reason, origin }) {
     where: { id: booking.id },
     data: { status: 'cancelled', cancelledAt: new Date() },
   });
+  // Mirror the cancellation onto the canonical registration (seats stop counting).
+  await syncDealRegistration(tx, { ...booking, status: 'cancelled' }, booking.tourEvent);
   await emitTimelineEvent(tx, {
     subjectType: 'tour_event',
     subjectId: booking.tourEventId,
@@ -401,6 +408,8 @@ export async function orphanDealBooking(tx, booking, { origin }) {
     where: { id: booking.id },
     data: { status: 'orphaned', orphanedAt: new Date() },
   });
+  // Orphaned seats do not count — collapse the registration to non-active.
+  await syncDealRegistration(tx, { ...booking, status: 'orphaned' }, booking.tourEvent);
   await emitTimelineEvent(tx, {
     subjectType: 'tour_event',
     subjectId: booking.tourEventId,
@@ -444,6 +453,8 @@ export async function reconnectOrphanBooking(tx, booking, { origin }) {
     where: { id: booking.id },
     data: { status: 'active', orphanedAt: null },
   });
+  // Seats count again — restore the canonical registration to active.
+  await syncDealRegistration(tx, { ...booking, status: 'active' }, booking.tourEvent);
   await emitTimelineEvent(tx, {
     subjectType: 'tour_event',
     subjectId: booking.tourEventId,
@@ -551,11 +562,24 @@ export async function syncDealToTour(tx, deal, booking, { origin }) {
 
   // seats always mirror participants (both tour kinds).
   const seats = Number(deal.participants);
-  if (Number.isInteger(seats) && seats >= 1 && seats !== booking.seats) {
-    await tx.booking.update({ where: { id: booking.id }, data: { seats } });
+  const effectiveSeats = Number.isInteger(seats) && seats >= 1 ? seats : booking.seats;
+  if (effectiveSeats !== booking.seats) {
+    await tx.booking.update({ where: { id: booking.id }, data: { seats: effectiveSeats } });
   }
 
-  if (tour.kind === 'group_slot') return false; // slot planning is slot-owned
+  // Keep the canonical registration in step with the deal's current seats and
+  // (for private/business) operational variant — the seat/derivation SSOT.
+  const syncRegistration = (productVariantId) =>
+    syncDealRegistration(
+      tx,
+      { ...booking, seats: effectiveSeats, status: 'active' },
+      { ...tour, productVariantId },
+    );
+
+  if (tour.kind === 'group_slot') {
+    await syncRegistration(tour.productVariantId); // variant is slot-owned
+    return false; // slot planning is slot-owned
+  }
 
   const patch = {};
   const postpone = tour.status === 'scheduled' && !deal.tourDate;
@@ -578,7 +602,14 @@ export async function syncDealToTour(tx, deal, booking, { origin }) {
     patch.productVariantId = deal.productVariantId || null;
   if ((deal.locationId || null) !== tour.locationId) patch.locationId = deal.locationId || null;
 
-  if (!Object.keys(patch).length) return false;
+  const effectiveVariantId = Object.prototype.hasOwnProperty.call(patch, 'productVariantId')
+    ? patch.productVariantId
+    : tour.productVariantId;
+
+  if (!Object.keys(patch).length) {
+    await syncRegistration(effectiveVariantId);
+    return false;
+  }
   // Deal-driven date/time/variant/language/status changes are calendar-visible.
   const calendarDirty = patchTouchesCalendar(patch);
   if (calendarDirty) Object.assign(patch, calendarPendingPatch());
@@ -610,5 +641,6 @@ export async function syncDealToTour(tx, deal, booking, { origin }) {
       origin,
     });
   }
+  await syncRegistration(effectiveVariantId);
   return true;
 }

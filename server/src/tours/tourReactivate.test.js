@@ -64,6 +64,15 @@ function stubTx({ priorCancelledBooking = null } = {}) {
       findMany: async () => [],
     },
     productVariantActivityComponent: { findMany: async () => [] }, // variant seed source
+    ticketRegistration: {
+      findFirst: async () => null, // no existing 'deal' registration
+      create: async ({ data }) => {
+        calls.ticketRegistrationCreate = calls.ticketRegistrationCreate || [];
+        calls.ticketRegistrationCreate.push(data);
+        return { id: 'regNew', ...data };
+      },
+      update: async () => ({}),
+    },
     timelineEntry: { create: async () => ({}) },
   };
   return tx;
