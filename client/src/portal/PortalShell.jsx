@@ -6,8 +6,12 @@ import BrandMark from '../brand/BrandMark.jsx';
 // Guide Portal shell — the app frame every portal page renders inside.
 //
 // Responsibilities:
-//   * token persistence (session + local storage; the authoritative PWA
-//     persistence is the server-rewritten manifest — see server/src/index.js)
+//   * tab-scoped token hand-off (sessionStorage only — see the effect
+//     below). The authoritative PWA persistence is the token-scoped
+//     manifest start_url (see server/src/pwa/manifest.js). The token is
+//     NEVER written to localStorage: portal identity is URL-token scoped,
+//     not device-global (root Landing security invariant, incident
+//     2026-07-13).
 //   * ONE bootstrap call (/api/portal/:token/home) → person + permissions.
 //     Permissions here only decide which tabs/menu entries RENDER — every
 //     data route re-resolves and enforces them server-side.
@@ -23,16 +27,16 @@ export default function PortalShell() {
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
 
-  // Same belt-and-braces persistence the old single-page portal used.
+  // Tab-scoped hand-off ONLY: the attempt runtime (opened in the SAME
+  // tab from a procedure) reads this to render its "back to portal"
+  // button if a refresh dropped the ?p= query. sessionStorage is
+  // per-tab and is NEVER read by the root/launch resolver, so it cannot
+  // cause the bare domain to open a portal. We deliberately do NOT write
+  // localStorage — portal identity is URL-token scoped, not device-global.
   useEffect(() => {
     if (!token) return;
     try {
       sessionStorage.setItem('gos.portalToken', token);
-    } catch {
-      /* ignore */
-    }
-    try {
-      localStorage.setItem('gos.portalToken', token);
     } catch {
       /* ignore */
     }

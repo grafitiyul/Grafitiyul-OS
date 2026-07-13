@@ -5,104 +5,45 @@ import {
   useSearchParams,
 } from 'react-router-dom';
 import PwaDiagnostics from './PwaDiagnostics.jsx';
+import { resolveLanding } from './landingResolve.js';
 
 // Root + launch resolver. Mounted on FOUR paths:
 //
-//   /                  — bare-domain entry. Admins typing the URL go
-//                         here. If there's no portal token, they fall
-//                         through to /admin (which then handles login).
-//   /launch            — query-based launch fallback. Renders the
-//                         missing-portal screen when no token is
-//                         resolvable from URL or storage.
-//   /launch/:token     — PATH-BASED launch URL. This is the
-//                         deterministic one — iOS Safari preserves
-//                         path segments through "Add to Home Screen"
-//                         and through the standalone launch even on
-//                         versions that strip queries or ignore the
-//                         manifest's start_url. The token sits in the
-//                         path, so it always survives.
+//   /                  — bare-domain entry. Admins typing the URL land
+//                         here; with no URL token they go to /admin
+//                         (which then handles login).
+//   /launch            — launcher with no token → fail-closed
+//                         missing-portal screen.
+//   /launch/:token     — PATH-BASED launch URL (the deterministic one;
+//                         iOS Safari preserves path segments through the
+//                         standalone launch). Redirects to /p/:token.
 //
-// Token resolution order, applied to ALL three paths:
+// Token resolution (see ./landingResolve.js) is URL-ONLY:
+//   1. URL path `:token`
+//   2. URL `?p=<token>` query
 //
-//   1. URL path `:token`        — the most reliable shape.
-//   2. URL `?p=<token>` query   — works in browsers that preserve
-//                                 queries.
-//   3. localStorage `gos.portalToken` — final fallback for shared-
-//                                 storage contexts.
-//
-// On `/` with NO token: redirect to `/admin` (admins typing the bare
-// URL still want admin login). On `/launch*` with no token: render
-// the public missing-portal screen + diagnostics — never bounce to
-// admin.
+// SECURITY INVARIANT: this route NEVER reads a device-global token from
+// localStorage/sessionStorage/cookies. A device that previously opened a
+// guide's portal must still land on the admin flow at "/". Portal identity
+// is URL-token scoped, not device-global. (Incident 2026-07-13: the bare
+// "/" opened another user's portal because Landing used to fall back to
+// localStorage['gos.portalToken'].)
 export default function Landing() {
   const params = useParams();
   const [searchParams] = useSearchParams();
   const location = useLocation();
   const isLaunchPath = location.pathname.startsWith('/launch');
 
-  let token = null;
-  let urlPathTokenPresent = false;
-  let urlQueryTokenPresent = false;
-  let storageTokenPresent = false;
+  const result = resolveLanding({
+    pathToken: params.token || null,
+    queryToken: searchParams.get('p'),
+    isLaunchPath,
+  });
 
-  const fromPath = params.token || null;
-  if (fromPath && /^[A-Za-z0-9_-]+$/.test(fromPath)) {
-    token = fromPath;
-    urlPathTokenPresent = true;
-    try {
-      localStorage.setItem('gos.portalToken', token);
-    } catch {
-      /* ignore */
-    }
+  if (result.kind === 'portal' || result.kind === 'admin') {
+    return <Navigate to={result.to} replace />;
   }
-
-  if (!token) {
-    const fromQuery = searchParams.get('p');
-    if (fromQuery && /^[A-Za-z0-9_-]+$/.test(fromQuery)) {
-      token = fromQuery;
-      urlQueryTokenPresent = true;
-      try {
-        localStorage.setItem('gos.portalToken', token);
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-
-  if (!token) {
-    try {
-      const stored = localStorage.getItem('gos.portalToken');
-      if (stored && /^[A-Za-z0-9_-]+$/.test(stored)) {
-        token = stored;
-        storageTokenPresent = true;
-      }
-    } catch {
-      /* ignore */
-    }
-  } else {
-    try {
-      const stored = localStorage.getItem('gos.portalToken');
-      storageTokenPresent = !!stored;
-    } catch {
-      /* ignore */
-    }
-  }
-
-  if (token) {
-    return <Navigate to={`/p/${encodeURIComponent(token)}`} replace />;
-  }
-
-  if (!isLaunchPath) {
-    return <Navigate to="/admin" replace />;
-  }
-
-  return (
-    <MissingPortalScreen
-      urlPathTokenPresent={urlPathTokenPresent}
-      urlQueryTokenPresent={urlQueryTokenPresent}
-      storageTokenPresent={storageTokenPresent}
-    />
-  );
+  return <MissingPortalScreen />;
 }
 
 function MissingPortalScreen() {
@@ -117,9 +58,9 @@ function MissingPortalScreen() {
           לא נמצא קישור מדריך
         </h1>
         <p className="text-sm text-gray-700 leading-relaxed mb-4">
-          האפליקציה הותקנה בלי קישור פורטל אישי, או שהקישור נמחק. בקש
-          מהמנהל את הקישור האישי שלך לפורטל ופתח אותו פעם אחת — אחרי
-          זה האפליקציה תזכור.
+          האפליקציה נפתחה בלי קישור פורטל אישי. בקש מהמנהל את הקישור
+          האישי שלך לפורטל ופתח אותו. כדי שהאפליקציה תיפתח ישר לפורטל
+          שלך בכל פעם — התקן אותה למסך הבית מתוך הקישור האישי שלך.
         </p>
         <div className="text-[12px] text-gray-500 mb-4">
           אפשר גם להדביק קישור פורטל בתיבת הכתובת של הדפדפן.

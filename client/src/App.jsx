@@ -384,6 +384,11 @@ export default function App() {
       <Route path="/__preview/accessibility" element={<AccessibilityPage />} />
       <Route path="/__preview/tours" element={<ToursPage />} />
       <Route path="/__preview/tour" element={<TourDetailPage />} />
+      {/* Catch-all — no route may fall through to a blank page or inherit the
+          previously-rendered shell. Unknown paths go to the root resolver,
+          which (no URL token) sends them to /admin. It NEVER infers a guide
+          portal from device storage (see Landing / landingResolve.js). */}
+      <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </>
   );

@@ -1,10 +1,11 @@
 {
+  "id": "/?app=grafitiyul-admin",
   "name": "Grafitiyul Team",
   "short_name": "Grafitiyul Team",
   "description": "מערכת התפעול והלמידה של גרפיתי-יול",
   "lang": "he",
   "dir": "rtl",
-  "start_url": "/launch",
+  "start_url": "/admin",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",

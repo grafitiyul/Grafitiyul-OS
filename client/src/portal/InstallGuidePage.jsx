@@ -60,14 +60,12 @@ export default function InstallGuidePage() {
     }
   }, [token, navigate]);
 
-  useEffect(() => {
-    if (!token) return;
-    try {
-      localStorage.setItem('gos.portalToken', token);
-    } catch {
-      /* ignore */
-    }
-  }, [token]);
+  // NOTE: we intentionally do NOT persist the token to localStorage.
+  // Portal identity is URL-token scoped, not device-global — the root
+  // Landing resolver must never infer a guide from device storage
+  // (security invariant, incident 2026-07-13). Installing from this
+  // page captures the token in the PWA's start_url (the token-scoped
+  // manifest), which is the authoritative "remember me".
 
   // (Manifest link is now rewritten server-side in the SPA fallback
   // for any /install-guide/:token / /p/:token / /launch/:token URL.

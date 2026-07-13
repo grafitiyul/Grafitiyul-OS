@@ -15,57 +15,25 @@ import './index.css';
 installChunkReload();
 startVersionWatch();
 
-// ── PRE-MOUNT: persist portal token from URL ─────────────────────
+// ── PRE-MOUNT: purge the legacy device-global portal token ───────
 //
-// We persist any guide-portal token visible in the current URL into
-// localStorage at module-load time, BEFORE React mounts. This makes
-// the persistence resilient to:
-//   * The user closing the tab/PWA before GuidePortal's useEffect
-//     fires (rare but possible on slow first paint).
-//   * Future routing changes that might unmount GuidePortal during
-//     init.
-//   * Any code-splitting that delays GuidePortal's own bundle.
+// SECURITY (incident 2026-07-13): earlier builds persisted any visited
+// guide token into localStorage['gos.portalToken'] and the root/launch
+// resolver read it back — so a device that had opened ONE guide's portal
+// would re-open that portal from the bare domain (and an installed PWA
+// launching at /launch would drop into it). Portal identity must be
+// URL-token scoped, never device-global.
 //
-// The token is what powers the smart Landing (/ and /launch): if a
-// guide ever visited /p/:token in this PWA / origin context, future
-// PWA launches at start_url should bounce them back to /p/<token>
-// instead of dropping them on /admin/login.
-//
-// Three URL shapes we accept:
-//   /p/:token                     — the canonical portal entry.
-//   /attempt/:id?p=<token>        — runtime hand-off.
-//   /(launch)?p=<token>           — explicit launcher hand-off, used
-//                                    when sharing a link that should
-//                                    open the PWA in portal mode.
-(function persistPortalTokenFromUrl() {
+// We now remove the key on EVERY load, so already-affected devices
+// self-heal on their next visit without any manual cache clearing.
+// (sessionStorage is tab-scoped and only powers the same-tab
+// attempt→portal "back" button; it never feeds root routing, so we
+// leave it untouched.)
+(function purgeLegacyDevicePortalToken() {
   try {
-    const path = window.location.pathname || '';
-    const search = window.location.search || '';
-    // Match any token-bearing path shape we use:
-    //   /p/<token>
-    //   /launch/<token>
-    //   /install-guide/<token>
-    const pathMatch = path.match(
-      /^\/(?:p|launch|install-guide)\/([^/?#]+)/,
-    );
-    let token = null;
-    if (pathMatch && pathMatch[1]) {
-      try {
-        token = decodeURIComponent(pathMatch[1]);
-      } catch {
-        token = pathMatch[1];
-      }
-    } else {
-      const params = new URLSearchParams(search);
-      const p = params.get('p');
-      if (p) token = p;
-    }
-    if (token && /^[A-Za-z0-9_-]+$/.test(token)) {
-      localStorage.setItem('gos.portalToken', token);
-    }
+    localStorage.removeItem('gos.portalToken');
   } catch {
-    /* private mode / storage disabled — fall back to in-component
-       writes in GuidePortal. Best-effort only. */
+    /* private mode / storage disabled — nothing to purge */
   }
 })();
 

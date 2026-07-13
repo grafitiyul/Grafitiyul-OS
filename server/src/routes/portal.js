@@ -33,9 +33,14 @@ const router = Router();
 // but the portal is disabled — that's an intentional admin signal
 // the user should see ("your portal access has been turned off") so
 // the lockout is debuggable without leaking why.
-async function resolvePerson(token) {
+// Exported for unit testing (with an injectable `db`). Security contract:
+//   * exact-match only (findUnique on portalToken) — no fuzzy/newest lookup
+//   * unknown token → not_found (never reveals whether a token exists)
+//   * valid-but-disabled / blocked → disabled (a deliberate, debuggable
+//     signal — NOT the same as "no such token")
+export async function resolvePerson(token, db = prisma) {
   if (!token || typeof token !== 'string') return { error: 'not_found' };
-  const person = await prisma.personRef.findUnique({
+  const person = await db.personRef.findUnique({
     where: { portalToken: token },
   });
   if (!person) return { error: 'not_found' };

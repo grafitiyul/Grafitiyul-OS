@@ -94,6 +94,7 @@ import controlRouter from './routes/control.js';
 import { startControlSweepWorker } from './control/sweepWorker.js';
 import './control/detectors/index.js';
 import { makeLegacyRedirect } from './legacyRedirect.js';
+import { buildManifest } from './pwa/manifest.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -410,59 +411,15 @@ app.use('/api', (_req, res) => {
 // Public route: never auth-gated. Returns no-store so a future token
 // rotation isn't masked by a stale cached manifest.
 app.get('/manifest.webmanifest', (req, res) => {
-  const rawToken = String(req.query?.p || '');
-  // Same character class as the rest of the codebase — anything off
-  // this set is treated as "no token" and the manifest falls back to
-  // the bare /launch start_url.
-  const token = /^[A-Za-z0-9_-]+$/.test(rawToken) ? rawToken : null;
-  // Path-based start_url for the per-token manifest. iOS Safari has
-  // historically had trouble preserving query strings through PWA
-  // standalone launches; path segments survive consistently. Older
-  // installs that captured /launch?p=<token> still resolve through
-  // Landing's query-aware fallback, so this is purely a hardening of
-  // future installs.
-  const startUrl = token
-    ? `/launch/${encodeURIComponent(token)}`
-    : '/launch';
+  // Content is a PURE function of the explicit ?p= query value (see
+  // src/pwa/manifest.js). No ?p (or a malformed one) ALWAYS returns the
+  // ADMIN manifest (start_url /admin) — the most-recently-resolved guide
+  // token can NEVER become the global manifest served at the bare URL.
+  // Each manifest carries a stable, identity-safe id so admin and guide
+  // installs never overwrite one another.
   res.set('Cache-Control', 'no-store');
   res.set('Content-Type', 'application/manifest+json; charset=utf-8');
-  res.json({
-    name: 'Grafitiyul Team',
-    short_name: 'Grafitiyul Team',
-    description: 'מערכת התפעול והלמידה של גרפיתי-יול',
-    lang: 'he',
-    dir: 'rtl',
-    start_url: startUrl,
-    scope: '/',
-    display: 'standalone',
-    orientation: 'portrait',
-    background_color: '#f9fafb',
-    theme_color: '#28a8a8',
-    // The icons mirror the static manifest (client/public/manifest.webmanifest):
-    // real Grafitiyul Team logo PNGs. Chrome/Android use the 192/512 "any"
-    // icons for install + launcher; the 512 maskable is cropped to the safe
-    // zone on Android. iOS picks up the apple-touch-icon link in index.html.
-    icons: [
-      {
-        src: '/icons/icon-192.png',
-        sizes: '192x192',
-        type: 'image/png',
-        purpose: 'any',
-      },
-      {
-        src: '/icons/icon-512.png',
-        sizes: '512x512',
-        type: 'image/png',
-        purpose: 'any',
-      },
-      {
-        src: '/icons/icon-maskable-512.png',
-        sizes: '512x512',
-        type: 'image/png',
-        purpose: 'maskable',
-      },
-    ],
-  });
+  res.json(buildManifest(req.query?.p));
 });
 
 // ---------- Static client assets ----------
