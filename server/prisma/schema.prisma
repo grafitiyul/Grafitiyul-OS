@@ -921,6 +921,12 @@ model Deal {
   valueMinor            BigInt                  @default(0)
   currency              String                  @default("ILS")
   discountMinor         BigInt?
+  // No-payment WAIVER (canonical) — an independent commercial decision layered on
+  // top of the fully-commercial builder. QuoteLines keep real prices; this records
+  // which ticket quantities were waived. valueMinor (the payable total) = gross −
+  // waived. Shape: { reason, waivedAt, lines: [{ cardGroupId, ticketTypeId,
+  // quantityWaived }] }. null = no waiver. See src/deals/waiver.js.
+  noPaymentWaiver       Json?
   // Payment — FK to the CRM catalog (the source of truth). The Deal stores only
   // IDs, never names, so renaming a term/method in settings never affects deals.
   paymentTerm           PaymentTerm?            @relation(fields: [paymentTermId], references: [id], onDelete: SetNull)
@@ -3098,6 +3104,12 @@ model TourEvent {
   wooSyncedAt             DateTime?
   wooAttempts             Int                          @default(0)
   wooNextRetryAt          DateTime?
+  // Canonical sellable-state revision. wooPendingPatch() bumps wooDesiredRevision
+  // on every dirty-mark; the worker stamps wooSyncedRevision with the revision it
+  // actually synced. desired ≠ synced ⇒ NOT truly synced — the sweep re-pends it,
+  // so a lost/racing mutation can never remain falsely 'synced'.
+  wooDesiredRevision      Int                          @default(0)
+  wooSyncedRevision       Int?
 
   // Registered-tour REPLACEMENT link: when a tour with registrations is moved,
   // the original is cancelled and points here at its replacement. Enables

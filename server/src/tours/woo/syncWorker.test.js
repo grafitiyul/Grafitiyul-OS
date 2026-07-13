@@ -462,6 +462,25 @@ test('missing duration mapping → tour stays pending (retryable), not synced', 
   assert.match(env.calls.tourUpdates.at(-1).wooSyncError, /pa_משך|duration/);
 });
 
+// ── Canonical Woo desired-revision ───────────────────────────────────────────
+import { wooPendingPatch } from './service.js';
+
+test('wooPendingPatch bumps the desired revision (every dirty-marker gets it free)', () => {
+  const p = wooPendingPatch();
+  assert.equal(p.wooSyncStatus, 'pending');
+  assert.deepEqual(p.wooDesiredRevision, { increment: 1 });
+});
+
+test('a successful sync records the revision it synced (wooSyncedRevision)', async () => {
+  const env = makeEnv({
+    tour: { id: 'slot1', status: 'scheduled', date: '2026-08-08', startTime: '10:00', capacity: 20, openTourTemplateId: 'tpl1', updatedAt: 'u1', wooSyncStatus: 'pending', wooAttempts: 0, wooDesiredRevision: 7 },
+  });
+  await reconcileTourWoo(deps(env), 'slot1');
+  const done = env.calls.tourUpdates.at(-1);
+  assert.equal(done.wooSyncStatus, 'synced');
+  assert.equal(done.wooSyncedRevision, 7); // stamps the desired revision it synced
+});
+
 // ── Cutoff helper ────────────────────────────────────────────────────────────
 
 test('occurrenceClosed respects the close cutoff', () => {

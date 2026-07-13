@@ -11,8 +11,20 @@ export { kickWooSync };
 
 // Patch fragment spread into a caller's own `data` object. Resets the retry
 // ladder so a fresh mutation gets fresh attempts even after a previous 'failed'.
+//
+// It also atomically BUMPS wooDesiredRevision — the canonical sellable-state
+// revision. Because every existing dirty-marker already spreads this patch, they
+// all bump the revision for free. The worker records the revision it synced
+// (wooSyncedRevision); the sweep re-pends any tour whose desired ≠ synced, so a
+// mutation that changed sellable state can NEVER stay falsely 'synced' (even one
+// that raced an in-progress sync). Structural, not per-route bookkeeping.
 export function wooPendingPatch() {
-  return { wooSyncStatus: 'pending', wooAttempts: 0, wooNextRetryAt: null };
+  return {
+    wooSyncStatus: 'pending',
+    wooAttempts: 0,
+    wooNextRetryAt: null,
+    wooDesiredRevision: { increment: 1 },
+  };
 }
 
 // TourEvent fields whose change is visible on the Woo variation (date/time =
@@ -27,7 +39,14 @@ export function patchTouchesWoo(data) {
 // Standalone mark for mutations that don't build a TourEvent `data` object
 // (registration changes → stock; occurrence overrides). updateMany so a
 // concurrently-deleted tour is a silent no-op.
-export async function markTourWooPending(client, tourEventId) {
+// THE canonical "a tour's sellable state changed → converge Woo" entry point.
+// Bumps the desired revision + marks pending + kicks the worker. Every standalone
+// invalidation should call this (route data-object mutations spread
+// wooPendingPatch() instead, which does the same bump inline).
+export async function markTourWooDirty(client, tourEventId) {
   await client.tourEvent.updateMany({ where: { id: tourEventId }, data: wooPendingPatch() });
   kickWooSync();
 }
+
+// Back-compat alias — existing callers keep working and now get the revision bump.
+export const markTourWooPending = markTourWooDirty;

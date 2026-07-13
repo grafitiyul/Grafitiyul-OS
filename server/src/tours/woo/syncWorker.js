@@ -242,6 +242,7 @@ export async function reconcileTourWoo(deps, tourId) {
       updatedAt: true,
       wooSyncStatus: true,
       wooAttempts: true,
+      wooDesiredRevision: true,
       // Operational product duration — the canonical source for pa_משך.
       durationHoursOverride: true,
       productVariantId: true,
@@ -306,12 +307,17 @@ export async function reconcileTourWoo(deps, tourId) {
   }
 
   if (!errors.length) {
+    // Stamp the revision we synced. The updateMany is GUARDED on the loaded
+    // updatedAt, so if any mutation raced this sync (bumping wooDesiredRevision +
+    // updatedAt) the guard fails and the tour stays pending — desired can never be
+    // recorded as synced when it changed underneath us.
     return markGuarded({
       wooSyncStatus: 'synced',
       wooSyncedAt: new Date(),
       wooSyncError: null,
       wooAttempts: 0,
       wooNextRetryAt: null,
+      wooSyncedRevision: tour.wooDesiredRevision,
     });
   }
 
