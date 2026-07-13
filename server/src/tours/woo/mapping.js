@@ -6,11 +6,11 @@
 import { deriveTicketRows } from '../../pricing/groupTicketCards.js';
 import { israelToday } from '../slotGeneration.js';
 
-// A sellable card's representative price (minor units) — the first priced ticket
-// type (by sort order), used as the Woo variation's single regular_price. The
-// full per-ticket-type pricing lives in the Pricing Card; a Variable Product's
-// date variation carries one price by design (existing site structure).
-export async function cardRepPriceMinor(client, cardGroupId) {
+// A sellable card's FULL per-ticket-type price rows (each ticket type keeps its
+// own canonical price — adult/child are distinct Woo variations, so there is NO
+// "first ticket type" collapse). Returns [{ ticketTypeId, label, unitPriceMinor }]
+// or [] when the card has no ticket-type pricing.
+export async function cardTicketRows(client, cardGroupId) {
   const rep = await client.priceRule.findFirst({
     where: {
       cardGroupId,
@@ -21,13 +21,15 @@ export async function cardRepPriceMinor(client, cardGroupId) {
     orderBy: { createdAt: 'asc' },
     include: { ticketPrices: { include: { ticketType: { select: { nameHe: true, sortOrder: true } } } } },
   });
-  if (!rep) return null;
-  const rows = deriveTicketRows(rep);
-  return rows && rows.length ? rows[0].unitPriceMinor : null;
+  if (!rep) return [];
+  return deriveTicketRows(rep) || [];
 }
 
-// The sellable cards for a template that are mapped to a Woo product.
-// Returns [{ cardGroupId, wooProductId, dateAttribute, priceMinor }].
+// The sellable cards for a template that are mapped to a Woo product. Returns
+//   [{ cardGroupId, wooProductId, dateAttribute, config, ticketRows }]
+// `config` is the per-product compatibility descriptor (global-taxonomy attribute
+// identities + ticket→age-term map); `ticketRows` are the card's real per-age
+// prices. Nothing here is product-specific — it all comes from the mapping row.
 export async function resolveSellableCards(client, templateId) {
   if (!templateId) return [];
   const products = await client.openTourTemplateProduct.findMany({
@@ -45,7 +47,8 @@ export async function resolveSellableCards(client, templateId) {
       cardGroupId: m.cardGroupId,
       wooProductId: m.wooProductId,
       dateAttribute: m.dateAttribute || null,
-      priceMinor: await cardRepPriceMinor(client, m.cardGroupId),
+      config: m.config || null,
+      ticketRows: await cardTicketRows(client, m.cardGroupId),
     });
   }
   return out;

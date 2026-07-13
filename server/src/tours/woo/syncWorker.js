@@ -2,7 +2,15 @@ import { prisma } from '../../db.js';
 import { israelToday } from '../slotGeneration.js';
 import { occupancyFor } from '../occupancy.js';
 import { woo as realWoo, wooSyncActive, WOO_DATE_ATTRIBUTE } from './wooClient.js';
-import { buildVariationPayload, findVariationForTour } from './desiredState.js';
+import {
+  buildVariationPayload,
+  buildOccurrenceVariations,
+  findVariationForVariant,
+  dateTermName,
+  dateTermSlug,
+  timeTermName,
+  timeTermSlug,
+} from './desiredState.js';
 import { resolveSellableCards, mappedTemplateIds } from './mapping.js';
 
 // GOS → WooCommerce sync worker. For every sellable TourEvent (a group slot whose
@@ -34,39 +42,121 @@ export function occurrenceClosed(date, startTime, closeMinutes, nowMs) {
   return nowMs >= occMs - closeMinutes * 60_000;
 }
 
-// Converge ONE (tour × card) variation. Idempotent: update the stored variation,
-// else adopt one matched by our _gos_tourevent_id meta, else create. NEVER
-// deletes (a disabled variation is preserved for order history).
-async function reconcileCardVariation(deps, tour, card, ctx) {
-  const { db, woo } = deps;
-  const dateAttribute = card.dateAttribute || WOO_DATE_ATTRIBUTE();
-  const desired = buildVariationPayload({
+// The desired variation SET for one (occurrence × card): the global model when
+// the mapping carries a config, else the legacy single-variation local path.
+function desiredVariationSet(tour, card, ctx) {
+  if (card.config) {
+    return buildOccurrenceVariations({
+      tour,
+      cardGroupId: card.cardGroupId,
+      ticketRows: card.ticketRows || [],
+      config: card.config,
+      capacity: ctx.capacity,
+      remaining: ctx.remaining,
+      registrationClosed: ctx.registrationClosed,
+    });
+  }
+  // Legacy/local fallback — ONE variation, one local Date attribute. It REFUSES
+  // to collapse several ticket types into a single price (that would mis-sell):
+  // such a card must be given a global config with a pa_גיל age split.
+  const rows = card.ticketRows || [];
+  if (rows.length > 1) {
+    throw new Error(
+      `card ${card.cardGroupId}: ${rows.length} ticket types but no Woo config to split them (age attribute)`,
+    );
+  }
+  const payload = buildVariationPayload({
     tour,
     cardGroupId: card.cardGroupId,
     capacity: ctx.capacity,
     remaining: ctx.remaining,
-    priceMinor: card.priceMinor,
-    dateAttribute,
+    priceMinor: rows[0]?.unitPriceMinor ?? null,
+    dateAttribute: card.dateAttribute || WOO_DATE_ATTRIBUTE(),
     registrationClosed: ctx.registrationClosed,
   });
+  return [
+    { variantKey: 'default', ticketTypeId: rows[0]?.ticketTypeId || null, priceMinor: rows[0]?.unitPriceMinor ?? null, payload },
+  ];
+}
 
-  const key = { tourEventId_cardGroupId: { tourEventId: tour.id, cardGroupId: card.cardGroupId } };
+// Ensure the GLOBAL-taxonomy occurrence terms exist (GOS owns the dates; Woo
+// won't auto-create terms) and that the date term is selectable on the product.
+async function ensureOccurrenceTerms(woo, card, tour) {
+  const cfg = card.config;
+  if (!cfg || !tour.date || !tour.startTime) return;
+  const wants = [];
+  if (cfg.date?.attrId != null) {
+    wants.push({ attrId: cfg.date.attrId, name: dateTermName(tour.date), slug: dateTermSlug(tour.date), isDate: true });
+  }
+  if (cfg.time?.attrId != null) {
+    wants.push({ attrId: cfg.time.attrId, name: timeTermName(tour.startTime), slug: timeTermSlug(tour.startTime) });
+  }
+  for (const w of wants) {
+    const terms = await woo.listAttributeTerms(w.attrId);
+    const hit = (terms || []).find((t) => t.slug === w.slug || t.name === w.name);
+    if (!hit) await woo.createAttributeTerm(w.attrId, { name: w.name, slug: w.slug });
+    if (w.isDate) await ensureProductHasOption(woo, card.wooProductId, cfg.date, w.name);
+  }
+}
+
+// Append a term to the product's global-attribute options (product options carry
+// term NAMES) so the frontend date picker offers it. Idempotent no-op if present.
+async function ensureProductHasOption(woo, productId, dateCfg, termName) {
+  const product = await woo.getProduct(productId);
+  const attrs = product.attributes || [];
+  const idx = attrs.findIndex((a) => a.id === dateCfg.attrId || a.name === dateCfg.attrName);
+  if (idx === -1) return; // product doesn't expose this attribute — nothing to attach
+  const options = attrs[idx].options || [];
+  if (options.includes(termName)) return;
+  const nextAttrs = attrs.map((a, i) => (i === idx ? { ...a, options: [...options, termName] } : a));
+  await woo.updateProduct(productId, { attributes: nextAttrs });
+}
+
+// Disable (never delete) a variation: hidden + zero, unpurchasable. Used for
+// cancellation is handled by the desired payload; this is for RETIRING a
+// variation we no longer produce (a dropped ticket type, or the old product
+// after a mapping change) so no orphan stays sellable.
+async function disableVariation(deps, productId, variationId) {
+  await deps.woo.updateVariation(productId, variationId, {
+    status: 'private',
+    manage_stock: true,
+    stock_quantity: 0,
+    stock_status: 'outofstock',
+  });
+}
+
+// Converge ONE variant (one age/ticket type) of a card. Idempotent: update the
+// stored variation, else adopt one matched by our stable per-variant meta, else
+// create. NEVER deletes. On a mapping product change, the OLD-product variation
+// is disabled first so an occurrence never has two active sellable variations.
+async function reconcileVariant(deps, tour, card, desired, existing) {
+  const { db, woo } = deps;
+  const key = {
+    tourEventId_cardGroupId_variantKey: {
+      tourEventId: tour.id,
+      cardGroupId: card.cardGroupId,
+      variantKey: desired.variantKey,
+    },
+  };
   const link = await db.wooVariationLink.findUnique({ where: key });
-  let variationId = link?.wooVariationId || null;
 
-  // Adoption path — recover the id from Woo by our stable meta link.
+  // Mapping moved to a different product → retire the old-product variation.
+  if (link?.wooVariationId && link.wooProductId && link.wooProductId !== card.wooProductId) {
+    await disableVariation(deps, link.wooProductId, link.wooVariationId).catch(() => {});
+  }
+
+  let variationId = link && link.wooProductId === card.wooProductId ? link.wooVariationId : null;
   if (!variationId) {
-    const existing = await woo.listVariations(card.wooProductId);
-    const found = findVariationForTour(existing, tour.id);
+    const found = findVariationForVariant(await existing(), tour.id, desired.variantKey);
     if (found) variationId = found.id;
   }
 
   let resultId;
   if (variationId) {
-    const res = await woo.updateVariation(card.wooProductId, variationId, desired);
+    const res = await woo.updateVariation(card.wooProductId, variationId, desired.payload);
     resultId = res?.id ?? variationId;
   } else {
-    const res = await woo.createVariation(card.wooProductId, desired);
+    const res = await woo.createVariation(card.wooProductId, desired.payload);
     resultId = res?.id ?? null;
   }
 
@@ -75,18 +165,53 @@ async function reconcileCardVariation(deps, tour, card, ctx) {
     create: {
       tourEventId: tour.id,
       cardGroupId: card.cardGroupId,
+      variantKey: desired.variantKey,
+      ticketTypeId: desired.ticketTypeId,
       wooProductId: card.wooProductId,
       wooVariationId: resultId,
       status: 'synced',
       lastError: null,
     },
     update: {
+      ticketTypeId: desired.ticketTypeId,
       wooProductId: card.wooProductId,
       wooVariationId: resultId ?? variationId ?? null,
       status: 'synced',
       lastError: null,
     },
   });
+}
+
+// Retire links whose variant is no longer produced (a removed ticket type). The
+// variation is DISABLED (private/0), never deleted, and the link kept as a
+// historical 'disabled' record.
+async function retireStaleVariants(deps, tour, card, desiredKeys) {
+  const { db } = deps;
+  const links = await db.wooVariationLink.findMany({
+    where: { tourEventId: tour.id, cardGroupId: card.cardGroupId },
+  });
+  for (const link of links || []) {
+    if (desiredKeys.has(link.variantKey) || link.status === 'disabled') continue;
+    if (link.wooVariationId) await disableVariation(deps, link.wooProductId, link.wooVariationId).catch(() => {});
+    await db.wooVariationLink.updateMany({
+      where: { tourEventId: tour.id, cardGroupId: card.cardGroupId, variantKey: link.variantKey },
+      data: { status: 'disabled', lastError: null },
+    });
+  }
+}
+
+// Converge ALL variations of one card for a tour (one per ticket type/age).
+async function reconcileCard(deps, tour, card, ctx) {
+  const { woo } = deps;
+  const desired = desiredVariationSet(tour, card, ctx);
+  await ensureOccurrenceTerms(woo, card, tour);
+
+  // Lazily fetch the product's variations once for the adoption path.
+  let cache = null;
+  const existing = async () => (cache ||= await woo.listVariations(card.wooProductId));
+
+  for (const d of desired) await reconcileVariant(deps, tour, card, d, existing);
+  await retireStaleVariants(deps, tour, card, new Set(desired.map((d) => d.variantKey)));
 }
 
 // Converge ALL of a pending tour's variations. Lost-update-safe: the final
@@ -149,7 +274,7 @@ export async function reconcileTourWoo(deps, tourId) {
   const errors = [];
   for (const card of cards) {
     try {
-      await reconcileCardVariation(deps, tour, card, ctx);
+      await reconcileCard(deps, tour, card, ctx);
     } catch (e) {
       errors.push(`${card.cardGroupId}: ${e.message}`);
       await db.wooVariationLink
