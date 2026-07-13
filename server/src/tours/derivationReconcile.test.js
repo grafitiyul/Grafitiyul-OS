@@ -154,8 +154,10 @@ test('9. product change marks the calendar pending + Woo dirty (DTO/calendar rea
 });
 
 test('10. reconcileAllOpenTourProducts heals a stale materialized tour', async () => {
+  // realign is covered separately (realignReconcile.test.js) with its own fake;
+  // here we assert the recompute-driven heal of a stale persisted product.
   const c = fakeClient({ tour: { productId: 'p_ws', productVariantId: 'v_ws' }, regs: [{ status: 'active', productVariantId: 'v_plain' }], components: ['c_tour', 'c_ws'] });
-  const summary = await reconcileAllOpenTourProducts(c);
+  const summary = await reconcileAllOpenTourProducts(c, { realign: false });
   assert.equal(summary.scanned, 1);
   assert.equal(summary.changed, 1);
   assert.ok(!showsWorkshop(c.state));
