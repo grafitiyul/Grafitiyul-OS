@@ -110,6 +110,25 @@ router.get(
       select: { id: true, guideVisible: true },
     });
     const componentById = new Map(components.map((c) => [c.id, c]));
+    // Configurable unit noun per general-activity type (one query for the
+    // month's general activities) → keyed by generalActivityId. Tours have no
+    // general activity, so their lines carry no unit label. This is the ONLY
+    // source of the noun — the DTO never guesses it.
+    const generalActivityIds = [
+      ...new Set(entries.map((e) => e.activity.generalActivityId).filter(Boolean)),
+    ];
+    const generals = generalActivityIds.length
+      ? await prisma.generalActivity.findMany({
+          where: { id: { in: generalActivityIds } },
+          select: { id: true, type: { select: { unitLabelSingularHe: true, unitLabelPluralHe: true } } },
+        })
+      : [];
+    const unitLabelsByGeneralId = new Map(
+      generals.map((g) => [
+        g.id,
+        { singular: g.type?.unitLabelSingularHe || null, plural: g.type?.unitLabelPluralHe || null },
+      ]),
+    );
     // Conversation rows for the guide's own entries (one query; the DTO
     // filters strictly per entryId — no other staff member's thread leaks).
     const activityIds = [...new Set(entries.map((e) => e.activityId))];
@@ -154,7 +173,15 @@ router.get(
       totals: { approvedMinor, pendingCount },
       entries: entries
         .sort((a, b) => String(a.activity.date || '9999').localeCompare(String(b.activity.date || '9999')))
-        .map((e) => guidePayEntryDto(e, e.activity, componentById, guideConversationDto(timelineRows, e.id))),
+        .map((e) =>
+          guidePayEntryDto(
+            e,
+            e.activity,
+            componentById,
+            guideConversationDto(timelineRows, e.id),
+            e.activity.generalActivityId ? unitLabelsByGeneralId.get(e.activity.generalActivityId) || null : null,
+          ),
+        ),
     });
   }),
 );

@@ -44,7 +44,7 @@ export function guideConversationDto(timelineRows, entryId) {
     }));
 }
 
-export function guidePayEntryDto(entry, activity, componentById, conversation = []) {
+export function guidePayEntryDto(entry, activity, componentById, conversation = [], unitLabels = null) {
   const visibleLines = (entry.lines || [])
     .filter((l) => {
       const component = componentById.get(l.componentId);
@@ -82,6 +82,12 @@ export function guidePayEntryDto(entry, activity, componentById, conversation = 
       // it only formats what the engine already computed. null when absent.
       quantity: l.quantity != null ? Number(l.quantity) : null,
       unitPriceMinor: l.unitPriceMinor != null ? Number(l.unitPriceMinor) : null,
+      // Configurable unit noun from the activity TYPE (never a per-line/entry
+      // copy) — only on quantity lines, null otherwise. The client picks
+      // singular/plural by quantity and falls back to a unitless breakdown when
+      // the type has no label configured.
+      unitLabelSingular: l.quantity != null ? unitLabels?.singular || null : null,
+      unitLabelPlural: l.quantity != null ? unitLabels?.plural || null : null,
     })),
     totals,
     // The guide's own conversation for THIS entry — never anyone else's.

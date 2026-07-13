@@ -435,12 +435,18 @@ router.post(
     const nameHe = String(b.nameHe || '').trim();
     if (!nameHe) return res.status(400).json({ error: 'name_required' });
     const max = await prisma.generalActivityType.aggregate({ _max: { sortOrder: true } });
+    // Unit noun defaults to שעה/שעות for a new type (the common hourly case);
+    // an explicitly-sent empty string clears it (unitless breakdown).
+    const singular = 'unitLabelSingularHe' in b ? (String(b.unitLabelSingularHe || '').trim() || null) : 'שעה';
+    const plural = 'unitLabelPluralHe' in b ? (String(b.unitLabelPluralHe || '').trim() || null) : 'שעות';
     const type = await prisma.generalActivityType.create({
       data: {
         nameHe,
         defaultUnitPriceMinor: Math.round(Number(b.defaultUnitPriceMinor) || 0),
         defaultQuantity: Number.isFinite(Number(b.defaultQuantity)) && Number(b.defaultQuantity) >= 0 ? Number(b.defaultQuantity) : 1,
         defaultNotes: b.defaultNotes ? String(b.defaultNotes) : null,
+        unitLabelSingularHe: singular,
+        unitLabelPluralHe: plural,
         sortOrder: (max._max.sortOrder || 0) + 10,
       },
     });
@@ -467,6 +473,8 @@ router.patch(
       data.defaultQuantity = q;
     }
     if ('defaultNotes' in b) data.defaultNotes = b.defaultNotes ? String(b.defaultNotes) : null;
+    if ('unitLabelSingularHe' in b) data.unitLabelSingularHe = String(b.unitLabelSingularHe || '').trim() || null;
+    if ('unitLabelPluralHe' in b) data.unitLabelPluralHe = String(b.unitLabelPluralHe || '').trim() || null;
     if ('active' in b) data.active = !!b.active;
     const type = await prisma.generalActivityType.update({ where: { id: existing.id }, data });
     res.json({ type });

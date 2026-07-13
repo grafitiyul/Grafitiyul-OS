@@ -4107,6 +4107,14 @@ model GeneralActivityType {
   defaultUnitPriceMinor BigInt   @default(0)
   defaultQuantity       Decimal  @default(1) @db.Decimal(10, 2)
   defaultNotes          String?
+  // Configurable unit noun for the quantity, so the payroll breakdown reads
+  // "₪40 לשעה × 1.5 שעות" instead of a unitless "₪40 × 1.5". Belongs to the
+  // TYPE (it describes the activity), never a specific PayrollEntry/Line.
+  // Nullable → legacy types stay unlabelled and the portal falls back to the
+  // unitless display (never a wrong noun). New types default to שעה/שעות at the
+  // API layer.
+  unitLabelSingularHe   String?
+  unitLabelPluralHe     String?
   active                Boolean  @default(true)
   sortOrder             Int      @default(0)
   createdAt             DateTime @default(now())

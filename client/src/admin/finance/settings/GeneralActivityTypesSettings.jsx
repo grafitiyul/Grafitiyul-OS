@@ -40,7 +40,8 @@ export default function GeneralActivityTypesSettings() {
       <header className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight text-gray-900">סוגי תוספת כללית</h1>
         <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed max-w-2xl">
-          תוספות שכר שאינן סיור. הכמות היא יחידות גנריות — לא בהכרח שעות.
+          תוספות שכר שאינן סיור. לכל סוג אפשר להגדיר יחידת מידה (שעה, יום, ק״מ…) —
+          היא שמופיעה בפירוט השכר של המדריך: ״₪40 לשעה × 1.5 שעות״.
         </p>
       </header>
 
@@ -96,14 +97,20 @@ export default function GeneralActivityTypesSettings() {
           }}
           renderMeta={(item) => (
             <span className="flex items-center gap-1.5 shrink-0">
-              <Pill>{formatMinor(item.defaultUnitPriceMinor)} ליחידה</Pill>
-              <Pill>{Number(item.defaultQuantity)} יח׳</Pill>
+              <Pill>
+                {formatMinor(item.defaultUnitPriceMinor)} {item.unitLabelSingularHe ? `ל${item.unitLabelSingularHe}` : 'ליחידה'}
+              </Pill>
+              <Pill>
+                {Number(item.defaultQuantity)} {item.unitLabelPluralHe || item.unitLabelSingularHe || 'יח׳'}
+              </Pill>
               {!item.active && <Pill>לא פעיל</Pill>}
             </span>
           )}
           editSeed={(item) => ({
             unitPrice: minorToInput(item.defaultUnitPriceMinor),
             quantity: String(Number(item.defaultQuantity)),
+            unitSingular: item.unitLabelSingularHe || '',
+            unitPlural: item.unitLabelPluralHe || '',
             defaultNotes: item.defaultNotes || '',
             active: item.active,
           })}
@@ -127,6 +134,24 @@ export default function GeneralActivityTypesSettings() {
                   className="w-16 h-10 rounded-lg border border-gray-300 px-2 text-sm"
                 />
               </label>
+              <label className={checkCls}>
+                יחידה (יחיד):
+                <input
+                  value={draft.unitSingular}
+                  onChange={(e) => setDraft((d) => ({ ...d, unitSingular: e.target.value }))}
+                  placeholder="שעה"
+                  className="w-20 h-10 rounded-lg border border-gray-300 px-2 text-sm"
+                />
+              </label>
+              <label className={checkCls}>
+                יחידה (רבים):
+                <input
+                  value={draft.unitPlural}
+                  onChange={(e) => setDraft((d) => ({ ...d, unitPlural: e.target.value }))}
+                  placeholder="שעות"
+                  className="w-20 h-10 rounded-lg border border-gray-300 px-2 text-sm"
+                />
+              </label>
               <label className={`${checkCls} flex-1 min-w-[12rem]`}>
                 הערות:
                 <input
@@ -148,6 +173,8 @@ export default function GeneralActivityTypesSettings() {
           editToPatch={(draft) => ({
             defaultUnitPriceMinor: toMinor(draft.unitPrice) || 0,
             defaultQuantity: Number(draft.quantity) || 1,
+            unitLabelSingularHe: draft.unitSingular.trim() || null,
+            unitLabelPluralHe: draft.unitPlural.trim() || null,
             defaultNotes: draft.defaultNotes.trim() || null,
             active: draft.active,
           })}

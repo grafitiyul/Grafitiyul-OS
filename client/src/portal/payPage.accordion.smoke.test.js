@@ -53,8 +53,9 @@ const PENDING_ENTRY = {
   inquiryResolvedAt: null,
   vatStatus: 'exempt',
   vatRate: 18,
-  // Hourly-style line: ₪40 × 1.5 = ₪60 — the portal shows the breakdown.
-  lines: [{ name: 'לפי כמות', sign: 1, amountMinor: 6000, quantity: 1.5, unitPriceMinor: 4000 }],
+  // Hourly-style line: ₪40 × 1.5 = ₪60 with the type's unit noun (שעה/שעות) —
+  // the portal shows "₪40 לשעה × 1.5 שעות".
+  lines: [{ name: 'לפי כמות', sign: 1, amountMinor: 6000, quantity: 1.5, unitPriceMinor: 4000, unitLabelSingular: 'שעה', unitLabelPlural: 'שעות' }],
   totals: { vatStatus: 'exempt', totalMinor: 6000, netMinor: 6000, vatMinor: 0 },
   conversation: [],
   officeNote: MULTILINE_NOTE,
@@ -246,12 +247,13 @@ test('#1 office note keeps its line breaks (pre-wrap), never collapsed', async (
   await unmount();
 });
 
-test('#2 hourly line shows the rate × quantity breakdown', async () => {
+test('#2 hourly line shows the rate × quantity breakdown with the unit noun', async () => {
   const { container, unmount } = await renderPayPage();
-  // ₪40 × 1.5 = ₪60 (money formatted via the canonical he-IL formatter).
+  // ₪40 לשעה × 1.5 שעות = ₪60 (money via the canonical he-IL formatter; the
+  // unit noun comes from the activity type, plural because 1.5 ≠ 1).
   assert.ok(
-    container.textContent.includes(`${formatMinor(4000)} × 1.5`),
-    'rate × quantity breakdown is shown for the hourly line',
+    container.textContent.includes(`${formatMinor(4000)} לשעה × 1.5 שעות`),
+    'rate × quantity breakdown shows the configured unit noun (plural)',
   );
   // The prominent total is still present.
   assert.ok(container.textContent.includes(formatMinor(6000)), 'final total remains visible');

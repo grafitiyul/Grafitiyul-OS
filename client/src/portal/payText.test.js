@@ -43,6 +43,55 @@ test('lineCalcLabel: null when an override broke the rate × quantity relationsh
   // Calculated 40 × 1.5 = 60, but the office overrode the amount to ₪75 — the
   // breakdown no longer reconciles, so we do NOT show a misleading equation.
   assert.equal(lineCalcLabel({ unitPriceMinor: 4000, quantity: 1.5, amountMinor: 7500 }), null);
+  // ...even with unit labels configured.
+  assert.equal(
+    lineCalcLabel({ unitPriceMinor: 4000, quantity: 1.5, amountMinor: 7500, unitLabelSingular: 'שעה', unitLabelPlural: 'שעות' }),
+    null,
+  );
+});
+
+test('lineCalcLabel: singular noun for quantity = 1', () => {
+  assert.equal(
+    lineCalcLabel({ unitPriceMinor: 4000, quantity: 1, amountMinor: 4000, unitLabelSingular: 'שעה', unitLabelPlural: 'שעות' }),
+    `${formatMinor(4000)} לשעה × 1 שעה`,
+  );
+});
+
+test('lineCalcLabel: plural noun for quantity ≠ 1 (decimal)', () => {
+  assert.equal(
+    lineCalcLabel({ unitPriceMinor: 4000, quantity: 1.5, amountMinor: 6000, unitLabelSingular: 'שעה', unitLabelPlural: 'שעות' }),
+    `${formatMinor(4000)} לשעה × 1.5 שעות`,
+  );
+});
+
+test('lineCalcLabel: "יום / ימים" and clean whole quantities', () => {
+  assert.equal(
+    lineCalcLabel({ unitPriceMinor: 25000, quantity: 2, amountMinor: 50000, unitLabelSingular: 'יום', unitLabelPlural: 'ימים' }),
+    `${formatMinor(25000)} ליום × 2 ימים`,
+  );
+});
+
+test('lineCalcLabel: "יחידה / יחידות" equipment example', () => {
+  assert.equal(
+    lineCalcLabel({ unitPriceMinor: 5000, quantity: 3, amountMinor: 15000, unitLabelSingular: 'יחידה', unitLabelPlural: 'יחידות' }),
+    `${formatMinor(5000)} ליחידה × 3 יחידות`,
+  );
+  // Singular for exactly one unit.
+  assert.equal(
+    lineCalcLabel({ unitPriceMinor: 5000, quantity: 1, amountMinor: 5000, unitLabelSingular: 'יחידה', unitLabelPlural: 'יחידות' }),
+    `${formatMinor(5000)} ליחידה × 1 יחידה`,
+  );
+});
+
+test('lineCalcLabel: empty unit labels fall back to the unitless breakdown', () => {
+  assert.equal(
+    lineCalcLabel({ unitPriceMinor: 4000, quantity: 1.5, amountMinor: 6000, unitLabelSingular: null, unitLabelPlural: null }),
+    `${formatMinor(4000)} × 1.5`,
+  );
+  assert.equal(
+    lineCalcLabel({ unitPriceMinor: 4000, quantity: 1.5, amountMinor: 6000, unitLabelSingular: '', unitLabelPlural: '' }),
+    `${formatMinor(4000)} × 1.5`,
+  );
 });
 
 test('lineDisplayName: tour deduction ניכוי is shown as קיזוז (display only)', () => {

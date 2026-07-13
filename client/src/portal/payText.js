@@ -17,16 +17,31 @@ export function formatQuantity(n) {
 }
 
 // The canonical rate × quantity breakdown for one payroll line, e.g.
-// "₪40 × 1.5", or null when the line is a direct amount (tour base/travel,
-// manual rows) OR an office override made the stored rate × quantity no longer
-// equal the paid amount. This NEVER re-derives business logic — it only formats
-// values the payroll engine already produced, and only while they still
+// "₪40 לשעה × 1.5 שעות" (or "₪40 × 1.5" when the activity type has no unit
+// noun), or null when the line is a direct amount (tour base/travel, manual
+// rows) OR an office override made the stored rate × quantity no longer equal
+// the paid amount. This NEVER re-derives business logic — it only formats
+// values the payroll engine already produced (quantity, unitPriceMinor) plus
+// the unit noun configured on the activity type, and only while they still
 // reconcile with the amount actually paid.
+//
+//   quantity === 1 → singular noun ("1 שעה"); otherwise plural ("1.5 שעות").
+//   rate noun is always the singular ("₪40 לשעה"). Missing nouns degrade
+//   gracefully to the bare multiplier.
 export function lineCalcLabel(line) {
-  const { unitPriceMinor, quantity, amountMinor } = line || {};
+  const { unitPriceMinor, quantity, amountMinor, unitLabelSingular, unitLabelPlural } = line || {};
   if (unitPriceMinor == null || quantity == null) return null;
   if (Math.round(Number(unitPriceMinor) * Number(quantity)) !== Number(amountMinor)) return null;
-  return `${formatMinor(unitPriceMinor)} × ${formatQuantity(quantity)}`;
+
+  const qty = formatQuantity(quantity);
+  const rate = formatMinor(unitPriceMinor);
+  const singular = String(unitLabelSingular || '').trim();
+  const plural = String(unitLabelPlural || '').trim();
+  if (!singular && !plural) return `${rate} × ${qty}`;
+
+  const ratePart = singular ? `${rate} ל${singular}` : rate;
+  const qtyNoun = Number(quantity) === 1 ? singular || plural : plural || singular;
+  return `${ratePart} × ${qty} ${qtyNoun}`.trim();
 }
 
 // User-facing label for a payroll component in the guide portal. Tours show

@@ -107,3 +107,33 @@ test('pay DTO: exposes quantity + unitPriceMinor for a rate × quantity line', (
   // concern, never normalised on the server).
   assert.equal(dto.officeNote, 'שורה ראשונה\n\nשורה שנייה', 'office note text is untouched');
 });
+
+test('pay DTO: attaches the configured unit label to quantity lines only', () => {
+  const componentById = new Map([
+    ['c_qty', { guideVisible: true }],
+    ['c_base', { guideVisible: true }],
+  ]);
+  const entry = {
+    id: 'e1', role: null, guideStatus: 'pending', guideApprovedAt: null,
+    inquiryStatus: 'none', inquiryResolvedAt: null,
+    vatStatusSnapshot: 'exempt', vatRateSnapshot: 18, officeNote: null,
+    lines: [
+      { componentId: 'c_qty', componentNameHe: 'לפי כמות', sign: 1, vatMode: 'net', quantity: 1.5, unitPriceMinor: 4000, calculatedMinor: 6000, overrideMinor: null, sortOrder: 10 },
+      { componentId: 'c_base', componentNameHe: 'תוספת', sign: 1, vatMode: 'net', quantity: null, unitPriceMinor: null, calculatedMinor: 2000, overrideMinor: null, sortOrder: 20 },
+    ],
+  };
+  const activity = { titleHe: 'ישיבת צוות', sourceType: 'general', date: null, payrollMonth: '2026-07' };
+  const dto = guidePayEntryDto(entry, activity, componentById, [], { singular: 'שעה', plural: 'שעות' });
+
+  const qtyLine = dto.lines.find((l) => l.name === 'לפי כמות');
+  assert.equal(qtyLine.unitLabelSingular, 'שעה', 'quantity line carries the type singular label');
+  assert.equal(qtyLine.unitLabelPlural, 'שעות', 'quantity line carries the type plural label');
+
+  const directLine = dto.lines.find((l) => l.name === 'תוספת');
+  assert.equal(directLine.unitLabelSingular, null, 'direct-amount line never carries a unit label');
+  assert.equal(directLine.unitLabelPlural, null, 'direct-amount line never carries a unit label');
+
+  // A type with no configured label → null (portal falls back to unitless).
+  const dtoNoLabels = guidePayEntryDto(entry, activity, componentById, [], null);
+  assert.equal(dtoNoLabels.lines.find((l) => l.name === 'לפי כמות').unitLabelSingular, null);
+});
