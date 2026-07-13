@@ -5,6 +5,7 @@
 // derivation.
 
 import { calendarPendingPatch, kickTourCalendarSync } from './calendar/service.js';
+import { wooPendingPatch, kickWooSync, markTourWooPending } from './woo/service.js';
 import { recomputeTourOperationalProduct } from './operationalProduct.js';
 import { seedTourComponents } from './tourComponents.js';
 
@@ -41,14 +42,14 @@ export async function applyExceptionToSlots(client, templateId, exception) {
     if (plan.action === 'cancel') {
       await client.tourEvent.update({
         where: { id: slot.id },
-        data: { status: 'cancelled', cancelledAt: new Date(), ...calendarPendingPatch() },
+        data: { status: 'cancelled', cancelledAt: new Date(), ...calendarPendingPatch(), ...wooPendingPatch() },
       });
       summary.cancelled += 1;
       dirty = true;
     } else if (plan.action === 'retime') {
       await client.tourEvent.update({
         where: { id: slot.id },
-        data: { ...plan.data, ...calendarPendingPatch() },
+        data: { ...plan.data, ...calendarPendingPatch(), ...wooPendingPatch() },
       });
       summary.retimed += 1;
       dirty = true;
@@ -56,7 +57,10 @@ export async function applyExceptionToSlots(client, templateId, exception) {
       summary.skipped += 1;
     }
   }
-  if (dirty) kickTourCalendarSync();
+  if (dirty) {
+    kickTourCalendarSync();
+    kickWooSync();
+  }
   return summary;
 }
 
@@ -89,11 +93,13 @@ export async function setManualProduct(client, tourEventId, productVariantId) {
       productId: variant.productId,
       productManualOverride: true,
       ...calendarPendingPatch(),
+      ...wooPendingPatch(),
     },
   });
   await client.tourEventActivityComponent.deleteMany({ where: { tourEventId } });
   await seedTourComponents(client, tourEventId, variant.id);
   kickTourCalendarSync();
+  kickWooSync();
 }
 
 // Release the manual pin and re-derive the product from active registrations.
@@ -102,5 +108,7 @@ export async function clearManualProduct(client, tourEventId) {
     where: { id: tourEventId },
     data: { productManualOverride: false },
   });
-  return recomputeTourOperationalProduct(client, tourEventId);
+  const result = await recomputeTourOperationalProduct(client, tourEventId);
+  await markTourWooPending(client, tourEventId);
+  return result;
 }

@@ -37,6 +37,7 @@ import {
   scheduleCalendarTombstone,
   kickTourCalendarSync,
 } from '../tours/calendar/service.js';
+import { wooPendingPatch, patchTouchesWoo, kickWooSync } from '../tours/woo/service.js';
 
 // TourEvent CRUD — the OPERATIONAL tours module ("סיורים"). Distinct from the
 // tour CONTENT routes (/api/tour-content). Ownership contract:
@@ -1117,6 +1118,9 @@ router.put(
     // Calendar-visible change (date/time/variant/language/status) → mark the
     // mirror dirty; the sync worker converges the Google event asynchronously.
     if (patchTouchesCalendar(data)) Object.assign(data, calendarPendingPatch());
+    // Woo-visible change (date/time/status/product/capacity) → mark the Woo
+    // mirror dirty; the sync worker converges the variation asynchronously.
+    if (patchTouchesWoo(data)) Object.assign(data, wooPendingPatch());
 
     const tour = await prisma.tourEvent.update({
       where: { id: existing.id },
@@ -1124,6 +1128,7 @@ router.put(
       include: TOUR_INCLUDE,
     });
     if (data.gcalSyncStatus === 'pending') kickTourCalendarSync();
+    if (data.wooSyncStatus === 'pending') kickWooSync();
     if (data.status && data.status !== existing.status) {
       const origin = await userOrigin(req.adminAuth?.userId);
       await emitTimelineEvent(prisma, {

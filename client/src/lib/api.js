@@ -1340,6 +1340,12 @@ export const api = {
       ),
     clearProduct: (tourEventId) =>
       tourMutation(request(`/api/open-tours/occurrences/${tourEventId}/product`, { method: 'DELETE' })),
+    // WooCommerce product mappings (sellable card → Woo Variable Product).
+    wooMappings: () => request('/api/open-tours/woo/mappings'),
+    setWooMapping: (cardGroupId, data) =>
+      request(`/api/open-tours/woo/mappings/${cardGroupId}`, { method: 'PUT', body: JSON.stringify(data) }),
+    removeWooMapping: (cardGroupId) =>
+      request(`/api/open-tours/woo/mappings/${cardGroupId}`, { method: 'DELETE' }),
   },
   tours: {
     // Every mutation below is wrapped in tourMutation() so a success emits the

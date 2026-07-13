@@ -14,6 +14,8 @@ import {
   setManualProduct,
   clearManualProduct,
 } from '../tours/occurrenceOverrides.js';
+import { markCardSlotsPending } from '../tours/woo/mapping.js';
+import { kickWooSync } from '../tours/woo/service.js';
 
 // Open Tours admin API (/api/open-tours) — CRUD for recurring tour TEMPLATES
 // (the "what"), their offered sellable products, weekly SCHEDULE RULES (the
@@ -271,6 +273,58 @@ router.delete(
   '/exceptions/:exceptionId',
   handle(async (req, res) => {
     await prisma.openTourScheduleException.delete({ where: { id: req.params.exceptionId } });
+    res.status(204).end();
+  }),
+);
+
+// ── WooCommerce product mappings (sellable card → Woo Variable Product) ───────
+// The canonical card→product mapping lives in GOS; business logic never
+// hardcodes a Woo product id. Changing a mapping re-syncs the card's future
+// sellable slots so their variations refresh in place.
+router.get(
+  '/woo/mappings',
+  handle(async (_req, res) => {
+    const mappings = await prisma.wooProductMapping.findMany({ orderBy: { createdAt: 'asc' } });
+    res.json(mappings);
+  }),
+);
+
+router.put(
+  '/woo/mappings/:cardGroupId',
+  handle(async (req, res) => {
+    const cardGroupId = String(req.params.cardGroupId || '');
+    if (!cardGroupId) return res.status(400).json({ error: 'invalid_card' });
+    const b = req.body || {};
+    const wooProductId = Number(b.wooProductId);
+    if (!Number.isInteger(wooProductId) || wooProductId <= 0) {
+      return res.status(400).json({ error: 'invalid_woo_product_id' });
+    }
+    const data = {
+      wooProductId,
+      dateAttribute: b.dateAttribute ? String(b.dateAttribute).trim() : null,
+      active: b.active !== false,
+    };
+    const mapping = await prisma.wooProductMapping.upsert({
+      where: { cardGroupId },
+      create: { cardGroupId, ...data },
+      update: data,
+    });
+    // Refresh the card's future sellable slots in Woo.
+    try {
+      await markCardSlotsPending(prisma, cardGroupId);
+      kickWooSync();
+    } catch (e) {
+      console.error('[open-tours] woo resync failed', e);
+    }
+    res.json(mapping);
+  }),
+);
+
+router.delete(
+  '/woo/mappings/:cardGroupId',
+  handle(async (req, res) => {
+    const cardGroupId = String(req.params.cardGroupId || '');
+    await prisma.wooProductMapping.deleteMany({ where: { cardGroupId } });
     res.status(204).end();
   }),
 );

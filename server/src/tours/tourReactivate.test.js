@@ -45,6 +45,7 @@ function stubTx({ priorCancelledBooking = null } = {}) {
         calls.tourEventUpdate.push({ where, data });
         return { id: where.id, ...data };
       },
+      updateMany: async () => ({ count: 0 }), // markTourWooPending
       findUnique: async () => null,
     },
     tourEventActivityComponent: {

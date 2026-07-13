@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { regStatusFromBooking, mergeOccupancy } from './registrations.js';
+import { regStatusFromBooking } from './registrations.js';
+import { mergeOccupancy } from './occupancy.js';
 
 // The canonical registration mirror rules + the occupancy merge shape. Occupancy
 // SEATS come from active registrations; booking counts stay CRM metadata.

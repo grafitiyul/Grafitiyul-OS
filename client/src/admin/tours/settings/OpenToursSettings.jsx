@@ -220,6 +220,8 @@ export default function OpenToursSettings() {
         )}
       </section>
 
+      <WooMappingsSection />
+
       {editId && (
         <OpenTourEditor
           templateId={editId}
@@ -565,5 +567,125 @@ function OpenTourEditor({ templateId, onClose }) {
         </div>
       )}
     </Dialog>
+  );
+}
+
+// ── WooCommerce product mapping (sellable card → Woo Variable Product) ────────
+// Minimal management surface: for every sellable Pricing Card, the Woo product
+// id it maps to. GOS holds the mapping; the sync worker mirrors each concrete
+// TourEvent occurrence to a variation of that product. Nothing here is hardcoded.
+function WooMappingsSection() {
+  const [cards, setCards] = useState([]);
+  const [byCard, setByCard] = useState({}); // cardGroupId → { wooProductId, active }
+  const [loading, setLoading] = useState(true);
+  const [savingCard, setSavingCard] = useState(null);
+
+  async function load() {
+    try {
+      const [sellable, mappings] = await Promise.all([
+        api.openTours.sellableProducts().catch(() => ({ cards: [] })),
+        api.openTours.wooMappings().catch(() => []),
+      ]);
+      setCards(sellable.cards || []);
+      const map = {};
+      for (const m of mappings) map[m.cardGroupId] = { wooProductId: String(m.wooProductId), active: m.active };
+      setByCard(map);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function save(card) {
+    const st = byCard[card.cardGroupId] || {};
+    if (!st.wooProductId) return;
+    setSavingCard(card.cardGroupId);
+    try {
+      await api.openTours.setWooMapping(card.cardGroupId, {
+        wooProductId: Number(st.wooProductId),
+        active: st.active !== false,
+      });
+      await load();
+    } catch (e) {
+      alert(errText(e));
+    } finally {
+      setSavingCard(null);
+    }
+  }
+
+  async function clear(card) {
+    setSavingCard(card.cardGroupId);
+    try {
+      await api.openTours.removeWooMapping(card.cardGroupId);
+      await load();
+    } catch (e) {
+      alert(errText(e));
+    } finally {
+      setSavingCard(null);
+    }
+  }
+
+  return (
+    <section className="bg-white border border-gray-200 rounded-2xl shadow-sm mb-6">
+      <div className="px-5 pt-4 pb-3 border-b border-gray-100">
+        <h2 className="text-[15px] font-semibold text-gray-900">WooCommerce — מיפוי מוצרים</h2>
+        <p className="text-[12.5px] text-gray-500 mt-0.5">
+          לכל כרטיס תמחור שנמכר, מזהה המוצר (Variable Product) באתר. המערכת מסנכרנת כל מועד סיור
+          כווריאציה של אותו מוצר. GOS הוא מקור האמת — הסנכרון פועל רק כשהוגדרו פרטי החיבור ל-Woo.
+        </p>
+      </div>
+      {loading ? (
+        <div className="px-5 py-6 text-center text-sm text-gray-400">טוען…</div>
+      ) : cards.length === 0 ? (
+        <p className="px-5 py-6 text-center text-[13px] text-gray-400">
+          אין כרטיסים זמינים למכירת כרטיסים — סמנו כרטיס תמחור כ״זמין למכירת כרטיסים״ במסך התמחור.
+        </p>
+      ) : (
+        <div className="divide-y divide-gray-100">
+          {cards.map((c) => {
+            const st = byCard[c.cardGroupId] || { wooProductId: '', active: true };
+            const mapped = byCard[c.cardGroupId] != null;
+            return (
+              <div key={c.cardGroupId} className="flex flex-wrap items-center gap-3 px-5 py-3">
+                <span className="min-w-0 flex-1 text-[13.5px] font-medium text-gray-800">{c.title}</span>
+                <label className="flex items-center gap-1.5 text-[12px] text-gray-600">
+                  מזהה מוצר Woo
+                  <input
+                    type="number"
+                    min="1"
+                    value={st.wooProductId}
+                    onChange={(e) =>
+                      setByCard((m) => ({ ...m, [c.cardGroupId]: { ...st, wooProductId: e.target.value } }))
+                    }
+                    className={INPUT + ' w-28'}
+                    dir="ltr"
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={savingCard === c.cardGroupId || !st.wooProductId}
+                  onClick={() => save(c)}
+                  className={PRIMARY}
+                >
+                  {savingCard === c.cardGroupId ? 'שומר…' : mapped ? 'עדכון' : 'שמירה'}
+                </button>
+                {mapped && (
+                  <button
+                    type="button"
+                    onClick={() => clear(c)}
+                    className="h-8 rounded-md px-2 text-[13px] text-gray-400 hover:bg-red-50 hover:text-red-600"
+                  >
+                    ניתוק
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }

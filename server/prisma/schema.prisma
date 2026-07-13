@@ -3086,12 +3086,25 @@ model TourEvent {
   gcalLastSummary     String?
   gcalLastDescription String?
   gcalLastColorId     String?
+  // ── WooCommerce mirror (sync TARGET only — TourEvent stays the SSOT) ──
+  // GOS generates concrete TourEvents; the Woo sync worker mirrors each sellable
+  // occurrence to a WooCommerce Variation. Same dirty-flag reconciler contract
+  // as gcal: null = never considered | 'pending' (reconcile) | 'synced' |
+  // 'failed' (retries exhausted) | 'skipped' (no mapped sellable card). The
+  // per-variation identity + ids live on WooVariationLink; this is only the
+  // per-tour outbox flag. Order ingestion (Woo→GOS) is a separate later slice.
+  wooSyncStatus   String?
+  wooSyncError    String?
+  wooSyncedAt     DateTime?
+  wooAttempts     Int             @default(0)
+  wooNextRetryAt  DateTime?
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
   bookings         Booking[]
   assignments      TourAssignment[]
   activityComponents TourEventActivityComponent[]
   ticketRegistrations TicketRegistration[]
+  wooVariationLinks WooVariationLink[]
   gallery          TourGallery?
   payrollActivity  PayrollActivity?
 
@@ -3103,6 +3116,41 @@ model TourEvent {
   @@index([locationId])
   @@index([openTourTemplateId, date])
   @@index([gcalSyncStatus, gcalNextRetryAt])
+  @@index([wooSyncStatus, wooNextRetryAt])
+}
+
+// Canonical mapping — a sellable Pricing Card (cardGroupId) → a WooCommerce
+// Variable Product. Lives in GOS so business logic NEVER hardcodes a Woo product
+// id. dateAttribute names the product's per-occurrence variation attribute
+// (falls back to WOO_DATE_ATTRIBUTE env). One mapping per card.
+model WooProductMapping {
+  id            String   @id @default(cuid())
+  cardGroupId   String   @unique
+  wooProductId  Int
+  dateAttribute String?
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// One WooCommerce variation per (TourEvent × sellable card) — the STABLE link
+// GOS keeps for idempotent updates + cancellation. wooVariationId is null until
+// first created; on cancel the variation is DISABLED/HIDDEN (never deleted, so
+// existing orders keep their integrity). status mirrors the last reconcile.
+model WooVariationLink {
+  id             String    @id @default(cuid())
+  tourEvent      TourEvent @relation(fields: [tourEventId], references: [id], onDelete: Cascade)
+  tourEventId    String
+  cardGroupId    String
+  wooProductId   Int
+  wooVariationId Int?
+  status         String    @default("pending") // pending | synced | failed
+  lastError      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([tourEventId, cardGroupId])
+  @@index([tourEventId])
 }
 
 // Deleting a TourEvent that already owns a Google Calendar event must still

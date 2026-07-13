@@ -9,7 +9,21 @@
 // Booking counts stay from Booking as CRM metadata (how many deals are on the
 // tour) — Booking is NO LONGER the seat source of truth.
 
-import { mergeOccupancy } from './registrations.js';
+// Merge grouped aggregates into the fixed occupancy shape. Pure — unit-tested.
+// Lives HERE (not in registrations.js) so occupancy has no dependency back on
+// the registration/woo write path (keeps the module graph acyclic).
+//   seatRows:   [{ tourEventId, _sum: { quantity } }]  (active registrations)
+//   activeBk:   [{ tourEventId, _count: { _all } }]     (active bookings, CRM)
+//   totalBk:    [{ tourEventId, _count: { _all } }]     (all bookings, CRM)
+export function mergeOccupancy(ids, seatRows, activeBk, totalBk) {
+  const out = Object.fromEntries(
+    ids.map((id) => [id, { activeSeats: 0, activeBookings: 0, totalBookings: 0 }]),
+  );
+  for (const r of seatRows) if (out[r.tourEventId]) out[r.tourEventId].activeSeats = r._sum.quantity || 0;
+  for (const r of activeBk) if (out[r.tourEventId]) out[r.tourEventId].activeBookings = r._count._all;
+  for (const r of totalBk) if (out[r.tourEventId]) out[r.tourEventId].totalBookings = r._count._all;
+  return out;
+}
 
 // Returns { [tourEventId]: { activeSeats, activeBookings, totalBookings } }.
 export async function occupancyFor(client, tourEventIds) {

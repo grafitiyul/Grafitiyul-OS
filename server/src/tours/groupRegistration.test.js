@@ -40,6 +40,7 @@ function regTx({ existingReg = null } = {}) {
         productVariantId: 'base',
       }),
       update: async () => ({}),
+      updateMany: async () => ({ count: 0 }), // markTourWooPending
     },
     openTourTemplateProduct: { findFirst: async () => null },
     productVariant: { findMany: async () => [] },
@@ -169,6 +170,7 @@ function joinTx({ capacity, currentSeats }) {
         productVariantId: 'base',
       }),
       update: async () => ({}),
+      updateMany: async () => ({ count: 0 }), // markTourWooPending
     },
     // occupancyFor: active registration seats currently on the slot
     ticketRegistration: {

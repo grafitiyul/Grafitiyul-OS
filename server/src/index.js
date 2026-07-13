@@ -84,6 +84,7 @@ import { startEmailSyncWorker } from './email/syncWorker.js';
 import { startTourGalleryCleanupWorker } from './tours/gallery/cleanupWorker.js';
 import { startTourCalendarSyncWorker } from './tours/calendar/syncWorker.js';
 import { startTourCompletionWorker } from './tours/completionWorker.js';
+import { startWooSyncWorker } from './tours/woo/syncWorker.js';
 import questionnairesRouter from './routes/questionnaires.js';
 import publicQuestionnaireRouter from './routes/publicQuestionnaire.js';
 import controlRouter from './routes/control.js';
@@ -599,6 +600,10 @@ app.listen(port, () => {
   // Tour completion sweep — flips scheduled tours whose date passed (business
   // TZ midnight) into the explicit Completed state; 5m tick, idempotent.
   startTourCompletionWorker(console);
+  // GOS → WooCommerce mirror — reconciles pending sellable TourEvents to their
+  // WooCommerce variations (one per tour × mapped card). 60s tick; no-op until
+  // WOO_STORE_URL/WOO_CONSUMER_KEY/WOO_CONSUMER_SECRET are configured.
+  startWooSyncWorker(console);
   // בקרה detectors — re-derive operational issues from live domain state
   // (raise missing, auto-resolve fixed); 60s tick.
   startControlSweepWorker(console);
