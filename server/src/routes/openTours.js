@@ -290,6 +290,28 @@ router.get(
   }),
 );
 
+// Validate the per-product compatibility descriptor (WooProductMapping.config).
+// Lenient by design (products differ), but a GLOBAL config must at least name a
+// date attribute id, and any declared attribute id must be a positive integer.
+function validateWooConfig(config) {
+  if (config == null) return { value: null };
+  if (typeof config !== 'object' || Array.isArray(config)) return { error: 'invalid_config' };
+  const okId = (v) => v == null || (Number.isInteger(v) && v > 0);
+  for (const key of ['date', 'time', 'activity', 'age']) {
+    const node = config[key];
+    if (node != null && (typeof node !== 'object' || !okId(node.attrId))) {
+      return { error: `invalid_config_${key}` };
+    }
+  }
+  if ((config.taxonomyMode || 'global') === 'global' && !(config.date && Number.isInteger(config.date.attrId))) {
+    return { error: 'config_missing_date_attr' };
+  }
+  if (config.ticketAge != null && (typeof config.ticketAge !== 'object' || Array.isArray(config.ticketAge))) {
+    return { error: 'invalid_config_ticketAge' };
+  }
+  return { value: config };
+}
+
 router.put(
   '/woo/mappings/:cardGroupId',
   handle(async (req, res) => {
@@ -300,24 +322,43 @@ router.put(
     if (!Number.isInteger(wooProductId) || wooProductId <= 0) {
       return res.status(400).json({ error: 'invalid_woo_product_id' });
     }
+    const { value: config, error: configError } = validateWooConfig(b.config);
+    if (configError) return res.status(400).json({ error: configError });
+
+    // Phase 7 safety: if an ACTIVE mapping already has future linked variations
+    // and the target product changes, moving is not silent — report the impact.
+    const prev = await prisma.wooProductMapping.findUnique({ where: { cardGroupId } });
+    let moved = 0;
+    if (prev && prev.wooProductId !== wooProductId) {
+      moved = await prisma.wooVariationLink.count({
+        where: { cardGroupId, wooProductId: prev.wooProductId, status: { not: 'disabled' } },
+      });
+      // Guard: require an explicit confirm flag when it would move live links.
+      if (moved > 0 && b.confirmMove !== true) {
+        return res.status(409).json({ error: 'mapping_move_requires_confirm', moved, fromProductId: prev.wooProductId });
+      }
+    }
+
     const data = {
       wooProductId,
       dateAttribute: b.dateAttribute ? String(b.dateAttribute).trim() : null,
+      config: config ?? undefined,
       active: b.active !== false,
     };
     const mapping = await prisma.wooProductMapping.upsert({
       where: { cardGroupId },
-      create: { cardGroupId, ...data },
+      create: { cardGroupId, ...data, config: config ?? null },
       update: data,
     });
-    // Refresh the card's future sellable slots in Woo.
+    // Refresh the card's future sellable slots in Woo. On a product move the
+    // reconciler disables the old-product variations and (re)creates on the new.
     try {
       await markCardSlotsPending(prisma, cardGroupId);
       kickWooSync();
     } catch (e) {
       console.error('[open-tours] woo resync failed', e);
     }
-    res.json(mapping);
+    res.json({ ...mapping, moved });
   }),
 );
 
@@ -327,6 +368,49 @@ router.delete(
     const cardGroupId = String(req.params.cardGroupId || '');
     await prisma.wooProductMapping.deleteMany({ where: { cardGroupId } });
     res.status(204).end();
+  }),
+);
+
+// ── Woo product structure discovery (READ-ONLY) ──────────────────────────────
+// Inspect a live product's attributes + terms so the operator can build a
+// mapping config without hardcoding ids anywhere. Read-only: needs credentials
+// but is INDEPENDENT of the WOO_SYNC_ENABLED write gate. No secrets/customer
+// data are returned. This is how the corrected model is configured before any
+// activation.
+router.get(
+  '/woo/products/:productId/structure',
+  handle(async (req, res) => {
+    if (!wooConfigured()) return res.status(503).json({ error: 'woo_not_configured' });
+    const productId = Number(req.params.productId);
+    if (!Number.isInteger(productId) || productId <= 0) return res.status(400).json({ error: 'invalid_product_id' });
+    let product;
+    try {
+      product = await woo.getProduct(productId);
+    } catch (e) {
+      return res.status(e.status === 404 ? 404 : 502).json({ error: 'woo_fetch_failed', detail: e.message });
+    }
+    const attributes = [];
+    for (const a of product.attributes || []) {
+      const global = Boolean(a.id); // global taxonomy attributes have a numeric id
+      let terms = [];
+      if (global) {
+        try {
+          terms = (await woo.listAttributeTerms(a.id)).map((t) => ({ name: t.name, slug: t.slug }));
+        } catch {
+          terms = [];
+        }
+      }
+      attributes.push({
+        id: a.id || null,
+        name: a.name,
+        slug: a.slug || null,
+        taxonomy: global ? 'global' : 'local',
+        variation: Boolean(a.variation),
+        options: a.options || [],
+        terms,
+      });
+    }
+    res.json({ productId, name: product.name, type: product.type, status: product.status, attributes });
   }),
 );
 

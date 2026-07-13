@@ -1346,6 +1346,9 @@ export const api = {
       request(`/api/open-tours/woo/mappings/${cardGroupId}`, { method: 'PUT', body: JSON.stringify(data) }),
     removeWooMapping: (cardGroupId) =>
       request(`/api/open-tours/woo/mappings/${cardGroupId}`, { method: 'DELETE' }),
+    // Read-only: inspect a live Woo product's attributes/terms to build a config.
+    wooProductStructure: (productId) =>
+      request(`/api/open-tours/woo/products/${productId}/structure`),
   },
   tours: {
     // Every mutation below is wrapped in tourMutation() so a success emits the

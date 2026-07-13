@@ -576,9 +576,12 @@ function OpenTourEditor({ templateId, onClose }) {
 // TourEvent occurrence to a variation of that product. Nothing here is hardcoded.
 function WooMappingsSection() {
   const [cards, setCards] = useState([]);
-  const [byCard, setByCard] = useState({}); // cardGroupId → { wooProductId, active }
+  // cardGroupId → { wooProductId, active, configText }
+  const [byCard, setByCard] = useState({});
   const [loading, setLoading] = useState(true);
   const [savingCard, setSavingCard] = useState(null);
+  const [structure, setStructure] = useState({}); // cardGroupId → discovery result
+  const [inspecting, setInspecting] = useState(null);
 
   async function load() {
     try {
@@ -588,7 +591,13 @@ function WooMappingsSection() {
       ]);
       setCards(sellable.cards || []);
       const map = {};
-      for (const m of mappings) map[m.cardGroupId] = { wooProductId: String(m.wooProductId), active: m.active };
+      for (const m of mappings) {
+        map[m.cardGroupId] = {
+          wooProductId: String(m.wooProductId),
+          active: m.active,
+          configText: m.config ? JSON.stringify(m.config, null, 2) : '',
+        };
+      }
       setByCard(map);
     } finally {
       setLoading(false);
@@ -599,15 +608,41 @@ function WooMappingsSection() {
     load();
   }, []);
 
+  function parseConfig(configText) {
+    const t = (configText || '').trim();
+    if (!t) return { config: null };
+    try {
+      const config = JSON.parse(t);
+      return { config };
+    } catch {
+      return { error: 'config_json_invalid' };
+    }
+  }
+
   async function save(card) {
     const st = byCard[card.cardGroupId] || {};
     if (!st.wooProductId) return;
+    const { config, error } = parseConfig(st.configText);
+    if (error) return alert('JSON לא תקין בהגדרות התאימות (config).');
     setSavingCard(card.cardGroupId);
     try {
-      await api.openTours.setWooMapping(card.cardGroupId, {
-        wooProductId: Number(st.wooProductId),
-        active: st.active !== false,
-      });
+      const body = { wooProductId: Number(st.wooProductId), active: st.active !== false, config };
+      try {
+        await api.openTours.setWooMapping(card.cardGroupId, body);
+      } catch (e) {
+        // Phase-7 safety: moving an active mapping with live variations needs a
+        // confirm; the server surfaces how many future occurrences will move.
+        if (e.status === 409 && e.payload?.error === 'mapping_move_requires_confirm') {
+          const ok = window.confirm(
+            `שינוי המיפוי יעביר ${e.payload.moved} מועדים עתידיים ממוצר ${e.payload.fromProductId} למוצר ${st.wooProductId}. ` +
+              `הווריאציות במוצר הישן יושבתו (לא יימחקו). להמשיך?`,
+          );
+          if (!ok) return;
+          await api.openTours.setWooMapping(card.cardGroupId, { ...body, confirmMove: true });
+        } else {
+          throw e;
+        }
+      }
       await load();
     } catch (e) {
       alert(errText(e));
@@ -628,13 +663,29 @@ function WooMappingsSection() {
     }
   }
 
+  async function inspect(card) {
+    const st = byCard[card.cardGroupId] || {};
+    if (!st.wooProductId) return alert('הזינו מזהה מוצר Woo לבדיקה.');
+    setInspecting(card.cardGroupId);
+    try {
+      const s = await api.openTours.wooProductStructure(Number(st.wooProductId));
+      setStructure((m) => ({ ...m, [card.cardGroupId]: s }));
+    } catch (e) {
+      alert(errText(e));
+    } finally {
+      setInspecting(null);
+    }
+  }
+
   return (
     <section className="bg-white border border-gray-200 rounded-2xl shadow-sm mb-6">
       <div className="px-5 pt-4 pb-3 border-b border-gray-100">
         <h2 className="text-[15px] font-semibold text-gray-900">WooCommerce — מיפוי מוצרים</h2>
         <p className="text-[12.5px] text-gray-500 mt-0.5">
-          לכל כרטיס תמחור שנמכר, מזהה המוצר (Variable Product) באתר. המערכת מסנכרנת כל מועד סיור
-          כווריאציה של אותו מוצר. GOS הוא מקור האמת — הסנכרון פועל רק כשהוגדרו פרטי החיבור ל-Woo.
+          לכל כרטיס תמחור שנמכר, מזהה המוצר (Variable Product) באתר. כרטיס = ערך פעילות אחד (pa_פעילות)
+          בתוך מוצר עירוני, וכל סוג כרטיס (מבוגר/ילד) הופך לווריאציית גיל (pa_גיל) במחירו הקנוני. GOS
+          הוא מקור האמת — הסנכרון בפועל פועל רק כשמוגדרים פרטי החיבור <span dir="ltr">WOOCOMMERCE_*</span>{' '}
+          וגם דגל ההפעלה <span dir="ltr">WOO_SYNC_ENABLED</span>.
         </p>
       </div>
       {loading ? (
@@ -646,40 +697,88 @@ function WooMappingsSection() {
       ) : (
         <div className="divide-y divide-gray-100">
           {cards.map((c) => {
-            const st = byCard[c.cardGroupId] || { wooProductId: '', active: true };
+            const st = byCard[c.cardGroupId] || { wooProductId: '', active: true, configText: '' };
             const mapped = byCard[c.cardGroupId] != null;
+            const s = structure[c.cardGroupId];
             return (
-              <div key={c.cardGroupId} className="flex flex-wrap items-center gap-3 px-5 py-3">
-                <span className="min-w-0 flex-1 text-[13.5px] font-medium text-gray-800">{c.title}</span>
-                <label className="flex items-center gap-1.5 text-[12px] text-gray-600">
-                  מזהה מוצר Woo
-                  <input
-                    type="number"
-                    min="1"
-                    value={st.wooProductId}
-                    onChange={(e) =>
-                      setByCard((m) => ({ ...m, [c.cardGroupId]: { ...st, wooProductId: e.target.value } }))
-                    }
-                    className={INPUT + ' w-28'}
-                    dir="ltr"
-                  />
-                </label>
-                <button
-                  type="button"
-                  disabled={savingCard === c.cardGroupId || !st.wooProductId}
-                  onClick={() => save(c)}
-                  className={PRIMARY}
-                >
-                  {savingCard === c.cardGroupId ? 'שומר…' : mapped ? 'עדכון' : 'שמירה'}
-                </button>
-                {mapped && (
+              <div key={c.cardGroupId} className="px-5 py-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="min-w-0 flex-1 text-[13.5px] font-medium text-gray-800">{c.title}</span>
+                  <label className="flex items-center gap-1.5 text-[12px] text-gray-600">
+                    מזהה מוצר Woo
+                    <input
+                      type="number"
+                      min="1"
+                      value={st.wooProductId}
+                      onChange={(e) =>
+                        setByCard((m) => ({ ...m, [c.cardGroupId]: { ...st, wooProductId: e.target.value } }))
+                      }
+                      className={INPUT + ' w-28'}
+                      dir="ltr"
+                    />
+                  </label>
                   <button
                     type="button"
-                    onClick={() => clear(c)}
-                    className="h-8 rounded-md px-2 text-[13px] text-gray-400 hover:bg-red-50 hover:text-red-600"
+                    disabled={inspecting === c.cardGroupId || !st.wooProductId}
+                    onClick={() => inspect(c)}
+                    className="h-8 rounded-md px-2 text-[13px] font-medium text-gray-600 hover:bg-gray-100"
+                    title="קריאה בלבד — מבנה המוצר החי (תכונות ומונחים)"
                   >
-                    ניתוק
+                    {inspecting === c.cardGroupId ? 'בודק…' : 'בדיקת מבנה'}
                   </button>
+                  <button
+                    type="button"
+                    disabled={savingCard === c.cardGroupId || !st.wooProductId}
+                    onClick={() => save(c)}
+                    className={PRIMARY}
+                  >
+                    {savingCard === c.cardGroupId ? 'שומר…' : mapped ? 'עדכון' : 'שמירה'}
+                  </button>
+                  {mapped && (
+                    <button
+                      type="button"
+                      onClick={() => clear(c)}
+                      className="h-8 rounded-md px-2 text-[13px] text-gray-400 hover:bg-red-50 hover:text-red-600"
+                    >
+                      ניתוק
+                    </button>
+                  )}
+                </div>
+
+                {/* Compatibility config (per-product attribute identities + ticket→age map) */}
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-[12px] text-gray-500 hover:text-gray-700">
+                    הגדרות תאימות (config JSON)
+                  </summary>
+                  <textarea
+                    value={st.configText}
+                    onChange={(e) =>
+                      setByCard((m) => ({ ...m, [c.cardGroupId]: { ...st, configText: e.target.value } }))
+                    }
+                    placeholder='{"taxonomyMode":"global","date":{"attrId":1},"time":{"attrId":2},"activity":{"attrId":3,"option":"סיור-בלבד"},"age":{"attrId":5},"ticketAge":{"<ticketTypeId>":{"option":"מבוגר"}}}'
+                    dir="ltr"
+                    rows={6}
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-[11px] focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  />
+                </details>
+
+                {s && (
+                  <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-600" dir="ltr">
+                    <div className="font-semibold text-gray-700">
+                      #{s.productId} · {s.type} · {s.status} — {s.name}
+                    </div>
+                    <ul className="mt-1 space-y-0.5">
+                      {s.attributes.map((a) => (
+                        <li key={a.id || a.name}>
+                          <span className="font-medium">{a.name}</span> · id={a.id ?? '—'} · {a.taxonomy}
+                          {a.variation ? ' · variation' : ''} ·{' '}
+                          {(a.terms.length ? a.terms.map((t) => `${t.name}→${t.slug}`) : a.options)
+                            .slice(0, 8)
+                            .join('  |  ')}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
               </div>
             );
