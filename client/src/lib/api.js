@@ -1329,6 +1329,17 @@ export const api = {
       tourMutation(request(`/api/open-tours/${id}/exceptions`, { method: 'POST', body: JSON.stringify(data) })),
     removeException: (exceptionId) =>
       tourMutation(request(`/api/open-tours/exceptions/${exceptionId}`, { method: 'DELETE' })),
+    // Occurrence override: manually pin a generated slot's operational product
+    // (suspends registration-driven derivation) or release the pin to re-derive.
+    pinProduct: (tourEventId, productVariantId) =>
+      tourMutation(
+        request(`/api/open-tours/occurrences/${tourEventId}/product`, {
+          method: 'POST',
+          body: JSON.stringify({ productVariantId }),
+        }),
+      ),
+    clearProduct: (tourEventId) =>
+      tourMutation(request(`/api/open-tours/occurrences/${tourEventId}/product`, { method: 'DELETE' })),
   },
   tours: {
     // Every mutation below is wrapped in tourMutation() so a success emits the

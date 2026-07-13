@@ -9,6 +9,11 @@ import {
   buildExceptionPatch,
   normalizeTemplateProducts,
 } from '../tours/openTourValidation.js';
+import {
+  applyExceptionToSlots,
+  setManualProduct,
+  clearManualProduct,
+} from '../tours/occurrenceOverrides.js';
 
 // Open Tours admin API (/api/open-tours) — CRUD for recurring tour TEMPLATES
 // (the "what"), their offered sellable products, weekly SCHEDULE RULES (the
@@ -223,8 +228,42 @@ router.post(
       create: { ...data, templateId: template.id },
       update: { time: data.time, note: data.note },
     });
+    // Two effects: generation materializes an 'add' occurrence (sync-on-write),
+    // and cancel/time_override reconcile ALREADY-materialized slots (the cursor
+    // only shapes future dates). `applied` reports what changed on live slots
+    // (e.g. slots with registrations are skipped, not silently cancelled).
     await regenerate();
-    res.status(201).json(exception);
+    const applied = await applyExceptionToSlots(prisma, template.id, exception);
+    res.status(201).json({ ...exception, applied });
+  }),
+);
+
+// ── Occurrence-level manual product override ─────────────────────────────────
+// Pin a generated slot's operational product against the registration-driven
+// derivation, or release the pin to re-derive. This is the "change product
+// manually if really necessary" override.
+router.post(
+  '/occurrences/:tourEventId/product',
+  handle(async (req, res) => {
+    const productVariantId = req.body?.productVariantId;
+    if (!productVariantId) return res.status(400).json({ error: 'missing_product_variant' });
+    try {
+      await setManualProduct(prisma, req.params.tourEventId, productVariantId);
+    } catch (e) {
+      if (e.code === 'invalid_product_variant' || e.code === 'not_a_group_slot') {
+        return res.status(400).json({ error: e.code });
+      }
+      throw e;
+    }
+    res.json({ ok: true, productManualOverride: true });
+  }),
+);
+
+router.delete(
+  '/occurrences/:tourEventId/product',
+  handle(async (req, res) => {
+    await clearManualProduct(prisma, req.params.tourEventId);
+    res.json({ ok: true, productManualOverride: false });
   }),
 );
 
