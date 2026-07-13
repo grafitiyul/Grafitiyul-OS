@@ -3,49 +3,39 @@ import { api } from '../../../lib/api.js';
 import { formatMinor, toMinor, minorToInput } from '../../../lib/money.js';
 import { fmtDate } from '../../common/pickers/DateTimeFields.jsx';
 import { ACTIVITY_STATUS_META, ROLE_LABELS, entryStatusMeta } from './payrollConfig.js';
+import { resolveAmountEdit, lineFinalMinor, isOverridden } from './payrollAmount.js';
+import Dialog from '../../common/Dialog.jsx';
 import CardKebabMenu from '../../common/CardKebabMenu.jsx';
 import PayrollEntryDrawer from './PayrollEntryDrawer.jsx';
 
-// The payroll activity drawer — DealDrawer pattern (absolute inset-0 slide-in
-// over the day screen). Top: activity summary. Body: the Excel-like matrix —
-// STAFF as columns (lead guide → guides → workshop assistants), payroll
-// COMPONENTS as rows, every cell editable. Editing writes an OVERRIDE; the
-// calculation is never replaced (calculated shown as a hint + restorable).
-// Office approval is ONE action for the whole activity.
+// The payroll activity editor — a LARGE centered modal (canonical Dialog shell,
+// content-based width) over the day screen. Top: activity summary. Body: the
+// Excel-like matrix — STAFF as columns (lead guide → guides → workshop
+// assistants) with a FIXED compact width each, payroll COMPONENTS as rows,
+// every cell editable. The modal sizes to the number of staff between a sane
+// min and max; large teams scroll horizontally inside it rather than stretching
+// columns across the screen. Editing writes an OVERRIDE; the calculation is
+// never replaced. Office approval is PER PERSON (the footer button runs the
+// same per-entry service in bulk).
 
 const fmtSigned = (minor) => formatMinor(minor);
 
-function final(line) {
-  if (line.overrideMinor != null) return Number(line.overrideMinor);
-  if (line.calculatedMinor != null) return Number(line.calculatedMinor);
-  return 0;
-}
-
-// One editable money cell. Commit on blur/Enter; Escape cancels. Clearing the
-// input restores the calculated value (override = null).
+// One editable money cell. Commit on blur/Enter; Escape cancels. Empty input
+// clears the override (return to calculated); the shared resolveAmountEdit
+// semantics live in payrollAmount.js and are applied by the parent on commit.
 function MoneyCell({ line, disabled, onCommit }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState('');
-  const overridden = line.overrideMinor != null && line.overrideMinor !== line.calculatedMinor;
+  const overridden = isOverridden(line);
 
   const start = () => {
     if (disabled) return;
-    setVal(minorToInput(line.overrideMinor != null ? line.overrideMinor : line.calculatedMinor));
+    setVal(minorToInput(lineFinalMinor(line)));
     setEditing(true);
   };
   const commit = () => {
     setEditing(false);
-    const trimmed = String(val).trim();
-    if (trimmed === '') {
-      if (line.overrideMinor != null) onCommit({ overrideMinor: null });
-      return;
-    }
-    const minor = toMinor(trimmed);
-    if (minor == null) return;
-    const current = line.overrideMinor != null ? Number(line.overrideMinor) : null;
-    if (minor === current) return;
-    if (current == null && minor === Number(line.calculatedMinor)) return; // no-op — matches the calculation
-    onCommit({ overrideMinor: minor });
+    onCommit(val);
   };
 
   if (editing) {
@@ -65,7 +55,7 @@ function MoneyCell({ line, disabled, onCommit }) {
     );
   }
   const sign = Number(line.sign) || 1;
-  const value = final(line);
+  const value = lineFinalMinor(line);
   return (
     <button
       type="button"
@@ -73,8 +63,10 @@ function MoneyCell({ line, disabled, onCommit }) {
       disabled={disabled}
       className={`w-full px-1 py-0.5 text-sm tabular-nums rounded transition ${
         disabled ? 'cursor-default' : 'hover:bg-blue-50 cursor-text'
-      } ${value === 0 ? 'text-gray-300' : sign < 0 ? 'text-red-600' : 'text-gray-800'}`}
-      title={overridden ? `מחושב: ${fmtSigned(line.calculatedMinor ?? 0)}` : undefined}
+      } ${overridden ? 'ring-1 ring-amber-300 bg-amber-50/50' : ''} ${
+        value === 0 ? 'text-gray-300' : sign < 0 ? 'text-red-600' : 'text-gray-800'
+      }`}
+      title={overridden ? `חושב אוטומטית: ${fmtSigned(line.calculatedMinor ?? 0)}` : undefined}
     >
       {value === 0 && line.calculatedMinor == null && line.overrideMinor == null ? '—' : fmtSigned(value)}
       {overridden && <span className="text-[10px] text-amber-600 mr-1">✎</span>}
@@ -133,7 +125,7 @@ function QuantityCell({ line, disabled, onCommit }) {
       disabled={disabled}
       className={`w-full px-1 py-0.5 text-sm tabular-nums rounded transition ${disabled ? 'cursor-default' : 'hover:bg-blue-50'}`}
     >
-      <span className="text-gray-800">{fmtSigned(final(line))}</span>
+      <span className="text-gray-800">{fmtSigned(lineFinalMinor(line))}</span>
       <span className="block text-[10px] text-gray-400">
         {Number(line.quantity ?? 0)} × {fmtSigned(line.unitPriceMinor ?? 0)}
       </span>
@@ -148,7 +140,7 @@ export default function PayrollActivityDrawer({ activityId, onClose, refreshTick
   const [showHistory, setShowHistory] = useState(false);
   // Per-column approval feedback ("סכום אפס" etc.) — keyed by entry id.
   const [entryErrors, setEntryErrors] = useState({});
-  // בבירור chip → that person's focused entry editor (inquiry workspace).
+  // בבירור chip → that person's focused entry editor (nested modal on top).
   const [openEntryId, setOpenEntryId] = useState(null);
 
   const load = useCallback(async ({ silent = false } = {}) => {
@@ -166,21 +158,38 @@ export default function PayrollActivityDrawer({ activityId, onClose, refreshTick
 
   // Real-time signal from the page-level stream (ONE EventSource per surface
   // — the drawer never opens its own): silently re-pull the matrix without
-  // closing the drawer or dropping scroll.
+  // closing the modal or dropping scroll.
   useEffect(() => {
     if (refreshTick > 0) load({ silent: true });
   }, [refreshTick, load]);
 
-  useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  const updateLine = async (lineId, body) => {
+  // Commit one amount cell edit. The parent resolves the raw string → override
+  // via the shared payrollAmount rules; quantity cells pass a {quantity,unit}
+  // body straight through.
+  const commitCell = async (line, input) => {
+    let body;
+    if (input && typeof input === 'object') {
+      body = input; // quantity cell — {quantity, unitPriceMinor}
+    } else {
+      const res = resolveAmountEdit(input, line);
+      if (res.noop) return;
+      body = { overrideMinor: res.overrideMinor };
+    }
     setBusy(true);
     try {
-      await api.payroll.updateLine(lineId, body);
+      await api.payroll.updateLine(line.id, body);
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clearOverride = async (line) => {
+    setBusy(true);
+    try {
+      await api.payroll.updateLine(line.id, { overrideMinor: null });
       await load();
     } catch (e) {
       setError(e.message);
@@ -204,63 +213,107 @@ export default function PayrollActivityDrawer({ activityId, onClose, refreshTick
   }
   const componentRows = [...rowMap.values()].sort((a, b) => a.sortOrder - b.sortOrder);
   const anyVat = entries.some((e) => e.vatStatus === 'vat_18');
+  const approvedCount = entries.filter((e) => e.officeStatus === 'approved').length;
+  const remainingCount = entries.length - approvedCount;
 
-  return (
-    <div className="absolute inset-0 z-30 bg-white flex flex-col shadow-2xl" dir="rtl">
-      {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-2.5 border-b border-gray-200 bg-gray-50">
-        <button
-          type="button"
-          onClick={onClose}
-          className="w-7 h-7 flex items-center justify-center rounded hover:bg-gray-200 text-gray-500 text-lg"
-          title="סגור (Esc)"
-        >
-          ×
-        </button>
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold text-gray-900 truncate">
-            {activity?.titleHe || '…'}
-            {activity?.date && <span className="text-gray-500 font-normal"> · {fmtDate(activity.date)}</span>}
-          </div>
+  // Esc / backdrop: while the nested focused-entry modal is open it owns the
+  // interaction — the outer close is a no-op so one Esc doesn't collapse both.
+  const guardedClose = () => {
+    if (openEntryId) return;
+    onClose();
+  };
+
+  const header = (
+    <div className="flex items-center gap-3 w-full min-w-0">
+      <div className="min-w-0">
+        <div className="text-sm font-semibold text-gray-900 truncate">
+          {activity?.titleHe || '…'}
+          {activity?.date && <span className="text-gray-500 font-normal"> · {fmtDate(activity.date)}</span>}
         </div>
-        {statusMeta && (
-          <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${statusMeta.cls}`}>{statusMeta.label}</span>
-        )}
-        {activity && activity.state === 'active' && (
-          <CardKebabMenu ariaLabel="פעולות פעילות">
-            {(close) => (
-              <button
-                type="button"
-                onClick={async () => {
-                  close();
-                  if (!window.confirm('לבטל את כל פעילות השכר? כל הרשומות יוסתרו מהסכומים ומפורטל המדריכים; ההיסטוריה נשמרת.')) return;
-                  const reason = window.prompt('סיבת הביטול (אופציונלי):', '');
-                  if (reason === null) return;
-                  setBusy(true);
-                  try {
-                    await api.payroll.voidActivity(activity.id, reason.trim() || null);
-                    onClose();
-                  } finally { setBusy(false); }
-                }}
-                className="block w-full text-right px-3 py-1.5 text-[13px] text-red-600 hover:bg-red-50"
-              >
-                🗑️ בטל פעילות שכר
-              </button>
-            )}
-          </CardKebabMenu>
+      </div>
+      <div className="flex-1" />
+      {statusMeta && (
+        <span className={`shrink-0 px-2 py-0.5 rounded-full text-[11px] font-medium ${statusMeta.cls}`}>{statusMeta.label}</span>
+      )}
+      {activity && activity.state === 'active' && (
+        <CardKebabMenu ariaLabel="פעולות פעילות">
+          {(close) => (
+            <button
+              type="button"
+              onClick={async () => {
+                close();
+                if (!window.confirm('לבטל את כל פעילות השכר? כל הרשומות יוסתרו מהסכומים ומפורטל המדריכים; ההיסטוריה נשמרת.')) return;
+                const reason = window.prompt('סיבת הביטול (אופציונלי):', '');
+                if (reason === null) return;
+                setBusy(true);
+                try {
+                  await api.payroll.voidActivity(activity.id, reason.trim() || null);
+                  onClose();
+                } finally { setBusy(false); }
+              }}
+              className="block w-full text-right px-3 py-1.5 text-[13px] text-red-600 hover:bg-red-50"
+            >
+              🗑️ בטל פעילות שכר
+            </button>
+          )}
+        </CardKebabMenu>
+      )}
+    </div>
+  );
+
+  // Footer: per-activity approval progress + the bulk action (same per-entry
+  // service as the per-person controls — never a second approval truth).
+  const footer =
+    data && activity?.state === 'active' && entries.length > 0 ? (
+      <div className="flex items-center gap-3 flex-wrap w-full">
+        <span className="text-[12px] text-gray-600">
+          {approvedCount} מתוך {entries.length} אושרו במשרד
+          {remainingCount > 0 && ` · ${remainingCount} נותרו`}
+        </span>
+        <div className="flex-1" />
+        {remainingCount > 0 && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError(null);
+              try {
+                const r = await api.payroll.approveActivity(activity.id);
+                if (r.skipped?.length) {
+                  setError(`לא אושרו (סכום אפס): ${r.skipped.map((s) => s.displayName).join(', ')}`);
+                }
+                await load();
+              } finally { setBusy(false); }
+            }}
+            className="px-4 py-1.5 text-[13px] rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
+          >
+            {approvedCount > 0 ? 'אשר את הנותרים' : 'אשר שכר'}
+          </button>
         )}
       </div>
+    ) : null;
 
-      {error && <div className="px-4 py-2 bg-red-50 text-red-700 text-sm">{error}</div>}
-
-      <div className="flex-1 min-h-0 overflow-y-auto">
+  return (
+    <>
+      <Dialog
+        open
+        onClose={guardedClose}
+        title={header}
+        ariaLabel={activity ? `פעילות שכר · ${activity.titleHe}` : 'פעילות שכר'}
+        fitContent
+        minWidthPx={700}
+        maxWidthPx={1400}
+        footer={footer}
+      >
+        {error && <div className="mb-3 px-3 py-2 rounded bg-red-50 text-red-700 text-sm">{error}</div>}
         {!data ? (
-          <div className="p-6 text-sm text-gray-400">טוען…</div>
+          <div className="text-sm text-gray-400">טוען…</div>
         ) : (
-          <>
+          <div className="space-y-4">
             {/* Tour / general summary */}
             {data.tour && (
-              <div className="px-4 py-3 border-b border-gray-100 bg-white flex flex-wrap gap-x-6 gap-y-1 text-[13px] text-gray-600">
+              <div className="flex flex-wrap gap-x-6 gap-y-1 text-[13px] text-gray-600 border-b border-gray-100 pb-3">
                 {data.tour.productName && <span><b className="text-gray-800">{data.tour.productName}</b></span>}
                 {data.tour.locationName && <span>📍 {data.tour.locationName}</span>}
                 {data.tour.date && <span>🗓 {fmtDate(data.tour.date)}{data.tour.startTime ? ` · ${data.tour.startTime}` : ''}</span>}
@@ -275,7 +328,7 @@ export default function PayrollActivityDrawer({ activityId, onClose, refreshTick
               </div>
             )}
             {data.general && (
-              <div className="px-4 py-3 border-b border-gray-100 bg-white flex flex-wrap gap-x-6 gap-y-1 text-[13px] text-gray-600">
+              <div className="flex flex-wrap gap-x-6 gap-y-1 text-[13px] text-gray-600 border-b border-gray-100 pb-3">
                 <span><b className="text-gray-800">{data.general.titleHe}</b></span>
                 <span>חודש שכר: {data.general.payrollMonth}</span>
                 {data.general.date && <span>🗓 {fmtDate(data.general.date)}</span>}
@@ -283,20 +336,22 @@ export default function PayrollActivityDrawer({ activityId, onClose, refreshTick
               </div>
             )}
 
-            {/* Matrix */}
+            {/* Matrix — staff columns have a FIXED compact width; the whole
+                matrix scrolls horizontally inside the modal for large teams
+                instead of stretching columns across the screen. */}
             {entries.length === 0 ? (
-              <div className="p-6 text-sm text-gray-500">אין רשומות שכר פעילות — לסיור לא שובץ צוות.</div>
+              <div className="text-sm text-gray-500">אין רשומות שכר פעילות — לסיור לא שובץ צוות.</div>
             ) : (
-              <div className="p-4 overflow-x-auto">
-                <table className="w-full border-collapse text-right" style={{ minWidth: entries.length * 140 + 200 }}>
+              <div className="overflow-x-auto -mx-1 px-1">
+                <table className="w-auto border-collapse text-right">
                   <thead>
                     <tr>
-                      <th className="sticky right-0 bg-white text-[12px] font-medium text-gray-500 px-3 py-2 border-b border-gray-200 w-48">
+                      <th className="sticky right-0 bg-white text-[12px] font-medium text-gray-500 px-3 py-2 border-b border-gray-200 w-44 min-w-[11rem]">
                         רכיב שכר
                       </th>
                       {entries.map((e) => (
-                        <th key={e.id} className="text-center px-2 py-2 border-b border-gray-200 min-w-[130px]">
-                          <div className="text-[13px] font-semibold text-gray-900">{e.displayName}</div>
+                        <th key={e.id} className="text-center px-2 py-2 border-b border-gray-200 w-52 min-w-[13rem] max-w-[15rem]">
+                          <div className="text-[13px] font-semibold text-gray-900 truncate">{e.displayName}</div>
                           <div className="text-[11px] text-gray-500">{ROLE_LABELS[e.role] || 'כללי'}</div>
                           {e.inquiryStatus === 'open' ? (
                             <button
@@ -319,7 +374,7 @@ export default function PayrollActivityDrawer({ activityId, onClose, refreshTick
                   <tbody>
                     {componentRows.map((row) => (
                       <tr key={row.componentId} className="border-b border-gray-100">
-                        <td className="sticky right-0 bg-white px-3 py-1.5 text-[13px] text-gray-700">
+                        <td className="sticky right-0 bg-white px-3 py-1.5 text-[13px] text-gray-700 w-44 min-w-[11rem]">
                           {row.name}
                           {row.sign < 0 && <span className="text-[11px] text-red-500 mr-1">(ניכוי)</span>}
                         </td>
@@ -328,16 +383,16 @@ export default function PayrollActivityDrawer({ activityId, onClose, refreshTick
                           if (!line) return <td key={e.id} className="text-center text-gray-200">·</td>;
                           const isQty = line.quantity != null || line.unitPriceMinor != null;
                           return (
-                            <td key={e.id} className="text-center px-2 py-1">
+                            <td key={e.id} className="text-center px-2 py-1 align-top">
                               {isQty ? (
-                                <QuantityCell line={line} disabled={busy} onCommit={(b) => updateLine(line.id, b)} />
+                                <QuantityCell line={line} disabled={busy} onCommit={(b) => commitCell(line, b)} />
                               ) : (
-                                <MoneyCell line={line} disabled={busy} onCommit={(b) => updateLine(line.id, b)} />
+                                <MoneyCell line={line} disabled={busy} onCommit={(v) => commitCell(line, v)} />
                               )}
                               {line.overrideMinor != null && (
                                 <button
                                   type="button"
-                                  onClick={() => updateLine(line.id, { overrideMinor: null })}
+                                  onClick={() => clearOverride(line)}
                                   className="block mx-auto text-[10px] text-gray-400 hover:text-blue-600"
                                   title="חזרה לערך המחושב"
                                 >
@@ -382,7 +437,7 @@ export default function PayrollActivityDrawer({ activityId, onClose, refreshTick
                       ))}
                     </tr>
                     {/* Office approval — PER PERSON, visually attached to the
-                        column. The bulk button below runs the SAME service. */}
+                        column, directly beneath that person. */}
                     <tr className="border-t border-gray-200 bg-gray-50/50">
                       <td className="sticky right-0 bg-white px-3 py-2 text-[12px] text-gray-500">
                         אישור משרד
@@ -429,51 +484,18 @@ export default function PayrollActivityDrawer({ activityId, onClose, refreshTick
                             </button>
                           )}
                           {entryErrors[e.id] && (
-                            <div className="mt-1 text-[10px] text-red-600 max-w-[130px] mx-auto">{entryErrors[e.id]}</div>
+                            <div className="mt-1 text-[10px] text-red-600 max-w-[13rem] mx-auto">{entryErrors[e.id]}</div>
                           )}
                         </td>
                       ))}
                     </tr>
                   </tbody>
                 </table>
-
-                {/* Matrix footer — counts + the bulk action (same service as
-                    the per-person control; never a second approval truth). */}
-                {activity.state === 'active' && (
-                  <div className="mt-3 flex items-center gap-3 flex-wrap border-t border-gray-100 pt-3">
-                    <span className="text-[12px] text-gray-600">
-                      {entries.filter((e) => e.officeStatus === 'approved').length} מתוך {entries.length} אושרו במשרד
-                      {entries.some((e) => e.officeStatus !== 'approved') &&
-                        ` · ${entries.filter((e) => e.officeStatus !== 'approved').length} נותרו`}
-                    </span>
-                    <div className="flex-1" />
-                    {entries.some((e) => e.officeStatus !== 'approved') && (
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={async () => {
-                          setBusy(true);
-                          setError(null);
-                          try {
-                            const r = await api.payroll.approveActivity(activity.id);
-                            if (r.skipped?.length) {
-                              setError(`לא אושרו (סכום אפס): ${r.skipped.map((s) => s.displayName).join(', ')}`);
-                            }
-                            await load();
-                          } finally { setBusy(false); }
-                        }}
-                        className="px-4 py-1.5 text-[13px] rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
-                      >
-                        {entries.some((e) => e.officeStatus === 'approved') ? 'אשר את הנותרים' : 'אשר שכר'}
-                      </button>
-                    )}
-                  </div>
-                )}
               </div>
             )}
 
             {/* History */}
-            <div className="px-4 pb-6">
+            <div>
               <button
                 type="button"
                 onClick={() => setShowHistory((v) => !v)}
@@ -500,9 +522,9 @@ export default function PayrollActivityDrawer({ activityId, onClose, refreshTick
                 </div>
               )}
             </div>
-          </>
+          </div>
         )}
-      </div>
+      </Dialog>
 
       {openEntryId && (
         <PayrollEntryDrawer
@@ -514,6 +536,6 @@ export default function PayrollActivityDrawer({ activityId, onClose, refreshTick
           }}
         />
       )}
-    </div>
+    </>
   );
 }
