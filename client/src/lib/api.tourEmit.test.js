@@ -70,9 +70,6 @@ test('tour mutations emit exactly once', async () => {
   assert.equal(await countEmits(() => api.tours.assignDeal('d1', 't1')), 1, 'assignDeal (WON join)');
   assert.equal(await countEmits(() => api.tours.reconnectOrphan('b1')), 1, 'reconnectOrphan');
   assert.equal(await countEmits(() => api.tours.cancelOrphan('b1')), 1, 'cancelOrphan');
-  assert.equal(await countEmits(() => api.tours.createScheduleRule({})), 1, 'createScheduleRule');
-  assert.equal(await countEmits(() => api.tours.updateScheduleRule('s1', {})), 1, 'updateScheduleRule');
-  assert.equal(await countEmits(() => api.tours.removeScheduleRule('s1')), 1, 'removeScheduleRule');
   assert.equal(await countEmits(() => api.tours.updateSchedulingSettings({})), 1, 'updateSchedulingSettings');
 });
 

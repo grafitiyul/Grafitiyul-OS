@@ -585,6 +585,7 @@ router.put(
           const { dealSync } = await createTourForWonDeal(tx, updated, {
             targetTourEventId: b.tourEventId,
             origin,
+            allowOverbook: b.allowOverbook === true,
           });
           if (dealSync) {
             // Group slot is authoritative — sync its fields onto the deal in
@@ -637,6 +638,10 @@ router.put(
     } catch (e) {
       if (e.code === 'tour_slot_invalid' || e.code === 'tour_slot_not_scheduled') {
         return res.status(422).json({ error: e.code });
+      }
+      // Capacity guard — the operator may retry with allowOverbook:true.
+      if (e.code === 'tour_full') {
+        return res.status(409).json({ error: 'tour_full', ...e.details });
       }
       throw e;
     }
@@ -771,6 +776,7 @@ router.post(
         const { dealSync } = await createTourForWonDeal(tx, full, {
           targetTourEventId: tourEventId,
           origin,
+          allowOverbook: req.body?.allowOverbook === true,
         });
         return tx.deal.update({
           where: { id: req.params.id },
@@ -781,6 +787,10 @@ router.post(
     } catch (e) {
       if (e.code === 'tour_slot_invalid' || e.code === 'tour_slot_not_scheduled') {
         return res.status(422).json({ error: e.code });
+      }
+      // Capacity guard — the operator may retry with allowOverbook:true.
+      if (e.code === 'tour_full') {
+        return res.status(409).json({ error: 'tour_full', ...e.details });
       }
       throw e;
     }
@@ -980,7 +990,20 @@ router.put(
         ? await tx.quoteOffer.findUnique({ where: { id: version.offerId } })
         : null;
       const { dealPatch, offerPatch } = splitBuilderPatch(offer, b);
-      if (Object.keys(dealPatch).length) await tx.deal.update({ where: { id: req.params.id }, data: dealPatch });
+      if (Object.keys(dealPatch).length) {
+        const updatedDeal = await tx.deal.update({ where: { id: req.params.id }, data: dealPatch });
+        // Propagate builder-driven product/participants to the canonical
+        // registration when this group deal is already on an open-tour slot: a
+        // plain→workshop change or a headcount change must reach the seat +
+        // derivation SSOT immediately (syncDealToTour is idempotent + only the
+        // seats/registration run for a group slot).
+        const booking = await activeBookingFor(tx, req.params.id);
+        if (booking && booking.tourEvent.kind === 'group_slot') {
+          await syncDealToTour(tx, updatedDeal, booking, {
+            origin: await userOrigin(req.adminAuth?.userId),
+          });
+        }
+      }
       if (Object.keys(offerPatch).length) await tx.quoteOffer.update({ where: { id: offer.id }, data: offerPatch });
       return version.id;
     });

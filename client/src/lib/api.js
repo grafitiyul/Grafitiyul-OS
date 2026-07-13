@@ -1347,11 +1347,11 @@ export const api = {
     // calendar / get / scheduling / orphans / completionState) are NOT wrapped.
     // "שבץ לסיור" / "החלף סיור" — attach a WON group deal to a slot (replaces
     // its current booking when one exists). Lives on the deals router.
-    assignDeal: (dealId, tourEventId) =>
+    assignDeal: (dealId, tourEventId, allowOverbook = false) =>
       tourMutation(
         request(`/api/deals/${dealId}/tour-booking`, {
           method: 'POST',
-          body: JSON.stringify({ tourEventId }),
+          body: JSON.stringify({ tourEventId, allowOverbook }),
         }),
       ),
     list: (params = {}) => request('/api/tours' + qs(params)),

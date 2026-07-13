@@ -4,6 +4,7 @@ import { seedTourComponents } from './tourComponents.js';
 import { splitPlanAssignments, planComponentRows } from './planMaterialize.js';
 import { scheduleGalleryCleanup } from './gallery/service.js';
 import { syncDealRegistration } from './registrations.js';
+import { occupancyFor } from './occupancy.js';
 import {
   calendarPendingPatch,
   patchTouchesCalendar,
@@ -77,7 +78,7 @@ export async function activeBookingFor(client, dealId) {
 // Returns { booking, tourEvent, dealSync } — dealSync is a patch of deal
 // fields the caller MUST apply to the deal in the same transaction (group
 // slot authority); null for private/business.
-export async function createTourForWonDeal(tx, deal, { targetTourEventId, origin }) {
+export async function createTourForWonDeal(tx, deal, { targetTourEventId, origin, allowOverbook = false }) {
   // Idempotency: re-winning a deal that somehow still has an active booking
   // (e.g. two admin tabs) reuses it instead of violating the partial unique.
   const existing = await activeBookingFor(tx, deal.id);
@@ -97,11 +98,27 @@ export async function createTourForWonDeal(tx, deal, { targetTourEventId, origin
       err.code = 'tour_slot_not_scheduled';
       throw err;
     }
+    // Capacity guard: a group deal cannot ACCIDENTALLY overbook a slot. Occupancy
+    // is the canonical active-registration seat count. The operator can still
+    // deliberately overbook by passing allowOverbook (soft ceiling preserved).
+    if (!allowOverbook && slot.capacity != null) {
+      const occ = await occupancyFor(tx, [slot.id]);
+      const current = occ[slot.id]?.activeSeats || 0;
+      if (current + seats > slot.capacity) {
+        const err = new Error('tour_full');
+        err.code = 'tour_full';
+        err.details = { capacity: slot.capacity, activeSeats: current, requested: seats };
+        throw err;
+      }
+    }
     const booking = await tx.booking.create({
       data: { tourEventId: slot.id, dealId: deal.id, seats, status: 'active' },
     });
-    // Canonical allocation row (source='deal') — the seat SSOT.
-    await syncDealRegistration(tx, booking, slot);
+    // Canonical allocation row (source='deal') — the seat SSOT. It carries the
+    // DEAL's chosen sellable variant (the ticket the customer bought — workshop
+    // vs plain), NOT the slot's base variant, so the slot's operational product
+    // derives correctly from what participants actually purchased.
+    await syncDealRegistration(tx, booking, slot, { productVariantId: deal.productVariantId });
     await emitTimelineEvent(tx, {
       subjectType: 'tour_event',
       subjectId: slot.id,
@@ -123,7 +140,11 @@ export async function createTourForWonDeal(tx, deal, { targetTourEventId, origin
       },
       origin,
     });
-    // The slot is authoritative: sync its planning fields onto the deal.
+    // The slot owns SCHEDULING (date/time/language/city) — sync those onto the
+    // deal. It does NOT own the PRODUCT anymore: the deal's sellable product is
+    // the ticket the customer bought (Group Ticket Builder), and it drives the
+    // canonical registration + the slot's derived operational product. So
+    // product/variant are deliberately NOT synced back onto the deal here.
     return {
       booking,
       tourEvent: slot,
@@ -132,8 +153,6 @@ export async function createTourForWonDeal(tx, deal, { targetTourEventId, origin
         tourTime: slot.startTime,
         tourLanguage: slot.tourLanguage,
         locationId: slot.locationId,
-        productId: slot.productId,
-        productVariantId: slot.productVariantId,
       },
     };
   }
@@ -259,8 +278,9 @@ export async function createTourForWonDeal(tx, deal, { targetTourEventId, origin
   const booking = await tx.booking.create({
     data: { tourEventId: tourEvent.id, dealId: deal.id, seats, status: 'active' },
   });
-  // Canonical allocation row (source='deal') — the seat SSOT.
-  await syncDealRegistration(tx, booking, tourEvent);
+  // Canonical allocation row (source='deal') — the seat SSOT. Private/business
+  // tour: the deal's variant IS the tour's variant.
+  await syncDealRegistration(tx, booking, tourEvent, { productVariantId: deal.productVariantId });
   const createdEvent = reactivating ? 'tour_reactivated' : 'tour_created';
   await emitTimelineEvent(tx, {
     subjectType: 'tour_event',
@@ -453,8 +473,11 @@ export async function reconnectOrphanBooking(tx, booking, { origin }) {
     where: { id: booking.id },
     data: { status: 'active', orphanedAt: null },
   });
-  // Seats count again — restore the canonical registration to active.
-  await syncDealRegistration(tx, { ...booking, status: 'active' }, booking.tourEvent);
+  // Seats count again — restore the canonical registration to active with the
+  // deal's current sellable variant.
+  await syncDealRegistration(tx, { ...booking, status: 'active' }, booking.tourEvent, {
+    productVariantId: deal.productVariantId,
+  });
   await emitTimelineEvent(tx, {
     subjectType: 'tour_event',
     subjectId: booking.tourEventId,
@@ -568,17 +591,19 @@ export async function syncDealToTour(tx, deal, booking, { origin }) {
   }
 
   // Keep the canonical registration in step with the deal's current seats and
-  // (for private/business) operational variant — the seat/derivation SSOT.
+  // chosen sellable variant — the seat/derivation SSOT.
   const syncRegistration = (productVariantId) =>
-    syncDealRegistration(
-      tx,
-      { ...booking, seats: effectiveSeats, status: 'active' },
-      { ...tour, productVariantId },
-    );
+    syncDealRegistration(tx, { ...booking, seats: effectiveSeats, status: 'active' }, tour, {
+      productVariantId,
+    });
 
   if (tour.kind === 'group_slot') {
-    await syncRegistration(tour.productVariantId); // variant is slot-owned
-    return false; // slot planning is slot-owned
+    // Group: the deal's chosen sellable variant (Group Ticket Builder) drives
+    // the registration → the slot's derived operational product. This is how a
+    // builder change (plain → workshop) propagates. Fall back to the tour's
+    // current variant only when the deal has no product selected yet.
+    await syncRegistration(deal.productVariantId ?? tour.productVariantId);
+    return false; // slot scheduling is slot-owned; product is registration-derived
   }
 
   const patch = {};

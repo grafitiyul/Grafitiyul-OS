@@ -404,16 +404,26 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
 
   // Slot picked in the picker — first WON sends the slot with the status
   // change (one transaction server-side); שבץ/החלף uses the dedicated route.
-  async function pickTourSlot(tourEventId) {
+  async function pickTourSlot(tourEventId, allowOverbook = false) {
     try {
       if (slotPickerFor === 'won') {
-        await api.deals.update(id, { status: 'won', tourEventId });
+        await api.deals.update(id, { status: 'won', tourEventId, allowOverbook });
       } else {
-        await api.tours.assignDeal(id, tourEventId);
+        await api.tours.assignDeal(id, tourEventId, allowOverbook);
       }
       setSlotPickerFor(null);
       await refresh();
     } catch (e) {
+      // Capacity guard — offer the operator a deliberate overbook.
+      if (e.payload?.error === 'tour_full' && !allowOverbook) {
+        const { capacity, activeSeats, requested } = e.payload;
+        const ok = window.confirm(
+          `הסיור מלא: קיבולת ${capacity}, תפוסה ${activeSeats}, מבוקש ${requested}.\n` +
+            'לשבץ בכל זאת (מעל הקיבולת)?',
+        );
+        if (ok) return pickTourSlot(tourEventId, true);
+        return;
+      }
       alert('שגיאה: ' + (e.payload?.error || e.message));
     }
   }

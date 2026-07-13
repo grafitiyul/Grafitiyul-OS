@@ -58,9 +58,12 @@ export default function TourSlotPickerDialog({ open, deal, currentTourEventId = 
       setOverbookSlot(slot);
       return;
     }
+    // Second click on an over-capacity slot = explicit overbook confirmation;
+    // pass it through so the server allows the deliberate exceed.
+    const confirmedOverbook = wouldOverbook(slot);
     setBusy(true);
     try {
-      await onPick(slot.id);
+      await onPick(slot.id, confirmedOverbook);
     } finally {
       setBusy(false);
     }

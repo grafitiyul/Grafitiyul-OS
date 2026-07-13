@@ -18,18 +18,36 @@ export function regStatusFromBooking(bookingStatus) {
 }
 
 // Idempotently converge the single 'deal' registration for a booking onto the
-// booking's current state (seats, status) and its tour's operational variant.
+// booking's current state (seats, status) and its SELLABLE product variant.
 // Runs inside the caller's transaction, called after every booking mutation.
 // For open tours (group slots) it then re-derives the operational product from
 // the tour's active registrations — the ONE hook every registration source
 // (deal now, WooCommerce/future later) funnels through.
-export async function syncDealRegistration(tx, booking, tour) {
+//
+// The product variant is the DEAL's chosen sellable variant (the ticket the
+// customer bought — e.g. workshop vs plain), NOT the slot's base variant, so the
+// operational-product derivation sees the real capability. Callers with the deal
+// pass it via opts.productVariantId; callers without one (cancel/orphan) omit it
+// and the existing registration's variant is preserved.
+//
+// Stable identity for auditability + idempotent upsert: source='deal',
+// externalOrderId=dealId (the source order), externalLineId=bookingId (the stable
+// per-tour line). Lookup stays keyed on bookingId so pre-existing (backfilled)
+// rows are matched and never duplicated.
+export async function syncDealRegistration(tx, booking, tour, opts = {}) {
   const status = regStatusFromBooking(booking.status);
   const quantity = Number(booking.seats) || 0;
-  const productVariantId = tour?.productVariantId ?? null;
   const existing = await tx.ticketRegistration.findFirst({
     where: { bookingId: booking.id, source: 'deal' },
   });
+  // Explicit selection wins; else keep the existing row's variant; else fall
+  // back to the tour's (last resort, e.g. a legacy row with no deal context).
+  const productVariantId =
+    opts.productVariantId !== undefined
+      ? opts.productVariantId
+      : existing
+        ? existing.productVariantId
+        : (tour?.productVariantId ?? null);
   let regId;
   if (existing) {
     await tx.ticketRegistration.update({
@@ -38,6 +56,8 @@ export async function syncDealRegistration(tx, booking, tour) {
         quantity,
         productVariantId,
         status,
+        externalOrderId: booking.dealId,
+        externalLineId: booking.id,
         cancelledAt: status === 'cancelled' ? existing.cancelledAt || new Date() : null,
       },
     });
@@ -51,6 +71,8 @@ export async function syncDealRegistration(tx, booking, tour) {
         source: 'deal',
         bookingId: booking.id,
         dealId: booking.dealId,
+        externalOrderId: booking.dealId,
+        externalLineId: booking.id,
         status,
         cancelledAt: status === 'cancelled' ? new Date() : null,
       },
