@@ -26,6 +26,12 @@ import {
   copyTourStateToPlan,
   GROUP_LOCKED_FIELDS,
 } from '../tours/tourFromDeal.js';
+import {
+  holdRegistrationForDeal,
+  recordPaymentLinkSent,
+  registerWithoutPayment,
+} from '../deals/registrationCompletion.js';
+import { settleDealWonFromPayment } from '../deals/paymentWon.js';
 
 // Deal CRUD + DealContact management. The Deal is the commercial object: it
 // owns agreed value (integer minor units + currency), discount, payment terms,
@@ -796,6 +802,132 @@ router.post(
     }
     if (!deal) return res.json(await loadDeal(req.params.id));
     await recordDealChanges(prisma, { dealId: req.params.id, before, after: deal, origin });
+    res.json(await loadDeal(req.params.id));
+  }),
+);
+
+// ── Group registration completion (the progressive modal's server actions) ───
+// All idempotent, all on the shipped lifecycle primitives. A group deal only.
+async function requireGroupDeal(req, res) {
+  const deal = await prisma.deal.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, activityType: true, status: true, participants: true, productVariantId: true, productId: true },
+  });
+  if (!deal) {
+    res.status(404).json({ error: 'not_found' });
+    return null;
+  }
+  if (deal.activityType !== 'group') {
+    res.status(409).json({ error: 'not_group_deal' });
+    return null;
+  }
+  return deal;
+}
+
+// Create / extend a HELD reservation (used by pay-now and send-link).
+router.post(
+  '/:id/register/hold',
+  handle(async (req, res) => {
+    const deal = await requireGroupDeal(req, res);
+    if (!deal) return;
+    const b = req.body || {};
+    if (!b.tourEventId) return res.status(400).json({ error: 'tour_event_required' });
+    const origin = await userOrigin(req.adminAuth?.userId);
+    const result = await holdRegistrationForDeal(prisma, {
+      dealId: deal.id,
+      tourEventId: String(b.tourEventId),
+      productVariantId: b.productVariantId ?? deal.productVariantId ?? null,
+      priceRuleId: b.priceRuleId ?? null,
+      cardGroupId: b.cardGroupId ?? null,
+      quantity: Number(b.quantity) || Number(deal.participants) || 1,
+      value: b.value,
+      unit: b.unit,
+      origin,
+    });
+    res.json({ ...result, deal: await loadDeal(req.params.id) });
+  }),
+);
+
+// Record the sent WhatsApp payment-link message in the Deal timeline (audit).
+router.post(
+  '/:id/register/send-link',
+  handle(async (req, res) => {
+    const deal = await requireGroupDeal(req, res);
+    if (!deal) return;
+    const b = req.body || {};
+    if (!b.tourEventId) return res.status(400).json({ error: 'tour_event_required' });
+    const origin = await userOrigin(req.adminAuth?.userId);
+    // Idempotent hold first, then audit the exact message.
+    const held = await holdRegistrationForDeal(prisma, {
+      dealId: deal.id,
+      tourEventId: String(b.tourEventId),
+      productVariantId: b.productVariantId ?? deal.productVariantId ?? null,
+      priceRuleId: b.priceRuleId ?? null,
+      cardGroupId: b.cardGroupId ?? null,
+      quantity: Number(b.quantity) || Number(deal.participants) || 1,
+      value: b.value,
+      unit: b.unit,
+      origin,
+    });
+    await recordPaymentLinkSent(prisma, {
+      dealId: deal.id,
+      tourEventId: String(b.tourEventId),
+      registrationId: held.registration.id,
+      message: String(b.message || ''),
+      phone: b.phone || null,
+      paymentLink: b.paymentLink || null,
+      origin,
+    });
+    res.json({ ...held, deal: await loadDeal(req.params.id) });
+  }),
+);
+
+// Register WITHOUT payment: reason required → confirm + WON.
+router.post(
+  '/:id/register/no-payment',
+  handle(async (req, res) => {
+    const deal = await requireGroupDeal(req, res);
+    if (!deal) return;
+    const b = req.body || {};
+    if (!b.tourEventId) return res.status(400).json({ error: 'tour_event_required' });
+    const origin = await userOrigin(req.adminAuth?.userId);
+    try {
+      await registerWithoutPayment(prisma, {
+        dealId: deal.id,
+        tourEventId: String(b.tourEventId),
+        reason: b.reason,
+        allowOverbook: b.allowOverbook === true,
+        origin,
+      });
+    } catch (e) {
+      if (e.code === 'no_payment_reason_required') return res.status(422).json({ error: e.code });
+      if (e.code === 'tour_full') return res.status(409).json({ error: 'tour_full', ...e.details });
+      if (e.code === 'tour_slot_invalid' || e.code === 'tour_slot_not_scheduled') {
+        return res.status(422).json({ error: e.code });
+      }
+      throw e;
+    }
+    res.json(await loadDeal(req.params.id));
+  }),
+);
+
+// Verified-payment settlement (pay-now callback) → canonical WON.
+router.post(
+  '/:id/register/settle-payment',
+  handle(async (req, res) => {
+    const deal = await requireGroupDeal(req, res);
+    if (!deal) return;
+    const origin = await userOrigin(req.adminAuth?.userId);
+    try {
+      await settleDealWonFromPayment(prisma, {
+        dealId: deal.id,
+        allowOverbook: req.body?.allowOverbook === true,
+        origin,
+      });
+    } catch (e) {
+      if (e.code === 'tour_full') return res.status(409).json({ error: 'tour_full', ...e.details });
+      throw e;
+    }
     res.json(await loadDeal(req.params.id));
   }),
 );

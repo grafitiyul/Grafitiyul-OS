@@ -78,6 +78,18 @@ function makeStore(init = {}) {
         Object.assign(r, data);
         return r;
       },
+      updateMany: async ({ where, data }) => {
+        let count = 0;
+        for (const r of s.registrations) {
+          if (where.dealId !== undefined && r.dealId !== where.dealId) continue;
+          if (where.tourEventId !== undefined && r.tourEventId !== where.tourEventId) continue;
+          if (typeof where.status === 'string' && r.status !== where.status) continue;
+          if (where.status?.in && !where.status.in.includes(r.status)) continue;
+          Object.assign(r, data);
+          count += 1;
+        }
+        return { count };
+      },
     },
     openTourTemplateProduct: { findMany: async () => [], findFirst: async () => null },
     productVariant: { findMany: async () => [] },
@@ -157,4 +169,44 @@ test('settleDealWonFromPayment: LATE payment on an expired hold is accepted (ove
   assert.equal(res.overbook, true); // accepted despite exceeding capacity
   assert.equal(c._s.deals.d1.status, 'won');
   assert.ok(c._s.timeline.some((t) => t.data?.event === 'late_payment_won'));
+});
+
+// ── registration completion service ──────────────────────────────────────────
+import { holdRegistrationForDeal, registerWithoutPayment } from './registrationCompletion.js';
+
+test('holdRegistrationForDeal is idempotent — repeated calls extend the SAME hold', async () => {
+  const c = makeStore({
+    deals: { d1: { id: 'd1', status: 'open', activityType: 'group', participants: 4, productVariantId: 'v_plain', orderNo: 27010 } },
+    tours: { slot1: { id: 'slot1', kind: 'group_slot', status: 'scheduled', capacity: 20 } },
+  });
+  await holdRegistrationForDeal(c, { dealId: 'd1', tourEventId: 'slot1', productVariantId: 'v_plain', quantity: 4, value: 3, unit: 'hours' });
+  await holdRegistrationForDeal(c, { dealId: 'd1', tourEventId: 'slot1', productVariantId: 'v_plain', quantity: 6, value: 2, unit: 'days' });
+  const holds = c._s.registrations.filter((r) => r.dealId === 'd1');
+  assert.equal(holds.length, 1, 'no duplicate hold');
+  assert.equal(holds[0].status, 'held');
+  assert.equal(holds[0].quantity, 6); // extended/updated in place
+  assert.equal(c._s.deals.d1.status, 'open'); // Deal stays OPEN
+});
+
+test('registerWithoutPayment requires a reason', async () => {
+  const c = makeStore({ deals: { d1: { id: 'd1', status: 'open', activityType: 'group', participants: 4, orderNo: 27011 } }, tours: { slot1: { id: 'slot1', kind: 'group_slot', status: 'scheduled', capacity: 20 } } });
+  await assert.rejects(
+    () => registerWithoutPayment(c, { dealId: 'd1', tourEventId: 'slot1', reason: '  ' }),
+    (e) => e.code === 'no_payment_reason_required',
+  );
+  assert.equal(c._s.deals.d1.status, 'open'); // not WON
+});
+
+test('registerWithoutPayment stores the reason canonically + WONs the deal', async () => {
+  const c = makeStore({
+    deals: { d1: { id: 'd1', status: 'open', activityType: 'group', participants: 4, productVariantId: 'v_plain', orderNo: 27012 } },
+    tours: { slot1: { id: 'slot1', kind: 'group_slot', status: 'scheduled', capacity: 20, productVariantId: 'v', productId: 'p' } },
+  });
+  await registerWithoutPayment(c, { dealId: 'd1', tourEventId: 'slot1', reason: 'אישור מנהל — לקוח VIP' });
+  assert.equal(c._s.deals.d1.status, 'won');
+  const reg = c._s.registrations.find((r) => r.dealId === 'd1');
+  assert.equal(reg.status, 'confirmed');
+  assert.equal(reg.paymentStatus, 'waived'); // not a fabricated payment
+  assert.equal(reg.noPaymentReason, 'אישור מנהל — לקוח VIP');
+  assert.ok(c._s.timeline.some((t) => t.data?.event === 'no_payment_won'));
 });
