@@ -114,6 +114,79 @@ function CustomerCard({ booking }) {
   );
 }
 
+// Purchased-ticket composition (PART 2) — a compact aggregate summary + a
+// per-customer breakdown, both derived server-side from the canonical
+// registrations. GENERIC: it renders only the dimensions that exist in the data
+// (cards, ticket types) — no product name or "adult/child" is hardcoded. Held
+// registrations read as tentative ("עוד לא סופי").
+function ChipRow({ items }) {
+  if (!items?.length) return null;
+  return (
+    <span className="flex flex-wrap gap-1.5">
+      {items.map((it) => (
+        <span
+          key={it.key}
+          className="inline-flex items-baseline gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[12px] text-gray-700"
+        >
+          <span>{it.label}</span>
+          <span className="font-bold tabular-nums text-gray-900">{it.quantity}</span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function TicketComposition({ breakdown }) {
+  const agg = breakdown?.aggregate;
+  const customers = breakdown?.customers || [];
+  const hasComposition = agg && (agg.byCard?.length || agg.byTicketType?.length);
+  if (!hasComposition) return null; // nothing purchased-composition to show (legacy/website-only)
+  return (
+    <div className="mb-3 rounded-lg border border-gray-200 bg-gray-50/60 p-3">
+      {/* Aggregate: total + only the dimensions that exist. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+        <span className="text-[12.5px] font-bold text-gray-900">
+          סה״כ {agg.total} כרטיסים
+        </span>
+        {agg.byCard?.length ? <ChipRow items={agg.byCard} /> : null}
+        {agg.byTicketType?.length ? (
+          <span className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11.5px] text-gray-400">לפי סוג:</span>
+            <ChipRow items={agg.byTicketType} />
+          </span>
+        ) : null}
+      </div>
+      {/* Per-customer composition. */}
+      {customers.length > 0 && (
+        <ul className="mt-2.5 space-y-1.5 border-t border-gray-200 pt-2.5">
+          {customers.map((c, i) => (
+            <li key={i} className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[12.5px]">
+              <span className={c.held ? 'font-medium text-gray-400' : 'font-medium text-gray-800'}>
+                {c.label}
+                {c.held ? <span className="text-gray-400"> · עוד לא סופי</span> : null}
+              </span>
+              <span className="text-gray-300">—</span>
+              {c.breakdown?.length ? (
+                <span className="flex flex-wrap gap-1.5">
+                  {c.breakdown.map((b, j) => (
+                    <span key={j} className="text-gray-600">
+                      {[b.cardTitle, b.ticketLabel].filter(Boolean).join(' · ')}
+                      <span className="font-bold tabular-nums text-gray-900"> ×{b.quantity}</span>
+                      {j < c.breakdown.length - 1 ? <span className="text-gray-300">،</span> : null}
+                    </span>
+                  ))}
+                </span>
+              ) : (
+                <span className="text-gray-600 tabular-nums">{c.quantity} מקומות</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 // Small bordered panel used for the body sections (team / participants).
 function Section({ title, count, children }) {
   return (
@@ -444,8 +517,10 @@ export default function TourPage() {
                 </div>
               </section>
 
-              {/* Participants — one card per booking, stacked vertically. */}
+              {/* Participants — purchased-ticket composition, then one card per
+                  booking, stacked vertically. */}
               <Section title="משתתפים" count={relevantBookings.length}>
+                <TicketComposition breakdown={tour.participantBreakdown} />
                 {relevantBookings.length === 0 ? (
                   <p className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-3 py-4 text-center text-[13px] text-gray-400">
                     {isSlot ? 'עדיין לא שובצו דילים לסיור — שיבוץ נעשה מדיל קבוצתי ב-WON.' : 'אין הזמנות פעילות.'}

@@ -28,11 +28,13 @@ import {
 } from '../tours/tourFromDeal.js';
 import {
   holdRegistrationForDeal,
-  recordPaymentLinkSent,
+  recordPaymentLinkOutcome,
   registerWithoutPayment,
   cancelHold,
 } from '../deals/registrationCompletion.js';
 import { settleDealWonFromPayment } from '../deals/paymentWon.js';
+import { ensurePaymentToken, paymentUrlFor, buildPaymentSnapshot, PAYMENT_DEAL_INCLUDE } from '../dealPayment.js';
+import { sendWhatsAppText } from '../whatsapp/send.js';
 
 // Deal CRUD + DealContact management. The Deal is the commercial object: it
 // owns agreed value (integer minor units + currency), discount, payment terms,
@@ -848,7 +850,7 @@ router.post(
 async function requireGroupDeal(req, res) {
   const deal = await prisma.deal.findUnique({
     where: { id: req.params.id },
-    select: { id: true, activityType: true, status: true, participants: true, productVariantId: true, productId: true },
+    select: { id: true, activityType: true, status: true, participants: true, productVariantId: true, productId: true, paymentToken: true },
   });
   if (!deal) {
     res.status(404).json({ error: 'not_found' });
@@ -861,7 +863,27 @@ async function requireGroupDeal(req, res) {
   return deal;
 }
 
-// Create / extend a HELD reservation (used by pay-now and send-link).
+// The deal's STABLE customer payment URL — the permanent GOS token link
+// (${PUBLIC_ORIGIN}/payment/icount/<token>) the send-link/pay-now flows embed.
+// It is generated once and never changes; the iCount sale link is created
+// lazily when the customer opens it (routes/payment.js). No Deal state changes.
+async function dealPaymentUrl(req, deal) {
+  const token = await ensurePaymentToken(prisma, deal);
+  return paymentUrlFor(req, token);
+}
+
+router.post(
+  '/:id/register/payment-url',
+  handle(async (req, res) => {
+    const deal = await requireGroupDeal(req, res);
+    if (!deal) return;
+    res.json({ paymentUrl: await dealPaymentUrl(req, deal) });
+  }),
+);
+
+// Create / extend a HELD reservation (used by pay-now and send-link). Returns the
+// stable payment URL so pay-now can open the real payment page immediately. The
+// Deal stays OPEN — settlement to WON happens only on a verified provider payment.
 router.post(
   '/:id/register/hold',
   handle(async (req, res) => {
@@ -881,11 +903,15 @@ router.post(
       unit: b.unit,
       origin,
     });
-    res.json({ ...result, deal: await loadDeal(req.params.id) });
+    const paymentUrl = await dealPaymentUrl(req, deal).catch(() => null);
+    res.json({ ...result, paymentUrl, deal: await loadDeal(req.params.id) });
   }),
 );
 
-// Record the sent WhatsApp payment-link message in the Deal timeline (audit).
+// Send-payment-link: hold the seat, ensure the REAL payment URL is in the
+// message, SEND it through the real WhatsApp bridge, and record the exact
+// outcome (sent / failed) in the Deal timeline. Never claims success on a failed
+// send — the hold is still created so the operator can retry. Deal stays OPEN.
 router.post(
   '/:id/register/send-link',
   handle(async (req, res) => {
@@ -893,8 +919,16 @@ router.post(
     if (!deal) return;
     const b = req.body || {};
     if (!b.tourEventId) return res.status(400).json({ error: 'tour_event_required' });
+    // Phone: trust the client's, else resolve the canonical payment-link contact
+    // phone from the deal (SAME rule as the payment snapshot).
+    let phone = String(b.phone || '').trim();
+    if (!phone) {
+      const full = await prisma.deal.findUnique({ where: { id: deal.id }, include: PAYMENT_DEAL_INCLUDE });
+      phone = String(buildPaymentSnapshot(full).customerPhone || '').trim();
+    }
+    if (!phone) return res.status(400).json({ error: 'phone_required' });
     const origin = await userOrigin(req.adminAuth?.userId);
-    // Idempotent hold first, then audit the exact message.
+    // 1) Idempotent hold (re-send extends the same hold).
     const held = await holdRegistrationForDeal(prisma, {
       dealId: deal.id,
       tourEventId: String(b.tourEventId),
@@ -906,16 +940,43 @@ router.post(
       unit: b.unit,
       origin,
     });
-    await recordPaymentLinkSent(prisma, {
+    // 2) The real stable payment URL — guaranteed present in the outgoing text
+    //    (append if the edited message dropped it) so no empty placeholder ships.
+    const paymentUrl = await dealPaymentUrl(req, deal);
+    let message = String(b.message || '').trim();
+    if (!message.includes(paymentUrl)) message = message ? `${message}\n${paymentUrl}` : paymentUrl;
+    // 3) Real WhatsApp send. Idempotency keyed on the registration so a retried
+    //    request can't double-send the same link.
+    let sent = false;
+    let externalMessageId = null;
+    let failureReason = null;
+    try {
+      const out = await sendWhatsAppText(phone, message, {
+        idempotencyKey: `paylink-${held.registration.id}`,
+      });
+      sent = true;
+      externalMessageId = out.externalMessageId;
+    } catch (e) {
+      failureReason = e?.code || 'send_failed';
+    }
+    // 4) Record the exact outcome (sent OR failed) with the message + URL.
+    await recordPaymentLinkOutcome(prisma, {
       dealId: deal.id,
       tourEventId: String(b.tourEventId),
       registrationId: held.registration.id,
-      message: String(b.message || ''),
-      phone: b.phone || null,
-      paymentLink: b.paymentLink || null,
+      message,
+      phone,
+      paymentLink: paymentUrl,
+      sent,
+      externalMessageId,
+      failureReason,
       origin,
     });
-    res.json({ ...held, deal: await loadDeal(req.params.id) });
+    const payload = { ...held, paymentUrl, sent, externalMessageId, failureReason, deal: await loadDeal(req.params.id) };
+    // Honest status: a failed send is a 502 (hold kept), so the UI never shows
+    // "sent" when the message didn't leave.
+    if (!sent) return res.status(502).json(payload);
+    res.json(payload);
   }),
 );
 

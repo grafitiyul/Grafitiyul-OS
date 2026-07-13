@@ -9,7 +9,7 @@
 // a VALID pin (pinned variant still offered) is preserved and reported.
 
 import { PrismaClient } from '@prisma/client';
-import { reconcileAllOpenTourProducts } from '../src/tours/operationalProduct.js';
+import { reconcileAllOpenTourProducts } from '../src/tours/reconcileProducts.js';
 
 const prisma = new PrismaClient();
 const force = process.argv.includes('--force');

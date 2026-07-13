@@ -26,6 +26,7 @@ import { planExceptionReconcile, classifyExceptionPlan } from '../tours/exceptio
 import { emitTourChangeImpact } from '../tours/changeImpact.js';
 import { calendarPendingPatch, kickTourCalendarSync } from '../tours/calendar/service.js';
 import { wooPendingPatch } from '../tours/woo/service.js';
+import { reconcileAllOpenTourProducts } from '../tours/reconcileProducts.js';
 
 // Open Tours admin API (/api/open-tours) — CRUD for recurring tour TEMPLATES
 // (the "what"), their offered sellable products, weekly SCHEDULE RULES (the
@@ -739,6 +740,21 @@ router.post(
     if (tour.kind !== 'group_slot') return res.status(400).json({ error: 'not_a_group_slot' });
     await markTourWooPending(prisma, tourEventId);
     res.json({ ok: true, tourEventId, writeEnabled: wooSyncActive() });
+  }),
+);
+
+// ── One-time safe reconciliation of stale operational products ───────────────
+// Recomputes the operational product of every materialized open-tour slot from
+// CURRENT canonical registrations — heals rows whose persisted product went
+// stale (e.g. a workshop product that never re-derived after a fix). Admin-only,
+// idempotent. `?force=1` also recomputes manually-pinned tours (clearing the
+// pin). Returns a summary; no tour is patched unless its derived product differs.
+router.post(
+  '/reconcile-products',
+  handle(async (req, res) => {
+    const force = /^(1|true|yes|on)$/i.test(String(req.query.force || req.body?.force || ''));
+    const summary = await reconcileAllOpenTourProducts(prisma, { force });
+    res.json(summary);
   }),
 );
 

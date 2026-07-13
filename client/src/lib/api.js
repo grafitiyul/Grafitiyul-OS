@@ -488,6 +488,8 @@ export const api = {
       request(`/api/deals/${id}/price-lines`, { method: 'PUT', body: JSON.stringify(data) }),
     // Group registration completion (the progressive modal's actions). All
     // idempotent; the server builds on the shipped lifecycle primitives.
+    registerPaymentUrl: (id) =>
+      request(`/api/deals/${id}/register/payment-url`, { method: 'POST', body: '{}' }),
     registerHold: (id, data) =>
       tourMutation(request(`/api/deals/${id}/register/hold`, { method: 'POST', body: JSON.stringify(data) })),
     registerSendLink: (id, data) =>

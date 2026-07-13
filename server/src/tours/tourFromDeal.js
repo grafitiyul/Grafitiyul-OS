@@ -5,11 +5,24 @@ import { splitPlanAssignments, planComponentRows } from './planMaterialize.js';
 import { scheduleGalleryCleanup } from './gallery/service.js';
 import { syncDealRegistration } from './registrations.js';
 import { occupancyFor } from './occupancy.js';
+import { resolveDealGroupOffering } from '../deals/groupOffering.js';
 import {
   calendarPendingPatch,
   patchTouchesCalendar,
   kickTourCalendarSync,
 } from './calendar/service.js';
+
+// The canonical group offering for a deal (from its Group Ticket Builder card
+// selection) → { productVariantId (dominant), ticketBreakdown }. Falls back to
+// the deal's own product when no group-ticket lines exist. THE one place the
+// group-slot registration's variant + composition are resolved, so a plain-only
+// deal never inherits a stale tour variant.
+async function groupOfferingPatch(tx, deal) {
+  const offering = await resolveDealGroupOffering(tx, deal.id);
+  return offering
+    ? { productVariantId: offering.productVariantId, ticketBreakdown: offering.ticketBreakdown }
+    : { productVariantId: deal.productVariantId || null };
+}
 
 // Deal⇄Tour lifecycle — the ONE module that creates/joins/leaves tours for a
 // deal. Called from the deals router inside a prisma transaction; never from
@@ -122,11 +135,11 @@ export async function createTourForWonDeal(tx, deal, { targetTourEventId, origin
     const booking = await tx.booking.create({
       data: { tourEventId: slot.id, dealId: deal.id, seats, status: 'active' },
     });
-    // Canonical allocation row (source='deal') — the seat SSOT. It carries the
-    // DEAL's chosen sellable variant (the ticket the customer bought — workshop
-    // vs plain), NOT the slot's base variant, so the slot's operational product
-    // derives correctly from what participants actually purchased.
-    await syncDealRegistration(tx, booking, slot, { productVariantId: deal.productVariantId });
+    // Canonical allocation row (source='deal') — the seat SSOT. Its variant +
+    // composition come from the deal's Group Ticket Builder card selection (the
+    // dominant card variant), NOT the slot's base, so the slot's operational
+    // product derives from what participants actually purchased.
+    await syncDealRegistration(tx, booking, slot, await groupOfferingPatch(tx, deal));
     await emitTimelineEvent(tx, {
       subjectType: 'tour_event',
       subjectId: slot.id,
@@ -482,10 +495,9 @@ export async function reconnectOrphanBooking(tx, booking, { origin }) {
     data: { status: 'active', orphanedAt: null },
   });
   // Seats count again — restore the canonical registration to active with the
-  // deal's current sellable variant.
-  await syncDealRegistration(tx, { ...booking, status: 'active' }, booking.tourEvent, {
-    productVariantId: deal.productVariantId,
-  });
+  // deal's CANONICAL offering (group cards drive it for a group slot; falls back
+  // to deal.productVariantId for private/business).
+  await syncDealRegistration(tx, { ...booking, status: 'active' }, booking.tourEvent, await groupOfferingPatch(tx, deal));
   await emitTimelineEvent(tx, {
     subjectType: 'tour_event',
     subjectId: booking.tourEventId,
@@ -600,18 +612,15 @@ export async function syncDealToTour(tx, deal, booking, { origin }) {
 
   // Keep the canonical registration in step with the deal's current seats and
   // chosen sellable variant — the seat/derivation SSOT.
-  const syncRegistration = (productVariantId) =>
-    syncDealRegistration(tx, { ...booking, seats: effectiveSeats, status: 'active' }, tour, {
-      productVariantId,
-    });
+  const syncRegistration = (opts) =>
+    syncDealRegistration(tx, { ...booking, seats: effectiveSeats, status: 'active' }, tour, opts);
 
   if (tour.kind === 'group_slot') {
-    // Group: the deal's chosen sellable variant (Group Ticket Builder) drives
-    // the registration → the slot's derived operational product. This is how a
-    // builder change (plain → workshop) propagates. A deal with NO product stays
-    // null — never stamped with the slot's base variant (which may be workshop),
-    // so a plain group deal can never make the slot derive to Workshop.
-    await syncRegistration(deal.productVariantId || null);
+    // Group: the deal's Group Ticket Builder card selection (dominant variant +
+    // composition) drives the registration → the slot's derived operational
+    // product. A builder change (plain → workshop) propagates here. A deal with
+    // no group-ticket lines stays null — never stamped with the slot's base.
+    await syncRegistration(await groupOfferingPatch(tx, deal));
     return false; // slot scheduling is slot-owned; product is registration-derived
   }
 
@@ -641,7 +650,7 @@ export async function syncDealToTour(tx, deal, booking, { origin }) {
     : tour.productVariantId;
 
   if (!Object.keys(patch).length) {
-    await syncRegistration(effectiveVariantId);
+    await syncRegistration({ productVariantId: effectiveVariantId });
     return false;
   }
   // Deal-driven date/time/variant/language/status changes are calendar-visible.
@@ -675,6 +684,6 @@ export async function syncDealToTour(tx, deal, booking, { origin }) {
       origin,
     });
   }
-  await syncRegistration(effectiveVariantId);
+  await syncRegistration({ productVariantId: effectiveVariantId });
   return true;
 }

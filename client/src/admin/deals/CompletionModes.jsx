@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api.js';
 import {
   DURATION_UNITS,
@@ -25,15 +25,33 @@ export default function CompletionModes({ deal, tourEventId, phone = '', context
 
   const [value, setValue] = useState(DEFAULT_HOLD.value);
   const [unit, setUnit] = useState(DEFAULT_HOLD.unit);
-  const [message, setMessage] = useState(defaultPaymentLinkMessage(DEFAULT_HOLD.value, DEFAULT_HOLD.unit));
+  const [message, setMessage] = useState('');
   const [messageEdited, setMessageEdited] = useState(false);
+  // The REAL stable payment URL, fetched once a payment mode opens. The message
+  // preview always carries it (never a placeholder), and pay-now opens it.
+  const [paymentUrl, setPaymentUrl] = useState('');
+  const [urlErr, setUrlErr] = useState('');
   const liveMessage = useMemo(
-    () => (messageEdited ? message : defaultPaymentLinkMessage(value, unit)),
-    [messageEdited, message, value, unit],
+    () => (messageEdited ? message : defaultPaymentLinkMessage(value, unit, paymentUrl)),
+    [messageEdited, message, value, unit, paymentUrl],
   );
   const [reason, setReason] = useState('');
 
   const ctx = { tourEventId, ...context };
+
+  // Ensure the deal's stable payment URL as soon as a payment mode is chosen.
+  useEffect(() => {
+    if (mode !== 'pay' && mode !== 'link') return;
+    if (paymentUrl) return;
+    let alive = true;
+    api.deals
+      .registerPaymentUrl(deal.id)
+      .then((r) => alive && setPaymentUrl(r?.paymentUrl || ''))
+      .catch((e) => alive && setUrlErr(e.payload?.error || e.message || 'payment_url_failed'));
+    return () => {
+      alive = false;
+    };
+  }, [mode, deal.id, paymentUrl]);
 
   async function run(fn, validate) {
     if (validate && !validate()) return;
@@ -50,13 +68,35 @@ export default function CompletionModes({ deal, tourEventId, phone = '', context
     }
   }
 
+  // Pay now: create/extend the hold, then OPEN the real payment page. The Deal
+  // stays OPEN — it becomes WON only when the provider confirms the payment
+  // (iCount IPN → settleDealWonFromPayment). We NEVER settle on this click.
   const payNow = () =>
     run(async () => {
-      await api.deals.registerHold(deal.id, { ...ctx, value: DEFAULT_HOLD.value, unit: DEFAULT_HOLD.unit });
-      await api.deals.settleRegistrationPayment(deal.id, {});
+      const res = await api.deals.registerHold(deal.id, { ...ctx, value: DEFAULT_HOLD.value, unit: DEFAULT_HOLD.unit });
+      const url = res?.paymentUrl || paymentUrl;
+      if (url) window.open(url, '_blank', 'noopener');
+      else alert('השריון נוצר, אך לא ניתן היה להפיק קישור תשלום. בדקו הגדרות תשלום.');
     });
-  const sendLink = () =>
-    run(() => api.deals.registerSendLink(deal.id, { ...ctx, value: Number(value), unit, message: liveMessage, phone }));
+  // Send link: the server holds the seat, guarantees the URL is in the text,
+  // sends via the real WhatsApp bridge, and reports the true outcome. A failed
+  // send throws (502) — we surface it and still refresh (the hold was created).
+  const sendLink = async () => {
+    setBusy(true);
+    try {
+      await api.deals.registerSendLink(deal.id, { ...ctx, value: Number(value), unit, message: liveMessage, phone });
+      onDone?.();
+    } catch (e) {
+      const code = e.payload?.error || e.payload?.failureReason;
+      if (code === 'phone_required') alert('אין מספר טלפון לשליחה — הוסיפו איש קשר עם טלפון לדיל');
+      else if (e.payload?.sent === false || e.status === 502)
+        alert('השריון נוצר אך שליחת הוואטסאפ נכשלה. הקישור מוכן — נסו לשלוח שוב.');
+      else alert(errText(e));
+      onDone?.(); // refresh either way — the hold + the outcome are recorded
+    } finally {
+      setBusy(false);
+    }
+  };
   const noPayment = () =>
     run(() => api.deals.registerNoPayment(deal.id, { ...ctx, reason: reason.trim() }), () => !!reason.trim());
 
@@ -83,10 +123,11 @@ export default function CompletionModes({ deal, tourEventId, phone = '', context
 
       {mode === 'pay' && (
         <div className="rounded-lg border border-gray-200 p-3 text-[13px] text-gray-600">
-          נוצר שריון והדיל ייסגר עם אישור התשלום.
+          נוצר שריון וייפתח דף התשלום. הדיל <span className="font-semibold">נשאר פתוח</span> ונסגר אוטומטית רק לאחר אישור התשלום מחברת הסליקה.
+          {urlErr && <p className="mt-1 text-[12px] text-red-600">לא ניתן להפיק קישור תשלום: {urlErr}</p>}
           <div className="mt-3 flex justify-end">
             <button type="button" disabled={busy} onClick={payNow} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
-              {busy ? 'מעבד…' : 'צור שריון והמשך לתשלום'}
+              {busy ? 'מעבד…' : 'צור שריון ופתח דף תשלום'}
             </button>
           </div>
         </div>
@@ -117,13 +158,20 @@ export default function CompletionModes({ deal, tourEventId, phone = '', context
               rows={4}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-200"
             />
-            <p className="mt-1 text-[11.5px] text-gray-400">הטקסט מתעדכן אוטומטית עם המשך עד שעורכים אותו ידנית.</p>
+            <p className="mt-1 text-[11.5px] text-gray-400">
+              {paymentUrl
+                ? 'הטקסט כולל את קישור התשלום ומתעדכן אוטומטית עד לעריכה ידנית.'
+                : urlErr
+                  ? `לא ניתן להפיק קישור תשלום: ${urlErr}`
+                  : 'מפיק קישור תשלום…'}
+            </p>
           </div>
           <div className="flex justify-end">
-            <button type="button" disabled={busy} onClick={sendLink} className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50">
+            <button type="button" disabled={busy || !paymentUrl || !phone} onClick={sendLink} className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50">
               {busy ? 'שולח…' : 'שריין ושלח קישור'}
             </button>
           </div>
+          {!phone && <p className="text-left text-[11.5px] text-amber-600">אין מספר טלפון לשליחה בדיל.</p>}
         </div>
       )}
 

@@ -2,6 +2,12 @@ import express, { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { DOC_TYPE_LABELS, emitAccountingEvent, systemOrigin } from '../icountDocs.js';
+import { settleDealWonFromPayment } from '../deals/paymentWon.js';
+import { REG_HELD, REG_EXPIRED } from '../tours/registrationStatus.js';
+
+// iCount doctypes that RECORD money received (a קבלה / חשבונית מס קבלה). Only
+// these represent a completed payment — an invoice alone does not.
+const PAID_DOCTYPES = new Set(['receipt', 'invrec']);
 
 // iCount IPN receiver — audit log + BEST-EFFORT document capture.
 //
@@ -82,6 +88,37 @@ async function captureDocumentFromIpn(dealId, payload, customLinkId) {
   }
 }
 
+// Verified-payment → WON for a GROUP REGISTRATION. THE only automatic path that
+// settles a pay-now / send-link deal: a real PAID document (receipt / invrec)
+// arrived on the IPN for a deal that is holding a seat (a held or lately-expired
+// group reservation). settleDealWonFromPayment is idempotent (already-WON is a
+// no-op) so a retried/duplicated IPN never double-settles, and a non-paid
+// doctype (or a deal with no pending hold) changes nothing. Best-effort: never
+// throws into the webhook (the raw log is already safe).
+export async function settleGroupRegistrationFromIpn(
+  dealId,
+  payload,
+  { client = prisma, settle = settleDealWonFromPayment, log = console } = {},
+) {
+  try {
+    if (!dealId) return { settled: false, reason: 'no_deal' };
+    const doctype = pick(payload, ['doctype', 'doc_type', 'docType']);
+    if (!doctype || !PAID_DOCTYPES.has(doctype)) return { settled: false, reason: 'not_paid_doctype' };
+    // Only deals that went through pay-now / send-link carry a pending hold.
+    const pending = await client.ticketRegistration.findFirst({
+      where: { dealId, source: 'deal', status: { in: [REG_HELD, REG_EXPIRED] } },
+      select: { id: true },
+    });
+    if (!pending) return { settled: false, reason: 'no_pending_hold' };
+    const result = await settle(client, { dealId, origin: systemOrigin() });
+    if (result?.wonNow) log?.log?.(`[icount webhook] settled deal ${dealId} WON from verified payment (${doctype})`);
+    return { settled: !!result?.wonNow, alreadyWon: !!result?.alreadyWon, doctype };
+  } catch (err) {
+    log?.error?.('[icount webhook] group-registration settlement failed', err);
+    return { settled: false, reason: 'error' };
+  }
+}
+
 // The app-level parser is JSON-only; IPN providers also send form-urlencoded.
 // Accept both here so no payload shape is ever dropped.
 router.use(express.urlencoded({ extended: true, limit: '1mb' }));
@@ -102,8 +139,11 @@ router.post(
         data: { dealId, payload: req.body ?? {} },
       });
       console.log(`[icount webhook] logged ${log.id} (dealId=${dealId || '—'})`);
-      // After the log is safe: best-effort document capture (never throws).
+      // After the log is safe: best-effort document capture (never throws), then
+      // verified-payment settlement for a pending group registration (idempotent,
+      // never throws). Order is independent — both read the same logged payload.
       await captureDocumentFromIpn(dealId, req.body, customLinkId);
+      await settleGroupRegistrationFromIpn(dealId, req.body);
       return res.status(200).json({ ok: true, logId: log.id });
     } catch (err) {
       // Still 200 — iCount must not retry forever; the failure is in our logs.

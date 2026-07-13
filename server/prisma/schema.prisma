@@ -3405,6 +3405,13 @@ model TicketRegistration {
   priceRuleId      String? // loose ref — the sellable PriceRule (pricing is config)
   cardGroupId      String? // loose ref — the Pricing Card identity
   quantity         Int             @default(1)
+  // The CANONICAL purchased ticket composition (from the Group Ticket Builder's
+  // quote lines): [{ cardGroupId, cardTitle, ticketTypeId, ticketLabel,
+  // productVariantId, quantity }]. productVariantId above is the operationally-
+  // DOMINANT card variant derived from this (so a plain-only deal contributes
+  // only plain capabilities — never a stale tour-variant snapshot). Drives the
+  // per-customer + aggregate breakdown UI; generic over any future card/ticket.
+  ticketBreakdown  Json?
   // Where this registration originated: admin | deal | woocommerce | …
   // (validated in code, no Postgres enum — project convention).
   source           String          @default("admin")

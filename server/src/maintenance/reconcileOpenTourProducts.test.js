@@ -54,7 +54,7 @@ test('runs once: pending → claimed → done, with a stored summary marker', as
 });
 
 test('idempotent: a done marker is skipped (no re-run)', async () => {
-  const c = fakeClient({ job: { key: 'reconcile_open_tour_products_v2', status: 'done', startedAt: new Date(), attempts: 1 } });
+  const c = fakeClient({ job: { key: 'reconcile_open_tour_products_v3', status: 'done', startedAt: new Date(), attempts: 1 } });
   const res = await runReconcileOpenTourProductsOnce(c, null);
   assert.equal(res.skipped, true);
   assert.equal(c.state.job.status, 'done');
@@ -62,13 +62,13 @@ test('idempotent: a done marker is skipped (no re-run)', async () => {
 });
 
 test('concurrency-safe: a freshly-running marker (another instance) is skipped', async () => {
-  const c = fakeClient({ job: { key: 'reconcile_open_tour_products_v2', status: 'running', startedAt: new Date(), attempts: 1 } });
+  const c = fakeClient({ job: { key: 'reconcile_open_tour_products_v3', status: 'running', startedAt: new Date(), attempts: 1 } });
   const res = await runReconcileOpenTourProductsOnce(c, null);
   assert.equal(res.skipped, true);
 });
 
 test('retry-safe: a failed marker is reclaimed and completed on the next run', async () => {
-  const c = fakeClient({ job: { key: 'reconcile_open_tour_products_v2', status: 'failed', startedAt: new Date(0), attempts: 1 } });
+  const c = fakeClient({ job: { key: 'reconcile_open_tour_products_v3', status: 'failed', startedAt: new Date(0), attempts: 1 } });
   const res = await runReconcileOpenTourProductsOnce(c, null);
   assert.equal(res.done, true);
   assert.equal(c.state.job.status, 'done');
@@ -77,7 +77,7 @@ test('retry-safe: a failed marker is reclaimed and completed on the next run', a
 
 test('retry-safe: a STALE running marker (crashed instance) is reclaimed', async () => {
   const old = new Date(Date.now() - 60 * 60 * 1000); // 1h ago > 15m stale window
-  const c = fakeClient({ job: { key: 'reconcile_open_tour_products_v2', status: 'running', startedAt: old, attempts: 1 } });
+  const c = fakeClient({ job: { key: 'reconcile_open_tour_products_v3', status: 'running', startedAt: old, attempts: 1 } });
   const res = await runReconcileOpenTourProductsOnce(c, null);
   assert.equal(res.done, true);
 });

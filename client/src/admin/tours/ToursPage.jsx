@@ -119,28 +119,21 @@ function CustomerCell({ value, extra = 0 }) {
   );
 }
 
-// ALL customer/organization names on a tour (canonical active registrations).
-// Every name is shown (wrapping), never "first +N". A very long list is bounded
-// to the first few with an accessible "+N נוספים" whose tooltip carries the rest
-// — so no customer is ever hidden behind the first one.
+// ALL customer/organization names on a tour (canonical capacity registrations).
+// EVERY name is shown, comma-separated, wrapping naturally — never "first +N",
+// never first-name-only. Held (not-yet-confirmed) customers get a subtle muted
+// tint + "(משוריין)" tooltip so they read as tentative without being hidden.
 function CustomerNamesCell({ names }) {
   if (!names?.length) return dash;
-  const MAX = 4;
-  const shown = names.slice(0, MAX);
-  const rest = names.length - shown.length;
   return (
-    <span className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5" title={names.join('\n')}>
-      {shown.map((n, i) => (
-        <span key={i}>
-          {n}
-          {i < shown.length - 1 || rest > 0 ? <span className="text-gray-300">·</span> : null}
+    <span className="flex flex-wrap items-baseline gap-x-1 gap-y-0.5" title={names.map((n) => n.label).join(', ')}>
+      {names.map((n, i) => (
+        <span key={i} className={n.held ? 'text-gray-400' : undefined} title={n.held ? 'משוריין — טרם אושר' : undefined}>
+          {n.label}
+          {n.held ? <span className="text-gray-300"> ⏳</span> : null}
+          {i < names.length - 1 ? <span className="text-gray-400">,</span> : null}
         </span>
       ))}
-      {rest > 0 && (
-        <span className="text-gray-400" title={names.slice(MAX).join('\n')}>
-          +{rest} נוספים
-        </span>
-      )}
     </span>
   );
 }
@@ -224,7 +217,7 @@ const COLUMNS = [
   { key: 'organization', label: 'ארגון', def: false, sortVal: (t) => t.organizationDisplayName || '',
     cls: 'text-gray-700 max-w-[200px] truncate',
     render: (t) => <CustomerCell value={t.organizationDisplayName} extra={t.additionalBookingCount} /> },
-  { key: 'booker', label: 'מזמין', def: true, sortVal: (t) => (t.customerNames?.[0] || t.bookerDisplayName || ''),
+  { key: 'booker', label: 'מזמין', def: true, sortVal: (t) => (t.customerNames?.[0]?.label || t.bookerDisplayName || ''),
     cls: 'text-gray-800 max-w-[280px] align-top',
     render: (t) =>
       t.customerNames?.length ? (

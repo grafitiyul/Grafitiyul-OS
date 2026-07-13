@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { recomputeTourOperationalProduct, reconcileAllOpenTourProducts } from './operationalProduct.js';
+import { recomputeTourOperationalProduct } from './operationalProduct.js';
+import { reconcileAllOpenTourProducts } from './reconcileProducts.js';
 
 // Full-recomputation regression for the workshop-derivation bug. Uses a stateful
 // fake so we assert the PERSISTED product/variant/components after reconcile —

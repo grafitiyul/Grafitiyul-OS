@@ -61,6 +61,8 @@ export async function syncDealRegistration(tx, booking, tour, opts = {}) {
       : existing
         ? existing.productVariantId
         : (tour?.productVariantId ?? null);
+  // The canonical purchased composition — set only when the caller resolved it.
+  const breakdownPatch = opts.ticketBreakdown !== undefined ? { ticketBreakdown: opts.ticketBreakdown } : {};
   let regId;
   if (existing) {
     await tx.ticketRegistration.update({
@@ -72,6 +74,7 @@ export async function syncDealRegistration(tx, booking, tour, opts = {}) {
         bookingId: booking.id,
         externalOrderId: booking.dealId,
         externalLineId: booking.id,
+        ...breakdownPatch,
         // Adoption confirms + clears the hold; preserve the row's audit history.
         ...(adopting ? { confirmedAt: new Date(), expiresAt: null, paymentStatus: 'paid' } : {}),
         cancelledAt: status === 'cancelled' ? existing.cancelledAt || new Date() : null,
@@ -90,6 +93,7 @@ export async function syncDealRegistration(tx, booking, tour, opts = {}) {
         externalOrderId: booking.dealId,
         externalLineId: booking.id,
         status,
+        ...breakdownPatch,
         cancelledAt: status === 'cancelled' ? new Date() : null,
       },
     });

@@ -3,6 +3,7 @@ import { REG_HELD, REG_EXPIRED } from '../tours/registrationStatus.js';
 import { recomputeTourOperationalProduct } from '../tours/operationalProduct.js';
 import { markTourWooPending } from '../tours/woo/service.js';
 import { settleDealWonNoPayment } from './paymentWon.js';
+import { resolveDealGroupOffering } from './groupOffering.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
 import { durationToMs, durationLabelHe } from '../../../shared/reservationDuration.mjs';
 
@@ -18,6 +19,12 @@ export async function holdRegistrationForDeal(client, opts = {}) {
   const ms = durationToMs(value, unit);
   const expiresAt = ms ? new Date(Date.now() + ms) : null;
   return client.$transaction(async (tx) => {
+    // The held seat's operational capability + composition come from the deal's
+    // Group Ticket Builder card selection (the canonical offering), never a tour
+    // snapshot. Explicit opts.productVariantId still wins if the caller forces it.
+    const offering = await resolveDealGroupOffering(tx, dealId);
+    const wantVariant = productVariantId ?? offering?.productVariantId ?? null;
+    const breakdown = offering ? offering.ticketBreakdown : undefined;
     const existing = await tx.ticketRegistration.findFirst({
       where: { dealId, tourEventId, status: { in: [REG_HELD, REG_EXPIRED] } },
       orderBy: { createdAt: 'desc' },
@@ -30,9 +37,10 @@ export async function holdRegistrationForDeal(client, opts = {}) {
         data: {
           status: REG_HELD,
           quantity: Number(quantity) || existing.quantity,
-          productVariantId: productVariantId ?? existing.productVariantId,
+          productVariantId: wantVariant ?? existing.productVariantId,
           priceRuleId: priceRuleId ?? existing.priceRuleId,
           cardGroupId: cardGroupId ?? existing.cardGroupId,
+          ...(breakdown !== undefined ? { ticketBreakdown: breakdown } : {}),
           expiresAt,
           heldAt: new Date(),
           expiredAt: null,
@@ -42,7 +50,7 @@ export async function holdRegistrationForDeal(client, opts = {}) {
       await recomputeTourOperationalProduct(tx, tourEventId);
       await markTourWooPending(tx, tourEventId);
     } else {
-      reg = await createHeldRegistration(tx, { tourEventId, dealId, productVariantId, priceRuleId, cardGroupId, quantity, source, expiresAt });
+      reg = await createHeldRegistration(tx, { tourEventId, dealId, productVariantId: wantVariant, priceRuleId, cardGroupId, quantity, source, expiresAt, ticketBreakdown: breakdown });
       created = true;
     }
     await emitTimelineEvent(tx, {
@@ -57,17 +65,32 @@ export async function holdRegistrationForDeal(client, opts = {}) {
   });
 }
 
-// Send-payment-link: create/extend the hold, then record the EXACT message the
-// operator is sending in the Deal timeline (audit). The actual WhatsApp delivery
-// reuses the existing WhatsApp pipeline (client). Deal stays OPEN; the expiry
-// worker handles expiration. Idempotent (re-send extends the same hold).
-export async function recordPaymentLinkSent(client, { dealId, tourEventId, registrationId, message, phone, paymentLink, origin }) {
+// Record the EXACT payment-link message + URL in the Deal timeline (audit),
+// stamped with the real delivery OUTCOME. `sent:true` only when the WhatsApp
+// bridge acknowledged the send — a failed send is recorded honestly as a failure
+// (never as "sent"). Deal stays OPEN either way; the expiry worker handles the
+// hold. Called after the hold is created and the send attempt returns.
+export async function recordPaymentLinkOutcome(
+  client,
+  { dealId, tourEventId, registrationId, message, phone, paymentLink, sent, externalMessageId = null, failureReason = null, origin },
+) {
   await emitTimelineEvent(client, {
     subjectType: 'deal',
     subjectId: dealId,
     kind: 'tour',
-    body: '📲 נשלח קישור לתשלום (וואטסאפ)',
-    data: { event: 'payment_link_sent', tourEventId, registrationId, message, phone: phone || null, paymentLink: paymentLink || null },
+    body: sent
+      ? '📲 נשלח קישור לתשלום (וואטסאפ)'
+      : `⚠️ שליחת קישור התשלום נכשלה${failureReason ? ` (${failureReason})` : ''} — הקישור מוכן לשליחה חוזרת`,
+    data: {
+      event: sent ? 'payment_link_sent' : 'payment_link_send_failed',
+      tourEventId,
+      registrationId,
+      message,
+      phone: phone || null,
+      paymentLink: paymentLink || null,
+      externalMessageId,
+      failureReason,
+    },
     origin: origin || systemOrigin(),
   });
 }
@@ -92,9 +115,51 @@ export async function cancelHold(client, { dealId, origin }) {
   });
 }
 
+// HTML-escape a reason before it becomes note body (the note is rich HTML).
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// A PINNED Deal note recording the no-payment reason, so it sits in the Deal
+// FOCUS area (near the top) — the reason is never buried in the timeline. Uses
+// the SAME timelineEntry + pin mechanism as accounting docs. Idempotent: repeat
+// registrations UPDATE the single marked note (data.event='no_payment_note')
+// instead of stacking duplicates.
+async function pinNoPaymentNote(client, { dealId, reason, origin }) {
+  const body = `<p><strong>רישום ללא תשלום:</strong> ${escapeHtml(reason)}</p>`;
+  const existing = await client.timelineEntry.findFirst({
+    where: { subjectType: 'deal', subjectId: dealId, kind: 'note', isPinned: true, deletedAt: null, data: { path: ['event'], equals: 'no_payment_note' } },
+    select: { id: true },
+  });
+  if (existing) {
+    return client.timelineEntry.update({
+      where: { id: existing.id },
+      data: { body, data: { event: 'no_payment_note', reason } },
+    });
+  }
+  const last = await client.timelineEntry.findFirst({
+    where: { subjectType: 'deal', subjectId: dealId, isPinned: true, deletedAt: null },
+    orderBy: { pinSortOrder: 'desc' },
+    select: { pinSortOrder: true },
+  });
+  const entry = await emitTimelineEvent(client, {
+    subjectType: 'deal',
+    subjectId: dealId,
+    kind: 'note',
+    body,
+    data: { event: 'no_payment_note', reason },
+    origin: origin || systemOrigin(),
+  });
+  return client.timelineEntry.update({
+    where: { id: entry.id },
+    data: { isPinned: true, pinSortOrder: (last?.pinSortOrder ?? -1) + 1 },
+  });
+}
+
 // Register WITHOUT payment: reason required, stored canonically, Deal → WON via
 // the ONE canonical path (settleDealWonNoPayment). The commercial total is not
-// erased. Idempotent (WON once).
+// erased. A PINNED Deal note surfaces the reason near the top. Idempotent (WON
+// once; the pinned note is updated, never duplicated).
 export async function registerWithoutPayment(client, { dealId, tourEventId, reason, allowOverbook = false, origin }) {
   const trimmed = String(reason || '').trim();
   if (!trimmed) {
@@ -102,5 +167,9 @@ export async function registerWithoutPayment(client, { dealId, tourEventId, reas
     e.code = 'no_payment_reason_required';
     throw e;
   }
-  return settleDealWonNoPayment(client, { dealId, targetTourEventId: tourEventId, reason: trimmed, allowOverbook, origin });
+  const result = await settleDealWonNoPayment(client, { dealId, targetTourEventId: tourEventId, reason: trimmed, allowOverbook, origin });
+  // Pin AFTER the WON settlement so it never leaves a note on a deal that failed
+  // to settle (e.g. tour_full throws above and we never reach here).
+  await pinNoPaymentNote(client, { dealId, reason: trimmed, origin });
+  return result;
 }

@@ -29,8 +29,14 @@ import { resolveTourGuideColor, resolveTourGuideColorInfo } from '../../../share
 import {
   resolveBookingsCustomerIdentity,
   withBookingCount,
-  dealBookerLabel,
 } from '../tours/customerDisplay.js';
+import {
+  fetchTourParticipantRegistrations,
+  tourCustomerNames,
+  tourParticipantBreakdown,
+  PARTICIPANT_REGISTRATION_SELECT,
+} from '../tours/participants.js';
+import { CAPACITY_STATUSES } from '../tours/registrationStatus.js';
 import {
   calendarPendingPatch,
   patchTouchesCalendar,
@@ -160,30 +166,14 @@ async function tourListExtrasFor(tourEventIds) {
         },
       },
     }),
-    // Canonical customer names come from ACTIVE TicketRegistrations (the seat
-    // SSOT — includes deal AND future website registrations), not bookings.
+    // Canonical customer names come from the capacity-consuming TicketRegistrations
+    // (confirmed + held — the seat SSOT, deal AND future website rows), not
+    // bookings. Confirmed WON deals normalize to 'confirmed', so a status:'active'
+    // filter would MISS them — we take the whole CAPACITY set and split by status.
     prisma.ticketRegistration.findMany({
-      where: { tourEventId: { in: ids }, status: 'active' },
+      where: { tourEventId: { in: ids }, status: { in: CAPACITY_STATUSES } },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      select: {
-        tourEventId: true,
-        customerName: true,
-        deal: {
-          select: {
-            title: true,
-            organization: { select: { name: true } },
-            contacts: {
-              orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
-              take: 1,
-              select: {
-                contact: {
-                  select: { firstNameHe: true, lastNameHe: true, firstNameEn: true, lastNameEn: true },
-                },
-              },
-            },
-          },
-        },
-      },
+      select: PARTICIPANT_REGISTRATION_SELECT,
     }),
   ]);
   const assignmentsByTour = new Map();
@@ -196,16 +186,16 @@ async function tourListExtrasFor(tourEventIds) {
     if (!bookingsByTour.has(b.tourEventId)) bookingsByTour.set(b.tourEventId, []);
     bookingsByTour.get(b.tourEventId).push(b);
   }
-  // Distinct customer labels per tour from active registrations (deal booker
-  // "contact · org", or the registration's own customerName for website rows).
-  const namesByTour = new Map();
+  // Distinct customer labels per tour from the capacity registrations, built by
+  // the ONE canonical helper → [{ label, held }]. The table renders every one,
+  // comma-separated (no "+N"); held customers get a subtle indicator.
+  const regsByTour = new Map();
   for (const r of registrationRows) {
-    const label = dealBookerLabel(r.deal) || (r.customerName || '').trim() || null;
-    if (!label) continue;
-    if (!namesByTour.has(r.tourEventId)) namesByTour.set(r.tourEventId, []);
-    const list = namesByTour.get(r.tourEventId);
-    if (!list.includes(label)) list.push(label);
+    if (!regsByTour.has(r.tourEventId)) regsByTour.set(r.tourEventId, []);
+    regsByTour.get(r.tourEventId).push(r);
   }
+  const namesByTour = new Map();
+  for (const [tid, rows] of regsByTour) namesByTour.set(tid, tourCustomerNames(rows));
   const staff = (a) => ({
     name: a.displayName,
     imageUrl: a.personRef?.profile?.imageUrl || null,
@@ -746,12 +736,18 @@ router.get(
       },
     });
     if (!tour) return res.status(404).json({ error: 'not_found' });
-    const occ = await occupancyFor(prisma, [tour.id]);
+    const [occ, participantRegs] = await Promise.all([
+      occupancyFor(prisma, [tour.id]),
+      fetchTourParticipantRegistrations(prisma, [tour.id]),
+    ]);
     res.json({
       ...toClientTour(tour, occ[tour.id]),
       // Same canonical derivation as the list/calendar — clients never
       // compute their own guide-color rule.
       guideColor: resolveTourGuideColor(toColorAssignments(tour.assignments)),
+      // Purchased-ticket composition from the canonical registrations (seat SSOT)
+      // — aggregate summary + per-customer breakdown for the participant section.
+      participantBreakdown: tourParticipantBreakdown(participantRegs),
     });
   }),
 );

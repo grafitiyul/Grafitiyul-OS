@@ -25,6 +25,7 @@ export async function createHeldRegistration(client, data) {
       priceRuleId: data.priceRuleId ?? null,
       cardGroupId: data.cardGroupId ?? null,
       quantity: Number(data.quantity) || 0,
+      ...(data.ticketBreakdown !== undefined ? { ticketBreakdown: data.ticketBreakdown } : {}),
       source: data.source || 'deal',
       dealId: data.dealId ?? null,
       bookingId: data.bookingId ?? null,

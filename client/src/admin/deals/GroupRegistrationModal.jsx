@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Dialog from '../common/Dialog.jsx';
 import { api } from '../../lib/api.js';
 import { formatMinor } from '../../lib/money.js';
 import { fmtTourDate } from '../tours/config.js';
-import GroupTicketBuilderDialog from './GroupTicketBuilderDialog.jsx';
+import GroupTicketBuilder from './GroupTicketBuilder.jsx';
 import TourSlotModal from '../tours/TourSlotModal.jsx';
 import CompletionModes from './CompletionModes.jsx';
 
@@ -39,14 +39,35 @@ function Section({ index, title, active, done, summary, onOpen, children }) {
 
 const dealComplete = (d) => Number(d?.participants) > 0 && (d?.productId || d?.productVariantId);
 
+// The deal's payment-link phone for display: the contact flagged to receive
+// payment links, else the primary/first contact, then its primary/first phone.
+// The SERVER re-resolves this authoritatively on send — this is only for the UI.
+function dealPhone(deal) {
+  const list = deal?.contacts || [];
+  const dc = list.find((c) => c.receivePaymentLinks) || list[0] || null;
+  const phones = dc?.contact?.phones || [];
+  const primary = phones.find((p) => p.isPrimary) || phones[0] || null;
+  return primary?.value || '';
+}
+
 export default function GroupRegistrationModal({ deal, onClose, onChanged, initialSection }) {
-  const builderDone = dealComplete(deal);
   const existingTour = deal.groupRegistration?.tour || (deal.bookings || []).find((b) => b.status === 'active')?.tourEvent || null;
+  // Locally-tracked offering summary — updated on inline-builder save so the
+  // collapsed Section-1 summary + the completion context reflect the save without
+  // waiting for a full parent reload.
+  const [savedOffering, setSavedOffering] = useState(
+    dealComplete(deal)
+      ? { participants: Number(deal.participants) || 0, valueMinor: deal.valueMinor ?? null, productId: deal.productId || null, productVariantId: deal.productVariantId || null, productName: deal.product?.nameHe || null }
+      : null,
+  );
+  const builderDone = !!savedOffering && Number(savedOffering.participants) > 0;
   const [section, setSection] = useState(initialSection || (builderDone ? 2 : 1));
   const [selectedTour, setSelectedTour] = useState(existingTour);
-  const [builderOpen, setBuilderOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [tours, setTours] = useState(null);
+  const [hasSelection, setHasSelection] = useState(builderDone);
+  const [saving, setSaving] = useState(false);
+  const builderRef = useRef(null);
 
   useEffect(() => {
     if (section !== 2 || tours) return;
@@ -57,17 +78,41 @@ export default function GroupRegistrationModal({ deal, onClose, onChanged, initi
   }, [section, tours]);
 
   const offeringSummary = builderDone
-    ? [deal.product?.nameHe, deal.participants ? `${deal.participants} משתתפים` : null, deal.valueMinor ? formatMinor(deal.valueMinor) : null]
+    ? [savedOffering.productName || deal.product?.nameHe, savedOffering.participants ? `${savedOffering.participants} משתתפים` : null, savedOffering.valueMinor != null ? formatMinor(savedOffering.valueMinor) : null]
         .filter(Boolean)
         .join(' · ')
     : 'טרם הוגדרה עסקה';
   const ctx = {
-    productVariantId: deal.productVariantId || null,
-    quantity: Number(deal.participants) || 1,
+    productVariantId: savedOffering?.productVariantId || deal.productVariantId || null,
+    quantity: Number(savedOffering?.participants) || Number(deal.participants) || 1,
   };
 
+  // Save the inline builder; optionally advance to tour selection. The builder
+  // returns the derived offering (participants/value/product) — no recalculation.
+  async function saveBuilder({ advance }) {
+    setSaving(true);
+    try {
+      const r = await builderRef.current?.save();
+      if (r?.ok) {
+        setSavedOffering({
+          participants: r.participants,
+          valueMinor: r.valueMinor,
+          productId: r.productId || null,
+          productVariantId: r.productVariantId || null,
+          productName: savedOffering?.productName || deal.product?.nameHe || null,
+        });
+        onChanged?.();
+        if (advance) setSection(2);
+      }
+    } catch {
+      /* the builder surfaces the error inline */
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
-    <Dialog open onClose={onClose} title="רישום לסיור קבוצתי" size="2xl">
+    <Dialog open onClose={onClose} title="רישום לסיור קבוצתי" size="lg">
       <div className="space-y-3">
         <Section
           index={1}
@@ -78,18 +123,25 @@ export default function GroupRegistrationModal({ deal, onClose, onChanged, initi
           onOpen={() => setSection(1)}
         >
           <div className="space-y-3">
-            <div className="rounded-lg bg-gray-50 px-3 py-2 text-[13px] text-gray-700">{offeringSummary}</div>
-            <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setBuilderOpen(true)} className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
-                עריכת כרטיסים
+            {/* The Group Ticket Builder, INLINE (no separate dialog) — narrow +
+                compact for group-ticket sales, reusing the shared builder body. */}
+            <GroupTicketBuilder ref={builderRef} deal={deal} context={{}} compact onSelectionChange={setHasSelection} />
+            <div className="flex justify-end gap-2 border-t border-gray-100 pt-3">
+              <button
+                type="button"
+                disabled={saving || !hasSelection}
+                onClick={() => saveBuilder({ advance: false })}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                {saving ? 'שומר…' : 'שמור'}
               </button>
               <button
                 type="button"
-                disabled={!builderDone}
-                onClick={() => setSection(2)}
+                disabled={saving || !hasSelection}
+                onClick={() => saveBuilder({ advance: true })}
                 className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
               >
-                שמור ושבץ לסיור
+                {saving ? 'שומר…' : 'שמור ושבץ לסיור'}
               </button>
             </div>
           </div>
@@ -150,7 +202,7 @@ export default function GroupRegistrationModal({ deal, onClose, onChanged, initi
             <CompletionModes
               deal={deal}
               tourEventId={selectedTour.id}
-              phone={deal.customerPhone || ''}
+              phone={dealPhone(deal)}
               context={ctx}
               onDone={() => { onChanged?.(); onClose?.(); }}
             />
@@ -160,15 +212,6 @@ export default function GroupRegistrationModal({ deal, onClose, onChanged, initi
         </Section>
       </div>
 
-      {builderOpen && (
-        <GroupTicketBuilderDialog
-          open
-          deal={deal}
-          context={{}}
-          onClose={() => setBuilderOpen(false)}
-          onSaved={() => { setBuilderOpen(false); onChanged?.(); }}
-        />
-      )}
       {createOpen && (
         <TourSlotModal
           open

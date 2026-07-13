@@ -94,7 +94,30 @@ function makeStore(init = {}) {
     openTourTemplateProduct: { findMany: async () => [], findFirst: async () => null },
     productVariant: { findMany: async () => [] },
     tourEventActivityComponent: { findMany: async () => [], deleteMany: async () => ({ count: 0 }), createMany: async () => ({ count: 0 }) },
-    timelineEntry: { create: async ({ data }) => { s.timeline.push(data); return {}; } },
+    timelineEntry: {
+      create: async ({ data }) => {
+        const row = { id: `tl${s.timeline.length + 1}`, ...data };
+        s.timeline.push(row);
+        return row;
+      },
+      findFirst: async ({ where }) => {
+        const wantEvent = where?.data?.equals;
+        return (
+          [...s.timeline].reverse().find(
+            (t) =>
+              t.subjectId === where.subjectId &&
+              (where.kind ? t.kind === where.kind : true) &&
+              (where.isPinned !== undefined ? !!t.isPinned === where.isPinned : true) &&
+              (wantEvent ? t.data?.event === wantEvent : true),
+          ) || null
+        );
+      },
+      update: async ({ where, data }) => {
+        const row = s.timeline.find((t) => t.id === where.id);
+        if (row) Object.assign(row, data);
+        return row || {};
+      },
+    },
   };
   return client;
 }
@@ -209,4 +232,21 @@ test('registerWithoutPayment stores the reason canonically + WONs the deal', asy
   assert.equal(reg.paymentStatus, 'waived'); // not a fabricated payment
   assert.equal(reg.noPaymentReason, 'אישור מנהל — לקוח VIP');
   assert.ok(c._s.timeline.some((t) => t.data?.event === 'no_payment_won'));
+  // A PINNED note surfaces the reason near the top (PART 7).
+  const pinned = c._s.timeline.filter((t) => t.data?.event === 'no_payment_note');
+  assert.equal(pinned.length, 1);
+  assert.equal(pinned[0].isPinned, true);
+  assert.match(pinned[0].body, /רישום ללא תשלום/);
+});
+
+test('registerWithoutPayment repeated does NOT duplicate the pinned note', async () => {
+  const c = makeStore({
+    deals: { d1: { id: 'd1', status: 'open', activityType: 'group', participants: 4, productVariantId: 'v_plain', orderNo: 27013 } },
+    tours: { slot1: { id: 'slot1', kind: 'group_slot', status: 'scheduled', capacity: 20, productVariantId: 'v', productId: 'p' } },
+  });
+  await registerWithoutPayment(c, { dealId: 'd1', tourEventId: 'slot1', reason: 'סיבה א' });
+  await registerWithoutPayment(c, { dealId: 'd1', tourEventId: 'slot1', reason: 'סיבה ב' });
+  const pinned = c._s.timeline.filter((t) => t.data?.event === 'no_payment_note');
+  assert.equal(pinned.length, 1); // updated in place, never duplicated
+  assert.match(pinned[0].body, /סיבה ב/); // reflects the latest reason
 });

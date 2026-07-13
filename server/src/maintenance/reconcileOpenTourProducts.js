@@ -1,4 +1,4 @@
-import { reconcileAllOpenTourProducts } from '../tours/operationalProduct.js';
+import { reconcileAllOpenTourProducts } from '../tours/reconcileProducts.js';
 
 // Automatic one-time reconciliation of stale open-tour operational products,
 // gated by a durable MaintenanceJob MARKER so it runs EXACTLY ONCE across
@@ -15,10 +15,15 @@ import { reconcileAllOpenTourProducts } from '../tours/operationalProduct.js';
 
 // v2: v1 recomputed the tour product FROM the registrations but never corrected
 // the registrations' own stale (workshop) variants, so a plain-only tour kept
-// re-deriving workshop. v2 re-aligns deal-registration variants to their deal
-// first, then recomputes. A new KEY forces the corrected job to re-run once even
-// though v1's marker is already 'done'.
-const KEY = 'reconcile_open_tour_products_v2';
+// re-deriving workshop. v2 re-aligned deal-registration variants to their deal
+// first, then recomputed.
+// v3: v2 aligned to deal.productVariantId, which is ITSELF a stale snapshot for a
+// group deal (it never reflects the Group Ticket Builder card edits). v3 re-aligns
+// each deal registration to its CANONICAL offering resolved from the deal's
+// group-ticket quote lines (the cards actually bought) — variant AND breakdown —
+// so a plain-only card selection heals a tour even when deal.productVariantId is
+// stale workshop. A new KEY forces the corrected job to re-run once.
+const KEY = 'reconcile_open_tour_products_v3';
 const STALE_MS = 15 * 60 * 1000;
 
 // Extracted for tests. Returns { done, skipped, failed, summary? }.

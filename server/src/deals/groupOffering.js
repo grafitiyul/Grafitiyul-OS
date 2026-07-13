@@ -1,0 +1,110 @@
+import { deriveOperational } from '../tours/operationalProduct.js';
+
+// Resolve a group Deal's CANONICAL purchased offering from the Group Ticket
+// Builder's quote lines (the source of truth for what the customer bought) — NOT
+// from any TourEvent variant snapshot. Returns:
+//   { productVariantId, productId, quantity, ticketBreakdown }
+// where productVariantId is the operationally-DOMINANT card variant (the superset
+// among the cards bought — so a plain-only deal is plain, a deal with any
+// workshop card is workshop), and ticketBreakdown is the full composition for
+// the per-customer / aggregate breakdown UI. Returns null when the deal has no
+// group-ticket lines (caller falls back to deal.productVariantId).
+export async function resolveDealGroupOffering(client, dealId) {
+  // No quote subsystem reachable (or no working version) → no group offering; the
+  // caller falls back to deal.productVariantId. Keeps single-product deal paths
+  // (and their fakes) working without a quote surface.
+  if (!dealId || !client?.quoteVersion?.findFirst) return null;
+  const version = await client.quoteVersion.findFirst({ where: { dealId, isWorking: true }, select: { id: true } });
+  if (!version) return null;
+  const lines = await client.quoteLine.findMany({
+    where: { quoteVersionId: version.id, sourceKind: 'group_ticket', active: true, quantity: { gt: 0 } },
+    select: {
+      sourceCardGroupId: true,
+      productVariantId: true,
+      quantity: true,
+      ticketTypeId: true,
+      ticketType: { select: { nameHe: true } },
+    },
+    orderBy: { sortOrder: 'asc' },
+  });
+  if (!lines.length) return null;
+
+  const cardIds = [...new Set(lines.map((l) => l.sourceCardGroupId).filter(Boolean))];
+  const rules = cardIds.length
+    ? await client.priceRule.findMany({
+        where: { cardGroupId: { in: cardIds } },
+        select: { cardGroupId: true, product: { select: { nameHe: true } } },
+      })
+    : [];
+  const titleByCard = new Map();
+  for (const r of rules) if (r.cardGroupId && !titleByCard.has(r.cardGroupId)) titleByCard.set(r.cardGroupId, r.product?.nameHe || 'כרטיס');
+
+  const ticketBreakdown = lines.map((l) => ({
+    cardGroupId: l.sourceCardGroupId || null,
+    cardTitle: titleByCard.get(l.sourceCardGroupId) || 'כרטיס',
+    ticketTypeId: l.ticketTypeId || null,
+    ticketLabel: l.ticketType?.nameHe || 'כרטיס',
+    productVariantId: l.productVariantId || null,
+    quantity: l.quantity || 0,
+  }));
+  const quantity = ticketBreakdown.reduce((n, b) => n + (b.quantity || 0), 0);
+
+  // Dominant operational variant across the DISTINCT card variants bought.
+  const variantIds = [...new Set(ticketBreakdown.map((b) => b.productVariantId).filter(Boolean))];
+  let productVariantId = null;
+  let productId = null;
+  if (variantIds.length) {
+    const variants = await client.productVariant.findMany({
+      where: { id: { in: variantIds } },
+      select: {
+        id: true,
+        productId: true,
+        durationHours: true,
+        activityComponents: { orderBy: { sortOrder: 'asc' }, select: { activityComponentId: true } },
+      },
+    });
+    const derived = deriveOperational(variants);
+    if (derived) {
+      productVariantId = derived.displayVariantId;
+      productId = derived.displayProductId;
+    }
+  }
+  return { productVariantId, productId, quantity, ticketBreakdown };
+}
+
+// PURE aggregate over a set of active registrations' breakdowns → the tour-level
+// summary. Only dimensions that actually exist are returned; nothing is
+// hardcoded. Returns { total, byCard: [{key,label,quantity}], byTicketType: […] }.
+export function aggregateBreakdowns(registrations) {
+  const byCard = new Map();
+  const byTicket = new Map();
+  let total = 0;
+  for (const reg of registrations || []) {
+    const rows = Array.isArray(reg?.ticketBreakdown) ? reg.ticketBreakdown : null;
+    if (rows && rows.length) {
+      for (const b of rows) {
+        const q = Number(b.quantity) || 0;
+        total += q;
+        if (b.cardGroupId || b.cardTitle) {
+          const key = b.cardGroupId || b.cardTitle;
+          const e = byCard.get(key) || { key, label: b.cardTitle || 'כרטיס', quantity: 0 };
+          e.quantity += q;
+          byCard.set(key, e);
+        }
+        if (b.ticketTypeId || b.ticketLabel) {
+          const key = b.ticketTypeId || b.ticketLabel;
+          const e = byTicket.get(key) || { key, label: b.ticketLabel || 'כרטיס', quantity: 0 };
+          e.quantity += q;
+          byTicket.set(key, e);
+        }
+      }
+    } else {
+      total += Number(reg?.quantity) || 0; // legacy row with no breakdown
+    }
+  }
+  return {
+    total,
+    byCard: [...byCard.values()].filter((e) => e.quantity > 0),
+    byTicketType: [...byTicket.values()].filter((e) => e.quantity > 0),
+  };
+}
