@@ -180,6 +180,35 @@ async function createEntry(client, { activity, source, person, role, tourAssignm
 
 // Materialise/reconcile payroll for a COMPLETED tour. Idempotent — safe to
 // call from the completion hook, the day screen, and the drawer.
+// Decide how a tour's payroll entries reconcile against its current
+// assignments. Matching is by the ASSIGNMENT SLOT (tourAssignmentId), NOT the
+// person — a payroll-only guide change (change-guide) repoints an entry's owner
+// away from the assignment's person while keeping the slot, and must survive
+// this reconcile (which runs on every activity open). Legacy entries with no
+// slot fall back to their person. Pure + deterministic so it can be tested
+// without a database.
+//   returns { create: [assignment], reactivate: [{entry, assignment}], cancel: [entry] }
+export function planSlotReconcile(assignments, entries) {
+  const entryBySlot = new Map();
+  const entryByExt = new Map();
+  for (const e of entries) {
+    if (e.tourAssignmentId) entryBySlot.set(e.tourAssignmentId, e);
+    else entryByExt.set(e.externalPersonId, e);
+  }
+  const create = [];
+  const reactivate = [];
+  for (const a of assignments) {
+    const existing = entryBySlot.get(a.id) || entryByExt.get(a.externalPersonId);
+    if (!existing) create.push(a);
+    else if (existing.state === 'cancelled') reactivate.push({ entry: existing, assignment: a });
+  }
+  const assignedSlots = new Set(assignments.map((a) => a.id));
+  const cancel = entries.filter(
+    (e) => e.state === 'active' && e.tourAssignmentId && !assignedSlots.has(e.tourAssignmentId),
+  );
+  return { create, reactivate, cancel };
+}
+
 export async function ensureTourPayroll(client, tourEventId) {
   const tour = await client.tourEvent.findUnique({
     where: { id: tourEventId },
@@ -234,35 +263,46 @@ export async function ensureTourPayroll(client, tourEventId) {
     });
   }
 
-  // Reconcile entries against current assignments (by stable externalPersonId).
+  // Reconcile entries against current assignments by the ASSIGNMENT SLOT
+  // (tourAssignmentId) — NOT the person. A payroll-only guide change
+  // (change-guide) deliberately repoints an entry's owner away from the
+  // assignment's person while KEEPING the slot; matching by person here would
+  // recreate the old guide's entry and cancel the reassigned one on the next
+  // reconcile (this runs on every activity open). The slot is the stable key.
   const components = await loadComponents(client);
-  const persons = tour.assignments.length
+  // Profiles for BOTH the assigned people AND current entry owners: a
+  // reassigned entry's owner is not among the assignments, but their
+  // seniority / travel / VAT must still drive the draft recalculation below.
+  const extIds = new Set([
+    ...tour.assignments.map((a) => a.externalPersonId),
+    ...activity.entries.filter((e) => e.state === 'active').map((e) => e.externalPersonId),
+  ]);
+  const persons = extIds.size
     ? await client.personRef.findMany({
-        where: { externalPersonId: { in: tour.assignments.map((a) => a.externalPersonId) } },
+        where: { externalPersonId: { in: [...extIds] } },
         include: { profile: true },
       })
     : [];
   const personByExt = new Map(persons.map((p) => [p.externalPersonId, p]));
-  const entryByExt = new Map(activity.entries.map((e) => [e.externalPersonId, e]));
   const tourInputs = await buildTourInputs(client, tour, components);
 
+  // Slot-based reconcile (see planSlotReconcile) — reassigned entries keep their
+  // slot and survive; only genuinely unfilled slots create entries and only
+  // slots that lost their assignment cancel.
+  const plan = planSlotReconcile(tour.assignments, activity.entries);
   let changed = false;
-  for (const a of tour.assignments) {
-    const existing = entryByExt.get(a.externalPersonId);
-    if (existing) {
-      if (existing.state === 'cancelled') {
-        await client.payrollEntry.update({
-          where: { id: existing.id },
-          data: { state: 'active', tourAssignmentId: a.id, role: a.role },
-        });
-        await emitPayrollEvent(client, activity.id, `↩️ הרשומה של ${a.displayName} הוחזרה לפעילה (שובץ מחדש)`, {
-          event: 'entry_reactivated',
-          externalPersonId: a.externalPersonId,
-        });
-        changed = true;
-      }
-      continue;
-    }
+  for (const { entry: existing, assignment: a } of plan.reactivate) {
+    await client.payrollEntry.update({
+      where: { id: existing.id },
+      data: { state: 'active', tourAssignmentId: a.id, role: a.role },
+    });
+    await emitPayrollEvent(client, activity.id, `↩️ הרשומה של ${existing.displayName} הוחזרה לפעילה (שובץ מחדש)`, {
+      event: 'entry_reactivated',
+      externalPersonId: existing.externalPersonId,
+    });
+    changed = true;
+  }
+  for (const a of plan.create) {
     const person = personByExt.get(a.externalPersonId);
     await createEntry(client, {
       activity,
@@ -280,18 +320,14 @@ export async function ensureTourPayroll(client, tourEventId) {
     });
     changed = true;
   }
-  // Assignment removed after entries existed → cancel (NEVER delete).
-  const assignedExt = new Set(tour.assignments.map((a) => a.externalPersonId));
-  for (const e of activity.entries) {
-    if (e.state === 'active' && e.tourAssignmentId && !assignedExt.has(e.externalPersonId)) {
-      await client.payrollEntry.update({ where: { id: e.id }, data: { state: 'cancelled' } });
-      await emitPayrollEvent(client, activity.id, `🚫 הרשומה של ${e.displayName} בוטלה (השיבוץ הוסר)`, {
-        event: 'entry_cancelled',
-        reason: 'assignment_removed',
-        externalPersonId: e.externalPersonId,
-      });
-      changed = true;
-    }
+  for (const e of plan.cancel) {
+    await client.payrollEntry.update({ where: { id: e.id }, data: { state: 'cancelled' } });
+    await emitPayrollEvent(client, activity.id, `🚫 הרשומה של ${e.displayName} בוטלה (השיבוץ הוסר)`, {
+      event: 'entry_cancelled',
+      reason: 'assignment_removed',
+      externalPersonId: e.externalPersonId,
+    });
+    changed = true;
   }
 
   // DRAFT auto-recalculation (product rule): a DRAFT entry is an automatically

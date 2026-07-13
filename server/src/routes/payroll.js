@@ -1014,8 +1014,16 @@ router.post(
         officeStatus: 'draft',
         officeApprovedAt: null,
         officeApprovedBy: null,
+        // The guide relationship starts fresh for the NEW owner: pending
+        // approval, no open inquiry. The previous guide's approval, inquiry and
+        // conversation belong to them and do NOT transfer (the conversation is
+        // cut off at this guide_changed event — see guideConversationDto). The
+        // office note stays: it belongs to the PayrollEntry, not the guide.
         guideStatus: 'pending',
         guideApprovedAt: null,
+        inquiryStatus: 'none',
+        inquiryResolvedAt: null,
+        inquiryResolvedBy: null,
       },
     });
     await emitTimelineEvent(prisma, {

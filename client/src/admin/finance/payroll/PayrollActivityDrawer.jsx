@@ -144,6 +144,9 @@ export default function PayrollActivityDrawer({ activityId, onClose, refreshTick
   const [showHistory, setShowHistory] = useState(false);
   // Per-column approval feedback ("סכום אפס" etc.) — keyed by entry id.
   const [entryErrors, setEntryErrors] = useState({});
+  // Uncommitted per-person office-note text, keyed by entry id — kept across
+  // silent realtime refreshes so typing is never clobbered.
+  const [noteDrafts, setNoteDrafts] = useState({});
   // בבירור chip → that person's focused entry editor (nested modal on top).
   const [openEntryId, setOpenEntryId] = useState(null);
 
@@ -182,6 +185,29 @@ export default function PayrollActivityDrawer({ activityId, onClose, refreshTick
     setBusy(true);
     try {
       await api.payroll.updateLine(line.id, body);
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Per-person Office Payroll Note — the SAME PayrollEntry.officeNote the
+  // focused editor writes (never a second field). Autosaves on blur; the server
+  // records the change and applies the canonical re-approval rule, exactly as
+  // in the single-entry editor.
+  const commitOfficeNote = async (entry, value) => {
+    setNoteDrafts((m) => {
+      const next = { ...m };
+      delete next[entry.id];
+      return next;
+    });
+    if ((entry.officeNote || '') === value) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.payroll.updateEntry(entry.id, { officeNote: value.trim() ? value : null });
       await load();
     } catch (e) {
       setError(e.message);
@@ -415,6 +441,29 @@ export default function PayrollActivityDrawer({ activityId, onClose, refreshTick
                       {entries.map((e) => (
                         <td key={e.id} className="text-center text-sm font-semibold text-gray-900 tabular-nums">
                           {fmtSigned(e.totals.totalMinor)}
+                        </td>
+                      ))}
+                    </tr>
+                    {/* Office Payroll Note — PER PERSON, the same
+                        PayrollEntry.officeNote as the focused editor (guide-
+                        facing). Autosaves on blur; drafts survive silent
+                        refreshes so typing is never lost. */}
+                    <tr className="border-t border-gray-200">
+                      <td className="sticky right-0 bg-white px-3 py-2 text-[12px] text-gray-500 align-top">
+                        הערת משרד
+                      </td>
+                      {entries.map((e) => (
+                        <td key={e.id} className="px-2 py-1.5 align-top">
+                          <textarea
+                            value={noteDrafts[e.id] ?? (e.officeNote || '')}
+                            disabled={busy}
+                            onChange={(ev) => setNoteDrafts((m) => ({ ...m, [e.id]: ev.target.value }))}
+                            onBlur={(ev) => commitOfficeNote(e, ev.target.value)}
+                            rows={2}
+                            placeholder="הערה למדריך…"
+                            title="הערת המשרד לרשומה זו — מוצגת למדריך; שמירה אוטומטית ביציאה מהשדה"
+                            className="w-full rounded border border-amber-200 bg-amber-50/40 p-1.5 text-[12px] text-right focus:outline-none focus:ring-1 focus:ring-amber-200"
+                          />
                         </td>
                       ))}
                     </tr>

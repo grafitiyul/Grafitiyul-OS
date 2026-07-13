@@ -64,6 +64,7 @@ import timelineRouter from './routes/timeline.js';
 import sharedContentRouter from './routes/sharedContent.js';
 import tourContentRouter from './routes/tourContent.js';
 import toursRouter from './routes/tours.js';
+import openToursRouter from './routes/openTours.js';
 import tourGalleryRouter from './routes/tourGallery.js';
 import tourContentExportRouter from './routes/tourContentExport.js';
 import staffEventsRouter from './routes/staffEvents.js';
@@ -361,6 +362,7 @@ app.use('/api/tour-content', requireAdminAuth, tourContentRouter);
 // tour CONTENT routes above; see server/src/routes/tours.js for the ownership
 // contract (group slots managed here, private/business mirror their deal).
 app.use('/api/tours', requireAdminAuth, toursRouter);
+app.use('/api/open-tours', requireAdminAuth, openToursRouter);
 // Tour Gallery — per-TourEvent media (photos/videos) on R2. Staff surface;
 // objects are private (presigned GETs only). The public customer gallery is a
 // separate token-derived router mounted with the other public routes.

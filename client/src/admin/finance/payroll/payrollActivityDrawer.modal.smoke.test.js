@@ -154,6 +154,15 @@ test('one editable amount cell per person; override reveals the calculated value
   await unmount();
 });
 
+test('per-person Office Payroll Note: one editable note field under each column', async () => {
+  const { container, unmount } = await mount();
+  // A row labelled הערת משרד with one textarea per staff member (2 people).
+  assert.ok(container.textContent.includes('הערת משרד'), 'matrix has an office-note row');
+  const noteFields = [...container.querySelectorAll('textarea')].filter((t) => t.placeholder === 'הערה למדריך…');
+  assert.equal(noteFields.length, 2, 'one office-note textarea per person, editing PayrollEntry.officeNote');
+  await unmount();
+});
+
 test('no ↺ restore control — clearing the field is the only reset affordance', async () => {
   const { container, unmount } = await mount();
   // The old per-cell "↺ מחושב X" restore button must be gone (Slice 4): the

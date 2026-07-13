@@ -198,7 +198,7 @@ export default function PayrollEntryDrawer({ entryId, onClose, refreshTick = 0 }
       onClose={onClose}
       title={header}
       ariaLabel={entry ? `רשומת שכר · ${entry.displayName}` : 'רשומת שכר'}
-      maxWidthPx={900}
+      maxWidthPx={720}
     >
       {error && <div className="mb-3 px-3 py-2 rounded bg-red-50 text-red-700 text-sm">{error}</div>}
       {!data ? (
@@ -299,12 +299,12 @@ export default function PayrollEntryDrawer({ entryId, onClose, refreshTick = 0 }
               override, clearing it returns to the calculated value, and 0 is an
               explicit zero. calculated/override/final stay separate on the
               server (resolveAmountEdit is the single rule for both editors). */}
-          <div className="border border-gray-200 rounded-lg overflow-hidden">
-            <table className="w-full text-right text-[13px]">
+          <div className="w-fit max-w-full border border-gray-200 rounded-lg overflow-hidden">
+            <table className="w-auto text-right text-[13px]">
               <thead>
                 <tr className="text-[11px] text-gray-500 bg-gray-50 border-b border-gray-200">
                   <th className="px-3 py-2 font-medium">רכיב</th>
-                  <th className="px-3 py-2 font-medium text-left w-40">סכום</th>
+                  <th className="px-3 py-2 font-medium text-left">סכום</th>
                 </tr>
               </thead>
               <tbody>

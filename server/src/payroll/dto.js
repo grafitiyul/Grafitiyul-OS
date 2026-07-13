@@ -12,15 +12,28 @@ export const CONVERSATION_EVENTS = ['guide_inquiry', 'guide_message', 'office_re
 
 // Map an activity's timeline rows to ONE entry's conversation, guide-safe:
 // only this entry's messages, only text/sender/time — no admin metadata.
+//
+// A payroll-only guide change starts a FRESH conversation for the new owner:
+// the previous guide's inquiry/messages stay in the office history (audit) but
+// must never be shown to — or resolved against — the new guide. We therefore
+// cut the thread off at the latest `guide_changed` event for this entry.
 export function guideConversationDto(timelineRows, entryId) {
-  return (timelineRows || [])
+  const rows = (timelineRows || []).filter(
+    (t) => t.kind === 'payroll' && t.data && t.data.entryId === entryId,
+  );
+  let cutoff = 0;
+  for (const t of rows) {
+    if (t.data.event === 'guide_changed') {
+      const ts = new Date(t.createdAt).getTime();
+      if (ts > cutoff) cutoff = ts;
+    }
+  }
+  return rows
     .filter(
       (t) =>
-        t.kind === 'payroll' &&
-        t.data &&
         CONVERSATION_EVENTS.includes(t.data.event) &&
-        t.data.entryId === entryId &&
-        t.data.text,
+        t.data.text &&
+        new Date(t.createdAt).getTime() > cutoff,
     )
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
     .map((t) => ({
