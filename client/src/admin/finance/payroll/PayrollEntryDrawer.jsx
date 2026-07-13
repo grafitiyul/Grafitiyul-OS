@@ -3,13 +3,18 @@ import { api } from '../../../lib/api.js';
 import { formatMinor, toMinor, minorToInput } from '../../../lib/money.js';
 import { fmtDate } from '../../common/pickers/DateTimeFields.jsx';
 import { ROLE_LABELS, entryStatusMeta } from './payrollConfig.js';
+import Dialog from '../../common/Dialog.jsx';
+import CardKebabMenu from '../../common/CardKebabMenu.jsx';
+import { StaffAvatar } from '../../tours/TourTeamEditor.jsx';
 
 // Focused single-entry editor — the Reports flow: one row = ONE person's
-// PayrollEntry, without the rest of the activity matrix. Same large-drawer
-// pattern (absolute inset-0 slide-over). Everything here is a PAYROLL
-// correction only: guide/product context changes affect this entry's
-// calculation snapshot and history — never the Deal, the TourEvent, Tour
-// assignments, the ProductVariant master record, or the PersonProfile.
+// PayrollEntry, without the rest of the activity matrix. A STANDARD centered
+// modal (canonical Dialog shell) over the Reports table — the table, its
+// filters and scroll stay mounted and untouched behind the backdrop.
+// Everything here is a PAYROLL correction only: guide/product context changes
+// affect this entry's calculation snapshot and history — never the Deal, the
+// TourEvent, Tour assignments, the ProductVariant master record, or the
+// PersonProfile.
 
 const fieldCls =
   'h-8 rounded-lg border border-gray-300 bg-white px-2 text-[12px] focus:outline-none focus:ring-2 focus:ring-blue-100';
@@ -24,7 +29,7 @@ export default function PayrollEntryDrawer({ entryId, onClose, refreshTick = 0 }
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [showHistory, setShowHistory] = useState(true);
+  const [showHistory, setShowHistory] = useState(false);
   const [changingGuide, setChangingGuide] = useState(false);
   const [changingContext, setChangingContext] = useState(false);
   const [assignable, setAssignable] = useState(null);
@@ -73,12 +78,6 @@ export default function PayrollEntryDrawer({ entryId, onClose, refreshTick = 0 }
     if (refreshTick > 0) load({ silent: true });
   }, [refreshTick, load]);
 
-  useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   const run = async (fn) => {
     setBusy(true);
     setError(null);
@@ -98,420 +97,428 @@ export default function PayrollEntryDrawer({ entryId, onClose, refreshTick = 0 }
     }
   };
 
+  const openChangeGuide = async () => {
+    setChangingGuide(true);
+    setChangingContext(false);
+    if (!assignable) setAssignable((await api.people.assignable()).people);
+  };
+  const openChangeContext = async () => {
+    setChangingContext(true);
+    setChangingGuide(false);
+    if (!variants) setVariants(await api.products.variantOptions());
+  };
+
   const entry = data?.entry;
   const meta = entry ? entryStatusMeta(entry) : null;
 
-  return (
-    <div className="absolute inset-0 z-30 bg-white flex flex-col shadow-2xl" dir="rtl">
-      <div className="flex items-center gap-3 px-4 py-2.5 border-b border-gray-200 bg-gray-50">
-        <button
-          type="button"
-          onClick={onClose}
-          className="w-7 h-7 flex items-center justify-center rounded hover:bg-gray-200 text-gray-500 text-lg"
-          title="סגור (Esc)"
-        >
-          ×
-        </button>
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold text-gray-900 truncate">
-            {entry ? `${entry.displayName} · ${data.activity.titleHe}` : '…'}
+  // Compact header (photo · name · activity · kind · date/month · role) with the
+  // status chip, the primary office-approval toggle and a ⋮ for the secondary
+  // corrections. Rendered in Dialog's shrink-0 title slot (never scrolls).
+  const header = (
+    <div className="flex items-center gap-3 w-full min-w-0">
+      <StaffAvatar src={entry?.imageUrl} name={entry?.displayName || '?'} className="h-9 w-9" />
+      <div className="min-w-0">
+        <div className="text-sm font-semibold text-gray-900 truncate">{entry ? entry.displayName : '…'}</div>
+        {entry && (
+          <div className="text-[11px] font-normal text-gray-500 truncate">
+            {data.activity.titleHe}
+            {' · '}{data.activity.sourceType === 'tour_event' ? 'סיור' : 'תוספת כללית'}
+            {' · '}
+            {data.activity.date ? fmtDate(data.activity.date) : `חודש ${data.activity.payrollMonth}`}
+            {entry.role ? ` · ${ROLE_LABELS[entry.role] || entry.role}` : ''}
           </div>
-          {entry && (
-            <div className="text-[11px] text-gray-500">
-              {data.activity.date ? fmtDate(data.activity.date) : `חודש ${data.activity.payrollMonth}`}
-              {' · '}חודש שכר {data.activity.payrollMonth}
-              {' · '}{data.activity.sourceType === 'tour_event' ? 'סיור' : 'תוספת כללית'}
-              {entry.role ? ` · ${ROLE_LABELS[entry.role] || entry.role}` : ''}
-            </div>
-          )}
-        </div>
-        {meta && (
-          <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${meta.cls}`}>{meta.label}</span>
-        )}
-        {entry && entry.state === 'active' && (
-          entry.officeStatus === 'approved' ? (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() =>
-                window.confirm(`להסיר את אישור המשרד של ${entry.displayName}?`) &&
-                run(() => api.payroll.officeUnapproveEntry(entry.id))
-              }
-              className="px-3 py-1.5 text-[12px] rounded-md border border-gray-300 text-gray-600 hover:bg-gray-100"
-            >
-              הסר אישור משרד
-            </button>
-          ) : (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => run(() => api.payroll.officeApproveEntry(entry.id))}
-              className="px-3 py-1.5 text-[12px] rounded-md bg-blue-600 text-white hover:bg-blue-700"
-            >
-              אשר במשרד
-            </button>
-          )
         )}
       </div>
-
-      {error && <div className="px-4 py-2 bg-red-50 text-red-700 text-sm">{error}</div>}
-
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
-        {!data ? (
-          <div className="text-sm text-gray-400">טוען…</div>
+      <div className="flex-1" />
+      {meta && (
+        <span className={`shrink-0 px-2 py-0.5 rounded-full text-[11px] font-medium ${meta.cls}`}>{meta.label}</span>
+      )}
+      {entry && entry.state === 'active' && (
+        entry.officeStatus === 'approved' ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              window.confirm(`להסיר את אישור המשרד של ${entry.displayName}?`) &&
+              run(() => api.payroll.officeUnapproveEntry(entry.id))
+            }
+            className="shrink-0 px-2.5 py-1 text-[12px] rounded-md border border-gray-300 text-gray-600 hover:bg-gray-100"
+          >
+            הסר אישור
+          </button>
         ) : (
-          <>
-            {/* Context bar — payroll-only correction controls */}
-            <div className="flex flex-wrap items-center gap-3 text-[12px] bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-              {data.tour && (
-                <span className="text-gray-600">
-                  {data.tour.productName}
-                  {data.tour.locationName ? ` · ${data.tour.locationName}` : ''}
-                  {data.tour.startTime ? ` · ${data.tour.startTime}` : ''}
-                </span>
-              )}
-              <label className="flex items-center gap-1.5">
-                <span className="text-gray-500">תפקיד:</span>
-                <select
-                  value={entry.role || ''}
-                  disabled={busy}
-                  onChange={(e) => run(() => api.payroll.updateEntry(entry.id, { role: e.target.value || null }))}
-                  className={fieldCls}
-                >
-                  <option value="">כללי</option>
-                  {Object.entries(ROLE_LABELS).map(([k, v]) => (
-                    <option key={k} value={k}>{v}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex items-center gap-1.5">
-                <span className="text-gray-500">מע״מ:</span>
-                <select
-                  value={entry.vatStatus}
-                  disabled={busy}
-                  onChange={(e) => run(() => api.payroll.updateEntry(entry.id, { vatStatus: e.target.value }))}
-                  className={fieldCls}
-                >
-                  <option value="exempt">פטור ממע״מ</option>
-                  <option value="vat_18">חייב מע״מ ({entry.vatRate}%)</option>
-                </select>
-              </label>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => run(() => api.payroll.officeApproveEntry(entry.id))}
+            className="shrink-0 px-2.5 py-1 text-[12px] rounded-md bg-blue-600 text-white hover:bg-blue-700"
+          >
+            אשר במשרד
+          </button>
+        )
+      )}
+      {entry && entry.state === 'active' && (
+        <CardKebabMenu ariaLabel="פעולות רשומת שכר">
+          {(close) => (
+            <>
               <button
                 type="button"
-                onClick={async () => {
-                  setChangingGuide((v) => !v);
-                  if (!assignable) setAssignable((await api.people.assignable()).people);
-                }}
-                className="text-blue-600 hover:underline"
+                onClick={() => { close(); openChangeGuide(); }}
+                className="block w-full text-right px-3 py-1.5 text-[13px] text-gray-700 hover:bg-gray-50"
               >
-                החלף מדריך…
+                החלף מדריך (שכר בלבד)…
               </button>
               {data.activity.sourceType === 'tour_event' && (
                 <button
                   type="button"
-                  onClick={async () => {
-                    setChangingContext((v) => !v);
-                    if (!variants) setVariants(await api.products.variantOptions());
-                  }}
-                  className="text-blue-600 hover:underline"
+                  onClick={() => { close(); openChangeContext(); }}
+                  className="block w-full text-right px-3 py-1.5 text-[13px] text-gray-700 hover:bg-gray-50"
                 >
                   שנה הקשר מוצר לשכר…
                 </button>
               )}
-            </div>
-
-            {changingGuide && (
-              <div className="border border-blue-200 bg-blue-50/40 rounded-lg p-3 text-[12px]">
-                <div className="mb-1.5 text-gray-700 font-medium">
-                  העברת רשומת השכר לאיש צוות אחר — שינוי זה משפיע על רשומת השכר בלבד (השיבוץ בסיור לא משתנה).
-                  הרשומה תחזור לטיוטה ותידרש אישור משרד מחדש.
-                </div>
-                <select
-                  disabled={busy || !assignable}
-                  defaultValue=""
-                  onChange={(e) => {
-                    if (!e.target.value) return;
-                    run(() => api.payroll.changeEntryGuide(entry.id, e.target.value)).then(() => setChangingGuide(false));
-                  }}
-                  className={`${fieldCls} min-w-[14rem]`}
-                >
-                  <option value="">{assignable ? 'בחרו איש צוות…' : 'טוען…'}</option>
-                  {(assignable || [])
-                    .filter((p) => p.externalPersonId !== entry.externalPersonId)
-                    .map((p) => (
-                      <option key={p.externalPersonId} value={p.externalPersonId}>
-                        {p.displayName}
-                        {p.lifecycleHint === 'trainee' ? ' · מתלמד' : ''}
-                      </option>
-                    ))}
-                </select>
-              </div>
-            )}
-
-            {changingContext && (
-              <div className="border border-blue-200 bg-blue-50/40 rounded-lg p-3 text-[12px]">
-                <div className="mb-1.5 text-gray-700 font-medium">
-                  חישוב בסיס/נסיעות לפי וריאנט אחר — שינוי זה משפיע על רשומת השכר בלבד (הסיור והדיל לא משתנים).
-                </div>
-                <select
-                  disabled={busy || !variants}
-                  defaultValue=""
-                  onChange={(e) => {
-                    if (!e.target.value) return;
-                    run(() => api.payroll.setEntryPayrollContext(entry.id, e.target.value)).then(() => setChangingContext(false));
-                  }}
-                  className={`${fieldCls} min-w-[16rem]`}
-                >
-                  <option value="">{variants ? 'בחרו וריאנט…' : 'טוען…'}</option>
-                  {(variants || []).map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.productNameHe} · {v.locationNameHe}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {/* Lines: calculated / override / final stay separate concepts */}
-            <div className="border border-gray-200 rounded-lg overflow-hidden">
-              <table className="w-full text-right text-[13px]">
-                <thead>
-                  <tr className="text-[11px] text-gray-500 bg-gray-50 border-b border-gray-200">
-                    <th className="px-3 py-2 font-medium">רכיב</th>
-                    <th className="px-3 py-2 font-medium">מחושב</th>
-                    <th className="px-3 py-2 font-medium">דריסה</th>
-                    <th className="px-3 py-2 font-medium">סופי</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {entry.lines.map((l) => (
-                    <tr key={l.id} className="border-b border-gray-50">
-                      <td className="px-3 py-1.5 text-gray-700">
-                        {l.componentNameHe}
-                        {l.sign < 0 && <span className="text-[11px] text-red-500 mr-1">(ניכוי)</span>}
-                        {l.quantity != null && (
-                          <span className="block text-[10px] text-gray-400">
-                            {Number(l.quantity)} × {formatMinor(l.unitPriceMinor ?? 0)}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-3 py-1.5 text-gray-500 tabular-nums" dir="ltr">
-                        {l.calculatedMinor != null ? formatMinor(l.calculatedMinor) : '—'}
-                      </td>
-                      <td className="px-3 py-1.5">
-                        <input
-                          dir="ltr"
-                          disabled={busy}
-                          value={overrideDrafts[l.id] ?? minorToInput(l.overrideMinor)}
-                          placeholder="—"
-                          onChange={(e) => setOverrideDrafts((m) => ({ ...m, [l.id]: e.target.value }))}
-                          onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-                          onBlur={(e) => {
-                            const raw = e.target.value.trim();
-                            const next = raw === '' ? null : toMinor(raw);
-                            const cur = l.overrideMinor == null ? null : Number(l.overrideMinor);
-                            if (raw !== '' && next == null) return;
-                            if (next === cur) return;
-                            run(() => api.payroll.updateLine(l.id, { overrideMinor: next }));
-                          }}
-                          className="w-24 h-7 rounded border border-gray-200 px-1.5 text-[12px] text-center focus:border-blue-400 focus:outline-none"
-                        />
-                      </td>
-                      <td className={`px-3 py-1.5 font-medium tabular-nums ${l.sign < 0 ? 'text-red-600' : 'text-gray-900'}`} dir="ltr">
-                        {formatMinor(lineFinal(l))}
-                      </td>
-                    </tr>
-                  ))}
-                  {entry.vatStatus === 'vat_18' && (
-                    <>
-                      <tr className="border-t border-gray-200 text-[12px] text-gray-500">
-                        <td className="px-3 py-1" colSpan={3}>לפני מע״מ</td>
-                        <td className="px-3 py-1 tabular-nums" dir="ltr">{formatMinor(entry.totals.netMinor)}</td>
-                      </tr>
-                      <tr className="text-[12px] text-gray-500">
-                        <td className="px-3 py-1" colSpan={3}>מע״מ ({entry.vatRate}%)</td>
-                        <td className="px-3 py-1 tabular-nums" dir="ltr">{formatMinor(entry.totals.vatMinor)}</td>
-                      </tr>
-                    </>
-                  )}
-                  <tr className="border-t border-gray-300 font-semibold text-gray-900">
-                    <td className="px-3 py-2" colSpan={3}>סה״כ לתשלום</td>
-                    <td className="px-3 py-2 tabular-nums" dir="ltr">{formatMinor(entry.totals.totalMinor)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            {/* Notes */}
-            <div>
-              <div className="text-[12px] text-gray-500 mb-1">הערות</div>
-              <textarea
-                value={notes}
-                disabled={busy}
-                onChange={(e) => setNotes(e.target.value)}
-                onBlur={() => {
-                  if ((entry.notes || '') !== notes) {
-                    run(() => api.payroll.updateEntry(entry.id, { notes }));
-                  }
-                }}
-                rows={2}
-                className="w-full rounded-lg border border-gray-200 p-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-blue-100"
-              />
-            </div>
-
-            {/* Inquiry area: the guide↔office CONVERSATION (immutable thread)
-                — distinct from the official office note below. */}
-            {(data.conversation?.length > 0 || entry.inquiryStatus !== 'none') && (
-              <div className="border border-orange-200 rounded-lg overflow-hidden">
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-orange-50 text-[12px] font-medium text-orange-800">
-                  <span className="flex-1">
-                    שיחה עם המדריך
-                    {entry.inquiryStatus === 'open' && ' · בבירור'}
-                    {entry.inquiryStatus === 'accepted' && ' · ✅ ההערה התקבלה'}
-                    {entry.inquiryStatus === 'rejected' && ' · ⛔ ההערה נדחתה'}
-                    {entry.inquiryResolvedBy && entry.inquiryStatus !== 'open' ? ` (${entry.inquiryResolvedBy})` : ''}
-                  </span>
-                  {entry.inquiryStatus === 'open' && (
-                    <>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => run(() => api.payroll.acceptInquiry(entry.id))}
-                        className="px-2.5 py-0.5 rounded-md bg-emerald-600 text-white text-[11px] hover:bg-emerald-700"
-                        title="קבלת ההערה — הרשומה תחזור לאישור המדריך"
-                      >
-                        ✓ אשר את ההערה
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => {
-                          const note = window.prompt('הסבר רשמי לדחייה (יוצג למדריך כהערת המשרד):', officeNote || '');
-                          if (note === null) return;
-                          if (!note.trim() && !window.confirm('לדחות ללא הסבר רשמי? מומלץ לצרף הסבר.')) return;
-                          run(() => api.payroll.rejectInquiry(entry.id, note.trim() || null));
-                        }}
-                        className="px-2.5 py-0.5 rounded-md bg-rose-600 text-white text-[11px] hover:bg-rose-700"
-                        title="דחיית ההערה — עם הסבר רשמי"
-                      >
-                        ⛔ דחה את ההערה
-                      </button>
-                    </>
-                  )}
-                </div>
-                <div className="p-3 space-y-1.5">
-                  {(data.conversation || []).map((m) => (
-                    <div
-                      key={m.id}
-                      className={`rounded-lg px-2.5 py-1.5 text-[12px] ${
-                        m.byGuide ? 'bg-orange-50/60 text-gray-800' : 'bg-blue-50/60 text-gray-800'
-                      }`}
-                    >
-                      <span className="block text-[10px] text-gray-400">
-                        {m.byGuide ? entry.displayName : 'המשרד'} · {new Date(m.at).toLocaleString('he-IL')}
-                      </span>
-                      {m.text}
-                    </div>
-                  ))}
-                  <div className="flex gap-2 pt-1">
-                    <input
-                      value={replyText}
-                      disabled={busy}
-                      onChange={(e) => setReplyText(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && replyText.trim()) {
-                          run(() => api.payroll.replyEntry(entry.id, replyText.trim())).then(() => setReplyText(''));
-                        }
-                      }}
-                      placeholder="תגובת המשרד…"
-                      className="flex-1 h-8 rounded-lg border border-gray-300 px-2 text-[12px] focus:outline-none focus:ring-2 focus:ring-blue-100"
-                    />
-                    <button
-                      type="button"
-                      disabled={busy || !replyText.trim()}
-                      onClick={() =>
-                        run(() => api.payroll.replyEntry(entry.id, replyText.trim())).then(() => setReplyText(''))
-                      }
-                      className="px-3 h-8 rounded-lg bg-blue-600 text-white text-[12px] hover:bg-blue-700 disabled:opacity-40"
-                    >
-                      שלח
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Official office note — a SEPARATE concept from the chat: the
-                formal explanation shown to the guide with the entry. */}
-            <div>
-              <div className="text-[12px] text-gray-500 mb-1">
-                הערת המשרד <span className="text-gray-400">(רשמית — מוצגת למדריך עם הרשומה)</span>
-              </div>
-              <textarea
-                value={officeNote}
-                disabled={busy}
-                onChange={(e) => setOfficeNote(e.target.value)}
-                onBlur={() => {
-                  if ((entry.officeNote || '') !== officeNote) {
-                    run(() => api.payroll.updateEntry(entry.id, { officeNote }));
-                  }
-                }}
-                rows={2}
-                placeholder="למשל: הנסיעות עודכנו לפי הקבלה שצורפה"
-                className="w-full rounded-lg border border-amber-200 bg-amber-50/40 p-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-amber-100"
-              />
-            </div>
-
-            {/* Void — destructive-looking, never destructive (history kept) */}
-            {entry.state === 'active' && (
-              <div className="border-t border-gray-100 pt-3">
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => {
-                    if (!window.confirm(`לבטל את רשומת השכר של ${entry.displayName}? הרשומה תוסתר מהסכומים ומפורטל המדריך; ההיסטוריה נשמרת.`)) return;
-                    const reason = window.prompt('סיבת הביטול (אופציונלי):', '');
-                    if (reason === null) return;
-                    run(() => api.payroll.voidEntry(entry.id, reason.trim() || null)).then(onClose);
-                  }}
-                  className="text-[12px] text-red-600 hover:underline"
-                >
-                  🗑️ בטל רשומת שכר
-                </button>
-              </div>
-            )}
-
-            {/* History + inquiry comments */}
-            <div>
               <button
                 type="button"
-                onClick={() => setShowHistory((v) => !v)}
-                className="text-[12px] text-gray-500 hover:text-gray-800"
+                onClick={() => {
+                  close();
+                  if (!window.confirm(`לבטל את רשומת השכר של ${entry.displayName}? הרשומה תוסתר מהסכומים ומפורטל המדריך; ההיסטוריה נשמרת.`)) return;
+                  const reason = window.prompt('סיבת הביטול (אופציונלי):', '');
+                  if (reason === null) return;
+                  run(() => api.payroll.voidEntry(entry.id, reason.trim() || null)).then(onClose);
+                }}
+                className="block w-full text-right px-3 py-1.5 text-[13px] text-red-600 hover:bg-red-50"
               >
-                {showHistory ? '▾' : '◂'} היסטוריה ({data.history?.length || 0})
+                🗑️ בטל רשומת שכר
               </button>
-              {showHistory && (
-                <div className="mt-2 space-y-1.5">
-                  {(data.history || []).map((h) => (
-                    <div key={h.id} className="text-[12px] text-gray-600 bg-gray-50 rounded px-3 py-1.5">
-                      <span>{h.body}</span>
-                      <span className="text-gray-400 mr-2">
-                        · {new Date(h.createdAt).toLocaleString('he-IL')}
-                        {h.createdByName ? ` · ${h.createdByName}` : h.actorLabel ? ` · ${h.actorLabel}` : ''}
-                      </span>
-                      {(h.comments || []).map((c) => (
-                        <div key={c.id} className="mr-4 mt-1 text-gray-700 bg-white border border-gray-100 rounded px-2 py-1">
-                          💬 {c.body}
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </>
-        )}
-      </div>
+            </>
+          )}
+        </CardKebabMenu>
+      )}
     </div>
+  );
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={header}
+      ariaLabel={entry ? `רשומת שכר · ${entry.displayName}` : 'רשומת שכר'}
+      maxWidthPx={900}
+    >
+      {error && <div className="mb-3 px-3 py-2 rounded bg-red-50 text-red-700 text-sm">{error}</div>}
+      {!data ? (
+        <div className="text-sm text-gray-400">טוען…</div>
+      ) : (
+        <div className="space-y-4">
+          {/* Context row — payroll-only correction controls (role / VAT). */}
+          <div className="flex flex-wrap items-center gap-3 text-[12px] bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+            {data.tour && (
+              <span className="text-gray-600">
+                {data.tour.productName}
+                {data.tour.locationName ? ` · ${data.tour.locationName}` : ''}
+                {data.tour.startTime ? ` · ${data.tour.startTime}` : ''}
+              </span>
+            )}
+            <label className="flex items-center gap-1.5">
+              <span className="text-gray-500">תפקיד:</span>
+              <select
+                value={entry.role || ''}
+                disabled={busy}
+                onChange={(e) => run(() => api.payroll.updateEntry(entry.id, { role: e.target.value || null }))}
+                className={fieldCls}
+              >
+                <option value="">כללי</option>
+                {Object.entries(ROLE_LABELS).map(([k, v]) => (
+                  <option key={k} value={k}>{v}</option>
+                ))}
+              </select>
+            </label>
+            <label className="flex items-center gap-1.5">
+              <span className="text-gray-500">מע״מ:</span>
+              <select
+                value={entry.vatStatus}
+                disabled={busy}
+                onChange={(e) => run(() => api.payroll.updateEntry(entry.id, { vatStatus: e.target.value }))}
+                className={fieldCls}
+              >
+                <option value="exempt">פטור ממע״מ</option>
+                <option value="vat_18">חייב מע״מ ({entry.vatRate}%)</option>
+              </select>
+            </label>
+          </div>
+
+          {changingGuide && (
+            <div className="border border-blue-200 bg-blue-50/40 rounded-lg p-3 text-[12px]">
+              <div className="mb-1.5 text-gray-700 font-medium">
+                העברת רשומת השכר לאיש צוות אחר — שינוי זה משפיע על רשומת השכר בלבד (השיבוץ בסיור לא משתנה).
+                הרשומה תחזור לטיוטה ותידרש אישור משרד מחדש.
+              </div>
+              <select
+                disabled={busy || !assignable}
+                defaultValue=""
+                onChange={(e) => {
+                  if (!e.target.value) return;
+                  run(() => api.payroll.changeEntryGuide(entry.id, e.target.value)).then(() => setChangingGuide(false));
+                }}
+                className={`${fieldCls} min-w-[14rem]`}
+              >
+                <option value="">{assignable ? 'בחרו איש צוות…' : 'טוען…'}</option>
+                {(assignable || [])
+                  .filter((p) => p.externalPersonId !== entry.externalPersonId)
+                  .map((p) => (
+                    <option key={p.externalPersonId} value={p.externalPersonId}>
+                      {p.displayName}
+                      {p.lifecycleHint === 'trainee' ? ' · מתלמד' : ''}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          )}
+
+          {changingContext && (
+            <div className="border border-blue-200 bg-blue-50/40 rounded-lg p-3 text-[12px]">
+              <div className="mb-1.5 text-gray-700 font-medium">
+                חישוב בסיס/נסיעות לפי וריאנט אחר — שינוי זה משפיע על רשומת השכר בלבד (הסיור והדיל לא משתנים).
+              </div>
+              <select
+                disabled={busy || !variants}
+                defaultValue=""
+                onChange={(e) => {
+                  if (!e.target.value) return;
+                  run(() => api.payroll.setEntryPayrollContext(entry.id, e.target.value)).then(() => setChangingContext(false));
+                }}
+                className={`${fieldCls} min-w-[16rem]`}
+              >
+                <option value="">{variants ? 'בחרו וריאנט…' : 'טוען…'}</option>
+                {(variants || []).map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.productNameHe} · {v.locationNameHe}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Lines: calculated / override / final stay separate concepts */}
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <table className="w-full text-right text-[13px]">
+              <thead>
+                <tr className="text-[11px] text-gray-500 bg-gray-50 border-b border-gray-200">
+                  <th className="px-3 py-2 font-medium">רכיב</th>
+                  <th className="px-3 py-2 font-medium">מחושב</th>
+                  <th className="px-3 py-2 font-medium">דריסה</th>
+                  <th className="px-3 py-2 font-medium">סופי</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entry.lines.map((l) => (
+                  <tr key={l.id} className="border-b border-gray-50">
+                    <td className="px-3 py-1.5 text-gray-700">
+                      {l.componentNameHe}
+                      {l.sign < 0 && <span className="text-[11px] text-red-500 mr-1">(ניכוי)</span>}
+                      {l.quantity != null && (
+                        <span className="block text-[10px] text-gray-400">
+                          {Number(l.quantity)} × {formatMinor(l.unitPriceMinor ?? 0)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-1.5 text-gray-500 tabular-nums" dir="ltr">
+                      {l.calculatedMinor != null ? formatMinor(l.calculatedMinor) : '—'}
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <input
+                        dir="ltr"
+                        disabled={busy}
+                        value={overrideDrafts[l.id] ?? minorToInput(l.overrideMinor)}
+                        placeholder="—"
+                        onChange={(e) => setOverrideDrafts((m) => ({ ...m, [l.id]: e.target.value }))}
+                        onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                        onBlur={(e) => {
+                          const raw = e.target.value.trim();
+                          const next = raw === '' ? null : toMinor(raw);
+                          const cur = l.overrideMinor == null ? null : Number(l.overrideMinor);
+                          if (raw !== '' && next == null) return;
+                          if (next === cur) return;
+                          run(() => api.payroll.updateLine(l.id, { overrideMinor: next }));
+                        }}
+                        className="w-24 h-7 rounded border border-gray-200 px-1.5 text-[12px] text-center focus:border-blue-400 focus:outline-none"
+                      />
+                    </td>
+                    <td className={`px-3 py-1.5 font-medium tabular-nums ${l.sign < 0 ? 'text-red-600' : 'text-gray-900'}`} dir="ltr">
+                      {formatMinor(lineFinal(l))}
+                    </td>
+                  </tr>
+                ))}
+                {entry.vatStatus === 'vat_18' && (
+                  <>
+                    <tr className="border-t border-gray-200 text-[12px] text-gray-500">
+                      <td className="px-3 py-1" colSpan={3}>לפני מע״מ</td>
+                      <td className="px-3 py-1 tabular-nums" dir="ltr">{formatMinor(entry.totals.netMinor)}</td>
+                    </tr>
+                    <tr className="text-[12px] text-gray-500">
+                      <td className="px-3 py-1" colSpan={3}>מע״מ ({entry.vatRate}%)</td>
+                      <td className="px-3 py-1 tabular-nums" dir="ltr">{formatMinor(entry.totals.vatMinor)}</td>
+                    </tr>
+                  </>
+                )}
+                <tr className="border-t border-gray-300 font-semibold text-gray-900">
+                  <td className="px-3 py-2" colSpan={3}>סה״כ לתשלום</td>
+                  <td className="px-3 py-2 tabular-nums" dir="ltr">{formatMinor(entry.totals.totalMinor)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Notes */}
+          <div>
+            <div className="text-[12px] text-gray-500 mb-1">הערות</div>
+            <textarea
+              value={notes}
+              disabled={busy}
+              onChange={(e) => setNotes(e.target.value)}
+              onBlur={() => {
+                if ((entry.notes || '') !== notes) {
+                  run(() => api.payroll.updateEntry(entry.id, { notes }));
+                }
+              }}
+              rows={2}
+              className="w-full rounded-lg border border-gray-200 p-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-blue-100"
+            />
+          </div>
+
+          {/* Inquiry area: the guide↔office CONVERSATION (immutable thread)
+              — distinct from the official office note below. */}
+          {(data.conversation?.length > 0 || entry.inquiryStatus !== 'none') && (
+            <div className="border border-orange-200 rounded-lg overflow-hidden">
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-orange-50 text-[12px] font-medium text-orange-800">
+                <span className="flex-1">
+                  שיחה עם המדריך
+                  {entry.inquiryStatus === 'open' && ' · בבירור'}
+                  {entry.inquiryStatus === 'accepted' && ' · ✅ ההערה התקבלה'}
+                  {entry.inquiryStatus === 'rejected' && ' · ⛔ ההערה נדחתה'}
+                  {entry.inquiryResolvedBy && entry.inquiryStatus !== 'open' ? ` (${entry.inquiryResolvedBy})` : ''}
+                </span>
+                {entry.inquiryStatus === 'open' && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => run(() => api.payroll.acceptInquiry(entry.id))}
+                      className="px-2.5 py-0.5 rounded-md bg-emerald-600 text-white text-[11px] hover:bg-emerald-700"
+                      title="קבלת ההערה — הרשומה תחזור לאישור המדריך"
+                    >
+                      ✓ אשר את ההערה
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        const note = window.prompt('הסבר רשמי לדחייה (יוצג למדריך כהערת המשרד):', officeNote || '');
+                        if (note === null) return;
+                        if (!note.trim() && !window.confirm('לדחות ללא הסבר רשמי? מומלץ לצרף הסבר.')) return;
+                        run(() => api.payroll.rejectInquiry(entry.id, note.trim() || null));
+                      }}
+                      className="px-2.5 py-0.5 rounded-md bg-rose-600 text-white text-[11px] hover:bg-rose-700"
+                      title="דחיית ההערה — עם הסבר רשמי"
+                    >
+                      ⛔ דחה את ההערה
+                    </button>
+                  </>
+                )}
+              </div>
+              <div className="p-3 space-y-1.5">
+                {(data.conversation || []).map((m) => (
+                  <div
+                    key={m.id}
+                    className={`rounded-lg px-2.5 py-1.5 text-[12px] ${
+                      m.byGuide ? 'bg-orange-50/60 text-gray-800' : 'bg-blue-50/60 text-gray-800'
+                    }`}
+                  >
+                    <span className="block text-[10px] text-gray-400">
+                      {m.byGuide ? entry.displayName : 'המשרד'} · {new Date(m.at).toLocaleString('he-IL')}
+                    </span>
+                    {m.text}
+                  </div>
+                ))}
+                <div className="flex gap-2 pt-1">
+                  <input
+                    value={replyText}
+                    disabled={busy}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && replyText.trim()) {
+                        run(() => api.payroll.replyEntry(entry.id, replyText.trim())).then(() => setReplyText(''));
+                      }
+                    }}
+                    placeholder="תגובת המשרד…"
+                    className="flex-1 h-8 rounded-lg border border-gray-300 px-2 text-[12px] focus:outline-none focus:ring-2 focus:ring-blue-100"
+                  />
+                  <button
+                    type="button"
+                    disabled={busy || !replyText.trim()}
+                    onClick={() =>
+                      run(() => api.payroll.replyEntry(entry.id, replyText.trim())).then(() => setReplyText(''))
+                    }
+                    className="px-3 h-8 rounded-lg bg-blue-600 text-white text-[12px] hover:bg-blue-700 disabled:opacity-40"
+                  >
+                    שלח
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Official office note — a SEPARATE concept from the chat: the
+              formal explanation shown to the guide with the entry. */}
+          <div>
+            <div className="text-[12px] text-gray-500 mb-1">
+              הערת המשרד <span className="text-gray-400">(רשמית — מוצגת למדריך עם הרשומה)</span>
+            </div>
+            <textarea
+              value={officeNote}
+              disabled={busy}
+              onChange={(e) => setOfficeNote(e.target.value)}
+              onBlur={() => {
+                if ((entry.officeNote || '') !== officeNote) {
+                  run(() => api.payroll.updateEntry(entry.id, { officeNote }));
+                }
+              }}
+              rows={2}
+              placeholder="למשל: הנסיעות עודכנו לפי הקבלה שצורפה"
+              className="w-full rounded-lg border border-amber-200 bg-amber-50/40 p-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-amber-100"
+            />
+          </div>
+
+          {/* History + inquiry comments — compact accordion (closed by default). */}
+          <div className="border-t border-gray-100 pt-3">
+            <button
+              type="button"
+              onClick={() => setShowHistory((v) => !v)}
+              className="text-[12px] text-gray-500 hover:text-gray-800"
+            >
+              {showHistory ? '▾' : '◂'} היסטוריה ({data.history?.length || 0})
+            </button>
+            {showHistory && (
+              <div className="mt-2 space-y-1.5">
+                {(data.history || []).map((h) => (
+                  <div key={h.id} className="text-[12px] text-gray-600 bg-gray-50 rounded px-3 py-1.5">
+                    <span>{h.body}</span>
+                    <span className="text-gray-400 mr-2">
+                      · {new Date(h.createdAt).toLocaleString('he-IL')}
+                      {h.createdByName ? ` · ${h.createdByName}` : h.actorLabel ? ` · ${h.actorLabel}` : ''}
+                    </span>
+                    {(h.comments || []).map((c) => (
+                      <div key={c.id} className="mr-4 mt-1 text-gray-700 bg-white border border-gray-100 rounded px-2 py-1">
+                        💬 {c.body}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </Dialog>
   );
 }

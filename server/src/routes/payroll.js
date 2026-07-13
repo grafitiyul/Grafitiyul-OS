@@ -803,8 +803,18 @@ router.get(
       orderBy: { createdAt: 'desc' },
       include: { comments: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' } } },
     });
+    // Staff photo for the modal header — one cheap lookup by external id (the
+    // entry only snapshots the display name). Best-effort; null when unknown.
+    let imageUrl = null;
+    if (entry.externalPersonId) {
+      const ref = await prisma.personRef.findUnique({
+        where: { externalPersonId: entry.externalPersonId },
+        select: { profile: { select: { imageUrl: true } } },
+      });
+      imageUrl = ref?.profile?.imageUrl || null;
+    }
     res.json({
-      entry: entryPayload(entry),
+      entry: { ...entryPayload(entry), imageUrl },
       activity: activitySummary(activity),
       tour,
       calcContext: entry.calcSnapshot?.inputs
