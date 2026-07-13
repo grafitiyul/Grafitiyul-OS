@@ -70,10 +70,15 @@ function Occupancy({ t }) {
   }
   const over = t.capacity != null && t.activeSeats > t.capacity;
   const full = t.capacity != null && !over && t.activeSeats === t.capacity;
-  // Over capacity → one simple inline value, entire value red, regular table
-  // typography, no fragments and no separate "חריגה" label.
+  // Over capacity → the SAME "current / capacity" layout, just entirely red
+  // (no "מתוך", no extra label, no fragment).
   if (over) {
-    return <span className="text-red-600">{t.activeSeats} מתוך {t.capacity}</span>;
+    return (
+      <span className="inline-flex items-center gap-1.5 tabular-nums text-red-600" dir="ltr">
+        <span>{t.activeSeats}</span>
+        <span>/ {t.capacity}</span>
+      </span>
+    );
   }
   return (
     <span className="inline-flex items-center gap-1.5 tabular-nums" dir="ltr">
