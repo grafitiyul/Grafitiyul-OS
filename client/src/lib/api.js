@@ -486,6 +486,16 @@ export const api = {
     getPriceLines: (id) => request(`/api/deals/${id}/price-lines`),
     savePriceLines: (id, data) =>
       request(`/api/deals/${id}/price-lines`, { method: 'PUT', body: JSON.stringify(data) }),
+    // Group registration completion (the progressive modal's actions). All
+    // idempotent; the server builds on the shipped lifecycle primitives.
+    registerHold: (id, data) =>
+      tourMutation(request(`/api/deals/${id}/register/hold`, { method: 'POST', body: JSON.stringify(data) })),
+    registerSendLink: (id, data) =>
+      tourMutation(request(`/api/deals/${id}/register/send-link`, { method: 'POST', body: JSON.stringify(data) })),
+    registerNoPayment: (id, data) =>
+      tourMutation(request(`/api/deals/${id}/register/no-payment`, { method: 'POST', body: JSON.stringify(data) })),
+    settleRegistrationPayment: (id, data = {}) =>
+      tourMutation(request(`/api/deals/${id}/register/settle-payment`, { method: 'POST', body: JSON.stringify(data) })),
     // Quote Module — ensure + return the draft QuoteDocument for this deal.
     quoteDocument: (id) => request(`/api/deals/${id}/quote-document`),
     quoteDocuments: (id) => request(`/api/deals/${id}/quote-documents`),
