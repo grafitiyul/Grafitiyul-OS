@@ -10,7 +10,8 @@ import {
   TIME_RE,
   missingFields,
 } from '../tours/requiredFields.js';
-import { ensureGeneratedSlots, getTourSettings } from '../tours/slotGeneration.js';
+import { getTourSettings } from '../tours/slotGeneration.js';
+import { ensureTourSlots } from '../tours/openTourGeneration.js';
 import { tourStatusWhere } from '../tours/statusFilter.js';
 import { occupancyFor } from '../tours/occupancy.js';
 import {
@@ -260,7 +261,7 @@ router.get(
     // since the last read (idempotent — cursor + unique guard, see
     // slotGeneration.js). Never blocks the list on a generation hiccup.
     try {
-      await ensureGeneratedSlots(prisma);
+      await ensureTourSlots(prisma);
     } catch (e) {
       console.error('[tours] slot generation failed', e);
     }
@@ -316,7 +317,7 @@ router.get(
   '/calendar',
   handle(async (req, res) => {
     try {
-      await ensureGeneratedSlots(prisma); // same sync-on-read as the list
+      await ensureTourSlots(prisma); // same sync-on-read as the list
     } catch (e) {
       console.error('[tours] slot generation failed', e);
     }
@@ -494,7 +495,7 @@ router.put(
     const settings = await prisma.tourSettings.update({ where: { id: 'singleton' }, data });
     // A larger horizon should materialize immediately.
     try {
-      await ensureGeneratedSlots(prisma);
+      await ensureTourSlots(prisma);
     } catch (e) {
       console.error('[tours] slot generation failed', e);
     }
@@ -520,7 +521,7 @@ router.post(
 
     const rule = await prisma.tourScheduleRule.create({ data, include: RULE_INCLUDE });
     try {
-      await ensureGeneratedSlots(prisma);
+      await ensureTourSlots(prisma);
     } catch (e) {
       console.error('[tours] slot generation failed', e);
     }
@@ -556,7 +557,7 @@ router.put(
       include: RULE_INCLUDE,
     });
     try {
-      await ensureGeneratedSlots(prisma);
+      await ensureTourSlots(prisma);
     } catch (e) {
       console.error('[tours] slot generation failed', e);
     }
