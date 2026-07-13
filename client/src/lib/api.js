@@ -1336,6 +1336,12 @@ export const api = {
       tourMutation(request(`/api/open-tours/${id}/rules`, { method: 'POST', body: JSON.stringify(data) })),
     updateRule: (ruleId, data) =>
       tourMutation(request(`/api/open-tours/rules/${ruleId}`, { method: 'PUT', body: JSON.stringify(data) })),
+    // Dry-run impact preview of a proposed rule edit (before saving).
+    ruleImpact: (ruleId, data) =>
+      request(`/api/open-tours/rules/${ruleId}/impact`, { method: 'POST', body: JSON.stringify(data) }),
+    // Raw update that surfaces the 409 confirm-required response to the caller.
+    updateRuleRaw: (ruleId, data) =>
+      request(`/api/open-tours/rules/${ruleId}`, { method: 'PUT', body: JSON.stringify(data) }),
     removeRule: (ruleId) => tourMutation(request(`/api/open-tours/rules/${ruleId}`, { method: 'DELETE' })),
     createException: (id, data) =>
       tourMutation(request(`/api/open-tours/${id}/exceptions`, { method: 'POST', body: JSON.stringify(data) })),

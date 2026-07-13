@@ -259,6 +259,8 @@ function OpenTourEditor({ templateId, onClose }) {
   const [saving, setSaving] = useState(false);
   const [ruleDraft, setRuleDraft] = useState(EMPTY_RULE);
   const [excDraft, setExcDraft] = useState(EMPTY_EXC);
+  const [editingRuleId, setEditingRuleId] = useState(null);
+  const [ruleEdit, setRuleEdit] = useState(EMPTY_RULE);
 
   async function load() {
     try {
@@ -374,6 +376,47 @@ function OpenTourEditor({ templateId, onClose }) {
   async function removeRule(ruleId) {
     try {
       await api.openTours.removeRule(ruleId);
+      await reloadTpl();
+    } catch (e) {
+      alert(errText(e));
+    }
+  }
+
+  function startEditRule(r) {
+    setEditingRuleId(r.id);
+    setRuleEdit({
+      weekday: r.weekday,
+      startTime: r.startTime,
+      validFrom: r.validFrom || '',
+      validUntil: r.validUntil || '',
+      season: r.season || '',
+    });
+  }
+
+  // Save the SAME rule row. Shows an impact summary first; registered
+  // occurrences require an explicit confirm (the server also enforces it).
+  async function saveRuleEdit(ruleId) {
+    const body = {
+      weekday: ruleEdit.weekday,
+      startTime: ruleEdit.startTime,
+      validFrom: ruleEdit.validFrom || null,
+      validUntil: ruleEdit.validUntil || null,
+      season: ruleEdit.season || null,
+    };
+    try {
+      const imp = await api.openTours.ruleImpact(ruleId, body);
+      const parts = [];
+      if (imp.willUpdate) parts.push(`יעודכנו ${imp.willUpdate}`);
+      if (imp.willCreate) parts.push(`ייווצרו ${imp.willCreate}`);
+      if (imp.willCancel) parts.push(`יבוטלו ${imp.willCancel}`);
+      const reg = imp.requiresConfirmation?.length || 0;
+      const pin = imp.preserved?.length || 0;
+      let msg = 'השפעת העריכה: ' + (parts.join(' · ') || 'אין שינוי במועדים קיימים') + '.';
+      if (pin) msg += `\n${pin} מועדים נעולים (עם התאמה ידנית) יישמרו.`;
+      if (reg) msg += `\n⚠️ ${reg} מועדים עם רישומי לקוחות יוזזו/יבוטלו — יידרש עדכון לקוחות (ייפתח כרטיס בקרה).`;
+      if ((parts.length || reg || pin) && !window.confirm(msg + '\nלהמשיך?')) return;
+      await api.openTours.updateRuleRaw(ruleId, { ...body, confirmRegistered: reg > 0 });
+      setEditingRuleId(null);
       await reloadTpl();
     } catch (e) {
       alert(errText(e));
@@ -503,20 +546,39 @@ function OpenTourEditor({ templateId, onClose }) {
               {(tpl.scheduleRules || []).length === 0 ? (
                 <p className="px-3 py-3 text-center text-[12.5px] text-gray-400">אין כללים עדיין.</p>
               ) : (
-                tpl.scheduleRules.map((r) => (
-                  <div key={r.id} className="flex items-center gap-2 px-3 py-2 text-[13px]">
-                    <span className="flex-1 text-gray-800">
-                      כל יום {WEEKDAY_LABELS[r.weekday]} · <span dir="ltr" className="tabular-nums">{r.startTime}</span>
-                      {(r.validFrom || r.validUntil) && (
-                        <span className="text-gray-400">
-                          {' '}({r.validFrom || '…'} → {r.validUntil || '…'})
-                        </span>
-                      )}
-                      {r.season && <span className="text-gray-400"> · {r.season}</span>}
-                    </span>
-                    <button type="button" onClick={() => removeRule(r.id)} className="h-7 w-7 rounded text-gray-400 hover:bg-red-50 hover:text-red-600">🗑</button>
-                  </div>
-                ))
+                tpl.scheduleRules.map((r) =>
+                  editingRuleId === r.id ? (
+                    <div key={r.id} className="grid grid-cols-2 gap-2 px-3 py-2 sm:grid-cols-3">
+                      <select value={ruleEdit.weekday} onChange={(e) => setRuleEdit((d) => ({ ...d, weekday: Number(e.target.value) }))} className={INPUT + ' bg-white'}>
+                        {WEEKDAY_LABELS.map((label, i) => (
+                          <option key={i} value={i}>יום {label}</option>
+                        ))}
+                      </select>
+                      <TimeField value={ruleEdit.startTime} onChange={(v) => setRuleEdit((d) => ({ ...d, startTime: v }))} clearable={false} />
+                      <input value={ruleEdit.season} onChange={(e) => setRuleEdit((d) => ({ ...d, season: e.target.value }))} placeholder="עונה (רשות)" className={INPUT} />
+                      <DateField value={ruleEdit.validFrom} onChange={(v) => setRuleEdit((d) => ({ ...d, validFrom: v }))} placeholder="בתוקף מ־" />
+                      <DateField value={ruleEdit.validUntil} onChange={(v) => setRuleEdit((d) => ({ ...d, validUntil: v }))} placeholder="בתוקף עד" />
+                      <div className="flex gap-1">
+                        <button type="button" onClick={() => saveRuleEdit(r.id)} className={PRIMARY + ' flex-1'}>שמור</button>
+                        <button type="button" onClick={() => setEditingRuleId(null)} className="h-10 rounded-lg px-2 text-[13px] text-gray-500 hover:bg-gray-100">ביטול</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div key={r.id} className="flex items-center gap-2 px-3 py-2 text-[13px]">
+                      <span className="flex-1 text-gray-800">
+                        כל יום {WEEKDAY_LABELS[r.weekday]} · <span dir="ltr" className="tabular-nums">{r.startTime}</span>
+                        {(r.validFrom || r.validUntil) && (
+                          <span className="text-gray-400">
+                            {' '}({r.validFrom || '…'} → {r.validUntil || '…'})
+                          </span>
+                        )}
+                        {r.season && <span className="text-gray-400"> · {r.season}</span>}
+                      </span>
+                      <button type="button" onClick={() => startEditRule(r)} title="עריכת הכלל" className="h-7 w-7 rounded text-gray-400 hover:bg-blue-50 hover:text-blue-600">✎</button>
+                      <button type="button" onClick={() => removeRule(r.id)} className="h-7 w-7 rounded text-gray-400 hover:bg-red-50 hover:text-red-600">🗑</button>
+                    </div>
+                  ),
+                )
               )}
             </div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">

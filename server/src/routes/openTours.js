@@ -19,8 +19,12 @@ import { deriveCardStatus } from '../tours/woo/cardStatus.js';
 import { kickWooSync, markTourWooPending } from '../tours/woo/service.js';
 import { woo, wooConfigured, wooSyncActive, wooSyncBulkEnabled } from '../tours/woo/wooClient.js';
 import { occupancyFor } from '../tours/occupancy.js';
-import { israelToday } from '../tours/slotGeneration.js';
+import { israelToday, addDays, getTourSettings } from '../tours/slotGeneration.js';
 import { suggestWooConfig } from '../tours/woo/suggestConfig.js';
+import { planRuleReconcile, classifyRulePlan } from '../tours/ruleEdit.js';
+import { emitTourChangeImpact } from '../tours/changeImpact.js';
+import { calendarPendingPatch, kickTourCalendarSync } from '../tours/calendar/service.js';
+import { wooPendingPatch } from '../tours/woo/service.js';
 
 // Open Tours admin API (/api/open-tours) — CRUD for recurring tour TEMPLATES
 // (the "what"), their offered sellable products, weekly SCHEDULE RULES (the
@@ -197,6 +201,59 @@ router.post(
   }),
 );
 
+// Merge a validated partial patch onto the existing rule → the full NEW rule.
+function mergedRule(existing, data) {
+  return {
+    weekday: data.weekday ?? existing.weekday,
+    startTime: data.startTime ?? existing.startTime,
+    validFrom: data.validFrom !== undefined ? data.validFrom : existing.validFrom,
+    validUntil: data.validUntil !== undefined ? data.validUntil : existing.validUntil,
+  };
+}
+
+// Load the reconciliation inputs: this rule's FUTURE scheduled slots (with seats
+// + manual-override pin), the horizon, and the template's cancel/time-override
+// exceptions. Shared by the impact preview and the apply.
+async function loadRuleReconcileInputs(rule) {
+  const today = israelToday();
+  const settings = await getTourSettings(prisma);
+  const target = addDays(today, settings.generateDaysAhead);
+  const slotRows = await prisma.tourEvent.findMany({
+    where: { generatedByRuleId: rule.id, kind: 'group_slot', status: 'scheduled', date: { gte: today } },
+    select: { id: true, date: true, startTime: true, productManualOverride: true },
+  });
+  const occ = await occupancyFor(prisma, slotRows.map((s) => s.id));
+  const slots = slotRows.map((s) => ({
+    id: s.id, date: s.date, startTime: s.startTime,
+    seats: occ[s.id]?.activeSeats || 0, pinned: s.productManualOverride,
+  }));
+  const excs = await prisma.openTourScheduleException.findMany({ where: { templateId: rule.templateId } });
+  const cancelDates = new Set(excs.filter((e) => e.type === 'cancel').map((e) => e.date));
+  const timeOverrides = new Map(excs.filter((e) => e.type === 'time_override' && e.time).map((e) => [e.date, e.time]));
+  return { today, target, slots, cancelDates, timeOverrides };
+}
+
+// Impact PREVIEW (dry run) — what an edit to this rule WOULD do, before saving.
+router.post(
+  '/rules/:ruleId/impact',
+  handle(async (req, res) => {
+    const existing = await prisma.openTourScheduleRule.findUnique({ where: { id: req.params.ruleId } });
+    if (!existing) return res.status(404).json({ error: 'not_found' });
+    const { data, error } = buildRulePatch(req.body, { partial: true });
+    if (error) return res.status(400).json({ error });
+    const newRule = mergedRule(existing, data);
+    const inputs = await loadRuleReconcileInputs(existing);
+    const plan = planRuleReconcile({ newRule, ...inputs });
+    const { summary } = classifyRulePlan(plan);
+    res.json(summary);
+  }),
+);
+
+// EDIT the same canonical rule row (never delete+recreate) and reconcile the
+// already-materialized future occurrences: create new-pattern dates, retime
+// same-day time changes, cancel orphans — protecting registered (needs confirm)
+// and manually-pinned (needs overwrite) occurrences, and emitting a canonical
+// impact record for every registered occurrence actually moved/cancelled.
 router.put(
   '/rules/:ruleId',
   handle(async (req, res) => {
@@ -204,11 +261,64 @@ router.put(
     if (!existing) return res.status(404).json({ error: 'not_found' });
     const { data, error } = buildRulePatch(req.body, { partial: true });
     if (error) return res.status(400).json({ error });
-    // Recipe changes apply to FUTURE generation only — already-created slots are
-    // real TourEvents and stay as they are (edited individually if needed).
-    const rule = await prisma.openTourScheduleRule.update({ where: { id: existing.id }, data });
+    const newRule = mergedRule(existing, data);
+    const inputs = await loadRuleReconcileInputs(existing);
+    const plan = planRuleReconcile({ newRule, ...inputs });
+    const confirmRegistered = req.body.confirmRegistered === true;
+    const overwritePinned = req.body.overwritePinned === true;
+    const { summary, apply } = classifyRulePlan(plan, { confirmRegistered, overwritePinned });
+
+    // Registered occurrences would move/cancel → require explicit confirmation.
+    if (summary.requiresConfirmation.length && !confirmRegistered) {
+      return res.status(409).json({ error: 'rule_edit_requires_confirm', summary });
+    }
+
+    // Update the SAME rule row + reset the generation cursor so the new pattern
+    // materializes from today (idempotent — no duplicate TourEvents).
+    const rule = await prisma.openTourScheduleRule.update({
+      where: { id: existing.id },
+      data: { ...data, generatedThrough: null },
+    });
     await regenerate();
-    res.json(rule);
+
+    const cancelIds = new Set(apply.cancel.map((c) => c.id));
+    for (const r of apply.retime) {
+      await prisma.tourEvent.update({
+        where: { id: r.id },
+        data: { startTime: r.toTime, ...calendarPendingPatch(), ...wooPendingPatch() },
+      });
+    }
+    for (const c of apply.cancel) {
+      await prisma.tourEvent.update({
+        where: { id: c.id },
+        data: { status: 'cancelled', cancelledAt: new Date(), ...calendarPendingPatch(), ...wooPendingPatch() },
+      });
+    }
+    // Canonical impact record for each registered occurrence we moved/cancelled.
+    for (const a of apply.impacted) {
+      const cancelled = cancelIds.has(a.id);
+      await emitTourChangeImpact(prisma, {
+        tourEventId: a.id,
+        impactType: cancelled ? 'tour_cancelled' : 'tour_time_changed',
+        before: { date: a.date, startTime: a.fromTime },
+        after: { date: a.date, startTime: cancelled ? a.fromTime : a.toTime },
+        note: 'weekly rule edit',
+      }).catch((e) => console.error('[open-tours] impact emit failed', e));
+    }
+    kickTourCalendarSync();
+    kickWooSync();
+
+    res.json({
+      ...rule,
+      applied: {
+        created: summary.willCreate,
+        retimed: apply.retime.length,
+        cancelled: apply.cancel.length,
+        impacted: apply.impacted.length,
+        preserved: summary.preserved.length,
+        blocked: apply.blocked.length,
+      },
+    });
   }),
 );
 

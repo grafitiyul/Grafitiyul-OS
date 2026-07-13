@@ -9,3 +9,6 @@ import './dealTourSync.js';
 import './heldExpired.js';
 import './overCapacity.js';
 import './wooSync.js';
+// Register the canonical tour-change impact issue type at startup (event-emitted
+// by rule/exception edits; no sweep detector).
+import '../../tours/changeImpact.js';
