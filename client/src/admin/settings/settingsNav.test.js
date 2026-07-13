@@ -56,7 +56,7 @@ test('resolveNode returns null for unknown, node for known', () => {
 
 test('every Tours category sits under the Tours landing page', () => {
   for (const path of [
-    '/admin/settings/tours/group-tours',
+    '/admin/settings/tours/open-tours',
     '/admin/settings/tours/components',
     '/admin/settings/tours/coordination',
     '/admin/settings/tours/summary',
@@ -66,10 +66,10 @@ test('every Tours category sits under the Tours landing page', () => {
   }
 });
 
-test('trail for Group Tours is root → Tours → Group Tours', () => {
+test('trail for Open Tours is root → Tours → Open Tours', () => {
   assert.deepEqual(
-    getTrail('/admin/settings/tours/group-tours').map((c) => c.label),
-    ['הגדרות', 'הגדרות סיורים', 'סיורים קבוצתיים'],
+    getTrail('/admin/settings/tours/open-tours').map((c) => c.label),
+    ['הגדרות', 'הגדרות סיורים', 'סיורים פתוחים'],
   );
 });
 

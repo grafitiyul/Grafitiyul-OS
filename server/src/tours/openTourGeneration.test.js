@@ -90,3 +90,58 @@ test('add exceptions are ignored when in the past, timeless, or also cancelled',
   const { rows } = planTemplateGeneration(tpl, HORIZON);
   assert.equal(rows.length, 0);
 });
+
+// ── Regression: ONLY the Open Tours engine generates (legacy retired) ─────────
+// A fake client whose legacy `tourScheduleRule` model throws on ANY access —
+// proving ensureTourSlots never touches the retired path — and that one weekly
+// schedule occurrence materializes EXACTLY one TourEvent.
+
+function genClient({ template, generateDaysAhead = 6 } = {}) {
+  const created = [];
+  return {
+    _created: created,
+    // Any access to the legacy model is a test failure.
+    tourScheduleRule: new Proxy(
+      {},
+      { get() { throw new Error('LEGACY tourScheduleRule accessed — legacy path not retired'); } },
+    ),
+    openTourTemplate: { findMany: async () => (template ? [template] : []) },
+    tourSettings: { upsert: async () => ({ defaultCapacity: 30, generateDaysAhead }) },
+    tourEvent: {
+      createMany: async ({ data }) => {
+        created.push(...data);
+        return { count: data.length };
+      },
+      findMany: async () => [],
+    },
+    openTourScheduleRule: { update: async () => ({}) },
+    productVariantActivityComponent: { findMany: async () => [] },
+    tourEventActivityComponent: { createMany: async () => ({ count: 0 }) },
+  };
+}
+
+test('ensureTourSlots delegates ONLY to the Open Tours engine (legacy never invoked)', async () => {
+  const { ensureTourSlots } = await import('./openTourGeneration.js');
+  const client = genClient({ template: null }); // no templates → nothing to do
+  const n = await ensureTourSlots(client); // must NOT touch the legacy trap
+  assert.equal(n, 0);
+});
+
+test('one weekly schedule occurrence materializes EXACTLY one TourEvent', async () => {
+  const { ensureTourSlots } = await import('./openTourGeneration.js');
+  const template = {
+    id: 'tpl1',
+    tourLanguage: 'he',
+    capacity: null,
+    locationId: null,
+    products: [],
+    exceptions: [],
+    // A single weekly rule; a 7-day horizon (gen=6) contains each weekday once.
+    scheduleRules: [{ id: 'r1', weekday: 3, startTime: '17:00' }],
+  };
+  const client = genClient({ template, generateDaysAhead: 6 });
+  await ensureTourSlots(client);
+  assert.equal(client._created.length, 1, 'exactly one TourEvent per occurrence');
+  assert.equal(client._created[0].kind, 'group_slot');
+  assert.equal(client._created[0].generatedByRuleId, 'r1');
+});

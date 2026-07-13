@@ -34,6 +34,9 @@ export default function OpenToursSettings() {
   const [creating, setCreating] = useState(false);
   const [editId, setEditId] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  // Shared TourSettings globals (migrated here from the retired Group Tours page).
+  const [globals, setGlobals] = useState({ defaultCapacity: '', generateDaysAhead: '' });
+  const [savingGlobals, setSavingGlobals] = useState(false);
 
   async function refresh() {
     try {
@@ -49,7 +52,27 @@ export default function OpenToursSettings() {
 
   useEffect(() => {
     refresh();
+    api.tours
+      .scheduling()
+      .then(({ settings }) =>
+        setGlobals({ defaultCapacity: settings.defaultCapacity, generateDaysAhead: settings.generateDaysAhead }),
+      )
+      .catch(() => {});
   }, []);
+
+  async function saveGlobals() {
+    setSavingGlobals(true);
+    try {
+      await api.tours.updateSchedulingSettings({
+        defaultCapacity: Number(globals.defaultCapacity),
+        generateDaysAhead: Number(globals.generateDaysAhead),
+      });
+    } catch (e) {
+      alert(errText(e));
+    } finally {
+      setSavingGlobals(false);
+    }
+  }
 
   async function createTemplate() {
     if (!newName.trim()) return;
@@ -96,6 +119,42 @@ export default function OpenToursSettings() {
           כרטיסים נמכרים בה — המוצר התפעולי של הסיור נגזר אוטומטית מההרשמות בפועל.
         </p>
       </header>
+
+      {/* Shared generation globals */}
+      <section className="bg-white border border-gray-200 rounded-2xl shadow-sm mb-6">
+        <div className="px-5 pt-4 pb-3 border-b border-gray-100">
+          <h2 className="text-[15px] font-semibold text-gray-900">תזמון אוטומטי</h2>
+          <p className="text-[12.5px] text-gray-500 mt-0.5">
+            המערכת יוצרת סלוטים עתידיים אוטומטית כשהם נכנסים לאופק המוגדר, לפי תבניות הסיור הפתוח.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-end gap-3 px-5 py-4">
+          <label className="block">
+            <span className={FIELD_LABEL}>קיבולת ברירת מחדל</span>
+            <input
+              type="number"
+              min="1"
+              value={globals.defaultCapacity}
+              onChange={(e) => setGlobals((g) => ({ ...g, defaultCapacity: e.target.value }))}
+              className={INPUT + ' w-32'}
+            />
+          </label>
+          <label className="block">
+            <span className={FIELD_LABEL}>ימים קדימה ליצירה</span>
+            <input
+              type="number"
+              min="0"
+              max="366"
+              value={globals.generateDaysAhead}
+              onChange={(e) => setGlobals((g) => ({ ...g, generateDaysAhead: e.target.value }))}
+              className={INPUT + ' w-32'}
+            />
+          </label>
+          <button type="button" disabled={savingGlobals} onClick={saveGlobals} className={PRIMARY + ' h-10'}>
+            {savingGlobals ? 'שומר…' : 'שמירה'}
+          </button>
+        </div>
+      </section>
 
       <section className="bg-white border border-gray-200 rounded-2xl shadow-sm mb-6">
         <div className="flex flex-wrap items-end gap-2 px-5 py-4 border-b border-gray-100 bg-gray-50/60 rounded-t-2xl">

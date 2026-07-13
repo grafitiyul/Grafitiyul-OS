@@ -3,7 +3,6 @@ import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import {
   GROUP_SLOT_REQUIRED_FIELDS,
-  SCHEDULE_RULE_REQUIRED_FIELDS,
   TOUR_EVENT_STATUSES,
   TOUR_LANGS,
   DATE_RE,
@@ -422,55 +421,17 @@ router.get(
   }),
 );
 
-// ---------- scheduling (Settings → Tours) ----------
-// Global settings singleton + recurring weekly rules. Registered BEFORE
-// '/:id'. Rule mutations trigger immediate generation so the tours list
-// reflects the schedule without waiting for the next read.
-
-const WEEKDAY_MIN = 0;
-const WEEKDAY_MAX = 6;
-
-function validateRuleFields(b, data) {
-  if (b.weekday !== undefined) {
-    const w = Number(b.weekday);
-    if (!Number.isInteger(w) || w < WEEKDAY_MIN || w > WEEKDAY_MAX) return 'invalid_weekday';
-    data.weekday = w;
-  }
-  if (b.startTime !== undefined) {
-    if (!TIME_RE.test(String(b.startTime || ''))) return 'invalid_time';
-    data.startTime = String(b.startTime);
-  }
-  if (b.tourLanguage !== undefined) {
-    if (!TOUR_LANGS.includes(b.tourLanguage)) return 'invalid_tour_language';
-    data.tourLanguage = b.tourLanguage;
-  }
-  if (b.capacity !== undefined) {
-    const n = Number(b.capacity);
-    if (!Number.isInteger(n) || n < 1) return 'invalid_capacity';
-    data.capacity = n;
-  }
-  if (b.active !== undefined) data.active = !!b.active;
-  return null;
-}
-
-const RULE_INCLUDE = {
-  product: { select: { id: true, nameHe: true } },
-  productVariant: {
-    select: { id: true, location: { select: { id: true, nameHe: true } } },
-  },
-};
-
+// ---------- scheduling GLOBALS (Settings → Tours) ----------
+// The recurring-rule endpoints (POST/PUT/DELETE /scheduling/rules) and the
+// legacy TourScheduleRule model they drove were RETIRED — recurring open-tour
+// generation now lives entirely in the Open Tours engine (/api/open-tours).
+// What remains here is the SHARED TourSettings singleton (defaultCapacity +
+// generateDaysAhead horizon), read/written by the Open Tours settings UI.
 router.get(
   '/scheduling',
   handle(async (_req, res) => {
-    const [settings, rules] = await Promise.all([
-      getTourSettings(prisma),
-      prisma.tourScheduleRule.findMany({
-        orderBy: [{ weekday: 'asc' }, { startTime: 'asc' }],
-        include: RULE_INCLUDE,
-      }),
-    ]);
-    res.json({ settings, rules });
+    const settings = await getTourSettings(prisma);
+    res.json({ settings });
   }),
 );
 
@@ -493,85 +454,13 @@ router.put(
     }
     await getTourSettings(prisma); // ensure the singleton exists
     const settings = await prisma.tourSettings.update({ where: { id: 'singleton' }, data });
-    // A larger horizon should materialize immediately.
+    // A larger horizon should materialize immediately (Open Tours engine).
     try {
       await ensureTourSlots(prisma);
     } catch (e) {
       console.error('[tours] slot generation failed', e);
     }
     res.json(settings);
-  }),
-);
-
-router.post(
-  '/scheduling/rules',
-  handle(async (req, res) => {
-    const b = req.body || {};
-    const missing = missingFields(b, SCHEDULE_RULE_REQUIRED_FIELDS);
-    if (missing.length) {
-      return res.status(422).json({ error: 'missing_required_fields', missing });
-    }
-    const data = {};
-    const fieldErr = validateRuleFields(b, data);
-    if (fieldErr) return res.status(400).json({ error: fieldErr });
-    const variant = await resolveVariant(b.productId, b.productVariantId);
-    if (!variant) return res.status(400).json({ error: 'invalid_product_variant' });
-    data.productId = b.productId;
-    data.productVariantId = variant.id;
-
-    const rule = await prisma.tourScheduleRule.create({ data, include: RULE_INCLUDE });
-    try {
-      await ensureTourSlots(prisma);
-    } catch (e) {
-      console.error('[tours] slot generation failed', e);
-    }
-    res.status(201).json(rule);
-  }),
-);
-
-router.put(
-  '/scheduling/rules/:ruleId',
-  handle(async (req, res) => {
-    const b = req.body || {};
-    const existing = await prisma.tourScheduleRule.findUnique({
-      where: { id: req.params.ruleId },
-    });
-    if (!existing) return res.status(404).json({ error: 'not_found' });
-    const data = {};
-    const fieldErr = validateRuleFields(b, data);
-    if (fieldErr) return res.status(400).json({ error: fieldErr });
-    if (b.productId !== undefined || b.productVariantId !== undefined) {
-      const productId = b.productId ?? existing.productId;
-      const productVariantId = b.productVariantId ?? existing.productVariantId;
-      const variant = await resolveVariant(productId, productVariantId);
-      if (!variant) return res.status(400).json({ error: 'invalid_product_variant' });
-      data.productId = productId;
-      data.productVariantId = variant.id;
-    }
-    // Recipe changes apply to FUTURE generation only — already-created slots
-    // are real TourEvents and stay as they are (edited individually if needed).
-    // Reactivating or rescheduling resumes from the existing cursor.
-    const rule = await prisma.tourScheduleRule.update({
-      where: { id: existing.id },
-      data,
-      include: RULE_INCLUDE,
-    });
-    try {
-      await ensureTourSlots(prisma);
-    } catch (e) {
-      console.error('[tours] slot generation failed', e);
-    }
-    res.json(rule);
-  }),
-);
-
-router.delete(
-  '/scheduling/rules/:ruleId',
-  handle(async (req, res) => {
-    // Already-generated slots survive (loose generatedByRuleId ref) — deleting
-    // a rule only stops FUTURE generation.
-    await prisma.tourScheduleRule.delete({ where: { id: req.params.ruleId } });
-    res.status(204).end();
   }),
 );
 

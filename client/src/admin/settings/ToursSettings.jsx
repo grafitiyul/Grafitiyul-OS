@@ -21,16 +21,10 @@ export default function ToursSettings() {
 
       <CategoryGrid>
         <CategoryCard
-          to="/admin/settings/tours/group-tours"
-          icon="🗓️"
-          title="סיורים קבוצתיים"
-          description="יצירה אוטומטית של סלוטים — קיבולת ברירת מחדל, אופק תכנון וכללי תזמון שבועיים."
-        />
-        <CategoryCard
           to="/admin/settings/tours/open-tours"
           icon="🎟️"
           title="סיורים פתוחים"
-          description="תבניות סיור חוזרות עם מכירת כרטיסים — מיקום, לו״ז, קיבולת ומוצרים; המוצר התפעולי נגזר מההרשמות."
+          description="תבניות סיור חוזרות עם מכירת כרטיסים — מיקום, לו״ז, קיבולת, מוצרים ותזמון; המוצר התפעולי נגזר מההרשמות."
         />
         <CategoryCard
           to="/admin/settings/tours/components"

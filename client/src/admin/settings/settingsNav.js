@@ -36,7 +36,6 @@ export const SETTINGS_TREE = {
   '/admin/settings/finance/payroll-components': { label: 'רכיבי שכר', parent: '/admin/settings/finance' },
   '/admin/settings/finance/activity-types': { label: 'סוגי תוספת כללית', parent: '/admin/settings/finance' },
   '/admin/settings/tours': { label: 'הגדרות סיורים', parent: '/admin/settings' },
-  '/admin/settings/tours/group-tours': { label: 'סיורים קבוצתיים', parent: '/admin/settings/tours' },
   '/admin/settings/tours/open-tours': { label: 'סיורים פתוחים', parent: '/admin/settings/tours' },
   '/admin/settings/tours/components': { label: 'מרכיבי הפעילות ומיקומי הסדנה', parent: '/admin/settings/tours' },
   '/admin/settings/tours/coordination': { label: 'שיחת תיאום', parent: '/admin/settings/tours' },

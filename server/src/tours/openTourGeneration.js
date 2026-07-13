@@ -15,13 +15,7 @@
 // authored as templates and the legacy rules deactivated, the legacy path is
 // retired.
 
-import {
-  israelToday,
-  addDays,
-  weekdayOf,
-  getTourSettings,
-  ensureGeneratedSlots,
-} from './slotGeneration.js';
+import { israelToday, addDays, weekdayOf, getTourSettings } from './slotGeneration.js';
 import { seedSlotComponents } from './tourComponents.js';
 
 // Synthetic generatedByRuleId for a one-off `add` occurrence, so it shares the
@@ -180,11 +174,11 @@ export async function ensureOpenTourSlots(client) {
   return created;
 }
 
-// Orchestrator called from the tours router (sync-on-read): legacy group-slot
-// rules + new open-tour templates. Both are idempotent; failures are logged by
-// the caller and never block the request.
+// Orchestrator called from the tours router (sync-on-read). The legacy
+// TourScheduleRule generator has been RETIRED — the Open Tours engine is now the
+// ONE and ONLY recurring-slot generator (guards against double generation). Kept
+// as a named seam so the router call sites (and any future generators) stay
+// stable and idempotent; failures are logged by the caller and never block.
 export async function ensureTourSlots(client) {
-  const legacy = await ensureGeneratedSlots(client);
-  const open = await ensureOpenTourSlots(client);
-  return legacy + open;
+  return ensureOpenTourSlots(client);
 }
