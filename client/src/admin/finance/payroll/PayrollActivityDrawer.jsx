@@ -50,25 +50,29 @@ function MoneyCell({ line, disabled, onCommit }) {
           if (e.key === 'Enter') e.currentTarget.blur();
           if (e.key === 'Escape') setEditing(false);
         }}
+        placeholder={minorToInput(line.calculatedMinor)}
+        title="רוקן את השדה לחזרה לערך המחושב · 0 = אפס מפורש"
         className="w-24 px-1.5 py-0.5 text-sm text-center border border-blue-400 rounded outline-none"
       />
     );
   }
   const sign = Number(line.sign) || 1;
   const value = lineFinalMinor(line);
+  const empty = value === 0 && line.calculatedMinor == null && line.overrideMinor == null;
   return (
     <button
       type="button"
       onClick={start}
       disabled={disabled}
+      aria-label={overridden ? `דריסה ${fmtSigned(value)} (חושב אוטומטית ${fmtSigned(line.calculatedMinor ?? 0)})` : fmtSigned(value)}
       className={`w-full px-1 py-0.5 text-sm tabular-nums rounded transition ${
         disabled ? 'cursor-default' : 'hover:bg-blue-50 cursor-text'
       } ${overridden ? 'ring-1 ring-amber-300 bg-amber-50/50' : ''} ${
         value === 0 ? 'text-gray-300' : sign < 0 ? 'text-red-600' : 'text-gray-800'
       }`}
-      title={overridden ? `חושב אוטומטית: ${fmtSigned(line.calculatedMinor ?? 0)}` : undefined}
+      title={overridden ? `חושב אוטומטית: ${fmtSigned(line.calculatedMinor ?? 0)} · רוקן לחזרה לחישוב` : 'לחצו לעריכה'}
     >
-      {value === 0 && line.calculatedMinor == null && line.overrideMinor == null ? '—' : fmtSigned(value)}
+      {empty ? '—' : fmtSigned(value)}
       {overridden && <span className="text-[10px] text-amber-600 mr-1">✎</span>}
     </button>
   );
@@ -178,18 +182,6 @@ export default function PayrollActivityDrawer({ activityId, onClose, refreshTick
     setBusy(true);
     try {
       await api.payroll.updateLine(line.id, body);
-      await load();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const clearOverride = async (line) => {
-    setBusy(true);
-    try {
-      await api.payroll.updateLine(line.id, { overrideMinor: null });
       await load();
     } catch (e) {
       setError(e.message);
@@ -388,16 +380,6 @@ export default function PayrollActivityDrawer({ activityId, onClose, refreshTick
                                 <QuantityCell line={line} disabled={busy} onCommit={(b) => commitCell(line, b)} />
                               ) : (
                                 <MoneyCell line={line} disabled={busy} onCommit={(v) => commitCell(line, v)} />
-                              )}
-                              {line.overrideMinor != null && (
-                                <button
-                                  type="button"
-                                  onClick={() => clearOverride(line)}
-                                  className="block mx-auto text-[10px] text-gray-400 hover:text-blue-600"
-                                  title="חזרה לערך המחושב"
-                                >
-                                  ↺ מחושב {line.calculatedMinor != null ? fmtSigned(line.calculatedMinor) : '—'}
-                                </button>
                               )}
                             </td>
                           );

@@ -153,3 +153,14 @@ test('one editable amount cell per person; override reveals the calculated value
   assert.equal(approveButtons.length, 2, 'per-person office-approval control under each column');
   await unmount();
 });
+
+test('no ↺ restore control — clearing the field is the only reset affordance', async () => {
+  const { container, unmount } = await mount();
+  // The old per-cell "↺ מחושב X" restore button must be gone (Slice 4): the
+  // override is cleared by emptying the amount field, not a dedicated control.
+  assert.ok(!container.textContent.includes('↺'), 'no per-cell restore button');
+  // The overridden cell still exposes the calculated value via title (hint).
+  const overriddenBtn = [...container.querySelectorAll('button[title]')].find((b) => /חושב אוטומטית/.test(b.getAttribute('title')));
+  assert.ok(overriddenBtn, 'overridden cell exposes the calculated value as a tooltip hint');
+  await unmount();
+});
