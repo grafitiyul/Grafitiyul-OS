@@ -15,6 +15,7 @@ import { tourStatusWhere } from '../tours/statusFilter.js';
 import { occupancyFor } from '../tours/occupancy.js';
 import { replaceTourEvent } from '../tours/replaceTour.js';
 import { emitTourChangeImpact } from '../tours/changeImpact.js';
+import { cancelTourAssignments } from '../tours/assignmentLifecycle.js';
 import {
   cancelDealBooking,
   reconnectOrphanBooking,
@@ -1192,6 +1193,10 @@ router.put(
         // Payroll history survives — the activity/entries park as 'cancelled'
         // (no-op when the tour never generated payroll).
         await cancelTourPayroll(prisma, tour.id, 'tour_cancelled');
+        // A cancelled tour must not retain operational staff — remove the
+        // assignments (recorded on the timeline) so no guide stays attached and
+        // the Guide Portal (which hides cancelled tours) reflects it immediately.
+        await cancelTourAssignments(prisma, tour.id, { origin, reason: 'tour_cancelled' });
       }
     }
     const occAfter = await occupancyFor(prisma, [tour.id]);

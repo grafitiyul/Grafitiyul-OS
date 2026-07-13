@@ -21,7 +21,11 @@ function makeDb({ original, regs = [], bookings = [], deals = {} } = {}) {
     _tours: tours, _reg: reg, _bk: bk, _deals: dl, _issues: issues,
     $transaction: async (fn) => fn(db),
     timelineEntry: { create: async () => ({}) },
-    tourAssignment: { count: async () => 0 },
+    tourAssignment: {
+      count: async () => 0,
+      findMany: async () => [],
+      deleteMany: async () => ({ count: 0 }),
+    },
     tourEvent: {
       findUnique: async ({ where }) => tours[where.id] || null,
       create: async ({ data }) => {

@@ -4,6 +4,7 @@ import { calendarPendingPatch, kickTourCalendarSync } from './calendar/service.j
 import { wooPendingPatch, kickWooSync } from './woo/service.js';
 import { emitTourChangeImpact } from './changeImpact.js';
 import { emitTimelineEvent } from '../timeline/events.js';
+import { cancelTourAssignments } from './assignmentLifecycle.js';
 
 // Canonical registered-tour mutation. A TourEvent that holds seats (active/held/
 // confirmed registrations) must NEVER be silently re-dated/moved: instead we
@@ -102,6 +103,10 @@ export async function replaceTourEvent(client, { originalId, patch = {}, origin 
       data: { event: 'tour_replaced', replacementId: replacement.id, from: { date: original.date, startTime: original.startTime }, to: { date: replacement.date, startTime: replacement.startTime } },
       origin,
     });
+    // The original is cancelled → remove its staff (assignments are NOT moved to
+    // the replacement; the new occurrence is re-staffed via the plan layer). This
+    // prevents the same active assignment sitting on both tours.
+    await cancelTourAssignments(tx, originalId, { origin, reason: 'tour_replaced' });
     return { replacement, dealIds };
   });
 

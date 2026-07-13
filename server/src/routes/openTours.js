@@ -24,6 +24,7 @@ import { suggestWooConfig } from '../tours/woo/suggestConfig.js';
 import { planRuleReconcile, classifyRulePlan } from '../tours/ruleEdit.js';
 import { planExceptionReconcile, classifyExceptionPlan } from '../tours/exceptionEdit.js';
 import { emitTourChangeImpact } from '../tours/changeImpact.js';
+import { cancelTourAssignments } from '../tours/assignmentLifecycle.js';
 import { calendarPendingPatch, kickTourCalendarSync } from '../tours/calendar/service.js';
 import { wooPendingPatch } from '../tours/woo/service.js';
 import { reconcileAllOpenTourProducts } from '../tours/reconcileProducts.js';
@@ -295,6 +296,8 @@ router.put(
         where: { id: c.id },
         data: { status: 'cancelled', cancelledAt: new Date(), ...calendarPendingPatch(), ...wooPendingPatch() },
       });
+      // A cancelled occurrence keeps no operational staff.
+      await cancelTourAssignments(prisma, c.id, { reason: 'schedule_edit_cancel' });
     }
     // Canonical impact record for each registered occurrence we moved/cancelled.
     for (const a of apply.impacted) {
