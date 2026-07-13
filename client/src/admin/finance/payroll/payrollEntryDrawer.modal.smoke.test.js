@@ -133,3 +133,24 @@ test('mounts as an aria modal with a backdrop (not a full-screen inset-0 slide-o
   assert.ok(text.includes('סיור פלורנטין'), 'renders the activity name in the header');
   await unmount();
 });
+
+test('single amount column: one editable value per component, calculated shown as a hint only', async () => {
+  const { container, unmount } = await mount();
+  // No separate calculated/override/final column headers.
+  const headText = [...container.querySelectorAll('thead th')].map((th) => th.textContent.trim());
+  assert.ok(!headText.includes('דריסה'), 'no separate דריסה (override) column');
+  assert.ok(!headText.includes('מחושב'), 'no separate מחושב (calculated) column header');
+  assert.ok(!headText.includes('סופי'), 'no separate סופי (final) column header');
+  assert.ok(headText.includes('סכום'), 'a single סכום column exists');
+
+  // One editable amount input per component line (2 components → 2 inputs).
+  const amountInputs = container.querySelectorAll('input[data-line-amount]');
+  assert.equal(amountInputs.length, 2, 'exactly one editable amount field per component');
+
+  // The overridden line (calc 2000 → override 7500) shows the FINAL in the
+  // field and exposes the calculated value as a subtle hint.
+  const overridden = [...amountInputs].find((el) => el.getAttribute('data-line-amount') === 'l2');
+  assert.equal(overridden.value, '75', 'field shows the final (override) value, not the calculated');
+  assert.ok(container.textContent.includes('חושב אוטומטית'), 'override reveals the calculated value as a hint');
+  await unmount();
+});

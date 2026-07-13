@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../../lib/api.js';
-import { formatMinor, toMinor, minorToInput } from '../../../lib/money.js';
+import { formatMinor, minorToInput } from '../../../lib/money.js';
 import { fmtDate } from '../../common/pickers/DateTimeFields.jsx';
 import { ROLE_LABELS, entryStatusMeta } from './payrollConfig.js';
+import { resolveAmountEdit, lineFinalMinor, isOverridden } from './payrollAmount.js';
 import Dialog from '../../common/Dialog.jsx';
 import CardKebabMenu from '../../common/CardKebabMenu.jsx';
 import { StaffAvatar } from '../../tours/TourTeamEditor.jsx';
@@ -18,12 +19,6 @@ import { StaffAvatar } from '../../tours/TourTeamEditor.jsx';
 
 const fieldCls =
   'h-8 rounded-lg border border-gray-300 bg-white px-2 text-[12px] focus:outline-none focus:ring-2 focus:ring-blue-100';
-
-function lineFinal(l) {
-  if (l.overrideMinor != null) return Number(l.overrideMinor);
-  if (l.calculatedMinor != null) return Number(l.calculatedMinor);
-  return 0;
-}
 
 export default function PayrollEntryDrawer({ entryId, onClose, refreshTick = 0 }) {
   const [data, setData] = useState(null);
@@ -299,71 +294,81 @@ export default function PayrollEntryDrawer({ entryId, onClose, refreshTick = 0 }
             </div>
           )}
 
-          {/* Lines: calculated / override / final stay separate concepts */}
+          {/* Lines — ONE editable amount column. The field shows the FINAL
+              value (override wins, else calculated); editing it writes an
+              override, clearing it returns to the calculated value, and 0 is an
+              explicit zero. calculated/override/final stay separate on the
+              server (resolveAmountEdit is the single rule for both editors). */}
           <div className="border border-gray-200 rounded-lg overflow-hidden">
             <table className="w-full text-right text-[13px]">
               <thead>
                 <tr className="text-[11px] text-gray-500 bg-gray-50 border-b border-gray-200">
                   <th className="px-3 py-2 font-medium">רכיב</th>
-                  <th className="px-3 py-2 font-medium">מחושב</th>
-                  <th className="px-3 py-2 font-medium">דריסה</th>
-                  <th className="px-3 py-2 font-medium">סופי</th>
+                  <th className="px-3 py-2 font-medium text-left w-40">סכום</th>
                 </tr>
               </thead>
               <tbody>
-                {entry.lines.map((l) => (
-                  <tr key={l.id} className="border-b border-gray-50">
-                    <td className="px-3 py-1.5 text-gray-700">
-                      {l.componentNameHe}
-                      {l.sign < 0 && <span className="text-[11px] text-red-500 mr-1">(ניכוי)</span>}
-                      {l.quantity != null && (
-                        <span className="block text-[10px] text-gray-400">
-                          {Number(l.quantity)} × {formatMinor(l.unitPriceMinor ?? 0)}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-1.5 text-gray-500 tabular-nums" dir="ltr">
-                      {l.calculatedMinor != null ? formatMinor(l.calculatedMinor) : '—'}
-                    </td>
-                    <td className="px-3 py-1.5">
-                      <input
-                        dir="ltr"
-                        disabled={busy}
-                        value={overrideDrafts[l.id] ?? minorToInput(l.overrideMinor)}
-                        placeholder="—"
-                        onChange={(e) => setOverrideDrafts((m) => ({ ...m, [l.id]: e.target.value }))}
-                        onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-                        onBlur={(e) => {
-                          const raw = e.target.value.trim();
-                          const next = raw === '' ? null : toMinor(raw);
-                          const cur = l.overrideMinor == null ? null : Number(l.overrideMinor);
-                          if (raw !== '' && next == null) return;
-                          if (next === cur) return;
-                          run(() => api.payroll.updateLine(l.id, { overrideMinor: next }));
-                        }}
-                        className="w-24 h-7 rounded border border-gray-200 px-1.5 text-[12px] text-center focus:border-blue-400 focus:outline-none"
-                      />
-                    </td>
-                    <td className={`px-3 py-1.5 font-medium tabular-nums ${l.sign < 0 ? 'text-red-600' : 'text-gray-900'}`} dir="ltr">
-                      {formatMinor(lineFinal(l))}
-                    </td>
-                  </tr>
-                ))}
+                {entry.lines.map((l) => {
+                  const overridden = isOverridden(l);
+                  return (
+                    <tr key={l.id} className="border-b border-gray-50">
+                      <td className="px-3 py-1.5 text-gray-700 align-top">
+                        {l.componentNameHe}
+                        {l.sign < 0 && <span className="text-[11px] text-red-500 mr-1">(ניכוי)</span>}
+                        {l.quantity != null && (
+                          <span className="block text-[10px] text-gray-400">
+                            {Number(l.quantity)} × {formatMinor(l.unitPriceMinor ?? 0)}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-1.5 align-top">
+                        <input
+                          dir="ltr"
+                          data-line-amount={l.id}
+                          disabled={busy}
+                          value={overrideDrafts[l.id] ?? minorToInput(lineFinalMinor(l))}
+                          onChange={(e) => setOverrideDrafts((m) => ({ ...m, [l.id]: e.target.value }))}
+                          onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                          onBlur={(e) => {
+                            const res = resolveAmountEdit(e.target.value, l);
+                            // Drop the local draft so the field re-syncs from
+                            // server truth (a no-op just restores the value).
+                            setOverrideDrafts((m) => {
+                              const next = { ...m };
+                              delete next[l.id];
+                              return next;
+                            });
+                            if (res.noop) return;
+                            run(() => api.payroll.updateLine(l.id, { overrideMinor: res.overrideMinor }));
+                          }}
+                          className={`w-28 h-7 rounded border px-1.5 text-[13px] text-center tabular-nums focus:outline-none focus:border-blue-400 ${
+                            overridden ? 'border-amber-300 bg-amber-50/40 text-gray-900' : 'border-gray-200'
+                          } ${l.sign < 0 ? 'text-red-600' : ''}`}
+                        />
+                        {overridden && (
+                          <div className="mt-0.5 text-[10px] text-gray-400" dir="ltr" title="הערך שחושב אוטומטית לפני הדריסה">
+                            חושב אוטומטית: {formatMinor(l.calculatedMinor ?? 0)}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
                 {entry.vatStatus === 'vat_18' && (
                   <>
                     <tr className="border-t border-gray-200 text-[12px] text-gray-500">
-                      <td className="px-3 py-1" colSpan={3}>לפני מע״מ</td>
-                      <td className="px-3 py-1 tabular-nums" dir="ltr">{formatMinor(entry.totals.netMinor)}</td>
+                      <td className="px-3 py-1">לפני מע״מ</td>
+                      <td className="px-3 py-1 tabular-nums text-left" dir="ltr">{formatMinor(entry.totals.netMinor)}</td>
                     </tr>
                     <tr className="text-[12px] text-gray-500">
-                      <td className="px-3 py-1" colSpan={3}>מע״מ ({entry.vatRate}%)</td>
-                      <td className="px-3 py-1 tabular-nums" dir="ltr">{formatMinor(entry.totals.vatMinor)}</td>
+                      <td className="px-3 py-1">מע״מ ({entry.vatRate}%)</td>
+                      <td className="px-3 py-1 tabular-nums text-left" dir="ltr">{formatMinor(entry.totals.vatMinor)}</td>
                     </tr>
                   </>
                 )}
                 <tr className="border-t border-gray-300 font-semibold text-gray-900">
-                  <td className="px-3 py-2" colSpan={3}>סה״כ לתשלום</td>
-                  <td className="px-3 py-2 tabular-nums" dir="ltr">{formatMinor(entry.totals.totalMinor)}</td>
+                  <td className="px-3 py-2">סה״כ לתשלום</td>
+                  <td className="px-3 py-2 tabular-nums text-left" dir="ltr">{formatMinor(entry.totals.totalMinor)}</td>
                 </tr>
               </tbody>
             </table>
