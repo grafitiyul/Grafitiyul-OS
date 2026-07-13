@@ -14,6 +14,7 @@ import {
 import StaffColorPicker, { StaffColorSwatch } from '../../color/StaffColorPicker.jsx';
 import { rowTintStyle } from '../../color/staffColorUi.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
+import NewStaffDialog from './NewStaffDialog.jsx';
 
 // Column definitions — the shared tableColumns infra owns visibility, order
 // and persistence (localStorage per table per browser profile — the app's
@@ -78,6 +79,7 @@ export default function PeopleList() {
 
   const [lifecycleFilter, setLifecycleFilter] = useState('all');
   const [accessFilter, setAccessFilter] = useState('all');
+  const [createOpen, setCreateOpen] = useState(false);
   const cols = useTableColumns('people.columns', STAFF_COLUMNS);
   // Teams feed the inline team editor (same list the profile uses).
   const [teams, setTeams] = useState([]);
@@ -159,6 +161,12 @@ export default function PeopleList() {
           </div>
         </div>
         <div className="flex-1" />
+        <button
+          onClick={() => setCreateOpen(true)}
+          className="rounded-xl bg-blue-600 px-3.5 py-2 text-[12.5px] font-semibold text-white shadow-sm hover:bg-blue-700"
+        >
+          + איש צוות חדש
+        </button>
         <div className="relative">
           <input
             type="search"
@@ -243,6 +251,12 @@ export default function PeopleList() {
       {!loading && !error && filtered.length > 0 && (
         <PeopleTable people={filtered} cols={cols} teams={teams} onChanged={refresh} />
       )}
+
+      <NewStaffDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={refresh}
+      />
     </div>
   );
 }

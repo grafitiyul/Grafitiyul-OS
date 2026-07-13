@@ -3,8 +3,13 @@ import express, { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { getRecruitmentSnapshot } from './recruitment.js';
-import { userOrigin } from '../timeline/events.js';
+import { userOrigin, emitTimelineEvent } from '../timeline/events.js';
 import { kickPayrollReconcile } from '../payroll/service.js';
+import {
+  buildManualStaffCreate,
+  findDuplicatePerson,
+  buildManualStaffAudit,
+} from '../people/createStaff.js';
 import {
   diffPersonFields,
   normalizeBankDetails,
@@ -331,6 +336,77 @@ router.post(
   handle(async (_req, res) => {
     const r = await syncFromUpstream();
     res.json(r);
+  }),
+);
+
+// ---------- Create a manual (admin-owned) staff member ----------
+// The office adds someone who did NOT come from recruitment. One identity model
+// only (PersonRef + PersonProfile), identitySource='management' so the upstream
+// pull can never overwrite the manually-entered identity. All mapping /
+// validation / duplicate logic is the pure, unit-tested people/createStaff.js.
+router.post(
+  '/',
+  handle(async (req, res) => {
+    const built = buildManualStaffCreate(req.body || {});
+    if (built.error) {
+      return res.status(400).json({
+        error: built.error,
+        ...(built.allowed ? { allowed: built.allowed } : {}),
+      });
+    }
+
+    // Identity guard: never silently fork a second identity for someone already
+    // here. Check phone + email (normalized) BEFORE creating; on a hit we return
+    // the existing person so the UI can offer to open/activate it instead.
+    const { email, phone } = req.body || {};
+    if (email || phone) {
+      const candidates = await prisma.personRef.findMany({
+        where: { OR: [{ email: { not: null } }, { phone: { not: null } }] },
+        select: {
+          id: true,
+          displayName: true,
+          email: true,
+          phone: true,
+          status: true,
+          lifecycleHint: true,
+          portalEnabled: true,
+        },
+      });
+      const dup = findDuplicatePerson(candidates, { email, phone });
+      if (dup) {
+        return res.status(409).json({
+          error: 'duplicate_person',
+          matchedOn: dup.matchedOn,
+          person: dup.person,
+        });
+      }
+    }
+
+    const person = await prisma.personRef.create({
+      data: built.data,
+      include: PERSON_INCLUDE,
+    });
+
+    // Audit: WHO (admin origin) + WHEN (entry timestamp) + source='admin' +
+    // the initial identity/profile values + status + portal access. Later
+    // profile/status edits land in the SAME immutable person changelog.
+    try {
+      await emitTimelineEvent(prisma, {
+        subjectType: 'person',
+        subjectId: person.id,
+        kind: 'change',
+        data: {
+          changes: buildManualStaffAudit(person, person.profile, built.summary),
+          source: 'admin',
+          created: true,
+        },
+        origin: await userOrigin(req.adminAuth?.userId),
+      });
+    } catch (err) {
+      console.warn(`[people] failed to record creation audit for ${person.id}`, err);
+    }
+
+    res.status(201).json(person);
   }),
 );
 

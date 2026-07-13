@@ -169,6 +169,11 @@ export const api = {
     // every read, so there's no user-facing import flow anymore.
     forceRefresh: () =>
       request('/api/people/import', { method: 'POST' }),
+    // Create a manual (admin-owned) staff member — identitySource='management'.
+    // Returns the new PersonRef, or throws with status 409 + payload
+    // { error:'duplicate_person', person, matchedOn } when phone/email already exist.
+    create: (data) =>
+      request('/api/people', { method: 'POST', body: JSON.stringify(data) }),
     update: (id, data) =>
       request(`/api/people/${id}`, {
         method: 'PUT',
