@@ -47,6 +47,17 @@ const TOUR_SYNC_INCLUDE = {
   },
 };
 
+// Open Tour template (loose ref, no FK) — fetched separately by openTourTemplateId
+// to enrich the calendar (forced duration + meeting-point fallback). Loaded in
+// reconcileTour and merged onto the tour object passed to buildDesiredEvent.
+async function loadOpenTourTemplate(db, openTourTemplateId) {
+  if (!openTourTemplateId) return null;
+  return db.openTourTemplate.findUnique({
+    where: { id: openTourTemplateId },
+    select: { durationHoursOverride: true, meetingPoint: true },
+  });
+}
+
 const isGone = (e) => e?.status === 404 || e?.status === 410;
 
 // ── One tour ──────────────────────────────────────────────────────────────────
@@ -61,6 +72,9 @@ export async function reconcileTour(deps, account, tourId) {
   });
   if (!tour || tour.gcalSyncStatus !== 'pending') return 'skipped';
   const loadedUpdatedAt = tour.updatedAt;
+  // Enrich with the Open Tour template (loose ref) for forced duration +
+  // meeting-point fallback — before any desired-event derivation below.
+  tour.openTourTemplate = await loadOpenTourTemplate(db, tour.openTourTemplateId);
 
   // Guarded success write: if the tour mutated while we were talking to
   // Google, leave it 'pending' — the next tick re-reconciles (diff → no-op if

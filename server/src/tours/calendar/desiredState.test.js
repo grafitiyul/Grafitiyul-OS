@@ -336,3 +336,37 @@ test('legacy event (no baselines) → GOS adopts presentation fields once', () =
   assert.equal(patch.colorId, EVENT_COLOR_ID); // colored orange
   assert.equal(written.summary, event.summary);
 });
+
+// ── Open Tour template enrichment (duration override + meeting-point fallback) ─
+
+test('open-tour template durationHoursOverride forces the calendar duration', () => {
+  // Variant says 2.5h, but the template pins 4h → end = start + 4h.
+  const { event } = buildDesiredEvent(
+    makeTour({ startTime: '10:00', openTourTemplate: { durationHoursOverride: 4 } }),
+  );
+  assert.match(event.end.dateTime, /T14:00:00$/);
+});
+
+test('a non-positive/absent override falls back to the variant duration', () => {
+  const { event } = buildDesiredEvent(
+    makeTour({ startTime: '10:00', openTourTemplate: { durationHoursOverride: 0 } }),
+  );
+  assert.match(event.end.dateTime, /T12:30:00$/); // 2.5h variant duration
+});
+
+test('open-tour meeting point is the location fallback when no workshop component', () => {
+  const { event } = buildDesiredEvent(
+    makeTour({ activityComponents: [], openTourTemplate: { meetingPoint: 'כיכר דיזנגוף' } }),
+  );
+  assert.equal(event.location, 'כיכר דיזנגוף');
+});
+
+test('a workshop component location still wins over the template meeting point', () => {
+  const { event } = buildDesiredEvent(
+    makeTour({
+      activityComponents: [{ sortOrder: 0, workshopLocation: { nameHe: 'הסטודיו', address: 'רח\' 1' } }],
+      openTourTemplate: { meetingPoint: 'כיכר דיזנגוף' },
+    }),
+  );
+  assert.equal(event.location, 'הסטודיו — רח\' 1');
+});

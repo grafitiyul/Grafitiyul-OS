@@ -144,6 +144,11 @@ function eventLocation(tour) {
     seen.add(label);
     parts.push(label);
   }
+  // Open tours with no workshop component fall back to the template's meeting
+  // point, so the calendar event still tells guides where to muster.
+  if (!parts.length && tour.openTourTemplate?.meetingPoint) {
+    return tour.openTourTemplate.meetingPoint;
+  }
   return parts.join(', ');
 }
 
@@ -169,8 +174,12 @@ export function buildDesiredEvent(tour) {
   const warnings = [];
   const he = isHebrewTour(tour.tourLanguage);
 
-  const durationHours = tour.productVariant?.durationHours;
-  let hours = Number(durationHours);
+  // Duration: an Open Tour template may FORCE a fixed duration (durationHours-
+  // Override); otherwise it derives from the operational variant — which the
+  // registration-driven derivation keeps current, so a workshop registration
+  // that lengthens the tour updates the calendar automatically.
+  const override = Number(tour.openTourTemplate?.durationHoursOverride);
+  let hours = Number.isFinite(override) && override > 0 ? override : Number(tour.productVariant?.durationHours);
   if (!Number.isFinite(hours) || hours <= 0) {
     warnings.push('לוריאנט אין משך מוגדר — הזימון נוצר עם ברירת מחדל של שעתיים');
     hours = DEFAULT_DURATION_HOURS;
