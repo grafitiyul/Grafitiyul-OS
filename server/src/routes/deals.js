@@ -9,7 +9,7 @@ import {
   toClientQuoteDocument,
 } from '../quote/quoteDocument.js';
 import { createParallelOffer, activateOffer, setPrimaryOffer, removeOrArchiveOffer, unarchiveOffer, buildWonQuoteRef, splitBuilderPatch, updateOfferContext } from '../quote/quoteOffers.js';
-import { ensurePaymentToken, paymentUrlFor, resolvePublicOrigin } from '../dealPayment.js';
+import { ensurePaymentToken, paymentUrlFor, resolvePublicOrigin, buildPaymentSnapshot, PAYMENT_DEAL_INCLUDE } from '../dealPayment.js';
 import { recordDealChanges, recordDealContactChange, DEAL_DIFF_SELECT } from '../timeline/dealChangelog.js';
 import { normalizeClassification } from '../deals/classification.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
@@ -33,7 +33,6 @@ import {
   cancelHold,
 } from '../deals/registrationCompletion.js';
 import { settleDealWonFromPayment } from '../deals/paymentWon.js';
-import { ensurePaymentToken, paymentUrlFor, buildPaymentSnapshot, PAYMENT_DEAL_INCLUDE } from '../dealPayment.js';
 import { sendWhatsAppText } from '../whatsapp/send.js';
 
 // Deal CRUD + DealContact management. The Deal is the commercial object: it

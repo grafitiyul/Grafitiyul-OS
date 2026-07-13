@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "test": "node --test \"src/**/*.test.js\" \"scripts/**/*.test.js\"",
+    "smoke:startup": "node scripts/startup-smoke.mjs",
     "validate:migrations": "node scripts/validate-migrations.mjs",
     "purge:whatsapp": "node scripts/purge-whatsapp-account.mjs",
     "start": "prisma migrate deploy && node src/index.js",

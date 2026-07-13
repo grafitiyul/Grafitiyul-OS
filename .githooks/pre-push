@@ -1,0 +1,16 @@
+#!/bin/sh
+# Pre-push gate: boot the REAL server entrypoint before code can reach Railway.
+# This catches deploy-crashing startup bugs that unit tests do NOT — duplicate
+# ESM identifier declarations in route files, missing/bad imports, and any throw
+# before the server reaches "listening on port". The 2026-07 outage (a duplicate
+# `ensurePaymentToken` import in routes/deals.js) would have been blocked here.
+#
+# Activated via `git config core.hooksPath .githooks`. Bypass in a true emergency
+# with: git push --no-verify
+
+echo "→ Startup smoke check (booting the real server entrypoint)…"
+node server/scripts/startup-smoke.mjs || {
+  echo "✗ Push blocked: the server did not boot cleanly (fix above, or --no-verify if truly necessary)."
+  exit 1
+}
+exit 0

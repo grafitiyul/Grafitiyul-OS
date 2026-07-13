@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import cors from 'cors';
 import { attachAuth, requireAdminAuth, buildAuthRoutes } from './auth.js';
+import { prisma } from './db.js';
 import itemsRouter from './routes/items.js';
 import flowsRouter from './routes/flows.js';
 import attemptsRouter from './routes/attempts.js';
@@ -436,21 +437,28 @@ app.get('/manifest.webmanifest', (req, res) => {
     display: 'standalone',
     orientation: 'portrait',
     background_color: '#f9fafb',
-    theme_color: '#2563eb',
-    // The two icons mirror the static manifest. SVG works on every
-    // modern install target; iOS picks up the apple-touch-icon link
-    // in index.html separately.
+    theme_color: '#28a8a8',
+    // The icons mirror the static manifest (client/public/manifest.webmanifest):
+    // real Grafitiyul Team logo PNGs. Chrome/Android use the 192/512 "any"
+    // icons for install + launcher; the 512 maskable is cropped to the safe
+    // zone on Android. iOS picks up the apple-touch-icon link in index.html.
     icons: [
       {
-        src: '/icon.svg',
-        sizes: 'any',
-        type: 'image/svg+xml',
+        src: '/icons/icon-192.png',
+        sizes: '192x192',
+        type: 'image/png',
         purpose: 'any',
       },
       {
-        src: '/icon-maskable.svg',
-        sizes: 'any',
-        type: 'image/svg+xml',
+        src: '/icons/icon-512.png',
+        sizes: '512x512',
+        type: 'image/png',
+        purpose: 'any',
+      },
+      {
+        src: '/icons/icon-maskable-512.png',
+        sizes: '512x512',
+        type: 'image/png',
         purpose: 'maskable',
       },
     ],
