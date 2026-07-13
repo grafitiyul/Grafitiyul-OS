@@ -411,3 +411,53 @@ test('tourEndMs — end = start + variant duration (fallback 3h)', () => {
   );
   assert.ok(Number.isNaN(tourEndMs({ date: null, startTime: null })));
 });
+
+// ── HELD (conditional) registration visibility ───────────────────────────────
+
+import { guideHeldParticipantDto } from './dto.js';
+
+const HELD_REG = {
+  id: 'reg1',
+  quantity: 6,
+  customerName: null,
+  deal: {
+    title: 'קבוצת דור',
+    customerInfo: '<p>מגיעים באוטובוס</p>',
+    organization: { name: 'IBM' },
+    contacts: [{ isPrimary: true, roles: [], contact: { firstNameHe: 'דור', lastNameHe: 'קורן', phones: [{ value: '050' }], emails: [{ value: 'a@b.c' }] } }],
+  },
+};
+
+test('HELD participant DTO exposes ONLY name/count/info/badge — never phone/email/coordination', () => {
+  // Even with ALL permissions on, a held row carries no contact channel.
+  const dto = guideHeldParticipantDto(HELD_REG, ALL_ON);
+  assert.equal(dto.held, true);
+  assert.equal(dto.badge, 'עוד לא סופי');
+  assert.equal(dto.seats, 6);
+  assert.equal(dto.customerName, 'דור קורן');
+  assert.equal(dto.customerInfo, '<p>מגיעים באוטובוס</p>'); // Important Info shows
+  assert.equal(dto.phone, null); // server-enforced restriction
+  assert.equal(dto.email, null);
+  assert.equal(dto.coordinationStatus, null);
+  assert.equal(dto.fieldRepName, null);
+  assert.ok(!('bookingId' in dto)); // not a confirmed booking
+});
+
+test('HELD customerInfo still respects the viewCustomerInfo permission', () => {
+  const dto = guideHeldParticipantDto(HELD_REG, { ...ALL_ON, viewCustomerInfo: false });
+  assert.equal(dto.customerInfo, null);
+});
+
+test('tour detail DTO: confirmed bookings in participants, held rows in provisionalParticipants', () => {
+  const dto = guideTourDetailDto({
+    tour: { id: 't1', kind: 'group_slot', bookings: [], activityComponents: [], assignments: [] },
+    assignment: { role: 'guide' },
+    occupancy: { activeSeats: 6 },
+    permissions: ALL_ON,
+    heldRegistrations: [HELD_REG],
+  });
+  assert.equal(dto.participants.length, 0);
+  assert.equal(dto.provisionalParticipants.length, 1);
+  assert.equal(dto.provisionalParticipants[0].badge, 'עוד לא סופי');
+  assert.equal(dto.provisionalParticipants[0].phone, null);
+});

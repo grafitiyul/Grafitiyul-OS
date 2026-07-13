@@ -174,6 +174,14 @@ export default function GuideTourPage() {
             ))}
           </div>
         )}
+        {(tour.provisionalParticipants || []).length > 0 && (
+          <div className="mt-4 space-y-3">
+            <div className="text-[12.5px] font-medium text-gray-400">שריון בהמתנה לאישור</div>
+            {tour.provisionalParticipants.map((p) => (
+              <HeldParticipantCard key={p.registrationId} participant={p} />
+            ))}
+          </div>
+        )}
       </SectionCard>
 
       <TourSummarySection
@@ -477,6 +485,26 @@ function WorkshopLocationRow({ component }) {
 }
 
 // ── participants ─────────────────────────────────────────────────────
+
+// A conditional (HELD) reservation — "probably coming, not yet confirmed". The
+// server DTO already strips phone/email/coordination, so this card reuses the
+// shared presentation with those omitted and adds the "עוד לא סופי" badge. No
+// contact/coordination affordance can appear (nothing to render).
+function HeldParticipantCard({ participant: p }) {
+  return (
+    <ParticipantCardView
+      customerName={p.customerName || p.title}
+      organizationLine={p.title && p.title !== p.customerName ? p.title : ''}
+      seats={p.seats}
+      corner={
+        <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-200">
+          {p.badge || 'עוד לא סופי'}
+        </span>
+      }
+      customerInfo={p.customerInfo}
+    />
+  );
+}
 
 function ParticipantCard({ participant: p, coordinationEnabled, apiBase }) {
   const [coordOpen, setCoordOpen] = useState(false);

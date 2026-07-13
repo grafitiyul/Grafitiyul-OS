@@ -111,6 +111,33 @@ export function guideParticipantDto(booking, permissions, { coordinationStatus =
   };
 }
 
+// ---------- provisional (HELD) participant card ----------
+// A conditional reservation the guide should be AWARE of ("probably coming"),
+// but which is NOT a confirmed customer. Server-enforced restriction: phone,
+// email, field rep and coordination NEVER ship for a held row — regardless of
+// permissions. Only name + count + Important Customer Information + the badge.
+export function guideHeldParticipantDto(reg, permissions) {
+  const deal = reg.deal;
+  const primary = deal ? resolveCustomerContacts(deal.contacts).primary : null;
+  const customerName = contactNameHe(primary?.contact) || deal?.title || reg.customerName || 'לקוח';
+  return {
+    registrationId: reg.id,
+    held: true,
+    badge: 'עוד לא סופי',
+    seats: reg.quantity,
+    title: deal?.organization?.name || customerName || 'לקוח',
+    customerName,
+    // Important Customer Information — same permission gate as a confirmed row.
+    customerInfo: permissions.viewCustomerInfo ? deal?.customerInfo || null : null,
+    // HELD is probable, not confirmed → NO contact channel / coordination action,
+    // even if the guide has those permissions. Enforced HERE, not in the client.
+    phone: null,
+    email: null,
+    fieldRepName: null,
+    coordinationStatus: null,
+  };
+}
+
 // ---------- tour detail ----------
 
 export function guideTourDetailDto({
@@ -119,6 +146,7 @@ export function guideTourDetailDto({
   occupancy,
   permissions,
   coordinationStatusByBooking = {},
+  heldRegistrations = [],
 }) {
   const occ = occupancy || { activeSeats: 0, activeBookings: 0 };
   return {
@@ -178,5 +206,8 @@ export function guideTourDetailDto({
         }),
       )
       .filter(Boolean),
+    // Conditional (HELD) reservations — "probably coming, not yet confirmed".
+    // Expired/cancelled holds are never fetched, so they vanish from the portal.
+    provisionalParticipants: (heldRegistrations || []).map((r) => guideHeldParticipantDto(r, permissions)),
   };
 }

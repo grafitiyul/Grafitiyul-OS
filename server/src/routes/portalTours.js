@@ -253,6 +253,33 @@ router.get(
     const coordinationStatusByBooking = access.permissions.useCoordinationForms
       ? await coordinationStatuses(tour.bookings.map((b) => b.id))
       : {};
+    // Conditional (HELD) reservations — surfaced to the guide as "probably
+    // coming" with a restricted shape. Phones/emails are DELIBERATELY NOT
+    // fetched here (server-enforced: a held row carries no contact channel).
+    const heldRegistrations = await prisma.ticketRegistration.findMany({
+      where: { tourEventId: tour.id, status: 'held' },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        quantity: true,
+        customerName: true,
+        deal: {
+          select: {
+            title: true,
+            customerInfo: true,
+            organization: { select: { name: true } },
+            contacts: {
+              orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+              select: {
+                isPrimary: true,
+                roles: true,
+                contact: { select: { firstNameHe: true, lastNameHe: true, firstNameEn: true, lastNameEn: true } },
+              },
+            },
+          },
+        },
+      },
+    });
     res.set('Cache-Control', 'no-store');
     res.json(
       guideTourDetailDto({
@@ -261,6 +288,7 @@ router.get(
         occupancy: occ[tour.id],
         permissions: access.permissions,
         coordinationStatusByBooking,
+        heldRegistrations,
       }),
     );
   }),
