@@ -582,6 +582,7 @@ function WooMappingsSection() {
   const [savingCard, setSavingCard] = useState(null);
   const [structure, setStructure] = useState({}); // cardGroupId → discovery result
   const [inspecting, setInspecting] = useState(null);
+  const [building, setBuilding] = useState(null);
   const [gate, setGate] = useState(null); // { configured, writeEnabled, bulkEnabled }
   const [candidates, setCandidates] = useState({}); // cardGroupId → slot list
   const [loadingCand, setLoadingCand] = useState(null);
@@ -707,6 +708,26 @@ function WooMappingsSection() {
     }
   }
 
+  // Auto-build the complete config (real ticketTypeIds + exact store encoding) and
+  // drop it into the editor — no placeholders, ready to save.
+  async function buildConfig(card) {
+    const st = byCard[card.cardGroupId] || {};
+    if (!st.wooProductId) return alert('הזינו מזהה מוצר Woo תחילה.');
+    setBuilding(card.cardGroupId);
+    try {
+      const r = await api.openTours.wooSuggestConfig(card.cardGroupId, Number(st.wooProductId));
+      const configText = JSON.stringify(r.config, null, 2);
+      setByCard((m) => ({ ...m, [card.cardGroupId]: { ...(m[card.cardGroupId] || st), configText } }));
+      if (r.warnings?.length) {
+        alert('ההגדרה נבנתה, אך שימו לב:\n• ' + r.warnings.join('\n• '));
+      }
+    } catch (e) {
+      alert(errText(e));
+    } finally {
+      setBuilding(null);
+    }
+  }
+
   return (
     <section className="bg-white border border-gray-200 rounded-2xl shadow-sm mb-6">
       <div className="px-5 pt-4 pb-3 border-b border-gray-100">
@@ -762,6 +783,15 @@ function WooMappingsSection() {
                     title="קריאה בלבד — מבנה המוצר החי (תכונות ומונחים)"
                   >
                     {inspecting === c.cardGroupId ? 'בודק…' : 'בדיקת מבנה'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={building === c.cardGroupId || !st.wooProductId}
+                    onClick={() => buildConfig(c)}
+                    className="h-8 rounded-md px-2 text-[13px] font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50"
+                    title="בונה אוטומטית את הגדרות התאימות עם מזהי סוגי הכרטיסים האמיתיים"
+                  >
+                    {building === c.cardGroupId ? 'בונה…' : 'בנה הגדרה'}
                   </button>
                   <button
                     type="button"

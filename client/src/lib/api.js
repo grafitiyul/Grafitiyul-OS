@@ -1349,6 +1349,12 @@ export const api = {
     // Read-only: inspect a live Woo product's attributes/terms to build a config.
     wooProductStructure: (productId) =>
       request(`/api/open-tours/woo/products/${productId}/structure`),
+    // Auto-build the mapping config (real ticketTypeIds + exact store encoding).
+    wooSuggestConfig: (cardGroupId, productId, activity) =>
+      request(
+        `/api/open-tours/woo/suggest-config/${cardGroupId}?productId=${productId}` +
+          (activity ? `&activity=${encodeURIComponent(activity)}` : ''),
+      ),
     // Controlled activation: gate status, candidate slots, single-occurrence sync.
     wooGate: () => request('/api/open-tours/woo/gate'),
     wooCandidates: (cardGroupId, limit = 20) =>

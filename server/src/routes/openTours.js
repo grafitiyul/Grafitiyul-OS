@@ -19,6 +19,7 @@ import { kickWooSync, markTourWooPending } from '../tours/woo/service.js';
 import { woo, wooConfigured, wooSyncActive, wooSyncBulkEnabled } from '../tours/woo/wooClient.js';
 import { occupancyFor } from '../tours/occupancy.js';
 import { israelToday } from '../tours/slotGeneration.js';
+import { suggestWooConfig } from '../tours/woo/suggestConfig.js';
 
 // Open Tours admin API (/api/open-tours) — CRUD for recurring tour TEMPLATES
 // (the "what"), their offered sellable products, weekly SCHEDULE RULES (the
@@ -428,6 +429,34 @@ router.get(
       writeEnabled: wooSyncActive(), // creds AND WOO_SYNC_ENABLED
       bulkEnabled: wooSyncBulkEnabled(), // WOO_SYNC_BULK_ENABLED (sweep)
     });
+  }),
+);
+
+// Auto-build the mapping config for a card + product: resolves the REAL GOS
+// ticketTypeIds and the store's EXACT option encoding (from the product's live
+// variations) so the admin gets ready-to-save JSON with no placeholders.
+router.get(
+  '/woo/suggest-config/:cardGroupId',
+  handle(async (req, res) => {
+    if (!wooConfigured()) return res.status(503).json({ error: 'woo_not_configured' });
+    const cardGroupId = String(req.params.cardGroupId || '');
+    const productId = Number(req.query.productId);
+    if (!Number.isInteger(productId) || productId <= 0) return res.status(400).json({ error: 'invalid_product_id' });
+    const activity = req.query.activity ? String(req.query.activity) : null;
+    // The card title drives the workshop-vs-tour activity inference.
+    const rep = await prisma.priceRule.findFirst({
+      where: { cardGroupId },
+      orderBy: { createdAt: 'asc' },
+      include: { product: { select: { nameHe: true } } },
+    });
+    const cardTitle = rep?.product?.nameHe || '';
+    let result;
+    try {
+      result = await suggestWooConfig({ db: prisma, woo }, { cardGroupId, productId, cardTitle, activity });
+    } catch (e) {
+      return res.status(e.status === 404 ? 404 : 502).json({ error: 'woo_fetch_failed', detail: e.message });
+    }
+    res.json(result);
   }),
 );
 
