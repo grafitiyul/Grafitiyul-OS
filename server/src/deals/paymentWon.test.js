@@ -240,12 +240,12 @@ test('registerWithoutPayment stores the reason canonically + WONs the deal + zer
   });
   await registerWithoutPayment(c, { dealId: 'd1', tourEventId: 'slot1', reason: 'אישור מנהל — לקוח VIP' });
   assert.equal(c._s.deals.d1.status, 'won');
-  // PART 4: total zeroed to ₪0; line price zeroed but STRUCTURE preserved.
+  // Waiver model: payable total ₪0, prices UNTOUCHED (builder stays commercial),
+  // and a canonical waiver snapshot recorded on the deal.
   assert.equal(Number(c._s.deals.d1.valueMinor), 0);
-  assert.equal(Number(c._s.quoteLines[0].unitPriceMinor), 0);
+  assert.equal(Number(c._s.quoteLines[0].unitPriceMinor), 30000); // price PRESERVED (not zeroed)
   assert.equal(c._s.quoteLines[0].quantity, 4); // quantity preserved
-  assert.equal(c._s.quoteLines[0].productVariantId, 'v_plain'); // product preserved
-  assert.equal(c._s.quoteLines[0].ticketTypeId, 't_a'); // ticket type preserved
+  assert.ok(c._s.deals.d1.noPaymentWaiver, 'a canonical waiver is recorded');
   const reg = c._s.registrations.find((r) => r.dealId === 'd1');
   assert.equal(reg.status, 'confirmed');
   assert.equal(reg.paymentStatus, 'waived'); // not a fabricated payment

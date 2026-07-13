@@ -145,7 +145,12 @@ const GroupTicketBuilder = forwardRef(function GroupTicketBuilder(
     setByRow((s) => ({ ...s, [id]: { ...s[id], unitPriceMinor: cardPriceMinor, overridden: false } }));
   }
 
-  async function save() {
+  // opts.waiverDecision ('expand' | 'charge_added' | 'cancel') is sent only when
+  // the operator has resolved a waiver-decision prompt (the server returns 409
+  // waiver_decision_required when a waived deal's builder is INCREASED). On that
+  // 409 we throw a structured error so the caller can open the decision dialog and
+  // re-save with the chosen decision — never silently waive or charge.
+  async function save(opts = {}) {
     setSaveError(null);
     try {
       const toSave = lines.filter((l) => l.quantity > 0 || l.overridden);
@@ -159,11 +164,21 @@ const GroupTicketBuilder = forwardRef(function GroupTicketBuilder(
       }
       const participants = lines.reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
       const valueMinor = totals ? totals.grossMinor : 0;
-      await api.deals.savePriceLines(deal.id, { lines: toSave, valueMinor, participants, ...productPatch });
+      const payload = { lines: toSave, valueMinor, participants, ...productPatch };
+      if (opts.waiverDecision) payload.waiverDecision = opts.waiverDecision;
+      await api.deals.savePriceLines(deal.id, payload);
       const summary = { ok: true, participants, valueMinor, ...productPatch };
       await onSavedData?.(summary);
       return summary;
     } catch (e) {
+      // A waiver decision is required — surface it to the caller WITHOUT flagging
+      // an error banner; the caller opens the system decision dialog.
+      if (e.payload?.error === 'waiver_decision_required') {
+        const err = new Error('waiver_decision_required');
+        err.code = 'waiver_decision_required';
+        err.added = e.payload.added || [];
+        throw err;
+      }
       setSaveError(e.payload?.error || e.message || 'שמירה נכשלה');
       throw e;
     }

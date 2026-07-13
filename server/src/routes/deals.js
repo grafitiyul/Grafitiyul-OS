@@ -32,7 +32,14 @@ import {
   recordPaymentLinkOutcome,
   registerWithoutPayment,
   cancelHold,
+  reconcileWaiverAfterSave,
 } from '../deals/registrationCompletion.js';
+import {
+  loadGroupTicketLines,
+  classifyBuilderChange,
+  computeWaivedMinor,
+  waiverBreakdown,
+} from '../deals/waiver.js';
 import { settleDealWonFromPayment } from '../deals/paymentWon.js';
 import { sendWhatsAppText } from '../whatsapp/send.js';
 
@@ -265,6 +272,22 @@ async function loadDeal(id) {
   const deal = await prisma.deal.findUnique({ where: { id }, include: DEAL_INCLUDE });
   if (deal && deal.activityType === 'group') {
     deal.groupRegistration = await groupRegistrationState(id);
+    // Computed waiver view: the builder stays commercial (gross); the deal's
+    // payable total (valueMinor) = gross − waived. Exposed so the deal UI can
+    // show the waived/payable split + per-line breakdown from canonical state.
+    if (deal.noPaymentWaiver) {
+      const lines = await loadGroupTicketLines(prisma, id);
+      const waivedMinor = computeWaivedMinor(deal.noPaymentWaiver, lines);
+      const payableMinor = Number(deal.valueMinor || 0);
+      deal.waiver = {
+        reason: deal.noPaymentWaiver.reason || null,
+        waivedAt: deal.noPaymentWaiver.waivedAt || null,
+        grossMinor: payableMinor + waivedMinor,
+        waivedMinor,
+        payableMinor,
+        breakdown: waiverBreakdown(deal.noPaymentWaiver, lines),
+      };
+    }
   }
   return deal;
 }
@@ -1217,6 +1240,26 @@ router.put(
     if (!before) return res.status(404).json({ error: 'not_found' });
     const inputLines = Array.isArray(b.lines) ? b.lines : [];
     const rows = inputLines.map((ln, i) => lineToData(ln, i));
+    const origin = await userOrigin(req.adminAuth?.userId);
+
+    // WAIVER pre-check: a deal registered without payment carries a canonical
+    // waiver. Editing that keeps the builder commercial, but an INCREASE (more of
+    // an existing ticket, or a new card/ticket) is an ambiguous business decision
+    // the system must never resolve silently — refuse until the operator chooses.
+    const waiverRow = await prisma.deal.findUnique({ where: { id: req.params.id }, select: { noPaymentWaiver: true } });
+    const waiver = waiverRow?.noPaymentWaiver || null;
+    if (waiver && !b.waiverDecision) {
+      const oldLines = await loadGroupTicketLines(prisma, req.params.id);
+      const newLines = inputLines
+        .filter((l) => l.sourceKind === 'group_ticket')
+        // carry the builder line's combined label ("card — ticket") so the client
+        // decision dialog can name the newly-added tickets.
+        .map((l) => ({ cardGroupId: l.sourceCardGroupId || null, ticketTypeId: l.ticketTypeId || null, quantity: Number(l.quantity) || 0, cardTitle: l.label || null }));
+      const change = classifyBuilderChange(oldLines, newLines);
+      if (change.hasIncrease) {
+        return res.status(409).json({ error: 'waiver_decision_required', added: change.added });
+      }
+    }
 
     const versionId = await prisma.$transaction(async (tx) => {
       const version = await ensureWorkingVersion(tx, req.params.id);
@@ -1245,7 +1288,20 @@ router.put(
       // open held reservation (which the old booking-only path missed). ONE
       // canonical resync + recompute; runs after the new lines are written so the
       // offering resolves from the current cards.
-      await resyncDealGroupTours(tx, req.params.id, { origin: await userOrigin(req.adminAuth?.userId) });
+      await resyncDealGroupTours(tx, req.params.id, { origin });
+
+      // WAIVER reconciliation — the ONE canonical recompute (waiver evolves with
+      // the builder; valueMinor = gross − waived). `b.valueMinor` is the builder's
+      // commercial gross; the reconcile overrides valueMinor with the payable.
+      if (waiver) {
+        await reconcileWaiverAfterSave(tx, {
+          dealId: req.params.id,
+          waiver,
+          grossMinor: Number(b.valueMinor) || 0,
+          decision: b.waiverDecision,
+          origin,
+        });
+      }
       return version.id;
     });
 

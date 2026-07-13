@@ -4,6 +4,7 @@ import { api } from '../../lib/api.js';
 import { formatMinor } from '../../lib/money.js';
 import { fmtTourDate } from '../tours/config.js';
 import GroupTicketBuilder from './GroupTicketBuilder.jsx';
+import WaiverDecisionDialog from './WaiverDecisionDialog.jsx';
 import TourSlotModal from '../tours/TourSlotModal.jsx';
 import CompletionModes from './CompletionModes.jsx';
 
@@ -67,6 +68,7 @@ export default function GroupRegistrationModal({ deal, onClose, onChanged, initi
   const [tours, setTours] = useState(null);
   const [hasSelection, setHasSelection] = useState(builderDone);
   const [saving, setSaving] = useState(false);
+  const [waiverPrompt, setWaiverPrompt] = useState(null); // { added, advance } | null
   const builderRef = useRef(null);
 
   useEffect(() => {
@@ -89,10 +91,12 @@ export default function GroupRegistrationModal({ deal, onClose, onChanged, initi
 
   // Save the inline builder; optionally advance to tour selection. The builder
   // returns the derived offering (participants/value/product) — no recalculation.
-  async function saveBuilder({ advance }) {
+  // If the deal is registered without payment and the edit INCREASES tickets, the
+  // server returns 409 and we surface the waiver decision dialog, then re-save.
+  async function saveBuilder({ advance = false, waiverDecision } = {}) {
     setSaving(true);
     try {
-      const r = await builderRef.current?.save();
+      const r = await builderRef.current?.save(waiverDecision ? { waiverDecision } : {});
       if (r?.ok) {
         setSavedOffering({
           participants: r.participants,
@@ -101,11 +105,16 @@ export default function GroupRegistrationModal({ deal, onClose, onChanged, initi
           productVariantId: r.productVariantId || null,
           productName: savedOffering?.productName || deal.product?.nameHe || null,
         });
+        setWaiverPrompt(null);
         onChanged?.();
         if (advance) setSection(2);
       }
-    } catch {
-      /* the builder surfaces the error inline */
+    } catch (e) {
+      if (e.code === 'waiver_decision_required') {
+        setWaiverPrompt({ added: e.added || [], advance }); // remember whether to advance after the decision
+        return;
+      }
+      /* the builder surfaces other errors inline */
     } finally {
       setSaving(false);
     }
@@ -225,6 +234,14 @@ export default function GroupRegistrationModal({ deal, onClose, onChanged, initi
               setSection(3);
             }
           }}
+        />
+      )}
+      {waiverPrompt && (
+        <WaiverDecisionDialog
+          added={waiverPrompt.added}
+          busy={saving}
+          onDecide={(decision) => saveBuilder({ advance: waiverPrompt.advance, waiverDecision: decision })}
+          onCancel={() => setWaiverPrompt(null)}
         />
       )}
     </Dialog>
