@@ -86,6 +86,7 @@ import { startTourCalendarSyncWorker } from './tours/calendar/syncWorker.js';
 import { startTourCompletionWorker } from './tours/completionWorker.js';
 import { startWooSyncWorker } from './tours/woo/syncWorker.js';
 import { startHeldExpiryWorker } from './tours/heldExpiryWorker.js';
+import { startReconcileOpenTourProducts } from './maintenance/reconcileOpenTourProducts.js';
 import questionnairesRouter from './routes/questionnaires.js';
 import publicQuestionnaireRouter from './routes/publicQuestionnaire.js';
 import controlRouter from './routes/control.js';
@@ -608,6 +609,11 @@ app.listen(port, () => {
   // Held-reservation expiry — flips lapsed HELD registrations to EXPIRED
   // (releases capacity + writes an audit event); 60s tick, idempotent.
   startHeldExpiryWorker(console);
+  // One-time automatic reconciliation of stale open-tour operational products —
+  // marker-gated (runs exactly once across restarts/instances), concurrency-safe,
+  // non-destructive. Heals already-materialized tours so the workshop-derivation
+  // fix applies to existing rows, then normal recomputation keeps them correct.
+  startReconcileOpenTourProducts(prisma, console);
   // בקרה detectors — re-derive operational issues from live domain state
   // (raise missing, auto-resolve fixed); 60s tick.
   startControlSweepWorker(console);

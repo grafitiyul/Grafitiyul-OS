@@ -160,3 +160,12 @@ test('10. reconcileAllOpenTourProducts heals a stale materialized tour', async (
   assert.equal(summary.changed, 1);
   assert.ok(!showsWorkshop(c.state));
 });
+
+test('11. idempotent: an already-correct plain tour is NOT re-marked dirty', async () => {
+  // Already plain (product p_plain, only c_tour). Recompute must change nothing.
+  const c = fakeClient({ tour: { productId: 'p_plain', productVariantId: 'v_plain' }, regs: [{ status: 'active', productVariantId: 'v_plain' }], components: ['c_tour'] });
+  const res = await recomputeTourOperationalProduct(c, 'slot1');
+  assert.ok(!res.changed);
+  assert.equal(c.state.wooMarks, 0); // Woo not marked dirty
+  assert.notEqual(c.state.tour.gcalSyncStatus, 'pending'); // calendar not marked
+});

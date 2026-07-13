@@ -251,28 +251,51 @@ export async function recomputeTourOperationalProduct(client, tourEventId, { for
 
 // One-time SAFE reconciliation of already-materialized open-tour slots whose
 // persisted operational product may be STALE (the previous fix corrected new
-// derivations but never re-ran for existing rows). Recomputes each scheduled
-// group_slot from CURRENT canonical state. `force:true` also recomputes manually
-// pinned tours (clearing the pin). Returns a summary { scanned, changed, ... }.
-export async function reconcileAllOpenTourProducts(client, { force = false, limit = 5000 } = {}) {
-  const tours = await client.tourEvent.findMany({
-    where: { kind: 'group_slot', status: 'scheduled' },
-    select: { id: true, productManualOverride: true },
-    take: limit,
-  });
-  const summary = { scanned: tours.length, changed: 0, pinnedSkipped: 0, pinsCleared: 0, changedIds: [] };
-  for (const t of tours) {
-    const res = await recomputeTourOperationalProduct(client, t.id, { force }).catch(() => null);
-    if (!res) continue;
-    if (res.pinned) {
-      summary.pinnedSkipped += 1;
-      continue;
+// derivations but never re-ran for existing rows). Recomputes each live (non-
+// cancelled/completed) group_slot from CURRENT canonical state using the ONE
+// canonical resolver — no business logic in raw SQL. `force:true` also recomputes
+// manually pinned tours (clearing the pin). Cancelled/completed history is left
+// untouched. Idempotent (a run with nothing stale changes nothing) and paged so
+// it is bounded. Returns { scanned, changed, unchanged, pinnedSkipped,
+// pinsCleared, failed, changedIds }.
+export async function reconcileAllOpenTourProducts(
+  client,
+  { force = false, statuses = ['scheduled', 'postponed'], batchSize = 500, maxTours = 100000 } = {},
+) {
+  const summary = { scanned: 0, changed: 0, unchanged: 0, pinnedSkipped: 0, pinsCleared: 0, failed: 0, changedIds: [] };
+  let cursor = null;
+  for (;;) {
+    const batch = await client.tourEvent.findMany({
+      where: { kind: 'group_slot', status: { in: statuses } },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+      take: batchSize,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+    });
+    if (!batch.length) break;
+    for (const t of batch) {
+      summary.scanned += 1;
+      let res;
+      try {
+        res = await recomputeTourOperationalProduct(client, t.id, { force });
+      } catch {
+        summary.failed += 1;
+        continue;
+      }
+      if (res?.pinned) {
+        summary.pinnedSkipped += 1;
+        continue;
+      }
+      if (res?.cleared) summary.pinsCleared += 1;
+      if (res?.changed) {
+        summary.changed += 1;
+        if (summary.changedIds.length < 200) summary.changedIds.push(t.id);
+      } else {
+        summary.unchanged += 1;
+      }
     }
-    if (res.cleared) summary.pinsCleared += 1;
-    if (res.changed) {
-      summary.changed += 1;
-      if (summary.changedIds.length < 100) summary.changedIds.push(t.id);
-    }
+    cursor = batch[batch.length - 1].id;
+    if (batch.length < batchSize || summary.scanned >= maxTours) break;
   }
   return summary;
 }

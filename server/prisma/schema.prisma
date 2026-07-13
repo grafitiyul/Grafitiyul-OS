@@ -3454,6 +3454,23 @@ model TicketRegistration {
   @@index([status, expiresAt])
 }
 
+// Durable one-time maintenance jobs (versioned backfills/reconciliations). The
+// key is the job identity (e.g. "reconcile_open_tour_products_v1"); the row is
+// the completion MARKER so the job runs exactly once across restarts AND across
+// multiple Railway instances. Claiming is a concurrency-safe conditional update
+// (pending/failed/stale-running → running); a fresh version = a new key.
+model MaintenanceJob {
+  key        String    @id
+  status     String    @default("pending") // pending | running | done | failed
+  startedAt  DateTime?
+  finishedAt DateTime?
+  attempts   Int       @default(0)
+  summary    Json?
+  error      String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+}
+
 // Guide Portal permissions — a singleton row (id='singleton'), created lazily
 // on first read (same convention as TourSettings / TourGallerySettings).
 // These are SERVER-ENFORCED: every guide-facing /api/portal route resolves
