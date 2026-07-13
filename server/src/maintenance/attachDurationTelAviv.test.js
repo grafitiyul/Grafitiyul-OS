@@ -91,11 +91,16 @@ test('refuses if a local duplicate "משך" attribute exists', async () => {
   assert.equal(env.productUpdates.length, 0);
 });
 
-test('not converged (a tour left pending) → ok=false, job stays retryable', async () => {
+test('dedup: disables orphan duplicate variations (keeps the linked one, never deletes)', async () => {
   const env = makeEnv({ durations: [2] });
-  env.client.tourEvent.findMany = async ({ select }) => (select?.wooSyncStatus ? [{ id: 'T1', wooSyncStatus: 'pending' }] : [{ id: 'T1' }]);
+  // Two GOS variations for the SAME tour+card+variantKey; the link points to 1560.
+  env.client.wooVariationLink.findMany = async () => [{ tourEventId: 'T1', cardGroupId: 'cTour', variantKey: 'tt_a', wooVariationId: 1560 }];
+  const gosMeta = (id, extra) => ({ id, status: 'publish', attributes: [], meta_data: [{ key: '_gos_tourevent_id', value: 'T1' }, { key: '_gos_card_group_id', value: 'cTour' }, { key: '_gos_variant_key', value: 'tt_a' }], ...extra });
+  const disabled = [];
+  env.woo.listVariations = async () => [gosMeta(1560), gosMeta(9999), { id: 1098, status: 'publish', meta_data: [] }]; // 9999 = orphan dup; 1098 = legacy
+  env.woo.updateVariation = async (pid, vid, data) => { disabled.push({ vid, status: data.status }); return { id: vid }; };
   const r = await attachAndBackfill(env.client, env.woo, env.reconcile, { log() {}, warn() {} });
-  assert.equal(r.ok, false);
-  assert.equal(r.error, 'tours_not_converged');
-  assert.deepEqual(r.notConverged, ['T1']);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.disabledIds, [9999]); // only the orphan dup
+  assert.deepEqual(disabled, [{ vid: 9999, status: 'private' }]); // disabled, not deleted
 });

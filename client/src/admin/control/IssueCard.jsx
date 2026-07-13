@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { MODULE_LABELS, SEVERITY_BY_KEY, entityHref, fmtDetected } from './config.js';
 import { apiActionHandler } from './issueActions.js';
+import ConfirmDialog from '../common/ConfirmDialog.jsx';
+import PromptDialog from '../common/PromptDialog.jsx';
 
 const BTN_STYLES = {
   primary: 'bg-blue-600 text-white hover:bg-blue-700 border-transparent',
@@ -17,6 +19,7 @@ export default function IssueCard({ issue, onChanged, onNeedsInput }) {
   const sev = SEVERITY_BY_KEY[issue.severity] || SEVERITY_BY_KEY.info;
   const [busyKey, setBusyKey] = useState(null);
   const [showNotify, setShowNotify] = useState(false);
+  const [pendingConfirm, setPendingConfirm] = useState(null);
   const isImpact = issue.type === 'tour_change_impact';
   const needsCustomers = (issue.requirements || []).some(
     (r) => r.kind === 'customer_notification' && !['completed', 'waived'].includes(r.state),
@@ -27,7 +30,9 @@ export default function IssueCard({ issue, onChanged, onNeedsInput }) {
   const diffs = Array.isArray(issue.data?.diffs) ? issue.data.diffs : null;
   const acknowledged = issue.status === 'acknowledged';
 
-  async function runAction(action) {
+  // action click → gate destructive actions through the system ConfirmDialog
+  // (never window.confirm); the dialog's onConfirm runs executeAction.
+  function runAction(action) {
     setError(null);
     setNotice(null);
     if (action.kind === 'link') {
@@ -35,7 +40,16 @@ export default function IssueCard({ issue, onChanged, onNeedsInput }) {
       if (href) navigate(href);
       return;
     }
-    if (action.confirm && !window.confirm(action.confirm)) return;
+    if (action.confirm) {
+      setPendingConfirm(action);
+      return;
+    }
+    executeAction(action);
+  }
+
+  async function executeAction(action) {
+    setError(null);
+    setNotice(null);
     setBusyKey(action.key);
     try {
       if (action.kind === 'server') {
@@ -175,6 +189,20 @@ export default function IssueCard({ issue, onChanged, onNeedsInput }) {
           {acknowledged ? 'החזר לרשימה' : 'השתק'}
         </button>
       </div>
+
+      <ConfirmDialog
+        open={!!pendingConfirm}
+        title={pendingConfirm?.label || 'אישור פעולה'}
+        body={pendingConfirm?.confirm}
+        confirmLabel={pendingConfirm?.label || 'אישור'}
+        danger={pendingConfirm?.style === 'danger'}
+        onCancel={() => setPendingConfirm(null)}
+        onConfirm={() => {
+          const a = pendingConfirm;
+          setPendingConfirm(null);
+          executeAction(a);
+        }}
+      />
     </div>
   );
 }
@@ -213,6 +241,7 @@ function NotifyPanel({ issue, onChanged, onClose }) {
   const [picked, setPicked] = useState(new Set());
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const [noteOpen, setNoteOpen] = useState(false);
 
   async function load() {
     try {
@@ -256,9 +285,10 @@ function NotifyPanel({ issue, onChanged, onClose }) {
       setBusy(false);
     }
   }
-  async function markHandled() {
-    const note = window.prompt('הערה חובה לסגירה ידנית (מה נעשה):');
-    if (!note || !note.trim()) return;
+  // Manual close needs a required note — collected via the system PromptDialog
+  // (which enforces non-empty), never window.prompt.
+  async function submitNote(note) {
+    setNoteOpen(false);
     if (!cn) return;
     setBusy(true);
     try {
@@ -330,13 +360,22 @@ function NotifyPanel({ issue, onChanged, onClose }) {
                 נסה שוב כשלים
               </button>
             )}
-            <button type="button" disabled={busy} onClick={markHandled} className="text-[12px] text-gray-500 hover:text-gray-700">
+            <button type="button" disabled={busy} onClick={() => setNoteOpen(true)} className="text-[12px] text-gray-500 hover:text-gray-700">
               סמן כטופל ידנית
             </button>
             <button type="button" onClick={onClose} className="ms-auto text-[12px] text-gray-400 hover:text-gray-600">סגור</button>
           </div>
         </>
       )}
+      <PromptDialog
+        open={noteOpen}
+        title="סגירה ידנית"
+        label="הערה חובה — מה נעשה לעדכון הלקוחות?"
+        placeholder="למשל: עודכנו טלפונית"
+        confirmLabel="סמן כטופל"
+        onClose={() => setNoteOpen(false)}
+        onSubmit={submitNote}
+      />
     </div>
   );
 }

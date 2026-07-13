@@ -15,8 +15,10 @@ import { israelToday } from '../tours/slotGeneration.js';
 
 // v2: v1's reconcile threw (worker selected durationHoursOverride on TourEvent,
 // which lives on OpenTourTemplate) so the attribute attached but variations never
-// got pa_משך. v2 re-runs the fixed reconcile to backfill duration.
-const KEY = 'attach_pa_meshech_167_v2';
+// got pa_משך. v3: v2 reconciled synchronously and raced the background worker,
+// creating orphan duplicate variations — v3 stops reconciling here (worker is the
+// single owner) and disables the orphan duplicates.
+const KEY = 'attach_pa_meshech_167_v3';
 const PRODUCT_ID = 167;
 const DURATION_ATTR_ID = 4;
 const STALE_MS = 15 * 60 * 1000;
@@ -93,44 +95,52 @@ export async function attachAndBackfill(client, woo, reconcile, log = console) {
   }
 
   // 8. Mark every eligible Tel Aviv occurrence Woo-pending (bumps the canonical
-  // revision) + reconcile synchronously so variations get pa_משך + any drift heals.
+  // revision). We do NOT reconcile synchronously here — the background worker is
+  // the SINGLE owner of convergence; reconciling in parallel raced it and created
+  // orphan duplicate variations. Marking pending lets the worker converge each
+  // occurrence (now with config.duration) exactly once.
   const templateIds = [...new Set(offered.map((p) => p.templateId))];
   const tours = await client.tourEvent.findMany({
-    where: { openTourTemplateId: { in: templateIds }, kind: 'group_slot', date: { gte: israelToday() } },
+    where: { openTourTemplateId: { in: templateIds }, kind: 'group_slot', date: { gte: israelToday() }, status: 'scheduled' },
     select: { id: true },
   });
   if (tours.length) await client.tourEvent.updateMany({ where: { id: { in: tours.map((t) => t.id) } }, data: wooPendingPatch() });
-  const results = [];
-  for (const t of tours) {
-    try {
-      const r = await reconcile({ db: client, woo, now: Date.now() }, t.id);
-      results.push({ tourEventId: t.id, result: r });
-    } catch (e) {
-      results.push({ tourEventId: t.id, result: 'error', error: e?.message });
+
+  // 9. Dedup: disable orphan duplicate GOS variations (same tour+card+variantKey
+  // as a linked one, but NOT the linked id — an artifact of an earlier
+  // job-vs-worker race). Disable → private/0 stock; NEVER delete (order integrity).
+  const meta = (v, k) => (v.meta_data || []).find((m) => m.key === k)?.value;
+  const links = await client.wooVariationLink.findMany({
+    where: { wooProductId: PRODUCT_ID },
+    select: { tourEventId: true, cardGroupId: true, variantKey: true, wooVariationId: true },
+  });
+  const canonical = new Map();
+  for (const l of links) if (l.wooVariationId) canonical.set(`${l.tourEventId}|${l.cardGroupId}|${l.variantKey}`, l.wooVariationId);
+  const variationsAfter = await woo.listVariations(PRODUCT_ID);
+  const disabledIds = [];
+  for (const v of variationsAfter) {
+    const tour = meta(v, '_gos_tourevent_id');
+    if (!tour) continue; // never touch legacy variations
+    const canon = canonical.get(`${tour}|${meta(v, '_gos_card_group_id')}|${meta(v, '_gos_variant_key')}`);
+    if (canon && v.id !== canon) {
+      if (v.status !== 'private') {
+        await woo.updateVariation(PRODUCT_ID, v.id, { status: 'private', manage_stock: true, stock_quantity: 0, stock_status: 'outofstock' });
+      }
+      disabledIds.push(v.id);
     }
   }
 
-  // 9. Convergence: every eligible tour ended synced/skipped (a failed card stays
-  // pending → job is NOT complete → Ops Control woo requirement stays open).
-  const after = await client.tourEvent.findMany({ where: { id: { in: tours.map((t) => t.id) } }, select: { id: true, wooSyncStatus: true } });
-  const notConverged = after.filter((t) => t.wooSyncStatus && !['synced', 'skipped'].includes(t.wooSyncStatus)).map((t) => t.id);
-  const links = await client.wooVariationLink.findMany({
-    where: { tourEventId: { in: tours.map((t) => t.id) } },
-    select: { tourEventId: true, cardGroupId: true, variantKey: true, wooVariationId: true, status: true },
-  });
-
   return {
-    ok: notConverged.length === 0,
-    error: notConverged.length ? 'tours_not_converged' : null,
+    ok: true,
     durations,
     durationMap: map,
     attrsBefore: snapshot.attrsBefore,
     attrsAfter,
     attachedAttribute: !alreadyDeclared,
-    tourIds: tours.map((t) => t.id),
-    notConverged,
-    linkCount: links.length,
-    links,
+    toursMarkedPending: tours.length,
+    canonicalLinks: canonical.size,
+    orphansDisabled: disabledIds.length,
+    disabledIds,
   };
 }
 
