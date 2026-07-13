@@ -5,17 +5,39 @@
 // the sync worker is a silent no-op, exactly like the calendar worker without a
 // connected Google account.
 
-const STORE_URL = () => (process.env.WOO_STORE_URL || '').replace(/\/+$/, '');
-const CK = () => process.env.WOO_CONSUMER_KEY || '';
-const CS = () => process.env.WOO_CONSUMER_SECRET || '';
+// Credentials. The live Railway project already stores these under the
+// WOOCOMMERCE_* names (the project convention, alongside CARDCOM_*, ICOUNT_*),
+// so those are PRIMARY; the older WOO_* names remain a backward-compatible
+// fallback. Reading the wrong names is exactly what kept sync a silent no-op.
+const STORE_URL = () =>
+  (process.env.WOOCOMMERCE_BASE_URL || process.env.WOO_STORE_URL || '').replace(/\/+$/, '');
+const CK = () => process.env.WOOCOMMERCE_CONSUMER_KEY || process.env.WOO_CONSUMER_KEY || '';
+const CS = () => process.env.WOOCOMMERCE_CONSUMER_SECRET || process.env.WOO_CONSUMER_SECRET || '';
 
-// The product attribute (name/option) used to represent a concrete occurrence on
-// a Variable Product. Configurable so we stay compatible with the EXISTING site
-// structure (variations already keyed by date/time). Default "Date".
+// Legacy LOCAL-attribute name, kept only for the local-taxonomy fallback path.
+// The live store uses GLOBAL taxonomy attributes (pa_תאריך / pa_שעה) captured
+// per-product in WooProductMapping.config, so this default is no longer the
+// primary date model.
 export const WOO_DATE_ATTRIBUTE = () => process.env.WOO_DATE_ATTRIBUTE || 'Date';
 
+// Credentials present? (Store URL + key + secret.) With none, the worker is a
+// silent no-op — the same contract as the calendar worker without Google.
 export function wooConfigured() {
   return Boolean(STORE_URL() && CK() && CS());
+}
+
+// EXPLICIT activation gate. Separate from wooConfigured() ON PURPOSE: deploying
+// the compatibility code (or configuring credentials) must NEVER be enough to
+// start mutating the live store. A human sets WOO_SYNC_ENABLED=true only once the
+// corrected model has been reviewed and a controlled occurrence approved. Until
+// then every write path is inert even when credentials are valid.
+export function wooSyncEnabled() {
+  return /^(1|true|yes|on)$/i.test(String(process.env.WOO_SYNC_ENABLED || '').trim());
+}
+
+// The single guard the worker consults before it will touch WooCommerce.
+export function wooSyncActive() {
+  return wooConfigured() && wooSyncEnabled();
 }
 
 async function wooFetch(path, { method = 'GET', query, body } = {}) {
@@ -66,4 +88,23 @@ export const woo = {
     wooFetch(`/products/${productId}/variations`, { method: 'POST', body: data }),
   updateVariation: (productId, variationId, data) =>
     wooFetch(`/products/${productId}/variations/${variationId}`, { method: 'PUT', body: data }),
+
+  // ── Global attribute terms ────────────────────────────────────────────────
+  // A GLOBAL taxonomy attribute (pa_תאריך, pa_שעה) can only carry a term that
+  // already exists in the taxonomy. GOS owns the occurrence dates, so for a new
+  // date it must first ensure the term exists (create) before a variation can
+  // reference it. Time terms already cover the working hours; date terms grow.
+  async listAttributeTerms(attributeId) {
+    const out = [];
+    for (let page = 1; ; page += 1) {
+      const batch = await wooFetch(`/products/attributes/${attributeId}/terms`, {
+        query: { per_page: 100, page },
+      });
+      out.push(...batch);
+      if (batch.length < 100) break;
+    }
+    return out;
+  },
+  createAttributeTerm: (attributeId, data) =>
+    wooFetch(`/products/attributes/${attributeId}/terms`, { method: 'POST', body: data }),
 };

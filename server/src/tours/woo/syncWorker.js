@@ -1,7 +1,7 @@
 import { prisma } from '../../db.js';
 import { israelToday } from '../slotGeneration.js';
 import { occupancyFor } from '../occupancy.js';
-import { woo as realWoo, wooConfigured, WOO_DATE_ATTRIBUTE } from './wooClient.js';
+import { woo as realWoo, wooSyncActive, WOO_DATE_ATTRIBUTE } from './wooClient.js';
 import { buildVariationPayload, findVariationForTour } from './desiredState.js';
 import { resolveSellableCards, mappedTemplateIds } from './mapping.js';
 
@@ -231,7 +231,7 @@ export function startWooSyncWorker(log = console) {
     if (inFlight) return;
     inFlight = true;
     try {
-      if (!wooConfigured()) return; // no-op until WOO_* env is set
+      if (!wooSyncActive()) return; // inert until creds AND WOO_SYNC_ENABLED are set
 
       const swept = await sweepUnsyncedWooTours(prisma);
       if (swept) log?.log?.(`[woo-sync] backfill: marked ${swept} tours pending`);
