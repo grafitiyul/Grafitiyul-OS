@@ -29,6 +29,18 @@ function matchAttr(attributes, patterns) {
   return (attributes || []).find((a) => patterns.some((re) => re.test(String(a.name || '')))) || null;
 }
 
+// Parse a Hebrew duration term name → hours. Data-driven, not a fixed table:
+//   "3 שעות" → 3 ; "שעה" → 1 ; "שעה וחצי" → 1.5 ; "שעתיים" → 2 ; "שעתיים וחצי" → 2.5
+export function parseDurationHours(name) {
+  const s = String(name || '');
+  const lead = s.match(/^\s*(\d+(?:\.\d+)?)/);
+  if (lead) return Number(lead[1]);
+  const half = /וחצי/.test(s);
+  if (/שעתיים/.test(s)) return half ? 2.5 : 2;
+  if (/שעה/.test(s)) return half ? 1.5 : 1;
+  return null;
+}
+
 // The distinct option strings a given attribute actually uses across existing
 // variations → { readableSlug(option): option }. This is the store's real
 // encoding, captured rather than guessed.
@@ -58,6 +70,7 @@ export async function suggestWooConfig(deps, { cardGroupId, productId, cardTitle
   const timeAttr = matchAttr(attributes, [/שעה/, /time|hour/i]);
   const ageAttr = matchAttr(attributes, [/גיל/, /age/i]);
   const activityAttr = matchAttr(attributes, [/פעילות/, /activ/i]);
+  const durationAttr = matchAttr(attributes, [/משך/, /duration/i]);
   if (!dateAttr) warnings.push('no date attribute matched (תאריך/date)');
 
   const config = { taxonomyMode: 'global' };
@@ -105,6 +118,32 @@ export async function suggestWooConfig(deps, { cardGroupId, productId, cardTitle
   }
   if (ageAttr) config.ticketAge = ticketAge;
 
+  // Duration (pa_משך): map GOS durationHours → the store's option. Built from the
+  // attribute's terms (or the encoding already used in variations), so hours are
+  // resolved data-drivenly, not hardcoded. When the product doesn't declare
+  // pa_משך (e.g. #167), duration is omitted with a warning — GOS then can't
+  // control it until the attribute is added to the product.
+  if (durationAttr) {
+    const map = {};
+    const usedDur = usedOptions(variations, durationAttr.id); // readableSlug → option
+    let terms = await woo.listAttributeTerms(durationAttr.id).catch(() => []);
+    if (!terms.length) terms = [...usedDur.values()].map((o) => ({ name: o }));
+    for (const t of terms) {
+      const hours = parseDurationHours(t.name);
+      if (hours == null) {
+        warnings.push(`duration term "${t.name}" — could not parse hours`);
+        continue;
+      }
+      // Prefer the exact option the store already uses in variations; else the
+      // readable slug of the term name.
+      const option = usedDur.get(readableSlug(t.name)) || readableSlug(t.name);
+      map[String(Number(hours))] = option;
+    }
+    config.duration = { attrId: durationAttr.id, attrName: durationAttr.name, map };
+  } else {
+    warnings.push('product does not declare pa_משך — duration will not sync until the attribute is added to the product');
+  }
+
   return {
     config,
     ticketRows: ticketRows.map((r) => ({ ticketTypeId: r.ticketTypeId, label: r.label, unitPriceMinor: r.unitPriceMinor })),
@@ -113,6 +152,7 @@ export async function suggestWooConfig(deps, { cardGroupId, productId, cardTitle
       time: timeAttr ? { id: timeAttr.id, name: timeAttr.name } : null,
       age: ageAttr ? { id: ageAttr.id, name: ageAttr.name } : null,
       activity: activityAttr ? { id: activityAttr.id, name: activityAttr.name } : null,
+      duration: durationAttr ? { id: durationAttr.id, name: durationAttr.name } : null,
     },
     availableActivities,
     warnings,

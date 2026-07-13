@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { suggestWooConfig, readableSlug } from './suggestConfig.js';
+import { suggestWooConfig, readableSlug, parseDurationHours } from './suggestConfig.js';
 
 // Auto-config builder — proves it resolves REAL ticketTypeIds and the store's
 // EXACT option encoding (from #167's live variations), no placeholders.
@@ -59,7 +59,7 @@ test('tour-only card → real ids + exact #167 encoding', async () => {
     productId: 167,
     cardTitle: 'Graffiti Tour',
   });
-  assert.equal(r.warnings.length, 0);
+  assert.deepEqual(r.warnings.filter((w) => !/pa_משך/.test(w)), []);
   assert.deepEqual(r.config.date, { attrId: 1, attrName: 'תאריך', format: 'slash-dmy' });
   assert.deepEqual(r.config.time, { attrId: 2, attrName: 'שעה' });
   assert.equal(r.config.age.attrId, 5);
@@ -79,7 +79,7 @@ test('workshop card (title inference) → סיור-סדנה', async () => {
     cardTitle: 'Graffiti Tour + Workshop',
   });
   assert.equal(r.config.activity.option, 'סיור-סדנה');
-  assert.equal(r.warnings.length, 0);
+  assert.deepEqual(r.warnings.filter((w) => !/pa_משך/.test(w)), []);
 });
 
 test('explicit activity override beats the title', async () => {
@@ -90,6 +90,33 @@ test('explicit activity override beats the title', async () => {
     activity: 'workshop',
   });
   assert.equal(r.config.activity.option, 'סיור-סדנה');
+});
+
+test('parseDurationHours reads the Hebrew term names', () => {
+  assert.equal(parseDurationHours('שעה'), 1);
+  assert.equal(parseDurationHours('שעה וחצי'), 1.5);
+  assert.equal(parseDurationHours('שעתיים'), 2);
+  assert.equal(parseDurationHours('שעתיים וחצי'), 2.5);
+  assert.equal(parseDurationHours('3 שעות'), 3);
+  assert.equal(parseDurationHours('גיבריש'), null);
+});
+
+test('#167 shape has no pa_משך → duration omitted with a warning', async () => {
+  const r = await suggestWooConfig(deps(TA_ROWS), { cardGroupId: 'c', productId: 167, cardTitle: 'Graffiti Tour' });
+  assert.equal(r.config.duration, undefined);
+  assert.match(r.warnings.join(' '), /pa_משך/);
+});
+
+test('a product WITH pa_משך → duration map built from its terms', async () => {
+  const d = deps(TA_ROWS);
+  d.woo.getProduct = async () => ({ ...PRODUCT, attributes: [...PRODUCT.attributes, { id: 4, name: 'משך', variation: true }] });
+  d.woo.listVariations = async () => VARIATIONS.map((v) => ({ ...v, attributes: [...v.attributes, { id: 4, option: 'שעתיים' }] }));
+  d.woo.listAttributeTerms = async (id) => (id === 4 ? [{ name: 'שעתיים' }, { name: 'שעתיים וחצי' }, { name: '3 שעות' }] : []);
+  const r = await suggestWooConfig(d, { cardGroupId: 'c', productId: 167, cardTitle: 'Graffiti Tour' });
+  assert.equal(r.config.duration.attrId, 4);
+  assert.equal(r.config.duration.map['2'], 'שעתיים'); // exact used option
+  assert.equal(r.config.duration.map['2.5'], 'שעתיים-וחצי'); // readable slug of term name
+  assert.equal(r.config.duration.map['3'], '3-שעות');
 });
 
 test('an unmatched ticket type is REPORTED, never silently dropped', async () => {

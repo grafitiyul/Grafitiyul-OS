@@ -409,6 +409,59 @@ test('adding the tour-only card when workshop is ALREADY synced does not clobber
   assert.ok(env.calls.created.every((c) => ![111, 112].includes(c.data.__id)));
 });
 
+// ── Duration (pa_משך) from the operational product ───────────────────────────
+const CONFIG_DUR = { ...GLOBAL_CONFIG, duration: { attrId: 4, attrName: 'pa_משך', map: { '2': 'שעתיים', '2.5': 'שעתיים-וחצי' } } };
+function durEnv(hours, extra = {}) {
+  return makeEnv({
+    tour: { id: 'slot1', status: 'scheduled', date: '2026-08-08', startTime: '10:00', capacity: 20, openTourTemplateId: 'tpl1', updatedAt: 'u1', wooSyncStatus: 'pending', wooAttempts: 0, productVariant: { durationHours: hours } },
+    mappings: [{ cardGroupId: 'cardA', wooProductId: 167, config: CONFIG_DUR, active: true }],
+    ticketsByCard: {
+      cardA: [
+        { ticketTypeId: TT_ADULT, priceMinor: 6000, nameHe: 'מבוגר', sortOrder: 0 },
+        { ticketTypeId: TT_CHILD, priceMinor: 3000, nameHe: 'ילד', sortOrder: 1 },
+      ],
+    },
+    attributeTerms: { 4: [{ name: 'שעתיים' }, { name: 'שעתיים וחצי' }] },
+    ...extra,
+  });
+}
+const durOf = (data) => data.attributes.find((a) => a.id === 4)?.option;
+
+test('duration synced to pa_משך from the operational product', async () => {
+  const env = durEnv(2);
+  await reconcileTourWoo(deps(env), 'slot1');
+  assert.equal(env.calls.created.length, 2);
+  assert.ok(env.calls.created.every((c) => durOf(c.data) === 'שעתיים'));
+});
+
+test('operational product change (plain→workshop) updates duration IN PLACE, no dup', async () => {
+  const env = durEnv(2.5, {
+    links: {
+      ['slot1::cardA::' + TT_ADULT]: { tourEventId: 'slot1', cardGroupId: 'cardA', variantKey: TT_ADULT, wooVariationId: 111, wooProductId: 167 },
+      ['slot1::cardA::' + TT_CHILD]: { tourEventId: 'slot1', cardGroupId: 'cardA', variantKey: TT_CHILD, wooVariationId: 112, wooProductId: 167 },
+    },
+  });
+  await reconcileTourWoo(deps(env), 'slot1');
+  assert.equal(env.calls.created.length, 0);
+  assert.ok(env.calls.updated.every((u) => durOf(u.data) === 'שעתיים-וחצי'));
+});
+
+test('revert to plain updates duration back', async () => {
+  const env = durEnv(2, {
+    links: { ['slot1::cardA::' + TT_ADULT]: { tourEventId: 'slot1', cardGroupId: 'cardA', variantKey: TT_ADULT, wooVariationId: 111, wooProductId: 167 } },
+    ticketsByCard: { cardA: [{ ticketTypeId: TT_ADULT, priceMinor: 6000, nameHe: 'מבוגר', sortOrder: 0 }] },
+  });
+  await reconcileTourWoo(deps(env), 'slot1');
+  assert.ok(env.calls.updated.every((u) => durOf(u.data) === 'שעתיים'));
+});
+
+test('missing duration mapping → tour stays pending (retryable), not synced', async () => {
+  const env = durEnv(4); // 4h not in the map
+  await reconcileTourWoo(deps(env), 'slot1');
+  assert.equal(env.calls.tourUpdates.at(-1).wooSyncStatus, 'pending');
+  assert.match(env.calls.tourUpdates.at(-1).wooSyncError, /pa_משך|duration/);
+});
+
 // ── Cutoff helper ────────────────────────────────────────────────────────────
 
 test('occurrenceClosed respects the close cutoff', () => {

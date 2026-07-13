@@ -204,6 +204,39 @@ test('product WITHOUT a separate time attribute omits pa_שעה cleanly', () => 
   );
 });
 
+const CONFIG_DUR = {
+  ...CONFIG_TA,
+  duration: { attrId: 4, attrName: 'pa_משך', map: { '2': 'שעתיים', '2.5': 'שעתיים-וחצי' } },
+};
+
+test('duration → pa_משך option from the operational product hours (plain vs workshop)', () => {
+  const plain = buildOccurrenceVariations({
+    tour: TOUR, cardGroupId: 'c', ticketRows: [ROWS[0]], config: CONFIG_DUR, capacity: 10, remaining: 5, durationHours: 2,
+  });
+  assert.equal(plain[0].payload.attributes.find((a) => a.id === 4).option, 'שעתיים');
+  const workshop = buildOccurrenceVariations({
+    tour: TOUR, cardGroupId: 'c', ticketRows: [ROWS[0]], config: CONFIG_DUR, capacity: 10, remaining: 5, durationHours: 2.5,
+  });
+  assert.equal(workshop[0].payload.attributes.find((a) => a.id === 4).option, 'שעתיים-וחצי');
+});
+
+test('configured duration with NO mapping for the hours FAILS visibly (retryable)', () => {
+  assert.throws(
+    () => buildOccurrenceVariations({ tour: TOUR, cardGroupId: 'c', ticketRows: [ROWS[0]], config: CONFIG_DUR, capacity: 10, remaining: 5, durationHours: 4 }),
+    /no pa_משך option mapped for duration=4/,
+  );
+  // Also fails when hours are unknown (null) but a duration attr is configured.
+  assert.throws(
+    () => buildOccurrenceVariations({ tour: TOUR, cardGroupId: 'c', ticketRows: [ROWS[0]], config: CONFIG_DUR, capacity: 10, remaining: 5, durationHours: null }),
+    /no pa_משך option mapped/,
+  );
+});
+
+test('no duration in config → no pa_משך attribute (existing behavior preserved)', () => {
+  const [v] = buildOccurrenceVariations({ tour: TOUR, cardGroupId: 'c', ticketRows: [ROWS[0]], config: CONFIG_TA, capacity: 10, remaining: 5, durationHours: 2 });
+  assert.equal(v.payload.attributes.some((a) => a.id === 4), false);
+});
+
 test('age configured but a ticket type is unmapped → refuses (no silent mis-sell)', () => {
   const cfg = { ...CONFIG_TA, ticketAge: { [TT_ADULT]: { option: 'מבוגר' } } }; // child missing
   assert.throws(

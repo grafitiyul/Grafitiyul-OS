@@ -10,7 +10,9 @@ import {
   dateTermSlug,
   timeTermName,
   timeTermSlug,
+  durationKey,
 } from './desiredState.js';
+import { readableSlug } from './suggestConfig.js';
 import { resolveSellableCards, mappedTemplateIds } from './mapping.js';
 
 // GOS → WooCommerce sync worker. For every sellable TourEvent (a group slot whose
@@ -54,6 +56,7 @@ function desiredVariationSet(tour, card, ctx) {
       capacity: ctx.capacity,
       remaining: ctx.remaining,
       registrationClosed: ctx.registrationClosed,
+      durationHours: ctx.durationHours,
     });
   }
   // Legacy/local fallback — ONE variation, one local Date attribute. It REFUSES
@@ -81,21 +84,29 @@ function desiredVariationSet(tour, card, ctx) {
 
 // Ensure the GLOBAL-taxonomy occurrence terms exist (GOS owns the dates; Woo
 // won't auto-create terms) and that the date term is selectable on the product.
-async function ensureOccurrenceTerms(woo, card, tour) {
+async function ensureOccurrenceTerms(woo, card, tour, durationHours = null) {
   const cfg = card.config;
   if (!cfg || !tour.date || !tour.startTime) return;
   const wants = [];
   if (cfg.date?.attrId != null) {
-    wants.push({ attrId: cfg.date.attrId, name: dateTermName(tour.date), slug: dateTermSlug(tour.date), isDate: true });
+    wants.push({ node: cfg.date, name: dateTermName(tour.date), slug: dateTermSlug(tour.date), attach: true });
   }
   if (cfg.time?.attrId != null) {
-    wants.push({ attrId: cfg.time.attrId, name: timeTermName(tour.startTime), slug: timeTermSlug(tour.startTime) });
+    wants.push({ node: cfg.time, name: timeTermName(tour.startTime), slug: timeTermSlug(tour.startTime), attach: false });
+  }
+  // Duration term (pa_משך): the option is the readable slug; find the real term
+  // by that slug so the product-option attach uses the correct NAME.
+  if (cfg.duration?.attrId != null && durationHours != null) {
+    const option = cfg.duration.map?.[durationKey(durationHours)];
+    if (option) wants.push({ node: cfg.duration, name: option, slug: option, attach: true, byOption: true });
   }
   for (const w of wants) {
-    const terms = await woo.listAttributeTerms(w.attrId);
-    const hit = (terms || []).find((t) => t.slug === w.slug || t.name === w.name);
-    if (!hit) await woo.createAttributeTerm(w.attrId, { name: w.name, slug: w.slug });
-    if (w.isDate) await ensureProductHasOption(woo, card.wooProductId, cfg.date, w.name);
+    const terms = await woo.listAttributeTerms(w.node.attrId);
+    let term = (terms || []).find(
+      (t) => t.slug === w.slug || t.name === w.name || (w.byOption && readableSlug(t.name) === w.slug),
+    );
+    if (!term) term = await woo.createAttributeTerm(w.node.attrId, { name: w.name, slug: w.slug });
+    if (w.attach) await ensureProductHasOption(woo, card.wooProductId, w.node, term?.name || w.name);
   }
 }
 
@@ -204,7 +215,7 @@ async function retireStaleVariants(deps, tour, card, desiredKeys) {
 async function reconcileCard(deps, tour, card, ctx) {
   const { woo } = deps;
   const desired = desiredVariationSet(tour, card, ctx);
-  await ensureOccurrenceTerms(woo, card, tour);
+  await ensureOccurrenceTerms(woo, card, tour, ctx.durationHours);
 
   // Lazily fetch the product's variations once for the adoption path.
   let cache = null;
@@ -231,6 +242,10 @@ export async function reconcileTourWoo(deps, tourId) {
       updatedAt: true,
       wooSyncStatus: true,
       wooAttempts: true,
+      // Operational product duration — the canonical source for pa_משך.
+      durationHoursOverride: true,
+      productVariantId: true,
+      productVariant: { select: { durationHours: true } },
     },
   });
   if (!tour || tour.wooSyncStatus !== 'pending') return 'skipped';
@@ -269,7 +284,11 @@ export async function reconcileTourWoo(deps, tourId) {
     closeMinutes = tpl?.registrationCloseMinutes ?? null;
   }
   const registrationClosed = occurrenceClosed(tour.date, tour.startTime, closeMinutes, now);
-  const ctx = { capacity: tour.capacity, remaining, registrationClosed };
+  // Effective duration: an explicit slot override wins, else the operational
+  // product variant's canonical durationHours (null when neither is set — a
+  // configured pa_משך then fails visibly per card and retries).
+  const durationHours = tour.durationHoursOverride ?? tour.productVariant?.durationHours ?? null;
+  const ctx = { capacity: tour.capacity, remaining, registrationClosed, durationHours };
 
   const errors = [];
   for (const card of cards) {

@@ -14,6 +14,7 @@ export const META_START_TIME = '_gos_start_time';
 // so these pin which ticket type (age) a given variation prices.
 export const META_TICKET_TYPE_ID = '_gos_ticket_type_id';
 export const META_VARIANT_KEY = '_gos_variant_key';
+export const META_DURATION = '_gos_duration_hours';
 
 // "08.08.2026 10:00" — the occurrence label used as the date-attribute option.
 export function occurrenceLabel(date, startTime) {
@@ -109,6 +110,10 @@ export function timeTermName(startTime) {
 export function timeTermSlug(startTime) {
   return String(startTime).replace(/:/g, '');
 }
+// Normalize an hours value to a stable config-map key: 2 → "2", 2.5 → "2.5".
+export function durationKey(hours) {
+  return String(Number(hours));
+}
 
 // Adopt an existing variation by our stable per-VARIANT meta link, for recovery
 // when the stored WooVariationLink id was lost. Matches on tour + CARD + variant
@@ -142,6 +147,7 @@ export function buildOccurrenceVariations({
   capacity,
   remaining,
   registrationClosed = false,
+  durationHours = null,
 }) {
   const cfg = config || {};
   const hasDate = Boolean(tour.date && tour.startTime);
@@ -158,6 +164,19 @@ export function buildOccurrenceVariations({
   }
   if (cfg.activity?.attrId != null && cfg.activity.option) {
     sharedAttributes.push({ id: cfg.activity.attrId, option: cfg.activity.option });
+  }
+  // Duration (pa_משך) — occurrence-wide, from the canonical operational product's
+  // durationHours mapped through the per-product config. When the operational
+  // product changes (plain↔workshop) the hours change → this option updates in
+  // place. A configured duration with NO mapping for the current hours FAILS
+  // visibly (the reconciler records it and retries) rather than shipping a wrong
+  // or empty duration.
+  if (cfg.duration?.attrId != null) {
+    const option = durationHours == null ? undefined : cfg.duration.map?.[durationKey(durationHours)];
+    if (!option) {
+      throw new Error(`woo: no pa_משך option mapped for duration=${durationHours} (card ${cardGroupId})`);
+    }
+    sharedAttributes.push({ id: cfg.duration.attrId, option });
   }
 
   const rows = ticketRows && ticketRows.length ? ticketRows : [];
@@ -189,6 +208,7 @@ export function buildOccurrenceVariations({
         { key: META_CAPACITY, value: capacity == null ? '' : String(capacity) },
         { key: META_DATE, value: tour.date || '' },
         { key: META_START_TIME, value: tour.startTime || '' },
+        { key: META_DURATION, value: durationHours == null ? '' : durationKey(durationHours) },
       ],
     };
     // Only (re)write attributes when we have a concrete occurrence — a postponed
