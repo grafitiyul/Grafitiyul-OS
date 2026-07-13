@@ -176,6 +176,7 @@ function joinTx({ capacity, currentSeats }) {
     // occupancyFor: active registration seats currently on the slot
     ticketRegistration: {
       groupBy: async () => [{ tourEventId: 'slot1', _sum: { quantity: currentSeats } }],
+      aggregate: async () => ({ _sum: { quantity: 0 } }), // no own held reservation
       findFirst: async () => null,
       findMany: async () => [],
       create: async ({ data }) => {

@@ -10,6 +10,7 @@
 
 import { recomputeTourOperationalProduct } from './operationalProduct.js';
 import { markTourWooPending } from './woo/service.js';
+import { REG_HELD, REG_EXPIRED, REG_CONFIRMED } from './registrationStatus.js';
 
 // A booking's allocation state maps onto its registration: only 'active' seats
 // count. 'orphaned' (deal left WON but tour kept) is intentionally NOT counted,
@@ -36,11 +37,22 @@ export function regStatusFromBooking(bookingStatus) {
 // per-tour line). Lookup stays keyed on bookingId so pre-existing (backfilled)
 // rows are matched and never duplicated.
 export async function syncDealRegistration(tx, booking, tour, opts = {}) {
-  const status = regStatusFromBooking(booking.status);
   const quantity = Number(booking.seats) || 0;
-  const existing = await tx.ticketRegistration.findFirst({
+  let existing = await tx.ticketRegistration.findFirst({
     where: { bookingId: booking.id, source: 'deal' },
   });
+  // ADOPTION (payment→WON): a deal's HELD/EXPIRED reservation (created before
+  // WON, so not yet booking-linked) is CONFIRMED in place — the SAME row, never a
+  // duplicate. Also covers late payment: an EXPIRED reservation is re-confirmed.
+  let adopting = false;
+  if (!existing && booking.status === 'active') {
+    existing = await tx.ticketRegistration.findFirst({
+      where: { dealId: booking.dealId, tourEventId: tour.id, status: { in: [REG_HELD, REG_EXPIRED] } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (existing) adopting = true;
+  }
+  const status = adopting ? REG_CONFIRMED : regStatusFromBooking(booking.status);
   // Explicit selection wins; else keep the existing row's variant; else fall
   // back to the tour's (last resort, e.g. a legacy row with no deal context).
   const productVariantId =
@@ -57,8 +69,11 @@ export async function syncDealRegistration(tx, booking, tour, opts = {}) {
         quantity,
         productVariantId,
         status,
+        bookingId: booking.id,
         externalOrderId: booking.dealId,
         externalLineId: booking.id,
+        // Adoption confirms + clears the hold; preserve the row's audit history.
+        ...(adopting ? { confirmedAt: new Date(), expiresAt: null, paymentStatus: 'paid' } : {}),
         cancelledAt: status === 'cancelled' ? existing.cancelledAt || new Date() : null,
       },
     });

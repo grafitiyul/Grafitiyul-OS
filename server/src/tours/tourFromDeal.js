@@ -103,7 +103,15 @@ export async function createTourForWonDeal(tx, deal, { targetTourEventId, origin
     // deliberately overbook by passing allowOverbook (soft ceiling preserved).
     if (!allowOverbook && slot.capacity != null) {
       const occ = await occupancyFor(tx, [slot.id]);
-      const current = occ[slot.id]?.activeSeats || 0;
+      let current = occ[slot.id]?.activeSeats || 0;
+      // The deal's OWN held reservation already counts in `current`; confirming
+      // it (adoption at WON) adds no new seats, so exclude it — otherwise the
+      // same seats are counted twice and a legitimate confirmation is rejected.
+      const ownHeld = await tx.ticketRegistration.aggregate({
+        where: { dealId: deal.id, tourEventId: slot.id, status: 'held' },
+        _sum: { quantity: true },
+      });
+      current -= ownHeld._sum.quantity || 0;
       if (current + seats > slot.capacity) {
         const err = new Error('tour_full');
         err.code = 'tour_full';
