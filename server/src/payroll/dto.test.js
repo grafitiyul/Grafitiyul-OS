@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { guideConversationDto, CONVERSATION_EVENTS } from './dto.js';
+import { guideConversationDto, guidePayEntryDto, CONVERSATION_EVENTS } from './dto.js';
 
 // Regression for the "guide can't see the comment they just submitted" bug:
 // the conversation must come back through the guide DTO — strictly the OWN
@@ -63,4 +63,47 @@ test('conversation: a guide change starts a fresh thread — the previous guide\
 test('conversation: with no guide change, every message still shows (cutoff defaults to open)', () => {
   const conv = guideConversationDto(ROWS, 'e1');
   assert.deepEqual(conv.map((m) => m.id), ['t1', 't2', 't3']);
+});
+
+// guidePayEntryDto — the portal read model must carry the canonical rate ×
+// quantity inputs the payroll engine already produced, so the portal can show
+// the breakdown WITHOUT re-deriving business logic. Direct-amount lines (tours)
+// carry null quantity/unitPriceMinor.
+test('pay DTO: exposes quantity + unitPriceMinor for a rate × quantity line', () => {
+  const componentById = new Map([
+    ['c_qty', { guideVisible: true }],
+    ['c_base', { guideVisible: true }],
+  ]);
+  const entry = {
+    id: 'e1',
+    role: null,
+    guideStatus: 'pending',
+    guideApprovedAt: null,
+    inquiryStatus: 'none',
+    inquiryResolvedAt: null,
+    vatStatusSnapshot: 'exempt',
+    vatRateSnapshot: 18,
+    officeNote: 'שורה ראשונה\n\nשורה שנייה',
+    lines: [
+      // General-activity hourly line: ₪40 × 1.5 = ₪60.
+      { componentId: 'c_qty', componentNameHe: 'לפי כמות', sign: 1, vatMode: 'net', quantity: 1.5, unitPriceMinor: 4000, calculatedMinor: 6000, overrideMinor: null, sortOrder: 10 },
+      // Tour direct amount: no rate/quantity.
+      { componentId: 'c_base', componentNameHe: 'תשלום בסיס', sign: 1, vatMode: 'net', quantity: null, unitPriceMinor: null, calculatedMinor: 35000, overrideMinor: null, sortOrder: 20 },
+    ],
+  };
+  const activity = { titleHe: 'ישיבת צוות', sourceType: 'general', date: null, payrollMonth: '2026-07' };
+  const dto = guidePayEntryDto(entry, activity, componentById);
+
+  const qtyLine = dto.lines.find((l) => l.name === 'לפי כמות');
+  assert.equal(qtyLine.quantity, 1.5, 'decimal quantity exposed');
+  assert.equal(qtyLine.unitPriceMinor, 4000, 'unit rate (minor) exposed');
+  assert.equal(qtyLine.amountMinor, 6000, 'final amount preserved');
+
+  const baseLine = dto.lines.find((l) => l.name === 'תשלום בסיס');
+  assert.equal(baseLine.quantity, null, 'direct-amount line has no quantity');
+  assert.equal(baseLine.unitPriceMinor, null, 'direct-amount line has no unit rate');
+
+  // The office note is passed through byte-for-byte (formatting is a render
+  // concern, never normalised on the server).
+  assert.equal(dto.officeNote, 'שורה ראשונה\n\nשורה שנייה', 'office note text is untouched');
 });

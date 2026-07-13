@@ -76,6 +76,12 @@ export function guidePayEntryDto(entry, activity, componentById, conversation = 
       name: l.componentNameHe,
       sign: l.sign,
       amountMinor: lineFinalMinor(l),
+      // Canonical rate × quantity inputs (general-activity lines carry them;
+      // tour base/travel/seniority are direct amounts → null). Exposed so the
+      // portal can SHOW the breakdown without re-deriving any business logic —
+      // it only formats what the engine already computed. null when absent.
+      quantity: l.quantity != null ? Number(l.quantity) : null,
+      unitPriceMinor: l.unitPriceMinor != null ? Number(l.unitPriceMinor) : null,
     })),
     totals,
     // The guide's own conversation for THIS entry — never anyone else's.

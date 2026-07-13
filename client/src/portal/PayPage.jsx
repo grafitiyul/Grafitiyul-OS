@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { formatMinor } from '../lib/money.js';
 import { usePayrollRealtime } from '../lib/payrollRealtime.js';
-import { waitingLabel } from './payText.js';
+import { waitingLabel, lineCalcLabel, lineDisplayName } from './payText.js';
 
 // שכר — the guide's payroll view. Server truth only (viewPay-gated,
 // office-approved entries): the guide sees ONLY components that actually
@@ -122,14 +122,24 @@ function EntryCard({ token, entry, onChanged }) {
       )}
 
       <div className="mt-3 space-y-1">
-        {entry.lines.map((l, i) => (
-          <div key={i} className="flex items-center justify-between text-[13px]">
-            <span className="text-gray-600">{l.name}</span>
-            <span className={`tabular-nums ${l.sign < 0 ? 'text-red-600' : 'text-gray-800'}`}>
-              {l.sign < 0 ? '−' : ''}{formatMinor(l.amountMinor)}
-            </span>
-          </div>
-        ))}
+        {entry.lines.map((l, i) => {
+          const calc = lineCalcLabel(l);
+          return (
+            <div key={i} className="flex items-start justify-between gap-2 text-[13px]">
+              <span className="min-w-0 text-gray-600">
+                {lineDisplayName(l.name, entry.sourceType)}
+                {calc && (
+                  <span className="block text-[11px] text-gray-400 tabular-nums" dir="ltr">
+                    {calc}
+                  </span>
+                )}
+              </span>
+              <span className={`shrink-0 tabular-nums ${l.sign < 0 ? 'text-red-600' : 'text-gray-800'}`}>
+                {l.sign < 0 ? '−' : ''}{formatMinor(l.amountMinor)}
+              </span>
+            </div>
+          );
+        })}
       </div>
 
       <div className="mt-3 pt-2 border-t border-gray-100 space-y-0.5">
@@ -178,7 +188,10 @@ function EntryCard({ token, entry, onChanged }) {
       {entry.officeNote && (
         <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
           <div className="text-[10px] font-semibold text-amber-700">הערת המשרד</div>
-          <div className="text-[12px] text-gray-800">{entry.officeNote}</div>
+          {/* Preserve the office's exact line breaks / paragraph spacing
+              (pre-wrap) while still wrapping long lines and never overflowing
+              horizontally (break-words). The stored text is untouched. */}
+          <div className="text-[12px] text-gray-800 whitespace-pre-wrap break-words">{entry.officeNote}</div>
         </div>
       )}
 

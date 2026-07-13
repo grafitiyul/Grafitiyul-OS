@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
+import { formatMinor } from '../lib/money.js';
 
 // Guide Portal Pay page — approved-entries accordion (presentation only).
 // Renders the REAL PayPage against a mocked portal DTO and asserts:
@@ -35,6 +36,10 @@ const APPROVED_ENTRY = {
   officeNote: 'תודה על הסיור!',
 };
 
+// A multiline office note (paragraph gap + Hebrew + numbers) — must survive
+// as multiline in the portal (pre-wrap), never collapsed to one line.
+const MULTILINE_NOTE = 'שורה ראשונה\nשורה שנייה\n\nפסקה חדשה עם 123';
+
 const PENDING_ENTRY = {
   id: 'pe1',
   activityTitle: 'ישיבת צוות',
@@ -48,8 +53,33 @@ const PENDING_ENTRY = {
   inquiryResolvedAt: null,
   vatStatus: 'exempt',
   vatRate: 18,
-  lines: [{ name: 'לפי כמות', sign: 1, amountMinor: 12000 }],
-  totals: { vatStatus: 'exempt', totalMinor: 12000, netMinor: 12000, vatMinor: 0 },
+  // Hourly-style line: ₪40 × 1.5 = ₪60 — the portal shows the breakdown.
+  lines: [{ name: 'לפי כמות', sign: 1, amountMinor: 6000, quantity: 1.5, unitPriceMinor: 4000 }],
+  totals: { vatStatus: 'exempt', totalMinor: 6000, netMinor: 6000, vatMinor: 0 },
+  conversation: [],
+  officeNote: MULTILINE_NOTE,
+};
+
+// A pending TOUR entry with a deduction line named "ניכוי" — the portal tour
+// breakdown must show it as "קיזוז".
+const DEDUCTION_TOUR_ENTRY = {
+  id: 'de1',
+  activityTitle: 'סיור יפו',
+  sourceType: 'tour_event',
+  date: '2026-07-12',
+  payrollMonth: '2026-07',
+  role: 'guide',
+  guideStatus: 'pending',
+  guideApprovedAt: null,
+  inquiryStatus: 'none',
+  inquiryResolvedAt: null,
+  vatStatus: 'exempt',
+  vatRate: 18,
+  lines: [
+    { name: 'תשלום מדריך', sign: 1, amountMinor: 35000, quantity: null, unitPriceMinor: null },
+    { name: 'ניכוי', sign: -1, amountMinor: 5000, quantity: null, unitPriceMinor: null },
+  ],
+  totals: { vatStatus: 'exempt', totalMinor: 30000, netMinor: 30000, vatMinor: 0 },
   conversation: [],
   officeNote: null,
 };
@@ -57,8 +87,8 @@ const PENDING_ENTRY = {
 const PAY_DTO = {
   month: '2026-07',
   months: ['2026-07'],
-  totals: { approvedMinor: 35000, pendingCount: 1 },
-  entries: [APPROVED_ENTRY, PENDING_ENTRY],
+  totals: { approvedMinor: 35000, pendingCount: 2 },
+  entries: [APPROVED_ENTRY, PENDING_ENTRY, DEDUCTION_TOUR_ENTRY],
 };
 
 const assetStubPlugin = {
@@ -201,5 +231,38 @@ test('pending entry stays fully expanded with the approve action', async () => {
   assert.match(html, /לפי כמות/, 'pending entry breakdown is visible without any tap');
   assert.match(html, /אשר ✓/, 'approve button prominent');
   assert.match(html, /תוספת כללית/, 'general source label uses the new terminology');
+  await unmount();
+});
+
+test('#1 office note keeps its line breaks (pre-wrap), never collapsed', async () => {
+  const { container, unmount } = await renderPayPage();
+  const noteEl = [...container.querySelectorAll('.whitespace-pre-wrap')].find((el) =>
+    el.textContent.includes('שורה ראשונה'),
+  );
+  assert.ok(noteEl, 'office note is rendered with whitespace-pre-wrap (structure preserved)');
+  assert.match(noteEl.className, /break-words/, 'long lines wrap and never overflow horizontally');
+  // The exact multiline text is preserved byte-for-byte, incl. the empty line.
+  assert.ok(noteEl.textContent.includes('שורה ראשונה\nשורה שנייה\n\nפסקה חדשה עם 123'), 'multiline text intact');
+  await unmount();
+});
+
+test('#2 hourly line shows the rate × quantity breakdown', async () => {
+  const { container, unmount } = await renderPayPage();
+  // ₪40 × 1.5 = ₪60 (money formatted via the canonical he-IL formatter).
+  assert.ok(
+    container.textContent.includes(`${formatMinor(4000)} × 1.5`),
+    'rate × quantity breakdown is shown for the hourly line',
+  );
+  // The prominent total is still present.
+  assert.ok(container.textContent.includes(formatMinor(6000)), 'final total remains visible');
+  await unmount();
+});
+
+test('#3 tour deduction shows "קיזוז", not "ניכוי"', async () => {
+  const { container, unmount } = await renderPayPage();
+  const text = container.textContent;
+  assert.match(text, /סיור יפו/, 'the tour entry renders');
+  assert.match(text, /קיזוז/, 'the deduction is labelled קיזוז');
+  assert.ok(!text.includes('ניכוי'), 'the old ניכוי label no longer appears in the tour breakdown');
   await unmount();
 });
