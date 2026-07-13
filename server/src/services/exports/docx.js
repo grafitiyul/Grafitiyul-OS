@@ -498,7 +498,7 @@ export async function renderDocx(doc, opts = {}) {
     levels: buildLevels(ordered),
   }));
   const document = new Document({
-    creator: 'Grafitiyul OS',
+    creator: 'Grafitiyul Team',
     title: doc.title || 'Export',
     styles: {
       default: {

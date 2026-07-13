@@ -4,6 +4,7 @@ import { api } from '../lib/api.js';
 import { validateAnswer } from '../lib/questionRequirement.js';
 import { titleToPlain } from '../editor/TitleEditor.jsx';
 import { normalizeRichHtml } from '../editor/htmlNormalize.js';
+import BrandMark from '../brand/BrandMark.jsx';
 
 // Entry point at /flow/:id.
 //   - ?preview=1 → local in-memory run that never hits /attempts (admin preview).
@@ -1067,8 +1068,8 @@ function NameGate({ isMobile, flow, name, setName, busy, error, onStart }) {
           isMobile ? 'w-full p-6' : 'max-w-md w-full p-8'
         }`}
       >
-        <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">
-          Grafitiyul OS
+        <div className="mb-4">
+          <BrandMark className="h-14 w-auto" />
         </div>
         <h1 className="text-2xl font-semibold mb-6">{flow.title}</h1>
         <label className="block text-sm font-medium mb-2">שם מלא</label>

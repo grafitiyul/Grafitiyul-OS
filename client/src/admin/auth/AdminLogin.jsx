@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import BrandMark from '../../brand/BrandMark.jsx';
 
 // Admin sign-in page. Renders ONE of two forms based on a server-side
 // "needsBootstrap" flag returned by /api/auth/status:
@@ -129,8 +130,8 @@ function LoginForm({ onAuthed }) {
 
   return (
     <>
-      <div className="text-[12px] uppercase tracking-wide text-gray-500 mb-1">
-        Grafitiyul OS
+      <div className="flex justify-center mb-4">
+        <BrandMark className="h-20 w-auto" />
       </div>
       <h1 className="text-xl font-semibold text-gray-900 mb-1">כניסת מנהל</h1>
       <p className="text-[12px] text-gray-500 mb-5">
@@ -252,8 +253,8 @@ function SetupForm({ onCreated, onAlreadyDone }) {
 
   return (
     <>
-      <div className="text-[12px] uppercase tracking-wide text-gray-500 mb-1">
-        Grafitiyul OS
+      <div className="flex justify-center mb-4">
+        <BrandMark className="h-20 w-auto" />
       </div>
       <h1 className="text-xl font-semibold text-gray-900 mb-1">
         יצירת משתמש מנהל ראשון

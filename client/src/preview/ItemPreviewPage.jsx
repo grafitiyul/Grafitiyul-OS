@@ -40,7 +40,7 @@ export default function ItemPreviewPage({ kind }) {
     div.innerHTML = title;
     document.title = `תצוגה מקדימה · ${div.textContent || '(ללא כותרת)'}`;
     return () => {
-      document.title = 'Grafitiyul OS';
+      document.title = 'Grafitiyul Team';
     };
   }, [title]);
 

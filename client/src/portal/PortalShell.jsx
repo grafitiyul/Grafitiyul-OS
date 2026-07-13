@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { CenteredMessage, DisabledScreen, NotFoundScreen } from './shellScreens.jsx';
+import BrandMark from '../brand/BrandMark.jsx';
 
 // Guide Portal shell — the app frame every portal page renders inside.
 //
@@ -130,7 +131,7 @@ function Header({ displayName, imageUrl, token }) {
             </div>
           </div>
         </NavLink>
-        <div className="text-[12px] font-bold tracking-tight text-gray-300">גרפיטיול</div>
+        <BrandMark className="h-7 w-auto shrink-0 opacity-90" />
       </div>
     </header>
   );

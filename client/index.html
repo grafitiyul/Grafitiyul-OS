@@ -9,18 +9,26 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#2563eb" />
+    <meta name="theme-color" content="#28a8a8" />
     <!-- PWA manifest. Served via express.static in production, no auth.
          No service worker is registered anywhere — the app stays
          online-only by design (see CLAUDE.md §15: no hidden stale
          caching). Installable yes; cached-offline no. -->
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-    <!-- iOS install metadata. Safari 13+ accepts SVG for the home-
-         screen icon. The two apple-* tags ask iOS to render the app
-         in standalone (no Safari chrome) when launched from the
-         home screen. -->
-    <link rel="apple-touch-icon" href="/icon.svg" />
+    <!-- Favicons — real Grafitiyul Team logo (teal "Feel The Street"
+         roundel), rasterised from client/src/public/assets/home/photos/
+         logo.png. favicon.ico (16/32/48) covers legacy + the browser's
+         automatic /favicon.ico probe; the sized PNGs give crisp tabs on
+         modern browsers. All transparent. -->
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
+    <!-- iOS install metadata. Apple touch icon is a 180×180 PNG on a
+         solid white brand background (iOS turns any transparency black
+         and rounds the corners itself). The two apple-* tags ask iOS to
+         render the app in standalone (no Safari chrome) when launched
+         from the home screen. -->
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Grafitiyul Team" />
     <meta

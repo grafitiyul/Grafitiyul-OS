@@ -38,7 +38,7 @@ export default function GroupPreviewPage() {
   useEffect(() => {
     document.title = `תצוגה מקדימה · קבוצה · ${groupTitle}`;
     return () => {
-      document.title = 'Grafitiyul OS';
+      document.title = 'Grafitiyul Team';
     };
   }, [groupTitle]);
 

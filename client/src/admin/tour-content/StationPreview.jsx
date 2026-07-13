@@ -19,7 +19,7 @@ export default function StationPreview() {
 
   useEffect(() => {
     document.title = station ? `תצוגה מקדימה · ${station.titleHe}` : 'תצוגה מקדימה';
-    return () => { document.title = 'Grafitiyul OS'; };
+    return () => { document.title = 'Grafitiyul Team'; };
   }, [station]);
 
   if (error) return <div dir="rtl" className="p-10 text-center text-red-600">שגיאה בטעינת התצוגה: {error}</div>;
