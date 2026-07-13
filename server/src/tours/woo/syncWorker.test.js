@@ -345,6 +345,70 @@ test('partial failure: one variation errors → tour stays pending (retryable), 
   assert.ok(env.calls.tourUpdates.at(-1).wooNextRetryAt); // backoff scheduled
 });
 
+// TWO cards on the SAME product (#167), distinguished only by pa_פעילות, sharing
+// the SAME ticket type ids (מבוגר/ילד) → 4 distinct variations, no cross-clobber.
+const CONFIG_WS = { ...GLOBAL_CONFIG, activity: { attrId: 3, attrName: 'pa_פעילות', option: 'סיור-סדנה' } };
+const CONFIG_TOUR = { ...GLOBAL_CONFIG, activity: { attrId: 3, attrName: 'pa_פעילות', option: 'סיור-בלבד' } };
+const TWO_CARDS = {
+  templateProducts: [{ cardGroupId: 'cardWs' }, { cardGroupId: 'cardTour' }],
+  mappings: [
+    { cardGroupId: 'cardWs', wooProductId: 167, config: CONFIG_WS, active: true },
+    { cardGroupId: 'cardTour', wooProductId: 167, config: CONFIG_TOUR, active: true },
+  ],
+  ticketsByCard: {
+    cardWs: [
+      { ticketTypeId: TT_ADULT, priceMinor: 25000, nameHe: 'מבוגר', sortOrder: 0 },
+      { ticketTypeId: TT_CHILD, priceMinor: 20000, nameHe: 'ילד', sortOrder: 1 },
+    ],
+    cardTour: [
+      { ticketTypeId: TT_ADULT, priceMinor: 6000, nameHe: 'מבוגר', sortOrder: 0 },
+      { ticketTypeId: TT_CHILD, priceMinor: 3000, nameHe: 'ילד', sortOrder: 1 },
+    ],
+  },
+};
+
+test('two cards, one product, shared ticket ids → 4 DISTINCT variations', async () => {
+  const env = makeEnv(TWO_CARDS);
+  await reconcileTourWoo(deps(env), 'slot1');
+  assert.equal(env.calls.created.length, 4);
+  // 4 distinct (activity, age) combos on the one product.
+  const combos = env.calls.created.map((c) => {
+    const a = Object.fromEntries(c.data.attributes.map((x) => [x.id, x.option]));
+    return `${a[3]}|${a[5]}`;
+  });
+  assert.deepEqual([...new Set(combos)].sort(), ['סיור-בלבד|ילד', 'סיור-בלבד|מבוגר', 'סיור-סדנה|ילד', 'סיור-סדנה|מבוגר']);
+  // 4 distinct links keyed by (card, variantKey).
+  assert.equal(Object.keys(env.linkStore).length, 4);
+});
+
+test('adding the tour-only card when workshop is ALREADY synced does not clobber it', async () => {
+  // Product 167 already holds the two workshop variations with our meta + links.
+  const wsVar = (id, age) => ({
+    id,
+    attributes: [{ id: 3, option: 'סיור-סדנה' }, { id: 5, option: age === TT_ADULT ? 'מבוגר' : 'ילד' }],
+    meta_data: [
+      { key: META_TOUREVENT_ID, value: 'slot1' },
+      { key: META_CARD_GROUP_ID, value: 'cardWs' },
+      { key: META_VARIANT_KEY, value: age },
+    ],
+  });
+  const env = makeEnv({
+    ...TWO_CARDS,
+    variationsByProduct: { 167: [wsVar(111, TT_ADULT), wsVar(112, TT_CHILD)] },
+    links: {
+      ['slot1::cardWs::' + TT_ADULT]: { tourEventId: 'slot1', cardGroupId: 'cardWs', variantKey: TT_ADULT, wooVariationId: 111, wooProductId: 167, status: 'synced' },
+      ['slot1::cardWs::' + TT_CHILD]: { tourEventId: 'slot1', cardGroupId: 'cardWs', variantKey: TT_CHILD, wooVariationId: 112, wooProductId: 167, status: 'synced' },
+    },
+  });
+  await reconcileTourWoo(deps(env), 'slot1');
+  // Workshop links → UPDATE 111/112 (never re-created). Tour-only → 2 CREATES,
+  // NOT adopting the workshop variations despite the shared ticket ids.
+  assert.deepEqual(env.calls.updated.map((u) => u.variationId).sort(), [111, 112]);
+  assert.equal(env.calls.created.length, 2);
+  assert.ok(env.calls.created.every((c) => c.data.attributes.find((a) => a.id === 3).option === 'סיור-בלבד'));
+  assert.ok(env.calls.created.every((c) => ![111, 112].includes(c.data.__id)));
+});
+
 // ── Cutoff helper ────────────────────────────────────────────────────────────
 
 test('occurrenceClosed respects the close cutoff', () => {

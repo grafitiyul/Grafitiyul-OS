@@ -614,8 +614,8 @@ function WooMappingsSection() {
   async function loadCandidates(card) {
     setLoadingCand(card.cardGroupId);
     try {
-      const { candidates: list } = await api.openTours.wooCandidates(card.cardGroupId, 20);
-      setCandidates((m) => ({ ...m, [card.cardGroupId]: list || [] }));
+      const resp = await api.openTours.wooCandidates(card.cardGroupId, 20);
+      setCandidates((m) => ({ ...m, [card.cardGroupId]: resp }));
     } catch (e) {
       alert(errText(e));
     } finally {
@@ -855,7 +855,8 @@ function WooMappingsSection() {
                   </div>
                 )}
 
-                {/* Controlled sync + status: nearest future occurrences of this card */}
+                {/* Controlled sync + status: nearest future occurrences of this card.
+                    Status is DERIVED per card from variation-link completeness. */}
                 {mapped && (
                   <details className="mt-2" onToggle={(e) => e.currentTarget.open && !candidates[c.cardGroupId] && loadCandidates(c)}>
                     <summary className="cursor-pointer text-[12px] text-gray-500 hover:text-gray-700">
@@ -863,11 +864,11 @@ function WooMappingsSection() {
                     </summary>
                     {loadingCand === c.cardGroupId ? (
                       <div className="mt-1 text-[12px] text-gray-400">טוען…</div>
-                    ) : (candidates[c.cardGroupId] || []).length === 0 ? (
+                    ) : !(candidates[c.cardGroupId]?.candidates || []).length ? (
                       <div className="mt-1 text-[12px] text-gray-400">אין מועדים עתידיים.</div>
                     ) : (
                       <div className="mt-1 divide-y divide-gray-100 rounded-lg border border-gray-200">
-                        {candidates[c.cardGroupId].map((t) => (
+                        {candidates[c.cardGroupId].candidates.map((t) => (
                           <div key={t.id} className="flex flex-wrap items-center gap-2 px-2.5 py-1.5 text-[12px]">
                             <span className="tabular-nums text-gray-700" dir="ltr">
                               {fmtTourDate(t.date)} {t.startTime}
@@ -875,7 +876,7 @@ function WooMappingsSection() {
                             <span className="text-gray-400">
                               {t.status} · {t.remaining == null ? '∞' : t.remaining}/{t.capacity ?? '—'} מקומות
                             </span>
-                            <SyncStatusChip status={t.wooSyncStatus} error={t.wooSyncError} />
+                            <CardSyncChip cardStatus={t.cardStatus} syncedCount={t.syncedCount} expected={t.expected} error={t.wooSyncError} />
                             {(t.wooVariationLinks || []).length > 0 && (
                               <span className="text-gray-400" dir="ltr" title="variation ids">
                                 {t.wooVariationLinks.map((l) => `${l.variantKey.slice(0, 6)}→${l.wooVariationId ?? '—'}`).join(' ')}
@@ -919,18 +920,39 @@ function GateChip({ on, label }) {
   );
 }
 
-const SYNC_CHIP = {
+// Per-card status chip — driven by the DERIVED cardStatus (link completeness),
+// not the TourEvent-level flag. Shows the coverage count so "2/2" vs "0/2" is
+// unmistakable.
+const CARD_CHIP = {
   synced: 'bg-green-50 text-green-700',
+  incomplete: 'bg-amber-50 text-amber-700',
+  missing: 'bg-red-50 text-red-700',
   pending: 'bg-amber-50 text-amber-700',
   failed: 'bg-red-50 text-red-700',
-  skipped: 'bg-gray-100 text-gray-500',
+  unmapped: 'bg-gray-100 text-gray-500',
+  not_offered: 'bg-gray-100 text-gray-400',
+  no_tickets: 'bg-gray-100 text-gray-500',
 };
-const SYNC_LABEL = { synced: 'מסונכרן', pending: 'ממתין', failed: 'נכשל', skipped: 'לא נמכר' };
-function SyncStatusChip({ status, error }) {
-  if (!status) return <span className="rounded-full bg-gray-100 px-2 py-0.5 text-gray-400">—</span>;
+const CARD_LABEL = {
+  synced: 'מסונכרן',
+  incomplete: 'חלקי',
+  missing: 'חסר',
+  pending: 'ממתין',
+  failed: 'נכשל',
+  unmapped: 'לא ממופה',
+  not_offered: 'לא מוצע',
+  no_tickets: 'ללא כרטיסים',
+};
+function CardSyncChip({ cardStatus, syncedCount, expected, error }) {
+  const label = CARD_LABEL[cardStatus] || cardStatus || '—';
+  const showCount = expected != null && ['synced', 'incomplete', 'missing', 'pending', 'failed'].includes(cardStatus);
   return (
-    <span className={'rounded-full px-2 py-0.5 font-medium ' + (SYNC_CHIP[status] || 'bg-gray-100 text-gray-500')} title={error || ''}>
-      {SYNC_LABEL[status] || status}
+    <span
+      className={'rounded-full px-2 py-0.5 font-medium ' + (CARD_CHIP[cardStatus] || 'bg-gray-100 text-gray-500')}
+      title={error || ''}
+    >
+      {label}
+      {showCount ? ` ${syncedCount ?? 0}/${expected}` : ''}
     </span>
   );
 }

@@ -110,13 +110,18 @@ export function timeTermSlug(startTime) {
   return String(startTime).replace(/:/g, '');
 }
 
-// Adopt an existing variation by our stable per-VARIANT meta link (tour + variant
-// key), for recovery when the stored WooVariationLink id was lost.
-export function findVariationForVariant(variations, tourEventId, variantKey) {
+// Adopt an existing variation by our stable per-VARIANT meta link, for recovery
+// when the stored WooVariationLink id was lost. Matches on tour + CARD + variant
+// key: ticket types (מבוגר/ילד) are shared across cards, so the variant key alone
+// collides when two cards live on the SAME product (tour-only vs tour+workshop) —
+// without the card match, the tour-only adult would adopt and overwrite the
+// workshop adult variation.
+export function findVariationForVariant(variations, tourEventId, cardGroupId, variantKey) {
   return (
     (variations || []).find(
       (v) =>
         String(metaValue(v, META_TOUREVENT_ID)) === String(tourEventId) &&
+        String(metaValue(v, META_CARD_GROUP_ID)) === String(cardGroupId) &&
         String(metaValue(v, META_VARIANT_KEY)) === String(variantKey),
     ) || null
   );

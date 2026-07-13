@@ -14,7 +14,8 @@ import {
   setManualProduct,
   clearManualProduct,
 } from '../tours/occurrenceOverrides.js';
-import { markCardSlotsPending } from '../tours/woo/mapping.js';
+import { markCardSlotsPending, cardTicketRows } from '../tours/woo/mapping.js';
+import { deriveCardStatus } from '../tours/woo/cardStatus.js';
 import { kickWooSync, markTourWooPending } from '../tours/woo/service.js';
 import { woo, wooConfigured, wooSyncActive, wooSyncBulkEnabled } from '../tours/woo/wooClient.js';
 import { occupancyFor } from '../tours/occupancy.js';
@@ -465,12 +466,20 @@ router.get(
   handle(async (req, res) => {
     const cardGroupId = String(req.params.cardGroupId || '');
     const take = Math.min(Number(req.query.limit) || 20, 100);
-    const products = await prisma.openTourTemplateProduct.findMany({
-      where: { cardGroupId },
-      select: { templateId: true },
-    });
+    // Card-level facts: which templates offer it, whether it's mapped, and how
+    // many variations it SHOULD have (its priced ticket rows = adult/child).
+    const [products, mapping, ticketRows] = await Promise.all([
+      prisma.openTourTemplateProduct.findMany({ where: { cardGroupId }, select: { templateId: true } }),
+      prisma.wooProductMapping.findUnique({ where: { cardGroupId } }),
+      cardTicketRows(prisma, cardGroupId),
+    ]);
     const templateIds = [...new Set(products.map((p) => p.templateId))];
-    if (!templateIds.length) return res.json({ candidates: [] });
+    const mapped = Boolean(mapping && mapping.active);
+    const expected = ticketRows.length;
+    const offered = templateIds.length > 0;
+    const head = { offered, mapped, expected, wooProductId: mapping?.wooProductId ?? null };
+    if (!offered) return res.json({ ...head, candidates: [] });
+
     const tours = await prisma.tourEvent.findMany({
       where: { openTourTemplateId: { in: templateIds }, kind: 'group_slot', date: { gte: israelToday() } },
       orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
@@ -486,11 +495,29 @@ router.get(
     });
     const occ = await occupancyFor(prisma, tours.map((t) => t.id));
     res.json({
-      candidates: tours.map((t) => ({
-        ...t,
-        activeSeats: occ[t.id]?.activeSeats || 0,
-        remaining: t.capacity == null ? null : Math.max(0, t.capacity - (occ[t.id]?.activeSeats || 0)),
-      })),
+      ...head,
+      candidates: tours.map((t) => {
+        const links = t.wooVariationLinks || [];
+        // Count DISTINCT variant keys actually synced (id present + status synced).
+        const syncedKeys = new Set(links.filter((l) => l.wooVariationId && l.status === 'synced').map((l) => l.variantKey));
+        const failed = links.some((l) => l.status === 'failed');
+        const cardStatus = deriveCardStatus({
+          offered: true,
+          mapped,
+          expected,
+          syncedCount: syncedKeys.size,
+          failed,
+          tourStatus: t.wooSyncStatus,
+        });
+        return {
+          ...t,
+          activeSeats: occ[t.id]?.activeSeats || 0,
+          remaining: t.capacity == null ? null : Math.max(0, t.capacity - (occ[t.id]?.activeSeats || 0)),
+          expected,
+          syncedCount: syncedKeys.size,
+          cardStatus,
+        };
+      }),
     });
   }),
 );

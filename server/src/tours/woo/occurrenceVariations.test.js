@@ -117,9 +117,11 @@ test('stable per-variant metadata + adoption by (tour, variantKey)', () => {
 
   // Adoption: given the existing live variations, match ours back by meta.
   const live = set.map((v, i) => ({ id: 900 + i, ...v.payload }));
-  const found = findVariationForVariant(live, 'slotTA', TT_CHILD);
+  const found = findVariationForVariant(live, 'slotTA', 'cardTourOnly', TT_CHILD);
   assert.equal(metaValue(found, META_VARIANT_KEY), TT_CHILD);
-  assert.equal(findVariationForVariant(live, 'slotTA', 'nope'), null);
+  assert.equal(findVariationForVariant(live, 'slotTA', 'cardTourOnly', 'nope'), null);
+  // Cross-card safety: the SAME variant key under a DIFFERENT card is NOT adopted.
+  assert.equal(findVariationForVariant(live, 'slotTA', 'otherCard', TT_CHILD), null);
 });
 
 test('shared capacity: EVERY sibling variation advertises the SAME stock', () => {

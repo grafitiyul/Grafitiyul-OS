@@ -147,7 +147,7 @@ async function reconcileVariant(deps, tour, card, desired, existing) {
 
   let variationId = link && link.wooProductId === card.wooProductId ? link.wooVariationId : null;
   if (!variationId) {
-    const found = findVariationForVariant(await existing(), tour.id, desired.variantKey);
+    const found = findVariationForVariant(await existing(), tour.id, card.cardGroupId, desired.variantKey);
     if (found) variationId = found.id;
   }
 
