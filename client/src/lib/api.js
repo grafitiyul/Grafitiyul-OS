@@ -1306,6 +1306,30 @@ export const api = {
 
   // Tours OPERATIONAL module ("סיורים") — TourEvent/Booking. Distinct from
   // tourContent below (training/route content).
+  // Open Tours — recurring tour TEMPLATES (the "what") + weekly schedule rules
+  // (the "when") + one-off exceptions. Mutations materialize/adjust group slots
+  // → wrapped in tourMutation() so open surfaces refresh.
+  openTours: {
+    list: () => request('/api/open-tours'),
+    get: (id) => request(`/api/open-tours/${id}`),
+    sellableProducts: () => request('/api/open-tours/sellable-products'),
+    create: (data) =>
+      tourMutation(request('/api/open-tours', { method: 'POST', body: JSON.stringify(data) })),
+    update: (id, data) =>
+      tourMutation(request(`/api/open-tours/${id}`, { method: 'PUT', body: JSON.stringify(data) })),
+    remove: (id) => tourMutation(request(`/api/open-tours/${id}`, { method: 'DELETE' })),
+    setProducts: (id, products) =>
+      tourMutation(request(`/api/open-tours/${id}/products`, { method: 'PUT', body: JSON.stringify({ products }) })),
+    createRule: (id, data) =>
+      tourMutation(request(`/api/open-tours/${id}/rules`, { method: 'POST', body: JSON.stringify(data) })),
+    updateRule: (ruleId, data) =>
+      tourMutation(request(`/api/open-tours/rules/${ruleId}`, { method: 'PUT', body: JSON.stringify(data) })),
+    removeRule: (ruleId) => tourMutation(request(`/api/open-tours/rules/${ruleId}`, { method: 'DELETE' })),
+    createException: (id, data) =>
+      tourMutation(request(`/api/open-tours/${id}/exceptions`, { method: 'POST', body: JSON.stringify(data) })),
+    removeException: (exceptionId) =>
+      tourMutation(request(`/api/open-tours/exceptions/${exceptionId}`, { method: 'DELETE' })),
+  },
   tours: {
     // Every mutation below is wrapped in tourMutation() so a success emits the
     // ONE canonical tour-changed signal (see the helper above). READS (list /

@@ -77,6 +77,7 @@ import PublicFormPage from './questionnaire/PublicFormPage.jsx';
 import SettingsHome from './admin/settings/SettingsHome.jsx';
 import ToursSettings from './admin/settings/ToursSettings.jsx';
 import GroupToursSettings from './admin/tours/settings/GroupToursSettings.jsx';
+import OpenToursSettings from './admin/tours/settings/OpenToursSettings.jsx';
 import TourComponentsSettingsPage from './admin/tours/settings/TourComponentsSettingsPage.jsx';
 import CoordinationSettingsPage from './admin/tours/settings/CoordinationSettingsPage.jsx';
 import TourSummarySettingsPage from './admin/tours/settings/TourSummarySettingsPage.jsx';
@@ -248,6 +249,7 @@ export default function App() {
             permission placeholders); the Tours module itself is not built yet. */}
         <Route path="settings/tours" element={<ToursSettings />} />
         <Route path="settings/tours/group-tours" element={<GroupToursSettings />} />
+        <Route path="settings/tours/open-tours" element={<OpenToursSettings />} />
         <Route path="settings/tours/components" element={<TourComponentsSettingsPage />} />
         <Route path="settings/tours/coordination" element={<CoordinationSettingsPage />} />
         <Route path="settings/tours/summary" element={<TourSummarySettingsPage />} />
