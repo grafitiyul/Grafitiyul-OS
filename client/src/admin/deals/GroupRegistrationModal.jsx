@@ -1,0 +1,189 @@
+import { useEffect, useState } from 'react';
+import Dialog from '../common/Dialog.jsx';
+import { api } from '../../lib/api.js';
+import { formatMinor } from '../../lib/money.js';
+import { fmtTourDate } from '../tours/config.js';
+import GroupTicketBuilderDialog from './GroupTicketBuilderDialog.jsx';
+import TourSlotModal from '../tours/TourSlotModal.jsx';
+import CompletionModes from './CompletionModes.jsx';
+
+// ONE persistent progressive modal for the whole group registration flow:
+//   1) פרטי העסקה (reuses the Group Ticket Builder)
+//   2) בחירת סיור (existing tour or create a new one)
+//   3) השלמת ההרשמה (pay-now / send-link / no-payment)
+// Only the active section expands; completed sections collapse to a summary and
+// reopen on click. No wizard screen-replacement. Both entry points (the Group
+// Builder and the tour "רשום לסיור" strip) open THIS modal.
+
+function Section({ index, title, active, done, summary, onOpen, children }) {
+  return (
+    <section className={'rounded-xl border ' + (active ? 'border-blue-300 shadow-sm' : 'border-gray-200')}>
+      <button
+        type="button"
+        onClick={onOpen}
+        className={'flex w-full items-center gap-3 px-4 py-3 text-right ' + (active ? 'bg-blue-50/60' : 'hover:bg-gray-50')}
+      >
+        <span className={'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[12px] font-bold ' + (done ? 'bg-emerald-500 text-white' : active ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600')}>
+          {done ? '✓' : index}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[14px] font-semibold text-gray-900">{title}</span>
+          {!active && summary && <span className="block truncate text-[12.5px] text-gray-500">{summary}</span>}
+        </span>
+        {!active && <span className="text-[12px] text-blue-600">{done ? 'עריכה' : 'פתח'}</span>}
+      </button>
+      {active && <div className="border-t border-gray-100 p-4">{children}</div>}
+    </section>
+  );
+}
+
+const dealComplete = (d) => Number(d?.participants) > 0 && (d?.productId || d?.productVariantId);
+
+export default function GroupRegistrationModal({ deal, onClose, onChanged, initialSection }) {
+  const builderDone = dealComplete(deal);
+  const existingTour = deal.groupRegistration?.tour || (deal.bookings || []).find((b) => b.status === 'active')?.tourEvent || null;
+  const [section, setSection] = useState(initialSection || (builderDone ? 2 : 1));
+  const [selectedTour, setSelectedTour] = useState(existingTour);
+  const [builderOpen, setBuilderOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [tours, setTours] = useState(null);
+
+  useEffect(() => {
+    if (section !== 2 || tours) return;
+    api.tours
+      .list({ kind: 'group_slot', statuses: 'scheduled' })
+      .then((r) => setTours((r.items || r || []).filter((t) => t.date)))
+      .catch(() => setTours([]));
+  }, [section, tours]);
+
+  const offeringSummary = builderDone
+    ? [deal.product?.nameHe, deal.participants ? `${deal.participants} משתתפים` : null, deal.valueMinor ? formatMinor(deal.valueMinor) : null]
+        .filter(Boolean)
+        .join(' · ')
+    : 'טרם הוגדרה עסקה';
+  const ctx = {
+    productVariantId: deal.productVariantId || null,
+    quantity: Number(deal.participants) || 1,
+  };
+
+  return (
+    <Dialog open onClose={onClose} title="רישום לסיור קבוצתי" size="2xl">
+      <div className="space-y-3">
+        <Section
+          index={1}
+          title="פרטי העסקה"
+          active={section === 1}
+          done={builderDone}
+          summary={offeringSummary}
+          onOpen={() => setSection(1)}
+        >
+          <div className="space-y-3">
+            <div className="rounded-lg bg-gray-50 px-3 py-2 text-[13px] text-gray-700">{offeringSummary}</div>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setBuilderOpen(true)} className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                עריכת כרטיסים
+              </button>
+              <button
+                type="button"
+                disabled={!builderDone}
+                onClick={() => setSection(2)}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                שמור ושבץ לסיור
+              </button>
+            </div>
+          </div>
+        </Section>
+
+        <Section
+          index={2}
+          title="בחירת סיור"
+          active={section === 2}
+          done={!!selectedTour}
+          summary={selectedTour ? `${fmtTourDate(selectedTour.date)} · ${selectedTour.startTime || ''}` : ''}
+          onOpen={() => setSection(2)}
+        >
+          <div className="space-y-2">
+            {tours == null ? (
+              <div className="py-4 text-center text-sm text-gray-400">טוען סיורים…</div>
+            ) : (
+              <ul className="max-h-[40vh] divide-y divide-gray-100 overflow-y-auto rounded-lg border border-gray-200">
+                {tours.length === 0 && <li className="px-3 py-4 text-center text-[13px] text-gray-400">אין סיורים מתוכננים — צרו חדש.</li>}
+                {tours.map((t) => {
+                  const over = t.capacity != null && t.activeSeats > t.capacity;
+                  const isSel = selectedTour?.id === t.id;
+                  return (
+                    <li key={t.id}>
+                      <button
+                        type="button"
+                        onClick={() => { setSelectedTour(t); setSection(3); }}
+                        className={'flex w-full items-center gap-3 px-3 py-2.5 text-right hover:bg-blue-50/50 ' + (isSel ? 'bg-blue-50' : '')}
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[13.5px] font-medium text-gray-800">
+                            {fmtTourDate(t.date)} · <span dir="ltr">{t.startTime}</span>
+                          </span>
+                          <span className="block text-[12px] text-gray-500">
+                            {t.product?.nameHe || '—'}
+                            {(t.location?.nameHe || t.productVariant?.location?.nameHe) && ` · ${t.location?.nameHe || t.productVariant?.location?.nameHe}`}
+                          </span>
+                        </span>
+                        <span className={'shrink-0 text-[12.5px] tabular-nums ' + (over ? 'text-red-600' : 'text-gray-500')} dir="ltr">
+                          {t.activeSeats} / {t.capacity ?? '—'}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <div className="flex justify-between">
+              <button type="button" onClick={() => setCreateOpen(true)} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100">
+                + צור סיור חדש
+              </button>
+            </div>
+          </div>
+        </Section>
+
+        <Section index={3} title="השלמת ההרשמה" active={section === 3} done={deal.groupRegistration?.state === 'confirmed'} summary="" onOpen={() => selectedTour && setSection(3)}>
+          {selectedTour ? (
+            <CompletionModes
+              deal={deal}
+              tourEventId={selectedTour.id}
+              phone={deal.customerPhone || ''}
+              context={ctx}
+              onDone={() => { onChanged?.(); onClose?.(); }}
+            />
+          ) : (
+            <div className="py-3 text-center text-[13px] text-gray-400">בחרו סיור תחילה.</div>
+          )}
+        </Section>
+      </div>
+
+      {builderOpen && (
+        <GroupTicketBuilderDialog
+          open
+          deal={deal}
+          context={{}}
+          onClose={() => setBuilderOpen(false)}
+          onSaved={() => { setBuilderOpen(false); onChanged?.(); }}
+        />
+      )}
+      {createOpen && (
+        <TourSlotModal
+          open
+          tour={null}
+          onClose={() => setCreateOpen(false)}
+          onSaved={(saved) => {
+            setCreateOpen(false);
+            if (saved) {
+              setTours((prev) => [saved, ...(prev || [])]);
+              setSelectedTour(saved);
+              setSection(3);
+            }
+          }}
+        />
+      )}
+    </Dialog>
+  );
+}

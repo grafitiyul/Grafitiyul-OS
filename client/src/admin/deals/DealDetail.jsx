@@ -11,6 +11,7 @@ import DealContactsDialog from './DealContactsDialog.jsx';
 import OrganizationEditDialog from './OrganizationEditDialog.jsx';
 import PriceBuilderDialog from './PriceBuilderDialog.jsx';
 import GroupTicketBuilderDialog from './GroupTicketBuilderDialog.jsx';
+import GroupRegistrationModal from './GroupRegistrationModal.jsx';
 import WorkspaceLayout from '../../shell/WorkspaceLayout.jsx';
 import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
 import WhatsAppDock from '../whatsapp/WhatsAppDock.jsx';
@@ -135,6 +136,8 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   //   • lostPending: LOST needs explicit tour-cancel confirmation
   const [wonMissing, setWonMissing] = useState(null);
   const [slotPickerFor, setSlotPickerFor] = useState(null);
+  // Group registration progressive modal: null | { section }
+  const [regModal, setRegModal] = useState(null);
   const [reopenConfirmTour, setReopenConfirmTour] = useState(null);
   const [lostPending, setLostPending] = useState(null);
   // Pending Tour Update actions + the leave-with-pending confirmation target.
@@ -694,6 +697,23 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
           }
         >
           <div className="space-y-3.5">
+            {/* Group registration strip — the lifecycle state + entry into the
+                progressive registration modal. Available before and after WON.
+                A confirmed booking falls through to DealTourSummary below. */}
+            {deal.activityType === 'group' && !activeBooking && (
+              <GroupRegistrationStrip
+                deal={deal}
+                onRegister={(section) => setRegModal({ section })}
+                onCancelHold={async () => {
+                  try {
+                    await api.deals.cancelRegistrationHold(id);
+                    await refresh();
+                  } catch (e) {
+                    alert('שגיאה: ' + (e.payload?.error || e.message));
+                  }
+                }}
+              />
+            )}
             {/* Live tour connection — WON created (private/business) or joined
                 (group). Group deals change tours ONLY via "החלף סיור". */}
             {activeBooking && (
@@ -1248,6 +1268,15 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
         />
       )}
 
+      {regModal && (
+        <GroupRegistrationModal
+          deal={deal}
+          initialSection={regModal.section}
+          onClose={() => setRegModal(null)}
+          onChanged={refresh}
+        />
+      )}
+
       {/* Tiny transient confirmation for "copy URL" (no global toast infra yet). */}
       {copied && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] rounded-lg bg-gray-900 text-white text-sm px-4 py-2 shadow-lg">
@@ -1256,6 +1285,66 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
       )}
 
     </WorkspaceLayout>
+  );
+}
+
+// The group registration lifecycle strip — before registration / held (with
+// expiry) / expired. A confirmed booking is handled by DealTourSummary instead.
+function GroupRegistrationStrip({ deal, onRegister, onCancelHold }) {
+  const reg = deal.groupRegistration;
+  const fmtWhen = (iso) => {
+    if (!iso) return '';
+    try {
+      return new Date(iso).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return '';
+    }
+  };
+
+  if (reg?.state === 'held') {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+        <div className="text-[14px] font-semibold text-amber-900">
+          ⏳ שמור על תנאי{reg.expiresAt ? ` עד ${fmtWhen(reg.expiresAt)}` : ''}
+        </div>
+        <div className="mt-0.5 text-[12.5px] text-amber-700">
+          {reg.quantity} משתתפים · {reg.tour?.product?.nameHe || 'סיור'} {reg.tour?.date || ''}
+        </div>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button type="button" onClick={() => onRegister(3)} className="rounded-lg bg-amber-600 px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-amber-700">
+            תשלום / שליחה חוזרת
+          </button>
+          <button type="button" onClick={onCancelHold} className="rounded-lg border border-amber-300 px-3 py-1.5 text-[13px] text-amber-800 hover:bg-amber-100">
+            בטל שריון
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (reg?.state === 'expired') {
+    return (
+      <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+        <div className="text-[14px] font-semibold text-red-700">השריון פג ללא תשלום</div>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button type="button" onClick={() => onRegister(3)} className="rounded-lg bg-red-600 px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-red-700">
+            שריין מחדש / תשלום
+          </button>
+          <button type="button" onClick={() => onRegister(2)} className="rounded-lg border border-red-300 px-3 py-1.5 text-[13px] text-red-700 hover:bg-red-100">
+            בחר סיור אחר
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // No registration yet.
+  return (
+    <div className="rounded-xl border border-dashed border-gray-300 px-4 py-3 text-center">
+      <button type="button" onClick={() => onRegister(1)} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
+        רשום לסיור
+      </button>
+    </div>
   );
 }
 

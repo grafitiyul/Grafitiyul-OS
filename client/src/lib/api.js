@@ -496,6 +496,8 @@ export const api = {
       tourMutation(request(`/api/deals/${id}/register/no-payment`, { method: 'POST', body: JSON.stringify(data) })),
     settleRegistrationPayment: (id, data = {}) =>
       tourMutation(request(`/api/deals/${id}/register/settle-payment`, { method: 'POST', body: JSON.stringify(data) })),
+    cancelRegistrationHold: (id) =>
+      tourMutation(request(`/api/deals/${id}/register/cancel-hold`, { method: 'POST', body: '{}' })),
     // Quote Module — ensure + return the draft QuoteDocument for this deal.
     quoteDocument: (id) => request(`/api/deals/${id}/quote-document`),
     quoteDocuments: (id) => request(`/api/deals/${id}/quote-documents`),

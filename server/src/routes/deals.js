@@ -30,6 +30,7 @@ import {
   holdRegistrationForDeal,
   recordPaymentLinkSent,
   registerWithoutPayment,
+  cancelHold,
 } from '../deals/registrationCompletion.js';
 import { settleDealWonFromPayment } from '../deals/paymentWon.js';
 
@@ -226,8 +227,44 @@ function tourChoicePayload(booking) {
   };
 }
 
+// The deal's CURRENT group-registration state (derived from canonical
+// TicketRegistrations) — drives the Deal/tour strip: held (with expiry) →
+// confirmed → expired. Nothing stored; recomputed on read.
+async function groupRegistrationState(dealId) {
+  const regs = await prisma.ticketRegistration.findMany({
+    where: { dealId, status: { in: ['held', 'confirmed', 'active', 'expired'] } },
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true,
+      status: true,
+      quantity: true,
+      expiresAt: true,
+      tourEventId: true,
+      tourEvent: { select: { id: true, date: true, startTime: true, status: true, product: { select: { nameHe: true } } } },
+    },
+  });
+  if (!regs.length) return null;
+  const held = regs.find((r) => r.status === 'held');
+  const confirmed = regs.find((r) => r.status === 'confirmed' || r.status === 'active');
+  const expired = regs.find((r) => r.status === 'expired');
+  const current = held || confirmed || expired;
+  if (!current) return null;
+  return {
+    state: held ? 'held' : confirmed ? 'confirmed' : 'expired',
+    registrationId: current.id,
+    tourEventId: current.tourEventId,
+    tour: current.tourEvent,
+    quantity: current.quantity,
+    expiresAt: current.expiresAt,
+  };
+}
+
 async function loadDeal(id) {
-  return prisma.deal.findUnique({ where: { id }, include: DEAL_INCLUDE });
+  const deal = await prisma.deal.findUnique({ where: { id }, include: DEAL_INCLUDE });
+  if (deal && deal.activityType === 'group') {
+    deal.groupRegistration = await groupRegistrationState(id);
+  }
+  return deal;
 }
 
 // Attach the DERIVED pending-tour-update diff (deal = desired vs tour =
@@ -907,6 +944,17 @@ router.post(
       }
       throw e;
     }
+    res.json(await loadDeal(req.params.id));
+  }),
+);
+
+// Cancel the deal's active held reservation.
+router.post(
+  '/:id/register/cancel-hold',
+  handle(async (req, res) => {
+    const deal = await requireGroupDeal(req, res);
+    if (!deal) return;
+    await cancelHold(prisma, { dealId: deal.id, origin: await userOrigin(req.adminAuth?.userId) });
     res.json(await loadDeal(req.params.id));
   }),
 );

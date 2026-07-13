@@ -72,6 +72,26 @@ export async function recordPaymentLinkSent(client, { dealId, tourEventId, regis
   });
 }
 
+// Cancel the deal's active HELD reservation (releases the seat). Idempotent.
+export async function cancelHold(client, { dealId, origin }) {
+  return client.$transaction(async (tx) => {
+    const held = await tx.ticketRegistration.findFirst({ where: { dealId, status: REG_HELD }, orderBy: { createdAt: 'desc' } });
+    if (!held) return { cancelled: false };
+    await tx.ticketRegistration.update({ where: { id: held.id }, data: { status: 'cancelled', cancelledAt: new Date() } });
+    await recomputeTourOperationalProduct(tx, held.tourEventId);
+    await markTourWooPending(tx, held.tourEventId);
+    await emitTimelineEvent(tx, {
+      subjectType: 'deal',
+      subjectId: dealId,
+      kind: 'tour',
+      body: '🚫 השריון בוטל',
+      data: { event: 'hold_cancelled', tourEventId: held.tourEventId, registrationId: held.id },
+      origin: origin || systemOrigin(),
+    });
+    return { cancelled: true, tourEventId: held.tourEventId };
+  });
+}
+
 // Register WITHOUT payment: reason required, stored canonically, Deal → WON via
 // the ONE canonical path (settleDealWonNoPayment). The commercial total is not
 // erased. Idempotent (WON once).
