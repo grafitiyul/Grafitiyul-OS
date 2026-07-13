@@ -489,8 +489,12 @@ export const api = {
     // Price Builder lines — canonical QuoteVersion/QuoteLine storage (one working
     // version per deal). get ensures the version exists and returns its lines.
     getPriceLines: (id) => request(`/api/deals/${id}/price-lines`),
+    // A group-deal builder edit re-derives the registered tour's operational
+    // product (server: resyncDealGroupTours), so a successful save is a
+    // tour-changed signal — the Tours table/modal refetch. Harmless no-op for a
+    // non-group deal (nothing tour-visible changes).
     savePriceLines: (id, data) =>
-      request(`/api/deals/${id}/price-lines`, { method: 'PUT', body: JSON.stringify(data) }),
+      tourMutation(request(`/api/deals/${id}/price-lines`, { method: 'PUT', body: JSON.stringify(data) })),
     // Group registration completion (the progressive modal's actions). All
     // idempotent; the server builds on the shipped lifecycle primitives.
     registerPaymentUrl: (id) =>

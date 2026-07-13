@@ -101,6 +101,10 @@ const GroupTicketBuilder = forwardRef(function GroupTicketBuilder(
           sourceKind: SOURCE_KIND,
           sourceCardGroupId: card.cardGroupId,
           ticketTypeId: row.ticketTypeId,
+          // The card's operational variant — persisted on the QuoteLine so the
+          // tour's operational product derives from the real ticket (plain vs
+          // workshop). Without it the offering resolves to a null variant.
+          productVariantId: card.productVariantId || null,
         });
       }
     }

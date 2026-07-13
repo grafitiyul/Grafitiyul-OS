@@ -18,6 +18,7 @@ function groupTicketLine(overrides = {}) {
     sourceKind: 'group_ticket',
     sourceCardGroupId: 'cg1',
     ticketTypeId: 'tt_adult',
+    productVariantId: 'v_ws', // the card's operational variant (workshop)
     ...overrides,
   };
 }
@@ -27,6 +28,25 @@ test('lineToData persists structured identity explicitly', () => {
   assert.equal(row.sourceKind, 'group_ticket');
   assert.equal(row.sourceCardGroupId, 'cg1');
   assert.equal(row.ticketTypeId, 'tt_adult');
+});
+
+// THE BUG-1 fix: a group-ticket line is kind='manual' (explicit price) yet MUST
+// persist its card's productVariantId — the sole input the operational-product
+// derivation reads. Without it, a workshop ticket saved a null variant and the
+// tour could never derive workshop.
+test('lineToData persists productVariantId for a group-ticket (manual) line', () => {
+  const row = lineToData(groupTicketLine({ productVariantId: 'v_ws' }), 0);
+  assert.equal(row.productVariantId, 'v_ws');
+});
+
+test('a plain group-ticket line persists its plain variant', () => {
+  const row = lineToData(groupTicketLine({ productVariantId: 'v_plain' }), 0);
+  assert.equal(row.productVariantId, 'v_plain');
+});
+
+test('a NON-group manual line never gets a fabricated variant', () => {
+  const row = lineToData({ kind: 'manual', label: 'שורה', unitPriceMinor: 5000, productVariantId: 'x' }, 0);
+  assert.equal(row.productVariantId, null); // only group_ticket lines carry it
 });
 
 test('identity is INDEPENDENT of the note — empty/changed note keeps identity', () => {

@@ -162,8 +162,10 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
       setTypes(ty);
       // Keep the TimelineFeed (pinned notes + history) in step with any action
       // that reloads the deal — e.g. register-without-payment adds a pinned note.
-      // Reuses the deal-page timeline refresh channel (no page reload).
-      emitDealTasksChanged(id);
+      // Reuses the deal-page timeline refresh channel (no page reload). MUST use
+      // the deal's UUID (d.id) — TimelineFeed's subjectId is the UUID, while `id`
+      // here is the route param (the deal's orderNo); an orderNo would never match.
+      emitDealTasksChanged(d.id);
       const init = {
         title: d.title || '',
         value: minorToInput(d.valueMinor),

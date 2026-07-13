@@ -41,10 +41,20 @@ export function lineToData(ln, i) {
   const vatRateRaw = ln.vatRate;
   const vatRate =
     vatRateRaw === null || vatRateRaw === undefined || vatRateRaw === '' ? null : parseInt(vatRateRaw, 10);
+  // Group Ticket Builder lines are kind='manual' (explicit price) but MUST still
+  // persist their card's productVariantId — it is the SOLE input the operational
+  // product derivation reads (resolveDealGroupOffering → dominant card variant).
+  // Without it a workshop ticket saves with a null variant and the tour can never
+  // derive workshop. Regular product lines keep carrying the variant via refId.
+  const isGroupTicket = ln.sourceKind === 'group_ticket';
   return {
     kind,
     label: ln.label ? String(ln.label) : '',
-    productVariantId: kind === 'product' ? ln.refId || null : null,
+    productVariantId: isGroupTicket
+      ? ln.productVariantId || null
+      : kind === 'product'
+        ? ln.refId || null
+        : null,
     addonId: kind === 'addon' ? ln.refId || null : null,
     quantity: qty,
     unitPriceMinor: BigInt(Math.round(Number(ln.unitPriceMinor) || 0)),
