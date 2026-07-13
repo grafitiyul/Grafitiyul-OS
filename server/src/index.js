@@ -588,4 +588,10 @@ app.listen(port, () => {
   import('./maintenance/repairTourDealDrift.js')
     .then(({ repairTourDealDrift }) => repairTourDealDrift(prisma, { log: console }))
     .catch((e) => console.warn('[repair] tour-deal drift failed:', e?.message));
+
+  // Durable one-time job: attach pa_משך to Woo product #167 + backfill duration on
+  // every eligible Tel Aviv occurrence (runs where the GOS DB is reachable).
+  import('./maintenance/attachDurationTelAviv.js')
+    .then(({ startAttachDurationTelAviv }) => startAttachDurationTelAviv(prisma, console))
+    .catch((e) => console.warn('[maintenance] attach pa_משך failed:', e?.message));
 });
