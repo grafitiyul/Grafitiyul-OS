@@ -8,9 +8,23 @@ import { emitTourChangeImpact, IMPACT_TYPE } from './changeImpact.js';
 
 function fakeClient({ regs = [] } = {}) {
   const issues = [];
+  const reqs = [];
   const client = {
     issues,
+    reqs,
     ticketRegistration: { findMany: async () => regs },
+    tourAssignment: { count: async () => 0 },
+    issueRequirement: {
+      upsert: async ({ where, create }) => {
+        const k = where.issueId_revision_kind;
+        let row = reqs.find((r) => r.issueId === k.issueId && r.revision === k.revision && r.kind === k.kind);
+        if (!row) {
+          row = { id: 'req' + (reqs.length + 1), state: 'pending', ...create };
+          reqs.push(row);
+        }
+        return row;
+      },
+    },
     operationalIssue: {
       findFirst: async ({ where }) =>
         issues.find((i) => i.dedupeKey === where.dedupeKey && ['open', 'acknowledged'].includes(i.status)) || null,

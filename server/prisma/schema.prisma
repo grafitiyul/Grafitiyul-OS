@@ -4408,7 +4408,14 @@ model OperationalIssue {
   resolvedAt     DateTime?
   resolvedBy     String? // AdminUser.id (loose); null = auto-resolved
   resolvedByName String?
-  resolution     String? // 'auto' | action key that resolved it
+  resolution     String? // 'auto' | action key that resolved it | 'requirements_complete'
+
+  // The impact change/revision this issue currently reflects (Part 4). A
+  // materially different change bumps the revision → new requirements, while the
+  // previous revision's requirements + notification audit are preserved.
+  revision String?
+
+  requirements IssueRequirement[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4417,4 +4424,57 @@ model OperationalIssue {
   @@index([dedupeKey, status])
   @@index([sourceModule, status])
   @@index([type, status])
+}
+
+// A sub-requirement that must resolve before its parent OperationalIssue can
+// close (Part 4). First-class lifecycle state — NOT a JSON blob. The parent
+// issue closes only when EVERY requirement of the current revision is completed
+// or waived.
+//   kind:  customer_notification | calendar_sync | woo_sync | guide_notification | manual_decision
+//   state: pending | in_progress | completed | failed | waived
+model IssueRequirement {
+  id             String              @id @default(cuid())
+  issue          OperationalIssue    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  issueId        String
+  revision       String // the impact revision this requirement belongs to
+  kind           String
+  state          String              @default("pending")
+  note           String? // required for manual completion / waive
+  resolvedAt     DateTime?
+  resolvedBy     String? // AdminUser.id (loose)
+  resolvedByName String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  notifications  IssueNotification[]
+
+  // One requirement per (issue, revision, kind) → repeated reconciliation never
+  // duplicates; a new revision creates a fresh set alongside the old audit.
+  @@unique([issueId, revision, kind])
+  @@index([issueId, state])
+}
+
+// One per (requirement × recipient × channel) customer notification (Part 4).
+// The per-recipient send audit — snapshots the exact subject/body sent, the
+// provider result, and retry history. Retrying updates the SAME row.
+model IssueNotification {
+  id             String           @id @default(cuid())
+  requirement    IssueRequirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  requirementId  String
+  recipientKey   String // stable identity: registrationId or dealId
+  recipientName  String?
+  address        String? // email address
+  phone          String? // whatsapp phone
+  channel        String // email | whatsapp
+  subject        String? // snapshot of what was sent
+  body           String? // snapshot of what was sent
+  status         String           @default("pending") // pending | sent | failed
+  sentAt         DateTime?
+  attempts       Int              @default(0)
+  providerResult Json? // provider payload / error (flexible)
+  retryHistory   Json             @default("[]") // [{ at, status, error }]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@unique([requirementId, recipientKey, channel])
+  @@index([requirementId, status])
 }

@@ -1,5 +1,6 @@
 import { raiseIssue } from '../control/issueService.js';
 import { registerIssueType } from '../control/registry.js';
+import { ensureRequirements, requirementKindsForImpact } from '../control/issueRequirements.js';
 import { CAPACITY_STATUSES } from './registrationStatus.js';
 
 // Canonical tour-change IMPACT record. Any operational change that affects
@@ -93,7 +94,20 @@ export async function emitTourChangeImpact(client, { tourEventId, impactType, be
       customers, // name/phone/email/status per registration
     },
   });
-  return issue;
+
+  // Part 4: stamp the revision + create the first-class sub-requirements. A
+  // materially different change bumps `revision`, so a fresh requirement set is
+  // created alongside the previous revision's audit (never overwritten).
+  const hasGuides = customerImpact
+    ? (await client.tourAssignment.count({ where: { tourEventId } }).catch(() => 0)) > 0
+    : false;
+  await client.operationalIssue.update({ where: { id: issue.id }, data: { revision } });
+  await ensureRequirements(client, {
+    issueId: issue.id,
+    revision,
+    kinds: requirementKindsForImpact(impactType, { hasGuides }),
+  });
+  return { ...issue, revision };
 }
 
 // Minimal registration so the dashboard renders it. Part 4 replaces buildActions

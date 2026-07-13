@@ -7,6 +7,20 @@ import { apiActionHandler } from './issueActions.js';
 
 const POLL_MS = 60_000;
 
+// Operational filters. Each matches an issue by type + its requirement state, so
+// the tabs reflect what actually needs office follow-up.
+const pendingReq = (i, kind) => (i.requirements || []).some((r) => r.kind === kind && !['completed', 'waived'].includes(r.state));
+const failedReq = (i, kind) => (i.requirements || []).some((r) => r.kind === kind && r.state === 'failed');
+const FILTERS = [
+  { key: 'all', label: 'הכל', match: () => true },
+  { key: 'customers', label: 'לקוחות דורשים עדכון', match: (i) => pendingReq(i, 'customer_notification') },
+  { key: 'capacity', label: 'חריגות קיבולת', match: (i) => i.data?.impactType === 'capacity_below_occupancy' || /capacity|over_capacity/.test(i.type) },
+  { key: 'woo', label: 'סנכרון אתר', match: (i) => i.type === 'woo_sync_failed' || failedReq(i, 'woo_sync') },
+  { key: 'calendar', label: 'Google Calendar', match: (i) => /calendar|gcal/.test(i.type) || failedReq(i, 'calendar_sync') },
+  { key: 'tourchange', label: 'שינויים בסיור', match: (i) => i.type === 'tour_change_impact' },
+  { key: 'decision', label: 'דורש החלטה', match: (i) => pendingReq(i, 'manual_decision') || i.data?.requiredAction === 'review_capacity' },
+];
+
 // בקרה — the operational control center and the admin landing page. Answers
 // ONE question: "מה דורש טיפול עכשיו?" — severity counters on top, actionable
 // issue cards below. Data is the canonical OperationalIssue list; issues
@@ -15,6 +29,7 @@ export default function ControlPage() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [needsInput, setNeedsInput] = useState(null); // { issue, action, input }
+  const [filter, setFilter] = useState('all');
   const timerRef = useRef(null);
 
   const load = useCallback(async () => {
@@ -39,7 +54,8 @@ export default function ControlPage() {
 
   const issues = data?.issues || [];
   const counts = data?.counts || { critical: 0, warning: 0, info: 0 };
-  const open = issues.filter((i) => i.status === 'open');
+  const activeFilter = FILTERS.find((f) => f.key === filter) || FILTERS[0];
+  const open = issues.filter((i) => i.status === 'open' && activeFilter.match(i));
   const acknowledged = issues.filter((i) => i.status === 'acknowledged');
   const resolvedRecent = data?.resolvedRecent || [];
 
@@ -87,6 +103,28 @@ export default function ControlPage() {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Category filters */}
+      <div className="mb-6 flex flex-wrap gap-1.5">
+        {FILTERS.map((f) => {
+          const n = issues.filter((i) => i.status === 'open' && f.match(i)).length;
+          const on = filter === f.key;
+          return (
+            <button
+              key={f.key}
+              type="button"
+              onClick={() => setFilter(f.key)}
+              className={
+                'rounded-full px-3 py-1 text-[12.5px] font-medium border ' +
+                (on ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50')
+              }
+            >
+              {f.label}
+              {f.key !== 'all' && n > 0 && <span className={'ms-1.5 ' + (on ? 'text-blue-100' : 'text-gray-400')} dir="ltr">{n}</span>}
+            </button>
+          );
+        })}
       </div>
 
       {data && open.length === 0 && (
