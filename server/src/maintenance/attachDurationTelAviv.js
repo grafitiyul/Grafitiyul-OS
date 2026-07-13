@@ -13,7 +13,10 @@ import { israelToday } from '../tours/slotGeneration.js';
 // if a canonical duration can't map to exactly one term. Uses the MaintenanceJob
 // marker (claim/run/reclaim-stale) so it runs once across restarts/instances.
 
-const KEY = 'attach_pa_meshech_167_v1';
+// v2: v1's reconcile threw (worker selected durationHoursOverride on TourEvent,
+// which lives on OpenTourTemplate) so the attribute attached but variations never
+// got pa_משך. v2 re-runs the fixed reconcile to backfill duration.
+const KEY = 'attach_pa_meshech_167_v2';
 const PRODUCT_ID = 167;
 const DURATION_ATTR_ID = 4;
 const STALE_MS = 15 * 60 * 1000;

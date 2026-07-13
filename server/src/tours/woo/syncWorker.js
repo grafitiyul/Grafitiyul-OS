@@ -243,8 +243,10 @@ export async function reconcileTourWoo(deps, tourId) {
       wooSyncStatus: true,
       wooAttempts: true,
       wooDesiredRevision: true,
-      // Operational product duration — the canonical source for pa_משך.
-      durationHoursOverride: true,
+      // Operational product duration — the canonical source for pa_משך. The
+      // per-slot override lives on the TEMPLATE (durationHoursOverride is an
+      // OpenTourTemplate field, NOT TourEvent — selecting it here threw and broke
+      // every reconcile since the duration slice), so read it from the template.
       productVariantId: true,
       productVariant: { select: { durationHours: true } },
     },
@@ -277,18 +279,20 @@ export async function reconcileTourWoo(deps, tourId) {
   const remaining = tour.capacity == null ? null : Math.max(0, tour.capacity - activeSeats);
 
   let closeMinutes = null;
+  let templateDurationOverride = null;
   if (tour.openTourTemplateId) {
     const tpl = await db.openTourTemplate.findUnique({
       where: { id: tour.openTourTemplateId },
-      select: { registrationCloseMinutes: true },
+      select: { registrationCloseMinutes: true, durationHoursOverride: true },
     });
     closeMinutes = tpl?.registrationCloseMinutes ?? null;
+    templateDurationOverride = tpl?.durationHoursOverride ?? null;
   }
   const registrationClosed = occurrenceClosed(tour.date, tour.startTime, closeMinutes, now);
-  // Effective duration: an explicit slot override wins, else the operational
-  // product variant's canonical durationHours (null when neither is set — a
-  // configured pa_משך then fails visibly per card and retries).
-  const durationHours = tour.durationHoursOverride ?? tour.productVariant?.durationHours ?? null;
+  // Effective duration: the template's explicit override wins, else the
+  // operational product variant's canonical durationHours (null when neither is
+  // set — a configured pa_משך then fails visibly per card and retries).
+  const durationHours = templateDurationOverride ?? tour.productVariant?.durationHours ?? null;
   const ctx = { capacity: tour.capacity, remaining, registrationClosed, durationHours };
 
   const errors = [];
