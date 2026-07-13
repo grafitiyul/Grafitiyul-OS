@@ -14,6 +14,7 @@
 // while still delivering the full union of components.
 
 import { calendarPendingPatch, kickTourCalendarSync } from './calendar/service.js';
+import { CAPACITY_STATUSES } from './registrationStatus.js';
 
 // PURE. variants: [{ id, productId, durationHours, activityComponents: [{ activityComponentId }] }]
 // (one entry per DISTINCT active-registration variant). Returns
@@ -158,7 +159,8 @@ export async function recomputeTourOperationalProduct(client, tourEventId) {
   if (tour.status === 'cancelled' || tour.status === 'completed') return null;
 
   const regs = await client.ticketRegistration.findMany({
-    where: { tourEventId, status: 'active', productVariantId: { not: null } },
+    // Held reservations participate in derivation (staff for probable arrivals).
+    where: { tourEventId, status: { in: CAPACITY_STATUSES }, productVariantId: { not: null } },
     select: { productVariantId: true },
   });
   let variantIds = [...new Set(regs.map((r) => r.productVariantId))];

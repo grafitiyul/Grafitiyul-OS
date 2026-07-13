@@ -9,6 +9,8 @@
 // Booking counts stay from Booking as CRM metadata (how many deals are on the
 // tour) — Booking is NO LONGER the seat source of truth.
 
+import { CAPACITY_STATUSES } from './registrationStatus.js';
+
 // Merge grouped aggregates into the fixed occupancy shape. Pure — unit-tested.
 // Lives HERE (not in registrations.js) so occupancy has no dependency back on
 // the registration/woo write path (keeps the module graph acyclic).
@@ -32,7 +34,8 @@ export async function occupancyFor(client, tourEventIds) {
   const [seatRows, activeBk, totalBk] = await Promise.all([
     client.ticketRegistration.groupBy({
       by: ['tourEventId'],
-      where: { tourEventId: { in: ids }, status: 'active' },
+      // Held reservations consume capacity too (probable arrivals hold a seat).
+      where: { tourEventId: { in: ids }, status: { in: CAPACITY_STATUSES } },
       _sum: { quantity: true },
     }),
     client.booking.groupBy({

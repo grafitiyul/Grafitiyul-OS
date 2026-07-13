@@ -3400,12 +3400,27 @@ model TicketRegistration {
   customerName  String?
   customerEmail String?
   customerPhone String?
-  // Allocation state: active | cancelled | refunded (only active counts).
+  // Allocation lifecycle (validated in code, no Postgres enum):
+  //   held      — conditional reservation; CONSUMES capacity + participates in
+  //               derivation, but is NOT a confirmed customer (no guide comms);
+  //               expiresAt is set. Deal stays OPEN.
+  //   confirmed — a confirmed customer (guide sees full contact). 'active' is the
+  //               legacy synonym (pre-lifecycle rows + the deal-WON path).
+  //   expired   — a held reservation that lapsed unpaid; capacity RELEASED.
+  //   cancelled / refunded — released, terminal.
+  // Capacity + derivation count held|confirmed|active (see registrationStatus.js).
   status      String    @default("active")
   // Money state (independent of allocation): pending | paid | refunded | comp | …
   paymentStatus String?
+  // Canonical held-reservation expiry (null unless status='held' or historical).
+  expiresAt   DateTime?
+  heldAt      DateTime?
+  confirmedAt DateTime?
+  expiredAt   DateTime?
   cancelledAt DateTime?
   refundedAt  DateTime?
+  // "register without payment" reason (Part 7) — stored canonically here.
+  noPaymentReason String?
   notes       String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -3415,6 +3430,7 @@ model TicketRegistration {
   @@index([productVariantId])
   @@index([bookingId])
   @@index([dealId])
+  @@index([status, expiresAt])
 }
 
 // Guide Portal permissions — a singleton row (id='singleton'), created lazily
