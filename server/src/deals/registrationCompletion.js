@@ -156,10 +156,26 @@ async function pinNoPaymentNote(client, { dealId, reason, origin }) {
   });
 }
 
+// Register-without-payment is a business decision to comp the booking: EVERY
+// quote line price becomes 0 while the commercial STRUCTURE is preserved
+// (quantities, products, ticket types untouched — only the unit price changes),
+// and the deal headline total is zeroed to match so the balance is ₪0.
+// Idempotent (re-running keeps everything at 0). Returns whether a working
+// version's lines were zeroed.
+async function zeroDealCommercials(client, dealId) {
+  const version = await client.quoteVersion.findFirst({ where: { dealId, isWorking: true }, select: { id: true } });
+  if (version) {
+    await client.quoteLine.updateMany({ where: { quoteVersionId: version.id }, data: { unitPriceMinor: 0 } });
+  }
+  await client.deal.update({ where: { id: dealId }, data: { valueMinor: 0n } });
+  return !!version;
+}
+
 // Register WITHOUT payment: reason required, stored canonically, Deal → WON via
-// the ONE canonical path (settleDealWonNoPayment). The commercial total is not
-// erased. A PINNED Deal note surfaces the reason near the top. Idempotent (WON
-// once; the pinned note is updated, never duplicated).
+// the ONE canonical path (settleDealWonNoPayment). As a comp decision it ZEROES
+// every quote line price + the deal total (structure preserved) so the balance is
+// ₪0. A PINNED Deal note surfaces the reason near the top. Idempotent (WON once;
+// prices stay 0; the pinned note is updated, never duplicated).
 export async function registerWithoutPayment(client, { dealId, tourEventId, reason, allowOverbook = false, origin }) {
   const trimmed = String(reason || '').trim();
   if (!trimmed) {
@@ -167,6 +183,8 @@ export async function registerWithoutPayment(client, { dealId, tourEventId, reas
     e.code = 'no_payment_reason_required';
     throw e;
   }
+  // Zero the commercials FIRST so the WON deal already carries a ₪0 total.
+  await zeroDealCommercials(client, dealId);
   const result = await settleDealWonNoPayment(client, { dealId, targetTourEventId: tourEventId, reason: trimmed, allowOverbook, origin });
   // Pin AFTER the WON settlement so it never leaves a note on a deal that failed
   // to settle (e.g. tour_full throws above and we never reach here).

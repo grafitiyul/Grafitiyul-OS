@@ -1,16 +1,19 @@
-// Tour participant composition for the TABLE (customer names) and the tour
-// MODAL (per-customer purchased-ticket breakdown + aggregate). Every number
-// derives from the CANONICAL TicketRegistration rows (seat SSOT) — never from a
-// tour snapshot — and the breakdown dimensions are whatever the registrations
-// actually carry (nothing about "workshop" or "adult/child" is hardcoded).
+// Tour participant composition for the TABLE (customer names), the admin tour
+// MODAL, and the GUIDE PORTAL — all from the ONE canonical TicketRegistration
+// breakdown (seat SSOT), never a tour snapshot. The grouping is generic: it
+// nests whatever ticket types exist under whatever products (cards) exist —
+// nothing about "workshop" or "adult/child" is hardcoded. Admin + Guide Portal
+// render the SAME shape from the SAME builder (no parallel breakdown logic).
 
 import { CAPACITY_STATUSES, CONFIRMED_STATUSES, isHeld } from './registrationStatus.js';
 import { dealBookerLabel } from './customerDisplay.js';
-import { aggregateBreakdowns } from '../deals/groupOffering.js';
 
-// The lean select every participant read shares: the booker label fields + the
-// seat/composition fields + status (to split confirmed vs held).
+// The lean select every participant read shares: identity/matching keys + the
+// booker label fields + the seat/composition fields + status.
 export const PARTICIPANT_REGISTRATION_SELECT = {
+  id: true,
+  bookingId: true,
+  dealId: true,
   tourEventId: true,
   status: true,
   quantity: true,
@@ -52,6 +55,34 @@ function registrationLabel(reg) {
   return dealBookerLabel(reg.deal) || (reg.customerName || '').trim() || null;
 }
 
+// GENERIC nested grouping — flat ticketBreakdown rows → product (card) → ticket
+// types. → [{ key, label, total, ticketTypes: [{ key, label, quantity }] }].
+// Only products/ticket types with a positive quantity appear (no empty rows).
+export function groupBreakdownByProduct(rows) {
+  const byCard = new Map(); // cardKey → { key, label, total, _tt: Map }
+  for (const b of rows || []) {
+    const q = Number(b?.quantity) || 0;
+    if (q <= 0) continue;
+    const cardKey = b.cardGroupId || b.cardTitle || '—';
+    let card = byCard.get(cardKey);
+    if (!card) {
+      card = { key: cardKey, label: b.cardTitle || 'כרטיס', total: 0, _tt: new Map() };
+      byCard.set(cardKey, card);
+    }
+    card.total += q;
+    const ttKey = b.ticketTypeId || b.ticketLabel || '—';
+    const tt = card._tt.get(ttKey) || { key: ttKey, label: b.ticketLabel || 'כרטיס', quantity: 0 };
+    tt.quantity += q;
+    card._tt.set(ttKey, tt);
+  }
+  return [...byCard.values()].map((c) => ({
+    key: c.key,
+    label: c.label,
+    total: c.total,
+    ticketTypes: [...c._tt.values()],
+  }));
+}
+
 // PURE. ALL distinct customer names on a tour, comma-rendered by the client with
 // natural wrapping (no "+N"). A name is HELD only when EVERY registration under
 // it is held — any confirmed seat makes the customer confirmed. Order = first
@@ -69,31 +100,30 @@ export function tourCustomerNames(registrationRows) {
   return [...byLabel.values()];
 }
 
-// PURE. The tour MODAL breakdown: a per-customer list (each with its own ticket
-// composition + a held flag) plus the tour-level aggregate. Generic — only the
-// dimensions present in the data appear. →
-//   { aggregate: { total, byCard, byTicketType },
-//     customers: [{ label, held, quantity, breakdown: [{cardTitle,ticketLabel,quantity,...}] }] }
+// One registration → its canonical participant breakdown row. Carries stable
+// matching keys (registrationId / bookingId / dealId) so consumers (admin modal,
+// guide portal) can attach the SAME per-customer composition to their own cards.
+function customerBreakdown(reg) {
+  const rows = Array.isArray(reg.ticketBreakdown) ? reg.ticketBreakdown : [];
+  const byProduct = groupBreakdownByProduct(rows);
+  const total = byProduct.reduce((n, c) => n + c.total, 0) || Number(reg.quantity) || 0;
+  return {
+    registrationId: reg.id,
+    bookingId: reg.bookingId || null,
+    dealId: reg.dealId || null,
+    label: registrationLabel(reg) || 'ללא שם',
+    held: isHeld(reg.status),
+    total,
+    byProduct,
+  };
+}
+
+// PURE. The canonical tour breakdown, reused by the admin modal AND the guide
+// portal. → { aggregate: { total, byProduct }, customers: [customerBreakdown…] }.
+// Generic — only the products/ticket types present in the data appear.
 export function tourParticipantBreakdown(registrationRows) {
-  const customers = [];
-  for (const r of registrationRows) {
-    const label = registrationLabel(r);
-    const breakdown = Array.isArray(r.ticketBreakdown) ? r.ticketBreakdown : [];
-    const quantity = breakdown.length
-      ? breakdown.reduce((n, b) => n + (Number(b.quantity) || 0), 0)
-      : Number(r.quantity) || 0;
-    customers.push({
-      label: label || 'ללא שם',
-      held: isHeld(r.status),
-      quantity,
-      breakdown: breakdown.map((b) => ({
-        cardGroupId: b.cardGroupId || null,
-        cardTitle: b.cardTitle || null,
-        ticketTypeId: b.ticketTypeId || null,
-        ticketLabel: b.ticketLabel || null,
-        quantity: Number(b.quantity) || 0,
-      })),
-    });
-  }
-  return { aggregate: aggregateBreakdowns(registrationRows), customers };
+  const customers = (registrationRows || []).map(customerBreakdown);
+  const allRows = (registrationRows || []).flatMap((r) => (Array.isArray(r.ticketBreakdown) ? r.ticketBreakdown : []));
+  const total = customers.reduce((n, c) => n + (c.total || 0), 0);
+  return { aggregate: { total, byProduct: groupBreakdownByProduct(allRows) }, customers };
 }

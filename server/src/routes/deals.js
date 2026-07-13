@@ -22,6 +22,7 @@ import {
   cancelDealBooking,
   orphanDealBooking,
   syncDealToTour,
+  resyncDealGroupTours,
   pendingTourUpdate,
   copyTourStateToPlan,
   GROUP_LOCKED_FIELDS,
@@ -988,6 +989,9 @@ router.post(
     const b = req.body || {};
     if (!b.tourEventId) return res.status(400).json({ error: 'tour_event_required' });
     const origin = await userOrigin(req.adminAuth?.userId);
+    // Snapshot for the changelog: register-without-payment zeroes the total, so
+    // the value change (X → 0) is recorded via the canonical diff path.
+    const before = await prisma.deal.findUnique({ where: { id: deal.id }, select: DEAL_DIFF_SELECT });
     try {
       await registerWithoutPayment(prisma, {
         dealId: deal.id,
@@ -1004,6 +1008,8 @@ router.post(
       }
       throw e;
     }
+    const after = await prisma.deal.findUnique({ where: { id: deal.id }, select: DEAL_DIFF_SELECT });
+    if (before && after) await recordDealChanges(prisma, { dealId: deal.id, before, after, origin });
     res.json(await loadDeal(req.params.id));
   }),
 );
@@ -1231,20 +1237,15 @@ router.put(
         : null;
       const { dealPatch, offerPatch } = splitBuilderPatch(offer, b);
       if (Object.keys(dealPatch).length) {
-        const updatedDeal = await tx.deal.update({ where: { id: req.params.id }, data: dealPatch });
-        // Propagate builder-driven product/participants to the canonical
-        // registration when this group deal is already on an open-tour slot: a
-        // plain→workshop change or a headcount change must reach the seat +
-        // derivation SSOT immediately (syncDealToTour is idempotent + only the
-        // seats/registration run for a group slot).
-        const booking = await activeBookingFor(tx, req.params.id);
-        if (booking && booking.tourEvent.kind === 'group_slot') {
-          await syncDealToTour(tx, updatedDeal, booking, {
-            origin: await userOrigin(req.adminAuth?.userId),
-          });
-        }
+        await tx.deal.update({ where: { id: req.params.id }, data: dealPatch });
       }
       if (Object.keys(offerPatch).length) await tx.quoteOffer.update({ where: { id: offer.id }, data: offerPatch });
+      // A builder edit must IMMEDIATELY re-derive the tour's operational product
+      // for every registration this deal already has — a WON booking OR a still-
+      // open held reservation (which the old booking-only path missed). ONE
+      // canonical resync + recompute; runs after the new lines are written so the
+      // offering resolves from the current cards.
+      await resyncDealGroupTours(tx, req.params.id, { origin: await userOrigin(req.adminAuth?.userId) });
       return version.id;
     });
 

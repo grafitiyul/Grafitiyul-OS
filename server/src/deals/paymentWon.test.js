@@ -12,6 +12,8 @@ function makeStore(init = {}) {
     deals: init.deals || {},
     tours: init.tours || {},
     registrations: init.registrations ? [...init.registrations] : [],
+    quoteVersion: init.quoteVersion || {},
+    quoteLines: init.quoteLines || [],
     bookings: [],
     timeline: [],
     seq: 0,
@@ -24,6 +26,15 @@ function makeStore(init = {}) {
     deal: {
       findUnique: async ({ where }) => s.deals[where.id] || null,
       update: async ({ where, data }) => Object.assign(s.deals[where.id], data),
+    },
+    // Register-without-payment zeroes the working version's line prices + total.
+    quoteVersion: { findFirst: async ({ where }) => s.quoteVersion?.[where.dealId] || null },
+    quoteLine: {
+      findMany: async () => [], // no group_ticket lines → offering falls back to deal variant
+      updateMany: async ({ data }) => {
+        for (const l of s.quoteLines || []) l.unitPriceMinor = data.unitPriceMinor;
+        return { count: (s.quoteLines || []).length };
+      },
     },
     tourEvent: {
       findUnique: async ({ where }) => s.tours[where.id] || null,
@@ -220,13 +231,21 @@ test('registerWithoutPayment requires a reason', async () => {
   assert.equal(c._s.deals.d1.status, 'open'); // not WON
 });
 
-test('registerWithoutPayment stores the reason canonically + WONs the deal', async () => {
+test('registerWithoutPayment stores the reason canonically + WONs the deal + zeroes the total', async () => {
   const c = makeStore({
-    deals: { d1: { id: 'd1', status: 'open', activityType: 'group', participants: 4, productVariantId: 'v_plain', orderNo: 27012 } },
+    deals: { d1: { id: 'd1', status: 'open', activityType: 'group', participants: 4, productVariantId: 'v_plain', orderNo: 27012, valueMinor: 120000n } },
     tours: { slot1: { id: 'slot1', kind: 'group_slot', status: 'scheduled', capacity: 20, productVariantId: 'v', productId: 'p' } },
+    quoteVersion: { d1: { id: 'qv1' } },
+    quoteLines: [{ id: 'l1', unitPriceMinor: 30000n, quantity: 4, productVariantId: 'v_plain', ticketTypeId: 't_a' }],
   });
   await registerWithoutPayment(c, { dealId: 'd1', tourEventId: 'slot1', reason: 'אישור מנהל — לקוח VIP' });
   assert.equal(c._s.deals.d1.status, 'won');
+  // PART 4: total zeroed to ₪0; line price zeroed but STRUCTURE preserved.
+  assert.equal(Number(c._s.deals.d1.valueMinor), 0);
+  assert.equal(Number(c._s.quoteLines[0].unitPriceMinor), 0);
+  assert.equal(c._s.quoteLines[0].quantity, 4); // quantity preserved
+  assert.equal(c._s.quoteLines[0].productVariantId, 'v_plain'); // product preserved
+  assert.equal(c._s.quoteLines[0].ticketTypeId, 't_a'); // ticket type preserved
   const reg = c._s.registrations.find((r) => r.dealId === 'd1');
   assert.equal(reg.status, 'confirmed');
   assert.equal(reg.paymentStatus, 'waived'); // not a fabricated payment

@@ -97,8 +97,12 @@ export default function CompletionModes({ deal, tourEventId, phone = '', context
       setBusy(false);
     }
   };
-  const noPayment = () =>
-    run(() => api.deals.registerNoPayment(deal.id, { ...ctx, reason: reason.trim() }), () => !!reason.trim());
+  // Comp decision: confirm the zero-total consequence BEFORE registering.
+  const noPayment = () => {
+    if (!reason.trim()) return;
+    if (!window.confirm('פעולה זו תאפס את סכום העסקה ל-₪0 ותרשום את הלקוח ללא תשלום.')) return;
+    return run(() => api.deals.registerNoPayment(deal.id, { ...ctx, reason: reason.trim() }));
+  };
 
   const modeBtn = (key, label) => (
     <button

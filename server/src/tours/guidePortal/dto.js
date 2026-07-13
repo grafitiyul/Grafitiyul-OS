@@ -78,7 +78,7 @@ export function guideTourCardDto({ tour, assignment, occupancy, guideColor = nul
 
 // ---------- participant (booking) card ----------
 
-export function guideParticipantDto(booking, permissions, { coordinationStatus = null } = {}) {
+export function guideParticipantDto(booking, permissions, { coordinationStatus = null, byProduct = [] } = {}) {
   const deal = booking.deal;
   if (!deal) return null;
   const { primary, fieldRep } = resolveCustomerContacts(deal.contacts);
@@ -89,6 +89,10 @@ export function guideParticipantDto(booking, permissions, { coordinationStatus =
     bookingId: booking.id,
     status: booking.status,
     seats: booking.seats,
+    // Canonical purchased composition (product → ticket types) — the SAME shape
+    // the admin tour modal renders (shared participants.js DTO). Empty for a
+    // legacy/website row with no breakdown; the client then shows seats.
+    byProduct,
     // Primary title: organization if it exists, otherwise the customer's
     // full name (spec). customerName still ships for the subtitle.
     title: deal.organization?.name || customerName || 'לקוח',
@@ -116,7 +120,7 @@ export function guideParticipantDto(booking, permissions, { coordinationStatus =
 // but which is NOT a confirmed customer. Server-enforced restriction: phone,
 // email, field rep and coordination NEVER ship for a held row — regardless of
 // permissions. Only name + count + Important Customer Information + the badge.
-export function guideHeldParticipantDto(reg, permissions) {
+export function guideHeldParticipantDto(reg, permissions, { byProduct = [] } = {}) {
   const deal = reg.deal;
   const primary = deal ? resolveCustomerContacts(deal.contacts).primary : null;
   const customerName = contactNameHe(primary?.contact) || deal?.title || reg.customerName || 'לקוח';
@@ -125,6 +129,8 @@ export function guideHeldParticipantDto(reg, permissions) {
     held: true,
     badge: 'עוד לא סופי',
     seats: reg.quantity,
+    // Same canonical composition as a confirmed row (shared DTO).
+    byProduct,
     title: deal?.organization?.name || customerName || 'לקוח',
     customerName,
     // Important Customer Information — same permission gate as a confirmed row.
@@ -147,9 +153,21 @@ export function guideTourDetailDto({
   permissions,
   coordinationStatusByBooking = {},
   heldRegistrations = [],
+  participantBreakdown = null,
 }) {
   const occ = occupancy || { activeSeats: 0, activeBookings: 0 };
+  // Route each customer's canonical composition to its card by stable key
+  // (bookingId for confirmed, registrationId for held) — the SAME participants.js
+  // DTO the admin modal uses. No parallel breakdown logic in the portal.
+  const byProductByBooking = new Map();
+  const byProductByReg = new Map();
+  for (const c of participantBreakdown?.customers || []) {
+    if (c.bookingId) byProductByBooking.set(c.bookingId, c.byProduct);
+    byProductByReg.set(c.registrationId, c.byProduct);
+  }
   return {
+    // Grouped aggregate (product → ticket types) above the participant cards.
+    participantBreakdown: participantBreakdown?.aggregate || null,
     id: tour.id,
     date: tour.date,
     startTime: tour.startTime,
@@ -203,11 +221,14 @@ export function guideTourDetailDto({
       .map((b) =>
         guideParticipantDto(b, permissions, {
           coordinationStatus: coordinationStatusByBooking[b.id] || null,
+          byProduct: byProductByBooking.get(b.id) || [],
         }),
       )
       .filter(Boolean),
     // Conditional (HELD) reservations — "probably coming, not yet confirmed".
     // Expired/cancelled holds are never fetched, so they vanish from the portal.
-    provisionalParticipants: (heldRegistrations || []).map((r) => guideHeldParticipantDto(r, permissions)),
+    provisionalParticipants: (heldRegistrations || []).map((r) =>
+      guideHeldParticipantDto(r, permissions, { byProduct: byProductByReg.get(r.id) || [] }),
+    ),
   };
 }

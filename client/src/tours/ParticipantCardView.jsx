@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import RichText from '../editor/RichText.jsx';
 import { participantsLabel } from '../portal/format.js';
+import ProductBreakdown from './ProductBreakdown.jsx';
 
 // Shared participant/customer card presentation — the ONE visual source of
 // truth for the tour surfaces (admin Tour modal `CustomerCard` and the Guide
@@ -21,6 +22,9 @@ export default function ParticipantCardView({
   customerName,
   organizationLine,
   seats,
+  byProduct = null, // canonical purchased composition (participants.js) — when
+  // present, the per-customer product→ticket breakdown REPLACES the bare seats
+  // line (PART 3). Empty/absent → the "👥 N משתתפים" fallback.
   identityHref = null, // present → the identity block opens the Deal (admin)
   identityTitle = null,
   corner = null, // ReactNode column on the far edge; omitted → column disappears
@@ -42,9 +46,15 @@ export default function ParticipantCardView({
         {customerName}
       </div>
       <div className="truncate text-[12.5px] text-gray-500">{organizationLine}</div>
-      <div className="mt-0.5 text-[13px] font-medium text-gray-700">
-        👥 {participantsLabel(seats)}
-      </div>
+      {byProduct?.length ? (
+        <div className="mt-1.5">
+          <ProductBreakdown byProduct={byProduct} />
+        </div>
+      ) : (
+        <div className="mt-0.5 text-[13px] font-medium text-gray-700">
+          👥 {participantsLabel(seats)}
+        </div>
+      )}
     </>
   );
 

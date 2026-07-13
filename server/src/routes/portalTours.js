@@ -26,6 +26,7 @@ import {
   guideTourDetailDto,
   tourEndMs,
 } from '../tours/guidePortal/dto.js';
+import { fetchTourParticipantRegistrations, tourParticipantBreakdown } from '../tours/participants.js';
 
 // Guide Portal → Tours. Mounted at /api/portal alongside the task feed and
 // gallery routers; the portal token IS the credential (same V1 model).
@@ -280,6 +281,10 @@ router.get(
         },
       },
     });
+    // Canonical purchased composition (product → ticket types) from the SAME
+    // participants.js builder the admin tour modal uses — aggregate + per-customer.
+    const participantRegs = await fetchTourParticipantRegistrations(prisma, [tour.id]);
+    const participantBreakdown = tourParticipantBreakdown(participantRegs);
     res.set('Cache-Control', 'no-store');
     res.json(
       guideTourDetailDto({
@@ -289,6 +294,7 @@ router.get(
         permissions: access.permissions,
         coordinationStatusByBooking,
         heldRegistrations,
+        participantBreakdown,
       }),
     );
   }),

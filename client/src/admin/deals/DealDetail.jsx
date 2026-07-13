@@ -39,6 +39,7 @@ import { InlineDatePicker, InlineTimePicker } from '../common/inline/InlinePicke
 import SendDocumentModal from './icount/SendDocumentModal.jsx';
 import DealQuoteCard from './quote/DealQuoteCard.jsx';
 import DealCollectionCard from './DealCollectionCard.jsx';
+import { emitDealTasksChanged } from './tasks/taskEvents.js';
 import { productContextFor, locationContextFor } from './tourContext.js';
 import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
 import Dialog from '../common/Dialog.jsx';
@@ -159,6 +160,10 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
       setOrgs(o);
       setSubtypes(st);
       setTypes(ty);
+      // Keep the TimelineFeed (pinned notes + history) in step with any action
+      // that reloads the deal — e.g. register-without-payment adds a pinned note.
+      // Reuses the deal-page timeline refresh channel (no page reload).
+      emitDealTasksChanged(id);
       const init = {
         title: d.title || '',
         value: minorToInput(d.valueMinor),

@@ -6,6 +6,9 @@ import { scheduleGalleryCleanup } from './gallery/service.js';
 import { syncDealRegistration } from './registrations.js';
 import { occupancyFor } from './occupancy.js';
 import { resolveDealGroupOffering } from '../deals/groupOffering.js';
+import { recomputeTourOperationalProduct } from './operationalProduct.js';
+import { markTourWooPending } from './woo/service.js';
+import { CAPACITY_STATUSES } from './registrationStatus.js';
 import {
   calendarPendingPatch,
   patchTouchesCalendar,
@@ -686,4 +689,44 @@ export async function syncDealToTour(tx, deal, booking, { origin }) {
   }
   await syncRegistration({ productVariantId: effectiveVariantId });
   return true;
+}
+
+// Converge the deal's group-slot registrations onto its CURRENT Group Ticket
+// Builder cards after a builder edit, so the tour's operational product
+// re-derives IMMEDIATELY — for a WON booking AND a still-OPEN held reservation.
+// THE single post-builder-save hook; every affected tour reaches the ONE
+// canonical derivation (recomputeTourOperationalProduct). Runs in the caller's
+// transaction AFTER the new quote lines are written (so resolveDealGroupOffering
+// sees them). Returns the affected tour ids.
+export async function resyncDealGroupTours(tx, dealId, { origin } = {}) {
+  const deal = await tx.deal.findUnique({ where: { id: dealId } });
+  if (!deal || deal.activityType !== 'group') return [];
+  const regs = await tx.ticketRegistration.findMany({
+    where: { dealId, source: 'deal', status: { in: CAPACITY_STATUSES }, tourEvent: { kind: 'group_slot' } },
+    select: { tourEventId: true },
+  });
+  const tourIds = [...new Set(regs.map((r) => r.tourEventId))];
+  if (!tourIds.length) return [];
+  const booking = await activeBookingFor(tx, dealId);
+  // The canonical offering (dominant variant + composition) from the current cards.
+  const patch = await groupOfferingPatch(tx, deal);
+  for (const tourEventId of tourIds) {
+    if (booking && booking.tourEventId === tourEventId && booking.tourEvent.kind === 'group_slot') {
+      // WON path: seats + offering + recompute via the canonical registration sync.
+      await syncDealToTour(tx, deal, booking, { origin });
+    } else {
+      // Open held/expired reservation (no booking yet): realign the registration's
+      // offering, then the ONE canonical recompute.
+      await tx.ticketRegistration.updateMany({
+        where: { dealId, tourEventId, source: 'deal', status: { in: CAPACITY_STATUSES } },
+        data: {
+          productVariantId: patch.productVariantId ?? null,
+          ...(patch.ticketBreakdown !== undefined ? { ticketBreakdown: patch.ticketBreakdown } : {}),
+        },
+      });
+      await recomputeTourOperationalProduct(tx, tourEventId);
+      await markTourWooPending(tx, tourEventId);
+    }
+  }
+  return tourIds;
 }

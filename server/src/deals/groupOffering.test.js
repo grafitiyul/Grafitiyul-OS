@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveDealGroupOffering, aggregateBreakdowns } from './groupOffering.js';
+import { resolveDealGroupOffering } from './groupOffering.js';
 
 // A minimal prisma fake for the quote → cards → variants resolution.
 function fake({ version = { id: 'qv1' }, lines = [], rules = [], variants = {} } = {}) {
@@ -68,25 +68,3 @@ test('missing quote surface (incomplete client) → null, no throw', async () =>
   assert.equal(await resolveDealGroupOffering({}, 'd1'), null);
 });
 
-test('aggregateBreakdowns: sums per card + per ticket, only existing dimensions', () => {
-  const regs = [
-    {
-      ticketBreakdown: [
-        { cardGroupId: 'c1', cardTitle: 'סיור בלבד', ticketTypeId: 't_a', ticketLabel: 'מבוגר', quantity: 8 },
-        { cardGroupId: 'c1', cardTitle: 'סיור בלבד', ticketTypeId: 't_c', ticketLabel: 'ילד', quantity: 4 },
-      ],
-    },
-    { ticketBreakdown: [{ cardGroupId: 'c2', cardTitle: 'סיור + סדנה', ticketTypeId: 't_a', ticketLabel: 'מבוגר', quantity: 4 }] },
-  ];
-  const agg = aggregateBreakdowns(regs);
-  assert.equal(agg.total, 16);
-  assert.equal(agg.byCard.length, 2);
-  assert.equal(agg.byTicketType.find((t) => t.key === 't_a').quantity, 12);
-});
-
-test('aggregateBreakdowns: legacy rows (no breakdown) count quantity, add no dimensions', () => {
-  const agg = aggregateBreakdowns([{ quantity: 5, ticketBreakdown: null }]);
-  assert.equal(agg.total, 5);
-  assert.deepEqual(agg.byCard, []);
-  assert.deepEqual(agg.byTicketType, []);
-});

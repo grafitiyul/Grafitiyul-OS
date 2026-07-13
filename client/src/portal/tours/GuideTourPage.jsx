@@ -13,6 +13,7 @@ import { FeedError } from './feedStates.jsx';
 // ONE participant-card presentation, shared with the admin Tour modal —
 // hierarchy, typography and spacing (incl. the customerInfo tight face).
 import ParticipantCardView from '../../tours/ParticipantCardView.jsx';
+import ProductBreakdown from '../../tours/ProductBreakdown.jsx';
 import FormActionButton from '../../questionnaire/FormActionButton.jsx';
 import QuestionnaireFillDialog from '../../questionnaire/QuestionnaireFillDialog.jsx';
 
@@ -158,6 +159,13 @@ export default function GuideTourPage() {
       )}
 
       <SectionCard title={`משתתפים · ${participantsLabel(tour.participantsTotal)}`}>
+        {/* Grouped aggregate (product → ticket types) — same shared renderer +
+            server DTO as the admin tour modal. */}
+        {tour.participantBreakdown?.byProduct?.length ? (
+          <div className="mb-3 rounded-lg border border-gray-200 bg-gray-50/60 p-3">
+            <ProductBreakdown byProduct={tour.participantBreakdown.byProduct} />
+          </div>
+        ) : null}
         {(tour.participants || []).length === 0 ? (
           <div className="py-2 text-center text-sm text-gray-500">
             אין עדיין נרשמים לסיור.
@@ -496,6 +504,7 @@ function HeldParticipantCard({ participant: p }) {
       customerName={p.customerName || p.title}
       organizationLine={p.title && p.title !== p.customerName ? p.title : ''}
       seats={p.seats}
+      byProduct={p.byProduct}
       corner={
         <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-200">
           {p.badge || 'עוד לא סופי'}
@@ -554,6 +563,7 @@ function ParticipantCard({ participant: p, coordinationEnabled, apiBase }) {
       customerName={customerName}
       organizationLine={organizationLine}
       seats={p.seats}
+      byProduct={p.byProduct}
       phone={p.phone}
       email={p.email}
       fieldRepName={p.fieldRepName}

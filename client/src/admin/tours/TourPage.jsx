@@ -16,6 +16,7 @@ import { contactNameHe, dealPath, resolveActivityLabel, effectiveOrgTypeLabel } 
 // ONE participant-card presentation, shared with the Guide Portal — hierarchy,
 // typography and spacing (incl. the customerInfo tight face) live there.
 import ParticipantCardView from '../../tours/ParticipantCardView.jsx';
+import ProductBreakdown from '../../tours/ProductBreakdown.jsx';
 import {
   TOUR_STATUS_LABELS,
   TOUR_STATUS_STYLES,
@@ -70,7 +71,7 @@ function resolveCustomerContacts(dealContacts) {
 // truth with the Guide Portal); this wrapper owns the admin-only concerns:
 // contact resolution from the deal, the Deal link on the identity block, and
 // the corner content ("דיל #NNNNN", booking-status badge, coordination form).
-function CustomerCard({ booking }) {
+function CustomerCard({ booking, byProduct = null }) {
   const deal = booking.deal;
   if (!deal) return null;
   const { primary, fieldRep } = resolveCustomerContacts(deal.contacts);
@@ -87,6 +88,7 @@ function CustomerCard({ booking }) {
         (deal.organizationUnit?.name ? ` · ${deal.organizationUnit.name}` : '')
       }
       seats={booking.seats}
+      byProduct={byProduct}
       identityHref={dealPath(deal)}
       identityTitle="פתיחת הדיל בכרטיסייה חדשה"
       phone={phone}
@@ -114,75 +116,18 @@ function CustomerCard({ booking }) {
   );
 }
 
-// Purchased-ticket composition (PART 2) — a compact aggregate summary + a
-// per-customer breakdown, both derived server-side from the canonical
-// registrations. GENERIC: it renders only the dimensions that exist in the data
-// (cards, ticket types) — no product name or "adult/child" is hardcoded. Held
-// registrations read as tentative ("עוד לא סופי").
-function ChipRow({ items }) {
-  if (!items?.length) return null;
-  return (
-    <span className="flex flex-wrap gap-1.5">
-      {items.map((it) => (
-        <span
-          key={it.key}
-          className="inline-flex items-baseline gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[12px] text-gray-700"
-        >
-          <span>{it.label}</span>
-          <span className="font-bold tabular-nums text-gray-900">{it.quantity}</span>
-        </span>
-      ))}
-    </span>
-  );
-}
-
+// Purchased-ticket composition (PART 3) — the GROUPED aggregate (by product →
+// ticket type) shown ABOVE the participant cards. The per-customer breakdown
+// lives inside each card (ParticipantCardView). GENERIC: only products/ticket
+// types present in the canonical breakdown appear. Same shared ProductBreakdown
+// renderer the Guide Portal uses (from the SAME server DTO).
 function TicketComposition({ breakdown }) {
   const agg = breakdown?.aggregate;
-  const customers = breakdown?.customers || [];
-  const hasComposition = agg && (agg.byCard?.length || agg.byTicketType?.length);
-  if (!hasComposition) return null; // nothing purchased-composition to show (legacy/website-only)
+  if (!agg?.byProduct?.length) return null; // nothing to show (legacy/website-only)
   return (
     <div className="mb-3 rounded-lg border border-gray-200 bg-gray-50/60 p-3">
-      {/* Aggregate: total + only the dimensions that exist. */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-        <span className="text-[12.5px] font-bold text-gray-900">
-          סה״כ {agg.total} כרטיסים
-        </span>
-        {agg.byCard?.length ? <ChipRow items={agg.byCard} /> : null}
-        {agg.byTicketType?.length ? (
-          <span className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[11.5px] text-gray-400">לפי סוג:</span>
-            <ChipRow items={agg.byTicketType} />
-          </span>
-        ) : null}
-      </div>
-      {/* Per-customer composition. */}
-      {customers.length > 0 && (
-        <ul className="mt-2.5 space-y-1.5 border-t border-gray-200 pt-2.5">
-          {customers.map((c, i) => (
-            <li key={i} className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[12.5px]">
-              <span className={c.held ? 'font-medium text-gray-400' : 'font-medium text-gray-800'}>
-                {c.label}
-                {c.held ? <span className="text-gray-400"> · עוד לא סופי</span> : null}
-              </span>
-              <span className="text-gray-300">—</span>
-              {c.breakdown?.length ? (
-                <span className="flex flex-wrap gap-1.5">
-                  {c.breakdown.map((b, j) => (
-                    <span key={j} className="text-gray-600">
-                      {[b.cardTitle, b.ticketLabel].filter(Boolean).join(' · ')}
-                      <span className="font-bold tabular-nums text-gray-900"> ×{b.quantity}</span>
-                      {j < c.breakdown.length - 1 ? <span className="text-gray-300">،</span> : null}
-                    </span>
-                  ))}
-                </span>
-              ) : (
-                <span className="text-gray-600 tabular-nums">{c.quantity} מקומות</span>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+      <div className="mb-2 text-[12.5px] font-bold text-gray-900">סה״כ {agg.total} משתתפים</div>
+      <ProductBreakdown byProduct={agg.byProduct} />
     </div>
   );
 }
@@ -528,7 +473,13 @@ export default function TourPage() {
                 ) : (
                   <div className="space-y-2.5">
                     {relevantBookings.map((b) => (
-                      <CustomerCard key={b.id} booking={b} />
+                      <CustomerCard
+                        key={b.id}
+                        booking={b}
+                        byProduct={
+                          (tour.participantBreakdown?.customers || []).find((c) => c.bookingId === b.id)?.byProduct || null
+                        }
+                      />
                     ))}
                   </div>
                 )}

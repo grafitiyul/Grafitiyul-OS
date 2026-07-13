@@ -72,39 +72,6 @@ export async function resolveDealGroupOffering(client, dealId) {
   return { productVariantId, productId, quantity, ticketBreakdown };
 }
 
-// PURE aggregate over a set of active registrations' breakdowns → the tour-level
-// summary. Only dimensions that actually exist are returned; nothing is
-// hardcoded. Returns { total, byCard: [{key,label,quantity}], byTicketType: […] }.
-export function aggregateBreakdowns(registrations) {
-  const byCard = new Map();
-  const byTicket = new Map();
-  let total = 0;
-  for (const reg of registrations || []) {
-    const rows = Array.isArray(reg?.ticketBreakdown) ? reg.ticketBreakdown : null;
-    if (rows && rows.length) {
-      for (const b of rows) {
-        const q = Number(b.quantity) || 0;
-        total += q;
-        if (b.cardGroupId || b.cardTitle) {
-          const key = b.cardGroupId || b.cardTitle;
-          const e = byCard.get(key) || { key, label: b.cardTitle || 'כרטיס', quantity: 0 };
-          e.quantity += q;
-          byCard.set(key, e);
-        }
-        if (b.ticketTypeId || b.ticketLabel) {
-          const key = b.ticketTypeId || b.ticketLabel;
-          const e = byTicket.get(key) || { key, label: b.ticketLabel || 'כרטיס', quantity: 0 };
-          e.quantity += q;
-          byTicket.set(key, e);
-        }
-      }
-    } else {
-      total += Number(reg?.quantity) || 0; // legacy row with no breakdown
-    }
-  }
-  return {
-    total,
-    byCard: [...byCard.values()].filter((e) => e.quantity > 0),
-    byTicketType: [...byTicket.values()].filter((e) => e.quantity > 0),
-  };
-}
+// Participant aggregation moved to tours/participants.js (groupBreakdownByProduct
+// + tourParticipantBreakdown) — the ONE canonical breakdown builder shared by the
+// admin tour modal and the Guide Portal.

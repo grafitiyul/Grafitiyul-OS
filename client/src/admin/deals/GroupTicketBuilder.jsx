@@ -221,11 +221,11 @@ function CardSection({ card, byRow, onQty, onPrice, onRevert, compact }) {
         <span className={compact ? 'text-[13.5px] font-semibold text-gray-900' : 'text-[15px] font-semibold text-gray-900'}>{card.title}</span>
       </div>
       <div className={compact ? 'px-3 pt-1.5 pb-1' : 'px-4 pt-2 pb-1'}>
-        <div className="flex items-center gap-3 pb-1.5 text-[11px] font-medium text-gray-400">
-          <span className="flex-1 min-w-[7rem]">סוג כרטיס</span>
-          <span className="w-32 shrink-0 text-center">מחיר</span>
+        <div className="flex items-center gap-2 pb-1.5 text-[11px] font-medium text-gray-400">
+          <span className="min-w-0 flex-1">סוג כרטיס</span>
+          <span className="w-24 shrink-0 text-center">מחיר</span>
           <span className="w-28 shrink-0 text-center">כמות</span>
-          <span className="w-28 shrink-0 text-left">סה״כ שורה</span>
+          <span className="w-20 shrink-0 text-left">סה״כ שורה</span>
         </div>
         <div className="divide-y divide-gray-100">
           {card.rows.map((row) => {
@@ -233,10 +233,10 @@ function CardSection({ card, byRow, onQty, onPrice, onRevert, compact }) {
             const st = byRow[id] || { quantity: 0, unitPriceMinor: row.unitPriceMinor, overridden: false };
             const lineTotal = (Number(st.unitPriceMinor) || 0) * (st.quantity || 0);
             return (
-              <div key={id} className="flex items-center gap-3 py-2">
-                <span className="flex-1 min-w-[7rem] text-sm text-gray-800">{row.label}</span>
-                <div className="w-32 shrink-0 flex items-center justify-center gap-1">
-                  <div className="w-24">
+              <div key={id} className="flex items-center gap-2 py-2">
+                <span className="min-w-0 flex-1 truncate text-sm text-gray-800">{row.label}</span>
+                <div className="w-24 shrink-0 flex items-center justify-center gap-1">
+                  <div className="w-20">
                     <InlineField
                       id={`gt-price-${id}`}
                       type="text"
@@ -269,7 +269,7 @@ function CardSection({ card, byRow, onQty, onPrice, onRevert, compact }) {
                     −
                   </button>
                 </div>
-                <div className="w-28 shrink-0 text-[13px] text-gray-700 text-left tabular-nums" dir="ltr">{formatMinor(lineTotal)}</div>
+                <div className="w-20 shrink-0 text-[13px] text-gray-700 text-left tabular-nums" dir="ltr">{formatMinor(lineTotal)}</div>
               </div>
             );
           })}
