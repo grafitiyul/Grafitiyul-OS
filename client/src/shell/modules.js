@@ -1,58 +1,32 @@
-// Shared module registry — the single source of truth for both the sidebar
-// (NavRail) and the TopBar breadcrumb. Keyed by stable internal keys, never by
-// the Hebrew label, so navigation and the header label can never drift apart.
+// Shared module registry — the single source of truth for the sidebar
+// (NavRail), the mobile bottom bar (MobileTabBar), and the TopBar breadcrumb.
 //
-// `glyph` is an emoji; an optional `Icon` component (real brand mark, shared
-// with the rest of the app) takes precedence in NavRail. No JSX here — this
-// file is .js and only passes component references.
+// The pure route metadata (keys, routes, labels, glyphs) + moduleForPath live
+// in ./moduleRoutes.js (no JSX, so they're testable and importable anywhere).
+// Here we decorate the two entries that render a real brand mark with their
+// icon component. Rendering consumers import from THIS file; logic-only
+// consumers and tests import from ./moduleRoutes.js.
 
 import WhatsAppLogo from '../admin/common/WhatsAppLogo.jsx';
 import GmailIcon from '../admin/common/icons/GmailIcon.jsx';
+import {
+  TOP_MODULES as TOP_MODULE_ROUTES,
+  BOTTOM_MODULES as BOTTOM_MODULE_ROUTES,
+  moduleForPath,
+} from './moduleRoutes.js';
 
-export const TOP_MODULES = [
-  // בקרה — the operations control center and the admin LANDING page. Answers
-  // "מה דורש טיפול עכשיו?" from the canonical OperationalIssue list.
-  { key: 'control', to: '/admin/control', label: 'בקרה', glyph: '🚨' },
-  // CRM is the operational hub: Deals (primary tab) + Contacts + Organizations.
-  { key: 'crm', to: '/admin/crm', label: 'CRM', glyph: '🏢' },
-  // Tours — the OPERATIONAL execution module (TourEvent/Booking). Daily working
-  // surface, distinct from "תוכן סיורים" (training/route content) below.
-  { key: 'tours', to: '/admin/tours', label: 'סיורים', glyph: '🧭' },
-  // The active WhatsApp inbox (conversations → deals) + connection management.
-  // A working surface, not a setting — hence a top-level module.
-  { key: 'whatsapp', to: '/admin/whatsapp', label: 'WhatsApp', glyph: '💬', Icon: WhatsAppLogo },
-  // The email inbox (Gmail mirror → deals) + account management. Same
-  // working-surface reasoning as WhatsApp.
-  { key: 'email', to: '/admin/email', label: 'אימייל', glyph: '📧', Icon: GmailIcon },
-];
+// key → brand-icon component. An `Icon` (when present) takes precedence over
+// `glyph` in NavRail / MobileTabBar.
+const MODULE_ICONS = {
+  whatsapp: WhatsAppLogo,
+  email: GmailIcon,
+};
 
-// Bottom cluster, top→bottom: גבייה, צוות, תוכן סיורים, מסמכים, נהלים, הגדרות,
-// משתמשים. "צוות" (the people/access module) moved here — it reflects its real
-// purpose as the staff/team surface; route (/admin/people) unchanged.
-export const BOTTOM_MODULES = [
-  // כספים — the finance hub: גבייה מלקוחות (the Collection service), שכר צוות
-  // (payroll), and ניהול פיננסי. Same icon the collection module carried.
-  { key: 'finance', to: '/admin/finance', label: 'כספים', glyph: '💰' },
-  { key: 'people', to: '/admin/people', label: 'צוות', glyph: '👥' },
-  { key: 'tour-content', to: '/admin/tour-content', label: 'תוכן סיורים', glyph: '🗺️' },
-  { key: 'documents', to: '/admin/documents', label: 'מסמכים', glyph: '📄' },
-  { key: 'procedures', to: '/admin/procedures', label: 'נהלים', glyph: '☰' },
-  // Questionnaire Engine — generic form templates (tour summary, coordination,
-  // future CRM/HR forms). The builder + template list live here; consumers
-  // (tour modal, booking cards) open the fill runtime from their own screens.
-  { key: 'questionnaires', to: '/admin/questionnaires', label: 'שאלונים', glyph: '📋' },
-  { key: 'settings', to: '/admin/settings', label: 'הגדרות', glyph: '⚙️' },
-  { key: 'users', to: '/admin/users', label: 'משתמשים', glyph: '🔐' },
-];
+const withIcons = (list) =>
+  list.map((m) => (MODULE_ICONS[m.key] ? { ...m, Icon: MODULE_ICONS[m.key] } : m));
 
+export const TOP_MODULES = withIcons(TOP_MODULE_ROUTES);
+export const BOTTOM_MODULES = withIcons(BOTTOM_MODULE_ROUTES);
 export const ALL_MODULES = [...TOP_MODULES, ...BOTTOM_MODULES];
 
-// Resolve the active module from a pathname by longest-prefix match, so
-// /admin/crm/deals/123 correctly maps to the CRM module (not "נהלים").
-export function moduleForPath(pathname) {
-  return (
-    ALL_MODULES
-      .filter((m) => pathname === m.to || pathname.startsWith(m.to + '/'))
-      .sort((a, b) => b.to.length - a.to.length)[0] || null
-  );
-}
+export { moduleForPath };

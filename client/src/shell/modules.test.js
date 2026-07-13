@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ALL_MODULES, TOP_MODULES, moduleForPath } from './modules.js';
+import { ALL_MODULES, TOP_MODULES, moduleForPath } from './moduleRoutes.js';
 
 // Global navigation registry. Both the desktop NavRail AND the mobile bottom
 // bar (MobileTabBar) map ALL_MODULES, so GOS has ONE navigation, identical in
