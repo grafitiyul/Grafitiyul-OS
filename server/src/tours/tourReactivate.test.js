@@ -66,6 +66,7 @@ function stubTx({ priorCancelledBooking = null } = {}) {
     productVariantActivityComponent: { findMany: async () => [] }, // variant seed source
     ticketRegistration: {
       findFirst: async () => null, // no existing 'deal' registration
+      findMany: async () => [], // no active registrations → derivation is a no-op
       create: async ({ data }) => {
         calls.ticketRegistrationCreate = calls.ticketRegistrationCreate || [];
         calls.ticketRegistrationCreate.push(data);
@@ -73,6 +74,8 @@ function stubTx({ priorCancelledBooking = null } = {}) {
       },
       update: async () => ({}),
     },
+    openTourTemplateProduct: { findFirst: async () => null },
+    productVariant: { findMany: async () => [] },
     timelineEntry: { create: async () => ({}) },
   };
   return tx;

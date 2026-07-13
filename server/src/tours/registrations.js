@@ -8,6 +8,8 @@
 // splits into several ticket products, this becomes several rows per booking —
 // occupancy and derivation already sum over rows, so nothing downstream changes.
 
+import { recomputeTourOperationalProduct } from './operationalProduct.js';
+
 // A booking's allocation state maps onto its registration: only 'active' seats
 // count. 'orphaned' (deal left WON but tour kept) is intentionally NOT counted,
 // so it collapses to a non-active registration like 'cancelled'.
@@ -18,6 +20,9 @@ export function regStatusFromBooking(bookingStatus) {
 // Idempotently converge the single 'deal' registration for a booking onto the
 // booking's current state (seats, status) and its tour's operational variant.
 // Runs inside the caller's transaction, called after every booking mutation.
+// For open tours (group slots) it then re-derives the operational product from
+// the tour's active registrations — the ONE hook every registration source
+// (deal now, WooCommerce/future later) funnels through.
 export async function syncDealRegistration(tx, booking, tour) {
   const status = regStatusFromBooking(booking.status);
   const quantity = Number(booking.seats) || 0;
@@ -25,6 +30,7 @@ export async function syncDealRegistration(tx, booking, tour) {
   const existing = await tx.ticketRegistration.findFirst({
     where: { bookingId: booking.id, source: 'deal' },
   });
+  let regId;
   if (existing) {
     await tx.ticketRegistration.update({
       where: { id: existing.id },
@@ -35,21 +41,28 @@ export async function syncDealRegistration(tx, booking, tour) {
         cancelledAt: status === 'cancelled' ? existing.cancelledAt || new Date() : null,
       },
     });
-    return existing.id;
+    regId = existing.id;
+  } else {
+    const created = await tx.ticketRegistration.create({
+      data: {
+        tourEventId: tour.id,
+        productVariantId,
+        quantity,
+        source: 'deal',
+        bookingId: booking.id,
+        dealId: booking.dealId,
+        status,
+        cancelledAt: status === 'cancelled' ? new Date() : null,
+      },
+    });
+    regId = created.id;
   }
-  const created = await tx.ticketRegistration.create({
-    data: {
-      tourEventId: tour.id,
-      productVariantId,
-      quantity,
-      source: 'deal',
-      bookingId: booking.id,
-      dealId: booking.dealId,
-      status,
-      cancelledAt: status === 'cancelled' ? new Date() : null,
-    },
-  });
-  return created.id;
+  // Only open tours derive their product from registrations; deal tours keep
+  // their deal-driven product. Cheap kind gate avoids an extra query otherwise.
+  if (tour?.kind === 'group_slot') {
+    await recomputeTourOperationalProduct(tx, tour.id);
+  }
+  return regId;
 }
 
 // Merge grouped aggregates into the fixed occupancy shape. Pure — unit-tested.
