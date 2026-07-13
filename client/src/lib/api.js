@@ -1454,6 +1454,8 @@ export const api = {
     // the deal WON transition, never from here).
     create: (data) => tourMutation(request('/api/tours', { method: 'POST', body: JSON.stringify(data) })),
     update: (id, data) => tourMutation(request(`/api/tours/${id}`, { method: 'PUT', body: JSON.stringify(data) })),
+    // Registered-tour replacement ("צור מועד חדש והעבר משתתפים").
+    replace: (id, data) => tourMutation(request(`/api/tours/${id}/replace`, { method: 'POST', body: JSON.stringify(data) })),
     remove: (id) => tourMutation(request(`/api/tours/${id}`, { method: 'DELETE' })),
   },
 

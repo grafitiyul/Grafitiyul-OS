@@ -3098,6 +3098,12 @@ model TourEvent {
   wooSyncedAt             DateTime?
   wooAttempts             Int                          @default(0)
   wooNextRetryAt          DateTime?
+
+  // Registered-tour REPLACEMENT link: when a tour with registrations is moved,
+  // the original is cancelled and points here at its replacement. Enables
+  // idempotent replace (retry finds the existing replacement) + the "replaced"
+  // state in the UI. Loose (no FK) so either side survives deletion.
+  replacedByTourEventId   String?
   createdAt               DateTime                     @default(now())
   updatedAt               DateTime                     @updatedAt
   bookings                Booking[]

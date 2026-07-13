@@ -12,8 +12,11 @@ export default function ProceduresLayout() {
 
   return (
     <div className="h-full flex flex-col">
-      {/* Desktop-only tab switcher. On mobile, the bottom tab bar handles nav. */}
-      <div className="hidden lg:flex items-center gap-1 px-3 py-2 border-b border-gray-200 bg-white">
+      {/* Module-local tab switcher (bank / approvals / flows) — shown on EVERY
+          breakpoint. The shell's bottom bar (MobileTabBar) now carries the
+          app-level global modules, so these internal tabs must live inside the
+          module on mobile too, not in the global nav. */}
+      <div className="flex items-center gap-1 px-3 py-2 border-b border-gray-200 bg-white overflow-x-auto">
         {TABS.map((tab) => (
           <Link
             key={tab.key}

@@ -13,7 +13,7 @@ export default function CrmLayout() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="hidden lg:flex items-center gap-1 px-3 py-2 border-b border-gray-200 bg-white">
+      <div className="flex items-center gap-1 px-3 py-2 border-b border-gray-200 bg-white overflow-x-auto">
         {CRM_TABS.map((tab) => (
           <Link
             key={tab.key}

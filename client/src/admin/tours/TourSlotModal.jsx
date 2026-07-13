@@ -38,11 +38,18 @@ export default function TourSlotModal({ open, tour, onClose, onSaved }) {
   // we never silently overwrite them — we ask keep vs. replace-from-defaults.
   const [askReseed, setAskReseed] = useState(false);
   const [reseedBusy, setReseedBusy] = useState(false);
+  // Registered tours can't be re-dated directly — the operator enters replace
+  // mode ("צור מועד חדש והעבר משתתפים") which picks the NEW date/time.
+  const [replaceMode, setReplaceMode] = useState(false);
+  const activeSeats = tour?.activeSeats ?? tour?.occupancy?.activeSeats ?? 0;
+  const registered = isEdit && activeSeats > 0;
+  const lockDateTime = registered && !replaceMode;
 
   useEffect(() => {
     if (!open) return;
     setError(null);
     setMissing([]);
+    setReplaceMode(false);
     api.products.list().then(setProducts).catch(() => {});
     if (tour?.id) {
       setForm({
@@ -103,22 +110,32 @@ export default function TourSlotModal({ open, tour, onClose, onSaved }) {
       // changes on a tour that already carries components.
       const variantChanged = isEdit && form.productVariantId !== (tour.productVariantId || '');
       const hasComponents = (tour?.activityComponents?.length || 0) > 0;
-      const saved = isEdit
-        ? await api.tours.update(tour.id, payload)
-        : await api.tours.create(payload);
+
+      // Registered tour → canonical REPLACEMENT (new occurrence + move everyone).
+      if (replaceMode) {
+        const result = await api.tours.replace(tour.id, payload);
+        onSaved?.(result);
+        onClose();
+        return;
+      }
+
+      const saved = await (isEdit ? api.tours.update(tour.id, payload) : api.tours.create(payload));
       onSaved?.(saved);
-      // Variant changed on a tour that already carries components → let the
-      // operator decide (keep / replace). Otherwise close as usual.
       if (variantChanged && hasComponents) {
         setAskReseed(true);
       } else {
         onClose();
       }
     } catch (err) {
-      if (err.payload?.error === 'missing_required_fields') {
+      const code = err.payload?.error;
+      if (code === 'missing_required_fields') {
         setMissing(err.payload.missing || []);
+      } else if (code === 'registered_tour_needs_replacement') {
+        // Server enforced the invariant → switch to replacement mode.
+        setReplaceMode(true);
+        setError('לסיור זה יש נרשמים — לא ניתן לשנות תאריך/שעה ישירות. בחרו מועד חדש והמשתתפים יועברו אליו.');
       } else {
-        setError(err.payload?.error || err.message);
+        setError(code || err.message);
       }
     } finally {
       setBusy(false);
@@ -140,18 +157,40 @@ export default function TourSlotModal({ open, tour, onClose, onSaved }) {
           >
             ביטול
           </button>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={busy}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            {busy ? 'שומר…' : isEdit ? 'שמירה' : 'יצירת סיור'}
-          </button>
+          {registered && !replaceMode ? (
+            <button
+              type="button"
+              onClick={() => {
+                setReplaceMode(true);
+                setError(null);
+              }}
+              className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700"
+            >
+              צור מועד חדש והעבר משתתפים
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={submit}
+              disabled={busy}
+              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {busy ? 'שומר…' : replaceMode ? 'אישור והעברת משתתפים' : isEdit ? 'שמירה' : 'יצירת סיור'}
+            </button>
+          )}
         </>
       }
     >
       <form onSubmit={submit} className="space-y-3">
+        {registered && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
+            {replaceMode ? (
+              <>בחרו <b>מועד חדש</b> — יווצר סיור חדש וכל {activeSeats} הנרשמים, ההזמנות והדילים יועברו אליו; הסיור הנוכחי יבוטל וישמר בהיסטוריה, ותיפתח משימת בקרה לעדכון לקוחות.</>
+            ) : (
+              <>לסיור זה יש {activeSeats} נרשמים — לא ניתן לשנות תאריך/שעה ישירות. השתמשו ב״צור מועד חדש והעבר משתתפים״.</>
+            )}
+          </div>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label className="block">
             <span className="mb-1 block text-[12px] font-medium text-gray-600">מוצר *</span>
@@ -185,12 +224,14 @@ export default function TourSlotModal({ open, tour, onClose, onSaved }) {
             value={form.date}
             onChange={(v) => setForm((f) => ({ ...f, date: v }))}
             clearable={false}
+            disabled={lockDateTime}
           />
           <TimeField
             label="שעה *"
             value={form.startTime}
             onChange={(v) => setForm((f) => ({ ...f, startTime: v }))}
             clearable={false}
+            disabled={lockDateTime}
           />
           <label className="block">
             <span className="mb-1 block text-[12px] font-medium text-gray-600">שפת סיור *</span>

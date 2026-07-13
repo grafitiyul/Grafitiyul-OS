@@ -13,6 +13,8 @@ import { getTourSettings } from '../tours/slotGeneration.js';
 import { ensureTourSlots } from '../tours/openTourGeneration.js';
 import { tourStatusWhere } from '../tours/statusFilter.js';
 import { occupancyFor } from '../tours/occupancy.js';
+import { replaceTourEvent } from '../tours/replaceTour.js';
+import { emitTourChangeImpact } from '../tours/changeImpact.js';
 import {
   cancelDealBooking,
   reconnectOrphanBooking,
@@ -1090,7 +1092,17 @@ router.put(
     if (!existing) return res.status(404).json({ error: 'not_found' });
 
     const occ = await occupancyFor(prisma, [existing.id]);
-    const { activeBookings } = occ[existing.id];
+    const { activeBookings, activeSeats } = occ[existing.id];
+
+    // Registered-tour invariant: a group slot that holds seats must NEVER be
+    // silently re-dated/re-timed here — that leaves Deals/Woo/Calendar stale and
+    // registrations stranded. Direct date/time edits are BLOCKED; the client uses
+    // the canonical replacement flow ("צור מועד חדש והעבר משתתפים").
+    const changesDate = b.date !== undefined && b.date !== existing.date;
+    const changesTime = b.startTime !== undefined && b.startTime !== existing.startTime;
+    if ((changesDate || changesTime) && activeSeats > 0) {
+      return res.status(409).json({ error: 'registered_tour_needs_replacement', activeSeats });
+    }
 
     const data = {};
 
@@ -1183,10 +1195,64 @@ router.put(
       }
     }
     const occAfter = await occupancyFor(prisma, [tour.id]);
+    // Capacity reduced below current occupancy → surface a canonical impact
+    // issue for the office (overbooked occurrence needs a decision).
+    if (b.capacity !== undefined && data.capacity != null && activeSeats > data.capacity) {
+      await emitTourChangeImpact(prisma, {
+        tourEventId: tour.id,
+        impactType: 'capacity_below_occupancy',
+        before: { capacity: existing.capacity },
+        after: { capacity: data.capacity },
+        note: 'capacity reduced below occupancy',
+      }).catch((e) => console.error('[tours] impact emit failed', e?.message));
+    }
     // Any tour patch may move payroll inputs (date → weekend rule + month,
     // variant → rates); the draft projection reconciles in the background.
     kickPayrollReconcile('tour', tour.id);
     res.json(toClientTour(tour, occAfter[tour.id]));
+  }),
+);
+
+// Canonical registered-tour REPLACEMENT ("צור מועד חדש והעבר משתתפים"). For a
+// group slot that holds seats: creates a replacement occurrence, moves all
+// registrations + bookings, realigns the Deals, cancels the original, recomputes
+// the operational product, marks Woo + Calendar dirty, and emits ONE impact
+// issue. Idempotent. Unregistered tours should use the plain PUT instead.
+router.post(
+  '/:id/replace',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const existing = await prisma.tourEvent.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, kind: true, productId: true, productVariantId: true },
+    });
+    if (!existing) return res.status(404).json({ error: 'not_found' });
+    if (existing.kind !== 'group_slot') return res.status(409).json({ error: 'deal_owns_planning_fields' });
+
+    const patch = {};
+    for (const f of ['date', 'startTime', 'tourLanguage', 'capacity', 'meetingPoint']) {
+      if (b[f] !== undefined) patch[f] = b[f];
+    }
+    // Optional product/variant change — validated as a pair; city follows variant.
+    if (b.productId !== undefined || b.productVariantId !== undefined) {
+      const productId = b.productId ?? existing.productId;
+      const productVariantId = b.productVariantId ?? existing.productVariantId;
+      const variant = await resolveVariant(productId, productVariantId);
+      if (!variant) return res.status(400).json({ error: 'invalid_product_variant' });
+      patch.productId = productId;
+      patch.productVariantId = variant.id;
+      patch.locationId = variant.locationId;
+    }
+
+    try {
+      const origin = await userOrigin(req.adminAuth?.userId);
+      const result = await replaceTourEvent(prisma, { originalId: existing.id, patch, origin });
+      res.json({ ok: true, replacementId: result.replacement.id, dealIds: result.dealIds, reused: result.reused });
+    } catch (e) {
+      if (e.code === 'not_found') return res.status(404).json({ error: 'not_found' });
+      if (e.code === 'not_a_group_slot') return res.status(409).json({ error: 'not_a_group_slot' });
+      throw e;
+    }
   }),
 );
 

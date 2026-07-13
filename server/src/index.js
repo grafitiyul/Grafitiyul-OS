@@ -582,4 +582,10 @@ app.listen(port, () => {
   // בקרה detectors — re-derive operational issues from live domain state
   // (raise missing, auto-resolve fixed); 60s tick.
   startControlSweepWorker(console);
+
+  // One-time, idempotent repair of the QA tour↔deal time drift (17/07 test
+  // case). Safe on repeated deploy — only touches drifted rows.
+  import('./maintenance/repairTourDealDrift.js')
+    .then(({ repairTourDealDrift }) => repairTourDealDrift(prisma, { log: console }))
+    .catch((e) => console.warn('[repair] tour-deal drift failed:', e?.message));
 });

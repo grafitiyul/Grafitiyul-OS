@@ -356,7 +356,7 @@ function FieldTrigger({ anchorRef, open, onOpen, display, placeholder, withLabel
 }
 
 // ── DateField ── form field. value: "YYYY-MM-DD" | ''; onChange(sameShape).
-export function DateField({ label, value, onChange, placeholder = 'בחירת תאריך', clearable = true }) {
+export function DateField({ label, value, onChange, placeholder = 'בחירת תאריך', clearable = true, disabled = false }) {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef(null);
   function pick(v) {
@@ -364,7 +364,7 @@ export function DateField({ label, value, onChange, placeholder = 'בחירת ת
     if ((v || '') !== (value || '')) onChange(v || '');
   }
   return (
-    <label className="block text-[12px] text-gray-600">
+    <label className={'block text-[12px] text-gray-600' + (disabled ? ' opacity-50 pointer-events-none' : '')}>
       {label}
       <FieldTrigger anchorRef={anchorRef} open={open} onOpen={() => setOpen(true)} display={fmtDate(value)} placeholder={placeholder} withLabel={!!label} />
       <AnchoredMenu anchorRef={anchorRef} open={open} onClose={() => setOpen(false)} width={256} align="start">
@@ -375,7 +375,7 @@ export function DateField({ label, value, onChange, placeholder = 'בחירת ת
 }
 
 // ── TimeField ── form field. value: "HH:MM" | ''; onChange(sameShape).
-export function TimeField({ label, value, onChange, placeholder = 'בחירת שעה', stepMinutes = 15, clearable = true }) {
+export function TimeField({ label, value, onChange, placeholder = 'בחירת שעה', stepMinutes = 15, clearable = true, disabled = false }) {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef(null);
   function pick(v) {
@@ -383,7 +383,7 @@ export function TimeField({ label, value, onChange, placeholder = 'בחירת ש
     if ((v || '') !== (value || '')) onChange(v || '');
   }
   return (
-    <label className="block text-[12px] text-gray-600">
+    <label className={'block text-[12px] text-gray-600' + (disabled ? ' opacity-50 pointer-events-none' : '')}>
       {label}
       <FieldTrigger anchorRef={anchorRef} open={open} onOpen={() => setOpen(true)} display={fmtTime(value)} placeholder={placeholder} withLabel={!!label} />
       <AnchoredMenu anchorRef={anchorRef} open={open} onClose={() => setOpen(false)} width={150} align="start">
