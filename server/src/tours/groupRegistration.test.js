@@ -117,6 +117,7 @@ test('a workshop registration flips the slot operational product to workshop', a
         updates.push(data);
         return {};
       },
+      updateMany: async () => ({ count: 0 }), // markTourWooPending
     },
     // one active registration bought the workshop variant
     ticketRegistration: {

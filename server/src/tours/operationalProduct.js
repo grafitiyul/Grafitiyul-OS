@@ -14,6 +14,7 @@
 // while still delivering the full union of components.
 
 import { calendarPendingPatch, kickTourCalendarSync } from './calendar/service.js';
+import { markTourWooPending } from './woo/service.js';
 import { CAPACITY_STATUSES } from './registrationStatus.js';
 
 // PURE. variants: [{ id, productId, durationHours, activityComponents: [{ activityComponentId }] }]
@@ -136,12 +137,30 @@ async function reconcileComponents(client, tourEventId, componentIds) {
   return changed;
 }
 
-// Recompute and apply a group-slot tour's operational product from its active
-// registrations. No-op for non-open tours, cancelled/completed tours, or when
-// the operator has manually pinned the product (productManualOverride). Runs in
-// the caller's transaction; a product change marks the calendar pending and
-// kicks the sync worker (post-commit). Returns the derived result or null.
-export async function recomputeTourOperationalProduct(client, tourEventId) {
+// A manual product pin is honored ONLY when explicitly valid: the pinned variant
+// must still be OFFERED by the tour's template. A stale/invalid pin (null variant
+// or a variant no longer offered) is NOT silently preserved — it is cleared and
+// the tour recomputed. When the tour has no template we cannot validate, so a
+// pin is trusted (an operator explicitly set it on a standalone slot).
+async function isPinValid(client, tour) {
+  if (!tour.productVariantId) return false;
+  if (!tour.openTourTemplateId) return true;
+  const offered = await client.openTourTemplateProduct.findFirst({
+    where: { templateId: tour.openTourTemplateId, productVariantId: tour.productVariantId },
+    select: { id: true },
+  });
+  return Boolean(offered);
+}
+
+// FULL recomputation of a group-slot tour's operational product from CURRENT
+// canonical state — not additive. It (1) reads only capacity/derivation-eligible
+// active registrations, (2) unions ONLY their capabilities, (3) resolves the
+// operational variant (plain base when none resolve), (4) PERSISTS the complete
+// result — replacing product/variant AND the delivered components (stale workshop
+// rows are removed), (5) marks the calendar + Woo mirrors dirty. No-op for
+// non-open / cancelled / completed tours. A VALID manual pin short-circuits;
+// `force:true` (backfill/admin) ignores the pin. Returns the result or null.
+export async function recomputeTourOperationalProduct(client, tourEventId, { force = false } = {}) {
   const tour = await client.tourEvent.findUnique({
     where: { id: tourEventId },
     select: {
@@ -155,8 +174,25 @@ export async function recomputeTourOperationalProduct(client, tourEventId) {
     },
   });
   if (!tour || tour.kind !== 'group_slot') return null;
-  if (tour.productManualOverride) return null;
   if (tour.status === 'cancelled' || tour.status === 'completed') return null;
+
+  let pinCleared = false;
+  if (tour.productManualOverride && !force) {
+    if (await isPinValid(client, tour)) {
+      return {
+        pinned: true,
+        displayVariantId: tour.productVariantId,
+        displayProductId: tour.productId,
+        changed: false,
+      };
+    }
+    // Stale/invalid pin — never silently preserved. Clear it, then recompute.
+    await client.tourEvent.update({ where: { id: tourEventId }, data: { productManualOverride: false } });
+    pinCleared = true;
+  } else if (tour.productManualOverride && force) {
+    await client.tourEvent.update({ where: { id: tourEventId }, data: { productManualOverride: false } });
+    pinCleared = true;
+  }
 
   const regs = await client.ticketRegistration.findMany({
     // Held reservations participate in derivation (staff for probable arrivals).
@@ -173,7 +209,11 @@ export async function recomputeTourOperationalProduct(client, tourEventId) {
     const baseVariantId = await resolveBaseVariantId(client, tour.openTourTemplateId);
     if (baseVariantId) variantIds = [baseVariantId];
   }
-  if (!variantIds.length) return null; // nothing to derive from — leave as-is
+  if (!variantIds.length) {
+    // Nothing to derive from AND no base — leave the product, but a cleared pin
+    // is still a change worth reporting.
+    return pinCleared ? { pinned: false, changed: true, cleared: true } : null;
+  }
 
   const variants = await client.productVariant.findMany({
     where: { id: { in: variantIds } },
@@ -185,7 +225,7 @@ export async function recomputeTourOperationalProduct(client, tourEventId) {
     },
   });
   const derived = deriveOperational(variants);
-  if (!derived) return null;
+  if (!derived) return pinCleared ? { pinned: false, changed: true, cleared: true } : null;
 
   const patch = {};
   if (derived.displayVariantId !== tour.productVariantId) patch.productVariantId = derived.displayVariantId;
@@ -198,8 +238,41 @@ export async function recomputeTourOperationalProduct(client, tourEventId) {
     await client.tourEvent.update({ where: { id: tourEventId }, data: patch });
     changed = true;
   }
+  // ALWAYS reconcile the delivered components to the derived set — this removes a
+  // stale workshop component even when the product id happens to already match.
   const compChanged = await reconcileComponents(client, tourEventId, derived.componentIds);
-  if (changed) kickTourCalendarSync();
+  if (changed || compChanged || pinCleared) {
+    kickTourCalendarSync();
+    await markTourWooPending(client, tourEventId);
+  }
 
-  return { ...derived, changed: changed || compChanged };
+  return { ...derived, pinned: false, cleared: pinCleared, changed: changed || compChanged || pinCleared };
+}
+
+// One-time SAFE reconciliation of already-materialized open-tour slots whose
+// persisted operational product may be STALE (the previous fix corrected new
+// derivations but never re-ran for existing rows). Recomputes each scheduled
+// group_slot from CURRENT canonical state. `force:true` also recomputes manually
+// pinned tours (clearing the pin). Returns a summary { scanned, changed, ... }.
+export async function reconcileAllOpenTourProducts(client, { force = false, limit = 5000 } = {}) {
+  const tours = await client.tourEvent.findMany({
+    where: { kind: 'group_slot', status: 'scheduled' },
+    select: { id: true, productManualOverride: true },
+    take: limit,
+  });
+  const summary = { scanned: tours.length, changed: 0, pinnedSkipped: 0, pinsCleared: 0, changedIds: [] };
+  for (const t of tours) {
+    const res = await recomputeTourOperationalProduct(client, t.id, { force }).catch(() => null);
+    if (!res) continue;
+    if (res.pinned) {
+      summary.pinnedSkipped += 1;
+      continue;
+    }
+    if (res.cleared) summary.pinsCleared += 1;
+    if (res.changed) {
+      summary.changed += 1;
+      if (summary.changedIds.length < 100) summary.changedIds.push(t.id);
+    }
+  }
+  return summary;
 }

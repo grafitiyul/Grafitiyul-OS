@@ -16,6 +16,7 @@ import {
 } from '../tours/occurrenceOverrides.js';
 import { markCardSlotsPending } from '../tours/woo/mapping.js';
 import { kickWooSync } from '../tours/woo/service.js';
+import { woo, wooConfigured } from '../tours/woo/wooClient.js';
 
 // Open Tours admin API (/api/open-tours) — CRUD for recurring tour TEMPLATES
 // (the "what"), their offered sellable products, weekly SCHEDULE RULES (the

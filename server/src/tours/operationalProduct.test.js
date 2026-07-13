@@ -111,6 +111,7 @@ test('recompute: a slot with only null-variant (card-priced) plain regs derives 
         openTourTemplateId: 'tpl1', productId: 'pW', productVariantId: 'workshop', // stale workshop base
       }),
       update: async ({ data }) => { updates.push(data); return {}; },
+      updateMany: async () => ({ count: 0 }), // markTourWooPending
     },
     // Active registrations exist but carry a null variant → filtered out here.
     ticketRegistration: { findMany: async () => [] },
