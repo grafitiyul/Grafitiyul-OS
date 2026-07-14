@@ -59,7 +59,7 @@ fields, crosswalk fields, Drive link reference, owner labels, plumbing→archive
   (8–26,306 < 27,000 — collision-free; URLs and business continuity preserved). New deals
   continue the 27000+ sequence.
 
-### 3a) Stage mapping — COMPLETE table with measured volumes (⏳ awaiting approval)
+### 3a) Stage mapping — COMPLETE table with measured volumes (✅ APPROVED 2026-07-14 — SPEC FROZEN)
 
 Target: the **single merged GOS sales pipeline** (the deliberate GOS improvement) — stages:
 `lead` ליד חדש · `contacted` שיחה מרכזית · `quote` הצעת מחיר · `negotiation` פולואפ/מו"מ ·
@@ -211,7 +211,7 @@ entity — not a generic browser.
 | Decision | Status |
 |---|---|
 | D1 active scope (Tier 2 = day-one view; all 24,356 migrate; future-relevance override) | ✅ approved |
-| D2 stage mapping | ⏳ **table above awaits approval** |
+| D2 stage mapping | ✅ approved (final table 2026-07-14) |
 | D3 pricing lines read-only | ✅ (owner rule) |
 | D3a/b/c contacts / tours / files (files gated on pre-copy report) | ✅ approved |
 | D4 org cleanup via in-GOS review | ✅ approved (Center tab ①) |

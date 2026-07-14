@@ -102,8 +102,8 @@ proposed tab list and clear caveats. Awaiting owner sign-off (remaining item #2)
 
 ## Remaining product-owner decisions (only these)
 
-1. **Approve the complete stage-mapping table** (mapping package §3a / final table presented
-   2026-07-14 — one row per legacy stage, with volumes, reasons, preserved history).
+1. ~~Stage-mapping table~~ — ✅ **APPROVED 2026-07-14** (final 25-row table, one row per legacy
+   stage, presented and accepted). **THE MIGRATION SPECIFICATION IS NOW FROZEN.**
 2. ~~Migration Review Center + archive access~~ — ✅ **APPROVED 2026-07-14**, with a binding UX
    refinement: the primary experience is a normal **"מידע ממערכת קודמת" card** on every migrated
    entity (clean label→value: Pipedrive owner, legacy stage, meaningful custom fields, pricing
