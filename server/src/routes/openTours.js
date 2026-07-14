@@ -21,6 +21,7 @@ import { woo, wooConfigured, wooSyncActive, wooSyncBulkEnabled } from '../tours/
 import { occupancyFor } from '../tours/occupancy.js';
 import { israelToday, addDays, getTourSettings } from '../tours/slotGeneration.js';
 import { suggestWooConfig } from '../tours/woo/suggestConfig.js';
+import { retireMapping } from '../tours/woo/retire.js';
 import { planRuleReconcile, classifyRulePlan } from '../tours/ruleEdit.js';
 import { planExceptionReconcile, classifyExceptionPlan } from '../tours/exceptionEdit.js';
 import { emitTourChangeImpact } from '../tours/changeImpact.js';
@@ -590,12 +591,28 @@ router.put(
   }),
 );
 
+// Removing a mapping is a canonical RETIREMENT, not a silent release: GOS is the
+// source of truth, so the variations it managed must not stay purchasable. Draft
+// them (0 stock, off the storefront), disable their links (history/orders/
+// registrations preserved — never deleted), reconcile the product's public
+// options, THEN delete the mapping. Legacy/manual variations and a sibling card
+// sharing the product are untouched. Runs whenever Woo credentials are present
+// (hiding is always safe); if Woo is unreachable the mapping is still removed.
 router.delete(
   '/woo/mappings/:cardGroupId',
   handle(async (req, res) => {
     const cardGroupId = String(req.params.cardGroupId || '');
+    let retired = null;
+    if (wooConfigured()) {
+      try {
+        retired = await retireMapping(prisma, woo, cardGroupId, { log: console });
+      } catch (e) {
+        console.error('[open-tours] woo mapping retirement failed', e);
+        retired = { ok: false, error: e.message };
+      }
+    }
     await prisma.wooProductMapping.deleteMany({ where: { cardGroupId } });
-    res.status(204).end();
+    res.json({ ok: true, retired });
   }),
 );
 

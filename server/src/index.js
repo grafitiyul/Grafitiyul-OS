@@ -86,6 +86,7 @@ import { startTourGalleryCleanupWorker } from './tours/gallery/cleanupWorker.js'
 import { startTourCalendarSyncWorker } from './tours/calendar/syncWorker.js';
 import { startTourCompletionWorker } from './tours/completionWorker.js';
 import { startWooSyncWorker } from './tours/woo/syncWorker.js';
+import { startTourGenerationWorker } from './tours/generationWorker.js';
 import { startHeldExpiryWorker } from './tours/heldExpiryWorker.js';
 import { startReconcileOpenTourProducts } from './maintenance/reconcileOpenTourProducts.js';
 import questionnairesRouter from './routes/questionnaires.js';
@@ -571,6 +572,12 @@ app.listen(port, () => {
   // WooCommerce variations (one per tour × mapped card). 60s tick; no-op until
   // WOO_STORE_URL/WOO_CONSUMER_KEY/WOO_CONSUMER_SECRET are configured.
   startWooSyncWorker(console);
+  // Scheduled Open-Tour generation — hourly, autonomous (no admin page visit
+  // needed). Runs the canonical ensureOpenTourSlots so the configured horizon
+  // (generateDaysAhead) is always filled ahead; idempotent + concurrency-safe.
+  // Read-triggered generation on the Tours screens stays as a fallback. Failures
+  // are recorded + surfaced by the open_tour_generation_failed בקרה detector.
+  startTourGenerationWorker(console);
   // Held-reservation expiry — flips lapsed HELD registrations to EXPIRED
   // (releases capacity + writes an audit event); 60s tick, idempotent.
   startHeldExpiryWorker(console);
