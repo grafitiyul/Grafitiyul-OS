@@ -158,6 +158,16 @@ export default function GuideTourPage() {
         </SectionCard>
       )}
 
+      {(tour.parallelTours || []).length > 0 && (
+        <SectionCard title="סיורים מקבילים">
+          <div className="space-y-2.5">
+            {tour.parallelTours.map((t, i) => (
+              <ParallelTourRow key={t.id || `pt-${i}`} tour={t} token={token} />
+            ))}
+          </div>
+        </SectionCard>
+      )}
+
       <SectionCard title={`משתתפים · ${participantsLabel(tour.participantsTotal)}`}>
         {/* Grouped aggregate (product → ticket types) — same shared renderer +
             server DTO as the admin tour modal. */}
@@ -405,6 +415,44 @@ function HeaderCard({ tour }) {
       )}
     </div>
   );
+}
+
+// A parallel tour (±3h) shown to the guide — operational summary only (no
+// customer data ever ships in this DTO). The row is a real link ONLY when the
+// server marked it `viewable` (this guide has an active assignment on that
+// tour and thus an id to link to); otherwise it is inert summary text. This
+// mirrors, and never weakens, the portal's server-side access rule.
+function ParallelTourRow({ tour, token }) {
+  const staffNames = (tour.staff || []).map((s) => s.displayName).join(' · ');
+  const inner = (
+    <>
+      <div className="shrink-0 rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-[13px] font-bold tabular-nums text-gray-900">
+        {tour.startTime || '—'}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[13px] font-semibold text-gray-900">
+          {tour.variantName || '—'}
+        </div>
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-gray-500">
+          <span>{participantsLabel(tour.participantsTotal)}</span>
+          {staffNames ? (
+            <span className="truncate">{staffNames}</span>
+          ) : (
+            <span className="text-gray-400">ללא שיבוץ</span>
+          )}
+        </div>
+      </div>
+    </>
+  );
+  const base = 'flex items-start gap-2.5 rounded-xl border border-gray-200 p-2.5';
+  if (tour.viewable && tour.id) {
+    return (
+      <Link to={`/p/${token}/tour/${tour.id}`} className={`${base} bg-white active:bg-gray-50 active:scale-[0.99]`}>
+        {inner}
+      </Link>
+    );
+  }
+  return <div className={`${base} bg-gray-50/60`}>{inner}</div>;
 }
 
 function SectionCard({ title, children }) {

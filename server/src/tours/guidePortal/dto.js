@@ -144,6 +144,35 @@ export function guideHeldParticipantDto(reg, permissions, { byProduct = [] } = {
   };
 }
 
+// ---------- parallel tours (operational summary) ----------
+// The guide-safe shape for a tour happening at ~the same time. Built from the
+// canonical parallelTours selector's core rows, which already contain NO
+// customer data (only operational tour fields + staff display names). This
+// builder additionally enforces the portal's direct-access rule:
+//   `viewable` is true ONLY when this guide has an active TourAssignment on
+//   that parallel tour. A non-viewable row ships NO id, so the client cannot
+//   construct a /p/:token/tour/:id link to it — and the detail route enforces
+//   the same assignment rule server-side regardless (this is a UI hint, not the
+//   gate). Never ships participants, deals, notes or contact channels.
+export function guideParallelToursDto(rows, { viewableIds } = {}) {
+  const viewable = viewableIds instanceof Set ? viewableIds : new Set(viewableIds || []);
+  return (rows || []).map((r) => {
+    const canOpen = viewable.has(r.id);
+    return {
+      id: canOpen ? r.id : null, // id only for a tour this guide may actually open
+      viewable: canOpen,
+      date: r.date,
+      startTime: r.startTime,
+      status: r.status,
+      variantName: r.variantName,
+      productName: r.productName,
+      locationName: r.locationName,
+      participantsTotal: r.participantCount, // aggregate count only, never identities
+      staff: r.staff, // staff display names only (never customers)
+    };
+  });
+}
+
 // ---------- tour detail ----------
 
 export function guideTourDetailDto({

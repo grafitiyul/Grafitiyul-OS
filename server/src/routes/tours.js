@@ -13,6 +13,7 @@ import { getTourSettings } from '../tours/slotGeneration.js';
 import { ensureTourSlots } from '../tours/openTourGeneration.js';
 import { tourStatusWhere } from '../tours/statusFilter.js';
 import { occupancyFor } from '../tours/occupancy.js';
+import { findParallelTours, toAdminParallelTours } from '../tours/parallelTours.js';
 import { replaceTourEvent } from '../tours/replaceTour.js';
 import { emitTourChangeImpact } from '../tours/changeImpact.js';
 import { cancelTourAssignments } from '../tours/assignmentLifecycle.js';
@@ -739,9 +740,12 @@ router.get(
       },
     });
     if (!tour) return res.status(404).json({ error: 'not_found' });
-    const [occ, participantRegs] = await Promise.all([
+    const [occ, participantRegs, parallelRows] = await Promise.all([
       occupancyFor(prisma, [tour.id]),
       fetchTourParticipantRegistrations(prisma, [tour.id]),
+      // Other tours within ±3h of this one — canonical selector (no stored
+      // relationship; recomputed every load so it always reflects current data).
+      findParallelTours(prisma, tour),
     ]);
     res.json({
       ...toClientTour(tour, occ[tour.id]),
@@ -751,6 +755,8 @@ router.get(
       // Purchased-ticket composition from the canonical registrations (seat SSOT)
       // — aggregate summary + per-customer breakdown for the participant section.
       participantBreakdown: tourParticipantBreakdown(participantRegs),
+      // Parallel tours — full operational summary (admin sees everything).
+      parallelTours: toAdminParallelTours(parallelRows),
     });
   }),
 );

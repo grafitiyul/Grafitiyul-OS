@@ -24,8 +24,10 @@ import {
 import {
   guideTourCardDto,
   guideTourDetailDto,
+  guideParallelToursDto,
   tourEndMs,
 } from '../tours/guidePortal/dto.js';
+import { findParallelTours } from '../tours/parallelTours.js';
 import { fetchTourParticipantRegistrations, tourParticipantBreakdown } from '../tours/participants.js';
 
 // Guide Portal → Tours. Mounted at /api/portal alongside the task feed and
@@ -285,9 +287,25 @@ router.get(
     // participants.js builder the admin tour modal uses — aggregate + per-customer.
     const participantRegs = await fetchTourParticipantRegistrations(prisma, [tour.id]);
     const participantBreakdown = tourParticipantBreakdown(participantRegs);
+    // Parallel tours (±3h) — SAME canonical selector as admin, but shaped by the
+    // guide DTO (operational summary only, no customer data). Direct-access rule:
+    // a row is clickable ONLY where this guide has an active assignment on that
+    // tour; those ids are resolved here and the detail route re-enforces access.
+    const parallelRows = await findParallelTours(prisma, tour);
+    let viewableIds = new Set();
+    if (parallelRows.length) {
+      const mine = await prisma.tourAssignment.findMany({
+        where: {
+          tourEventId: { in: parallelRows.map((r) => r.id) },
+          externalPersonId: access.person.externalPersonId,
+        },
+        select: { tourEventId: true },
+      });
+      viewableIds = new Set(mine.map((a) => a.tourEventId));
+    }
     res.set('Cache-Control', 'no-store');
-    res.json(
-      guideTourDetailDto({
+    res.json({
+      ...guideTourDetailDto({
         tour,
         assignment: access.assignment,
         occupancy: occ[tour.id],
@@ -296,7 +314,8 @@ router.get(
         heldRegistrations,
         participantBreakdown,
       }),
-    );
+      parallelTours: guideParallelToursDto(parallelRows, { viewableIds }),
+    });
   }),
 );
 

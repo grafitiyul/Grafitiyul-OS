@@ -11,6 +11,7 @@ import TourSlotModal from './TourSlotModal.jsx';
 import TourComponents from './TourComponents.jsx';
 import TourTeamEditor from './TourTeamEditor.jsx';
 import TourGalleryCard from './gallery/TourGalleryCard.jsx';
+import ParallelToursList from './ParallelToursList.jsx';
 import { todayIL } from './calendar/dates.js';
 import { useTourChanged } from './tourEvents.js';
 import { contactNameHe, dealPath, resolveActivityLabel, effectiveOrgTypeLabel } from '../deals/config.js';
@@ -463,6 +464,17 @@ export default function TourPage() {
                   />
                 </div>
               </section>
+
+              {/* Parallel tours — other tours within ±3h of this one. Renders
+                  NOTHING (no card, no spacing) when there are none. */}
+              {(tour.parallelTours || []).length > 0 && (
+                <Section title="סיורים מקבילים" count={tour.parallelTours.length}>
+                  <ParallelToursList
+                    tours={tour.parallelTours}
+                    onOpen={(id) => navigate(`/admin/tours/${id}`)}
+                  />
+                </Section>
+              )}
 
               {/* Participants — purchased-ticket composition, then one card per
                   booking, stacked vertically. */}

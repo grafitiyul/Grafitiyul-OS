@@ -107,8 +107,9 @@ function fmtDateDots(dateStr) {
 // The variant's FULL display identity. A ProductVariant has no name of its own
 // anywhere in GOS — it IS Product×Location, and every surface (Tour modal
 // header, slot picker, tours table) renders it as "product · city". The title
-// resolves the same pair in the tour's language.
-function variantDisplayName(tour, he) {
+// resolves the same pair in the tour's language. Exported so other surfaces
+// (e.g. the Parallel Tours selector) reuse the ONE canonical formatter.
+export function variantDisplayName(tour, he) {
   const product = he
     ? tour.product?.nameHe
     : tour.product?.nameEn || tour.product?.nameHe;
