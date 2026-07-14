@@ -124,15 +124,55 @@ backfill at leisure, after legacy systems are already read-only).** Goal B runni
 is deliberate: it removes all time pressure from the historical work and shrinks the
 freeze/drift window for Goal A to days, not weeks.
 
-### 1.7 Drift control (the migration happens while the business runs)
+### 1.7 Drift control & the rehearsal→delta→cutover model (UPDATED after M1)
 
-Legacy systems keep changing until cutover, and Make.com automations may write to them. Strategy:
+Pipedrive and Airtable **remain the active working systems until the formal cutover**. Therefore
+any early import is a **rehearsal/dry run**, never the final operational import. The cutover is
+built as six explicit steps:
 
-- Goal A loads run from a **fresh snapshot**, followed by a short **freeze window** (legacy
-  becomes look-don't-touch), a **delta pass** (snapshot diff → apply), verification, then cutover.
-- Every Make.com scenario touching Pipedrive/Airtable must be inventoried **before** Goal A and
-  explicitly retired/re-pointed at cutover — an automation still writing to Pipedrive after
-  cutover would silently fork the truth.
+1. **Initial immutable snapshot + rehearsal import** — Snapshot #1 → dry-run load into GOS
+   (idempotent, crosswalk-keyed, fully reversible). Proves the pipeline end-to-end; discards or
+   keeps the result as a rehearsal only.
+2. **Continued operation** — the business keeps working in Pipedrive + Airtable. GOS is not yet
+   the operational system.
+3. **Final delta extraction** — at cutover time, extract everything **created or changed since
+   Snapshot #1**, plus a deletion sweep (below).
+4. **Final reconciliation** — counts/sums/spot-checks snapshot+delta ↔ GOS; go/no-go.
+5. **Cutover** — legacy → read-only; Make scenarios retired/re-pointed.
+6. **Switch operational work to GOS.**
+
+**Reliable change-detection fields (verified in M1):**
+- **Pipedrive:** every deal/person/organization carries `update_time` and `add_time`
+  (timestamped). Delta = records with `update_time > snapshot1.startedAt`. A whole-account delta
+  can also use `GET /recents?since_timestamp=…` (all changed items across types). **Deletion
+  detection:** deleted deals leave the `all_not_deleted` set and appear under `status=deleted`
+  for ~30 days (verified: 9 currently) — so a delta run within the freeze window catches
+  deletions; deletions older than ~30 days are unrecoverable, which is fine (snapshot #1 already
+  captured them).
+- **Airtable:** there is **no reliable table-wide updated-at** unless a `Last Modified Time`
+  (all-fields) field exists — only scattered field-specific `lastModifiedTime` columns exist
+  today (e.g. on `משתתפים`). Two options, decided in M3: (a) add an all-fields `Last Modified
+  Time` field to the operational tables (`סיורים`, `משתתפים`) before the delta window, or
+  (b) — cheaper and recommended given the small operational set (**94 future tours**) —
+  **re-snapshot the operational tables and diff by record id**; deletions = record ids present in
+  Snapshot #1 but absent in the delta snapshot. Airtable has no API deletion log, so id-diff is
+  the deletion-detection mechanism.
+
+**Make.com:** every scenario touching Pipedrive/Airtable must be inventoried **before** Goal A and
+explicitly retired/re-pointed at cutover — an automation still writing to a legacy system after
+cutover would silently fork the truth.
+
+### 1.8 "Operationally active" — measured definition (from M1; see M1 deep-audit §2)
+
+Goal A's scope is **not** `status=open` alone. Verified candidate signals over all 4,908 deals:
+open (70), won-with-future-tour (82), any-future-tour (107), future next-activity (28), has-open-
+activity (612), plus wider signals lost-recent-90d (503) / modified-30d (387).
+
+**Recommended measurable definition (Tier 2 = 699 deals):**
+`open ∪ (won & future tour) ∪ any future tour ∪ future next-activity ∪ has-open-activity`.
+Tier 1 (~150–180, tightest live-scheduling set) and Tier 3 (~1,200–1,400, adds recent/lost) are
+the alternatives. **Owner selects the tier before the Goal A load** — not implemented until
+approved. Cross-checked against Airtable: 94 future tours, 100% linked to a Pipedrive deal id.
 
 ---
 
@@ -153,6 +193,13 @@ Legacy systems keep changing until cutover, and Make.com automations may write t
 
 Phases M1–M3 are cheap and safe (read-only, no GOS writes). M4 is the first GOS write and the
 riskiest phase. M5–M7 are schedule-driven (freeze window). M8 has no time pressure at all.
+
+> **Status (2026-07-14):** M1 external read-only audit is **complete** — see
+> `GOS-migration-M1-deep-audit.md` (verified deal count, active-scope measurement, line-item
+> availability, org dedup, contact language classification, Drive-link inventory) and
+> `GOS-migration-external-readiness-audit.md` (connection, structure, Deal↔Tour linkage). The
+> rehearsal→delta→cutover model (§1.7) maps onto phases M4 (rehearsal load) → freeze → delta →
+> M6 reconciliation → M7 cutover. No snapshot has been stored and no GOS write has occurred yet.
 
 ---
 
