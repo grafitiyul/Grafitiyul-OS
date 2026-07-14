@@ -1,5 +1,12 @@
 # GOS — M1 Deep Audit (verified data findings + owner decisions)
 
+> **⚠️ CORRECTED 2026-07-14 — see `GOS-migration-M1b-corrections-audit.md`.** §1 below counted
+> only the NON-archived population: Pipedrive's archive (mass-archived 2026-03) holds **19,448
+> additional deals** (`archived_status=archived`), making the true accessible population
+> **24,356**, and the id gap is archived deals — NOT deletions (~1,945 genuinely deleted).
+> §5's "mixed/ambiguous" contact bucket is dominated by 3,193 excluded "New Contact" spam
+> records. Goal A (§2) is unaffected (0 archived deals have future tour dates).
+
 **Status:** COMPLETE. Read-only deep audit executed via Railway against live Pipedrive + Airtable.
 All numbers below are verified from the API (full pagination, not estimates). No writes to any
 system, no snapshot stored, no import, no `LegacyRecord`, no schema change.

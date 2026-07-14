@@ -194,12 +194,16 @@ approved. Cross-checked against Airtable: 94 future tours, 100% linked to a Pipe
 Phases M1–M3 are cheap and safe (read-only, no GOS writes). M4 is the first GOS write and the
 riskiest phase. M5–M7 are schedule-driven (freeze window). M8 has no time pressure at all.
 
-> **Status (2026-07-14):** M1 external read-only audit is **complete** — see
-> `GOS-migration-M1-deep-audit.md` (verified deal count, active-scope measurement, line-item
-> availability, org dedup, contact language classification, Drive-link inventory) and
-> `GOS-migration-external-readiness-audit.md` (connection, structure, Deal↔Tour linkage). The
-> rehearsal→delta→cutover model (§1.7) maps onto phases M4 (rehearsal load) → freeze → delta →
-> M6 reconciliation → M7 cutover. No snapshot has been stored and no GOS write has occurred yet.
+> **Status (2026-07-14):** M1 external read-only audit is **complete**, including the M1b
+> corrections round — see `GOS-migration-M1b-corrections-audit.md` (the Pipedrive archive holds
+> **19,448 additional deals**, mass-archived 2026-03; true accessible population **24,356**;
+> extraction must use `archived_status=all`; archived deals are fully extractable without
+> restore and carry update timestamps for delta), plus `GOS-migration-M1-deep-audit.md` and
+> `GOS-migration-external-readiness-audit.md`. The mapping package draft
+> (`GOS-migration-mapping-package.md`) and the Org+Unit review report
+> (`GOS-migration-org-unit-review.md`) are awaiting owner approval. The rehearsal→delta→cutover
+> model (§1.7) maps onto phases M4 (rehearsal load) → freeze → delta → M6 reconciliation → M7
+> cutover. No snapshot has been stored and no GOS write has occurred yet.
 
 ---
 
