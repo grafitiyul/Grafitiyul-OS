@@ -189,20 +189,22 @@ collection rows, unresolvable phones/links) · ⑥ Legacy archive browser (§10)
 - Decisions persist in migration-scoped ledger tables (designed with the `LegacyRecord` slice),
   so deleting the Center's UI/routes later loses nothing — the decision audit survives.
 
-## 10) Archive accessibility (Decision 7c — proposal, ⏳ awaiting approval)
+## 10) Archive accessibility (Decision 7c — ✅ APPROVED with UX refinement)
 
-Archived material must be reachable without reading JSON:
+**Owner refinement (binding):** the PRIMARY experience is a normal card on every migrated
+entity — not a generic browser.
 
-1. **Permanent per-record panel — "מידע ממערכת קודמת".** On every migrated Deal / Contact /
-   Organization / Tour: a collapsed section rendering the entity's archived legacy fields as
-   readable label → value pairs (Hebrew field names as they were), including original pipeline/
-   stage, owner name, legacy ids, unmapped custom fields. Read-only, loaded on demand. This
-   panel is small, permanent, and is the honest answer to "where did this deal come from".
-2. **Read-only legacy-archive browser.** During migration: tab ⑥ of the Review Center. After
-   cutover: a small read-only screen (admin settings area) for NON-entity material — the ניסוחים
-   templates, legacy catalogs, obsolete-field reference — searchable by table/name. The Review
-   Center is deleted; this browser (a thin read-only list+viewer) is retained.
-3. Raw snapshots in R2 remain the deep-forensics layer (rarely needed once 1+2 exist).
+1. **"מידע ממערכת קודמת" card** on every migrated Deal / Contact / Organization / Tour: a clean
+   **label → value** layout of the *important* legacy information — Pipedrive owner, legacy
+   pipeline + stage, meaningful legacy custom fields, original pricing notes, original Drive/
+   Photos links, and similar. **No JSON, no raw payloads, no internal ids.** Curated per entity
+   type (the mapping decides which fields are "important"; the rest stays in the full archive).
+2. **"View complete legacy archive" action** on the card — only when needed, opens the full
+   preserved record (complete field set, rendered readably).
+3. **Legacy-archive browser** is demoted to secondary: Review Center tab ⑥ during migration;
+   after cutover a small read-only screen for NON-entity material only (ניסוחים templates,
+   legacy catalogs). Day-to-day experience stays native to GOS.
+4. Raw snapshots in R2 remain the deep-forensics layer.
 
 ## 11) Decision register (final state)
 
@@ -217,6 +219,6 @@ Archived material must be reachable without reading JSON:
 | D6 legacy ids (deals orderNo + org/contact visible ids) | ✅ approved |
 | D7a tasks (lost/archived → history; active → Tasks) | ✅ approved |
 | D7b links only | ✅ approved |
-| D7c archive-only + accessible presentation | ✅ approved; §10 presentation ⏳ |
+| D7c archive-only + accessible presentation | ✅ approved incl. §10 card-first UX refinement |
 | D8 native Timeline (incl. stage-change history) | ✅ approved |
-| Review Center (single center) | ⏳ **recommended, awaits approval** |
+| Review Center (single center, 6 tabs) | ✅ **approved** |

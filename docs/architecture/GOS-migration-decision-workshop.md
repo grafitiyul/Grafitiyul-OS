@@ -102,11 +102,16 @@ proposed tab list and clear caveats. Awaiting owner sign-off (remaining item #2)
 
 ## Remaining product-owner decisions (only these)
 
-1. **Approve the complete stage-mapping table** (mapping package §3a — now with full volumes,
-   the Collection rule, and the measured Gift-Cards / Long-term proposals).
-2. **Approve the Migration Review Center design + archive-access proposal** (mapping package
-   §9–§10: single center, 6 tabs, decision ledger, deletion plan; permanent legacy panel +
-   read-only archive browser).
+1. **Approve the complete stage-mapping table** (mapping package §3a / final table presented
+   2026-07-14 — one row per legacy stage, with volumes, reasons, preserved history).
+2. ~~Migration Review Center + archive access~~ — ✅ **APPROVED 2026-07-14**, with a binding UX
+   refinement: the primary experience is a normal **"מידע ממערכת קודמת" card** on every migrated
+   entity (clean label→value: Pipedrive owner, legacy stage, meaningful custom fields, pricing
+   notes, Drive links — no JSON, no raw payloads, no ids), plus a **"View complete legacy
+   archive"** action for the full preserved record. The generic browser is secondary (Center tab
+   during migration; small read-only screen for non-entity material afterward).
 
 Later checkpoints (not decisions now): the file-size report go/no-go before copying (3c), the
 review-queue items themselves (inside the Center), and the final cutover go/no-go.
+
+**Upon approval of item 1, the migration specification is FROZEN and implementation begins.**
