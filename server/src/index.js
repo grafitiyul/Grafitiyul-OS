@@ -601,4 +601,11 @@ app.listen(port, () => {
   import('./maintenance/repairWooSellableState.js')
     .then(({ startWooSellableRepair }) => startWooSellableRepair(prisma, console))
     .catch((e) => console.warn('[maintenance] woo sellable repair failed:', e?.message));
+
+  // Durable one-time dedupe of raced duplicate open-tour slots (2026-07-13
+  // generation race): the oldest twin is kept, empty newer twins are cancelled
+  // through the normal Woo/Calendar mirrors — never deleted, never registered.
+  import('./maintenance/dedupeRacedTourSlots.js')
+    .then(({ startDedupeRacedTourSlots }) => startDedupeRacedTourSlots(prisma, console))
+    .catch((e) => console.warn('[maintenance] raced-slot dedupe failed:', e?.message));
 });
