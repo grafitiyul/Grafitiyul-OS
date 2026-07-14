@@ -150,7 +150,7 @@ test('cancelled/postponed occurrence → every variation hidden + zero stock, ne
     remaining: 7,
   });
   for (const v of cancelled) {
-    assert.equal(v.payload.status, 'private');
+    assert.equal(v.payload.status, 'draft');
     assert.equal(v.payload.stock_quantity, 0);
     assert.equal(v.payload.stock_status, 'outofstock');
   }
@@ -166,7 +166,7 @@ test('registration cutoff hides every sibling', () => {
     remaining: 7,
     registrationClosed: true,
   });
-  for (const v of closed) assert.equal(v.payload.status, 'private');
+  for (const v of closed) assert.equal(v.payload.status, 'draft');
 });
 
 test('product WITHOUT age split (no pa_גיל) → one variation, still real price', () => {

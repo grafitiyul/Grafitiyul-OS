@@ -294,7 +294,7 @@ test('global: cancellation disables EVERY sibling variation (never deletes)', as
   });
   await reconcileTourWoo(deps(env), 'slot1');
   assert.equal(env.calls.updated.length, 2);
-  assert.ok(env.calls.updated.every((u) => u.data.status === 'private' && u.data.stock_quantity === 0));
+  assert.ok(env.calls.updated.every((u) => u.data.status === 'draft' && u.data.stock_quantity === 0));
 });
 
 test('global: reopen (cancelled→scheduled) re-publishes the SAME variations', async () => {
@@ -323,7 +323,7 @@ test('mapping change: old-product variations DISABLED, new-product created; old 
   // Old product 167 variations disabled in place (updates, not deletes).
   const disabled = env.calls.updated.filter((u) => u.productId === 167);
   assert.equal(disabled.length, 2);
-  assert.ok(disabled.every((u) => u.data.status === 'private' && u.data.stock_quantity === 0));
+  assert.ok(disabled.every((u) => u.data.status === 'draft' && u.data.stock_quantity === 0));
   // New product 170 gets fresh variations.
   assert.equal(env.calls.created.filter((c) => c.productId === 170).length, 2);
   // Links now point at the new product.
@@ -342,7 +342,7 @@ test('dropped ticket type: its stale variation is retired (disabled), never dele
   await reconcileTourWoo(deps(env), 'slot1');
   // Child variation 112 disabled; link marked disabled.
   const childDisable = env.calls.updated.find((u) => u.variationId === 112);
-  assert.ok(childDisable && childDisable.data.status === 'private');
+  assert.ok(childDisable && childDisable.data.status === 'draft');
   assert.equal(env.linkStore['slot1::cardA::' + TT_CHILD].status, 'disabled');
 });
 

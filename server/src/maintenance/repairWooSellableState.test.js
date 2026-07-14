@@ -43,16 +43,22 @@ function makeEnv() {
       },
     },
   };
+  const drafted = [];
   const woo = {
     getProduct: async () => ({ id: 167, attributes: [{ id: 1, name: 'תאריך', options: ['15/07/2026'] }] }),
     listVariations: async () => [
-      { status: 'publish', attributes: [{ id: 1, option: '15-07-2026' }, { id: 2, option: '1800' }] },
+      { id: 900, status: 'publish', attributes: [{ id: 1, option: '15-07-2026' }, { id: 2, option: '1800' }], meta_data: [] },
+      // orphan GOS variation stuck at 'private' → must be drafted (theme lists private children)
+      { id: 901, status: 'private', attributes: [], meta_data: [{ key: '_gos_tourevent_id', value: 'T-linked-1' }] },
+      // legacy private variation without GOS meta → must NOT be touched
+      { id: 902, status: 'private', attributes: [], meta_data: [] },
     ],
     listAttributeTerms: async () => [{ id: 11, name: '15/07/2026', slug: '15-07-2026', menu_order: 20260715 }],
     updateProduct: async (id, data) => { productUpdates.push({ id, data }); return { id }; },
+    updateVariation: async (productId, variationId, data) => { drafted.push({ variationId, ...data }); return { id: variationId }; },
     updateAttributeTerm: async () => ({}),
   };
-  return { db, woo, tourUpdates, productUpdates };
+  return { db, woo, tourUpdates, productUpdates, drafted };
 }
 
 test('repair re-pends ONLY linked occurrences (maintenance origin) and reconciles product options', async () => {
@@ -66,6 +72,9 @@ test('repair re-pends ONLY linked occurrences (maintenance origin) and reconcile
   // Options already truthful in this fixture → no product write.
   assert.equal(env.productUpdates.length, 0);
   assert.equal(summary.products[0].changed, false);
+  // The private GOS orphan is drafted; the legacy private variation is untouched.
+  assert.deepEqual(env.drafted, [{ variationId: 901, status: 'draft' }]);
+  assert.deepEqual(summary.products[0].drafted, [901]);
 });
 
 test('repair is a no-op without active mappings', async () => {

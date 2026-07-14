@@ -22,6 +22,26 @@ export function occurrenceLabel(date, startTime) {
   return `${d}.${m}.${y} ${startTime}`;
 }
 
+// Chronological variation menu_order — minutes since 2020-01-01 for the
+// occurrence's (date, time). The LIVE storefront theme lists occurrences in
+// WordPress child order (menu_order ASC, ID ASC — NOT product options or term
+// order), so GOS stamps every variation with this stable, monotonic key: new
+// occurrences land in true chronological position with no reindexing.
+const MENU_ORDER_EPOCH = Date.parse('2020-01-01T00:00:00Z');
+export function variationMenuOrder(date, startTime) {
+  if (!date || !startTime) return null;
+  const ms = Date.parse(`${date}T${startTime}:00Z`) - MENU_ORDER_EPOCH;
+  if (!Number.isFinite(ms)) return null;
+  return Math.max(0, Math.floor(ms / 60_000));
+}
+
+// Status for a variation that must NOT be offered (cancelled/replaced/closed/
+// no-date). 'draft' — NOT 'private' — because the live theme builds its date
+// picker from get_children(), which INCLUDES private children; only draft
+// leaves the storefront list entirely. Still never deleted: the row, its
+// order references and its history stay intact, and reopen republishes it.
+export const DISABLED_VARIATION_STATUS = 'draft';
+
 // Minor units → WooCommerce decimal price string ("45.00"). Undefined when no
 // price is known (the reconciler then leaves the variation price untouched).
 export function minorToWooPrice(minor) {
@@ -65,9 +85,9 @@ export function buildVariationPayload({
     manage_stock: true,
     stock_quantity: disabled ? 0 : stock,
     stock_status: !disabled && stock > 0 ? 'instock' : 'outofstock',
-    // published vs hidden: a disabled occurrence goes 'private' (hidden from the
-    // store) but is preserved for order history.
-    status: disabled ? 'private' : 'publish',
+    // published vs hidden: a disabled occurrence is a DRAFT (out of the
+    // storefront's children list) but is preserved for order history.
+    status: disabled ? DISABLED_VARIATION_STATUS : 'publish',
     meta_data: [
       { key: META_TOUREVENT_ID, value: tour.id },
       { key: META_CARD_GROUP_ID, value: cardGroupId },
@@ -80,6 +100,7 @@ export function buildVariationPayload({
   // a postponed tour keeps whatever attribute it already had (just hidden).
   if (hasDate) {
     payload.attributes = [{ name: dateAttribute, option: occurrenceLabel(tour.date, tour.startTime) }];
+    payload.menu_order = variationMenuOrder(tour.date, tour.startTime);
   }
   const price = minorToWooPrice(priceMinor);
   if (price !== undefined) payload.regular_price = price;
@@ -199,7 +220,7 @@ export function buildOccurrenceVariations({
       manage_stock: true,
       stock_quantity: disabled ? 0 : stock,
       stock_status: !disabled && stock > 0 ? 'instock' : 'outofstock',
-      status: disabled ? 'private' : 'publish',
+      status: disabled ? DISABLED_VARIATION_STATUS : 'publish',
       meta_data: [
         { key: META_TOUREVENT_ID, value: tour.id },
         { key: META_CARD_GROUP_ID, value: cardGroupId },
@@ -213,7 +234,10 @@ export function buildOccurrenceVariations({
     };
     // Only (re)write attributes when we have a concrete occurrence — a postponed
     // tour keeps whatever attributes it already had (just hidden).
-    if (hasDate) payload.attributes = attributes;
+    if (hasDate) {
+      payload.attributes = attributes;
+      payload.menu_order = variationMenuOrder(tour.date, tour.startTime);
+    }
 
     const price = minorToWooPrice(row.unitPriceMinor);
     if (price !== undefined) payload.regular_price = price;

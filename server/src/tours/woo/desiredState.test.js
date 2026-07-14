@@ -7,6 +7,7 @@ import {
   metaValue,
   findVariationForTour,
   META_TOUREVENT_ID,
+  variationMenuOrder,
 } from './desiredState.js';
 
 // The pure GOS→Woo variation-payload rules. WooCommerce simply REFLECTS GOS.
@@ -56,7 +57,7 @@ test('cancelled occurrence → hidden (private) + zero stock, never deleted, met
     priceMinor: 4500,
     dateAttribute: 'Date',
   });
-  assert.equal(p.status, 'private'); // hidden, order history preserved
+  assert.equal(p.status, 'draft'); // out of the storefront, order history preserved
   assert.equal(p.stock_quantity, 0);
   assert.equal(p.stock_status, 'outofstock');
   assert.equal(metaValue(p, META_TOUREVENT_ID), 'slot1'); // identity preserved
@@ -71,13 +72,13 @@ test('postponed (no date) → hidden and the date attribute is NOT rewritten', (
     priceMinor: 4500,
     dateAttribute: 'Date',
   });
-  assert.equal(p.status, 'private');
+  assert.equal(p.status, 'draft');
   assert.equal(p.attributes, undefined); // keep whatever the variation already had
 });
 
 test('registrationClosed hides the occurrence even while scheduled', () => {
   const p = buildVariationPayload({ tour: TOUR, cardGroupId: 'c', capacity: 20, remaining: 5, priceMinor: 4500, dateAttribute: 'Date', registrationClosed: true });
-  assert.equal(p.status, 'private');
+  assert.equal(p.status, 'draft');
   assert.equal(p.stock_quantity, 0);
 });
 
@@ -93,4 +94,22 @@ test('findVariationForTour matches by the stable meta link', () => {
   ];
   assert.equal(findVariationForTour(variations, 'slot1').id, 2);
   assert.equal(findVariationForTour(variations, 'nope'), null);
+});
+
+// ── Chronological variation menu_order (the LIVE theme sorts by child order) ──
+
+test('variationMenuOrder is monotonic across days, months, years and times', () => {
+  const k = variationMenuOrder;
+  assert.ok(k('2026-07-15', '18:00') < k('2026-07-17', '10:45'));
+  assert.ok(k('2026-07-17', '10:45') < k('2026-07-17', '13:00')); // same date, later time
+  assert.ok(k('2026-07-17', '13:00') < k('2026-08-01', '09:00')); // month rollover
+  assert.ok(k('2026-12-31', '23:00') < k('2027-01-01', '07:00')); // year rollover
+  assert.equal(k(null, '10:00'), null);
+  assert.equal(k('2026-07-15', null), null);
+});
+
+test('payload carries the chronological menu_order for the occurrence', () => {
+  const p = buildVariationPayload({ tour: TOUR, cardGroupId: 'c', capacity: 20, remaining: 5, priceMinor: 4500, dateAttribute: 'Date' });
+  assert.equal(p.menu_order, variationMenuOrder(TOUR.date, TOUR.startTime));
+  assert.ok(Number.isInteger(p.menu_order) && p.menu_order > 0);
 });

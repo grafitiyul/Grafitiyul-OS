@@ -11,6 +11,7 @@ import {
   timeTermName,
   timeTermSlug,
   durationKey,
+  DISABLED_VARIATION_STATUS,
 } from './desiredState.js';
 import { readableSlug } from './suggestConfig.js';
 import { resolveSellableCards, mappedTemplateIds } from './mapping.js';
@@ -145,13 +146,13 @@ async function ensureProductHasOption(woo, productId, dateCfg, termName) {
   await woo.updateProduct(productId, { attributes: nextAttrs });
 }
 
-// Disable (never delete) a variation: hidden + zero, unpurchasable. Used for
-// cancellation is handled by the desired payload; this is for RETIRING a
-// variation we no longer produce (a dropped ticket type, or the old product
-// after a mapping change) so no orphan stays sellable.
+// Disable (never delete) a variation: out of the storefront + zero stock,
+// unpurchasable. Used for cancellation is handled by the desired payload; this
+// is for RETIRING a variation we no longer produce (a dropped ticket type, or
+// the old product after a mapping change) so no orphan stays sellable.
 async function disableVariation(deps, productId, variationId) {
   await deps.woo.updateVariation(productId, variationId, {
-    status: 'private',
+    status: DISABLED_VARIATION_STATUS,
     manage_stock: true,
     stock_quantity: 0,
     stock_status: 'outofstock',

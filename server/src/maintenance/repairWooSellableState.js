@@ -2,6 +2,7 @@ import { woo as realWoo, wooConfigured } from '../tours/woo/wooClient.js';
 import { wooPendingPatch } from '../tours/woo/service.js';
 import { kickWooSync } from '../tours/woo/syncWorker.js';
 import { reconcileProductOptions } from '../tours/woo/productOptions.js';
+import { META_TOUREVENT_ID, metaValue, DISABLED_VARIATION_STATUS } from '../tours/woo/desiredState.js';
 
 // Durable one-time repair of the LIVE sellable state for every GOS-mapped Woo
 // product (currently #167):
@@ -15,8 +16,16 @@ import { reconcileProductOptions } from '../tours/woo/productOptions.js';
 //      published variation set (cancelled/stale dates disappear from the
 //      selector; shared dates survive) and the global date/time terms get a
 //      chronological menu_order (fixes lexicographic dd/mm/yyyy ordering).
+//   3. every GOS-managed variation still sitting at 'private' is moved to
+//      'draft': the LIVE theme builds its date picker from get_children(),
+//      which INCLUDES private children — only draft leaves the list. Covers the
+//      orphan duplicates disabled by earlier jobs (no link → the worker never
+//      revisits them). Re-pended linked tours also pick up the chronological
+//      variation menu_order the storefront actually sorts by.
 // Idempotent + claim-guarded (MaintenanceJob) — runs once across restarts.
-const KEY = 'woo_sellable_repair_v1';
+// v2: v1 ran before the storefront audit revealed the theme ignores product
+// options/term order and lists private children — v2 adds steps 3 + menu_order.
+const KEY = 'woo_sellable_repair_v2';
 const STALE_MS = 15 * 60 * 1000;
 
 // The core, exported for tests. deps: { woo, log }.
@@ -49,16 +58,28 @@ export async function repairWooSellableState(client, woo, log = console) {
     });
   }
 
-  // 2. Public selector truth + chronological order, per mapped product.
+  // 2+3. Public selector truth + chronological order + private→draft for every
+  // GOS-managed disabled variation (incl. unlinked orphans), per mapped product.
   const productIds = [...new Set(mappings.map((m) => m.wooProductId))];
   const products = [];
   for (const productId of productIds) {
     const before = (await woo.getProduct(productId)).attributes || [];
+
+    const drafted = [];
+    for (const v of await woo.listVariations(productId)) {
+      if (v.status !== 'private') continue;
+      if (metaValue(v, META_TOUREVENT_ID) === undefined) continue; // never touch legacy variations
+      await woo.updateVariation(productId, v.id, { status: DISABLED_VARIATION_STATUS });
+      drafted.push(v.id);
+    }
+    if (drafted.length) log?.log?.(`[maintenance:${KEY}] product ${productId}: drafted ${drafted.length} private GOS variations`);
+
     const result = await reconcileProductOptions({ db: client, woo, log }, productId);
     products.push({
       productId,
       changed: result.changed,
       removed: result.removed,
+      drafted,
       optionsBefore: Object.fromEntries(before.map((a) => [a.id ?? a.name, a.options || []])),
     });
   }
