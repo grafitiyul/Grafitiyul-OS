@@ -13,3 +13,5 @@ coverage/
 .figma-ref/
 # Build artifact: schema copied from server/prisma by bridge/scripts/sync-schema.mjs
 bridge/prisma/schema.prisma
+# One-time legacy-migration audit output (raw legacy structure — never commit)
+server/scripts/migration/output/
