@@ -14,6 +14,7 @@ import {
 } from './desiredState.js';
 import { readableSlug } from './suggestConfig.js';
 import { resolveSellableCards, mappedTemplateIds } from './mapping.js';
+import { reconcileProductOptions, dateMenuOrder, timeMenuOrder } from './productOptions.js';
 
 // GOS → WooCommerce sync worker. For every sellable TourEvent (a group slot whose
 // template has a mapped Pricing Card) it mirrors the concrete occurrence to a
@@ -84,15 +85,30 @@ function desiredVariationSet(tour, card, ctx) {
 
 // Ensure the GLOBAL-taxonomy occurrence terms exist (GOS owns the dates; Woo
 // won't auto-create terms) and that the date term is selectable on the product.
+// New date/time terms are created WITH a chronological menu_order (yyyymmdd /
+// hhmm) — the storefront orders every attribute by term menu_order, so a fresh
+// occurrence lands in its chronological slot instead of lexicographic name order.
 async function ensureOccurrenceTerms(woo, card, tour, durationHours = null) {
   const cfg = card.config;
   if (!cfg || !tour.date || !tour.startTime) return;
   const wants = [];
   if (cfg.date?.attrId != null) {
-    wants.push({ node: cfg.date, name: dateTermName(tour.date), slug: dateTermSlug(tour.date), attach: true });
+    wants.push({
+      node: cfg.date,
+      name: dateTermName(tour.date),
+      slug: dateTermSlug(tour.date),
+      menuOrder: dateMenuOrder(dateTermName(tour.date)),
+      attach: true,
+    });
   }
   if (cfg.time?.attrId != null) {
-    wants.push({ node: cfg.time, name: timeTermName(tour.startTime), slug: timeTermSlug(tour.startTime), attach: false });
+    wants.push({
+      node: cfg.time,
+      name: timeTermName(tour.startTime),
+      slug: timeTermSlug(tour.startTime),
+      menuOrder: timeMenuOrder(timeTermName(tour.startTime)),
+      attach: false,
+    });
   }
   // Duration term (pa_משך): the option is the readable slug; find the real term
   // by that slug so the product-option attach uses the correct NAME.
@@ -105,7 +121,13 @@ async function ensureOccurrenceTerms(woo, card, tour, durationHours = null) {
     let term = (terms || []).find(
       (t) => t.slug === w.slug || t.name === w.name || (w.byOption && readableSlug(t.name) === w.slug),
     );
-    if (!term) term = await woo.createAttributeTerm(w.node.attrId, { name: w.name, slug: w.slug });
+    if (!term) {
+      term = await woo.createAttributeTerm(w.node.attrId, {
+        name: w.name,
+        slug: w.slug,
+        ...(w.menuOrder != null ? { menu_order: w.menuOrder } : {}),
+      });
+    }
     if (w.attach) await ensureProductHasOption(woo, card.wooProductId, w.node, term?.name || w.name);
   }
 }
@@ -136,12 +158,23 @@ async function disableVariation(deps, productId, variationId) {
   });
 }
 
+// How a CREATED variation came to exist — recorded on the link (createdVia) and
+// logged, so live variations are attributable: explicit sync-one, bulk
+// generation, adoption of an existing Woo variation, or repair of an
+// already-linked occurrence.
+function creationProvenance(origin, adopted) {
+  if (adopted) return 'adoption';
+  if (origin === 'explicit') return 'sync_one';
+  if (origin === 'bulk') return 'bulk';
+  return 'repair';
+}
+
 // Converge ONE variant (one age/ticket type) of a card. Idempotent: update the
 // stored variation, else adopt one matched by our stable per-variant meta, else
 // create. NEVER deletes. On a mapping product change, the OLD-product variation
 // is disabled first so an occurrence never has two active sellable variations.
 async function reconcileVariant(deps, tour, card, desired, existing) {
-  const { db, woo } = deps;
+  const { db, woo, log } = deps;
   const key = {
     tourEventId_cardGroupId_variantKey: {
       tourEventId: tour.id,
@@ -157,18 +190,29 @@ async function reconcileVariant(deps, tour, card, desired, existing) {
   }
 
   let variationId = link && link.wooProductId === card.wooProductId ? link.wooVariationId : null;
+  let adopted = false;
   if (!variationId) {
     const found = findVariationForVariant(await existing(), tour.id, card.cardGroupId, desired.variantKey);
-    if (found) variationId = found.id;
+    if (found) {
+      variationId = found.id;
+      adopted = true;
+    }
   }
 
   let resultId;
+  let createdVia = null;
   if (variationId) {
     const res = await woo.updateVariation(card.wooProductId, variationId, desired.payload);
     resultId = res?.id ?? variationId;
+    if (adopted) createdVia = 'adoption';
   } else {
     const res = await woo.createVariation(card.wooProductId, desired.payload);
     resultId = res?.id ?? null;
+    createdVia = creationProvenance(tour.wooSyncOrigin, false);
+    log?.log?.(
+      `[woo-sync] created variation product=${card.wooProductId} variation=${resultId} ` +
+        `tour=${tour.id} card=${card.cardGroupId} variant=${desired.variantKey} via=${createdVia}`,
+    );
   }
 
   await db.wooVariationLink.upsert({
@@ -181,6 +225,8 @@ async function reconcileVariant(deps, tour, card, desired, existing) {
       wooProductId: card.wooProductId,
       wooVariationId: resultId,
       status: 'synced',
+      // Adoption is also provenance when the LINK is new but the variation existed.
+      createdVia: createdVia || creationProvenance(tour.wooSyncOrigin, adopted),
       lastError: null,
     },
     update: {
@@ -189,6 +235,7 @@ async function reconcileVariant(deps, tour, card, desired, existing) {
       wooVariationId: resultId ?? variationId ?? null,
       status: 'synced',
       lastError: null,
+      // createdVia deliberately NOT updated — creation provenance is immutable.
     },
   });
 }
@@ -229,7 +276,7 @@ async function reconcileCard(deps, tour, card, ctx) {
 // success/failure write is guarded on the loaded updatedAt, so a mutation during
 // the Woo round-trip leaves the row pending for the next tick.
 export async function reconcileTourWoo(deps, tourId) {
-  const { db, woo, now = Date.now() } = deps;
+  const { db, woo, log, now = Date.now() } = deps;
   const tour = await db.tourEvent.findUnique({
     where: { id: tourId },
     select: {
@@ -241,14 +288,9 @@ export async function reconcileTourWoo(deps, tourId) {
       openTourTemplateId: true,
       updatedAt: true,
       wooSyncStatus: true,
+      wooSyncOrigin: true,
       wooAttempts: true,
       wooDesiredRevision: true,
-      // Operational product duration — the canonical source for pa_משך. The
-      // per-slot override lives on the TEMPLATE (durationHoursOverride is an
-      // OpenTourTemplate field, NOT TourEvent — selecting it here threw and broke
-      // every reconcile since the duration slice), so read it from the template.
-      productVariantId: true,
-      productVariant: { select: { durationHours: true } },
     },
   });
   if (!tour || tour.wooSyncStatus !== 'pending') return 'skipped';
@@ -272,6 +314,28 @@ export async function reconcileTourWoo(deps, tourId) {
     return 'skipped';
   }
 
+  // FIRST-PUBLICATION GATE. WOO_SYNC_ENABLED alone allows converging occurrences
+  // that are ALREADY linked (update/cancel/reopen/repair) and explicit sync-one.
+  // Automatically publishing a NEVER-linked occurrence is BULK behaviour: it
+  // requires WOO_SYNC_BULK_ENABLED, no matter who marked the tour pending — so a
+  // maintenance/repair job that marks tours pending can never silently become a
+  // bulk-publication mechanism. Blocked tours are parked back to NULL (with the
+  // reason recorded), so enabling bulk later sweeps them in normally.
+  const linkCount = await db.wooVariationLink.count({ where: { tourEventId: tour.id } });
+  if (!linkCount && !wooSyncBulkEnabled() && tour.wooSyncOrigin !== 'explicit') {
+    log?.log?.(
+      `[woo-sync] BLOCKED first-time publication tour=${tour.id} date=${tour.date} ` +
+        `(origin=${tour.wooSyncOrigin || 'auto'}, bulk off) — explicit sync-one or WOO_SYNC_BULK_ENABLED required`,
+    );
+    await markGuarded({
+      wooSyncStatus: null,
+      wooSyncError: 'first_publication_blocked: bulk sync off and not explicitly requested',
+      wooAttempts: 0,
+      wooNextRetryAt: null,
+    });
+    return 'blocked';
+  }
+
   // ONE canonical capacity + remaining, shared across EVERY card on this tour
   // (so sibling ticket products can never advertise divergent stock).
   const occ = await occupancyFor(db, [tour.id]);
@@ -279,26 +343,23 @@ export async function reconcileTourWoo(deps, tourId) {
   const remaining = tour.capacity == null ? null : Math.max(0, tour.capacity - activeSeats);
 
   let closeMinutes = null;
-  let templateDurationOverride = null;
   if (tour.openTourTemplateId) {
     const tpl = await db.openTourTemplate.findUnique({
       where: { id: tour.openTourTemplateId },
-      select: { registrationCloseMinutes: true, durationHoursOverride: true },
+      select: { registrationCloseMinutes: true },
     });
     closeMinutes = tpl?.registrationCloseMinutes ?? null;
-    templateDurationOverride = tpl?.durationHoursOverride ?? null;
   }
   const registrationClosed = occurrenceClosed(tour.date, tour.startTime, closeMinutes, now);
-  // Effective duration: the template's explicit override wins, else the
-  // operational product variant's canonical durationHours (null when neither is
-  // set — a configured pa_משך then fails visibly per card and retries).
-  const durationHours = templateDurationOverride ?? tour.productVariant?.durationHours ?? null;
-  const ctx = { capacity: tour.capacity, remaining, registrationClosed, durationHours };
+  const ctx = { capacity: tour.capacity, remaining, registrationClosed };
 
   const errors = [];
   for (const card of cards) {
     try {
-      await reconcileCard(deps, tour, card, ctx);
+      // Customer-facing duration is PER CARD (the card's own product variant),
+      // never the tour's operational duration: the same occurrence sells a
+      // 1.5h tour-only card next to a 2.5h tour+workshop card.
+      await reconcileCard(deps, tour, card, { ...ctx, durationHours: card.durationHours ?? null });
     } catch (e) {
       errors.push(`${card.cardGroupId}: ${e.message}`);
       await db.wooVariationLink
@@ -349,7 +410,9 @@ export async function sweepUnsyncedWooTours(db, { today = israelToday() } = {}) 
       date: { gte: today },
       openTourTemplateId: { in: templateIds },
     },
-    data: { wooSyncStatus: 'pending' },
+    // 'bulk' provenance: the sweep only runs when WOO_SYNC_BULK_ENABLED is on,
+    // and variations it creates are recorded as bulk-generated.
+    data: { wooSyncStatus: 'pending', wooSyncOrigin: 'bulk' },
   });
   return res.count;
 }
@@ -408,6 +471,21 @@ export function startWooSyncWorker(log = console) {
         select: { id: true },
       });
       for (const t of tours) await reconcileTourWoo(deps, t.id);
+
+      // Keep each touched product's PUBLIC selector truthful: derive its
+      // attribute options from the actual published variation set (a cancelled
+      // occurrence's date disappears once no published variation uses it) and
+      // keep date/time term order chronological.
+      const touched = await prisma.wooVariationLink.findMany({
+        where: { tourEventId: { in: tours.map((t) => t.id) } },
+        select: { wooProductId: true },
+        distinct: ['wooProductId'],
+      });
+      for (const { wooProductId } of touched) {
+        await reconcileProductOptions(deps, wooProductId).catch((e) =>
+          log?.warn?.(`[woo-sync] product-options reconcile failed for ${wooProductId}: ${e?.message}`),
+        );
+      }
     } catch (e) {
       log?.warn?.('[woo-sync] worker tick failed:', e?.message);
     } finally {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../../../lib/api.js';
 import SettingsChrome from '../../settings/SettingsChrome.jsx';
 import Toggle from '../../common/Toggle.jsx';
+import AlertDialog from '../../common/AlertDialog.jsx';
 
 // Settings → Tours → "גלריית סיורים". Server-backed singleton
 // (TourGallerySettings) — every switch here materially controls behavior that
@@ -29,6 +30,7 @@ export default function GallerySettingsPage() {
   const [settings, setSettings] = useState(null);
   const [error, setError] = useState(null);
   const [savedFlash, setSavedFlash] = useState(false);
+  const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
 
   useEffect(() => {
     api.tourGallery
@@ -47,7 +49,7 @@ export default function GallerySettingsPage() {
       setTimeout(() => setSavedFlash(false), 1500);
     } catch (e) {
       setSettings(prev);
-      alert('שגיאה בשמירה: ' + (e.payload?.error || e.message));
+      setAlertMsg('שגיאה בשמירה: ' + (e.payload?.error || e.message));
     }
   }
 
@@ -136,6 +138,7 @@ export default function GallerySettingsPage() {
           </div>
         </section>
       )}
+      <AlertDialog open={!!alertMsg} body={alertMsg} onClose={() => setAlertMsg(null)} />
     </div>
   );
 }

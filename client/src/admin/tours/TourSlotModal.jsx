@@ -303,12 +303,14 @@ export default function TourSlotModal({ open, tour, onClose, onSaved }) {
           try {
             await api.tours.reseedComponents(tour.id);
             onSaved?.();
+            onClose();
           } catch (e) {
-            alert('שגיאה בהחלפת המרכיבים: ' + (e.payload?.error || e.message));
+            // Keep the modal open and surface the failure in the inline error
+            // banner (never a native alert; closing would hide the message).
+            setError('החלפת המרכיבים נכשלה — ' + (e.payload?.error || e.message));
           } finally {
             setReseedBusy(false);
             setAskReseed(false);
-            onClose();
           }
         }}
       />

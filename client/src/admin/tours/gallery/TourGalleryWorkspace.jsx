@@ -7,6 +7,7 @@ import UploadQueuePanel from '../../../gallery/UploadQueuePanel.jsx';
 import DownloadAllButton from '../../../gallery/DownloadAllButton.jsx';
 import UploadPrimaryButton from '../../../gallery/UploadPrimaryButton.jsx';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
+import AlertDialog from '../../common/AlertDialog.jsx';
 
 // Full staff gallery workspace — a large modal ABOVE the Tour page (z-[70]).
 // Grid + lightbox + multi-select + bulk delete + cover + customer-link
@@ -61,6 +62,8 @@ export default function TourGalleryWorkspace({ tourEventId, onClose, onChanged }
   const [copied, setCopied] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [queueSnap, setQueueSnap] = useState(null);
+  const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
+  const [confirmLink, setConfirmLink] = useState(null); // 'rotate' | 'revoke' | null
   const fileInputRef = useRef(null);
 
   const uploader = useMemo(
@@ -145,7 +148,7 @@ export default function TourGalleryWorkspace({ tourEventId, onClose, onChanged }
       await load();
       onChanged?.();
     } catch (e) {
-      alert('שגיאה במחיקה: ' + (e.payload?.error || e.message));
+      setAlertMsg('שגיאה במחיקה: ' + (e.payload?.error || e.message));
     }
   }
 
@@ -155,7 +158,7 @@ export default function TourGalleryWorkspace({ tourEventId, onClose, onChanged }
       await load();
       onChanged?.();
     } catch (e) {
-      alert('שגיאה: ' + (e.payload?.error || e.message));
+      setAlertMsg('שגיאה: ' + (e.payload?.error || e.message));
     }
   }
 
@@ -168,27 +171,27 @@ export default function TourGalleryWorkspace({ tourEventId, onClose, onChanged }
       setTimeout(() => setCopied(false), 2000);
       if (!data?.link) await load();
     } catch (e) {
-      alert('שגיאה: ' + (e.payload?.error || e.message));
+      setAlertMsg('שגיאה: ' + (e.payload?.error || e.message));
     } finally {
       setLinkBusy(false);
     }
   }
 
   async function rotateLink() {
-    if (!window.confirm('להחליף את קישור הלקוח? הקישור הישן יפסיק לעבוד מיידית.')) return;
+    setConfirmLink(null);
     setLinkBusy(true);
     try {
       await api.tourGallery.rotateLink(tourEventId);
       await load();
     } catch (e) {
-      alert('שגיאה: ' + (e.payload?.error || e.message));
+      setAlertMsg('שגיאה: ' + (e.payload?.error || e.message));
     } finally {
       setLinkBusy(false);
     }
   }
 
   async function revokeLink() {
-    if (!window.confirm('לבטל את קישור הלקוח? לקוחות עם הקישור יאבדו גישה.')) return;
+    setConfirmLink(null);
     setLinkBusy(true);
     try {
       await api.tourGallery.revokeLink(tourEventId);
@@ -337,10 +340,10 @@ export default function TourGalleryWorkspace({ tourEventId, onClose, onChanged }
                 </ToolbarButton>
                 {data?.link && (
                   <>
-                    <ToolbarButton onClick={rotateLink} disabled={linkBusy} title="מחליף את הקישור — הישן נחסם">
+                    <ToolbarButton onClick={() => setConfirmLink('rotate')} disabled={linkBusy} title="מחליף את הקישור — הישן נחסם">
                       ↻ החלפת קישור
                     </ToolbarButton>
-                    <ToolbarButton danger onClick={revokeLink} disabled={linkBusy}>
+                    <ToolbarButton danger onClick={() => setConfirmLink('revoke')} disabled={linkBusy}>
                       ביטול קישור
                     </ToolbarButton>
                   </>
@@ -441,6 +444,21 @@ export default function TourGalleryWorkspace({ tourEventId, onClose, onChanged }
         onCancel={() => setConfirmDelete(false)}
         onConfirm={runDelete}
       />
+
+      <ConfirmDialog
+        open={!!confirmLink}
+        title={confirmLink === 'revoke' ? 'ביטול קישור הלקוח' : 'החלפת קישור הלקוח'}
+        body={
+          confirmLink === 'revoke'
+            ? 'לבטל את קישור הלקוח? לקוחות עם הקישור יאבדו גישה.'
+            : 'להחליף את קישור הלקוח? הקישור הישן יפסיק לעבוד מיידית.'
+        }
+        confirmLabel={confirmLink === 'revoke' ? 'בטל קישור' : 'החלף קישור'}
+        danger
+        onCancel={() => setConfirmLink(null)}
+        onConfirm={() => (confirmLink === 'revoke' ? revokeLink() : rotateLink())}
+      />
+      <AlertDialog open={!!alertMsg} body={alertMsg} onClose={() => setAlertMsg(null)} />
     </div>
   );
 }

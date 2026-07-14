@@ -117,4 +117,8 @@ export const woo = {
   },
   createAttributeTerm: (attributeId, data) =>
     wooFetch(`/products/attributes/${attributeId}/terms`, { method: 'POST', body: data }),
+  // Used only to keep date/time terms chronologically ordered (menu_order) —
+  // GOS never deletes taxonomy terms.
+  updateAttributeTerm: (attributeId, termId, data) =>
+    wooFetch(`/products/attributes/${attributeId}/terms/${termId}`, { method: 'PUT', body: data }),
 };

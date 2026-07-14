@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import Dialog from '../admin/common/Dialog.jsx';
 import ConfirmDialog from '../admin/common/ConfirmDialog.jsx';
+import AlertDialog from '../admin/common/AlertDialog.jsx';
 import { fmtTourDate } from '../admin/tours/config.js';
 import { dealPath } from '../admin/deals/config.js';
 
@@ -26,6 +27,7 @@ export default function OrphanToursIndicator() {
   const [loading, setLoading] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(null); // orphan row | null
   const [busyId, setBusyId] = useState(null);
+  const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
   const { pathname } = useLocation();
   const navigate = useNavigate();
 
@@ -71,7 +73,7 @@ export default function OrphanToursIndicator() {
       refreshCount();
       notifyOrphansChanged();
     } catch (e) {
-      alert(errMap[e.payload?.error] || 'שגיאה: ' + (e.payload?.error || e.message));
+      setAlertMsg(errMap[e.payload?.error] || 'שגיאה: ' + (e.payload?.error || e.message));
     } finally {
       setBusyId(null);
     }
@@ -189,6 +191,7 @@ export default function OrphanToursIndicator() {
           act(row, api.tours.cancelOrphan, {});
         }}
       />
+      <AlertDialog open={!!alertMsg} body={alertMsg} onClose={() => setAlertMsg(null)} />
     </>
   );
 }

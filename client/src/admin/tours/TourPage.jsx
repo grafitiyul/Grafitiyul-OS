@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
+import AlertDialog from '../common/AlertDialog.jsx';
 import TimelineFeed from '../common/timeline/TimelineFeed.jsx';
 import QuestionnaireFillDialog from '../../questionnaire/QuestionnaireFillDialog.jsx';
 import FormActionButton from '../../questionnaire/FormActionButton.jsx';
@@ -176,6 +177,7 @@ export default function TourPage() {
   const [confirmComplete, setConfirmComplete] = useState(null); // { missing: [...] } | null
   // Completion reversal ("החזר לעתידי") — undo an accidental same-day completion.
   const [confirmReopen, setConfirmReopen] = useState(false);
+  const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
 
   const refreshSummaryStatus = useCallback(async () => {
     try {
@@ -259,7 +261,7 @@ export default function TourPage() {
       refreshSummaryStatus();
     } catch (e) {
       const code = e.payload?.error;
-      alert(
+      setAlertMsg(
         code === 'tour_cancelled'
           ? 'הסיור בוטל — אין מה לסמן כהסתיים.'
           : code === 'not_tour_day'
@@ -277,7 +279,7 @@ export default function TourPage() {
       refreshSummaryStatus();
     } catch (e) {
       const code = e.payload?.error;
-      alert(
+      setAlertMsg(
         code === 'date_passed'
           ? 'תאריך הסיור כבר עבר — לא ניתן להחזיר אותו לעתידי.'
           : code === 'not_completed'
@@ -296,7 +298,7 @@ export default function TourPage() {
       close();
     } catch (e) {
       const code = e.payload?.error;
-      alert(
+      setAlertMsg(
         code === 'tour_has_bookings'
           ? 'לא ניתן למחוק סיור שיש לו הזמנות.'
           : code === 'gallery_has_media'
@@ -660,6 +662,8 @@ export default function TourPage() {
         onCancel={() => setConfirmReopen(false)}
         onConfirm={runReopen}
       />
+
+      <AlertDialog open={!!alertMsg} body={alertMsg} onClose={() => setAlertMsg(null)} />
     </div>
   );
 }

@@ -6,6 +6,7 @@
 import { deriveTicketRows } from '../../pricing/groupTicketCards.js';
 import { israelToday } from '../slotGeneration.js';
 import { wooSyncBulkEnabled } from './wooClient.js';
+import { wooPendingPatch } from './service.js';
 
 // A sellable card's FULL per-ticket-type price rows (each ticket type keeps its
 // own canonical price — adult/child are distinct Woo variations, so there is NO
@@ -27,16 +28,26 @@ export async function cardTicketRows(client, cardGroupId) {
 }
 
 // The sellable cards for a template that are mapped to a Woo product. Returns
-//   [{ cardGroupId, wooProductId, dateAttribute, config, ticketRows }]
+//   [{ cardGroupId, wooProductId, dateAttribute, config, ticketRows, durationHours }]
 // `config` is the per-product compatibility descriptor (global-taxonomy attribute
 // identities + ticket→age-term map); `ticketRows` are the card's real per-age
-// prices. Nothing here is product-specific — it all comes from the mapping row.
+// prices. `durationHours` is the CUSTOMER-FACING duration of THIS card — the
+// canonical durationHours of the card's own offered product variant (tour-only
+// vs tour+workshop each carry their own), NEVER the tour's operational duration:
+// one occurrence sells cards with DIFFERENT durations side by side.
+// Nothing here is product-specific — it all comes from the mapping row.
 export async function resolveSellableCards(client, templateId) {
   if (!templateId) return [];
   const products = await client.openTourTemplateProduct.findMany({
     where: { templateId, cardGroupId: { not: null } },
-    select: { cardGroupId: true },
+    select: { cardGroupId: true, productVariant: { select: { durationHours: true } } },
   });
+  const durationByCard = {};
+  for (const p of products) {
+    if (p.cardGroupId && durationByCard[p.cardGroupId] == null) {
+      durationByCard[p.cardGroupId] = p.productVariant?.durationHours ?? null;
+    }
+  }
   const cardGroupIds = [...new Set(products.map((p) => p.cardGroupId).filter(Boolean))];
   if (!cardGroupIds.length) return [];
   const mappings = await client.wooProductMapping.findMany({
@@ -50,6 +61,7 @@ export async function resolveSellableCards(client, templateId) {
       dateAttribute: m.dateAttribute || null,
       config: m.config || null,
       ticketRows: await cardTicketRows(client, m.cardGroupId),
+      durationHours: durationByCard[m.cardGroupId] ?? null,
     });
   }
   return out;
@@ -76,7 +88,7 @@ export async function markCardSlotsPending(client, cardGroupId, { today = israel
       status: 'scheduled',
       date: { gte: today },
     },
-    data: { wooSyncStatus: 'pending', wooAttempts: 0, wooNextRetryAt: null },
+    data: wooPendingPatch('bulk'),
   });
   return res.count;
 }

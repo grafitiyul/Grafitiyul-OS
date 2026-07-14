@@ -594,4 +594,11 @@ app.listen(port, () => {
   import('./maintenance/attachDurationTelAviv.js')
     .then(({ startAttachDurationTelAviv }) => startAttachDurationTelAviv(prisma, console))
     .catch((e) => console.warn('[maintenance] attach pa_משך failed:', e?.message));
+
+  // Durable one-time repair of live Woo sellable state: per-card durations on
+  // already-linked occurrences (repair-only, never bulk-publishes), stale dates
+  // removed from the public selector, chronological date/time term order.
+  import('./maintenance/repairWooSellableState.js')
+    .then(({ startWooSellableRepair }) => startWooSellableRepair(prisma, console))
+    .catch((e) => console.warn('[maintenance] woo sellable repair failed:', e?.message));
 });

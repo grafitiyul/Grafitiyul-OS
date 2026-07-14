@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
+import AlertDialog from '../common/AlertDialog.jsx';
+import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import TourTeamEditor from './TourTeamEditor.jsx';
 import TourComponents from './TourComponents.jsx';
@@ -25,6 +27,8 @@ export default function DealTourPlanning({ deal }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [notes, setNotes] = useState('');
+  const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
+  const [confirmReset, setConfirmReset] = useState(false); // system ConfirmDialog, never window.confirm
   const anchorRef = useRef(null);
   const popWidth = Math.min(480, (typeof window !== 'undefined' ? window.innerWidth : 480) - 32);
 
@@ -63,17 +67,17 @@ export default function DealTourPlanning({ deal }) {
       await api.dealTourPlan.reseedComponents(deal.id);
       await load();
     } catch (e) {
-      alert('שגיאה: ' + (e.payload?.error || e.message));
+      setAlertMsg('שגיאה: ' + (e.payload?.error || e.message));
     }
   }
 
   async function resetComponents() {
-    if (!window.confirm('לחזור לברירת המחדל של הווריאציה? ההתאמות שבוצעו לרשימת המרכיבים יימחקו.')) return;
+    setConfirmReset(false);
     try {
       await api.dealTourPlan.resetComponents(deal.id);
       await load();
     } catch (e) {
-      alert('שגיאה: ' + (e.payload?.error || e.message));
+      setAlertMsg('שגיאה: ' + (e.payload?.error || e.message));
     }
   }
 
@@ -135,7 +139,7 @@ export default function DealTourPlanning({ deal }) {
                   {customized ? (
                     <button
                       type="button"
-                      onClick={resetComponents}
+                      onClick={() => setConfirmReset(true)}
                       className="text-[11.5px] font-semibold text-gray-400 hover:text-gray-600"
                     >
                       חזרה לברירת המחדל
@@ -192,6 +196,17 @@ export default function DealTourPlanning({ deal }) {
           )}
         </div>
       </AnchoredMenu>
+
+      <ConfirmDialog
+        open={confirmReset}
+        title="חזרה לברירת המחדל של הווריאציה"
+        body="לחזור לברירת המחדל של הווריאציה? ההתאמות שבוצעו לרשימת המרכיבים יימחקו."
+        confirmLabel="חזור לברירת המחדל"
+        danger
+        onCancel={() => setConfirmReset(false)}
+        onConfirm={resetComponents}
+      />
+      <AlertDialog open={!!alertMsg} body={alertMsg} onClose={() => setAlertMsg(null)} />
     </div>
   );
 }

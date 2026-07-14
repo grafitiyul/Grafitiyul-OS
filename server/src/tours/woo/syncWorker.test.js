@@ -23,6 +23,9 @@ const GLOBAL_CONFIG = {
 
 function makeEnv(opts = {}) {
   const {
+    // Default origin 'explicit': most tests exercise the converge paths, which
+    // presume the occurrence's publication was approved. The first-publication
+    // gate tests override the origin (and the env flag) explicitly.
     tour = {
       id: 'slot1',
       status: 'scheduled',
@@ -32,6 +35,7 @@ function makeEnv(opts = {}) {
       openTourTemplateId: 'tpl1',
       updatedAt: 'u1',
       wooSyncStatus: 'pending',
+      wooSyncOrigin: 'explicit',
       wooAttempts: 0,
     },
     templateProducts = [{ cardGroupId: 'cardA' }],
@@ -93,6 +97,8 @@ function makeEnv(opts = {}) {
     },
     booking: { groupBy: async () => [] },
     wooVariationLink: {
+      count: async ({ where }) =>
+        Object.values(linkStore).filter((l) => l.tourEventId === where.tourEventId).length,
       findUnique: async ({ where }) => linkStore[keyOf(where.tourEventId_cardGroupId_variantKey)] || null,
       findMany: async ({ where }) =>
         Object.values(linkStore).filter(
@@ -257,7 +263,9 @@ test('global: ensures the date term + attaches it to the product options', async
   });
   await reconcileTourWoo(deps(env), 'slot1');
   assert.equal(env.calls.createdTerms.length, 1);
-  assert.deepEqual(env.calls.createdTerms[0], { attrId: 1, name: '08/08/2026', slug: '08-08-2026' });
+  // New terms are created WITH a chronological menu_order (yyyymmdd) so the
+  // storefront selector lists them in real date order.
+  assert.deepEqual(env.calls.createdTerms[0], { attrId: 1, name: '08/08/2026', slug: '08-08-2026', menu_order: 20260808 });
   // Date term appended to the product's attribute options (name form).
   assert.equal(env.calls.productUpdates.length, 1);
   const opts = env.calls.productUpdates[0].data.attributes[0].options;
@@ -409,11 +417,13 @@ test('adding the tour-only card when workshop is ALREADY synced does not clobber
   assert.ok(env.calls.created.every((c) => ![111, 112].includes(c.data.__id)));
 });
 
-// ── Duration (pa_משך) from the operational product ───────────────────────────
-const CONFIG_DUR = { ...GLOBAL_CONFIG, duration: { attrId: 4, attrName: 'pa_משך', map: { '2': 'שעתיים', '2.5': 'שעתיים-וחצי' } } };
+// ── Duration (pa_משך) — PER SELLABLE CARD, from the card's own product variant ─
+const CONFIG_DUR = { ...GLOBAL_CONFIG, duration: { attrId: 4, attrName: 'pa_משך', map: { '1.5': 'שעה-וחצי', '2': 'שעתיים', '2.5': 'שעתיים-וחצי' } } };
 function durEnv(hours, extra = {}) {
   return makeEnv({
-    tour: { id: 'slot1', status: 'scheduled', date: '2026-08-08', startTime: '10:00', capacity: 20, openTourTemplateId: 'tpl1', updatedAt: 'u1', wooSyncStatus: 'pending', wooAttempts: 0, productVariant: { durationHours: hours } },
+    // The card's canonical customer-facing duration lives on the card's own
+    // offered product variant — NOT on the tour's operational product.
+    templateProducts: [{ cardGroupId: 'cardA', productVariant: { durationHours: hours } }],
     mappings: [{ cardGroupId: 'cardA', wooProductId: 167, config: CONFIG_DUR, active: true }],
     ticketsByCard: {
       cardA: [
@@ -421,20 +431,20 @@ function durEnv(hours, extra = {}) {
         { ticketTypeId: TT_CHILD, priceMinor: 3000, nameHe: 'ילד', sortOrder: 1 },
       ],
     },
-    attributeTerms: { 4: [{ name: 'שעתיים' }, { name: 'שעתיים וחצי' }] },
+    attributeTerms: { 4: [{ name: 'שעה וחצי' }, { name: 'שעתיים' }, { name: 'שעתיים וחצי' }] },
     ...extra,
   });
 }
 const durOf = (data) => data.attributes.find((a) => a.id === 4)?.option;
 
-test('duration synced to pa_משך from the operational product', async () => {
+test('duration synced to pa_משך from the CARD\'s product variant', async () => {
   const env = durEnv(2);
   await reconcileTourWoo(deps(env), 'slot1');
   assert.equal(env.calls.created.length, 2);
   assert.ok(env.calls.created.every((c) => durOf(c.data) === 'שעתיים'));
 });
 
-test('operational product change (plain→workshop) updates duration IN PLACE, no dup', async () => {
+test('card duration change updates its variations IN PLACE, no dup', async () => {
   const env = durEnv(2.5, {
     links: {
       ['slot1::cardA::' + TT_ADULT]: { tourEventId: 'slot1', cardGroupId: 'cardA', variantKey: TT_ADULT, wooVariationId: 111, wooProductId: 167 },
@@ -462,6 +472,144 @@ test('missing duration mapping → tour stays pending (retryable), not synced', 
   assert.match(env.calls.tourUpdates.at(-1).wooSyncError, /pa_משך|duration/);
 });
 
+// THE live #167 shape: tour-only (1.5h) and tour+workshop (2.5h) cards on the
+// SAME TourEvent → each card's variations carry ITS OWN pa_משך, side by side.
+test('plain + workshop cards on one TourEvent get DIFFERENT durations per card', async () => {
+  const env = makeEnv({
+    templateProducts: [
+      { cardGroupId: 'cardWs', productVariant: { durationHours: 2.5 } },
+      { cardGroupId: 'cardTour', productVariant: { durationHours: 1.5 } },
+    ],
+    mappings: [
+      { cardGroupId: 'cardWs', wooProductId: 167, config: { ...CONFIG_DUR, activity: { attrId: 3, attrName: 'pa_פעילות', option: 'סיור-סדנה' } }, active: true },
+      { cardGroupId: 'cardTour', wooProductId: 167, config: { ...CONFIG_DUR, activity: { attrId: 3, attrName: 'pa_פעילות', option: 'סיור-בלבד' } }, active: true },
+    ],
+    ticketsByCard: {
+      cardWs: [
+        { ticketTypeId: TT_ADULT, priceMinor: 25000, nameHe: 'מבוגר', sortOrder: 0 },
+        { ticketTypeId: TT_CHILD, priceMinor: 20000, nameHe: 'ילד', sortOrder: 1 },
+      ],
+      cardTour: [
+        { ticketTypeId: TT_ADULT, priceMinor: 15000, nameHe: 'מבוגר', sortOrder: 0 },
+        { ticketTypeId: TT_CHILD, priceMinor: 9000, nameHe: 'ילד', sortOrder: 1 },
+      ],
+    },
+    attributeTerms: { 4: [{ name: 'שעה וחצי' }, { name: 'שעתיים וחצי' }] },
+  });
+  await reconcileTourWoo(deps(env), 'slot1');
+  assert.equal(env.calls.created.length, 4);
+  const activityOf = (data) => data.attributes.find((a) => a.id === 3)?.option;
+  for (const c of env.calls.created) {
+    const expected = activityOf(c.data) === 'סיור-סדנה' ? 'שעתיים-וחצי' : 'שעה-וחצי';
+    assert.equal(durOf(c.data), expected);
+  }
+  assert.equal(env.calls.tourUpdates.at(-1).wooSyncStatus, 'synced');
+});
+
+// ── First-publication gate (WOO_SYNC_BULK_ENABLED) + provenance ──────────────
+
+function withBulk(value, fn) {
+  const prev = process.env.WOO_SYNC_BULK_ENABLED;
+  if (value == null) delete process.env.WOO_SYNC_BULK_ENABLED;
+  else process.env.WOO_SYNC_BULK_ENABLED = value;
+  return Promise.resolve(fn()).finally(() => {
+    if (prev === undefined) delete process.env.WOO_SYNC_BULK_ENABLED;
+    else process.env.WOO_SYNC_BULK_ENABLED = prev;
+  });
+}
+const tourWithOrigin = (origin) => ({
+  id: 'slot1', status: 'scheduled', date: '2026-08-08', startTime: '10:00', capacity: 20,
+  openTourTemplateId: 'tpl1', updatedAt: 'u1', wooSyncStatus: 'pending', wooAttempts: 0,
+  ...(origin ? { wooSyncOrigin: origin } : {}),
+});
+
+test('bulk OFF: never-linked occurrence is BLOCKED (parked to null, nothing created)', async () => {
+  await withBulk(null, async () => {
+    for (const origin of [undefined, 'auto', 'bulk', 'maintenance']) {
+      const env = makeEnv({ tour: tourWithOrigin(origin) });
+      const res = await reconcileTourWoo(deps(env), 'slot1');
+      assert.equal(res, 'blocked', `origin=${origin}`);
+      assert.equal(env.calls.created.length, 0);
+      assert.equal(env.calls.tourUpdates.at(-1).wooSyncStatus, null);
+      assert.match(env.calls.tourUpdates.at(-1).wooSyncError, /first_publication_blocked/);
+    }
+  });
+});
+
+test('bulk OFF: explicit sync-one still publishes a never-linked occurrence', async () => {
+  await withBulk(null, async () => {
+    const env = makeEnv({ tour: tourWithOrigin('explicit') });
+    await reconcileTourWoo(deps(env), 'slot1');
+    assert.equal(env.calls.created.length, 1);
+    assert.equal(env.calls.tourUpdates.at(-1).wooSyncStatus, 'synced');
+    assert.equal(env.linkStore['slot1::cardA::default'].createdVia, 'sync_one');
+  });
+});
+
+test('bulk OFF: an ALREADY-LINKED occurrence still updates (repair/cancel/reopen)', async () => {
+  await withBulk(null, async () => {
+    const env = makeEnv({
+      tour: tourWithOrigin('auto'),
+      links: { 'slot1::cardA::default': { tourEventId: 'slot1', cardGroupId: 'cardA', variantKey: 'default', wooVariationId: 555, wooProductId: 101 } },
+    });
+    await reconcileTourWoo(deps(env), 'slot1');
+    assert.equal(env.calls.updated.length, 1);
+    assert.equal(env.calls.updated[0].variationId, 555);
+    assert.equal(env.calls.tourUpdates.at(-1).wooSyncStatus, 'synced');
+  });
+});
+
+test('bulk OFF: a maintenance-marked pending sweep CANNOT bulk-publish unlinked occurrences', async () => {
+  await withBulk(null, async () => {
+    const env = makeEnv({ tour: tourWithOrigin('maintenance') });
+    const res = await reconcileTourWoo(deps(env), 'slot1');
+    assert.equal(res, 'blocked');
+    assert.equal(env.calls.created.length, 0);
+  });
+});
+
+test('bulk ON: never-linked occurrence publishes; provenance recorded as bulk', async () => {
+  await withBulk('true', async () => {
+    const env = makeEnv({ tour: tourWithOrigin('bulk') });
+    await reconcileTourWoo(deps(env), 'slot1');
+    assert.equal(env.calls.created.length, 1);
+    assert.equal(env.linkStore['slot1::cardA::default'].createdVia, 'bulk');
+  });
+});
+
+test('adoption provenance: existing Woo variation matched by meta → createdVia adoption', async () => {
+  const adoptable = {
+    id: 777,
+    attributes: [],
+    meta_data: [
+      { key: META_TOUREVENT_ID, value: 'slot1' },
+      { key: META_CARD_GROUP_ID, value: 'cardA' },
+      { key: META_VARIANT_KEY, value: 'default' },
+    ],
+  };
+  const env = makeEnv({ variationsByProduct: { 101: [adoptable] } });
+  await reconcileTourWoo(deps(env), 'slot1');
+  assert.equal(env.calls.created.length, 0);
+  assert.equal(env.calls.updated[0].variationId, 777);
+  assert.equal(env.linkStore['slot1::cardA::default'].createdVia, 'adoption');
+});
+
+test('new variant on an already-linked occurrence (bulk off) is created as repair', async () => {
+  await withBulk(null, async () => {
+    // Adult already linked; the card now also sells child → sibling created as
+    // repair of the linked occurrence, allowed while bulk is off.
+    const env = globalEnv({
+      tour: tourWithOrigin('auto'),
+      links: {
+        ['slot1::cardA::' + TT_ADULT]: { tourEventId: 'slot1', cardGroupId: 'cardA', variantKey: TT_ADULT, wooVariationId: 111, wooProductId: 167, status: 'synced' },
+      },
+    });
+    await reconcileTourWoo(deps(env), 'slot1');
+    assert.equal(env.calls.created.length, 1);
+    assert.equal(env.linkStore['slot1::cardA::' + TT_CHILD].createdVia, 'repair');
+  });
+});
+
 // ── Canonical Woo desired-revision ───────────────────────────────────────────
 import { wooPendingPatch } from './service.js';
 
@@ -473,7 +621,7 @@ test('wooPendingPatch bumps the desired revision (every dirty-marker gets it fre
 
 test('a successful sync records the revision it synced (wooSyncedRevision)', async () => {
   const env = makeEnv({
-    tour: { id: 'slot1', status: 'scheduled', date: '2026-08-08', startTime: '10:00', capacity: 20, openTourTemplateId: 'tpl1', updatedAt: 'u1', wooSyncStatus: 'pending', wooAttempts: 0, wooDesiredRevision: 7 },
+    tour: { id: 'slot1', status: 'scheduled', date: '2026-08-08', startTime: '10:00', capacity: 20, openTourTemplateId: 'tpl1', updatedAt: 'u1', wooSyncStatus: 'pending', wooSyncOrigin: 'explicit', wooAttempts: 0, wooDesiredRevision: 7 },
   });
   await reconcileTourWoo(deps(env), 'slot1');
   const done = env.calls.tourUpdates.at(-1);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../../lib/api.js';
 import TourGalleryWorkspace from './TourGalleryWorkspace.jsx';
+import AlertDialog from '../../common/AlertDialog.jsx';
 
 // Compact gallery card for the Tour page — the operational summary stays
 // dense: cover thumb, counts, last upload, and the three actions (open /
@@ -27,6 +28,7 @@ export default function TourGalleryCard({ tourEventId, tourStatus }) {
   const [summary, setSummary] = useState(null);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
 
   const load = useCallback(async () => {
     try {
@@ -48,7 +50,7 @@ export default function TourGalleryCard({ tourEventId, tourStatus }) {
       setTimeout(() => setCopied(false), 2000);
       if (!summary?.link) load();
     } catch (e) {
-      alert('שגיאה: ' + (e.payload?.error || e.message));
+      setAlertMsg('שגיאה: ' + (e.payload?.error || e.message));
     }
   }
 
@@ -135,6 +137,7 @@ export default function TourGalleryCard({ tourEventId, tourStatus }) {
           onChanged={load}
         />
       )}
+      <AlertDialog open={!!alertMsg} body={alertMsg} onClose={() => setAlertMsg(null)} />
     </section>
   );
 }

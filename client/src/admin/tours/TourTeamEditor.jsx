@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api.js';
+import AlertDialog from '../common/AlertDialog.jsx';
 import {
   ASSIGNMENT_ROLES,
   ASSIGNMENT_ROLE_LABELS,
@@ -113,7 +114,7 @@ function AddGuidesButton({ people, onPickMany, busy }) {
       return next;
     });
   }
-  function confirm() {
+  function applySelection() {
     const ids = [...selected];
     closeReset();
     if (ids.length) onPickMany(ids);
@@ -176,7 +177,7 @@ function AddGuidesButton({ people, onPickMany, busy }) {
               </button>
               <button
                 type="button"
-                onClick={confirm}
+                onClick={applySelection}
                 disabled={selected.size === 0}
                 className="rounded-lg bg-blue-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-blue-700 disabled:opacity-40"
               >
@@ -197,6 +198,7 @@ function AddGuidesButton({ people, onPickMany, busy }) {
 export default function TourTeamEditor({ tourId, assignments = [], onChanged, endpoints = api.tours }) {
   const [people, setPeople] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
 
   useEffect(() => {
     // Canonical assignable list (active guides/trainees only) — the server
@@ -232,7 +234,7 @@ export default function TourTeamEditor({ tourId, assignments = [], onChanged, en
       }
       await onChanged?.();
     } catch (e) {
-      alert(
+      setAlertMsg(
         e.payload?.error === 'person_not_assignable'
           ? 'לא ניתן לשבץ: איש הצוות אינו פעיל במערכת (עזב, הושבת או שאינו בסטטוס מדריך/מתלמד).'
           : 'שגיאה: ' + (e.payload?.error || e.message),
@@ -249,7 +251,7 @@ export default function TourTeamEditor({ tourId, assignments = [], onChanged, en
       await endpoints.updateAssignment(a.id, { role });
       await onChanged?.();
     } catch (e) {
-      alert('שגיאה: ' + (e.payload?.error || e.message));
+      setAlertMsg('שגיאה: ' + (e.payload?.error || e.message));
     } finally {
       setBusy(false);
     }
@@ -260,7 +262,7 @@ export default function TourTeamEditor({ tourId, assignments = [], onChanged, en
       await endpoints.removeAssignment(a.id);
       await onChanged?.();
     } catch (e) {
-      alert('שגיאה: ' + (e.payload?.error || e.message));
+      setAlertMsg('שגיאה: ' + (e.payload?.error || e.message));
     } finally {
       setBusy(false);
     }
@@ -275,6 +277,7 @@ export default function TourTeamEditor({ tourId, assignments = [], onChanged, en
       {sorted.length === 0 && (
         <span className="text-[13px] text-gray-400">עדיין לא שובצו מדריכים — הוסיפו עם +</span>
       )}
+      <AlertDialog open={!!alertMsg} body={alertMsg} onClose={() => setAlertMsg(null)} />
     </div>
   );
 }

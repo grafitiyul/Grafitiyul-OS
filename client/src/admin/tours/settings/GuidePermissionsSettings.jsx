@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../../../lib/api.js';
 import SettingsChrome from '../../settings/SettingsChrome.jsx';
 import Toggle from '../../common/Toggle.jsx';
+import AlertDialog from '../../common/AlertDialog.jsx';
 
 // Settings → Tours → "הרשאות מדריכים". SERVER-BACKED singleton
 // (GuidePortalSettings) — every switch here is enforced server-side by the
@@ -43,6 +44,7 @@ export default function GuidePermissionsSettings() {
   const [settings, setSettings] = useState(null);
   const [error, setError] = useState(null);
   const [savedFlash, setSavedFlash] = useState(false);
+  const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
 
   useEffect(() => {
     api.guidePortalSettings
@@ -61,7 +63,7 @@ export default function GuidePermissionsSettings() {
       setTimeout(() => setSavedFlash(false), 1500);
     } catch (e) {
       setSettings(prev);
-      alert('שגיאה בשמירה: ' + (e.payload?.error || e.message));
+      setAlertMsg('שגיאה בשמירה: ' + (e.payload?.error || e.message));
     }
   }
 
@@ -108,6 +110,7 @@ export default function GuidePermissionsSettings() {
           ))}
         </div>
       )}
+      <AlertDialog open={!!alertMsg} body={alertMsg} onClose={() => setAlertMsg(null)} />
     </div>
   );
 }

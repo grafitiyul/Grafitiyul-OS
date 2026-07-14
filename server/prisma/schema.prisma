@@ -3104,6 +3104,12 @@ model TourEvent {
   wooSyncedAt             DateTime?
   wooAttempts             Int                          @default(0)
   wooNextRetryAt          DateTime?
+  // Provenance of the LAST dirty-mark: 'explicit' (sync-one action) | 'bulk'
+  // (backfill sweep / mapping-wide resync) | 'auto' (single-tour mutation) |
+  // 'maintenance' (repair job). The worker consults it for the first-publication
+  // gate: a never-linked occurrence may only be CREATED on Woo when bulk sync is
+  // enabled or the occurrence was explicitly requested.
+  wooSyncOrigin           String?
   // Canonical sellable-state revision. wooPendingPatch() bumps wooDesiredRevision
   // on every dirty-mark; the worker stamps wooSyncedRevision with the revision it
   // actually synced. desired ≠ synced ⇒ NOT truly synced — the sweep re-pends it,
@@ -3184,6 +3190,11 @@ model WooVariationLink {
   wooProductId   Int
   wooVariationId Int?
   status         String    @default("pending") // pending | synced | failed | disabled
+  // Provenance of the variation's CREATION (set once, never overwritten):
+  // 'sync_one' (explicit per-occurrence action) | 'bulk' (bulk generation) |
+  // 'adoption' (existing Woo variation adopted by meta match) | 'repair'
+  // (created while converging an already-linked occurrence).
+  createdVia     String?
   lastError      String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt

@@ -741,7 +741,9 @@ router.post(
     });
     if (!tour) return res.status(404).json({ error: 'not_found' });
     if (tour.kind !== 'group_slot') return res.status(400).json({ error: 'not_a_group_slot' });
-    await markTourWooPending(prisma, tourEventId);
+    // 'explicit' origin — the ONE provenance that lets the worker create a
+    // never-linked occurrence on Woo even while bulk sync is off.
+    await markTourWooPending(prisma, tourEventId, { origin: 'explicit' });
     res.json({ ok: true, tourEventId, writeEnabled: wooSyncActive() });
   }),
 );

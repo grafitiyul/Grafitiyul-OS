@@ -5,6 +5,7 @@ import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../
 import { migrateStoredColumnKey } from '../common/tableColumnsCore.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
+import AlertDialog from '../common/AlertDialog.jsx';
 import { rowTintStyle } from '../../color/staffColorUi.js';
 import { StaffAvatar } from './TourTeamEditor.jsx';
 import { loadToursView, saveToursView } from './viewPrefs.js';
@@ -282,6 +283,7 @@ export default function ToursPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editTour, setEditTour] = useState(null);
   const [confirmAction, setConfirmAction] = useState(null); // { type: 'cancel'|'delete'|'restore', tour }
+  const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
 
   useEffect(() => {
     saveFilters({ search, kind, statuses });
@@ -390,7 +392,7 @@ export default function ToursPage() {
       await refresh();
     } catch (e) {
       const code = e.payload?.error;
-      alert(
+      setAlertMsg(
         code === 'tour_has_active_bookings'
           ? 'לא ניתן לבטל סיור עם דילים פעילים — יש להסיר או להעביר אותם קודם.'
           : code === 'tour_has_bookings'
@@ -593,6 +595,8 @@ export default function ToursPage() {
         onClose={() => setModalOpen(false)}
         onSaved={refresh}
       />
+
+      <AlertDialog open={!!alertMsg} body={alertMsg} onClose={() => setAlertMsg(null)} />
 
       <ConfirmDialog
         open={!!confirmAction}

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
+import AlertDialog from '../common/AlertDialog.jsx';
 import ReorderableList from '../common/ReorderableList.jsx';
 
 // Tour modal → "מרכיבי הפעילות". The tour's DELIVERED components as a HORIZONTAL
@@ -18,6 +19,7 @@ export default function TourComponents({ tourId, rows = [], onChanged, endpoints
   const [locations, setLocations] = useState([]); // active workshop locations
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
 
   useEffect(() => {
     api.activityComponents.list(true).then(setCatalog).catch(() => {});
@@ -34,7 +36,7 @@ export default function TourComponents({ tourId, rows = [], onChanged, endpoints
       await fn();
       await onChanged?.();
     } catch (e) {
-      alert('שגיאה: ' + (e.payload?.error || e.message));
+      setAlertMsg('שגיאה: ' + (e.payload?.error || e.message));
     } finally {
       setBusy(false);
     }
@@ -53,7 +55,7 @@ export default function TourComponents({ tourId, rows = [], onChanged, endpoints
       await endpoints.reorderComponents(tourId, ids);
       await onChanged?.();
     } catch (e) {
-      alert('שגיאה בשינוי הסדר: ' + (e.payload?.error || e.message));
+      setAlertMsg('שגיאה בשינוי הסדר: ' + (e.payload?.error || e.message));
       onChanged?.();
     }
   }
@@ -164,6 +166,7 @@ export default function TourComponents({ tourId, rows = [], onChanged, endpoints
           </div>
         </div>
       )}
+      <AlertDialog open={!!alertMsg} body={alertMsg} onClose={() => setAlertMsg(null)} />
     </div>
   );
 }

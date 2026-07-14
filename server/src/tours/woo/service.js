@@ -18,11 +18,19 @@ export { kickWooSync };
 // (wooSyncedRevision); the sweep re-pends any tour whose desired ≠ synced, so a
 // mutation that changed sellable state can NEVER stay falsely 'synced' (even one
 // that raced an in-progress sync). Structural, not per-route bookkeeping.
-export function wooPendingPatch() {
+//
+// `origin` records WHO marked the tour dirty — 'auto' (a single-tour mutation:
+// edit/cancel/registration), 'explicit' (the per-occurrence sync action),
+// 'bulk' (sweep / mapping-wide resync) or 'maintenance' (repair jobs). The
+// worker's first-publication gate only lets a NEVER-linked occurrence be
+// created on Woo when origin is 'explicit' or WOO_SYNC_BULK_ENABLED is on —
+// so no job or mutation can silently become a bulk-publication mechanism.
+export function wooPendingPatch(origin = 'auto') {
   return {
     wooSyncStatus: 'pending',
     wooAttempts: 0,
     wooNextRetryAt: null,
+    wooSyncOrigin: origin,
     wooDesiredRevision: { increment: 1 },
   };
 }
@@ -43,8 +51,8 @@ export function patchTouchesWoo(data) {
 // Bumps the desired revision + marks pending + kicks the worker. Every standalone
 // invalidation should call this (route data-object mutations spread
 // wooPendingPatch() instead, which does the same bump inline).
-export async function markTourWooDirty(client, tourEventId) {
-  await client.tourEvent.updateMany({ where: { id: tourEventId }, data: wooPendingPatch() });
+export async function markTourWooDirty(client, tourEventId, { origin = 'auto' } = {}) {
+  await client.tourEvent.updateMany({ where: { id: tourEventId }, data: wooPendingPatch(origin) });
   kickWooSync();
 }
 

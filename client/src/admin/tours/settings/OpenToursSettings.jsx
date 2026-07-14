@@ -3,6 +3,7 @@ import SettingsChrome from '../../settings/SettingsChrome.jsx';
 import Toggle from '../../common/Toggle.jsx';
 import Dialog from '../../common/Dialog.jsx';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
+import AlertDialog from '../../common/AlertDialog.jsx';
 import { DateField, TimeField } from '../../common/pickers/DateTimeFields.jsx';
 import { api } from '../../../lib/api.js';
 import { TOUR_LANGS, TOUR_LANG_LABELS, WEEKDAY_LABELS, fmtTourDate } from '../config.js';
@@ -34,6 +35,7 @@ export default function OpenToursSettings() {
   const [creating, setCreating] = useState(false);
   const [editId, setEditId] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
   // Shared TourSettings globals (migrated here from the retired Group Tours page).
   const [globals, setGlobals] = useState({ defaultCapacity: '', generateDaysAhead: '' });
   const [savingGlobals, setSavingGlobals] = useState(false);
@@ -68,7 +70,7 @@ export default function OpenToursSettings() {
         generateDaysAhead: Number(globals.generateDaysAhead),
       });
     } catch (e) {
-      alert(errText(e));
+      setAlertMsg(errText(e));
     } finally {
       setSavingGlobals(false);
     }
@@ -83,7 +85,7 @@ export default function OpenToursSettings() {
       await refresh();
       setEditId(t.id); // open the editor on the fresh template
     } catch (e) {
-      alert(errText(e));
+      setAlertMsg(errText(e));
     } finally {
       setCreating(false);
     }
@@ -94,7 +96,7 @@ export default function OpenToursSettings() {
       await api.openTours.update(t.id, { active });
       await refresh();
     } catch (e) {
-      alert(errText(e));
+      setAlertMsg(errText(e));
     }
   }
 
@@ -105,7 +107,7 @@ export default function OpenToursSettings() {
       await api.openTours.remove(t.id);
       await refresh();
     } catch (e) {
-      alert(errText(e));
+      setAlertMsg(errText(e));
     }
   }
 
@@ -241,6 +243,7 @@ export default function OpenToursSettings() {
         onCancel={() => setConfirmDelete(null)}
         onConfirm={deleteTemplate}
       />
+      <AlertDialog open={!!alertMsg} body={alertMsg} onClose={() => setAlertMsg(null)} />
     </div>
   );
 }
@@ -263,6 +266,11 @@ function OpenTourEditor({ templateId, onClose }) {
   const [ruleEdit, setRuleEdit] = useState(EMPTY_RULE);
   const [editingExcId, setEditingExcId] = useState(null);
   const [excEdit, setExcEdit] = useState(EMPTY_EXC);
+  const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
+  // Impact confirmations (rule/exception edits) — system ConfirmDialog holding
+  // the pending edit until the admin approves the consequences.
+  const [pendingRuleConfirm, setPendingRuleConfirm] = useState(null); // { ruleId, body, msg, reg, cancels }
+  const [pendingExcConfirm, setPendingExcConfirm] = useState(null); // { exceptionId, body, msg, reg, cancels }
 
   async function load() {
     try {
@@ -285,7 +293,7 @@ function OpenTourEditor({ templateId, onClose }) {
         defaultLeadGuides: t.defaultLeadGuides ?? 1,
       });
     } catch (e) {
-      alert(errText(e));
+      setAlertMsg(errText(e));
       onClose();
     } finally {
       setLoading(false);
@@ -317,7 +325,7 @@ function OpenTourEditor({ templateId, onClose }) {
       });
       await reloadTpl();
     } catch (e) {
-      alert(errText(e));
+      setAlertMsg(errText(e));
     } finally {
       setSaving(false);
     }
@@ -342,7 +350,7 @@ function OpenTourEditor({ templateId, onClose }) {
       await api.openTours.setProducts(templateId, rows);
       await reloadTpl();
     } catch (e) {
-      alert(errText(e));
+      setAlertMsg(errText(e));
     }
   }
 
@@ -371,7 +379,7 @@ function OpenTourEditor({ templateId, onClose }) {
       setRuleDraft(EMPTY_RULE);
       await reloadTpl();
     } catch (e) {
-      alert(errText(e));
+      setAlertMsg(errText(e));
     }
   }
 
@@ -380,7 +388,7 @@ function OpenTourEditor({ templateId, onClose }) {
       await api.openTours.removeRule(ruleId);
       await reloadTpl();
     } catch (e) {
-      alert(errText(e));
+      setAlertMsg(errText(e));
     }
   }
 
@@ -395,8 +403,8 @@ function OpenTourEditor({ templateId, onClose }) {
     });
   }
 
-  // Save the SAME rule row. Shows an impact summary first; registered
-  // occurrences require an explicit confirm (the server also enforces it).
+  // Save the SAME rule row. Shows an impact summary first (system ConfirmDialog);
+  // registered occurrences require an explicit confirm (the server also enforces it).
   async function saveRuleEdit(ruleId) {
     const body = {
       weekday: ruleEdit.weekday,
@@ -416,12 +424,23 @@ function OpenTourEditor({ templateId, onClose }) {
       let msg = 'השפעת העריכה: ' + (parts.join(' · ') || 'אין שינוי במועדים קיימים') + '.';
       if (pin) msg += `\n${pin} מועדים נעולים (עם התאמה ידנית) יישמרו.`;
       if (reg) msg += `\n⚠️ ${reg} מועדים עם רישומי לקוחות יוזזו/יבוטלו — יידרש עדכון לקוחות (ייפתח כרטיס בקרה).`;
-      if ((parts.length || reg || pin) && !window.confirm(msg + '\nלהמשיך?')) return;
+      if (parts.length || reg || pin) {
+        setPendingRuleConfirm({ ruleId, body, msg, reg, cancels: (imp.willCancel || 0) > 0 });
+        return;
+      }
+      await applyRuleEdit({ ruleId, body, reg });
+    } catch (e) {
+      setAlertMsg(errText(e));
+    }
+  }
+
+  async function applyRuleEdit({ ruleId, body, reg }) {
+    try {
       await api.openTours.updateRuleRaw(ruleId, { ...body, confirmRegistered: reg > 0 });
       setEditingRuleId(null);
       await reloadTpl();
     } catch (e) {
-      alert(errText(e));
+      setAlertMsg(errText(e));
     }
   }
 
@@ -435,7 +454,7 @@ function OpenTourEditor({ templateId, onClose }) {
       setExcDraft(EMPTY_EXC);
       await reloadTpl();
     } catch (e) {
-      alert(errText(e));
+      setAlertMsg(errText(e));
     }
   }
 
@@ -444,7 +463,7 @@ function OpenTourEditor({ templateId, onClose }) {
       await api.openTours.removeException(exceptionId);
       await reloadTpl();
     } catch (e) {
-      alert(errText(e));
+      setAlertMsg(errText(e));
     }
   }
 
@@ -453,8 +472,8 @@ function OpenTourEditor({ templateId, onClose }) {
     setExcEdit({ date: x.date, type: x.type, time: x.time || '11:00' });
   }
 
-  // Save the SAME exception row. Impact summary first; registered occurrences
-  // require explicit confirm (the server also enforces it).
+  // Save the SAME exception row. Impact summary first (system ConfirmDialog);
+  // registered occurrences require explicit confirm (the server also enforces it).
   async function saveExceptionEdit(exceptionId) {
     const body = { date: excEdit.date, type: excEdit.type, time: excEdit.type === 'cancel' ? null : excEdit.time };
     try {
@@ -465,12 +484,23 @@ function OpenTourEditor({ templateId, onClose }) {
       const reg = imp.requiresConfirmation?.length || 0;
       let msg = 'השפעת העריכה: ' + (parts.join(' · ') || 'אין שינוי במועדים קיימים') + '.';
       if (reg) msg += `\n⚠️ ${reg} מועדים עם רישומי לקוחות — יידרש עדכון לקוחות (ייפתח כרטיס בקרה).`;
-      if ((parts.length || reg) && !window.confirm(msg + '\nלהמשיך?')) return;
+      if (parts.length || reg) {
+        setPendingExcConfirm({ exceptionId, body, msg, reg, cancels: (imp.willCancel || 0) > 0 });
+        return;
+      }
+      await applyExceptionEdit({ exceptionId, body, reg });
+    } catch (e) {
+      setAlertMsg(errText(e));
+    }
+  }
+
+  async function applyExceptionEdit({ exceptionId, body, reg }) {
+    try {
       await api.openTours.updateExceptionRaw(exceptionId, { ...body, confirmRegistered: reg > 0 });
       setEditingExcId(null);
       await reloadTpl();
     } catch (e) {
-      alert(errText(e));
+      setAlertMsg(errText(e));
     }
   }
 
@@ -675,6 +705,34 @@ function OpenTourEditor({ templateId, onClose }) {
           </section>
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!pendingRuleConfirm}
+        title="עריכת כלל תזמון — אישור השפעה"
+        body={pendingRuleConfirm ? pendingRuleConfirm.msg + '\nלהמשיך ולהחיל את השינוי?' : ''}
+        confirmLabel="החל את השינוי"
+        danger={!!pendingRuleConfirm && (pendingRuleConfirm.cancels || pendingRuleConfirm.reg > 0)}
+        onCancel={() => setPendingRuleConfirm(null)}
+        onConfirm={() => {
+          const p = pendingRuleConfirm;
+          setPendingRuleConfirm(null);
+          applyRuleEdit(p);
+        }}
+      />
+      <ConfirmDialog
+        open={!!pendingExcConfirm}
+        title="עריכת חריג — אישור השפעה"
+        body={pendingExcConfirm ? pendingExcConfirm.msg + '\nלהמשיך ולהחיל את השינוי?' : ''}
+        confirmLabel="החל את השינוי"
+        danger={!!pendingExcConfirm && (pendingExcConfirm.cancels || pendingExcConfirm.reg > 0)}
+        onCancel={() => setPendingExcConfirm(null)}
+        onConfirm={() => {
+          const p = pendingExcConfirm;
+          setPendingExcConfirm(null);
+          applyExceptionEdit(p);
+        }}
+      />
+      <AlertDialog open={!!alertMsg} body={alertMsg} onClose={() => setAlertMsg(null)} />
     </Dialog>
   );
 }
@@ -696,6 +754,10 @@ function WooMappingsSection() {
   const [candidates, setCandidates] = useState({}); // cardGroupId → slot list
   const [loadingCand, setLoadingCand] = useState(null);
   const [syncingTour, setSyncingTour] = useState(null);
+  const [alertMsg, setAlertMsg] = useState(null); // { body, tone?, title? } | string
+  // Mapping move (product change with live variations) — held here until the
+  // admin approves it in the system ConfirmDialog (never window.confirm).
+  const [pendingMove, setPendingMove] = useState(null); // { card, body, moved, fromProductId }
 
   async function load() {
     try {
@@ -726,7 +788,7 @@ function WooMappingsSection() {
       const resp = await api.openTours.wooCandidates(card.cardGroupId, 20);
       setCandidates((m) => ({ ...m, [card.cardGroupId]: resp }));
     } catch (e) {
-      alert(errText(e));
+      setAlertMsg(errText(e));
     } finally {
       setLoadingCand(null);
     }
@@ -738,7 +800,7 @@ function WooMappingsSection() {
       await api.openTours.wooSyncOne(tourEventId);
       await loadCandidates(card); // refresh status
     } catch (e) {
-      alert(errText(e));
+      setAlertMsg(errText(e));
     } finally {
       setSyncingTour(null);
     }
@@ -763,7 +825,7 @@ function WooMappingsSection() {
     const st = byCard[card.cardGroupId] || {};
     if (!st.wooProductId) return;
     const { config, error } = parseConfig(st.configText);
-    if (error) return alert('JSON לא תקין בהגדרות התאימות (config).');
+    if (error) return setAlertMsg('JSON לא תקין בהגדרות התאימות (config).');
     setSavingCard(card.cardGroupId);
     try {
       const body = { wooProductId: Number(st.wooProductId), active: st.active !== false, config };
@@ -773,19 +835,29 @@ function WooMappingsSection() {
         // Phase-7 safety: moving an active mapping with live variations needs a
         // confirm; the server surfaces how many future occurrences will move.
         if (e.status === 409 && e.payload?.error === 'mapping_move_requires_confirm') {
-          const ok = window.confirm(
-            `שינוי המיפוי יעביר ${e.payload.moved} מועדים עתידיים ממוצר ${e.payload.fromProductId} למוצר ${st.wooProductId}. ` +
-              `הווריאציות במוצר הישן יושבתו (לא יימחקו). להמשיך?`,
-          );
-          if (!ok) return;
-          await api.openTours.setWooMapping(card.cardGroupId, { ...body, confirmMove: true });
-        } else {
-          throw e;
+          setPendingMove({ card, body, moved: e.payload.moved, fromProductId: e.payload.fromProductId });
+          return;
         }
+        throw e;
       }
       await load();
     } catch (e) {
-      alert(errText(e));
+      setAlertMsg(errText(e));
+    } finally {
+      setSavingCard(null);
+    }
+  }
+
+  async function applyMappingMove() {
+    const p = pendingMove;
+    setPendingMove(null);
+    if (!p) return;
+    setSavingCard(p.card.cardGroupId);
+    try {
+      await api.openTours.setWooMapping(p.card.cardGroupId, { ...p.body, confirmMove: true });
+      await load();
+    } catch (e) {
+      setAlertMsg(errText(e));
     } finally {
       setSavingCard(null);
     }
@@ -797,7 +869,7 @@ function WooMappingsSection() {
       await api.openTours.removeWooMapping(card.cardGroupId);
       await load();
     } catch (e) {
-      alert(errText(e));
+      setAlertMsg(errText(e));
     } finally {
       setSavingCard(null);
     }
@@ -805,13 +877,13 @@ function WooMappingsSection() {
 
   async function inspect(card) {
     const st = byCard[card.cardGroupId] || {};
-    if (!st.wooProductId) return alert('הזינו מזהה מוצר Woo לבדיקה.');
+    if (!st.wooProductId) return setAlertMsg('הזינו מזהה מוצר Woo לבדיקה.');
     setInspecting(card.cardGroupId);
     try {
       const s = await api.openTours.wooProductStructure(Number(st.wooProductId));
       setStructure((m) => ({ ...m, [card.cardGroupId]: s }));
     } catch (e) {
-      alert(errText(e));
+      setAlertMsg(errText(e));
     } finally {
       setInspecting(null);
     }
@@ -821,17 +893,21 @@ function WooMappingsSection() {
   // drop it into the editor — no placeholders, ready to save.
   async function buildConfig(card) {
     const st = byCard[card.cardGroupId] || {};
-    if (!st.wooProductId) return alert('הזינו מזהה מוצר Woo תחילה.');
+    if (!st.wooProductId) return setAlertMsg('הזינו מזהה מוצר Woo תחילה.');
     setBuilding(card.cardGroupId);
     try {
       const r = await api.openTours.wooSuggestConfig(card.cardGroupId, Number(st.wooProductId));
       const configText = JSON.stringify(r.config, null, 2);
       setByCard((m) => ({ ...m, [card.cardGroupId]: { ...(m[card.cardGroupId] || st), configText } }));
       if (r.warnings?.length) {
-        alert('ההגדרה נבנתה, אך שימו לב:\n• ' + r.warnings.join('\n• '));
+        setAlertMsg({
+          title: 'ההגדרה נבנתה עם הערות',
+          tone: 'notice',
+          body: 'ההגדרה נבנתה, אך שימו לב:\n• ' + r.warnings.join('\n• '),
+        });
       }
     } catch (e) {
-      alert(errText(e));
+      setAlertMsg(errText(e));
     } finally {
       setBuilding(null);
     }
@@ -1011,6 +1087,31 @@ function WooMappingsSection() {
           })}
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!pendingMove}
+        title="העברת מיפוי למוצר אחר"
+        body={
+          pendingMove
+            ? `שינוי המיפוי יעביר ${pendingMove.moved} מועדים עתידיים ממוצר ${pendingMove.fromProductId} למוצר ${pendingMove.body.wooProductId}.\n` +
+              'הווריאציות במוצר הישן יושבתו (לא יימחקו). להמשיך?'
+            : ''
+        }
+        confirmLabel="העבר מיפוי"
+        danger
+        onCancel={() => {
+          setPendingMove(null);
+          setSavingCard(null);
+        }}
+        onConfirm={applyMappingMove}
+      />
+      <AlertDialog
+        open={!!alertMsg}
+        title={typeof alertMsg === 'object' && alertMsg?.title ? alertMsg.title : 'שגיאה'}
+        tone={typeof alertMsg === 'object' && alertMsg?.tone ? alertMsg.tone : 'error'}
+        body={typeof alertMsg === 'object' ? alertMsg?.body : alertMsg}
+        onClose={() => setAlertMsg(null)}
+      />
     </section>
   );
 }

@@ -3,6 +3,7 @@ import { api } from '../../../lib/api.js';
 import RichEditor from '../../../editor/RichEditor.jsx';
 import ReorderableList from '../ReorderableList.jsx';
 import NoteCard from './NoteCard.jsx';
+import AlertDialog from '../AlertDialog.jsx';
 import WhatsAppPanel from '../../whatsapp/WhatsAppPanel.jsx';
 import TaskComposer from '../../deals/tasks/TaskComposer.jsx';
 import OpenTasksStrip from '../../deals/tasks/OpenTasksStrip.jsx';
@@ -140,6 +141,7 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
   // DOM state clears/reloads along with the draft.
   const [editorNonce, setEditorNonce] = useState(0);
   const [posting, setPosting] = useState(false);
+  const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
   const draftKeyRef = useRef(noteDraftKey);
   const draftValRef = useRef(draft);
   draftValRef.current = draft;
@@ -301,7 +303,7 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
       clearDraft();
       await refresh();
     } catch (e) {
-      alert('שגיאה בשמירת הפתק: ' + (e.payload?.error || e.message));
+      setAlertMsg('שגיאה בשמירת הפתק: ' + (e.payload?.error || e.message));
     } finally {
       setPosting(false);
     }
@@ -332,7 +334,7 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
     try {
       await api.timeline.reorderPins(subjectType, subjectId, ids);
     } catch (e) {
-      alert('שגיאה בשינוי הסדר: ' + e.message);
+      setAlertMsg('שגיאה בשינוי הסדר: ' + e.message);
       refresh();
     }
   }
@@ -594,6 +596,7 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
           </section>
         </>
       )}
+      <AlertDialog open={!!alertMsg} body={alertMsg} onClose={() => setAlertMsg(null)} />
     </div>
   );
 }

@@ -94,17 +94,29 @@ export async function attachAndBackfill(client, woo, reconcile, log = console) {
     await client.wooProductMapping.update({ where: { id: m.id }, data: { config: cfg } });
   }
 
-  // 8. Mark every eligible Tel Aviv occurrence Woo-pending (bumps the canonical
+  // 8. Mark eligible Tel Aviv occurrences Woo-pending (bumps the canonical
   // revision). We do NOT reconcile synchronously here — the background worker is
   // the SINGLE owner of convergence; reconciling in parallel raced it and created
   // orphan duplicate variations. Marking pending lets the worker converge each
   // occurrence (now with config.duration) exactly once.
+  //
+  // REPAIR-ONLY: only occurrences that ALREADY have a WooVariationLink are
+  // marked (wooVariationLinks: some). A maintenance job must never become a
+  // bulk-publication mechanism — never-linked occurrences stay unpublished until
+  // explicit sync-one or WOO_SYNC_BULK_ENABLED (the worker's first-publication
+  // gate also enforces this; the filter here keeps the job honest at the source).
   const templateIds = [...new Set(offered.map((p) => p.templateId))];
   const tours = await client.tourEvent.findMany({
-    where: { openTourTemplateId: { in: templateIds }, kind: 'group_slot', date: { gte: israelToday() }, status: 'scheduled' },
+    where: {
+      openTourTemplateId: { in: templateIds },
+      kind: 'group_slot',
+      date: { gte: israelToday() },
+      status: 'scheduled',
+      wooVariationLinks: { some: {} },
+    },
     select: { id: true },
   });
-  if (tours.length) await client.tourEvent.updateMany({ where: { id: { in: tours.map((t) => t.id) } }, data: wooPendingPatch() });
+  if (tours.length) await client.tourEvent.updateMany({ where: { id: { in: tours.map((t) => t.id) } }, data: wooPendingPatch('maintenance') });
 
   // 9. Dedup: disable orphan duplicate GOS variations (same tour+card+variantKey
   // as a linked one, but NOT the linked id — an artifact of an earlier

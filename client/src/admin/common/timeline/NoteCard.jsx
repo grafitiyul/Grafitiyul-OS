@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react';
 import RichEditor from '../../../editor/RichEditor.jsx';
 import AnchoredMenu from '../AnchoredMenu.jsx';
+import AlertDialog from '../AlertDialog.jsx';
+import ConfirmDialog from '../ConfirmDialog.jsx';
 import { normalizeRichHtml } from '../../../editor/htmlNormalize.js';
 import { titleToPlain } from '../../../editor/TitleEditor.jsx';
 import { actorDisplay } from './actor.js';
@@ -66,6 +68,8 @@ export default function NoteCard({
   const [replying, setReplying] = useState(false);
   const [commentDraft, setCommentDraft] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const menuRef = useRef(null);
 
   const originLabel = ORIGIN_LABELS[entry.data?.origin];
@@ -83,17 +87,17 @@ export default function NoteCard({
       await onEdit(entry.id, body);
       setEditing(false);
     } catch (e) {
-      alert('שגיאה: ' + (e.payload?.error || e.message));
+      setAlertMsg('שגיאה: ' + (e.payload?.error || e.message));
     } finally {
       setBusy(false);
     }
   }
   async function remove() {
-    if (!confirm('למחוק את הפתק?')) return;
+    setConfirmDelete(false);
     try {
       await onDelete(entry.id);
     } catch (e) {
-      alert('שגיאה: ' + (e.payload?.error || e.message));
+      setAlertMsg('שגיאה: ' + (e.payload?.error || e.message));
     }
   }
   async function addComment() {
@@ -105,7 +109,7 @@ export default function NoteCard({
       setCommentDraft('');
       setReplying(false);
     } catch (e) {
-      alert('שגיאה: ' + (e.payload?.error || e.message));
+      setAlertMsg('שגיאה: ' + (e.payload?.error || e.message));
     } finally {
       setBusy(false);
     }
@@ -165,7 +169,7 @@ export default function NoteCard({
               </button>
               <div className="my-1 border-t border-gray-100" />
               <button
-                onClick={() => { setMenuOpen(false); remove(); }}
+                onClick={() => { setMenuOpen(false); setConfirmDelete(true); }}
                 className="block w-full text-right px-3 py-2 text-sm text-red-600 hover:bg-red-50"
               >
                 מחיקה
@@ -231,6 +235,16 @@ export default function NoteCard({
           )}
         </div>
       )}
+      <ConfirmDialog
+        open={confirmDelete}
+        title="מחיקת פתק"
+        body="למחוק את הפתק? התגובות שלו יימחקו איתו. לא ניתן לבטל פעולה זו."
+        confirmLabel="מחק פתק"
+        danger
+        onCancel={() => setConfirmDelete(false)}
+        onConfirm={remove}
+      />
+      <AlertDialog open={!!alertMsg} body={alertMsg} onClose={() => setAlertMsg(null)} />
     </div>
   );
 }
@@ -239,6 +253,8 @@ function CommentRow({ comment, onEdit, onDelete, readOnly = false }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(comment.body);
   const [busy, setBusy] = useState(false);
+  const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   // Unsaved-work guard: an in-progress comment edit (changed from the original).
   useDirtyForm(editing && draft !== comment.body);
@@ -251,17 +267,17 @@ function CommentRow({ comment, onEdit, onDelete, readOnly = false }) {
       await onEdit(comment.id, b);
       setEditing(false);
     } catch (e) {
-      alert('שגיאה: ' + (e.payload?.error || e.message));
+      setAlertMsg('שגיאה: ' + (e.payload?.error || e.message));
     } finally {
       setBusy(false);
     }
   }
   async function remove() {
-    if (!confirm('למחוק את התגובה?')) return;
+    setConfirmDelete(false);
     try {
       await onDelete(comment.id);
     } catch (e) {
-      alert('שגיאה: ' + (e.payload?.error || e.message));
+      setAlertMsg('שגיאה: ' + (e.payload?.error || e.message));
     }
   }
 
@@ -286,11 +302,21 @@ function CommentRow({ comment, onEdit, onDelete, readOnly = false }) {
           {!readOnly && (
             <>
               <button onClick={() => { setDraft(comment.body); setEditing(true); }} className="text-[12px] text-blue-700 shrink-0">ערוך</button>
-              <button onClick={remove} className="text-[12px] text-red-600 shrink-0">מחק</button>
+              <button onClick={() => setConfirmDelete(true)} className="text-[12px] text-red-600 shrink-0">מחק</button>
             </>
           )}
         </div>
       )}
+      <ConfirmDialog
+        open={confirmDelete}
+        title="מחיקת תגובה"
+        body="למחוק את התגובה? לא ניתן לבטל פעולה זו."
+        confirmLabel="מחק"
+        danger
+        onCancel={() => setConfirmDelete(false)}
+        onConfirm={remove}
+      />
+      <AlertDialog open={!!alertMsg} body={alertMsg} onClose={() => setAlertMsg(null)} />
     </div>
   );
 }

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../../lib/api.js';
 import ReorderableList from '../../common/ReorderableList.jsx';
+import AlertDialog from '../../common/AlertDialog.jsx';
+import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 
 // Settings → Tours → "מיקומי סדנה". Physical places a workshop component can take
 // place in; chosen per workshop component on each tour (Slice C). Drag to
@@ -17,6 +19,8 @@ export default function WorkshopLocationsSettings() {
   const [error, setError] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [adding, setAdding] = useState(false);
+  const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
+  const [confirmRemove, setConfirmRemove] = useState(null); // item | null
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -36,7 +40,7 @@ export default function WorkshopLocationsSettings() {
     try {
       await api.workshopLocations.reorder(ids);
     } catch (e) {
-      alert('שגיאה בעדכון הסדר: ' + e.message);
+      setAlertMsg('שגיאה בעדכון הסדר: ' + e.message);
       refresh();
     }
   }
@@ -45,16 +49,16 @@ export default function WorkshopLocationsSettings() {
       await api.workshopLocations.update(item.id, { isActive: !item.isActive });
       await refresh();
     } catch (e) {
-      alert('שגיאה: ' + e.message);
+      setAlertMsg('שגיאה: ' + e.message);
     }
   }
   async function remove(item) {
-    if (!confirm(`למחוק את מיקום הסדנה "${item.nameHe}"?`)) return;
+    setConfirmRemove(null);
     try {
       await api.workshopLocations.remove(item.id);
       await refresh();
     } catch (e) {
-      alert(
+      setAlertMsg(
         e.payload?.error === 'location_in_use'
           ? 'לא ניתן למחוק מיקום שכבר בשימוש בסיור — כבו אותו במקום זאת.'
           : 'שגיאה במחיקה: ' + (e.payload?.error || e.message),
@@ -151,7 +155,7 @@ export default function WorkshopLocationsSettings() {
                       ✎
                     </button>
                     <button
-                      onClick={() => remove(item)}
+                      onClick={() => setConfirmRemove(item)}
                       title="מחק"
                       className="text-red-500 hover:text-red-600 hover:bg-red-50 rounded-md p-1.5"
                     >
@@ -164,6 +168,17 @@ export default function WorkshopLocationsSettings() {
           />
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!confirmRemove}
+        title="מחיקת מיקום סדנה"
+        body={confirmRemove ? `למחוק את מיקום הסדנה "${confirmRemove.nameHe}"? לא ניתן לבטל פעולה זו.` : ''}
+        confirmLabel="מחק"
+        danger
+        onCancel={() => setConfirmRemove(null)}
+        onConfirm={() => remove(confirmRemove)}
+      />
+      <AlertDialog open={!!alertMsg} body={alertMsg} onClose={() => setAlertMsg(null)} />
     </section>
   );
 }
@@ -175,6 +190,7 @@ function LocationForm({ draft, onClose, onSubmit }) {
     instructions: draft.instructions || '',
   });
   const [busy, setBusy] = useState(false);
+  const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
 
   async function save(e) {
@@ -188,7 +204,7 @@ function LocationForm({ draft, onClose, onSubmit }) {
         instructions: f.instructions.trim() || null,
       });
     } catch (e) {
-      alert('שגיאה בשמירה: ' + (e.payload?.error || e.message));
+      setAlertMsg('שגיאה בשמירה: ' + (e.payload?.error || e.message));
       setBusy(false);
     }
   }
@@ -235,6 +251,7 @@ function LocationForm({ draft, onClose, onSubmit }) {
           {busy ? 'שומר…' : 'שמור'}
         </button>
       </div>
+      <AlertDialog open={!!alertMsg} body={alertMsg} onClose={() => setAlertMsg(null)} />
     </form>
   );
 }
