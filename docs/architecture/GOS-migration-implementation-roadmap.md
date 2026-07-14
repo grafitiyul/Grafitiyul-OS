@@ -37,7 +37,14 @@ S2 body follows.
 
 ---
 
-### Slice 1 — Legacy foundation ⛔ writes NO production customer data
+### Slice 1 — Legacy foundation ⛔ writes NO production customer data — ✅ SHIPPED (91ff7e0, 2026-07-14)
+
+*Delivered: migration 20260808090000_migration_foundation (LegacyRecord / MigrationDecision /
+MigrationRun); `src/migration/{config,status}.js`; admin-only `GET /api/migration/status`; 8 tests.
+Verified live: migration applied (rolled_back_at null), 3 tables + all indexes/uniques present,
+empty state, endpoint 401-gated. Rollback: revert commit + DROP the 3 tables (empty, no inbound
+FKs, nothing live reads them).*
+
 
 **Goal:** the migration's storage + observability skeleton, deployed safely with zero business impact.
 **Implemented:** additive Prisma migration — `LegacyRecord` (sourceSystem/sourceType/sourceId
