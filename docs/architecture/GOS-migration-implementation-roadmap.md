@@ -8,9 +8,13 @@ single source of truth; one canonical path per mutation; idempotent imports; imm
 everything resumable and observable.
 **Deviation from the suggested slice list (explained):** "Rehearsal import" is split into FOUR
 domain slices (identity / deals / timeline / tours) — one combined slice would violate the
-small-slice rule. "Snapshot engine" and "Pipedrive extractor" are re-cut so the engine ships with
-a small real extraction (an engine with nothing to run can't be honestly verified). A dedicated
-"Legacy card UI" slice is added (owner's approved UX is a real deliverable, not a byproduct).
+small-slice rule. A dedicated "Legacy card UI" slice is added (owner's approved UX is a real
+deliverable, not a byproduct).
+**Owner refinement (2026-07-14):** Snapshot engine + Pipedrive extractor + Airtable extractor are
+merged into ONE slice, **S2 "Snapshot & Extraction"** — an engine without real extraction (and an
+extractor without snapshot capability) cannot be meaningfully verified; they form one deployable
+capability. They remain modular INTERNALLY (engine / Pipedrive module / Airtable module) but are
+delivered, deployed, and verified together. Total slices: 15 → **13**.
 **Last updated:** 2026-07-14
 
 ---
@@ -19,13 +23,17 @@ a small real extraction (an engine with nothing to run can't be honestly verifie
 
 ```
 S1 foundation
- ├─► S2 snapshot engine (+reference extraction) ─► S3 Pipedrive extractor ─► S4 Airtable extractor
- └─► S5 Review Center framework ─► S6 Org review ──┐   (S6/S7 proposals read Snapshot #1 → need S3/S4)
-                                  └─ S7 Contact review ┤
-S3+S4+S6+S7 ─► S8 identity import ─► S9 deals import ─► S10 legacy card UI
-S9 ─► S11 timeline import          S8+S9 ─► S12 tours import
-S9 ─► S13 files migration (gated)  S8–S13 ─► S14 delta+reconciliation ─► S15 cutover+teardown
+ ├─► S2 Snapshot & Extraction (engine + Pipedrive + Airtable, one slice) ──┐
+ └─► S3 Review Center framework ─► S4 Org review ──┐  (S4/S5 proposals read Snapshot #1 → need S2)
+                                  └─ S5 Contact review ┤◄──────────────────┘
+S2+S4+S5 ─► S6 identity import ─► S7 deals import ─► S8 legacy card UI
+S7 ─► S9 timeline import          S6+S7 ─► S10 tours import
+S7 ─► S11 files migration (gated)  S6–S11 ─► S12 delta+reconciliation ─► S13 cutover+teardown
 ```
+
+**Renumbering after the S2-S4 merge:** old S5→S3, S6→S4, S7→S5, S8→S6, S9→S7, S10→S8, S11→S9,
+S12→S10, S13→S11, S14→S12, S15→S13. Slice bodies below keep their original detail; the merged
+S2 body follows.
 
 ---
 
@@ -47,50 +55,30 @@ reports unconfigured/configured correctly; unit tests for the crosswalk uniquene
 **Risks:** low — additive DDL only; the one real risk (migration breaking deploy) is covered by
 the existing validate-migrations gate + startup smoke.
 
-### Slice 2 — Snapshot engine + reference extraction
+### Slice 2 — Snapshot & Extraction (MERGED: engine + Pipedrive + Airtable)
 
-**Goal:** the immutable landing zone works end-to-end, proven on tiny real data.
-**Implemented:** snapshot writer (JSONL streams → `gos-migration-snapshots`, per-snapshot
-manifest with counts+checksums, immutable snapshotId); resumable run executor on `MigrationRun`
-(claim-based, restart-safe, progress counters); rate-limit-aware legacy HTTP client (reusing the
-audited pacing/redaction patterns); first real extraction: Pipedrive REFERENCE data (pipelines,
-stages, field definitions, users, activity types) — small, non-customer, verifies the whole pipe.
+**Goal:** the immutable landing zone works end-to-end AND both systems are fully extracted into
+Snapshot #1 — one cohesive, deployable, verifiable capability.
+**Implemented (internally modular):**
+- *Engine:* snapshot writer (JSONL → `gos-migration-snapshots`, per-snapshot manifest with
+  counts+checksums, immutable snapshotId); resumable run executor on `MigrationRun` (claim-based,
+  restart-safe, progress counters); rate-limit-aware legacy HTTP client (audited pacing/redaction).
+- *Pipedrive module:* reference data (pipelines/stages/fields/users/activity types) + entities —
+  deals (**`archived_status=all`**), persons, organizations, notes, activities, deal products
+  (15,639 deals), **deal flow/stage-change history** (Decision 8), file METADATA (bytes → S11).
+- *Airtable module:* main base (all 24 tables) + legacy base **excluding `גישה, סיסמאות`
+  (hard-coded + test)**; attachment download at pull time (URL-expiry safe); Drive/Photos link
+  classification into the manifest.
 **Dependencies:** S1 (+ bucket & env provisioned).
-**Testable after:** run a reference snapshot twice → identical manifests, resumable mid-run kill,
-objects verifiable in R2, run visible in `/api/migration/status`.
-**Remains:** entity extraction.
-**Complexity:** M.
-**Risks:** R2 credential scoping; manifest/checksum design gets locked here (changing later means
-re-snapshotting — reviewed carefully in this slice).
-
-### Slice 3 — Pipedrive entity extractor
-
-**Goal:** complete Pipedrive Snapshot #1.
-**Implemented:** extractors for deals (**`archived_status=all`**), persons, organizations, notes,
-activities, deal products (15,639 deals), **deal flow/stage-change history** (Decision 8), files
-METADATA (bytes deferred to S13); per-entity JSONL + manifest counts cross-checked against the
-audited numbers (24,356 / 32,470 / 2,905).
-**Dependencies:** S2.
-**Testable after:** full Snapshot #1 manifest matches audit counts exactly; spot-decode random
-records; re-run = new snapshotId, same counts; throughput measured for delta planning.
-**Remains:** Airtable; file bytes.
-**Complexity:** M (volume + rate-limit care, logic is simple).
-**Risks:** rate-limit budget on ~40k+ calls for products/flow (mitigate: measured pacing,
-resumable runs); flow API shape verified early in the slice.
-
-### Slice 4 — Airtable extractor
-
-**Goal:** complete Airtable Snapshot #1 (both bases).
-**Implemented:** table extractors for the main base (all 24 tables) + legacy base **excluding
-`גישה, סיסמאות` (hard-coded exclusion + test)**; attachment download at pull time (3 fields,
-URL-expiry safe) into the snapshot; schema metadata captured; Drive/Photos link classification
-(folder/album/invalid) computed into the manifest.
-**Dependencies:** S2.
-**Testable after:** manifests vs bounded-count audit; passwords-table exclusion proven by test;
-attachments verified by checksum.
-**Remains:** imports.
-**Complexity:** S-M.
-**Risks:** low; formula-field values are point-in-time (accepted — they're derived and unmapped).
+**Testable after:** full Snapshot #1 manifests match the audited counts exactly
+(24,356 / 32,470 / 2,905; both Airtable bases); reference snapshot twice → identical manifests;
+resumable mid-run kill; passwords-table exclusion proven by test; attachment checksums; throughput
+measured for delta planning.
+**Remains:** file bytes (S11); all imports.
+**Complexity:** L (was three slices; volume + rate-limit care, logic simple).
+**Risks:** manifest/checksum format locks here (re-snapshot cost if changed — reviewed in-slice);
+rate-limit budget on ~40k+ calls (resumable runs, measured pacing); R2 credential scoping. Kept as
+one slice per owner decision — an engine with nothing to run can't be honestly verified.
 
 ### Slice 5 — Migration Review Center framework
 

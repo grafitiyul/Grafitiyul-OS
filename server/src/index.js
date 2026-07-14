@@ -94,6 +94,7 @@ import publicQuestionnaireRouter from './routes/publicQuestionnaire.js';
 import controlRouter from './routes/control.js';
 import { startControlSweepWorker } from './control/sweepWorker.js';
 import './control/detectors/index.js';
+import migrationRouter from './routes/migration.js';
 import { makeLegacyRedirect } from './legacyRedirect.js';
 import { buildManifest } from './pwa/manifest.js';
 
@@ -384,6 +385,11 @@ app.use('/api/questionnaires', requireAdminAuth, questionnairesRouter);
 // subsystem reports problems into OperationalIssue (server/src/control/);
 // this router serves the dashboard + acknowledge/recheck/server actions.
 app.use('/api/control', requireAdminAuth, controlRouter);
+
+// Legacy Data Migration (Pipedrive + Airtable → GOS) — admin-only. Slice 1 is
+// FOUNDATION ONLY: a read-only status/health endpoint over the migration
+// infrastructure tables. No extraction, no imports, no destination writes here.
+app.use('/api/migration', requireAdminAuth, migrationRouter);
 
 // Unknown /api/* paths get a real JSON 404 instead of falling through to
 // the SPA fallback (which would serve HTML for an API request).

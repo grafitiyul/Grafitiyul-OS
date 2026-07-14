@@ -3015,9 +3015,9 @@ model EmailEngagement {
 // status: cancellation is a STATUS, never a delete. Deleting a TourEvent is
 // allowed only while it has no Bookings at all (DB-enforced via Restrict).
 model TourEvent {
-  id                      String                       @id @default(cuid())
+  id                      String          @id @default(cuid())
   kind                    String // 'private' | 'business' | 'group_slot'
-  status                  String                       @default("scheduled") // scheduled | completed | cancelled | postponed
+  status                  String          @default("scheduled") // scheduled | completed | cancelled | postponed
   // Explicit business completion (tours/completion.js is the ONE transition):
   // when + why the tour completed. completedAt drives the tour summary's
   // post-completion edit window. reason: summaries | midnight | manual.
@@ -3031,11 +3031,11 @@ model TourEvent {
   // deal tours are validated at WON).
   date                    String? // "YYYY-MM-DD"
   startTime               String? // "HH:MM"
-  product                 Product?                     @relation(fields: [productId], references: [id], onDelete: SetNull)
+  product                 Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
   productId               String?
-  productVariant          ProductVariant?              @relation(fields: [productVariantId], references: [id], onDelete: SetNull)
+  productVariant          ProductVariant? @relation(fields: [productVariantId], references: [id], onDelete: SetNull)
   productVariantId        String?
-  location                Location?                    @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  location                Location?       @relation(fields: [locationId], references: [id], onDelete: SetNull)
   locationId              String?
   tourLanguage            String? // he | en | es | fr | ru (same vocabulary as Deal.tourLanguage)
   // Soft ceiling for group slots (warnings only — the operator may explicitly
@@ -3055,7 +3055,7 @@ model TourEvent {
   // When true the operator manually pinned this slot's operational product and
   // the registration-driven derivation must NOT overwrite productVariantId /
   // activity components. Cleared when the manual override is removed.
-  productManualOverride   Boolean                      @default(false)
+  productManualOverride   Boolean         @default(false)
   cancelledAt             DateTime?
   // Loose ref (no FK) to the TourEvent that superseded this row. Set ONLY on
   // proven erroneous replacement duplicates (historical reopen→re-WON twins —
@@ -3081,7 +3081,7 @@ model TourEvent {
   // of the tour still syncs; surfaced in the Tour modal status tooltip.
   gcalSyncWarning         String?
   gcalSyncedAt            DateTime?
-  gcalAttempts            Int                          @default(0)
+  gcalAttempts            Int             @default(0)
   gcalNextRetryAt         DateTime?
   // Field-ownership baselines for PRESENTATION fields (title/description/
   // color): the value GOS last wrote to Google. While Google's current value
@@ -3102,7 +3102,7 @@ model TourEvent {
   wooSyncStatus           String?
   wooSyncError            String?
   wooSyncedAt             DateTime?
-  wooAttempts             Int                          @default(0)
+  wooAttempts             Int             @default(0)
   wooNextRetryAt          DateTime?
   // Provenance of the LAST dirty-mark: 'explicit' (sync-one action) | 'bulk'
   // (backfill sweep / mapping-wide resync) | 'auto' (single-tour mutation) |
@@ -3114,23 +3114,23 @@ model TourEvent {
   // on every dirty-mark; the worker stamps wooSyncedRevision with the revision it
   // actually synced. desired ≠ synced ⇒ NOT truly synced — the sweep re-pends it,
   // so a lost/racing mutation can never remain falsely 'synced'.
-  wooDesiredRevision      Int                          @default(0)
+  wooDesiredRevision      Int             @default(0)
   wooSyncedRevision       Int?
 
   // Registered-tour REPLACEMENT link: when a tour with registrations is moved,
   // the original is cancelled and points here at its replacement. Enables
   // idempotent replace (retry finds the existing replacement) + the "replaced"
   // state in the UI. Loose (no FK) so either side survives deletion.
-  replacedByTourEventId   String?
-  createdAt               DateTime                     @default(now())
-  updatedAt               DateTime                     @updatedAt
-  bookings                Booking[]
-  assignments             TourAssignment[]
-  activityComponents      TourEventActivityComponent[]
-  ticketRegistrations     TicketRegistration[]
-  wooVariationLinks       WooVariationLink[]
-  gallery                 TourGallery?
-  payrollActivity         PayrollActivity?
+  replacedByTourEventId String?
+  createdAt             DateTime                     @default(now())
+  updatedAt             DateTime                     @updatedAt
+  bookings              Booking[]
+  assignments           TourAssignment[]
+  activityComponents    TourEventActivityComponent[]
+  ticketRegistrations   TicketRegistration[]
+  wooVariationLinks     WooVariationLink[]
+  gallery               TourGallery?
+  payrollActivity       PayrollActivity?
 
   // Canonical identity of a GENERATED open-tour occurrence is (openTourTemplateId,
   // date, startTime) — NOT (generatedByRuleId, date). Rule id is unstable across
@@ -4519,4 +4519,135 @@ model IssueNotification {
 
   @@unique([requirementId, recipientKey, channel])
   @@index([requirementId, status])
+}
+
+// ============================================================================
+// Legacy Data Migration (Pipedrive + Airtable → GOS) — Slice 1 FOUNDATION ONLY
+// ============================================================================
+// The infrastructure spine for the one-time legacy migration. These three
+// tables carry NO customer data yet — Slice 1 only creates the structures and
+// their observability. Extraction (Slice 2), review (Slices 3-5), and imports
+// (Slices 6+) fill them. See docs/architecture/GOS-migration-implementation-
+// roadmap.md. Additive-only; nothing in the live app reads or writes these.
+//
+// Design follows proven GOS patterns: cuid ids + string status (live-schema
+// convention), loose entity refs (no FK — survive entity deletion, like
+// TimelineEntry.subjectId / OperationalIssue.entityRefs), claim-based resumable
+// runs (like WhatsAppScheduledMessage / MaintenanceJob), and a stable source
+// crosswalk key (like TicketRegistration external ids / PersonRef.externalPersonId).
+
+// THE crosswalk + archive record. One row per legacy source record. Carries the
+// raw preserved `payload` (Legacy Archive) + a curated `cardData` map for the
+// "מידע ממערכת קודמת" card, and a LOOSE link to the GOS entity it became (filled
+// at import time). The (sourceSystem, sourceType, sourceId) triple is the
+// idempotency + reversibility key: extraction/import upsert on it, so re-runs
+// never duplicate, and a whole import batch can be rolled back by batchId.
+model LegacyRecord {
+  id            String   @id @default(cuid())
+  // 'pipedrive' | 'airtable' (validated in code — project convention, no enum).
+  sourceSystem  String
+  // e.g. 'deal' | 'person' | 'organization' | 'note' | 'activity' | 'deal_product'
+  //      | 'deal_flow' | 'tour' | 'participant' | 'file' | … (source entity kind).
+  sourceType    String
+  // The legacy record id, as a string (Pipedrive numeric ids + Airtable recIds
+  // both fit). Uniqueness is per (system, type) — see the compound unique.
+  sourceId      String
+  // The snapshot batch this row was last extracted from (set by Slice 2). Null
+  // until first extracted.
+  snapshotId    String?
+  // The import batch that wrote the linked GOS entity (set by Slices 6+). Null
+  // until imported; the handle for batch rollback until cutover.
+  importBatchId String?
+  // Raw preserved source record (the Legacy Archive payload). Never rendered as
+  // JSON to users — the "View complete legacy archive" action renders it readably.
+  payload       Json?
+  // Curated label→value pairs for the permanent "מידע ממערכת קודמת" card
+  // (owner, legacy stage, meaningful custom fields, pricing notes, Drive links…).
+  // Shaped at import time from `payload` per the frozen mapping — no ids/JSON.
+  cardData      Json?
+  // LOOSE link to the migrated GOS entity (no FK — survives entity deletion,
+  // same convention as TimelineEntry.subjectId). entityType e.g. 'Deal' |
+  // 'Contact' | 'Organization' | 'TourEvent'.
+  entityType    String?
+  entityId      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([sourceSystem, sourceType, sourceId])
+  @@index([entityType, entityId])
+  @@index([snapshotId])
+  @@index([importBatchId])
+  @@index([sourceSystem, sourceType])
+}
+
+// The migration review ledger — one row per decision the Review Center presents
+// (org merge, contact dedup, name split, stage-config approval, exceptional
+// record). The decision AUDIT is the point: who decided what, when, and the
+// resolved action (which may differ from the proposal when edited). Seeding is
+// idempotent via the (queue, subjectKey) unique, so re-building a queue from a
+// fresh snapshot never duplicates rows.
+model MigrationDecision {
+  id            String    @id @default(cuid())
+  // 'org_dedup' | 'contact_dedup' | 'name_cleanup' | 'stage_config' | 'exceptional'
+  queue         String
+  // Stable identity of the thing being decided (e.g. a normalized cluster key,
+  // a legacy contact id). Unique per queue → idempotent re-seed.
+  subjectKey    String
+  // The proposed action + the evidence panel data (candidates, confidence, links).
+  proposal      Json
+  // 'pending' | 'approved' | 'rejected' | 'edited' (validated in code).
+  status        String    @default("pending")
+  // The resolved decision (equals the proposal for a plain approve; carries the
+  // operator's edits otherwise). Null while pending.
+  decision      Json?
+  decidedBy     String? // AdminUser.id (loose)
+  decidedByName String? // username snapshot (survives rename/deactivation)
+  decidedAt     DateTime?
+  note          String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([queue, subjectKey])
+  @@index([queue, status])
+}
+
+// The resumable-run spine. One row per unit of migration work (a snapshot, an
+// extraction target, an import batch, a delta pass, a reconciliation). Claim-
+// based like WhatsAppScheduledMessage / MaintenanceJob so a run survives
+// restarts and can never be double-claimed across instances. `cursor` holds the
+// resume position; `counters` the observable progress. History stays honest —
+// a failed run keeps its error and is retried, never silently reset.
+model MigrationRun {
+  id         String    @id @default(cuid())
+  // 'snapshot' | 'extract' | 'import' | 'delta' | 'reconcile' (validated in code).
+  kind       String
+  // What this run operates on, e.g. 'pipedrive.deals' | 'airtable.main' |
+  // 'import.identity'. Null for whole-phase runs.
+  target     String?
+  // 'pending' | 'running' | 'done' | 'failed'.
+  status     String    @default("pending")
+  // The snapshot this run belongs to / produces (extraction + import trace back
+  // to a snapshot). Null for runs that don't touch a snapshot.
+  snapshotId String?
+  // The import batch this run produced (import runs). Null otherwise.
+  batchId    String?
+  // Resume position (source-specific: pagination cursor, last id, table offset).
+  cursor     Json?
+  // Observable progress: { extracted, written, skipped, errors, total, … }.
+  counters   Json?
+  // Claim-based concurrency (atomic updateMany claim, same pattern as the
+  // scheduled-message worker) so restarts/multiple instances are safe.
+  claimedAt  DateTime?
+  claimedBy  String?
+  attempts   Int       @default(0)
+  startedAt  DateTime?
+  finishedAt DateTime?
+  error      String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([kind, status])
+  @@index([status, claimedAt])
+  @@index([snapshotId])
+  @@index([batchId])
 }
