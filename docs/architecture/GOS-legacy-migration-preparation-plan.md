@@ -194,16 +194,21 @@ approved. Cross-checked against Airtable: 94 future tours, 100% linked to a Pipe
 Phases M1–M3 are cheap and safe (read-only, no GOS writes). M4 is the first GOS write and the
 riskiest phase. M5–M7 are schedule-driven (freeze window). M8 has no time pressure at all.
 
-> **Status (2026-07-14):** M1 external read-only audit is **complete**, including the M1b
-> corrections round — see `GOS-migration-M1b-corrections-audit.md` (the Pipedrive archive holds
-> **19,448 additional deals**, mass-archived 2026-03; true accessible population **24,356**;
-> extraction must use `archived_status=all`; archived deals are fully extractable without
-> restore and carry update timestamps for delta), plus `GOS-migration-M1-deep-audit.md` and
-> `GOS-migration-external-readiness-audit.md`. The mapping package draft
-> (`GOS-migration-mapping-package.md`) and the Org+Unit review report
-> (`GOS-migration-org-unit-review.md`) are awaiting owner approval. The rehearsal→delta→cutover
-> model (§1.7) maps onto phases M4 (rehearsal load) → freeze → delta → M6 reconciliation → M7
-> cutover. No snapshot has been stored and no GOS write has occurred yet.
+> **Status (2026-07-14):** M1 + M1b audits **complete**; the owner **decision workshop is
+> resolved** (`GOS-migration-decision-workshop.md`) — all business decisions recorded except two:
+> the §3a stage-mapping table and the Migration Review Center / archive-access design (mapping
+> package §9–§10). Key rulings now binding: ALL 24,356 accessible deals migrate (Tier 2 = day-one
+> active view only, with a future-relevance override); the two sales pipelines merge into the
+> single GOS pipeline; the legacy collection pipeline maps to the GOS Collection module (24
+> unpaid deals flagged); all contacts/tours/files import (files gated on a pre-copy report);
+> review happens in a **temporary in-GOS Migration Review Center** (recommended single module,
+> 6 tabs) whose queues gate load finalization; imported deals/orgs/contacts keep their Pipedrive
+> ids (deals: as orderNo — collision-free below 27000); history imports as native Timeline
+> entries incl. stage-change history; lost/archived deals' open tasks become history, active
+> deals keep real Tasks. Execution order now: approvals → LegacyRecord + decision-ledger slice →
+> build Review Center → Snapshot #1 → rehearsal import → queues resolved (gate) → verification →
+> freeze/delta → cutover → Center deleted (archive browser + legacy panels remain). No snapshot
+> stored, no GOS write, no Center code yet.
 
 ---
 

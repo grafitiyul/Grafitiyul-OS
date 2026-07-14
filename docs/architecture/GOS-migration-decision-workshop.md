@@ -1,153 +1,112 @@
-# GOS Migration — Product-Owner Decision Workshop
+# GOS Migration — Product-Owner Decision Workshop (RESOLVED)
 
-**Status:** Decision session document. No technical work in this phase. Each decision below has an
-empty **DECISION:** line — the owner's answers get recorded here and become binding for the
-mapping package (`GOS-migration-mapping-package.md`), which then updates automatically.
-**Consolidation:** D-1…D-14 → **7 business decisions** (D-3 pricing already decided by the owner;
-purely inferable items moved to "already decided" below).
-**Last updated:** 2026-07-14
+**Status:** Decisions recorded 2026-07-14 from the product owner, with adjustments. This document
+is the binding record; the mapping package (`GOS-migration-mapping-package.md`) reflects it.
+**Remaining open items:** exactly two — see the end of this document.
 
 ---
 
-## Already decided — no discussion needed
+## Already decided (unchanged)
 
-These follow from your earlier instructions or directly from the audited data:
-
-- **Historical pricing lines** — preserved read-only: original wording (verbatim), the math,
-  totals, tax; never forced into the live Pricing Builder. (Your instruction; verified feasible.)
-- **"New Contact" spam (3,193)** — excluded; verified none has an open/won deal.
-- **Phone handling** — original numbers never altered; normalized copies used only for matching;
-  foreign numbers never auto-"repaired"; unclear cases go to review.
-- **Google Drive** — links preserved on the records; file contents stay in Drive.
-- **Old Airtable base** — archived as-is (no live records); the passwords table is never copied.
-- **Archived Pipedrive deals** — included in extraction (no restore needed).
-- **Cutover model** — practice import first, keep working in the old systems, final top-up of
-  changes, verification, then switch.
-- **Snapshot storage** — a new private storage bucket, separate from anything public.
+Historical pricing read-only (wording + math) · "New Contact" spam excluded · phone originals
+never altered, matching via safe copies, foreign never auto-repaired · Drive links kept, contents
+stay in Drive · legacy Airtable base archived (passwords never copied) · archived deals included
+in extraction · rehearsal → delta → cutover · private snapshot bucket.
 
 ---
 
-## Decision 1 — Which deals are "live work" on day one? 🔴 most important
+## Decision 1 — Active operational scope ✅ APPROVED (with adjustment)
 
-**Question:** When we switch to GOS, which old deals should appear as live, workable deals
-(rather than history)?
-**Why it matters:** This defines what your team sees in the pipeline on the first morning.
-**Recommendation:** The measured "Tier 2" set — every open deal, every deal with a future tour,
-every deal with an upcoming or open to-do (**699 deals**). Also: quickly glance at the **8 open
-deals that sit inside the archive** — likely archived on purpose; if so they stay history.
-**Why:** It captures everything with real future work without dragging in thousands of cold
-leads.
-**Impact:** ~700 of 24,356 deals · Goal A.
-**Tradeoffs:** Complete working picture; the price is some stale to-dos come along (they can be
-bulk-closed later).
-**Alternatives:** Tighter (~150–180: only open/future-dated — risks losing follow-up work) ·
-Wider (~1,200–1,400: adds recently-touched lost deals — more noise).
+**DECISION:** Tier 2 (699 deals) defines the **day-one active view**. Adjustments:
+- **ALL 24,356 accessible deals migrate eventually** — Tier 2 is a visibility/priority cut, not
+  a migration cut.
+- **Override rule:** any deal with genuine future operational relevance belongs to Goal A even
+  if its Pipedrive status would exclude it. Applied so far: the 5 open gift-voucher deals
+  (purchased, awaiting redemption) are already inside the active set; the 8 archived-open deals
+  go to the Exceptional-records review queue for a per-deal call.
 
-**DECISION 1:** _________
+## Decision 2 — Pipeline/stage mapping ⏳ NOT YET APPROVED — table now complete
 
-## Decision 2 — Where does each deal land in the GOS pipeline?
+**Owner rulings recorded:**
+- Pipelines "מכירות גרפיטיול" + "לקוחות עסקיים" merge into the **single GOS sales pipeline**
+  (deliberate GOS improvement).
+- "לקוחות עסקיים - גבייה" is **NOT a sales pipeline** — it is unpaid customers. Every imported
+  deal in it **below the final stage (יצאה קבלה = fully paid)** must appear in the **GOS
+  Collection module as unpaid**. Never recreated as a pipeline.
+- Gift Cards / Long-term Follow-up: decide after seeing volumes.
 
-**Question:** Approve the translation table from the 25 old Pipedrive stages to your 6 GOS
-stages, and choose what stage closed historical deals get.
-**Why it matters:** Every imported deal must sit in some stage; this shapes your pipeline view.
-**Recommendation:** The table in the mapping package (intake→ליד חדש, proposal-sent→הצעת מחיר,
-follow-ups→פולואפ/מו"מ, awaiting-our-approval→הסכמה לסגירה, confirmed→סגירה; the old collection
-pipeline just becomes "won" — GOS's own collection module owns payment state). Historical closed
-deals: mapped stage where obvious, otherwise סגירה — their original stage is always kept in the
-attached legacy record.
-**Impact:** All 24,356 deals (699 visibly; the rest as history) · Goals A+B.
-**Tradeoffs:** No new stage clutter; you lose a dedicated "imported" stage marker (origin is
-still always visible on the deal).
-**Alternative:** Create one hidden "ארכיון-ייבוא" stage for all historical deals.
+**Volumes (now measured, full population incl. archived):**
+- Collection pipeline: **יצאה קבלה 2,521** (fully paid — nothing owed) vs **ממתין לתשלום 24**
+  (all won, none archived — live unpaid customers → Collection module). All other collection
+  stages: empty. Oddities: 2 open + 6 lost rows → Exceptional-records queue.
+- **Long-term Follow-up: 341 deals — 100% lost, 100% archived.** Pure history.
+- **Gift Cards: 49 deals — 5 open (awaiting redemption → Goal A), 14 won, 30 lost.**
 
-**DECISION 2:** _________
+The complete stage-by-stage table with these volumes is in the mapping package §3a —
+**awaiting the owner's approval** (remaining item #1).
 
-## Decision 3 — How much of the past becomes real records? (three toggles)
+## Decision 3 — Historical records ✅ APPROVED
 
-**Question:** For old contacts, old tours, and old files — real GOS records, or archive-only?
-**Why it matters:** This sets how rich the customer history is when your team opens a customer.
+**DECISION:** 3a import **all contacts** · 3b import **all historical tours** · 3c import **all
+files** — with a mandatory **pre-copy file report** (total size, unusually large files, broken
+files, inaccessible files) before any copying runs.
 
-| Toggle | Recommendation | Why |
-|---|---|---|
-| **3a. Contacts** — all 29,277 (after spam removal) vs only those attached to deals | **All** | WhatsApp/email auto-matching works against the full phone book; a returning customer from 2019 is recognized |
-| **3b. Historical tours** (~2,000+) | **Real tour records** | "This school did 4 tours with us" becomes visible on the customer page |
-| **3c. Old deal files** (≥ ~7,000 deals have files; total size measured before running) | **Copy into GOS storage** | Pipedrive disappears at the end — un-copied files are gone forever |
+## Decision 4 — Organization cleanup ✅ APPROVED (method changed)
 
-**Impact:** Mostly Goal B (history) · 3a slightly affects Goal A matching quality.
-**Tradeoffs:** Rich, searchable history and safe files; the cost is a bigger database/storage
-bill (measured and reported before anything runs).
-**Alternatives:** Any toggle can be flipped to "archive-only/leaner"; 3c can be "list files
-without copying" (cheaper, but files die with Pipedrive).
+**DECISION:** No spreadsheets/CSV. A **temporary review experience inside GOS** presents each
+proposed organization merge with: candidate organizations, proposed canonical organization,
+proposed Units/Departments, linked deals, linked contacts, confidence score. Actions: Approve /
+Reject / Edit / Merge into another organization / Create additional Unit. Migration-only tooling,
+not a permanent feature. → Implemented as a tab of the **Migration Review Center** (see below).
 
-**DECISION 3a/3b/3c:** _________
+## Decision 5 — Contacts without names ✅ APPROVED (Option C)
 
-## Decision 4 — Duplicate cleanup: approve the auto-merges and staff the review
+**DECISION:** No silent name moves. A temporary review queue shows original data, the proposed
+split (first name / last name / language fields); owner approves, edits, or rejects each.
+→ A tab of the Migration Review Center.
 
-**Question:** Confirm the safe automatic merges, and decide who reviews the rest.
-**Why it matters:** This is what makes GOS start with ONE record per real customer/organization.
-**Recommendation:**
-- Auto-merge the **647 contact pairs** with identical phone + matching name/email, and the **2
-  organization pairs** with identical tax id (every merge is logged and reversible pre-cutover).
-- You personally work the **top-25 organization clusters** (banks, health funds, universities →
-  one organization + branches as Units) — about 1–2 hours, before any deals load.
-- Office staff work the contact review queue (**363 probable + 141 ambiguous**) during the
-  import phase.
-**Impact:** ~2,400 contacts + 384 organizations · both goals (this is the identity foundation).
-**Tradeoffs:** A few hours of human review buys a permanently clean customer base; skipping it
-means duplicate customers forever.
-**Alternative:** Defer everything to review (no auto-merges) — safer-feeling but adds ~650
-unnecessary manual confirmations of obvious duplicates.
-**Depends on:** Decision 3a (importing all contacts is what makes the queue this size).
+## Decision 6 — Legacy IDs ✅ APPROVED (extended)
 
-**DECISION 4:** _________
+**DECISION:** Imported deals keep their original Pipedrive numbers (8–26,306; no collision with
+the GOS sequence at 27,000+). **Extended:** Organizations and Contacts also keep their Pipedrive
+IDs as first-class, visible, searchable references (GOS orgs/contacts have no numeric public id,
+so the legacy id is displayed on the record and searchable; legacy-id lookup URLs supported).
+New GOS-created entities continue the new numbering untouched.
 
-## Decision 5 — Two leftover contact edge cases
+## Decision 7 — Historical cleanup ✅ APPROVED (7a modified)
 
-**Question (5a):** Contacts with no first name (~1,177, usually a single name in the wrong box) —
-approve moving their only name into the first-name field (display unchanged; nothing invented)?
-**Question (5b):** The single exceptional "New Contact" spam record that has one old closed deal —
-stays excluded (the deal itself migrates regardless)?
-**Recommendation:** Yes to both.
-**Impact:** ~1,200 records · Goal B.
-**Tradeoffs:** None material; the alternative (routing 1,177 records to manual review) costs
-hours for no business value.
+- **7a:** Tasks on **LOST deals → Timeline history only** (127 deals measured). Tasks on **active
+  operational deals stay real Tasks**. Refinement adopted (same spirit): open tasks on
+  **archived** deals (deliberately shelved) also become history — archived work is not active
+  work. Non-archived open/won deals with open tasks keep real Tasks.
+- **7b:** Approved — Drive + Google Photos links only; contents never copied.
+- **7c:** Archive-only approved, **with accessible presentation** (not hidden JSON). Proposal in
+  the mapping package §10: a permanent per-record "מידע ממערכת קודמת" panel (rendered
+  label→value) + a small read-only legacy-archive browser for non-entity material (templates
+  etc.). — awaiting approval as part of remaining item #2.
 
-**DECISION 5:** _________
+## Decision 8 — Historical Timeline ✅ APPROVED (new)
 
-## Decision 6 — Deal numbers for imported deals
+**DECISION:** History must feel native. A 2019 deal opened in GOS should read as if it always
+lived there: notes, activities, **stage changes** (Pipedrive keeps per-deal change history —
+extractable), files, historical documents, relevant events — all as natural Timeline entries
+with their original timestamps and the standard import provenance.
 
-**Question:** What "מספר הזמנה" do imported deals carry?
-**Why it matters:** GOS deal numbers are customer-facing and start at 27,000; the number is also
-the deal's link/URL.
-**Recommendation:** **Imported deals keep their original Pipedrive number as their GOS deal
-number.** The old numbers run 8–26,306 and GOS starts at 27,000 — the ranges can never collide.
-Old deals stay recognizable ("deal 21,455" means the same thing it always did), new deals
-continue from 27,000+ untouched.
-**Impact:** All 24,356 imported deals · both goals.
-**Tradeoffs:** Clean continuity, zero collisions; no real downside identified.
-**Alternative:** Let imports consume new numbers (burns ~24k numbers, breaks continuity) — not
-recommended.
+## Architectural request — ONE Migration Review Center ✅ EVALUATED, RECOMMENDED
 
-**DECISION 6:** _________
-
-## Decision 7 — Small cleanups bundle (rubber-stamp)
-
-| Item | Recommendation |
-|---|---|
-| **7a.** Old open to-dos on deals NOT in the live set | Don't create live tasks — keep as a history line on the deal |
-| **7b.** Google Photos album links (hundreds of deals/tours) | Keep as clickable links on the deal/tour (tour photos context); contents not copied |
-| **7c.** Old message templates (ניסוחים, ~230 texts in the old base) | Archive only — GOS's own content/templates are already rebuilt; revisit only if something is missed |
-
-**Impact:** Small · Goal B.
-**Depends on:** 7a follows Decision 1's cut line.
-
-**DECISION 7:** _________
+Honest evaluation in the mapping package §9. Verdict: **a single temporary Migration Review
+Center is architecturally cleaner** than separate modules — with two consolidations to the
+proposed tab list and clear caveats. Awaiting owner sign-off (remaining item #2).
 
 ---
 
-## After this workshop
+## Remaining product-owner decisions (only these)
 
-With these 7 answers recorded, implementation becomes mechanical: legacy-record foundation →
-Snapshot #1 → rehearsal import → your two review queues (org top-25, contact duplicates) →
-verification → freeze/top-up → cutover → history backfill. Remaining owner touchpoints: the two
-review queues and the final go/no-go.
+1. **Approve the complete stage-mapping table** (mapping package §3a — now with full volumes,
+   the Collection rule, and the measured Gift-Cards / Long-term proposals).
+2. **Approve the Migration Review Center design + archive-access proposal** (mapping package
+   §9–§10: single center, 6 tabs, decision ledger, deletion plan; permanent legacy panel +
+   read-only archive browser).
+
+Later checkpoints (not decisions now): the file-size report go/no-go before copying (3c), the
+review-queue items themselves (inside the Center), and the final cutover go/no-go.
