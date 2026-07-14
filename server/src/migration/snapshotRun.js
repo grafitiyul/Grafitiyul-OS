@@ -201,14 +201,16 @@ export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, m
     const buffer = [];
     const shards = cur.shards;
     let shardIndex = cur.shardIndex;
-    for (let i = cur.cursor.index; i < targets.length; i++) {
-      const dealId = targets[i];
-      const products = await pd.dealProducts(dealId);
-      buffer.push({ deal_id: dealId, products });
+    const CONCURRENCY = 6; // per-deal fetches parallelised; well under PD burst (80/2s)
+    for (let i = cur.cursor.index; i < targets.length;) {
+      const batch = targets.slice(i, i + CONCURRENCY);
+      const rows = await Promise.all(batch.map(async (dealId) => ({ deal_id: dealId, products: await pd.dealProducts(dealId) })));
+      buffer.push(...rows); // deterministic order (Promise.all preserves input order)
+      i += batch.length;
       if (buffer.length >= desc.shardSize) {
         shardIndex = await flush(desc.system, desc.entity, shardIndex, buffer, shards);
-        cur.cursor.index = i + 1; cur.shardIndex = shardIndex; await persist();
-        log(`    deal_products ${i + 1}/${targets.length}`);
+        cur.cursor.index = i; cur.shardIndex = shardIndex; await persist();
+        log(`    deal_products ${i}/${targets.length}`);
       }
     }
     shardIndex = await flush(desc.system, desc.entity, shardIndex, buffer, shards);
