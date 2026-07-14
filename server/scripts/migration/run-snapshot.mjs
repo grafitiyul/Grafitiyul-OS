@@ -78,9 +78,17 @@ try {
   if (prisma) await prisma.$disconnect();
   process.exit(0);
 } catch (e) {
+  if (e?.code === 'RATE_BUDGET_EXCEEDED') {
+    const mins = Math.round((e.retryAfter || 0) / 60);
+    console.error(`\n⏸ PAUSED — Pipedrive daily request budget exceeded. Reset in ~${mins} min (${e.retryAfter}s).`);
+    console.error('Progress is safely checkpointed. Resume after reset with:');
+    console.error(`  node server/scripts/migration/run-snapshot.mjs --snapshot ${snapshotId}`);
+    if (prisma) await prisma.$disconnect().catch(() => {});
+    process.exit(3); // distinct code: paused, not failed
+  }
   console.error('\n✗ SNAPSHOT ERROR:', e?.message || e);
   console.error('Re-run with the SAME snapshot id to resume:');
-  console.error(`  node scripts/migration/run-snapshot.mjs --snapshot ${snapshotId}`);
+  console.error(`  node server/scripts/migration/run-snapshot.mjs --snapshot ${snapshotId}`);
   if (prisma) await prisma.$disconnect().catch(() => {});
   process.exit(1);
 }

@@ -61,6 +61,8 @@ export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, m
     await persist();
     log(`initialized snapshot ${snapshotId} — ${plan.length} entities planned`);
   } else {
+    state.status = 'running'; // flip a previously paused run back to running
+    delete state.pausedReason; delete state.retryAfter;
     log(`resuming snapshot ${snapshotId} — ${Object.keys(state.completed).length}/${state.plan.length} entities already complete`);
   }
 
@@ -87,12 +89,23 @@ export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, m
     if (!resuming) state.current = { key, cursor: null, shardIndex: 0, shards: [] };
     log(`▶ ${key}${resuming ? ' (resume)' : ''}`);
     let manifest;
-    if (desc.kind === 'pdReference') manifest = await extractReference(desc);
-    else if (desc.kind === 'pdBulk') manifest = await extractPdBulk(desc);
-    else if (desc.kind === 'pdPerDeal') manifest = await extractPdPerDeal(desc);
-    else if (desc.kind === 'atTable') manifest = await extractAtTable(desc);
-    else if (desc.kind === 'atAttachments') manifest = await extractAtAttachments(desc);
-    else throw new Error(`unknown entity kind: ${desc.kind}`);
+    try {
+      if (desc.kind === 'pdReference') manifest = await extractReference(desc);
+      else if (desc.kind === 'pdBulk') manifest = await extractPdBulk(desc);
+      else if (desc.kind === 'pdPerDeal') manifest = await extractPdPerDeal(desc);
+      else if (desc.kind === 'atTable') manifest = await extractAtTable(desc);
+      else if (desc.kind === 'atAttachments') manifest = await extractAtAttachments(desc);
+      else throw new Error(`unknown entity kind: ${desc.kind}`);
+    } catch (e) {
+      // Rate-budget lockout: pause cleanly (progress + cursor already persisted at
+      // the last shard boundary) so a later resume continues from here.
+      if (e?.code === 'RATE_BUDGET_EXCEEDED') {
+        state.status = 'paused'; state.pausedReason = e.message; state.retryAfter = e.retryAfter; state.pausedAt = nowIso();
+        await persist();
+        log(`⏸ paused on ${key}: ${e.message} — resume after the budget resets`);
+      }
+      throw e;
+    }
 
     state.completed[key] = { records: manifest.totalRecords ?? manifest.fileCount ?? 0, bytes: manifest.totalBytes ?? 0, combinedSha256: manifest.combinedSha256 || null };
     state.counters[key] = manifest.totalRecords ?? manifest.fileCount ?? 0;
