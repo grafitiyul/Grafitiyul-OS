@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
-import { ensureTourSlots } from '../tours/openTourGeneration.js';
+import { ensureTourSlots, reconcileExceptionDeletion } from '../tours/openTourGeneration.js';
 import { buildGroupCards } from '../pricing/groupTicketCards.js';
 import {
   buildTemplatePatch,
@@ -480,11 +480,29 @@ router.put(
   }),
 );
 
+// Deleting an exception must reconcile the occurrences it was shaping, through
+// the canonical slot path: a removed CANCEL reopens the date's occurrence (the
+// previously-cancelled TourEvent is revived with its Woo/registration history,
+// never a fresh duplicate), a removed ADD cancels its empty one-off. Without
+// this, deleting a cancel exception left the tour cancelled forever (the live
+// 16/07 failure).
 router.delete(
   '/exceptions/:exceptionId',
   handle(async (req, res) => {
-    await prisma.openTourScheduleException.delete({ where: { id: req.params.exceptionId } });
-    res.status(204).end();
+    const exception = await prisma.openTourScheduleException.findUnique({
+      where: { id: req.params.exceptionId },
+    });
+    if (!exception) return res.status(204).end();
+    await prisma.openTourScheduleException.delete({ where: { id: exception.id } });
+    let reconciled = null;
+    try {
+      reconciled = await reconcileExceptionDeletion(prisma, exception.templateId, exception, { log: console });
+      kickTourCalendarSync();
+      kickWooSync();
+    } catch (e) {
+      console.error('[open-tours] exception-deletion reconcile failed', e);
+    }
+    res.status(200).json({ ok: true, reconciled });
   }),
 );
 

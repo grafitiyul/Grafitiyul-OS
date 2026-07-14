@@ -3132,7 +3132,20 @@ model TourEvent {
   gallery                 TourGallery?
   payrollActivity         PayrollActivity?
 
-  @@unique([generatedByRuleId, date])
+  // Canonical identity of a GENERATED open-tour occurrence is (openTourTemplateId,
+  // date, startTime) — NOT (generatedByRuleId, date). Rule id is unstable across
+  // rule delete+recreate (which minted the 2026-07 duplicates: a deleted Thu rule
+  // and its recreated twin each generated the same Thursdays under different rule
+  // ids, so the old (generatedByRuleId, date) unique never fired). The structural
+  // guard is now a PARTIAL unique index over active generated slots, created in
+  // raw SQL (Prisma can't express a WHERE-filtered unique) in the
+  // tour_canonical_slot_identity migration:
+  //   UNIQUE (openTourTemplateId, date, startTime)
+  //     WHERE kind='group_slot' AND status='scheduled' AND openTourTemplateId,date,startTime NOT NULL
+  // It permits unlimited cancelled/postponed history, manual tours (template null)
+  // and different clock times, but at most ONE active occurrence per logical slot.
+  // generatedByRuleId keeps a plain index for ruleEdit's per-rule slot lookups.
+  @@index([generatedByRuleId, date])
   @@index([date, startTime])
   @@index([kind, status, date])
   @@index([productId])

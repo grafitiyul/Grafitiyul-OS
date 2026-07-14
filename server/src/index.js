@@ -608,4 +608,13 @@ app.listen(port, () => {
   import('./maintenance/dedupeRacedTourSlots.js')
     .then(({ startDedupeRacedTourSlots }) => startDedupeRacedTourSlots(prisma, console))
     .catch((e) => console.warn('[maintenance] raced-slot dedupe failed:', e?.message));
+
+  // Durable one-time repair of generated-slot identity (runs AFTER the
+  // tour_canonical_slot_identity migration): re-attributes live slots that point
+  // at a deleted rule to their current rule, and reopens occurrences whose cancel
+  // exception was deleted but never returned (16/07). Skips dates already served
+  // by a replacement, so 17/07 is untouched.
+  import('./maintenance/repairGeneratedSlotIdentity.js')
+    .then(({ startRepairGeneratedSlotIdentity }) => startRepairGeneratedSlotIdentity(prisma, console))
+    .catch((e) => console.warn('[maintenance] generated-slot identity repair failed:', e?.message));
 });
