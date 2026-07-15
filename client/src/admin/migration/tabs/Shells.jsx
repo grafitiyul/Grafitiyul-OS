@@ -3,16 +3,8 @@
 // controls, no placeholder rows.
 import QueueShell from '../components/QueueShell.jsx';
 
-export function ContactsTab() {
-  return (
-    <QueueShell
-      icon="👤"
-      title="אנשי קשר"
-      blocking
-      description="כאן יוצגו אנשי קשר שנראים כפולים, כולל ראיות טלפון ואימייל, כדי להחליט מה לאחד. בניית ההצעות תגיע בשלב הבא."
-    />
-  );
-}
+// NOTE: "אנשי קשר" (tab 2) is now the real duplicate-review queue —
+// see tabs/ContactsTab.jsx. It is not a shell any more.
 
 export function NameCleanupTab() {
   return (

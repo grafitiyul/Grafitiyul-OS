@@ -13,7 +13,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import * as r2 from '../migration/r2.js';
-import { seedStageConfig, buildReviewSummary, listQueue, recordDecision } from '../migration/review/service.js';
+import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe } from '../migration/review/service.js';
 import { buildSnapshotStatus } from '../migration/review/snapshotStatus.js';
 import { createBrowser } from '../migration/review/browser.js';
 
@@ -101,6 +101,27 @@ router.get(
     } catch (e) {
       if (e.code === 'UNKNOWN_QUEUE') return res.status(404).json({ error: 'unknown_queue' });
       if (e.code === 'UNKNOWN_FILTER') return res.status(400).json({ error: 'unknown_filter' });
+      throw e;
+    }
+  }),
+);
+
+// EXPLICIT batch approval of the deterministically-safe clusters (contacts).
+// The caller cannot choose WHICH rows: only engine-marked `batchApprovable`
+// pending rows qualify, each written with its own decision + audit trail.
+router.post(
+  '/queues/:queue/batch-approve-safe',
+  handle(async (req, res) => {
+    const userId = req.adminAuth?.userId || null;
+    let userName = null;
+    if (userId) {
+      const u = await prisma.adminUser.findUnique({ where: { id: userId }, select: { username: true } });
+      userName = u?.username || null;
+    }
+    try {
+      res.json(await batchApproveSafe(prisma, { queue: req.params.queue, userId, userName }));
+    } catch (e) {
+      if (e.code === 'BATCH_NOT_SUPPORTED') return res.status(400).json({ error: 'batch_not_supported' });
       throw e;
     }
   }),

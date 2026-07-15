@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { seedStageConfig, buildReviewSummary, listQueue, recordDecision } from './service.js';
+import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe } from './service.js';
 import { STAGE_CONFIG_COUNT } from './stageConfigSeed.js';
 import { draftFromProposal } from './orgDecision.js';
 
@@ -254,6 +254,69 @@ test('re-seeding NEVER overwrites an owner-edited organizations decision', async
   const reopened = draftFromProposal(decided.proposal, decided.decision);
   assert.equal(reopened.canonicalName, 'Bank Leumi');
   assert.equal(reopened.units[0].name, 'Capital Markets Division');
+});
+
+// ── Batch approval of safe contact clusters ─────────────────────────────────
+const contactCluster = (id, confidence, batchApprovable) => ({
+  queue: 'contacts', subjectKey: `contact:phone:${id}`, status: 'pending',
+  proposal: {
+    kind: 'contact_cluster', confidence, batchApprovable,
+    members: [
+      { legacyId: id * 10, name: 'דנה', phones: ['050-1111111'], emails: [], dealCount: 2 },
+      { legacyId: id * 10 + 1, name: 'דנה', phones: ['0501111111'], emails: [], dealCount: 1 },
+    ],
+    proposedPrimaryLegacyId: id * 10,
+    proposedMergeLegacyIds: [id * 10 + 1],
+    proposedSeparateLegacyIds: [],
+  },
+});
+
+test('batch approve touches ONLY engine-marked safe clusters, with a full audit trail', async () => {
+  const c = stubClient([
+    contactCluster(1, 'safe', true),
+    contactCluster(2, 'safe', true),
+    contactCluster(3, 'probable', false),
+    contactCluster(4, 'shared', false),
+    contactCluster(5, 'ambiguous', false),
+  ]);
+  const res = await batchApproveSafe(c, { queue: 'contacts', userId: 'u1', userName: 'elinoy' });
+  assert.equal(res.approved, 2);
+  assert.equal(res.skipped, 3);
+
+  const rows = [...c._rows.values()];
+  for (const r of rows) {
+    if (r.proposal.batchApprovable) {
+      assert.equal(r.status, 'approved');
+      assert.equal(r.decidedByName, 'elinoy', 'audited exactly like a manual approval');
+      assert.ok(r.decidedAt instanceof Date);
+      assert.equal(r.decision.primaryLegacyId, r.proposal.proposedPrimaryLegacyId, 'stores exactly the proposal');
+      assert.match(r.note, /אישור קבוצתי/);
+    } else {
+      assert.equal(r.status, 'pending', 'risky clusters are never batch-approved');
+      assert.equal(r.decision, undefined);
+    }
+  }
+});
+
+test('batch approve cannot be pointed at another queue, and is idempotent', async () => {
+  const c = stubClient([contactCluster(1, 'safe', true)]);
+  await assert.rejects(() => batchApproveSafe(c, { queue: 'organizations' }), (e) => e.code === 'BATCH_NOT_SUPPORTED');
+  await assert.rejects(() => batchApproveSafe(c, { queue: 'stage_config' }), (e) => e.code === 'BATCH_NOT_SUPPORTED');
+
+  assert.equal((await batchApproveSafe(c, { queue: 'contacts' })).approved, 1);
+  // Running it again approves nothing new — decided rows are no longer pending.
+  assert.equal((await batchApproveSafe(c, { queue: 'contacts' })).approved, 0);
+});
+
+test('batch approve never resurrects a rejected or deferred cluster', async () => {
+  const c = stubClient([contactCluster(1, 'safe', true), contactCluster(2, 'safe', true)]);
+  const [a] = [...c._rows.values()];
+  a.status = 'rejected';
+  a.decidedByName = 'elinoy';
+  const res = await batchApproveSafe(c, { queue: 'contacts', userName: 'other' });
+  assert.equal(res.approved, 1, 'only the still-pending one');
+  assert.equal([...c._rows.values()][0].status, 'rejected', 'the owner rejection stands');
+  assert.equal([...c._rows.values()][0].decidedByName, 'elinoy');
 });
 
 test('the whole review service touches ONLY the decision ledger (no production writes)', async () => {

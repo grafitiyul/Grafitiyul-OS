@@ -37,4 +37,8 @@ export const migrationApi = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  // Explicit batch approval of the deterministically-safe clusters. The server
+  // decides WHICH qualify (engine-marked only) — the caller cannot choose.
+  batchApproveSafe: (queue) =>
+    req(`/api/migration/review/queues/${encodeURIComponent(queue)}/batch-approve-safe`, { method: 'POST' }),
 };

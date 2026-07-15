@@ -25,8 +25,8 @@ export const REVIEW_QUEUES = [
     label: 'אנשי קשר',
     kind: 'queue',
     blocking: true,
-    implemented: false,
-    summary: 'איחוד אנשי קשר כפולים, כולל ראיות טלפון — נבנה בשלב הבא.',
+    implemented: true,
+    summary: 'קבוצות של אנשי קשר כפולים בלבד — לא כל אנשי הקשר. הקבוצות הבטוחות ניתנות לאישור קבוצתי.',
   },
   {
     key: 'name_cleanup',

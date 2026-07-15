@@ -68,11 +68,8 @@ import MigrationLayout from './admin/migration/MigrationLayout.jsx';
 import StageConfigTab from './admin/migration/tabs/StageConfigTab.jsx';
 import OrganizationsTab from './admin/migration/tabs/OrganizationsTab.jsx';
 import SnapshotBrowserTab from './admin/migration/tabs/SnapshotBrowserTab.jsx';
-import {
-  ContactsTab,
-  NameCleanupTab,
-  ExceptionalTab,
-} from './admin/migration/tabs/Shells.jsx';
+import ContactsTab from './admin/migration/tabs/ContactsTab.jsx';
+import { NameCleanupTab, ExceptionalTab } from './admin/migration/tabs/Shells.jsx';
 import TourEventPage from './admin/tours/TourPage.jsx';
 import DealDetail from './admin/deals/DealDetail.jsx';
 import QuotePreviewCanvas from './admin/quote/QuotePreviewCanvas.jsx';

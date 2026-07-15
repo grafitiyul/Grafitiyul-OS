@@ -82,11 +82,13 @@ test('no "finalize import" action exists yet — readiness is only REPORTED', ()
   assert.deepEqual(routes.sort(), [
     'GET /browser/entities', 'GET /browser/filter', 'GET /browser/record', 'GET /browser/records',
     'GET /queues/:queue', 'GET /snapshot', 'GET /summary',
-    'POST /decisions/:id/decide', 'POST /seed',
+    'POST /decisions/:id/decide', 'POST /queues/:queue/batch-approve-safe', 'POST /seed',
   ]);
   // Every write route is a decision-ledger route — nothing else mutates.
   const writes = routes.filter((r) => r.startsWith('POST'));
-  assert.deepEqual(writes.sort(), ['POST /decisions/:id/decide', 'POST /seed']);
+  assert.deepEqual(writes.sort(), [
+    'POST /decisions/:id/decide', 'POST /queues/:queue/batch-approve-safe', 'POST /seed',
+  ]);
 });
 
 test('the deletion boundary is a single mount line', () => {

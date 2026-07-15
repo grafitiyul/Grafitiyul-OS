@@ -6,6 +6,7 @@
 import { REVIEW_QUEUES, queueByKey, FROZEN_QUEUES, isResolved } from './queues.js';
 import { stageConfigDecisions } from './stageConfigSeed.js';
 import { decisionFromDraft } from './orgDecision.js';
+import { contactDecisionFromDraft, batchDecisionFor } from './contactDecision.js';
 
 // Idempotent seeding of the frozen, owner-approved configuration.
 // upsert(update: {}) means a re-run NEVER clobbers a recorded decision or its
@@ -98,6 +99,11 @@ const FILTERS = {
   active: (d) => d.proposal?.operationallyActive === true,
   gos: (d) => !!d.proposal?.gosMatch,
   top25: (d) => d.proposal?.auditedTop25 === true,
+  // Contacts: everything that needs a human, and the individual risk buckets.
+  needsReview: (d) => d.proposal?.batchApprovable === false,
+  probable: (d) => d.proposal?.confidence === 'probable',
+  ambiguous: (d) => d.proposal?.confidence === 'ambiguous',
+  shared: (d) => d.proposal?.confidence === 'shared',
 };
 
 // One queue's decisions, shaped for the UI (label→value proposals; never raw
@@ -142,6 +148,39 @@ export async function listQueue(client, queueKey, { status = null, filter = null
   };
 }
 
+// EXPLICIT batch approval of the deterministically-safe contact clusters.
+//
+// Deliberately narrow, because a batch action is the easiest place to do damage:
+//   * only the `contacts` queue,
+//   * only rows still `pending`,
+//   * only proposals the ENGINE marked batchApprovable (`safe`) — the flag comes
+//     from the evidence, never from the caller,
+//   * each row is written with its own resolved decision + full audit trail, so a
+//     batch is indistinguishable from the owner approving them one by one.
+// It never invents a decision: it stores exactly what the proposal proposed.
+export async function batchApproveSafe(client, { queue, userId = null, userName = null } = {}) {
+  if (queue !== 'contacts') { const e = new Error('batch_not_supported'); e.code = 'BATCH_NOT_SUPPORTED'; throw e; }
+  const rows = await client.migrationDecision.findMany({ where: { queue, status: 'pending' } });
+  const targets = rows.filter((r) => r.proposal?.batchApprovable === true);
+  const decidedAt = new Date();
+  let approved = 0;
+  for (const r of targets) {
+    await client.migrationDecision.update({
+      where: { id: r.id },
+      data: {
+        status: 'approved',
+        decision: batchDecisionFor(r.proposal),
+        decidedBy: userId,
+        decidedByName: userName,
+        decidedAt,
+        note: 'אושר באישור קבוצתי של הקבוצות הבטוחות',
+      },
+    });
+    approved++;
+  }
+  return { approved, skipped: rows.length - targets.length, examined: rows.length };
+}
+
 const ACTION_STATUS = { approve: 'approved', reject: 'rejected', edit: 'edited', defer: 'deferred' };
 
 // Record a human decision with its audit trail.
@@ -161,15 +200,21 @@ export async function recordDecision(client, { id, action, decision = null, note
   // server-side (same resolver the preview uses) and store the resolved shape, so
   // the import consumes the DECISION, never the proposal.
   let stored = decision ?? existing.decision ?? null;
-  if (existing.queue === 'organizations' && decision && (status === 'approved' || status === 'edited')) {
-    const resolved = decisionFromDraft(existing.proposal, decision);
-    if (!resolved.result.valid) {
-      const e = new Error(`invalid_decision: ${resolved.result.problems.join(' · ')}`);
-      e.code = 'INVALID_DECISION';
-      e.problems = resolved.result.problems;
-      throw e;
+  if (decision && (status === 'approved' || status === 'edited')) {
+    const resolver =
+      existing.queue === 'organizations' ? decisionFromDraft
+        : existing.queue === 'contacts' ? contactDecisionFromDraft
+          : null;
+    if (resolver) {
+      const resolved = resolver(existing.proposal, decision);
+      if (!resolved.result.valid) {
+        const e = new Error(`invalid_decision: ${resolved.result.problems.join(' · ')}`);
+        e.code = 'INVALID_DECISION';
+        e.problems = resolved.result.problems;
+        throw e;
+      }
+      stored = resolved;
     }
-    stored = resolved;
   }
 
   return client.migrationDecision.update({
