@@ -13,7 +13,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import * as r2 from '../migration/r2.js';
-import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe, buildOrgTargets } from '../migration/review/service.js';
+import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe, buildOrgTargets, buildContactWorkload } from '../migration/review/service.js';
 import { buildSnapshotStatus } from '../migration/review/snapshotStatus.js';
 import { createBrowser } from '../migration/review/browser.js';
 
@@ -89,7 +89,18 @@ router.post(
   }),
 );
 
+// The Contacts owner dashboard: SAFE / requires-review-before-import /
+// historical review / no-decision-required, plus per-section progress.
+router.get(
+  '/queues/contacts/workload',
+  handle(async (_req, res) => {
+    res.json(await buildContactWorkload(prisma));
+  }),
+);
+
 // One queue's decisions (optionally filtered; ordered by priority rank).
+// `section` routes the Contacts queue by business impact. With no section, the
+// listing excludes `none` (clusters that cannot produce a duplicate at all).
 router.get(
   '/queues/:queue',
   handle(async (req, res) => {
@@ -97,10 +108,12 @@ router.get(
       res.json(await listQueue(prisma, req.params.queue, {
         status: req.query.status || null,
         filter: req.query.filter || null,
+        section: req.query.section || null,
       }));
     } catch (e) {
       if (e.code === 'UNKNOWN_QUEUE') return res.status(404).json({ error: 'unknown_queue' });
       if (e.code === 'UNKNOWN_FILTER') return res.status(400).json({ error: 'unknown_filter' });
+      if (e.code === 'UNKNOWN_SECTION') return res.status(400).json({ error: 'unknown_section' });
       throw e;
     }
   }),

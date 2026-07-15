@@ -24,7 +24,10 @@ const qs = (o) =>
 export const migrationApi = {
   summary: () => req('/api/migration/review/summary'),
   snapshot: () => req('/api/migration/review/snapshot'),
-  queue: (key, filter = null) => req(`/api/migration/review/queues/${encodeURIComponent(key)}${filter ? qs({ filter }) : ''}`),
+  queue: (key, filter = null, section = null) =>
+    req(`/api/migration/review/queues/${encodeURIComponent(key)}${filter || section ? qs({ filter, section }) : ''}`),
+  // The Contacts owner dashboard (business-impact sections + the import gate).
+  contactWorkload: () => req('/api/migration/review/queues/contacts/workload'),
   // Snapshot Browser (read-only).
   browserEntities: () => req('/api/migration/review/browser/entities'),
   browserRecords: (entity, offset = 0, limit = 25) => req('/api/migration/review/browser/records' + qs({ entity, offset, limit })),

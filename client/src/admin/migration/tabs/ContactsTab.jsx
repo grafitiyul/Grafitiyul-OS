@@ -5,23 +5,20 @@ import { num, dateTime } from '../components/format.js';
 import SourceRecord from '../components/SourceRecord.jsx';
 import { contactDraftFromProposal, resolveContactResult } from '../components/contactPreview.js';
 
-const FILTERS = [
-  { key: 'needsReview', label: 'דורש הכרעה' },
-  { key: 'probable', label: 'סביר' },
-  { key: 'ambiguous', label: 'לא ברור' },
-  { key: 'shared', label: 'מספר משותף' },
-  { key: 'active', label: 'פעילים תפעולית' },
-  { key: 'safe', label: 'בטוחים' },
-  { key: 'approved', label: 'אושרו' },
-  { key: 'rejected', label: 'נדחו' },
-  { key: 'deferred', label: 'נדחו למועד אחר' },
-  { key: null, label: 'הכול' },
+// Business impact drives the queue. The owner lands on `critical` and, when it is
+// empty, is told plainly that Identity Import can begin.
+const SECTIONS = [
+  { key: 'critical', emoji: '🔥', label: 'דורש הכרעה לפני ייבוא הזהויות', cls: 'bg-red-50 border-red-200 text-red-800' },
+  { key: 'recent', emoji: '🟠', label: 'עסקים אחרונים', cls: 'bg-orange-50 border-orange-200 text-orange-800' },
+  { key: 'historical', emoji: '🟡', label: 'היסטוריה עסקית', cls: 'bg-amber-50 border-amber-200 text-amber-800' },
+  { key: 'low', emoji: '⚪', label: 'עדיפות נמוכה', cls: 'bg-gray-50 border-gray-200 text-gray-700' },
+  { key: 'none', emoji: '⚫', label: 'לא נדרשת הכרעה', cls: 'bg-gray-100 border-gray-300 text-gray-500' },
 ];
 const CONF = {
   safe: { label: 'בטוח', cls: 'bg-green-50 text-green-700' },
   probable: { label: 'סביר', cls: 'bg-blue-50 text-blue-700' },
   ambiguous: { label: 'לא ברור', cls: 'bg-amber-50 text-amber-800' },
-  shared: { label: 'מספר משותף', cls: 'bg-red-50 text-red-700' },
+  shared: { label: 'מפתח משותף', cls: 'bg-red-50 text-red-700' },
 };
 const STATUS = {
   pending: { label: 'ממתין', cls: 'bg-gray-100 text-gray-600' },
@@ -32,9 +29,11 @@ const STATUS = {
 };
 
 export default function ContactsTab() {
-  const { summary, reload } = useOutletContext() || {};
-  const [filter, setFilter] = useState('needsReview');
+  const { reload } = useOutletContext() || {};
+  const [section, setSection] = useState('critical');
+  const [showResolved, setShowResolved] = useState(false);
   const [data, setData] = useState(null);
+  const [work, setWork] = useState(null);
   const [openId, setOpenId] = useState(null);
   const [draft, setDraft] = useState(null);
   const [source, setSource] = useState(null);
@@ -43,9 +42,14 @@ export default function ContactsTab() {
   const [error, setError] = useState(null);
 
   const load = useCallback(async () => {
-    try { setData(await migrationApi.queue('contacts', filter)); setError(null); }
-    catch { setError('טעינת התור נכשלה'); }
-  }, [filter]);
+    try {
+      const [q, w] = await Promise.all([
+        migrationApi.queue('contacts', showResolved ? null : 'unresolved', section),
+        migrationApi.contactWorkload(),
+      ]);
+      setData(q); setWork(w); setError(null);
+    } catch { setError('טעינת התור נכשלה'); }
+  }, [section, showResolved]);
   useEffect(() => { load(); }, [load]);
 
   const selected = data?.decisions?.find((d) => d.id === openId) || null;
@@ -54,8 +58,9 @@ export default function ContactsTab() {
     [selected, draft],
   );
 
-  const contactsQueue = summary?.queues?.find((q) => q.key === 'contacts');
-  const safeRemaining = data?.decisions?.filter((d) => d.status === 'pending' && d.proposal.batchApprovable).length ?? 0;
+  const head = work?.headline;
+  const counts = (k) => work?.sections?.find((s) => s.key === k)?.counts || { total: 0, unresolved: 0 };
+  const safeRemaining = work?.safe?.unresolved ?? 0;
 
   function select(d) { setOpenId(d.id); setSource(null); setDraft(contactDraftFromProposal(d.proposal, d.decision)); }
 
@@ -95,40 +100,80 @@ export default function ContactsTab() {
 
   return (
     <div className="p-4">
-      {/* Batch bar — the workload shortcut */}
-      <div className="bg-white border border-gray-200 rounded-xl p-3 mb-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="text-[13px] text-gray-700">
-            <b>{num(contactsQueue?.counts.total)}</b> קבוצות כפילות בלבד — לא כל אנשי הקשר.
-            {' '}נותרו <b>{num(contactsQueue?.counts.unresolved)}</b> להכרעה.
-          </div>
-          {safeRemaining > 0 && (
+      {/* Owner dashboard — the four numbers that decide what to do today. */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-3">
+        <Stat label="בטוחים — מאוחדים אוטומטית" value={head?.safe} tone="text-green-700" note={safeRemaining > 0 ? `${num(safeRemaining)} ממתינים לאישור קבוצתי` : 'כולם אושרו'} />
+        <Stat label="דורש הכרעה לפני ייבוא" value={head?.beforeImport} tone={head?.beforeImport ? 'text-red-700' : 'text-green-700'} note="עסקה פתוחה או סיור עתידי" emphasise />
+        <Stat label="הכרעה היסטורית" value={head?.historicalReview} tone="text-amber-700" note="לא חוסם ייבוא" />
+        <Stat label="לא נדרשת הכרעה" value={head?.noDecisionRequired} tone="text-gray-400" note="פחות משני אנשי קשר ייובאו" />
+      </div>
+
+      {/* The gate: when the critical section is empty, say so plainly. */}
+      {work?.criticalCleared ? (
+        <div className="bg-green-50 border border-green-200 rounded-xl px-3 py-2 mb-3 text-[13px] text-green-900">
+          <b>אין יותר כפילויות שנוגעות לתפעול חי.</b> כל קבוצה שנשארה פתוחה נוגעת להיסטוריה סגורה בלבד —
+          אם לא תוכרע, שתי הרשומות פשוט ייובאו בנפרד. שום עסקה פתוחה ושום סיור עתידי לא יושפעו.
+        </div>
+      ) : (
+        <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2 mb-3 text-[13px] text-red-900">
+          <b>{num(head?.beforeImport)} קבוצות נוגעות לעסקה פתוחה או לסיור עתידי.</b> אלה היחידות שאיחוד שגוי בהן
+          עלול לפגוע בתפעול חי — כדאי להכריע אותן לפני ייבוא הזהויות.
+        </div>
+      )}
+
+      {safeRemaining > 0 && (
+        <div className="bg-white border border-gray-200 rounded-xl p-3 mb-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="text-[13px] text-gray-700">
+              <b>{num(safeRemaining)}</b> קבוצות בטוחות ממתינות לאישור קבוצתי.
+            </div>
             <button
               type="button" disabled={busy} onClick={batchApprove}
               className="text-[13px] px-3 py-1.5 rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 mr-auto"
             >
               אשר את כל {num(safeRemaining)} הקבוצות הבטוחות
             </button>
-          )}
+          </div>
+          {batchMsg && <div className="mt-2 text-[12px] text-green-800 bg-green-50 border border-green-200 rounded px-2 py-1">{batchMsg}</div>}
+          <p className="text-[11px] text-gray-400 mt-1.5">
+            "בטוח" = יש ראיה בלתי תלויה במפתח שיצר את הקבוצה, ואף סימן אחר לא סותר. כל השאר נשאר להכרעה שלך.
+          </p>
         </div>
-        {batchMsg && <div className="mt-2 text-[12px] text-green-800 bg-green-50 border border-green-200 rounded px-2 py-1">{batchMsg}</div>}
-        <p className="text-[11px] text-gray-400 mt-1.5">
-          קבוצה "בטוחה" = אותו טלפון וגם אותו שם (או אימייל משותף). רק מקרים סבירים, לא ברורים או מספר משותף דורשים הכרעה פרטנית.
-        </p>
+      )}
+
+      {/* Sections — priority order, not alphabetical. */}
+      <div className="flex flex-wrap gap-1 mb-1">
+        {SECTIONS.map((s) => {
+          const c = counts(s.key);
+          const n = s.key === 'none' ? c.total : c.unresolved;
+          return (
+            <button
+              key={s.key} type="button"
+              onClick={() => { setSection(s.key); setOpenId(null); setDraft(null); }}
+              className={`text-[12px] px-2.5 py-1.5 rounded-lg border transition ${
+                section === s.key ? `${s.cls} font-semibold` : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              {s.emoji} {s.label} <span className="opacity-70">({num(n)})</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex flex-wrap items-center gap-3 mb-3">
+        <label className="flex items-center gap-1.5 text-[12px] text-gray-500">
+          <input type="checkbox" checked={showResolved} onChange={(e) => { setShowResolved(e.target.checked); setOpenId(null); }} />
+          הצג גם קבוצות שכבר הוכרעו
+        </label>
+        <span className="text-[12px] text-gray-400">{num(data.counts.shown)} מוצגות</span>
       </div>
 
-      <div className="flex flex-wrap gap-1 mb-3">
-        {FILTERS.map((f) => (
-          <button
-            key={String(f.key)} type="button"
-            onClick={() => { setFilter(f.key); setOpenId(null); setDraft(null); }}
-            className={`text-[12px] px-2.5 py-1 rounded-full border transition ${
-              filter === f.key ? 'bg-blue-50 border-blue-200 text-blue-700 font-semibold' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-            }`}
-          >{f.label}</button>
-        ))}
-        <span className="text-[12px] text-gray-400 self-center px-2">{num(data.counts.shown)} מתוך {num(data.counts.all)}</span>
-      </div>
+      {section === 'none' && (
+        <div className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 mb-3 text-[12px] text-gray-600">
+          הקבוצות האלה מוצגות לשקיפות בלבד — <b>אין בהן מה להכריע</b>. בכל אחת מהן לכל היותר איש קשר אחד
+          ייובא ל-GOS בכלל: לשאר אין אף עסקה, פעילות, הערה או קובץ, ולכן הם נשמרים בצילום ובארכיון ולא נוצרים
+          כאנשי קשר. כפילות לא יכולה להיווצר כאן.
+        </div>
+      )}
 
       <div className="grid grid-cols-1 xl:grid-cols-[22rem_1fr] gap-3">
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
@@ -142,17 +187,23 @@ export default function ContactsTab() {
                       {p.members.map((m) => m.name).join(' · ')}
                     </div>
                     <div className="flex flex-wrap items-center gap-1">
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${CONF[p.confidence].cls}`}>{CONF[p.confidence].label}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${CONF[p.confidence]?.cls || 'bg-gray-100 text-gray-600'}`}>{CONF[p.confidence]?.label || p.confidence}</span>
                       <span className={`text-[10px] px-1.5 py-0.5 rounded ${STATUS[d.status]?.cls}`}>{STATUS[d.status]?.label}</span>
                       <span className="text-[10px] text-gray-400">
-                        {p.clusterKind === 'phone' ? 'טלפון' : 'אימייל'} · {num(p.totals.deals)} עסקאות{p.totals.activeDeals ? ` · ${num(p.totals.activeDeals)} פעילות` : ''}
+                        {p.clusterKind === 'phone' ? 'טלפון' : 'אימייל'} · {num(p.totals.deals)} עסקאות
+                        {p.totals.openDeals ? <b className="text-red-700"> · {num(p.totals.openDeals)} פתוחות</b> : null}
+                        {p.totals.futureTourDeals ? <b className="text-blue-700"> · {num(p.totals.futureTourDeals)} סיור עתידי</b> : null}
                       </span>
                     </div>
                   </button>
                 </li>
               );
             })}
-            {!data.decisions.length && <li className="px-3 py-8 text-center text-[13px] text-gray-400">אין פריטים בסינון הזה</li>}
+            {!data.decisions.length && (
+              <li className="px-3 py-8 text-center text-[13px] text-gray-400">
+                {section === 'critical' ? '✓ אין כאן כלום — אפשר להמשיך בבטחה' : 'אין פריטים בסינון הזה'}
+              </li>
+            )}
           </ul>
         </div>
 
@@ -164,7 +215,9 @@ export default function ContactsTab() {
               <div className="bg-white border border-gray-200 rounded-xl p-4">
                 <div className="flex flex-wrap items-center gap-2 mb-2">
                   <h3 className="text-sm font-semibold text-gray-900">למה הרשומות קובצו יחד</h3>
-                  <span className={`text-[11px] px-2 py-0.5 rounded-full ${CONF[selected.proposal.confidence].cls}`}>{CONF[selected.proposal.confidence].label}</span>
+                  <span className={`text-[11px] px-2 py-0.5 rounded-full ${CONF[selected.proposal.confidence]?.cls || 'bg-gray-100 text-gray-600'}`}>
+                    {CONF[selected.proposal.confidence]?.label || selected.proposal.confidence}
+                  </span>
                 </div>
                 <p className="text-[13px] text-gray-600 leading-relaxed mb-3">{selected.proposal.reason}</p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -183,7 +236,14 @@ export default function ContactsTab() {
                     return (
                       <div key={m.legacyId} className={`border rounded-lg p-3 ${a === 'primary' ? 'border-green-300 bg-green-50/40' : 'border-gray-200'}`}>
                         <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1">
-                          <div className="text-[13px] font-semibold text-gray-900">{m.name}</div>
+                          <div className="flex items-center gap-1.5">
+                            <div className="text-[13px] font-semibold text-gray-900">{m.name}</div>
+                            {m.importable === false && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500" title="אין לו אף עסקה, פעילות, הערה או קובץ">
+                                לא ייובא — רשומה ריקה
+                              </span>
+                            )}
+                          </div>
                           <div className="flex items-center gap-1.5">
                             <span className="text-[11px] text-gray-400">מזהה מקור: {m.legacyId}</span>
                             <button type="button" onClick={() => setSource(m.source)} className="text-[11px] text-blue-700 hover:underline">מקור →</button>
@@ -195,8 +255,10 @@ export default function ContactsTab() {
                           {m.orgName && <div>ארגון: {m.orgName}</div>}
                           <div className="text-gray-500">
                             {num(m.dealCount)} עסקאות
-                            {m.activeDealCount ? <span className="text-green-700"> · {num(m.activeDealCount)} פעילות</span> : null}
+                            {m.openDealCount ? <span className="text-red-700"> · {num(m.openDealCount)} פתוחות</span> : null}
                             {m.futureTourDeals ? <span className="text-blue-700"> · {num(m.futureTourDeals)} סיור עתידי</span> : null}
+                            {m.activityCount ? <span> · {num(m.activityCount)} פעילויות</span> : null}
+                            {m.noteCount ? <span> · {num(m.noteCount)} הערות</span> : null}
                           </div>
                         </div>
                         <div className="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-gray-100">
@@ -297,6 +359,16 @@ export default function ContactsTab() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, tone, note, emphasise }) {
+  return (
+    <div className={`bg-white border rounded-xl px-3 py-2 ${emphasise && value ? 'border-red-300 ring-1 ring-red-100' : 'border-gray-200'}`}>
+      <div className={`text-2xl font-bold tabular-nums ${tone}`}>{num(value)}</div>
+      <div className="text-[12px] text-gray-700 leading-tight mt-0.5">{label}</div>
+      {note && <div className="text-[11px] text-gray-400 mt-0.5">{note}</div>}
     </div>
   );
 }

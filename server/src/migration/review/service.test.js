@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe, buildOrgTargets } from './service.js';
+import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe, buildOrgTargets, buildContactWorkload } from './service.js';
 import { STAGE_CONFIG_COUNT } from './stageConfigSeed.js';
 import { draftFromProposal } from './orgDecision.js';
 
@@ -333,10 +333,11 @@ test('re-seeding NEVER overwrites an owner-edited organizations decision', async
 });
 
 // ── Batch approval of safe contact clusters ─────────────────────────────────
-const contactCluster = (id, confidence, batchApprovable) => ({
+const contactCluster = (id, confidence, batchApprovable, section = batchApprovable ? 'safe' : 'historical') => ({
   queue: 'contacts', subjectKey: `contact:phone:${id}`, status: 'pending',
   proposal: {
-    kind: 'contact_cluster', confidence, batchApprovable,
+    kind: 'contact_cluster', confidence, batchApprovable, section,
+    decisionRequired: !batchApprovable && section !== 'none',
     members: [
       { legacyId: id * 10, name: 'דנה', phones: ['050-1111111'], emails: [], dealCount: 2 },
       { legacyId: id * 10 + 1, name: 'דנה', phones: ['0501111111'], emails: [], dealCount: 1 },
@@ -382,6 +383,66 @@ test('batch approve cannot be pointed at another queue, and is idempotent', asyn
   assert.equal((await batchApproveSafe(c, { queue: 'contacts' })).approved, 1);
   // Running it again approves nothing new — decided rows are no longer pending.
   assert.equal((await batchApproveSafe(c, { queue: 'contacts' })).approved, 0);
+});
+
+// ── Business-impact sections ────────────────────────────────────────────────
+// The point of the whole exercise: the owner must not be shown 789 clusters as if
+// they were equal, and must never be shown the ones with nothing to decide.
+test('the Contacts queue hides `none` clusters unless they are asked for explicitly', async () => {
+  const c = stubClient([
+    contactCluster(1, 'safe', true),
+    contactCluster(2, 'probable', false, 'critical'),
+    contactCluster(3, 'probable', false, 'historical'),
+    contactCluster(4, 'ambiguous', false, 'none'),
+    contactCluster(5, 'ambiguous', false, 'none'),
+  ]);
+  // Default listing: everything EXCEPT `none`.
+  const all = await listQueue(c, 'contacts');
+  assert.equal(all.decisions.length, 3);
+  assert.ok(!all.decisions.some((d) => d.proposal.section === 'none'), 'never shown by default');
+
+  // The landing section is the only one that blocks Identity Import.
+  const critical = await listQueue(c, 'contacts', { section: 'critical' });
+  assert.equal(critical.decisions.length, 1);
+  assert.equal(critical.decisions[0].proposal.section, 'critical');
+
+  // `none` is reachable only on purpose (the statistics link).
+  const none = await listQueue(c, 'contacts', { section: 'none' });
+  assert.equal(none.decisions.length, 2);
+
+  await assert.rejects(() => listQueue(c, 'contacts', { section: 'nope' }), (e) => e.code === 'UNKNOWN_SECTION');
+});
+
+test('sections apply to Contacts only — other queues are untouched', async () => {
+  const c = stubClient([{ queue: 'organizations', subjectKey: 'o1', status: 'pending', proposal: {} }]);
+  const orgs = await listQueue(c, 'organizations');
+  assert.equal(orgs.decisions.length, 1, 'an org proposal has no section and must not be filtered away');
+});
+
+test('the workload dashboard reports the four headline numbers and the import gate', async () => {
+  const c = stubClient([
+    contactCluster(1, 'safe', true),
+    contactCluster(2, 'safe', true),
+    contactCluster(3, 'probable', false, 'critical'),
+    contactCluster(4, 'probable', false, 'recent'),
+    contactCluster(5, 'probable', false, 'historical'),
+    contactCluster(6, 'ambiguous', false, 'low'),
+    contactCluster(7, 'ambiguous', false, 'none'),
+  ]);
+  const w = await buildContactWorkload(c);
+  assert.equal(w.headline.safe, 2);
+  assert.equal(w.headline.beforeImport, 1, 'only the critical section blocks import');
+  assert.equal(w.headline.historicalReview, 3, 'recent + historical + low');
+  assert.equal(w.headline.noDecisionRequired, 1);
+  assert.equal(w.criticalCleared, false);
+
+  // Deciding the critical cluster opens the gate — and nothing else has to happen.
+  const critical = [...c._rows.values()].find((r) => r.proposal.section === 'critical');
+  critical.status = 'approved';
+  const after = await buildContactWorkload(c);
+  assert.equal(after.headline.beforeImport, 0);
+  assert.equal(after.criticalCleared, true, 'the owner can stop here and import safely');
+  assert.equal(after.headline.historicalReview, 3, 'the rest stays open, and that is fine');
 });
 
 test('batch approve never resurrects a rejected or deferred cluster', async () => {

@@ -22,6 +22,9 @@ const dry = process.argv.includes('--dry');
 if (!snapshotId) { console.error('usage: --snapshot <id> [--dry]'); process.exit(1); }
 
 const today = new Date().toISOString().slice(0, 10);
+// "Recent business" = a deal WON in the last half year. Anything older is history.
+const RECENT_DAYS = 180;
+const recentCut = new Date(Date.now() - RECENT_DAYS * 864e5).toISOString().slice(0, 10);
 const reader = createSnapshotReader({ store: { getText: r2.getObjectText }, snapshotId });
 const prisma = new PrismaClient({ datasourceUrl: process.env.MIGRATION_DB_URL || process.env.DATABASE_URL });
 
@@ -60,11 +63,17 @@ const personCount = await stream('pipedrive/persons', (p) => {
     dealCount: 0,
     activeDealCount: 0,
     futureTourDeals: 0,
+    openDealCount: 0,
+    wonRecentDealCount: 0,
+    activityCount: 0,
+    noteCount: 0,
+    fileCount: 0,
   });
 });
 console.log(`  persons: ${personCount}`);
 
-// 3) Deals → operational weight per contact.
+// 3) Deals → operational weight per contact, split by business impact so the
+//    review sections can be derived without re-reading the snapshot.
 const dealCount = await stream('pipedrive/deals', (d) => {
   const personId = d.person_id?.value ?? d.person_id;
   if (personId == null) return;
@@ -72,9 +81,21 @@ const dealCount = await stream('pipedrive/deals', (d) => {
   if (!c) return;
   c.dealCount++;
   if (isActiveDeal(d, today)) c.activeDealCount++;
-  if (hasFutureTour(d, today)) c.futureTourDeals++;
+  const future = hasFutureTour(d, today);
+  if (future) c.futureTourDeals++;
+  if (d.status === 'open') c.openDealCount++;
+  else if (d.status === 'won' && !future && String(d.won_time || '').slice(0, 10) >= recentCut) c.wonRecentDealCount++;
 });
 console.log(`  deals scanned: ${dealCount}`);
+
+// 3b) Activities / notes / files → does this contact have ANY history at all?
+//     A contact with none is an empty shell: archived, never created in GOS, so it
+//     can never duplicate anything. This is what dissolves most of the queue.
+const bump = (personId, field) => { const c = contacts.get(personId?.value ?? personId); if (c) c[field]++; };
+const actCount = await stream('pipedrive/activities', (a) => bump(a.person_id, 'activityCount'));
+const noteCount = await stream('pipedrive/notes', (n) => bump(n.person_id, 'noteCount'));
+const fileCount = await stream('pipedrive/files', (f) => bump(f.person_id, 'fileCount'));
+console.log(`  activities: ${actCount} · notes: ${noteCount} · files: ${fileCount}`);
 
 // 4) Build proposals.
 const { proposals, stats } = buildContactProposals({ contacts: [...contacts.values()], today });
@@ -82,24 +103,35 @@ const { ruleCounts, ...printable } = stats;
 console.log('\nstats:', JSON.stringify(printable, null, 2));
 console.log('\nnormalisation rules applied:', JSON.stringify(ruleCounts, null, 2));
 
-// The audit measured PHONE clusters only, so reconcile against the phone-only
-// breakdown. Email clusters are an addition on top (reported separately).
-console.log('\nAUDIT RECONCILIATION — phone clusters only (M1b baseline):');
+// The M1b phone-cluster GROUPING is unchanged (1,151 clusters / 2,402 members) and
+// must still reconcile. The CONFIDENCE split deliberately does not: the audits of
+// 2026-07-15 fixed the corroboration bug and promoted 5 measured rules, so the old
+// 647/363/141 split is superseded on purpose. Grouping is the invariant here.
+console.log('\nGROUPING RECONCILIATION — phone clusters (M1b baseline, must still hold):');
 const line = (label, actual, expected) => console.log(`  ${label.padEnd(34)} ${String(actual).padStart(5)}  vs audited ${String(expected).padStart(5)}  ${actual === expected ? '✓' : '(Δ ' + (actual - expected) + ')'}`);
 line('phone clusters', stats.phoneClusters, 1151);
 line('contacts in clusters (summed)', stats.contactsInPhoneClustersSummed, 2402);
-line('safe', stats.phoneByConfidence.safe || 0, 647);
-line('probable', stats.phoneByConfidence.probable || 0, 363);
-line('ambiguous ∪ shared', stats.auditAmbiguousBucket, 141);
-line('shared (>2 on one number)', stats.phoneByConfidence.shared || 0, 87);
 line('New Contact spam excluded', stats.newContactSpamExcluded, 3193);
-console.log(`\nAdditional exact-email duplicate clusters (beyond the audit): ${stats.emailOnlyClusters}`);
+console.log(`\nAdditional exact-email duplicate clusters: ${stats.emailOnlyClusters}`);
 console.log(`Role/shared mailboxes skipped (>2 contacts on one address): ${stats.roleEmailClustersSkipped}`);
-console.log(`\nOWNER WORKLOAD:  ${stats.batchApprovable} batch-approvable  ·  ${stats.needsIndividualReview} need individual review  (of ${stats.contactsConsidered} contacts)`);
 
-console.log('\ntop 8 needing individual review:');
-for (const p of proposals.filter((x) => !x.batchApprovable).slice(0, 8)) {
-  console.log(`  #${String(p.rank).padStart(4)} ${p.confidence.padEnd(9)} ${p.members.length}× ${p.members.map((m) => m.name).join(' / ').slice(0, 44).padEnd(44)} deals=${String(p.totals.deals).padStart(3)} active=${p.totals.activeDeals}`);
+console.log('\nOWNER WORKLOAD — business-impact sections:');
+const S = stats.bySection;
+const sline = (emoji, label, n) => console.log(`  ${emoji} ${label.padEnd(38)} ${String(n || 0).padStart(5)}`);
+sline('  ', 'SAFE — merged automatically', S.safe);
+sline('🔥', 'requires review BEFORE Identity Import', S.critical);
+sline('🟠', 'recent business', S.recent);
+sline('🟡', 'historical business', S.historical);
+sline('⚪', 'low priority', S.low);
+sline('⚫', 'no decision required (never queued)', S.none);
+console.log(`  ${''.padEnd(41)} ${'—'.padStart(5)}`);
+console.log(`  ${'total clusters'.padEnd(41)} ${String(stats.proposals).padStart(5)}`);
+console.log(`\n  real decisions the owner faces: ${stats.decisionRequired}  (of ${stats.contactsConsidered} contacts considered)`);
+console.log(`  dissolved by the empty-shell rule: ${stats.noDecisionRequired}`);
+
+console.log('\n🔥 the clusters that must be reviewed before Identity Import:');
+for (const p of proposals.filter((x) => x.section === 'critical')) {
+  console.log(`  #${String(p.rank).padStart(4)} ${p.confidence.padEnd(9)} ${p.members.length}× ${p.members.map((m) => m.name).join(' / ').slice(0, 40).padEnd(40)} open=${p.totals.openDeals} tours=${p.totals.futureTourDeals} deals=${p.totals.deals}`);
 }
 
 if (dry) { console.log('\n--dry: nothing written'); await prisma.$disconnect(); process.exit(0); }

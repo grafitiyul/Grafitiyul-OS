@@ -7,6 +7,7 @@ import { REVIEW_QUEUES, queueByKey, FROZEN_QUEUES, isResolved } from './queues.j
 import { stageConfigDecisions } from './stageConfigSeed.js';
 import { decisionFromDraft, draftFromProposal, orgKeyForProposal, orgKeyForGos, orgKeyForStandalone } from './orgDecision.js';
 import { contactDecisionFromDraft, batchDecisionFor } from './contactDecision.js';
+import { summarizeSections, SECTION_KEYS } from './contactSections.js';
 
 // Every Organization a source record may be mapped to: the canonical org of each
 // migration proposal, plus every live GOS organization (with its real units).
@@ -171,12 +172,37 @@ const FILTERS = {
   shared: (d) => d.proposal?.confidence === 'shared',
 };
 
+// Business-impact sections for the Contacts queue. `none` is reachable ONLY by
+// asking for it explicitly (the statistics link) — it is never part of a normal
+// queue listing, because a cluster with <2 importable members has nothing to decide.
+function applySection(decisions, section) {
+  if (section) return decisions.filter((d) => d.proposal?.section === section);
+  return decisions.filter((d) => d.proposal?.section !== 'none');
+}
+
+// The Contacts dashboard: the four headline numbers + per-section progress.
+// Reads the ledger, folds by the section the ENGINE precomputed. No re-derivation.
+export async function buildContactWorkload(client) {
+  const rows = await client.migrationDecision.findMany({
+    where: { queue: 'contacts' },
+    select: { proposal: true, status: true },
+  });
+  const proposals = rows.map((r) => ({ ...r.proposal, _status: r.status }));
+  const summary = summarizeSections(proposals, (p) => !isResolved(p._status));
+  return {
+    ...summary,
+    totalClusters: rows.length,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
 // One queue's decisions, shaped for the UI (label→value proposals; never raw
 // payload dumps). `id` is returned for actions but the UI never displays it.
 // Ordered by the proposal's precomputed priority rank when present.
-export async function listQueue(client, queueKey, { status = null, filter = null } = {}) {
+export async function listQueue(client, queueKey, { status = null, filter = null, section = null } = {}) {
   const q = queueByKey(queueKey);
   if (!q) { const e = new Error('unknown_queue'); e.code = 'UNKNOWN_QUEUE'; throw e; }
+  if (section && !SECTION_KEYS.includes(section)) { const e = new Error('unknown_section'); e.code = 'UNKNOWN_SECTION'; throw e; }
   const rows = await client.migrationDecision.findMany({
     where: { queue: queueKey, ...(status ? { status } : {}) },
     orderBy: [{ subjectKey: 'asc' }],
@@ -198,6 +224,9 @@ export async function listQueue(client, queueKey, { status = null, filter = null
   const fn = filter ? FILTERS[filter] : null;
   if (filter && !fn) { const e = new Error('unknown_filter'); e.code = 'UNKNOWN_FILTER'; throw e; }
   if (fn) decisions = decisions.filter(fn);
+  // Contacts are routed by business impact; other queues have no sections and are
+  // left exactly as they were.
+  if (queueKey === 'contacts') decisions = applySection(decisions, section);
 
   // Priority order (rank was computed once, in the bounded generation pass).
   if (decisions.some((d) => d.proposal?.rank != null)) {
