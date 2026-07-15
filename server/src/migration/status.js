@@ -15,12 +15,16 @@ export async function buildMigrationStatus(client) {
     migrationRuns,
     decisionGroups,
     runGroups,
+    latestRun,
   ] = await Promise.all([
     client.legacyRecord.count(),
     client.migrationDecision.count(),
     client.migrationRun.count(),
     client.migrationDecision.groupBy({ by: ['queue', 'status'], _count: true }),
     client.migrationRun.groupBy({ by: ['kind', 'status'], _count: true }),
+    client.migrationRun.findFirst
+      ? client.migrationRun.findFirst({ orderBy: { startedAt: 'desc' } })
+      : null,
   ]);
 
   return {
@@ -32,9 +36,29 @@ export async function buildMigrationStatus(client) {
     },
     decisionsByQueue: foldGroups(decisionGroups, 'queue'),
     runsByKind: foldGroups(runGroups, 'kind'),
-    // Slice 1 is infrastructure only — nothing has run or been written yet.
+    // The most recent run's API usage + why it stopped — the operational view
+    // that was missing when a run silently exhausted the Pipedrive daily budget.
+    latestRun: summarizeRun(latestRun),
     phase: 'foundation',
     timestamp: new Date().toISOString(),
+  };
+}
+
+// Secret-free summary of a MigrationRun row: what it is, how many Pipedrive
+// requests it made against its ceiling, and the pause/failure reason.
+function summarizeRun(run) {
+  if (!run) return null;
+  const counters = run.counters && typeof run.counters === 'object' ? run.counters : {};
+  return {
+    kind: run.kind,
+    snapshotId: run.snapshotId ?? null,
+    status: run.status,
+    startedAt: run.startedAt ?? null,
+    finishedAt: run.finishedAt ?? null,
+    pipedriveRequests: counters._pipedriveRequests ?? null,
+    pipedriveRequestLimit: counters._pipedriveRequestLimit ?? null,
+    pauseReason: run.error ?? null,
+    entityCounters: Object.fromEntries(Object.entries(counters).filter(([k]) => !k.startsWith('_'))),
   };
 }
 

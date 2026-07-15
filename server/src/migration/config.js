@@ -41,6 +41,24 @@ export function airtableConfigured() {
   return missing(AIRTABLE_ENV).length === 0;
 }
 
+// ── Extraction safety gate (post-incident) ───────────────────────────────────
+// The extraction is OFF unless explicitly enabled, and every approved run must
+// declare a hard cumulative request ceiling before launch. These exist because a
+// prior run exhausted the COMPANY-WIDE Pipedrive daily budget and throttled live
+// integrations. Default-off is deliberate: forgetting to set it means no calls.
+export function extractionEnabled() {
+  return String(process.env.MIGRATION_EXTRACTION_ENABLED || '').trim().toLowerCase() === 'true';
+}
+
+// Hard cumulative ceiling on Pipedrive requests for this snapshot. Null when
+// unset/invalid — callers must refuse to run rather than assume a default.
+export function maxPipedriveRequests() {
+  const raw = String(process.env.MIGRATION_MAX_REQUESTS || '').trim();
+  if (!/^\d+$/.test(raw)) return null;
+  const n = Number(raw);
+  return n > 0 ? n : null;
+}
+
 // A secret-free readiness summary: booleans + the NAMES of any missing vars.
 // Safe to serialize into an admin API response or a log line.
 export function migrationConfigStatus() {
@@ -57,5 +75,10 @@ export function migrationConfigStatus() {
     // True only when everything Slice 2 (Snapshot & Extraction) will need is present.
     readyForExtraction:
       snapshotStorageConfigured() && pipedriveConfigured() && airtableConfigured(),
+    // Safety gate — configured presence only; both must be set for a run to start.
+    extraction: {
+      enabled: extractionEnabled(),
+      maxPipedriveRequests: maxPipedriveRequests(),
+    },
   };
 }

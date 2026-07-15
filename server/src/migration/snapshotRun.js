@@ -7,11 +7,21 @@
 // where the in-memory buffer is empty and the saved cursor points exactly at the
 // next unread page. On resume, a completed entity (its `_manifest.json` present)
 // is skipped; the in-progress entity continues from its saved cursor.
+//
+// Cost contract (post-incident): deal products come from the v2 BULK endpoint
+// using deal ids read from the ALREADY-SNAPSHOTTED deals shards — Pipedrive is
+// never re-paged to discover them. Completed entities make zero calls.
 import { SnapshotWriter } from './snapshotWriter.js';
 import { EXCLUDED_TABLE_NAME } from './sources/airtable.js';
+import { DEAL_IDS_PER_BULK_CALL } from './sources/pipedrive.js';
 
 const BULK_SHARD = 5000;
-const PERDEAL_SHARD = 1000;
+const PRODUCTS_SHARD = 1000;
+
+// Frozen-spec fields that MUST survive the v1→v2 switch. The first bulk response
+// is inspected and the run ABORTS before writing if any is absent — `comments`
+// carries the historical pricing wording (package semantics live only there).
+const REQUIRED_PRODUCT_FIELDS = ['deal_id', 'product_id', 'quantity', 'item_price', 'comments'];
 
 const slug = (s) => String(s || '').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
 const nowIso = () => new Date().toISOString();
@@ -21,25 +31,26 @@ const nowIso = () => new Date().toISOString();
 function pipedrivePlan() {
   return [
     { key: 'pipedrive/reference', system: 'pipedrive', entity: 'reference', kind: 'pdReference' },
-    { key: 'pipedrive/organizations', system: 'pipedrive', entity: 'organizations', kind: 'pdBulk', path: '/organizations', params: {}, shardSize: BULK_SHARD },
-    { key: 'pipedrive/persons', system: 'pipedrive', entity: 'persons', kind: 'pdBulk', path: '/persons', params: {}, shardSize: BULK_SHARD },
-    { key: 'pipedrive/deals', system: 'pipedrive', entity: 'deals', kind: 'pdBulk', path: '/deals', params: { archived_status: 'all', status: 'all_not_deleted' }, shardSize: BULK_SHARD },
-    { key: 'pipedrive/notes', system: 'pipedrive', entity: 'notes', kind: 'pdBulk', path: '/notes', params: {}, shardSize: BULK_SHARD },
-    { key: 'pipedrive/activities', system: 'pipedrive', entity: 'activities', kind: 'pdBulk', path: '/activities', params: { user_id: 0 }, shardSize: BULK_SHARD },
-    { key: 'pipedrive/files', system: 'pipedrive', entity: 'files', kind: 'pdBulk', path: '/files', params: {}, shardSize: BULK_SHARD, note: 'file METADATA only — bodies deferred to the gated Files slice' },
-    { key: 'pipedrive/deal_products', system: 'pipedrive', entity: 'deal_products', kind: 'pdPerDeal', shardSize: PERDEAL_SHARD },
+    { key: 'pipedrive/organizations', system: 'pipedrive', entity: 'organizations', kind: 'pdBulk', path: '/organizations', params: {}, limit: 500, shardSize: BULK_SHARD },
+    { key: 'pipedrive/persons', system: 'pipedrive', entity: 'persons', kind: 'pdBulk', path: '/persons', params: {}, limit: 500, shardSize: BULK_SHARD },
+    { key: 'pipedrive/deals', system: 'pipedrive', entity: 'deals', kind: 'pdBulk', path: '/deals', params: { archived_status: 'all', status: 'all_not_deleted' }, limit: 500, shardSize: BULK_SHARD },
+    { key: 'pipedrive/notes', system: 'pipedrive', entity: 'notes', kind: 'pdBulk', path: '/notes', params: {}, limit: 500, shardSize: BULK_SHARD },
+    { key: 'pipedrive/activities', system: 'pipedrive', entity: 'activities', kind: 'pdBulk', path: '/activities', params: { user_id: 0 }, limit: 500, shardSize: BULK_SHARD },
+    // /files hard-caps at 100 per page (v1 only; no v2 files endpoint).
+    { key: 'pipedrive/files', system: 'pipedrive', entity: 'files', kind: 'pdBulk', path: '/files', params: {}, limit: 100, shardSize: BULK_SHARD, note: 'file METADATA only — bodies deferred to the gated Files slice' },
+    // Product catalog: resolves product_id → name if v2 line rows omit the name.
+    { key: 'pipedrive/products', system: 'pipedrive', entity: 'products', kind: 'pdBulk', path: '/products', params: {}, limit: 500, shardSize: BULK_SHARD, note: 'product catalog (name resolution for historical line items)' },
+    { key: 'pipedrive/deal_products', system: 'pipedrive', entity: 'deal_products', kind: 'pdBulkProducts', shardSize: PRODUCTS_SHARD },
   ];
 }
 
-export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, mirror = null }) {
+export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, mirror = null, budget = null }) {
   const writer = new SnapshotWriter({ snapshotId, store });
 
   // ── load or initialize run state (R2 is authoritative) ─────────────────────
   let state = await writer.readRunState();
   if (!state || state.snapshotId !== snapshotId) {
-    // Build the full plan: fixed Pipedrive + dynamic Airtable tables.
     const plan = pipedrivePlan();
-    const atTables = [];
     for (const b of at.bases) {
       const tables = await at.tables(b.id);
       for (const t of tables) {
@@ -49,7 +60,6 @@ export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, m
           kind: 'atTable', baseId: b.id, tableId: t.id, tableName: t.name, primaryFieldId: t.primaryFieldId,
           shardSize: BULK_SHARD,
         });
-        atTables.push({ base: b.role, id: t.id, name: t.name, attachmentFields: t.attachmentFields });
       }
     }
     plan.push({ key: 'airtable/attachments', system: 'airtable', entity: 'attachments', kind: 'atAttachments' });
@@ -63,14 +73,27 @@ export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, m
   } else {
     state.status = 'running'; // flip a previously paused run back to running
     delete state.pausedReason; delete state.retryAfter;
+    // Refresh INCOMPLETE Pipedrive descriptors from current code, and append any
+    // newly-planned Pipedrive entities. Completed entities and their manifests are
+    // never touched — an implementation change must NEVER fork a second snapshot.
+    const fixed = new Map(pipedrivePlan().map((p) => [p.key, p]));
+    state.planDetail = state.planDetail.map((p) => (fixed.has(p.key) && !state.completed[p.key] ? fixed.get(p.key) : p));
+    for (const [key, desc] of fixed) {
+      if (!state.plan.includes(key)) { state.plan.push(key); state.planDetail.push(desc); log(`plan: + ${key} (new)`); }
+    }
     log(`resuming snapshot ${snapshotId} — ${Object.keys(state.completed).length}/${state.plan.length} entities already complete`);
   }
+  if (budget) state.requestBudget = budget.snapshot();
 
   async function persist() {
     state.updatedAt = nowIso();
+    if (budget) state.requestBudget = budget.snapshot();
     await writer.writeRunState(state);
     if (mirror) { try { await mirror(state); } catch (e) { log(`[mirror] warn: ${e?.message || e}`); } }
   }
+  // Budget checkpoints go straight to R2 so a hard kill cannot reset the allowance.
+  if (budget) budget.onPersist = async () => { state.updatedAt = nowIso(); state.requestBudget = budget.snapshot(); await writer.writeRunState(state); };
+
   const planByKey = Object.fromEntries(state.planDetail.map((p) => [p.key, p]));
 
   async function flush(system, entity, shardIndex, buffer, shards) {
@@ -83,7 +106,7 @@ export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, m
 
   // ── execute entities in order ──────────────────────────────────────────────
   for (const key of state.plan) {
-    if (state.completed[key]) continue;
+    if (state.completed[key]) continue; // ← completed entities make ZERO calls
     const desc = planByKey[key];
     const resuming = state.current && state.current.key === key;
     if (!resuming) state.current = { key, cursor: null, shardIndex: 0, shards: [] };
@@ -92,21 +115,20 @@ export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, m
     try {
       if (desc.kind === 'pdReference') manifest = await extractReference(desc);
       else if (desc.kind === 'pdBulk') manifest = await extractPdBulk(desc);
-      else if (desc.kind === 'pdPerDeal') manifest = await extractPdPerDeal(desc);
+      else if (desc.kind === 'pdBulkProducts') manifest = await extractPdBulkProducts(desc);
       else if (desc.kind === 'atTable') manifest = await extractAtTable(desc);
       else if (desc.kind === 'atAttachments') manifest = await extractAtAttachments(desc);
       else throw new Error(`unknown entity kind: ${desc.kind}`);
     } catch (e) {
-      // Rate-budget lockout: pause cleanly (progress + cursor already persisted at
-      // the last shard boundary) so a later resume continues from here.
-      if (e?.code === 'RATE_BUDGET_EXCEEDED') {
-        state.status = 'paused'; state.pausedReason = e.message; state.retryAfter = e.retryAfter; state.pausedAt = nowIso();
+      // Rate-budget lockout or run-limit stop: pause cleanly (cursor + shards are
+      // already persisted at the last boundary) so a later resume continues here.
+      if (e?.code === 'RATE_BUDGET_EXCEEDED' || e?.code === 'RUN_LIMIT_REACHED') {
+        state.status = 'paused'; state.pausedReason = e.message; state.retryAfter = e.retryAfter ?? null; state.pausedAt = nowIso();
         await persist();
-        log(`⏸ paused on ${key}: ${e.message} — resume after the budget resets`);
+        log(`⏸ paused on ${key}: ${e.message}`);
       }
       throw e;
     }
-
     state.completed[key] = { records: manifest.totalRecords ?? manifest.fileCount ?? 0, bytes: manifest.totalBytes ?? 0, combinedSha256: manifest.combinedSha256 || null };
     state.counters[key] = manifest.totalRecords ?? manifest.fileCount ?? 0;
     state.current = null;
@@ -114,13 +136,13 @@ export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, m
     log(`  ✓ ${key}: ${state.completed[key].records} records`);
   }
 
-  // ── finalize top-level manifest ────────────────────────────────────────────
   const topManifest = {
     snapshotId, kind: 'snapshot', status: 'complete',
     startedAt: state.startedAt, finishedAt: nowIso(),
     excludedTables: state.excludedTables,
     entities: state.completed,
     counters: state.counters,
+    requestBudget: state.requestBudget ?? null,
     totals: {
       entities: Object.keys(state.completed).length,
       records: Object.values(state.counters).reduce((n, v) => n + (Number(v) || 0), 0),
@@ -128,6 +150,7 @@ export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, m
     scope: {
       pipedriveFiles: 'METADATA ONLY — bodies deferred to the gated Files slice',
       dealFlow: 'DEFERRED to the native-timeline slice (not in Snapshot #1)',
+      dealProducts: 'v2 bulk endpoint (100 deal_ids/call); one record per deal with products_count>0',
       airtableAttachments: 'BODIES captured (URLs expire)',
     },
   };
@@ -146,7 +169,7 @@ export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, m
     return writer.writeEntityManifest({
       system: 'pipedrive', entity: 'reference',
       shards: [{ key: obj.key, records: 1, bytes: obj.bytes, sha256: obj.sha256 }],
-      params: { counts }, note: 'config/reference bundle (pipelines, stages, fields, activityTypes, users, currencies, filters)',
+      params: { counts }, note: 'config/reference bundle',
     });
   }
 
@@ -157,7 +180,7 @@ export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, m
     const shards = cur.shards;
     let shardIndex = cur.shardIndex;
     for (;;) {
-      const { records, nextStart, hasMore } = await pd.page(desc.path, desc.params || {}, cur.cursor.start);
+      const { records, nextStart, hasMore } = await pd.page(desc.path, desc.params || {}, cur.cursor.start, desc.limit || 500);
       buffer.push(...records);
       if (buffer.length >= desc.shardSize) {
         shardIndex = await flush(desc.system, desc.entity, shardIndex, buffer, shards);
@@ -172,6 +195,88 @@ export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, m
     return writer.writeEntityManifest({ system: desc.system, entity: desc.entity, shards, params: desc.params || {}, note: desc.note || null });
   }
 
+  // Deal ids come from the COMPLETED deals snapshot in R2 — zero Pipedrive calls.
+  async function readDealTargetsFromSnapshot() {
+    const man = await writer.readEntityManifest('pipedrive', 'deals');
+    if (!man) throw new Error('deals_entity_not_snapshotted: cannot derive deal_products targets without the deals snapshot');
+    const targets = [];
+    let scanned = 0;
+    for (const shard of man.shards) {
+      const text = await store.getText(shard.key);
+      for (const line of text.split('\n')) {
+        if (!line) continue;
+        const d = JSON.parse(line);
+        scanned++;
+        if ((d.products_count || 0) > 0) targets.push(d.id);
+      }
+    }
+    targets.sort((a, b) => a - b);
+    log(`    deal_products targets: ${targets.length} of ${scanned} deals (from R2 snapshot, 0 Pipedrive calls)`);
+    return targets;
+  }
+
+  async function extractPdBulkProducts(desc) {
+    const targets = await readDealTargetsFromSnapshot();
+    const cur = state.current;
+    if (!cur.cursor) cur.cursor = { index: 0, targetCount: targets.length };
+    cur.cursor.targetCount = targets.length;
+    const buffer = [];
+    const shards = cur.shards;
+    let shardIndex = cur.shardIndex;
+    let observedFields = cur.observedFields || null;
+
+    for (let i = cur.cursor.index; i < targets.length;) {
+      const batch = targets.slice(i, i + DEAL_IDS_PER_BULK_CALL);
+      // Pull every page for this batch (a batch can exceed the 500-row page).
+      const rows = [];
+      let cursor = null;
+      do {
+        const res = await pd.dealProductsBulk(batch, cursor);
+        rows.push(...res.records);
+        cursor = res.nextCursor;
+      } while (cursor);
+
+      // Field-parity gate — runs once, on the first batch, BEFORE anything is written.
+      if (!observedFields) {
+        observedFields = [...new Set(rows.flatMap((r) => Object.keys(r || {})))].sort();
+        const missing = REQUIRED_PRODUCT_FIELDS.filter((f) => !observedFields.includes(f));
+        if (rows.length && missing.length) {
+          const err = new Error(`deal_products_field_parity_failed: v2 bulk response is missing required field(s) [${missing.join(', ')}]. Observed: [${observedFields.join(', ')}]. Refusing to write a lossy snapshot.`);
+          err.code = 'FIELD_PARITY_FAILED';
+          throw err;
+        }
+        cur.observedFields = observedFields;
+        log(`    field parity OK — observed: ${observedFields.join(', ')}`);
+      }
+
+      // Group by deal, preserving product-line order (order_nr when present).
+      const byDeal = new Map(batch.map((id) => [id, []]));
+      for (const r of rows) {
+        const arr = byDeal.get(r.deal_id);
+        if (arr) arr.push(r); else byDeal.set(r.deal_id, [r]);
+      }
+      for (const id of batch) {
+        const products = byDeal.get(id) || [];
+        if (products.length > 1 && products.every((p) => p.order_nr != null)) {
+          products.sort((a, b) => Number(a.order_nr) - Number(b.order_nr));
+        }
+        buffer.push({ deal_id: id, products }); // one record per target deal
+      }
+      i += batch.length;
+      if (buffer.length >= desc.shardSize) {
+        shardIndex = await flush(desc.system, desc.entity, shardIndex, buffer, shards);
+        cur.cursor.index = i; cur.shardIndex = shardIndex; await persist();
+        log(`    deal_products ${i}/${targets.length}`);
+      }
+    }
+    shardIndex = await flush(desc.system, desc.entity, shardIndex, buffer, shards);
+    return writer.writeEntityManifest({
+      system: 'pipedrive', entity: 'deal_products', shards,
+      params: { targetDeals: targets.length, batchSize: DEAL_IDS_PER_BULK_CALL, observedFields, endpoint: 'GET /api/v2/deals/products' },
+      note: 'v2 BULK: one record per deal with products_count>0 → {deal_id, products[]} (order_nr preserved)',
+    });
+  }
+
   async function extractAtTable(desc) {
     const cur = state.current;
     if (!cur.cursor) cur.cursor = { offset: null };
@@ -182,12 +287,9 @@ export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, m
       const { records, offset } = await at.recordsPage(desc.baseId, desc.tableId, { offset: cur.cursor.offset });
       buffer.push(...records);
       const done = !offset;
-      if (buffer.length >= desc.shardSize || (done && buffer.length)) {
-        // flush at shard boundary OR final flush
-        if (buffer.length >= desc.shardSize) {
-          shardIndex = await flush(desc.system, desc.entity, shardIndex, buffer, shards);
-          cur.cursor.offset = offset; cur.shardIndex = shardIndex; await persist();
-        }
+      if (buffer.length >= desc.shardSize) {
+        shardIndex = await flush(desc.system, desc.entity, shardIndex, buffer, shards);
+        cur.cursor.offset = offset; cur.shardIndex = shardIndex; await persist();
       }
       if (done) break;
       cur.cursor.offset = offset;
@@ -196,42 +298,7 @@ export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, m
     return writer.writeEntityManifest({ system: 'airtable', entity: desc.entity, shards, params: { base: desc.baseId, tableId: desc.tableId, tableName: desc.tableName } });
   }
 
-  async function extractPdPerDeal(desc) {
-    // Deterministic target list: deals with products_count>0, sorted by id.
-    log('  building deal-products target list…');
-    const targets = [];
-    let start = 0;
-    for (;;) {
-      const { records, nextStart, hasMore } = await pd.page('/deals', { archived_status: 'all', status: 'all_not_deleted' }, start);
-      for (const d of records) if ((d.products_count || 0) > 0) targets.push(d.id);
-      if (!hasMore) break;
-      start = nextStart;
-    }
-    targets.sort((a, b) => a - b);
-    const cur = state.current;
-    if (!cur.cursor) cur.cursor = { index: 0, targetCount: targets.length };
-    cur.cursor.targetCount = targets.length;
-    const buffer = [];
-    const shards = cur.shards;
-    let shardIndex = cur.shardIndex;
-    const CONCURRENCY = 6; // per-deal fetches parallelised; well under PD burst (80/2s)
-    for (let i = cur.cursor.index; i < targets.length;) {
-      const batch = targets.slice(i, i + CONCURRENCY);
-      const rows = await Promise.all(batch.map(async (dealId) => ({ deal_id: dealId, products: await pd.dealProducts(dealId) })));
-      buffer.push(...rows); // deterministic order (Promise.all preserves input order)
-      i += batch.length;
-      if (buffer.length >= desc.shardSize) {
-        shardIndex = await flush(desc.system, desc.entity, shardIndex, buffer, shards);
-        cur.cursor.index = i; cur.shardIndex = shardIndex; await persist();
-        log(`    deal_products ${i}/${targets.length}`);
-      }
-    }
-    shardIndex = await flush(desc.system, desc.entity, shardIndex, buffer, shards);
-    return writer.writeEntityManifest({ system: 'pipedrive', entity: 'deal_products', shards, params: { targetDeals: targets.length }, note: 'one record per deal with products_count>0: {deal_id, products[]}' });
-  }
-
   async function extractAtAttachments(desc) {
-    // Small (~82 files) — treated atomically (redo fully on resume; deterministic keys).
     const descriptors = [];
     let files = 0, bytes = 0;
     for (const b of at.bases) {
