@@ -2,6 +2,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { moduleForPath } from './modules.js';
 import OrphanToursIndicator from './OrphanToursIndicator.jsx';
+import GlobalSearch from './search/GlobalSearch.jsx';
 import BrandMark from '../brand/BrandMark.jsx';
 
 export default function TopBar() {
@@ -32,7 +33,14 @@ export default function TopBar() {
         <span className="text-gray-300">/</span>
         <span className="text-gray-700">{moduleLabel}</span>
       </div>
-      <div className="flex-1" />
+      {/* Global search — centred between branding and the account controls.
+          Desktop is the design target; below md it is hidden so the mobile
+          header keeps its original layout rather than crushing three controls
+          into 56px. The plain spacer preserves that layout exactly. */}
+      <div className="flex-1 hidden md:flex justify-center px-4">
+        <GlobalSearch />
+      </div>
+      <div className="flex-1 md:hidden" />
       {/* Permanent orphan-tours warning (renders nothing when none exist). */}
       <div className="me-3">
         <OrphanToursIndicator />

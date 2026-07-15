@@ -32,6 +32,7 @@ import organizationsRouter from './routes/organizations.js';
 import organizationTypesRouter from './routes/organizationTypes.js';
 import organizationSubtypesRouter from './routes/organizationSubtypes.js';
 import contactsRouter from './routes/contacts.js';
+import searchRouter from './routes/search.js';
 import dealsRouter from './routes/deals.js';
 import quoteDocumentsRouter from './routes/quoteDocuments.js';
 import publicQuoteRouter from './routes/publicQuote.js';
@@ -288,6 +289,10 @@ app.use('/api/organizations', requireAdminAuth, organizationsRouter);
 app.use('/api/organization-types', requireAdminAuth, organizationTypesRouter);
 app.use('/api/organization-subtypes', requireAdminAuth, organizationSubtypesRouter);
 app.use('/api/contacts', requireAdminAuth, contactsRouter);
+
+// Global header search — THE one cross-entity search service (deals, contacts,
+// organizations, tasks, timeline). Admin-only.
+app.use('/api/search', requireAdminAuth, searchRouter);
 
 // Deal module (commercial core): deals + pipeline stages. Admin-only. Quotes /
 // payments / tours / activities are NOT built yet.

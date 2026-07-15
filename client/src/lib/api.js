@@ -380,6 +380,11 @@ export const api = {
     remove: (id) =>
       request(`/api/organization-subtypes/${id}`, { method: 'DELETE' }),
   },
+  // Global header search — the ONE cross-entity search endpoint. Any new
+  // search surface calls this rather than growing its own query logic.
+  search: {
+    query: ({ q, category }) => request(`/api/search${qs({ q, category })}`),
+  },
   contacts: {
     list: () => request('/api/contacts'),
     get: (id) => request(`/api/contacts/${id}`),
