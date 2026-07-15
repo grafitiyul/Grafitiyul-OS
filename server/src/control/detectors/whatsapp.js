@@ -32,8 +32,10 @@ function reasonHe(status, reason) {
   return MAP[reason] || `השליחה נכשלה לאחר מספר נסיונות (${reason || 'לא ידוע'}).`;
 }
 
-function buildPayload(msg) {
-  const deal = msg.task?.deal || null;
+// `deal` is passed IN, resolved via the batched taskId lookup in run() — it is
+// deliberately NOT a relation on msg (see MSG_INCLUDE). null when the message
+// has no linked task, or when that task/deal no longer exists.
+function buildPayload(msg, deal) {
   const chatName =
     msg.chat?.savedContactName || msg.chat?.groupSubject || msg.chat?.pushName || msg.chat?.phoneNumber || 'צ׳אט';
   const preview = (msg.content || '').replace(/\s+/g, ' ').trim().slice(0, 80);
@@ -61,7 +63,14 @@ function buildPayload(msg) {
   };
 }
 
-const MSG_INCLUDE = {
+// `chat` is a REAL relation, so it is included. `task` is NOT:
+// WhatsAppScheduledMessage.taskId is a LOOSE key with no FK relation, on
+// purpose — it keeps the sensitive scheduled-message table decoupled from CRM
+// (same convention as createdById). Prisma rejects `include: { task: … }`
+// outright at validation time, which silently killed this detector on every
+// sweep. Resolve the task through its id instead; @@index([taskId]) exists for
+// exactly that. Do NOT add a `task` key here.
+export const MSG_INCLUDE = {
   chat: {
     select: {
       savedContactName: true,
@@ -70,24 +79,41 @@ const MSG_INCLUDE = {
       phoneNumber: true,
     },
   },
-  task: { select: { deal: { select: { id: true, orderNo: true, title: true } } } },
 };
+
+// taskId → deal | null, for the whole batch in ONE query (never one per row).
+// Returns an empty map when no message carries a taskId, so the query is
+// skipped entirely rather than issued with an empty IN list.
+async function dealsByTaskId(client, rows) {
+  const taskIds = [...new Set(rows.map((r) => r.taskId).filter(Boolean))];
+  if (!taskIds.length) return new Map();
+  const tasks = await client.task.findMany({
+    where: { id: { in: taskIds } },
+    select: { id: true, deal: { select: { id: true, orderNo: true, title: true } } },
+  });
+  return new Map(tasks.map((t) => [t.id, t.deal || null]));
+}
+
+// Exported for tests: the sweep worker only ever reaches this through
+// registerDetector, and an untested run() is what let the broken include ship.
+export async function runWhatsAppStuckDetector(client) {
+  const rows = await client.whatsAppScheduledMessage.findMany({
+    where: { status: { in: STUCK_STATUSES } },
+    include: MSG_INCLUDE,
+    take: 500,
+  });
+  const dealByTaskId = await dealsByTaskId(client, rows);
+  const present = new Set();
+  for (const msg of rows) {
+    present.add(dedupeKey(msg.id));
+    await raiseIssue(client, buildPayload(msg, dealByTaskId.get(msg.taskId) ?? null));
+  }
+  await resolveMissing(client, TYPE, present);
+}
 
 registerDetector({
   key: 'whatsapp-scheduled-stuck',
-  async run(client) {
-    const rows = await client.whatsAppScheduledMessage.findMany({
-      where: { status: { in: STUCK_STATUSES } },
-      include: MSG_INCLUDE,
-      take: 500,
-    });
-    const present = new Set();
-    for (const msg of rows) {
-      present.add(dedupeKey(msg.id));
-      await raiseIssue(client, buildPayload(msg));
-    }
-    await resolveMissing(client, TYPE, present);
-  },
+  run: runWhatsAppStuckDetector,
 });
 
 registerIssueType(TYPE, {
