@@ -4,6 +4,7 @@ import { MIGRATION_TABS, tabForPath } from './config.js';
 import { migrationApi } from './api.js';
 import SnapshotCard from './components/SnapshotCard.jsx';
 import ProgressSummary from './components/ProgressSummary.jsx';
+import ReadinessCard from './components/ReadinessCard.jsx';
 
 // Migration Review Center — the TEMPORARY one-time tool for reviewing the
 // Pipedrive/Airtable migration before it is imported into GOS.
@@ -16,13 +17,15 @@ export default function MigrationLayout() {
   const active = tabForPath(pathname);
   const [summary, setSummary] = useState(null);
   const [snapshot, setSnapshot] = useState(null);
+  const [readiness, setReadiness] = useState(null);
   const [error, setError] = useState(null);
 
   const load = useCallback(async () => {
     try {
-      const [s, snap] = await Promise.all([migrationApi.summary(), migrationApi.snapshot()]);
+      const [s, snap, r] = await Promise.all([migrationApi.summary(), migrationApi.snapshot(), migrationApi.readiness()]);
       setSummary(s);
       setSnapshot(snap);
+      setReadiness(r);
       setError(null);
     } catch (e) {
       setError(e?.status === 401 ? 'אין הרשאה' : 'טעינת מצב המיגרציה נכשלה');
@@ -51,6 +54,8 @@ export default function MigrationLayout() {
           <SnapshotCard snapshot={snapshot} />
           <ProgressSummary summary={summary} />
         </div>
+
+        <ReadinessCard readiness={readiness} />
       </div>
 
       <div className="flex items-center gap-1 px-3 py-2 border-b border-gray-200 bg-white overflow-x-auto">

@@ -112,7 +112,8 @@ test('no "finalize import" action exists yet — readiness is only REPORTED', ()
   const routes = [...router.matchAll(/router\.(get|post|put|delete)\(\s*'([^']+)'/g)].map((m) => `${m[1].toUpperCase()} ${m[2]}`);
   assert.deepEqual(routes.sort(), [
     'GET /browser/entities', 'GET /browser/filter', 'GET /browser/record', 'GET /browser/records',
-    'GET /org-targets', 'GET /queues/:queue', 'GET /queues/contacts/workload', 'GET /snapshot', 'GET /summary',
+    'GET /org-targets', 'GET /queues/:queue', 'GET /queues/contacts/workload',
+    'GET /readiness', 'GET /snapshot', 'GET /summary',
     'POST /decisions/:id/decide', 'POST /decisions/:id/identity',
     'POST /queues/:queue/batch-approve-safe', 'POST /seed',
   ]);

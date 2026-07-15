@@ -44,6 +44,15 @@ function normalizePriority(p) {
   return TASK_PRIORITIES.includes(p) ? p : null;
 }
 
+// Task.ownerUserId is a real FK (onDelete: Restrict) as of the CRM Tasks
+// workspace. The owner arrives from the client, so it must be checked HERE:
+// without this, an unknown id reaches Postgres and comes back as a P2003
+// foreign-key violation — a 500 where the caller deserves a 400.
+async function ownerExists(id) {
+  const row = await prisma.adminUser.findUnique({ where: { id }, select: { id: true } });
+  return Boolean(row);
+}
+
 async function serializeTasks(tasks) {
   const schedIds = tasks.map((t) => t.scheduledMessageId).filter(Boolean);
   const schedMap = new Map();
@@ -121,6 +130,7 @@ router.post(
     const priority = normalizePriority(b.priority);
     const ownerUserId = String(b.ownerUserId || req.adminAuth?.userId || '').trim();
     if (!ownerUserId) return res.status(400).json({ error: 'owner_required' });
+    if (!(await ownerExists(ownerUserId))) return res.status(400).json({ error: 'owner_not_found' });
     const currentUser = req.adminAuth?.userId || null;
     const dueTime = b.dueTime && /^([01]\d|2[0-3]):[0-5]\d$/.test(b.dueTime) ? b.dueTime : null;
     const notes = b.notes != null ? String(b.notes).slice(0, 2000) : null;
@@ -237,6 +247,7 @@ router.patch(
     if (b.ownerUserId !== undefined) {
       const o = String(b.ownerUserId).trim();
       if (!o) return res.status(400).json({ error: 'owner_required' });
+      if (!(await ownerExists(o))) return res.status(400).json({ error: 'owner_not_found' });
       data.ownerUserId = o;
     }
     if (b.notes !== undefined) data.notes = b.notes != null ? String(b.notes).slice(0, 2000) : null;

@@ -158,8 +158,10 @@ test('gate opens only when every blocking queue is resolved; non-blocking never 
 });
 
 // Generic audit behaviour, on a queue with no domain resolver of its own.
+// (`exceptional` stores the chosen treatment verbatim — Organizations, Contacts and
+// Name Cleanup each resolve their decision server-side instead.)
 test('recording a decision preserves who decided and when', async () => {
-  const c = stubClient([{ queue: 'name_cleanup', subjectKey: 'o1', status: 'pending', proposal: {} }]);
+  const c = stubClient([{ queue: 'exceptional', subjectKey: 'exc:archived_open_deal:1', status: 'pending', proposal: {} }]);
   const target = [...c._rows.values()][0];
   const row = await recordDecision(c, {
     id: target.id, action: 'approve', decision: { merge: true }, note: '  אושר  ',

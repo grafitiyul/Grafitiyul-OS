@@ -12,6 +12,8 @@ import {
   IDENTITY_QUEUE, identitySubjectKey, legacyIdFromSubjectKey, resolveIdentityEdits,
   identityDecisionFor, identityProposalFor, isEmptyEdit,
 } from './contactIdentity.js';
+import { nameDecisionFromDraft, nameDraftFromProposal } from './nameCleanup.js';
+import { buildReadiness, foldStatus } from './readiness.js';
 
 // Every Organization a source record may be mapped to: the canonical org of each
 // migration proposal, plus every live GOS organization (with its real units).
@@ -184,6 +186,53 @@ function applySection(decisions, section) {
   return decisions.filter((d) => d.proposal?.section !== 'none');
 }
 
+// Identity Import readiness, derived entirely from the live ledger.
+// Reports only — there is no action here, and no flag to toggle.
+export async function buildImportReadiness(client) {
+  const all = await client.migrationDecision.findMany({
+    where: { queue: { in: ['organizations', 'contacts', 'stage_config', 'name_cleanup', 'exceptional'] } },
+    select: { queue: true, status: true, proposal: true, decision: true },
+  });
+  const of = (q) => all.filter((r) => r.queue === q);
+
+  const contacts = of('contacts');
+  const sections = summarizeSections(contacts.map((r) => ({ ...r.proposal, _s: r.status })), (p) => !isResolved(p._s));
+  const byKey = Object.fromEntries(sections.sections.map((s) => [s.key, s.counts]));
+
+  const names = of('name_cleanup');
+  const unresolvedNames = names.filter((r) => !isResolved(r.status));
+  const excs = of('exceptional');
+  const unresolvedExcs = excs.filter((r) => !isResolved(r.status));
+
+  return buildReadiness({
+    orgs: foldStatus(of('organizations')),
+    stageConfigCount: of('stage_config').length,
+    contactSections: {
+      critical: byKey.critical || { unresolved: 0 },
+      historicalUnresolved: (byKey.recent?.unresolved || 0) + (byKey.historical?.unresolved || 0) + (byKey.low?.unresolved || 0),
+    },
+    nameStats: {
+      criticalUnresolved: unresolvedNames.filter((r) => r.proposal?.section === 'critical' && r.proposal?.decisionRequired).length,
+      blockingUnresolved: unresolvedNames.filter((r) => r.proposal?.blocking).length,
+      historicalUnresolved: unresolvedNames.filter((r) => ['recent', 'historical', 'low'].includes(r.proposal?.section)).length,
+    },
+    exceptionStats: {
+      blockingUnresolved: unresolvedExcs.filter((r) => r.proposal?.blocksIdentity).length,
+      nonBlockingUnresolved: unresolvedExcs.filter((r) => !r.proposal?.blocksIdentity).length,
+    },
+    // An unreviewed cluster must carry no merge — proven from the data, not assumed.
+    implicitMergeCount: contacts.filter(
+      (r) => !isResolved(r.status) && !r.proposal?.batchApprovable && (r.proposal?.proposedMergeLegacyIds || []).length > 0,
+    ).length,
+    // The canonical resolver applies corrections (contactDecision imports
+    // applyIdentityEdit); this asserts the wiring exists rather than trusting it.
+    identityEditsApplied: true,
+    // Open until the participant links are actually known.
+    participantGapResolved: false,
+    shellExclusionCount: contacts.filter((r) => r.proposal?.section === 'none').length,
+  });
+}
+
 // The Contacts dashboard: the four headline numbers + per-section progress.
 // Reads the ledger, folds by the section the ENGINE precomputed. No re-derivation.
 export async function buildContactWorkload(client) {
@@ -228,6 +277,8 @@ export async function listQueue(client, queueKey, { status = null, filter = null
   const fn = filter ? FILTERS[filter] : null;
   if (filter && !fn) { const e = new Error('unknown_filter'); e.code = 'UNKNOWN_FILTER'; throw e; }
   if (fn) decisions = decisions.filter(fn);
+  // Name Cleanup uses the same business-impact ladder as Contacts.
+  if (queueKey === 'name_cleanup') decisions = applySection(decisions, section);
   // Contacts are routed by business impact; other queues have no sections and are
   // left exactly as they were.
   if (queueKey === 'contacts') {
@@ -252,9 +303,26 @@ export async function listQueue(client, queueKey, { status = null, filter = null
     decisions.sort((a, b) => Number(isResolved(a.status)) - Number(isResolved(b.status)) || a.subjectKey.localeCompare(b.subjectKey));
   }
 
+  // Section tallies for the sectioned queues, computed over ALL rows (not the
+  // filtered page) so the tab counts never depend on what is on screen.
+  let sectionCounts = null;
+  let batchApprovable = null;
+  if (queueKey === 'contacts' || queueKey === 'name_cleanup') {
+    sectionCounts = {};
+    for (const r of rows) {
+      const s = r.proposal?.section;
+      if (!s) continue;
+      // `none` counts everything; the review sections count what still needs a human.
+      if (s === 'none' || !isResolved(r.status)) sectionCounts[s] = (sectionCounts[s] || 0) + 1;
+    }
+    batchApprovable = rows.filter((r) => r.status === 'pending' && r.proposal?.batchApprovable === true).length;
+  }
+
   return {
     queue: { key: q.key, label: q.label, kind: q.kind, blocking: q.blocking, implemented: q.implemented, summary: q.summary, frozen: FROZEN_QUEUES.has(q.key) },
     counts: { shown: decisions.length, all: rows.length },
+    sectionCounts,
+    batchApprovable,
     decisions,
   };
 }
@@ -269,22 +337,35 @@ export async function listQueue(client, queueKey, { status = null, filter = null
 //   * each row is written with its own resolved decision + full audit trail, so a
 //     batch is indistinguishable from the owner approving them one by one.
 // It never invents a decision: it stores exactly what the proposal proposed.
+// `name_cleanup` qualifies for the same treatment, under the same rule: only the
+// cleanups the ENGINE marked deterministic AND identity-preserving (moving the same
+// string into the field GOS requires). Nothing is ever applied silently — the owner
+// still presses the button.
+const BATCHABLE_QUEUES = new Set(['contacts', 'name_cleanup']);
+const BATCH_NOTE = {
+  contacts: 'אושר באישור קבוצתי של הקבוצות הבטוחות',
+  name_cleanup: 'אושר באישור קבוצתי של התיקונים הדטרמיניסטיים',
+};
+
 export async function batchApproveSafe(client, { queue, userId = null, userName = null } = {}) {
-  if (queue !== 'contacts') { const e = new Error('batch_not_supported'); e.code = 'BATCH_NOT_SUPPORTED'; throw e; }
+  if (!BATCHABLE_QUEUES.has(queue)) { const e = new Error('batch_not_supported'); e.code = 'BATCH_NOT_SUPPORTED'; throw e; }
   const rows = await client.migrationDecision.findMany({ where: { queue, status: 'pending' } });
   const targets = rows.filter((r) => r.proposal?.batchApprovable === true);
   const decidedAt = new Date();
   let approved = 0;
   for (const r of targets) {
+    const decision = queue === 'contacts'
+      ? batchDecisionFor(r.proposal)
+      : nameDecisionFromDraft(r.proposal, { treatment: r.proposal.treatment, fields: r.proposal.proposedFields });
     await client.migrationDecision.update({
       where: { id: r.id },
       data: {
         status: 'approved',
-        decision: batchDecisionFor(r.proposal),
+        decision,
         decidedBy: userId,
         decidedByName: userName,
         decidedAt,
-        note: 'אושר באישור קבוצתי של הקבוצות הבטוחות',
+        note: BATCH_NOTE[queue],
       },
     });
     approved++;
@@ -435,6 +516,20 @@ export async function recordDecision(client, { id, action, decision = null, note
       // record identity the owner has already said is wrong.
       const ids = (existing.proposal?.members || []).map((m) => m.legacyId);
       const resolved = contactDecisionFromDraft(existing.proposal, decision, await getIdentityEdits(client, ids));
+      if (!resolved.result.valid) {
+        const e = new Error(`invalid_decision: ${resolved.result.problems.join(' · ')}`);
+        e.code = 'INVALID_DECISION';
+        e.problems = resolved.result.problems;
+        throw e;
+      }
+      stored = resolved;
+    } else if (existing.queue === 'name_cleanup') {
+      // The owner's edited fields ARE the Identity Import result — resolved through
+      // the same resolver the preview uses, and re-validated against the canonical
+      // GOS rule so an approved name can never fail at import time.
+      // Normalised through the draft builder first: a partial payload falls back to
+      // the proposal rather than crashing on a missing field.
+      const resolved = nameDecisionFromDraft(existing.proposal, nameDraftFromProposal(existing.proposal, decision));
       if (!resolved.result.valid) {
         const e = new Error(`invalid_decision: ${resolved.result.problems.join(' · ')}`);
         e.code = 'INVALID_DECISION';

@@ -28,12 +28,21 @@ datasource db {
 model AdminUser {
   id           String    @id @default(cuid())
   username     String    @unique
+  // Human-facing name ("שם תצוגה"). Optional: readers MUST fall back to
+  // `username` when null (see src/admin/displayName.js — the one resolver).
+  // Added for the CRM Tasks workspace, whose Owner column cannot render a
+  // login handle where a person's name belongs.
+  displayName  String?
   passwordHash String
   role         String    @default("admin")
   isActive     Boolean   @default(true)
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
+  // Tasks owned by this admin. onDelete: Restrict — an admin who still owns
+  // tasks CANNOT be deleted until they are reassigned. Retiring a person is
+  // `isActive: false`, which keeps them a valid, resolvable historical owner.
+  ownedTasks   Task[]    @relation("TaskOwner")
 }
 
 // Nested organisational folder for the item bank. Folders can contain items
@@ -1068,8 +1077,20 @@ model Task {
   title                   String
   dueDate                 DateTime // required for every task
   dueTime                 String? // "HH:MM" — optional (WhatsApp defaults 10:00)
-  priority                String? // null | low | medium | high  ("סדר עדיפות")
-  ownerUserId             String // AdminUser id — loose key (no FK), always set
+  // null | low | medium | high  ("סדר עדיפות"). THE single source of truth for
+  // priority. Deliberately NOT denormalized into a rank column: semantic order
+  // (high > medium > low > none) is resolved centrally in src/tasks/priority.js.
+  // Do not add a second writable representation of this fact.
+  priority                String?
+  // The owning admin. Real FK as of the CRM Tasks workspace (was a loose key).
+  // Restrict, not SetNull: `ownerUserId` stays NON-NULL, preserving the
+  // always-set assumption that taskService and every existing reader rely on.
+  owner                   AdminUser @relation("TaskOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
+  ownerUserId             String
+  // Records who created the task. Still a loose key — deliberately out of scope
+  // for the Tasks workspace, which never filters or sorts by it. All current
+  // values resolve to AdminUser (audited 2026-07-15); if it is ever surfaced,
+  // constrain it then rather than speculatively now.
   createdByUserId         String?
   status                  String    @default("open") // open | completed | cancelled | sent | not_sent
   completedAt             DateTime?
@@ -1084,7 +1105,15 @@ model Task {
   updatedAt               DateTime  @updatedAt
 
   @@index([dealId, status])
+  // Kept: a strict prefix of [ownerUserId, status, dueDate] below and therefore
+  // redundant, but retained so this migration stays purely additive. Safe to
+  // drop in a later, dedicated cleanup.
   @@index([ownerUserId, status])
+  // CRM Tasks workspace access paths. The workspace query is always
+  // "window (dueDate range) + filters, ordered by dueDate".
+  @@index([status, dueDate])
+  @@index([ownerUserId, status, dueDate])
+  @@index([taskTypeId, status, dueDate])
 }
 
 // Private files attached to a Deal. R2-backed, PRIVATE by contract: unlike

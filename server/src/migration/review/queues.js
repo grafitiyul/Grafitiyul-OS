@@ -33,8 +33,8 @@ export const REVIEW_QUEUES = [
     label: 'ניקוי שמות',
     kind: 'queue',
     blocking: true,
-    implemented: false,
-    summary: 'שמות חסרים או לא תקינים לאישור ידני — נבנה בשלב הבא.',
+    implemented: true,
+    summary: 'רק רשומות שהשם שלהן לא נכנס נקי למודל של GOS. שם פרטי בלי משפחה הוא תקין ולא מופיע כאן.',
   },
   {
     key: 'stage_config',
@@ -48,9 +48,11 @@ export const REVIEW_QUEUES = [
     key: 'exceptional',
     label: 'רשומות חריגות',
     kind: 'queue',
+    // Deliberately NOT blocking as a whole: most exceptions are deal-level, not
+    // identity-level. The readiness gate blocks on the identity-blocking ones only.
     blocking: false,
-    implemented: false,
-    summary: 'רשומות שדורשות החלטה פרטנית — נבנה בשלב הבא.',
+    implemented: true,
+    summary: 'רק מקרים חריגים באמת — לא אזהרות ולידציה רגילות. מסומן במפורש מה חוסם את ייבוא הזהויות ומה לא.',
   },
   {
     key: 'legacy_archive',

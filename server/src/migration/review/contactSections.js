@@ -67,17 +67,30 @@ export const sectionRank = (k) => RANK[k] ?? 9;
 export const isImportable = (m) =>
   (m.dealCount || 0) + (m.activityCount || 0) + (m.noteCount || 0) + (m.fileCount || 0) > 0;
 
-// The section a cluster belongs to. `safe` short-circuits: a batch-approvable
-// cluster is auto-merged, so its business impact never costs the owner attention.
-export function sectionFor({ members, batchApprovable }) {
-  if (batchApprovable) return SAFE_SECTION;
-  const importable = members.filter(isImportable);
-  if (importable.length < 2) return 'none';
-  const sum = (f) => members.reduce((n, m) => n + (m[f] || 0), 0);
+// Business impact of a set of records, once we already know they need a decision.
+function impactOf(records) {
+  const sum = (f) => records.reduce((n, m) => n + (m[f] || 0), 0);
   if (sum('openDealCount') > 0 || sum('futureTourDeals') > 0) return 'critical';
   if (sum('wonRecentDealCount') > 0) return 'recent';
   if (sum('dealCount') > 0) return 'historical';
   return 'low';
+}
+
+// The section a CLUSTER belongs to. `safe` short-circuits: a batch-approvable
+// cluster is auto-merged, so its business impact never costs the owner attention.
+// A cluster needs >=2 importable members before a duplicate can even exist.
+export function sectionFor({ members, batchApprovable }) {
+  if (batchApprovable) return SAFE_SECTION;
+  if (members.filter(isImportable).length < 2) return 'none';
+  return impactOf(members);
+}
+
+// The section a SINGLE record belongs to (Name Cleanup). The cluster rule does not
+// apply here: one importable record is a real decision, not a non-duplicate. Only an
+// empty shell — which is never created in GOS — costs the owner nothing.
+export function sectionForSingle(record) {
+  if (!isImportable(record)) return 'none';
+  return impactOf([record]);
 }
 
 // The owner's dashboard. Counts CLUSTERS, and separately how many still await a

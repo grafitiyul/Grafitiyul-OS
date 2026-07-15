@@ -13,7 +13,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import * as r2 from '../migration/r2.js';
-import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe, buildOrgTargets, buildContactWorkload, recordIdentityEdits } from '../migration/review/service.js';
+import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe, buildOrgTargets, buildContactWorkload, recordIdentityEdits, buildImportReadiness } from '../migration/review/service.js';
 import { buildSnapshotStatus } from '../migration/review/snapshotStatus.js';
 import { createBrowser } from '../migration/review/browser.js';
 
@@ -95,6 +95,15 @@ router.get(
   '/queues/contacts/workload',
   handle(async (_req, res) => {
     res.json(await buildContactWorkload(prisma));
+  }),
+);
+
+// Identity Import readiness — derived from the live ledger, never a toggled flag.
+// Reports only: there is no import action anywhere in this router.
+router.get(
+  '/readiness',
+  handle(async (_req, res) => {
+    res.json(await buildImportReadiness(prisma));
   }),
 );
 
