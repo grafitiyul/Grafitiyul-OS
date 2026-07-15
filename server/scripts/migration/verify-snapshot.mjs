@@ -107,6 +107,40 @@ async function main() {
   if (bodyLike.length) fails.push(`unexpected non-JSONL objects under pipedrive/files (${bodyLike.length}) — file bodies must NOT be in Snapshot #1`);
 
   report.reconciliation = { blocking: fails, warnings: warns, verdict: fails.length ? 'FAIL' : 'PASS' };
+
+  // Persist the verdict alongside the snapshot so the Review Center can report a
+  // REAL verification state instead of re-verifying on every page load.
+  const verification = {
+    snapshotId,
+    verdict: report.reconciliation.verdict,
+    verifiedAt: report.verifiedAt,
+    blockingCount: fails.length,
+    warningCount: warns.length,
+    blocking: fails,
+    warnings: warns,
+    // Derived from the ACTUAL findings — never asserted optimistically.
+    checks: (() => {
+      const f = fails.join(' | ');
+      return {
+        shardSumsMatchManifests: !/shard sum/.test(f),
+        shardObjectsPresentWithMatchingBytes: !/(shard object missing|shard .* size .* ≠ manifest)/.test(f),
+        combinedHashesRecomputed: !/combined hash mismatch/.test(f),
+        sampleShardContentRehashed: !/sample shard content hash mismatch/.test(f),
+        attachmentBodiesPresent: report.attachments?.bodiesMissing === 0,
+        noPipedriveFileBodies: report.pipedriveFileBodies === 0,
+        excludedTableNotCaptured: !/EXCLUDED table/.test(f),
+      };
+    })(),
+    objectCount: report.objectCount,
+    totalBytes: report.totalBytes,
+  };
+  await r2.putObject({
+    key: `${root}/_verification.json`,
+    body: Buffer.from(JSON.stringify(verification, null, 2), 'utf8'),
+    contentType: 'application/json',
+  });
+  console.log(`\nverification verdict persisted → ${root}/_verification.json`);
+
   console.log(JSON.stringify(report, null, 2));
   console.log(`\nVERDICT: ${report.reconciliation.verdict}  (blocking ${fails.length}, warnings ${warns.length})`);
   for (const f of fails) console.log('  ✗', f);

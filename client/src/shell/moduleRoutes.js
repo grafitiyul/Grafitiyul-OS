@@ -32,6 +32,9 @@ export const BOTTOM_MODULES = [
   { key: 'questionnaires', to: '/admin/questionnaires', label: 'שאלונים', glyph: '📋' },
   { key: 'settings', to: '/admin/settings', label: 'הגדרות', glyph: '⚙️' },
   { key: 'users', to: '/admin/users', label: 'משתמשים', glyph: '🔐' },
+  // TEMPORARY — Migration Review Center. Deleted after cutover along with
+  // client/src/admin/migration/ and the /api/migration/review surface.
+  { key: 'migration', to: '/admin/migration', label: 'בדיקת מיגרציה', glyph: '🚚' },
 ];
 
 export const ALL_MODULES = [...TOP_MODULES, ...BOTTOM_MODULES];

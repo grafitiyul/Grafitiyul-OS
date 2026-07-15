@@ -63,6 +63,16 @@ import CollectionPage from './admin/collection/CollectionPage.jsx';
 // Aliased: ToursPage is taken by the PUBLIC tours page import below.
 import AdminToursPage from './admin/tours/ToursPage.jsx';
 import ControlPage from './admin/control/ControlPage.jsx';
+// TEMPORARY — Migration Review Center (removed after cutover).
+import MigrationLayout from './admin/migration/MigrationLayout.jsx';
+import StageConfigTab from './admin/migration/tabs/StageConfigTab.jsx';
+import {
+  OrganizationsTab,
+  ContactsTab,
+  NameCleanupTab,
+  ExceptionalTab,
+  LegacyArchiveTab,
+} from './admin/migration/tabs/Shells.jsx';
 import TourEventPage from './admin/tours/TourPage.jsx';
 import DealDetail from './admin/deals/DealDetail.jsx';
 import QuotePreviewCanvas from './admin/quote/QuotePreviewCanvas.jsx';
@@ -217,6 +227,19 @@ export default function App() {
         </Route>
         {/* Old collection URL keeps working for existing links/bookmarks. */}
         <Route path="collection" element={<Navigate to="/admin/finance/collection" replace />} />
+        {/* בדיקת מיגרציה — TEMPORARY one-time Migration Review Center.
+            DELETION BOUNDARY: this route block + client/src/admin/migration/ +
+            the moduleRoutes entry + the server's /api/migration/review surface.
+            Landing on stage-config: it is the only fully-built tab. */}
+        <Route path="migration" element={<MigrationLayout />}>
+          <Route index element={<Navigate to="/admin/migration/stage-config" replace />} />
+          <Route path="organizations" element={<OrganizationsTab />} />
+          <Route path="contacts" element={<ContactsTab />} />
+          <Route path="name-cleanup" element={<NameCleanupTab />} />
+          <Route path="stage-config" element={<StageConfigTab />} />
+          <Route path="exceptional" element={<ExceptionalTab />} />
+          <Route path="legacy-archive" element={<LegacyArchiveTab />} />
+        </Route>
         {/* Tours — the operational tours module (TourEvent/Booking): table of
             upcoming tours + group slot management. Calendar views come later. */}
         {/* The tour opens as a modal on top of the list — nested so the list
