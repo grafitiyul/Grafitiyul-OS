@@ -1,0 +1,138 @@
+// One-off BOUNDED pass: generate Organizations review proposals from Snapshot #1
+// and persist them into MigrationDecision.
+//
+// Reads each needed shard exactly ONCE (organizations, persons, deals), reads live
+// GOS organizations READ-ONLY for conflict evidence, and writes ONLY
+// MigrationDecision rows. No Pipedrive/Airtable calls. No production-entity writes.
+// No LegacyRecords.
+//
+// Re-running NEVER overwrites an owner decision: resolved rows are left untouched;
+// only still-pending proposals are refreshed.
+//
+//   railway run --service Grafitiyul-OS node server/scripts/migration/build-org-proposals.mjs --snapshot <id> [--dry]
+import { PrismaClient } from '@prisma/client';
+import * as r2 from '../../src/migration/r2.js';
+import { createSnapshotReader } from '../../src/migration/review/snapshotReader.js';
+import {
+  buildOrgProposals, subjectKeyFor, normName, digits, emailDomain,
+  isActiveDeal, hasFutureTour, ORG_TAXID, ORG_ICOUNT,
+} from '../../src/migration/review/orgProposals.js';
+
+const arg = (n) => { const i = process.argv.indexOf(n); return i >= 0 ? process.argv[i + 1] : null; };
+const snapshotId = arg('--snapshot');
+const dry = process.argv.includes('--dry');
+if (!snapshotId) { console.error('usage: --snapshot <id> [--dry]'); process.exit(1); }
+
+const today = new Date().toISOString().slice(0, 10);
+const store = { getText: r2.getObjectText };
+const reader = createSnapshotReader({ store, snapshotId });
+const prisma = new PrismaClient({ datasourceUrl: process.env.MIGRATION_DB_URL || process.env.DATABASE_URL });
+
+// Stream one entity's shards, calling visit(record) — never holds the entity.
+async function stream(entityKey, visit) {
+  const man = await reader.entityManifest(entityKey);
+  let n = 0;
+  for (const shard of man.shards || []) {
+    const recs = await reader.readShard(shard.key);
+    for (const r of recs) { visit(r); n++; }
+    reader._shardCache.clear();
+  }
+  return n;
+}
+
+console.log(`building Organizations proposals from ${snapshotId} (today=${today})\n`);
+
+// 1) Organizations (one shard).
+const orgs = new Map();
+const orgCount = await stream('pipedrive/organizations', (o) => {
+  orgs.set(o.id, {
+    legacyId: o.id,
+    name: String(o.name || '').trim(),
+    taxId: o[ORG_TAXID] || null,
+    icountId: o[ORG_ICOUNT] || null,
+    phone: o.phone || null,
+    address: o.address || null,
+    emailDomains: [],
+    contactCount: 0,
+    dealCount: 0,
+    activeDealCount: 0,
+    futureTourDeals: 0,
+  });
+});
+console.log(`  organizations: ${orgCount}`);
+
+// 2) Persons → linked-contact counts + email domains per org.
+const domainsByOrg = new Map();
+const personCount = await stream('pipedrive/persons', (p) => {
+  const orgId = p.org_id?.value ?? p.org_id;
+  if (orgId == null) return;
+  const o = orgs.get(orgId);
+  if (!o) return;
+  o.contactCount++;
+  for (const e of p.email || []) {
+    const d = emailDomain(e?.value);
+    // Free mail domains are not organisation evidence.
+    if (!d || /^(gmail|walla|hotmail|outlook|yahoo|icloud|live)\./i.test(d)) continue;
+    if (!domainsByOrg.has(orgId)) domainsByOrg.set(orgId, new Set());
+    domainsByOrg.get(orgId).add(d);
+  }
+});
+for (const [orgId, set] of domainsByOrg) if (orgs.has(orgId)) orgs.get(orgId).emailDomains = [...set].slice(0, 5);
+console.log(`  persons scanned: ${personCount}`);
+
+// 3) Deals → deal / Tier-2-active / future-tour counts per org.
+const dealCount = await stream('pipedrive/deals', (d) => {
+  const orgId = d.org_id?.value ?? d.org_id;
+  if (orgId == null) return;
+  const o = orgs.get(orgId);
+  if (!o) return;
+  o.dealCount++;
+  if (isActiveDeal(d, today)) o.activeDealCount++;
+  if (hasFutureTour(d, today)) o.futureTourDeals++;
+});
+console.log(`  deals scanned: ${dealCount}`);
+
+// 4) Live GOS organizations — READ-ONLY evidence (conflict detection).
+const gosRows = await prisma.organization.findMany({
+  select: { id: true, name: true, taxId: true, organizationTypeId: true, organizationType: { select: { label: true } } },
+});
+const gosOrgs = { byTaxId: new Map(), byName: new Map() };
+for (const g of gosRows) {
+  const row = { id: g.id, name: g.name, organizationTypeId: g.organizationTypeId, organizationTypeLabel: g.organizationType?.label || null };
+  const t = digits(g.taxId);
+  if (t.length >= 8) gosOrgs.byTaxId.set(t, row);
+  const n = normName(g.name);
+  if (n) gosOrgs.byName.set(n, row);
+}
+console.log(`  live GOS organizations (read-only): ${gosRows.length}`);
+
+// 5) Build proposals.
+const { proposals, stats } = buildOrgProposals({ orgs: [...orgs.values()], gosOrgs, today });
+console.log('\nstats:', JSON.stringify(stats, null, 2));
+console.log('\ntop 10 by priority:');
+for (const p of proposals.slice(0, 10)) {
+  console.log(`  #${String(p.rank).padStart(3)} ${p.confidence.padEnd(6)} ${String(p.members.length)}× ${p.proposedCanonical.name.slice(0, 34).padEnd(34)} deals=${String(p.totals.deals).padStart(4)} active=${String(p.totals.activeDeals).padStart(3)} contacts=${String(p.totals.contacts).padStart(3)}${p.gosMatch ? ' · GOS✓' : ''}`);
+}
+
+if (dry) { console.log('\n--dry: nothing written'); await prisma.$disconnect(); process.exit(0); }
+
+// 6) Persist — one read of existing rows, then only the necessary writes.
+const existing = await prisma.migrationDecision.findMany({ where: { queue: 'organizations' } });
+const bySubject = new Map(existing.map((r) => [r.subjectKey, r]));
+let created = 0, refreshed = 0, preserved = 0;
+for (const p of proposals) {
+  const subjectKey = subjectKeyFor(p);
+  const row = bySubject.get(subjectKey);
+  if (!row) {
+    await prisma.migrationDecision.create({ data: { queue: 'organizations', subjectKey, proposal: p, status: 'pending' } });
+    created++;
+  } else if (row.status === 'pending') {
+    await prisma.migrationDecision.update({ where: { id: row.id }, data: { proposal: p } });
+    refreshed++;
+  } else {
+    preserved++; // an owner decision — NEVER overwritten
+  }
+}
+console.log(`\n✔ persisted: ${created} created · ${refreshed} refreshed (still pending) · ${preserved} owner decisions preserved`);
+console.log(`LegacyRecord count (must be 0): ${await prisma.legacyRecord.count()}`);
+await prisma.$disconnect();

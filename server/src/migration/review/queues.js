@@ -17,8 +17,8 @@ export const REVIEW_QUEUES = [
     label: 'ארגונים',
     kind: 'queue',
     blocking: true,
-    implemented: false,
-    summary: 'איחוד ארגונים כפולים ויצירת סניפים (יחידות) — נבנה בשלב הבא.',
+    implemented: true,
+    summary: 'איחוד ארגונים כפולים ויצירת סניפים (יחידות), לפי ראיות מהצילום.',
   },
   {
     key: 'contacts',
@@ -57,8 +57,8 @@ export const REVIEW_QUEUES = [
     label: 'ארכיון מערכת קודמת',
     kind: 'browser',
     blocking: false,
-    implemented: false,
-    summary: 'עיון בנתוני המערכת הקודמת — נבנה בשלב הבא.',
+    implemented: true,
+    summary: 'עיון לקריאה בלבד ברשומות המקור מתוך הצילום. אין כאן החלטות.',
   },
 ];
 
@@ -70,5 +70,8 @@ export const queueByKey = (key) => REVIEW_QUEUES.find((q) => q.key === key) || n
 export const FROZEN_QUEUES = new Set(['stage_config']);
 
 // A decision is resolved once it is no longer awaiting a human.
+// `deferred` is deliberately NOT resolved — deferring parks an item for later, so
+// the blocking gate must stay closed while any deferred item remains.
 export const RESOLVED_STATUSES = new Set(['approved', 'rejected', 'edited']);
+export const UNRESOLVED_STATUSES = new Set(['pending', 'deferred']);
 export const isResolved = (status) => RESOLVED_STATUSES.has(String(status || ''));

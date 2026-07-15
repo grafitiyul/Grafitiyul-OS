@@ -4,7 +4,9 @@
 // client will happily read any table id it is given, so callers MUST filter.
 import { setTimeout as sleep } from 'node:timers/promises';
 
-export const EXCLUDED_TABLE_NAME = 'גישה, סיסמאות';
+// Re-exported from the shared constant so non-API consumers (e.g. the Review
+// Center) never have to import this module just to know what is excluded.
+export { EXCLUDED_TABLE_NAME } from '../excludedTables.js';
 
 export function airtableClient({ throttleMs = 220 } = {}) {
   const token = String(process.env.AIRTABLE_PERSONAL_ACCESS_TOKEN || '').trim();

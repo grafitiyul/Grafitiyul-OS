@@ -15,8 +15,55 @@ import { handle } from '../asyncHandler.js';
 import * as r2 from '../migration/r2.js';
 import { seedStageConfig, buildReviewSummary, listQueue, recordDecision } from '../migration/review/service.js';
 import { buildSnapshotStatus } from '../migration/review/snapshotStatus.js';
+import { createBrowser } from '../migration/review/browser.js';
 
 const router = Router();
+
+// ── Snapshot Browser ────────────────────────────────────────────────────────
+// One browser per snapshot id, cached for the process (its internal caches are
+// bounded). The snapshot id is resolved from the run mirror, never from input,
+// so no request can point the browser at arbitrary storage.
+const browsers = new Map();
+async function browser() {
+  const run = await prisma.migrationRun.findFirst({ where: { kind: 'snapshot' }, orderBy: { startedAt: 'desc' } });
+  if (!run?.snapshotId) { const e = new Error('no_snapshot'); e.code = 'NO_SNAPSHOT'; throw e; }
+  if (!browsers.has(run.snapshotId)) {
+    browsers.set(run.snapshotId, createBrowser({ store: { getText: r2.getObjectText }, snapshotId: run.snapshotId }));
+  }
+  return browsers.get(run.snapshotId);
+}
+// Map browser errors to honest HTTP codes (the excluded table lands on 404).
+function browserError(e, res) {
+  if (e.code === 'NOT_BROWSABLE') return res.status(404).json({ error: 'entity_not_browsable' });
+  if (e.code === 'NO_INDEX') return res.status(503).json({ error: 'index_unavailable', message: 'הצילום טרם אונדקס' });
+  if (e.code === 'NO_SNAPSHOT') return res.status(404).json({ error: 'no_snapshot' });
+  throw e;
+}
+
+router.get('/browser/entities', handle(async (_req, res) => {
+  try { res.json({ entities: await (await browser()).entities() }); }
+  catch (e) { browserError(e, res); }
+}));
+
+router.get('/browser/records', handle(async (req, res) => {
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 25, 1), 100); // bounded page
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+  try { res.json(await (await browser()).page(String(req.query.entity || ''), { offset, limit })); }
+  catch (e) { browserError(e, res); }
+}));
+
+router.get('/browser/record', handle(async (req, res) => {
+  try {
+    const rec = await (await browser()).record(String(req.query.entity || ''), req.query.id);
+    if (!rec) return res.status(404).json({ error: 'record_not_found' });
+    res.json(rec);
+  } catch (e) { browserError(e, res); }
+}));
+
+router.get('/browser/filter', handle(async (req, res) => {
+  try { res.json(await (await browser()).filter(String(req.query.entity || ''), String(req.query.q || ''), { limit: 25 })); }
+  catch (e) { browserError(e, res); }
+}));
 
 // Queue counts, progress, and the blocking gate.
 router.get(
@@ -42,14 +89,18 @@ router.post(
   }),
 );
 
-// One queue's decisions.
+// One queue's decisions (optionally filtered; ordered by priority rank).
 router.get(
   '/queues/:queue',
   handle(async (req, res) => {
     try {
-      res.json(await listQueue(prisma, req.params.queue, { status: req.query.status || null }));
+      res.json(await listQueue(prisma, req.params.queue, {
+        status: req.query.status || null,
+        filter: req.query.filter || null,
+      }));
     } catch (e) {
       if (e.code === 'UNKNOWN_QUEUE') return res.status(404).json({ error: 'unknown_queue' });
+      if (e.code === 'UNKNOWN_FILTER') return res.status(400).json({ error: 'unknown_filter' });
       throw e;
     }
   }),

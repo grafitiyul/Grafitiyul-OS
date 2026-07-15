@@ -17,10 +17,19 @@ async function req(path, options = {}) {
   return res.status === 204 ? null : res.json();
 }
 
+const qs = (o) =>
+  '?' + Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== '')
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&');
+
 export const migrationApi = {
   summary: () => req('/api/migration/review/summary'),
   snapshot: () => req('/api/migration/review/snapshot'),
-  queue: (key) => req(`/api/migration/review/queues/${encodeURIComponent(key)}`),
+  queue: (key, filter = null) => req(`/api/migration/review/queues/${encodeURIComponent(key)}${filter ? qs({ filter }) : ''}`),
+  // Snapshot Browser (read-only).
+  browserEntities: () => req('/api/migration/review/browser/entities'),
+  browserRecords: (entity, offset = 0, limit = 25) => req('/api/migration/review/browser/records' + qs({ entity, offset, limit })),
+  browserRecord: (entity, id) => req('/api/migration/review/browser/record' + qs({ entity, id })),
+  browserFilter: (entity, q) => req('/api/migration/review/browser/filter' + qs({ entity, q })),
   // Idempotent — safe to call on every mount; a no-op once seeded.
   seed: () => req('/api/migration/review/seed', { method: 'POST' }),
   decide: (id, body) =>

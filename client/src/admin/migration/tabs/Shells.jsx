@@ -3,17 +3,6 @@
 // controls, no placeholder rows.
 import QueueShell from '../components/QueueShell.jsx';
 
-export function OrganizationsTab() {
-  return (
-    <QueueShell
-      icon="🏢"
-      title="ארגונים"
-      blocking
-      description="כאן יוצגו ארגונים שנראים כפולים, עם הראיות לכל התאמה, כדי להחליט מה לאחד ומה להשאיר נפרד. סניפים (יחידות) ייווצרו כחלק מאותו תהליך. בניית ההצעות תגיע בשלב הבא."
-    />
-  );
-}
-
 export function ContactsTab() {
   return (
     <QueueShell
@@ -47,13 +36,5 @@ export function ExceptionalTab() {
   );
 }
 
-export function LegacyArchiveTab() {
-  return (
-    <QueueShell
-      icon="📦"
-      title="ארכיון מערכת קודמת"
-      blocking={false}
-      description="כאן יהיה אפשר לעיין בנתונים כפי שהיו במערכת הקודמת. המידע כבר שמור בצילום — מסך העיון ייבנה בשלב הבא."
-    />
-  );
-}
+// NOTE: "ארכיון מערכת קודמת" (tab 6) is now the read-only Snapshot Browser —
+// see tabs/SnapshotBrowserTab.jsx. It is not a shell any more.

@@ -66,12 +66,12 @@ import ControlPage from './admin/control/ControlPage.jsx';
 // TEMPORARY — Migration Review Center (removed after cutover).
 import MigrationLayout from './admin/migration/MigrationLayout.jsx';
 import StageConfigTab from './admin/migration/tabs/StageConfigTab.jsx';
+import OrganizationsTab from './admin/migration/tabs/OrganizationsTab.jsx';
+import SnapshotBrowserTab from './admin/migration/tabs/SnapshotBrowserTab.jsx';
 import {
-  OrganizationsTab,
   ContactsTab,
   NameCleanupTab,
   ExceptionalTab,
-  LegacyArchiveTab,
 } from './admin/migration/tabs/Shells.jsx';
 import TourEventPage from './admin/tours/TourPage.jsx';
 import DealDetail from './admin/deals/DealDetail.jsx';
@@ -238,7 +238,8 @@ export default function App() {
           <Route path="name-cleanup" element={<NameCleanupTab />} />
           <Route path="stage-config" element={<StageConfigTab />} />
           <Route path="exceptional" element={<ExceptionalTab />} />
-          <Route path="legacy-archive" element={<LegacyArchiveTab />} />
+          {/* Tab 6 "ארכיון מערכת קודמת" IS the read-only Snapshot Browser. */}
+          <Route path="legacy-archive" element={<SnapshotBrowserTab />} />
         </Route>
         {/* Tours — the operational tours module (TourEvent/Booking): table of
             upcoming tours + group slot management. Calendar views come later. */}

@@ -47,10 +47,18 @@ test('no "finalize import" action exists yet — readiness is only REPORTED', ()
     const code = stripComments(raw).replace(/readyToFinalize/g, '');
     assert.ok(!/finalize|commitImport|runImport|startImport/i.test(code), 'no finalize/import action in code');
   }
-  // And no route exposes one.
+  // And no route exposes one. The full surface is locked: adding an endpoint must
+  // be a deliberate act, not an accident.
   const router = stripComments(read('src/routes/migrationReview.js'));
   const routes = [...router.matchAll(/router\.(get|post|put|delete)\(\s*'([^']+)'/g)].map((m) => `${m[1].toUpperCase()} ${m[2]}`);
-  assert.deepEqual(routes.sort(), ['GET /queues/:queue', 'GET /snapshot', 'GET /summary', 'POST /decisions/:id/decide', 'POST /seed']);
+  assert.deepEqual(routes.sort(), [
+    'GET /browser/entities', 'GET /browser/filter', 'GET /browser/record', 'GET /browser/records',
+    'GET /queues/:queue', 'GET /snapshot', 'GET /summary',
+    'POST /decisions/:id/decide', 'POST /seed',
+  ]);
+  // Every write route is a decision-ledger route — nothing else mutates.
+  const writes = routes.filter((r) => r.startsWith('POST'));
+  assert.deepEqual(writes.sort(), ['POST /decisions/:id/decide', 'POST /seed']);
 });
 
 test('the deletion boundary is a single mount line', () => {
