@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe } from './service.js';
+import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe, buildOrgTargets } from './service.js';
 import { STAGE_CONFIG_COUNT } from './stageConfigSeed.js';
 import { draftFromProposal } from './orgDecision.js';
 
@@ -44,7 +44,12 @@ function stubClient(extra = []) {
     },
   };
 
-  return new Proxy({ migrationDecision, _rows: rows }, {
+  // Live GOS organizations are READ (never written) as merge targets/evidence.
+  const organization = {
+    findMany: async () => [{ id: 'gosA', name: 'ארגון קיים', units: [{ id: 'gosU1', name: 'סניף קיים' }] }],
+  };
+
+  return new Proxy({ migrationDecision, organization, _rows: rows }, {
     get(target, prop) {
       if (prop in target) return target[prop];
       throw new Error(`FORBIDDEN: review code touched prisma.${String(prop)} — no production writes allowed`);
@@ -194,7 +199,7 @@ const ORG_PROPOSAL = {
   proposedAssignments: { 1: 'organization', 2: 'organization' },
 };
 
-test('an owner decision stores the EDITED names as the migration result', async () => {
+test('an owner decision stores the EDITED names + the per-source mapping', async () => {
   const c = stubClient([{ queue: 'organizations', subjectKey: 'org:normName:x', status: 'pending', proposal: ORG_PROPOSAL }]);
   const id = [...c._rows.values()][0].id;
   const row = await recordDecision(c, {
@@ -204,13 +209,13 @@ test('an owner decision stores the EDITED names as the migration result', async 
       organizationTypeId: null,
       mergeIntoGosId: null,
       units: [{ key: 'cm', name: 'Capital Markets Division' }],
-      assignments: { 1: 'unit:cm', 2: 'unit:cm' },
+      dispositions: { 1: { disposition: 'organization' }, 2: { disposition: 'unit', targetUnitKey: 'cm' } },
     },
   });
   assert.equal(row.status, 'edited');
   assert.equal(row.decision.canonicalName, 'Bank Leumi', 'the typed name wins');
   assert.equal(row.decision.result.units[0].name, 'Capital Markets Division');
-  assert.deepEqual(row.decision.result.units[0].members.map((m) => m.legacyId), [1, 2], 'two records → one unit');
+  assert.deepEqual(row.decision.dispositions['2'], { disposition: 'unit', targetUnitKey: 'cm' });
   assert.equal(row.decision.result.valid, true);
   assert.equal(row.decidedByName, 'elinoy');
 });
@@ -218,11 +223,47 @@ test('an owner decision stores the EDITED names as the migration result', async 
 test('an invalid edited decision is refused (never silently stored)', async () => {
   const c = stubClient([{ queue: 'organizations', subjectKey: 'org:normName:y', status: 'pending', proposal: ORG_PROPOSAL }]);
   const id = [...c._rows.values()][0].id;
+  // No disposition for either source record → blocked.
   await assert.rejects(
-    () => recordDecision(c, { id, action: 'edit', decision: { canonicalName: '  ', units: [], assignments: {} } }),
+    () => recordDecision(c, { id, action: 'edit', decision: { canonicalName: 'x', units: [], dispositions: {} } }),
     (e) => e.code === 'INVALID_DECISION',
   );
   assert.equal([...c._rows.values()][0].status, 'pending', 'left untouched');
+});
+
+test('a cross-cluster mapping is validated against the LIVE target registry', async () => {
+  const c = stubClient([
+    { queue: 'organizations', subjectKey: 'org:normName:x', status: 'pending', proposal: ORG_PROPOSAL },
+    { queue: 'organizations', subjectKey: 'org:normName:store', status: 'pending', proposal: { ...ORG_PROPOSAL, proposedCanonical: { name: 'STORE NEXT', organizationTypeId: null } } },
+  ]);
+  const [a] = [...c._rows.values()];
+  // Map source 2 to the OTHER cluster's organization — a real, existing target.
+  const ok = await recordDecision(c, {
+    id: a.id, action: 'edit', userName: 'elinoy',
+    decision: {
+      canonicalName: 'IMD SOFT', units: [],
+      dispositions: { 1: { disposition: 'organization' }, 2: { disposition: 'other_organization', targetOrganizationKey: 'prop:org:normName:store' } },
+    },
+  });
+  assert.equal(ok.decision.result.elsewhere[0].targetName, 'STORE NEXT', 'resolved through the registry');
+
+  // A target that does not exist is refused.
+  await assert.rejects(
+    () => recordDecision(c, {
+      id: a.id, action: 'edit',
+      decision: { canonicalName: 'IMD SOFT', units: [], dispositions: { 1: { disposition: 'organization' }, 2: { disposition: 'other_organization', targetOrganizationKey: 'prop:nope' } } },
+    }),
+    (e) => e.code === 'INVALID_DECISION',
+  );
+});
+
+test('an existing GOS organization is offered as a mapping target (read-only)', async () => {
+  const c = stubClient([{ queue: 'organizations', subjectKey: 'org:normName:x', status: 'pending', proposal: ORG_PROPOSAL }]);
+  const targets = await buildOrgTargets(c);
+  assert.equal(targets.gos.length, 1);
+  assert.equal(targets.gos[0].key, 'gos:gosA');
+  assert.deepEqual(targets.gos[0].units, [{ key: 'gosU1', name: 'סניף קיים' }]);
+  assert.equal(targets.proposals[0].key, 'prop:org:normName:x');
 });
 
 test('re-seeding NEVER overwrites an owner-edited organizations decision', async () => {
@@ -234,7 +275,11 @@ test('re-seeding NEVER overwrites an owner-edited organizations decision', async
   const [a, b] = [...c._rows.values()];
   await recordDecision(c, {
     id: a.id, action: 'edit', userId: 'u1', userName: 'elinoy',
-    decision: { canonicalName: 'Bank Leumi', units: [{ key: 'cm', name: 'Capital Markets Division' }], assignments: { 1: 'unit:cm', 2: 'unit:cm' } },
+    decision: {
+      canonicalName: 'Bank Leumi',
+      units: [{ key: 'cm', name: 'Capital Markets Division' }],
+      dispositions: { 1: { disposition: 'organization' }, 2: { disposition: 'unit', targetUnitKey: 'cm' } },
+    },
   });
 
   // The pass's rule: the EVIDENCE (proposal) is refreshed on every row so decided

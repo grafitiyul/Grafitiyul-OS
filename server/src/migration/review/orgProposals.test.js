@@ -11,19 +11,32 @@ const org = (o) => ({
 });
 const noGos = { byTaxId: new Map(), byName: new Map() };
 
-// The normaliser is intentionally byte-identical to the audit's, INCLUDING its
-// quirk: Hebrew corporate suffixes are NOT stripped (punctuation is removed first
-// and JS \b never matches beside Hebrew), so only Latin suffixes are removed.
-// These tests pin that behaviour so nobody "fixes" it and breaks reconciliation
-// with the approved 169 clusters.
-test('normalisation is byte-identical to the audit (incl. its Hebrew-suffix quirk)', () => {
-  assert.equal(normName('Acme Ltd.'), 'acme', 'Latin suffixes ARE stripped');
-  assert.equal(normName('Acme Ltd'), normName('Acme Inc'), 'Latin variants collapse together');
+// The audit's normaliser had a measured defect: Hebrew legal suffixes were never
+// stripped (punctuation was removed first, and JS \b never matches beside Hebrew),
+// so only Latin suffixes worked. That is FIXED here (owner-approved), which is what
+// takes the name clusters from 169 → 173.
+test('legal suffixes are stripped in BOTH scripts (the audited Hebrew defect is fixed)', () => {
+  assert.equal(normName('Acme Ltd.'), 'acme', 'Latin suffixes stripped');
+  assert.equal(normName('Acme Ltd'), normName('Acme Inc'), 'Latin variants collapse');
   assert.equal(normName('  ביתא   '), 'ביתא', 'whitespace collapses');
-  assert.equal(normName('ביתא.'), normName('ביתא'), 'punctuation is stripped');
-  // The quirk, pinned deliberately:
-  assert.equal(normName('בנק לאומי בע"מ'), 'בנק לאומי בע מ');
-  assert.notEqual(normName('בנק לאומי בע"מ'), normName('בנק לאומי'));
+  assert.equal(normName('ביתא.'), normName('ביתא'), 'punctuation stripped');
+  // The fix — these are the measured real-world wins:
+  assert.equal(normName('בנק לאומי בע"מ'), 'בנק לאומי');
+  assert.equal(normName('בנק לאומי בע"מ'), normName('בנק לאומי'));
+  assert.equal(normName('גולמט בע"מ'), normName('גולמט'));
+  assert.equal(normName('מנורה מבטחים בעמ'), normName('מנורה מבטחים'));
+  // A brand that merely CONTAINS a suffix-like word is untouched.
+  assert.equal(normName('בעלי מלאכה'), 'בעלי מלאכה');
+});
+
+test('the fixed normaliser clusters legal-suffix variants that the old one missed', () => {
+  const { proposals } = buildOrgProposals({
+    today: TODAY, gosOrgs: noGos,
+    orgs: [org({ id: 1, name: 'גולמט', deals: 2 }), org({ id: 2, name: 'גולמט בע"מ', deals: 1 })],
+  });
+  assert.equal(proposals.length, 1, 'the old normaliser produced NO cluster here');
+  assert.equal(proposals[0].clusterKind, 'normName');
+  assert.equal(proposals[0].proposedCanonical.name, 'גולמט');
 });
 
 test('exact tax id → SAFE; identical name alone → REVIEW (never auto-approved)', () => {
@@ -95,6 +108,64 @@ test('nothing is ever auto-approved: every proposal starts unresolved', () => {
   assert.equal(proposals[0].status, undefined);
   assert.equal(proposals[0].autoApprove, undefined);
   assert.equal(proposals[0].autoMerge, undefined);
+});
+
+// ── iCount demotion (audit finding) ────────────────────────────────────────
+test('an iCount id ALONE never creates a proposal (the real false positives)', () => {
+  // The exact live cluster: five unrelated orgs sharing placeholder iCount 15641.
+  const { proposals, stats } = buildOrgProposals({
+    today: TODAY, gosOrgs: noGos,
+    orgs: [
+      org({ id: 220, name: 'IMD SOFT', icountId: '15641' }),
+      org({ id: 361, name: 'STORE NEXT', icountId: '15641' }),
+      org({ id: 414, name: 'ניסיון למחוק', icountId: '15641' }),
+      org({ id: 416, name: 'priory team', icountId: '15641' }),
+    ],
+  });
+  assert.equal(proposals.length, 0, 'no corroboration → no proposal at all');
+  assert.equal(stats.icountRejectedUncorroborated, 1);
+  assert.deepEqual(stats.icountRejectedExamples[0].names.sort(), ['IMD SOFT', 'STORE NEXT', 'ניסיון למחוק', 'priory team'].sort());
+});
+
+test('a CORROBORATED iCount match still proposes — but never above its evidence', () => {
+  // iCount + a shared name token → plausible, so a human decides.
+  const tokenOnly = buildOrgProposals({
+    today: TODAY, gosOrgs: noGos,
+    orgs: [org({ id: 1, name: 'אולגה תיירות', icountId: '20893' }), org({ id: 2, name: 'אולגה נסיעות', icountId: '20893' })],
+  });
+  assert.equal(tokenOnly.proposals.length, 1);
+  assert.equal(tokenOnly.proposals[0].confidence, 'review', 'iCount + name token is NOT high confidence');
+  assert.match(tokenOnly.proposals[0].reason, /iCount לבדו אינו הוכחה/);
+
+  // iCount + identical contact details → strong.
+  const strong = buildOrgProposals({
+    today: TODAY, gosOrgs: noGos,
+    orgs: [
+      org({ id: 1, name: 'אלפא', icountId: '999', phone: '03-1234567', address: 'הרצל 1' }),
+      org({ id: 2, name: 'ביתא', icountId: '999', phone: '031234567', address: 'הרצל 1' }),
+    ],
+  });
+  assert.equal(strong.proposals[0].confidence, 'high');
+});
+
+test('every proposal reports EVERY rule, passed and failed', () => {
+  const { proposals } = buildOrgProposals({
+    today: TODAY, gosOrgs: noGos,
+    orgs: [org({ id: 1, name: 'דלתא', taxId: '512345678' }), org({ id: 2, name: 'דלתא אחר', taxId: '512345678' })],
+  });
+  const checks = proposals[0].evidence.checks;
+  const byRule = Object.fromEntries(checks.map((c) => [c.rule, c]));
+  assert.equal(byRule['ח.פ / עוסק מורשה זהה'].passed, true);
+  assert.equal(byRule['שם מנורמל זהה'].passed, false, 'and it says so');
+  assert.match(byRule['שם מנורמל זהה'].detail, /שמות שונים/);
+  assert.equal(byRule['טלפון זהה'].passed, false);
+  assert.match(byRule['טלפון זהה'].detail, /אין טלפון/);
+  assert.equal(byRule['ארגון תואם קיים ב-GOS'].passed, false);
+  // The checklist covers the whole rule set — no silent rules.
+  assert.deepEqual(checks.map((c) => c.rule).sort(), [
+    'ארגון תואם קיים ב-GOS', 'דומיין אימייל תאגידי משותף', 'חפיפת מילה בשם',
+    'ח.פ / עוסק מורשה זהה', 'טלפון זהה', 'כתובת זהה', 'מזהה iCount זהה', 'שם מנורמל זהה',
+  ].sort());
 });
 
 test('shared non-free email domain is inferred evidence', () => {

@@ -15,24 +15,29 @@ export const ORG_TAXID = '49f67a1342a56c48ed9ef2cb8a07264d4f3b58ac';
 export const ORG_ICOUNT = 'b57596667582c03433c8f2d05d60ad0d8efba283';
 export const DEAL_TOURDATE = 'a860fcf9681c2bb1f71200514cffdb5c8cadedb7';
 
-// Byte-identical to the audit's normaliser, so the approved 169 name clusters
-// reconcile EXACTLY. Do not "improve" it without re-running the audit and getting
-// the new numbers re-approved.
+// Legal-suffix stripping. The ORIGINAL audit normaliser had a measured defect:
+// punctuation was removed FIRST (so `בע"מ` became `בע מ`), and JS `\b` is an ASCII
+// word boundary that never matches beside Hebrew letters — so Hebrew suffixes were
+// never stripped and only the Latin ones (ltd/inc/…) worked.
 //
-// Known, deliberate quirk: the Hebrew corporate-suffix stripping is a no-op.
-// Punctuation is removed FIRST (so `בע"מ` becomes `בע מ`, which the suffix
-// alternation no longer matches), and JS `\b` is an ASCII word boundary that never
-// matches beside Hebrew letters. Only the Latin suffixes (ltd/inc/llc/…) are
-// actually stripped. The audited clusters were measured with exactly this
-// behaviour; matching it is the point.
+// Fixed here (owner-approved): punctuation → collapse → strip suffixes tolerant of
+// the space the punctuation left behind. Measured effect: name clusters
+// 169 → 173 (+4 clusters / +8 orgs), e.g. `גולמט` ≡ `גולמט בע"מ`. All true
+// positives; no first-token/brand matching is added (measured unusable).
+const LEGAL_SUFFIX = /(^|\s)(בע"?מ|בעמ|בע\s*מ|בע”מ|חל"?צ|עמותה|ltd|inc|llc|co|company)(\s|$)/gi;
+
 export function normName(n) {
   return String(n || '')
     .toLowerCase()
     .replace(/["'’`.,\-–_()|]/g, ' ')
-    .replace(/\b(בע"?מ|בעמ|ltd|inc|llc|co|company|עמותה|בית ספר|ביה"?ס|עיריית|מועצה|חברת)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(LEGAL_SUFFIX, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+// Meaningful tokens for corroboration (short tokens are noise).
+export const nameTokens = (n) => new Set(normName(n).split(' ').filter((t) => t.length > 2));
 
 export const digits = (v) => String(v || '').replace(/\D/g, '');
 export const emailDomain = (e) => {
@@ -133,9 +138,24 @@ function matchGos(member, gosOrgs) {
   return null;
 }
 
+// Do the members share at least one meaningful name token? (Corroboration, and
+// the cheapest signal that an iCount id is not a shared placeholder.)
+function sharedNameToken(members) {
+  const sets = members.map((m) => nameTokens(m.name));
+  for (let i = 0; i < sets.length; i++) {
+    for (let j = i + 1; j < sets.length; j++) {
+      for (const t of sets[i]) if (sets[j].has(t)) return t;
+    }
+  }
+  return null;
+}
+
 function buildCluster({ clusterKind, clusterKey, members, gosOrgs, today }) {
   const signals = sharedSignals(members);
   const taxIds = new Set(members.map((m) => digits(m.taxId)).filter((t) => t.length >= 8));
+  const icountIds = new Set(members.map((m) => String(m.icountId || '').trim()).filter(Boolean));
+  const sharedIcount = icountIds.size === 1 && members.every((m) => String(m.icountId || '').trim());
+  const tokenMatch = sharedNameToken(members);
 
   // Confidence — the single most important rule in this slice.
   let confidence, reason;
@@ -143,8 +163,18 @@ function buildCluster({ clusterKind, clusterKey, members, gosOrgs, today }) {
     confidence = 'safe';
     reason = 'מספר ח.פ/עוסק זהה בכל הרשומות — ראיה חד-משמעית לאותו ארגון.';
   } else if (clusterKind === 'icountId') {
-    confidence = 'high';
-    reason = 'מזהה iCount זהה — אותו לקוח בהנהלת החשבונות.';
+    // DEMOTED (audit finding): an iCount id is NOT a unique organisation identifier
+    // in this data — 74 values are shared by unrelated orgs (placeholders/test rows),
+    // which produced clusters like "IMD SOFT + STORE NEXT + ניסיון למחוק". It may no
+    // longer create a proposal on its own; it must be corroborated. Uncorroborated
+    // iCount clusters are dropped before this point (see buildOrgProposals).
+    if (signals.sharedPhone || signals.sharedAddress || signals.sharedEmailDomain) {
+      confidence = 'high';
+      reason = 'מזהה iCount זהה, ובנוסף פרטי התקשרות זהים — ראיה תומכת מעבר למזהה החשבונאי.';
+    } else {
+      confidence = 'review';
+      reason = `מזהה iCount זהה ושם חופף חלקית ("${tokenMatch}"). מזהה iCount לבדו אינו הוכחה — הוא משותף לעיתים לרשומות לא קשורות — ולכן נדרשת הכרעה אנושית.`;
+    }
   } else if (signals.sharedPhone || signals.sharedAddress || signals.sharedEmailDomain) {
     confidence = 'high';
     const which = [signals.sharedPhone && 'טלפון זהה', signals.sharedAddress && 'כתובת זהה', signals.sharedEmailDomain && 'דומיין אימייל משותף'].filter(Boolean);
@@ -268,6 +298,19 @@ function buildCluster({ clusterKind, clusterKey, members, gosOrgs, today }) {
         gosMatch?.matchedOn === 'name' && 'התאמה לארגון קיים ב-GOS לפי שם',
       ].filter(Boolean),
       missing,
+      // EVERY rule, reported pass AND fail. Seeing "✗ שמות שונים · ✗ טלפונים שונים"
+      // is what makes a wrong cluster obvious at a glance. Derived from the signals
+      // already computed above — no second code path, no re-derivation.
+      checks: [
+        { rule: 'ח.פ / עוסק מורשה זהה', passed: clusterKind === 'taxId', detail: taxIds.size === 1 ? 'זהה בכל הרשומות' : taxIds.size === 0 ? 'אין ח.פ באף רשומה' : 'ערכים שונים' },
+        { rule: 'שם מנורמל זהה', passed: clusterKind === 'normName', detail: clusterKind === 'normName' ? `"${clusterKey}"` : `שמות שונים: ${[...new Set(members.map((m) => m.name))].join(' · ')}` },
+        { rule: 'חפיפת מילה בשם', passed: !!tokenMatch, detail: tokenMatch ? `"${tokenMatch}"` : 'אין אף מילה משותפת בשמות' },
+        { rule: 'מזהה iCount זהה', passed: sharedIcount, detail: sharedIcount ? `${[...icountIds][0]} — לא הוכחה בפני עצמה` : icountIds.size ? 'ערכים שונים' : 'אין מזהה iCount' },
+        { rule: 'טלפון זהה', passed: signals.sharedPhone, detail: signals.sharedPhone ? 'זהה בכל הרשומות' : members.some((m) => memberPhones(m).length) ? 'טלפונים שונים או חסרים' : 'אין טלפון באף רשומה' },
+        { rule: 'כתובת זהה', passed: signals.sharedAddress, detail: signals.sharedAddress ? 'זהה בכל הרשומות' : members.some((m) => m.address) ? 'כתובות שונות או חסרות' : 'אין כתובת באף רשומה' },
+        { rule: 'דומיין אימייל תאגידי משותף', passed: signals.sharedEmailDomain, detail: signals.sharedEmailDomain ? signals.domains.join(', ') : signals.domains.length ? 'דומיינים שונים' : 'אין דומיין תאגידי' },
+        { rule: 'ארגון תואם קיים ב-GOS', passed: !!gosMatch, detail: gosMatch ? `${gosMatch.name} (לפי ${gosMatch.matchedOn === 'taxId' ? 'ח.פ' : 'שם'})` : 'לא נמצא' },
+      ],
     },
     operationallyActive: totals.activeDeals > 0 || totals.futureTourDeals > 0,
   };
@@ -293,11 +336,22 @@ export function buildOrgProposals({ orgs, gosOrgs = { byTaxId: new Map(), byName
   const taxClusters = clusterBy(orgs, (o) => (digits(o.taxId).length >= 8 ? digits(o.taxId) : null));
   const claimed = new Set(taxClusters.flatMap(([, arr]) => arr.map((o) => o.legacyId)));
 
-  // iCount clusters only add value for orgs not already settled by tax id.
-  const icountClusters = clusterBy(
+  // iCount clusters only add value for orgs not already settled by tax id — AND
+  // only when CORROBORATED. Tier-A membership must be earned by evidence, not
+  // assumed: an iCount id is demonstrably shared by unrelated organisations in this
+  // data (placeholder/test rows), so on its own it proves nothing.
+  const icountCandidates = clusterBy(
     orgs.filter((o) => !claimed.has(o.legacyId)),
     (o) => (String(o.icountId || '').trim() ? `ic:${String(o.icountId).trim()}` : null),
   );
+  const icountClusters = [];
+  const icountRejected = [];
+  for (const [key, members] of icountCandidates) {
+    const s = sharedSignals(members);
+    const corroborated = !!sharedNameToken(members) || s.sharedPhone || s.sharedAddress || s.sharedEmailDomain;
+    if (corroborated) icountClusters.push([key, members]);
+    else icountRejected.push({ key, names: members.map((m) => m.name) });
+  }
   for (const [, arr] of icountClusters) for (const o of arr) claimed.add(o.legacyId);
 
   const nameClusters = clusterBy(orgs, (o) => normName(o.name) || null);
@@ -329,7 +383,11 @@ export function buildOrgProposals({ orgs, gosOrgs = { byTaxId: new Map(), byName
       organizations: orgs.length,
       taxIdClusters: taxClusters.length,
       taxIdOrgs: taxClusters.reduce((n, [, a]) => n + a.length, 0),
+      icountCandidates: icountCandidates.length,
       icountClusters: icountClusters.length,
+      // Dropped by the demotion — an iCount id with nothing corroborating it.
+      icountRejectedUncorroborated: icountRejected.length,
+      icountRejectedExamples: icountRejected.slice(0, 6),
       nameClusters: nameClusters.length,
       nameClusterOrgs: nameClusters.reduce((n, [, a]) => n + a.length, 0),
       proposals: proposals.length,

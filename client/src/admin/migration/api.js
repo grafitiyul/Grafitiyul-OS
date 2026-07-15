@@ -30,6 +30,8 @@ export const migrationApi = {
   browserRecords: (entity, offset = 0, limit = 25) => req('/api/migration/review/browser/records' + qs({ entity, offset, limit })),
   browserRecord: (entity, id) => req('/api/migration/review/browser/record' + qs({ entity, id })),
   browserFilter: (entity, q) => req('/api/migration/review/browser/filter' + qs({ entity, q })),
+  // Every Organization a source record can be mapped to (proposals + live GOS orgs).
+  orgTargets: () => req('/api/migration/review/org-targets'),
   // Idempotent — safe to call on every mount; a no-op once seeded.
   seed: () => req('/api/migration/review/seed', { method: 'POST' }),
   decide: (id, body) =>

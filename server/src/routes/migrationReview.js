@@ -13,7 +13,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import * as r2 from '../migration/r2.js';
-import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe } from '../migration/review/service.js';
+import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe, buildOrgTargets } from '../migration/review/service.js';
 import { buildSnapshotStatus } from '../migration/review/snapshotStatus.js';
 import { createBrowser } from '../migration/review/browser.js';
 
@@ -103,6 +103,15 @@ router.get(
       if (e.code === 'UNKNOWN_FILTER') return res.status(400).json({ error: 'unknown_filter' });
       throw e;
     }
+  }),
+);
+
+// Every Organization a source record can be mapped to: migration proposals +
+// live GOS organizations, each with their units. Read-only.
+router.get(
+  '/org-targets',
+  handle(async (_req, res) => {
+    res.json(await buildOrgTargets(prisma));
   }),
 );
 

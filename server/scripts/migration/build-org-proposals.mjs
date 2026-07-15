@@ -17,6 +17,7 @@ import {
   buildOrgProposals, subjectKeyFor, normName, digits, emailDomain,
   isActiveDeal, hasFutureTour, ORG_TAXID, ORG_ICOUNT,
 } from '../../src/migration/review/orgProposals.js';
+import { draftFromProposal, decisionFromDraft } from '../../src/migration/review/orgDecision.js';
 
 const arg = (n) => { const i = process.argv.indexOf(n); return i >= 0 ? process.argv[i + 1] : null; };
 const snapshotId = arg('--snapshot');
@@ -152,24 +153,144 @@ if (dry) { console.log('\n--dry: nothing written'); await prisma.$disconnect(); 
 // 6) Persist — one read of existing rows, then only the necessary writes.
 const existing = await prisma.migrationDecision.findMany({ where: { queue: 'organizations' } });
 const bySubject = new Map(existing.map((r) => [r.subjectKey, r]));
-let created = 0, refreshed = 0, decidedRefreshed = 0;
+const newBySubject = new Map(proposals.map((p) => [subjectKeyFor(p), p]));
+
+let created = 0, refreshed = 0, decidedKept = 0, upgraded = 0, returnedToReview = 0, supersededPending = 0;
+const returnedDetail = [];
+
+// Rows whose subjectKey no longer exists under the corrected rules. Two very
+// different causes — and the owner deserves the true one:
+//   * iCount demotion  → the cluster should never have existed.
+//   * normalisation fix → the KEY was renamed (e.g. "קודיום בע מ" → "קודיום"),
+//     so the same organisations now live under a different cluster. An owner
+//     decision here must be REHOMED, not discarded.
+const why = (subjectKey) =>
+  subjectKey.startsWith('org:icountId:')
+    ? 'הקבוצה בוטלה: מזהה iCount לבדו אינו ראיה מספקת לאיחוד'
+    : 'מפתח הקבוצה השתנה בעקבות תיקון נרמול השם';
+let rehomed = 0;
+const refreshedIds = new Set();
+
+for (const row of existing) {
+  if (newBySubject.has(row.subjectKey)) continue;
+
+  // A row with NO decision costs the owner nothing — a wrong proposal just goes.
+  if (!row.decision) {
+    await prisma.migrationDecision.delete({ where: { id: row.id } });
+    supersededPending++;
+    continue;
+  }
+
+  // The owner answered this. Try to rehome onto the cluster that now holds the
+  // same source records (their old members must all still be together).
+  const oldIds = new Set((row.proposal?.members || []).map((m) => String(m.legacyId)));
+  const target = proposals.find((p) => {
+    const key = subjectKeyFor(p);
+    if (key === row.subjectKey) return false;
+    const ids = new Set(p.members.map((m) => String(m.legacyId)));
+    return oldIds.size > 0 && [...oldIds].every((id) => ids.has(id));
+  });
+
+  if (target) {
+    const targetKey = subjectKeyFor(target);
+    const targetRow = bySubject.get(targetKey);
+    const carried = decisionFromDraft(target, draftFromProposal(target, row.decision));
+    const added = target.members.filter((m) => !oldIds.has(String(m.legacyId)));
+    const reason = added.length
+      ? `${why(row.subjectKey)} — נוספו ${added.length} רשומות מקור לקבוצה`
+      : why(row.subjectKey);
+    const data = {
+      proposal: target,
+      status: 'pending',
+      decision: { ...carried, needsRereview: true, rereviewReason: `${reason}. ההחלטה הקודמת שלך נשמרה — יש לאשר מחדש.` },
+      note: `הוחזר לבדיקה: ${reason}`,
+    };
+    if (targetRow) {
+      // The new cluster already has a row — move the decision into it and drop the orphan.
+      await prisma.migrationDecision.update({ where: { id: targetRow.id }, data });
+      await prisma.migrationDecision.delete({ where: { id: row.id } });
+      refreshedIds.add(targetRow.id);
+    } else {
+      await prisma.migrationDecision.update({ where: { id: row.id }, data: { ...data, subjectKey: targetKey } });
+    }
+    rehomed++;
+    returnedToReview++;
+    returnedDetail.push({ subjectKey: `${row.subjectKey} → ${targetKey}`, reason: `הועבר לקבוצה המעודכנת · ${reason}`, added: added.map((m) => m.legacyId), removed: [] });
+    continue;
+  }
+
+  // Nowhere to rehome: keep the row + the owner's decision, mark it superseded.
+  await prisma.migrationDecision.update({
+    where: { id: row.id },
+    data: {
+      status: 'pending',
+      proposal: { ...row.proposal, superseded: true, supersededReason: why(row.subjectKey) },
+      decision: { ...row.decision, needsRereview: true, rereviewReason: `${why(row.subjectKey)}. ההחלטה הקודמת נשמרה לעיון.` },
+      note: `הוחזר לבדיקה: ${why(row.subjectKey)}`,
+    },
+  });
+  returnedToReview++;
+  returnedDetail.push({ subjectKey: row.subjectKey, reason: why(row.subjectKey), added: [], removed: [] });
+}
+
+// ── PASS 2: create new clusters / refresh evidence / carry decisions forward ──
+// Re-read: pass 1 may have rehomed rows onto these subject keys.
+const afterRehome = await prisma.migrationDecision.findMany({ where: { queue: 'organizations' } });
+const nowBySubject = new Map(afterRehome.map((r) => [r.subjectKey, r]));
+
 for (const p of proposals) {
   const subjectKey = subjectKeyFor(p);
-  const row = bySubject.get(subjectKey);
+  const row = nowBySubject.get(subjectKey);
   if (!row) {
     await prisma.migrationDecision.create({ data: { queue: 'organizations', subjectKey, proposal: p, status: 'pending' } });
     created++;
     continue;
   }
-  // The PROPOSAL (evidence) is always refreshed so every cluster — decided or
-  // not — shows the same full source context. The owner's DECISION, status and
-  // audit trail are never touched: a re-run can improve the evidence, never
-  // overwrite a human's answer.
-  await prisma.migrationDecision.update({ where: { id: row.id }, data: { proposal: p } });
-  if (row.status === 'pending') refreshed++; else decidedRefreshed++;
+  if (refreshedIds.has(row.id)) continue; // already written by the rehome pass
+
+  const data = { proposal: p };
+  if (row.status !== 'pending' && row.decision) {
+    // Carry the owner's answer forward into the per-source model. Their choices are
+    // never discarded; but if the corrected rules changed WHICH source rows are in
+    // the cluster, the decision no longer covers every row — so it goes back to
+    // review with the reason, keeping the prior choices pre-filled.
+    const upgradedDraft = draftFromProposal(p, row.decision);
+    const oldIds = new Set(Object.keys(row.decision.dispositions || row.decision.assignments || row.decision.roles || {}).map(String));
+    const newIds = new Set(p.members.map((m) => String(m.legacyId)));
+    const added = [...newIds].filter((id) => !oldIds.has(id));
+    const removed = [...oldIds].filter((id) => !newIds.has(id));
+
+    if (added.length || removed.length) {
+      const reason = [
+        added.length ? `נוספו ${added.length} רשומות מקור` : null,
+        removed.length ? `הוסרו ${removed.length} רשומות מקור` : null,
+      ].filter(Boolean).join(' · ');
+      data.status = 'pending';
+      data.decision = { ...decisionFromDraft(p, upgradedDraft), needsRereview: true, rereviewReason: `${reason} בעקבות תיקון מנוע ההתאמה — יש לאשר מחדש` };
+      data.note = `הוחזר לבדיקה: ${reason}`;
+      returnedToReview++;
+      returnedDetail.push({ subjectKey, reason, added, removed });
+    } else {
+      data.decision = decisionFromDraft(p, upgradedDraft);
+      if (row.decision.dispositions == null) upgraded++;
+      decidedKept++;
+    }
+  } else if (row.status === 'pending') {
+    refreshed++;
+  }
+  await prisma.migrationDecision.update({ where: { id: row.id }, data });
 }
-console.log(`\n✔ persisted: ${created} created · ${refreshed} pending proposals refreshed · ${decidedRefreshed} decided rows kept their decision (evidence refreshed only)`);
+
+console.log(`\n✔ persisted:`);
+console.log(`   created                        : ${created}`);
+console.log(`   decisions rehomed to a renamed/updated cluster: ${rehomed}`);
+console.log(`   pending proposals refreshed    : ${refreshed}`);
+console.log(`   owner decisions carried forward: ${decidedKept} (of which upgraded to the per-source model: ${upgraded})`);
+console.log(`   RETURNED TO OWNER REVIEW       : ${returnedToReview}`);
+for (const d of returnedDetail) console.log(`       • ${d.subjectKey} — ${d.reason}`);
+console.log(`   superseded undecided clusters removed: ${supersededPending}`);
 const stillDecided = await prisma.migrationDecision.count({ where: { queue: 'organizations', status: { not: 'pending' } } });
-console.log(`   owner decisions intact after refresh: ${stillDecided}`);
+const total = await prisma.migrationDecision.count({ where: { queue: 'organizations' } });
+console.log(`\n   organizations queue: ${total} proposals · ${stillDecided} decided · ${total - stillDecided} awaiting the owner`);
 console.log(`LegacyRecord count (must be 0): ${await prisma.legacyRecord.count()}`);
 await prisma.$disconnect();

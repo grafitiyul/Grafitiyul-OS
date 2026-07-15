@@ -5,8 +5,73 @@
 // MigrationDecision (the permanent decision ledger).
 import { REVIEW_QUEUES, queueByKey, FROZEN_QUEUES, isResolved } from './queues.js';
 import { stageConfigDecisions } from './stageConfigSeed.js';
-import { decisionFromDraft } from './orgDecision.js';
+import { decisionFromDraft, draftFromProposal, orgKeyForProposal, orgKeyForGos } from './orgDecision.js';
 import { contactDecisionFromDraft, batchDecisionFor } from './contactDecision.js';
+
+// Every Organization a source record may be mapped to: the canonical org of each
+// migration proposal, plus every live GOS organization (with its real units).
+// Standalone `new:<sourceId>` targets need no registry entry — they are created by
+// the mapping itself.
+export async function buildOrgTargets(client) {
+  const rows = await client.migrationDecision.findMany({ where: { queue: 'organizations' } });
+  const proposals = rows.map((r) => ({
+    key: orgKeyForProposal(r.subjectKey),
+    subjectKey: r.subjectKey,
+    // The owner's edited name wins over the suggestion, exactly like everywhere else.
+    name: r.decision?.canonicalName || r.proposal?.proposedCanonical?.name || r.subjectKey,
+    kind: 'proposal',
+    status: r.status,
+    units: (r.decision?.units ?? r.proposal?.proposedUnits ?? []).map((u) => ({ key: u.key, name: u.name })),
+  }));
+
+  const gosRows = await client.organization.findMany({
+    select: { id: true, name: true, units: { select: { id: true, name: true } } },
+    orderBy: { name: 'asc' },
+  });
+  const gos = gosRows.map((g) => ({
+    key: orgKeyForGos(g.id),
+    name: g.name,
+    kind: 'gos',
+    units: g.units.map((u) => ({ key: u.id, name: u.name })),
+  }));
+
+  return { proposals, gos };
+}
+
+// Registry shape the resolver validates against.
+function targetsIndex({ proposals, gos }, selfKey = null) {
+  const orgs = new Map();
+  for (const t of [...proposals, ...gos]) {
+    orgs.set(t.key, {
+      name: t.name,
+      units: new Set(t.units.map((u) => u.key)),
+      unitNames: new Map(t.units.map((u) => [u.key, u.name])),
+    });
+  }
+  return { orgs, selfKey };
+}
+
+// A source row may not be sent to an organization that is not actually created —
+// e.g. cluster A points at cluster B while every row of B has been sent elsewhere.
+// That is the real "circular / dangling" case, and it is checked against the ledger.
+function danglingTargets(draft, registry, ownSubjectKey) {
+  const problems = [];
+  const byKey = new Map(registry.proposals.map((p) => [p.key, p]));
+  for (const [legacyId, d] of Object.entries(draft.dispositions || {})) {
+    if (d.disposition !== 'other_organization' || !d.targetOrganizationKey) continue;
+    const key = d.targetOrganizationKey;
+    if (key.startsWith('new:') || key.startsWith('gos:')) continue;
+    const target = byKey.get(key);
+    if (!target) { problems.push(`ארגון היעד ${key} לא נמצא`); continue; }
+    if (target.subjectKey === ownSubjectKey) { problems.push('לא ניתן למפות רשומה לארגון של אותה קבוצה'); continue; }
+    // Does the target cluster actually create its organization?
+    const dec = target.decisionRef;
+    if (dec && !Object.values(dec.dispositions || {}).some((x) => x.disposition === 'organization')) {
+      problems.push(`ארגון היעד "${target.name}" לא ייווצר — אף רשומה בקבוצה שלו לא שויכה אליו`);
+    }
+  }
+  return problems;
+}
 
 // Idempotent seeding of the frozen, owner-approved configuration.
 // upsert(update: {}) means a re-run NEVER clobbers a recorded decision or its
@@ -201,12 +266,28 @@ export async function recordDecision(client, { id, action, decision = null, note
   // the import consumes the DECISION, never the proposal.
   let stored = decision ?? existing.decision ?? null;
   if (decision && (status === 'approved' || status === 'edited')) {
-    const resolver =
-      existing.queue === 'organizations' ? decisionFromDraft
-        : existing.queue === 'contacts' ? contactDecisionFromDraft
-          : null;
-    if (resolver) {
-      const resolved = resolver(existing.proposal, decision);
+    if (existing.queue === 'organizations') {
+      // Resolve against the LIVE target registry so cross-cluster mappings are
+      // validated for real: the target must exist, a chosen unit must belong to it,
+      // and it must not be dangling/self-referential.
+      const registry = await buildOrgTargets(client);
+      const decRows = await client.migrationDecision.findMany({ where: { queue: 'organizations' }, select: { subjectKey: true, decision: true } });
+      const decBySubject = new Map(decRows.map((r) => [r.subjectKey, r.decision]));
+      for (const p of registry.proposals) p.decisionRef = decBySubject.get(p.subjectKey) || null;
+
+      const selfKey = orgKeyForProposal(existing.subjectKey);
+      const resolved = decisionFromDraft(existing.proposal, decision, targetsIndex(registry, selfKey));
+      const cross = danglingTargets(decision, registry, existing.subjectKey);
+      const problems = [...resolved.result.problems, ...cross];
+      if (problems.length) {
+        const e = new Error(`invalid_decision: ${problems.join(' · ')}`);
+        e.code = 'INVALID_DECISION';
+        e.problems = problems;
+        throw e;
+      }
+      stored = resolved;
+    } else if (existing.queue === 'contacts') {
+      const resolved = contactDecisionFromDraft(existing.proposal, decision);
       if (!resolved.result.valid) {
         const e = new Error(`invalid_decision: ${resolved.result.problems.join(' · ')}`);
         e.code = 'INVALID_DECISION';
