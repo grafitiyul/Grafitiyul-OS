@@ -133,8 +133,9 @@ test('gate opens only when every blocking queue is resolved; non-blocking never 
   assert.equal(s.queues.find((q) => q.key === 'exceptional').counts.unresolved, 1);
 });
 
+// Generic audit behaviour, on a queue with no domain resolver of its own.
 test('recording a decision preserves who decided and when', async () => {
-  const c = stubClient([{ queue: 'organizations', subjectKey: 'o1', status: 'pending', proposal: {} }]);
+  const c = stubClient([{ queue: 'name_cleanup', subjectKey: 'o1', status: 'pending', proposal: {} }]);
   const target = [...c._rows.values()][0];
   const row = await recordDecision(c, {
     id: target.id, action: 'approve', decision: { merge: true }, note: '  אושר  ',
@@ -178,6 +179,74 @@ test('listQueue returns label→value proposals + audit, and marks resolution', 
   assert.ok(stage.proposal.pipeline && stage.proposal.stage && stage.proposal.targetStageLabel);
   assert.equal(typeof stage.proposal.deals, 'number');
   assert.ok(stage.decidedByName);
+});
+
+// A minimal organizations proposal for decision-recording tests.
+const ORG_PROPOSAL = {
+  kind: 'organization_cluster',
+  members: [
+    { legacyId: 1, name: 'Leumi Capital Markets', dealCount: 3, contactCount: 1 },
+    { legacyId: 2, name: 'Capital Markets', dealCount: 2, contactCount: 1 },
+  ],
+  proposedCanonical: { name: 'Leumi Capital Markets', organizationTypeId: null },
+  proposedUnits: [],
+  proposedAssignments: { 1: 'organization', 2: 'organization' },
+};
+
+test('an owner decision stores the EDITED names as the migration result', async () => {
+  const c = stubClient([{ queue: 'organizations', subjectKey: 'org:normName:x', status: 'pending', proposal: ORG_PROPOSAL }]);
+  const id = [...c._rows.values()][0].id;
+  const row = await recordDecision(c, {
+    id, action: 'edit', userId: 'u1', userName: 'elinoy',
+    decision: {
+      canonicalName: 'Bank Leumi',
+      organizationTypeId: null,
+      mergeIntoGosId: null,
+      units: [{ key: 'cm', name: 'Capital Markets Division' }],
+      assignments: { 1: 'unit:cm', 2: 'unit:cm' },
+    },
+  });
+  assert.equal(row.status, 'edited');
+  assert.equal(row.decision.canonicalName, 'Bank Leumi', 'the typed name wins');
+  assert.equal(row.decision.result.units[0].name, 'Capital Markets Division');
+  assert.deepEqual(row.decision.result.units[0].members.map((m) => m.legacyId), [1, 2], 'two records → one unit');
+  assert.equal(row.decision.result.valid, true);
+  assert.equal(row.decidedByName, 'elinoy');
+});
+
+test('an invalid edited decision is refused (never silently stored)', async () => {
+  const c = stubClient([{ queue: 'organizations', subjectKey: 'org:normName:y', status: 'pending', proposal: ORG_PROPOSAL }]);
+  const id = [...c._rows.values()][0].id;
+  await assert.rejects(
+    () => recordDecision(c, { id, action: 'edit', decision: { canonicalName: '  ', units: [], assignments: {} } }),
+    (e) => e.code === 'INVALID_DECISION',
+  );
+  assert.equal([...c._rows.values()][0].status, 'pending', 'left untouched');
+});
+
+test('re-seeding NEVER overwrites an owner-edited organizations decision', async () => {
+  // Simulates the proposal pass: it may refresh a PENDING proposal, never a decided one.
+  const c = stubClient([
+    { queue: 'organizations', subjectKey: 'org:normName:x', status: 'pending', proposal: ORG_PROPOSAL },
+    { queue: 'organizations', subjectKey: 'org:normName:z', status: 'pending', proposal: ORG_PROPOSAL },
+  ]);
+  const [a, b] = [...c._rows.values()];
+  await recordDecision(c, {
+    id: a.id, action: 'edit', userId: 'u1', userName: 'elinoy',
+    decision: { canonicalName: 'Bank Leumi', units: [{ key: 'cm', name: 'Capital Markets Division' }], assignments: { 1: 'unit:cm', 2: 'unit:cm' } },
+  });
+
+  // The pass's rule: only refresh rows still `pending`.
+  for (const row of [...c._rows.values()]) {
+    if (row.status === 'pending') row.proposal = { ...ORG_PROPOSAL, rank: 99 };
+  }
+
+  const decided = [...c._rows.values()].find((r) => r.id === a.id);
+  assert.equal(decided.status, 'edited');
+  assert.equal(decided.decision.canonicalName, 'Bank Leumi', 'owner edit survived re-seeding');
+  assert.equal(decided.decision.result.units[0].name, 'Capital Markets Division');
+  assert.equal(decided.proposal.rank, undefined, 'a decided proposal is not refreshed');
+  assert.equal([...c._rows.values()].find((r) => r.id === b.id).proposal.rank, 99, 'pending proposals still refresh');
 });
 
 test('the whole review service touches ONLY the decision ledger (no production writes)', async () => {

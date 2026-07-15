@@ -5,6 +5,7 @@
 // MigrationDecision (the permanent decision ledger).
 import { REVIEW_QUEUES, queueByKey, FROZEN_QUEUES, isResolved } from './queues.js';
 import { stageConfigDecisions } from './stageConfigSeed.js';
+import { decisionFromDraft } from './orgDecision.js';
 
 // Idempotent seeding of the frozen, owner-approved configuration.
 // upsert(update: {}) means a re-run NEVER clobbers a recorded decision or its
@@ -155,11 +156,27 @@ export async function recordDecision(client, { id, action, decision = null, note
     e.code = 'QUEUE_FROZEN';
     throw e;
   }
+
+  // Organizations: the owner's edited draft IS the migration result. Resolve it
+  // server-side (same resolver the preview uses) and store the resolved shape, so
+  // the import consumes the DECISION, never the proposal.
+  let stored = decision ?? existing.decision ?? null;
+  if (existing.queue === 'organizations' && decision && (status === 'approved' || status === 'edited')) {
+    const resolved = decisionFromDraft(existing.proposal, decision);
+    if (!resolved.result.valid) {
+      const e = new Error(`invalid_decision: ${resolved.result.problems.join(' · ')}`);
+      e.code = 'INVALID_DECISION';
+      e.problems = resolved.result.problems;
+      throw e;
+    }
+    stored = resolved;
+  }
+
   return client.migrationDecision.update({
     where: { id },
     data: {
       status,
-      decision: decision ?? existing.decision ?? undefined,
+      decision: stored ?? undefined,
       note: note ?? null,
       decidedBy: userId,
       decidedByName: userName,

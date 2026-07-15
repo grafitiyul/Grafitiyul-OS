@@ -130,6 +130,7 @@ router.post(
       if (e.code === 'INVALID_ACTION') return res.status(400).json({ error: 'invalid_action' });
       if (e.code === 'NOT_FOUND') return res.status(404).json({ error: 'not_found' });
       if (e.code === 'QUEUE_FROZEN') return res.status(409).json({ error: 'queue_frozen', message: e.message });
+      if (e.code === 'INVALID_DECISION') return res.status(400).json({ error: 'invalid_decision', problems: e.problems });
       throw e;
     }
   }),

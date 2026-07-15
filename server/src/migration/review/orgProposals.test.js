@@ -120,9 +120,14 @@ test('units are proposed from name extension, not keyword lists', () => {
   });
   const p = proposals[0];
   assert.equal(p.proposedCanonical.name, 'בנק לאומי', 'most deals + shortest name wins');
-  assert.deepEqual(p.proposedUnits.map((u) => u.name), ['בנק לאומי סניף רמת גן', 'בנק לאומי סניף חיפה']);
+  // The SUGGESTED unit name is the distinguishing tail, not the parent repeated —
+  // and it is only a suggestion: the owner can type anything.
+  assert.deepEqual(p.proposedUnits.map((u) => u.name), ['סניף רמת גן', 'סניף חיפה']);
   assert.equal(p.members.find((m) => m.legacyId === 1).role, 'canonical');
   assert.equal(p.members.find((m) => m.legacyId === 2).role, 'unit');
+  // Units carry stable keys and each record is assigned to one of them.
+  assert.deepEqual(p.proposedUnits.map((u) => u.key), ['u2', 'u3']);
+  assert.deepEqual(p.proposedAssignments, { 1: 'organization', 2: 'unit:u2', 3: 'unit:u3' });
 });
 
 test('organization type is proposed ONLY from an existing GOS match — never guessed', () => {
@@ -204,7 +209,7 @@ test('missing information is reported explicitly', () => {
     today: TODAY, gosOrgs: noGos,
     orgs: [org({ id: 1, name: 'ללא פרטים' }), org({ id: 2, name: 'ללא פרטים.' })],
   });
-  assert.deepEqual(proposals[0].evidence.missing, ['ח.פ / עוסק מורשה', 'כתובת', 'טלפון', 'דומיין אימייל']);
+  assert.deepEqual(proposals[0].evidence.missing, ['ח.פ / עוסק מורשה', 'כתובת', 'טלפון', 'דומיין אימייל', 'אנשי קשר']);
 });
 
 test('Tier-2 activity + future tour detection', () => {

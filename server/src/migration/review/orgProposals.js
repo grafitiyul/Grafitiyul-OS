@@ -71,11 +71,14 @@ function clusterBy(orgs, keyFn) {
 
 // Shared attributes across a cluster → the "inferred" evidence that can lift a
 // name cluster to high confidence.
+const memberPhones = (m) => (m.phones?.length ? m.phones : m.phone ? [m.phone] : []);
+
 function sharedSignals(members) {
   const phones = new Set(), addresses = new Set(), domains = new Set();
   let withPhone = 0, withAddress = 0, withDomain = 0;
   for (const m of members) {
-    if (m.phone) { phones.add(digits(m.phone)); withPhone++; }
+    const ph = memberPhones(m);
+    if (ph.length) { for (const p of ph) phones.add(digits(p)); withPhone++; }
     if (m.address) { addresses.add(String(m.address).trim().toLowerCase()); withAddress++; }
     for (const d of m.emailDomains) domains.add(d);
     if (m.emailDomains.length) withDomain++;
@@ -98,12 +101,35 @@ function pickCanonical(members) {
 
 // A member is a UNIT candidate when it is not the canonical row AND its name
 // extends the canonical name (a branch/department pattern) — evidence-based, no
-// keyword lists.
+// keyword lists. Returns the SUGGESTED unit name (the distinguishing tail, which
+// is what a human usually wants: "Clalit Platinum" under "Clalit" → "Platinum").
 function unitName(canonicalName, memberName) {
   const c = normName(canonicalName);
   const m = normName(memberName);
   if (m === c) return null;
-  if (m.startsWith(c) && m.length > c.length) return String(memberName).trim();
+  if (!(m.startsWith(c) && m.length > c.length)) return null;
+  // Suggest the tail of the ORIGINAL (un-normalised) name where possible, else
+  // fall back to the full original name. Always overridable by the owner.
+  const raw = String(memberName).trim();
+  const rawCanon = String(canonicalName).trim();
+  const tail = raw.toLowerCase().startsWith(rawCanon.toLowerCase())
+    ? raw.slice(rawCanon.length).replace(/^[\s\-–—:,.|]+/, '').trim()
+    : '';
+  return tail || raw;
+}
+
+// Per-member match against live GOS (read-only evidence).
+function matchGos(member, gosOrgs) {
+  const t = digits(member.taxId);
+  if (t.length >= 8 && gosOrgs.byTaxId.has(t)) {
+    const h = gosOrgs.byTaxId.get(t);
+    return { id: h.id, name: h.name, matchedOn: 'taxId', organizationTypeId: h.organizationTypeId ?? null, organizationTypeLabel: h.organizationTypeLabel ?? null };
+  }
+  const n = normName(member.name);
+  if (n && gosOrgs.byName.has(n)) {
+    const h = gosOrgs.byName.get(n);
+    return { id: h.id, name: h.name, matchedOn: 'name', organizationTypeId: h.organizationTypeId ?? null, organizationTypeLabel: h.organizationTypeLabel ?? null };
+  }
   return null;
 }
 
@@ -130,13 +156,31 @@ function buildCluster({ clusterKind, clusterKey, members, gosOrgs, today }) {
   }
 
   const canonical = pickCanonical(members);
-  const memberRoles = {};
+
+  // Units carry a STABLE KEY, and each source record is ASSIGNED to the
+  // organization, to a specific unit key, or split off as separate. This is what
+  // lets several source rows collapse into ONE (possibly renamed) unit — e.g.
+  // "Leumi Capital Markets" + "Capital Markets" + "Leumi - Capital" → one unit
+  // "Capital Markets Division" under "Bank Leumi".
   const proposedUnits = [];
+  const proposedAssignments = {};
+  const memberRoles = {};
   for (const m of members) {
-    if (m.legacyId === canonical.legacyId) { memberRoles[m.legacyId] = 'canonical'; continue; }
+    if (m.legacyId === canonical.legacyId) {
+      memberRoles[m.legacyId] = 'canonical';
+      proposedAssignments[m.legacyId] = 'organization';
+      continue;
+    }
     const u = unitName(canonical.name, m.name);
-    if (u) { memberRoles[m.legacyId] = 'unit'; proposedUnits.push({ name: u, fromLegacyId: m.legacyId }); }
-    else memberRoles[m.legacyId] = 'same';
+    if (u) {
+      const key = `u${m.legacyId}`;
+      proposedUnits.push({ key, name: u, fromLegacyId: m.legacyId });
+      memberRoles[m.legacyId] = 'unit';
+      proposedAssignments[m.legacyId] = `unit:${key}`;
+    } else {
+      memberRoles[m.legacyId] = 'same';
+      proposedAssignments[m.legacyId] = 'organization';
+    }
   }
 
   // Existing GOS organization match — exact tax id first, then exact normalised
@@ -169,8 +213,9 @@ function buildCluster({ clusterKind, clusterKey, members, gosOrgs, today }) {
   const missing = [];
   if (!taxIds.size) missing.push('ח.פ / עוסק מורשה');
   if (!members.some((m) => m.address)) missing.push('כתובת');
-  if (!members.some((m) => m.phone)) missing.push('טלפון');
+  if (!members.some((m) => memberPhones(m).length)) missing.push('טלפון');
   if (!members.some((m) => m.emailDomains.length)) missing.push('דומיין אימייל');
+  if (!members.some((m) => m.contactCount > 0)) missing.push('אנשי קשר');
 
   return {
     kind: 'organization_cluster',
@@ -178,14 +223,34 @@ function buildCluster({ clusterKind, clusterKey, members, gosOrgs, today }) {
     clusterKey,
     confidence,
     reason,
+    // Every source record carries enough BUSINESS CONTEXT to decide without
+    // guessing from the name: who the contacts are, how to reach them, the
+    // identity fields, the operational weight, and any existing GOS match.
     members: members.map((m) => ({
-      legacyId: m.legacyId, name: m.name, taxId: m.taxId || null, phone: m.phone || null, address: m.address || null,
-      emailDomains: m.emailDomains, contactCount: m.contactCount, dealCount: m.dealCount,
-      activeDealCount: m.activeDealCount, futureTourDeals: m.futureTourDeals,
+      legacyId: m.legacyId,
+      name: m.name,
+      taxId: m.taxId || null,
+      address: m.address || null,
+      city: m.city || null,
+      phones: m.phones || (m.phone ? [m.phone] : []),
+      emails: m.emails || [],
+      emailDomains: m.emailDomains,
+      contacts: m.contacts || [],
+      primaryContact: m.primaryContact || null,
+      contactCount: m.contactCount,
+      dealCount: m.dealCount,
+      activeDealCount: m.activeDealCount,
+      futureTourDeals: m.futureTourDeals,
+      operationallyActive: (m.activeDealCount || 0) > 0 || (m.futureTourDeals || 0) > 0,
+      gosMatch: matchGos(m, gosOrgs),
+      // Deep link into the Snapshot Browser for the full source record.
+      source: { entity: 'pipedrive/organizations', id: m.legacyId },
       role: memberRoles[m.legacyId],
+      defaultAssignment: proposedAssignments[m.legacyId],
     })),
     proposedCanonical: { name: canonical.name, fromLegacyId: canonical.legacyId, ...proposedType },
     proposedUnits,
+    proposedAssignments,
     gosMatch,
     totals,
     // Exact vs inferred vs missing — surfaced explicitly for the reviewer.
