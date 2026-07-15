@@ -62,7 +62,11 @@ reports unconfigured/configured correctly; unit tests for the crosswalk uniquene
 **Risks:** low — additive DDL only; the one real risk (migration breaking deploy) is covered by
 the existing validate-migrations gate + startup smoke.
 
-### Slice 2 — Snapshot & Extraction (MERGED: engine + Pipedrive + Airtable)
+### Slice 2 — Snapshot & Extraction (MERGED: engine + Pipedrive + Airtable) — ✅ SHIPPED (2026-07-15)
+
+**Snapshot #1 = `snap-20260714T125052Z-aaaa` — COMPLETE & VERIFIED (PASS, 0 blocking, 0 warnings).**
+493,506 records · 49 entities · 285 objects · 782.7 MB · 1,414/1,800 Pipedrive requests.
+See `GOS-migration-snapshot1-completion.md`. LegacyRecord count = 0 (nothing imported).
 
 **Goal:** the immutable landing zone works end-to-end AND both systems are fully extracted into
 Snapshot #1 — one cohesive, deployable, verifiable capability.
