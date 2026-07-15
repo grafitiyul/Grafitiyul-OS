@@ -61,6 +61,42 @@ test('a name cluster is lifted to HIGH only with supporting evidence', () => {
   assert.ok(p.evidence.exact.includes('כתובת זהה'));
 });
 
+test('INVARIANT: a name cluster with no supporting signal can never be elevated', () => {
+  // Exhaustive over the signal combinations: only name → always `review`.
+  const cases = [
+    { label: 'name only', a: {}, b: {} },
+    { label: 'phones differ', a: { phone: '03-1111111' }, b: { phone: '03-2222222' } },
+    { label: 'addresses differ', a: { address: 'א' }, b: { address: 'ב' } },
+    { label: 'domains differ', a: { domains: ['x.co.il'] }, b: { domains: ['y.co.il'] } },
+    { label: 'phone on only one member', a: { phone: '03-1111111' }, b: {} },
+    { label: 'address on only one member', a: { address: 'א' }, b: {} },
+  ];
+  for (const c of cases) {
+    const { proposals } = buildOrgProposals({
+      today: TODAY, gosOrgs: noGos,
+      orgs: [org({ id: 1, name: 'זהה', ...c.a }), org({ id: 2, name: 'זהה.', ...c.b })],
+    });
+    assert.equal(proposals[0].confidence, 'review', `"${c.label}" must stay review`);
+    assert.deepEqual(proposals[0].evidence.exact, [], `"${c.label}" has no exact evidence`);
+  }
+});
+
+test('nothing is ever auto-approved: every proposal starts unresolved', () => {
+  const { proposals } = buildOrgProposals({
+    today: TODAY, gosOrgs: noGos,
+    orgs: [
+      org({ id: 1, name: 'ודאי', taxId: '512345678' }), // even the SAFEST cluster
+      org({ id: 2, name: 'ודאי2', taxId: '512345678' }),
+    ],
+  });
+  assert.equal(proposals[0].confidence, 'safe');
+  // Confidence is advice for a human — it carries no approval, no status, no
+  // auto-merge flag. The pass persists every proposal as `pending`.
+  assert.equal(proposals[0].status, undefined);
+  assert.equal(proposals[0].autoApprove, undefined);
+  assert.equal(proposals[0].autoMerge, undefined);
+});
+
 test('shared non-free email domain is inferred evidence', () => {
   const { proposals } = buildOrgProposals({
     today: TODAY, gosOrgs: noGos,

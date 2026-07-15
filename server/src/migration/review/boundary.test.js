@@ -23,19 +23,47 @@ test('the Review Center can make NO Pipedrive or Airtable API calls', () => {
   }
 });
 
-test('the Review Center never writes production entities or LegacyRecords', () => {
-  const forbidden = /prisma\.(deal|contact|organization|tourEvent|booking|task|timelineEntry|person|legacyRecord)\b|client\.(deal|contact|organization|tourEvent|booking|task|timelineEntry|person|legacyRecord)\b/i;
-  for (const f of reviewFiles) {
-    const src = read(path.join('src/migration/review', f));
-    assert.ok(!forbidden.test(src), `${f} must not touch production models or LegacyRecord`);
+// Enumerate EVERY prisma write and assert the model is the decision ledger.
+// Deliberately not a `\b` deny-list: that silently misses `organizationUnit` /
+// `organizationType` (no word boundary after "organization").
+const WRITE = /\b(?:prisma|client|tx)\.(\w+)\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/g;
+const ALLOWED_WRITE_MODELS = new Set(['migrationDecision']);
+
+test('the ONLY prisma writes anywhere in the Review Center are on the decision ledger', () => {
+  const files = [
+    ...reviewFiles.map((f) => ['src/migration/review/' + f, read(path.join('src/migration/review', f))]),
+    ['src/routes/migrationReview.js', read('src/routes/migrationReview.js')],
+    // The one-off proposal pass writes proposals — it is held to the same rule.
+    ['scripts/migration/build-org-proposals.mjs', read('scripts/migration/build-org-proposals.mjs')],
+    ['scripts/migration/build-snapshot-index.mjs', read('scripts/migration/build-snapshot-index.mjs')],
+  ];
+  let seenLedgerWrite = false;
+  for (const [name, src] of files) {
+    for (const m of src.matchAll(WRITE)) {
+      const [, model] = m;
+      assert.ok(ALLOWED_WRITE_MODELS.has(model), `${name} writes prisma.${model}.${m[2]}() — only the decision ledger may be written`);
+      seenLedgerWrite = true;
+    }
   }
-  const router = read('src/routes/migrationReview.js');
-  assert.ok(!forbidden.test(router.replace(/prisma\.adminUser[^;]*/g, '')), 'router only reads adminUser for the audit name');
-  // The only mutations anywhere are on the decision ledger.
-  const service = read('src/migration/review/service.js');
-  const mutations = service.match(/\.(create|update|upsert|delete|deleteMany|createMany|updateMany)\(/g) || [];
-  assert.ok(mutations.length > 0, 'the ledger is written');
-  assert.ok(/migrationDecision\.upsert|migrationDecision\.update/.test(service));
+  assert.ok(seenLedgerWrite, 'the ledger IS written (the guard is actually matching writes)');
+});
+
+test('no LegacyRecord is ever created, and production reads stay read-only', () => {
+  const files = [
+    ...reviewFiles.map((f) => ['review/' + f, read(path.join('src/migration/review', f))]),
+    ['routes/migrationReview.js', read('src/routes/migrationReview.js')],
+    ['scripts/build-org-proposals.mjs', read('scripts/migration/build-org-proposals.mjs')],
+  ];
+  for (const [name, src] of files) {
+    // LegacyRecord may only ever be COUNTED (an invariant check), never written.
+    for (const m of src.matchAll(/legacyRecord\.(\w+)\s*\(/g)) {
+      assert.equal(m[1], 'count', `${name}: legacyRecord.${m[1]}() is forbidden — Slice 4 creates no LegacyRecords`);
+    }
+    // Production models may only be READ (findMany/findFirst/findUnique/count).
+    for (const m of src.matchAll(/\b(?:prisma|client)\.(organization|organizationUnit|organizationType|deal|contact|tourEvent|booking|task|timelineEntry|person)\.(\w+)\s*\(/g)) {
+      assert.ok(/^(findMany|findFirst|findUnique|count)$/.test(m[2]), `${name}: prisma.${m[1]}.${m[2]}() must be a read`);
+    }
+  }
 });
 
 test('no "finalize import" action exists yet — readiness is only REPORTED', () => {
