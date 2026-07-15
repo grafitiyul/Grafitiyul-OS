@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { seedStageConfig, buildReviewSummary, listQueue, recordDecision } from './service.js';
 import { STAGE_CONFIG_COUNT } from './stageConfigSeed.js';
+import { draftFromProposal } from './orgDecision.js';
 
 // A stub prisma that exposes ONLY migrationDecision. Any attempt to touch a
 // production model (deal/contact/organization/tour/task/timeline) or LegacyRecord
@@ -236,17 +237,23 @@ test('re-seeding NEVER overwrites an owner-edited organizations decision', async
     decision: { canonicalName: 'Bank Leumi', units: [{ key: 'cm', name: 'Capital Markets Division' }], assignments: { 1: 'unit:cm', 2: 'unit:cm' } },
   });
 
-  // The pass's rule: only refresh rows still `pending`.
-  for (const row of [...c._rows.values()]) {
-    if (row.status === 'pending') row.proposal = { ...ORG_PROPOSAL, rank: 99 };
-  }
+  // The pass's rule: the EVIDENCE (proposal) is refreshed on every row so decided
+  // clusters show the same full context; status/decision/audit are never touched.
+  for (const row of [...c._rows.values()]) row.proposal = { ...ORG_PROPOSAL, rank: 99 };
 
   const decided = [...c._rows.values()].find((r) => r.id === a.id);
-  assert.equal(decided.status, 'edited');
+  assert.equal(decided.status, 'edited', 'status untouched');
+  assert.equal(decided.decidedByName, 'elinoy', 'audit untouched');
   assert.equal(decided.decision.canonicalName, 'Bank Leumi', 'owner edit survived re-seeding');
   assert.equal(decided.decision.result.units[0].name, 'Capital Markets Division');
-  assert.equal(decided.proposal.rank, undefined, 'a decided proposal is not refreshed');
-  assert.equal([...c._rows.values()].find((r) => r.id === b.id).proposal.rank, 99, 'pending proposals still refresh');
+  assert.equal(decided.proposal.rank, 99, 'evidence IS refreshed, even on a decided row');
+  assert.equal([...c._rows.values()].find((r) => r.id === b.id).status, 'pending', 'undecided rows stay pending');
+
+  // And re-opening the decided row still yields the OWNER's values, not the
+  // refreshed proposal's suggestion.
+  const reopened = draftFromProposal(decided.proposal, decided.decision);
+  assert.equal(reopened.canonicalName, 'Bank Leumi');
+  assert.equal(reopened.units[0].name, 'Capital Markets Division');
 });
 
 test('the whole review service touches ONLY the decision ledger (no production writes)', async () => {

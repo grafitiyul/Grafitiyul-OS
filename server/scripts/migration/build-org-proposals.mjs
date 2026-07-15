@@ -152,20 +152,24 @@ if (dry) { console.log('\n--dry: nothing written'); await prisma.$disconnect(); 
 // 6) Persist — one read of existing rows, then only the necessary writes.
 const existing = await prisma.migrationDecision.findMany({ where: { queue: 'organizations' } });
 const bySubject = new Map(existing.map((r) => [r.subjectKey, r]));
-let created = 0, refreshed = 0, preserved = 0;
+let created = 0, refreshed = 0, decidedRefreshed = 0;
 for (const p of proposals) {
   const subjectKey = subjectKeyFor(p);
   const row = bySubject.get(subjectKey);
   if (!row) {
     await prisma.migrationDecision.create({ data: { queue: 'organizations', subjectKey, proposal: p, status: 'pending' } });
     created++;
-  } else if (row.status === 'pending') {
-    await prisma.migrationDecision.update({ where: { id: row.id }, data: { proposal: p } });
-    refreshed++;
-  } else {
-    preserved++; // an owner decision — NEVER overwritten
+    continue;
   }
+  // The PROPOSAL (evidence) is always refreshed so every cluster — decided or
+  // not — shows the same full source context. The owner's DECISION, status and
+  // audit trail are never touched: a re-run can improve the evidence, never
+  // overwrite a human's answer.
+  await prisma.migrationDecision.update({ where: { id: row.id }, data: { proposal: p } });
+  if (row.status === 'pending') refreshed++; else decidedRefreshed++;
 }
-console.log(`\n✔ persisted: ${created} created · ${refreshed} refreshed (still pending) · ${preserved} owner decisions preserved`);
+console.log(`\n✔ persisted: ${created} created · ${refreshed} pending proposals refreshed · ${decidedRefreshed} decided rows kept their decision (evidence refreshed only)`);
+const stillDecided = await prisma.migrationDecision.count({ where: { queue: 'organizations', status: { not: 'pending' } } });
+console.log(`   owner decisions intact after refresh: ${stillDecided}`);
 console.log(`LegacyRecord count (must be 0): ${await prisma.legacyRecord.count()}`);
 await prisma.$disconnect();
