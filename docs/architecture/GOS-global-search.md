@@ -196,13 +196,23 @@ than implying completeness.
 
 ## 8. Known limitations (honest, not speculative)
 
-1. **Text split across HTML tags in a note may not match.** Matching runs in
+1. **Very broad queries rank within a 300-row candidate window, not the whole
+   match set.** Each lookup is capped at `CANDIDATE_CAP = 300` rows ordered by
+   `updatedAt desc`. At scale a word like `ריסוס` matches ~11,000 deals, so the
+   business-group ordering is applied to the 300 most recently updated of them
+   — an old-but-open deal could be missed. The response sets `truncated: true`
+   and the UI says results are partial, so this is never silently wrong. This
+   is the correct trade for a header quick-search (the alternative is ranking
+   11,000 rows per keystroke); users narrow the query or use the full list
+   pages. Exact-identifier queries are unaffected — they match a handful of
+   rows and never reach the cap.
+2. **Text split across HTML tags in a note may not match.** Matching runs in
    SQL against raw HTML, then re-verifies against stripped text. A phrase
    interrupted by markup (`he<b>llo</b>`) is missed. Rare in practice; fixing
    it properly needs a stored stripped-text column.
-2. **Substring matching cannot use a B-tree index.** Fine at measured scale;
+3. **Substring matching cannot use a B-tree index.** Fine at measured scale;
    see the revisit trigger in §2.
-3. **`Organization` has no email-domain field** — a domain query matches via
+4. **`Organization` has no email-domain field** — a domain query matches via
    `financeEmail`. No field was invented for this.
-4. **Search is hidden below the `md` breakpoint** so the mobile header keeps
+5. **Search is hidden below the `md` breakpoint** so the mobile header keeps
    its layout. Desktop admin is the stated design target.
