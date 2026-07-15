@@ -231,6 +231,37 @@ test('an invalid edited decision is refused (never silently stored)', async () =
   assert.equal([...c._rows.values()][0].status, 'pending', 'left untouched');
 });
 
+test('rejecting an Organizations cluster materialises EXPLICIT standalone dispositions', async () => {
+  const c = stubClient([{ queue: 'organizations', subjectKey: 'org:normName:x', status: 'pending', proposal: ORG_PROPOSAL }]);
+  const id = [...c._rows.values()][0].id;
+  const row = await recordDecision(c, { id, action: 'reject', userName: 'elinoy' });
+  assert.equal(row.status, 'rejected');
+  // "Not duplicates" → each source row is its own organization, stated explicitly
+  // so the import never has to infer intent.
+  assert.equal(row.decision.rejectedAsSeparate, true);
+  assert.deepEqual(Object.keys(row.decision.dispositions).sort(), ['1', '2']);
+  for (const [id2, d] of Object.entries(row.decision.dispositions)) {
+    assert.equal(d.disposition, 'other_organization');
+    assert.equal(d.targetOrganizationKey, `new:${id2}`);
+  }
+  assert.equal(row.decision.result.totals.sentElsewhere, 2);
+  assert.equal(row.decidedByName, 'elinoy');
+});
+
+test('EVERY source id in a decided cluster has exactly one disposition', async () => {
+  const c = stubClient([{ queue: 'organizations', subjectKey: 'org:normName:x', status: 'pending', proposal: ORG_PROPOSAL }]);
+  const id = [...c._rows.values()][0].id;
+  for (const action of ['reject', 'edit']) {
+    const decision = action === 'edit'
+      ? { canonicalName: 'X', units: [], dispositions: { 1: { disposition: 'organization' }, 2: { disposition: 'organization' } } }
+      : null;
+    const row = await recordDecision(c, { id, action, decision });
+    const ids = ORG_PROPOSAL.members.map((m) => String(m.legacyId));
+    assert.deepEqual(Object.keys(row.decision.dispositions).sort(), ids.sort(), `${action}: every source id covered`);
+    for (const d of Object.values(row.decision.dispositions)) assert.ok(d.disposition, `${action}: one disposition each`);
+  }
+});
+
 test('a cross-cluster mapping is validated against the LIVE target registry', async () => {
   const c = stubClient([
     { queue: 'organizations', subjectKey: 'org:normName:x', status: 'pending', proposal: ORG_PROPOSAL },

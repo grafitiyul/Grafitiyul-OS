@@ -5,7 +5,7 @@
 // MigrationDecision (the permanent decision ledger).
 import { REVIEW_QUEUES, queueByKey, FROZEN_QUEUES, isResolved } from './queues.js';
 import { stageConfigDecisions } from './stageConfigSeed.js';
-import { decisionFromDraft, draftFromProposal, orgKeyForProposal, orgKeyForGos } from './orgDecision.js';
+import { decisionFromDraft, draftFromProposal, orgKeyForProposal, orgKeyForGos, orgKeyForStandalone } from './orgDecision.js';
 import { contactDecisionFromDraft, batchDecisionFor } from './contactDecision.js';
 
 // Every Organization a source record may be mapped to: the canonical org of each
@@ -265,6 +265,28 @@ export async function recordDecision(client, { id, action, decision = null, note
   // server-side (same resolver the preview uses) and store the resolved shape, so
   // the import consumes the DECISION, never the proposal.
   let stored = decision ?? existing.decision ?? null;
+
+  // Rejecting an Organizations cluster means "these are NOT duplicates" — i.e. every
+  // source row becomes its own standalone Organization. That is a real destination,
+  // so it is materialised EXPLICITLY: the import must never have to infer intent,
+  // and "every source id has exactly one binding disposition" has to hold for
+  // rejected clusters too.
+  if (existing.queue === 'organizations' && status === 'rejected') {
+    const standalone = {
+      canonicalName: existing.proposal?.proposedCanonical?.name ?? null,
+      organizationTypeId: null,
+      mergeIntoGosId: null,
+      units: [],
+      dispositions: Object.fromEntries(
+        (existing.proposal?.members || []).map((m) => [
+          m.legacyId,
+          { disposition: 'other_organization', targetOrganizationKey: orgKeyForStandalone(m.legacyId), targetUnitKey: null },
+        ]),
+      ),
+    };
+    stored = { ...decisionFromDraft(existing.proposal, standalone), rejectedAsSeparate: true };
+  }
+
   if (decision && (status === 'approved' || status === 'edited')) {
     if (existing.queue === 'organizations') {
       // Resolve against the LIVE target registry so cross-cluster mappings are
