@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe, buildOrgTargets, buildContactWorkload } from './service.js';
+import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe, buildOrgTargets, buildContactWorkload, recordIdentityEdits, getIdentityEdits } from './service.js';
 import { STAGE_CONFIG_COUNT } from './stageConfigSeed.js';
 import { draftFromProposal } from './orgDecision.js';
 
@@ -35,8 +35,26 @@ function stubClient(extra = []) {
       });
     },
     findMany: async ({ where }) =>
-      [...rows.values()].filter((r) => r.queue === where.queue && (!where.status || r.status === where.status)),
-    findUnique: async ({ where: { id } }) => [...rows.values()].find((r) => r.id === id) || null,
+      [...rows.values()].filter(
+        (r) =>
+          r.queue === where.queue &&
+          (!where.status || r.status === where.status) &&
+          (!where.subjectKey?.in || where.subjectKey.in.includes(r.subjectKey)),
+      ),
+    findUnique: async ({ where }) => {
+      if (where.id) return [...rows.values()].find((r) => r.id === where.id) || null;
+      const k = key(where.queue_subjectKey.queue, where.queue_subjectKey.subjectKey);
+      return rows.get(k) || null;
+    },
+    create: async ({ data }) => {
+      const row = { id: `d${++idc}`, decidedBy: null, note: null, ...data };
+      rows.set(key(data.queue, data.subjectKey), row);
+      return row;
+    },
+    delete: async ({ where: { id } }) => {
+      for (const [k, r] of rows) if (r.id === id) { rows.delete(k); return r; }
+      return null;
+    },
     update: async ({ where: { id }, data }) => {
       const r = [...rows.values()].find((x) => x.id === id);
       Object.assign(r, data);
@@ -443,6 +461,121 @@ test('the workload dashboard reports the four headline numbers and the import ga
   assert.equal(after.headline.beforeImport, 0);
   assert.equal(after.criticalCleared, true, 'the owner can stop here and import safely');
   assert.equal(after.headline.historicalReview, 3, 'the rest stays open, and that is fine');
+});
+
+// ── Source-data corrections ─────────────────────────────────────────────────
+const identityCluster = () => ({
+  queue: 'contacts', subjectKey: 'contact:email:itay@example.com', status: 'pending',
+  proposal: {
+    kind: 'contact_cluster', confidence: 'probable', batchApprovable: false, section: 'critical',
+    clusterKind: 'email', clusterKey: 'itay@example.com',
+    members: [
+      { legacyId: 1, name: 'איתי רון', phones: ['050-1112222'], emails: ['itay@example.com'], dealCount: 2 },
+      { legacyId: 2, name: 'מיכל אבן', phones: ['054-3334444'], emails: ['itay@example.com'], dealCount: 3 },
+    ],
+    proposedPrimaryLegacyId: 2, proposedMergeLegacyIds: [], proposedSeparateLegacyIds: [1],
+  },
+});
+
+test('a correction is stored per SOURCE CONTACT, not per cluster', async () => {
+  const c = stubClient([identityCluster()]);
+  const [cluster] = [...c._rows.values()];
+  const res = await recordIdentityEdits(c, {
+    clusterDecisionId: cluster.id,
+    edits: { 2: { removeEmails: ['itay@example.com'] } },
+    note: 'the address belongs to the other person',
+    userId: 'u1', userName: 'elinoy',
+  });
+  assert.equal(res.written, 1, 'only the corrected record gets a row');
+
+  const rows = [...c._rows.values()].filter((r) => r.queue === 'contact_identity');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].subjectKey, 'person:2', 'keyed by the source contact');
+  assert.deepEqual(rows[0].decision.effective, { phones: ['054-3334444'], emails: [] });
+  assert.deepEqual(rows[0].proposal.original.emails, ['itay@example.com'], 'the ORIGINAL is preserved as evidence');
+  assert.equal(rows[0].decidedByName, 'elinoy');
+  assert.match(rows[0].note, /belongs to the other person/);
+
+  // The cluster proposal itself is untouched — the snapshot values still stand.
+  assert.deepEqual(cluster.proposal.members[1].emails, ['itay@example.com']);
+});
+
+test('corrections are surfaced with the queue, beside the original values', async () => {
+  const c = stubClient([identityCluster()]);
+  const [cluster] = [...c._rows.values()];
+  await recordIdentityEdits(c, { clusterDecisionId: cluster.id, edits: { 2: { removeEmails: ['itay@example.com'] } } });
+
+  const q = await listQueue(c, 'contacts', { section: 'critical' });
+  assert.equal(q.decisions.length, 1);
+  assert.ok(q.decisions[0].identityEdits[2], 'the correction rides along');
+  assert.deepEqual(q.decisions[0].proposal.members[1].emails, ['itay@example.com'], 'the member still shows the ORIGINAL');
+});
+
+test('an approved cluster decision can never record identity the owner corrected away', async () => {
+  const c = stubClient([identityCluster()]);
+  const [cluster] = [...c._rows.values()];
+  await recordIdentityEdits(c, { clusterDecisionId: cluster.id, edits: { 2: { removeEmails: ['itay@example.com'] } } });
+
+  await recordDecision(c, {
+    id: cluster.id, action: 'edit',
+    decision: { primaryLegacyId: 2, assignments: { 1: 'merge', 2: 'primary' } },
+  });
+  const stored = cluster.decision;
+  // Merging record 1 into 2 would normally fold 1's address in. The owner said that
+  // address is 1's, not 2's — but it IS 1's, so it survives the merge legitimately.
+  assert.ok(stored.result.primary.emails.includes('itay@example.com'));
+  // Record 2's own copy was corrected away, so it contributes nothing.
+  assert.deepEqual(stored.result.primary.phones, ['054-3334444', '050-1112222']);
+});
+
+test('a merged-away record cannot smuggle a corrected identifier into the survivor', async () => {
+  const c = stubClient([identityCluster()]);
+  const [cluster] = [...c._rows.values()];
+  // Correct the address off record 1 instead, then merge 1 INTO 2.
+  await recordIdentityEdits(c, { clusterDecisionId: cluster.id, edits: { 1: { removeEmails: ['itay@example.com'] } } });
+  await recordDecision(c, {
+    id: cluster.id, action: 'edit',
+    decision: { primaryLegacyId: 2, assignments: { 1: 'merge', 2: 'primary' } },
+  });
+  const stored = cluster.decision;
+  assert.deepEqual(stored.result.primary.emails, ['itay@example.com'], "only record 2's own address remains");
+  assert.ok(!stored.result.primary.absorbs.some((a) => a.emails), 'nothing re-adds the corrected value');
+});
+
+test('clearing a correction DELETES the row — "no correction" is one state, not two', async () => {
+  const c = stubClient([identityCluster()]);
+  const [cluster] = [...c._rows.values()];
+  await recordIdentityEdits(c, { clusterDecisionId: cluster.id, edits: { 2: { removeEmails: ['itay@example.com'] } } });
+  assert.equal([...c._rows.values()].filter((r) => r.queue === 'contact_identity').length, 1);
+
+  const res = await recordIdentityEdits(c, { clusterDecisionId: cluster.id, edits: { 2: {} } });
+  assert.equal(res.cleared, 1);
+  assert.equal([...c._rows.values()].filter((r) => r.queue === 'contact_identity').length, 0);
+});
+
+test('an invalid correction is refused server-side, whatever the client sent', async () => {
+  const c = stubClient([identityCluster()]);
+  const [cluster] = [...c._rows.values()];
+  // Removing a value the source record does not have.
+  await assert.rejects(
+    () => recordIdentityEdits(c, { clusterDecisionId: cluster.id, edits: { 2: { removePhones: ['03-0000000'] } } }),
+    (e) => e.code === 'INVALID_DECISION',
+  );
+  // Copying rather than moving.
+  await assert.rejects(
+    () => recordIdentityEdits(c, { clusterDecisionId: cluster.id, edits: { 2: { addPhones: [{ value: '050-1112222', fromLegacyId: 1 }] } } }),
+    (e) => e.code === 'INVALID_DECISION',
+  );
+  assert.equal([...c._rows.values()].filter((r) => r.queue === 'contact_identity').length, 0, 'nothing was written');
+});
+
+test('corrections belong to the Contacts queue only', async () => {
+  const c = stubClient([{ queue: 'organizations', subjectKey: 'o1', status: 'pending', proposal: {} }]);
+  const [org] = [...c._rows.values()];
+  await assert.rejects(
+    () => recordIdentityEdits(c, { clusterDecisionId: org.id, edits: {} }),
+    (e) => e.code === 'BATCH_NOT_SUPPORTED',
+  );
 });
 
 test('batch approve never resurrects a rejected or deferred cluster', async () => {

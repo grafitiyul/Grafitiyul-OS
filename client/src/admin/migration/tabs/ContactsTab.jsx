@@ -3,7 +3,9 @@ import { useOutletContext } from 'react-router-dom';
 import { migrationApi } from '../api.js';
 import { num, dateTime } from '../components/format.js';
 import SourceRecord from '../components/SourceRecord.jsx';
+import IdentityEditor from '../components/IdentityEditor.jsx';
 import { contactDraftFromProposal, resolveContactResult } from '../components/contactPreview.js';
+import { toggleRemove, setMoveTarget, clusterKeySurvives, anyEdits } from '../components/identityPreview.js';
 
 // Business impact drives the queue. The owner lands on `critical` and, when it is
 // empty, is told plainly that Identity Import can begin.
@@ -40,6 +42,10 @@ export default function ContactsTab() {
   const [busy, setBusy] = useState(false);
   const [batchMsg, setBatchMsg] = useState(null);
   const [error, setError] = useState(null);
+  // Source-data corrections, edited per cluster but stored per source contact.
+  const [edits, setEdits] = useState({});
+  const [idNote, setIdNote] = useState('');
+  const [idProblems, setIdProblems] = useState([]);
 
   const load = useCallback(async () => {
     try {
@@ -53,24 +59,50 @@ export default function ContactsTab() {
   useEffect(() => { load(); }, [load]);
 
   const selected = data?.decisions?.find((d) => d.id === openId) || null;
+  // The merge preview reads the CORRECTED identity: an identifier the owner removed
+  // must not reappear on the survivor just because its record was merged in.
   const result = useMemo(
-    () => (selected && draft ? resolveContactResult(selected.proposal, draft) : null),
-    [selected, draft],
+    () => (selected && draft ? resolveContactResult(selected.proposal, draft, edits) : null),
+    [selected, draft, edits],
+  );
+  const keySurvives = useMemo(
+    () => (selected ? clusterKeySurvives({ ...selected.proposal, edits }) : null),
+    [selected, edits],
   );
 
   const head = work?.headline;
   const counts = (k) => work?.sections?.find((s) => s.key === k)?.counts || { total: 0, unresolved: 0 };
   const safeRemaining = work?.safe?.unresolved ?? 0;
 
-  function select(d) { setOpenId(d.id); setSource(null); setDraft(contactDraftFromProposal(d.proposal, d.decision)); }
+  function select(d) {
+    setOpenId(d.id);
+    setSource(null);
+    setDraft(contactDraftFromProposal(d.proposal, d.decision));
+    setEdits(d.identityEdits || {});
+    setIdNote(Object.values(d.identityEdits || {})[0]?.note || '');
+    setIdProblems([]);
+  }
 
   async function act(action) {
     setBusy(true);
     try {
       await migrationApi.decide(selected.id, { action, decision: action === 'approve' || action === 'edit' ? draft : null });
       await load(); reload?.();
-      setDraft(null); setOpenId(null);
+      setDraft(null); setOpenId(null); setEdits({});
     } catch (e) { setError(e?.status === 400 ? 'ההחלטה אינה תקינה' : 'שמירת ההחלטה נכשלה'); }
+    setBusy(false);
+  }
+
+  async function saveIdentity() {
+    setBusy(true);
+    setIdProblems([]);
+    try {
+      await migrationApi.saveIdentityEdits(selected.id, { edits, note: idNote });
+      await load(); reload?.();
+    } catch (e) {
+      // The server re-validates against the snapshot and is the authority.
+      setIdProblems(e?.body?.problems || ['שמירת התיקון נכשלה']);
+    }
     setBusy(false);
   }
 
@@ -292,6 +324,22 @@ export default function ContactsTab() {
                   })}
                 </div>
               </div>
+
+              {/* Source-data corrections — an independent decision from the merge. */}
+              <IdentityEditor
+                members={selected.proposal.members}
+                clusterKind={selected.proposal.clusterKind}
+                edits={edits}
+                note={idNote}
+                busy={busy}
+                problems={idProblems}
+                keySurvives={keySurvives}
+                onToggle={(id, kind, v) => setEdits((e) => toggleRemove(e, id, kind, v))}
+                onMove={(fromId, kind, v, toId) => setEdits((e) => setMoveTarget(e, fromId, kind, v, toId))}
+                onNote={setIdNote}
+                onSave={saveIdentity}
+                onReset={() => { setEdits(selected.identityEdits || {}); setIdProblems([]); }}
+              />
 
               {source && (
                 <div className="bg-white border border-gray-200 rounded-xl p-3">

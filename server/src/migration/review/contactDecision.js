@@ -6,6 +6,11 @@
 // Model: one record is the PRIMARY (the contact GOS keeps). Every other record is
 // either MERGED into it (its phones/emails/deals fold in) or split off as its own
 // SEPARATE contact. Nothing merges without an explicit human decision.
+//
+// Source-data corrections (contactIdentity.js) are a SEPARATE, independent decision
+// and are applied on top: "are these one person?" and "does this phone belong to
+// this person?" are different questions with different answers.
+import { applyIdentityEdit } from './contactIdentity.js';
 
 export function contactDraftFromProposal(proposal, decision = null) {
   const base = decision && decision.primaryLegacyId != null ? decision : null;
@@ -24,7 +29,12 @@ export function contactDraftFromProposal(proposal, decision = null) {
   };
 }
 
-export function resolveContactResult(proposal, draft) {
+// `edits` are the owner's source-data corrections, keyed by legacyId. They are
+// applied HERE and nowhere else, so the preview, the stored decision and the
+// eventual import all see the same corrected identity. The proposal's own member
+// values are never mutated — the snapshot stays the only source of truth for what
+// the legacy system actually said.
+export function resolveContactResult(proposal, draft, edits = {}) {
   const members = proposal.members || [];
   const byId = new Map(members.map((m) => [m.legacyId, m]));
   const primary = byId.get(draft.primaryLegacyId) || null;
@@ -41,10 +51,13 @@ export function resolveContactResult(proposal, draft) {
   if (!primary) problems.push('לא נבחר איש קשר ראשי');
 
   // Everything the surviving contact ends up owning — shown in the preview so the
-  // owner sees exactly what merging costs/keeps. Raw values, never normalised.
+  // owner sees exactly what merging costs/keeps. Raw values, never normalised, but
+  // AFTER the owner's corrections: an identifier removed from a record must not
+  // reappear here just because that record was merged into the primary.
   const keep = primary ? [primary, ...merged] : merged;
-  const phones = [...new Set(keep.flatMap((m) => m.phones || []))];
-  const emails = [...new Set(keep.flatMap((m) => m.emails || []))];
+  const eff = (m) => applyIdentityEdit(m, edits?.[m.legacyId]);
+  const phones = [...new Set(keep.flatMap((m) => eff(m).phones))];
+  const emails = [...new Set(keep.flatMap((m) => eff(m).emails))];
   const orgNames = [...new Set(keep.map((m) => m.orgName).filter(Boolean))];
 
   return {
@@ -69,8 +82,8 @@ export function resolveContactResult(proposal, draft) {
   };
 }
 
-export function contactDecisionFromDraft(proposal, draft) {
-  const result = resolveContactResult(proposal, draft);
+export function contactDecisionFromDraft(proposal, draft, edits = {}) {
+  const result = resolveContactResult(proposal, draft, edits);
   const mergeLegacyIds = Object.entries(draft.assignments || {})
     .filter(([id, a]) => a === 'merge' && Number(id) !== draft.primaryLegacyId)
     .map(([id]) => Number(id));

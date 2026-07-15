@@ -8,6 +8,10 @@ import { stageConfigDecisions } from './stageConfigSeed.js';
 import { decisionFromDraft, draftFromProposal, orgKeyForProposal, orgKeyForGos, orgKeyForStandalone } from './orgDecision.js';
 import { contactDecisionFromDraft, batchDecisionFor } from './contactDecision.js';
 import { summarizeSections, SECTION_KEYS } from './contactSections.js';
+import {
+  IDENTITY_QUEUE, identitySubjectKey, legacyIdFromSubjectKey, resolveIdentityEdits,
+  identityDecisionFor, identityProposalFor, isEmptyEdit,
+} from './contactIdentity.js';
 
 // Every Organization a source record may be mapped to: the canonical org of each
 // migration proposal, plus every live GOS organization (with its real units).
@@ -226,7 +230,20 @@ export async function listQueue(client, queueKey, { status = null, filter = null
   if (fn) decisions = decisions.filter(fn);
   // Contacts are routed by business impact; other queues have no sections and are
   // left exactly as they were.
-  if (queueKey === 'contacts') decisions = applySection(decisions, section);
+  if (queueKey === 'contacts') {
+    decisions = applySection(decisions, section);
+    // Attach any source-data corrections for the records on screen. The proposal's
+    // member values stay ORIGINAL — the correction is shown as an override beside
+    // them, never folded into them.
+    const ids = decisions.flatMap((d) => (d.proposal?.members || []).map((m) => m.legacyId));
+    const edits = ids.length ? await getIdentityEdits(client, [...new Set(ids)]) : {};
+    decisions = decisions.map((d) => {
+      const mine = Object.fromEntries(
+        (d.proposal?.members || []).filter((m) => edits[m.legacyId]).map((m) => [m.legacyId, edits[m.legacyId]]),
+      );
+      return { ...d, identityEdits: mine };
+    });
+  }
 
   // Priority order (rank was computed once, in the bounded generation pass).
   if (decisions.some((d) => d.proposal?.rank != null)) {
@@ -273,6 +290,82 @@ export async function batchApproveSafe(client, { queue, userId = null, userName 
     approved++;
   }
   return { approved, skipped: rows.length - targets.length, examined: rows.length };
+}
+
+// ── Source-data corrections (identity overrides) ─────────────────────────────
+// Keyed by SOURCE CONTACT, not by cluster: one legacy record can appear in both a
+// phone cluster and an email cluster, and must never carry two conflicting
+// corrections. Stored as MigrationDecision overrides; Slice 6 applies them.
+// The snapshot and the Snapshot Browser are untouched — see contactIdentity.js.
+
+// Every correction that applies to a set of source contacts, as a map keyed by
+// legacyId, ready to hand to the resolver.
+export async function getIdentityEdits(client, legacyIds = null) {
+  const rows = await client.migrationDecision.findMany({
+    where: {
+      queue: IDENTITY_QUEUE,
+      ...(legacyIds ? { subjectKey: { in: legacyIds.map(identitySubjectKey) } } : {}),
+    },
+  });
+  const edits = {};
+  for (const r of rows) {
+    const id = legacyIdFromSubjectKey(r.subjectKey);
+    if (id != null && r.decision) edits[id] = { ...r.decision, note: r.note ?? null, decidedByName: r.decidedByName ?? null, decidedAt: r.decidedAt ?? null };
+  }
+  return edits;
+}
+
+// Record (or clear) the corrections for one cluster's source records.
+//
+// Submitted per CLUSTER because a MOVE spans two records and is only coherent as one
+// atomic act — but STORED per source contact. Validated server-side against the
+// ORIGINAL snapshot values carried on the proposal, so a stale client cannot remove
+// a value that is not there.
+export async function recordIdentityEdits(client, { clusterDecisionId, edits, note = null, userId = null, userName = null }) {
+  const cluster = await client.migrationDecision.findUnique({ where: { id: clusterDecisionId } });
+  if (!cluster) { const e = new Error('decision_not_found'); e.code = 'NOT_FOUND'; throw e; }
+  if (cluster.queue !== 'contacts') { const e = new Error('identity_edits_are_contacts_only'); e.code = 'BATCH_NOT_SUPPORTED'; throw e; }
+
+  const members = cluster.proposal?.members || [];
+  const resolved = resolveIdentityEdits(members, edits);
+  if (!resolved.valid) {
+    const e = new Error(`invalid_identity_edit: ${resolved.problems.join(' · ')}`);
+    e.code = 'INVALID_DECISION';
+    e.problems = resolved.problems;
+    throw e;
+  }
+
+  const byId = new Map(members.map((m) => [m.legacyId, m]));
+  const decidedAt = new Date();
+  let written = 0, cleared = 0;
+  for (const m of members) {
+    const edit = edits?.[m.legacyId];
+    const subjectKey = identitySubjectKey(m.legacyId);
+    const existing = await client.migrationDecision.findUnique({
+      where: { queue_subjectKey: { queue: IDENTITY_QUEUE, subjectKey } },
+    });
+    // An emptied correction is DELETED, not stored as a no-op row: "no correction"
+    // and "a correction that changes nothing" must not be distinguishable states.
+    if (isEmptyEdit(edit)) {
+      if (existing) { await client.migrationDecision.delete({ where: { id: existing.id } }); cleared++; }
+      continue;
+    }
+    const data = {
+      queue: IDENTITY_QUEUE,
+      subjectKey,
+      status: 'edited',
+      proposal: identityProposalFor(byId.get(m.legacyId)),
+      decision: identityDecisionFor(byId.get(m.legacyId), edit),
+      note,
+      decidedBy: userId,
+      decidedByName: userName,
+      decidedAt,
+    };
+    if (existing) await client.migrationDecision.update({ where: { id: existing.id }, data });
+    else await client.migrationDecision.create({ data });
+    written++;
+  }
+  return { written, cleared, warnings: resolved.warnings };
 }
 
 const ACTION_STATUS = { approve: 'approved', reject: 'rejected', edit: 'edited', defer: 'deferred' };
@@ -338,7 +431,10 @@ export async function recordDecision(client, { id, action, decision = null, note
       }
       stored = resolved;
     } else if (existing.queue === 'contacts') {
-      const resolved = contactDecisionFromDraft(existing.proposal, decision);
+      // Resolve against the LIVE corrections, so an approved decision can never
+      // record identity the owner has already said is wrong.
+      const ids = (existing.proposal?.members || []).map((m) => m.legacyId);
+      const resolved = contactDecisionFromDraft(existing.proposal, decision, await getIdentityEdits(client, ids));
       if (!resolved.result.valid) {
         const e = new Error(`invalid_decision: ${resolved.result.problems.join(' · ')}`);
         e.code = 'INVALID_DECISION';

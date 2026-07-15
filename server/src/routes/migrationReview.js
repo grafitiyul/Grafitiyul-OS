@@ -13,7 +13,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import * as r2 from '../migration/r2.js';
-import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe, buildOrgTargets, buildContactWorkload } from '../migration/review/service.js';
+import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe, buildOrgTargets, buildContactWorkload, recordIdentityEdits } from '../migration/review/service.js';
 import { buildSnapshotStatus } from '../migration/review/snapshotStatus.js';
 import { createBrowser } from '../migration/review/browser.js';
 
@@ -144,6 +144,35 @@ router.post(
       res.json(await batchApproveSafe(prisma, { queue: req.params.queue, userId, userName }));
     } catch (e) {
       if (e.code === 'BATCH_NOT_SUPPORTED') return res.status(400).json({ error: 'batch_not_supported' });
+      throw e;
+    }
+  }),
+);
+
+// Record SOURCE-DATA corrections for one cluster's records ("this phone belongs to
+// someone else"). Stored as MigrationDecision overrides keyed by source contact.
+// The snapshot is never touched and the Snapshot Browser keeps showing the original.
+router.post(
+  '/decisions/:id/identity',
+  handle(async (req, res) => {
+    const userId = req.adminAuth?.userId || null;
+    let userName = null;
+    if (userId) {
+      const u = await prisma.adminUser.findUnique({ where: { id: userId }, select: { username: true } });
+      userName = u?.username || null;
+    }
+    try {
+      res.json(await recordIdentityEdits(prisma, {
+        clusterDecisionId: req.params.id,
+        edits: req.body?.edits || {},
+        note: typeof req.body?.note === 'string' ? req.body.note.trim() || null : null,
+        userId,
+        userName,
+      }));
+    } catch (e) {
+      if (e.code === 'NOT_FOUND') return res.status(404).json({ error: 'not_found' });
+      if (e.code === 'BATCH_NOT_SUPPORTED') return res.status(400).json({ error: 'identity_edits_are_contacts_only' });
+      if (e.code === 'INVALID_DECISION') return res.status(400).json({ error: 'invalid_identity_edit', problems: e.problems });
       throw e;
     }
   }),

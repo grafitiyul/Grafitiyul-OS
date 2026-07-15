@@ -12,6 +12,9 @@ async function req(path, options = {}) {
     const text = await res.text();
     const err = new Error(`${res.status} ${text}`);
     err.status = res.status;
+    // The server is the authority on validity; surface WHY it refused, not just that
+    // it did, so the owner can fix the correction instead of guessing.
+    try { err.body = JSON.parse(text); } catch { err.body = null; }
     throw err;
   }
   return res.status === 204 ? null : res.json();
@@ -39,6 +42,13 @@ export const migrationApi = {
   seed: () => req('/api/migration/review/seed', { method: 'POST' }),
   decide: (id, body) =>
     req(`/api/migration/review/decisions/${encodeURIComponent(id)}/decide`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  // Source-data corrections for a cluster's records. Stored per source contact as
+  // MigrationDecision overrides; the snapshot is never touched.
+  saveIdentityEdits: (id, body) =>
+    req(`/api/migration/review/decisions/${encodeURIComponent(id)}/identity`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),

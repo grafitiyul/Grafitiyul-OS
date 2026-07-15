@@ -66,6 +66,37 @@ test('no LegacyRecord is ever created, and production reads stay read-only', () 
   }
 });
 
+// ── The immutability contract for source-data corrections ───────────────────
+// The owner's rule: corrections are OVERRIDES. The snapshot and the Snapshot
+// Browser must keep telling the truth about what the legacy system actually said,
+// forever — otherwise a correction becomes indistinguishable from history, and the
+// original value can never be recovered.
+test('a correction NEVER reaches the snapshot: no writes to R2, no rewriting of source records', () => {
+  const src = read('src/migration/review/contactIdentity.js');
+  // The snapshot store is append-only at extraction time and read-only here.
+  assert.ok(!/putObject|writeShard|uploadPart|deleteObject|from '\.\.\/r2\.js'/.test(src), 'the correction module cannot touch storage at all');
+  // The source record is an input, never a target.
+  assert.ok(!/source\.(phones|emails)\s*=|members\[[^\]]*\]\.(phones|emails)\s*=|\.phones\.push|\.emails\.push/.test(src),
+    'source values are never assigned to or pushed into');
+});
+
+test('the Snapshot Browser is blind to corrections — it always shows the ORIGINAL', () => {
+  const browser = read('src/migration/review/browser.js');
+  assert.ok(!/contactIdentity|identityEdits|applyIdentityEdit|getIdentityEdits/.test(browser),
+    'the browser must not consult, import, or apply any correction');
+  // And the browser reads the snapshot, not the ledger.
+  assert.ok(!/migrationDecision/.test(browser), 'the browser never reads the decision ledger');
+});
+
+test('corrections are keyed by SOURCE CONTACT so one record can never hold two conflicting ones', () => {
+  const src = read('src/migration/review/contactIdentity.js');
+  // A cluster-scoped key would allow a record in both a phone and an email cluster
+  // to be corrected twice, differently.
+  assert.match(src, /identitySubjectKey = \(legacyId\) => `person:\$\{legacyId\}`/);
+  const service = read('src/migration/review/service.js');
+  assert.ok(!/identitySubjectKey\(\s*(?:cluster|proposal|subjectKey)/.test(service), 'never keyed by cluster');
+});
+
 test('no "finalize import" action exists yet — readiness is only REPORTED', () => {
   // Strip comments first: the guard must judge CODE, not prose about the guard.
   const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
@@ -82,12 +113,15 @@ test('no "finalize import" action exists yet — readiness is only REPORTED', ()
   assert.deepEqual(routes.sort(), [
     'GET /browser/entities', 'GET /browser/filter', 'GET /browser/record', 'GET /browser/records',
     'GET /org-targets', 'GET /queues/:queue', 'GET /queues/contacts/workload', 'GET /snapshot', 'GET /summary',
-    'POST /decisions/:id/decide', 'POST /queues/:queue/batch-approve-safe', 'POST /seed',
+    'POST /decisions/:id/decide', 'POST /decisions/:id/identity',
+    'POST /queues/:queue/batch-approve-safe', 'POST /seed',
   ]);
   // Every write route is a decision-ledger route — nothing else mutates.
+  // `/identity` records source-data corrections; they are ledger overrides too.
   const writes = routes.filter((r) => r.startsWith('POST'));
   assert.deepEqual(writes.sort(), [
-    'POST /decisions/:id/decide', 'POST /queues/:queue/batch-approve-safe', 'POST /seed',
+    'POST /decisions/:id/decide', 'POST /decisions/:id/identity',
+    'POST /queues/:queue/batch-approve-safe', 'POST /seed',
   ]);
 });
 
