@@ -19,10 +19,20 @@ import fontkit from '@pdf-lib/fontkit';
 import bidiFactory from 'bidi-js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const NOTO_HEBREW_TTF = path.resolve(
-  __dirname,
-  '../../assets/fonts/NotoSansHebrew-Regular.ttf',
-);
+// Heebo Regular — a professionally-mastered STATIC build (weight 400, no
+// variation axes), the same family the editor preview renders with.
+//
+// Font-asset history (do not repeat):
+//   1. The original "NotoSansHebrew-Regular.ttf" was the VARIABLE Noto whose
+//      default instance is Thin(100) → all PDF text rendered hairline-thin.
+//   2. A harfbuzz-instanced wght=400 build fixed the weight, but instancing
+//      keeps the design's overlapping contours, which some viewers (Adobe
+//      Acrobat notably) rasterize with white seams — "ghost / double-edge"
+//      glyphs. fonttools' instancer documents this exact pitfall
+//      (--remove-overlaps).
+// Rule: only ship a static, professionally-released TTF here. Never a
+// variable font, never a synthetically-instanced one.
+const HEBREW_TTF = path.resolve(__dirname, '../../assets/fonts/Heebo-Regular.ttf');
 const HEB_RE = /[\u0590-\u05FF]/;
 
 const bidi = bidiFactory();
@@ -72,8 +82,8 @@ function fontSizeForFieldHeight(fieldHPt) {
 export async function renderFinalPdf(sourcePdfBytes, fields, annotations = []) {
   const pdfDoc = await PDFDocument.load(sourcePdfBytes);
   pdfDoc.registerFontkit(fontkit);
-  const notoFontBytes = fs.readFileSync(NOTO_HEBREW_TTF);
-  const hebrewFont = await pdfDoc.embedFont(notoFontBytes);
+  const hebrewFontBytes = fs.readFileSync(HEBREW_TTF);
+  const hebrewFont = await pdfDoc.embedFont(hebrewFontBytes);
   const pages = pdfDoc.getPages();
 
   // ── Pass 1: highlights (under values, so text reads over the colour) ─────

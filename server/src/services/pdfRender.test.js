@@ -15,10 +15,7 @@ import fontkit from '@pdf-lib/fontkit';
 import { layoutNoteLines, renderFinalPdf, looksLikePdf } from './pdfRender.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const FONT_PATH = path.resolve(
-  __dirname,
-  '../../assets/fonts/NotoSansHebrew-Regular.ttf',
-);
+const FONT_PATH = path.resolve(__dirname, '../../assets/fonts/Heebo-Regular.ttf');
 
 // Run a render with PDFPage.drawText instrumented; returns every call's
 // text payload + coordinates. This is the draw-count harness for the
@@ -152,18 +149,17 @@ test('render smoke: notes near the page boundary and large fonts do not throw', 
 
 // ── Font asset guard ─────────────────────────────────────────────────────────
 //
-// Production incident 2026-07: the shipped "Regular" ttf was actually the
-// VARIABLE Noto Sans Hebrew whose default instance is Thin (100). fontkit
-// embeds the default master's outlines, so all PDF text rendered hairline-
-// thin — at 20pt+ the stems rasterize as two faint parallel edges, which
-// users perceive as "the text drawn twice with an offset / shadow". The
-// asset is now a static wght=400 instance (internal name strings still say
-// "Thin" — a cosmetic instancer artifact; the OUTLINES are Regular).
-test('embedded Hebrew font is a static Regular (weight 400), not variable-Thin', () => {
+// Production incident 2026-07 (two rounds — see the asset-history comment in
+// pdfRender.js): a VARIABLE font rendered Thin(100), then a synthetically-
+// instanced wght=400 build kept overlapping contours that Acrobat rasterizes
+// with white seams ("ghost / double-edge" glyphs). The asset must be a
+// professionally-released STATIC Regular — currently Heebo-Regular.
+test('embedded Hebrew font is a professionally-built static Regular (400)', () => {
   const font = fontkit.create(fs.readFileSync(FONT_PATH));
+  assert.equal(font.postscriptName, 'Heebo-Regular');
   assert.equal(font['OS/2'].usWeightClass, 400);
   assert.ok(!font.fvar, 'font must be static (no variation axes)');
-  for (const cp of [0x05d0, 0x05ea, 0x30, 0x39, 0x41, 0x2d]) {
+  for (const cp of [0x05d0, 0x05ea, 0x30, 0x39, 0x41, 0x7a, 0x2d, 0x22, 0x28, 0x3a, 0x20aa]) {
     assert.ok(font.hasGlyphForCodePoint(cp), `missing glyph U+${cp.toString(16)}`);
   }
 });

@@ -67,9 +67,9 @@ const TEXT_FIELD_TYPES = new Set(['text', 'date', 'number', 'phone', 'email']);
 
 // Measure visual text width in CSS pixels at a given font size. Uses a
 // shared off-screen canvas so we don't pay setup cost per call. Font family
-// matches what stamps use — same family family as the on-screen preview so
-// WYSIWYG holds. The server-side NotoSansHebrew may differ by a few
-// percent; we pad when we use the result to absorb that variance.
+// matches the on-screen preview AND the server-side PDF font (both Heebo
+// Regular since the 2026-07 font fix), so measured widths track the final
+// render closely; the padding below absorbs the remaining variance.
 let _measureCanvas = null;
 function measureTextPx(text, fontPx) {
   if (typeof document === 'undefined') return 0;
@@ -255,8 +255,8 @@ export default function InstanceEditor() {
         const fontPx = (heightPct / 100) * dims.pageCssHeight * 0.6;
         const text = resolvePlacementText(pending, liveBusinessFields);
         const measured = measureTextPx(text, fontPx);
-        // ~10px of horizontal breathing room total (5 per side) absorbs the
-        // Heebo ↔ NotoSansHebrew font-metric variance so the PDF never clips.
+        // ~10px of horizontal breathing room total (5 per side) absorbs
+        // canvas-vs-PDF metric rounding so the final render never clips.
         const PAD_PX = 10;
         const widthPx = Math.max(measured + PAD_PX, 28);
         const widthPct = Math.min(96, (widthPx / dims.pageCssWidth) * 100);
