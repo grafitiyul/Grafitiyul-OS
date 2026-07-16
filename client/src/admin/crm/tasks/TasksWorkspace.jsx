@@ -6,6 +6,7 @@ import { useRealtime } from '../../../lib/realtime.js';
 import { DEAL_TASKS_CHANGED_EVENT } from '../../deals/tasks/taskEvents.js';
 import DealDrawer from '../../common/DealDrawer.jsx';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
+import TaskCards from './TaskCards.jsx';
 import { dealPath } from '../../deals/config.js';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell, COL_SEP } from '../../common/tableColumns.jsx';
 import { toggleSortKey, sortFromParam } from '../../common/tableColumnsCore.js';
@@ -711,7 +712,26 @@ export default function TasksWorkspace() {
           would make it scroll away with the rows.) */}
       <div className="relative min-h-0 flex-1">
       <div ref={gridRef} className="h-full overflow-auto">
-        <table className="w-full border-collapse bg-white text-[13px]">
+        {/* Mobile: cards over the SAME rows/handlers — presentation only. */}
+        <div className="bg-white md:hidden">
+          <TaskCards
+            rows={rows}
+            today={today}
+            cursor={cursor}
+            selected={selected}
+            freshIds={freshIds}
+            savingId={savingId}
+            onOpen={openDrawer}
+            onToggleSelect={(id, idx) => toggleRow(id, idx, false)}
+            onComplete={completeRow}
+          />
+          {!rows.length && !loading && (
+            <div className="px-4 py-12 text-center text-sm text-gray-400">
+              {data.empty ? 'אין ימים בטווח הזה' : 'אין משימות שתואמות את הסינון'}
+            </div>
+          )}
+        </div>
+        <table className="hidden w-full border-collapse bg-white text-[13px] md:table">
           <thead className="sticky top-0 z-20 bg-gray-50/95 backdrop-blur">
             <SortableHeaderRow
               cols={cols.visibleCols}
@@ -960,7 +980,7 @@ export default function TasksWorkspace() {
             הבא ›
           </button>
         </div>
-        <span className="text-[11px] text-gray-400">
+        <span className="hidden text-[11px] text-gray-400 md:inline">
           ↑↓ ניווט · Enter פתיחה · רווח בחירה · Ctrl+Enter השלמה · לחיצה כפולה לעריכה
         </span>
       </div>
