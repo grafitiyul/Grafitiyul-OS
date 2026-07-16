@@ -116,6 +116,29 @@ function localId() {
   return 'local_' + Math.random().toString(36).slice(2, 10);
 }
 
+// Download a final PDF via fetch + blob instead of a bare <a href>. A bare
+// link saves WHATEVER the server answers — if the session expired or a proxy
+// returned an error page, the user gets a broken ".pdf" that no viewer can
+// open. Here a non-PDF response surfaces as a message and nothing is saved.
+async function downloadFinalPdf(url, filename) {
+  const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
+  const ct = res.headers.get('content-type') || '';
+  if (!res.ok || !ct.includes('application/pdf')) {
+    if (res.status === 401) {
+      throw new Error('פג תוקף ההתחברות — רענן את הדף והתחבר מחדש, ואז נסה להוריד שוב.');
+    }
+    throw new Error(`ההורדה נכשלה (שגיאה ${res.status}). נסה שוב.`);
+  }
+  const blob = await res.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 30_000);
+}
+
 export default function InstanceEditor() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -593,13 +616,17 @@ export default function InstanceEditor() {
                 >
                   ערוך והפק גרסה מתוקנת
                 </button>
-                <a
-                  href={api.documents.instanceFinalPdfUrl(id)}
+                <button
+                  onClick={() =>
+                    downloadFinalPdf(
+                      api.documents.instanceFinalPdfUrl(id),
+                      `${instance.title} — גרסה ${finalVersions[0]?.version ?? 1}.pdf`,
+                    ).catch((e) => window.alert(e.message))
+                  }
                   className="bg-blue-600 text-white rounded px-3 py-1.5 text-sm font-medium hover:bg-blue-700"
-                  download
                 >
                   הורד PDF סופי
-                </a>
+                </button>
               </>
             )}
             <button
@@ -634,7 +661,13 @@ export default function InstanceEditor() {
             תמונת מצב קפואה מ-{new Date(instance.createdAt).toLocaleDateString('he-IL')} — שינויים בשדות העסק ובחותמים לא ישפיעו על מסמך זה לאחר סיום.
           </div>
         )}
-        {hasFinals && <VersionHistory instanceId={id} versions={finalVersions} />}
+        {hasFinals && (
+          <VersionHistory
+            instanceId={id}
+            title={instance.title}
+            versions={finalVersions}
+          />
+        )}
         {saveErr && (
           <div className="mt-2 bg-red-50 border border-red-200 text-red-800 rounded p-2 text-xs">
             {saveErr}
@@ -818,7 +851,7 @@ export default function InstanceEditor() {
 // Immutable per-version rows. Every version keeps its own permanent URL
 // (FinalDocument row id) — old versions stay downloadable forever.
 
-function VersionHistory({ instanceId, versions }) {
+function VersionHistory({ instanceId, title, versions }) {
   return (
     <div className="mt-2 bg-gray-50 border border-gray-200 rounded p-2">
       <div className="text-[11px] font-semibold text-gray-700 mb-1">
@@ -848,14 +881,17 @@ function VersionHistory({ instanceId, versions }) {
                 · {v.note}
               </span>
             )}
-            <a
-              href={api.documents.instanceFinalVersionPdfUrl(instanceId, v.id)}
-              target="_blank"
-              rel="noreferrer"
+            <button
+              onClick={() =>
+                downloadFinalPdf(
+                  api.documents.instanceFinalVersionPdfUrl(instanceId, v.id),
+                  `${title} — גרסה ${v.version}.pdf`,
+                ).catch((e) => window.alert(e.message))
+              }
               className="text-blue-700 hover:underline mr-auto"
             >
-              פתח / הורד
-            </a>
+              הורד
+            </button>
           </li>
         ))}
       </ul>
