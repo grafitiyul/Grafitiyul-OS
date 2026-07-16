@@ -12,7 +12,7 @@ import {
   IDENTITY_QUEUE, identitySubjectKey, legacyIdFromSubjectKey, resolveIdentityEdits,
   identityDecisionFor, identityProposalFor, isEmptyEdit,
 } from './contactIdentity.js';
-import { nameDecisionFromDraft, nameDraftFromProposal, legacyIdFromNameKey } from './nameCleanup.js';
+import { nameDecisionFromDraft, nameDraftFromProposal, legacyIdFromNameKey, openLinked, wonLinked } from './nameCleanup.js';
 import { buildReadiness, foldStatus } from './readiness.js';
 import { normalizePhoneIntl } from '../../whatsapp/phone.js';
 
@@ -371,7 +371,13 @@ export async function listQueue(client, queueKey, { status = null, filter = null
     // fail outright. Computed over ALL rows so the counter never depends on the
     // section on screen — this is the number that keeps the readiness gate red.
     if (queueKey === 'name_cleanup') {
-      extra.blockingUnresolved = rows.filter((r) => r.proposal?.blocking === true && !isResolved(r.status)).length;
+      const pendingBlocking = rows.filter((r) => r.proposal?.blocking === true && !isResolved(r.status));
+      extra.blockingUnresolved = pendingBlocking.length;
+      // The owner's two focused review queues over the blocking rows:
+      // OPEN-linked is the highest-priority section; WON-linked (without OPEN) is
+      // "נדרש לעבור — מקושר לעסקת WON". Both include secondary-participant links.
+      extra.openLinkedUnresolved = pendingBlocking.filter((r) => openLinked(r.proposal)).length;
+      extra.wonLinkedUnresolved = pendingBlocking.filter((r) => wonLinked(r.proposal) && !openLinked(r.proposal)).length;
     }
   }
 

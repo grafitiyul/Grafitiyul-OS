@@ -50,14 +50,33 @@ await stream('pipedrive/persons', (p) => {
     dealCount: 0, activeDealCount: 0, futureTourDeals: 0, openDealCount: 0,
     wonRecentDealCount: 0, activityCount: 0, noteCount: 0, fileCount: 0,
     participantCount: 0, dealStatuses: [],
+    dealStatusCounts: {}, participantStatusCounts: {}, primaryDeals: [], participantDeals: [],
   });
 });
 const deals = [];
+const dealById = new Map();
+const DEAL_LIST_CAP = 25; // bounds proposal size; exact totals live in the counts
+const dealBrief = (d) => ({
+  id: d.id, title: d.title, status: d.status,
+  wonTime: d.wonTime ? String(d.wonTime).slice(0, 10) : null,
+  orgName: d.orgName,
+});
 await stream('pipedrive/deals', (d) => {
   const personId = pid(d.person_id);
   const orgId = pid(d.org_id);
   const c = contacts.get(personId);
   const future = hasFutureTour(d, today);
+  const rec = {
+    id: d.id, title: String(d.title || '').trim(), status: d.status,
+    archived: d.is_archived === true || d.archived === true,
+    personId, orgId, orgName: orgId != null ? orgNames.get(orgId) || null : null,
+    personName: c?.name || null,
+    tourDate: d[DEAL_TOURDATE] ? String(d[DEAL_TOURDATE]).slice(0, 10) : null,
+    wonTime: d.won_time || null,
+    value: d.value, isActive: isActiveDeal(d, today),
+  };
+  deals.push(rec);
+  dealById.set(rec.id, rec);
   if (c) {
     c.dealCount++;
     if (isActiveDeal(d, today)) c.activeDealCount++;
@@ -65,22 +84,28 @@ await stream('pipedrive/deals', (d) => {
     if (d.status === 'open') c.openDealCount++;
     else if (d.status === 'won' && !future && String(d.won_time || '').slice(0, 10) >= recentCut) c.wonRecentDealCount++;
     if (c.dealStatuses.length < 8) c.dealStatuses.push(d.status);
+    // Exact per-status counts + a bounded detail list — the evidence the
+    // owner-approved deletion rule and the WON-review queue both run on.
+    c.dealStatusCounts[d.status] = (c.dealStatusCounts[d.status] || 0) + 1;
+    if (c.primaryDeals.length < DEAL_LIST_CAP) c.primaryDeals.push(dealBrief(rec));
   }
-  deals.push({
-    id: d.id, title: String(d.title || '').trim(), status: d.status,
-    archived: d.is_archived === true || d.archived === true,
-    personId, orgId, orgName: orgId != null ? orgNames.get(orgId) || null : null,
-    personName: c?.name || null,
-    tourDate: d[DEAL_TOURDATE] ? String(d[DEAL_TOURDATE]).slice(0, 10) : null,
-    value: d.value, isActive: isActiveDeal(d, today),
-  });
 });
 const bump = (v, f) => { const c = contacts.get(pid(v)); if (c) c[f]++; };
 await stream('pipedrive/activities', (a) => bump(a.person_id, 'activityCount'));
 await stream('pipedrive/notes', (n) => bump(n.person_id, 'noteCount'));
 await stream('pipedrive/files', (f) => bump(f.person_id, 'fileCount'));
 // A secondary participant owns no deal of its own but is NOT an empty shell.
-const partCount = await stream('pipedrive/deal_participants', (l) => bump(l.person_id, 'participantCount'));
+// The link's DEAL STATUS matters too: the owner-approved deletion rule blocks on
+// a WON/OPEN participant link exactly like a WON/OPEN primary deal.
+const partCount = await stream('pipedrive/deal_participants', (l) => {
+  const c = contacts.get(pid(l.person_id));
+  if (!c) return;
+  c.participantCount++;
+  const d = dealById.get(l.deal_id);
+  if (!d) { c.participantStatusCounts.unknown = (c.participantStatusCounts.unknown || 0) + 1; return; }
+  c.participantStatusCounts[d.status] = (c.participantStatusCounts[d.status] || 0) + 1;
+  if (c.participantDeals.length < DEAL_LIST_CAP) c.participantDeals.push(dealBrief(d));
+});
 if (partCount === -1) { console.error('ABORT: pipedrive/deal_participants is not in this snapshot.'); process.exit(1); }
 console.log(`  persons ${contacts.size} · deals ${deals.length} · orgs ${orgNames.size} · participant links ${partCount}`);
 

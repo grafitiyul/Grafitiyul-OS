@@ -193,6 +193,27 @@ function proposeFor({ first, last, sf, sl, issues }) {
 export const zeroDealOrgDefault = (proposal) =>
   (proposal?.context?.dealCount || 0) === 0 && (proposal?.context?.participantCount || 0) === 0;
 
+// Exact open/won/lost splits; anything else — and any shortfall against the total
+// count — lands in `other`, which BLOCKS deletion. Unknown is never LOST.
+export function statusCounts(raw, total) {
+  const src = raw || {};
+  const open = src.open || 0;
+  const won = src.won || 0;
+  const lost = src.lost || 0;
+  const nonStandard = Object.entries(src)
+    .filter(([k]) => !['open', 'won', 'lost'].includes(k))
+    .reduce((n, [, v]) => n + (v || 0), 0);
+  const accountedAll = open + won + lost + nonStandard;
+  return { open, won, lost, other: nonStandard + Math.max(0, (Number(total) || 0) - accountedAll) };
+}
+
+// Link classification for the owner's review queues. OPEN outranks WON: a record
+// touching an open deal goes to the highest-priority section, never auto-deleted.
+export const openLinked = (p) =>
+  (p?.context?.dealStatusCounts?.open || 0) + (p?.context?.participantStatusCounts?.open || 0) > 0;
+export const wonLinked = (p) =>
+  (p?.context?.dealStatusCounts?.won || 0) + (p?.context?.participantStatusCounts?.won || 0) > 0;
+
 export const nameSubjectKey = (legacyId) => `name:${legacyId}`;
 export const legacyIdFromNameKey = (k) => {
   const m = /^name:(\d+)$/.exec(String(k || ''));
@@ -242,9 +263,16 @@ export function buildNameProposal(person, analysis) {
       activityCount: person.activityCount || 0,
       noteCount: person.noteCount || 0,
       fileCount: person.fileCount || 0,
-      // Secondary participation on someone else's deal — part of the DELETION
-      // safety boundary: a record that participates anywhere is never deletable.
+      // Secondary participation on someone else's deal.
       participantCount: person.participantCount || 0,
+      // Per-status evidence for the owner-approved deletion rule. `other` absorbs
+      // any status that is not open/won/lost AND any deal the counts cannot
+      // account for — unknown status is never treated as LOST (fail-safe).
+      dealStatusCounts: statusCounts(person.dealStatusCounts, person.dealCount),
+      participantStatusCounts: statusCounts(person.participantStatusCounts, person.participantCount),
+      // Bounded detail lists for the WON-review queue (id/title/status/wonTime/org).
+      primaryDeals: person.primaryDeals || [],
+      participantDeals: person.participantDeals || [],
       operationallyActive: (person.openDealCount || 0) > 0 || (person.futureTourDeals || 0) > 0,
     },
     importable: importableNow,
@@ -374,29 +402,43 @@ export function resolveNameResult(proposal, draft, ctx = {}) {
   // internally for audit integrity — nothing here can touch it — but it never
   // resurfaces as an entity or actionable record.
   //
-  // SAFETY BOUNDARY: deletable only when the record owns ZERO deals AND appears
-  // as a secondary participant on ZERO deals. Activities, notes and files do NOT
-  // block — per the business rule, old noise does not justify keeping a record.
+  // SAFETY BOUNDARY (owner-approved rule, 2026-07-16): deletable only when the
+  // record has NO WON and NO OPEN deal — as primary contact AND as a secondary
+  // participant. LOST deals never block (LOST-only history is exactly what the
+  // rule deletes), and neither do activities, notes or files. A deal whose status
+  // cannot be proven (missing splits, unknown status, unresolvable participant
+  // link) BLOCKS — unknown is never treated as LOST.
   let deleted = null;
   if (isDeleted) {
     const cxx = proposal.context || {};
-    const deals = cxx.dealCount ?? 0;
-    // Fail-safe: a proposal seeded before participant links were extracted cannot
-    // prove the boundary — refuse rather than guess.
-    const participants = cxx.participantCount ?? null;
-    if (deals > 0) problems.push(`לא ניתן למחוק: ${deals} עסקאות מקושרות לרשומה הזו`);
-    if (participants === null) problems.push('לא ניתן למחוק: נתוני משתתפים משניים חסרים בהצעה — רענן את ההצעות');
-    else if (participants > 0) problems.push(`לא ניתן למחוק: הרשומה מופיעה כמשתתף משני ב-${participants} עסקאות`);
+    // Re-normalized HERE against the totals, never trusted from the proposal:
+    // any deal the splits cannot account for lands in `other`, which blocks. So a
+    // stale/tampered proposal can never claim "no deals" while carrying a count.
+    const ds = statusCounts(cxx.dealStatusCounts, cxx.dealCount);
+    const ps = statusCounts(cxx.participantStatusCounts, cxx.participantCount);
+    if (ds.open > 0) problems.push(`לא ניתן למחוק: ${ds.open} עסקאות פתוחות מקושרות לרשומה`);
+    if (ds.won > 0) problems.push(`לא ניתן למחוק: ${ds.won} עסקאות WON מקושרות לרשומה`);
+    if (ds.other > 0) problems.push(`לא ניתן למחוק: ${ds.other} עסקאות בסטטוס לא מוכר — לא ניתן להוכיח שהן LOST`);
+    if (ps.open > 0) problems.push(`לא ניתן למחוק: משתתף משני ב-${ps.open} עסקאות פתוחות`);
+    if (ps.won > 0) problems.push(`לא ניתן למחוק: משתתף משני ב-${ps.won} עסקאות WON`);
+    if (ps.other > 0) problems.push(`לא ניתן למחוק: משתתף משני ב-${ps.other} עסקאות בסטטוס לא מוכר`);
+    const lostTotal = ds.lost + ps.lost;
+    if (lostTotal > 0) warnings.push(`נמחק עם היסטוריית LOST בלבד (${lostTotal} עסקאות) — לפי כלל העסק היא אינה סיבה לשמור את הרשומה`);
     const noise = [];
     if (cxx.activityCount) noise.push(`${cxx.activityCount} פעילויות`);
     if (cxx.noteCount) noise.push(`${cxx.noteCount} הערות`);
     if (cxx.fileCount) noise.push(`${cxx.fileCount} קבצים`);
     if (noise.length) warnings.push(`נמחק למרות ${noise.join(', ')} — לפי כלל העסק הם אינם סיבה לשמור את הרשומה`);
     deleted = {
-      // Evidence counts AT DECISION TIME — the proof the boundary held.
+      // Evidence AT DECISION TIME — the proof the boundary held: exact ids and
+      // statuses on both relationship kinds, plus the per-status counts.
       evidence: {
-        dealCount: deals,
-        participantCount: participants,
+        dealCount: cxx.dealCount ?? 0,
+        participantCount: cxx.participantCount ?? 0,
+        dealStatusCounts: ds,
+        participantStatusCounts: ps,
+        primaryDeals: (cxx.primaryDeals || []).map((d) => ({ id: d.id, status: d.status })),
+        participantDeals: (cxx.participantDeals || []).map((d) => ({ id: d.id, status: d.status })),
         activityCount: cxx.activityCount || 0,
         noteCount: cxx.noteCount || 0,
         fileCount: cxx.fileCount || 0,

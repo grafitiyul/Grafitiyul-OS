@@ -3,7 +3,7 @@ import { useOutletContext } from 'react-router-dom';
 import { migrationApi } from '../api.js';
 import { num, dateTime } from '../components/format.js';
 import SourceRecord from '../components/SourceRecord.jsx';
-import { nameDraftFromProposal, resolveNameResult, COUNTRIES, zeroDealOrgDefault } from '../components/namePreview.js';
+import { nameDraftFromProposal, resolveNameResult, COUNTRIES, zeroDealOrgDefault, openLinked, wonLinked } from '../components/namePreview.js';
 
 const SECTIONS = [
   { key: 'critical', emoji: '🔥', label: 'קריטי לפני ייבוא', cls: 'bg-red-50 border-red-200 text-red-800' },
@@ -29,9 +29,11 @@ const FIELDS = [
 export default function NameCleanupTab() {
   const { reload } = useOutletContext() || {};
   const [section, setSection] = useState('critical');
-  // The mandatory view: only rows whose import would FAIL (the readiness-gate
-  // blocker). Spans sections, so it replaces the section filter while active.
-  const [mustOnly, setMustOnly] = useState(false);
+  // Cross-section focused views over the blocking rows: 'must' (all blockers),
+  // 'open' (highest priority — linked to an OPEN deal), 'won' (the owner's
+  // "נדרש לעבור — מקושר לעסקת WON" queue). null = the normal section browsing.
+  const [view, setView] = useState(null);
+  const mustOnly = view !== null;
   const [showResolved, setShowResolved] = useState(false);
   const [data, setData] = useState(null);
   const [openId, setOpenId] = useState(null);
@@ -75,7 +77,11 @@ export default function NameCleanupTab() {
   useEffect(() => { load(); }, [load]);
 
   const shown = mustOnly
-    ? (data?.decisions || []).filter((d) => d.proposal.blocking)
+    ? (data?.decisions || []).filter((d) =>
+        d.proposal.blocking &&
+        (view === 'open' ? openLinked(d.proposal)
+          : view === 'won' ? wonLinked(d.proposal) && !openLinked(d.proposal)
+          : true))
     : data?.decisions || [];
   const selected = shown.find((d) => d.id === openId) || null;
   // The mirror resolves with the same context the server will use on save: the
@@ -176,15 +182,29 @@ export default function NameCleanupTab() {
         {/* The MANDATORY work — the exact rows keeping the readiness gate red.
             A validation dimension, not a business-impact section: the same rows
             also live inside historical/low, and this chip cuts across them. */}
+        {(data.openLinkedUnresolved ?? 0) > 0 && (
+          <button type="button"
+            onClick={() => { setView(view === 'open' ? null : 'open'); setOpenId(null); setDraft(null); }}
+            className={`text-[12px] px-2.5 py-1.5 rounded-lg border transition font-bold ${
+              view === 'open' ? 'bg-red-700 border-red-700 text-white' : 'bg-red-100 border-red-400 text-red-900 hover:bg-red-200'}`}>
+            🔴 עסקה פתוחה — עדיפות עליונה ({num(data.openLinkedUnresolved)})
+          </button>
+        )}
         <button type="button"
-          onClick={() => { setMustOnly(!mustOnly); setOpenId(null); setDraft(null); }}
+          onClick={() => { setView(view === 'won' ? null : 'won'); setOpenId(null); setDraft(null); }}
           className={`text-[12px] px-2.5 py-1.5 rounded-lg border transition font-semibold ${
-            mustOnly ? 'bg-red-600 border-red-600 text-white' : (data.blockingUnresolved ? 'bg-red-50 border-red-300 text-red-800 hover:bg-red-100' : 'bg-green-50 border-green-200 text-green-800')}`}>
+            view === 'won' ? 'bg-amber-600 border-amber-600 text-white' : (data.wonLinkedUnresolved ? 'bg-amber-50 border-amber-300 text-amber-900 hover:bg-amber-100' : 'bg-green-50 border-green-200 text-green-800')}`}>
+          💰 נדרש לעבור — מקושר לעסקת WON ({num(data.wonLinkedUnresolved ?? 0)})
+        </button>
+        <button type="button"
+          onClick={() => { setView(view === 'must' ? null : 'must'); setOpenId(null); setDraft(null); }}
+          className={`text-[12px] px-2.5 py-1.5 rounded-lg border transition font-semibold ${
+            view === 'must' ? 'bg-red-600 border-red-600 text-white' : (data.blockingUnresolved ? 'bg-red-50 border-red-300 text-red-800 hover:bg-red-100' : 'bg-green-50 border-green-200 text-green-800')}`}>
           ⛔ חובה לפני ייבוא — הייבוא ייכשל ({num(data.blockingUnresolved ?? 0)})
         </button>
         {SECTIONS.map((s) => (
           <button key={s.key} type="button"
-            onClick={() => { setMustOnly(false); setSection(s.key); setOpenId(null); setDraft(null); }}
+            onClick={() => { setView(null); setSection(s.key); setOpenId(null); setDraft(null); }}
             className={`text-[12px] px-2.5 py-1.5 rounded-lg border transition ${!mustOnly && section === s.key ? `${s.cls} font-semibold` : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
             {s.emoji} {s.label} <span className="opacity-70">({num(counts[s.key] ?? 0)})</span>
           </button>
@@ -196,9 +216,19 @@ export default function NameCleanupTab() {
           הצג גם רשומות שכבר הוכרעו
         </label>
         <span className="text-[12px] text-gray-400">{num(shown.length)} מוצגות</span>
-        {mustOnly && (
+        {view === 'must' && (
           <span className="text-[12px] text-red-700">
             אלה הרשומות היחידות שעדיין חוסמות את ייבוא הזהויות — כל השאר רשות.
+          </span>
+        )}
+        {view === 'open' && (
+          <span className="text-[12px] text-red-800 font-semibold">
+            מקושרות לעסקה פתוחה — לעולם לא נמחקות אוטומטית. נדרשת הכרעה ידנית.
+          </span>
+        )}
+        {view === 'won' && (
+          <span className="text-[12px] text-amber-800">
+            מקושרות לעסקת WON (כולל כמשתתף משני) — הכלל האוטומטי לא נגע בהן.
           </span>
         )}
       </div>
@@ -281,6 +311,33 @@ export default function NameCleanupTab() {
                 </div>
               </div>
 
+              {/* The WON/OPEN deals that kept this record out of the automatic rule —
+                  with the exact link kind, per the owner's review-queue spec. */}
+              {(wonLinked(selected.proposal) || openLinked(selected.proposal)) && (
+                <div className="bg-white border border-amber-200 rounded-xl p-4">
+                  <h3 className="text-sm font-semibold text-gray-900 mb-2">העסקאות שמחייבות הכרעה</h3>
+                  <ul className="space-y-1.5">
+                    {[
+                      ...(selected.proposal.context.primaryDeals || []).map((d) => ({ ...d, role: 'איש קשר ראשי' })),
+                      ...(selected.proposal.context.participantDeals || []).map((d) => ({ ...d, role: 'משתתף משני' })),
+                    ]
+                      .filter((d) => d.status === 'won' || d.status === 'open')
+                      .map((d) => (
+                        <li key={`${d.role}-${d.id}`} className="text-[12px] border border-gray-100 rounded-lg px-2.5 py-1.5 flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded ${d.status === 'open' ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+                            {d.status === 'open' ? 'פתוחה' : 'WON'}
+                          </span>
+                          <span className="text-gray-400">#{d.id}</span>
+                          <span className="text-gray-900 font-medium">{d.title || '(ללא כותרת)'}</span>
+                          <span className="text-[11px] text-gray-500">{d.role}</span>
+                          {d.wonTime && <span className="text-[11px] text-gray-500">נסגרה: {d.wonTime}</span>}
+                          {d.orgName && <span className="text-[11px] text-gray-500">ארגון: {d.orgName}</span>}
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+              )}
+
               {source && (
                 <div className="bg-white border border-gray-200 rounded-xl p-3">
                   <div className="flex justify-between items-center mb-2">
@@ -306,9 +363,13 @@ export default function NameCleanupTab() {
                     צילום המקור הגולמי נשמר רק לצורכי ביקורת.
                   </div>
                   <div className="text-[11px] text-gray-500 mb-2">
-                    בדיקת בטיחות: עסקאות {num(selected.proposal.context.dealCount)} ·
-                    קישורי משתתף משני {selected.proposal.context.participantCount ?? '?'} ·
-                    (פעילויות {num(selected.proposal.context.activityCount)}, הערות {num(selected.proposal.context.noteCount)} — אינן חוסמות)
+                    בדיקת בטיחות — עסקאות ראשיות: פתוחות {selected.proposal.context.dealStatusCounts?.open ?? '?'} ·
+                    WON {selected.proposal.context.dealStatusCounts?.won ?? '?'} ·
+                    LOST {selected.proposal.context.dealStatusCounts?.lost ?? '?'} ·
+                    כמשתתף משני: פתוחות {selected.proposal.context.participantStatusCounts?.open ?? '?'} ·
+                    WON {selected.proposal.context.participantStatusCounts?.won ?? '?'} ·
+                    LOST {selected.proposal.context.participantStatusCounts?.lost ?? '?'}
+                    <span className="block">(פעילויות {num(selected.proposal.context.activityCount)}, הערות {num(selected.proposal.context.noteCount)} — לעולם אינן חוסמות; LOST אינו חוסם)</span>
                   </div>
                   {result?.problems?.map((p) => (
                     <p key={p} className="text-[12px] text-red-800 bg-red-50 border border-red-200 rounded px-2 py-1 mb-1">{p}</p>

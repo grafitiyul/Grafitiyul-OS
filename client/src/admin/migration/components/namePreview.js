@@ -6,6 +6,17 @@
 // between this mirror and the server surfaces as a 400 with the server's reasons.
 const t = (s) => String(s ?? '').trim().replace(/\s+/g, ' ');
 
+// Mirror of server statusCounts(): exact open/won/lost; any unexplained deal
+// lands in `other`, which blocks deletion (unknown is never LOST).
+export function statusCountsOf(raw, total) {
+  const src = raw || {};
+  const open = src.open || 0, won = src.won || 0, lost = src.lost || 0;
+  const nonStandard = Object.entries(src)
+    .filter(([k]) => !['open', 'won', 'lost'].includes(k))
+    .reduce((n, [, v]) => n + (v || 0), 0);
+  return { open, won, lost, other: nonStandard + Math.max(0, (Number(total) || 0) - (open + won + lost + nonStandard)) };
+}
+
 // ── countries (mirror of server namePhones.js) ───────────────────────────────
 export const COUNTRIES = [
   { code: 'IL', dial: '972', label: 'ישראל (+972)', nationalLen: [8, 9] },
@@ -171,22 +182,28 @@ export function resolveNameResult(proposal, draft, ctx = {}) {
   const warnings = [];
   if (!excluded && !isOrg && !isDeleted && !fields.firstNameHe && !fields.firstNameEn) problems.push('חובה שם פרטי — בעברית או באנגלית');
 
-  // "זו שטות מוחלטת — מחק": deletable only at 0 deals AND 0 participant links.
-  // Activities/notes/files never block (the business rule), but are listed.
+  // "זו שטות מוחלטת — מחק": the owner-approved boundary — WON/OPEN deals block
+  // (primary AND secondary-participant), LOST never blocks, unknown status is
+  // never treated as LOST. Activities/notes/files never block, but are listed.
   let deleted = null;
   if (isDeleted) {
     const cxx = proposal.context || {};
-    const deals = cxx.dealCount ?? 0;
-    const participants = cxx.participantCount ?? null;
-    if (deals > 0) problems.push(`לא ניתן למחוק: ${deals} עסקאות מקושרות לרשומה הזו`);
-    if (participants === null) problems.push('לא ניתן למחוק: נתוני משתתפים משניים חסרים בהצעה — רענן את ההצעות');
-    else if (participants > 0) problems.push(`לא ניתן למחוק: הרשומה מופיעה כמשתתף משני ב-${participants} עסקאות`);
+    const ds = statusCountsOf(cxx.dealStatusCounts, cxx.dealCount);
+    const ps = statusCountsOf(cxx.participantStatusCounts, cxx.participantCount);
+    if (ds.open > 0) problems.push(`לא ניתן למחוק: ${ds.open} עסקאות פתוחות מקושרות לרשומה`);
+    if (ds.won > 0) problems.push(`לא ניתן למחוק: ${ds.won} עסקאות WON מקושרות לרשומה`);
+    if (ds.other > 0) problems.push(`לא ניתן למחוק: ${ds.other} עסקאות בסטטוס לא מוכר — לא ניתן להוכיח שהן LOST`);
+    if (ps.open > 0) problems.push(`לא ניתן למחוק: משתתף משני ב-${ps.open} עסקאות פתוחות`);
+    if (ps.won > 0) problems.push(`לא ניתן למחוק: משתתף משני ב-${ps.won} עסקאות WON`);
+    if (ps.other > 0) problems.push(`לא ניתן למחוק: משתתף משני ב-${ps.other} עסקאות בסטטוס לא מוכר`);
+    const lostTotal = ds.lost + ps.lost;
+    if (lostTotal > 0) warnings.push(`נמחק עם היסטוריית LOST בלבד (${lostTotal} עסקאות) — לפי כלל העסק היא אינה סיבה לשמור את הרשומה`);
     const noise = [];
     if (cxx.activityCount) noise.push(`${cxx.activityCount} פעילויות`);
     if (cxx.noteCount) noise.push(`${cxx.noteCount} הערות`);
     if (cxx.fileCount) noise.push(`${cxx.fileCount} קבצים`);
     if (noise.length) warnings.push(`נמחק למרות ${noise.join(', ')} — לפי כלל העסק הם אינם סיבה לשמור את הרשומה`);
-    deleted = { evidence: { dealCount: deals, participantCount: participants, activityCount: cxx.activityCount || 0, noteCount: cxx.noteCount || 0, fileCount: cxx.fileCount || 0 } };
+    deleted = { evidence: { dealCount: cxx.dealCount ?? 0, participantCount: cxx.participantCount ?? 0, dealStatusCounts: ds, participantStatusCounts: ps } };
   }
 
   let organization = null;
@@ -248,3 +265,9 @@ export function resolveNameResult(proposal, draft, ctx = {}) {
 // may explicitly keep it instead.
 export const zeroDealOrgDefault = (proposal) =>
   (proposal?.context?.dealCount || 0) === 0 && (proposal?.context?.participantCount || 0) === 0;
+
+// Link classification (mirror of server): OPEN outranks WON.
+export const openLinked = (p) =>
+  (p?.context?.dealStatusCounts?.open || 0) + (p?.context?.participantStatusCounts?.open || 0) > 0;
+export const wonLinked = (p) =>
+  (p?.context?.dealStatusCounts?.won || 0) + (p?.context?.participantStatusCounts?.won || 0) > 0;

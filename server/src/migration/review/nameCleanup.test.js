@@ -12,9 +12,14 @@ const c = (o) => ({
   legacyId: o.id, name: o.name ?? `${o.first || ''} ${o.last || ''}`.trim(),
   firstName: o.first ?? null, lastName: o.last ?? null,
   phones: o.phones || [], emails: o.emails || [], orgId: o.orgId ?? null, orgName: o.orgName ?? null,
-  dealCount: o.deals || 0, openDealCount: o.open || 0, futureTourDeals: o.tours || 0,
+  dealCount: o.deals ?? (o.open || 0) + (o.won || 0) + (o.lost || 0),
+  openDealCount: o.open || 0, futureTourDeals: o.tours || 0,
   wonRecentDealCount: o.wonRecent || 0, activityCount: o.acts || 0, noteCount: o.notes || 0,
-  fileCount: o.files || 0, participantCount: o.parts || 0,
+  fileCount: o.files || 0,
+  participantCount: o.parts ?? (o.pOpen || 0) + (o.pWon || 0) + (o.pLost || 0),
+  dealStatusCounts: { open: o.open || 0, won: o.won || 0, lost: o.lost || 0 },
+  participantStatusCounts: { open: o.pOpen || 0, won: o.pWon || 0, lost: o.pLost || 0 },
+  primaryDeals: o.primaryDeals || [], participantDeals: o.participantDeals || [],
 });
 
 test('the canonical GOS rule is mirrored exactly: a first name in EITHER language', () => {
@@ -323,43 +328,63 @@ test('a deleted record produces NOTHING: no contact, no organisation, no phones,
   assert.equal(d.result.phones, null);
   assert.deepEqual(d.result.emails, []);
   assert.equal(d.result.organization, null);
-  // Evidence counts at decision time — the audit proof the boundary held.
-  assert.deepEqual(d.deleted.evidence, { dealCount: 0, participantCount: 0, activityCount: 5, noteCount: 3, fileCount: 0 });
+  // Evidence at decision time — the audit proof the boundary held.
+  assert.equal(d.deleted.evidence.dealCount, 0);
+  assert.equal(d.deleted.evidence.participantCount, 0);
+  assert.deepEqual(d.deleted.evidence.dealStatusCounts, { open: 0, won: 0, lost: 0, other: 0 });
+  assert.deepEqual(d.deleted.evidence.participantStatusCounts, { open: 0, won: 0, lost: 0, other: 0 });
+  assert.equal(d.deleted.evidence.activityCount, 5);
   assert.deepEqual(d.deleted.source, { entity: 'pipedrive/persons', id: 1 });
   // Name validation deliberately does NOT apply — garbage needs no first name.
   assert.ok(!d.result.problems.length);
 });
 
-test('THE SAFETY BOUNDARY: deals block deletion, participant links block deletion, noise does not', () => {
+test('THE SAFETY BOUNDARY (owner rule): WON/OPEN block deletion — LOST never does', () => {
   const build = (o) => {
     const { proposals } = buildNameCleanupProposals({ contacts: [c({ id: 9, first: '', last: 'ארגון כלשהו', ...o })] });
     const p = proposals[0];
     return resolveNameResult(p, { ...nameDraftFromProposal(p, null), treatment: 'deleted' });
   };
-  const withDeal = build({ deals: 2 });
-  assert.equal(withDeal.valid, false);
-  assert.match(withDeal.problems.join(' '), /2 עסקאות/, 'says exactly what is linked');
+  // WON blocks — primary and secondary alike.
+  const won = build({ won: 2 });
+  assert.equal(won.valid, false);
+  assert.match(won.problems.join(' '), /2 עסקאות WON/, 'names exactly what is linked');
+  const pWon = build({ pWon: 1 });
+  assert.equal(pWon.valid, false);
+  assert.match(pWon.problems.join(' '), /משתתף משני ב-1 עסקאות WON/);
 
-  const withPart = build({ parts: 3 });
-  assert.equal(withPart.valid, false);
-  assert.match(withPart.problems.join(' '), /משתתף משני ב-3/, 'participant links named too');
+  // OPEN blocks — primary and secondary alike.
+  const open = build({ open: 1 });
+  assert.equal(open.valid, false);
+  assert.match(open.problems.join(' '), /1 עסקאות פתוחות/);
+  const pOpen = build({ pOpen: 2 });
+  assert.equal(pOpen.valid, false);
+  assert.match(pOpen.problems.join(' '), /משתתף משני ב-2 עסקאות פתוחות/);
 
+  // LOST-only history is exactly what the rule deletes — disclosed, never blocked.
+  const lostOnly = build({ lost: 3, pLost: 1 });
+  assert.equal(lostOnly.valid, true, 'LOST never blocks — the owner-approved rule');
+  assert.match(lostOnly.warnings.join(' '), /היסטוריית LOST בלבד \(4 עסקאות\)/);
+
+  // Noise never blocks either.
   const noisy = build({ acts: 12, notes: 7, files: 2 });
-  assert.equal(noisy.valid, true, 'activities/notes/files never block — the business rule');
-  assert.match(noisy.warnings.join(' '), /12 פעילויות, 7 הערות, 2 קבצים/, 'but they are disclosed');
+  assert.equal(noisy.valid, true);
+  assert.match(noisy.warnings.join(' '), /12 פעילויות, 7 הערות, 2 קבצים/, 'but disclosed');
 });
 
-test('a proposal that cannot PROVE the participant boundary refuses deletion (fail-safe)', () => {
-  // A proposal seeded before participant links existed carries no participantCount.
+test('a deal whose status cannot be PROVEN blocks deletion — unknown is never LOST', () => {
+  // dealCount says 2 but the splits explain none of them (a stale/tampered
+  // proposal, or one seeded before statuses were collected).
   const p = {
     legacyId: 5, displayName: 'ישן', treatment: 'import',
     original: { name: 'ישן', first_name: '', last_name: 'ישן' },
     proposedFields: { firstNameHe: 'ישן', lastNameHe: '', firstNameEn: '', lastNameEn: '' },
-    context: { phones: [], emails: [], dealCount: 0, activityCount: 0, noteCount: 0 }, // no participantCount
+    context: { phones: [], emails: [], dealCount: 2, participantCount: 3, activityCount: 0, noteCount: 0 },
   };
   const r = resolveNameResult(p, { ...nameDraftFromProposal(p, null), treatment: 'deleted' });
   assert.equal(r.valid, false);
-  assert.match(r.problems.join(' '), /נתוני משתתפים משניים חסרים/);
+  assert.match(r.problems.join(' '), /2 עסקאות בסטטוס לא מוכר/);
+  assert.match(r.problems.join(' '), /משתתף משני ב-3 עסקאות בסטטוס לא מוכר/);
 });
 
 test('subject keys are stable and per source contact', () => {
