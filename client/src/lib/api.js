@@ -602,14 +602,16 @@ export const api = {
       request('/api/workshop-locations/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
   },
   // ── CRM Tasks WORKSPACE (the first CRM tab) — cross-deal grid + chip counts.
-  // READ-ONLY. Writes still go through `dealTasks` below: every grid row carries
-  // its dealId, so inline edits reuse the ONE existing task write path instead
-  // of opening a second one.
+  // Writes here and the deal-scoped routes below both delegate to the SAME
+  // canonical server write path (taskService) — one implementation, two doors.
   tasks: {
     // `query` is a pre-serialized string from taskFilters.filtersToQuery — the
     // canonical filter object is built there, never assembled here.
     list: (query) => request(`/api/tasks${query ? `?${query}` : ''}`),
     counts: (query) => request(`/api/tasks/counts${query ? `?${query}` : ''}`),
+    update: (id, data) => request(`/api/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    // Per-row results; partial failure is the normal case, never blanket success.
+    bulk: (data) => request('/api/tasks/bulk', { method: 'POST', body: JSON.stringify(data) }),
   },
   // ── Deal Tasks (משימות) — future actions on a deal ───────────────
   dealTasks: {

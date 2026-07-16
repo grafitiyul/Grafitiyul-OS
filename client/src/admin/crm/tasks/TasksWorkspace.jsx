@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import { hasDirtyForms } from '../../../lib/dirtyForms.js';
 import DealDrawer from '../../common/DealDrawer.jsx';
+import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 import { dealPath } from '../../deals/config.js';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell, COL_SEP } from '../../common/tableColumns.jsx';
 import { toggleSortKey, sortFromParam } from '../../common/tableColumnsCore.js';
@@ -29,6 +30,22 @@ import {
 // consolidates it behind taskService when bulk actions arrive).
 
 const PAGE_SIZE = 50;
+
+// Server error codes → operator Hebrew. Every per-row bulk failure and every
+// refused inline edit speaks through this map.
+const WRITE_ERRORS = {
+  task_not_found: 'המשימה לא נמצאה',
+  task_not_open: 'המשימה אינה פתוחה',
+  whatsapp_type_locked: 'משימת וואטסאפ מתוזמנת — הסוג נעול',
+  type_channel_not_allowed: 'לא ניתן להפוך משימה למשימת וואטסאפ',
+  scheduled_not_editable: 'ההודעה המתוזמנת כבר אינה ניתנת לעריכה',
+  scheduled_at_past: 'מועד השליחה המתוזמן כבר עבר',
+  owner_not_found: 'האחראי לא נמצא',
+  invalid_task_type: 'סוג משימה לא קיים',
+  nothing_to_update: 'אין מה לעדכן',
+  internal: 'שגיאה פנימית',
+};
+const writeError = (code) => WRITE_ERRORS[code] || code || 'שגיאה';
 
 const CHIP_TONE = {
   primary: 'bg-emerald-600 text-white ring-emerald-600',
@@ -86,6 +103,9 @@ export default function TasksWorkspace() {
   const [cursor, setCursor] = useState(0);
   const [editing, setEditing] = useState(null); // { rowId, colKey }
   const [savingId, setSavingId] = useState(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkReport, setBulkReport] = useState(null); // { action, succeeded, failed:[{id,error}] }
+  const [confirmCancel, setConfirmCancel] = useState(false);
   // The drawer follows a ROW index, not a deal id: consecutive rows may share a
   // Deal (two tasks on one deal), and prev/next walks the filtered ROW order —
   // deduping would make the position indicator lie.
@@ -220,15 +240,19 @@ export default function TasksWorkspace() {
 
   const allVisibleSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
 
-  // ── writes: reuse the EXISTING deal-scoped task endpoints ──
+  // ── writes: the canonical path (taskService via /api/tasks) ──
+  // Single-row complete rides the SAME bulk endpoint with one id, so there is
+  // literally one transition code path however a task gets completed.
   async function completeRow(row) {
     if (row.status !== 'open') return;
     setSavingId(row.id);
     try {
-      await api.dealTasks.complete(row.deal.id, row.id);
+      const res = await api.tasks.bulk({ action: 'complete', ids: [row.id] });
+      const fail = res.results.find((r) => !r.ok);
+      if (fail) setError(writeError(fail.error));
       await load();
     } catch (e) {
-      setError(e.payload?.error || e.message);
+      setError(writeError(e.payload?.error) || e.message);
     } finally {
       setSavingId(null);
     }
@@ -237,15 +261,34 @@ export default function TasksWorkspace() {
   async function saveCell(row, data2) {
     setSavingId(row.id);
     try {
-      await api.dealTasks.update(row.deal.id, row.id, data2);
+      await api.tasks.update(row.id, data2);
       setEditing(null);
       await load();
     } catch (e) {
-      // 409 task_not_open is the real contract: a terminal task is read-only.
-      setError(e.payload?.error === 'task_not_open' ? 'לא ניתן לערוך משימה שאינה פתוחה' : e.payload?.error || e.message);
+      setError(writeError(e.payload?.error) || e.message);
       setEditing(null);
     } finally {
       setSavingId(null);
+    }
+  }
+
+  // ── bulk over the selection ──
+  async function runBulk(action, payload = {}) {
+    const ids = [...selected];
+    if (!ids.length || bulkBusy) return;
+    setBulkBusy(true);
+    setError('');
+    try {
+      const res = await api.tasks.bulk({ action, ids, ...payload });
+      const failed = res.results.filter((r) => !r.ok);
+      setBulkReport(failed.length ? { action, succeeded: res.succeeded, failed } : null);
+      // Failures stay selected so the operator can see and retry exactly them.
+      setSelected(new Set(failed.map((f) => f.id)));
+      await load();
+    } catch (e) {
+      setError(writeError(e.payload?.error) || e.message);
+    } finally {
+      setBulkBusy(false);
     }
   }
 
@@ -289,13 +332,16 @@ export default function TasksWorkspace() {
     return col.render(row);
   }
 
-  // Inline-editable columns. TASK TYPE is deliberately absent: the existing
-  // PATCH accepts text/priority/ownerUserId/notes/dueDate/dueTime and NOT
-  // taskTypeId, so a type editor here would silently do nothing. Changing a
-  // type also re-snapshots `channel`, which for a WhatsApp task would orphan a
-  // real scheduled send — that guard belongs with the write-path unification in
-  // Slice 4, and the editor arrives with it.
-  const INLINE_KEYS = new Set(['priority', 'owner', 'dueDate', 'dueTime']);
+  // Inline-editable columns. TASK TYPE arrived with the Slice 4 write-path
+  // unification: the canonical PATCH accepts taskTypeId behind the safe-path
+  // guards (a WhatsApp task's type is locked — retyping would orphan its
+  // scheduled send — and no task can be retyped INTO a WhatsApp type; the
+  // server enforces both, the cell simply doesn't offer them).
+  const INLINE_KEYS = new Set(['priority', 'owner', 'dueDate', 'dueTime', 'taskType']);
+  const canEditCell = (col, row) =>
+    INLINE_KEYS.has(col.key) &&
+    editable(row) &&
+    !(col.key === 'taskType' && row.channel === 'whatsapp');
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-gray-50" dir="rtl">
@@ -463,10 +509,15 @@ export default function TasksWorkspace() {
                   <TableCell
                     key={col.key}
                     col={col}
-                    className={`py-1.5 ${INLINE_KEYS.has(col.key) && editable(row) ? 'cursor-text hover:bg-blue-50/40' : ''}`}
+                    className={`py-1.5 ${canEditCell(col, row) ? 'cursor-text hover:bg-blue-50/40' : ''}`}
                   >
                     <span
-                      onDoubleClick={INLINE_KEYS.has(col.key) && editable(row) ? () => setEditing({ rowId: row.id, colKey: col.key }) : undefined}
+                      // An editable cell is a CONTROL, like the checkbox and ✓:
+                      // single click selects the row (not the drawer — else the
+                      // first click of a double-click would open it), double
+                      // click edits. Everywhere non-editable opens the drawer.
+                      onClick={canEditCell(col, row) ? (e) => { e.stopPropagation(); setCursor(idx); } : undefined}
+                      onDoubleClick={canEditCell(col, row) ? () => setEditing({ rowId: row.id, colKey: col.key }) : undefined}
                       className="block"
                     >
                       {cellContent(col, row)}
@@ -524,16 +575,114 @@ export default function TasksWorkspace() {
       )}
       </div>
 
-      {/* ── selection bar: inline, never a modal ── */}
+      {/* ── bulk action bar: inline, never a modal (the one exception is the
+          cancel CONFIRM, which is an in-system dialog, not a native one) ── */}
       {selected.size > 0 && (
-        <div className="flex items-center gap-3 border-t border-blue-200 bg-blue-50 px-3 py-2 text-[12px]">
+        <div className="flex flex-wrap items-center gap-2 border-t border-blue-200 bg-blue-50 px-3 py-2 text-[12px]">
           <span className="font-semibold text-blue-800">{selected.size} נבחרו</span>
-          <span className="text-blue-500">פעולות מרובות — בקרוב</span>
-          <button type="button" onClick={() => setSelected(new Set())} className="ms-auto text-blue-700 hover:underline">
+          <button
+            type="button"
+            disabled={bulkBusy}
+            onClick={() => runBulk('complete')}
+            className="rounded-md bg-emerald-600 px-2.5 py-1 font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            ✓ השלמה
+          </button>
+          <button
+            type="button"
+            disabled={bulkBusy}
+            onClick={() => setConfirmCancel(true)}
+            className="rounded-md border border-red-300 bg-white px-2.5 py-1 font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+          >
+            ביטול משימות…
+          </button>
+          <span className="mx-1 h-5 w-px bg-blue-200" />
+          <select
+            disabled={bulkBusy}
+            value=""
+            onChange={(e) => e.target.value && runBulk('assign_owner', { ownerUserId: e.target.value })}
+            className="h-7 rounded-md border border-blue-300 bg-white px-1.5 text-[12px]"
+          >
+            <option value="">שינוי אחראי…</option>
+            {boot.users.map((u) => <option key={u.id} value={u.id}>{u.displayName || u.username}</option>)}
+          </select>
+          <select
+            disabled={bulkBusy}
+            value=""
+            onChange={(e) => e.target.value && runBulk('set_priority', { priority: e.target.value })}
+            className="h-7 rounded-md border border-blue-300 bg-white px-1.5 text-[12px]"
+          >
+            <option value="">שינוי עדיפות…</option>
+            <option value="high">גבוהה</option>
+            <option value="medium">בינונית</option>
+            <option value="low">נמוכה</option>
+            <option value="none">ללא</option>
+          </select>
+          <select
+            disabled={bulkBusy}
+            value=""
+            onChange={(e) => e.target.value && runBulk('set_type', { taskTypeId: e.target.value })}
+            className="h-7 rounded-md border border-blue-300 bg-white px-1.5 text-[12px]"
+          >
+            <option value="">שינוי סוג…</option>
+            {boot.types.filter((t) => t.channel !== 'whatsapp').map((t) => (
+              <option key={t.id} value={t.id}>{t.nameHe}</option>
+            ))}
+          </select>
+          <div className="w-36">
+            <DateField
+              placeholder="שינוי תאריך…"
+              value={null}
+              clearable={false}
+              disabled={bulkBusy}
+              onChange={(v) => v && runBulk('set_due_date', { dueDate: v })}
+            />
+          </div>
+          <div className="w-28">
+            <TimeField
+              placeholder="שינוי שעה…"
+              value=""
+              disabled={bulkBusy}
+              onChange={(v) => runBulk('set_due_time', { dueTime: v || null })}
+            />
+          </div>
+          {bulkBusy && <span className="text-blue-500">מעדכן…</span>}
+          <button type="button" onClick={() => { setSelected(new Set()); setBulkReport(null); }} className="ms-auto text-blue-700 hover:underline">
             ניקוי בחירה
           </button>
         </div>
       )}
+
+      {/* Per-row partial-failure report — the failed rows stay selected for retry. */}
+      {bulkReport && (
+        <div className="flex items-start gap-2 border-t border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
+          <span className="font-semibold">
+            הצליחו {bulkReport.succeeded} · נכשלו {bulkReport.failed.length}:
+          </span>
+          <span className="min-w-0 flex-1">
+            {Object.entries(
+              bulkReport.failed.reduce((m, f) => ({ ...m, [f.error]: (m[f.error] || 0) + 1 }), {}),
+            )
+              .map(([code, n]) => `${writeError(code)} (${n})`)
+              .join(' · ')}
+            <span className="text-amber-600"> — השורות שנכשלו נשארו מסומנות</span>
+          </span>
+          <button type="button" onClick={() => setBulkReport(null)} className="text-amber-700 hover:underline">
+            סגירה
+          </button>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={confirmCancel}
+        danger
+        title="ביטול משימות"
+        body={`לבטל ${selected.size} משימות? הביטול נרשם בהיסטוריית הדיל (אין מחיקה במערכת). משימות וואטסאפ מתוזמנות — ההודעה לא תישלח.`}
+        confirmLabel="ביטול המשימות"
+        cancelLabel="חזרה"
+        onCancel={() => setConfirmCancel(false)}
+        onConfirm={() => { setConfirmCancel(false); runBulk('cancel'); }}
+      />
 
       {/* ── pagination ── */}
       <div className="flex items-center justify-between border-t border-gray-200 bg-white px-3 py-1.5 text-[12px] text-gray-500">
@@ -586,6 +735,20 @@ function InlineEditor({ col, row, boot, onCancel, onSave }) {
         onChange={(e) => e.target.value && onSave({ ownerUserId: e.target.value })}
         className="h-7 w-full rounded border border-blue-400 bg-white px-1 text-[12px]">
         {boot.users.map((u) => <option key={u.id} value={u.id}>{u.displayName || u.username}</option>)}
+      </select>
+    );
+  }
+  if (col.key === 'taskType') {
+    // WhatsApp-channel target types are not offered — a task cannot be retyped
+    // INTO WhatsApp (the server refuses it; WhatsApp tasks are born in the
+    // composer). WhatsApp SOURCE rows never reach this editor (canEditCell).
+    return (
+      <select autoFocus onClick={stop} onKeyDown={onKeyDown} defaultValue={row.taskType?.id || ''} onBlur={onCancel}
+        onChange={(e) => e.target.value && onSave({ taskTypeId: e.target.value })}
+        className="h-7 w-full rounded border border-blue-400 bg-white px-1 text-[12px]">
+        {boot.types.filter((t) => t.channel !== 'whatsapp').map((t) => (
+          <option key={t.id} value={t.id}>{t.nameHe}</option>
+        ))}
       </select>
     );
   }

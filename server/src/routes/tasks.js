@@ -24,6 +24,8 @@ import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { adminDisplayName } from '../admin/displayName.js';
 import { comparePriority } from '../tasks/priority.js';
+import { userOrigin, completeTask, cancelTask, applyTaskPatch } from '../tasks/taskService.js';
+import { parseBulkRequest, chunkIds, summarizeResults } from '../tasks/bulkActions.js';
 import { resolveWindow, countScanBounds, bucketOf, WINDOWS } from '../tasks/windows.js';
 import {
   parseTaskQuery, buildTaskWhere, buildBaseWhere, buildTaskOrderBy,
@@ -295,6 +297,57 @@ router.get(
     }
 
     res.json({ today, counts, empty });
+  }),
+);
+
+// ── Writes ───────────────────────────────────────────────────────────────────
+// Both endpoints are THIN CALLERS of taskService — the same canonical write
+// path the Deal tab's routes delegate to. No task-mutation rule lives here.
+
+// PATCH /api/tasks/:id — single-row field edit (the workspace's inline cells).
+router.patch(
+  '/:id',
+  handle(async (req, res) => {
+    const result = await applyTaskPatch(req.params.id, req.body);
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
+    res.json({ ok: true, id: result.task.id });
+  }),
+);
+
+// POST /api/tasks/bulk — complete / cancel (never delete) / assign_owner /
+// set_due_date / set_due_time / set_priority / set_type over an id list.
+//
+// Each task is processed individually (transitions already run in their own
+// transaction, preserving the one-TimelineEntry-per-transition audit), in
+// slices of BULK_CHUNK_SIZE, ids capped at MAX_BULK_IDS. Partial failure is the
+// NORMAL case: the response reports every row, never a blanket success.
+router.post(
+  '/bulk',
+  handle(async (req, res) => {
+    const parsed = parseBulkRequest(req.body);
+    if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+    const { action, ids, patch } = parsed;
+    const origin = await userOrigin(req.adminAuth?.userId);
+
+    const results = [];
+    for (const chunk of chunkIds(ids)) {
+      for (const id of chunk) {
+        try {
+          const r =
+            action === 'complete'
+              ? await completeTask(id, origin)
+              : action === 'cancel'
+                ? await cancelTask(id, origin)
+                : await applyTaskPatch(id, patch);
+          results.push(r.ok ? { id, ok: true } : { id, ok: false, error: r.error });
+        } catch (e) {
+          console.warn('[tasks/bulk] row failed', id, e?.message);
+          results.push({ id, ok: false, error: 'internal' });
+        }
+      }
+    }
+
+    res.json(summarizeResults(results));
   }),
 );
 

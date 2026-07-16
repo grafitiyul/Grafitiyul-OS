@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { callBridge } from '../whatsapp/bridgeClient.js';
-import { transitionTask, userOrigin, TASK_PRIORITIES } from '../tasks/taskService.js';
+import { userOrigin, TASK_PRIORITIES, completeTask, cancelTask, applyTaskPatch } from '../tasks/taskService.js';
+import { combineDateTime, SCHEDULE_MIN_LEAD_MS, CANCELLABLE_SCHED } from '../tasks/taskEdit.js';
 
 // Deal Tasks (משימות) — mounted at /api/deals, serves /:dealId/tasks*. A task is
 // a FUTURE action on a deal. Open tasks live in the deal focus area; terminal
@@ -18,25 +19,11 @@ import { transitionTask, userOrigin, TASK_PRIORITIES } from '../tasks/taskServic
 
 const router = Router();
 
-const SCHEDULE_MIN_LEAD_MS = 30_000;
-// Statuses at which a scheduled message can still be pulled/cancelled by us
-// (i.e. not mid-send and not already terminal from WhatsApp's side).
-const CANCELLABLE_SCHED = ['pending', 'failed', 'skipped'];
+// Scheduling constants + combineDateTime moved to tasks/taskEdit.js (the pure
+// half of the canonical write path) so bulk actions share them — imported above.
 
 function badDeal(res) {
   return res.status(404).json({ error: 'deal_not_found' });
-}
-
-// Combine a "YYYY-MM-DD" date with an optional "HH:MM" into a Date. When no time
-// is given the moment is local-midnight of that day (fine for non-timed tasks).
-function combineDateTime(dueDate, dueTime) {
-  const d = new Date(dueDate);
-  if (Number.isNaN(d.getTime())) return null;
-  if (dueTime && /^([01]\d|2[0-3]):[0-5]\d$/.test(dueTime)) {
-    const [h, m] = dueTime.split(':').map(Number);
-    d.setHours(h, m, 0, 0);
-  }
-  return d;
 }
 
 function normalizePriority(p) {
@@ -229,119 +216,49 @@ async function loadTask(req, res) {
 // PATCH /:dealId/tasks/:taskId — edit an OPEN task. For WhatsApp tasks a text /
 // time change is mirrored onto the linked scheduled message (content edits only
 // while it is still pending; a time change may re-arm a failed/skipped row).
+// PATCH — a thin caller of the canonical write path (taskService.applyTaskPatch).
+// The deal-scoped load keeps this route's 404 semantics (task must belong to
+// THIS deal); everything after that is the same code the workspace and bulk use.
 router.patch(
   '/:dealId/tasks/:taskId',
   handle(async (req, res) => {
     const task = await loadTask(req, res);
     if (!task) return;
-    if (task.status !== 'open') return res.status(409).json({ error: 'task_not_open' });
-    const b = req.body || {};
-
-    const data = {};
-    if (b.text !== undefined) {
-      const t = String(b.text).trim();
-      if (!t) return res.status(400).json({ error: 'text_required' });
-      data.title = t.slice(0, 500);
-    }
-    if (b.priority !== undefined) data.priority = normalizePriority(b.priority);
-    if (b.ownerUserId !== undefined) {
-      const o = String(b.ownerUserId).trim();
-      if (!o) return res.status(400).json({ error: 'owner_required' });
-      if (!(await ownerExists(o))) return res.status(400).json({ error: 'owner_not_found' });
-      data.ownerUserId = o;
-    }
-    if (b.notes !== undefined) data.notes = b.notes != null ? String(b.notes).slice(0, 2000) : null;
-    if (b.dueTime !== undefined)
-      data.dueTime = b.dueTime && /^([01]\d|2[0-3]):[0-5]\d$/.test(b.dueTime) ? b.dueTime : null;
-    if (b.dueDate !== undefined) {
-      const d = new Date(b.dueDate);
-      if (Number.isNaN(d.getTime())) return res.status(400).json({ error: 'due_date_invalid' });
-      data.dueDate = d;
-    }
-
-    // Mirror onto the scheduled message for WhatsApp tasks.
-    if (task.channel === 'whatsapp' && task.scheduledMessageId) {
-      const nextDate = b.dueDate !== undefined ? b.dueDate : task.dueDate;
-      const nextTime =
-        data.dueTime !== undefined ? data.dueTime : task.dueTime || '10:00';
-      const schedData = { status: 'pending', attemptCount: 0, nextRetryAt: null, failureReason: null, claimedAt: null, claimedBy: null };
-      if (data.title !== undefined) schedData.content = data.title;
-      if (b.scheduledAt !== undefined || b.dueDate !== undefined || b.dueTime !== undefined) {
-        // Prefer the client-computed (timezone-correct) scheduledAt; fall back to
-        // a server combine only when the client didn't send one.
-        const scheduledAt = b.scheduledAt
-          ? new Date(String(b.scheduledAt))
-          : combineDateTime(nextDate, nextTime || '10:00');
-        if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) return res.status(400).json({ error: 'scheduled_at_invalid' });
-        if (scheduledAt.getTime() < Date.now() + SCHEDULE_MIN_LEAD_MS) {
-          return res.status(400).json({ error: 'scheduled_at_past' });
-        }
-        schedData.scheduledAt = scheduledAt;
-      }
-      // Content edits only while pending; a time-only change may re-arm failed/skipped.
-      const allowed = schedData.content !== undefined ? ['pending'] : ['pending', 'failed', 'skipped'];
-      const updated = await prisma.whatsAppScheduledMessage.updateMany({
-        where: { id: task.scheduledMessageId, status: { in: allowed } },
-        data: schedData,
-      });
-      if (updated.count === 0) return res.status(409).json({ error: 'scheduled_not_editable' });
-    }
-
-    await prisma.task.update({ where: { id: task.id }, data });
+    const result = await applyTaskPatch(task.id, req.body);
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
     const fresh = await prisma.task.findUnique({ where: { id: task.id }, include: TASK_INCLUDE });
     const [out] = await serializeTasks([fresh]);
     res.json(out);
   }),
 );
 
-// Cancel a WhatsApp task's scheduled message (best-effort, guarded).
-async function pullScheduled(scheduledMessageId) {
-  if (!scheduledMessageId) return;
-  await prisma.whatsAppScheduledMessage.updateMany({
-    where: { id: scheduledMessageId, status: { in: CANCELLABLE_SCHED } },
-    data: { status: 'cancelled', claimedAt: null, claimedBy: null, nextRetryAt: null },
-  });
-}
-
-// POST /:dealId/tasks/:taskId/complete — normal task → completed; WhatsApp task
-// (still open ⇒ not yet sent) → cancel the scheduled message + 'not_sent'
-// ("בסוף לא נשלחה"). Ticking the checkbox NEVER sends a WhatsApp message.
+// POST /:dealId/tasks/:taskId/complete — thin caller. Normal task → completed;
+// WhatsApp task (still open ⇒ not yet sent) → scheduled message pulled +
+// 'not_sent' ("בסוף לא נשלחה"). The checkbox NEVER sends. Semantics live in
+// taskService.completeTask, shared with the workspace's bulk complete.
 router.post(
   '/:dealId/tasks/:taskId/complete',
   handle(async (req, res) => {
     const task = await loadTask(req, res);
     if (!task) return;
-    if (task.status !== 'open') return res.status(409).json({ error: 'task_not_open' });
     const origin = await userOrigin(req.adminAuth?.userId);
-
-    if (task.channel === 'whatsapp') {
-      await pullScheduled(task.scheduledMessageId);
-      await transitionTask(task.id, { status: 'not_sent', event: 'task_not_sent', origin });
-    } else {
-      await transitionTask(task.id, { status: 'completed', event: 'task_completed', origin });
-    }
+    const result = await completeTask(task.id, origin);
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
     const fresh = await prisma.task.findUnique({ where: { id: task.id }, include: TASK_INCLUDE });
     const [out] = await serializeTasks([fresh]);
     res.json(out);
   }),
 );
 
-// POST /:dealId/tasks/:taskId/cancel — normal task → cancelled; WhatsApp task →
-// cancel the scheduled message + 'not_sent'.
+// POST /:dealId/tasks/:taskId/cancel — thin caller of taskService.cancelTask.
 router.post(
   '/:dealId/tasks/:taskId/cancel',
   handle(async (req, res) => {
     const task = await loadTask(req, res);
     if (!task) return;
-    if (task.status !== 'open') return res.status(409).json({ error: 'task_not_open' });
     const origin = await userOrigin(req.adminAuth?.userId);
-
-    if (task.channel === 'whatsapp') {
-      await pullScheduled(task.scheduledMessageId);
-      await transitionTask(task.id, { status: 'not_sent', event: 'task_not_sent', origin });
-    } else {
-      await transitionTask(task.id, { status: 'cancelled', event: 'task_cancelled', origin });
-    }
+    const result = await cancelTask(task.id, origin);
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
     const fresh = await prisma.task.findUnique({ where: { id: task.id }, include: TASK_INCLUDE });
     const [out] = await serializeTasks([fresh]);
     res.json(out);
