@@ -46,6 +46,41 @@ export async function buildOrgTargets(client) {
   return { proposals, gos };
 }
 
+// Where every CLUSTERED legacy organization is routed by the owner's decisions:
+//   canonical | unit | excluded | standalone (other_organization → new:<self>) |
+//   routed (other_organization → some other target) | pending (cluster undecided).
+// A legacy org id ABSENT from this map was never in any duplicate cluster — it
+// imports as-is and is a legitimate standalone destination (`new:<id>`).
+export async function buildOrgDispositionIndex(client) {
+  const rows = await client.migrationDecision.findMany({ where: { queue: 'organizations' } });
+  const index = new Map();
+  for (const r of rows) {
+    const pending = !isResolved(r.status);
+    for (const [legacyId, d] of Object.entries(r.decision?.dispositions || {})) {
+      let kind;
+      if (pending) kind = 'pending';
+      else if (d.disposition === 'organization') kind = 'canonical';
+      else if (d.disposition === 'unit') kind = 'unit';
+      else if (d.disposition === 'excluded') kind = 'excluded';
+      else kind = d.targetOrganizationKey === `new:${legacyId}` ? 'standalone' : 'routed';
+      index.set(Number(legacyId), kind);
+    }
+    // A member with no disposition (pending cluster) is fail-safe ineligible.
+    for (const m of r.proposal?.members || []) {
+      if (!index.has(m.legacyId)) index.set(m.legacyId, 'pending');
+    }
+  }
+  return index;
+}
+
+// May `new:<legacyOrgId>` be a mapping destination? Yes when the org was never
+// clustered (absent) or the owner explicitly sent it standalone. Everything else
+// either becomes part of another organisation or will not exist at all.
+export const standaloneEligible = (dispositionIndex, legacyOrgId) => {
+  const kind = dispositionIndex.get(Number(legacyOrgId));
+  return kind == null || kind === 'standalone';
+};
+
 // Registry shape the resolver validates against.
 function targetsIndex({ proposals, gos }, selfKey = null) {
   const orgs = new Map();
@@ -702,12 +737,26 @@ export async function recordDecision(client, { id, action, decision = null, note
         identityEdit: (await getIdentityEdits(client, [legacyId]))[legacyId] || null,
         claimedPhones: claimsExcludingSelf(await buildClaimedPhones(client), legacyId),
       };
-      // "This is an Organization" mapped to an existing target: the key must exist
-      // in the live registry (same registry the Organizations queue validates
-      // against), so a stale picker cannot bind a record to a deleted target.
+      // "This is an Organization" mapped to an existing target: the key must be a
+      // destination that will actually exist after migration —
+      //   * a registry key (cluster canonical / live GOS org), or
+      //   * `new:<legacyOrgId>` for a STANDALONE-ELIGIBLE legacy organisation
+      //     (never clustered, or explicitly sent standalone by the owner).
+      // A member routed into another org, a unit, or an excluded org is refused —
+      // it will not exist as its own destination. Snapshot EXISTENCE of new:<id>
+      // is verified at the route layer (it has the snapshot index); this layer
+      // owns the routing legality.
       if (decision?.treatment === 'organization' && decision?.organization?.targetOrganizationKey) {
         const registry = await buildOrgTargets(client);
-        ctx.orgTargetKeys = new Set([...registry.proposals, ...registry.gos].map((x) => x.key));
+        const registryKeys = new Set([...registry.proposals, ...registry.gos].map((x) => x.key));
+        const dispositions = await buildOrgDispositionIndex(client);
+        ctx.orgTargetKeys = {
+          has(key) {
+            const m = /^new:(\d+)$/.exec(String(key || ''));
+            if (m) return standaloneEligible(dispositions, Number(m[1]));
+            return registryKeys.has(key);
+          },
+        };
       }
       const resolved = nameDecisionFromDraft(existing.proposal, nameDraftFromProposal(existing.proposal, decision), ctx);
       if (!resolved.result.valid) {

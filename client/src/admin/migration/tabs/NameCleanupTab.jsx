@@ -3,6 +3,7 @@ import { useOutletContext } from 'react-router-dom';
 import { migrationApi } from '../api.js';
 import { num, dateTime } from '../components/format.js';
 import SourceRecord from '../components/SourceRecord.jsx';
+import TargetCombobox from '../components/TargetCombobox.jsx';
 import { nameDraftFromProposal, resolveNameResult, COUNTRIES, zeroDealOrgDefault, openLinked, wonLinked } from '../components/namePreview.js';
 
 const SECTIONS = [
@@ -43,22 +44,19 @@ export default function NameCleanupTab() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [error, setError] = useState(null);
-  // Existing-organisation targets (the same registry the Organizations tab uses),
-  // loaded once on first entering "זה ארגון" mode.
-  const [orgTargets, setOrgTargets] = useState(null);
+  // "שייך לארגון קיים" UI mode (the chosen key itself lives in the draft).
+  const [mapExisting, setMapExisting] = useState(false);
 
-  async function enterOrgMode() {
+  function enterOrgMode() {
     // THE BUSINESS RULE: "this is an organization" + zero deals (and zero
     // participant links) defaults to DELETION, not to an org and not to
     // "do not import". The delete panel offers the explicit keep-override.
     const zeroDeal = selected && zeroDealOrgDefault(selected.proposal);
+    setMapExisting(false);
     setDraft((dr) => {
       if (dr.treatment === 'organization' || dr.treatment === 'deleted') return { ...dr, treatment: 'import' };
       return zeroDeal ? { ...dr, treatment: 'deleted' } : { ...dr, treatment: 'organization' };
     });
-    if (!orgTargets) {
-      try { setOrgTargets(await migrationApi.orgTargets()); } catch { setOrgTargets({ proposals: [], gos: [] }); }
-    }
   }
   function enterDeleteMode() {
     setDraft((dr) => ({ ...dr, treatment: dr.treatment === 'deleted' ? 'import' : 'deleted' }));
@@ -102,6 +100,7 @@ export default function NameCleanupTab() {
   function select(d) {
     setOpenId(d.id); setSource(null); setNote(d.note || '');
     setDraft(nameDraftFromProposal(d.proposal, d.decision));
+    setMapExisting(!!d.decision?.organization?.targetOrganizationKey);
   }
   function setPhone(i, patch) {
     setDraft((dr) => {
@@ -411,33 +410,37 @@ export default function NameCleanupTab() {
                   {draft.organization.create && (
                     <div className="space-y-2 pr-5">
                       <label className="flex items-center gap-2 text-[12px]">
-                        <input type="radio" name={`orgmode-${selected.id}`} checked={!draft.organization.targetOrganizationKey}
-                          onChange={() => setDraft({ ...draft, organization: { ...draft.organization, targetOrganizationKey: null, targetLabel: null } })} />
+                        <input type="radio" name={`orgmode-${selected.id}`} checked={!mapExisting && !draft.organization.targetOrganizationKey}
+                          onChange={() => { setMapExisting(false); setDraft({ ...draft, organization: { ...draft.organization, targetOrganizationKey: null, targetLabel: null } }); }} />
                         ארגון חדש בשם:
-                        <input type="text" value={draft.organization.name} disabled={!!draft.organization.targetOrganizationKey}
+                        <input type="text" value={draft.organization.name} disabled={mapExisting || !!draft.organization.targetOrganizationKey}
                           onChange={(e) => setDraft({ ...draft, organization: { ...draft.organization, name: e.target.value } })}
                           className="text-[13px] border border-gray-200 rounded-md px-2 py-1 bg-white flex-1 disabled:bg-gray-50" />
                       </label>
-                      <label className="flex items-center gap-2 text-[12px]">
-                        <input type="radio" name={`orgmode-${selected.id}`} checked={!!draft.organization.targetOrganizationKey}
-                          onChange={() => { /* selecting from the dropdown activates this */ }} disabled={!orgTargets} />
-                        שייך לארגון קיים:
-                        <select
-                          value={draft.organization.targetOrganizationKey || ''}
-                          onChange={(e) => {
-                            const key = e.target.value || null;
-                            const all = [...(orgTargets?.proposals || []), ...(orgTargets?.gos || [])];
-                            const hit = all.find((x) => x.key === key);
-                            setDraft({ ...draft, organization: { ...draft.organization, targetOrganizationKey: key, targetLabel: hit?.name || null } });
-                          }}
-                          className="text-[12px] border border-gray-200 rounded-md px-1.5 py-1 bg-white flex-1">
-                          <option value="">{orgTargets ? '— בחר ארגון —' : 'טוען…'}</option>
-                          {(orgTargets?.proposals || []).map((x) => <option key={x.key} value={x.key}>{x.name}</option>)}
-                          {(orgTargets?.gos || []).map((x) => <option key={x.key} value={x.key}>{x.name} (קיים ב-GOS)</option>)}
-                        </select>
-                      </label>
+                      <div className="flex items-center gap-2 text-[12px]">
+                        <input type="radio" name={`orgmode-${selected.id}`} checked={mapExisting || !!draft.organization.targetOrganizationKey}
+                          onChange={() => setMapExisting(true)} />
+                        <span className="whitespace-nowrap">שייך לארגון קיים:</span>
+                        {(mapExisting || draft.organization.targetOrganizationKey) && (
+                          <TargetCombobox
+                            value={draft.organization.targetOrganizationKey
+                              ? { key: draft.organization.targetOrganizationKey, label: draft.organization.targetLabel || draft.organization.targetOrganizationKey }
+                              : null}
+                            onSelect={(entry) => setDraft({
+                              ...draft,
+                              organization: {
+                                ...draft.organization,
+                                targetOrganizationKey: entry?.key || null,
+                                targetLabel: entry?.name || null,
+                              },
+                            })}
+                            search={migrationApi.orgTargetSearch}
+                          />
+                        )}
+                      </div>
                       <p className="text-[11px] text-gray-400">
-                        שיוך לארגון קיים מונע כפילות — אם "{selected.proposal.displayName}" כבר קיים בתור הארגונים, בחר אותו כאן.
+                        החיפוש מכסה את כל היעדים שיתקיימו אחרי המיגרציה: ארגונים מתור הארגונים, ארגונים
+                        קיימים ב-GOS, וכל ארגון מקור עצמאי. שיוך לקיים מונע כפילות.
                       </p>
                     </div>
                   )}

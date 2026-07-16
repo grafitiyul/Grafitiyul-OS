@@ -40,6 +40,9 @@ export const migrationApi = {
   browserFilter: (entity, q) => req('/api/migration/review/browser/filter' + qs({ entity, q })),
   // Every Organization a source record can be mapped to (proposals + live GOS orgs).
   orgTargets: () => req('/api/migration/review/org-targets'),
+  // Searchable destination lookup — the COMPLETE post-migration population,
+  // including standalone legacy organisations. Read-only.
+  orgTargetSearch: (q) => req('/api/migration/review/org-target-search' + qs({ q })),
   // Idempotent — safe to call on every mount; a no-op once seeded.
   seed: () => req('/api/migration/review/seed', { method: 'POST' }),
   decide: (id, body) =>

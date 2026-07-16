@@ -13,7 +13,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import * as r2 from '../migration/r2.js';
-import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe, buildOrgTargets, buildContactWorkload, recordIdentityEdits, buildImportReadiness, getDeletedPersonIds } from '../migration/review/service.js';
+import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe, buildOrgTargets, buildContactWorkload, recordIdentityEdits, buildImportReadiness, getDeletedPersonIds, buildOrgDispositionIndex, standaloneEligible } from '../migration/review/service.js';
 import { buildSnapshotStatus } from '../migration/review/snapshotStatus.js';
 import { createBrowser } from '../migration/review/browser.js';
 
@@ -165,6 +165,46 @@ router.get(
   }),
 );
 
+// Searchable destination lookup for "שייך לארגון קיים" — the COMPLETE population
+// of organisations that will legitimately exist after migration:
+//   * cluster canonical orgs (the Organizations-queue proposals)
+//   * live GOS organisations
+//   * STANDALONE legacy organisations — never clustered, or explicitly sent
+//     standalone by an owner decision (`new:<legacyOrgId>`), found via the
+//     snapshot label index (cheap partial match, Hebrew and English alike).
+// Cluster members routed into another org / a unit / excluded will NOT exist as
+// destinations and are filtered out (reported in `hiddenByDisposition`).
+router.get(
+  '/org-target-search',
+  handle(async (req, res) => {
+    const q = String(req.query.q || '').trim();
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 50);
+    if (!q) return res.json({ matches: [], truncated: false, hiddenByDisposition: 0 });
+
+    const needle = q.toLowerCase();
+    const [registry, dispositions] = await Promise.all([buildOrgTargets(prisma), buildOrgDispositionIndex(prisma)]);
+    const out = [];
+    for (const t of registry.proposals) {
+      if (t.name?.toLowerCase().includes(needle)) out.push({ key: t.key, name: t.name, kind: 'proposal' });
+    }
+    for (const t of registry.gos) {
+      if (t.name?.toLowerCase().includes(needle)) out.push({ key: t.key, name: t.name, kind: 'gos' });
+    }
+    let hiddenByDisposition = 0;
+    try {
+      const snap = await (await browser()).filter('pipedrive/organizations', q, { limit: limit * 3 });
+      for (const m of snap.matches || []) {
+        if (!standaloneEligible(dispositions, m.id)) { hiddenByDisposition++; continue; }
+        out.push({ key: `new:${m.id}`, name: m.label, kind: 'legacy' });
+      }
+    } catch (e) {
+      if (e.code !== 'NO_INDEX' && e.code !== 'NO_SNAPSHOT') throw e;
+    }
+    out.sort((a, b) => a.name.localeCompare(b.name, 'he'));
+    res.json({ matches: out.slice(0, limit), truncated: out.length > limit, hiddenByDisposition });
+  }),
+);
+
 // EXPLICIT batch approval of the deterministically-safe clusters (contacts).
 // The caller cannot choose WHICH rows: only engine-marked `batchApprovable`
 // pending rows qualify, each written with its own decision + audit trail.
@@ -224,6 +264,22 @@ router.post(
     if (userId) {
       const u = await prisma.adminUser.findUnique({ where: { id: userId }, select: { username: true } });
       userName = u?.username || null;
+    }
+    // A `new:<legacyOrgId>` mapping target must EXIST in the snapshot. The service
+    // validates routing legality (dispositions); existence is checked here, where
+    // the snapshot index lives — so a hand-crafted id cannot become a dangling
+    // destination.
+    const newKey = /^new:(\d+)$/.exec(String(req.body?.decision?.organization?.targetOrganizationKey || ''));
+    if (newKey) {
+      try {
+        const rec = await (await browser()).record('pipedrive/organizations', Number(newKey[1]));
+        if (!rec) return res.status(400).json({ error: 'invalid_decision', problems: [`ארגון מקור ${newKey[1]} לא קיים בצילום`] });
+      } catch (e) {
+        if (e.code === 'NO_INDEX' || e.code === 'NO_SNAPSHOT') {
+          return res.status(503).json({ error: 'index_unavailable', message: 'לא ניתן לאמת את ארגון היעד — אינדקס הצילום אינו זמין' });
+        }
+        throw e;
+      }
     }
     try {
       const row = await recordDecision(prisma, {

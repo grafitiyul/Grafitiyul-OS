@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe, buildOrgTargets, buildContactWorkload, recordIdentityEdits, getIdentityEdits, getDeletedPersonIds, buildImportReadiness } from './service.js';
+import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe, buildOrgTargets, buildContactWorkload, recordIdentityEdits, getIdentityEdits, getDeletedPersonIds, buildImportReadiness, buildOrgDispositionIndex, standaloneEligible } from './service.js';
 import { STAGE_CONFIG_COUNT } from './stageConfigSeed.js';
 import { draftFromProposal } from './orgDecision.js';
 
@@ -746,6 +746,67 @@ test('deletion is refused server-side when deals or participant links exist', as
     () => recordDecision(c, { id: row.id, action: 'edit', decision: { treatment: 'deleted', fields: row.proposal.proposedFields } }),
     (e) => e.code === 'INVALID_DECISION' && /משתתף משני/.test(e.problems.join(' ')),
   );
+});
+
+// ── the org-destination population ───────────────────────────────────────────
+const orgClusterRow = () => ({
+  queue: 'organizations', subjectKey: 'org:normName:בנק', status: 'edited',
+  proposal: { proposedCanonical: { name: 'בנק' }, members: [{ legacyId: 100 }, { legacyId: 101 }, { legacyId: 102 }, { legacyId: 103 }] },
+  decision: {
+    canonicalName: 'בנק', units: [],
+    dispositions: {
+      100: { disposition: 'organization' },
+      101: { disposition: 'excluded' },
+      102: { disposition: 'other_organization', targetOrganizationKey: 'new:102' },
+      103: { disposition: 'other_organization', targetOrganizationKey: 'prop:org:normName:בנק' },
+    },
+  },
+});
+
+test('the disposition index routes every clustered org; unclustered ids are standalone-eligible', async () => {
+  const c = stubClient([orgClusterRow()]);
+  const idx = await buildOrgDispositionIndex(c);
+  assert.equal(idx.get(100), 'canonical');
+  assert.equal(idx.get(101), 'excluded');
+  assert.equal(idx.get(102), 'standalone');
+  assert.equal(idx.get(103), 'routed');
+  assert.equal(standaloneEligible(idx, 102), true, 'explicitly sent standalone → a destination');
+  assert.equal(standaloneEligible(idx, 100), false, 'folded into a canonical → NOT its own destination');
+  assert.equal(standaloneEligible(idx, 101), false, 'excluded → will not exist');
+  assert.equal(standaloneEligible(idx, 103), false, 'routed elsewhere → NOT its own destination');
+  assert.equal(standaloneEligible(idx, 9999), true, 'never clustered → imports as-is, a destination');
+});
+
+test('a pending cluster makes ALL its members ineligible (fail-safe)', async () => {
+  const row = orgClusterRow();
+  row.status = 'pending';
+  const c = stubClient([row]);
+  const idx = await buildOrgDispositionIndex(c);
+  for (const id of [100, 101, 102, 103]) assert.equal(standaloneEligible(idx, id), false, String(id));
+});
+
+test('mapping to new:<id> saves only for standalone-eligible legacy orgs', async () => {
+  const c = stubClient([orgClusterRow(), nameRow(50, [])]);
+  const row = [...c._rows.values()].find((r) => r.queue === 'name_cleanup');
+  row.proposal.context.dealCount = 0;
+  row.proposal.context.participantCount = 0;
+  const orgDecision = (key) => ({
+    treatment: 'organization', fields: row.proposal.proposedFields,
+    organization: { create: true, name: '', targetOrganizationKey: key, targetLabel: 'x' },
+  });
+  // An org folded into a canonical is refused as a destination.
+  await assert.rejects(
+    () => recordDecision(c, { id: row.id, action: 'edit', decision: orgDecision('new:100') }),
+    (e) => e.code === 'INVALID_DECISION' && /לא נמצא במרשם/.test(e.problems.join(' ')),
+  );
+  // An explicitly-standalone member IS a destination.
+  const ok = await recordDecision(c, { id: row.id, action: 'edit', decision: orgDecision('new:102') });
+  assert.equal(ok.status, 'edited');
+  assert.equal(ok.decision.organization.targetOrganizationKey, 'new:102');
+  // A never-clustered legacy org is a destination too (existence is verified at
+  // the route layer, which owns the snapshot index).
+  const ok2 = await recordDecision(c, { id: row.id, action: 'edit', decision: orgDecision('new:2600') });
+  assert.equal(ok2.status, 'edited');
 });
 
 test('batch approve never resurrects a rejected or deferred cluster', async () => {
