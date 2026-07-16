@@ -7,8 +7,12 @@ import {
   orderedVisibleColumns,
   setKeyWidth,
   renameColumnKeyInState,
+  toggleSortKey,
+  sortToParam,
+  sortFromParam,
   MIN_COL_WIDTH,
   MAX_COL_WIDTH,
+  MAX_SORT_KEYS,
 } from './tableColumnsCore.js';
 
 const KEYS = ['a', 'b', 'c', 'd'];
@@ -146,4 +150,75 @@ test('renameColumnKeyInState: absent source is a content no-op', () => {
   const next = renameColumnKeyInState(raw, 'customer', 'booker');
   assert.deepEqual(next.visible, ['date']);
   assert.deepEqual(next.order, ['date', 'status']);
+});
+
+// ── Multi-column sort ────────────────────────────────────────────────────
+// Added with the CRM Tasks workspace. Screens that sort by a single column
+// keep passing a single {key,dir}; these helpers are opt-in.
+
+test('toggleSortKey: plain click sorts by one column, asc first', () => {
+  assert.deepEqual(toggleSortKey([], 'dueDate'), [{ key: 'dueDate', dir: 'asc' }]);
+});
+
+test('toggleSortKey: plain click on the active column flips direction', () => {
+  const asc = [{ key: 'dueDate', dir: 'asc' }];
+  assert.deepEqual(toggleSortKey(asc, 'dueDate'), [{ key: 'dueDate', dir: 'desc' }]);
+  assert.deepEqual(toggleSortKey([{ key: 'dueDate', dir: 'desc' }], 'dueDate'), [{ key: 'dueDate', dir: 'asc' }]);
+});
+
+test('toggleSortKey: plain click REPLACES a multi-sort rather than growing it', () => {
+  const multi = [{ key: 'dueDate', dir: 'asc' }, { key: 'priority', dir: 'desc' }];
+  assert.deepEqual(toggleSortKey(multi, 'title'), [{ key: 'title', dir: 'asc' }]);
+  // even clicking a column already in the list collapses to just that column
+  assert.deepEqual(toggleSortKey(multi, 'priority'), [{ key: 'priority', dir: 'asc' }]);
+});
+
+test('toggleSortKey: shift+click appends, preserving order', () => {
+  const one = [{ key: 'dueDate', dir: 'asc' }];
+  assert.deepEqual(toggleSortKey(one, 'priority', { additive: true }), [
+    { key: 'dueDate', dir: 'asc' },
+    { key: 'priority', dir: 'asc' },
+  ]);
+});
+
+test('toggleSortKey: shift+click cycles asc -> desc -> removed', () => {
+  let s = [{ key: 'a', dir: 'asc' }, { key: 'b', dir: 'asc' }];
+  s = toggleSortKey(s, 'b', { additive: true });
+  assert.deepEqual(s, [{ key: 'a', dir: 'asc' }, { key: 'b', dir: 'desc' }]);
+  s = toggleSortKey(s, 'b', { additive: true });
+  assert.deepEqual(s, [{ key: 'a', dir: 'asc' }], 'third shift+click drops the column');
+});
+
+test('toggleSortKey: sort depth is capped', () => {
+  const full = [{ key: 'a', dir: 'asc' }, { key: 'b', dir: 'asc' }, { key: 'c', dir: 'asc' }];
+  assert.equal(full.length, MAX_SORT_KEYS);
+  assert.deepEqual(toggleSortKey(full, 'd', { additive: true }), full, 'refuses a 4th key');
+});
+
+test('toggleSortKey: accepts the legacy single-object shape and never mutates', () => {
+  const legacy = { key: 'dueDate', dir: 'asc' };
+  assert.deepEqual(toggleSortKey(legacy, 'dueDate'), [{ key: 'dueDate', dir: 'desc' }]);
+  const list = [{ key: 'a', dir: 'asc' }];
+  toggleSortKey(list, 'b', { additive: true });
+  assert.deepEqual(list, [{ key: 'a', dir: 'asc' }], 'input untouched');
+});
+
+test('sortToParam / sortFromParam round-trip', () => {
+  const s = [{ key: 'dueDate', dir: 'asc' }, { key: 'priority', dir: 'desc' }];
+  assert.equal(sortToParam(s), 'dueDate:asc,priority:desc');
+  assert.deepEqual(sortFromParam('dueDate:asc,priority:desc'), s);
+  assert.equal(sortToParam([]), '');
+  assert.deepEqual(sortFromParam(''), []);
+  assert.deepEqual(sortFromParam(null), []);
+});
+
+test('sortFromParam drops keys the screen does not know', () => {
+  // A stale URL or saved view must not send a column the API will 400 on.
+  assert.deepEqual(sortFromParam('dueDate:asc,bogus:desc', ['dueDate', 'title']), [{ key: 'dueDate', dir: 'asc' }]);
+});
+
+test('sortFromParam defaults a missing/garbage direction to asc and caps depth', () => {
+  assert.deepEqual(sortFromParam('a'), [{ key: 'a', dir: 'asc' }]);
+  assert.deepEqual(sortFromParam('a:sideways'), [{ key: 'a', dir: 'asc' }]);
+  assert.equal(sortFromParam('a:asc,b:asc,c:asc,d:asc').length, MAX_SORT_KEYS);
 });

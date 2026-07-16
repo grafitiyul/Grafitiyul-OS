@@ -220,6 +220,15 @@ function alignClass(col) {
 // Keep the drag strictly horizontal — headers only ever move along the row.
 const horizontalOnly = ({ transform }) => ({ ...transform, y: 0 });
 
+// The `sort` prop accepts EITHER a single {key,dir} (the original contract, still
+// used by Deals/Contacts/Collection/Tours) or an ORDERED array of them for
+// multi-column sort. Normalising here keeps every existing caller working
+// untouched while the Tasks workspace passes an array.
+function sortList(sort) {
+  if (!sort) return [];
+  return Array.isArray(sort) ? sort : [sort];
+}
+
 function SortableTh({ col, className, sort, onSort, width, resizable, onResizeEnd }) {
   const s = useSortable({ id: col.key });
   const thRef = useRef(null);
@@ -231,7 +240,13 @@ function SortableTh({ col, className, sort, onSort, width, resizable, onResizeEn
   // it); drag past the 8px activation distance = reorder. dnd-kit only
   // swallows the click once a real drag started, so both coexist.
   const sortable = !!onSort && col.sortable !== false;
-  const active = sortable && sort?.key === col.key;
+  const list = sortList(sort);
+  const idx = list.findIndex((s2) => s2.key === col.key);
+  const active = sortable && idx >= 0;
+  const entry = active ? list[idx] : null;
+  // With more than one active sort, show each column's RANK — otherwise the
+  // arrows alone can't say which column sorted first.
+  const rank = active && list.length > 1 ? idx + 1 : null;
 
   // Resize: drag the header's inline-end edge, and THAT edge follows the
   // pointer while every other edge stays anchored. A w-full auto-layout table
@@ -290,14 +305,19 @@ function SortableTh({ col, className, sort, onSort, width, resizable, onResizeEn
       }}
       {...s.attributes}
       {...s.listeners}
-      onClick={sortable ? () => onSort(col.key) : undefined}
-      title={sortable ? 'לחיצה למיון · גרירה לשינוי סדר' : 'גרירה לשינוי סדר העמודות'}
+      onClick={sortable ? (e) => onSort(col.key, { additive: e.shiftKey }) : undefined}
+      title={
+        sortable
+          ? 'לחיצה למיון · Shift+לחיצה להוספת מיון · גרירה לשינוי סדר'
+          : 'גרירה לשינוי סדר העמודות'
+      }
       className={`${TH_BASE} ${COL_SEP} ${alignClass(col)} relative cursor-grab select-none active:cursor-grabbing ${
         s.isDragging ? 'z-10 rounded-md bg-blue-50 text-blue-700 shadow-sm' : ''
       } ${active ? 'text-blue-700' : ''} ${className || ''}`}
     >
       {col.label}
-      {active && <span className="ms-1 text-[9px]">{sort.dir === 'asc' ? '▲' : '▼'}</span>}
+      {active && <span className="ms-1 text-[9px]">{entry.dir === 'asc' ? '▲' : '▼'}</span>}
+      {rank && <span className="ms-0.5 align-super text-[8px] font-bold text-blue-600">{rank}</span>}
       {resizable && (
         <span
           role="separator"

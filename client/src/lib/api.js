@@ -601,6 +601,16 @@ export const api = {
     reorder: (ids) =>
       request('/api/workshop-locations/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
   },
+  // ── CRM Tasks WORKSPACE (the first CRM tab) — cross-deal grid + chip counts.
+  // READ-ONLY. Writes still go through `dealTasks` below: every grid row carries
+  // its dealId, so inline edits reuse the ONE existing task write path instead
+  // of opening a second one.
+  tasks: {
+    // `query` is a pre-serialized string from taskFilters.filtersToQuery — the
+    // canonical filter object is built there, never assembled here.
+    list: (query) => request(`/api/tasks${query ? `?${query}` : ''}`),
+    counts: (query) => request(`/api/tasks/counts${query ? `?${query}` : ''}`),
+  },
   // ── Deal Tasks (משימות) — future actions on a deal ───────────────
   dealTasks: {
     list: (dealId, status) => request(`/api/deals/${dealId}/tasks${qs({ status })}`),

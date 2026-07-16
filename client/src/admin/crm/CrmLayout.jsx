@@ -5,11 +5,14 @@ import { CRM_TABS } from './config.js';
 // so the shell, desktop tabs, and mobile tab bar stay consistent.
 export default function CrmLayout() {
   const { pathname } = useLocation();
-  const activeKey = pathname.startsWith('/admin/crm/contacts')
-    ? 'contacts'
-    : pathname.startsWith('/admin/crm/organizations')
-      ? 'organizations'
-      : 'deals';
+  // Derived FROM CRM_TABS rather than a parallel if/else chain, so adding a tab
+  // is a one-line edit in config.js. Longest path first, so a nested route can
+  // never be shadowed by a shorter sibling. Deals stays the fallback because a
+  // deal URL is `/admin/crm/deals<orderNo>` with no separator (see dealPath).
+  const activeKey =
+    [...CRM_TABS]
+      .sort((a, b) => b.path.length - a.path.length)
+      .find((t) => pathname.startsWith(`/admin/crm/${t.path}`))?.key || 'deals';
 
   return (
     <div className="h-full flex flex-col">

@@ -4,6 +4,74 @@
 // Persisted state per table: { visible: [keys], order: [keys], widths: {key: px} }.
 // Legacy format (a plain array of visible keys, pre-reorder) is still read.
 
+// ── Multi-column sort ────────────────────────────────────────────────────
+// Sort state is an ORDERED list of { key, dir } — first entry is the primary
+// sort. Screens that only ever sort by one column keep passing a single
+// { key, dir } object to the table; this list form is opt-in.
+
+/** Cap the sort depth. Beyond ~3 keys nobody can read the result anyway. */
+export const MAX_SORT_KEYS = 3;
+
+/**
+ * Toggle a column in the sort list.
+ *
+ * Plain click  → this column becomes the ONLY sort (asc; clicking the active
+ *                column again flips its direction).
+ * Shift+click  → ADD the column to the existing sort, or flip it if already
+ *                there. Dropping a shift-clicked column requires flipping it
+ *                past desc, which is the same asc→desc→remove cycle the plain
+ *                click does not need.
+ *
+ * @param {Array<{key,dir}>} sort current list
+ * @param {string} key column toggled
+ * @param {{additive?: boolean}} [opts]
+ * @returns {Array<{key,dir}>} a NEW list
+ */
+export function toggleSortKey(sort, key, opts = {}) {
+  const list = Array.isArray(sort) ? sort : sort ? [sort] : [];
+  const idx = list.findIndex((s) => s.key === key);
+
+  if (!opts.additive) {
+    if (idx === 0 && list.length === 1) {
+      return [{ key, dir: list[0].dir === 'asc' ? 'desc' : 'asc' }];
+    }
+    return [{ key, dir: 'asc' }];
+  }
+
+  if (idx < 0) {
+    if (list.length >= MAX_SORT_KEYS) return list;
+    return [...list, { key, dir: 'asc' }];
+  }
+  // Already in the list: asc → desc → removed.
+  if (list[idx].dir === 'asc') {
+    const next = [...list];
+    next[idx] = { key, dir: 'desc' };
+    return next;
+  }
+  return list.filter((s) => s.key !== key);
+}
+
+/** Serialize to the API's `sort=key:dir,key2:dir2`. */
+export function sortToParam(sort) {
+  const list = Array.isArray(sort) ? sort : sort ? [sort] : [];
+  return list.map((s) => `${s.key}:${s.dir}`).join(',');
+}
+
+/** Parse `key:dir,key2:dir2` back into a list. Unknown keys are dropped. */
+export function sortFromParam(raw, allowedKeys) {
+  const allowed = allowedKeys ? new Set(allowedKeys) : null;
+  return String(raw || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const [key, dir = 'asc'] = part.split(':');
+      return { key, dir: dir === 'desc' ? 'desc' : 'asc' };
+    })
+    .filter((s) => s.key && (!allowed || allowed.has(s.key)))
+    .slice(0, MAX_SORT_KEYS);
+}
+
 // Columns may not collapse below this (a column's `minWidth` can raise it).
 export const MIN_COL_WIDTH = 60;
 // …nor grow past this, so one dragged column can't swallow the whole table (a

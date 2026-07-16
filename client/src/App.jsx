@@ -43,9 +43,10 @@ import PeopleList from './admin/people/PeopleList.jsx';
 import PersonProfile from './admin/people/PersonProfile.jsx';
 import TeamsPage from './admin/people/TeamsPage.jsx';
 import AdminUsersPage from './admin/users/AdminUsersPage.jsx';
-// CRM foundation (Phase 1) — secondary reference/management surface. Daily work
-// will start from Activities (built later); these pages are reached from Deals.
+// CRM — the operational hub. Tasks (משימות) is the primary daily workspace and
+// the landing route; Deals/Contacts/Organizations are reached from that work.
 import CrmLayout from './admin/crm/CrmLayout.jsx';
+import TasksWorkspace from './admin/crm/tasks/TasksWorkspace.jsx';
 import OrganizationsList from './admin/crm/organizations/OrganizationsList.jsx';
 import OrganizationDetail from './admin/crm/organizations/OrganizationDetail.jsx';
 import ContactsList from './admin/crm/contacts/ContactsList.jsx';
@@ -193,9 +194,10 @@ export default function App() {
           <Route path="teams" element={<TeamsPage />} />
           <Route path=":id" element={<PersonProfile />} />
         </Route>
-        {/* CRM hub — Deals (primary) + Contacts + Organizations. */}
+        {/* CRM hub — Tasks (the primary daily workspace) + Deals + Contacts + Organizations. */}
         <Route path="crm" element={<CrmLayout />}>
-          <Route index element={<Navigate to="/admin/crm/deals" replace />} />
+          <Route index element={<Navigate to="/admin/crm/tasks" replace />} />
+          <Route path="tasks" element={<TasksWorkspace />} />
           <Route path="deals" element={<DealsList />} />
           <Route path="deals/:id" element={<DealDetail />} />
           <Route path="contacts" element={<ContactsList />} />
