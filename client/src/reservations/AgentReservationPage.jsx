@@ -237,11 +237,19 @@ export default function AgentReservationPage() {
             </div>
           ))}
         </div>
-        <div className="mt-6 text-center">
+        <div className="mt-6 flex flex-col items-center gap-2 sm:flex-row sm:justify-center">
+          {/* Official reservation copy — direct download from the canonical
+              Documents engine (BINDING #7/#8). */}
+          <a
+            href={`/api/public/reservations/${token}/session/${submissionKey}/pdf`}
+            className="w-full rounded-xl bg-gray-900 px-6 py-2.5 text-center text-[14px] font-semibold text-white hover:brightness-110 sm:w-auto"
+          >
+            {t.thanks.downloadPdf}
+          </a>
           <button
             type="button"
             onClick={() => window.location.reload()}
-            className="rounded-xl border border-gray-300 bg-white px-6 py-2.5 text-[14px] font-medium text-gray-700 hover:bg-gray-50"
+            className="w-full rounded-xl border border-gray-300 bg-white px-6 py-2.5 text-[14px] font-medium text-gray-700 hover:bg-gray-50 sm:w-auto"
           >
             {t.thanks.newReservation}
           </button>

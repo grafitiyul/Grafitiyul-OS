@@ -21,6 +21,7 @@ import {
   MAX_GROUPS,
 } from '../reservations/intake.js';
 import { processReservationSession } from '../reservations/processor.js';
+import { buildReservationPdf } from '../reservations/pdf.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
 
 const router = Router();
@@ -178,6 +179,50 @@ router.get(
       return res.status(404).json({ error: 'not_found' });
     }
     res.json({ session: publicSessionDto(session) });
+  }),
+);
+
+// Official reservation copy (BINDING #7/#8) — rendered through the canonical
+// Documents engine from the FROZEN session data, so a re-download always
+// regenerates the identical document. Token + ownership gated like the status
+// endpoint; the response is a direct attachment download.
+router.get(
+  '/reservations/:token/session/:submissionKey/pdf',
+  handle(async (req, res) => {
+    const r = await resolveReservationLink(req.params.token);
+    if (r.error) return sendResolveError(res, r.error);
+    const session = await prisma.reservationSession.findUnique({
+      where: { submissionKey: req.params.submissionKey },
+      include: {
+        groups: {
+          orderBy: { sortOrder: 'asc' },
+          include: { createdDeal: { select: { orderNo: true } } },
+        },
+        contact: { select: { firstNameHe: true, lastNameHe: true, firstNameEn: true, lastNameEn: true } },
+        organization: { select: { name: true } },
+      },
+    });
+    if (!session || session.contactId !== r.contact.id) {
+      return res.status(404).json({ error: 'not_found' });
+    }
+    const agentName =
+      session.language === 'en'
+        ? `${session.contact?.firstNameEn || ''} ${session.contact?.lastNameEn || ''}`.trim() ||
+          `${session.contact?.firstNameHe || ''} ${session.contact?.lastNameHe || ''}`.trim()
+        : `${session.contact?.firstNameHe || ''} ${session.contact?.lastNameHe || ''}`.trim();
+    const pdf = await buildReservationPdf({
+      ...session,
+      agentName,
+      organizationName: session.organization?.name || '',
+      groups: session.groups.map((g) => ({
+        ...g,
+        createdDealOrderNo: g.createdDeal?.orderNo || null,
+      })),
+    });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Length', pdf.length);
+    res.setHeader('Content-Disposition', `attachment; filename="reservation-${session.sessionNo}.pdf"`);
+    res.send(pdf);
   }),
 );
 

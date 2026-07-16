@@ -73,6 +73,7 @@ export const L = {
       received: 'התקבל',
       processing: 'בטיפול',
       orderNo: (n) => `GOS-${n}`,
+      downloadPdf: 'הורד הזמנה (PDF)',
       newReservation: 'הזמנה חדשה',
     },
     blocked: {
@@ -152,6 +153,7 @@ export const L = {
       received: 'Received',
       processing: 'Processing',
       orderNo: (n) => `GOS-${n}`,
+      downloadPdf: 'Download reservation (PDF)',
       newReservation: 'New reservation',
     },
     blocked: {
