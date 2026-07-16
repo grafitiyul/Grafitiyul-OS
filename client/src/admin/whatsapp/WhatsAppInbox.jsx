@@ -7,7 +7,6 @@ import ChatListRow from './ChatListRow.jsx';
 import PhoneFlag from './PhoneFlag.jsx';
 import DealDrawer from '../common/DealDrawer.jsx';
 import { hasDirtyForms } from '../../lib/dirtyForms.js';
-import { ensureSeen, isUnread, markSeen, markUnread, readManualUnread, readSeen } from './seenStore.js';
 
 // Active WhatsApp inbox — WhatsApp-style two-pane workspace:
 //   RIGHT: pinned conversation list (resizable, persisted width) with the
@@ -297,10 +296,6 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
   // deal edits" confirmation (null = no pending confirmation).
   const [followConfirm, setFollowConfirm] = useState(null);
   const [error, setError] = useState(null);
-  // Per-chat unread counts (device-local seen markers + server counts).
-  const [unreadCounts, setUnreadCounts] = useState({});
-  // Manual "mark unread" flags (mirrors the shared store, for rendering).
-  const [manualUnread, setManualUnread] = useState(() => readManualUnread());
   // Which chat's snooze menu is open (chat id or null).
   const [snoozeMenuFor, setSnoozeMenuFor] = useState(null);
   // Keyboard cursor (chat id) — ↑/↓ move it, Enter opens it.
@@ -317,25 +312,10 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
   const containerRef = useRef(null);
   const searchInputRef = useRef(null);
 
-  // Unread counts for chats whose last message is newer than the seen marker.
-  // Bounded: only unread candidates hit the count endpoint (usually a few).
-  const computeUnread = useCallback(async (list) => {
-    const seen = ensureSeen(list.map((c) => c.id));
-    setManualUnread(readManualUnread());
-    // Counts reflect REAL new messages only (manual flags are display-only),
-    // so pass an empty manual map when picking count candidates.
-    const candidates = list.filter((c) => isUnread(c, seen, {})).slice(0, 25);
-    const entries = await Promise.all(
-      candidates.map(async (c) => {
-        try {
-          const { count } = await api.whatsapp.chatMessages(c.id, { count: 1, after: seen[c.id] });
-          return [c.id, count || 0];
-        } catch {
-          return [c.id, 1]; // it IS unread — show at least a dot-equivalent
-        }
-      }),
-    );
-    setUnreadCounts(Object.fromEntries(entries.filter(([, n]) => n > 0)));
+  // Optimistically patch one chat in the loaded list (immediate read/unread
+  // feedback before the next fetch confirms the server SSOT).
+  const patchChat = useCallback((chatId, patch) => {
+    setChats((cur) => (cur ? cur.map((c) => (c.id === chatId ? { ...c, ...patch } : c)) : cur));
   }, []);
 
   const load = useCallback(async () => {
@@ -346,17 +326,18 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
         scope: search ? 'all' : scope,
         kind,
       });
+      // Unread state is carried on each chat (server SSOT: unreadCount /
+      // manualUnread) — no per-device markers, no extra count fetches.
       setChats(data.chats);
       setUnmatchedCount(data.unmatchedCount);
       onCountChange?.(data.unmatchedCount);
       // Keep the open thread's snapshot fresh (name/contact may change).
       setSelected((cur) => (cur ? data.chats.find((c) => c.id === cur.id) || cur : cur));
       setError(null);
-      computeUnread(data.chats);
     } catch (e) {
       setError(e?.payload?.error || e?.message || 'failed');
     }
-  }, [search, accountFilter, scope, kind, onCountChange, computeUnread]);
+  }, [search, accountFilter, scope, kind, onCountChange]);
 
   useEffect(() => {
     const t = setTimeout(() => load(), search ? 300 : 0);
@@ -370,23 +351,14 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
     return () => clearInterval(t);
   }, [load, drawerDealId]);
 
-  // Reading the open conversation = seen (also as new messages arrive).
+  // Reading the open conversation marks it read — server SSOT + a WhatsApp read
+  // receipt (so the phone / other linked devices clear too). Re-runs when a new
+  // message arrives while the thread is open. Optimistic local clear first.
   useEffect(() => {
     if (!selected) return;
-    markSeen(selected.id);
-    setManualUnread((cur) => {
-      if (!cur[selected.id]) return cur;
-      const next = { ...cur };
-      delete next[selected.id];
-      return next;
-    });
-    setUnreadCounts((cur) => {
-      if (!cur[selected.id]) return cur;
-      const next = { ...cur };
-      delete next[selected.id];
-      return next;
-    });
-  }, [selected?.id, selected?.lastMessageAt]); // eslint-disable-line react-hooks/exhaustive-deps
+    patchChat(selected.id, { unreadCount: 0, manualUnread: false, unread: false });
+    api.whatsapp.markChatRead(selected.id).catch(() => {});
+  }, [selected?.id, selected?.lastMessageAt, patchChat]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // List resize — anchored to the container's RIGHT edge (RTL list).
   useEffect(() => {
@@ -420,11 +392,10 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
   const filteredChats = useMemo(() => {
     if (!chats) return null;
     if (statusFilter === 'all') return chats;
-    const seen = readSeen();
     return chats.filter((c) => {
       switch (statusFilter) {
         case 'unread':
-          return isUnread(c, seen, manualUnread);
+          return (c.unreadCount ?? 0) > 0 || !!c.manualUnread;
         case 'awaiting':
           return c.lastMessage?.direction === 'incoming';
         case 'deal':
@@ -437,7 +408,7 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
           return true;
       }
     });
-  }, [chats, statusFilter, unreadCounts, manualUnread]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [chats, statusFilter]);
 
   // Open a conversation. WORK-QUEUE MODE: when the deal drawer is already
   // open, switching conversations follows PASSIVELY — exactly-one matching
@@ -583,24 +554,16 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
   }
 
   function toggleRead(chat) {
-    const seen = readSeen();
-    if (isUnread(chat, seen, manualUnread) || unreadCounts[chat.id]) {
-      markSeen(chat.id);
-      setManualUnread((cur) => {
-        const next = { ...cur };
-        delete next[chat.id];
-        return next;
-      });
-      setUnreadCounts((cur) => {
-        const next = { ...cur };
-        delete next[chat.id];
-        return next;
-      });
+    const isUnreadNow = (chat.unreadCount ?? 0) > 0 || !!chat.manualUnread;
+    if (isUnreadNow) {
+      // Mark read: server SSOT + WhatsApp read receipt. Optimistic clear first.
+      patchChat(chat.id, { unreadCount: 0, manualUnread: false, unread: false });
+      api.whatsapp.markChatRead(chat.id).catch(() => {});
     } else {
-      // WhatsApp-style manual unread: a display flag (empty circle) — counts
-      // stay honest and only reflect real new messages.
-      markUnread(chat.id);
-      setManualUnread((cur) => ({ ...cur, [chat.id]: true }));
+      // WhatsApp-style manual unread: a display flag (empty circle) — the honest
+      // count stays 0 and only reflects real new messages.
+      patchChat(chat.id, { manualUnread: true, unread: true });
+      api.whatsapp.markChatUnread(chat.id).catch(() => {});
       if (selected?.id === chat.id) setSelected(null);
     }
   }
@@ -740,8 +703,8 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                       chat={chat}
                       active={!!selected && chat.id === selected.id}
                       cursor={cursorId === chat.id}
-                      unreadCount={unreadCounts[chat.id] || 0}
-                      manualUnread={!!manualUnread[chat.id]}
+                      unreadCount={chat.unreadCount || 0}
+                      manualUnread={!!chat.manualUnread}
                       snoozeMenuOpen={snoozeMenuFor === chat.id}
                       onOpen={openChat}
                       onTogglePin={(c) => setChatState(c, { pinned: !c.pinnedAt })}

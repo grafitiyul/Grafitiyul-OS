@@ -2,7 +2,6 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'r
 import { api } from '../../lib/api.js';
 import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import ChatThread from './ChatThread.jsx';
-import { ensureSeen, markSeen } from './seenStore.js';
 import { OPEN_WHATSAPP_COMPOSER_EVENT } from './composerEvents.js';
 import { WorkspaceSeamContext } from '../../shell/WorkspaceLayout.jsx';
 
@@ -13,10 +12,9 @@ import { WorkspaceSeamContext } from '../../shell/WorkspaceLayout.jsx';
 // overlay (may cover the script), horizontally RESIZABLE by dragging its
 // center-facing edge; the chosen width persists globally across deals.
 //
-// Unread badge: derived from the SHARED seen-store (seenStore.js — the same
-// per-chat "last seen" markers the inbox uses; no duplicate unread system);
-// the count is the store's incoming messages after each marker. Opening the
-// popup marks the visible conversation read.
+// Unread badge: the SUM of the server's canonical per-chat unreadCount (one
+// read model shared with the inbox — no per-device markers). Opening the popup
+// marks the visible conversation read (server SSOT + WhatsApp read receipt).
 //
 // Contact model (user spec): default to the Deal's PRIMARY contact; a compact
 // selector switches between the deal's linked contacts inside the same popup.
@@ -93,24 +91,11 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
     }
   }, [subjectType, subjectId]);
 
-  // Unread = incoming messages newer than each chat's last-seen marker. A
-  // chat we've never seen gets its marker initialized to NOW (history isn't
-  // "unread"); only messages arriving after that count.
-  const computeUnread = useCallback(async (d) => {
+  // Unread badge = sum of the server's canonical per-chat unread counts (SSOT).
+  // Manual "mark unread" flags are display-only and don't inflate the badge.
+  const computeUnread = useCallback((d) => {
     const chats = d?.chats || [];
-    // First sight initializes markers to NOW (history isn't "unread").
-    const seen = ensureSeen(chats.map((c) => c.id));
-    let total = 0;
-    for (const chat of chats) {
-      if (!seen[chat.id] || !chat.lastMessageAt || chat.lastMessageAt <= seen[chat.id]) continue;
-      try {
-        const { count } = await api.whatsapp.chatMessages(chat.id, { after: seen[chat.id], count: 1 });
-        total += count || 0;
-      } catch {
-        /* transient — next poll recounts */
-      }
-    }
-    setUnread(total);
+    setUnread(chats.reduce((sum, c) => sum + (c.unreadCount || 0), 0));
   }, []);
 
   // Load + poll the chat list. While CLOSED the poll only feeds the badge;
@@ -119,7 +104,7 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
     let cancelled = false;
     async function refresh() {
       const d = await load();
-      if (!cancelled && d) await computeUnread(d);
+      if (!cancelled && d) computeUnread(d);
     }
     refresh();
     const t = setInterval(() => {
@@ -174,18 +159,21 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
   const activeChat =
     activeContact?.chats.find((c) => c.id === chatSel) || activeContact?.chats[0] || null;
 
-  // Reading the conversation = seen. Mark on open/switch and keep marking
-  // while the popup stays open on it (the badge is for the CLOSED bubble).
+  // Reading the conversation marks it read on the server (SSOT) and pushes a
+  // WhatsApp read receipt. Mark on open/switch and periodically while the popup
+  // stays open on it (a newer inbound message re-marks read). The badge is for
+  // the CLOSED bubble, so clear it optimistically too.
   useEffect(() => {
     if (!open || !activeChat) return undefined;
-    markSeen(activeChat.id);
+    const markRead = () => api.whatsapp.markChatRead(activeChat.id).catch(() => {});
+    markRead();
     setUnread(0);
     const t = setInterval(() => {
-      if (!document.hidden) markSeen(activeChat.id);
+      if (!document.hidden) markRead();
     }, 10_000);
     return () => {
       clearInterval(t);
-      markSeen(activeChat.id);
+      markRead();
     };
   }, [open, activeChat?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 

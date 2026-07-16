@@ -788,6 +788,12 @@ export const api = {
     // Inbox workflow state (pin / snooze) + message bookmarks (star)
     chatState: (chatId, data) =>
       request(`/api/whatsapp/chats/${chatId}/state`, { method: 'PUT', body: JSON.stringify(data) }),
+    // Canonical read state: opening a chat marks it read (server SSOT + pushes
+    // a WhatsApp read receipt); manual mark-unread is a display flag only.
+    markChatRead: (chatId) =>
+      request(`/api/whatsapp/chats/${chatId}/read`, { method: 'POST', body: JSON.stringify({}) }),
+    markChatUnread: (chatId) =>
+      request(`/api/whatsapp/chats/${chatId}/unread`, { method: 'POST', body: JSON.stringify({}) }),
     starMessage: (messageId, starred) =>
       request(`/api/whatsapp/messages/${messageId}/star`, { method: 'PUT', body: JSON.stringify({ starred }) }),
     chatStarred: (chatId) => request(`/api/whatsapp/chats/${chatId}/starred`),
