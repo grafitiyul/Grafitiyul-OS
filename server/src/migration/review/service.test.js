@@ -600,6 +600,16 @@ const importDraft = (phones) => ({
   ...(phones ? { phones } : {}),
 });
 
+test('the queue response carries the MANDATORY counter — blocking rows across all sections', async () => {
+  const rows = [nameRow(1), nameRow(2), nameRow(3)];
+  rows[0].proposal.blocking = true;                       // pending → counts
+  rows[1].proposal.blocking = true; rows[1].status = 'edited'; // resolved → not counted
+  rows[2].proposal.blocking = false;                      // optional → never counted
+  const c = stubClient(rows);
+  const q = await listQueue(c, 'name_cleanup');
+  assert.equal(q.blockingUnresolved, 1, 'exactly the unresolved import-would-fail rows');
+});
+
 test('a phone claimed by another decision blocks the save; removing it unblocks', async () => {
   const c = stubClient([
     nameRow(1, ['050-1234567']),

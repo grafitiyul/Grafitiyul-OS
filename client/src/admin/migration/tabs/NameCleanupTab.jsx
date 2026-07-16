@@ -29,6 +29,9 @@ const FIELDS = [
 export default function NameCleanupTab() {
   const { reload } = useOutletContext() || {};
   const [section, setSection] = useState('critical');
+  // The mandatory view: only rows whose import would FAIL (the readiness-gate
+  // blocker). Spans sections, so it replaces the section filter while active.
+  const [mustOnly, setMustOnly] = useState(false);
   const [showResolved, setShowResolved] = useState(false);
   const [data, setData] = useState(null);
   const [openId, setOpenId] = useState(null);
@@ -40,12 +43,17 @@ export default function NameCleanupTab() {
   const [error, setError] = useState(null);
 
   const load = useCallback(async () => {
-    try { setData(await migrationApi.queue('name_cleanup', showResolved ? null : 'unresolved', section)); setError(null); }
-    catch { setError('טעינת התור נכשלה'); }
-  }, [section, showResolved]);
+    try {
+      setData(await migrationApi.queue('name_cleanup', showResolved ? null : 'unresolved', mustOnly ? null : section));
+      setError(null);
+    } catch { setError('טעינת התור נכשלה'); }
+  }, [section, showResolved, mustOnly]);
   useEffect(() => { load(); }, [load]);
 
-  const selected = data?.decisions?.find((d) => d.id === openId) || null;
+  const shown = mustOnly
+    ? (data?.decisions || []).filter((d) => d.proposal.blocking)
+    : data?.decisions || [];
+  const selected = shown.find((d) => d.id === openId) || null;
   // The mirror resolves with the same context the server will use on save: the
   // person's identity correction and the shared claimed-phone index.
   const result = useMemo(
@@ -141,10 +149,19 @@ export default function NameCleanupTab() {
       </div>
 
       <div className="flex flex-wrap gap-1 mb-1">
+        {/* The MANDATORY work — the exact rows keeping the readiness gate red.
+            A validation dimension, not a business-impact section: the same rows
+            also live inside historical/low, and this chip cuts across them. */}
+        <button type="button"
+          onClick={() => { setMustOnly(!mustOnly); setOpenId(null); setDraft(null); }}
+          className={`text-[12px] px-2.5 py-1.5 rounded-lg border transition font-semibold ${
+            mustOnly ? 'bg-red-600 border-red-600 text-white' : (data.blockingUnresolved ? 'bg-red-50 border-red-300 text-red-800 hover:bg-red-100' : 'bg-green-50 border-green-200 text-green-800')}`}>
+          ⛔ חובה לפני ייבוא — הייבוא ייכשל ({num(data.blockingUnresolved ?? 0)})
+        </button>
         {SECTIONS.map((s) => (
           <button key={s.key} type="button"
-            onClick={() => { setSection(s.key); setOpenId(null); setDraft(null); }}
-            className={`text-[12px] px-2.5 py-1.5 rounded-lg border transition ${section === s.key ? `${s.cls} font-semibold` : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+            onClick={() => { setMustOnly(false); setSection(s.key); setOpenId(null); setDraft(null); }}
+            className={`text-[12px] px-2.5 py-1.5 rounded-lg border transition ${!mustOnly && section === s.key ? `${s.cls} font-semibold` : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
             {s.emoji} {s.label} <span className="opacity-70">({num(counts[s.key] ?? 0)})</span>
           </button>
         ))}
@@ -154,7 +171,12 @@ export default function NameCleanupTab() {
           <input type="checkbox" checked={showResolved} onChange={(e) => { setShowResolved(e.target.checked); setOpenId(null); }} />
           הצג גם רשומות שכבר הוכרעו
         </label>
-        <span className="text-[12px] text-gray-400">{num(data.counts.shown)} מוצגות</span>
+        <span className="text-[12px] text-gray-400">{num(shown.length)} מוצגות</span>
+        {mustOnly && (
+          <span className="text-[12px] text-red-700">
+            אלה הרשומות היחידות שעדיין חוסמות את ייבוא הזהויות — כל השאר רשות.
+          </span>
+        )}
       </div>
 
       {section === 'none' && (
@@ -167,7 +189,7 @@ export default function NameCleanupTab() {
       <div className="grid grid-cols-1 xl:grid-cols-[22rem_1fr] gap-3">
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
           <ul className="divide-y divide-gray-100 max-h-[70vh] overflow-y-auto">
-            {data.decisions.map((d) => (
+            {shown.map((d) => (
               <li key={d.id}>
                 <button type="button" onClick={() => select(d)} className={`w-full text-right px-3 py-2.5 hover:bg-gray-50 ${openId === d.id ? 'bg-blue-50' : ''}`}>
                   <div className="text-[13px] font-medium text-gray-900 truncate mb-1">{d.proposal.displayName}</div>
@@ -181,9 +203,11 @@ export default function NameCleanupTab() {
                 </button>
               </li>
             ))}
-            {!data.decisions.length && (
+            {!shown.length && (
               <li className="px-3 py-8 text-center text-[13px] text-gray-400">
-                {section === 'critical' ? '✓ אין כאן כלום — אף שם בעייתי לא נוגע לתפעול חי' : 'אין פריטים בסינון הזה'}
+                {mustOnly
+                  ? '✓ אין יותר רשומות שחוסמות את ייבוא הזהויות'
+                  : section === 'critical' ? '✓ אין כאן כלום — אף שם בעייתי לא נוגע לתפעול חי' : 'אין פריטים בסינון הזה'}
               </li>
             )}
           </ul>

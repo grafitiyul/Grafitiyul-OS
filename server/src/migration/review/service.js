@@ -367,6 +367,12 @@ export async function listQueue(client, queueKey, { status = null, filter = null
       if (s === 'none' || !isResolved(r.status)) sectionCounts[s] = (sectionCounts[s] || 0) + 1;
     }
     batchApprovable = rows.filter((r) => r.status === 'pending' && r.proposal?.batchApprovable === true).length;
+    // The MANDATORY dimension, orthogonal to sections: rows whose import would
+    // fail outright. Computed over ALL rows so the counter never depends on the
+    // section on screen — this is the number that keeps the readiness gate red.
+    if (queueKey === 'name_cleanup') {
+      extra.blockingUnresolved = rows.filter((r) => r.proposal?.blocking === true && !isResolved(r.status)).length;
+    }
   }
 
   return {
