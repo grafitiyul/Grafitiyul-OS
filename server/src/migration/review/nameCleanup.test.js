@@ -215,6 +215,84 @@ test('excluding a record that has deals is allowed, but warned about', () => {
   assert.match(r.warnings.join(' '), /4 עסקאות/);
 });
 
+// ── THE BUSINESS RULE (owner, 2026-07-16) ─────────────────────────────────────
+// "This is an Organization" + zero Deals → NOT imported by default. Old
+// activities/notes are not enough to justify an Organization. Deals > 0 →
+// defaults to creating one. Either default is an explicit-override away — a
+// business decision, never an automatic matching rule.
+test('an organisation with ZERO deals defaults to NOT imported; the owner may override', () => {
+  const { proposals } = buildNameCleanupProposals({
+    contacts: [c({ id: 1, first: '', last: 'בית ספר הדר', acts: 5, notes: 3 })], // history but no deals
+  });
+  const p = proposals[0];
+  const draft = nameDraftFromProposal(p, null);
+  assert.equal(draft.organization.create, false, 'zero deals → the default is do-not-import');
+
+  // The default outcome: archive only, valid, no organisation.
+  let r = resolveNameResult(p, { ...draft, treatment: 'organization' });
+  assert.equal(r.valid, true);
+  assert.equal(r.organization.create, false);
+
+  // The explicit override is allowed — and labelled as an override of the rule.
+  r = resolveNameResult(p, { ...draft, treatment: 'organization', organization: { ...draft.organization, create: true } });
+  assert.equal(r.valid, true);
+  assert.match(r.warnings.join(' '), /חריגה מכלל העסק/);
+});
+
+test('an organisation WITH deals defaults to being created', () => {
+  const { proposals } = buildNameCleanupProposals({
+    contacts: [c({ id: 1, first: '', last: 'בנק יהב', deals: 4 })],
+  });
+  const p = proposals[0];
+  const draft = nameDraftFromProposal(p, null);
+  assert.equal(draft.organization.create, true, 'deals > 0 → the default is create');
+  assert.equal(draft.organization.name, 'בנק יהב', 'name defaults from the record');
+
+  const r = resolveNameResult(p, { ...draft, treatment: 'organization' });
+  assert.equal(r.valid, true);
+  assert.equal(r.organization.create, true);
+  assert.deepEqual(r.warnings, [], 'following the rule is not a warning');
+
+  // Choosing NOT to import despite deals is allowed but strands them — warned.
+  const skip = resolveNameResult(p, { ...draft, treatment: 'organization', organization: { ...draft.organization, create: false } });
+  assert.equal(skip.valid, true);
+  assert.match(skip.warnings.join(' '), /4 עסקאות/);
+});
+
+test('creating an organisation requires a name — or an existing target whose key is real', () => {
+  const { proposals } = buildNameCleanupProposals({
+    contacts: [c({ id: 1, first: '', last: 'בנק יהב', deals: 2 })],
+  });
+  const p = proposals[0];
+  const base = nameDraftFromProposal(p, null);
+
+  const noName = resolveNameResult(p, { ...base, treatment: 'organization', organization: { create: true, name: '', targetOrganizationKey: null } });
+  assert.equal(noName.valid, false);
+  assert.match(noName.problems.join(' '), /חובה שם/);
+
+  const ctx = { orgTargetKeys: new Set(['prop:org:normName:בנק יהב']) };
+  const mapped = resolveNameResult(p, { ...base, treatment: 'organization', organization: { create: true, name: '', targetOrganizationKey: 'prop:org:normName:בנק יהב', targetLabel: 'בנק יהב' } }, ctx);
+  assert.equal(mapped.valid, true, 'mapping to an existing target needs no new name');
+
+  const dangling = resolveNameResult(p, { ...base, treatment: 'organization', organization: { create: true, name: '', targetOrganizationKey: 'prop:gone' } }, ctx);
+  assert.equal(dangling.valid, false);
+  assert.match(dangling.problems.join(' '), /לא נמצא במרשם/);
+});
+
+test('organisation mode never creates a Contact: name/phone/email gates do not apply', () => {
+  const { proposals } = buildNameCleanupProposals({
+    contacts: [c({ id: 1, first: '', last: 'בנק יהב', deals: 2, phones: ['not-a-phone-at-all'] })],
+  });
+  const p = proposals[0];
+  const draft = nameDraftFromProposal(p, null);
+  // As a PERSON this record is invalid twice over (no first name via empty fields +
+  // junk phone). As an ORGANISATION neither gate applies.
+  const r = resolveNameResult(p, { ...draft, treatment: 'organization', fields: { firstNameHe: '', lastNameHe: '', firstNameEn: '', lastNameEn: '' } });
+  assert.equal(r.valid, true);
+  assert.equal(r.phones, null, 'phones belong to the person flow');
+  assert.deepEqual(r.emails, []);
+});
+
 test('subject keys are stable and per source contact', () => {
   assert.equal(nameSubjectKey(19834), 'name:19834');
 });

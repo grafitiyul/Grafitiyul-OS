@@ -145,6 +145,16 @@ export function nameDraftFromProposal(proposal, decision = null) {
       firstNameEn: t(base.firstNameEn), lastNameEn: t(base.lastNameEn),
     },
     phones,
+    // THE BUSINESS RULE: an organisation with zero deals defaults to NOT imported;
+    // the owner may override explicitly. Deals > 0 defaults to creating it.
+    organization: decision?.organization
+      ? { ...decision.organization }
+      : {
+          create: (proposal?.context?.dealCount || 0) > 0,
+          name: t(proposal.displayName) || t(proposal.original?.name) || '',
+          targetOrganizationKey: null,
+          targetLabel: null,
+        },
   };
 }
 
@@ -155,12 +165,26 @@ export function resolveNameResult(proposal, draft, ctx = {}) {
     firstNameEn: t(draft.fields.firstNameEn), lastNameEn: t(draft.fields.lastNameEn),
   };
   const excluded = draft.treatment === 'exclude';
+  const isOrg = draft.treatment === 'organization';
   const problems = [];
   const warnings = [];
-  if (!excluded && !fields.firstNameHe && !fields.firstNameEn) problems.push('חובה שם פרטי — בעברית או באנגלית');
+  if (!excluded && !isOrg && !fields.firstNameHe && !fields.firstNameEn) problems.push('חובה שם פרטי — בעברית או באנגלית');
+
+  let organization = null;
+  if (isOrg) {
+    const o = draft.organization || {};
+    const deals = proposal.context?.dealCount || 0;
+    organization = { create: !!o.create, name: t(o.name), targetOrganizationKey: o.targetOrganizationKey || null, targetLabel: o.targetLabel || null };
+    if (organization.create) {
+      if (!organization.targetOrganizationKey && !organization.name) problems.push('חובה שם לארגון שייווצר');
+      if (deals === 0) warnings.push('חריגה מכלל העסק: נוצר ארגון בלי אף עסקה — החלטה מפורשת שלך');
+    } else if (deals > 0) {
+      warnings.push(`הרשומה לא תיובא למרות ${deals} עסקאות מקושרות — העסקאות יישארו ללא יעד`);
+    }
+  }
 
   let phones = null;
-  if (!excluded && Array.isArray(draft.phones)) {
+  if (!excluded && !isOrg && Array.isArray(draft.phones)) {
     phones = draft.phones.map((row) => resolvePhoneRow(row));
     const kept = phones.filter((p) => !p.remove);
     for (const p of kept) for (const prob of p.problems) problems.push(`טלפון ${p.value || p.original}: ${prob}`);
@@ -182,9 +206,9 @@ export function resolveNameResult(proposal, draft, ctx = {}) {
     if (removed.length) warnings.push(`${removed.length} מספרים לא ייובאו — הם נשארים בצילום ובארכיון`);
   }
 
-  const emails = excluded ? [] : effectiveEmails(proposal.context?.emails, ctx.identityEdit);
+  const emails = excluded || isOrg ? [] : effectiveEmails(proposal.context?.emails, ctx.identityEdit);
 
-  if (!excluded) {
+  if (!excluded && !isOrg) {
     const orig = `${proposal.original.first_name} ${proposal.original.last_name}`.trim();
     const now = [fields.firstNameHe, fields.lastNameHe, fields.firstNameEn, fields.lastNameEn].filter(Boolean).join(' ');
     if (orig && now && orig !== now) warnings.push(`השם שונה מהמקור: "${orig}" ← "${now}"`);
@@ -196,6 +220,6 @@ export function resolveNameResult(proposal, draft, ctx = {}) {
     treatment: draft.treatment, fields,
     displayHe: `${fields.firstNameHe} ${fields.lastNameHe}`.trim(),
     displayEn: `${fields.firstNameEn} ${fields.lastNameEn}`.trim(),
-    phones, emails, excluded, warnings, problems, valid: problems.length === 0,
+    phones, emails, organization, excluded, warnings, problems, valid: problems.length === 0,
   };
 }

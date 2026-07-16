@@ -41,6 +41,16 @@ export default function NameCleanupTab() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [error, setError] = useState(null);
+  // Existing-organisation targets (the same registry the Organizations tab uses),
+  // loaded once on first entering "זה ארגון" mode.
+  const [orgTargets, setOrgTargets] = useState(null);
+
+  async function enterOrgMode() {
+    setDraft((dr) => ({ ...dr, treatment: dr.treatment === 'organization' ? 'import' : 'organization' }));
+    if (!orgTargets) {
+      try { setOrgTargets(await migrationApi.orgTargets()); } catch { setOrgTargets({ proposals: [], gos: [] }); }
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -267,7 +277,58 @@ export default function NameCleanupTab() {
                 </div>
               )}
 
+              {/* "This is an Organization" — the business rule made visible. */}
+              {draft.treatment === 'organization' && (
+                <div className="bg-white border border-gray-200 rounded-xl p-4">
+                  <h3 className="text-sm font-semibold text-gray-900 mb-1">זה ארגון — לא איש קשר</h3>
+                  <div className={`text-[12px] rounded-lg border px-2.5 py-2 mb-3 ${selected.proposal.context.dealCount > 0 ? 'bg-blue-50 border-blue-200 text-blue-900' : 'bg-gray-50 border-gray-200 text-gray-700'}`}>
+                    {selected.proposal.context.dealCount > 0
+                      ? <>לרשומה <b>{num(selected.proposal.context.dealCount)} עסקאות</b> — לפי כלל העסק ייווצר ארגון ב-GOS (אפשר לבטל).</>
+                      : <>לרשומה <b>אפס עסקאות</b> — לפי כלל העסק היא <b>לא תיובא</b>. פעילויות והערות ישנות אינן סיבה מספקת לארגון. אפשר לעקוף במפורש.</>}
+                  </div>
+                  <label className="flex items-center gap-2 text-[13px] mb-2">
+                    <input type="checkbox" checked={draft.organization.create}
+                      onChange={(e) => setDraft({ ...draft, organization: { ...draft.organization, create: e.target.checked } })} />
+                    צור ארגון ב-GOS
+                  </label>
+                  {draft.organization.create && (
+                    <div className="space-y-2 pr-5">
+                      <label className="flex items-center gap-2 text-[12px]">
+                        <input type="radio" name={`orgmode-${selected.id}`} checked={!draft.organization.targetOrganizationKey}
+                          onChange={() => setDraft({ ...draft, organization: { ...draft.organization, targetOrganizationKey: null, targetLabel: null } })} />
+                        ארגון חדש בשם:
+                        <input type="text" value={draft.organization.name} disabled={!!draft.organization.targetOrganizationKey}
+                          onChange={(e) => setDraft({ ...draft, organization: { ...draft.organization, name: e.target.value } })}
+                          className="text-[13px] border border-gray-200 rounded-md px-2 py-1 bg-white flex-1 disabled:bg-gray-50" />
+                      </label>
+                      <label className="flex items-center gap-2 text-[12px]">
+                        <input type="radio" name={`orgmode-${selected.id}`} checked={!!draft.organization.targetOrganizationKey}
+                          onChange={() => { /* selecting from the dropdown activates this */ }} disabled={!orgTargets} />
+                        שייך לארגון קיים:
+                        <select
+                          value={draft.organization.targetOrganizationKey || ''}
+                          onChange={(e) => {
+                            const key = e.target.value || null;
+                            const all = [...(orgTargets?.proposals || []), ...(orgTargets?.gos || [])];
+                            const hit = all.find((x) => x.key === key);
+                            setDraft({ ...draft, organization: { ...draft.organization, targetOrganizationKey: key, targetLabel: hit?.name || null } });
+                          }}
+                          className="text-[12px] border border-gray-200 rounded-md px-1.5 py-1 bg-white flex-1">
+                          <option value="">{orgTargets ? '— בחר ארגון —' : 'טוען…'}</option>
+                          {(orgTargets?.proposals || []).map((x) => <option key={x.key} value={x.key}>{x.name}</option>)}
+                          {(orgTargets?.gos || []).map((x) => <option key={x.key} value={x.key}>{x.name} (קיים ב-GOS)</option>)}
+                        </select>
+                      </label>
+                      <p className="text-[11px] text-gray-400">
+                        שיוך לארגון קיים מונע כפילות — אם "{selected.proposal.displayName}" כבר קיים בתור הארגונים, בחר אותו כאן.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Editable final fields — the owner's values are binding. */}
+              {draft.treatment !== 'organization' && (
               <div className="bg-white border border-gray-200 rounded-xl p-4">
                 <h3 className="text-sm font-semibold text-gray-900 mb-1">השדות הסופיים ב-GOS</h3>
                 <p className="text-[11px] text-gray-400 mb-3">
@@ -309,9 +370,10 @@ export default function NameCleanupTab() {
                   </button>
                 </div>
               </div>
+              )}
 
               {/* Phones — country drives normalization; nothing is guessed. */}
-              {draft.treatment !== 'exclude' && draft.phones.length > 0 && (
+              {draft.treatment !== 'exclude' && draft.treatment !== 'organization' && draft.phones.length > 0 && (
                 <div className="bg-white border border-gray-200 rounded-xl p-4">
                   <h3 className="text-sm font-semibold text-gray-900 mb-1">טלפונים</h3>
                   <p className="text-[11px] text-gray-400 mb-3">
@@ -367,8 +429,23 @@ export default function NameCleanupTab() {
               {/* The final imported Contact, exactly as GOS will create it. */}
               {result && (
                 <div className="bg-blue-50/50 border border-blue-200 rounded-xl p-4">
-                  <h3 className="text-sm font-semibold text-gray-900 mb-2">איש הקשר שייווצר ב-GOS</h3>
-                  {result.excluded ? (
+                  <h3 className="text-sm font-semibold text-gray-900 mb-2">
+                    {result.organization ? 'התוצאה ב-GOS' : 'איש הקשר שייווצר ב-GOS'}
+                  </h3>
+                  {result.organization ? (
+                    result.organization.create ? (
+                      <p className="text-[13px] text-gray-900 bg-white border border-gray-200 rounded-lg px-3 py-2">
+                        {result.organization.targetOrganizationKey
+                          ? <>ישויך לארגון הקיים: <b>{result.organization.targetLabel || result.organization.targetOrganizationKey}</b></>
+                          : <>ייווצר ארגון: <b>{result.organization.name || '(ללא שם)'}</b></>}
+                        <span className="block text-[11px] text-gray-500 mt-0.5">לא ייווצר איש קשר.</span>
+                      </p>
+                    ) : (
+                      <p className="text-[13px] text-gray-700 bg-white border border-gray-200 rounded-lg px-3 py-2">
+                        זה ארגון, אבל <b>הוא לא ייובא</b> — אפס עסקאות. נשמר בצילום ובארכיון לתמיד.
+                      </p>
+                    )
+                  ) : result.excluded ? (
                     <p className="text-[13px] text-red-800">הרשומה לא תיווצר כאיש קשר ב-GOS. היא נשמרת בצילום ובארכיון.</p>
                   ) : (
                     <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 space-y-1.5">
@@ -421,8 +498,14 @@ export default function NameCleanupTab() {
                   className="w-full text-[13px] border border-gray-200 rounded-md px-2 py-1.5 bg-white mb-2" />
                 <div className="flex flex-wrap gap-2">
                   <button type="button" disabled={busy || !result?.valid || draft.treatment === 'exclude'}
-                    onClick={() => act('edit', { ...draft, treatment: 'import' })}
-                    className="text-[13px] px-3 py-1.5 rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50">זה אדם — אשר</button>
+                    onClick={() => act('edit', draft.treatment === 'organization' ? draft : { ...draft, treatment: 'import' })}
+                    className="text-[13px] px-3 py-1.5 rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50">
+                    {draft.treatment === 'organization' ? 'זה ארגון — אשר' : 'זה אדם — אשר'}
+                  </button>
+                  <button type="button" disabled={busy} onClick={enterOrgMode}
+                    className={`text-[13px] px-3 py-1.5 rounded-md border disabled:opacity-50 ${draft.treatment === 'organization' ? 'bg-blue-50 border-blue-300 text-blue-800 font-semibold' : 'border-blue-200 text-blue-700 hover:bg-blue-50'}`}>
+                    {draft.treatment === 'organization' ? '← חזור לעריכת אדם' : 'זה ארגון'}
+                  </button>
                   <button type="button" disabled={busy}
                     onClick={() => act('edit', { treatment: 'exclude', fields: draft.fields })}
                     className="text-[13px] px-3 py-1.5 rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-50">זה לא איש קשר</button>

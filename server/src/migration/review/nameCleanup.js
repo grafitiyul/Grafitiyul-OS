@@ -325,6 +325,19 @@ export function nameDraftFromProposal(proposal, decision = null) {
       firstNameEn: t(base.firstNameEn), lastNameEn: t(base.lastNameEn),
     },
     phones,
+    // "This is an Organization" state. THE BUSINESS RULE (owner, 2026-07-16):
+    // an organisation with ZERO deals adds no business value — old activities and
+    // notes are not enough — so `create` DEFAULTS to false at 0 deals and to true
+    // otherwise. The owner may override either way; the default is a business
+    // decision, never an automatic matching rule.
+    organization: decision?.organization
+      ? { ...decision.organization }
+      : {
+          create: (proposal?.context?.dealCount || 0) > 0,
+          name: t(proposal?.displayName) || t(proposal?.original?.name) || '',
+          targetOrganizationKey: null, // null = create new; a key = map to existing
+          targetLabel: null,
+        },
   };
 }
 
@@ -338,13 +351,46 @@ export function resolveNameResult(proposal, draft, ctx = {}) {
     firstNameEn: t(draft.fields.firstNameEn), lastNameEn: t(draft.fields.lastNameEn),
   };
   const excluded = draft.treatment === 'exclude';
+  const isOrg = draft.treatment === 'organization';
   const problems = [];
   const warnings = [];
-  if (!excluded) problems.push(...validateContactNames(fields).problems);
+  if (!excluded && !isOrg) problems.push(...validateContactNames(fields).problems);
 
-  // ── phones (only when the draft carries them — i.e. the editing flow) ────────
+  // ── "This is an Organization" ────────────────────────────────────────────────
+  // No Contact is created either way. `organization.create` decides whether a GOS
+  // Organization is (deals > 0 by default), and the record may instead be MAPPED
+  // to an existing target — never two organisations for one real-world entity.
+  let organization = null;
+  if (isOrg) {
+    const o = draft.organization || {};
+    const deals = proposal.context?.dealCount || 0;
+    organization = {
+      create: !!o.create,
+      name: t(o.name),
+      targetOrganizationKey: o.targetOrganizationKey || null,
+      targetLabel: o.targetLabel || null,
+    };
+    if (organization.create) {
+      if (organization.targetOrganizationKey) {
+        // Mapping to an existing organisation — the key must be real.
+        if (ctx.orgTargetKeys && !ctx.orgTargetKeys.has(organization.targetOrganizationKey)) {
+          problems.push(`ארגון היעד ${organization.targetOrganizationKey} לא נמצא במרשם`);
+        }
+      } else if (!organization.name) {
+        problems.push('חובה שם לארגון שייווצר');
+      }
+      if (deals === 0) {
+        warnings.push('חריגה מכלל העסק: נוצר ארגון בלי אף עסקה — החלטה מפורשת שלך');
+      }
+    } else {
+      // The business-rule default at 0 deals; at >0 deals it strands the deals.
+      if (deals > 0) warnings.push(`הרשומה לא תיובא למרות ${deals} עסקאות מקושרות — העסקאות יישארו ללא יעד`);
+    }
+  }
+
+  // ── phones (only when the draft carries them — i.e. the PERSON editing flow) ─
   let phones = null;
-  if (!excluded && Array.isArray(draft.phones)) {
+  if (!excluded && !isOrg && Array.isArray(draft.phones)) {
     phones = draft.phones.map((row) => resolvePhoneRow(row));
     const kept = phones.filter((p) => !p.remove);
     for (const p of kept) {
@@ -369,9 +415,9 @@ export function resolveNameResult(proposal, draft, ctx = {}) {
   }
 
   // ── effective emails: identity corrections applied, never re-derived ─────────
-  const emails = excluded ? [] : applyIdentityEdit({ phones: [], emails: proposal.context?.emails || [] }, ctx.identityEdit || null).emails;
+  const emails = excluded || isOrg ? [] : applyIdentityEdit({ phones: [], emails: proposal.context?.emails || [] }, ctx.identityEdit || null).emails;
 
-  if (!excluded) {
+  if (!excluded && !isOrg) {
     const orig = `${proposal.original.first_name} ${proposal.original.last_name}`.trim();
     const now = [fields.firstNameHe, fields.lastNameHe, fields.firstNameEn, fields.lastNameEn].filter(Boolean).join(' ');
     if (orig && now && orig !== now) warnings.push(`השם שונה מהמקור: "${orig}" ← "${now}"`);
@@ -393,6 +439,9 @@ export function resolveNameResult(proposal, draft, ctx = {}) {
         }))
       : null,
     emails,
+    // The organisation classification: {create, name, targetOrganizationKey}.
+    // create=false is the business-rule default at 0 deals — archive only.
+    organization,
     excluded,
     warnings,
     problems,
@@ -409,6 +458,7 @@ export function nameDecisionFromDraft(proposal, draft, ctx = {}) {
     // remove:true so the decision is complete. null = phones were never edited
     // (batch name-only fix) and the import uses the snapshot originals.
     phones: result.phones,
+    organization: result.organization,
     result,
   };
 }

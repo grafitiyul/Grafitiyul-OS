@@ -649,6 +649,13 @@ export async function recordDecision(client, { id, action, decision = null, note
         identityEdit: (await getIdentityEdits(client, [legacyId]))[legacyId] || null,
         claimedPhones: claimsExcludingSelf(await buildClaimedPhones(client), legacyId),
       };
+      // "This is an Organization" mapped to an existing target: the key must exist
+      // in the live registry (same registry the Organizations queue validates
+      // against), so a stale picker cannot bind a record to a deleted target.
+      if (decision?.treatment === 'organization' && decision?.organization?.targetOrganizationKey) {
+        const registry = await buildOrgTargets(client);
+        ctx.orgTargetKeys = new Set([...registry.proposals, ...registry.gos].map((x) => x.key));
+      }
       const resolved = nameDecisionFromDraft(existing.proposal, nameDraftFromProposal(existing.proposal, decision), ctx);
       if (!resolved.result.valid) {
         const e = new Error(`invalid_decision: ${resolved.result.problems.join(' · ')}`);
