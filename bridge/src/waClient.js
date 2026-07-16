@@ -422,6 +422,32 @@ export class WaClient {
     });
   }
 
+  // Mark incoming messages READ on WhatsApp (GOS→WhatsApp read sync). Sends
+  // read receipts via the canonical readMessages op, which in multi-device also
+  // syncs the read to the owner's own devices (phone / WhatsApp Web). Keys are
+  // built for the given chat jid; participant is passed through for group
+  // senders. Best-effort: requires a live socket — a not-connected failure is
+  // soft (GOS keeps its own read state; reconnect reconciliation repairs the
+  // WhatsApp side). NOT serialized through the send lock: a read receipt is
+  // lightweight and independent of message ordering.
+  async markRead({ jid, keys }) {
+    const readiness = this.getReadiness();
+    if (!readiness.ok) throw new Error('whatsapp_not_connected');
+    const socket = this.socket;
+    const messageKeys = (keys || [])
+      .filter((k) => k && k.id)
+      .map((k) => ({
+        remoteJid: jid,
+        id: k.id,
+        fromMe: false,
+        ...(k.participant ? { participant: k.participant } : {}),
+      }));
+    if (messageKeys.length === 0) return { ok: true, marked: 0 };
+    await socket.readMessages(messageKeys);
+    this.log.info({ jidShape: jid.slice(-20), marked: messageKeys.length }, 'mark-read: read receipts sent');
+    return { ok: true, marked: messageKeys.length };
+  }
+
   // The serialized send core every outbound type funnels through:
   // double readiness check, onWhatsApp gate, stale-socket guard, 12s timeout
   // with stale-mark-and-reconnect, retransmit payload capture.

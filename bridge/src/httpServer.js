@@ -187,6 +187,25 @@ export function startHttpServer(client) {
     });
   });
 
+  // Mark incoming messages read on WhatsApp (called by GOS when a chat is
+  // opened). Soft-fails with 503 when disconnected — GOS keeps its own read
+  // state and reconnect reconciliation repairs the WhatsApp side.
+  app.post('/mark-read', async (req, res) => {
+    const { jid, keys } = req.body || {};
+    if (!jid || typeof jid !== 'string') {
+      return res.status(400).json({ error: 'jid_required' });
+    }
+    try {
+      const out = await client.markRead({ jid, keys: Array.isArray(keys) ? keys : [] });
+      res.json({ ok: true, ...out });
+    } catch (err) {
+      const detail = errSummary(err);
+      log.warn({ err: detail }, '[/mark-read] failed');
+      const soft = detail === 'whatsapp_not_connected';
+      res.status(soft ? 503 : 500).json({ error: 'mark_read_failed', detail });
+    }
+  });
+
   app.post('/sign-out', async (_req, res) => {
     log.warn('[/sign-out] requested');
     try {
@@ -206,7 +225,7 @@ export function startHttpServer(client) {
       error: 'not_found',
       method: req.method,
       url: req.url,
-      registeredRoutes: ['GET /health', 'GET /status', 'POST /send', 'POST /send-voice', 'POST /restart-socket', 'POST /hard-reset-session', 'POST /sign-out'],
+      registeredRoutes: ['GET /health', 'GET /status', 'POST /send', 'POST /send-voice', 'POST /mark-read', 'POST /restart-socket', 'POST /hard-reset-session', 'POST /sign-out'],
     });
   });
 

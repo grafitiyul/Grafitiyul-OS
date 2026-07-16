@@ -262,6 +262,50 @@ export function createIngest({ prisma, socket, log, accountId }) {
     });
   }
 
+  // ── canonical read state (monotonic water-mark) ──────────────────────────
+  // lastReadAt only ever ADVANCES (GREATEST in a single statement) so a delayed
+  // or out-of-order event can never clear a newer message. All three writers —
+  // live-inbound bump, owner reply, "read on the phone" (unreadCount→0) — go
+  // through these atomic statements; no fetch-then-write race. Cast to
+  // timestamptz because the Prisma connection runs in UTC, so both sides
+  // compare in the same frame regardless of the column's tz-less type.
+  async function markChatReadById(chatId, uptoTs) {
+    await prisma.$executeRaw`
+      UPDATE "WhatsAppChat"
+         SET "lastReadAt" = GREATEST(COALESCE("lastReadAt"::timestamptz, '-infinity'::timestamptz), ${uptoTs}::timestamptz),
+             "unreadCount" = 0,
+             "manualUnreadAt" = NULL
+       WHERE "id" = ${chatId}`;
+  }
+
+  // Increment ONLY when the message is strictly newer than the water-mark —
+  // monotonic, race-free (one statement), and a no-op for backfilled/old rows.
+  async function bumpUnreadById(chatId, ts) {
+    await prisma.$executeRaw`
+      UPDATE "WhatsAppChat"
+         SET "unreadCount" = "unreadCount" + 1
+       WHERE "id" = ${chatId}
+         AND ${ts}::timestamptz > COALESCE("lastReadAt"::timestamptz, '-infinity'::timestamptz)`;
+  }
+
+  // WhatsApp's canonical INBOUND read signal: a chat's unreadCount hit 0 on the
+  // phone / another linked device (chats.update / chats.upsert / history set).
+  // We trust only the read transition (==0); a positive count is left to our
+  // own message-derived count (WhatsApp's history unread is not imported — the
+  // documented V1 limitation). Resolves across every JID form we track.
+  async function applyChatReadState(externalChatId, unreadCount) {
+    if (isExcludedChatJid(externalChatId)) return;
+    if (unreadCount === undefined || unreadCount === null) return;
+    if (Number(unreadCount) !== 0) return;
+    await prisma.$executeRaw`
+      UPDATE "WhatsAppChat"
+         SET "lastReadAt" = GREATEST(COALESCE("lastReadAt"::timestamptz, '-infinity'::timestamptz), COALESCE("lastMessageAt"::timestamptz, now())),
+             "unreadCount" = 0,
+             "manualUnreadAt" = NULL
+       WHERE "accountId" = ${accountId}
+         AND ("externalChatId" = ${externalChatId} OR "lidJid" = ${externalChatId} OR "phoneJid" = ${externalChatId})`;
+  }
+
   // ── media pipeline ──────────────────────────────────────────────────────
   function scheduleMediaDownload(messageRowId, msg, mediaInfo, externalChatId, externalMessageId, timestampFromSource, source) {
     enqueueMedia(async () => {
@@ -403,6 +447,14 @@ export function createIngest({ prisma, socket, log, accountId }) {
     }
 
     await prisma.whatsAppChat.update({ where: { id: chat.id }, data: { lastMessageAt: timestampFromSource } });
+    // Canonical unread maintenance. History-synced rows never move read state
+    // (they describe the past). A LIVE inbound message bumps unread iff it is
+    // newer than the water-mark; a LIVE outgoing message means the owner is
+    // active on another device → the chat is read (advance + clear).
+    if (source !== 'history') {
+      if (isFromMe) await markChatReadById(chat.id, timestampFromSource);
+      else await bumpUnreadById(chat.id, timestampFromSource);
+    }
     // A LIVE message revives the conversation (WhatsApp's own default: a new
     // message unarchives; a written-to deleted chat reappears). History-synced
     // messages must NOT revive — they describe the past, not the present.
@@ -642,6 +694,9 @@ export function createIngest({ prisma, socket, log, accountId }) {
         try {
           const archived = c.archived ?? c.archive;
           if (c.id && archived !== undefined) await applyChatState(c.id, !!archived);
+          // Reconnect reconciliation: a chat that is read on the phone
+          // (unreadCount 0) repairs any GOS unread we missed while offline.
+          if (c.id && c.unreadCount !== undefined) await applyChatReadState(c.id, c.unreadCount);
         } catch (err) {
           log.warn({ chatId: c.id, err: errSummary(err) }, 'history chats state failed');
         }
@@ -675,6 +730,7 @@ export function createIngest({ prisma, socket, log, accountId }) {
           await applyChatIdentity(chat.id, chat.name);
           const archived = chat.archived ?? chat.archive;
           if (archived !== undefined) await applyChatState(chat.id, !!archived);
+          if (chat.unreadCount !== undefined) await applyChatReadState(chat.id, chat.unreadCount);
         } catch (err) {
           log.warn({ chatId: chat.id, err: errSummary(err) }, 'chats.upsert identity failed');
         }
@@ -690,6 +746,8 @@ export function createIngest({ prisma, socket, log, accountId }) {
           // `archived`, chat-modify sync actions emit `archive`).
           const archived = update.archived ?? update.archive;
           if (archived !== undefined) await applyChatState(update.id, !!archived);
+          // Read on the phone / another linked device (unreadCount → 0).
+          if (update.unreadCount !== undefined) await applyChatReadState(update.id, update.unreadCount);
         } catch (err) {
           log.warn({ chatId: update.id, err: errSummary(err) }, 'chats.update identity failed');
         }
