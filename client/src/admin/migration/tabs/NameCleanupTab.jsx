@@ -251,16 +251,27 @@ export default function NameCleanupTab() {
                   ועברית לא מועתקת לאנגלית (ולהפך) אוטומטית.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {FIELDS.map(([k, label]) => (
-                    <label key={k} className="block">
-                      <span className="block text-[11px] text-gray-500 mb-0.5">{label}</span>
-                      <input
-                        type="text" value={draft.fields[k]} disabled={draft.treatment === 'exclude'}
-                        onChange={(e) => setDraft({ ...draft, fields: { ...draft.fields, [k]: e.target.value } })}
-                        className="w-full text-[13px] border border-gray-200 rounded-md px-2 py-1.5 bg-white disabled:bg-gray-50 disabled:text-gray-400"
-                      />
-                    </label>
-                  ))}
+                  {FIELDS.map(([k, label]) => {
+                    // The per-field ORIGINAL: what this GOS field would hold with no
+                    // cleanup at all (the default script split of the Pipedrive name).
+                    const orig = selected.proposal.currentMapping?.[k] || '';
+                    const changed = (draft.fields[k] || '') !== orig;
+                    return (
+                      <label key={k} className="block">
+                        <span className="flex items-baseline justify-between text-[11px] mb-0.5">
+                          <span className="text-gray-500">{label}</span>
+                          <span className={changed ? 'text-amber-700' : 'text-gray-400'}>
+                            מקור: {orig || 'ריק'}
+                          </span>
+                        </span>
+                        <input
+                          type="text" value={draft.fields[k]} disabled={draft.treatment === 'exclude'}
+                          onChange={(e) => setDraft({ ...draft, fields: { ...draft.fields, [k]: e.target.value } })}
+                          className={`w-full text-[13px] border rounded-md px-2 py-1.5 bg-white disabled:bg-gray-50 disabled:text-gray-400 ${changed ? 'border-amber-300' : 'border-gray-200'}`}
+                        />
+                      </label>
+                    );
+                  })}
                 </div>
                 <div className="flex flex-wrap gap-2 mt-3">
                   <button type="button"
@@ -288,7 +299,9 @@ export default function NameCleanupTab() {
                       return (
                         <div key={`${p.original}-${i}`} className={`border rounded-lg p-2.5 ${p.remove ? 'border-gray-200 bg-gray-50 opacity-70' : r?.problems?.length ? 'border-red-200 bg-red-50/30' : 'border-gray-200'}`}>
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-[11px] text-gray-400">מקור: <span dir="ltr">{p.original}</span></span>
+                            <span className={`text-[11px] ${p.value !== p.original ? 'text-amber-700' : 'text-gray-400'}`}>
+                              מקור: <b dir="ltr">{p.original}</b>
+                            </span>
                             <label className="flex items-center gap-1 text-[11px] text-gray-500 mr-auto">
                               <input type="checkbox" checked={p.remove} onChange={(e) => setPhone(i, { remove: e.target.checked })} />
                               הסר
@@ -301,13 +314,13 @@ export default function NameCleanupTab() {
                                 {COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
                               </select>
                               <input type="text" dir="ltr" value={p.value} onChange={(e) => setPhone(i, { value: e.target.value })}
-                                className="text-[13px] border border-gray-200 rounded-md px-2 py-1 bg-white w-44" />
+                                className={`text-[13px] border rounded-md px-2 py-1 bg-white w-44 ${p.value !== p.original ? 'border-amber-300' : 'border-gray-200'}`} />
                               <label className="flex items-center gap-1 text-[11px] text-gray-500">
                                 <input type="radio" name={`primary-${selected.id}`} checked={p.isPrimary} onChange={() => setPhone(i, { isPrimary: true })} />
                                 מועדף
                               </label>
                               {r?.normalized && (
-                                <span className="text-[11px] text-green-700" dir="ltr">→ +{r.normalized}</span>
+                                <span className="text-[11px] text-green-700">ייובא להשוואה כ־<b dir="ltr">+{r.normalized}</b></span>
                               )}
                             </div>
                           )}
@@ -392,7 +405,11 @@ export default function NameCleanupTab() {
                   <button type="button" disabled={busy} onClick={() => act('defer')}
                     className="text-[13px] px-3 py-1.5 rounded-md border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50">דחה לבדיקה</button>
                 </div>
-                <p className="text-[11px] text-gray-400 mt-2">ההחלטה נשמרת ביומן ההחלטות בלבד. שום איש קשר לא נוצר ולא משתנה עכשיו, והצילום לעולם לא משתנה.</p>
+                {/* The permanent architecture note the owner asked for — always visible. */}
+                <p className="text-[11px] text-gray-500 bg-gray-50 border border-gray-200 rounded px-2 py-1.5 mt-2">
+                  🔒 <b>הצילום המקורי לעולם לא משתנה.</b> השינויים כאן משפיעים רק על רשומת ה-GOS
+                  שתיווצר בייבוא — הערכים המקוריים נשארים בצילום ובארכיון לתמיד.
+                </p>
               </div>
             </div>
           )}
