@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import AnchoredMenu from '../../common/AnchoredMenu.jsx';
 import { api } from '../../../lib/api.js';
 import { hasDirtyForms } from '../../../lib/dirtyForms.js';
 import { useRealtime } from '../../../lib/realtime.js';
@@ -7,6 +9,7 @@ import { DEAL_TASKS_CHANGED_EVENT } from '../../deals/tasks/taskEvents.js';
 import DealDrawer from '../../common/DealDrawer.jsx';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 import TaskCards from './TaskCards.jsx';
+import { taskIcon } from '../../deals/tasks/taskConfig.js';
 import { dealPath } from '../../deals/config.js';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell, COL_SEP } from '../../common/tableColumns.jsx';
 import { toggleSortKey, sortFromParam } from '../../common/tableColumnsCore.js';
@@ -34,6 +37,14 @@ import {
 
 const PAGE_SIZE = 50;
 
+// Saved Views: TEMPORARILY HIDDEN (owner decision 2026-07-16) while the
+// workspace design stabilises. The full infrastructure — server model/routes,
+// API client, apply/save/update/delete logic below — stays intact; this flag
+// gates only the UI, the boot fetch, and the cross-device last-view restore
+// (restoring an invisible view would apply filters with no indicator of why).
+// Re-enabling is flipping this to true.
+const SHOW_SAVED_VIEWS_UI = false;
+
 // Server error codes → operator Hebrew. Every per-row bulk failure and every
 // refused inline edit speaks through this map.
 const WRITE_ERRORS = {
@@ -57,26 +68,8 @@ const CHIP_TONE = {
   plain: 'bg-slate-700 text-white ring-slate-700',
 };
 
-function Chip({ active, disabled, onClick, children, tone = 'plain', title }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      aria-pressed={active}
-      className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-[12px] font-medium ring-1 transition ${
-        disabled
-          ? 'cursor-not-allowed bg-gray-50 text-gray-300 ring-gray-200'
-          : active
-            ? `${CHIP_TONE[tone]} shadow-sm`
-            : 'bg-white text-gray-600 ring-gray-300 hover:bg-gray-50'
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
+// (The multi-chip row is gone — the time filter is now ONE tone-coloured chip
+// with an AnchoredMenu; CHIP_TONE colours it and Count renders its badge.)
 
 function Count({ n, active }) {
   if (n == null) return null;
@@ -118,6 +111,13 @@ export default function TasksWorkspace() {
   const [saveScope, setSaveScope] = useState('personal');
   const [viewBusy, setViewBusy] = useState(false);
   const [confirmDeleteView, setConfirmDeleteView] = useState(false);
+  // ── toolbar chrome ──
+  // The CRM tab row's end-side slot (CrmLayout renders it) — workspace-level
+  // filters portal there, leaving this component's toolbar to task-level work.
+  const [tabRowSlot, setTabRowSlot] = useState(null);
+  useEffect(() => setTabRowSlot(document.getElementById('crm-tabrow-slot')), []);
+  const [timeMenuOpen, setTimeMenuOpen] = useState(false);
+  const timeChipRef = useRef(null);
   // The drawer follows a ROW index, not a deal id: consecutive rows may share a
   // Deal (two tasks on one deal), and prev/next walks the filtered ROW order —
   // deduping would make the position indicator lie.
@@ -139,7 +139,7 @@ export default function TasksWorkspace() {
         api.adminUsers.list().catch(() => ({ users: [] })),
         api.auth.status().catch(() => ({})),
         api.dealStages.list().catch(() => []),
-        api.savedViews.list('crm_tasks').catch(() => null),
+        SHOW_SAVED_VIEWS_UI ? api.savedViews.list('crm_tasks').catch(() => null) : Promise.resolve(null),
       ]);
       if (!alive) return;
       const types = Array.isArray(ttRes) ? ttRes : ttRes?.taskTypes || [];
@@ -510,146 +510,151 @@ export default function TasksWorkspace() {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-gray-50" dir="rtl">
-      {/* ── time chips: the primary navigation ── */}
-      <div className="flex items-center gap-1.5 overflow-x-auto border-b border-gray-200 bg-white px-3 py-2">
-        {TIME_CHIPS.map((chip) => {
-          const isEmpty = Boolean(counts.empty?.[chip.key]);
-          const n = chip.key === 'range' ? null : counts.counts?.[chip.key];
-          return (
-            <Chip
-              key={chip.key}
-              tone={chip.tone}
-              active={filters.window === chip.key}
-              // "השבוע" has no days at all on Fri/Sat — disabled at 0, never
-              // redefined to overlap another chip.
-              disabled={isEmpty}
-              title={isEmpty ? 'אין ימים בטווח הזה השבוע' : undefined}
-              onClick={() => patch(selectWindow(filters, chip.key))}
+      {/* ── WORKSPACE-LEVEL filters → the CRM tab row (portal) ──
+          Owner / stage / open-closed describe whose workspace this is, not
+          what task you're filtering — so they live beside the module tabs, on
+          the opposite (end) side, and the working toolbar below stays for
+          task-level controls. */}
+      {tabRowSlot &&
+        createPortal(
+          <>
+            <select
+              value={filters.ownerIds[0] || ''}
+              onChange={(e) => patch({ ...filters, ownerIds: e.target.value ? [e.target.value] : [] })}
+              className="h-7 rounded-md border border-gray-300 bg-white px-1.5 text-[12px] text-gray-700"
             >
-              <span aria-hidden>{chip.emoji}</span>
-              {chip.label}
-              <Count n={isEmpty ? 0 : n} active={filters.window === chip.key} />
-            </Chip>
+              <option value="">כל האחראים</option>
+              {boot.users.map((u) => (
+                <option key={u.id} value={u.id}>{u.displayName || u.username}{u.id === boot.me ? ' (אני)' : ''}</option>
+              ))}
+            </select>
+            <select
+              value={filters.stageIds[0] || ''}
+              onChange={(e) => patch({ ...filters, stageIds: e.target.value ? [e.target.value] : [] })}
+              className="h-7 rounded-md border border-gray-300 bg-white px-1.5 text-[12px] text-gray-700"
+            >
+              <option value="">כל השלבים</option>
+              {boot.stages.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+            <select
+              value={filters.status}
+              disabled={!!statusLock}
+              // באיחור means open by definition — the control locks rather than
+              // offering a combination the server rejects.
+              title={statusLock ? 'באיחור מתייחס למשימות פתוחות בלבד' : undefined}
+              onChange={(e) => patch({ ...filters, status: e.target.value })}
+              className="h-7 rounded-md border border-gray-300 bg-white px-1.5 text-[12px] text-gray-700 disabled:bg-gray-50 disabled:text-gray-400"
+            >
+              <option value="open">פתוחות</option>
+              <option value="completed">הושלמו</option>
+              <option value="all">הכול</option>
+            </select>
+          </>,
+          tabRowSlot,
+        )}
+
+      {/* ── the working toolbar: ONE calm row ──
+          RTL reading order: type icons → gap → time filter → (range fields) →
+          priority → clear → … count + columns. The table below is the primary
+          workspace; these support it without dominating. */}
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-gray-200 bg-white px-3 py-2">
+        {/* Task types — icon-only squares; the name lives in the tooltip. */}
+        <div className="flex items-center gap-1">
+          {boot.types.map((t) => {
+            const active = filters.typeKeys.includes(t.key);
+            return (
+              <button
+                key={t.id}
+                type="button"
+                title={t.nameHe}
+                aria-label={t.nameHe}
+                aria-pressed={active}
+                onClick={() => patch({ ...filters, typeKeys: toggleIn(filters.typeKeys, t.key) })}
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[15px] ring-1 transition ${
+                  active
+                    ? 'bg-blue-600 ring-blue-600 shadow-sm'
+                    : 'bg-white ring-gray-200 opacity-55 grayscale hover:opacity-100 hover:grayscale-0 hover:ring-gray-300'
+                }`}
+              >
+                <span aria-hidden>{taskIcon(t.icon)}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <span className="mx-1.5 h-5 w-px bg-gray-200" />
+
+        {/* Time filter — ONE chip showing the current window; the rest live in
+            its menu. Same bubble design, same disjoint semantics. */}
+        {(() => {
+          const current = TIME_CHIPS.find((c) => c.key === filters.window) || TIME_CHIPS[1];
+          const n = current.key === 'range' ? null : counts.counts?.[current.key];
+          return (
+            <>
+              <button
+                ref={timeChipRef}
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded={timeMenuOpen}
+                onClick={() => setTimeMenuOpen((o) => !o)}
+                className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-[12px] font-medium ring-1 shadow-sm transition ${CHIP_TONE[current.tone]}`}
+              >
+                <span aria-hidden>{current.emoji}</span>
+                {current.label}
+                <Count n={n} active />
+                <span aria-hidden className="text-[9px] opacity-80">▼</span>
+              </button>
+              <AnchoredMenu anchorRef={timeChipRef} open={timeMenuOpen} onClose={() => setTimeMenuOpen(false)} width={200} align="start">
+                {TIME_CHIPS.map((chip) => {
+                  const isEmpty = Boolean(counts.empty?.[chip.key]);
+                  const cnt = chip.key === 'range' ? null : counts.counts?.[chip.key];
+                  const isCurrent = filters.window === chip.key;
+                  return (
+                    <button
+                      key={chip.key}
+                      type="button"
+                      // "השבוע" has no days at all on Fri/Sat — disabled at 0,
+                      // never redefined to overlap another chip.
+                      disabled={isEmpty}
+                      title={isEmpty ? 'אין ימים בטווח הזה השבוע' : undefined}
+                      onClick={() => {
+                        setTimeMenuOpen(false);
+                        patch(selectWindow(filters, chip.key));
+                      }}
+                      className={`flex w-full items-center gap-2 px-3 py-1.5 text-start text-[12px] ${
+                        isEmpty
+                          ? 'cursor-not-allowed text-gray-300'
+                          : isCurrent
+                            ? 'bg-blue-50 font-semibold text-blue-700'
+                            : 'text-gray-700 hover:bg-gray-50'
+                      }`}
+                    >
+                      <span aria-hidden>{chip.emoji}</span>
+                      <span className="flex-1">{chip.label}</span>
+                      {cnt != null && (
+                        <span className={`rounded-full px-1.5 text-[10px] font-bold ${isCurrent ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                          {isEmpty ? 0 : cnt}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </AnchoredMenu>
+            </>
           );
-        })}
+        })()}
         {filters.window === 'range' && (
-          <div className="flex items-center gap-2 ps-2">
+          <div className="flex items-center gap-2">
             <div className="w-36"><DateField value={filters.rangeFrom} onChange={(v) => patch({ ...filters, rangeFrom: v })} placeholder="מתאריך" /></div>
             <div className="w-36"><DateField value={filters.rangeTo} onChange={(v) => patch({ ...filters, rangeTo: v })} placeholder="עד תאריך" /></div>
           </div>
         )}
-      </div>
 
-      {/* ── task-type chips + filters ── */}
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-gray-200 bg-white px-3 py-2">
-        {/* Saved views: presets over the SAME canonical filter object the chips
-            write — a view simply remembers which chip was active. */}
-        <select
-          value={selectedViewId || ''}
-          onChange={(e) => selectView(e.target.value || null)}
-          className={`h-8 max-w-44 rounded-md border px-1.5 text-[12px] ${
-            selectedViewId ? 'border-indigo-400 bg-indigo-50 text-indigo-800 font-medium' : 'border-gray-300 bg-white text-gray-700'
-          }`}
-          title="תצוגות שמורות"
-        >
-          <option value="">תצוגה שמורה…</option>
-          {['system', 'shared', 'personal'].map((scope) => {
-            const group = views.filter((v) => v.scope === scope);
-            if (!group.length) return null;
-            const label = scope === 'system' ? 'מערכת' : scope === 'shared' ? 'משותפות' : 'שלי';
-            return (
-              <optgroup key={scope} label={label}>
-                {group.map((v) => (
-                  <option key={v.id} value={v.id}>{v.icon ? `${v.icon} ` : ''}{v.name}</option>
-                ))}
-              </optgroup>
-            );
-          })}
-        </select>
-        {selectedView?.editable && viewDirty && (
-          <button
-            type="button"
-            disabled={viewBusy}
-            onClick={updateSelectedView}
-            title="שמירת הסינון הנוכחי לתוך התצוגה"
-            className="h-8 rounded-md border border-indigo-300 bg-white px-2 text-[12px] text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
-          >
-            ⟳ עדכון התצוגה
-          </button>
-        )}
-        {selectedView?.editable && (
-          <button
-            type="button"
-            disabled={viewBusy}
-            onClick={() => setConfirmDeleteView(true)}
-            title="מחיקת התצוגה השמורה"
-            className="h-8 rounded-md px-1.5 text-[12px] text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
-          >
-            🗑
-          </button>
-        )}
-        {!saveOpen ? (
-          <button
-            type="button"
-            onClick={() => setSaveOpen(true)}
-            className="h-8 rounded-md border border-gray-300 bg-white px-2 text-[12px] text-gray-600 hover:bg-gray-50"
-          >
-            💾 שמירת תצוגה…
-          </button>
-        ) : (
-          <span className="flex items-center gap-1.5 rounded-md border border-indigo-200 bg-indigo-50/60 px-2 py-1">
-            <input
-              autoFocus
-              value={saveName}
-              onChange={(e) => setSaveName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') saveNewView();
-                if (e.key === 'Escape') { setSaveOpen(false); setSaveName(''); }
-              }}
-              placeholder="שם התצוגה"
-              maxLength={60}
-              className="h-6 w-32 rounded border border-indigo-300 bg-white px-1.5 text-[12px]"
-            />
-            <label className="flex items-center gap-1 text-[11px] text-gray-600">
-              <input type="radio" checked={saveScope === 'personal'} onChange={() => setSaveScope('personal')} /> אישית
-            </label>
-            <label className="flex items-center gap-1 text-[11px] text-gray-600">
-              <input type="radio" checked={saveScope === 'shared'} onChange={() => setSaveScope('shared')} /> משותפת
-            </label>
-            <button
-              type="button"
-              disabled={!saveName.trim() || viewBusy}
-              onClick={saveNewView}
-              className="h-6 rounded bg-indigo-600 px-2 text-[11px] font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-            >
-              שמירה
-            </button>
-            <button type="button" onClick={() => { setSaveOpen(false); setSaveName(''); }} className="text-[11px] text-gray-500 hover:underline">
-              ביטול
-            </button>
-          </span>
-        )}
-        <span className="mx-1 h-5 w-px bg-gray-200" />
-        {boot.types.map((t) => (
-          <Chip
-            key={t.id}
-            active={filters.typeKeys.includes(t.key)}
-            onClick={() => patch({ ...filters, typeKeys: toggleIn(filters.typeKeys, t.key) })}
-          >
-            {t.nameHe}
-          </Chip>
-        ))}
-        <span className="mx-1 h-5 w-px bg-gray-200" />
-        <select
-          value={filters.ownerIds[0] || ''}
-          onChange={(e) => patch({ ...filters, ownerIds: e.target.value ? [e.target.value] : [] })}
-          className="h-8 rounded-md border border-gray-300 bg-white px-2 text-[12px] text-gray-700"
-        >
-          <option value="">כל האחראים</option>
-          {boot.users.map((u) => (
-            <option key={u.id} value={u.id}>{u.displayName || u.username}{u.id === boot.me ? ' (אני)' : ''}</option>
-          ))}
-        </select>
+        <span className="mx-1.5 h-5 w-px bg-gray-200" />
+
+        {/* Priority stays here: it filters TASKS (deliberately not in the
+            owner's workspace-level list). Search will slot in after it when a
+            server-side text filter exists. */}
         <select
           value={filters.priorities[0] || ''}
           onChange={(e) => patch({ ...filters, priorities: e.target.value ? [e.target.value] : [] })}
@@ -661,32 +666,104 @@ export default function TasksWorkspace() {
           <option value="low">נמוכה</option>
           <option value="none">ללא</option>
         </select>
-        <select
-          value={filters.stageIds[0] || ''}
-          onChange={(e) => patch({ ...filters, stageIds: e.target.value ? [e.target.value] : [] })}
-          className="h-8 rounded-md border border-gray-300 bg-white px-2 text-[12px] text-gray-700"
-        >
-          <option value="">כל השלבים</option>
-          {boot.stages.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-        </select>
-        <select
-          value={filters.status}
-          disabled={!!statusLock}
-          // באיחור means open by definition — the control locks rather than
-          // offering a combination the server rejects.
-          title={statusLock ? 'באיחור מתייחס למשימות פתוחות בלבד' : undefined}
-          onChange={(e) => patch({ ...filters, status: e.target.value })}
-          className="h-8 rounded-md border border-gray-300 bg-white px-2 text-[12px] text-gray-700 disabled:bg-gray-50 disabled:text-gray-400"
-        >
-          <option value="open">פתוחות</option>
-          <option value="completed">הושלמו</option>
-          <option value="all">הכול</option>
-        </select>
         {hasActiveFilters(filters) && (
           <button type="button" onClick={() => patch(defaultFilters(boot.me))} className="h-8 rounded-md px-2 text-[12px] text-blue-700 hover:bg-blue-50">
             נקה סינון
           </button>
         )}
+
+        {/* Saved views — infrastructure intact, UI temporarily hidden (see
+            SHOW_SAVED_VIEWS_UI above). */}
+        {SHOW_SAVED_VIEWS_UI && (
+          <>
+            <select
+              value={selectedViewId || ''}
+              onChange={(e) => selectView(e.target.value || null)}
+              className={`h-8 max-w-44 rounded-md border px-1.5 text-[12px] ${
+                selectedViewId ? 'border-indigo-400 bg-indigo-50 text-indigo-800 font-medium' : 'border-gray-300 bg-white text-gray-700'
+              }`}
+              title="תצוגות שמורות"
+            >
+              <option value="">תצוגה שמורה…</option>
+              {['system', 'shared', 'personal'].map((scope) => {
+                const group = views.filter((v) => v.scope === scope);
+                if (!group.length) return null;
+                const label = scope === 'system' ? 'מערכת' : scope === 'shared' ? 'משותפות' : 'שלי';
+                return (
+                  <optgroup key={scope} label={label}>
+                    {group.map((v) => (
+                      <option key={v.id} value={v.id}>{v.icon ? `${v.icon} ` : ''}{v.name}</option>
+                    ))}
+                  </optgroup>
+                );
+              })}
+            </select>
+            {selectedView?.editable && viewDirty && (
+              <button
+                type="button"
+                disabled={viewBusy}
+                onClick={updateSelectedView}
+                title="שמירת הסינון הנוכחי לתוך התצוגה"
+                className="h-8 rounded-md border border-indigo-300 bg-white px-2 text-[12px] text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+              >
+                ⟳ עדכון התצוגה
+              </button>
+            )}
+            {selectedView?.editable && (
+              <button
+                type="button"
+                disabled={viewBusy}
+                onClick={() => setConfirmDeleteView(true)}
+                title="מחיקת התצוגה השמורה"
+                className="h-8 rounded-md px-1.5 text-[12px] text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+              >
+                🗑
+              </button>
+            )}
+            {!saveOpen ? (
+              <button
+                type="button"
+                onClick={() => setSaveOpen(true)}
+                className="h-8 rounded-md border border-gray-300 bg-white px-2 text-[12px] text-gray-600 hover:bg-gray-50"
+              >
+                💾 שמירת תצוגה…
+              </button>
+            ) : (
+              <span className="flex items-center gap-1.5 rounded-md border border-indigo-200 bg-indigo-50/60 px-2 py-1">
+                <input
+                  autoFocus
+                  value={saveName}
+                  onChange={(e) => setSaveName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') saveNewView();
+                    if (e.key === 'Escape') { setSaveOpen(false); setSaveName(''); }
+                  }}
+                  placeholder="שם התצוגה"
+                  maxLength={60}
+                  className="h-6 w-32 rounded border border-indigo-300 bg-white px-1.5 text-[12px]"
+                />
+                <label className="flex items-center gap-1 text-[11px] text-gray-600">
+                  <input type="radio" checked={saveScope === 'personal'} onChange={() => setSaveScope('personal')} /> אישית
+                </label>
+                <label className="flex items-center gap-1 text-[11px] text-gray-600">
+                  <input type="radio" checked={saveScope === 'shared'} onChange={() => setSaveScope('shared')} /> משותפת
+                </label>
+                <button
+                  type="button"
+                  disabled={!saveName.trim() || viewBusy}
+                  onClick={saveNewView}
+                  className="h-6 rounded bg-indigo-600 px-2 text-[11px] font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  שמירה
+                </button>
+                <button type="button" onClick={() => { setSaveOpen(false); setSaveName(''); }} className="text-[11px] text-gray-500 hover:underline">
+                  ביטול
+                </button>
+              </span>
+            )}
+          </>
+        )}
+
         <div className="ms-auto flex items-center gap-2">
           <span className="text-[11px] text-gray-400">
             {loading ? '…' : `${data.total} משימות`}

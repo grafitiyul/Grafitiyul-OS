@@ -592,6 +592,19 @@ Do not attempt to manufacture a cleaner history for Slice 0.
 | 6 — Realtime | `5800dc5` | `lib/realtime.js` + `realtime/sse.js` extracted from payroll VERBATIM; payroll re-exports old names and its untouched test suites (8+12) are the no-regression proof. Tasks channel emits post-commit from the canonical write path — including the scheduled worker's 'sent'. Silent refetch + row glow on same-query diffs only. |
 | 7 — Mobile cards | `3b6a78f` | `TaskCards.jsx`, presentation-only over the same rows/handlers/state. No separate mobile logic exists. |
 
+**2026-07-16 toolbar cleanup (owner-directed):** workspace-level filters
+(owner / stage / open-closed) moved up into the CRM tab row via a generic
+end-side slot in `CrmLayout` (`#crm-tabrow-slot`, portal-filled by the active
+tab); task types became icon-only squares with name tooltips; the six time
+chips collapsed into ONE tone-coloured dropdown chip (AnchoredMenu) with the
+same disjoint semantics and counts; **the Saved Views UI is temporarily hidden**
+behind `SHOW_SAVED_VIEWS_UI = false` in `TasksWorkspace.jsx` — the entire
+infrastructure (model, routes, API client, apply/save logic) is intact, and the
+flag also gates the boot fetch and the cross-device last-view restore, since
+restoring an invisible view would apply filters with no indicator of why.
+Search appears in the owner's toolbar sketch but does not exist yet (the API
+has no text filter); its slot is marked after the priority select.
+
 Slice-4+ deviations, deliberate:
 1. **Single-row complete rides the bulk endpoint with one id** — literally one
    transition code path however a task is completed.

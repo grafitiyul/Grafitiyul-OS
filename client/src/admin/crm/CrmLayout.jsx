@@ -30,6 +30,11 @@ export default function CrmLayout() {
             {tab.label}
           </Link>
         ))}
+        {/* End-side slot (left in RTL): the active tab may portal WORKSPACE-LEVEL
+            controls here — e.g. the Tasks workspace's owner/stage/status filters —
+            keeping its own toolbar for task-level work. Empty for tabs that don't
+            use it; the layout stays generic. */}
+        <div id="crm-tabrow-slot" className="ms-auto flex shrink-0 items-center gap-1.5" />
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto">
         <Outlet />
