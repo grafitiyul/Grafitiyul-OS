@@ -43,6 +43,8 @@ function eventBody(event, task) {
       // A record correction on a task that was already closed — the history
       // shows the amendment without reopening anything.
       return `משימה סגורה עודכנה (תיקון): ${title}`;
+    case 'task_reopened':
+      return `משימה נפתחה מחדש: ${title}`;
     default:
       return title;
   }
@@ -197,6 +199,52 @@ export async function cancelTask(taskId, origin, db = prisma) {
     updated = await transitionTask(task.id, { status: 'cancelled', event: 'task_cancelled', origin }, db);
   }
   return { ok: true, task: updated ?? task };
+}
+
+// Reopen: the ONLY terminal→open transition (owner decision 2026-07-16 — a
+// task completed by mistake returns to Open; never faked with a new task).
+//
+//   • The SAME row reopens: creation date, id, deal linkage — everything
+//     stays. completedAt/cancelledAt clear on the ROW (an open task cannot
+//     carry them), but the completion DATE is preserved where history lives:
+//     the original task_completed TimelineEntry remains untouched, and the
+//     reopen writes its own entry — so the deal history reads
+//     "completed → reopened → completed again", every transition auditable.
+//   • WHATSAPP: reopening must never resend, recreate or reconnect. A SENT
+//     task is refused outright — the message went; reopening would
+//     misrepresent messaging history. A not_sent task reopens with a
+//     PERMANENT DETACH: scheduledMessageId → null and the channel snapshot →
+//     'none', so it continues life as a normal task. Send-now is gated on
+//     scheduledMessageId and the worker claims only 'pending' rows, so after
+//     the detach no code path can reach the old message — verified against
+//     both call sites, not assumed. The message row itself is not touched
+//     (it is settled history); only the task lets go of it.
+//   • Reopening changes ONLY the task: no communication, no automation.
+export async function reopenTask(taskId, origin, db = prisma) {
+  const task = await db.task.findUnique({ where: { id: taskId } });
+  if (!task) return { ok: false, status: 404, error: 'task_not_found' };
+  if (task.status === OPEN_STATUS) return { ok: false, status: 409, error: 'task_already_open' };
+  if (task.status === 'sent') return { ok: false, status: 409, error: 'sent_task_final' };
+
+  const icon = await taskIcon(task.taskTypeId, db);
+  const data = { status: OPEN_STATUS, completedAt: null, cancelledAt: null };
+  if (task.channel === 'whatsapp') {
+    data.scheduledMessageId = null;
+    data.channel = 'none';
+  }
+
+  const updated = await db.$transaction(async (tx) => {
+    const row = await tx.task.update({ where: { id: task.id }, data });
+    await emitEvent(tx, {
+      dealId: task.dealId,
+      event: 'task_reopened',
+      task: { ...row, icon },
+      origin: origin ?? systemOrigin(),
+    });
+    return row;
+  });
+  emitTasksChanged(db, { taskId: task.id, dealId: task.dealId, reason: 'task_reopened' });
+  return { ok: true, task: updated };
 }
 
 // Field edits — the ONE rule for every editor (Deal tab, inline cells, bulk).

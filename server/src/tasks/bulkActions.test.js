@@ -2,16 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseBulkRequest, chunkIds, summarizeResults, BULK_ACTIONS, MAX_BULK_IDS, BULK_CHUNK_SIZE } from './bulkActions.js';
 
-test('vocabulary: transitions + field edits, NEVER delete', () => {
+test('vocabulary: transitions (incl. reopen) + field edits, NEVER delete', () => {
   assert.deepEqual(BULK_ACTIONS, [
-    'complete', 'cancel', 'assign_owner', 'set_due_date', 'set_due_time', 'set_priority', 'set_type',
+    'complete', 'cancel', 'reopen', 'assign_owner', 'set_due_date', 'set_due_time', 'set_priority', 'set_type',
   ]);
   assert.ok(!BULK_ACTIONS.includes('delete'), 'hard delete must never exist (decision #2)');
   assert.deepEqual(parseBulkRequest({ action: 'delete', ids: ['a'] }), { ok: false, error: 'invalid_action' });
 });
 
 test('transitions carry no patch', () => {
-  for (const action of ['complete', 'cancel']) {
+  for (const action of ['complete', 'cancel', 'reopen']) {
     const r = parseBulkRequest({ action, ids: ['a', 'b'] });
     assert.deepEqual(r, { ok: true, action, ids: ['a', 'b'], patch: null });
   }

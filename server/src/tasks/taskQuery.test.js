@@ -112,8 +112,9 @@ test('defaults: window=today, status=open', () => {
   assert.equal(r.pageSize, DEFAULT_PAGE_SIZE);
 });
 
-test('pageSize is clamped, never unbounded', () => {
-  assert.equal(parse({ pageSize: '1000' }).pageSize, MAX_PAGE_SIZE);
+test('pageSize is clamped at the one-continuous-list cap, never unbounded', () => {
+  assert.equal(MAX_PAGE_SIZE, 2000, 'the workspace fetch ceiling (not a page — pagination is gone)');
+  assert.equal(parse({ pageSize: '999999' }).pageSize, MAX_PAGE_SIZE);
   assert.equal(parse({ pageSize: '0' }).pageSize, DEFAULT_PAGE_SIZE);
   assert.equal(parse({ pageSize: '-5' }).pageSize, 1);
   assert.equal(parse({ pageSize: 'abc' }).pageSize, DEFAULT_PAGE_SIZE);

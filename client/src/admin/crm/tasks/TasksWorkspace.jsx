@@ -38,7 +38,10 @@ import {
 // carries its dealId, so the project keeps ONE task write path (Slice 4
 // consolidates it behind taskService when bulk actions arrive).
 
-const PAGE_SIZE = 50;
+// ONE CONTINUOUS LIST (owner decision): no pages — the whole filtered result
+// loads in one fetch, capped at the server's ceiling; scrolling is the only
+// navigation. If a filter ever exceeds the cap, the count shows 'מוצג חלק'.
+const FETCH_LIMIT = 2000;
 
 // Saved Views: TEMPORARILY HIDDEN (owner decision 2026-07-16) while the
 // workspace design stabilises. The full infrastructure — server model/routes,
@@ -60,6 +63,8 @@ const WRITE_ERRORS = {
   owner_not_found: 'האחראי לא נמצא',
   invalid_task_type: 'סוג משימה לא קיים',
   nothing_to_update: 'אין מה לעדכן',
+  task_already_open: 'המשימה כבר פתוחה',
+  sent_task_final: 'הודעת וואטסאפ שנשלחה — המשימה סופית ואינה נפתחת מחדש',
   internal: 'שגיאה פנימית',
 };
 const writeError = (code) => WRITE_ERRORS[code] || code || 'שגיאה';
@@ -93,7 +98,6 @@ export default function TasksWorkspace() {
     const s = sortFromParam(searchParams.get('sort'), SORTABLE_KEYS);
     return s.length ? s : [{ key: 'dueDate', dir: 'asc' }];
   });
-  const [page, setPage] = useState(() => Math.max(parseInt(searchParams.get('page'), 10) || 1, 1));
   const [data, setData] = useState({ rows: [], total: 0, truncated: false, empty: false, today: null });
   const [counts, setCounts] = useState({ counts: {}, empty: {} });
   const [loading, setLoading] = useState(true);
@@ -173,14 +177,14 @@ export default function TasksWorkspace() {
   useEffect(() => {
     if (!filters) return;
     saveFilters(filters);
-    const next = filtersToParams(filters, sort, page);
+    const next = filtersToParams(filters, sort, 1);
     if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters, sort, page]);
+  }, [filters, sort]);
 
   const query = useMemo(
-    () => (filters ? filtersToQuery(filters, sort, page, PAGE_SIZE) : null),
-    [filters, sort, page],
+    () => (filters ? filtersToQuery(filters, sort, 1, FETCH_LIMIT) : null),
+    [filters, sort],
   );
 
   // Row-diff bookkeeping for the realtime animation: rows that ENTER during a
@@ -249,7 +253,6 @@ export default function TasksWorkspace() {
 
   const rows = data.rows || [];
   const today = data.today;
-  const pages = Math.max(Math.ceil((data.total || 0) / PAGE_SIZE), 1);
   const statusLock = filters ? statusLockedBy(filters) : null;
 
   // ── drawer ──
@@ -316,7 +319,6 @@ export default function TasksWorkspace() {
 
   const patch = (next) => {
     setFilters(next);
-    setPage(1);
     setSelected(new Set());
     // A manual change means the workspace has drifted from the applied view —
     // the view stays selected (so "עדכון התצוגה" can capture the drift) but is
@@ -336,7 +338,6 @@ export default function TasksWorkspace() {
     if (view.columns) cols.applyColumnState(view.columns);
     setSelectedViewId(view.id);
     setViewDirty(false);
-    setPage(1);
     setSelected(new Set());
   }
 
@@ -422,7 +423,6 @@ export default function TasksWorkspace() {
 
   function onSort(key, opts) {
     setSort((s) => toggleSortKey(s, key, opts));
-    setPage(1);
   }
 
   // ── selection ──
@@ -874,6 +874,7 @@ export default function TasksWorkspace() {
             onOpen={openDrawer}
             onToggleSelect={(id, idx) => toggleRow(id, idx, false)}
             onComplete={completeRow}
+            onReopen={(row) => transitionRow(row, 'reopen')}
           />
           {!rows.length && !loading && (
             <div className="px-4 py-12 text-center text-sm text-gray-400">
@@ -892,18 +893,23 @@ export default function TasksWorkspace() {
               onResize={cols.setColWidth}
               trClassName="border-b border-gray-200 text-gray-500"
               leading={
-                <th className={`w-9 px-2 ${COL_SEP}`}>
-                  <input
-                    type="checkbox"
-                    aria-label="בחר הכול"
-                    checked={allVisibleSelected}
-                    onChange={() => setSelected(allVisibleSelected ? new Set() : new Set(rows.map((r) => r.id)))}
-                    className="accent-blue-600"
-                  />
-                </th>
+                <>
+                  <th className={`w-9 px-2 ${COL_SEP}`}>
+                    <input
+                      type="checkbox"
+                      aria-label="בחר הכול"
+                      checked={allVisibleSelected}
+                      onChange={() => setSelected(allVisibleSelected ? new Set() : new Set(rows.map((r) => r.id)))}
+                      className="accent-blue-600"
+                    />
+                  </th>
+                  {/* the quick-action column (✓ / ↩) — the PRIMARY action sits
+                      at the row start (owner decision), right after selection */}
+                  <th className={`w-9 px-1 ${COL_SEP}`} aria-label="פעולה מהירה" />
+                </>
               }
             >
-              <th className="w-16 px-2" />
+              <th className="w-10 px-2" />
             </SortableHeaderRow>
           </thead>
           <tbody>
@@ -929,6 +935,33 @@ export default function TasksWorkspace() {
                     className="accent-blue-600"
                   />
                 </td>
+                {/* PRIMARY quick action, immediately after selection (RTL):
+                    open → ✓ complete; completed/cancelled/not_sent → ↩ reopen
+                    (the only terminal→open transition; a sent WhatsApp task is
+                    final and gets no action here). */}
+                <td className={`px-1 ${COL_SEP}`} onClick={(e) => e.stopPropagation()}>
+                  {row.status === 'open' ? (
+                    <button
+                      type="button"
+                      title="סמן כהושלמה (Ctrl+Enter)"
+                      disabled={savingId === row.id}
+                      onClick={() => completeRow(row)}
+                      className="flex h-6 w-6 items-center justify-center rounded-full border border-emerald-300 text-[12px] text-emerald-600 hover:bg-emerald-50 disabled:opacity-40"
+                    >
+                      ✓
+                    </button>
+                  ) : row.status !== 'sent' ? (
+                    <button
+                      type="button"
+                      title="פתיחה מחדש — המשימה חוזרת לסטטוס פתוחה; ההיסטוריה נשמרת"
+                      disabled={savingId === row.id}
+                      onClick={() => transitionRow(row, 'reopen')}
+                      className="flex h-6 w-6 items-center justify-center rounded-full border border-gray-300 text-[12px] text-gray-500 no-underline hover:bg-blue-50 hover:text-blue-700 disabled:opacity-40"
+                    >
+                      ↩
+                    </button>
+                  ) : null}
+                </td>
                 {cols.visibleCols.map((col) => (
                   <TableCell
                     key={col.key}
@@ -949,7 +982,7 @@ export default function TasksWorkspace() {
                         col.key === 'taskType' && row.channel === 'whatsapp'
                           ? 'סוג של משימת וואטסאפ נעול — קשור להודעה מתוזמנת'
                           : col.key === 'status' && row.status !== 'open'
-                            ? 'סטטוס סופי — תיקוני שדות מותרים, פתיחה מחדש לא'
+                            ? 'סטטוס סופי — תיקוני שדות מותרים; פתיחה מחדש בכפתור ↩'
                             : undefined
                       }
                       className="block"
@@ -959,33 +992,20 @@ export default function TasksWorkspace() {
                   </TableCell>
                 ))}
                 <td className="px-2" onClick={(e) => e.stopPropagation()}>
-                  <div className="flex items-center justify-end gap-1">
-                    {row.status === 'open' && (
-                      <button
-                        type="button"
-                        title="סמן כהושלמה (Ctrl+Enter)"
-                        disabled={savingId === row.id}
-                        onClick={() => completeRow(row)}
-                        className="rounded p-1 text-emerald-600 hover:bg-emerald-50 disabled:opacity-40"
-                      >
-                        ✓
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      title="פתיחת הדיל בעמוד מלא"
-                      onClick={() => navigate(dealPath(row.deal))}
-                      className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
-                    >
-                      ↗
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    title="פתיחת הדיל בעמוד מלא"
+                    onClick={() => navigate(dealPath(row.deal))}
+                    className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                  >
+                    ↗
+                  </button>
                 </td>
               </tr>
             ))}
             {!rows.length && !loading && (
               <tr>
-                <td colSpan={cols.visibleCols.length + 2} className="px-4 py-12 text-center text-sm text-gray-400">
+                <td colSpan={cols.visibleCols.length + 3} className="px-4 py-12 text-center text-sm text-gray-400">
                   {data.empty ? 'אין ימים בטווח הזה' : 'אין משימות שתואמות את הסינון'}
                 </td>
               </tr>
@@ -1130,19 +1150,16 @@ export default function TasksWorkspace() {
         onConfirm={() => { setConfirmCancel(false); runBulk('cancel'); }}
       />
 
-      {/* ── pagination ── */}
+      {/* ── status footer — no pagination: ONE continuous list, scrolling is
+          the only navigation. `truncated` is honest: the fetch cap cut the
+          list short (never expected at real volumes). ── */}
       <div className="flex items-center justify-between border-t border-gray-200 bg-white px-3 py-1.5 text-[12px] text-gray-500">
-        <div className="flex items-center gap-1">
-          <button type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded px-2 py-1 disabled:opacity-30 hover:bg-gray-100">
-            ‹ הקודם
-          </button>
-          <span>עמוד {page} מתוך {pages}</span>
-          <button type="button" disabled={page >= pages} onClick={() => setPage((p) => p + 1)} className="rounded px-2 py-1 disabled:opacity-30 hover:bg-gray-100">
-            הבא ›
-          </button>
-        </div>
+        <span>
+          {loading ? 'טוען…' : `${rows.length} משימות`}
+          {data.truncated && <span className="ms-1 text-amber-600">(מוצג חלק — צמצמו את הסינון)</span>}
+        </span>
         <span className="hidden text-[11px] text-gray-400 md:inline">
-          ↑↓ ניווט · Enter פתיחה · רווח בחירה · Ctrl+Enter השלמה · לחיצה כפולה לעריכה
+          ↑↓ ניווט · Enter פתיחה · רווח בחירה · Ctrl+Enter השלמה · לחיצה לעריכה בתא
         </span>
       </div>
     </div>

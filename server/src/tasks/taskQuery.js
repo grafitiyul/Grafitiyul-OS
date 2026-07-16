@@ -26,7 +26,14 @@ export const TASK_STATUS_FILTERS = Object.freeze(['open', 'completed', 'all']);
 export const PRIORITY_FILTERS = Object.freeze([...PRIORITY_VALUES, 'none']);
 
 export const DEFAULT_PAGE_SIZE = 50;
-export const MAX_PAGE_SIZE = 100;
+// The workspace is ONE CONTINUOUS LIST (owner decision 2026-07-16 — pagination
+// removed; scrolling is the only navigation). The client requests up to this
+// cap in a single fetch; `total` still rides the response, so if a filter ever
+// matches more than the cap the UI says "מוצג חלק" instead of lying. This is a
+// server-protection ceiling, NOT a page: if real volumes ever approach it, the
+// answer is virtualized RENDERING of the one list — never pagination.
+// (Audited 2026-07-16: production holds 10 tasks.)
+export const MAX_PAGE_SIZE = 2000;
 
 // Ceiling for the sort-in-memory path (priority). Bounded like every other
 // scan in this codebase (cf. search/lookups.js CANDIDATE_CAP), and the response

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { completeTask, cancelTask, applyTaskPatch, systemOrigin } from './taskService.js';
+import { completeTask, cancelTask, reopenTask, applyTaskPatch, systemOrigin } from './taskService.js';
 
 // The canonical write path, exercised with a fake prisma client (the codebase's
 // fake-db idiom — cf. tours/completion.test.js, routes/portal.resolve.test.js).
@@ -248,4 +248,66 @@ test('timeline is written for TRANSITIONS only — field edits keep parity with 
   const db = fakeDb({ task: openTask() });
   await applyTaskPatch('t1', { priority: 'high' }, { db });
   assert.equal(db.log.timeline.length, 0);
+});
+
+// ── reopen (owner decision 2026-07-16): the ONLY terminal→open transition ────
+
+test('REOPEN: a completed task returns to open — same row, creation date preserved', async () => {
+  const created = new Date('2026-07-01T08:00:00Z');
+  const db = fakeDb({ task: openTask({ status: 'completed', completedAt: new Date(), createdAt: created }) });
+  const r = await reopenTask('t1', ORIGIN, db);
+  assert.equal(r.ok, true);
+  assert.equal(r.task.status, 'open');
+  assert.equal(r.task.id, 't1', 'the SAME task — never a new one');
+  assert.equal(r.task.createdAt, created, 'creation date untouched');
+  assert.equal(r.task.completedAt, null, 'an open task cannot carry completedAt');
+  assert.equal(db.log.timeline.length, 1);
+  assert.equal(db.log.timeline[0].data.event, 'task_reopened');
+});
+
+test('REOPEN: the full audit sequence — completed, reopened, completed again', async () => {
+  const db = fakeDb({ task: openTask() });
+  await completeTask('t1', ORIGIN, db);
+  await reopenTask('t1', ORIGIN, db);
+  const again = await completeTask('t1', ORIGIN, db);
+  assert.equal(again.task.status, 'completed');
+  assert.deepEqual(
+    db.log.timeline.map((e) => e.data.event),
+    ['task_completed', 'task_reopened', 'task_completed'],
+    'every transition auditable — the original completion entry is never erased',
+  );
+});
+
+test('REOPEN: an open task cannot be reopened', async () => {
+  const db = fakeDb({ task: openTask() });
+  assert.deepEqual(await reopenTask('t1', ORIGIN, db), { ok: false, status: 409, error: 'task_already_open' });
+  assert.deepEqual(await reopenTask('missing', ORIGIN, fakeDb({})), { ok: false, status: 404, error: 'task_not_found' });
+});
+
+test('REOPEN WHATSAPP: not_sent reopens with a PERMANENT DETACH — message untouched', async () => {
+  const db = fakeDb({
+    task: openTask({ status: 'not_sent', channel: 'whatsapp', scheduledMessageId: 'sm1', cancelledAt: new Date() }),
+  });
+  const r = await reopenTask('t1', ORIGIN, db);
+  assert.equal(r.ok, true);
+  assert.equal(r.task.status, 'open');
+  assert.equal(r.task.scheduledMessageId, null, 'detached — send-now is structurally unreachable');
+  assert.equal(r.task.channel, 'none', 'continues life as a normal task');
+  assert.equal(db.log.schedUpdates.length, 0, 'the settled message row was NOT touched');
+});
+
+test('REOPEN WHATSAPP: a SENT task is final — the message went, history must not be misrepresented', async () => {
+  const db = fakeDb({ task: openTask({ status: 'sent', channel: 'whatsapp', scheduledMessageId: 'sm1' }) });
+  assert.deepEqual(await reopenTask('t1', ORIGIN, db), { ok: false, status: 409, error: 'sent_task_final' });
+  assert.equal(db.log.taskUpdates.length, 0, 'nothing written');
+  assert.equal(db.log.timeline.length, 0, 'no audit entry for a refused reopen');
+});
+
+test('REOPEN: reopening changes ONLY the task — never communication or automation', async () => {
+  // The complete inventory of what reopen writes: the status trio (+ the
+  // WhatsApp detach). Anything else appearing here is a regression.
+  const db = fakeDb({ task: openTask({ status: 'completed', completedAt: new Date() }) });
+  await reopenTask('t1', ORIGIN, db);
+  assert.deepEqual(Object.keys(db.log.taskUpdates[0].data).sort(), ['cancelledAt', 'completedAt', 'status']);
+  assert.equal(db.log.schedUpdates.length, 0);
 });

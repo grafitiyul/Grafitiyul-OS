@@ -10,6 +10,7 @@
 export const BULK_ACTIONS = Object.freeze([
   'complete',
   'cancel',
+  'reopen',
   'assign_owner',
   'set_due_date',
   'set_due_time',
@@ -49,6 +50,7 @@ export function parseBulkRequest(body) {
   switch (action) {
     case 'complete':
     case 'cancel':
+    case 'reopen':
       break;
     case 'assign_owner':
       if (!String(b.ownerUserId || '').trim()) return { ok: false, error: 'owner_required' };

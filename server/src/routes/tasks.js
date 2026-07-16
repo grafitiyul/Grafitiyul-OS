@@ -24,7 +24,7 @@ import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { adminDisplayName } from '../admin/displayName.js';
 import { comparePriority } from '../tasks/priority.js';
-import { userOrigin, completeTask, cancelTask, applyTaskPatch } from '../tasks/taskService.js';
+import { userOrigin, completeTask, cancelTask, reopenTask, applyTaskPatch } from '../tasks/taskService.js';
 import { parseBulkRequest, chunkIds, summarizeResults } from '../tasks/bulkActions.js';
 import { openStream } from '../realtime/sse.js';
 import { TASKS_CHANNEL } from '../tasks/events.js';
@@ -249,7 +249,9 @@ router.get(
       prisma.task.findMany({ where, include: TASK_INCLUDE, orderBy: buildTaskOrderBy(sort), skip, take: pageSize }),
     ]);
 
-    res.json({ ...base, rows: await hydratePage(rows), total, truncated: false, empty: false });
+    // truncated = the fetch cap cut the list short — the UI says "מוצג חלק"
+    // rather than presenting a capped list as complete.
+    res.json({ ...base, rows: await hydratePage(rows), total, truncated: skip + rows.length < total, empty: false });
   }),
 );
 
@@ -349,7 +351,9 @@ router.post(
               ? await completeTask(id, origin)
               : action === 'cancel'
                 ? await cancelTask(id, origin)
-                : await applyTaskPatch(id, patch, { origin });
+                : action === 'reopen'
+                  ? await reopenTask(id, origin)
+                  : await applyTaskPatch(id, patch, { origin });
           results.push(r.ok ? { id, ok: true } : { id, ok: false, error: r.error });
         } catch (e) {
           console.warn('[tasks/bulk] row failed', id, e?.message);

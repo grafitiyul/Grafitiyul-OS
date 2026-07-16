@@ -25,6 +25,7 @@ export default function TaskCards({
   onOpen, // (idx)
   onToggleSelect, // (id, idx)
   onComplete, // (row)
+  onReopen, // (row) — terminal (non-sent) rows return to open; same canonical path
 }) {
   if (!rows.length) return null;
   return (
@@ -71,7 +72,7 @@ export default function TaskCards({
               {row.owner?.name && <span className="text-gray-400">{row.owner.name}</span>}
             </div>
           </div>
-          {row.status === 'open' && (
+          {row.status === 'open' ? (
             <button
               type="button"
               title="סמן כהושלמה"
@@ -84,7 +85,20 @@ export default function TaskCards({
             >
               ✓
             </button>
-          )}
+          ) : row.status !== 'sent' && onReopen ? (
+            <button
+              type="button"
+              title="פתיחה מחדש"
+              disabled={savingId === row.id}
+              onClick={(e) => {
+                e.stopPropagation();
+                onReopen(row);
+              }}
+              className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-300 text-gray-500 no-underline active:bg-blue-50 disabled:opacity-40"
+            >
+              ↩
+            </button>
+          ) : null}
         </li>
       ))}
     </ul>
