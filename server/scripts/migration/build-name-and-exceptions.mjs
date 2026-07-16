@@ -49,7 +49,7 @@ await stream('pipedrive/persons', (p) => {
     orgId, orgName: orgId != null ? orgNames.get(orgId) || null : null,
     dealCount: 0, activeDealCount: 0, futureTourDeals: 0, openDealCount: 0,
     wonRecentDealCount: 0, activityCount: 0, noteCount: 0, fileCount: 0,
-    dealStatuses: [],
+    participantCount: 0, dealStatuses: [],
   });
 });
 const deals = [];
@@ -79,7 +79,10 @@ const bump = (v, f) => { const c = contacts.get(pid(v)); if (c) c[f]++; };
 await stream('pipedrive/activities', (a) => bump(a.person_id, 'activityCount'));
 await stream('pipedrive/notes', (n) => bump(n.person_id, 'noteCount'));
 await stream('pipedrive/files', (f) => bump(f.person_id, 'fileCount'));
-console.log(`  persons ${contacts.size} · deals ${deals.length} · orgs ${orgNames.size}`);
+// A secondary participant owns no deal of its own but is NOT an empty shell.
+const partCount = await stream('pipedrive/deal_participants', (l) => bump(l.person_id, 'participantCount'));
+if (partCount === -1) { console.error('ABORT: pipedrive/deal_participants is not in this snapshot.'); process.exit(1); }
+console.log(`  persons ${contacts.size} · deals ${deals.length} · orgs ${orgNames.size} · participant links ${partCount}`);
 
 // ── Name Cleanup ─────────────────────────────────────────────────────────────
 const { proposals: nameProposals, stats: nameStats } = buildNameCleanupProposals({ contacts: [...contacts.values()] });

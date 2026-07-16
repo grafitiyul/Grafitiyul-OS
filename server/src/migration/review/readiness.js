@@ -71,7 +71,7 @@ export function buildReadiness(facts) {
       'החרגת הרשומות הריקות בטוחה מול משתתפים משניים',
       participantGapResolved,
       participantGapResolved
-        ? 'קישורי המשתתפים ידועים'
+        ? 'קישורי המשתתפים חולצו — אף משתתף משני לא מוחרג כרשומה ריקה'
         : `לא ידוע: ${shellExclusionCount} רשומות ריקות מיועדות לאי-ייבוא, ו-478 עסקאות עם יותר ממשתתף אחד לא חולצו מעולם`,
     ),
   ];

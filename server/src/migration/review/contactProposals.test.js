@@ -12,6 +12,7 @@ const c = (o) => ({
   dealCount: o.deals || 0, activeDealCount: o.active || 0, futureTourDeals: o.tours || 0,
   openDealCount: o.open || 0, wonRecentDealCount: o.wonRecent || 0,
   activityCount: o.acts || 0, noteCount: o.notes || 0, fileCount: o.files || 0,
+  participantCount: o.parts || 0,
 });
 const build = (contacts) => buildContactProposals({ contacts, today: TODAY });
 const only = (contacts) => build(contacts).proposals[0];
@@ -272,6 +273,30 @@ test('evidence separates exact, inferred and conflicting signals', () => {
 
 // ── BUSINESS-IMPACT SECTIONS ───────────────────────────────────────────────────
 // The engine knows which clusters can actually hurt. The queue must not bury them.
+
+// A contact can be a SECONDARY PARTICIPANT on someone else's deal while owning no
+// deal, activity, note or file. Snapshot #1 originally never extracted those links,
+// so such a contact looked empty and would have been dropped in silence. The links
+// were extracted on 2026-07-16; a participant link IS business value.
+test('a secondary participant is NOT an empty shell', () => {
+  const p = only([
+    c({ id: 1, first: 'רון', last: 'לוי', phones: ['050-1111111'], deals: 12 }),
+    c({ id: 2, first: 'שרה', last: 'בר', phones: ['0501111111'], parts: 1 }), // participant only
+  ]);
+  assert.equal(p.importableCount, 2, 'a participant link makes the contact importable');
+  assert.equal(p.decisionRequired, true, 'so this IS a real duplicate the owner must judge');
+  assert.notEqual(p.section, 'none');
+  assert.equal(p.members.find((m) => m.legacyId === 2).participantCount, 1);
+  assert.equal(p.members.find((m) => m.legacyId === 2).importable, true);
+
+  // Without the link it is genuinely empty and costs nothing.
+  const shell = only([
+    c({ id: 3, first: 'רון', last: 'לוי', phones: ['052-2222222'], deals: 12 }),
+    c({ id: 4, first: 'שרה', last: 'בר', phones: ['0522222222'] }),
+  ]);
+  assert.equal(shell.importableCount, 1);
+  assert.equal(shell.section, 'none');
+});
 
 test('a cluster with <2 importable members needs NO decision and never enters the queue', () => {
   // A real contact + an empty shell. The shell is archived, never created in GOS,

@@ -40,15 +40,55 @@ test('the default import mapping splits by script and leaves the other pair empt
   assert.equal(scriptOf(''), 'empty');
 });
 
-test('a name living only in last_name would FAIL the import — and the fix is deterministic', () => {
+test('a name living only in last_name would FAIL the import, and is NEVER auto-fixed', () => {
   const a = analyzeName({ name: 'לוי', first_name: '', last_name: 'לוי' });
   assert.ok(a.issues.includes('no_first_name'));
-  assert.equal(a.deterministic, true, 'the same string, only in the field GOS requires');
   assert.equal(a.treatment, 'import');
   assert.deepEqual(a.fields, { firstNameHe: 'לוי', lastNameHe: '', firstNameEn: '', lastNameEn: '' });
   // The default mapping (no cleanup) really does fail — that is why this is blocking.
   assert.equal(validateContactNames(defaultFields('', 'לוי')).valid, false);
   assert.equal(validateContactNames(a.fields).valid, true);
+  // ...but moving the string is only identity-preserving if this is a PERSON.
+  assert.equal(a.deterministic, false, 'we cannot know a person from a company — the owner decides');
+});
+
+// The regression that a live sample caught before any batch was approved. Moving a
+// surname-only value into the first-name field is mechanically trivial, which is
+// exactly why it looked "deterministic" — but the measured population of this class
+// is dominated by ORGANISATIONS that no generic pattern catches. Auto-approving it
+// would have created GOS "people" named after companies.
+test('a surname-only ORGANISATION is never batch-approved into a person', () => {
+  for (const org of ['חייקין כהן ושות', 'Israel Luxury Tours', 'MD CLONE', 'renacer tours', 'ידידים']) {
+    const a = analyzeName({ name: org, first_name: '', last_name: org });
+    assert.ok(a, `${org} must be surfaced`);
+    assert.equal(a.deterministic, false, `"${org}" must never be auto-approved into a first name`);
+  }
+  const { proposals, stats } = buildNameCleanupProposals({
+    contacts: [c({ id: 1, first: '', last: 'Israel Luxury Tours', deals: 1 })],
+  });
+  assert.equal(proposals[0].batchApprovable, false);
+  assert.equal(stats.batchApprovable, 0);
+  assert.equal(stats.needsIndividualReview, 1);
+});
+
+test('every batch-approvable fix leaves the FIRST NAME byte-identical', () => {
+  const { proposals } = buildNameCleanupProposals({
+    contacts: [
+      c({ id: 1, first: 'אודליה', last: '-', deals: 2 }),
+      c({ id: 2, first: 'אבישי', last: '972506063744', acts: 1 }),
+      c({ id: 3, first: '', last: 'ידידים', deals: 1 }),
+      c({ id: 4, first: 'שירה', last: 'kleinman', deals: 1 }),
+    ],
+  });
+  const batch = proposals.filter((p) => p.batchApprovable);
+  assert.equal(batch.length, 2, 'only the junk-surname fixes qualify');
+  for (const p of batch) {
+    const f = p.proposedFields;
+    const firstOut = f.firstNameHe || f.firstNameEn;
+    assert.equal(firstOut, p.original.first_name, 'the identity-carrying field is untouched');
+    assert.equal(p.treatment, 'import', 'a batch fix never excludes');
+    assert.equal(p.validationAfter.valid, true);
+  }
 });
 
 test('an English surname-only record moves into the English pair, not the Hebrew one', () => {
@@ -134,15 +174,17 @@ test('sections rank by business impact — a live deal outranks closed history',
 test('only deterministic, identity-preserving cleanups are batch-approvable', () => {
   const { proposals } = buildNameCleanupProposals({
     contacts: [
-      c({ id: 1, first: '', last: 'לוי', deals: 2 }),                    // deterministic move
-      c({ id: 2, first: '', last: 'בית ספר הדר', deals: 2 }),            // company → exclusion
-      c({ id: 3, first: 'שירה', last: 'kleinman', deals: 2 }),           // cross-script
+      c({ id: 1, first: 'אודליה', last: '-', deals: 2 }),                // junk surname → the ONLY batchable class
+      c({ id: 2, first: '', last: 'לוי', deals: 2 }),                    // surname-only → person or company? owner decides
+      c({ id: 3, first: '', last: 'בית ספר הדר', deals: 2 }),            // company → exclusion
+      c({ id: 4, first: 'שירה', last: 'kleinman', deals: 2 }),           // cross-script
     ],
   });
   const byId = Object.fromEntries(proposals.map((p) => [p.legacyId, p]));
-  assert.equal(byId[1].batchApprovable, true);
-  assert.equal(byId[2].batchApprovable, false, 'an exclusion is never batched');
-  assert.equal(byId[3].batchApprovable, false, 'an ambiguous split is never batched');
+  assert.equal(byId[1].batchApprovable, true, 'the first name is untouched');
+  assert.equal(byId[2].batchApprovable, false, 'a surname-only record may well be an organisation');
+  assert.equal(byId[3].batchApprovable, false, 'an exclusion is never batched');
+  assert.equal(byId[4].batchApprovable, false, 'an ambiguous split is never batched');
 });
 
 test('the owner\'s edited fields are binding, and re-validated', () => {

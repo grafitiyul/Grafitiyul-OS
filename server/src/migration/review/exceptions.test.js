@@ -167,3 +167,10 @@ test('the unresolved participant question keeps the gate closed while shells are
   assert.match(b.detail, /406/);
   assert.match(b.detail, /478/, 'the exact unmeasured exposure is named');
 });
+
+test('once the participant links exist the gap closes, and says so', () => {
+  const r = buildReadiness(facts({ participantGapResolved: true }));
+  const q = r.requirements.find((x) => x.key === 'participant_gap');
+  assert.equal(q.ready, true);
+  assert.match(q.detail, /אף משתתף משני לא מוחרג/);
+});

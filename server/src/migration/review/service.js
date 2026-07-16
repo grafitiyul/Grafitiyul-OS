@@ -227,8 +227,13 @@ export async function buildImportReadiness(client) {
     // The canonical resolver applies corrections (contactDecision imports
     // applyIdentityEdit); this asserts the wiring exists rather than trusting it.
     identityEditsApplied: true,
-    // Open until the participant links are actually known.
-    participantGapResolved: false,
+    // DERIVED, not asserted: the gap is closed only if the proposals on the ledger
+    // actually carry participant counts. If a re-seed ever ran against a snapshot
+    // without pipedrive/deal_participants, every member would lack the field and
+    // the gate must reopen rather than quietly trust a stale `true`.
+    participantGapResolved: contacts.some((r) =>
+      (r.proposal?.members || []).some((m) => typeof m.participantCount === 'number'),
+    ),
     shellExclusionCount: contacts.filter((r) => r.proposal?.section === 'none').length,
   });
 }

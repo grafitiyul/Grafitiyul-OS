@@ -68,6 +68,7 @@ const personCount = await stream('pipedrive/persons', (p) => {
     activityCount: 0,
     noteCount: 0,
     fileCount: 0,
+    participantCount: 0,
   });
 });
 console.log(`  persons: ${personCount}`);
@@ -96,6 +97,12 @@ const actCount = await stream('pipedrive/activities', (a) => bump(a.person_id, '
 const noteCount = await stream('pipedrive/notes', (n) => bump(n.person_id, 'noteCount'));
 const fileCount = await stream('pipedrive/files', (f) => bump(f.person_id, 'fileCount'));
 console.log(`  activities: ${actCount} · notes: ${noteCount} · files: ${fileCount}`);
+
+// Secondary participation on someone else's deal. Without this a contact that owns
+// nothing of its own looks empty and would be silently dropped from the import.
+const partCount = await stream('pipedrive/deal_participants', (l) => bump(l.person_id, 'participantCount'));
+console.log(`  participant links: ${partCount === -1 ? 'ENTITY MISSING — shells cannot be excluded safely' : partCount}`);
+if (partCount === -1) { console.error('ABORT: pipedrive/deal_participants is not in this snapshot.'); process.exit(1); }
 
 // 4) Build proposals.
 const { proposals, stats } = buildContactProposals({ contacts: [...contacts.values()], today });

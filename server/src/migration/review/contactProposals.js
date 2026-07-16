@@ -264,6 +264,9 @@ function buildCluster({ clusterKind, clusterKey, members, today }) {
       activityCount: m.activityCount || 0,
       noteCount: m.noteCount || 0,
       fileCount: m.fileCount || 0,
+      // Secondary participation on another person's deal — business value even
+      // when this contact owns nothing itself.
+      participantCount: m.participantCount || 0,
       // Empty shells are archived, never created in GOS — so they can never
       // duplicate anything and never cost the owner a decision.
       importable: isImportable(m),

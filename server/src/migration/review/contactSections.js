@@ -64,8 +64,15 @@ const RANK = { critical: 0, recent: 1, historical: 2, low: 3, none: 4, safe: 5 }
 export const sectionRank = (k) => RANK[k] ?? 9;
 
 // A contact GOS will actually create. Empty shells are archived, never imported.
+//
+// `participantCount` closes the gap that kept the readiness gate shut: a contact
+// can be a SECONDARY PARTICIPANT on someone else's deal while owning no deal,
+// activity, note or file of its own. Snapshot #1 originally never extracted those
+// links, so 31 such contacts looked empty and would have been silently dropped.
+// The links were extracted on 2026-07-16 (pipedrive/deal_participants) — a
+// participant link IS business value and makes a contact importable.
 export const isImportable = (m) =>
-  (m.dealCount || 0) + (m.activityCount || 0) + (m.noteCount || 0) + (m.fileCount || 0) > 0;
+  (m.dealCount || 0) + (m.activityCount || 0) + (m.noteCount || 0) + (m.fileCount || 0) + (m.participantCount || 0) > 0;
 
 // Business impact of a set of records, once we already know they need a decision.
 function impactOf(records) {

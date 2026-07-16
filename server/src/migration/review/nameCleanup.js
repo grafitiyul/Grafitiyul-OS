@@ -119,9 +119,16 @@ function proposeFor({ first, last, sf, sl, issues }) {
     };
   }
 
-  // The name lives only in last_name → the import would fail validation. Moving the
-  // SAME STRING between fields cannot change who this is, so it is deterministic —
-  // but it is still proposed, never applied silently.
+  // The name lives only in last_name → the import would fail validation.
+  //
+  // NOT deterministic, despite being mechanically trivial. Moving the string is
+  // only identity-preserving IF the record is a person — and that is exactly what
+  // cannot be determined automatically. A measured sample of this class was
+  // dominated by ORGANISATIONS ("<firm> ושות", "… Tours", acronyms, nonprofits)
+  // that no generic company pattern catches, and hardcoding organisation-type
+  // names is an owner-approved prohibition. Batch-approving would have created
+  // ~85 GOS "people" named after companies. Only the owner can tell these apart,
+  // so every one of them is an individual decision.
   if (issues.includes('no_first_name')) {
     const s = sl === 'en' ? 'en' : 'he';
     const fields = s === 'en'
@@ -130,8 +137,8 @@ function proposeFor({ first, last, sf, sl, issues }) {
     return {
       treatment: 'import',
       fields,
-      deterministic: true,
-      reason: `השם קיים רק בשדה שם המשפחה, ולכן הייבוא היה נכשל (חובה שם פרטי). הצעה: להעביר "${last}" לשם הפרטי — אותו טקסט בדיוק, רק בשדה הנכון.`,
+      deterministic: false,
+      reason: `השם קיים רק בשדה שם המשפחה, ולכן הייבוא ייכשל (חובה שם פרטי). ההצעה מעבירה "${last}" לשם הפרטי — אבל בדוק קודם: אם זה שם של ארגון ולא של אדם, עדיף להחריג.`,
     };
   }
 
@@ -159,15 +166,19 @@ function proposeFor({ first, last, sf, sl, issues }) {
     };
   }
 
-  // Only the surname is junk: drop it, keep the person. The first name is untouched,
-  // so identity cannot change.
+  // Only the surname is junk ("-", a phone number, punctuation): drop it and keep
+  // the person. Deterministic in the sense that MATTERS: the FIRST NAME — the field
+  // that carries identity and that GOS validates — is untouched, and the record was
+  // already importable, so this changes tidiness and nothing else. Note this DOES
+  // discard a token; it is not "the same string", and the discarded value stays
+  // visible in the snapshot and in the proposal's `original`.
   if (issues.includes('junk_surname')) {
     const d = defaultFields(first, '');
     return {
       treatment: 'import',
       fields: d,
       deterministic: true,
-      reason: `שם המשפחה ("${last}") אינו שם. הצעה: לייבא בלי שם משפחה — השם הפרטי לא משתנה.`,
+      reason: `שם המשפחה ("${last}") אינו שם. הצעה: לייבא בלי שם משפחה — השם הפרטי נשאר בדיוק כפי שהוא.`,
     };
   }
 
