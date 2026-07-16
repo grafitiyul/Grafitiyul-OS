@@ -575,6 +575,64 @@ written (7 tasks, 1 distinct owner, 0 null/empty, 0 orphaned).
 
 Do not attempt to manufacture a cleaner history for Slice 0.
 
+### Slices 1–3 — shipped 2026-07-16, verified in production
+
+| Slice | Commit | Notes |
+|---|---|---|
+| 1 — Read API + counts | `0a27165` | `GET /api/tasks`, `GET /api/tasks/counts`. Created `lib/israelDate.js` (the canonical date module — there were three "today in Israel" copies; `tours/completion.js` and `tours/slotGeneration.js` now re-export from it). |
+| 2 — Workspace UI | `f95e3db` | משימות is the first CRM tab + landing route. Chips, filters, grid, inline editing, URL state. Multi-sort added to the shared table infra. |
+| 3 — Shared Deal drawer | `272fa52` | `DealDrawer` moved `whatsapp/` → `common/`; prev/next over the filtered row order, PgUp/PgDn, dirty guard, 150ms debounce, position indicator. |
+
+**Slices 4–7 are NOT started**: bulk actions, saved views, realtime, mobile cards.
+
+#### Deviations from this plan (deliberate, with reasons)
+
+1. **§4.4's raw-SQL `CASE` escape hatch went unused.** It was permitted, not
+   required, and it buys nothing: the canonical `where` is built by Prisma, so a
+   raw `ORDER BY` still needs the filtered id set first, and expressing the
+   filter in SQL too would fork it into a second implementation. The id set is
+   ordered in memory with the tested comparator instead — bounded by
+   `PRIORITY_SORT_CAP`, with `truncated` surfaced. Dead SQL removed from
+   `priority.js`. If it ever stops scaling, the answer is a Postgres STORED
+   GENERATED column (derived by the DB — still not a second *writable* truth),
+   never a hand-maintained rank.
+2. **Inline editing of TASK TYPE is not shipped.** The existing PATCH accepts
+   `text/priority/ownerUserId/notes/dueDate/dueTime` and **not** `taskTypeId`, so
+   the control would have silently done nothing. Changing a type also
+   re-snapshots `channel`, which for a WhatsApp task would orphan a real
+   scheduled send. Both belong with the Slice 4 write-path unification.
+3. **`next_week` starts `max(next Sunday, today+2)`.** On a Saturday, "מחר" IS
+   next week's Sunday; the plan's literal "Sunday…Saturday" would have
+   double-counted it and broken the binding mutual-exclusivity rule (decision #4).
+
+#### Known issues (NOT introduced by this work)
+
+- **`client` test suite is RED on main**: `nativeDialogs.scan.test.js` fails on
+  `admin/tours/settings/OpenToursSettings.jsx` (L407, L476). It is a **false
+  positive** — the scan's regex `(confirm|alert|prompt)\s*\(` matches English
+  prose in a *comment* ("require an explicit confirm (the server also enforces
+  it)") because it does not strip comments. Pre-existing since `7165e6f`, proven
+  by stashing all Tasks work at the slice base. Left alone as unrelated work; the
+  fix is either rewording the comment or making the scan comment-aware.
+- Slice 3 did fix a **real** violation it exposed: `DealDrawer`'s clipboard
+  fallback was a native `window.prompt()`, which only survived because
+  `admin/whatsapp/` is outside the scan's `SCOPED_DIRS`. Moving the file into
+  `common/` put it in scope. Now uses the in-system `AlertDialog`.
+
+#### Verification gap (honest)
+
+`GET /api/tasks` is verified as *mounted and admin-guarded* (404→401 on deploy)
+and its query layer is verified directly against the production database by a
+read-only probe (every sortable column executes asc+desc, multi-sort executes,
+windows are disjoint over real rows, chip counts equal what the grid returns,
+hydration is 2 batch queries per page). A full authenticated HTTP round-trip was
+NOT performed: it needs admin credentials, and minting an admin would be a
+production write and a security change. The JSON payload gets eyes-on the first
+time a human opens the tab.
+
+Note: production currently holds **7 tasks, all terminal (0 open)**, so a default
+workspace legitimately renders empty until new tasks exist.
+
 ### Isolation for Slices 1–7
 
 Built on branch **`feature/crm-tasks-workspace`** in a dedicated worktree
