@@ -44,3 +44,9 @@ export const SIGNER_ASSET_MODES = [
 // Mapping between DocumentField.fieldType and allowed SignerAsset mode values
 // when valueSource is signer_asset. Keeps the dropdown honest.
 export const IMAGE_FIELD_TYPES = new Set(['signature', 'stamp', 'combined']);
+
+// The one font stack for every WYSIWYG surface in the documents editor —
+// field overlays, note previews, and text measurement. 'GosDocPdf' is a
+// @font-face (index.css) over the byte-identical TTF the server embeds into
+// generated PDFs; the fallbacks only cover the moments before it loads.
+export const DOC_FONT_FAMILY = "'GosDocPdf', 'Heebo', Arial, sans-serif";

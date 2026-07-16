@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 // Vite: ?url returns the built asset URL for the worker.
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { DOC_FONT_FAMILY } from '../config.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
@@ -194,6 +195,10 @@ function PdfPage({
   const [rendered, setRendered] = useState(false);
   const [cssWidth, setCssWidth] = useState(0);
   const [cssHeight, setCssHeight] = useState(0);
+  // Page height in PDF POINTS (the unit the server renders with). Lets
+  // overlays convert pt-based sizes (e.g. note fontSize) into on-screen px
+  // at the current zoom so preview size == printed size.
+  const [ptHeight, setPtHeight] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -222,6 +227,7 @@ function PdfPage({
         canvas.style.height = `${lh}px`;
         setCssWidth(lw);
         setCssHeight(lh);
+        setPtHeight(natural.height);
         const ctx = canvas.getContext('2d');
         if (!ctx || cancelled) return;
         ctx.direction = 'ltr';
@@ -457,6 +463,7 @@ function PdfPage({
               readOnly={readOnly}
               selected={selectedAnnotationId === ann.id}
               pageCssHeight={cssHeight}
+              pagePtHeight={ptHeight}
               onMove={onMoveAnnotation}
               onResize={onResizeAnnotation}
               onDelete={onDeleteAnnotation}
@@ -585,13 +592,14 @@ function useOverlayInteractions({
 }
 
 // Client-side text sizing rule for fields. Mirrors the server-side rule in
-// pdfRender.js (ratio 0.60 of field height, clamped). Working in CSS pixels
-// because the preview is pixel-based; the PDF's PT-based equivalent renders
-// to the same visual ratio.
+// pdfRender.js EXACTLY (ratio 0.60 of field height, clamped 10..36 — same
+// TEXT_SIZE_MIN/MAX). Working in CSS pixels because the preview is
+// pixel-based; the PDF's PT-based equivalent renders to the same visual
+// ratio.
 function fieldFontSizePx(fieldHPct, pageCssHeightPx) {
   if (!pageCssHeightPx) return 13;
   const heightPx = (fieldHPct / 100) * pageCssHeightPx;
-  return Math.max(10, Math.min(48, heightPx * 0.6));
+  return Math.max(10, Math.min(36, heightPx * 0.6));
 }
 
 // ─── Field overlay (chrome + dynamic fontSize) ───────────────────────────────
@@ -644,10 +652,9 @@ function FieldOverlay({
           className={`leading-tight truncate flex-1 ${cfg.text}`}
           style={{
             fontSize: `${fontSizePx}px`,
-            // Match the font family + weight used by measureTextPx so the
-            // rendered width equals the measured width that drove sizing.
-            // Regular weight also mirrors pdf-lib's render (no synth-bold).
-            fontFamily: '"Heebo", Arial, sans-serif',
+            // The exact font asset the PDF embeds (see DOC_FONT_FAMILY) at
+            // the same Regular weight — preview text == final PDF text.
+            fontFamily: DOC_FONT_FAMILY,
             fontWeight: 400,
           }}
         >
@@ -674,6 +681,7 @@ function AnnotationOverlay({
   readOnly,
   selected,
   pageCssHeight,
+  pagePtHeight,
   onMove,
   onResize,
   onDelete,
@@ -715,7 +723,7 @@ function AnnotationOverlay({
     >
       <div className={`relative h-full w-full rounded-sm ${clip} ${selectionRing}`}>
         {renderContent
-          ? renderContent(ann, { pageCssHeight })
+          ? renderContent(ann, { pageCssHeight, pagePtHeight })
           : null}
       </div>
       {/* Editor-only chrome outside the annotation rect (see FieldOverlay). */}

@@ -2,6 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The EXACT font file the server embeds into generated document PDFs
+   (server/assets/fonts/Heebo-Regular.ttf — static Heebo Regular, weight 400).
+   Registered under a dedicated family name so document-editor previews render
+   with this byte-identical asset rather than the Google-Fonts Heebo build —
+   preview and PDF must be visually identical (WYSIWYG). Safe to cache: Vite
+   emits a content-hashed URL (immutable asset per caching rules §15). */
+@font-face {
+  font-family: 'GosDocPdf';
+  src: url('./assets/fonts/Heebo-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
 html,
 body,
 #root {

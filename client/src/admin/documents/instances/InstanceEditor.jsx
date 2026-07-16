@@ -6,7 +6,7 @@ import { useDirtyForm } from '../../../lib/dirtyForms.js';
 import { relativeHebrew } from '../../../lib/relativeTime.js';
 import PdfViewer from '../shared/PdfViewer.jsx';
 import SignaturePad from '../shared/SignaturePad.jsx';
-import { IMAGE_FIELD_TYPES, SIGNER_ASSET_MODES } from '../config.js';
+import { DOC_FONT_FAMILY, IMAGE_FIELD_TYPES, SIGNER_ASSET_MODES } from '../config.js';
 
 // Document-first instance editor.
 //
@@ -66,16 +66,16 @@ const HEB_RE = /[\u0590-\u05FF]/;
 const TEXT_FIELD_TYPES = new Set(['text', 'date', 'number', 'phone', 'email']);
 
 // Measure visual text width in CSS pixels at a given font size. Uses a
-// shared off-screen canvas so we don't pay setup cost per call. Font family
-// matches the on-screen preview AND the server-side PDF font (both Heebo
-// Regular since the 2026-07 font fix), so measured widths track the final
-// render closely; the padding below absorbs the remaining variance.
+// shared off-screen canvas so we don't pay setup cost per call. Measures in
+// DOC_FONT_FAMILY — the byte-identical asset the server embeds into the PDF
+// — so measured widths equal both the on-screen preview and the final
+// render; the padding below absorbs canvas metric rounding.
 let _measureCanvas = null;
 function measureTextPx(text, fontPx) {
   if (typeof document === 'undefined') return 0;
   if (!_measureCanvas) _measureCanvas = document.createElement('canvas');
   const ctx = _measureCanvas.getContext('2d');
-  ctx.font = `${fontPx}px "Heebo", Arial, sans-serif`;
+  ctx.font = `${fontPx}px ${DOC_FONT_FAMILY}`;
   return ctx.measureText(String(text || '')).width;
 }
 
@@ -774,7 +774,11 @@ export default function InstanceEditor() {
             }}
             selectedAnnotationId={selectedAnnotationId}
             renderAnnotationContent={(ann, ctx) => (
-              <AnnotationVisual ann={ann} pageCssHeight={ctx?.pageCssHeight} />
+              <AnnotationVisual
+                ann={ann}
+                pageCssHeight={ctx?.pageCssHeight}
+                pagePtHeight={ctx?.pagePtHeight}
+              />
             )}
           />
           </div>
@@ -1692,7 +1696,7 @@ function pickBusinessValue(bf, language) {
 
 // ── Annotation visual (rendered inside the overlay rect) ─────────────────────
 
-function AnnotationVisual({ ann, pageCssHeight }) {
+function AnnotationVisual({ ann, pageCssHeight, pagePtHeight }) {
   if (ann.kind === 'highlight') {
     return (
       <div
@@ -1717,21 +1721,30 @@ function AnnotationVisual({ ann, pageCssHeight }) {
     return <EllipseVisual ann={ann} />;
   }
   if (ann.kind === 'note') {
-    const fontSize = clampFont(
+    // ann.fontSize is in PDF POINTS (the unit the server renders with).
+    // Clamp in point space exactly like the server (explicit 8..48, else
+    // field-height rule 0.60 / 10..36 pt), then convert to CSS px at the
+    // page's current zoom so preview size == printed size.
+    const ptToPx =
+      pagePtHeight > 0 && pageCssHeight > 0 ? pageCssHeight / pagePtHeight : 1;
+    const fontSizePt =
       typeof ann.fontSize === 'number'
-        ? ann.fontSize
-        : (ann.hPct / 100) * (pageCssHeight || 0) * 0.65,
-    );
+        ? Math.max(8, Math.min(48, ann.fontSize))
+        : Math.max(10, Math.min(36, (ann.hPct / 100) * (pagePtHeight || 842) * 0.6));
+    const fontSize = fontSizePt * ptToPx;
     return (
       <div
-        // Mirrors the PDF renderer: explicit newlines + word wrapping
-        // (pre-wrap), 1.25 line height, top-aligned, right-aligned RTL,
-        // transparent background, and visible overflow below a too-short
-        // rect (the PDF draws every wrapped line too).
+        // Mirrors the PDF renderer: same font asset (DOC_FONT_FAMILY) at
+        // Regular weight, explicit newlines + word wrapping (pre-wrap),
+        // 1.25 line height, top-aligned, right-aligned RTL, transparent
+        // background, and visible overflow below a too-short rect (the PDF
+        // draws every wrapped line too).
         className="w-full h-full px-0.5"
         style={{
           color: ann.color || '#111827',
           fontSize: `${fontSize}px`,
+          fontFamily: DOC_FONT_FAMILY,
+          fontWeight: 400,
           lineHeight: 1.25,
           direction: 'rtl',
           textAlign: 'right',
@@ -1769,11 +1782,6 @@ function EllipseVisual({ ann }) {
       />
     </svg>
   );
-}
-
-function clampFont(px) {
-  if (!Number.isFinite(px)) return 14;
-  return Math.max(11, Math.min(48, px));
 }
 
 function MarkVisual({ kind, color }) {
