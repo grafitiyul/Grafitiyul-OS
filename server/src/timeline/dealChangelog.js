@@ -45,6 +45,7 @@ function fmtDate(v) {
 // enum (labels map) | fk (model+labelField, resolved in ONE batched query per model).
 const TRACKED_FIELDS = [
   { key: 'title', labelHe: 'כותרת', type: 'text' },
+  { key: 'groupName', labelHe: 'שם הקבוצה', type: 'text' },
   { key: 'dealStageId', labelHe: 'שלב', type: 'fk', model: 'dealStage', labelField: 'label' },
   { key: 'status', labelHe: 'סטטוס', type: 'enum', labels: STATUS_LABELS },
   { key: 'valueMinor', labelHe: 'מחיר', type: 'money' },

@@ -819,6 +819,16 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
               onDiscard={discardTourUpdate}
             />
 
+            {/* שם הקבוצה — dedicated business field (agent reservations,
+                BINDING #6): below the fixed deal info, above customer info.
+                Independent of the title by design. */}
+            <div className="grid grid-cols-1">
+              <InlineField id="f-groupName" iconInline icon={<span className={FIELD_EMOJI}>🏷️</span>} label="שם הקבוצה"
+                value={deal.groupName || ''} editFirst={editFirst}
+                placeholder="—"
+                onSave={(v) => saveField({ groupName: v || null })} />
+            </div>
+
             {/* Important customer information — collapsed to ~3 formatted lines
                 by default, with a "show more" control. */}
             <CollapsibleNote id="f-customerInfo" label="מידע חשוב על הלקוח" value={deal.customerInfo || ''} rich

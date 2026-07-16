@@ -225,6 +225,7 @@ router.get(
               select: {
                 orderNo: true,
                 title: true,
+                groupName: true,
                 customerInfo: true,
                 organization: { select: { name: true } },
                 organizationUnit: { select: { name: true } },

@@ -169,6 +169,17 @@ export default function GuideTourPage() {
       )}
 
       <SectionCard title={`משתתפים · ${participantsLabel(tour.participantsTotal)}`}>
+        {/* שם הקבוצה (agent reservations) — above the participant cards. On
+            the common single-booking business tour this is THE group name;
+            with several bookings each distinct name is listed once. */}
+        {(() => {
+          const names = [...new Set((tour.participants || []).map((p) => p.groupName).filter(Boolean))];
+          return names.length ? (
+            <div className="mb-3 rounded-lg bg-blue-50/70 px-3 py-2 text-[14px] font-semibold text-blue-900">
+              {names.join(' · ')}
+            </div>
+          ) : null;
+        })()}
         {/* Grouped aggregate (product → ticket types) — same shared renderer +
             server DTO as the admin tour modal. */}
         {tour.participantBreakdown?.byProduct?.length ? (

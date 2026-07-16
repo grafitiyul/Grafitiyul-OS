@@ -93,6 +93,7 @@ import { startTourCompletionWorker } from './tours/completionWorker.js';
 import { startWooSyncWorker } from './tours/woo/syncWorker.js';
 import { startTourGenerationWorker } from './tours/generationWorker.js';
 import { startHeldExpiryWorker } from './tours/heldExpiryWorker.js';
+import { startReservationWorker } from './reservations/worker.js';
 import { startReconcileOpenTourProducts } from './maintenance/reconcileOpenTourProducts.js';
 import questionnairesRouter from './routes/questionnaires.js';
 import publicQuestionnaireRouter from './routes/publicQuestionnaire.js';
@@ -613,6 +614,9 @@ app.listen(port, () => {
   // Held-reservation expiry — flips lapsed HELD registrations to EXPIRED
   // (releases capacity + writes an audit event); 60s tick, idempotent.
   startHeldExpiryWorker(console);
+  // Travel-agent reservations — async safety net behind the inline submit-time
+  // processing attempt (crash recovery + failure retries); 60s tick, claim-based.
+  startReservationWorker(console);
   // One-time automatic reconciliation of stale open-tour operational products —
   // marker-gated (runs exactly once across restarts/instances), concurrency-safe,
   // non-destructive. Heals already-materialized tours so the workshop-derivation

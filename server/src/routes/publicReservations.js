@@ -20,6 +20,8 @@ import {
   REQUIRED_CONFIRMATIONS,
   MAX_GROUPS,
 } from '../reservations/intake.js';
+import { processReservationSession } from '../reservations/processor.js';
+import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
 
 const router = Router();
 
@@ -103,7 +105,7 @@ router.post(
       signature: { signerName: validated.session.signerName, method: validated.session.signatureMethod },
     };
 
-    const { session } = await persistSubmission({
+    const { session, created } = await persistSubmission({
       link: r.link,
       contact: r.contact,
       organization: r.organization,
@@ -114,6 +116,39 @@ router.post(
         userAgent: String(req.headers['user-agent'] || '').slice(0, 300),
       },
     });
+
+    if (created) {
+      // Intake history — best-effort, never blocks the submission response.
+      const groupCount = session.groups?.length || 0;
+      const participants = (session.groups || []).reduce((a, g) => a + (g.participants || 0), 0);
+      await Promise.allSettled([
+        emitTimelineEvent(null, {
+          subjectType: 'reservation_session',
+          subjectId: session.id,
+          kind: 'note',
+          body: `<p>הבקשה הוגשה בטופס הסוכנים — ${groupCount} קבוצות, ${participants} משתתפים.</p>`,
+          data: { event: 'reservation_submitted', groupCount, participants },
+          origin: systemOrigin(),
+        }),
+        emitTimelineEvent(null, {
+          subjectType: 'contact',
+          subjectId: r.contact.id,
+          kind: 'note',
+          body: `<p>הוגשה בקשת הזמנה #${session.sessionNo} — ${groupCount} קבוצות, ${participants} משתתפים.</p>`,
+          data: { event: 'reservation_submitted', reservationSessionId: session.id },
+          origin: systemOrigin(),
+        }),
+      ]);
+
+      // Inline processing attempt (sync-first, async-safety-net): the happy
+      // path returns real GOS numbers in THIS response; any failure leaves the
+      // session for the sweep worker — the submission itself is already safe.
+      try {
+        await processReservationSession(session.id);
+      } catch (e) {
+        console.warn('[reservations] inline processing failed:', e?.message);
+      }
+    }
 
     // Re-read with Deal numbers included — a very late duplicate retry of an
     // already-processed session must return its final numbers.

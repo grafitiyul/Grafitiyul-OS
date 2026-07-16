@@ -97,6 +97,9 @@ export function guideParticipantDto(booking, permissions, { coordinationStatus =
     // full name (spec). customerName still ships for the subtitle.
     title: deal.organization?.name || customerName || 'לקוח',
     customerName,
+    // "שם הקבוצה" (agent reservations, BINDING #6) — rendered above the
+    // participant cards on the portal tour page.
+    groupName: deal.groupName || null,
     organizationUnit: deal.organizationUnit?.name || null,
     // Display-only — the portal must NOT link to the Deal.
     orderNo: deal.orderNo ?? null,

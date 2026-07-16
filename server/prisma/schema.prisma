@@ -974,6 +974,12 @@ model Deal {
   // header and used as the Deal URL; the cuid `id` stays the internal PK/FK key.
   orderNo               Int                     @unique @default(dbgenerated("nextval('deal_order_no_seq')"))
   title                 String
+  // "שם הקבוצה" — dedicated business field (agent reservations, BINDING #6).
+  // Seeded from the reservation group's name (which also seeds the title),
+  // then independently editable — deliberately NOT an internal copy of title.
+  // Displayed on the Deal page below the fixed deal info and in the guide
+  // portal above the participant cards.
+  groupName             String?
   organization          Organization?           @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   organizationId        String?
   organizationUnit      OrganizationUnit?       @relation(fields: [organizationUnitId], references: [id], onDelete: SetNull)

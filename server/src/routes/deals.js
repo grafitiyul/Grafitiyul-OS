@@ -465,6 +465,10 @@ router.put(
       if (!t) return res.status(400).json({ error: 'title_required' });
       data.title = t;
     }
+    // "שם הקבוצה" — dedicated business field (agent reservations); independent
+    // of title by design, clearable.
+    if (b.groupName !== undefined)
+      data.groupName = String(b.groupName || '').trim() || null;
     if (b.dealStageId !== undefined) data.dealStageId = b.dealStageId;
     if (b.organizationId !== undefined)
       data.organizationId = b.organizationId || null;
