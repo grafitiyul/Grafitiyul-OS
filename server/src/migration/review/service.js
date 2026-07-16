@@ -746,6 +746,27 @@ export async function recordDecision(client, { id, action, decision = null, note
         throw e;
       }
       stored = resolved;
+    } else if (existing.queue === 'deals') {
+      // Canonical deal treatments only; corrections stored verbatim (the planner
+      // consumes them). Nothing blocks on legacy relationships — the impact
+      // report shown in the UI is the safety mechanism. Split is NOT supported.
+      const TREATMENTS = ['import', 'import_corrected', 'merge', 'exclude', 'deleted'];
+      if (decision && !TREATMENTS.includes(decision.treatment)) {
+        const e = new Error(`invalid_decision: טיפול לא מוכר: ${decision.treatment}`);
+        e.code = 'INVALID_DECISION';
+        e.problems = [`טיפול לא מוכר: ${decision.treatment}`];
+        throw e;
+      }
+      if (decision?.treatment === 'merge' && !decision.mergeIntoDealId) {
+        const e = new Error('invalid_decision: לא נבחרה עסקת יעד לאיחוד');
+        e.code = 'INVALID_DECISION';
+        e.problems = ['לא נבחרה עסקת יעד לאיחוד'];
+        throw e;
+      }
+      if (decision?.treatment === 'deleted') {
+        decision.deleted = { ...(decision.deleted || {}), deletedAt: new Date().toISOString(), deletedBy: userName || userId || null };
+      }
+      stored = decision ?? existing.decision ?? null;
     } else if (existing.queue === 'name_cleanup') {
       // The owner's edited fields ARE the Identity Import result — resolved through
       // the same resolver the preview uses, and re-validated against the canonical

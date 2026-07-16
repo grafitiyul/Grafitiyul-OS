@@ -48,10 +48,10 @@ export const REVIEW_QUEUES = [
     key: 'deals',
     label: 'עסקאות',
     kind: 'queue',
-    // Blocking for the DEALS import gate (a later slice) — identity import is done.
+    // Blocking for the DEALS import gate — identity import is already done.
     blocking: false,
-    implemented: false,
-    summary: 'החלטות מיגרציה על עסקאות: ייבוא, תיקון, איחוד, אי-ייבוא או מחיקת זבל היסטורי — עם דוח השלכות מלא לפני כל אישור. ממשק המודול נבנה בשלב הבא; החלטות בעלים ממוקדות כבר נרשמות.',
+    implemented: true,
+    summary: 'רק העסקאות הדורשות תשומת לב — השאר מיובאות כפי שהן. ייבוא, תיקון, איחוד, אי-ייבוא או מחיקת זבל היסטורי, עם דוח השלכות לפני כל פעולה הרסנית.',
   },
   {
     key: 'exceptional',

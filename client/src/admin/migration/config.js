@@ -12,6 +12,7 @@ export const MIGRATION_TABS = [
   { key: 'contacts', path: 'contacts', label: 'אנשי קשר' },
   { key: 'name_cleanup', path: 'name-cleanup', label: 'ניקוי שמות' },
   { key: 'stage_config', path: 'stage-config', label: 'שלבים והגדרות' },
+  { key: 'deals', path: 'deals', label: 'עסקאות' },
   { key: 'exceptional', path: 'exceptional', label: 'רשומות חריגות' },
   { key: 'legacy_archive', path: 'legacy-archive', label: 'ארכיון מערכת קודמת' },
 ];

@@ -71,6 +71,7 @@ import OrganizationsTab from './admin/migration/tabs/OrganizationsTab.jsx';
 import SnapshotBrowserTab from './admin/migration/tabs/SnapshotBrowserTab.jsx';
 import ContactsTab from './admin/migration/tabs/ContactsTab.jsx';
 import NameCleanupTab from './admin/migration/tabs/NameCleanupTab.jsx';
+import DealsTab from './admin/migration/tabs/DealsTab.jsx';
 import ExceptionalTab from './admin/migration/tabs/ExceptionalTab.jsx';
 import TourEventPage from './admin/tours/TourPage.jsx';
 import DealDetail from './admin/deals/DealDetail.jsx';
@@ -240,6 +241,7 @@ export default function App() {
           <Route path="contacts" element={<ContactsTab />} />
           <Route path="name-cleanup" element={<NameCleanupTab />} />
           <Route path="stage-config" element={<StageConfigTab />} />
+          <Route path="deals" element={<DealsTab />} />
           <Route path="exceptional" element={<ExceptionalTab />} />
           {/* Tab 6 "ארכיון מערכת קודמת" IS the read-only Snapshot Browser. */}
           <Route path="legacy-archive" element={<SnapshotBrowserTab />} />

@@ -55,9 +55,10 @@ test('no LegacyRecord is ever created, and production reads stay read-only', () 
     ['scripts/build-org-proposals.mjs', read('scripts/migration/build-org-proposals.mjs')],
   ];
   for (const [name, src] of files) {
-    // LegacyRecord may only ever be COUNTED (an invariant check), never written.
+    // LegacyRecord: the Review Center may READ the crosswalk (it exists since the
+    // identity import) but NEVER writes it — only the import engine does.
     for (const m of src.matchAll(/legacyRecord\.(\w+)\s*\(/g)) {
-      assert.equal(m[1], 'count', `${name}: legacyRecord.${m[1]}() is forbidden — Slice 4 creates no LegacyRecords`);
+      assert.ok(/^(count|findMany|findFirst|findUnique)$/.test(m[1]), `${name}: legacyRecord.${m[1]}() is forbidden — the Review Center never writes the crosswalk`);
     }
     // Production models may only be READ (findMany/findFirst/findUnique/count).
     for (const m of src.matchAll(/\b(?:prisma|client)\.(organization|organizationUnit|organizationType|deal|contact|tourEvent|booking|task|timelineEntry|person)\.(\w+)\s*\(/g)) {
@@ -112,7 +113,7 @@ test('no "finalize import" action exists yet — readiness is only REPORTED', ()
   const routes = [...router.matchAll(/router\.(get|post|put|delete)\(\s*'([^']+)'/g)].map((m) => `${m[1].toUpperCase()} ${m[2]}`);
   assert.deepEqual(routes.sort(), [
     'GET /browser/entities', 'GET /browser/filter', 'GET /browser/record', 'GET /browser/records',
-    'GET /org-target-search', 'GET /org-targets', 'GET /queues/:queue', 'GET /queues/contacts/workload',
+    'GET /deal-impact', 'GET /org-target-search', 'GET /org-targets', 'GET /queues/:queue', 'GET /queues/contacts/workload',
     'GET /readiness', 'GET /snapshot', 'GET /summary',
     'POST /decisions/:id/decide', 'POST /decisions/:id/identity',
     'POST /queues/:queue/batch-approve-safe', 'POST /seed',

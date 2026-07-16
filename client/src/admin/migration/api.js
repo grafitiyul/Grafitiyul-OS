@@ -33,6 +33,8 @@ export const migrationApi = {
   contactWorkload: () => req('/api/migration/review/queues/contacts/workload'),
   // Identity Import readiness, derived from the live ledger. Read-only.
   readiness: () => req('/api/migration/review/readiness'),
+  // Graph-consequence report for a deal decision. Read-only.
+  dealImpact: (dealId) => req('/api/migration/review/deal-impact' + qs({ dealId })),
   // Snapshot Browser (read-only).
   browserEntities: () => req('/api/migration/review/browser/entities'),
   browserRecords: (entity, offset = 0, limit = 25) => req('/api/migration/review/browser/records' + qs({ entity, offset, limit })),

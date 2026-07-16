@@ -126,6 +126,76 @@ router.get(
   }),
 );
 
+// Impact report for a graph-changing DEAL decision. Read-only: what else would
+// be removed or disconnected. The report replaces technical prohibitions —
+// nothing here blocks; the owner decides. Person→deals index built lazily from
+// the snapshot and cached per process.
+let dealGraphCache = null;
+async function dealGraph() {
+  if (dealGraphCache) return dealGraphCache;
+  const b = await browser();
+  const graph = { dealsByPerson: new Map(), participantsByDeal: new Map(), personName: new Map() };
+  // One bounded pass over deals + participants via the browser's page API.
+  const run = await prisma.migrationRun.findFirst({ where: { kind: 'snapshot' }, orderBy: { startedAt: 'desc' } });
+  const { createSnapshotReader } = await import('../migration/review/snapshotReader.js');
+  const reader = createSnapshotReader({ store: { getText: r2.getObjectText }, snapshotId: run.snapshotId });
+  const pv = (x) => (x && typeof x === 'object' ? x.value : x) ?? null;
+  const stream = async (key, visit) => {
+    const man = await reader.entityManifest(key);
+    for (const s of man.shards || []) { for (const rec of await reader.readShard(s.key)) visit(rec); reader._shardCache.clear(); }
+  };
+  await stream('pipedrive/deals', (d) => {
+    const p = pv(d.person_id);
+    if (p == null) return;
+    if (!graph.dealsByPerson.has(p)) graph.dealsByPerson.set(p, []);
+    graph.dealsByPerson.get(p).push({ id: d.id, status: d.status });
+  });
+  await stream('pipedrive/deal_participants', (l) => {
+    if (!graph.participantsByDeal.has(l.deal_id)) graph.participantsByDeal.set(l.deal_id, []);
+    graph.participantsByDeal.get(l.deal_id).push(l.person_id);
+    if (!graph.dealsByPerson.has(l.person_id)) graph.dealsByPerson.set(l.person_id, []);
+  });
+  await stream('pipedrive/persons', (p) => graph.personName.set(p.id, String(p.name || '').trim()));
+  dealGraphCache = graph;
+  return graph;
+}
+
+router.get(
+  '/deal-impact',
+  handle(async (req, res) => {
+    const dealId = Number(req.query.dealId);
+    if (!Number.isInteger(dealId)) return res.status(400).json({ error: 'dealId_required' });
+    try {
+      const raw = await (await browser()).record('pipedrive/deals', dealId);
+      if (!raw) return res.status(404).json({ error: 'deal_not_found' });
+      const graph = await dealGraph();
+      const row = await prisma.migrationDecision.findUnique({ where: { queue_subjectKey: { queue: 'deals', subjectKey: `deal:${dealId}` } } });
+      const proposal = row?.proposal || {};
+      const primary = proposal.personSourceId ?? null;
+      const linked = [...new Set([primary, ...(graph.participantsByDeal.get(dealId) || [])].filter((x) => x != null))];
+      const xwalk = await prisma.legacyRecord.findMany({ where: { sourceSystem: 'pipedrive', sourceType: 'person', sourceId: { in: linked.map(String) } } });
+      const { computeDealDeletionImpact } = await import('../migration/review/dealImpact.js');
+      const impact = computeDealDeletionImpact({
+        deal: { id: dealId, title: proposal.title, status: proposal.status, value: proposal.value, wonTime: proposal.wonTime, personId: primary, orgId: proposal.orgSourceId ?? null, orgName: null, activityCount: 0, noteCount: 0, fileCount: 0 },
+        linkedPersons: linked.map((id) => {
+          const others = (graph.dealsByPerson.get(id) || []).filter((d) => d.id !== dealId);
+          const byStatus = { open: 0, won: 0, lost: 0 };
+          for (const d of others) if (byStatus[d.status] != null) byStatus[d.status] += 1;
+          const x = xwalk.find((w) => w.sourceId === String(id));
+          return {
+            legacyId: id, name: graph.personName.get(id) || String(id),
+            relationship: id === primary ? 'primary' : 'participant',
+            otherDeals: byStatus, otherHistory: 0,
+            imported: x?.entityType === 'Contact' ? 'contact' : x?.entityType === 'Organization' ? 'organization' : 'not_imported',
+          };
+        }),
+        orgOtherDeals: null,
+      });
+      res.json(impact);
+    } catch (e) { browserError(e, res); }
+  }),
+);
+
 // Identity Import readiness — derived from the live ledger, never a toggled flag.
 // Reports only: there is no import action anywhere in this router.
 router.get(
