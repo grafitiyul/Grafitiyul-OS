@@ -10,6 +10,7 @@ import {
   syncTaskFromScheduledEdit,
 } from '../tasks/taskService.js';
 import { dealsForContact, classifyDealsForContact } from '../crm/dealResolution.js';
+import { markChatRead, markChatUnread } from '../whatsapp/readState.js';
 
 // WhatsApp module — Slice 1 (accounts / connections admin).
 //
@@ -281,6 +282,12 @@ function toClientChat(chat) {
       : null,
     matchSource: chat.matchSource,
     lastMessageAt: chat.lastMessageAt,
+    // Canonical server-side read state (SSOT). unread = a real unread count OR
+    // the manual "mark unread" display flag; the client renders straight from
+    // these and no longer keeps its own per-device unread store.
+    unreadCount: chat.unreadCount ?? 0,
+    manualUnread: !!chat.manualUnreadAt,
+    unread: (chat.unreadCount ?? 0) > 0 || !!chat.manualUnreadAt,
     pinnedAt: chat.pinnedAt ?? null,
     snoozedUntil: chat.snoozedUntil ?? null,
     snoozedAt: chat.snoozedAt ?? null,
@@ -364,6 +371,30 @@ router.get(
     }
     res.set('Cache-Control', 'no-store');
     res.json(chats.map(toClientChat));
+  }),
+);
+
+// Mark a chat READ — the one canonical read action every surface calls when a
+// conversation is opened. Advances the server water-mark, clears unread, and
+// best-effort pushes read receipts to WhatsApp (bridge /mark-read) so the phone
+// and other linked devices clear too. Bridge failure is soft: the 200 still
+// reflects that GOS marked it read.
+router.post(
+  '/chats/:id/read',
+  handle(async (req, res) => {
+    const out = await markChatRead(req.params.id, { prisma, bridge: callBridge, log: req.log });
+    res.set('Cache-Control', 'no-store');
+    res.json(out);
+  }),
+);
+
+// Manual "mark as unread" (display flag only — never touches the honest count).
+router.post(
+  '/chats/:id/unread',
+  handle(async (req, res) => {
+    const out = await markChatUnread(req.params.id, { prisma });
+    res.set('Cache-Control', 'no-store');
+    res.json(out);
   }),
 );
 

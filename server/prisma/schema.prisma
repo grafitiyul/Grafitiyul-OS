@@ -1388,6 +1388,18 @@ model WhatsAppChat {
   contactId          String?
   matchSource        String? // 'phone' | 'manual'
   lastMessageAt      DateTime?
+  // Canonical read state (server-side SSOT; mirrors the proven Email model).
+  // lastReadAt is a monotonic per-chat READ WATER-MARK: an incoming message is
+  // unread iff its timestampFromSource > lastReadAt. unreadCount is the cached
+  // derivation, maintained incrementally by the bridge (live inbound bumps it;
+  // reading — in GOS, on the phone, or an owner reply — resets it to 0 and
+  // advances lastReadAt). manualUnreadAt is the WhatsApp-style manual
+  // "mark unread" DISPLAY flag: it renders the row unread without inflating the
+  // honest count, and is cleared by any real read. Retires the per-device
+  // localStorage seenStore as the source of truth.
+  unreadCount        Int                        @default(0)
+  lastReadAt         DateTime?
+  manualUnreadAt     DateTime?
   // Inbox workflow state (team-level, not per-admin): pinned floats the chat
   // to the top; snooze hides it from the active scope until snoozedUntil —
   // UNLESS a new message arrives after snoozedAt (Gmail-style early wake).
