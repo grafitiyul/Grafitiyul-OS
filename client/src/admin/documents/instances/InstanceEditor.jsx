@@ -773,13 +773,21 @@ export default function InstanceEditor() {
               setSelectedId(null);
             }}
             selectedAnnotationId={selectedAnnotationId}
-            renderAnnotationContent={(ann, ctx) => (
-              <AnnotationVisual
-                ann={ann}
-                pageCssHeight={ctx?.pageCssHeight}
-                pagePtHeight={ctx?.pagePtHeight}
-              />
-            )}
+            renderAnnotationContent={(ann, ctx) =>
+              // Same rule as InstanceFieldPreview: once finalized, the page
+              // canvas IS the final PDF with every annotation already baked
+              // in — repainting the overlay content would draw each note/
+              // mark a second time on top of its baked copy (the "ghost
+              // text" defect). Draft mode shows the clean source PDF, so
+              // overlays are the only copy there.
+              isFinalized ? null : (
+                <AnnotationVisual
+                  ann={ann}
+                  pageCssHeight={ctx?.pageCssHeight}
+                  pagePtHeight={ctx?.pagePtHeight}
+                />
+              )
+            }
           />
           </div>
         </div>
