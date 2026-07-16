@@ -153,6 +153,30 @@ test('idempotency: already-imported source ids are skipped and their entities re
   assert.equal(link.orgRef.existingId, 'org-live-900', 'the new contact links to the EXISTING org entity');
 });
 
+test('idempotency covers CLUSTER canonicals and person-orgs too — a re-run creates nothing', () => {
+  const inputs = base({
+    persons: [person({ id: 7, name: 'חברה' })],
+    organizations: [{ legacyId: 100, name: 'בנק א' }],
+    orgRows: [{
+      subjectKey: 'org:x', status: 'edited',
+      proposal: { members: [{ legacyId: 100 }] },
+      decision: {
+        canonicalName: 'בנק אחד', mergeIntoGosId: null, units: [],
+        dispositions: { 100: { disposition: 'organization' } },
+        result: { organization: { name: 'בנק אחד', members: [{ legacyId: 100 }] }, units: [], elsewhere: [], excluded: [] },
+      },
+    }],
+    nameRows: [{ subjectKey: 'name:7', status: 'edited', decision: { treatment: 'organization', organization: { create: true, name: 'חברה', targetOrganizationKey: null } } }],
+    // Everything already imported.
+    existingPersonXwalk: new Map([['7', 'org-live-7']]),
+    existingOrgXwalk: new Map([['100', 'org-live-100']]),
+  });
+  const r = planIdentityImport(inputs);
+  assert.equal(r.stats.organizations, 0, 'no canonical re-created, no person-org re-created');
+  assert.equal(r.stats.contacts, 0);
+  assert.equal(r.stats.legacyRecords, 0);
+});
+
 test('a contact that would fail GOS validation is skipped and reported, never crashes', () => {
   const r = planIdentityImport(base({
     persons: [person({ id: 1, first: '', last: '', name: '' })],

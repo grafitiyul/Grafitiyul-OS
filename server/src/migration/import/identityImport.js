@@ -74,9 +74,14 @@ export function planIdentityImport({
       if (d.mergeIntoGosId) {
         canonicalRef = { existingId: d.mergeIntoGosId };
       } else {
-        const already = existingOrgXwalk.get(`cluster:${row.subjectKey}`);
+        // Idempotency: crosswalk rows are stored per MEMBER org id — a canonical
+        // already exists iff any of its organization-members is already mapped.
+        const already = (result.organization.members || [])
+          .map((m) => existingOrgXwalk.get(String(m.legacyId)))
+          .find(Boolean);
         canonicalRef = already ? { existingId: already } : { plannedId: newId() };
-        if (!already) {
+        if (already) skipped.orgAlreadyImported++;
+        else {
           plan.organizations.push({
             id: canonicalRef.plannedId,
             name: t(result.organization.name),
@@ -177,6 +182,9 @@ export function planIdentityImport({
     if (!isResolved(row.status) || row.decision?.treatment !== 'organization') continue;
     const o = row.decision.organization || {};
     if (!o.create) { personIsOrg.set(pid, null); continue; }
+    // Idempotency: this person's crosswalk row already points at its Organization.
+    const alreadyEntity = existingPersonXwalk.get(String(pid));
+    if (alreadyEntity) { personIsOrg.set(pid, { existingId: alreadyEntity }); continue; }
     let ref = o.targetOrganizationKey ? resolveKey(o.targetOrganizationKey) : null;
     if (!ref && o.targetOrganizationKey) {
       problems.push(`רשומה ${pid}: ארגון היעד ${o.targetOrganizationKey} לא נבנה`);
