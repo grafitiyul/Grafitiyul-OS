@@ -67,6 +67,8 @@ export function entityHref(target) {
       return '/admin/whatsapp';
     case 'reservation':
       return '/admin/crm/reservations';
+    case 'contact':
+      return target.id ? `/admin/crm/contacts/${target.id}` : null;
     default:
       return null;
   }

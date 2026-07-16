@@ -153,11 +153,11 @@ export default function GroupCard({
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <div>
-            <DateField label={t.group.date} value={g.tourDate} onChange={(v) => set('tourDate', v)} clearable={false} />
+            <DateField label={t.group.date} value={g.tourDate} onChange={(v) => set('tourDate', v)} clearable={false} lang={lang} />
             <Err msg={p.tourDate} />
           </div>
           <div>
-            <TimeField label={t.group.time} value={g.tourTime} onChange={(v) => set('tourTime', v)} clearable={false} />
+            <TimeField label={t.group.time} value={g.tourTime} onChange={(v) => set('tourTime', v)} clearable={false} lang={lang} />
             <Err msg={p.tourTime} />
           </div>
           <div>

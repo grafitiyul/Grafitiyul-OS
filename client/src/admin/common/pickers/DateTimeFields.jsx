@@ -16,11 +16,27 @@ import AnchoredMenu from '../AnchoredMenu.jsx';
 // Date objects cross a component boundary, so timezone semantics never
 // change here.
 
-const WEEKDAYS = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'];
+// Locale support is ADDITIVE: every existing consumer keeps the Hebrew
+// default; public bilingual surfaces (agent reservation form) pass lang="en".
+const WEEKDAYS_BY_LANG = {
+  he: ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'],
+  en: ['S', 'M', 'T', 'W', 'T', 'F', 'S'],
+};
 const MONTHS_HE = [
   'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
   'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר',
 ];
+const MONTHS_BY_LANG = {
+  he: MONTHS_HE,
+  en: [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ],
+};
+const PANEL_L = {
+  he: { clear: 'נקה', today: 'היום', typeTime: 'הקלד שעה…', badTime: 'זמן לא תקין', current: 'נוכחי', pickDate: 'בחירת תאריך', pickTime: 'בחירת שעה' },
+  en: { clear: 'Clear', today: 'Today', typeTime: 'Type a time…', badTime: 'Invalid time', current: 'current', pickDate: 'Select date', pickTime: 'Select time' },
+};
 
 function pad2(n) {
   return String(n).padStart(2, '0');
@@ -113,9 +129,12 @@ const NAV_BTN = 'h-7 w-7 inline-flex items-center justify-center rounded-md text
 
 // ── Date panel ── calendar with fast month/year navigation. Mounted fresh on
 // each open (AnchoredMenu unmounts closed content), so view state self-resets.
-export function DatePanel({ value, onPick, clearable = true }) {
+export function DatePanel({ value, onPick, clearable = true, lang = 'he' }) {
   const [view, setView] = useState(() => firstOfMonth(value));
   const [mode, setMode] = useState('days'); // 'days' | 'months'
+  const months = MONTHS_BY_LANG[lang] || MONTHS_HE;
+  const weekdays = WEEKDAYS_BY_LANG[lang] || WEEKDAYS_BY_LANG.he;
+  const pl = PANEL_L[lang] || PANEL_L.he;
 
   const y = view.getFullYear();
   const m = view.getMonth();
@@ -151,7 +170,7 @@ export function DatePanel({ value, onPick, clearable = true }) {
               onClick={() => setMode('months')}
               className="text-[13px] font-semibold text-gray-800 rounded-md px-2 py-1 hover:bg-gray-100"
             >
-              {MONTHS_HE[m]} {y}
+              {months[m]} {y}
             </button>
             <button type="button" onClick={() => setView(new Date(y, m + 1, 1))} aria-label="חודש הבא" className={NAV_BTN}>
               <Chevron dir="left" />
@@ -179,7 +198,7 @@ export function DatePanel({ value, onPick, clearable = true }) {
       {mode === 'days' ? (
         <>
           <div className="grid grid-cols-7 gap-0.5 px-0.5 text-[11px] text-gray-400 text-center pb-0.5">
-            {WEEKDAYS.map((w) => (<div key={w} className="h-6 flex items-center justify-center">{w}</div>))}
+            {weekdays.map((w, i) => (<div key={`${w}${i}`} className="h-6 flex items-center justify-center">{w}</div>))}
           </div>
           <div className="grid grid-cols-7 gap-0.5 px-0.5">
             {cells.map((d, i) => {
@@ -207,16 +226,16 @@ export function DatePanel({ value, onPick, clearable = true }) {
           </div>
           <div className="flex items-center justify-between px-1 pt-1.5 mt-1 border-t border-gray-100">
             {clearable ? (
-              <button type="button" onClick={() => onPick('')} className="text-[12px] text-gray-400 hover:text-red-600">נקה</button>
+              <button type="button" onClick={() => onPick('')} className="text-[12px] text-gray-400 hover:text-red-600">{pl.clear}</button>
             ) : (
               <span />
             )}
-            <button type="button" onClick={() => onPick(todayStr)} className="text-[12px] font-medium text-blue-700 hover:text-blue-800">היום</button>
+            <button type="button" onClick={() => onPick(todayStr)} className="text-[12px] font-medium text-blue-700 hover:text-blue-800">{pl.today}</button>
           </div>
         </>
       ) : (
         <div className="grid grid-cols-3 gap-1 px-0.5 pb-1">
-          {MONTHS_HE.map((name, idx) => {
+          {months.map((name, idx) => {
             const isSel = selYear === y && selMonth0 === idx;
             const isView = idx === m;
             return (
@@ -244,10 +263,11 @@ export function DatePanel({ value, onPick, clearable = true }) {
 
 // ── Time panel ── combobox: type to filter/normalise, or pick a 15-minute
 // slot. An off-grid current value (e.g. 14:20) is preserved and pinned on top.
-export function TimePanel({ value, onPick, stepMinutes = 15, clearable = true }) {
+export function TimePanel({ value, onPick, stepMinutes = 15, clearable = true, lang = 'he' }) {
   const inputRef = useRef(null);
   const selectedRef = useRef(null);
   const [query, setQuery] = useState('');
+  const pl = PANEL_L[lang] || PANEL_L.he;
 
   const baseOptions = useMemo(() => {
     const out = [];
@@ -292,14 +312,14 @@ export function TimePanel({ value, onPick, stepMinutes = 15, clearable = true })
           onKeyDown={onKeyDown}
           dir="ltr"
           inputMode="numeric"
-          placeholder={current || 'הקלד שעה…'}
+          placeholder={current || pl.typeTime}
           className="w-full h-8 rounded-md border border-blue-300 bg-white px-2 text-[13px] text-center focus:outline-none focus:ring-2 focus:ring-blue-200"
         />
       </div>
       <div className="max-h-56 overflow-auto">
         {list.length === 0 ? (
           <div className="px-3 py-3 text-center text-[12px] text-gray-400">
-            {trimmed ? 'זמן לא תקין' : '—'}
+            {trimmed ? pl.badTime : '—'}
           </div>
         ) : (
           list.map((t, i) => {
@@ -317,7 +337,7 @@ export function TimePanel({ value, onPick, stepMinutes = 15, clearable = true })
                 }`}
               >
                 {t}
-                {customTop && <span className="text-[10px] opacity-70">(נוכחי)</span>}
+                {customTop && <span className="text-[10px] opacity-70">({pl.current})</span>}
               </button>
             );
           })
@@ -326,7 +346,7 @@ export function TimePanel({ value, onPick, stepMinutes = 15, clearable = true })
       {clearable && (
         <div className="border-t border-gray-100">
           <button type="button" onClick={() => onPick('')} className="block w-full text-center px-3 py-1.5 text-[12px] text-gray-400 hover:text-red-600">
-            נקה
+            {pl.clear}
           </button>
         </div>
       )}
@@ -356,7 +376,7 @@ function FieldTrigger({ anchorRef, open, onOpen, display, placeholder, withLabel
 }
 
 // ── DateField ── form field. value: "YYYY-MM-DD" | ''; onChange(sameShape).
-export function DateField({ label, value, onChange, placeholder = 'בחירת תאריך', clearable = true, disabled = false }) {
+export function DateField({ label, value, onChange, placeholder, clearable = true, disabled = false, lang = 'he' }) {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef(null);
   function pick(v) {
@@ -366,16 +386,16 @@ export function DateField({ label, value, onChange, placeholder = 'בחירת ת
   return (
     <label className={'block text-[12px] text-gray-600' + (disabled ? ' opacity-50 pointer-events-none' : '')}>
       {label}
-      <FieldTrigger anchorRef={anchorRef} open={open} onOpen={() => setOpen(true)} display={fmtDate(value)} placeholder={placeholder} withLabel={!!label} />
+      <FieldTrigger anchorRef={anchorRef} open={open} onOpen={() => setOpen(true)} display={fmtDate(value)} placeholder={placeholder ?? (PANEL_L[lang] || PANEL_L.he).pickDate} withLabel={!!label} />
       <AnchoredMenu anchorRef={anchorRef} open={open} onClose={() => setOpen(false)} width={256} align="start">
-        <DatePanel value={value} onPick={pick} clearable={clearable} />
+        <DatePanel value={value} onPick={pick} clearable={clearable} lang={lang} />
       </AnchoredMenu>
     </label>
   );
 }
 
 // ── TimeField ── form field. value: "HH:MM" | ''; onChange(sameShape).
-export function TimeField({ label, value, onChange, placeholder = 'בחירת שעה', stepMinutes = 15, clearable = true, disabled = false }) {
+export function TimeField({ label, value, onChange, placeholder, stepMinutes = 15, clearable = true, disabled = false, lang = 'he' }) {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef(null);
   function pick(v) {
@@ -385,9 +405,9 @@ export function TimeField({ label, value, onChange, placeholder = 'בחירת ש
   return (
     <label className={'block text-[12px] text-gray-600' + (disabled ? ' opacity-50 pointer-events-none' : '')}>
       {label}
-      <FieldTrigger anchorRef={anchorRef} open={open} onOpen={() => setOpen(true)} display={fmtTime(value)} placeholder={placeholder} withLabel={!!label} />
+      <FieldTrigger anchorRef={anchorRef} open={open} onOpen={() => setOpen(true)} display={fmtTime(value)} placeholder={placeholder ?? (PANEL_L[lang] || PANEL_L.he).pickTime} withLabel={!!label} />
       <AnchoredMenu anchorRef={anchorRef} open={open} onClose={() => setOpen(false)} width={150} align="start">
-        <TimePanel value={value} onPick={pick} stepMinutes={stepMinutes} clearable={clearable} />
+        <TimePanel value={value} onPick={pick} stepMinutes={stepMinutes} clearable={clearable} lang={lang} />
       </AnchoredMenu>
     </label>
   );

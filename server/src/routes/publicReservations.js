@@ -22,9 +22,29 @@ import {
 } from '../reservations/intake.js';
 import { processReservationSession } from '../reservations/processor.js';
 import { buildReservationPdf } from '../reservations/pdf.js';
+import { createRateLimiter } from '../reservations/rateLimit.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
 
 const router = Router();
+
+// Abuse guards (hardening slice). Reads are generous (form loads, status
+// polling every 5s, PDF); submits are tight — a real agent never submits 20
+// sessions in an hour. Keyed by token (the capability) + IP.
+const readLimiter = createRateLimiter({ windowMs: 10 * 60 * 1000, max: 600 });
+const submitLimiter = createRateLimiter({ windowMs: 60 * 60 * 1000, max: 20 });
+
+function clientIp(req) {
+  return String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+}
+
+function guard(limiter) {
+  return (req, res, next) => {
+    if (!limiter(`${req.params.token}:${clientIp(req)}`)) {
+      return res.status(429).json({ error: 'rate_limited' });
+    }
+    next();
+  };
+}
 
 function sendResolveError(res, error) {
   if (error === 'not_found') return res.status(404).json({ error: 'not_found' });
@@ -65,6 +85,7 @@ const SESSION_INCLUDE = {
 // Bootstrap: who the agent is + the bookable catalog + form policy.
 router.get(
   '/reservations/:token',
+  guard(readLimiter),
   handle(async (req, res) => {
     const r = await resolveReservationLink(req.params.token);
     if (r.error) return sendResolveError(res, r.error);
@@ -88,6 +109,7 @@ router.get(
 // stable codes). Idempotent by client-minted submissionKey.
 router.post(
   '/reservations/:token/submit',
+  guard(submitLimiter),
   handle(async (req, res) => {
     const r = await resolveReservationLink(req.params.token);
     if (r.error) return sendResolveError(res, r.error);
@@ -166,6 +188,7 @@ router.post(
 // refresh after submit can recover its result without any admin data.
 router.get(
   '/reservations/:token/session/:submissionKey',
+  guard(readLimiter),
   handle(async (req, res) => {
     const r = await resolveReservationLink(req.params.token);
     if (r.error) return sendResolveError(res, r.error);
@@ -188,6 +211,7 @@ router.get(
 // endpoint; the response is a direct attachment download.
 router.get(
   '/reservations/:token/session/:submissionKey/pdf',
+  guard(readLimiter),
   handle(async (req, res) => {
     const r = await resolveReservationLink(req.params.token);
     if (r.error) return sendResolveError(res, r.error);

@@ -1,6 +1,13 @@
 # Travel Agency Reservation Module — Architecture Audit & Proposal
 
-Status: APPROVED (owner sign-off 2026-07-16, binding decisions below)
+Status: SHIPPED (all slices) — owner sign-off 2026-07-16, binding decisions below.
+Slices: 1 entities+links (3f43819) · 2 public form (047535c) · 3 processing
+pipeline + Deal.groupName (4d51da8) · 4 reservation PDF via Documents engine
+(67acc44) · 5 בקרה reservation_stuck + reprocess (97e5636) · 6 hardening
+(rate limits, link-abuse detector, EN pickers).
+One-time setup: enable "קישורי הזמנות לסוכנים" on the OrganizationType
+"סוכנויות תיירות ונסיעות" (CRM settings → org types), then mint links from
+agent Contact pages.
 Date: 2026-07-16 (updated same day with binding product decisions)
 Scope: canonical reservation entry point for travel agents, designed as the
 first consumer of a single source-agnostic booking-processing pipeline.
