@@ -414,8 +414,24 @@ export function resolveNameResult(proposal, draft, ctx = {}) {
     // Re-normalized HERE against the totals, never trusted from the proposal:
     // any deal the splits cannot account for lands in `other`, which blocks. So a
     // stale/tampered proposal can never claim "no deals" while carrying a count.
-    const ds = statusCounts(cxx.dealStatusCounts, cxx.dealCount);
-    const ps = statusCounts(cxx.participantStatusCounts, cxx.participantCount);
+    //
+    // THE CASCADE (owner principle, 2026-07-16): a deal the owner DELETED as
+    // historical junk no longer protects anything. ctx.deadDealIds subtracts such
+    // deals from the boundary — but only deals VISIBLE in the detail lists, so a
+    // record with more deals than the capped list can never be under-counted
+    // (the unlisted remainder keeps blocking, fail-safe).
+    const subtractDead = (counts, list) => {
+      if (!ctx.deadDealIds?.size || !Array.isArray(list)) return counts;
+      const out = { ...counts };
+      for (const d of list) {
+        if (!ctx.deadDealIds.has(d.id)) continue;
+        const bucket = ['open', 'won', 'lost'].includes(d.status) ? d.status : 'other';
+        if (out[bucket] > 0) out[bucket] -= 1;
+      }
+      return out;
+    };
+    const ds = subtractDead(statusCounts(cxx.dealStatusCounts, cxx.dealCount), cxx.primaryDeals);
+    const ps = subtractDead(statusCounts(cxx.participantStatusCounts, cxx.participantCount), cxx.participantDeals);
     if (ds.open > 0) problems.push(`לא ניתן למחוק: ${ds.open} עסקאות פתוחות מקושרות לרשומה`);
     if (ds.won > 0) problems.push(`לא ניתן למחוק: ${ds.won} עסקאות WON מקושרות לרשומה`);
     if (ds.other > 0) problems.push(`לא ניתן למחוק: ${ds.other} עסקאות בסטטוס לא מוכר — לא ניתן להוכיח שהן LOST`);

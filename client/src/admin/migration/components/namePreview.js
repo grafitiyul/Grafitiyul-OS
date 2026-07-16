@@ -188,8 +188,20 @@ export function resolveNameResult(proposal, draft, ctx = {}) {
   let deleted = null;
   if (isDeleted) {
     const cxx = proposal.context || {};
-    const ds = statusCountsOf(cxx.dealStatusCounts, cxx.dealCount);
-    const ps = statusCountsOf(cxx.participantStatusCounts, cxx.participantCount);
+    // The cascade: deals the owner deleted as junk no longer protect anything.
+    const dead = new Set(ctx.deadDealIds || []);
+    const subtractDead = (counts, list) => {
+      if (!dead.size || !Array.isArray(list)) return counts;
+      const out = { ...counts };
+      for (const d of list) {
+        if (!dead.has(d.id)) continue;
+        const bucket = ['open', 'won', 'lost'].includes(d.status) ? d.status : 'other';
+        if (out[bucket] > 0) out[bucket] -= 1;
+      }
+      return out;
+    };
+    const ds = subtractDead(statusCountsOf(cxx.dealStatusCounts, cxx.dealCount), cxx.primaryDeals);
+    const ps = subtractDead(statusCountsOf(cxx.participantStatusCounts, cxx.participantCount), cxx.participantDeals);
     if (ds.open > 0) problems.push(`לא ניתן למחוק: ${ds.open} עסקאות פתוחות מקושרות לרשומה`);
     if (ds.won > 0) problems.push(`לא ניתן למחוק: ${ds.won} עסקאות WON מקושרות לרשומה`);
     if (ds.other > 0) problems.push(`לא ניתן למחוק: ${ds.other} עסקאות בסטטוס לא מוכר — לא ניתן להוכיח שהן LOST`);

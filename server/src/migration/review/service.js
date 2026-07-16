@@ -13,6 +13,7 @@ import {
   identityDecisionFor, identityProposalFor, isEmptyEdit,
 } from './contactIdentity.js';
 import { nameDecisionFromDraft, nameDraftFromProposal, legacyIdFromNameKey, openLinked, wonLinked } from './nameCleanup.js';
+import { dealIdFromSubjectKey } from './dealImpact.js';
 import { buildReadiness, foldStatus } from './readiness.js';
 import { normalizePhoneIntl } from '../../whatsapp/phone.js';
 
@@ -413,6 +414,9 @@ export async function listQueue(client, queueKey, { status = null, filter = null
       // "נדרש לעבור — מקושר לעסקת WON". Both include secondary-participant links.
       extra.openLinkedUnresolved = pendingBlocking.filter((r) => openLinked(r.proposal)).length;
       extra.wonLinkedUnresolved = pendingBlocking.filter((r) => wonLinked(r.proposal) && !openLinked(r.proposal)).length;
+      // Owner-deleted deals, so the client preview applies the same cascade the
+      // server enforces on save.
+      extra.deadDealIds = [...(await getDeadDealIds(client))];
     }
   }
 
@@ -618,6 +622,26 @@ const claimsExcludingSelf = (claims, selfLegacyId) => ({
 // this set as its first-pass filter over ALL persons, so a deleted id can never
 // become an entity through any path (clustered, separate, or unclustered).
 // The raw snapshot objects are untouched — audit integrity is storage-level.
+// Deals the owner removed from the migration as HISTORICAL JUNK (deals-queue
+// treatment 'deleted'). A dead deal protects nothing: contact deletion
+// boundaries subtract it, and the deal importer must never import it. Exclusion
+// ('do not import') is deliberately NOT dead — an excluded deal still happened
+// and its archive value still protects its contacts.
+export async function getDeadDealIds(client) {
+  const rows = await client.migrationDecision.findMany({
+    where: { queue: 'deals', status: { in: ['approved', 'edited'] } },
+    select: { subjectKey: true, decision: true },
+  });
+  const ids = new Set();
+  for (const r of rows) {
+    if (r.decision?.treatment === 'deleted') {
+      const id = dealIdFromSubjectKey(r.subjectKey);
+      if (id != null) ids.add(id);
+    }
+  }
+  return ids;
+}
+
 export async function getDeletedPersonIds(client) {
   const rows = await client.migrationDecision.findMany({
     where: { queue: 'name_cleanup', status: { in: ['approved', 'edited'] } },
@@ -736,6 +760,8 @@ export async function recordDecision(client, { id, action, decision = null, note
       const ctx = {
         identityEdit: (await getIdentityEdits(client, [legacyId]))[legacyId] || null,
         claimedPhones: claimsExcludingSelf(await buildClaimedPhones(client), legacyId),
+        // Owner-deleted deals no longer protect their contacts (the cascade).
+        deadDealIds: await getDeadDealIds(client),
       };
       // "This is an Organization" mapped to an existing target: the key must be a
       // destination that will actually exist after migration —

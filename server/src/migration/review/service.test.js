@@ -114,8 +114,8 @@ test('progress summary + blocking gate are correct while other queues are unbuil
   await seedStageConfig(c);
   const s = await buildReviewSummary(c);
 
-  assert.equal(s.queues.length, 6, 'six tabs');
-  assert.deepEqual(s.queues.map((q) => q.key), ['organizations', 'contacts', 'name_cleanup', 'stage_config', 'exceptional', 'legacy_archive']);
+  assert.equal(s.queues.length, 7, 'seven queues (deals registered for the Deals Review module)');
+  assert.deepEqual(s.queues.map((q) => q.key), ['organizations', 'contacts', 'name_cleanup', 'stage_config', 'deals', 'exceptional', 'legacy_archive']);
 
   const stage = s.queues.find((q) => q.key === 'stage_config');
   assert.equal(stage.counts.total, STAGE_CONFIG_COUNT);

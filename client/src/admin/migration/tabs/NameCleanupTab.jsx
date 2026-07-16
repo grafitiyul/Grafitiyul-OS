@@ -90,6 +90,7 @@ export default function NameCleanupTab() {
           identityEdit: selected.identityEdit,
           claimedPhones: data?.claimedPhones || {},
           selfLegacyId: selected.proposal.legacyId,
+          deadDealIds: data?.deadDealIds || [],
         })
       : null),
     [selected, draft, data],
