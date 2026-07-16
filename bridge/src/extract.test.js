@@ -7,7 +7,7 @@ process.env.DATABASE_URL ||= 'postgresql://test:test@localhost:5432/test';
 process.env.WHATSAPP_ACCOUNT_ID ||= 'test_account';
 process.env.BRIDGE_INTERNAL_SECRET ||= 'test-secret';
 
-const { extractContent, jidToPhone, isGroupJid, isLikelyRealPhone, sanitiseRawPayload } =
+const { extractContent, jidToPhone, isGroupJid, isExcludedChatJid, isLikelyRealPhone, sanitiseRawPayload } =
   await import('./extract.js');
 const { buildMediaKey } = await import('./media.js');
 
@@ -98,6 +98,29 @@ test('isGroupJid / isLikelyRealPhone', () => {
   assert.equal(isGroupJid('972501234567@s.whatsapp.net'), false);
   assert.equal(isLikelyRealPhone('972501234567'), true);
   assert.equal(isLikelyRealPhone('240359288365074'), false); // LID digits
+});
+
+// ── isExcludedChatJid (Status / broadcast / channel exclusion) ─────────────
+test('isExcludedChatJid: WhatsApp Status is excluded', () => {
+  assert.equal(isExcludedChatJid('status@broadcast'), true);
+});
+
+test('isExcludedChatJid: broadcast lists and channels are excluded', () => {
+  assert.equal(isExcludedChatJid('1234567890@broadcast'), true);
+  assert.equal(isExcludedChatJid('120363000000000000@newsletter'), true);
+});
+
+test('isExcludedChatJid: a missing/empty jid fails safe (excluded)', () => {
+  assert.equal(isExcludedChatJid(null), true);
+  assert.equal(isExcludedChatJid(undefined), true);
+  assert.equal(isExcludedChatJid(''), true);
+});
+
+test('isExcludedChatJid: real private and group conversations are NOT excluded', () => {
+  assert.equal(isExcludedChatJid('972501234567@s.whatsapp.net'), false);
+  assert.equal(isExcludedChatJid('972501234567:3@s.whatsapp.net'), false); // device suffix
+  assert.equal(isExcludedChatJid('240359288365074@lid'), false); // privacy id, still a real 1:1
+  assert.equal(isExcludedChatJid('12345-67890@g.us'), false); // group
 });
 
 // ── sanitiseRawPayload ───────────────────────────────────────────────────────

@@ -20,7 +20,7 @@
 
 import { getBaileys } from './baileysLib.js';
 import { accountState } from './accountState.js';
-import { extractContent, isGroupJid, isLikelyRealPhone, jidToPhone, sanitiseRawPayload } from './extract.js';
+import { extractContent, isExcludedChatJid, isGroupJid, isLikelyRealPhone, jidToPhone, sanitiseRawPayload } from './extract.js';
 import { isMediaConfigured, buildMediaKey, storeMedia } from './media.js';
 import { config } from './config.js';
 
@@ -318,6 +318,13 @@ export function createIngest({ prisma, socket, log, accountId }) {
     const externalMessageId = msg.key.id;
     const externalChatId = msg.key.remoteJid;
 
+    // EARLIEST canonical exclusion: WhatsApp Status / broadcast / channel
+    // traffic must never enter the CRM conversation model — no message row,
+    // no chat, no contact/deal link, no unread, no downstream side effect.
+    // Enforced here (and mirrored in the chat-identity/state handlers below)
+    // so every reader inherits the invariant for free.
+    if (isExcludedChatJid(externalChatId)) return;
+
     const content = extractContent(msg);
     if (content.skip) return;
 
@@ -417,6 +424,7 @@ export function createIngest({ prisma, socket, log, accountId }) {
   // exclude what WhatsApp itself wouldn't show. Rows are never deleted here —
   // CRM history keeps the full mirror; only the flags change.
   async function applyChatState(externalChatId, archived) {
+    if (isExcludedChatJid(externalChatId)) return;
     if (archived === undefined || archived === null) return;
     const existing = await prisma.whatsAppChat.findUnique({
       where: { accountId_externalChatId: { accountId, externalChatId } },
@@ -440,6 +448,7 @@ export function createIngest({ prisma, socket, log, accountId }) {
 
   // ── identity: chats.upsert / chats.update ───────────────────────────────
   async function applyChatIdentity(externalChatId, rawName) {
+    if (isExcludedChatJid(externalChatId)) return;
     // Owner-leak guard: the owner's chat-with-self must never name a row.
     if (socket.user?.id && externalChatId === socket.user.id) return;
     const name = pickName(rawName);

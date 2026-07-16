@@ -214,6 +214,27 @@ export function isGroupJid(jid) {
   return jid.endsWith('@g.us');
 }
 
+// Traffic that is NOT a person-to-person / group CONVERSATION and must never
+// enter the CRM conversation model:
+//   - status@broadcast  → WhatsApp Status posts (the production incident: a
+//     customer's Status showed up in GOS as if they had messaged us). The
+//     author is in msg.key.participant, so without this guard the message was
+//     ingested and — via the inbound senderPn — even merged into that person's
+//     real DM thread and auto-linked to their Contact.
+//   - *@broadcast        → broadcast-list fan-outs (owner→many marketing), not
+//     a two-way conversation.
+//   - *@newsletter       → WhatsApp Channels, a publish feed, not a chat.
+// Excluded at the single ingestion boundary (ingestMessage / upsertChat), so
+// no downstream reader ever has to know about it. Returns true for a missing
+// jid too — callers already require a remoteJid, this just fails safe.
+export function isExcludedChatJid(jid) {
+  if (typeof jid !== 'string' || !jid) return true;
+  if (jid === 'status@broadcast') return true;
+  if (jid.endsWith('@broadcast')) return true;
+  if (jid.endsWith('@newsletter')) return true;
+  return false;
+}
+
 // Strict "this is a real phone" whitelist (cc + exact length) — used to decide
 // whether a stored phoneNumber is real or stale LID garbage safe to overwrite.
 export function isLikelyRealPhone(value) {
