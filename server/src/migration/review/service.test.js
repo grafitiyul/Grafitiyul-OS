@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe, buildOrgTargets, buildContactWorkload, recordIdentityEdits, getIdentityEdits } from './service.js';
+import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe, buildOrgTargets, buildContactWorkload, recordIdentityEdits, getIdentityEdits, getDeletedPersonIds, buildImportReadiness } from './service.js';
 import { STAGE_CONFIG_COUNT } from './stageConfigSeed.js';
 import { draftFromProposal } from './orgDecision.js';
 
@@ -647,6 +647,104 @@ test('an invalid-for-country phone refuses the save server-side', async () => {
   await assert.rejects(
     () => recordDecision(c, { id: a.id, action: 'edit', decision: importDraft([{ original: '+44 20 7946 0958', country: 'IL', value: '+44 20 7946 0958', remove: false, isPrimary: true, confirmUnverified: false }]) }),
     (e) => e.code === 'INVALID_DECISION' && /בריטניה/.test(e.problems.join(' ')),
+  );
+});
+
+// ── owner-deleted records are TERMINAL ───────────────────────────────────────
+const deletedNameRow = (id) => ({
+  queue: 'name_cleanup', subjectKey: `name:${id}`, status: 'edited',
+  proposal: { kind: 'name_cleanup', legacyId: id, displayName: `זבל ${id}`, context: { phones: [], emails: [], dealCount: 0, participantCount: 0, activityCount: 0, noteCount: 0, fileCount: 0 } },
+  decision: { treatment: 'deleted', deleted: { deletedAt: '2026-07-16T00:00:00Z', deletedBy: 'elinoy', evidence: { dealCount: 0, participantCount: 0 }, source: { entity: 'pipedrive/persons', id } } },
+});
+
+test('getDeletedPersonIds returns exactly the owner-deleted set — never exclusions', async () => {
+  const c = stubClient([
+    deletedNameRow(11),
+    { queue: 'name_cleanup', subjectKey: 'name:12', status: 'edited', proposal: {}, decision: { treatment: 'exclude' } },
+    { queue: 'name_cleanup', subjectKey: 'name:13', status: 'pending', proposal: {}, decision: null },
+  ]);
+  const ids = await getDeletedPersonIds(c);
+  assert.deepEqual([...ids], [11], 'exclude/pending are NOT deleted — never overloaded');
+});
+
+test('a deleted record cannot be the merge primary and cannot be merged away', async () => {
+  const c = stubClient([
+    deletedNameRow(1),
+    identityCluster(), // members 1 and 2 on itay@example.com
+  ]);
+  const cluster = [...c._rows.values()].find((r) => r.queue === 'contacts');
+  // Deleted member as PRIMARY → refused.
+  await assert.rejects(
+    () => recordDecision(c, { id: cluster.id, action: 'edit', decision: { primaryLegacyId: 1, assignments: { 1: 'primary', 2: 'merge' } } }),
+    (e) => e.code === 'INVALID_DECISION' && /נמחקה על ידי הבעלים/.test(e.problems.join(' ')),
+  );
+  // Deleted member MERGED INTO the survivor → refused.
+  await assert.rejects(
+    () => recordDecision(c, { id: cluster.id, action: 'edit', decision: { primaryLegacyId: 2, assignments: { 1: 'merge', 2: 'primary' } } }),
+    (e) => e.code === 'INVALID_DECISION' && /לא יכולה להשתתף באיחוד/.test(e.problems.join(' ')),
+  );
+  // Kept SEPARATE is storable (import filters the deleted set over every path).
+  const ok = await recordDecision(c, { id: cluster.id, action: 'edit', decision: { primaryLegacyId: 2, assignments: { 1: 'separate', 2: 'primary' } } });
+  assert.equal(ok.status, 'edited');
+});
+
+test('identity corrections cannot touch a deleted record — in either direction', async () => {
+  const c = stubClient([deletedNameRow(1), identityCluster()]);
+  const cluster = [...c._rows.values()].find((r) => r.queue === 'contacts');
+  await assert.rejects(
+    () => recordIdentityEdits(c, { clusterDecisionId: cluster.id, edits: { 1: { removeEmails: ['itay@example.com'] } } }),
+    (e) => e.code === 'INVALID_DECISION' && /נמחקו על ידי הבעלים/.test(e.problems.join(' ')),
+  );
+});
+
+test('deletion is stamped with who and when INSIDE the decision', async () => {
+  const c = stubClient([nameRow(7, [])]);
+  const [row] = [...c._rows.values()];
+  row.proposal.context.dealCount = 0;
+  row.proposal.context.participantCount = 0;
+  row.proposal.context.fileCount = 0;
+  await recordDecision(c, {
+    id: row.id, action: 'edit',
+    decision: { treatment: 'deleted', fields: row.proposal.proposedFields },
+    userId: 'u1', userName: 'elinoy',
+  });
+  assert.equal(row.status, 'edited', 'disappears from the unresolved workload');
+  assert.equal(row.decision.treatment, 'deleted');
+  assert.equal(row.decision.deleted.deletedBy, 'elinoy');
+  assert.ok(row.decision.deleted.deletedAt);
+  assert.equal(row.decision.deleted.evidence.dealCount, 0);
+});
+
+test('the readiness gate counts a deleted row as RESOLVED', async () => {
+  const c = stubClient([
+    { ...nameRow(1, []), status: 'pending' },
+  ]);
+  const [row] = [...c._rows.values()];
+  row.proposal.blocking = true;
+  row.proposal.context.dealCount = 0;
+  row.proposal.context.participantCount = 0;
+  const before = await buildImportReadiness(c);
+  assert.ok(!before.requirements.find((x) => x.key === 'name_cleanup_critical').ready);
+
+  await recordDecision(c, { id: row.id, action: 'edit', decision: { treatment: 'deleted', fields: row.proposal.proposedFields } });
+  const after = await buildImportReadiness(c);
+  assert.ok(after.requirements.find((x) => x.key === 'name_cleanup_critical').ready, 'deleted = decided');
+});
+
+test('deletion is refused server-side when deals or participant links exist', async () => {
+  const c = stubClient([nameRow(8, [])]);
+  const [row] = [...c._rows.values()];
+  row.proposal.context.dealCount = 1;
+  row.proposal.context.participantCount = 0;
+  await assert.rejects(
+    () => recordDecision(c, { id: row.id, action: 'edit', decision: { treatment: 'deleted', fields: row.proposal.proposedFields } }),
+    (e) => e.code === 'INVALID_DECISION' && /עסקאות/.test(e.problems.join(' ')),
+  );
+  row.proposal.context.dealCount = 0;
+  row.proposal.context.participantCount = 2;
+  await assert.rejects(
+    () => recordDecision(c, { id: row.id, action: 'edit', decision: { treatment: 'deleted', fields: row.proposal.proposedFields } }),
+    (e) => e.code === 'INVALID_DECISION' && /משתתף משני/.test(e.problems.join(' ')),
   );
 });
 

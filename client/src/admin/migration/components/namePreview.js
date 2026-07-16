@@ -166,9 +166,28 @@ export function resolveNameResult(proposal, draft, ctx = {}) {
   };
   const excluded = draft.treatment === 'exclude';
   const isOrg = draft.treatment === 'organization';
+  const isDeleted = draft.treatment === 'deleted';
   const problems = [];
   const warnings = [];
-  if (!excluded && !isOrg && !fields.firstNameHe && !fields.firstNameEn) problems.push('חובה שם פרטי — בעברית או באנגלית');
+  if (!excluded && !isOrg && !isDeleted && !fields.firstNameHe && !fields.firstNameEn) problems.push('חובה שם פרטי — בעברית או באנגלית');
+
+  // "זו שטות מוחלטת — מחק": deletable only at 0 deals AND 0 participant links.
+  // Activities/notes/files never block (the business rule), but are listed.
+  let deleted = null;
+  if (isDeleted) {
+    const cxx = proposal.context || {};
+    const deals = cxx.dealCount ?? 0;
+    const participants = cxx.participantCount ?? null;
+    if (deals > 0) problems.push(`לא ניתן למחוק: ${deals} עסקאות מקושרות לרשומה הזו`);
+    if (participants === null) problems.push('לא ניתן למחוק: נתוני משתתפים משניים חסרים בהצעה — רענן את ההצעות');
+    else if (participants > 0) problems.push(`לא ניתן למחוק: הרשומה מופיעה כמשתתף משני ב-${participants} עסקאות`);
+    const noise = [];
+    if (cxx.activityCount) noise.push(`${cxx.activityCount} פעילויות`);
+    if (cxx.noteCount) noise.push(`${cxx.noteCount} הערות`);
+    if (cxx.fileCount) noise.push(`${cxx.fileCount} קבצים`);
+    if (noise.length) warnings.push(`נמחק למרות ${noise.join(', ')} — לפי כלל העסק הם אינם סיבה לשמור את הרשומה`);
+    deleted = { evidence: { dealCount: deals, participantCount: participants, activityCount: cxx.activityCount || 0, noteCount: cxx.noteCount || 0, fileCount: cxx.fileCount || 0 } };
+  }
 
   let organization = null;
   if (isOrg) {
@@ -184,7 +203,7 @@ export function resolveNameResult(proposal, draft, ctx = {}) {
   }
 
   let phones = null;
-  if (!excluded && !isOrg && Array.isArray(draft.phones)) {
+  if (!excluded && !isOrg && !isDeleted && Array.isArray(draft.phones)) {
     phones = draft.phones.map((row) => resolvePhoneRow(row));
     const kept = phones.filter((p) => !p.remove);
     for (const p of kept) for (const prob of p.problems) problems.push(`טלפון ${p.value || p.original}: ${prob}`);
@@ -206,9 +225,9 @@ export function resolveNameResult(proposal, draft, ctx = {}) {
     if (removed.length) warnings.push(`${removed.length} מספרים לא ייובאו — הם נשארים בצילום ובארכיון`);
   }
 
-  const emails = excluded || isOrg ? [] : effectiveEmails(proposal.context?.emails, ctx.identityEdit);
+  const emails = excluded || isOrg || isDeleted ? [] : effectiveEmails(proposal.context?.emails, ctx.identityEdit);
 
-  if (!excluded && !isOrg) {
+  if (!excluded && !isOrg && !isDeleted) {
     const orig = `${proposal.original.first_name} ${proposal.original.last_name}`.trim();
     const now = [fields.firstNameHe, fields.lastNameHe, fields.firstNameEn, fields.lastNameEn].filter(Boolean).join(' ');
     if (orig && now && orig !== now) warnings.push(`השם שונה מהמקור: "${orig}" ← "${now}"`);
@@ -220,6 +239,12 @@ export function resolveNameResult(proposal, draft, ctx = {}) {
     treatment: draft.treatment, fields,
     displayHe: `${fields.firstNameHe} ${fields.lastNameHe}`.trim(),
     displayEn: `${fields.firstNameEn} ${fields.lastNameEn}`.trim(),
-    phones, emails, organization, excluded, warnings, problems, valid: problems.length === 0,
+    phones, emails, organization, deleted, excluded, warnings, problems, valid: problems.length === 0,
   };
 }
+
+// THE BUSINESS RULE: classifying a record as an ORGANIZATION with zero deals and
+// zero participant links defaults to DELETION (not "do not import"). The owner
+// may explicitly keep it instead.
+export const zeroDealOrgDefault = (proposal) =>
+  (proposal?.context?.dealCount || 0) === 0 && (proposal?.context?.participantCount || 0) === 0;

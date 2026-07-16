@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   analyzeName, defaultFields, validateContactNames, buildNameCleanupProposals,
-  resolveNameResult, nameDraftFromProposal, nameSubjectKey, scriptOf,
+  resolveNameResult, nameDraftFromProposal, nameDecisionFromDraft, nameSubjectKey, scriptOf,
+  zeroDealOrgDefault,
 } from './nameCleanup.js';
 
 // Fixtures are SYNTHETIC — this repo is public. They reproduce the shapes measured
@@ -12,7 +13,8 @@ const c = (o) => ({
   firstName: o.first ?? null, lastName: o.last ?? null,
   phones: o.phones || [], emails: o.emails || [], orgId: o.orgId ?? null, orgName: o.orgName ?? null,
   dealCount: o.deals || 0, openDealCount: o.open || 0, futureTourDeals: o.tours || 0,
-  wonRecentDealCount: o.wonRecent || 0, activityCount: o.acts || 0, noteCount: o.notes || 0, fileCount: 0,
+  wonRecentDealCount: o.wonRecent || 0, activityCount: o.acts || 0, noteCount: o.notes || 0,
+  fileCount: o.files || 0, participantCount: o.parts || 0,
 });
 
 test('the canonical GOS rule is mirrored exactly: a first name in EITHER language', () => {
@@ -291,6 +293,73 @@ test('organisation mode never creates a Contact: name/phone/email gates do not a
   assert.equal(r.valid, true);
   assert.equal(r.phones, null, 'phones belong to the person flow');
   assert.deepEqual(r.emails, []);
+});
+
+// ── "זו שטות מוחלטת — מחק את הרשומה" (owner, 2026-07-16) ──────────────────────
+// A BINDING destructive decision, never overloaded onto exclude/archive-only.
+test('the zero-deal organisation default is DELETION, not do-not-import', () => {
+  const { proposals } = buildNameCleanupProposals({
+    contacts: [
+      c({ id: 1, first: '', last: 'בית ספר הדר', acts: 5, notes: 3 }),           // 0 deals, 0 participants
+      c({ id: 2, first: '', last: 'בנק יהב', deals: 4 }),                        // has deals
+      c({ id: 3, first: '', last: 'מועצה אזורית', parts: 1 }),                   // participant link
+    ],
+  });
+  const byId = Object.fromEntries(proposals.map((p) => [p.legacyId, p]));
+  assert.equal(zeroDealOrgDefault(byId[1]), true, '0 deals + 0 participants → delete is the default');
+  assert.equal(zeroDealOrgDefault(byId[2]), false, 'deals → create/map, never default-delete');
+  assert.equal(zeroDealOrgDefault(byId[3]), false, 'a participant link blocks the default too');
+});
+
+test('a deleted record produces NOTHING: no contact, no organisation, no phones, no emails', () => {
+  const { proposals } = buildNameCleanupProposals({
+    contacts: [c({ id: 1, first: '', last: 'בית ספר הדר', acts: 5, notes: 3, emails: ['x@y.com'], phones: ['050-1234567'] })],
+  });
+  const p = proposals[0];
+  const draft = nameDraftFromProposal(p, null);
+  const d = nameDecisionFromDraft(p, { ...draft, treatment: 'deleted' });
+  assert.equal(d.treatment, 'deleted');
+  assert.equal(d.result.valid, true);
+  assert.equal(d.result.phones, null);
+  assert.deepEqual(d.result.emails, []);
+  assert.equal(d.result.organization, null);
+  // Evidence counts at decision time — the audit proof the boundary held.
+  assert.deepEqual(d.deleted.evidence, { dealCount: 0, participantCount: 0, activityCount: 5, noteCount: 3, fileCount: 0 });
+  assert.deepEqual(d.deleted.source, { entity: 'pipedrive/persons', id: 1 });
+  // Name validation deliberately does NOT apply — garbage needs no first name.
+  assert.ok(!d.result.problems.length);
+});
+
+test('THE SAFETY BOUNDARY: deals block deletion, participant links block deletion, noise does not', () => {
+  const build = (o) => {
+    const { proposals } = buildNameCleanupProposals({ contacts: [c({ id: 9, first: '', last: 'ארגון כלשהו', ...o })] });
+    const p = proposals[0];
+    return resolveNameResult(p, { ...nameDraftFromProposal(p, null), treatment: 'deleted' });
+  };
+  const withDeal = build({ deals: 2 });
+  assert.equal(withDeal.valid, false);
+  assert.match(withDeal.problems.join(' '), /2 עסקאות/, 'says exactly what is linked');
+
+  const withPart = build({ parts: 3 });
+  assert.equal(withPart.valid, false);
+  assert.match(withPart.problems.join(' '), /משתתף משני ב-3/, 'participant links named too');
+
+  const noisy = build({ acts: 12, notes: 7, files: 2 });
+  assert.equal(noisy.valid, true, 'activities/notes/files never block — the business rule');
+  assert.match(noisy.warnings.join(' '), /12 פעילויות, 7 הערות, 2 קבצים/, 'but they are disclosed');
+});
+
+test('a proposal that cannot PROVE the participant boundary refuses deletion (fail-safe)', () => {
+  // A proposal seeded before participant links existed carries no participantCount.
+  const p = {
+    legacyId: 5, displayName: 'ישן', treatment: 'import',
+    original: { name: 'ישן', first_name: '', last_name: 'ישן' },
+    proposedFields: { firstNameHe: 'ישן', lastNameHe: '', firstNameEn: '', lastNameEn: '' },
+    context: { phones: [], emails: [], dealCount: 0, activityCount: 0, noteCount: 0 }, // no participantCount
+  };
+  const r = resolveNameResult(p, { ...nameDraftFromProposal(p, null), treatment: 'deleted' });
+  assert.equal(r.valid, false);
+  assert.match(r.problems.join(' '), /נתוני משתתפים משניים חסרים/);
 });
 
 test('subject keys are stable and per source contact', () => {

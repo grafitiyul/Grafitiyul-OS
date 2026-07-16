@@ -187,6 +187,12 @@ function proposeFor({ first, last, sf, sl, issues }) {
   return { treatment: 'import', fields: defaultFields(first, last), deterministic: false, reason: 'נדרשת הכרעה.' };
 }
 
+// THE BUSINESS RULE default: classifying a record as an ORGANIZATION with zero
+// deals and zero participant links defaults to DELETION — not "do not import",
+// not "preserve as legacy", not "map". The owner may explicitly keep it instead.
+export const zeroDealOrgDefault = (proposal) =>
+  (proposal?.context?.dealCount || 0) === 0 && (proposal?.context?.participantCount || 0) === 0;
+
 export const nameSubjectKey = (legacyId) => `name:${legacyId}`;
 export const legacyIdFromNameKey = (k) => {
   const m = /^name:(\d+)$/.exec(String(k || ''));
@@ -235,6 +241,10 @@ export function buildNameProposal(person, analysis) {
       futureTourDeals: person.futureTourDeals || 0,
       activityCount: person.activityCount || 0,
       noteCount: person.noteCount || 0,
+      fileCount: person.fileCount || 0,
+      // Secondary participation on someone else's deal — part of the DELETION
+      // safety boundary: a record that participates anywhere is never deletable.
+      participantCount: person.participantCount || 0,
       operationallyActive: (person.openDealCount || 0) > 0 || (person.futureTourDeals || 0) > 0,
     },
     importable: importableNow,
@@ -352,9 +362,49 @@ export function resolveNameResult(proposal, draft, ctx = {}) {
   };
   const excluded = draft.treatment === 'exclude';
   const isOrg = draft.treatment === 'organization';
+  const isDeleted = draft.treatment === 'deleted';
   const problems = [];
   const warnings = [];
-  if (!excluded && !isOrg) problems.push(...validateContactNames(fields).problems);
+  if (!excluded && !isOrg && !isDeleted) problems.push(...validateContactNames(fields).problems);
+
+  // ── "זו שטות מוחלטת — מחק את הרשומה" (owner, 2026-07-16) ────────────────────
+  // A BINDING destructive decision, deliberately NOT "exclude"/"archive-only":
+  // no Contact, no Organization, no mapping, no merging, hidden from the normal
+  // Legacy Archive UI, terminal for every resolver. The raw snapshot object stays
+  // internally for audit integrity — nothing here can touch it — but it never
+  // resurfaces as an entity or actionable record.
+  //
+  // SAFETY BOUNDARY: deletable only when the record owns ZERO deals AND appears
+  // as a secondary participant on ZERO deals. Activities, notes and files do NOT
+  // block — per the business rule, old noise does not justify keeping a record.
+  let deleted = null;
+  if (isDeleted) {
+    const cxx = proposal.context || {};
+    const deals = cxx.dealCount ?? 0;
+    // Fail-safe: a proposal seeded before participant links were extracted cannot
+    // prove the boundary — refuse rather than guess.
+    const participants = cxx.participantCount ?? null;
+    if (deals > 0) problems.push(`לא ניתן למחוק: ${deals} עסקאות מקושרות לרשומה הזו`);
+    if (participants === null) problems.push('לא ניתן למחוק: נתוני משתתפים משניים חסרים בהצעה — רענן את ההצעות');
+    else if (participants > 0) problems.push(`לא ניתן למחוק: הרשומה מופיעה כמשתתף משני ב-${participants} עסקאות`);
+    const noise = [];
+    if (cxx.activityCount) noise.push(`${cxx.activityCount} פעילויות`);
+    if (cxx.noteCount) noise.push(`${cxx.noteCount} הערות`);
+    if (cxx.fileCount) noise.push(`${cxx.fileCount} קבצים`);
+    if (noise.length) warnings.push(`נמחק למרות ${noise.join(', ')} — לפי כלל העסק הם אינם סיבה לשמור את הרשומה`);
+    deleted = {
+      // Evidence counts AT DECISION TIME — the proof the boundary held.
+      evidence: {
+        dealCount: deals,
+        participantCount: participants,
+        activityCount: cxx.activityCount || 0,
+        noteCount: cxx.noteCount || 0,
+        fileCount: cxx.fileCount || 0,
+      },
+      source: { entity: 'pipedrive/persons', id: proposal.legacyId },
+      // deletedAt / deletedBy are stamped by the service at save time.
+    };
+  }
 
   // ── "This is an Organization" ────────────────────────────────────────────────
   // No Contact is created either way. `organization.create` decides whether a GOS
@@ -390,7 +440,7 @@ export function resolveNameResult(proposal, draft, ctx = {}) {
 
   // ── phones (only when the draft carries them — i.e. the PERSON editing flow) ─
   let phones = null;
-  if (!excluded && !isOrg && Array.isArray(draft.phones)) {
+  if (!excluded && !isOrg && !isDeleted && Array.isArray(draft.phones)) {
     phones = draft.phones.map((row) => resolvePhoneRow(row));
     const kept = phones.filter((p) => !p.remove);
     for (const p of kept) {
@@ -415,9 +465,9 @@ export function resolveNameResult(proposal, draft, ctx = {}) {
   }
 
   // ── effective emails: identity corrections applied, never re-derived ─────────
-  const emails = excluded || isOrg ? [] : applyIdentityEdit({ phones: [], emails: proposal.context?.emails || [] }, ctx.identityEdit || null).emails;
+  const emails = excluded || isOrg || isDeleted ? [] : applyIdentityEdit({ phones: [], emails: proposal.context?.emails || [] }, ctx.identityEdit || null).emails;
 
-  if (!excluded && !isOrg) {
+  if (!excluded && !isOrg && !isDeleted) {
     const orig = `${proposal.original.first_name} ${proposal.original.last_name}`.trim();
     const now = [fields.firstNameHe, fields.lastNameHe, fields.firstNameEn, fields.lastNameEn].filter(Boolean).join(' ');
     if (orig && now && orig !== now) warnings.push(`השם שונה מהמקור: "${orig}" ← "${now}"`);
@@ -440,8 +490,10 @@ export function resolveNameResult(proposal, draft, ctx = {}) {
       : null,
     emails,
     // The organisation classification: {create, name, targetOrganizationKey}.
-    // create=false is the business-rule default at 0 deals — archive only.
     organization,
+    // The TERMINAL destructive decision: evidence counts + source, stamped with
+    // deletedAt/deletedBy by the service. Never overloaded onto "exclude".
+    deleted,
     excluded,
     warnings,
     problems,
@@ -459,6 +511,7 @@ export function nameDecisionFromDraft(proposal, draft, ctx = {}) {
     // (batch name-only fix) and the import uses the snapshot originals.
     phones: result.phones,
     organization: result.organization,
+    deleted: result.deleted,
     result,
   };
 }

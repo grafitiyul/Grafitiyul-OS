@@ -3,7 +3,7 @@ import { useOutletContext } from 'react-router-dom';
 import { migrationApi } from '../api.js';
 import { num, dateTime } from '../components/format.js';
 import SourceRecord from '../components/SourceRecord.jsx';
-import { nameDraftFromProposal, resolveNameResult, COUNTRIES } from '../components/namePreview.js';
+import { nameDraftFromProposal, resolveNameResult, COUNTRIES, zeroDealOrgDefault } from '../components/namePreview.js';
 
 const SECTIONS = [
   { key: 'critical', emoji: '🔥', label: 'קריטי לפני ייבוא', cls: 'bg-red-50 border-red-200 text-red-800' },
@@ -46,10 +46,24 @@ export default function NameCleanupTab() {
   const [orgTargets, setOrgTargets] = useState(null);
 
   async function enterOrgMode() {
-    setDraft((dr) => ({ ...dr, treatment: dr.treatment === 'organization' ? 'import' : 'organization' }));
+    // THE BUSINESS RULE: "this is an organization" + zero deals (and zero
+    // participant links) defaults to DELETION, not to an org and not to
+    // "do not import". The delete panel offers the explicit keep-override.
+    const zeroDeal = selected && zeroDealOrgDefault(selected.proposal);
+    setDraft((dr) => {
+      if (dr.treatment === 'organization' || dr.treatment === 'deleted') return { ...dr, treatment: 'import' };
+      return zeroDeal ? { ...dr, treatment: 'deleted' } : { ...dr, treatment: 'organization' };
+    });
     if (!orgTargets) {
       try { setOrgTargets(await migrationApi.orgTargets()); } catch { setOrgTargets({ proposals: [], gos: [] }); }
     }
+  }
+  function enterDeleteMode() {
+    setDraft((dr) => ({ ...dr, treatment: dr.treatment === 'deleted' ? 'import' : 'deleted' }));
+  }
+  function keepAsOrgAnyway() {
+    // The explicit override of the zero-deal rule: keep it, as an organisation.
+    setDraft((dr) => ({ ...dr, treatment: 'organization', organization: { ...dr.organization, create: true } }));
   }
 
   const load = useCallback(async () => {
@@ -277,6 +291,48 @@ export default function NameCleanupTab() {
                 </div>
               )}
 
+              {/* "זו שטות מוחלטת" — the binding destructive decision. ONE inline
+                  confirmation (never a native dialog); blockers render in place. */}
+              {draft.treatment === 'deleted' && (
+                <div className="bg-white border-2 border-red-300 rounded-xl p-4">
+                  <h3 className="text-sm font-semibold text-red-800 mb-1">🗑️ זו שטות מוחלטת — מחק את הרשומה</h3>
+                  {zeroDealOrgDefault(selected.proposal) && (
+                    <p className="text-[12px] text-gray-600 mb-2">
+                      זו ברירת המחדל לפי כלל העסק: ארגון בלי אף עסקה ובלי קישורי משתתפים לא נשמר.
+                    </p>
+                  )}
+                  <div className="text-[12px] text-gray-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-2 mb-2">
+                    הרשומה לא תיווצר ב-GOS ולא תופיע כישות בארכיון המערכת הקודמת.
+                    צילום המקור הגולמי נשמר רק לצורכי ביקורת.
+                  </div>
+                  <div className="text-[11px] text-gray-500 mb-2">
+                    בדיקת בטיחות: עסקאות {num(selected.proposal.context.dealCount)} ·
+                    קישורי משתתף משני {selected.proposal.context.participantCount ?? '?'} ·
+                    (פעילויות {num(selected.proposal.context.activityCount)}, הערות {num(selected.proposal.context.noteCount)} — אינן חוסמות)
+                  </div>
+                  {result?.problems?.map((p) => (
+                    <p key={p} className="text-[12px] text-red-800 bg-red-50 border border-red-200 rounded px-2 py-1 mb-1">{p}</p>
+                  ))}
+                  {result?.warnings?.map((w) => (
+                    <p key={w} className="text-[12px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-1">{w}</p>
+                  ))}
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    <button type="button" disabled={busy || !result?.valid} onClick={() => act('edit', draft)}
+                      className="text-[13px] px-3 py-1.5 rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 font-semibold">
+                      מחק סופית — אני מאשר
+                    </button>
+                    <button type="button" disabled={busy} onClick={keepAsOrgAnyway}
+                      className="text-[13px] px-3 py-1.5 rounded-md border border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-50">
+                      בכל זאת השאר — צור/שייך ארגון
+                    </button>
+                    <button type="button" disabled={busy} onClick={() => setDraft({ ...draft, treatment: 'import' })}
+                      className="text-[13px] px-3 py-1.5 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                      ביטול
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* "This is an Organization" — the business rule made visible. */}
               {draft.treatment === 'organization' && (
                 <div className="bg-white border border-gray-200 rounded-xl p-4">
@@ -328,7 +384,7 @@ export default function NameCleanupTab() {
               )}
 
               {/* Editable final fields — the owner's values are binding. */}
-              {draft.treatment !== 'organization' && (
+              {draft.treatment !== 'organization' && draft.treatment !== 'deleted' && (
               <div className="bg-white border border-gray-200 rounded-xl p-4">
                 <h3 className="text-sm font-semibold text-gray-900 mb-1">השדות הסופיים ב-GOS</h3>
                 <p className="text-[11px] text-gray-400 mb-3">
@@ -373,7 +429,7 @@ export default function NameCleanupTab() {
               )}
 
               {/* Phones — country drives normalization; nothing is guessed. */}
-              {draft.treatment !== 'exclude' && draft.treatment !== 'organization' && draft.phones.length > 0 && (
+              {!['exclude', 'organization', 'deleted'].includes(draft.treatment) && draft.phones.length > 0 && (
                 <div className="bg-white border border-gray-200 rounded-xl p-4">
                   <h3 className="text-sm font-semibold text-gray-900 mb-1">טלפונים</h3>
                   <p className="text-[11px] text-gray-400 mb-3">
@@ -430,9 +486,14 @@ export default function NameCleanupTab() {
               {result && (
                 <div className="bg-blue-50/50 border border-blue-200 rounded-xl p-4">
                   <h3 className="text-sm font-semibold text-gray-900 mb-2">
-                    {result.organization ? 'התוצאה ב-GOS' : 'איש הקשר שייווצר ב-GOS'}
+                    {result.deleted || result.organization ? 'התוצאה ב-GOS' : 'איש הקשר שייווצר ב-GOS'}
                   </h3>
-                  {result.organization ? (
+                  {result.deleted ? (
+                    <p className="text-[13px] text-red-800 bg-white border border-red-200 rounded-lg px-3 py-2">
+                      🗑️ <b>נמחק.</b> לא ייווצר איש קשר ולא ארגון, הרשומה לא תופיע בארכיון,
+                      ואף החלטה אחרת לא תוכל לאחד או למפות אותה. צילום המקור נשמר לביקורת בלבד.
+                    </p>
+                  ) : result.organization ? (
                     result.organization.create ? (
                       <p className="text-[13px] text-gray-900 bg-white border border-gray-200 rounded-lg px-3 py-2">
                         {result.organization.targetOrganizationKey
@@ -497,18 +558,24 @@ export default function NameCleanupTab() {
                 <input type="text" value={note} onChange={(e) => setNote(e.target.value)} placeholder="הערת החלטה (לא חובה)"
                   className="w-full text-[13px] border border-gray-200 rounded-md px-2 py-1.5 bg-white mb-2" />
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" disabled={busy || !result?.valid || draft.treatment === 'exclude'}
-                    onClick={() => act('edit', draft.treatment === 'organization' ? draft : { ...draft, treatment: 'import' })}
-                    className="text-[13px] px-3 py-1.5 rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50">
-                    {draft.treatment === 'organization' ? 'זה ארגון — אשר' : 'זה אדם — אשר'}
-                  </button>
+                  {draft.treatment !== 'deleted' && (
+                    <button type="button" disabled={busy || !result?.valid || draft.treatment === 'exclude'}
+                      onClick={() => act('edit', draft.treatment === 'organization' ? draft : { ...draft, treatment: 'import' })}
+                      className="text-[13px] px-3 py-1.5 rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50">
+                      {draft.treatment === 'organization' ? 'זה ארגון — אשר' : 'זה אדם — אשר'}
+                    </button>
+                  )}
                   <button type="button" disabled={busy} onClick={enterOrgMode}
                     className={`text-[13px] px-3 py-1.5 rounded-md border disabled:opacity-50 ${draft.treatment === 'organization' ? 'bg-blue-50 border-blue-300 text-blue-800 font-semibold' : 'border-blue-200 text-blue-700 hover:bg-blue-50'}`}>
                     {draft.treatment === 'organization' ? '← חזור לעריכת אדם' : 'זה ארגון'}
                   </button>
                   <button type="button" disabled={busy}
                     onClick={() => act('edit', { treatment: 'exclude', fields: draft.fields })}
-                    className="text-[13px] px-3 py-1.5 rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-50">זה לא איש קשר</button>
+                    className="text-[13px] px-3 py-1.5 rounded-md border border-amber-300 text-amber-800 hover:bg-amber-50 disabled:opacity-50">זה לא איש קשר</button>
+                  <button type="button" disabled={busy} onClick={enterDeleteMode}
+                    className={`text-[13px] px-3 py-1.5 rounded-md border disabled:opacity-50 ${draft.treatment === 'deleted' ? 'bg-red-600 border-red-600 text-white font-semibold' : 'border-red-300 text-red-700 hover:bg-red-50'}`}>
+                    🗑️ זו שטות מוחלטת — מחק את הרשומה
+                  </button>
                   <button type="button" disabled={busy} onClick={() => act('defer')}
                     className="text-[13px] px-3 py-1.5 rounded-md border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50">דחה לבדיקה</button>
                 </div>

@@ -466,6 +466,16 @@ export async function recordIdentityEdits(client, { clusterDecisionId, edits, no
   if (cluster.queue !== 'contacts') { const e = new Error('identity_edits_are_contacts_only'); e.code = 'BATCH_NOT_SUPPORTED'; throw e; }
 
   const members = cluster.proposal?.members || [];
+  // A deleted record is terminal — identity data may not be corrected on it or
+  // moved to it. (Moving a value OFF it is pointless: it imports nothing.)
+  const deletedIds = await getDeletedPersonIds(client);
+  const touchingDeleted = Object.keys(edits || {}).map(Number).filter((id) => deletedIds.has(id));
+  if (touchingDeleted.length) {
+    const e = new Error(`invalid_identity_edit: הרשומות ${touchingDeleted.join(', ')} נמחקו על ידי הבעלים`);
+    e.code = 'INVALID_DECISION';
+    e.problems = [`הרשומות ${touchingDeleted.join(', ')} נמחקו על ידי הבעלים — אין מה לתקן בהן`];
+    throw e;
+  }
   const resolved = resolveIdentityEdits(members, edits);
   if (!resolved.valid) {
     const e = new Error(`invalid_identity_edit: ${resolved.problems.join(' · ')}`);
@@ -560,6 +570,28 @@ const claimsExcludingSelf = (claims, selfLegacyId) => ({
   },
 });
 
+// ── Owner-deleted records ─────────────────────────────────────────────────────
+// The TERMINAL set: legacy person ids the owner marked "זו שטות מוחלטת — מחק".
+// Every resolver treats these as gone — no Contact, no Organization, no mapping,
+// no merging, hidden from the normal Legacy Archive UI. Identity Import must use
+// this set as its first-pass filter over ALL persons, so a deleted id can never
+// become an entity through any path (clustered, separate, or unclustered).
+// The raw snapshot objects are untouched — audit integrity is storage-level.
+export async function getDeletedPersonIds(client) {
+  const rows = await client.migrationDecision.findMany({
+    where: { queue: 'name_cleanup', status: { in: ['approved', 'edited'] } },
+    select: { subjectKey: true, decision: true },
+  });
+  const ids = new Set();
+  for (const r of rows) {
+    if (r.decision?.treatment === 'deleted') {
+      const id = legacyIdFromNameKey(r.subjectKey);
+      if (id != null) ids.add(id);
+    }
+  }
+  return ids;
+}
+
 const ACTION_STATUS = { approve: 'approved', reject: 'rejected', edit: 'edited', defer: 'deferred' };
 
 // Record a human decision with its audit trail.
@@ -626,6 +658,21 @@ export async function recordDecision(client, { id, action, decision = null, note
       // Resolve against the LIVE corrections, so an approved decision can never
       // record identity the owner has already said is wrong.
       const ids = (existing.proposal?.members || []).map((m) => m.legacyId);
+      // An owner-DELETED record is terminal: it may not survive as the primary and
+      // may not fold its data into a survivor. (Import additionally filters the
+      // deleted set over every path, including 'separate' and unclustered.)
+      const deletedIds = await getDeletedPersonIds(client);
+      const violations = [];
+      if (deletedIds.has(decision?.primaryLegacyId)) violations.push(`הרשומה ${decision.primaryLegacyId} נמחקה על ידי הבעלים — לא יכולה להיות איש הקשר שנשמר`);
+      for (const [mid, a] of Object.entries(decision?.assignments || {})) {
+        if (a === 'merge' && deletedIds.has(Number(mid))) violations.push(`הרשומה ${mid} נמחקה על ידי הבעלים — לא יכולה להשתתף באיחוד`);
+      }
+      if (violations.length) {
+        const e = new Error(`invalid_decision: ${violations.join(' · ')}`);
+        e.code = 'INVALID_DECISION';
+        e.problems = violations;
+        throw e;
+      }
       const resolved = contactDecisionFromDraft(existing.proposal, decision, await getIdentityEdits(client, ids));
       if (!resolved.result.valid) {
         const e = new Error(`invalid_decision: ${resolved.result.problems.join(' · ')}`);
@@ -662,6 +709,11 @@ export async function recordDecision(client, { id, action, decision = null, note
         e.code = 'INVALID_DECISION';
         e.problems = resolved.result.problems;
         throw e;
+      }
+      // A deletion is stamped with who and when INSIDE the decision — the binding
+      // audit record the owner mandated, beyond the row's own decidedBy/decidedAt.
+      if (resolved.treatment === 'deleted') {
+        resolved.deleted = { ...resolved.deleted, deletedAt: new Date().toISOString(), deletedBy: userName || userId || null };
       }
       stored = resolved;
     }

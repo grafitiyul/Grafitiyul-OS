@@ -13,7 +13,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import * as r2 from '../migration/r2.js';
-import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe, buildOrgTargets, buildContactWorkload, recordIdentityEdits, buildImportReadiness } from '../migration/review/service.js';
+import { seedStageConfig, buildReviewSummary, listQueue, recordDecision, batchApproveSafe, buildOrgTargets, buildContactWorkload, recordIdentityEdits, buildImportReadiness, getDeletedPersonIds } from '../migration/review/service.js';
 import { buildSnapshotStatus } from '../migration/review/snapshotStatus.js';
 import { createBrowser } from '../migration/review/browser.js';
 
@@ -45,24 +45,52 @@ router.get('/browser/entities', handle(async (_req, res) => {
   catch (e) { browserError(e, res); }
 }));
 
+// Owner-DELETED persons ("זו שטות מוחלטת — מחק") are hidden from the normal
+// Legacy Archive UI. Deliberately enforced HERE, at the route layer: browser.js
+// stays a pure snapshot reader (it never consults the ledger, so it can never
+// alter what the snapshot says), while the user-facing surface filters the
+// deleted set out. The raw R2 objects are untouched — audit access is storage-
+// level, not through this UI.
+const isPersons = (entity) => String(entity || '') === 'pipedrive/persons';
+async function hideDeleted(pageResult) {
+  const deleted = await getDeletedPersonIds(prisma);
+  if (!deleted.size || !Array.isArray(pageResult?.records)) return pageResult;
+  const before = pageResult.records.length;
+  const records = pageResult.records.filter((r) => !deleted.has(r?.id));
+  return { ...pageResult, records, hiddenDeleted: before - records.length };
+}
+
 router.get('/browser/records', handle(async (req, res) => {
   const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 25, 1), 100); // bounded page
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
-  try { res.json(await (await browser()).page(String(req.query.entity || ''), { offset, limit })); }
-  catch (e) { browserError(e, res); }
+  try {
+    const entity = String(req.query.entity || '');
+    const page = await (await browser()).page(entity, { offset, limit });
+    res.json(isPersons(entity) ? await hideDeleted(page) : page);
+  } catch (e) { browserError(e, res); }
 }));
 
 router.get('/browser/record', handle(async (req, res) => {
   try {
-    const rec = await (await browser()).record(String(req.query.entity || ''), req.query.id);
+    const entity = String(req.query.entity || '');
+    if (isPersons(entity) && (await getDeletedPersonIds(prisma)).has(Number(req.query.id))) {
+      return res.status(404).json({
+        error: 'owner_deleted',
+        message: 'הרשומה נמחקה על ידי הבעלים ואינה זמינה כישות. צילום המקור הגולמי נשמר לצורכי ביקורת בלבד.',
+      });
+    }
+    const rec = await (await browser()).record(entity, req.query.id);
     if (!rec) return res.status(404).json({ error: 'record_not_found' });
     res.json(rec);
   } catch (e) { browserError(e, res); }
 }));
 
 router.get('/browser/filter', handle(async (req, res) => {
-  try { res.json(await (await browser()).filter(String(req.query.entity || ''), String(req.query.q || ''), { limit: 25 })); }
-  catch (e) { browserError(e, res); }
+  try {
+    const entity = String(req.query.entity || '');
+    const out = await (await browser()).filter(entity, String(req.query.q || ''), { limit: 25 });
+    res.json(isPersons(entity) ? await hideDeleted(out) : out);
+  } catch (e) { browserError(e, res); }
 }));
 
 // Queue counts, progress, and the blocking gate.
