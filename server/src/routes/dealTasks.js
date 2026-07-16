@@ -228,7 +228,8 @@ router.patch(
   handle(async (req, res) => {
     const task = await loadTask(req, res);
     if (!task) return;
-    const result = await applyTaskPatch(task.id, req.body);
+    const origin = await userOrigin(req.adminAuth?.userId);
+    const result = await applyTaskPatch(task.id, req.body, { origin });
     if (!result.ok) return res.status(result.status).json({ error: result.error });
     const fresh = await prisma.task.findUnique({ where: { id: task.id }, include: TASK_INCLUDE });
     const [out] = await serializeTasks([fresh]);

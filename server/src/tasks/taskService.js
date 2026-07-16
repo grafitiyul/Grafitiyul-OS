@@ -39,6 +39,10 @@ function eventBody(event, task) {
       return `וואטסאפ נשלח: ${title}`;
     case 'task_not_sent':
       return `בסוף לא נשלחה: ${title}`;
+    case 'task_corrected':
+      // A record correction on a task that was already closed — the history
+      // shows the amendment without reopening anything.
+      return `משימה סגורה עודכנה (תיקון): ${title}`;
     default:
       return title;
   }
@@ -195,12 +199,29 @@ export async function cancelTask(taskId, origin, db = prisma) {
   return { ok: true, task: updated ?? task };
 }
 
-// Field edits on an OPEN task. Validation is parseTaskPatch (ONE validator for
-// every editor); this adds the DB-dependent checks and the WhatsApp mirror.
-export async function applyTaskPatch(taskId, body, db = prisma) {
-  const loaded = await loadOpen(taskId, db);
-  if (!loaded.ok) return loaded;
-  const { task } = loaded;
+// Field edits — the ONE rule for every editor (Deal tab, inline cells, bulk).
+//
+// PRODUCT RULE (owner decision 2026-07-16): tasks stay editable in ANY status.
+// A terminal task (completed/cancelled/sent/not_sent) accepts RECORD
+// CORRECTIONS — fixing a due date, an owner, a priority after the fact — under
+// hard invariants:
+//   • status / completedAt / cancelledAt are NEVER touched (parseTaskPatch has
+//     no way to express them — preserved by construction, not by discipline);
+//     a correction can never reopen a task;
+//   • the scheduled WhatsApp message of a TERMINAL task is NEVER touched: the
+//     send is settled (sent or cancelled) and a record correction must not
+//     re-arm, resend or recreate anything. The mirror runs for OPEN WhatsApp
+//     tasks only — exactly where task and pending message must stay in
+//     lockstep;
+//   • retyping stays structurally guarded in BOTH directions at ANY status;
+//   • a terminal-task correction writes a Timeline audit entry
+//     ('task_corrected', atomically with the update), so the deal history
+//     records that a closed task was amended. Open-task edits keep their
+//     long-standing behaviour (no entry — routine work, not history).
+export async function applyTaskPatch(taskId, body, { origin = null, db = prisma } = {}) {
+  const task = await db.task.findUnique({ where: { id: taskId } });
+  if (!task) return { ok: false, status: 404, error: 'task_not_found' };
+  const isOpen = task.status === OPEN_STATUS;
 
   const parsed = parseTaskPatch(body);
   if (!parsed.ok) return { ok: false, status: 400, error: parsed.error };
@@ -212,7 +233,7 @@ export async function applyTaskPatch(taskId, body, db = prisma) {
   }
 
   if (data.taskTypeId !== undefined) {
-    // The SAFE canonical path for retyping (the only one):
+    // The SAFE canonical path for retyping (the only one), at ANY status:
     //  • a WhatsApp task is bound to a real scheduled send — retyping it would
     //    orphan that message, so it is locked;
     //  • retyping a normal task INTO a WhatsApp type would claim a channel with
@@ -225,18 +246,41 @@ export async function applyTaskPatch(taskId, body, db = prisma) {
     if (type.channel === 'whatsapp') return { ok: false, status: 400, error: 'type_channel_not_allowed' };
   }
 
-  const mirror = buildScheduledMirror(task, body, data);
-  if (!mirror.ok) return { ok: false, status: 400, error: mirror.error };
-  if (mirror.sched) {
-    const updated = await db.whatsAppScheduledMessage.updateMany({
-      where: { id: task.scheduledMessageId, status: { in: mirror.sched.allowedStatuses } },
-      data: mirror.sched.data,
-    });
-    if (updated.count === 0) return { ok: false, status: 409, error: 'scheduled_not_editable' };
+  // The scheduled-message mirror applies to OPEN WhatsApp tasks only (see the
+  // rule above). A refused mirror still blocks the edit — task and PENDING
+  // message can never drift.
+  if (isOpen) {
+    const mirror = buildScheduledMirror(task, body, data);
+    if (!mirror.ok) return { ok: false, status: 400, error: mirror.error };
+    if (mirror.sched) {
+      const updated = await db.whatsAppScheduledMessage.updateMany({
+        where: { id: task.scheduledMessageId, status: { in: mirror.sched.allowedStatuses } },
+        data: mirror.sched.data,
+      });
+      if (updated.count === 0) return { ok: false, status: 409, error: 'scheduled_not_editable' };
+    }
   }
 
-  const updated = await db.task.update({ where: { id: task.id }, data });
-  emitTasksChanged(db, { taskId: task.id, dealId: task.dealId, reason: 'task_edited' });
+  let updated;
+  if (isOpen) {
+    updated = await db.task.update({ where: { id: task.id }, data });
+  } else {
+    // Terminal correction: the update and its audit entry commit together.
+    const icon = await taskIcon(task.taskTypeId, db);
+    updated = await db.$transaction(async (tx) => {
+      const row = await tx.task.update({ where: { id: task.id }, data });
+      await emitEvent(tx, {
+        dealId: task.dealId,
+        event: 'task_corrected',
+        task: { ...row, icon },
+        // The correcting USER when the route knows one; system otherwise
+        // (defensive sync paths).
+        origin: origin ?? systemOrigin(),
+      });
+      return row;
+    });
+  }
+  emitTasksChanged(db, { taskId: task.id, dealId: task.dealId, reason: isOpen ? 'task_edited' : 'task_corrected' });
   return { ok: true, task: updated };
 }
 

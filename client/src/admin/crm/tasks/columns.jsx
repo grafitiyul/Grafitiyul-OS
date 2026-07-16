@@ -9,7 +9,12 @@
 // `def: true` = visible on a first visit. Everything else is available through
 // the עמודות picker and persists per user (localStorage, via useTableColumns).
 
-import { taskIcon } from '../../deals/tasks/taskConfig.js';
+// TaskIcon is THE task-icon renderer (one WhatsApp mark across GOS): it routes
+// whatsapp — by icon key OR channel — to the shared SVG brand component, and
+// everything else to its emoji. Never use the raw taskIcon() string helper for
+// display; its whatsapp fallback is a plain green emoji and only exists for
+// text-only contexts (<option> labels).
+import TaskIcon from '../../deals/tasks/TaskIcon.jsx';
 
 export const COLUMNS_KEY = 'crm.tasks.columns.v1';
 
@@ -68,8 +73,11 @@ export function statusLabel(s) {
 export const TASK_COLUMNS = [
   { key: 'taskType', label: 'סוג', def: true, minWidth: 90, render: (r) => (
     <span className="inline-flex items-center gap-1.5">
-      <span aria-hidden>{taskIcon(r.icon)}</span>
+      <TaskIcon name={r.icon} channel={r.channel} size={14} />
       <span className="truncate">{r.taskType?.nameHe || '—'}</span>
+      {/* A WhatsApp task's type is locked (bound to its scheduled send) — the
+          lock is VISIBLE, not a silent no-op; the cell's tooltip explains. */}
+      {r.channel === 'whatsapp' && <span aria-hidden className="text-[10px] opacity-60">🔒</span>}
     </span>
   ) },
   { key: 'title', label: 'משימה', def: true, minWidth: 180, render: (r) => (

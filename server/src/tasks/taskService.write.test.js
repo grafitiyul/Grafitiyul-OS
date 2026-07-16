@@ -100,17 +100,94 @@ test('transitions on missing/terminal tasks fail per-row with honest codes', asy
 
 // ── applyTaskPatch ──────────────────────────────────────────────────────────
 
-test('patch: terminal task is read-only (409), invalid body is 400', async () => {
-  const dbTerminal = fakeDb({ task: openTask({ status: 'sent' }) });
-  assert.deepEqual(await applyTaskPatch('t1', { priority: 'high' }, dbTerminal), { ok: false, status: 409, error: 'task_not_open' });
+test('patch: invalid body is 400, missing task is 404', async () => {
   const dbOpen = fakeDb({ task: openTask() });
-  assert.deepEqual(await applyTaskPatch('t1', {}, dbOpen), { ok: false, status: 400, error: 'nothing_to_update' });
+  assert.deepEqual(await applyTaskPatch('t1', {}, { db: dbOpen }), { ok: false, status: 400, error: 'nothing_to_update' });
+  assert.deepEqual(await applyTaskPatch('missing', { priority: 'high' }, { db: fakeDb({}) }), { ok: false, status: 404, error: 'task_not_found' });
+});
+
+// ── terminal-task RECORD CORRECTIONS (owner decision 2026-07-16) ────────────
+// A completed task stays editable for internal corrections. The invariants the
+// bulk due-date bug report demanded: status/completedAt untouched, audit entry
+// written, nothing reopened, nothing resent, WhatsApp message never touched.
+
+test('CORRECTION: completed task dueDate change succeeds — completed stays completed', async () => {
+  const done = new Date('2026-07-10T09:00:00Z');
+  const db = fakeDb({ task: openTask({ status: 'completed', completedAt: done }) });
+  const r = await applyTaskPatch('t1', { dueDate: '2026-07-20' }, { db });
+  assert.equal(r.ok, true);
+  assert.equal(r.task.status, 'completed', 'never reopened');
+  assert.equal(r.task.completedAt, done, 'completedAt unchanged');
+  assert.equal(r.task.dueDate.toISOString().slice(0, 10), '2026-07-20');
+  // the update wrote ONLY the corrected field — status untouched by construction
+  assert.deepEqual(Object.keys(db.log.taskUpdates[0].data), ['dueDate']);
+});
+
+test('CORRECTION: completed task dueTime change succeeds, same invariants', async () => {
+  const done = new Date('2026-07-10T09:00:00Z');
+  const db = fakeDb({ task: openTask({ status: 'completed', completedAt: done }) });
+  const r = await applyTaskPatch('t1', { dueTime: '14:30' }, { db });
+  assert.equal(r.ok, true);
+  assert.equal(r.task.dueTime, '14:30');
+  assert.equal(r.task.status, 'completed');
+  assert.equal(r.task.completedAt, done);
+});
+
+test('CORRECTION: a terminal edit writes ONE timeline audit entry, atomically', async () => {
+  const db = fakeDb({ task: openTask({ status: 'completed', completedAt: new Date() }) });
+  await applyTaskPatch('t1', { dueDate: '2026-07-21' }, { db });
+  assert.equal(db.log.timeline.length, 1, 'the correction is recorded');
+  assert.equal(db.log.timeline[0].kind, 'task');
+  assert.equal(db.log.timeline[0].data.event, 'task_corrected');
+  assert.equal(db.log.timeline[0].subjectId, 'd1');
+});
+
+test('CORRECTION carries the acting user when the route provides one', async () => {
+  const db = fakeDb({ task: openTask({ status: 'completed', completedAt: new Date() }) });
+  const origin = { actorType: 'user', actorLabel: null, createdBy: 'u1', createdByName: 'dorko' };
+  await applyTaskPatch('t1', { priority: 'high' }, { db, origin });
+  assert.equal(db.log.timeline[0].createdBy, 'u1');
+});
+
+test('CORRECTION on a terminal WhatsApp task NEVER touches the scheduled message', async () => {
+  // The send is settled (here: already sent). Fixing the due date is a record
+  // correction — re-arming/resending would be a catastrophe, so the mirror must
+  // not even be attempted (schedUpdateCount: 0 would 409 if it were).
+  const db = fakeDb({
+    task: openTask({ status: 'sent', channel: 'whatsapp', scheduledMessageId: 'sm1', completedAt: new Date() }),
+    schedUpdateCount: 0,
+  });
+  const r = await applyTaskPatch('t1', { dueDate: '2026-07-22' }, { db });
+  assert.equal(r.ok, true);
+  assert.equal(db.log.schedUpdates.length, 0, 'the settled message was not touched');
+  assert.equal(r.task.status, 'sent', 'nothing resent, nothing reopened');
+});
+
+test('CORRECTION: retyping stays guarded at ANY status', async () => {
+  // whatsapp source: locked even after completion
+  const dbWa = fakeDb({
+    task: openTask({ status: 'not_sent', channel: 'whatsapp', scheduledMessageId: 'sm1' }),
+    taskTypes: { call: { id: 'call', channel: 'none' } },
+  });
+  assert.deepEqual(await applyTaskPatch('t1', { taskTypeId: 'call' }, { db: dbWa }), { ok: false, status: 409, error: 'whatsapp_type_locked' });
+  // whatsapp target: forbidden even on a completed normal task
+  const dbTo = fakeDb({
+    task: openTask({ status: 'completed', completedAt: new Date() }),
+    taskTypes: { wa: { id: 'wa', channel: 'whatsapp' } },
+  });
+  assert.deepEqual(await applyTaskPatch('t1', { taskTypeId: 'wa' }, { db: dbTo }), { ok: false, status: 400, error: 'type_channel_not_allowed' });
+});
+
+test('transitions still refuse terminal tasks — a correction can never complete twice', async () => {
+  const db = fakeDb({ task: openTask({ status: 'completed', completedAt: new Date() }) });
+  assert.deepEqual(await completeTask('t1', ORIGIN, db), { ok: false, status: 409, error: 'task_not_open' });
+  assert.deepEqual(await cancelTask('t1', ORIGIN, db), { ok: false, status: 409, error: 'task_not_open' });
 });
 
 test('patch: owner must resolve to a real AdminUser', async () => {
   const db = fakeDb({ task: openTask(), owners: ['u1'] });
-  assert.deepEqual(await applyTaskPatch('t1', { ownerUserId: 'ghost' }, db), { ok: false, status: 400, error: 'owner_not_found' });
-  const ok = await applyTaskPatch('t1', { ownerUserId: 'u1' }, db);
+  assert.deepEqual(await applyTaskPatch('t1', { ownerUserId: 'ghost' }, { db }), { ok: false, status: 400, error: 'owner_not_found' });
+  const ok = await applyTaskPatch('t1', { ownerUserId: 'u1' }, { db });
   assert.equal(ok.ok, true);
   assert.equal(ok.task.ownerUserId, 'u1');
 });
@@ -120,7 +197,7 @@ test('SAFE TYPE PATH: a WhatsApp task can never be retyped (would orphan its sen
     task: openTask({ channel: 'whatsapp', scheduledMessageId: 'sm1' }),
     taskTypes: { call: { id: 'call', channel: 'none' } },
   });
-  const r = await applyTaskPatch('t1', { taskTypeId: 'call' }, db);
+  const r = await applyTaskPatch('t1', { taskTypeId: 'call' }, { db });
   assert.deepEqual(r, { ok: false, status: 409, error: 'whatsapp_type_locked' });
   assert.equal(db.log.taskUpdates.length, 0, 'nothing was written');
 });
@@ -129,13 +206,13 @@ test('SAFE TYPE PATH: a normal task can never be retyped INTO a WhatsApp type', 
   // That would claim channel semantics with no scheduled message behind them —
   // WhatsApp tasks are born in the composer, never made by edit.
   const db = fakeDb({ task: openTask(), taskTypes: { wa: { id: 'wa', channel: 'whatsapp' } } });
-  const r = await applyTaskPatch('t1', { taskTypeId: 'wa' }, db);
+  const r = await applyTaskPatch('t1', { taskTypeId: 'wa' }, { db });
   assert.deepEqual(r, { ok: false, status: 400, error: 'type_channel_not_allowed' });
 });
 
 test('SAFE TYPE PATH: valid retype updates taskTypeId and NOTHING else — channel untouched', async () => {
   const db = fakeDb({ task: openTask({ taskTypeId: 'old' }), taskTypes: { call: { id: 'call', channel: 'none' } } });
-  const r = await applyTaskPatch('t1', { taskTypeId: 'call' }, db);
+  const r = await applyTaskPatch('t1', { taskTypeId: 'call' }, { db });
   assert.equal(r.ok, true);
   assert.deepEqual(db.log.taskUpdates[0].data, { taskTypeId: 'call' });
   assert.equal(r.task.channel, 'none');
@@ -143,12 +220,12 @@ test('SAFE TYPE PATH: valid retype updates taskTypeId and NOTHING else — chann
 
 test('unknown type id is a 400', async () => {
   const db = fakeDb({ task: openTask() });
-  assert.deepEqual(await applyTaskPatch('t1', { taskTypeId: 'nope' }, db), { ok: false, status: 400, error: 'invalid_task_type' });
+  assert.deepEqual(await applyTaskPatch('t1', { taskTypeId: 'nope' }, { db }), { ok: false, status: 400, error: 'invalid_task_type' });
 });
 
 test('WhatsApp field edit mirrors onto the scheduled message, CAS-guarded', async () => {
   const db = fakeDb({ task: openTask({ channel: 'whatsapp', scheduledMessageId: 'sm1', dueTime: '10:00' }) });
-  const r = await applyTaskPatch('t1', { dueDate: '2099-08-02', dueTime: '11:00' }, db);
+  const r = await applyTaskPatch('t1', { dueDate: '2099-08-02', dueTime: '11:00' }, { db });
   assert.equal(r.ok, true);
   assert.equal(db.log.schedUpdates.length, 1);
   assert.equal(db.log.schedUpdates[0].data.status, 'pending', 're-armed');
@@ -162,13 +239,13 @@ test('WhatsApp mirror refused (already sent/cancelled) blocks the task edit too'
     task: openTask({ channel: 'whatsapp', scheduledMessageId: 'sm1' }),
     schedUpdateCount: 0, // CAS found the message in a non-editable status
   });
-  const r = await applyTaskPatch('t1', { dueDate: '2099-08-02' }, db);
+  const r = await applyTaskPatch('t1', { dueDate: '2099-08-02' }, { db });
   assert.deepEqual(r, { ok: false, status: 409, error: 'scheduled_not_editable' });
   assert.equal(db.log.taskUpdates.length, 0, 'task and message can never drift');
 });
 
 test('timeline is written for TRANSITIONS only — field edits keep parity with the old PATCH', async () => {
   const db = fakeDb({ task: openTask() });
-  await applyTaskPatch('t1', { priority: 'high' }, db);
+  await applyTaskPatch('t1', { priority: 'high' }, { db });
   assert.equal(db.log.timeline.length, 0);
 });

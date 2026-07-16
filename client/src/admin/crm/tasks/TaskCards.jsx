@@ -1,4 +1,5 @@
-import { taskIcon } from '../../deals/tasks/taskConfig.js';
+// TaskIcon = the ONE task-icon renderer (canonical WhatsApp mark included).
+import TaskIcon from '../../deals/tasks/TaskIcon.jsx';
 import { fmtDate, priorityLabel, PRIORITY_TONE, rowTone, dueDateOf } from './columns.jsx';
 
 // Mobile card renderer for the Tasks workspace — PRESENTATION ONLY.
@@ -48,7 +49,7 @@ export default function TaskCards({
           />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <span aria-hidden className="shrink-0 text-[13px]">{taskIcon(row.icon)}</span>
+              <span className="shrink-0"><TaskIcon name={row.icon} channel={row.channel} size={14} /></span>
               <span className="truncate text-[13px] font-medium text-gray-900">{row.title}</span>
               {row.priority && (
                 <span className={`ms-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset ${PRIORITY_TONE[row.priority]}`}>

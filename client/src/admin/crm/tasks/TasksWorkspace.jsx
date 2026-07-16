@@ -9,7 +9,10 @@ import { DEAL_TASKS_CHANGED_EVENT } from '../../deals/tasks/taskEvents.js';
 import DealDrawer from '../../common/DealDrawer.jsx';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 import TaskCards from './TaskCards.jsx';
-import { taskIcon } from '../../deals/tasks/taskConfig.js';
+// TaskIcon = the ONE task-icon renderer: whatsapp (by key OR channel) → the
+// shared SVG brand mark; everything else → its emoji. Same component the Deal
+// task UI uses — one WhatsApp icon source across GOS.
+import TaskIcon from '../../deals/tasks/TaskIcon.jsx';
 import { dealPath } from '../../deals/config.js';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell, COL_SEP } from '../../common/tableColumns.jsx';
 import { toggleSortKey, sortFromParam } from '../../common/tableColumnsCore.js';
@@ -489,24 +492,61 @@ export default function TasksWorkspace() {
     return <div className="p-6 text-sm text-gray-400">טוען…</div>;
   }
 
-  const editable = (row) => row.status === 'open';
-
   function cellContent(col, row) {
     const isEditing = editing?.rowId === row.id && editing?.colKey === col.key;
-    if (isEditing) return <InlineEditor col={col} row={row} boot={boot} onCancel={() => setEditing(null)} onSave={(d) => saveCell(row, d)} />;
+    if (savingId === row.id && isEditing) {
+      // Visible saving state: the cell being written shows it, in place.
+      return <span className="animate-pulse text-[12px] text-blue-500">שומר…</span>;
+    }
+    if (isEditing) {
+      return (
+        <InlineEditor
+          col={col}
+          row={row}
+          boot={boot}
+          onCancel={() => setEditing(null)}
+          onSave={(d) => saveCell(row, d)}
+          onTransition={(action) => transitionRow(row, action)}
+        />
+      );
+    }
     return col.render(row);
   }
 
-  // Inline-editable columns. TASK TYPE arrived with the Slice 4 write-path
-  // unification: the canonical PATCH accepts taskTypeId behind the safe-path
-  // guards (a WhatsApp task's type is locked — retyping would orphan its
-  // scheduled send — and no task can be retyped INTO a WhatsApp type; the
-  // server enforces both, the cell simply doesn't offer them).
-  const INLINE_KEYS = new Set(['priority', 'owner', 'dueDate', 'dueTime', 'taskType']);
-  const canEditCell = (col, row) =>
-    INLINE_KEYS.has(col.key) &&
-    editable(row) &&
-    !(col.key === 'taskType' && row.channel === 'whatsapp');
+  // Inline-editable columns — the same canonical write path as bulk actions
+  // (taskService), per cell:
+  //   owner / dueDate / dueTime / priority — ANY status (terminal rows accept
+  //     record corrections; the server preserves status/completedAt and writes
+  //     the correction audit entry);
+  //   taskType — any status, but NEVER on a WhatsApp task (its type is bound
+  //     to a real scheduled send; the cell shows a lock, not a silent no-op);
+  //   status — OPEN tasks only (complete/cancel are transitions; a terminal
+  //     status is final — corrections never reopen a task).
+  const INLINE_KEYS = new Set(['priority', 'owner', 'dueDate', 'dueTime', 'taskType', 'status']);
+  const canEditCell = (col, row) => {
+    if (!INLINE_KEYS.has(col.key)) return false;
+    if (col.key === 'status') return row.status === 'open';
+    if (col.key === 'taskType') return row.channel !== 'whatsapp';
+    return true;
+  };
+
+  // Status transitions from the inline status cell — the SAME canonical path
+  // as the ✓ button and every bulk action: the bulk endpoint with one id.
+  async function transitionRow(row, action) {
+    setSavingId(row.id);
+    try {
+      const res = await api.tasks.bulk({ action, ids: [row.id] });
+      const fail = res.results.find((r) => !r.ok);
+      if (fail) setError(writeError(fail.error));
+      setEditing(null);
+      await load();
+    } catch (e) {
+      setError(writeError(e.payload?.error) || e.message);
+      setEditing(null);
+    } finally {
+      setSavingId(null);
+    }
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-gray-50" dir="rtl">
@@ -576,7 +616,7 @@ export default function TasksWorkspace() {
                     : 'bg-white ring-gray-200 opacity-55 grayscale hover:opacity-100 hover:grayscale-0 hover:ring-gray-300'
                 }`}
               >
-                <span aria-hidden>{taskIcon(t.icon)}</span>
+                <TaskIcon name={t.icon} channel={t.channel} size={16} />
               </button>
             );
           })}
@@ -863,12 +903,22 @@ export default function TasksWorkspace() {
                     className={`py-1.5 ${canEditCell(col, row) ? 'cursor-text hover:bg-blue-50/40' : ''}`}
                   >
                     <span
-                      // An editable cell is a CONTROL, like the checkbox and ✓:
-                      // single click selects the row (not the drawer — else the
-                      // first click of a double-click would open it), double
-                      // click edits. Everywhere non-editable opens the drawer.
-                      onClick={canEditCell(col, row) ? (e) => { e.stopPropagation(); setCursor(idx); } : undefined}
-                      onDoubleClick={canEditCell(col, row) ? () => setEditing({ rowId: row.id, colKey: col.key }) : undefined}
+                      // An editable cell is a CONTROL: CLICK opens the inline
+                      // editor in place (binding UX decision — no drawer, no
+                      // modal). Everywhere non-editable opens the Deal drawer.
+                      onClick={
+                        canEditCell(col, row)
+                          ? (e) => { e.stopPropagation(); setCursor(idx); setEditing({ rowId: row.id, colKey: col.key }); }
+                          : undefined
+                      }
+                      // A locked cell explains itself instead of failing silently.
+                      title={
+                        col.key === 'taskType' && row.channel === 'whatsapp'
+                          ? 'סוג של משימת וואטסאפ נעול — קשור להודעה מתוזמנת'
+                          : col.key === 'status' && row.status !== 'open'
+                            ? 'סטטוס סופי — תיקוני שדות מותרים, פתיחה מחדש לא'
+                            : undefined
+                      }
                       className="block"
                     >
                       {cellContent(col, row)}
@@ -1066,12 +1116,38 @@ export default function TasksWorkspace() {
 }
 
 // Inline cell editor — editing happens IN the cell. Dates/times use the shared
-// DateTimeFields (never native inputs, per the project's picker rule).
-function InlineEditor({ col, row, boot, onCancel, onSave }) {
+// DateTimeFields (never native inputs, per the project's picker rule). Save is
+// an explicit selection/pick (Enter within the pickers); Esc cancels.
+function InlineEditor({ col, row, boot, onCancel, onSave, onTransition }) {
   const stop = (e) => e.stopPropagation();
   const onKeyDown = (e) => {
     if (e.key === 'Escape') { e.stopPropagation(); onCancel(); }
   };
+
+  if (col.key === 'status') {
+    // Transitions, not field edits: completing/cancelling from the cell rides
+    // the SAME canonical path as the ✓ button and bulk actions. A WhatsApp
+    // task completed here follows its rule — the send is pulled, never fired.
+    return (
+      <select
+        autoFocus
+        onClick={stop}
+        onKeyDown={onKeyDown}
+        defaultValue="open"
+        onBlur={onCancel}
+        onChange={(e) => {
+          if (e.target.value === 'completed') onTransition('complete');
+          else if (e.target.value === 'cancelled') onTransition('cancel');
+          else onCancel();
+        }}
+        className="h-7 w-full rounded border border-blue-400 bg-white px-1 text-[12px]"
+      >
+        <option value="open">פתוחה</option>
+        <option value="completed">הושלמה ✓</option>
+        <option value="cancelled">בוטלה</option>
+      </select>
+    );
+  }
 
   if (col.key === 'dueDate') {
     return <div onClick={stop} onKeyDown={onKeyDown} className="w-36"><DateField value={dueDateOf(row)} onChange={(v) => v && onSave({ dueDate: v })} clearable={false} /></div>;

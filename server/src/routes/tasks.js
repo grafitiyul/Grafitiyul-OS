@@ -318,7 +318,8 @@ router.get('/stream', (req, res) => {
 router.patch(
   '/:id',
   handle(async (req, res) => {
-    const result = await applyTaskPatch(req.params.id, req.body);
+    const origin = await userOrigin(req.adminAuth?.userId);
+    const result = await applyTaskPatch(req.params.id, req.body, { origin });
     if (!result.ok) return res.status(result.status).json({ error: result.error });
     res.json({ ok: true, id: result.task.id });
   }),
@@ -348,7 +349,7 @@ router.post(
               ? await completeTask(id, origin)
               : action === 'cancel'
                 ? await cancelTask(id, origin)
-                : await applyTaskPatch(id, patch);
+                : await applyTaskPatch(id, patch, { origin });
           results.push(r.ok ? { id, ok: true } : { id, ok: false, error: r.error });
         } catch (e) {
           console.warn('[tasks/bulk] row failed', id, e?.message);
