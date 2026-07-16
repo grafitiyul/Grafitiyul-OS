@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildStageMap, resolveFieldKeys, planDealImport } from './dealImport.js';
+import { buildStageMap, resolveFieldKeys, planDealImport, checkDealExecutionGates } from './dealImport.js';
 
 // SYNTHETIC fixtures — this repo is public.
 const PIPELINES = [{ id: 1, name: 'מכירות גרפיטיול' }, { id: 5, name: 'שוברי מתנה' }];
@@ -137,6 +137,39 @@ test('DETERMINISM: two runs over the same inputs produce byte-identical payload 
   const b = planDealImport(inputs);
   assert.equal(a.payloadHash, b.payloadHash);
   assert.deepEqual(a.payloads.map((p) => p.orderNo), [1, 2, 3], 'source-id order, whatever the input order');
+});
+
+// ── THE HARD EXECUTION GATES — every one refuses before any write ─────────────
+const GOS6 = new Map([['lead', '1'], ['contacted', '2'], ['quote', '3'], ['negotiation', '4'], ['stage_a88c9186', '5'], ['closing', '6']]);
+const okPlans = () => ({
+  fullPlan: { payloadHash: 'HASH', stats: { sourceDeals: 24359, create: 24358, ownerDeleted: 1 }, problems: [] },
+  execPlan: { stats: { create: 24358, alreadyImported: 0 } },
+  expectHash: 'HASH', gosStageIdByKey: GOS6, foreignOrderNos: [],
+});
+
+test('gates PASS on the exact approved state — including a legitimate resume', () => {
+  assert.equal(checkDealExecutionGates(okPlans()).ok, true);
+  const resume = okPlans();
+  resume.execPlan.stats = { create: 358, alreadyImported: 24000 };
+  assert.equal(checkDealExecutionGates(resume).ok, true, 'resume: create+alreadyImported still accounts for 24,358');
+});
+
+test('every gate refuses: hash drift, wrong totals, squatting orderNo, missing stage, no hash', () => {
+  for (const [label, mutate] of [
+    ['hash drift', (g) => { g.fullPlan.payloadHash = 'OTHER'; }],
+    ['missing expect-hash', (g) => { g.expectHash = null; }],
+    ['source total', (g) => { g.fullPlan.stats.sourceDeals = 24358; }],
+    ['create total', (g) => { g.fullPlan.stats.create = 24357; }],
+    ['owner-deleted count', (g) => { g.fullPlan.stats.ownerDeleted = 2; }],
+    ['blocking problems', (g) => { g.fullPlan.problems = [{ kind: 'x' }]; }],
+    ['resume math broken', (g) => { g.execPlan.stats = { create: 100, alreadyImported: 100 }; }],
+    ['foreign orderNo', (g) => { g.foreignOrderNos = [1234]; }],
+    ['missing GOS stage', (g) => { g.gosStageIdByKey = new Map([['lead', '1']]); }],
+  ]) {
+    const g = okPlans();
+    mutate(g);
+    assert.equal(checkDealExecutionGates(g).ok, false, `${label} must refuse`);
+  }
 });
 
 test('idempotency: an already-imported deal is skipped', () => {

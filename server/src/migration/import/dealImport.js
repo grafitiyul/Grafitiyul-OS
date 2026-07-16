@@ -307,3 +307,106 @@ export function planDealImport({
   });
   return { payloads, stats, problems, warnings, payloadHash: sha256(canonical), payloadBytes: canonical.length };
 }
+
+// ── HARD EXECUTION GATES (owner, 2026-07-16) — refuse before ANY Deal write ───
+// `fullPlan` is computed with an EMPTY deal crosswalk: its hash pins the exact
+// source + decisions state the owner approved. `execPlan` uses the real
+// crosswalk: on a resume it legitimately plans fewer creates, but must always
+// account for exactly the approved total.
+export function checkDealExecutionGates({ fullPlan, execPlan, expectHash, gosStageIdByKey, foreignOrderNos = [] }) {
+  const failures = [];
+  if (!expectHash) failures.push('expect-hash חסר — הרצה ללא נעילת hash אסורה');
+  else if (fullPlan.payloadHash !== expectHash) {
+    failures.push(`ה-hash של התוכנית (${fullPlan.payloadHash.slice(0, 16)}…) שונה מה-hash המאושר (${String(expectHash).slice(0, 16)}…) — הקלט השתנה`);
+  }
+  if (fullPlan.stats.sourceDeals !== 24359) failures.push(`סך עסקאות מקור ${fullPlan.stats.sourceDeals} ≠ 24,359`);
+  if (fullPlan.stats.create !== 24358) failures.push(`תוכנית יצירה מלאה ${fullPlan.stats.create} ≠ 24,358`);
+  if (fullPlan.stats.ownerDeleted !== 1) failures.push(`מחיקות בעלים ${fullPlan.stats.ownerDeleted} ≠ 1`);
+  if (fullPlan.problems.length > 0) failures.push(`${fullPlan.problems.length} בעיות חוסמות בתוכנית`);
+  if (execPlan.stats.create + execPlan.stats.alreadyImported !== 24358) {
+    failures.push(`יצירה (${execPlan.stats.create}) + כבר-יובאו (${execPlan.stats.alreadyImported}) ≠ 24,358`);
+  }
+  for (const key of ['lead', 'contacted', 'quote', 'negotiation', 'stage_a88c9186', 'closing']) {
+    if (!gosStageIdByKey.has(key)) failures.push(`שלב היעד ${key} לא קיים בהגדרות GOS`);
+  }
+  // An orderNo in the legacy range that belongs to a GOS deal we did NOT import
+  // means an unrelated deal squatting on a legacy number — refuse.
+  if (foreignOrderNos.length) failures.push(`מספרי הזמנה תפוסים ע"י עסקאות זרות: ${foreignOrderNos.slice(0, 5).join(', ')}${foreignOrderNos.length > 5 ? '…' : ''}`);
+  return { ok: failures.length === 0, failures };
+}
+
+// ── EXECUTOR — the proven identity pattern: chunked createMany, transactional
+// chunk boundaries, crosswalk-first idempotency, resume-safe checkpoints.
+// FORWARD-CORRECTION strategy: there is no destructive rollback; a bad row is
+// corrected by a follow-up decision + re-import of the correction, never by
+// deleting history. Writes deal + dealContact + legacyRecord ONLY — no Booking,
+// no TourEvent, no TicketRegistration, nothing that can wake live automation.
+export async function executeDealPlan(prisma, execPlan, { batchId, snapshotId, chunk = 500, log = () => {}, checkpoint = async () => {} } = {}) {
+  const creates = execPlan.payloads.filter((p) => p.kind === 'create');
+  const merges = execPlan.payloads.filter((p) => p.kind === 'merge');
+  const orderNoToId = new Map();
+  let written = 0;
+
+  for (let i = 0; i < creates.length; i += chunk) {
+    const slice = creates.slice(i, i + chunk);
+    const dealRows = [];
+    const contactRows = [];
+    const legacyRows = [];
+    for (const p of slice) {
+      const id = crypto.randomUUID();
+      orderNoToId.set(p.orderNo, id);
+      dealRows.push({
+        id, orderNo: p.orderNo, title: p.title, status: p.status,
+        dealStageId: p.dealStageId,
+        valueMinor: BigInt(p.valueMinor), currency: p.currency,
+        wonAt: p.wonAt ? new Date(p.wonAt) : null,
+        lostAt: p.lostAt ? new Date(p.lostAt) : null,
+        lostReason: p.lostReason,
+        expectedCloseDate: p.expectedCloseDate ? new Date(p.expectedCloseDate) : null,
+        activityType: p.activityType,
+        tourDate: p.tourDate, tourTime: p.tourTime, participants: p.participants,
+        communicationLanguage: p.communicationLanguage, tourLanguage: p.tourLanguage,
+        customerInfo: p.customerInfo,
+        organizationId: p.organizationId, organizationUnitId: p.organizationUnitId,
+      });
+      const linked = new Set();
+      if (p.primaryContactId) {
+        linked.add(p.primaryContactId);
+        contactRows.push({ dealId: id, contactId: p.primaryContactId, isPrimary: true });
+      }
+      for (const cid of p.participantContactIds || []) {
+        if (linked.has(cid)) continue; // merge survivors can collapse two sources onto one contact
+        linked.add(cid);
+        contactRows.push({ dealId: id, contactId: cid, isPrimary: false });
+      }
+      legacyRows.push({
+        sourceSystem: 'pipedrive', sourceType: 'deal', sourceId: String(p.orderNo),
+        entityType: 'Deal', entityId: id,
+        importBatchId: batchId, snapshotId,
+        cardData: p.cardData?.length ? p.cardData : null,
+      });
+    }
+    // One transaction per chunk: a kill mid-chunk leaves NO partial deal (a deal
+    // without its crosswalk row would break resume accounting).
+    await prisma.$transaction([
+      prisma.deal.createMany({ data: dealRows }),
+      prisma.dealContact.createMany({ data: contactRows, skipDuplicates: true }),
+      prisma.legacyRecord.createMany({ data: legacyRows, skipDuplicates: true }),
+    ]);
+    written += slice.length;
+    await checkpoint({ written, total: creates.length });
+    if (written % 2500 < chunk) log(`  ✓ ${written}/${creates.length} deals`);
+  }
+
+  // Merge decisions (none in the approved plan, supported for completeness):
+  // the merged source crosswalks to its TARGET deal entity.
+  for (const m of merges) {
+    const targetId = orderNoToId.get(m.mergeIntoDealSourceId) || null;
+    if (!targetId) { log(`  ⚠ merge ${m.orderNo}: target ${m.mergeIntoDealSourceId} not in this run — crosswalk row skipped`); continue; }
+    await prisma.legacyRecord.createMany({
+      data: [{ sourceSystem: 'pipedrive', sourceType: 'deal', sourceId: String(m.orderNo), entityType: 'Deal', entityId: targetId, importBatchId: batchId, snapshotId }],
+      skipDuplicates: true,
+    });
+  }
+  return { written, merges: merges.length };
+}
