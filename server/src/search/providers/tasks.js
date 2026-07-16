@@ -1,9 +1,14 @@
 // Task search provider.
 //
 // A Task ALWAYS belongs to a Deal (dealId is required), so the parent entity
-// is always resolvable for the result row. Task.ownerUserId is a LOOSE key
-// with no FK to AdminUser, so the owner cannot be `include`d — it is resolved
-// with one bounded batch query instead of one lookup per row.
+// is always resolvable for the result row.
+//
+// Owner resolution: Task.ownerUserId became a REAL FK to AdminUser with the CRM
+// Tasks workspace, so the owner could now be `include`d. This provider keeps its
+// bounded batch query because it also needs the inverse direction — matching
+// admin usernames to owners BEFORE building the where clause — and one batch is
+// equally free of N+1. Either shape is correct now; the FK just means the batch
+// is no longer forced.
 
 import { CANDIDATE_CAP } from '../lookups.js';
 import { scoreOf, bestReason } from '../ranking.js';

@@ -10,13 +10,25 @@
 // The business order is:
 //   high > medium > low > none
 //
-// Two consumers, one definition:
-//   - comparePriority()  — in-memory sorting / tests
-//   - PRIORITY_ORDER_SQL — the CASE fragment for the canonical Tasks query
+// `comparePriority` is the ONE definition of that order. Its consumer is the
+// workspace grid's priority-sort path (routes/tasks.js).
+//
+// On the raw-SQL escape hatch that §4.4 PERMITTED but which is NOT used:
+// Prisma cannot order by a CASE, so the plan sanctioned one narrowly-contained
+// SQL CASE as a fallback. In implementation the fallback turned out to buy
+// nothing. The canonical `where` is built by Prisma (tasks/taskQuery.js), so a
+// raw ORDER BY would STILL need the filtered id set first — and expressing the
+// filter in SQL as well would fork it into a second implementation, which the
+// project forbids. Both routes therefore fetch the same id set; ordering it in
+// memory with this comparator is strictly simpler and adds no SQL surface. The
+// fetch is bounded (taskQuery.PRIORITY_SORT_CAP) and the response carries
+// `truncated`. If that ever stops scaling, the answer is a Postgres STORED
+// GENERATED column — computed by the database from `priority`, so still not a
+// second WRITABLE truth — never a hand-maintained rank field.
 //
 // See docs/architecture/GOS-crm-tasks-workspace-plan.md §4.4.
 //
-// Pure: no Prisma import, no I/O, no interpolation of caller input.
+// Pure: no Prisma import, no I/O.
 
 /** Valid non-null priorities, most urgent first. */
 export const PRIORITY_VALUES = Object.freeze(['high', 'medium', 'low']);
@@ -56,34 +68,6 @@ export function priorityRank(priority) {
 export function comparePriority(a, b, dir = 'asc') {
   const diff = priorityRank(a) - priorityRank(b);
   return dir === 'desc' ? -diff : diff;
-}
-
-/**
- * The SQL ordering expression.
- *
- * This is a server-controlled CONSTANT. It interpolates nothing: no caller
- * input, no column name, no fragment ever reaches this string. Callers choose
- * only a direction, and only through PRIORITY_ORDER_SQL_DIR below, which maps a
- * validated token to another constant.
- *
- * Values are inlined as literals rather than bound as parameters because they
- * are fixed identifiers in this module's own source, and because keeping the
- * fragment parameter-free lets it compose into an ORDER BY without disturbing
- * the caller's positional parameter numbering.
- */
-export const PRIORITY_ORDER_SQL =
-  `CASE "Task"."priority" WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END`;
-
-/**
- * Direction-applied ordering fragments. Constants, selected by an exact match —
- * never string-built from a caller's value.
- * @param {'asc'|'desc'} dir
- * @returns {string}
- */
-export function priorityOrderSql(dir) {
-  if (dir === 'asc') return `${PRIORITY_ORDER_SQL} ASC`;
-  if (dir === 'desc') return `${PRIORITY_ORDER_SQL} DESC`;
-  throw new Error(`priorityOrderSql: direction must be 'asc' or 'desc', got ${JSON.stringify(dir)}`);
 }
 
 /**

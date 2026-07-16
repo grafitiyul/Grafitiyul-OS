@@ -4,20 +4,14 @@
 // recurring-slot generator. These helpers + the TourSettings accessor remain
 // SHARED and are imported by the new engine, so they stay here.
 
-// Israel-local calendar date (server runs UTC) — "YYYY-MM-DD".
-export function israelToday() {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' });
-}
-
-export function addDays(dateStr, n) {
-  const d = new Date(`${dateStr}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-
-export function weekdayOf(dateStr) {
-  return new Date(`${dateStr}T00:00:00Z`).getUTCDay(); // 0=Sunday
-}
+// The date helpers moved to the ONE canonical date module
+// (src/lib/israelDate.js) when the CRM Tasks workspace needed the same logic —
+// there were three independent copies of "today in Israel" by then. Behaviour
+// is unchanged (israelToday now takes an optional injectable clock, which the
+// callers here simply don't pass). Re-exported so every existing importer
+// (tours/woo/*, openTourGeneration, routes/openTours, maintenance/*) is
+// untouched.
+export { israelToday, addDays, weekdayOf } from '../lib/israelDate.js';
 
 // Lazily-created settings singleton — the ONE accessor. SHARED (used by the
 // Open Tours engine and the settings routes).

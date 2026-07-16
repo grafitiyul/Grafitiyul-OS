@@ -14,38 +14,20 @@ import { prisma } from '../db.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
 import { calendarPendingPatch } from './calendar/service.js';
 import { ensureTourPayroll, cancelTourPayroll } from '../payroll/service.js';
+import { ISRAEL_TZ, israelToday, midnightAfterMs as ilMidnightAfterMs } from '../lib/israelDate.js';
 
 export const REQUIRED_SUMMARY_ROLES = ['lead_guide', 'guide'];
 
-// Business timezone — tour dates are calendar dates in Israel, wherever the
-// server happens to run.
-export const TOUR_TZ = 'Asia/Jerusalem';
-
-const tzDate = new Intl.DateTimeFormat('en-CA', {
-  timeZone: TOUR_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
-});
-const tzHour = new Intl.DateTimeFormat('en-GB', {
-  timeZone: TOUR_TZ, hour: '2-digit', hourCycle: 'h23',
-});
-
-// Today's calendar date in the business timezone, as "YYYY-MM-DD".
-export function businessToday(nowMs = Date.now()) {
-  return tzDate.format(new Date(nowMs));
-}
-
-// The UTC instant of midnight (in TOUR_TZ) AFTER the given calendar date —
-// i.e. when "the tour date has passed". Israel is UTC+2 (standard) or UTC+3
-// (DST), so that instant is 22:00Z or 21:00Z of the date itself; we probe
-// both candidates and pick the one that actually renders as next-day 00:00.
-export function midnightAfterMs(dateStr) {
-  for (const utcHour of [21, 22]) {
-    const t = Date.parse(`${dateStr}T${String(utcHour).padStart(2, '0')}:00:00Z`);
-    if (Number.isNaN(t)) return Number.NaN;
-    const d = new Date(t);
-    if (tzDate.format(d) !== dateStr && tzHour.format(d) === '00') return t;
-  }
-  return Number.NaN;
-}
+// The business timezone and its calendar-date helpers moved to the ONE canonical
+// date module (src/lib/israelDate.js) when the CRM Tasks workspace needed the
+// same date logic — there were three independent copies by then. Behaviour is
+// unchanged; these are re-exported under their long-standing names so existing
+// importers (routes/payroll.js, routes/portalPay.js, completion.test.js) keep
+// working untouched. `businessToday` is the tours/payroll-facing alias for
+// `israelToday`.
+export const TOUR_TZ = ISRAEL_TZ;
+export const businessToday = israelToday;
+export const midnightAfterMs = ilMidnightAfterMs;
 
 // Per-required-guide summary state. allSubmitted is false when the tour has
 // no required guides at all — an empty requirement must never auto-complete.

@@ -37,6 +37,7 @@ import dealsRouter from './routes/deals.js';
 import quoteDocumentsRouter from './routes/quoteDocuments.js';
 import publicQuoteRouter from './routes/publicQuote.js';
 import dealStagesRouter from './routes/dealStages.js';
+import tasksRouter from './routes/tasks.js';
 import dealTasksRouter from './routes/dealTasks.js';
 import dealFilesRouter from './routes/dealFiles.js';
 import dealTourPlanRouter from './routes/dealTourPlan.js';
@@ -326,6 +327,10 @@ app.use('/api/whatsapp', requireAdminAuth, whatsappRouter);
 // cookie-gated; the public tracking pixel lives separately under /api/track.
 app.use('/api/email', requireAdminAuth, emailRouter);
 app.use('/api/deal-stages', requireAdminAuth, dealStagesRouter);
+// CRM Tasks WORKSPACE — the canonical cross-deal task grid + chip counts (the
+// first CRM tab). Read-only. Distinct from dealTasksRouter above, which serves
+// ONE deal's task strip and cannot answer cross-deal questions.
+app.use('/api/tasks', requireAdminAuth, tasksRouter);
 // CRM Task Types catalog (configurable task types behind the Deal task composer).
 app.use('/api/task-types', requireAdminAuth, taskTypesRouter);
 app.use('/api/activity-components', requireAdminAuth, activityComponentsRouter);

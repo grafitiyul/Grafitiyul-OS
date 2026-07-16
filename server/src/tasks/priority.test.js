@@ -1,13 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  PRIORITY_VALUES,
-  PRIORITY_ORDER_SQL,
-  priorityRank,
-  comparePriority,
-  priorityOrderSql,
-  isValidPriority,
-} from './priority.js';
+import * as priorityModule from './priority.js';
+import { PRIORITY_VALUES, priorityRank, comparePriority, isValidPriority } from './priority.js';
 
 // The whole point of this module: prove semantic ordering works WITHOUT a
 // denormalized priorityRank column (architecture decision #11).
@@ -64,32 +58,24 @@ test('PRIORITY_VALUES is ordered most-urgent-first and frozen', () => {
   assert.deepEqual(ranks, [...ranks].sort((a, b) => a - b));
 });
 
-test('the SQL CASE ranks identically to the in-memory comparator', () => {
-  // Both consumers must agree, or the grid sorts differently from any
-  // in-memory path. Parse the ranks straight out of the constant.
-  for (const value of ['high', 'medium', 'low']) {
-    const m = PRIORITY_ORDER_SQL.match(new RegExp(`WHEN '${value}' THEN (\\d+)`));
-    assert.ok(m, `CASE must handle ${value}`);
-    assert.equal(Number(m[1]), priorityRank(value), `SQL rank for ${value} must match priorityRank`);
+test('this module exposes NO raw SQL — the §4.4 escape hatch went unused', () => {
+  // §4.4 permitted one narrowly-contained SQL CASE as a fallback. It was not
+  // needed: the canonical `where` is built by Prisma, so a raw ORDER BY would
+  // still need the filtered id set first, and duplicating the filter into SQL
+  // is forbidden. Ordering that id set in memory with comparePriority is
+  // strictly simpler and adds no SQL surface. This test fails if someone
+  // reintroduces a SQL fragment here without revisiting that reasoning.
+  const exported = Object.keys(priorityModule);
+  assert.deepEqual(
+    exported.sort(),
+    ['PRIORITY_VALUES', 'comparePriority', 'isValidPriority', 'priorityRank'],
+    'no SQL fragment should be exported from priority.js',
+  );
+  for (const [name, value] of Object.entries(priorityModule)) {
+    if (typeof value === 'string') {
+      assert.ok(!/\bCASE\b|\bORDER BY\b|\bSELECT\b/i.test(value), `${name} must not carry SQL`);
+    }
   }
-  const fallback = PRIORITY_ORDER_SQL.match(/ELSE (\d+) END/);
-  assert.equal(Number(fallback[1]), priorityRank(null), 'SQL ELSE must match the none rank');
-});
-
-test('priorityOrderSql only accepts exact directions — no injection surface', () => {
-  assert.ok(priorityOrderSql('asc').endsWith(' ASC'));
-  assert.ok(priorityOrderSql('desc').endsWith(' DESC'));
-  for (const bad of ['ASC', 'asc; DROP TABLE "Task"', '', null, undefined, 'ascending', 1]) {
-    assert.throws(() => priorityOrderSql(bad), /direction must be/, `must reject ${JSON.stringify(bad)}`);
-  }
-});
-
-test('the SQL fragment interpolates nothing and binds no parameters', () => {
-  // Guards the §4.4 constraint: no untrusted fragment can reach the query text.
-  assert.ok(!PRIORITY_ORDER_SQL.includes('${'), 'no template interpolation');
-  assert.ok(!PRIORITY_ORDER_SQL.includes('$1'), 'no positional parameters to disturb the caller');
-  assert.ok(!/;/.test(PRIORITY_ORDER_SQL), 'single expression, no statement break');
-  assert.ok(PRIORITY_ORDER_SQL.includes('"Task"."priority"'), 'reads the source-of-truth column directly');
 });
 
 test('isValidPriority accepts the vocabulary and null, rejects junk', () => {
