@@ -5,6 +5,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
+import { processReservationSession } from '../reservations/processor.js';
 
 const router = Router();
 
@@ -64,6 +65,24 @@ router.get(
         })),
       })),
     );
+  }),
+);
+
+// Manual reprocess ("עבד מחדש") — the SAME processor the inline attempt and
+// the sweep use, so it is inherently exactly-once: already-created deals are
+// skipped, only pending/failed groups are attempted. 409 when another
+// processor currently owns the session or it is already fully processed.
+router.post(
+  '/:id/process',
+  handle(async (req, res) => {
+    const session = await prisma.reservationSession.findUnique({
+      where: { id: req.params.id },
+      select: { id: true },
+    });
+    if (!session) return res.status(404).json({ error: 'not_found' });
+    const r = await processReservationSession(session.id);
+    if (!r.claimed) return res.status(409).json({ error: 'busy_or_done' });
+    res.json({ ok: true, status: r.status, processed: r.processed, failed: r.failed });
   }),
 );
 

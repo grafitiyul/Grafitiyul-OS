@@ -1675,9 +1675,10 @@ export const api = {
       },
     },
   },
-  // Travel Agency Reservations — admin read surface.
+  // Travel Agency Reservations — admin surface.
   reservations: {
     list: () => request('/api/reservations'),
+    process: (id) => request(`/api/reservations/${id}/process`, { method: 'POST' }),
   },
   // PUBLIC travel-agent reservation form (/r/:token) — token = capability.
   publicReservations: {

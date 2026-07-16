@@ -51,6 +51,7 @@ export const MODULE_LABELS = {
   calendar: 'יומן',
   payroll: 'שכר',
   payments: 'תשלומים',
+  reservations: 'הזמנות סוכנים',
 };
 
 // Loose entity ref → client route. Issues must survive entity deletion, so a
@@ -64,6 +65,8 @@ export function entityHref(target) {
       return `/admin/tours/${target.id}`;
     case 'whatsapp':
       return '/admin/whatsapp';
+    case 'reservation':
+      return '/admin/crm/reservations';
     default:
       return null;
   }
