@@ -33,6 +33,7 @@ import organizationTypesRouter from './routes/organizationTypes.js';
 import organizationSubtypesRouter from './routes/organizationSubtypes.js';
 import contactsRouter from './routes/contacts.js';
 import reservationLinksRouter from './routes/reservationLinks.js';
+import reservationsRouter from './routes/reservations.js';
 import searchRouter from './routes/search.js';
 import dealsRouter from './routes/deals.js';
 import quoteDocumentsRouter from './routes/quoteDocuments.js';
@@ -95,6 +96,7 @@ import { startHeldExpiryWorker } from './tours/heldExpiryWorker.js';
 import { startReconcileOpenTourProducts } from './maintenance/reconcileOpenTourProducts.js';
 import questionnairesRouter from './routes/questionnaires.js';
 import publicQuestionnaireRouter from './routes/publicQuestionnaire.js';
+import publicReservationsRouter from './routes/publicReservations.js';
 import controlRouter from './routes/control.js';
 import { startControlSweepWorker } from './control/sweepWorker.js';
 import './control/detectors/index.js';
@@ -232,6 +234,9 @@ app.use('/api/public', publicQuoteRouter);
 // Public questionnaire fill (coordination forms etc.) — token-gated
 // (QuestionnaireLink.token), no auth. Same capability-URL philosophy.
 app.use('/api/public', publicQuestionnaireRouter);
+// PUBLIC travel-agent reservation form (token = capability; eligibility
+// re-checked per request). Slice 2: intake only — no Deal creation.
+app.use('/api/public', publicReservationsRouter);
 app.use('/api/attempts', attemptsRouter);
 app.use('/api/flows', flowsRouter);
 app.use('/api/items', itemsRouter);
@@ -296,6 +301,9 @@ app.use('/api/contacts', requireAdminAuth, contactsRouter);
 // under /api/contacts/:contactId/reservation-link (mounted after the CRUD
 // router; the single-segment '/:id' routes there never capture these paths).
 app.use('/api/contacts', requireAdminAuth, reservationLinksRouter);
+
+// Travel Agency Reservations — admin read surface (sessions list).
+app.use('/api/reservations', requireAdminAuth, reservationsRouter);
 
 // Global header search — THE one cross-entity search service (deals, contacts,
 // organizations, tasks, timeline). Admin-only.

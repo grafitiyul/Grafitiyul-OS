@@ -18,4 +18,5 @@ export const CRM_TABS = [
   { key: 'deals', path: 'deals', label: 'דילים' },
   { key: 'contacts', path: 'contacts', label: 'אנשי קשר' },
   { key: 'organizations', path: 'organizations', label: 'ארגונים' },
+  { key: 'reservations', path: 'reservations', label: 'הזמנות סוכנים' },
 ];

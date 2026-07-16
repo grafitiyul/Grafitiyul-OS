@@ -1675,6 +1675,21 @@ export const api = {
       },
     },
   },
+  // Travel Agency Reservations — admin read surface.
+  reservations: {
+    list: () => request('/api/reservations'),
+  },
+  // PUBLIC travel-agent reservation form (/r/:token) — token = capability.
+  publicReservations: {
+    bootstrap: (token) => request(`/api/public/reservations/${token}`),
+    submit: (token, body) =>
+      request(`/api/public/reservations/${token}/submit`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    status: (token, submissionKey) =>
+      request(`/api/public/reservations/${token}/session/${submissionKey}`),
+  },
   // בקרה (Operations Control) — the canonical operational-issue surface.
   // Mutations that already have endpoints (whatsapp.scheduledCancel,
   // deals.applyTourUpdate…) are called directly by the dashboard's action

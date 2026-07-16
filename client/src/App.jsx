@@ -82,6 +82,8 @@ import QuestionnairesPage from './admin/questionnaires/QuestionnairesPage.jsx';
 import QuestionnaireBuilderPage from './admin/questionnaires/QuestionnaireBuilderPage.jsx';
 import QuestionnairePreviewPage from './admin/questionnaires/QuestionnairePreviewPage.jsx';
 import PublicFormPage from './questionnaire/PublicFormPage.jsx';
+import AgentReservationPage from './reservations/AgentReservationPage.jsx';
+import ReservationsList from './admin/crm/reservations/ReservationsList.jsx';
 // Global Settings module (low-frequency configuration).
 import SettingsHome from './admin/settings/SettingsHome.jsx';
 import ToursSettings from './admin/settings/ToursSettings.jsx';
@@ -204,6 +206,7 @@ export default function App() {
           <Route path="contacts/:id" element={<ContactDetail />} />
           <Route path="organizations" element={<OrganizationsList />} />
           <Route path="organizations/:id" element={<OrganizationDetail />} />
+          <Route path="reservations" element={<ReservationsList />} />
         </Route>
         {/* כספים — the finance hub. Collection (גבייה מלקוחות) is the existing
             module, unchanged besides its navigation home; payroll (שכר צוות)
@@ -383,6 +386,9 @@ export default function App() {
       {/* Public questionnaire fill (coordination form etc.) — token-gated
           (QuestionnaireLink.token), no admin auth, mobile-first. */}
       <Route path="/form/:token" element={<PublicFormPage />} />
+      {/* Public travel-agent reservation form — token-gated
+          (AgentReservationLink.token), no admin auth, bilingual RTL/LTR. */}
+      <Route path="/r/:token" element={<AgentReservationPage />} />
       {/* Dedicated install entry — public, token-bearing URL that
           iOS Safari captures verbatim on Add to Home Screen, and
           that Android Chrome resolves through a per-token manifest
