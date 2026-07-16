@@ -583,7 +583,25 @@ Do not attempt to manufacture a cleaner history for Slice 0.
 | 2 — Workspace UI | `f95e3db` | משימות is the first CRM tab + landing route. Chips, filters, grid, inline editing, URL state. Multi-sort added to the shared table infra. |
 | 3 — Shared Deal drawer | `272fa52` | `DealDrawer` moved `whatsapp/` → `common/`; prev/next over the filtered row order, PgUp/PgDn, dirty guard, 150ms debounce, position indicator. |
 
-**Slices 4–7 are NOT started**: bulk actions, saved views, realtime, mobile cards.
+### Slices 4–7 — shipped 2026-07-16, verified in production
+
+| Slice | Commit | Notes |
+|---|---|---|
+| 4 — Bulk + write unification | `4f25bdf` | ONE canonical write path: `taskService.completeTask/cancelTask/applyTaskPatch`; Deal-tab routes, inline cells and `POST /api/tasks/bulk` are thin callers. Per-row partial-failure results; failed rows stay selected. WhatsApp guards server-enforced (type locked both directions, CAS send-pull, mirror-or-nothing). Never delete. |
+| 5 — Saved views | `a066622` | `SavedView` + `UserUiState` (migration `20260811090000`). personal/shared/system, 6 seeded system views, `$me` portability, cross-device last-selected restore (URL → localStorage → server lastView → defaults). |
+| 6 — Realtime | `5800dc5` | `lib/realtime.js` + `realtime/sse.js` extracted from payroll VERBATIM; payroll re-exports old names and its untouched test suites (8+12) are the no-regression proof. Tasks channel emits post-commit from the canonical write path — including the scheduled worker's 'sent'. Silent refetch + row glow on same-query diffs only. |
+| 7 — Mobile cards | `3b6a78f` | `TaskCards.jsx`, presentation-only over the same rows/handlers/state. No separate mobile logic exists. |
+
+Slice-4+ deviations, deliberate:
+1. **Single-row complete rides the bulk endpoint with one id** — literally one
+   transition code path however a task is completed.
+2. **The seeded "תיאום סיורים" system view is absent** — no such TaskType exists,
+   and a view over a nonexistent type key renders a permanently empty grid.
+   When the type is created, the view is one entry in `SYSTEM_VIEWS`.
+3. **Slice 3's row-click-drawer had made double-click editing unreachable**
+   (first click opened the drawer); fixed in Slice 4 — editable cells are
+   controls (click selects, double-click edits), non-editable areas open the
+   drawer.
 
 #### Deviations from this plan (deliberate, with reasons)
 
