@@ -64,6 +64,43 @@ const quotePanel = (draft, setDraft) => (
   <QuoteContentEditor draft={draft} setDraft={setDraft} />
 );
 
+// Type-only edit hooks: quote content + the Travel Agency Reservations
+// capability flag (logic reads the flag, never the Hebrew label — toggled on
+// for "סוכנויות תיירות ונסיעות"). Turning it off immediately blocks every
+// dependent agent link (eligibility re-checks live on each open).
+const typeSeed = (item) => ({
+  ...quoteSeed(item),
+  agentReservations: !!item.agentReservations,
+});
+const typeToPatch = (draft) => ({
+  ...quoteToPatch(draft),
+  agentReservations: !!draft.agentReservations,
+});
+const typePanel = (draft, setDraft) => (
+  <div className="w-full space-y-3">
+    <QuoteContentEditor draft={draft} setDraft={setDraft} />
+    <label className="flex items-start gap-2 pt-1 cursor-pointer">
+      <input
+        type="checkbox"
+        checked={!!draft.agentReservations}
+        onChange={(e) =>
+          setDraft((d) => ({ ...d, agentReservations: e.target.checked }))
+        }
+        className="mt-0.5"
+      />
+      <span>
+        <span className="block text-[13px] font-medium text-gray-800">
+          קישורי הזמנות לסוכנים
+        </span>
+        <span className="block text-[12px] text-gray-500">
+          אנשי קשר של ארגונים מסוג זה יכולים לקבל קישור הזמנות קבוע (טופס
+          הזמנות לסוכני נסיעות). כיבוי חוסם מיידית את כל הקישורים התלויים.
+        </span>
+      </span>
+    </label>
+  </div>
+);
+
 // CRM settings → Organization Types & Subtypes.
 //
 // Types belong to the Organization; Subtypes belong to the Deal (e.g. School →
@@ -153,11 +190,16 @@ function TypesSection({ types, onChange }) {
         onSave={save}
         onRemove={remove}
         emptyText="עדיין אין סוגי ארגון. הוסיפו את הראשון למטה."
-        renderMeta={(t) => <CountChip n={t._count?.organizations ?? 0} noun="ארגונים" />}
+        renderMeta={(t) => (
+          <span className="flex items-center gap-1.5">
+            {t.agentReservations && <Pill>הזמנות סוכנים</Pill>}
+            <CountChip n={t._count?.organizations ?? 0} noun="ארגונים" />
+          </span>
+        )}
         rowActions={(t) => <PaymentTermsButton type={t} onSaved={onChange} />}
-        editSeed={quoteSeed}
-        editPanel={quotePanel}
-        editToPatch={quoteToPatch}
+        editSeed={typeSeed}
+        editPanel={typePanel}
+        editToPatch={typeToPatch}
       />
     </SettingsCard>
   );

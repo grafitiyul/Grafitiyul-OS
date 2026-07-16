@@ -436,6 +436,22 @@ export const api = {
       }),
     removeOrganization: (linkId) =>
       request(`/api/contacts/organizations/${linkId}`, { method: 'DELETE' }),
+    // Travel Agency Reservations — permanent per-agent reservation link.
+    reservationLink: (id) => request(`/api/contacts/${id}/reservation-link`),
+    mintReservationLink: (id, data) =>
+      request(`/api/contacts/${id}/reservation-link`, {
+        method: 'POST',
+        body: JSON.stringify(data || {}),
+      }),
+    rotateReservationLink: (id) =>
+      request(`/api/contacts/${id}/reservation-link/rotate`, { method: 'POST' }),
+    revokeReservationLink: (id) =>
+      request(`/api/contacts/${id}/reservation-link/revoke`, { method: 'POST' }),
+    updateReservationLink: (id, data) =>
+      request(`/api/contacts/${id}/reservation-link`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
   },
   // ── Deal module (commercial core) ───────────────────────────────
   dealStages: {

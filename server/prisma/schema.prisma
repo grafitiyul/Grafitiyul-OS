@@ -750,6 +750,12 @@ model OrganizationType {
   defaultPaymentMethodId String?
   paymentTermsNote       String?
 
+  // Travel Agency Reservations capability: contacts of organizations of this
+  // type may hold a permanent reservation link (AgentReservationLink). Logic
+  // reads THIS flag, never the Hebrew label — toggled in settings for
+  // "סוכנויות תיירות ונסיעות". Eligibility is re-checked on every resolve.
+  agentReservations Boolean @default(false)
+
   @@index([sortOrder])
 }
 
@@ -803,6 +809,8 @@ model Organization {
   units              OrganizationUnit[]
   contactLinks       ContactOrganization[]
   deals              Deal[]
+  // Agent reservations submitted under this organization (snapshot at submit).
+  reservationSessions ReservationSession[]
 
   @@index([organizationTypeId])
   @@index([name])
@@ -855,6 +863,9 @@ model Contact {
   dealContacts          DealContact[]
   whatsAppChats         WhatsAppChat[]
   emailThreads          EmailThread[]
+  // Travel Agency Reservations (the contact as the travel agent).
+  reservationLinks      AgentReservationLink[]
+  reservationSessions   ReservationSession[]
 
   @@index([lastNameHe])
   @@index([lastNameEn])
@@ -1084,6 +1095,9 @@ model Deal {
   ticketRegistrations   TicketRegistration[]
   // Pre-WON tour PLANNING (team/components/notes) — see DealTourPlan.
   tourPlan              DealTourPlan?
+  // Back-relation only: the reservation group this deal was created from
+  // (provenance lives on the reservation side — the deal is independent).
+  reservationGroup      ReservationGroup?
 
   @@index([organizationId])
   @@index([organizationUnitId])
@@ -1865,6 +1879,7 @@ model Location {
   quoteImageLinks       QuoteImageLocation[]
   tourEvents            TourEvent[]
   openTourTemplates     OpenTourTemplate[]
+  reservationGroups     ReservationGroup[]
 
   @@index([sortOrder])
   @@index([defaultMeetingPointId])
@@ -1889,6 +1904,7 @@ model Product {
   quoteOffers       QuoteOffer[]
   tourEvents        TourEvent[]
   tourScheduleRules TourScheduleRule[]
+  reservationGroups ReservationGroup[]
 
   @@index([sortOrder])
 }
@@ -1943,6 +1959,7 @@ model ProductVariant {
   activityComponents       ProductVariantActivityComponent[]
   openTourTemplateProducts OpenTourTemplateProduct[]
   ticketRegistrations      TicketRegistration[]
+  reservationGroups        ReservationGroup[]
 
   @@unique([productId, locationId])
   @@index([productId])
@@ -4760,4 +4777,147 @@ model MigrationRun {
   @@index([status, claimedAt])
   @@index([snapshotId])
   @@index([batchId])
+}
+
+// ═══════════════ Travel Agency Reservations (הזמנות סוכנים) ═══════════════
+// Canonical reservation intake — see
+// docs/architecture/GOS-travel-agent-reservation-module-plan.md.
+// The public form NEVER creates Deals: it writes ONE ReservationSession
+// (+ Groups) atomically. A source-blind processor (Slice 3) turns each group
+// into an OPEN Deal exactly once (stage "הסכמה לסגירה"; no TourEvents, no
+// registrations, no seat holds at intake — operational commitment stays in the
+// existing WON flow). Sessions are immutable audit records after submission
+// and are never deleted.
+
+// Permanent per-agent capability link. Same token convention as
+// QuestionnaireLink / TourGalleryLink / portalToken: 24-byte base64url token,
+// unique, exact-match resolve, unknown → 404, no enumeration. Belongs to the
+// CONTACT (the travel agent). Eligibility — the contact currently belongs to
+// an Organization whose OrganizationType has agentReservations=true — is
+// re-checked at EVERY resolve, so a detached contact makes the link fail
+// safely (403) without deleting anything. Rotation = revoke + create new row.
+model AgentReservationLink {
+  id              String    @id @default(cuid())
+  contact         Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contactId       String
+  token           String    @unique
+  status          String    @default("active") // active | revoked
+  // Kill switch independent of rotation (portalEnabled pattern): disabled
+  // resolves to a deliberate, debuggable 403; revoked/unknown to 404.
+  isEnabled       Boolean   @default(true)
+  label           String? // admin-facing note
+  defaultLanguage String    @default("he") // he | en — the form opens in this language
+  createdById     String? // AdminUser.id (loose)
+  lastUsedAt      DateTime?
+  revokedAt       DateTime?
+  revokedReason   String? // rotated | manual
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  sessions ReservationSession[]
+
+  @@index([contactId, status])
+}
+
+// One submitted reservation (a batch of groups filled in one sitting). This is
+// the durability point (once committed the reservation can never be lost), the
+// intake idempotency anchor (submissionKey), and the immutable audit record
+// (payloadSnapshot + one session-wide signature + legal confirmations).
+model ReservationSession {
+  id                 String                @id @default(cuid())
+  // Human reference — own PG sequence (deal_order_no_seq pattern), monotonic,
+  // gaps allowed, never reused. NOT the Deal orderNo — each created Deal gets
+  // its own orderNo; sessionNo identifies the submission batch.
+  sessionNo          Int                   @unique @default(dbgenerated("nextval('reservation_session_no_seq')"))
+  source             String                @default("travel_agent") // travel_agent | website | api | internal
+  link               AgentReservationLink? @relation(fields: [linkId], references: [id], onDelete: SetNull)
+  linkId             String?
+  // Denormalized submitter identity — survives link rotation/deletion.
+  contact            Contact?              @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  contactId          String?
+  organization       Organization?         @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationId     String?
+  language           String                @default("he") // language the form was filled in
+  status             String                @default("submitted") // submitted | processing | processed | partially_processed | failed | cancelled
+  // Client-minted UUID: a retried/double-tapped submit finds the existing
+  // session and returns its current result instead of creating a duplicate.
+  submissionKey      String                @unique
+  // The EXACT submitted payload, frozen forever (audit + reprocess source —
+  // stays readable even if catalog rows are later renamed or deleted).
+  payloadSnapshot    Json
+  signerName         String?
+  signatureMethod    String? // drawn | typed
+  // Cropped PNG, SignerAsset conventions (magic-byte validated, size-capped).
+  signatureBytes     Bytes?
+  // [{key, textVersion, acceptedAt}] — session-wide legal confirmations.
+  legalConfirmations Json?
+  clientMeta         Json? // { ip, userAgent } — abuse forensics
+  submittedAt        DateTime              @default(now())
+  processedAt        DateTime?
+  // Claim-based processing (whatsapp scheduledWorker pattern): a conditional
+  // updateMany takes the claim; expired claims are re-claimable.
+  claimId            String?
+  claimExpiresAt     DateTime?
+  attemptCount       Int                   @default(0)
+  nextRetryAt        DateTime?
+  lastError          String?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  groups ReservationGroup[]
+
+  @@index([status, nextRetryAt])
+  @@index([contactId])
+  @@index([organizationId])
+  @@index([linkId])
+  @@index([submittedAt])
+}
+
+// One group inside a session — the exactly-once unit of work: each group
+// becomes AT MOST one Deal. The Deal is created and createdDealId stamped in
+// the SAME transaction; a group with a non-null pointer is never processed
+// again. Deals carry no structural back-dependency — from the moment they
+// exist they are fully independent (session deletion is not a thing, and Deal
+// deletion merely nulls the pointer here).
+model ReservationGroup {
+  id                 String             @id @default(cuid())
+  session            ReservationSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sessionId          String
+  sortOrder          Int                @default(0)
+  status             String             @default("pending") // pending | processed | failed
+  // Booking intent — validated FK refs + frozen display snapshots (labels keep
+  // the group readable after catalog changes).
+  groupName          String // becomes Deal.title AND the dedicated Deal.groupName field
+  product            Product?           @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productId          String?
+  productVariant     ProductVariant?    @relation(fields: [productVariantId], references: [id], onDelete: SetNull)
+  productVariantId   String?
+  location           Location?          @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  locationId         String?
+  productLabel       String?
+  locationLabel      String?
+  tourDate           String // "YYYY-MM-DD" (Deal working-scalar convention)
+  tourTime           String? // "HH:MM"
+  // Business participant count (no ticket categories — business tours only;
+  // pricing arrives later from the Pricing Module).
+  participants       Int
+  tourLanguage       String? // he | en | es | fr | ru
+  // Optional operational representative. When filled, processing creates a
+  // Contact linked to the Deal with DealContact role 'onSiteRep' ("נציג
+  // בשטח"). Empty → nothing is created.
+  onSiteContactName  String?
+  onSiteContactPhone String?
+  notes              String?
+  // Exactly-once anchor (see model comment). Unique: one Deal per group, ever.
+  createdDeal        Deal?              @relation(fields: [createdDealId], references: [id], onDelete: SetNull)
+  createdDealId      String?            @unique
+  processedAt        DateTime?
+  attemptCount       Int                @default(0)
+  lastError          String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@index([sessionId, status])
+  @@index([productVariantId])
+  @@index([locationId])
 }

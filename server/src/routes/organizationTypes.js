@@ -106,6 +106,7 @@ router.put(
       defaultPaymentTermId,
       defaultPaymentMethodId,
       paymentTermsNote,
+      agentReservations,
     } = req.body || {};
     const data = {};
     if (label !== undefined) data.label = String(label).trim();
@@ -131,6 +132,10 @@ router.put(
       data.defaultPaymentMethodId = defaultPaymentMethodId || null;
     if (paymentTermsNote !== undefined)
       data.paymentTermsNote = paymentTermsNote?.trim() ? paymentTermsNote.trim() : null;
+    // Travel Agency Reservations capability: contacts of orgs of this type may
+    // hold a permanent reservation link. Eligibility re-checks live, so
+    // toggling this off immediately locks every dependent link (safe 403).
+    if (agentReservations !== undefined) data.agentReservations = !!agentReservations;
     const type = await prisma.organizationType.update({
       where: { id: req.params.id },
       data,

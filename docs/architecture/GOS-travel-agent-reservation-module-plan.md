@@ -1,9 +1,58 @@
 # Travel Agency Reservation Module — Architecture Audit & Proposal
 
-Status: PROPOSAL (audit + design only, no implementation)
-Date: 2026-07-16
+Status: APPROVED (owner sign-off 2026-07-16, binding decisions below)
+Date: 2026-07-16 (updated same day with binding product decisions)
 Scope: canonical reservation entry point for travel agents, designed as the
 first consumer of a single source-agnostic booking-processing pipeline.
+
+---
+
+## 0a) BINDING product decisions (owner, 2026-07-16)
+
+These override anything else in this document where they conflict.
+
+1. **Initial Deal stage**: agent reservations create OPEN Deals in stage
+   **"הסכמה לסגירה"** (`DealStage.key = 'stage_a88c9186'` — the canonical key
+   per the migration mapping package). NEVER won. NO TourEvents,
+   registrations, seat holds or any operational commitment at intake — those
+   stay exclusively in the existing approval/WON flow.
+2. **Contact + Organization**: the permanent link belongs to the Contact; the
+   Contact becomes the primary DealContact; the Contact's current
+   Organization becomes the Deal Organization; `activityType='business'`
+   continues to come from the existing canonical classification logic
+   (`reconcileClassification`) — never set manually by this module.
+3. **Eligibility**: the form works only while the Contact belongs to an
+   Organization whose OrganizationType is "סוכנויות תיירות ונסיעות".
+   Mechanism (schema rule: logic never reads the Hebrew label): a new
+   `OrganizationType.agentReservations Boolean` capability flag, toggled on
+   for that type in settings. Eligibility is re-checked at EVERY token
+   resolve — a Contact detached from a qualifying org makes the permanent
+   link fail safely (403), without deleting anything. Entry point lives on
+   the Contact page.
+4. **Participant model**: business tours only. NO adults/children ticket
+   categories, NO public-group ticket design. The group carries the business
+   participant information that exists today (`participants Int`). Pricing
+   arrives later from the Pricing Module.
+5. **On-site contact**: two OPTIONAL fields (name, phone). Empty → nothing is
+   created. Filled → processing creates a Contact linked to the Deal with
+   DealContact role **"נציג בשטח"** (new role key `onSiteRep`). This is the
+   operational representative, NOT the booking contact. Future: the Guide
+   Portal displays this representative inside the Tour page.
+6. **Group Name**: new required field per group. It becomes the Deal title
+   AND a dedicated Deal field (`Deal.groupName` — real business data, not an
+   internal duplicate of title). Deal page: displayed directly below the
+   fixed Deal information section, above Customer Information. Guide Portal:
+   displayed above the Participants section, before the participant cards.
+7. **Submission result**: Thank-You page with the Deal number(s) (used as the
+   reservation number), NO admin URLs, plus a **"הורד הזמנה (PDF)"** button.
+   Wording must make clear this is a submitted reservation REQUEST, not a
+   confirmed booking.
+8. **PDF**: generated through the canonical Documents module — no separate
+   PDF engine. The ReservationSession is the document's data source;
+   templates reuse the existing Documents infrastructure.
+9. Everything else in this document (entities, processor, exactly-once,
+   retries, partial success, immutable audit, pricing compatibility,
+   source-independent pipeline) stands as approved.
 
 ---
 
@@ -94,18 +143,27 @@ sources), mirroring `QuestionnaireLink` / `TourGalleryLink`:
 AgentReservationLink
   id            cuid PK
   token         String @unique        // 24-byte base64url, capability token
-  contactId     FK → Contact (Restrict)   // the travel agent
-  organizationId FK → Organization (SetNull)?  // the agency (optional explicit pin;
-                                                // else derived from agent's primary orgLink)
-  isEnabled     Boolean @default(true) // kill switch (portalEnabled pattern)
+  contactId     FK → Contact (Cascade)    // the travel agent
+  status        String @default("active") // active | revoked (TourGalleryLink pattern)
+  isEnabled     Boolean @default(true)    // kill switch (portalEnabled pattern)
   label         String?               // admin-facing note
   defaultLanguage String @default("he")
-  createdAt / revokedAt / lastUsedAt
+  createdById / createdAt / revokedAt / revokedReason / lastUsedAt
 ```
+
+The agency Organization is NOT pinned on the link — BINDING #2 says the
+Contact's **current** organization becomes the Deal organization, so it is
+derived live at resolve/processing time from the Contact's primary
+qualifying `ContactOrganization`.
 
 Rules (inherited from the house token contract):
 - exact-match `findUnique`, unknown/revoked/disabled → 404/403, never enumerable
 - subject (agent Contact, agency Org) always derived from the token row
+- **eligibility re-checked at every resolve** (BINDING #3): the Contact must
+  currently belong to an Organization whose OrganizationType has the new
+  `agentReservations` capability flag (toggled on for
+  "סוכנויות תיירות ונסיעות" in settings). Detached contact ⇒ safe 403,
+  link data preserved.
 - token lives in the URL only; never persisted to device-global storage
 - rotation = revoke + mint new (audit preserved)
 
@@ -143,15 +201,17 @@ ReservationGroup
   sortOrder       Int
   status          String        // pending | processed | failed
   -- booking intent (validated refs + display snapshots, both kept):
+  groupName       String        // BINDING #6 — becomes Deal.groupName + Deal title
   productId / productVariantId / locationId   FK (SetNull)  // city + tour selection
   productLabel / locationLabel  String        // frozen display snapshot
   tourDate        String        // "YYYY-MM-DD" (Deal working-scalar convention)
   tourTime        String        // "HH:MM"
-  participantsBreakdown Json    // [{key, label, quantity}] structured composition —
-                                //   ticketBreakdown-compatible contract (pricing-ready)
-  participantsTotal Int         // derived, denormalized for lists
+  participants    Int           // BINDING #4 — business participant count, no
+                                //   ticket categories; pricing arrives later
   tourLanguage    String?
-  onSiteContactName / onSiteContactPhone  String?   // snapshot, NOT a Contact row (v1)
+  onSiteContactName / onSiteContactPhone  String?   // BINDING #5 — optional; when
+                                //   filled, processing creates a Contact with
+                                //   DealContact role 'onSiteRep' ("נציג בשטח")
   notes           String?
   -- processing result:
   createdDealId   FK → Deal (SetNull)?  @unique     // exactly-once anchor
@@ -186,14 +246,20 @@ Contact (agent) 1 ── n AgentReservationLink 1 ── n ReservationSession 1 
 
 Created by the shared service inside the per-group transaction:
 
-- `title` — generated: `"<agency/agent> — <location> <tourDate>"` (editable later like any Deal)
-- `dealStageId` — configured intake stage (owner decision, see §11)
-- `status='open'`, `activityType` per classification rule (org-linked ⇒ `business`, forced by `reconcileClassification`)
-- `organizationId` — the agency (from the link/agent's primary org)
-- `contacts` — the agent as `DealContact` (`roles:['coordinator']`, `isPrimary:true`)
+- `title` — the group's `groupName`; `groupName` is ALSO stored on the new
+  dedicated `Deal.groupName` field (BINDING #6 — independent business data,
+  edits to one do not silently rewrite the other)
+- `dealStageId` — "הסכמה לסגירה" resolved by `DealStage.key='stage_a88c9186'`
+  (BINDING #1); missing stage ⇒ group fails loudly (`stage_not_found`), never
+  a silent fallback
+- `status='open'` — NEVER won at intake; no TourEvent/registration/seat hold
+- `activityType` — via canonical `reconcileClassification` (org-linked ⇒ `business`)
+- `organizationId` — the agent Contact's current organization (BINDING #2)
+- `contacts` — the agent as primary `DealContact`; plus, when on-site contact
+  fields are filled, a created Contact with role `onSiteRep` ("נציג בשטח")
 - `productId/productVariantId/locationId`, `tourDate`, `tourTime`, `participants`, `tourLanguage` — from the group
 - `dealSourceId='travel_agent'`, `source="reservation #<sessionNo>"`
-- notes — group notes + on-site contact snapshot
+- notes — group notes
 
 From here the Deal enters the normal lifecycle untouched: quotes, group
 registration modal, payment links, `settleDealWon`, tour creation. **This
@@ -310,10 +376,13 @@ Screen anatomy (matches the brief):
    Completeness badge per card.
 3. **Session footer** — legal confirmations (session-wide), single
    signature, submit.
-4. **Result screen** — "ההזמנה התקבלה" + per-group rows
+4. **Thank-You page** (BINDING #7) — wording explicitly frames a submitted
+   reservation REQUEST (not a confirmed booking) + per-group rows
    `GOS-28134 · חיפה · 12.8 · 42 משתתפים`; entries still processing show a
-   pending chip and upgrade via status polling. (Public page shows numbers
-   only; admin screens link numbers to Deals via `dealPath`.)
+   pending chip and upgrade via status polling. NO admin URLs. A
+   **"הורד הזמנה (PDF)"** button downloads the official reservation copy,
+   generated through the canonical Documents module from the
+   ReservationSession (BINDING #8 — no separate PDF engine).
 
 Catalog DTO: a small public read endpoint (token-gated) exposing only
 bookable locations/products/variants + labels in both languages — never the
@@ -329,10 +398,9 @@ becomes a pure function over existing data — no redesign:
 - **Who**: `organizationId` → `OrganizationType.defaultPriceListId` /
   `defaultPaymentTermId` (already in schema) — agency-specific pricing
   resolution path exists today.
-- **What**: `participantsBreakdown` is structured `[{key, label, quantity}]`
-  — the same composition contract as `ticketBreakdown` (Group Ticket Builder
-  / TicketRegistration), not a bare total. Price-per-type × quantity is
-  computable per group.
+- **What**: `participants Int` per group (BINDING #4 — business tours, no
+  ticket categories). The future Pricing Module prices business tours from
+  org type / product / date / participants — all captured on the group.
 - **When/where**: `productVariantId` + `tourDate` + `tourTime` — enough for
   variant-, season- or date-based rules.
 - **Where it lands**: pricing output belongs on the **Deal/Quote side**
@@ -341,8 +409,6 @@ becomes a pure function over existing data — no redesign:
   draft quote from intent". The reservation stays a frozen record of what
   was *requested*.
 
-The only rule to hold now: participant composition is captured
-**structured**, and the breakdown keys come from a catalog (not free text).
 
 ---
 
@@ -458,26 +524,15 @@ separate cleanup.
 
 ---
 
-## 11) Open product decisions (owner input needed before Slice 1)
+## 11) Product decisions — RESOLVED (see §0a binding decisions)
 
-1. **Intake Deal stage** — which `DealStage` do agent-created Deals land in?
-   (Recommend a dedicated stage or the first stage by sortOrder; needs a
-   product decision, it shapes the team's pipeline view.)
-2. **Agency org linkage** — always attach the agent's primary organization to
-   the Deal (forcing `activityType='business'` per the classification SSOT)?
-   Recommended yes; confirm this matches how agent deals are worked today.
-3. **On-site contact** — v1 stores it as a snapshot on the group/Deal notes
-   (recommended; avoids Contact-table pollution). Confirm no requirement to
-   create Contact rows now.
-4. **Tour selection semantics** — v1 treats groups as *requests* (no seat
-   holds, no `TicketRegistration` at intake; capacity commitment stays at the
-   existing WON path). Confirm agents don't need live-availability
-   guarantees at submit time.
-5. **Participant breakdown keys** — which composition types should the form
-   offer (age bands? ticket types per product)? This defines the
-   pricing-ready catalog.
-6. **English scope** — full form + result screen in both languages from day
-   one, or Hebrew-first with EN in a follow-up slice?
+All six open questions were answered by the owner on 2026-07-16:
+intake stage = "הסכמה לסגירה" (`stage_a88c9186`); agency org always attached
+with canonical classification; on-site contact CREATES a Contact with role
+`onSiteRep` ("נציג בשטח") when filled; groups are requests (no operational
+commitment at intake); participants = single business count (no ticket
+categories); English ships per the original plan (full bilingual form,
+polish in the hardening slice).
 
 ## 12) Risks called out honestly
 
@@ -502,26 +557,35 @@ separate cleanup.
 
 Each slice ships independently, pushed to main (= deploy) only when verified.
 
-- **Slice 0 — this document.** Decisions §11 answered by owner.
+- **Slice 0 — this document.** DONE; §0a binding decisions recorded.
 - **Slice 1 — Entities + agent links.** Prisma models
   (`AgentReservationLink`, `ReservationSession`, `ReservationGroup`,
-  `sessionNo` sequence, DealSource `travel_agent`), migration (validated via
-  `npm run validate:migrations`), token mint/rotate/disable on the Contact
-  page, resolver + tests (portal.resolve.test.js pattern). No public UI yet.
+  `sessionNo` sequence, `OrganizationType.agentReservations` flag), additive
+  migration (validated via `npm run validate:migrations`), eligibility
+  resolver + tests (portal.resolve.test.js pattern), token
+  mint/rotate/revoke endpoints, admin management UI on the Contact page,
+  settings toggle on the org-types screen. No public UI, no Deal creation.
 - **Slice 2 — Public form.** `/r/:token` bilingual mobile-first form: header
-  summary, group cards (validate/duplicate/delete), catalog DTO endpoint,
-  local draft, signature + confirmations, submit → session persisted
-  (status `submitted` only). Honest "received" screen (no Deal numbers yet).
-  Admin: minimal read-only sessions list.
-- **Slice 3 — Processing pipeline.** `createDealFromIntent` service,
-  processor (claim + per-group tx + exactly-once), inline-sync attempt +
-  sweep worker, timeline entries (session / Deal / Contact), result screen
-  upgraded to live GOS-numbers with status polling.
-- **Slice 4 — Admin review + control.** Full הזמנות סוכנים inbox (shared
+  summary, group cards (groupName, validate/duplicate/delete), catalog DTO
+  endpoint, local draft, signature + confirmations, submit → session
+  persisted (status `submitted` only). Honest "received" screen (no Deal
+  numbers yet). Admin: minimal read-only sessions list.
+- **Slice 3 — Processing pipeline.** `createDealFromIntent` service (incl.
+  `Deal.groupName` field + Deal page placement, `onSiteRep` DealContact role
+  + Contact creation, intake stage `stage_a88c9186`), processor (claim +
+  per-group tx + exactly-once), inline-sync attempt + sweep worker, timeline
+  entries (session / Deal / Contact), Thank-You page upgraded to live
+  GOS-numbers with status polling.
+- **Slice 4 — Reservation PDF.** "הורד הזמנה (PDF)" on the Thank-You page via
+  the canonical Documents module (ReservationSession as data source,
+  reusable template) — BINDING #8.
+- **Slice 5 — Admin review + control.** Full הזמנות סוכנים inbox (shared
   table infra), session detail + reprocess action, realtime invalidation,
   בקרה `reservation_stuck` detector.
-- **Slice 5 — Hardening + EN polish.** Rate limiting, payload caps, anomaly
+- **Slice 6 — Hardening + EN polish.** Rate limiting, payload caps, anomaly
   detector, link-usage audit, full English pass, mobile QA.
 - **Future slices (designed, not scheduled):** pricing hook (draft quote from
-  intent), attachments (§6), website/API intake adapters, migration of the 3
-  legacy inline Deal-creation sites onto `createDealFromIntent`.
+  intent), attachments (§6), Guide Portal display of the on-site
+  representative + groupName above Participants (BINDING #5/#6 future
+  behavior), website/API intake adapters, migration of the 3 legacy inline
+  Deal-creation sites onto `createDealFromIntent`.

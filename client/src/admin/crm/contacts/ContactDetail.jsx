@@ -6,6 +6,7 @@ import ChannelSection from '../common/ChannelSection.jsx';
 import PhoneDisplay from '../../common/PhoneDisplay.jsx';
 import WorkspaceLayout from '../../../shell/WorkspaceLayout.jsx';
 import TimelineFeed from '../../common/timeline/TimelineFeed.jsx';
+import ReservationLinkSection from './ReservationLinkSection.jsx';
 import { useDirtyWhen } from '../../../lib/dirtyForms.js';
 
 function fmtDate(iso) {
@@ -163,6 +164,12 @@ export default function ContactDetail() {
       />
 
       <MembershipsSection contact={contact} orgs={orgs} onChange={refresh} />
+
+      {/* Remounts when memberships change so eligibility re-evaluates live. */}
+      <ReservationLinkSection
+        key={(contact.orgLinks || []).map((l) => l.id).join(',')}
+        contactId={id}
+      />
 
       <Section title="מטא-דאטה">
         <dl className="space-y-1 text-[13px]">

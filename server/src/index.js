@@ -32,6 +32,7 @@ import organizationsRouter from './routes/organizations.js';
 import organizationTypesRouter from './routes/organizationTypes.js';
 import organizationSubtypesRouter from './routes/organizationSubtypes.js';
 import contactsRouter from './routes/contacts.js';
+import reservationLinksRouter from './routes/reservationLinks.js';
 import searchRouter from './routes/search.js';
 import dealsRouter from './routes/deals.js';
 import quoteDocumentsRouter from './routes/quoteDocuments.js';
@@ -291,6 +292,10 @@ app.use('/api/organizations', requireAdminAuth, organizationsRouter);
 app.use('/api/organization-types', requireAdminAuth, organizationTypesRouter);
 app.use('/api/organization-subtypes', requireAdminAuth, organizationSubtypesRouter);
 app.use('/api/contacts', requireAdminAuth, contactsRouter);
+// Travel Agency Reservations — permanent per-agent link management, nested
+// under /api/contacts/:contactId/reservation-link (mounted after the CRUD
+// router; the single-segment '/:id' routes there never capture these paths).
+app.use('/api/contacts', requireAdminAuth, reservationLinksRouter);
 
 // Global header search — THE one cross-entity search service (deals, contacts,
 // organizations, tasks, timeline). Admin-only.
