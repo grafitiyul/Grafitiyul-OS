@@ -506,20 +506,36 @@ visible) exceeds ~16ms render, revisit. Not before.
 
 Each is independently shippable and independently deployable (push to `main` = deploy).
 
-| Slice | Content |
-|---|---|
-| **0 — Model** | Owner-value audit (blocking gate, §5.5), `Task.owner` FK `Restrict`, `AdminUser.displayName`, indexes. Migration only, no behavior change. Includes a priority semantic-sort test proving §4.4 is achievable **without** `priorityRank` — no query layer, no field. |
-| **1 — Read API** | Shared window resolver (`server/src/tasks/windows.js`, unit-tested with injected clock) + `GET /api/tasks` + `GET /api/tasks/counts`. Sortable whitelist enforced from §4.1. No UI. |
-| **2 — Write unification** | All task mutation into `taskService`; `PATCH /api/tasks/:id`; deal-scoped routes become thin callers. No behavior change — the Deal tab keeps working identically. |
-| **3 — Table infra** | Sticky header/leading columns, multi-sort, selection, keyboard nav, editable-cell contract, persisted sort. All seven existing consumers keep working. |
-| **4 — The screen** | First CRM tab, time chips, type chips, grid, filter state in URL + localStorage, inline editing, mobile cards. |
-| **5 — Drawer** | Move to `common/`, prev/next, keyboard, debounced switch, dirty guard. |
-| **6 — Bulk** | `POST /api/tasks/bulk`, chunked, WhatsApp guards, partial-success UI, cancel-not-delete. |
-| **7 — Saved views** | `SavedView` model + CRUD, personal/shared/system, seeded system views, last-selected restore. |
-| **8 — Realtime** | Extract shared SSE core, migrate Payroll, add Tasks stream, row diff animations. |
+Slice numbering below is the owner's, fixed on 2026-07-16, and is authoritative.
+Two units of work identified during the audit are **folded in** rather than given
+their own numbers — they are prerequisites, not features:
 
-Slices 0–2 are server-only and carry the migration risk. Slice 3 touches seven live
-screens and is the highest-regression slice — it ships alone.
+- **Table-infra extension** (sticky header/columns, multi-sort, selection,
+  keyboard nav, editable cells, persisted sort) → inside Slice 2. It touches all
+  seven existing `useTableColumns` consumers and is the highest-regression work in
+  the project; it ships as its own commit *within* Slice 2.
+- **Write-path unification** (all task mutation behind `taskService`) → inside
+  Slice 4, where bulk actions first require it.
+
+**Slice 2 inline editing deliberately reuses the existing
+`PATCH /api/deals/:dealId/tasks/:taskId`.** Every grid row already carries its
+`dealId`, so no new write route is needed and the project keeps exactly one task
+write path until Slice 4 consolidates it. Adding `PATCH /api/tasks/:id` earlier
+would create a second write path for no gain.
+
+| Slice | Content | Status |
+|---|---|---|
+| **0 — Model** | Owner-value audit (blocking gate, §5.5), `Task.owner` FK `Restrict`, `AdminUser.displayName`, indexes, priority semantic-sort proven **without** `priorityRank`. | **shipped** — see §10a |
+| **1 — Read API + counts** | Shared window resolver (`server/src/tasks/windows.js`, unit-tested with injected clock) + `GET /api/tasks` + `GET /api/tasks/counts`. Sortable whitelist enforced from §4.1. Bounded hydration, no N+1. No UI. | |
+| **2 — Workspace UI** | First CRM tab + default CRM route, time chips, type chips, filters, grid on the extended table infra, conditional formatting, inline editing, URL + persisted state. | |
+| **3 — Shared Deal drawer** | Move to `common/`, prev/next over the filtered order, keyboard, debounced switch, dirty guard, position indicator. Email + WhatsApp unchanged. | |
+| **4 — Bulk actions** | `POST /api/tasks/bulk`, chunked, WhatsApp guards, partial-failure report, cancel-never-delete. Includes write-path unification. | |
+| **5 — Saved views** | `SavedView` model + CRUD, personal/shared/system, seeded system views, last-selected restore, edit permissions. | |
+| **6 — Realtime** | Extract shared SSE core, migrate Payroll without regression, Tasks as second consumer, row diff animations. | |
+| **7 — Mobile** | Card renderer on the same canonical filter/query/state model. No separate mobile business logic. | |
+
+Slice 1 is server-only. Slice 2 carries the table-infra regression risk. Slice 6
+touches live Payroll realtime and must not regress it.
 
 ---
 
@@ -535,6 +551,50 @@ screens and is the highest-regression slice — it ships alone.
 One **blocking gate** remains inside Slice 0, which is a verification step rather than an
 open design question: the owner-value audit in §5.5. If it finds non-resolving values,
 Slice 0 stops and reports.
+
+---
+
+## 10a. Delivery record
+
+### Slice 0 — shipped 2026-07-15, split across two commits (accepted; do not "fix")
+
+Slice 0 is represented by **two** commits rather than one. The owner decided on
+2026-07-16 to leave them exactly as they are and not rewrite pushed history.
+
+| Commit | Contents |
+|---|---|
+| `d5027c0` | *"feat(migration): Name Cleanup + Exceptional Records…"* — a concurrent migration session ran `git add .` and pushed while Slice 0 was mid-implementation, sweeping its files (`schema.prisma`, `src/tasks/priority.js`, `src/admin/displayName.js`, `src/routes/dealTasks.js`, both test files, `scripts/_tasks-owner-gate.mjs`) into an unrelated commit. |
+| `7c0307a` | *"feat(crm-tasks): Slice 0 migration…"* — the migration SQL, which the sweep had left untracked. Without it, main declared an FK and a column that did not exist in the database (latent only: nothing queried them yet). This commit closed that drift forward. |
+
+**The deployed and verified state is authoritative, not the commit shape.**
+Verified against production after deploy: FK `RESTRICT` ✓ · owner relation joins ✓ ·
+`displayName` → `username` fallback ✓ · Restrict blocks deleting an owner who still
+has tasks (P2003, nothing deleted) ✓ · 7/7 tasks join their owner ✓ · 1389/1389
+tests ✓ · production 200 ✓. The blocking pre-flight gate passed *before* the FK was
+written (7 tasks, 1 distinct owner, 0 null/empty, 0 orphaned).
+
+Do not attempt to manufacture a cleaner history for Slice 0.
+
+### Isolation for Slices 1–7
+
+Built on branch **`feature/crm-tasks-workspace`** in a dedicated worktree
+(`C:/Projects/gos-crm-tasks`), leaving the primary worktree to the active
+migration session. `main` may advance concurrently — that is expected and is not
+a stop condition. Before every merge: fetch `origin/main`, list files changed on
+main since the slice base, list files changed by the slice, and report the
+overlap. **Never `git add .`** — stage only the current slice's explicit files.
+
+### Unrelated: production migration-ledger drift (NOT part of this project)
+
+Production's migration ledger contains **`20260626160000_location_meeting_point`**,
+which does not exist in `prisma/migrations/` in the repo. `prisma migrate deploy`
+ignores applied migrations it does not know about, so this is not blocking and has
+not affected any deploy.
+
+**Flagged only — do not fix or remove it as part of the Tasks project.** It belongs
+to a separate migration-ledger audit, which should first establish how a migration
+came to be applied outside the repo before deciding whether to reconstruct the file
+or record it as intentionally retired.
 
 ---
 
