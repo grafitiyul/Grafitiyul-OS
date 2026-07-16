@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
+import { hasDirtyForms } from '../../../lib/dirtyForms.js';
+import DealDrawer from '../../common/DealDrawer.jsx';
 import { dealPath } from '../../deals/config.js';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell, COL_SEP } from '../../common/tableColumns.jsx';
 import { toggleSortKey, sortFromParam } from '../../common/tableColumnsCore.js';
@@ -84,6 +86,11 @@ export default function TasksWorkspace() {
   const [cursor, setCursor] = useState(0);
   const [editing, setEditing] = useState(null); // { rowId, colKey }
   const [savingId, setSavingId] = useState(null);
+  // The drawer follows a ROW index, not a deal id: consecutive rows may share a
+  // Deal (two tasks on one deal), and prev/next walks the filtered ROW order —
+  // deduping would make the position indicator lie.
+  const [drawerIdx, setDrawerIdx] = useState(null);
+  const [drawerDealId, setDrawerDealId] = useState(null);
 
   const cols = useTableColumns(COLUMNS_KEY, TASK_COLUMNS);
   const gridRef = useRef(null);
@@ -161,6 +168,35 @@ export default function TasksWorkspace() {
   const pages = Math.max(Math.ceil((data.total || 0) / PAGE_SIZE), 1);
   const statusLock = filters ? statusLockedBy(filters) : null;
 
+  // ── drawer ──
+  // DealDetail is a ~1000-line workspace and remounts per deal (key={dealId}),
+  // so holding an arrow key would fire one full load per keypress. Debounce the
+  // target: arrowing THROUGH rows is free, and only where you land loads.
+  useEffect(() => {
+    if (drawerIdx == null) { setDrawerDealId(null); return; }
+    const target = rows[drawerIdx]?.deal?.id ?? null;
+    if (target === drawerDealId) return;
+    const t = setTimeout(() => setDrawerDealId(target), 150);
+    return () => clearTimeout(t);
+  }, [drawerIdx, rows, drawerDealId]);
+
+  const stepDrawer = useCallback((delta) => {
+    setDrawerIdx((i) => {
+      if (i == null) return i;
+      // Same guard the inboxes use: never abandon a half-typed form.
+      if (hasDirtyForms()) return i;
+      const next = i + delta;
+      if (next < 0 || next >= rows.length) return i;
+      setCursor(next);
+      return next;
+    });
+  }, [rows.length]);
+
+  function openDrawer(idx) {
+    setDrawerIdx(idx);
+    setCursor(idx);
+  }
+
   const patch = (next) => { setFilters(next); setPage(1); setSelected(new Set()); };
 
   function onSort(key, opts) {
@@ -217,13 +253,16 @@ export default function TasksWorkspace() {
   useEffect(() => {
     function onKey(e) {
       if (editing) return; // the cell editor owns the keyboard while open
+      // While the drawer is open it owns the keyboard (ESC + PgUp/PgDn) — the
+      // same deferral both inboxes use.
+      if (drawerIdx != null) return;
       const tag = e.target.tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
       const row = rows[cursor];
       if (e.key === 'ArrowDown') { e.preventDefault(); setCursor((c) => Math.min(c + 1, rows.length - 1)); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); setCursor((c) => Math.max(c - 1, 0)); }
       else if (e.key === ' ' && row) { e.preventDefault(); toggleRow(row.id, cursor, e.shiftKey); }
-      else if (e.key === 'Enter' && row) { e.preventDefault(); navigate(dealPath(row.deal)); }
+      else if (e.key === 'Enter' && row) { e.preventDefault(); openDrawer(cursor); }
       else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
         e.preventDefault();
         setSelected(allVisibleSelected ? new Set() : new Set(rows.map((r) => r.id)));
@@ -366,8 +405,14 @@ export default function TasksWorkspace() {
 
       {error && <div className="border-b border-red-200 bg-red-50 px-3 py-1.5 text-[12px] text-red-700">{error}</div>}
 
-      {/* ── the grid ── */}
-      <div ref={gridRef} className="relative min-h-0 flex-1 overflow-auto">
+      {/* ── the grid ──
+          The OUTER div is the positioning context and does NOT scroll; the
+          inner div scrolls. The drawer is `absolute inset-0` against the outer
+          one, so it covers exactly the table area and stays put while the table
+          behind it keeps its scroll position. (Putting it inside the scroller
+          would make it scroll away with the rows.) */}
+      <div className="relative min-h-0 flex-1">
+      <div ref={gridRef} className="h-full overflow-auto">
         <table className="w-full border-collapse bg-white text-[13px]">
           <thead className="sticky top-0 z-20 bg-gray-50/95 backdrop-blur">
             <SortableHeaderRow
@@ -398,7 +443,9 @@ export default function TasksWorkspace() {
               <tr
                 key={row.id}
                 data-rowidx={idx}
-                onClick={() => setCursor(idx)}
+                // Clicking anywhere that is not a control opens the Deal drawer
+                // — the table stays visible, the operator keeps their place.
+                onClick={() => openDrawer(idx)}
                 className={`border-b border-gray-100 transition-colors ${rowTone(row, today)} ${
                   idx === cursor ? 'ring-1 ring-inset ring-blue-400' : ''
                 } ${selected.has(row.id) ? 'bg-blue-50/60' : 'hover:bg-gray-50'}`}
@@ -441,7 +488,7 @@ export default function TasksWorkspace() {
                     )}
                     <button
                       type="button"
-                      title="פתיחת הדיל"
+                      title="פתיחת הדיל בעמוד מלא"
                       onClick={() => navigate(dealPath(row.deal))}
                       className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
                     >
@@ -460,6 +507,21 @@ export default function TasksWorkspace() {
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* ── the Deal drawer ──
+          Prev/Next walk the current filtered ROW order. The position counts
+          rows, not deals: two tasks can share one deal, and deduping would make
+          the indicator lie about where you are in the queue. */}
+      {drawerIdx != null && drawerDealId && (
+        <DealDrawer
+          dealId={drawerDealId}
+          onClose={() => setDrawerIdx(null)}
+          onPrev={drawerIdx > 0 ? () => stepDrawer(-1) : undefined}
+          onNext={drawerIdx < rows.length - 1 ? () => stepDrawer(1) : undefined}
+          position={`${drawerIdx + 1} מתוך ${rows.length}`}
+        />
+      )}
       </div>
 
       {/* ── selection bar: inline, never a modal ── */}

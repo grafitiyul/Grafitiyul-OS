@@ -5,7 +5,7 @@ import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import ChatThread from './ChatThread.jsx';
 import ChatListRow from './ChatListRow.jsx';
 import PhoneFlag from './PhoneFlag.jsx';
-import DealDrawer from './DealDrawer.jsx';
+import DealDrawer from '../common/DealDrawer.jsx';
 import { hasDirtyForms } from '../../lib/dirtyForms.js';
 import { ensureSeen, isUnread, markSeen, markUnread, readManualUnread, readSeen } from './seenStore.js';
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
-import DealDrawer from '../whatsapp/DealDrawer.jsx';
+import DealDrawer from '../common/DealDrawer.jsx';
 import EmailThreadView from './EmailThreadView.jsx';
 import EmailComposer from './EmailComposer.jsx';
 import { hasDirtyForms } from '../../lib/dirtyForms.js';
