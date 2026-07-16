@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
+import { OrgPicker, resolveOrganization } from '../common/OrgPicker.jsx';
 import BackButton from '../../common/BackButton.jsx';
 import ChannelSection from '../common/ChannelSection.jsx';
 import PhoneDisplay from '../../common/PhoneDisplay.jsx';
@@ -24,7 +25,6 @@ export default function ContactDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [contact, setContact] = useState(null);
-  const [orgs, setOrgs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [form, setForm] = useState(null);
@@ -35,12 +35,9 @@ export default function ContactDetail() {
     setLoading(true);
     setError(null);
     try {
-      const [c, o] = await Promise.all([
-        api.contacts.get(id),
-        api.organizations.list(),
-      ]);
+      // The org picker searches server-side — no catalog preload needed here.
+      const c = await api.contacts.get(id);
       setContact(c);
-      setOrgs(o);
       const init = {
         firstNameHe: c.firstNameHe,
         lastNameHe: c.lastNameHe,
@@ -163,7 +160,7 @@ export default function ContactDetail() {
         onChange={refresh}
       />
 
-      <MembershipsSection contact={contact} orgs={orgs} onChange={refresh} />
+      <MembershipsSection contact={contact} onChange={refresh} />
 
       {/* Remounts when memberships change so eligibility re-evaluates live. */}
       <ReservationLinkSection
@@ -210,49 +207,85 @@ function Row({ label, value }) {
   );
 }
 
-function MembershipsSection({ contact, orgs, onChange }) {
-  const [orgId, setOrgId] = useState('');
+// Contact ↔ Organization memberships. The relationship is the JOIN model
+// ContactOrganization: a contact may belong to MANY organizations, each link
+// optionally scoped to a unit. Assignment affects FUTURE context (new deals'
+// defaults, travel-agency link eligibility) — it never rewrites the
+// organization on existing Deals (Deal.organizationId is stamped at deal
+// creation and owned by the deal).
+function MembershipsSection({ contact, onChange }) {
+  const [types, setTypes] = useState([]);
+  const [resolution, setResolution] = useState(null);
+  const [units, setUnits] = useState([]);
   const [unitId, setUnitId] = useState('');
+  const [unitCleared, setUnitCleared] = useState(false);
   const [role, setRole] = useState('');
   const [busy, setBusy] = useState(false);
+  const [success, setSuccess] = useState(null);
+  const [formError, setFormError] = useState(null);
+  // The canonical picker is uncontrolled — bump the key to reset after a save.
+  const [pickerKey, setPickerKey] = useState(0);
+  const prevOrgRef = useRef('');
 
-  const selectedOrg = orgs.find((o) => o.id === orgId);
-  // The list endpoint doesn't include units; fetch on demand when an org is
-  // chosen would be ideal, but to keep this simple we only offer units we
-  // already know about. Units are optional anyway (link can be org-level).
-  const [units, setUnits] = useState([]);
+  useEffect(() => {
+    api.organizationTypes.list().then(setTypes).catch(() => setTypes([]));
+  }, []);
 
-  async function chooseOrg(value) {
-    setOrgId(value);
+  // Units follow the SELECTED org (existing orgs only — a new org has none).
+  // Changing the org drops an incompatible unit and says so.
+  const orgId = resolution?.existingOrgId || '';
+  useEffect(() => {
+    const orgChanged = prevOrgRef.current && prevOrgRef.current !== orgId;
+    prevOrgRef.current = orgId;
+    if (orgChanged && unitId) setUnitCleared(true);
     setUnitId('');
     setUnits([]);
-    if (value) {
-      try {
-        const full = await api.organizations.get(value);
-        setUnits(full.units || []);
-      } catch {
-        setUnits([]);
-      }
-    }
-  }
+    if (!orgId) return undefined;
+    let live = true;
+    api.organizations
+      .get(orgId)
+      .then((full) => { if (live) setUnits(full.units || []); })
+      .catch(() => { if (live) setUnits([]); });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId]);
+
+  const canSubmit =
+    resolution && !resolution.invalid && (resolution.isExisting || resolution.isNew);
 
   async function add(e) {
     e.preventDefault();
-    if (!orgId) return;
+    if (!canSubmit || busy) return;
     setBusy(true);
+    setFormError(null);
     try {
+      // resolveOrganization = the canonical persistence path (creates an
+      // inline-typed NEW org via the same API the dialog uses).
+      const { organizationId } = await resolveOrganization(resolution);
+      if (!organizationId) return;
       await api.contacts.addOrganization(contact.id, {
-        organizationId: orgId,
+        organizationId,
         organizationUnitId: unitId || null,
         role: role.trim() || null,
       });
-      setOrgId('');
+      setSuccess('הארגון שויך לאיש הקשר ✓');
+      setTimeout(() => setSuccess(null), 3000);
+      setPickerKey((k) => k + 1);
+      setResolution(null);
       setUnitId('');
       setRole('');
-      setUnits([]);
+      setUnitCleared(false);
+      prevOrgRef.current = '';
       await onChange();
-    } catch (e) {
-      alert('שגיאה: ' + e.message);
+    } catch (err) {
+      const code = err?.payload?.error;
+      setFormError(
+        code === 'membership_exists'
+          ? 'איש הקשר כבר משויך לארגון הזה.'
+          : code === 'unit_not_in_organization'
+            ? 'היחידה שנבחרה אינה שייכת לארגון.'
+            : 'שגיאה: ' + err.message,
+      );
     } finally {
       setBusy(false);
     }
@@ -271,6 +304,7 @@ function MembershipsSection({ contact, orgs, onChange }) {
     <Section title="שיוך לארגונים">
       <div className="text-[12px] text-gray-500 mb-2">
         איש קשר יכול להיות משויך למספר ארגונים, ואופציונלית ליחידה ספציפית.
+        השיוך משפיע על הקשרים עתידיים (וזכאות לקישור הזמנות) — לא על דילים קיימים.
       </div>
       {contact.orgLinks?.length ? (
         <ul className="divide-y divide-gray-100 mb-3">
@@ -299,55 +333,112 @@ function MembershipsSection({ contact, orgs, onChange }) {
       ) : (
         <div className="text-sm text-gray-400 mb-3">לא משויך לארגון.</div>
       )}
-      <form onSubmit={add} className="flex flex-wrap items-end gap-2">
-        <div className="flex flex-col gap-1">
-          <label className="text-[11px] text-gray-500">ארגון</label>
-          <select
-            value={orgId}
-            onChange={(e) => chooseOrg(e.target.value)}
-            className="border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white w-52"
+
+      <form onSubmit={add} className="space-y-3">
+        {/* THE canonical org combobox: server-side search + "+ צור ארגון חדש". */}
+        <OrgPicker
+          key={pickerKey}
+          serverSearch
+          allowCreateDialog
+          types={types}
+          onResolve={setResolution}
+        />
+
+        {orgId && units.length > 0 && (
+          <UnitPicker units={units} value={unitId} onChange={setUnitId} />
+        )}
+        {unitCleared && (
+          <div className="rounded-md bg-amber-50 px-3 py-1.5 text-[12px] text-amber-800">
+            היחידה שנבחרה נוקתה — היא אינה שייכת לארגון החדש.
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] text-gray-500">תפקיד (אופציונלי)</label>
+            <input
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              className="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-40"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={busy || !canSubmit}
+            className="bg-gray-800 text-white text-sm rounded-md px-4 py-1.5 disabled:opacity-50"
           >
-            <option value="">— בחר ארגון —</option>
-            {orgs.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.name}
-              </option>
-            ))}
-          </select>
+            {busy ? 'משייך…' : 'שייך'}
+          </button>
+          {success && <span className="text-[13px] font-medium text-emerald-700">{success}</span>}
+          {formError && <span className="text-[13px] text-red-600">{formError}</span>}
         </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-[11px] text-gray-500">יחידה (אופציונלי)</label>
-          <select
-            value={unitId}
-            onChange={(e) => setUnitId(e.target.value)}
-            disabled={!selectedOrg || units.length === 0}
-            className="border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white w-48 disabled:bg-gray-100"
-          >
-            <option value="">— ללא —</option>
-            {units.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-[11px] text-gray-500">תפקיד (אופציונלי)</label>
-          <input
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            className="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-40"
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={busy || !orgId}
-          className="bg-gray-800 text-white text-sm rounded-md px-4 py-1.5 disabled:opacity-50"
-        >
-          שייך
-        </button>
       </form>
     </Section>
+  );
+}
+
+// Searchable unit single-select — shown only when the selected organization
+// HAS units; a foreign unit is impossible by construction (options come from
+// the selected org) and rejected server-side regardless.
+function UnitPicker({ units, value, onChange }) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const selected = units.find((u) => u.id === value) || null;
+  const q = query.trim().toLowerCase();
+  const filtered = q ? units.filter((u) => (u.name || '').toLowerCase().includes(q)) : units;
+
+  return (
+    <div className="relative max-w-xs">
+      <label className="flex flex-col gap-1">
+        <span className="text-[11px] text-gray-500">יחידה (אופציונלי)</span>
+        <span className="relative block">
+          <input
+            value={open ? query : selected?.name || ''}
+            onChange={(e) => setQuery(e.target.value)}
+            onFocus={() => { setOpen(true); setQuery(''); }}
+            onBlur={() => setTimeout(() => setOpen(false), 120)}
+            placeholder="חיפוש יחידה…"
+            autoComplete="off"
+            className={
+              'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400' +
+              (selected ? ' pe-8' : '')
+            }
+          />
+          {selected && !open && (
+            <button
+              type="button"
+              onClick={() => onChange('')}
+              title="נקה יחידה"
+              className="absolute end-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+            >
+              ✕
+            </button>
+          )}
+        </span>
+      </label>
+      {open && (
+        <ul className="absolute z-10 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg max-h-44 overflow-y-auto">
+          {filtered.length === 0 ? (
+            <li className="px-3 py-2 text-[12px] text-gray-400">לא נמצאו יחידות תואמות.</li>
+          ) : (
+            filtered.map((u) => (
+              <li key={u.id}>
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => { onChange(u.id); setOpen(false); }}
+                  className={`block w-full text-right px-3 py-2 text-sm hover:bg-blue-50 ${
+                    u.id === value ? 'bg-blue-50 font-medium' : ''
+                  }`}
+                >
+                  {u.name}
+                </button>
+              </li>
+            ))
+          )}
+        </ul>
+      )}
+    </div>
   );
 }
 

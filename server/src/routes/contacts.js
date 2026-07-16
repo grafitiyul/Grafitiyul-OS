@@ -351,12 +351,24 @@ router.post(
     const organizationId = String(req.body?.organizationId || '').trim();
     if (!organizationId)
       return res.status(400).json({ error: 'organizationId_required' });
+    // A unit must belong to the linked organization — a stale/foreign unit id
+    // is rejected, never silently attached.
+    const organizationUnitId = req.body?.organizationUnitId || null;
+    if (organizationUnitId) {
+      const unit = await prisma.organizationUnit.findUnique({
+        where: { id: organizationUnitId },
+        select: { organizationId: true },
+      });
+      if (!unit || unit.organizationId !== organizationId) {
+        return res.status(422).json({ error: 'unit_not_in_organization' });
+      }
+    }
     try {
       await prisma.contactOrganization.create({
         data: {
           contactId: req.params.id,
           organizationId,
-          organizationUnitId: req.body?.organizationUnitId || null,
+          organizationUnitId,
           role: req.body?.role ? String(req.body.role).trim() : null,
           isPrimary: !!req.body?.isPrimary,
         },
@@ -378,8 +390,19 @@ router.put(
     });
     if (!link) return res.status(404).json({ error: 'not_found' });
     const data = {};
-    if (req.body?.organizationUnitId !== undefined)
-      data.organizationUnitId = req.body.organizationUnitId || null;
+    if (req.body?.organizationUnitId !== undefined) {
+      const unitId = req.body.organizationUnitId || null;
+      if (unitId) {
+        const unit = await prisma.organizationUnit.findUnique({
+          where: { id: unitId },
+          select: { organizationId: true },
+        });
+        if (!unit || unit.organizationId !== link.organizationId) {
+          return res.status(422).json({ error: 'unit_not_in_organization' });
+        }
+      }
+      data.organizationUnitId = unitId;
+    }
     if (req.body?.role !== undefined)
       data.role = req.body.role ? String(req.body.role).trim() : null;
     if (req.body?.isPrimary !== undefined) data.isPrimary = !!req.body.isPrimary;

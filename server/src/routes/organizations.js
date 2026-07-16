@@ -31,9 +31,19 @@ function pickFinance(body, data) {
 
 router.get(
   '/',
-  handle(async (_req, res) => {
+  handle(async (req, res) => {
+    // Optional type-ahead search (`?q=`): case-insensitive partial name match,
+    // capped result set — pickers must never pull thousands of rows into a
+    // client select. No `q` keeps the full alphabetical list (existing
+    // consumers: settings/admin screens with modest catalogs).
+    const q = String(req.query.q || '').trim();
+    const take = q
+      ? Math.min(50, Math.max(1, Number(req.query.take) || 20))
+      : undefined;
     const orgs = await prisma.organization.findMany({
+      where: q ? { name: { contains: q, mode: 'insensitive' } } : undefined,
       orderBy: { name: 'asc' },
+      take,
       include: {
         organizationType: { select: { id: true, label: true } },
         _count: { select: { units: true, contactLinks: true } },

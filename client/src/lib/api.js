@@ -313,7 +313,12 @@ export const api = {
   },
   // ── CRM foundation (Phase 1) — reference data only ───────────────
   organizations: {
-    list: () => request('/api/organizations'),
+    // list() = full catalog (settings screens); list({ q }) = capped
+    // server-side type-ahead search for pickers.
+    list: (params) =>
+      request(
+        `/api/organizations${params?.q ? `?q=${encodeURIComponent(params.q)}` : ''}`,
+      ),
     get: (id) => request(`/api/organizations/${id}`),
     create: (data) =>
       request('/api/organizations', {
