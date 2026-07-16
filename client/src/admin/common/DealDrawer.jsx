@@ -21,12 +21,18 @@ import AlertDialog from './AlertDialog.jsx';
 // full page canonicalises the address bar to the מספר הזמנה form on load.
 //
 // PREV/NEXT (optional): pass onPrev/onNext to walk the CALLER's current list
-// order without closing the drawer, plus `position` ("3 מתוך 47") for context.
+// order without closing the drawer, plus `position` ("3 / 47") for context.
 // The caller owns the order and the dirty-form guard; this component only
-// renders the controls and binds the keys. Callers that pass nothing (the two
-// inboxes) behave exactly as before.
+// renders the controls and binds the keys (PgUp/PgDn and Alt+↑/↓). Callers
+// that pass nothing (the two inboxes) behave exactly as before.
+//
+// STARTOFFSET (optional, px): pushes the drawer's inline-START edge (right in
+// RTL) away from the container edge, leaving that strip of the underlying list
+// visible — record-navigation UX: the queue stays in sight while the detail is
+// open. Logical property, so RTL/LTR both work; 0 (default) = the original
+// full-pane cover, which is what the inboxes keep.
 
-export default function DealDrawer({ dealId, onClose, onPrev, onNext, position }) {
+export default function DealDrawer({ dealId, onClose, onPrev, onNext, position, startOffset = 0 }) {
   const [entered, setEntered] = useState(false);
   const [copied, setCopied] = useState(false);
   const [fallbackUrl, setFallbackUrl] = useState(null);
@@ -41,12 +47,15 @@ export default function DealDrawer({ dealId, onClose, onPrev, onNext, position }
     function onKey(e) {
       const nav = navRef.current;
       if (e.key === 'Escape') { nav.onClose(); return; }
-      // PgUp/PgDn walk the queue — but never while a field has focus, so
-      // paging inside a long note still works.
+      // PgUp/PgDn and Alt+↑/↓ walk the queue — but never while a field has
+      // focus: paging inside a long note must still page it, and Alt+↓ opens a
+      // native <select>. Text editing is never interfered with.
       const tag = e.target.tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
-      if (e.key === 'PageUp' && nav.onPrev) { e.preventDefault(); nav.onPrev(); }
-      else if (e.key === 'PageDown' && nav.onNext) { e.preventDefault(); nav.onNext(); }
+      const prevKey = e.key === 'PageUp' || (e.altKey && e.key === 'ArrowUp');
+      const nextKey = e.key === 'PageDown' || (e.altKey && e.key === 'ArrowDown');
+      if (prevKey && nav.onPrev) { e.preventDefault(); nav.onPrev(); }
+      else if (nextKey && nav.onNext) { e.preventDefault(); nav.onNext(); }
     }
     window.addEventListener('keydown', onKey);
     return () => {
@@ -76,7 +85,10 @@ export default function DealDrawer({ dealId, onClose, onPrev, onNext, position }
     <div
       className={`absolute inset-0 z-[60] flex flex-col bg-gray-50 shadow-2xl transition-transform duration-300 ${
         entered ? 'translate-x-0' : '-translate-x-full'
-      }`}
+      } ${startOffset > 0 ? 'border-s border-gray-300' : ''}`}
+      // Inline style beats the class's `inset: 0` for this one edge; logical
+      // property, so the preserved strip is on the correct side in RTL and LTR.
+      style={startOffset > 0 ? { insetInlineStart: `${startOffset}px` } : undefined}
     >
       <div className="flex shrink-0 items-center gap-3 border-b border-gray-200 bg-white px-4 py-2">
         <button

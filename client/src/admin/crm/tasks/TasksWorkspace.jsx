@@ -264,6 +264,39 @@ export default function TasksWorkspace() {
     return () => clearTimeout(t);
   }, [drawerIdx, rows, drawerDealId]);
 
+  // ── drawer boundary ──
+  // The drawer leaves the LEADING table columns visible (Pipedrive-style record
+  // navigation: the queue stays in sight). The offset is MEASURED from the real
+  // rendered header cells — never hardcoded — so resizing, hiding or reordering
+  // columns keeps the boundary correct, fluid and fixed layouts alike.
+  //   desktop (lg+): checkbox + first 2 data columns
+  //   tablet  (md+): checkbox + 1 compact data column
+  //   mobile:        0 — full-screen detail is the intended card behaviour
+  // Capped at 45% of the grid so the drawer itself stays usable. The drawer is
+  // an absolute overlay, so opening/closing never re-lays-out the table.
+  const [drawerStartPx, setDrawerStartPx] = useState(0);
+  useEffect(() => {
+    if (drawerIdx == null) return undefined;
+    const measure = () => {
+      const grid = gridRef.current;
+      if (!grid || !window.matchMedia('(min-width: 768px)').matches) {
+        setDrawerStartPx(0);
+        return;
+      }
+      const keepData = window.matchMedia('(min-width: 1024px)').matches ? 2 : 1;
+      const headerRow = grid.querySelector('thead tr');
+      if (!headerRow) { setDrawerStartPx(0); return; }
+      // Leading utility cell (the checkbox) + the first N *visible* data cells,
+      // whatever they currently are and however wide they were dragged.
+      const cells = [...headerRow.children].slice(0, 1 + keepData);
+      const width = cells.reduce((sum, th) => sum + th.offsetWidth, 0);
+      setDrawerStartPx(Math.min(width, Math.floor(grid.clientWidth * 0.45)));
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [drawerIdx, cols.widths, cols.visibleCols]);
+
   const stepDrawer = useCallback((delta) => {
     setDrawerIdx((i) => {
       if (i == null) return i;
@@ -971,7 +1004,8 @@ export default function TasksWorkspace() {
           onClose={() => setDrawerIdx(null)}
           onPrev={drawerIdx > 0 ? () => stepDrawer(-1) : undefined}
           onNext={drawerIdx < rows.length - 1 ? () => stepDrawer(1) : undefined}
-          position={`${drawerIdx + 1} מתוך ${rows.length}`}
+          position={`${drawerIdx + 1} / ${rows.length}`}
+          startOffset={drawerStartPx}
         />
       )}
       </div>

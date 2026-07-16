@@ -71,15 +71,25 @@ export function statusLabel(s) {
  * order, at what width is owned by useTableColumns (the shared infra).
  */
 export const TASK_COLUMNS = [
-  { key: 'taskType', label: 'סוג', def: true, minWidth: 90, render: (r) => (
-    <span className="inline-flex items-center gap-1.5">
-      <TaskIcon name={r.icon} channel={r.channel} size={14} />
-      <span className="truncate">{r.taskType?.nameHe || '—'}</span>
-      {/* A WhatsApp task's type is locked (bound to its scheduled send) — the
-          lock is VISIBLE, not a silent no-op; the cell's tooltip explains. */}
-      {r.channel === 'whatsapp' && <span aria-hidden className="text-[10px] opacity-60">🔒</span>}
-    </span>
-  ) },
+  // ICON ONLY (owner decision): the type name lives in the tooltip and the
+  // aria-label, never in the cell — the column stays narrow. Rendering is the
+  // canonical TaskIcon (one WhatsApp mark across GOS); the raw string helper is
+  // for text-only contexts and must not appear here.
+  { key: 'taskType', label: 'סוג', def: true, align: 'center', minWidth: 44, maxWidth: 72, render: (r) => {
+    const name = r.taskType?.nameHe || 'סוג משימה';
+    return (
+      <span
+        className="inline-flex items-center justify-center gap-0.5"
+        title={r.channel === 'whatsapp' ? `${name} — נעול (קשור להודעה מתוזמנת)` : name}
+        aria-label={name}
+        role="img"
+      >
+        <TaskIcon name={r.icon} channel={r.channel} size={16} />
+        {/* The WhatsApp type lock stays VISIBLE — never a silent no-op. */}
+        {r.channel === 'whatsapp' && <span aria-hidden className="text-[9px] opacity-60">🔒</span>}
+      </span>
+    );
+  } },
   { key: 'title', label: 'משימה', def: true, minWidth: 180, render: (r) => (
     <span className="block truncate font-medium text-gray-900" title={r.title}>{r.title}</span>
   ) },
@@ -135,8 +145,20 @@ export const TASK_COLUMNS = [
 /**
  * Conditional row formatting. Overdue is the one an operator must see without
  * reading a date; terminal rows recede.
+ *
+ * COMPLETED rows additionally get ONE row-level strikethrough (owner decision):
+ * `line-through` on the row propagates to every cell's text, and interactive
+ * controls (buttons / selects / inputs — the checkbox, ✓, inline editors) opt
+ * back out via descendant resets so they stay readable and clickable. 60%
+ * opacity keeps the data legible; completed tasks remain editable for record
+ * corrections. Other terminal statuses (cancelled/sent/not_sent) keep the
+ * existing recede-only treatment — they were never "done", so they don't earn
+ * the done-mark.
  */
 export function rowTone(row, today) {
+  if (row.status === 'completed') {
+    return 'opacity-60 line-through decoration-gray-400/80 [&_button]:no-underline [&_select]:no-underline [&_input]:no-underline';
+  }
   if (row.status !== 'open') return 'opacity-55';
   const due = dueDateOf(row);
   if (due && today && due < today) return 'bg-red-50/40';
