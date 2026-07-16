@@ -3,7 +3,7 @@ import { useOutletContext } from 'react-router-dom';
 import { migrationApi } from '../api.js';
 import { num, dateTime } from '../components/format.js';
 import SourceRecord from '../components/SourceRecord.jsx';
-import { nameDraftFromProposal, resolveNameResult } from '../components/namePreview.js';
+import { nameDraftFromProposal, resolveNameResult, COUNTRIES } from '../components/namePreview.js';
 
 const SECTIONS = [
   { key: 'critical', emoji: '🔥', label: 'קריטי לפני ייבוא', cls: 'bg-red-50 border-red-200 text-red-800' },
@@ -46,7 +46,18 @@ export default function NameCleanupTab() {
   useEffect(() => { load(); }, [load]);
 
   const selected = data?.decisions?.find((d) => d.id === openId) || null;
-  const result = useMemo(() => (selected && draft ? resolveNameResult(selected.proposal, draft) : null), [selected, draft]);
+  // The mirror resolves with the same context the server will use on save: the
+  // person's identity correction and the shared claimed-phone index.
+  const result = useMemo(
+    () => (selected && draft
+      ? resolveNameResult(selected.proposal, draft, {
+          identityEdit: selected.identityEdit,
+          claimedPhones: data?.claimedPhones || {},
+          selfLegacyId: selected.proposal.legacyId,
+        })
+      : null),
+    [selected, draft, data],
+  );
   const counts = data?.sectionCounts || {};
   const batchable = data?.batchApprovable ?? 0;
 
@@ -54,12 +65,26 @@ export default function NameCleanupTab() {
     setOpenId(d.id); setSource(null); setNote(d.note || '');
     setDraft(nameDraftFromProposal(d.proposal, d.decision));
   }
-  async function act(action) {
+  function setPhone(i, patch) {
+    setDraft((dr) => {
+      const phones = dr.phones.map((p, j) => {
+        if (j !== i) return p;
+        const next = { ...p, ...patch };
+        // Changing country resets the confirmation — it belonged to the OLD choice.
+        if (patch.country && patch.country !== p.country) next.confirmUnverified = false;
+        return next;
+      });
+      // At most one preferred phone: setting one clears the others.
+      if (patch.isPrimary) for (let j = 0; j < phones.length; j++) if (j !== i) phones[j] = { ...phones[j], isPrimary: false };
+      return { ...dr, phones };
+    });
+  }
+  async function act(action, decisionOverride = null) {
     setBusy(true);
     try {
       await migrationApi.decide(selected.id, {
         action,
-        decision: ['approve', 'edit'].includes(action) ? draft : null,
+        decision: ['approve', 'edit'].includes(action) ? (decisionOverride || draft) : null,
         note: note || null,
       });
       await load(); reload?.();
@@ -221,7 +246,10 @@ export default function NameCleanupTab() {
               {/* Editable final fields — the owner's values are binding. */}
               <div className="bg-white border border-gray-200 rounded-xl p-4">
                 <h3 className="text-sm font-semibold text-gray-900 mb-1">השדות הסופיים ב-GOS</h3>
-                <p className="text-[11px] text-gray-400 mb-3">מה שתשמור כאן הוא מה שייווצר בייבוא הזהויות. אפשר לערוך כל שדה.</p>
+                <p className="text-[11px] text-gray-400 mb-3">
+                  מה שתשמור כאן הוא מה שייווצר בייבוא הזהויות. מלא רק את השדות הרלוונטיים — שדה ריק נשאר ריק,
+                  ועברית לא מועתקת לאנגלית (ולהפך) אוטומטית.
+                </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {FIELDS.map(([k, label]) => (
                     <label key={k} className="block">
@@ -236,12 +264,7 @@ export default function NameCleanupTab() {
                 </div>
                 <div className="flex flex-wrap gap-2 mt-3">
                   <button type="button"
-                    onClick={() => setDraft({ ...draft, treatment: draft.treatment === 'exclude' ? 'import' : 'exclude' })}
-                    className={`text-[12px] px-2.5 py-1 rounded-md border ${draft.treatment === 'exclude' ? 'bg-red-50 border-red-200 text-red-700 font-semibold' : 'bg-white border-gray-200 text-gray-600'}`}>
-                    {draft.treatment === 'exclude' ? '✓ מוחרג מייבוא' : 'החרג מייבוא'}
-                  </button>
-                  <button type="button"
-                    onClick={() => setDraft(nameDraftFromProposal({ ...selected.proposal, proposedFields: selected.proposal.currentMapping, treatment: 'import' }, null))}
+                    onClick={() => setDraft({ ...nameDraftFromProposal({ ...selected.proposal, proposedFields: selected.proposal.currentMapping, treatment: 'import' }, null), phones: draft.phones })}
                     className="text-[12px] px-2.5 py-1 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50">
                     השאר את המקור כמו שהוא
                   </button>
@@ -252,16 +275,94 @@ export default function NameCleanupTab() {
                 </div>
               </div>
 
+              {/* Phones — country drives normalization; nothing is guessed. */}
+              {draft.treatment !== 'exclude' && draft.phones.length > 0 && (
+                <div className="bg-white border border-gray-200 rounded-xl p-4">
+                  <h3 className="text-sm font-semibold text-gray-900 mb-1">טלפונים</h3>
+                  <p className="text-[11px] text-gray-400 mb-3">
+                    המדינה קובעת את הנרמול. הסרת מספר לא מוחקת אותו מהארכיון — הוא פשוט לא ייובא.
+                  </p>
+                  <div className="space-y-2">
+                    {draft.phones.map((p, i) => {
+                      const r = result?.phones?.[i];
+                      return (
+                        <div key={`${p.original}-${i}`} className={`border rounded-lg p-2.5 ${p.remove ? 'border-gray-200 bg-gray-50 opacity-70' : r?.problems?.length ? 'border-red-200 bg-red-50/30' : 'border-gray-200'}`}>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[11px] text-gray-400">מקור: <span dir="ltr">{p.original}</span></span>
+                            <label className="flex items-center gap-1 text-[11px] text-gray-500 mr-auto">
+                              <input type="checkbox" checked={p.remove} onChange={(e) => setPhone(i, { remove: e.target.checked })} />
+                              הסר
+                            </label>
+                          </div>
+                          {!p.remove && (
+                            <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                              <select value={p.country} onChange={(e) => setPhone(i, { country: e.target.value })}
+                                className="text-[12px] border border-gray-200 rounded-md px-1.5 py-1 bg-white">
+                                {COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
+                              </select>
+                              <input type="text" dir="ltr" value={p.value} onChange={(e) => setPhone(i, { value: e.target.value })}
+                                className="text-[13px] border border-gray-200 rounded-md px-2 py-1 bg-white w-44" />
+                              <label className="flex items-center gap-1 text-[11px] text-gray-500">
+                                <input type="radio" name={`primary-${selected.id}`} checked={p.isPrimary} onChange={() => setPhone(i, { isPrimary: true })} />
+                                מועדף
+                              </label>
+                              {r?.normalized && (
+                                <span className="text-[11px] text-green-700" dir="ltr">→ +{r.normalized}</span>
+                              )}
+                            </div>
+                          )}
+                          {!p.remove && p.country === 'OTHER' && (
+                            <label className="flex items-center gap-1.5 mt-1.5 text-[11px] text-amber-800">
+                              <input type="checkbox" checked={p.confirmUnverified} onChange={(e) => setPhone(i, { confirmUnverified: e.target.checked })} />
+                              אני מאשר לייבא את המספר כפי שהוא, ללא נרמול
+                            </label>
+                          )}
+                          {!p.remove && r?.problems?.map((prob) => (
+                            <p key={prob} className="mt-1 text-[11px] text-red-700">{prob}</p>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* The final imported Contact, exactly as GOS will create it. */}
               {result && (
                 <div className="bg-blue-50/50 border border-blue-200 rounded-xl p-4">
-                  <h3 className="text-sm font-semibold text-gray-900 mb-2">התוצאה לאחר הייבוא</h3>
+                  <h3 className="text-sm font-semibold text-gray-900 mb-2">איש הקשר שייווצר ב-GOS</h3>
                   {result.excluded ? (
                     <p className="text-[13px] text-red-800">הרשומה לא תיווצר כאיש קשר ב-GOS. היא נשמרת בצילום ובארכיון.</p>
                   ) : (
-                    <div className="bg-white border border-gray-200 rounded-lg px-3 py-2">
-                      {result.displayHe && <div className="text-[14px] font-semibold text-gray-900">{result.displayHe}</div>}
-                      {result.displayEn && <div className="text-[13px] text-gray-700">{result.displayEn}</div>}
-                      {!result.displayHe && !result.displayEn && <div className="text-[13px] text-red-700">ללא שם</div>}
+                    <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 space-y-1.5">
+                      <div>
+                        {result.displayHe && <div className="text-[14px] font-semibold text-gray-900">{result.displayHe}</div>}
+                        {result.displayEn && <div className="text-[13px] text-gray-700" dir="ltr">{result.displayEn}</div>}
+                        {!result.displayHe && !result.displayEn && <div className="text-[13px] text-red-700">ללא שם</div>}
+                      </div>
+                      {result.phones?.filter((p) => !p.remove).length > 0 && (
+                        <div className="text-[12px] text-gray-600 border-t border-gray-100 pt-1.5">
+                          {result.phones.filter((p) => !p.remove).map((p) => (
+                            <div key={p.original} dir="ltr" className="text-left">
+                              {p.value}{p.normalized ? ` → +${p.normalized}` : ' (ללא נרמול)'}{p.isPrimary ? ' ★' : ''}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {result.emails.length > 0 && (
+                        <div className="text-[12px] text-gray-600 border-t border-gray-100 pt-1.5" dir="ltr">
+                          {result.emails.join(' · ')}
+                        </div>
+                      )}
+                      {selected.identityEdit && (
+                        <p className="text-[11px] text-blue-800">כולל תיקון נתוני מקור שכבר נרשם</p>
+                      )}
+                      {selected.orgDestination && (
+                        <div className="text-[12px] text-gray-600 border-t border-gray-100 pt-1.5">
+                          ארגון: <b>{selected.orgDestination.label}</b>
+                          {selected.orgDestination.pending && <span className="text-[11px] text-amber-700"> (טרם הוכרע בתור הארגונים)</span>}
+                        </div>
+                      )}
                     </div>
                   )}
                   {result.warnings.map((w) => (
@@ -282,14 +383,16 @@ export default function NameCleanupTab() {
                 <input type="text" value={note} onChange={(e) => setNote(e.target.value)} placeholder="הערת החלטה (לא חובה)"
                   className="w-full text-[13px] border border-gray-200 rounded-md px-2 py-1.5 bg-white mb-2" />
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" disabled={busy || !result?.valid} onClick={() => act('edit')}
-                    className="text-[13px] px-3 py-1.5 rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50">אישור התוצאה</button>
-                  <button type="button" disabled={busy} onClick={() => act('reject')}
-                    className="text-[13px] px-3 py-1.5 rounded-md border border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-50">המקור תקין — אל תשנה</button>
+                  <button type="button" disabled={busy || !result?.valid || draft.treatment === 'exclude'}
+                    onClick={() => act('edit', { ...draft, treatment: 'import' })}
+                    className="text-[13px] px-3 py-1.5 rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50">זה אדם — אשר</button>
+                  <button type="button" disabled={busy}
+                    onClick={() => act('edit', { treatment: 'exclude', fields: draft.fields })}
+                    className="text-[13px] px-3 py-1.5 rounded-md border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-50">זה לא איש קשר</button>
                   <button type="button" disabled={busy} onClick={() => act('defer')}
-                    className="text-[13px] px-3 py-1.5 rounded-md border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50">דחה למועד אחר</button>
+                    className="text-[13px] px-3 py-1.5 rounded-md border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50">דחה לבדיקה</button>
                 </div>
-                <p className="text-[11px] text-gray-400 mt-2">ההחלטה נשמרת ביומן ההחלטות בלבד. שום איש קשר לא נוצר ולא משתנה עכשיו.</p>
+                <p className="text-[11px] text-gray-400 mt-2">ההחלטה נשמרת ביומן ההחלטות בלבד. שום איש קשר לא נוצר ולא משתנה עכשיו, והצילום לעולם לא משתנה.</p>
               </div>
             </div>
           )}

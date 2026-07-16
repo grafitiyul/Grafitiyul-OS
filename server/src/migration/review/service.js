@@ -12,8 +12,9 @@ import {
   IDENTITY_QUEUE, identitySubjectKey, legacyIdFromSubjectKey, resolveIdentityEdits,
   identityDecisionFor, identityProposalFor, isEmptyEdit,
 } from './contactIdentity.js';
-import { nameDecisionFromDraft, nameDraftFromProposal } from './nameCleanup.js';
+import { nameDecisionFromDraft, nameDraftFromProposal, legacyIdFromNameKey } from './nameCleanup.js';
 import { buildReadiness, foldStatus } from './readiness.js';
+import { normalizePhoneIntl } from '../../whatsapp/phone.js';
 
 // Every Organization a source record may be mapped to: the canonical org of each
 // migration proposal, plus every live GOS organization (with its real units).
@@ -282,8 +283,53 @@ export async function listQueue(client, queueKey, { status = null, filter = null
   const fn = filter ? FILTERS[filter] : null;
   if (filter && !fn) { const e = new Error('unknown_filter'); e.code = 'UNKNOWN_FILTER'; throw e; }
   if (fn) decisions = decisions.filter(fn);
+  // Queue-specific response extras (e.g. the shared claimed-phone index).
+  const extra = {};
   // Name Cleanup uses the same business-impact ladder as Contacts.
-  if (queueKey === 'name_cleanup') decisions = applySection(decisions, section);
+  if (queueKey === 'name_cleanup') {
+    decisions = applySection(decisions, section);
+    // Everything the editor + preview need, computed server-side so the client
+    // mirror never has to invent it:
+    //   * identityEdit    — this person's source-data correction (effective emails).
+    //   * claimedPhones   — normalized numbers already owned by OTHER decisions,
+    //                       self-claims excluded, so the client can warn pre-save.
+    //   * orgDestination  — the FINAL mapped organisation, read live from the
+    //                       Organizations ledger. Deliberately NOT copied into the
+    //                       stored name decision: the org ledger is the single
+    //                       source of truth and the import reads it directly.
+    const ids = decisions.map((d) => legacyIdFromNameKey(d.subjectKey)).filter((x) => x != null);
+    const [edits, claims, orgRows] = await Promise.all([
+      ids.length ? getIdentityEdits(client, ids) : {},
+      buildClaimedPhones(client),
+      client.migrationDecision.findMany({ where: { queue: 'organizations' }, select: { decision: true, proposal: true } }),
+    ]);
+    // legacy orgId → final destination name (organisation · unit), from dispositions.
+    const orgDest = new Map();
+    for (const r of orgRows) {
+      const canonical = r.decision?.canonicalName || r.proposal?.proposedCanonical?.name || null;
+      const unitNames = new Map((r.decision?.units || []).map((u) => [u.key, u.name]));
+      for (const [legacyId, d] of Object.entries(r.decision?.dispositions || {})) {
+        if (d.disposition === 'excluded') orgDest.set(Number(legacyId), { label: 'הוחרג — לא ייווצר ארגון', excluded: true });
+        else if (d.disposition === 'unit') orgDest.set(Number(legacyId), { label: `${canonical} · ${unitNames.get(d.targetUnitKey) || 'יחידה'}` });
+        else orgDest.set(Number(legacyId), { label: canonical || 'ארגון היעד' });
+      }
+    }
+    decisions = decisions.map((d) => {
+      const legacyId = legacyIdFromNameKey(d.subjectKey);
+      const orgId = d.proposal?.context?.orgId ?? null;
+      return {
+        ...d,
+        identityEdit: edits[legacyId] || null,
+        orgDestination: orgId != null ? orgDest.get(orgId) || { label: d.proposal.context.orgName || `ארגון ${orgId}`, pending: true } : null,
+      };
+    });
+    // ONE shared claim index on the response (not per row — that would square the
+    // payload). ownerIds lets the client exclude a person's own claims; the server
+    // re-checks with the same exclusion on save regardless.
+    extra.claimedPhones = Object.fromEntries(
+      [...claims].map(([n, c]) => [n, { label: c.label, ownerIds: [...c.ownerIds] }]),
+    );
+  }
   // Contacts are routed by business impact; other queues have no sections and are
   // left exactly as they were.
   if (queueKey === 'contacts') {
@@ -328,6 +374,7 @@ export async function listQueue(client, queueKey, { status = null, filter = null
     counts: { shown: decisions.length, all: rows.length },
     sectionCounts,
     batchApprovable,
+    ...extra,
     decisions,
   };
 }
@@ -454,6 +501,59 @@ export async function recordIdentityEdits(client, { clusterDecisionId, edits, no
   return { written, cleared, warnings: resolved.warnings };
 }
 
+// ── Claimed phones ────────────────────────────────────────────────────────────
+// Every normalized number already spoken for by a DECIDED row anywhere in the
+// ledger: a name-cleanup decision keeping it, an identity correction moving it,
+// or a contacts-merge survivor owning it. A Name Cleanup approval that keeps a
+// number claimed elsewhere is a real conflict — the same person would exist twice
+// or the number would land on two contacts — so it blocks until one side lets go.
+//
+// `ownerIds` are the legacy person ids a claim legitimately belongs to: the same
+// person appearing in two queues (their own identity row, their own duplicate
+// cluster) must never conflict with themselves.
+export async function buildClaimedPhones(client) {
+  const claims = new Map(); // normalized → { label, ownerIds:Set<number> }
+  const add = (normalized, label, ownerIds) => {
+    if (!normalized) return;
+    const cur = claims.get(normalized);
+    if (cur) { for (const id of ownerIds) cur.ownerIds.add(id); return; }
+    claims.set(normalized, { label, ownerIds: new Set(ownerIds) });
+  };
+  const rows = await client.migrationDecision.findMany({
+    where: { queue: { in: ['name_cleanup', 'contact_identity', 'contacts'] }, status: { in: ['approved', 'edited'] } },
+    select: { queue: true, subjectKey: true, decision: true, proposal: true },
+  });
+  for (const r of rows) {
+    if (r.queue === 'name_cleanup') {
+      const id = legacyIdFromNameKey(r.subjectKey);
+      for (const p of r.decision?.phones || []) {
+        if (!p.remove && p.normalized) add(p.normalized, `ניקוי שמות: ${r.proposal?.displayName || id}`, [id]);
+      }
+    } else if (r.queue === 'contact_identity') {
+      const id = legacyIdFromSubjectKey(r.subjectKey);
+      for (const raw of r.decision?.effective?.phones || []) {
+        add(normalizePhoneIntl(raw), `תיקון נתוני מקור: ${r.proposal?.name || id}`, [id]);
+      }
+    } else {
+      // A decided duplicate cluster: the surviving contact owns the kept numbers,
+      // on behalf of every member that was merged into it.
+      const memberIds = (r.proposal?.members || []).map((m) => m.legacyId);
+      for (const raw of r.decision?.result?.primary?.phones || []) {
+        add(normalizePhoneIntl(raw), `איחוד כפילויות: ${r.decision?.result?.primary?.name || r.subjectKey}`, memberIds);
+      }
+    }
+  }
+  return claims;
+}
+
+// The view of the claims one specific person is NOT allowed to collide with.
+const claimsExcludingSelf = (claims, selfLegacyId) => ({
+  get(normalized) {
+    const c = claims.get(normalized);
+    return c && !c.ownerIds.has(selfLegacyId) ? c : undefined;
+  },
+});
+
 const ACTION_STATUS = { approve: 'approved', reject: 'rejected', edit: 'edited', defer: 'deferred' };
 
 // Record a human decision with its audit trail.
@@ -534,7 +634,16 @@ export async function recordDecision(client, { id, action, decision = null, note
       // GOS rule so an approved name can never fail at import time.
       // Normalised through the draft builder first: a partial payload falls back to
       // the proposal rather than crashing on a missing field.
-      const resolved = nameDecisionFromDraft(existing.proposal, nameDraftFromProposal(existing.proposal, decision));
+      //
+      // Phone gates are strict here: invalid-for-country, duplicate normalized,
+      // unconfirmed unknown-country, and cross-decision ownership conflicts all
+      // refuse the save — the server never trusts the client's own validation.
+      const legacyId = legacyIdFromNameKey(existing.subjectKey);
+      const ctx = {
+        identityEdit: (await getIdentityEdits(client, [legacyId]))[legacyId] || null,
+        claimedPhones: claimsExcludingSelf(await buildClaimedPhones(client), legacyId),
+      };
+      const resolved = nameDecisionFromDraft(existing.proposal, nameDraftFromProposal(existing.proposal, decision), ctx);
       if (!resolved.result.valid) {
         const e = new Error(`invalid_decision: ${resolved.result.problems.join(' · ')}`);
         e.code = 'INVALID_DECISION';

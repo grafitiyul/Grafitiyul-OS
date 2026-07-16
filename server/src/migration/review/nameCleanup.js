@@ -21,6 +21,8 @@
 // the owner approves, edits, or rejects. The owner's final fields are binding.
 import { isNewContactName } from '../phoneCompare.js';
 import { sectionForSingle, isImportable } from './contactSections.js';
+import { defaultPhoneRow, resolvePhoneRow } from './namePhones.js';
+import { applyIdentityEdit } from './contactIdentity.js';
 
 const t = (s) => String(s ?? '').trim().replace(/\s+/g, ' ');
 const HEBREW = /[֐-׿]/, LATIN = /[A-Za-z]/;
@@ -301,27 +303,74 @@ export function compareNameProposals(a, b) {
 }
 
 // The owner's binding result. Their edited fields ARE the Identity Import outcome.
+//
+// `phones` is the owner's phone-editing state (see namePhones.js). When present,
+// approval gates on it strictly; when ABSENT (the deterministic name-only batch),
+// the decision records phones as NOT EDITED and the import uses the original
+// snapshot values untouched — exactly what happens to the 27k contacts that never
+// enter this queue at all. One resolver, two documented modes; never two
+// interpretations of the same decision.
 export function nameDraftFromProposal(proposal, decision = null) {
   // Tolerate a partial decision and a proposal with no fields: fall back rather than
   // throw, so a malformed payload becomes a validation error the owner can see.
   const base = decision?.fields || proposal?.proposedFields || { firstNameHe: '', lastNameHe: '', firstNameEn: '', lastNameEn: '' };
+  const sourcePhones = proposal?.context?.phones || [];
+  const phones = Array.isArray(decision?.phones)
+    ? decision.phones.map((p) => ({ ...defaultPhoneRow(p.original, 0), ...p }))
+    : sourcePhones.map((raw, i) => defaultPhoneRow(raw, i));
   return {
     treatment: decision?.treatment || proposal?.treatment || 'import',
     fields: {
       firstNameHe: t(base.firstNameHe), lastNameHe: t(base.lastNameHe),
       firstNameEn: t(base.firstNameEn), lastNameEn: t(base.lastNameEn),
     },
+    phones,
   };
 }
 
-export function resolveNameResult(proposal, draft) {
+// ctx (all optional, supplied by the service):
+//   identityEdit  — this person's contact_identity override, for effective emails.
+//   claimedPhones — Map<normalizedDigits, {label}> of numbers already claimed by
+//                   OTHER decisions; a kept phone colliding with one is a blocker.
+export function resolveNameResult(proposal, draft, ctx = {}) {
   const fields = {
     firstNameHe: t(draft.fields.firstNameHe), lastNameHe: t(draft.fields.lastNameHe),
     firstNameEn: t(draft.fields.firstNameEn), lastNameEn: t(draft.fields.lastNameEn),
   };
   const excluded = draft.treatment === 'exclude';
-  const v = excluded ? { valid: true, problems: [] } : validateContactNames(fields);
+  const problems = [];
   const warnings = [];
+  if (!excluded) problems.push(...validateContactNames(fields).problems);
+
+  // ── phones (only when the draft carries them — i.e. the editing flow) ────────
+  let phones = null;
+  if (!excluded && Array.isArray(draft.phones)) {
+    phones = draft.phones.map((row) => resolvePhoneRow(row));
+    const kept = phones.filter((p) => !p.remove);
+    for (const p of kept) {
+      for (const prob of p.problems) problems.push(`טלפון ${p.value || p.original}: ${prob}`);
+    }
+    // The same normalized number twice on one contact.
+    const seen = new Map();
+    for (const p of kept) {
+      if (!p.normalized) continue;
+      if (seen.has(p.normalized)) problems.push(`המספר ${p.normalized} מופיע פעמיים באיש הקשר`);
+      seen.set(p.normalized, true);
+    }
+    // Claimed elsewhere. Removing the phone resolves the conflict; keeping it blocks.
+    for (const p of kept) {
+      if (!p.normalized) continue;
+      const owner = ctx.claimedPhones?.get?.(p.normalized);
+      if (owner) problems.push(`המספר ${p.normalized} כבר שויך להחלטה אחרת (${owner.label}) — הסר אותו מאחד הצדדים`);
+    }
+    if (kept.filter((p) => p.isPrimary).length > 1) problems.push('סומן יותר מטלפון מועדף אחד');
+    const removed = phones.filter((p) => p.remove);
+    if (removed.length) warnings.push(`${removed.length} מספרים לא ייובאו — הם נשארים בצילום ובארכיון`);
+  }
+
+  // ── effective emails: identity corrections applied, never re-derived ─────────
+  const emails = excluded ? [] : applyIdentityEdit({ phones: [], emails: proposal.context?.emails || [] }, ctx.identityEdit || null).emails;
+
   if (!excluded) {
     const orig = `${proposal.original.first_name} ${proposal.original.last_name}`.trim();
     const now = [fields.firstNameHe, fields.lastNameHe, fields.firstNameEn, fields.lastNameEn].filter(Boolean).join(' ');
@@ -335,14 +384,31 @@ export function resolveNameResult(proposal, draft) {
     fields,
     displayHe: `${fields.firstNameHe} ${fields.lastNameHe}`.trim(),
     displayEn: `${fields.firstNameEn} ${fields.lastNameEn}`.trim(),
+    // The import payload, per phone: original / country / edited value / normalized.
+    phones: phones
+      ? phones.map((p) => ({
+          original: p.original, country: p.country, value: t(p.value),
+          normalized: p.normalized, isPrimary: !!p.isPrimary, remove: !!p.remove,
+          confirmUnverified: !!p.confirmUnverified, problems: p.problems,
+        }))
+      : null,
+    emails,
     excluded,
     warnings,
-    problems: v.problems,
-    valid: v.valid,
+    problems,
+    valid: problems.length === 0,
   };
 }
 
-export function nameDecisionFromDraft(proposal, draft) {
-  const result = resolveNameResult(proposal, draft);
-  return { treatment: draft.treatment, fields: result.fields, result };
+export function nameDecisionFromDraft(proposal, draft, ctx = {}) {
+  const result = resolveNameResult(proposal, draft, ctx);
+  return {
+    treatment: draft.treatment,
+    fields: result.fields,
+    // Kept phones with their full audit shape; removed ones stay listed with
+    // remove:true so the decision is complete. null = phones were never edited
+    // (batch name-only fix) and the import uses the snapshot originals.
+    phones: result.phones,
+    result,
+  };
 }

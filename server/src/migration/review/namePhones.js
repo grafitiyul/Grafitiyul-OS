@@ -1,12 +1,25 @@
-// Live preview of a Name Cleanup result — names, phones and effective emails.
-// MIRRORS the server resolvers (src/migration/review/nameCleanup.js +
-// namePhones.js + contactIdentity.js), which are the authority: the server
-// re-resolves on save with the same rules plus the live claimed-phone index, and
-// refuses anything invalid. Nothing here is a second interpretation — a drift
-// between this mirror and the server surfaces as a 400 with the server's reasons.
-const t = (s) => String(s ?? '').trim().replace(/\s+/g, ' ');
+// Country-driven phone editing for the Name Cleanup flow. PURE — no I/O.
+//
+// The COUNTRY the owner selects drives normalization; the code never guesses.
+// Three sources of truth, never merged:
+//   * `original`   — the raw snapshot value. Never rewritten, stays in the legacy
+//                    archive whatever happens here.
+//   * `value`      — the owner-edited display value. This is what GOS imports as
+//                    ContactPhone.value (GOS stores phones raw, as typed).
+//   * `normalized` — international digits for comparison/matching only, in the
+//                    exact shape of the runtime SSOT (whatsapp/phone.js
+//                    normalizePhoneIntl: digits, no '+'). null when unverifiable.
+//
+// "Never guess" is enforced twice:
+//   * a suggestion is made only when the NUMBER ITSELF states its country
+//     (Israeli local `0…` form, or an explicit +/00 international prefix that
+//     matches a known dial code). Everything else is suggested as OTHER.
+//   * a number that states one country while the owner selects another is a
+//     MISMATCH ERROR — it is never silently rewritten to the selected code.
 
-// ── countries (mirror of server namePhones.js) ───────────────────────────────
+// Dial codes, longest-first so +1… never shadows +12-style codes (none here, but
+// the ordering rule keeps future additions safe). NOT an exhaustive ITU table —
+// 'OTHER' covers the rest with explicit owner confirmation.
 export const COUNTRIES = [
   { code: 'IL', dial: '972', label: 'ישראל (+972)', nationalLen: [8, 9] },
   { code: 'US', dial: '1', label: 'ארה"ב / קנדה (+1)', nationalLen: [10, 10] },
@@ -35,14 +48,19 @@ export const COUNTRIES = [
 ];
 const byCode = new Map(COUNTRIES.map((c) => [c.code, c]));
 const byDialDesc = COUNTRIES.filter((c) => c.dial).sort((a, b) => b.dial.length - a.dial.length);
+
 const digitsOf = (raw) => String(raw || '').replace(/\D/g, '');
+// A number "states" an international prefix when it is written with + or 00.
 const statedIntl = (raw) => {
-  const d = digitsOf(raw);
+  let d = digitsOf(raw);
   if (/^\s*\+/.test(String(raw || ''))) return d;
   if (d.startsWith('00')) return d.slice(2);
   return null;
 };
 
+// Suggest a country ONLY from what the number itself states. Everything else is
+// OTHER — a suggestion here is a pre-filled selector the owner confirms by
+// approving, never a silent rewrite.
 export function suggestCountry(raw) {
   const intl = statedIntl(raw);
   if (intl) {
@@ -50,7 +68,11 @@ export function suggestCountry(raw) {
     return hit ? hit.code : 'OTHER';
   }
   const d = digitsOf(raw);
+  // Israeli local form: 0 + 8-9 digits. This IS stated, not guessed — it is the
+  // same rule the runtime SSOT (normalizePhoneIntl) applies unconditionally.
   if (d.startsWith('0') && !d.startsWith('00') && (d.length === 9 || d.length === 10)) return 'IL';
+  // Bare international digits that happen to start with a known dial code and are
+  // long enough to be a full number (e.g. "972501234567" typed without +).
   if (!d.startsWith('0') && d.length >= 11 && d.length <= 15) {
     const hit = byDialDesc.find((c) => d.startsWith(c.dial));
     if (hit) return hit.code;
@@ -58,13 +80,23 @@ export function suggestCountry(raw) {
   return 'OTHER';
 }
 
+// Normalize an owner-edited value under the owner-selected country.
+// Returns { normalized, problems, requiresConfirmation }.
+//   * normalized: international digits (no '+') — comparison/matching shape only.
+//   * problems:   human-readable validation errors; non-empty ⇒ not approvable.
+//   * requiresConfirmation: OTHER-country values import as-is only after the
+//     owner explicitly confirms.
 export function normalizeForCountry(value, countryCode) {
   const raw = String(value || '').trim();
   if (!raw) return { normalized: null, problems: ['מספר ריק'], requiresConfirmation: false };
   const country = byCode.get(countryCode);
   if (!country) return { normalized: null, problems: [`מדינה לא מוכרת: ${countryCode}`], requiresConfirmation: false };
+
   const stated = statedIntl(raw);
+
   if (country.code === 'OTHER') {
+    // Preserve the original; import only with explicit confirmation. If the number
+    // states a KNOWN dial code, say so — the right fix is selecting that country.
     const hit = stated ? byDialDesc.find((c) => stated.startsWith(c.dial)) : null;
     return {
       normalized: stated && stated.length >= 8 && stated.length <= 15 ? stated : null,
@@ -72,8 +104,11 @@ export function normalizeForCountry(value, countryCode) {
       requiresConfirmation: true,
     };
   }
+
   let intl;
   if (stated) {
+    // The number states its country. A mismatch with the selection is an ERROR —
+    // never silently rewritten to the selected code.
     if (!stated.startsWith(country.dial)) {
       const actual = byDialDesc.find((c) => stated.startsWith(c.dial));
       return {
@@ -85,12 +120,15 @@ export function normalizeForCountry(value, countryCode) {
     intl = stated;
   } else {
     let d = digitsOf(raw);
-    if (d.startsWith(country.dial) && d.length >= country.dial.length + 6 && !d.startsWith('0')) intl = d;
-    else {
+    if (d.startsWith(country.dial) && d.length >= country.dial.length + 6 && !d.startsWith('0')) {
+      intl = d; // full international digits typed without '+'
+    } else {
+      // Local form: strip ONE leading trunk zero, prepend the dial code.
       if (d.startsWith('0')) d = d.slice(1);
       intl = `${country.dial}${d}`;
     }
   }
+
   const problems = [];
   const national = intl.slice(country.dial.length);
   if (national.startsWith('0')) problems.push('ספרת 0 מיותרת אחרי הקידומת');
@@ -104,11 +142,19 @@ export function normalizeForCountry(value, countryCode) {
   return { normalized: problems.length ? null : intl, problems, requiresConfirmation: false };
 }
 
-export const defaultPhoneRow = (original, index) => ({
-  original: String(original || ''), country: suggestCountry(original),
-  value: String(original || ''), remove: false, isPrimary: index === 0, confirmUnverified: false,
-});
+// The default (untouched) editing row for one raw snapshot phone.
+export function defaultPhoneRow(original, index) {
+  return {
+    original: String(original || ''),
+    country: suggestCountry(original),
+    value: String(original || ''),
+    remove: false,
+    isPrimary: index === 0,
+    confirmUnverified: false,
+  };
+}
 
+// Resolve one edited row → what will actually be imported for it.
 export function resolvePhoneRow(row) {
   if (row.remove) return { ...row, normalized: null, problems: [], importable: false };
   const { normalized, problems, requiresConfirmation } = normalizeForCountry(row.value, row.country);
@@ -118,84 +164,4 @@ export function resolvePhoneRow(row) {
   }
   out.importable = out.problems.length === 0;
   return out;
-}
-
-// Effective emails after the person's identity correction (mirror of
-// contactIdentity.applyIdentityEdit for the email half).
-export function effectiveEmails(sourceEmails, identityEdit) {
-  const emails = (sourceEmails || []).map((e) => t(e));
-  if (!identityEdit) return emails;
-  const rm = (identityEdit.removeEmails || []).map((e) => t(e));
-  const add = (identityEdit.addEmails || []).map((a) => t(a?.value ?? a));
-  const kept = emails.filter((e) => !rm.includes(e));
-  return [...kept, ...add.filter((e) => !kept.includes(e))];
-}
-
-// ── draft + resolve (mirror of server nameCleanup.js) ────────────────────────
-export function nameDraftFromProposal(proposal, decision = null) {
-  const base = decision?.fields || proposal.proposedFields;
-  const sourcePhones = proposal?.context?.phones || [];
-  const phones = Array.isArray(decision?.phones)
-    ? decision.phones.map((p) => ({ ...defaultPhoneRow(p.original, 0), ...p }))
-    : sourcePhones.map((raw, i) => defaultPhoneRow(raw, i));
-  return {
-    treatment: decision?.treatment || proposal.treatment,
-    fields: {
-      firstNameHe: t(base.firstNameHe), lastNameHe: t(base.lastNameHe),
-      firstNameEn: t(base.firstNameEn), lastNameEn: t(base.lastNameEn),
-    },
-    phones,
-  };
-}
-
-// ctx: { identityEdit, claimedPhones: {normalized:{label,ownerIds:[]}}, selfLegacyId }
-export function resolveNameResult(proposal, draft, ctx = {}) {
-  const fields = {
-    firstNameHe: t(draft.fields.firstNameHe), lastNameHe: t(draft.fields.lastNameHe),
-    firstNameEn: t(draft.fields.firstNameEn), lastNameEn: t(draft.fields.lastNameEn),
-  };
-  const excluded = draft.treatment === 'exclude';
-  const problems = [];
-  const warnings = [];
-  if (!excluded && !fields.firstNameHe && !fields.firstNameEn) problems.push('חובה שם פרטי — בעברית או באנגלית');
-
-  let phones = null;
-  if (!excluded && Array.isArray(draft.phones)) {
-    phones = draft.phones.map((row) => resolvePhoneRow(row));
-    const kept = phones.filter((p) => !p.remove);
-    for (const p of kept) for (const prob of p.problems) problems.push(`טלפון ${p.value || p.original}: ${prob}`);
-    const seen = new Set();
-    for (const p of kept) {
-      if (!p.normalized) continue;
-      if (seen.has(p.normalized)) problems.push(`המספר ${p.normalized} מופיע פעמיים באיש הקשר`);
-      seen.add(p.normalized);
-    }
-    for (const p of kept) {
-      if (!p.normalized) continue;
-      const claim = ctx.claimedPhones?.[p.normalized];
-      if (claim && !(claim.ownerIds || []).includes(ctx.selfLegacyId)) {
-        problems.push(`המספר ${p.normalized} כבר שויך להחלטה אחרת (${claim.label}) — הסר אותו מאחד הצדדים`);
-      }
-    }
-    if (kept.filter((p) => p.isPrimary).length > 1) problems.push('סומן יותר מטלפון מועדף אחד');
-    const removed = phones.filter((p) => p.remove);
-    if (removed.length) warnings.push(`${removed.length} מספרים לא ייובאו — הם נשארים בצילום ובארכיון`);
-  }
-
-  const emails = excluded ? [] : effectiveEmails(proposal.context?.emails, ctx.identityEdit);
-
-  if (!excluded) {
-    const orig = `${proposal.original.first_name} ${proposal.original.last_name}`.trim();
-    const now = [fields.firstNameHe, fields.lastNameHe, fields.firstNameEn, fields.lastNameEn].filter(Boolean).join(' ');
-    if (orig && now && orig !== now) warnings.push(`השם שונה מהמקור: "${orig}" ← "${now}"`);
-  }
-  if (excluded && proposal.context.dealCount > 0) {
-    warnings.push(`הרשומה מוחרגת למרות ${proposal.context.dealCount} עסקאות מקושרות — העסקאות יישארו ללא איש קשר`);
-  }
-  return {
-    treatment: draft.treatment, fields,
-    displayHe: `${fields.firstNameHe} ${fields.lastNameHe}`.trim(),
-    displayEn: `${fields.firstNameEn} ${fields.lastNameEn}`.trim(),
-    phones, emails, excluded, warnings, problems, valid: problems.length === 0,
-  };
 }

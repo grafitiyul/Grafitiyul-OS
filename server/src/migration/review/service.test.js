@@ -34,13 +34,14 @@ function stubClient(extra = []) {
         return { queue, status, _count: n };
       });
     },
-    findMany: async ({ where }) =>
-      [...rows.values()].filter(
-        (r) =>
-          r.queue === where.queue &&
-          (!where.status || r.status === where.status) &&
-          (!where.subjectKey?.in || where.subjectKey.in.includes(r.subjectKey)),
-      ),
+    findMany: async ({ where }) => {
+      // Supports the two operator shapes the service actually uses: exact match
+      // and `{ in: [...] }` — on queue, status and subjectKey.
+      const match = (cond, v) => cond == null || (cond.in ? cond.in.includes(v) : cond === v);
+      return [...rows.values()].filter(
+        (r) => match(where.queue, r.queue) && match(where.status, r.status) && match(where.subjectKey, r.subjectKey),
+      );
+    },
     findUnique: async ({ where }) => {
       if (where.id) return [...rows.values()].find((r) => r.id === where.id) || null;
       const k = key(where.queue_subjectKey.queue, where.queue_subjectKey.subjectKey);
@@ -577,6 +578,65 @@ test('corrections belong to the Contacts queue only', async () => {
   await assert.rejects(
     () => recordIdentityEdits(c, { clusterDecisionId: org.id, edits: {} }),
     (e) => e.code === 'BATCH_NOT_SUPPORTED',
+  );
+});
+
+// ── Name Cleanup phone editing ───────────────────────────────────────────────
+const nameRow = (id, phones = ['050-1234567'], status = 'pending') => ({
+  queue: 'name_cleanup', subjectKey: `name:${id}`, status,
+  proposal: {
+    kind: 'name_cleanup', legacyId: id, displayName: `רשומה ${id}`, treatment: 'import',
+    original: { name: 'לוי', first_name: '', last_name: 'לוי' },
+    currentMapping: { firstNameHe: '', lastNameHe: 'לוי', firstNameEn: '', lastNameEn: '' },
+    proposedFields: { firstNameHe: 'לוי', lastNameHe: '', firstNameEn: '', lastNameEn: '' },
+    context: { phones, emails: [], orgId: null, orgName: null, dealCount: 1, openDealCount: 0, futureTourDeals: 0, activityCount: 0, noteCount: 0 },
+    section: 'historical', importable: true, decisionRequired: true, batchApprovable: false, issues: ['no_first_name'], issueLabels: [],
+    validationBefore: { valid: false, problems: [] }, validationAfter: { valid: true, problems: [] },
+  },
+});
+const importDraft = (phones) => ({
+  treatment: 'import',
+  fields: { firstNameHe: 'לוי', lastNameHe: '', firstNameEn: '', lastNameEn: '' },
+  ...(phones ? { phones } : {}),
+});
+
+test('a phone claimed by another decision blocks the save; removing it unblocks', async () => {
+  const c = stubClient([
+    nameRow(1, ['050-1234567']),
+    nameRow(2, ['050-1234567']),
+  ]);
+  const [a, b] = [...c._rows.values()];
+  // First owner takes the number.
+  await recordDecision(c, { id: a.id, action: 'edit', decision: importDraft([{ original: '050-1234567', country: 'IL', value: '050-1234567', remove: false, isPrimary: true, confirmUnverified: false }]) });
+  assert.equal(a.status, 'edited');
+  assert.equal(a.decision.phones[0].normalized, '972501234567');
+
+  // Second owner keeping the SAME number is refused with the conflict named.
+  await assert.rejects(
+    () => recordDecision(c, { id: b.id, action: 'edit', decision: importDraft([{ original: '050-1234567', country: 'IL', value: '050-1234567', remove: false, isPrimary: true, confirmUnverified: false }]) }),
+    (e) => e.code === 'INVALID_DECISION' && /כבר שויך/.test(e.problems.join(' ')),
+  );
+  // Removing the phone resolves the conflict.
+  const r = await recordDecision(c, { id: b.id, action: 'edit', decision: importDraft([{ original: '050-1234567', country: 'IL', value: '050-1234567', remove: true, isPrimary: false, confirmUnverified: false }]) });
+  assert.equal(r.status, 'edited');
+});
+
+test('re-deciding the SAME record never conflicts with its own earlier claim', async () => {
+  const c = stubClient([nameRow(1, ['050-1234567'])]);
+  const [a] = [...c._rows.values()];
+  const draft = importDraft([{ original: '050-1234567', country: 'IL', value: '050-1234567', remove: false, isPrimary: true, confirmUnverified: false }]);
+  await recordDecision(c, { id: a.id, action: 'edit', decision: draft });
+  // The owner reopens and re-approves — must not collide with themselves.
+  const r = await recordDecision(c, { id: a.id, action: 'edit', decision: draft });
+  assert.equal(r.status, 'edited');
+});
+
+test('an invalid-for-country phone refuses the save server-side', async () => {
+  const c = stubClient([nameRow(1, ['+44 20 7946 0958'])]);
+  const [a] = [...c._rows.values()];
+  await assert.rejects(
+    () => recordDecision(c, { id: a.id, action: 'edit', decision: importDraft([{ original: '+44 20 7946 0958', country: 'IL', value: '+44 20 7946 0958', remove: false, isPrimary: true, confirmUnverified: false }]) }),
+    (e) => e.code === 'INVALID_DECISION' && /בריטניה/.test(e.problems.join(' ')),
   );
 });
 
