@@ -545,13 +545,21 @@ export function resolveNameResult(proposal, draft, ctx = {}) {
 
 export function nameDecisionFromDraft(proposal, draft, ctx = {}) {
   const result = resolveNameResult(proposal, draft, ctx);
+  const isOrg = draft.treatment === 'organization';
   return {
     treatment: draft.treatment,
-    fields: result.fields,
+    // CASE EASTWARD BOUND (owner, 2026-07-16): an Organization decision is
+    // CONTACT-FREE by construction. No Contact is created, so no person name
+    // fields and no phones are stored — `null`, not leftovers. The phone on the
+    // source record may belong to someone who merely accompanied a tour; if the
+    // real official contact is ever discovered, it is added in GOS later. The
+    // import must never read fields/phones from an organization decision.
+    fields: isOrg ? null : result.fields,
     // Kept phones with their full audit shape; removed ones stay listed with
     // remove:true so the decision is complete. null = phones were never edited
-    // (batch name-only fix) and the import uses the snapshot originals.
-    phones: result.phones,
+    // (batch name-only fix) and the import uses the snapshot originals — a
+    // semantic that applies to PERSON decisions only.
+    phones: isOrg ? null : result.phones,
     organization: result.organization,
     deleted: result.deleted,
     result,

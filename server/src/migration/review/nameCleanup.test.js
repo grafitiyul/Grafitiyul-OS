@@ -286,6 +286,20 @@ test('creating an organisation requires a name — or an existing target whose k
   assert.match(dangling.problems.join(' '), /לא נמצא במרשם/);
 });
 
+// CASE EASTWARD BOUND: the org flow must not depend on Contact fields in any way.
+test('an organisation decision is CONTACT-FREE: no fields, no phones, importable with no contact', () => {
+  const { proposals } = buildNameCleanupProposals({
+    contacts: [c({ id: 1, first: '', last: 'Eastward Bound Ltd', won: 1, phones: ['+972507811630'], emails: ['tal@example.com'] })],
+  });
+  const p = proposals[0];
+  const d = nameDecisionFromDraft(p, { ...nameDraftFromProposal(p, null), treatment: 'organization' });
+  assert.equal(d.treatment, 'organization');
+  assert.equal(d.fields, null, 'no person name fields stored on an org decision');
+  assert.equal(d.phones, null, 'no phones stored — the record phone may belong to a mere companion');
+  assert.equal(d.organization.create, true, 'WON deal → the business-rule default');
+  assert.equal(d.result.valid, true, 'valid with NO contact at all');
+});
+
 test('organisation mode never creates a Contact: name/phone/email gates do not apply', () => {
   const { proposals } = buildNameCleanupProposals({
     contacts: [c({ id: 1, first: '', last: 'בנק יהב', deals: 2, phones: ['not-a-phone-at-all'] })],
