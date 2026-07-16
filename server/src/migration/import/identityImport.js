@@ -94,6 +94,15 @@ export function planIdentityImport({
       for (const m of result.organization.members || []) memberDest.set(m.legacyId, { ref: canonicalRef, unitRef: null });
     }
     for (const u of result.units || []) {
+      // Units are created together with their canonical; a canonical that already
+      // exists (re-run) brought its units with it — never re-create them.
+      const canonicalAlreadyExisted = !!canonicalRef?.existingId && !d.mergeIntoGosId
+        ? (result.organization?.members || []).some((m) => existingOrgXwalk.get(String(m.legacyId)))
+        : false;
+      if (canonicalAlreadyExisted) {
+        for (const m of u.members || []) memberDest.set(m.legacyId, { ref: canonicalRef, unitRef: null });
+        continue;
+      }
       const unitRef = { plannedId: newId() };
       plan.units.push({ id: unitRef.plannedId, orgRef: canonicalRef, name: t(u.name), key: u.key });
       for (const m of u.members || []) memberDest.set(m.legacyId, { ref: canonicalRef, unitRef });
