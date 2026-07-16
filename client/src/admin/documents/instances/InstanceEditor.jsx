@@ -45,6 +45,7 @@ const ANNOTATION_DEFAULT_SIZES = {
   highlight: { wPct: 30, hPct: 5 },
   line: { wPct: 30, hPct: 1.5 },
   note: { wPct: 24, hPct: 5 },
+  ellipse: { wPct: 14, hPct: 7 },
 };
 
 // Default non-geometric config per annotation kind at placement time.
@@ -53,6 +54,7 @@ function annotationDefaults(kind) {
   if (kind === 'line') return { color: '#111827', thickness: 2, orientation: 'horizontal' };
   if (kind === 'note') return { text: 'הערה', fontSize: 14, color: '#111827' };
   if (kind === 'x') return { color: '#b91c1c', thickness: 3 };
+  if (kind === 'ellipse') return { color: '#b91c1c', thickness: 2.5 };
   // check default
   return { color: '#111827', thickness: 3 };
 }
@@ -139,6 +141,7 @@ export default function InstanceEditor() {
 
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeErr, setFinalizeErr] = useState(null);
+  const [finalizeOpen, setFinalizeOpen] = useState(false);
 
   // Placement mode — one of:
   //   null                             (idle)
@@ -195,6 +198,13 @@ export default function InstanceEditor() {
   }, [pending]);
 
   const isFinalized = instance?.status === 'finalized';
+  // Immutable PDF version history (newest first, from the server).
+  const finalVersions = Array.isArray(instance?.finalDocuments)
+    ? instance.finalDocuments
+    : [];
+  const hasFinals = finalVersions.length > 0;
+  const nextVersion =
+    finalVersions.reduce((m, f) => Math.max(m, f.version || 0), 0) + 1;
   const businessMap = instance?.businessSnapshot || {};
   const signers = Array.isArray(instance?.signersSnapshot)
     ? instance.signersSnapshot
@@ -301,6 +311,31 @@ export default function InstanceEditor() {
     [pending, annotations.length, isFinalized],
   );
 
+  // Draw-to-place (ellipse): PdfViewer reports the exact dragged bounds —
+  // they are stored verbatim as the annotation rect.
+  const placeAnnotationRect = useCallback(
+    (page, rect) => {
+      if (!pending || pending.mode !== 'annotation' || isFinalized) return;
+      const newAnn = {
+        id: 'ann_' + Math.random().toString(36).slice(2, 10),
+        kind: pending.kind,
+        page,
+        xPct: rect.xPct,
+        yPct: rect.yPct,
+        wPct: rect.wPct,
+        hPct: rect.hPct,
+        order: annotations.length,
+        ...annotationDefaults(pending.kind),
+      };
+      setAnnotations((prev) => [...prev, newAnn]);
+      setDirty(true);
+      setSelectedAnnotationId(newAnn.id);
+      setSelectedId(null);
+      setPending(null);
+    },
+    [pending, annotations.length, isFinalized],
+  );
+
   // Dispatch for the PdfViewer's click/drop-to-place. PdfViewer emits
   // (mode, page, x, y, dims) — mode is 'field' or 'annotation', dims
   // carries the page's current CSS width/height for content-aware sizing.
@@ -367,23 +402,62 @@ export default function InstanceEditor() {
     await load();
   }
 
-  // ── Finalize / delete ─────────────────────────────────────────────────────
+  // ── Finalize / reopen / cancel-correction / delete ────────────────────────
 
-  async function finalize() {
+  function requestFinalize() {
     if (dirty) {
-      window.alert('יש שינויים לא שמורים. שמור תחילה לפני סיום.');
+      window.alert('יש שינויים לא שמורים. שמור תחילה לפני הפקה.');
       return;
     }
-    if (!window.confirm('לאחר סיום, לא ניתן יהיה לערוך את המסמך. להמשיך?')) return;
+    setFinalizeOpen(true);
+  }
+
+  async function finalize(note) {
+    setFinalizeOpen(false);
     setFinalizing(true);
     setFinalizeErr(null);
     try {
-      await api.documents.finalize(id);
+      await api.documents.finalize(id, note);
       await load();
     } catch (e) {
       setFinalizeErr(e.message);
     } finally {
       setFinalizing(false);
+    }
+  }
+
+  // Reopen a finalized document for correction. The generated PDF versions
+  // are immutable — this only makes the working record editable again.
+  async function reopenForCorrection() {
+    if (
+      !window.confirm(
+        'המסמך ייפתח לעריכה עם הערכים השמורים שלו.\n' +
+          'גרסאות ה-PDF הקיימות יישמרו כפי שהן ולא ישתנו.\n' +
+          'בסיום התיקון תופק גרסת PDF חדשה. להמשיך?',
+      )
+    )
+      return;
+    try {
+      await api.documents.reopenInstance(id);
+      await load();
+    } catch (e) {
+      window.alert(e.message);
+    }
+  }
+
+  // Abort a correction without generating a new PDF version.
+  async function cancelCorrection() {
+    if (
+      !window.confirm(
+        'לבטל את התיקון? לא תופק גרסת PDF חדשה, והגרסה האחרונה תישאר הנוכחית.',
+      )
+    )
+      return;
+    try {
+      await api.documents.cancelCorrection(id);
+      await load();
+    } catch (e) {
+      window.alert(e.message);
     }
   }
 
@@ -489,29 +563,53 @@ export default function InstanceEditor() {
                 >
                   שמור כתבנית
                 </button>
+                {hasFinals && (
+                  <button
+                    onClick={cancelCorrection}
+                    className="text-[12px] border border-gray-300 text-gray-700 rounded px-3 py-1.5 hover:bg-gray-50"
+                  >
+                    בטל תיקון
+                  </button>
+                )}
                 <button
-                  onClick={finalize}
+                  onClick={requestFinalize}
                   disabled={finalizing || dirty}
                   title={dirty ? 'שמור תחילה' : undefined}
                   className="bg-green-600 text-white rounded px-3 py-1.5 text-sm font-medium hover:bg-green-700 disabled:opacity-40"
                 >
-                  {finalizing ? 'מפיק…' : 'סיים ושמור PDF סופי'}
+                  {finalizing
+                    ? 'מפיק…'
+                    : hasFinals
+                    ? `הפק PDF מתוקן (גרסה ${nextVersion})`
+                    : 'סיים ושמור PDF סופי'}
                 </button>
               </>
             )}
             {isFinalized && (
-              <a
-                href={api.documents.instanceFinalPdfUrl(id)}
-                className="bg-blue-600 text-white rounded px-3 py-1.5 text-sm font-medium hover:bg-blue-700"
-                download
-              >
-                הורד PDF סופי
-              </a>
+              <>
+                <button
+                  onClick={reopenForCorrection}
+                  className="border border-blue-300 text-blue-700 rounded px-3 py-1.5 text-sm font-medium hover:bg-blue-50"
+                >
+                  ערוך והפק גרסה מתוקנת
+                </button>
+                <a
+                  href={api.documents.instanceFinalPdfUrl(id)}
+                  className="bg-blue-600 text-white rounded px-3 py-1.5 text-sm font-medium hover:bg-blue-700"
+                  download
+                >
+                  הורד PDF סופי
+                </a>
+              </>
             )}
             <button
               onClick={deleteInstance}
-              disabled={isFinalized}
-              title={isFinalized ? 'לא ניתן למחוק מסמך סופי' : undefined}
+              disabled={hasFinals || isFinalized}
+              title={
+                hasFinals || isFinalized
+                  ? 'לא ניתן למחוק מסמך עם גרסאות PDF'
+                  : undefined
+              }
               className="text-[12px] text-red-600 hover:bg-red-50 border border-red-200 rounded px-3 py-1.5 disabled:opacity-40"
             >
               מחק
@@ -520,13 +618,23 @@ export default function InstanceEditor() {
         </div>
         {isFinalized ? (
           <div className="mt-3 bg-green-50 border border-green-200 text-green-900 rounded p-2 text-sm">
-            ✓ המסמך סופי ואינו ניתן לעריכה. התצוגה מציגה את ה-PDF הסופי.
+            ✓ הופקה גרסת PDF סופית (גרסה {finalVersions[0]?.version ?? 1}). קבצי
+            ה-PDF קפואים ולא ישתנו; ניתן לפתוח את המסמך לעריכה ולהפיק גרסה
+            מתוקנת בכל עת.
+          </div>
+        ) : hasFinals ? (
+          <div className="mt-3 bg-blue-50 border border-blue-200 text-blue-900 rounded p-2 text-sm">
+            מצב תיקון — המסמך נטען עם הערכים השמורים שלו. קיימות{' '}
+            {finalVersions.length} גרסאות PDF קפואות; שמירה והפקה ייצרו את גרסה{' '}
+            {nextVersion} מבלי לשנות את הקודמות. ״בטל תיקון״ סוגר את העריכה בלי
+            ליצור גרסה.
           </div>
         ) : (
           <div className="mt-3 bg-amber-50 border border-amber-200 text-amber-900 rounded p-2 text-sm">
             תמונת מצב קפואה מ-{new Date(instance.createdAt).toLocaleDateString('he-IL')} — שינויים בשדות העסק ובחותמים לא ישפיעו על מסמך זה לאחר סיום.
           </div>
         )}
+        {hasFinals && <VersionHistory instanceId={id} versions={finalVersions} />}
         {saveErr && (
           <div className="mt-2 bg-red-50 border border-red-200 text-red-800 rounded p-2 text-xs">
             {saveErr}
@@ -560,7 +668,18 @@ export default function InstanceEditor() {
                 <div className="mt-2 bg-blue-50 border border-blue-200 text-blue-900 rounded px-3 py-1 text-[12px] flex items-center gap-2">
                   <span>📍</span>
                   <span className="flex-1">
-                    גרור את הפריט אל ה-PDF, או לחץ עליו פעם אחת. <kbd className="opacity-70">ESC</kbd> לביטול.
+                    {pending.kind === 'ellipse' ? (
+                      <>
+                        גרור על ה-PDF מפינה לפינה כדי לצייר את האליפסה.
+                        החזק <kbd className="opacity-70">Shift</kbd> לעיגול מושלם.{' '}
+                        <kbd className="opacity-70">ESC</kbd> לביטול.
+                      </>
+                    ) : (
+                      <>
+                        גרור את הפריט אל ה-PDF, או לחץ עליו פעם אחת.{' '}
+                        <kbd className="opacity-70">ESC</kbd> לביטול.
+                      </>
+                    )}
                   </span>
                   <span className="text-[11px] opacity-80">{pending.label}</span>
                 </div>
@@ -576,11 +695,14 @@ export default function InstanceEditor() {
             isPlacing={
               !isFinalized && pending
                 ? pending.mode === 'annotation'
-                  ? 'annotation'
+                  ? pending.kind === 'ellipse'
+                    ? 'annotation-draw'
+                    : 'annotation'
                   : 'field'
                 : false
             }
             onPageClick={onPageClick}
+            onPageDraw={placeAnnotationRect}
             onMoveField={(fid, x, y) =>
               updatePlacement(fid, { xPct: x, yPct: y })
             }
@@ -679,6 +801,117 @@ export default function InstanceEditor() {
           onSubmit={saveAsTemplate}
         />
       )}
+      {finalizeOpen && (
+        <FinalizeDialog
+          nextVersion={nextVersion}
+          hasFinals={hasFinals}
+          onClose={() => setFinalizeOpen(false)}
+          onConfirm={finalize}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Version history ──────────────────────────────────────────────────────────
+//
+// Immutable per-version rows. Every version keeps its own permanent URL
+// (FinalDocument row id) — old versions stay downloadable forever.
+
+function VersionHistory({ instanceId, versions }) {
+  return (
+    <div className="mt-2 bg-gray-50 border border-gray-200 rounded p-2">
+      <div className="text-[11px] font-semibold text-gray-700 mb-1">
+        גרסאות PDF ({versions.length})
+      </div>
+      <ul className="space-y-0.5">
+        {versions.map((v) => (
+          <li
+            key={v.id}
+            className="flex items-center gap-2 text-[12px] text-gray-700"
+          >
+            <span className="font-medium">גרסה {v.version}</span>
+            {v.isCurrent && (
+              <span className="text-[10px] bg-green-100 text-green-800 border border-green-200 rounded-full px-1.5 py-0">
+                נוכחית
+              </span>
+            )}
+            <span className="text-gray-500">
+              {new Date(v.generatedAt).toLocaleString('he-IL', {
+                dateStyle: 'short',
+                timeStyle: 'short',
+              })}
+            </span>
+            {v.generatedBy && <span className="text-gray-500">· {v.generatedBy}</span>}
+            {v.note && (
+              <span className="text-gray-500 truncate max-w-[240px]" title={v.note}>
+                · {v.note}
+              </span>
+            )}
+            <a
+              href={api.documents.instanceFinalVersionPdfUrl(instanceId, v.id)}
+              target="_blank"
+              rel="noreferrer"
+              className="text-blue-700 hover:underline mr-auto"
+            >
+              פתח / הורד
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// ── Finalize dialog ──────────────────────────────────────────────────────────
+
+function FinalizeDialog({ nextVersion, hasFinals, onClose, onConfirm }) {
+  const [note, setNote] = useState('');
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      dir="rtl"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="bg-white w-full max-w-md rounded-xl shadow-2xl p-5 space-y-3">
+        <h3 className="text-base font-semibold">
+          {hasFinals ? `הפקת גרסה מתוקנת (גרסה ${nextVersion})` : 'הפקת PDF סופי'}
+        </h3>
+        <p className="text-xs text-gray-600">
+          {hasFinals
+            ? 'תופק גרסת PDF חדשה מהערכים הנוכחיים. הגרסאות הקודמות נשמרות ללא שינוי וניתן יהיה להוריד אותן מהיסטוריית הגרסאות.'
+            : 'יופק קובץ PDF סופי מהערכים הנוכחיים. אם תתגלה טעות, אפשר יהיה לפתוח את המסמך לעריכה ולהפיק גרסה מתוקנת — הקובץ הזה יישמר כגרסה 1.'}
+        </p>
+        {hasFinals && (
+          <label className="block">
+            <div className="text-[12px] text-gray-600 mb-1">
+              הערת תיקון (אופציונלי)
+            </div>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="מה תוקן בגרסה זו?"
+              className="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm h-16"
+            />
+          </label>
+        )}
+        <div className="flex items-center gap-2 pt-1">
+          <button
+            onClick={() => onConfirm(note.trim() || undefined)}
+            className="flex-1 bg-green-600 text-white rounded px-3 py-1.5 text-sm font-medium hover:bg-green-700"
+          >
+            {hasFinals ? `הפק גרסה ${nextVersion}` : 'הפק PDF סופי'}
+          </button>
+          <button
+            onClick={onClose}
+            className="text-sm text-gray-600 px-3 py-1.5 rounded hover:bg-gray-100"
+          >
+            ביטול
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -880,6 +1113,7 @@ function PlacementToolbar({ businessFields, signers, pending, setPending }) {
         { kind: 'highlight', label: '+ הדגשה', cfgLabel: 'הדגשה' },
         { kind: 'line', label: '+ קו', cfgLabel: 'קו' },
         { kind: 'note', label: '+ הערה', cfgLabel: 'הערה' },
+        { kind: 'ellipse', label: '+ עיגול / אליפסה', cfgLabel: 'עיגול / אליפסה' },
       ].map(({ kind, label, cfgLabel }) => {
         const props = makeArmProps(
           setPending,
@@ -1443,6 +1677,9 @@ function AnnotationVisual({ ann, pageCssHeight }) {
   if (ann.kind === 'x') {
     return <MarkVisual kind="x" color={ann.color || '#b91c1c'} />;
   }
+  if (ann.kind === 'ellipse') {
+    return <EllipseVisual ann={ann} />;
+  }
   if (ann.kind === 'note') {
     const fontSize = clampFont(
       typeof ann.fontSize === 'number'
@@ -1451,12 +1688,18 @@ function AnnotationVisual({ ann, pageCssHeight }) {
     );
     return (
       <div
-        className="w-full h-full overflow-hidden px-1 leading-tight"
+        // Mirrors the PDF renderer: explicit newlines + word wrapping
+        // (pre-wrap), 1.25 line height, top-aligned, right-aligned RTL,
+        // transparent background, and visible overflow below a too-short
+        // rect (the PDF draws every wrapped line too).
+        className="w-full h-full px-0.5"
         style={{
           color: ann.color || '#111827',
           fontSize: `${fontSize}px`,
+          lineHeight: 1.25,
           direction: 'rtl',
           textAlign: 'right',
+          whiteSpace: 'pre-wrap',
         }}
       >
         {ann.text || <span className="opacity-50 italic">הערה</span>}
@@ -1464,6 +1707,32 @@ function AnnotationVisual({ ann, pageCssHeight }) {
     );
   }
   return null;
+}
+
+// Outline-only ellipse inscribed in the annotation rect — same geometry as
+// the PDF renderer (drawEllipse centered in the rect, transparent fill).
+// non-scaling-stroke keeps the outline crisp under non-uniform scaling.
+function EllipseVisual({ ann }) {
+  const thickness = Math.max(0.5, Math.min(10, Number(ann.thickness) || 2.5));
+  return (
+    <svg
+      viewBox="0 0 100 100"
+      className="w-full h-full"
+      preserveAspectRatio="none"
+      aria-hidden
+    >
+      <ellipse
+        cx="50"
+        cy="50"
+        rx="50"
+        ry="50"
+        fill="none"
+        stroke={ann.color || '#b91c1c'}
+        strokeWidth={thickness}
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  );
 }
 
 function clampFont(px) {
@@ -1534,6 +1803,8 @@ function SelectedAnnotationPanel({ ann, onUpdate, onDelete }) {
       ? 'הדגשה'
       : ann.kind === 'line'
       ? 'קו'
+      : ann.kind === 'ellipse'
+      ? 'עיגול / אליפסה'
       : 'הערה';
 
   return (
@@ -1546,13 +1817,19 @@ function SelectedAnnotationPanel({ ann, onUpdate, onDelete }) {
         </div>
       </div>
 
-      {(ann.kind === 'check' || ann.kind === 'x' || ann.kind === 'line') && (
+      {(ann.kind === 'check' ||
+        ann.kind === 'x' ||
+        ann.kind === 'line' ||
+        ann.kind === 'ellipse') && (
         <div className="grid grid-cols-2 gap-2">
           <label className="block">
             <div className="text-[11px] text-gray-600 mb-1">צבע</div>
             <input
               type="color"
-              value={ann.color || (ann.kind === 'x' ? '#b91c1c' : '#111827')}
+              value={
+                ann.color ||
+                (ann.kind === 'x' || ann.kind === 'ellipse' ? '#b91c1c' : '#111827')
+              }
               onChange={(e) => onUpdate({ color: e.target.value })}
               className="w-full h-8 border border-gray-300 rounded"
             />
@@ -1563,7 +1840,7 @@ function SelectedAnnotationPanel({ ann, onUpdate, onDelete }) {
             </div>
             <input
               type="range"
-              min={1}
+              min={0.5}
               max={10}
               step={0.5}
               value={Number(ann.thickness) || 2}
@@ -1571,6 +1848,13 @@ function SelectedAnnotationPanel({ ann, onUpdate, onDelete }) {
               className="w-full"
             />
           </label>
+        </div>
+      )}
+
+      {ann.kind === 'ellipse' && (
+        <div className="text-[11px] text-gray-500">
+          החזק <kbd className="border border-gray-300 rounded px-1">Shift</kbd>{' '}
+          בעת שינוי גודל כדי לשמור על עיגול מושלם.
         </div>
       )}
 

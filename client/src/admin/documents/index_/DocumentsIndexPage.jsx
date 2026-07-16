@@ -220,17 +220,24 @@ function InstanceRow({ inst, onClick }) {
             {inst.snapshotPageCount} עמ׳ · עודכן {relativeHebrew(inst.updatedAt)}
           </div>
         </div>
-        <StatusPill status={inst.status} />
+        <StatusPill
+          status={inst.status}
+          hasFinals={(inst._count?.finalDocuments ?? 0) > 0}
+        />
       </button>
     </li>
   );
 }
 
-function StatusPill({ status }) {
+function StatusPill({ status, hasFinals }) {
+  // A draft that already has PDF versions is a correction in progress —
+  // finalizing no longer locks a document permanently.
+  const key = status === 'draft' && hasFinals ? 'correcting' : status;
   const m = {
     draft: { label: 'טיוטה', cls: 'bg-gray-100 text-gray-700 border-gray-200' },
+    correcting: { label: 'בתיקון', cls: 'bg-blue-100 text-blue-800 border-blue-200' },
     finalized: { label: 'סופי', cls: 'bg-green-100 text-green-800 border-green-200' },
-  }[status] || { label: status, cls: 'bg-gray-100 text-gray-700' };
+  }[key] || { label: status, cls: 'bg-gray-100 text-gray-700' };
   return (
     <span className={`shrink-0 text-[10px] border rounded-full px-2 py-0.5 ${m.cls}`}>
       {m.label}

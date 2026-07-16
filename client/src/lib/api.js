@@ -1260,6 +1260,15 @@ export const api = {
       request(`/api/documents/instances/${id}`, { method: 'DELETE' }),
     instancePdfUrl: (id) => `/api/documents/instances/${id}/pdf`,
     instanceFinalPdfUrl: (id) => `/api/documents/instances/${id}/final`,
+    // Immutable URL of one specific PDF version (FinalDocument row id).
+    instanceFinalVersionPdfUrl: (id, finalId) =>
+      `/api/documents/instances/${id}/final/${finalId}`,
+    reopenInstance: (id) =>
+      request(`/api/documents/instances/${id}/reopen`, { method: 'POST' }),
+    cancelCorrection: (id) =>
+      request(`/api/documents/instances/${id}/cancel-correction`, {
+        method: 'POST',
+      }),
     setOverrideText: (id, snapshotFieldId, textValue) =>
       request(
         `/api/documents/instances/${id}/overrides/${snapshotFieldId}`,
@@ -1286,8 +1295,11 @@ export const api = {
         `/api/documents/instances/${id}/overrides/${snapshotFieldId}`,
         { method: 'DELETE' },
       ),
-    finalize: (id) =>
-      request(`/api/documents/instances/${id}/finalize`, { method: 'POST' }),
+    finalize: (id, note) =>
+      request(`/api/documents/instances/${id}/finalize`, {
+        method: 'POST',
+        body: JSON.stringify({ note: note || undefined }),
+      }),
   },
 
   // Israeli bank catalog — static bundled dataset (bank codes/names for the

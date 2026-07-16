@@ -372,6 +372,7 @@ router.get(
         updatedAt: true,
         finalizedAt: true,
         snapshotPageCount: true,
+        _count: { select: { finalDocuments: true } },
       },
     });
     res.json(list);
@@ -497,8 +498,16 @@ router.get(
       include: {
         overrides: true,
         finalDocuments: {
-          orderBy: { generatedAt: 'desc' },
-          select: { id: true, pdfSize: true, generatedAt: true },
+          orderBy: { version: 'desc' },
+          select: {
+            id: true,
+            version: true,
+            isCurrent: true,
+            note: true,
+            generatedBy: true,
+            pdfSize: true,
+            generatedAt: true,
+          },
         },
       },
     });
@@ -530,10 +539,16 @@ router.delete(
   handle(async (req, res) => {
     const inst = await prisma.documentInstance.findUnique({
       where: { id: req.params.id },
-      select: { status: true, templateId: true },
+      select: {
+        status: true,
+        templateId: true,
+        _count: { select: { finalDocuments: true } },
+      },
     });
     if (!inst) return res.status(404).json({ error: 'not_found' });
-    if (inst.status === 'finalized') {
+    // Deleting an instance that has generated PDF versions would destroy the
+    // immutable version history — blocked even after a reopen-for-correction.
+    if (inst.status === 'finalized' || inst._count.finalDocuments > 0) {
       return res.status(409).json({ error: 'cannot_delete_finalized' });
     }
     // Delete the instance; if it was attached to an adhoc template that has
@@ -808,12 +823,17 @@ router.delete(
 // ── Finalize ─────────────────────────────────────────────────────────────────
 //
 // Resolves every field → (text value | image bytes), calls renderFinalPdf,
-// saves a FinalDocument row, flips instance status to 'finalized'. Once
-// finalized, the instance is immutable: no further overrides, no re-finalize.
+// appends a new immutable FinalDocument VERSION row (version = max + 1,
+// isCurrent flag moves to it), flips instance status to 'finalized'.
+//
+// Finalizing does NOT permanently lock the instance: POST /reopen returns
+// it to 'draft' so values can be corrected and a new version generated.
+// Existing version rows are never rewritten or deleted by any of this.
 
 router.post(
   '/instances/:id/finalize',
   handle(async (req, res) => {
+    const { note } = req.body || {};
     const inst = await prisma.documentInstance.findUnique({
       where: { id: req.params.id },
       include: { overrides: true },
@@ -915,15 +935,46 @@ router.post(
     const sourcePdf = Buffer.from(inst.snapshotPdfBytes);
     const pdfBytes = await renderFinalPdf(sourcePdf, resolved, annotationsSnapshot);
 
+    // Best-effort generator identity for the version audit trail. Loose
+    // reference (no FK) — admin deletion never touches document history.
+    const admin = req.adminAuth?.userId
+      ? await prisma.adminUser.findUnique({
+          where: { id: req.adminAuth.userId },
+          select: { id: true, username: true, displayName: true },
+        })
+      : null;
+
     const final = await prisma.$transaction(async (tx) => {
+      const prev = await tx.finalDocument.findFirst({
+        where: { instanceId: inst.id },
+        orderBy: { version: 'desc' },
+        select: { version: true },
+      });
+      await tx.finalDocument.updateMany({
+        where: { instanceId: inst.id, isCurrent: true },
+        data: { isCurrent: false },
+      });
       const fd = await tx.finalDocument.create({
         data: {
           instanceId: inst.id,
+          version: (prev?.version || 0) + 1,
+          isCurrent: true,
+          note: note && String(note).trim() ? String(note).trim().slice(0, 500) : null,
+          generatedById: admin?.id || null,
+          generatedBy: admin ? admin.displayName || admin.username : null,
           pdfBytes,
           pdfSize: pdfBytes.length,
           generatorVersion: 'v1',
         },
-        select: { id: true, pdfSize: true, generatedAt: true },
+        select: {
+          id: true,
+          version: true,
+          isCurrent: true,
+          note: true,
+          generatedBy: true,
+          pdfSize: true,
+          generatedAt: true,
+        },
       });
       await tx.documentInstance.update({
         where: { id: inst.id },
@@ -936,25 +987,99 @@ router.post(
   }),
 );
 
+// Reopen a finalized instance for correction. Already-generated PDF version
+// rows are untouched (immutable); the working record becomes editable again
+// and the next finalize appends version N+1.
+router.post(
+  '/instances/:id/reopen',
+  handle(async (req, res) => {
+    const inst = await prisma.documentInstance.findUnique({
+      where: { id: req.params.id },
+      select: { status: true },
+    });
+    if (!inst) return res.status(404).json({ error: 'not_found' });
+    if (inst.status !== 'finalized') {
+      return res.status(409).json({ error: 'not_finalized' });
+    }
+    const updated = await prisma.documentInstance.update({
+      where: { id: req.params.id },
+      data: { status: 'draft' },
+      select: { id: true, status: true, updatedAt: true },
+    });
+    res.json(updated);
+  }),
+);
+
+// Cancel an in-progress correction: return to 'finalized' WITHOUT rendering
+// anything — no new version is created. Only valid when the instance has at
+// least one final version to fall back to.
+router.post(
+  '/instances/:id/cancel-correction',
+  handle(async (req, res) => {
+    const inst = await prisma.documentInstance.findUnique({
+      where: { id: req.params.id },
+      select: { status: true, _count: { select: { finalDocuments: true } } },
+    });
+    if (!inst) return res.status(404).json({ error: 'not_found' });
+    if (inst.status !== 'draft') {
+      return res.status(409).json({ error: 'not_in_correction' });
+    }
+    if (inst._count.finalDocuments === 0) {
+      return res.status(409).json({ error: 'no_final_versions' });
+    }
+    const updated = await prisma.documentInstance.update({
+      where: { id: req.params.id },
+      data: { status: 'finalized' },
+      select: { id: true, status: true, updatedAt: true },
+    });
+    res.json(updated);
+  }),
+);
+
+// Current (latest) final PDF for an instance.
 router.get(
   '/instances/:id/final',
   handle(async (req, res) => {
-    // Latest final document for this instance (V1 has only one).
     const fd = await prisma.finalDocument.findFirst({
       where: { instanceId: req.params.id },
-      orderBy: { generatedAt: 'desc' },
+      orderBy: { version: 'desc' },
     });
     if (!fd) return res.status(404).json({ error: 'not_found' });
-    res.set('Content-Type', 'application/pdf');
-    res.set('Content-Length', String(fd.pdfSize));
-    res.set(
-      'Content-Disposition',
-      `attachment; filename="document-${fd.id}.pdf"`,
-    );
-    res.set('Cache-Control', 'public, max-age=31536000, immutable');
-    res.send(Buffer.from(fd.pdfBytes));
+    // NOT immutable: this URL tracks the CURRENT version, whose identity
+    // changes when a corrected version is generated (caching rule §15).
+    sendFinalPdf(res, fd, { immutable: false });
   }),
 );
+
+// A specific immutable PDF version. The id is the FinalDocument row id, so
+// the URL always maps to the same bytes forever — older versions stay
+// downloadable from the version history.
+router.get(
+  '/instances/:id/final/:finalId',
+  handle(async (req, res) => {
+    const fd = await prisma.finalDocument.findUnique({
+      where: { id: req.params.finalId },
+    });
+    if (!fd || fd.instanceId !== req.params.id) {
+      return res.status(404).json({ error: 'not_found' });
+    }
+    sendFinalPdf(res, fd, { immutable: true });
+  }),
+);
+
+function sendFinalPdf(res, fd, { immutable }) {
+  res.set('Content-Type', 'application/pdf');
+  res.set('Content-Length', String(fd.pdfSize));
+  res.set(
+    'Content-Disposition',
+    `attachment; filename="document-${fd.id}-v${fd.version}.pdf"`,
+  );
+  res.set(
+    'Cache-Control',
+    immutable ? 'public, max-age=31536000, immutable' : 'no-store',
+  );
+  res.send(Buffer.from(fd.pdfBytes));
+}
 
 function clamp01to100(n) {
   const v = Number(n);
@@ -1019,7 +1144,7 @@ function resolveBusinessFieldValue(bf, language) {
 // fields we recognise per-kind, drops anything else (defence in depth).
 // Client-generated ids are preserved (needed to keep selection stable
 // across saves; same pattern as field placements).
-const ANN_KINDS = new Set(['check', 'x', 'highlight', 'line', 'note']);
+const ANN_KINDS = new Set(['check', 'x', 'highlight', 'line', 'note', 'ellipse']);
 function normaliseAnnotation(a, i) {
   const kind = ANN_KINDS.has(a?.kind) ? a.kind : 'check';
   const base = {
@@ -1053,6 +1178,14 @@ function normaliseAnnotation(a, i) {
       text: a.text != null ? String(a.text) : '',
       fontSize: Number.isFinite(a.fontSize) ? Math.max(8, Math.min(48, a.fontSize)) : 12,
       color: typeof a.color === 'string' ? a.color : '#111827',
+    };
+  }
+  if (kind === 'ellipse') {
+    // Outline-only vector shape: transparent fill, stroke color + width.
+    return {
+      ...base,
+      color: typeof a.color === 'string' ? a.color : '#b91c1c',
+      thickness: Number.isFinite(a.thickness) ? Math.max(0.5, Math.min(10, a.thickness)) : 2.5,
     };
   }
   // check / x

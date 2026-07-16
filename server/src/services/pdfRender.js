@@ -169,6 +169,7 @@ export async function renderFinalPdf(sourcePdfBytes, fields, annotations = []) {
       if (ann.kind === 'check') drawCheckAnnotation(page, ann);
       else if (ann.kind === 'x') drawXAnnotation(page, ann);
       else if (ann.kind === 'line') drawLineAnnotation(page, ann);
+      else if (ann.kind === 'ellipse') drawEllipseAnnotation(page, ann);
       else if (ann.kind === 'note') drawNoteAnnotation(page, ann, hebrewFont);
     } catch {
       // Swallow per-annotation errors so a bad one cannot kill the render.
@@ -283,29 +284,97 @@ function drawXAnnotation(page, ann) {
   });
 }
 
+// Line height for note text. Matches the editor preview (lineHeight: 1.25),
+// so on-screen wrapping/spacing and the PDF stay in step.
+const NOTE_LINE_HEIGHT_RATIO = 1.25;
+
+// Split a note's logical text into display lines that fit maxWidthPt.
+// Explicit newlines (\n) are hard breaks; each logical line is then
+// word-wrapped independently. Returns LOGICAL-order lines — bidi/visual
+// conversion happens per line at draw time (running it across newlines is
+// exactly the bug this replaces: bidi-js + whole-string reversal merged
+// lines together and reversed their order, and pdf-lib then drew them at a
+// fixed 24pt line height, overlapping into a smear for larger fonts).
+// Width is measured on the logical string: visual reordering permutes the
+// same glyphs, so the advance width is identical.
+// Exported for regression tests.
+export function layoutNoteLines(rawText, font, fontSize, maxWidthPt) {
+  const logical = String(rawText ?? '').replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  for (const line of logical) {
+    if (!line.trim()) {
+      out.push(''); // intentional blank line — keeps its vertical slot
+      continue;
+    }
+    const words = line.split(/\s+/).filter(Boolean);
+    let cur = '';
+    for (const word of words) {
+      const cand = cur ? `${cur} ${word}` : word;
+      if (cur && font.widthOfTextAtSize(cand, fontSize) > maxWidthPt) {
+        out.push(cur);
+        cur = word; // a single over-wide word overflows rather than breaking
+      } else {
+        cur = cand;
+      }
+    }
+    if (cur) out.push(cur);
+  }
+  // Trim trailing blank lines — they have no visual meaning below the text.
+  while (out.length && out[out.length - 1] === '') out.pop();
+  return out;
+}
+
 function drawNoteAnnotation(page, ann, hebrewFont) {
   const { x, y, w, h } = annRect(page, ann);
   const raw = (ann.text ?? '').toString();
   if (!raw.trim()) return;
   const color = parseColor(ann.color || '#111827');
-  const isHebrew = HEB_RE.test(raw);
   const fontSize = Number.isFinite(ann.fontSize)
     ? Math.max(8, Math.min(48, ann.fontSize))
     : fontSizeForFieldHeight(h);
-  const visualText = isHebrew ? toFontkitInput(raw) : raw;
-  // Start at top of rect, account for font baseline.
-  const textY = y + h - fontSize - 1;
-  const textWidth = hebrewFont.widthOfTextAtSize(visualText, fontSize);
-  // Right-align for Hebrew, left-align for Latin.
-  const textX = isHebrew
-    ? x + w - 2 - Math.min(textWidth, Math.max(0, w - 4))
-    : x + 2;
-  page.drawText(visualText, {
-    x: textX,
-    y: Math.max(y + 1, textY),
-    size: fontSize,
-    font: hebrewFont,
-    color,
+  const lineHeight = fontSize * NOTE_LINE_HEIGHT_RATIO;
+  const lines = layoutNoteLines(raw, hebrewFont, fontSize, Math.max(8, w - 4));
+
+  // Text is top-aligned in the rect (like the editor). Every wrapped line is
+  // drawn — no clipping at the rect edge; a too-short rect overflows below,
+  // which the editor preview shows identically. No background, border, or
+  // shadow is ever drawn for notes: text only.
+  let baseline = Math.max(y + 1, y + h - fontSize - 1);
+  for (const line of lines) {
+    if (baseline < 0) break; // below the physical page — nothing to draw
+    if (line) {
+      // Per-line bidi: the load-bearing double-reversal trick, applied to ONE
+      // line at a time so newlines never enter the bidi algorithm.
+      const visual = HEB_RE.test(line) ? toFontkitInput(line) : line;
+      const textWidth = hebrewFont.widthOfTextAtSize(visual, fontSize);
+      // Right-aligned like the editor preview (RTL document convention).
+      const textX = x + w - 2 - Math.min(textWidth, Math.max(0, w - 4));
+      page.drawText(visual, {
+        x: Math.max(x + 2, textX),
+        y: baseline,
+        size: fontSize,
+        font: hebrewFont,
+        color,
+      });
+    }
+    baseline -= lineHeight;
+  }
+}
+
+// Outline-only vector ellipse inscribed in the annotation rect. Transparent
+// fill by design — page content stays visible through it.
+function drawEllipseAnnotation(page, ann) {
+  const { x, y, w, h } = annRect(page, ann);
+  const thickness = Number.isFinite(ann.thickness)
+    ? Math.max(0.5, Math.min(10, ann.thickness))
+    : 2.5;
+  page.drawEllipse({
+    x: x + w / 2,
+    y: y + h / 2,
+    xScale: Math.max(0.5, w / 2),
+    yScale: Math.max(0.5, h / 2),
+    borderColor: parseColor(ann.color || '#b91c1c'),
+    borderWidth: thickness,
   });
 }
 

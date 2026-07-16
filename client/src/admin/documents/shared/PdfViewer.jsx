@@ -19,14 +19,25 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 //   fields           required — [{ id, page, xPct, yPct, wPct, hPct, fieldType, label }]
 //   annotations      optional — [{ id, kind, page, xPct, yPct, wPct, hPct, ... }]
 //   readOnly         disables click-to-place + drag/resize for both layers
-//   isPlacing        'field' | 'annotation' | true | false — when set, clicking
-//                    empty space calls onPageClick(kind, page, xPct, yPct).
-//                    `true` is treated as 'field' for back-compat.
+//   isPlacing        'field' | 'annotation' | 'annotation-draw' | true | false —
+//                    when set, clicking empty space calls
+//                    onPageClick(kind, page, xPct, yPct). `true` is treated as
+//                    'field' for back-compat. 'annotation-draw' arms
+//                    drag-to-draw: the user drags a rectangle and
+//                    onPageDraw(page, {xPct,yPct,wPct,hPct}) fires on release
+//                    (Shift while dragging locks a 1:1 aspect → circle). A
+//                    plain click in this mode falls back to onPageClick.
 //   onPageClick      (page, xPct, yPct)  OR  (kind, page, xPct, yPct) if using
 //                    annotation placement. The component emits the 4-arg form
 //                    whenever isPlacing === 'annotation'.
 //   (for each layer) onMoveX/onResizeX/onDeleteX/onXClick + selectedXId
 //   renderFieldContent / renderAnnotationContent — callback returns inner JSX.
+//
+// Editor chrome (delete ×, resize handle, rubber band) lives OUTSIDE the
+// canonical field/annotation rect: the rect is exactly what gets persisted
+// and rendered into the PDF; the controls are absolutely positioned around
+// it and exist only in the editor (never in preview/readOnly, never in the
+// generated PDF, and they never consume the rect's inner width).
 export default function PdfViewer({
   pdfUrl,
   fields,
@@ -34,6 +45,7 @@ export default function PdfViewer({
   readOnly = false,
   isPlacing = false,
   onPageClick,
+  onPageDraw,
   onMoveField,
   onResizeField,
   onDeleteField,
@@ -135,6 +147,7 @@ export default function PdfViewer({
             readOnly={readOnly}
             isPlacing={isPlacing}
             onPageClick={onPageClick}
+            onPageDraw={onPageDraw}
             onMoveField={onMoveField}
             onResizeField={onResizeField}
             onDeleteField={onDeleteField}
@@ -163,6 +176,7 @@ function PdfPage({
   readOnly,
   isPlacing,
   onPageClick,
+  onPageDraw,
   onMoveField,
   onResizeField,
   onDeleteField,
@@ -233,6 +247,8 @@ function PdfPage({
 
   const handleContainerClick = (e) => {
     if (readOnly || !placementMode || !rendered) return;
+    // In draw mode placement happens on pointerup (drag or tiny-drag click).
+    if (placementMode === 'annotation-draw') return;
     if (e.target.closest('[data-field-overlay]')) return;
     if (e.target.closest('[data-annotation-overlay]')) return;
     const rect = e.currentTarget.getBoundingClientRect();
@@ -248,6 +264,72 @@ function PdfPage({
       pageCssWidth: rect.width,
       pageCssHeight: rect.height,
     });
+  };
+
+  // ── Drag-to-draw (ellipse etc.) ──────────────────────────────────────────
+  // Rubber band in CSS pixels relative to the page container. Editor-only
+  // visual — the persisted annotation is created by the caller on release.
+  const [drawBand, setDrawBand] = useState(null); // {x, y, w, h}
+  const drawRef = useRef(null); // {startX, startY} in page-local px
+
+  const bandFromPointer = (e, pageRect) => {
+    const sx = drawRef.current.startX;
+    const sy = drawRef.current.startY;
+    let dx = e.clientX - pageRect.left - sx;
+    let dy = e.clientY - pageRect.top - sy;
+    // Shift → lock 1:1 in CSS px (a perfect circle on screen and in the PDF).
+    if (e.shiftKey) {
+      const m = Math.min(Math.abs(dx), Math.abs(dy));
+      dx = Math.sign(dx || 1) * m;
+      dy = Math.sign(dy || 1) * m;
+    }
+    const x = Math.max(0, Math.min(sx, sx + dx));
+    const y = Math.max(0, Math.min(sy, sy + dy));
+    const w = Math.min(Math.abs(dx), pageRect.width - x);
+    const h = Math.min(Math.abs(dy), pageRect.height - y);
+    return { x, y, w, h };
+  };
+
+  const onDrawPointerDown = (e) => {
+    if (readOnly || placementMode !== 'annotation-draw' || !rendered) return;
+    if (e.target.closest('[data-field-overlay]')) return;
+    if (e.target.closest('[data-annotation-overlay]')) return;
+    const pageRect = e.currentTarget.getBoundingClientRect();
+    drawRef.current = {
+      startX: e.clientX - pageRect.left,
+      startY: e.clientY - pageRect.top,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDrawBand({ x: drawRef.current.startX, y: drawRef.current.startY, w: 0, h: 0 });
+  };
+
+  const onDrawPointerMove = (e) => {
+    if (!drawRef.current) return;
+    const pageRect = e.currentTarget.getBoundingClientRect();
+    setDrawBand(bandFromPointer(e, pageRect));
+  };
+
+  const onDrawPointerUp = (e) => {
+    if (!drawRef.current) return;
+    const pageRect = e.currentTarget.getBoundingClientRect();
+    const band = bandFromPointer(e, pageRect);
+    drawRef.current = null;
+    setDrawBand(null);
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    const dims = { pageCssWidth: pageRect.width, pageCssHeight: pageRect.height };
+    if (band.w < 6 || band.h < 6) {
+      // Treated as a click — caller places a default-size annotation.
+      const xPct = ((e.clientX - pageRect.left) / pageRect.width) * 100;
+      const yPct = ((e.clientY - pageRect.top) / pageRect.height) * 100;
+      onPageClick?.('annotation', pageNum, xPct, yPct, dims);
+      return;
+    }
+    onPageDraw?.(pageNum, {
+      xPct: (band.x / pageRect.width) * 100,
+      yPct: (band.y / pageRect.height) * 100,
+      wPct: (band.w / pageRect.width) * 100,
+      hPct: (band.h / pageRect.height) * 100,
+    }, dims);
   };
 
   // Drag-and-drop placement from the toolbar. Reuses the exact same page-
@@ -307,13 +389,51 @@ function PdfPage({
           cursor: !readOnly && placementMode && rendered ? 'crosshair' : 'default',
           width: cssWidth || 'auto',
           height: cssHeight || 'auto',
+          // Draw mode captures pointer drags — stop touch scrolling from
+          // hijacking them.
+          touchAction:
+            !readOnly && placementMode === 'annotation-draw' && rendered
+              ? 'none'
+              : undefined,
         }}
         onClick={handleContainerClick}
         onDragOver={onPageDragOver}
         onDragLeave={onPageDragLeave}
         onDrop={onPageDrop}
+        onPointerDown={onDrawPointerDown}
+        onPointerMove={onDrawPointerMove}
+        onPointerUp={onDrawPointerUp}
       >
         <canvas ref={canvasRef} style={{ display: 'block' }} />
+        {drawBand && drawBand.w > 0 && drawBand.h > 0 && (
+          <div
+            aria-hidden
+            className="absolute pointer-events-none border border-dashed border-blue-500"
+            style={{
+              left: drawBand.x,
+              top: drawBand.y,
+              width: drawBand.w,
+              height: drawBand.h,
+            }}
+          >
+            <svg
+              viewBox="0 0 100 100"
+              preserveAspectRatio="none"
+              className="w-full h-full"
+            >
+              <ellipse
+                cx="50"
+                cy="50"
+                rx="50"
+                ry="50"
+                fill="none"
+                stroke="#3b82f6"
+                strokeWidth="2"
+                vectorEffect="non-scaling-stroke"
+              />
+            </svg>
+          </div>
+        )}
         {rendered &&
           fields.map((field) => (
             <FieldOverlay
@@ -354,7 +474,16 @@ function PdfPage({
 const MIN_W_PCT = 3;
 const MIN_H_PCT = 1.5;
 
-function useOverlayInteractions({ rect, readOnly, onMove, onResize, onClick }) {
+function useOverlayInteractions({
+  rect,
+  readOnly,
+  onMove,
+  onResize,
+  onClick,
+  // Shift while resizing locks a 1:1 CSS-pixel aspect (circle). Opt-in per
+  // overlay kind (used by ellipse annotations).
+  lockAspectWithShift = false,
+}) {
   // rect: { id, xPct, yPct, wPct, hPct }
   const dragRef = useRef(null);
   const resizeRef = useRef(null);
@@ -424,10 +553,15 @@ function useOverlayInteractions({ rect, readOnly, onMove, onResize, onClick }) {
       MIN_W_PCT,
       Math.min(resizeRef.current.startW + dxPct, 100 - rect.xPct),
     );
-    const newH = Math.max(
+    let newH = Math.max(
       MIN_H_PCT,
       Math.min(resizeRef.current.startH + dyPct, 100 - rect.yPct),
     );
+    if (lockAspectWithShift && e.shiftKey) {
+      // Equal CSS pixels: hPx == wPx → hPct = wPct * pageW / pageH.
+      const locked = newW * (pageRect.width / pageRect.height);
+      newH = Math.max(MIN_H_PCT, Math.min(locked, 100 - rect.yPct));
+    }
     onResize(rect.id, newW, newH);
   }
 
@@ -520,20 +654,14 @@ function FieldOverlay({
           {renderContent ? renderContent(field) : field.label || cfg.label}
           {field.required && <span className="text-red-500 ml-0.5">*</span>}
         </div>
-        {!readOnly && onDelete && (
-          <button
-            data-del
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(field.id);
-            }}
-            className="shrink-0 w-4 h-4 rounded-full bg-white/80 hover:bg-red-100 border border-gray-300 hover:border-red-400 flex items-center justify-center text-gray-500 hover:text-red-600 text-[10px] leading-none"
-            title="הסר שדה"
-          >
-            ×
-          </button>
-        )}
       </div>
+      {/* Editor-only chrome, positioned OUTSIDE the field rect. The rect
+          itself stays exactly the persisted text/render area — the delete
+          control sits after the field (left side in this RTL document flow)
+          and never covers content or shrinks the usable text width. */}
+      {!readOnly && onDelete && (
+        <DeleteHandle onDelete={() => onDelete(field.id)} title="הסר שדה" />
+      )}
       {!readOnly && onResize && <ResizeHandle {...resize} />}
     </div>
   );
@@ -558,11 +686,17 @@ function AnnotationOverlay({
     onMove,
     onResize,
     onClick,
+    lockAspectWithShift: ann.kind === 'ellipse',
   });
 
   const selectionRing = selected
     ? 'outline outline-2 outline-offset-1 outline-blue-500'
     : '';
+
+  // Notes overflow visibly (the PDF draws every wrapped line even past a
+  // too-short rect — the editor must show the same). Ellipses keep their
+  // centered stroke unclipped. Everything else clips to the rect.
+  const clip = ann.kind === 'note' || ann.kind === 'ellipse' ? '' : 'overflow-hidden';
 
   return (
     <div
@@ -579,39 +713,53 @@ function AnnotationOverlay({
       }}
       {...body}
     >
-      <div
-        className={`relative h-full w-full overflow-hidden rounded-sm ${selectionRing}`}
-      >
+      <div className={`relative h-full w-full rounded-sm ${clip} ${selectionRing}`}>
         {renderContent
           ? renderContent(ann, { pageCssHeight })
           : null}
-        {!readOnly && onDelete && selected && (
-          <button
-            data-del
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(ann.id);
-            }}
-            className="absolute top-0 right-0 w-4 h-4 rounded-full bg-white/90 hover:bg-red-100 border border-gray-400 flex items-center justify-center text-gray-600 hover:text-red-600 text-[10px] leading-none"
-            title="הסר סימון"
-          >
-            ×
-          </button>
-        )}
       </div>
+      {/* Editor-only chrome outside the annotation rect (see FieldOverlay). */}
+      {!readOnly && onDelete && selected && (
+        <DeleteHandle onDelete={() => onDelete(ann.id)} title="הסר סימון" />
+      )}
       {!readOnly && onResize && selected && <ResizeHandle {...resize} />}
     </div>
   );
 }
 
+// Remove control. Sits just past the overlay's LEFT edge — outside the
+// canonical rect, so it never covers content in this RTL editor and never
+// participates in the persisted geometry. Rendered only in the editor
+// (readOnly hides it; the PDF is rendered server-side from data alone).
+function DeleteHandle({ onDelete, title }) {
+  return (
+    <button
+      data-del
+      onClick={(e) => {
+        e.stopPropagation();
+        onDelete();
+      }}
+      style={{ left: -20, top: '50%', transform: 'translateY(-50%)' }}
+      className="absolute w-4 h-4 rounded-full bg-white/90 hover:bg-red-100 border border-gray-300 hover:border-red-400 flex items-center justify-center text-gray-500 hover:text-red-600 text-[10px] leading-none shadow-sm"
+      title={title}
+    >
+      ×
+    </button>
+  );
+}
+
+// Resize control at the BOTTOM-RIGHT corner (straddling it), so dragging
+// right/down grows the rect naturally. Geometry math is unchanged — x/y stay
+// the rect's top-left, width grows rightward — so moving this control does
+// not shift saved coordinates. Editor-only, like DeleteHandle.
 function ResizeHandle(handlers) {
   return (
     <div
       data-resize
       style={{
         position: 'absolute',
-        bottom: 0,
-        left: 0,
+        bottom: -5,
+        right: -5,
         width: 10,
         height: 10,
         cursor: 'nwse-resize',

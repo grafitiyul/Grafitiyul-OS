@@ -461,6 +461,12 @@ model DocumentField {
 // A specific use of a template. ALWAYS carries its own frozen field list and
 // PDF bytes so later template/field/snapshot edits cannot mutate it.
 // status: 'draft' | 'finalized'
+//   draft     — editable working record (including a correction in progress
+//               after a reopen; existing FinalDocument versions are kept).
+//   finalized — a current PDF version exists and the record is not being
+//               edited. NOT permanent: POST /reopen returns it to 'draft'
+//               so a corrected version can be generated. The PDF artifacts
+//               themselves (FinalDocument rows) are immutable either way.
 model DocumentInstance {
   id                  String                     @id @default(cuid())
   template            DocumentTemplate           @relation(fields: [templateId], references: [id])
@@ -499,17 +505,30 @@ model DocumentInstanceOverride {
   @@unique([instanceId, snapshotFieldId])
 }
 
-// The rendered final PDF for an instance. Append-only audit trail (one row
-// per finalization; V1 finalizes once and locks the instance).
+// The rendered final PDF for an instance. Append-only, versioned audit
+// trail: every finalize creates a new row (version N+1) and marks the
+// previous row isCurrent=false. pdfBytes of an existing row are NEVER
+// rewritten — corrections always add a row. Reopening the instance for
+// correction does not touch these rows.
 model FinalDocument {
   id               String           @id @default(cuid())
   instance         DocumentInstance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
   instanceId       String
+  version          Int              @default(1)
+  // Exactly one row per instance is current (the latest version).
+  isCurrent        Boolean          @default(true)
+  // Optional correction note supplied when generating this version.
+  note             String?
+  // AdminUser identity at generation time. Loose reference (no FK) so
+  // deleting an admin never blocks on / cascades into document history.
+  generatedById    String?
+  generatedBy      String?
   pdfBytes         Bytes
   pdfSize          Int
   generatorVersion String           @default("v1")
   generatedAt      DateTime         @default(now())
 
+  @@unique([instanceId, version])
   @@index([instanceId])
 }
 
