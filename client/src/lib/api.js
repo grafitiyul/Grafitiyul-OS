@@ -613,6 +613,15 @@ export const api = {
     // Per-row results; partial failure is the normal case, never blanket success.
     bulk: (data) => request('/api/tasks/bulk', { method: 'POST', body: JSON.stringify(data) }),
   },
+  // ── Saved Views (workspace presets) + cross-device last-selected view ──
+  savedViews: {
+    list: (module) => request(`/api/saved-views?module=${encodeURIComponent(module)}`),
+    create: (data) => request('/api/saved-views', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/api/saved-views/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/saved-views/${id}`, { method: 'DELETE' }),
+    select: (module, viewId) =>
+      request('/api/saved-views/select/state', { method: 'PUT', body: JSON.stringify({ module, viewId }) }),
+  },
   // ── Deal Tasks (משימות) — future actions on a deal ───────────────
   dealTasks: {
     list: (dealId, status) => request(`/api/deals/${dealId}/tasks${qs({ status })}`),

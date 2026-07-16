@@ -13,7 +13,7 @@ import { TASK_COLUMNS, COLUMNS_KEY, SORTABLE_KEYS, rowTone, priorityLabel, dueDa
 import {
   TIME_CHIPS, defaultFilters, filtersFromParams, filtersToParams, filtersToQuery,
   selectWindow, statusLockedBy, toggleIn, hasActiveFilters, rangeIncomplete,
-  loadFilters, saveFilters, sortToParam,
+  loadFilters, saveFilters, hasStoredFilters, resolveViewFilters, portableFilters,
 } from './taskFilters.js';
 
 // CRM Tasks WORKSPACE — the first CRM tab and the primary daily operational
@@ -106,6 +106,15 @@ export default function TasksWorkspace() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkReport, setBulkReport] = useState(null); // { action, succeeded, failed:[{id,error}] }
   const [confirmCancel, setConfirmCancel] = useState(false);
+  // ── saved views ──
+  const [views, setViews] = useState([]);
+  const [selectedViewId, setSelectedViewId] = useState(null);
+  const [viewDirty, setViewDirty] = useState(false); // filters changed since the view was applied
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveName, setSaveName] = useState('');
+  const [saveScope, setSaveScope] = useState('personal');
+  const [viewBusy, setViewBusy] = useState(false);
+  const [confirmDeleteView, setConfirmDeleteView] = useState(false);
   // The drawer follows a ROW index, not a deal id: consecutive rows may share a
   // Deal (two tasks on one deal), and prev/next walks the filtered ROW order —
   // deduping would make the position indicator lie.
@@ -122,11 +131,12 @@ export default function TasksWorkspace() {
     (async () => {
       // taskTypes drive the type chips and are REAL if they fail. The rest are
       // best-effort: a missing owner list degrades a filter, not the screen.
-      const [ttRes, usRes, status, stRes] = await Promise.all([
+      const [ttRes, usRes, status, stRes, vRes] = await Promise.all([
         api.taskTypes.list(true).catch(() => []),
         api.adminUsers.list().catch(() => ({ users: [] })),
         api.auth.status().catch(() => ({})),
         api.dealStages.list().catch(() => []),
+        api.savedViews.list('crm_tasks').catch(() => null),
       ]);
       if (!alive) return;
       const types = Array.isArray(ttRes) ? ttRes : ttRes?.taskTypes || [];
@@ -134,9 +144,20 @@ export default function TasksWorkspace() {
       const stages = Array.isArray(stRes) ? stRes : stRes?.dealStages || stRes?.stages || [];
       const me = users.find((u) => u.username === status?.username)?.id || null;
       setBoot({ me, types, users, stages });
-      // The URL wins over the remembered workspace, so a shared link opens what
-      // the sender saw rather than the recipient's last view.
-      setFilters([...searchParams.keys()].length ? filtersFromParams(searchParams, me) : loadFilters(me));
+      setViews(vRes?.views || []);
+      // Restore priority: URL (a shared link opens what the sender saw) →
+      // this browser's exact last workspace (localStorage) → the user's
+      // last-selected VIEW (server state — this is the cross-device restore;
+      // it fires precisely when the device has no local memory) → defaults.
+      if ([...searchParams.keys()].length) {
+        setFilters(filtersFromParams(searchParams, me));
+      } else if (!hasStoredFilters() && vRes?.lastSelectedId) {
+        const lastView = (vRes.views || []).find((v) => v.id === vRes.lastSelectedId);
+        if (lastView) applyView(lastView, me);
+        else setFilters(loadFilters(me));
+      } else {
+        setFilters(loadFilters(me));
+      }
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -217,7 +238,111 @@ export default function TasksWorkspace() {
     setCursor(idx);
   }
 
-  const patch = (next) => { setFilters(next); setPage(1); setSelected(new Set()); };
+  const patch = (next) => {
+    setFilters(next);
+    setPage(1);
+    setSelected(new Set());
+    // A manual change means the workspace has drifted from the applied view —
+    // the view stays selected (so "עדכון התצוגה" can capture the drift) but is
+    // marked dirty.
+    if (selectedViewId) setViewDirty(true);
+  };
+
+  // ── saved views ──
+  const SORTABLE_SET = useMemo(() => new Set(SORTABLE_KEYS), []);
+
+  function applyView(view, meId = boot?.me) {
+    setFilters(resolveViewFilters(view.filters, meId));
+    const sortList = (Array.isArray(view.sort) ? view.sort : [])
+      .filter((s) => s && SORTABLE_SET.has(s.key))
+      .map((s) => ({ key: s.key, dir: s.dir === 'desc' ? 'desc' : 'asc' }));
+    setSort(sortList.length ? sortList : [{ key: 'dueDate', dir: 'asc' }]);
+    if (view.columns) cols.applyColumnState(view.columns);
+    setSelectedViewId(view.id);
+    setViewDirty(false);
+    setPage(1);
+    setSelected(new Set());
+  }
+
+  function selectView(viewId) {
+    if (!viewId) {
+      setSelectedViewId(null);
+      setViewDirty(false);
+      api.savedViews.select('crm_tasks', null).catch(() => {});
+      return;
+    }
+    const view = views.find((v) => v.id === viewId);
+    if (!view) return;
+    applyView(view);
+    // Cross-device: remember the selection server-side (best-effort).
+    api.savedViews.select('crm_tasks', view.id).catch(() => {});
+  }
+
+  const selectedView = views.find((v) => v.id === selectedViewId) || null;
+
+  async function saveNewView() {
+    const name = saveName.trim();
+    if (!name || viewBusy) return;
+    setViewBusy(true);
+    setError('');
+    try {
+      const created = await api.savedViews.create({
+        module: 'crm_tasks',
+        name,
+        scope: saveScope,
+        // '$me' portability: a shared view saved as "my tasks" follows whoever
+        // opens it, not whoever saved it.
+        filters: portableFilters(filters, boot.me),
+        sort,
+        columns: cols.columnState,
+      });
+      setViews((list) => [...list, created]);
+      setSelectedViewId(created.id);
+      setViewDirty(false);
+      setSaveOpen(false);
+      setSaveName('');
+      api.savedViews.select('crm_tasks', created.id).catch(() => {});
+    } catch (e) {
+      setError(e.payload?.error || e.message);
+    } finally {
+      setViewBusy(false);
+    }
+  }
+
+  async function updateSelectedView() {
+    if (!selectedView?.editable || viewBusy) return;
+    setViewBusy(true);
+    setError('');
+    try {
+      const updated = await api.savedViews.update(selectedView.id, {
+        filters: portableFilters(filters, boot.me),
+        sort,
+        columns: cols.columnState,
+      });
+      setViews((list) => list.map((v) => (v.id === updated.id ? updated : v)));
+      setViewDirty(false);
+    } catch (e) {
+      setError(e.payload?.error || e.message);
+    } finally {
+      setViewBusy(false);
+    }
+  }
+
+  async function deleteSelectedView() {
+    if (!selectedView?.editable || viewBusy) return;
+    setViewBusy(true);
+    try {
+      await api.savedViews.remove(selectedView.id);
+      setViews((list) => list.filter((v) => v.id !== selectedView.id));
+      setSelectedViewId(null);
+      setViewDirty(false);
+      api.savedViews.select('crm_tasks', null).catch(() => {});
+    } catch (e) {
+      setError(e.payload?.error || e.message);
+    } finally {
+      setViewBusy(false);
+    }
+  }
 
   function onSort(key, opts) {
     setSort((s) => toggleSortKey(s, key, opts));
@@ -377,6 +502,94 @@ export default function TasksWorkspace() {
 
       {/* ── task-type chips + filters ── */}
       <div className="flex flex-wrap items-center gap-1.5 border-b border-gray-200 bg-white px-3 py-2">
+        {/* Saved views: presets over the SAME canonical filter object the chips
+            write — a view simply remembers which chip was active. */}
+        <select
+          value={selectedViewId || ''}
+          onChange={(e) => selectView(e.target.value || null)}
+          className={`h-8 max-w-44 rounded-md border px-1.5 text-[12px] ${
+            selectedViewId ? 'border-indigo-400 bg-indigo-50 text-indigo-800 font-medium' : 'border-gray-300 bg-white text-gray-700'
+          }`}
+          title="תצוגות שמורות"
+        >
+          <option value="">תצוגה שמורה…</option>
+          {['system', 'shared', 'personal'].map((scope) => {
+            const group = views.filter((v) => v.scope === scope);
+            if (!group.length) return null;
+            const label = scope === 'system' ? 'מערכת' : scope === 'shared' ? 'משותפות' : 'שלי';
+            return (
+              <optgroup key={scope} label={label}>
+                {group.map((v) => (
+                  <option key={v.id} value={v.id}>{v.icon ? `${v.icon} ` : ''}{v.name}</option>
+                ))}
+              </optgroup>
+            );
+          })}
+        </select>
+        {selectedView?.editable && viewDirty && (
+          <button
+            type="button"
+            disabled={viewBusy}
+            onClick={updateSelectedView}
+            title="שמירת הסינון הנוכחי לתוך התצוגה"
+            className="h-8 rounded-md border border-indigo-300 bg-white px-2 text-[12px] text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+          >
+            ⟳ עדכון התצוגה
+          </button>
+        )}
+        {selectedView?.editable && (
+          <button
+            type="button"
+            disabled={viewBusy}
+            onClick={() => setConfirmDeleteView(true)}
+            title="מחיקת התצוגה השמורה"
+            className="h-8 rounded-md px-1.5 text-[12px] text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+          >
+            🗑
+          </button>
+        )}
+        {!saveOpen ? (
+          <button
+            type="button"
+            onClick={() => setSaveOpen(true)}
+            className="h-8 rounded-md border border-gray-300 bg-white px-2 text-[12px] text-gray-600 hover:bg-gray-50"
+          >
+            💾 שמירת תצוגה…
+          </button>
+        ) : (
+          <span className="flex items-center gap-1.5 rounded-md border border-indigo-200 bg-indigo-50/60 px-2 py-1">
+            <input
+              autoFocus
+              value={saveName}
+              onChange={(e) => setSaveName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') saveNewView();
+                if (e.key === 'Escape') { setSaveOpen(false); setSaveName(''); }
+              }}
+              placeholder="שם התצוגה"
+              maxLength={60}
+              className="h-6 w-32 rounded border border-indigo-300 bg-white px-1.5 text-[12px]"
+            />
+            <label className="flex items-center gap-1 text-[11px] text-gray-600">
+              <input type="radio" checked={saveScope === 'personal'} onChange={() => setSaveScope('personal')} /> אישית
+            </label>
+            <label className="flex items-center gap-1 text-[11px] text-gray-600">
+              <input type="radio" checked={saveScope === 'shared'} onChange={() => setSaveScope('shared')} /> משותפת
+            </label>
+            <button
+              type="button"
+              disabled={!saveName.trim() || viewBusy}
+              onClick={saveNewView}
+              className="h-6 rounded bg-indigo-600 px-2 text-[11px] font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              שמירה
+            </button>
+            <button type="button" onClick={() => { setSaveOpen(false); setSaveName(''); }} className="text-[11px] text-gray-500 hover:underline">
+              ביטול
+            </button>
+          </span>
+        )}
+        <span className="mx-1 h-5 w-px bg-gray-200" />
         {boot.types.map((t) => (
           <Chip
             key={t.id}
@@ -672,6 +885,17 @@ export default function TasksWorkspace() {
           </button>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmDeleteView}
+        danger
+        title="מחיקת תצוגה שמורה"
+        body={`למחוק את התצוגה "${selectedView?.name ?? ''}"?${selectedView?.scope === 'shared' ? ' התצוגה משותפת — היא תיעלם גם אצל שאר המשתמשים.' : ''}`}
+        confirmLabel="מחיקה"
+        cancelLabel="חזרה"
+        onCancel={() => setConfirmDeleteView(false)}
+        onConfirm={() => { setConfirmDeleteView(false); deleteSelectedView(); }}
+      />
 
       <ConfirmDialog
         open={confirmCancel}

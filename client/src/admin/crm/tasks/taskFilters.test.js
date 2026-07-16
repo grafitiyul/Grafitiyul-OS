@@ -4,6 +4,7 @@ import {
   defaultFilters, filtersFromParams, filtersToParams, filtersToQuery,
   selectWindow, statusLockedBy, toggleIn, hasActiveFilters, rangeIncomplete,
   TIME_CHIPS, WINDOWS,
+  sanitizeFilters, resolveViewFilters, portableFilters, ME_SENTINEL,
 } from './taskFilters.js';
 
 const ME = 'admin-1';
@@ -157,4 +158,38 @@ test('rangeIncomplete guards a half-filled date range', () => {
   assert.ok(rangeIncomplete({ window: 'range', rangeFrom: null, rangeTo: null }));
   assert.ok(!rangeIncomplete({ window: 'range', rangeFrom: '2026-01-01', rangeTo: '2026-01-31' }));
   assert.ok(!rangeIncomplete({ window: 'today' }));
+});
+
+// ── saved-view portability ($me sentinel) ───────────────────────────────────
+
+test('sanitizeFilters: garbage in, complete valid shape out', () => {
+  assert.deepEqual(sanitizeFilters(null, ME), defaultFilters(ME));
+  assert.deepEqual(sanitizeFilters('junk', ME), defaultFilters(ME));
+  assert.deepEqual(sanitizeFilters([], ME), defaultFilters(ME));
+  const f = sanitizeFilters({ window: 'banana', priorities: ['urgent', 'low'], typeKeys: ['call'] }, ME);
+  assert.equal(f.window, 'today');
+  assert.deepEqual(f.priorities, ['low']);
+  assert.deepEqual(f.typeKeys, ['call']);
+  assert.deepEqual(f.ownerIds, [ME], 'missing ownerIds falls back to me');
+});
+
+test('resolveViewFilters: $me follows whoever OPENS the view', () => {
+  const stored = { ...defaultFilters(null), ownerIds: [ME_SENTINEL] };
+  assert.deepEqual(resolveViewFilters(stored, 'other-admin').ownerIds, ['other-admin']);
+  // no signed-in user known → the sentinel drops out rather than leaking '$me'
+  assert.deepEqual(resolveViewFilters(stored, null).ownerIds, []);
+});
+
+test('portableFilters: saving turns MY id into the sentinel, leaves others', () => {
+  const f = { ...defaultFilters(ME), ownerIds: [ME, 'u2'] };
+  assert.deepEqual(portableFilters(f, ME).ownerIds, [ME_SENTINEL, 'u2']);
+  assert.deepEqual(portableFilters(f, null).ownerIds, [ME, 'u2'], 'unknown me → untouched');
+});
+
+test('portability round-trip: save → open as someone else → their tasks', () => {
+  const mine = { ...defaultFilters(ME), ownerIds: [ME], typeKeys: ['first_call'] };
+  const stored = portableFilters(mine, ME);
+  const opened = resolveViewFilters(stored, 'admin-2');
+  assert.deepEqual(opened.ownerIds, ['admin-2']);
+  assert.deepEqual(opened.typeKeys, ['first_call']);
 });

@@ -81,12 +81,22 @@ export function useTableColumns(storageKey, columns) {
   function resetCols() {
     setState(normalizeColumnState(null, canonicalKeys, defaults));
   }
+  // Apply an EXTERNAL layout snapshot (a saved view's `columns`). Runs through
+  // the same normalizer as a localStorage load, so a stale snapshot (renamed /
+  // removed columns) degrades exactly like a stale save would.
+  function applyColumnState(raw) {
+    setState(normalizeColumnState(raw, canonicalKeys, defaults));
+  }
   return {
     colKeys: state.visible,
     toggleCol,
     moveCol,
     setColWidth,
     resetCols,
+    applyColumnState,
+    // The raw persisted shape ({visible, order, widths}) — what a saved view
+    // stores as its layout snapshot.
+    columnState: state,
     widths: state.widths,
     visibleCols,
     orderedColumns,

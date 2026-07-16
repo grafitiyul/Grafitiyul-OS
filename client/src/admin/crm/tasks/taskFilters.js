@@ -158,23 +158,66 @@ export function rangeIncomplete(filters) {
   return filters.window === 'range' && !(filters.rangeFrom && filters.rangeTo);
 }
 
+/**
+ * Sanitize an untrusted raw object (localStorage, a saved view, an old URL)
+ * into a valid canonical filter object. Garbage falls back per-field; the
+ * result is ALWAYS a complete, valid shape.
+ */
+export function sanitizeFilters(raw, me = null) {
+  const d = defaultFilters(me);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return d;
+  return {
+    window: oneOf(raw.window, WINDOWS, d.window),
+    rangeFrom: raw.rangeFrom ?? null,
+    rangeTo: raw.rangeTo ?? null,
+    typeKeys: Array.isArray(raw.typeKeys) ? raw.typeKeys.map(String) : [],
+    ownerIds: Array.isArray(raw.ownerIds) ? raw.ownerIds.map(String) : d.ownerIds,
+    priorities: Array.isArray(raw.priorities) ? raw.priorities.filter((p) => PRIORITIES.includes(p)) : [],
+    stageIds: Array.isArray(raw.stageIds) ? raw.stageIds.map(String) : [],
+    status: oneOf(raw.status, STATUSES, d.status),
+  };
+}
+
+// ── Saved-view portability ───────────────────────────────────────────────────
+// A view that filters on "me" must follow whoever OPENS it, not whoever saved
+// it — otherwise a shared "השיחות שלי" shows the creator's calls to everyone.
+// Views therefore store the '$me' sentinel; it is resolved here, client-side,
+// against the signed-in admin. The server stores filters opaquely.
+
+export const ME_SENTINEL = '$me';
+
+/** View filters (untrusted Json) → applied filter object, '$me' resolved. */
+export function resolveViewFilters(raw, me = null) {
+  const f = sanitizeFilters(raw, me);
+  return {
+    ...f,
+    ownerIds: f.ownerIds.map((id) => (id === ME_SENTINEL ? me : id)).filter(Boolean),
+  };
+}
+
+/** Current filters → the portable form to STORE in a view (me → '$me'). */
+export function portableFilters(filters, me = null) {
+  return {
+    ...filters,
+    ownerIds: (filters.ownerIds || []).map((id) => (me && id === me ? ME_SENTINEL : id)),
+  };
+}
+
 export function loadFilters(me = null) {
   try {
-    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (!raw || typeof raw !== 'object') return defaultFilters(me);
-    const d = defaultFilters(me);
-    return {
-      window: oneOf(raw.window, WINDOWS, d.window),
-      rangeFrom: raw.rangeFrom ?? null,
-      rangeTo: raw.rangeTo ?? null,
-      typeKeys: Array.isArray(raw.typeKeys) ? raw.typeKeys : [],
-      ownerIds: Array.isArray(raw.ownerIds) ? raw.ownerIds : d.ownerIds,
-      priorities: Array.isArray(raw.priorities) ? raw.priorities.filter((p) => PRIORITIES.includes(p)) : [],
-      stageIds: Array.isArray(raw.stageIds) ? raw.stageIds : [],
-      status: oneOf(raw.status, STATUSES, d.status),
-    };
+    return sanitizeFilters(JSON.parse(localStorage.getItem(STORAGE_KEY)), me);
   } catch {
     return defaultFilters(me);
+  }
+}
+
+/** True when this browser has a remembered workspace (vs a first visit /
+ *  fresh device, where the server-side last-selected view should apply). */
+export function hasStoredFilters() {
+  try {
+    return localStorage.getItem(STORAGE_KEY) != null;
+  } catch {
+    return false;
   }
 }
 

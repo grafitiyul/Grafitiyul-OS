@@ -43,6 +43,56 @@ model AdminUser {
   // tasks CANNOT be deleted until they are reassigned. Retiring a person is
   // `isActive: false`, which keeps them a valid, resolvable historical owner.
   ownedTasks   Task[]    @relation("TaskOwner")
+  // Saved views + per-user UI state are PREFERENCES, not records: unlike tasks
+  // (Restrict), they Cascade away with their owner — nothing auditable is lost.
+  savedViews   SavedView[]   @relation("SavedViewOwner")
+  uiState      UserUiState[] @relation("UserUiStateUser")
+}
+
+// ── Saved Views — workspace presets (first consumer: the CRM Tasks workspace).
+// A view stores the CANONICAL filter object verbatim (including the selected
+// time chip — chips are navigation, views are presets, and both speak the same
+// object, so there can never be two competing concepts of "today"), the sort
+// list, and optionally a column-layout snapshot. `module` scopes the model so
+// future modules reuse it rather than growing a second preset system.
+model SavedView {
+  id          String     @id @default(cuid())
+  module      String // 'crm_tasks' (string, not enum — project convention)
+  // Stable identifier for SEEDED system views only (null for user views), so
+  // seeding is idempotent and the client recognises them across renames.
+  key         String?
+  name        String
+  icon        String? // emoji shown on the view chip
+  // 'personal' (owner-only) | 'shared' (visible to all, editable by its owner)
+  // | 'system' (seeded, visible to all, editable by nobody).
+  scope       String
+  owner       AdminUser? @relation("SavedViewOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  ownerUserId String? // null for system views
+  filters     Json
+  sort        Json
+  columns     Json? // { visible[], order[], widths{} } — the tableColumns shape
+  sortOrder   Int        @default(0)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@unique([module, key])
+  @@index([module, scope])
+  @@index([ownerUserId])
+}
+
+// Tiny per-user KV for cross-device UI state (first key: which saved view the
+// user last selected — 'crm_tasks.lastView'). Deliberately generic so the next
+// workspace preference is a key, not a model.
+model UserUiState {
+  id        String    @id @default(cuid())
+  user      AdminUser @relation("UserUiStateUser", fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  key       String
+  value     Json
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([userId, key])
 }
 
 // Nested organisational folder for the item bank. Folders can contain items

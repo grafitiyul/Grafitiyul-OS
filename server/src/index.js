@@ -38,6 +38,7 @@ import quoteDocumentsRouter from './routes/quoteDocuments.js';
 import publicQuoteRouter from './routes/publicQuote.js';
 import dealStagesRouter from './routes/dealStages.js';
 import tasksRouter from './routes/tasks.js';
+import savedViewsRouter from './routes/savedViews.js';
 import dealTasksRouter from './routes/dealTasks.js';
 import dealFilesRouter from './routes/dealFiles.js';
 import dealTourPlanRouter from './routes/dealTourPlan.js';
@@ -328,9 +329,11 @@ app.use('/api/whatsapp', requireAdminAuth, whatsappRouter);
 app.use('/api/email', requireAdminAuth, emailRouter);
 app.use('/api/deal-stages', requireAdminAuth, dealStagesRouter);
 // CRM Tasks WORKSPACE — the canonical cross-deal task grid + chip counts (the
-// first CRM tab). Read-only. Distinct from dealTasksRouter above, which serves
-// ONE deal's task strip and cannot answer cross-deal questions.
+// first CRM tab). Distinct from dealTasksRouter above, which serves ONE deal's
+// task strip; both delegate writes to the same taskService.
 app.use('/api/tasks', requireAdminAuth, tasksRouter);
+// Saved Views (workspace presets) + last-selected view, cross-device.
+app.use('/api/saved-views', requireAdminAuth, savedViewsRouter);
 // CRM Task Types catalog (configurable task types behind the Deal task composer).
 app.use('/api/task-types', requireAdminAuth, taskTypesRouter);
 app.use('/api/activity-components', requireAdminAuth, activityComponentsRouter);
