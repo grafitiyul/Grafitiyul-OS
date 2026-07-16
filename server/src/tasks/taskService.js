@@ -16,6 +16,7 @@
 import { prisma } from '../db.js';
 import { emitTimelineEvent, systemOrigin, userOrigin } from '../timeline/events.js';
 import { parseTaskPatch, buildScheduledMirror, CANCELLABLE_SCHED } from './taskEdit.js';
+import { emitTasksChanged } from './events.js';
 
 export const TASK_STATUSES = ['open', 'completed', 'cancelled', 'sent', 'not_sent'];
 export const TASK_PRIORITIES = ['low', 'medium', 'high']; // null = "ללא" (none)
@@ -83,16 +84,22 @@ export async function transitionTask(taskId, { status, event, origin }, db = pri
   if (status === 'completed' || status === 'sent') data.completedAt = now;
   if (status === 'cancelled' || status === 'not_sent') data.cancelledAt = now;
 
-  return db.$transaction(async (tx) => {
-    const updated = await tx.task.update({ where: { id: taskId }, data });
+  const updated = await db.$transaction(async (tx) => {
+    const row = await tx.task.update({ where: { id: taskId }, data });
     await emitEvent(tx, {
       dealId: task.dealId,
       event,
-      task: { ...updated, icon },
+      task: { ...row, icon },
       origin,
     });
-    return updated;
+    return row;
   });
+  // Realtime hint AFTER the transaction committed (the emit's own root-client
+  // guard additionally skips fakes/tx handles). This single line is what makes
+  // worker-driven 'sent' transitions and other admins' actions reach every
+  // open workspace.
+  emitTasksChanged(db, { taskId, dealId: task.dealId, reason: event });
+  return updated;
 }
 
 // Create an open WhatsApp Task bound to an ALREADY-created scheduled message and
@@ -229,6 +236,7 @@ export async function applyTaskPatch(taskId, body, db = prisma) {
   }
 
   const updated = await db.task.update({ where: { id: task.id }, data });
+  emitTasksChanged(db, { taskId: task.id, dealId: task.dealId, reason: 'task_edited' });
   return { ok: true, task: updated };
 }
 
@@ -265,7 +273,10 @@ export async function syncTaskFromScheduledEdit(taskId, { dueDate, dueTime, titl
       data.dueTime = dueTime && /^([01]\d|2[0-3]):[0-5]\d$/.test(dueTime) ? dueTime : null;
     }
     if (title !== undefined && String(title).trim()) data.title = String(title).trim().slice(0, 500);
-    if (Object.keys(data).length) await prisma.task.update({ where: { id: taskId }, data });
+    if (Object.keys(data).length) {
+      const updated = await prisma.task.update({ where: { id: taskId }, data });
+      emitTasksChanged(prisma, { taskId, dealId: updated.dealId, reason: 'task_sched_synced' });
+    }
   } catch (e) {
     console.warn('[task] syncTaskFromScheduledEdit failed', taskId, e?.message);
   }

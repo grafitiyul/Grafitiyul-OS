@@ -4,6 +4,7 @@ import { handle } from '../asyncHandler.js';
 import { callBridge } from '../whatsapp/bridgeClient.js';
 import { userOrigin, TASK_PRIORITIES, completeTask, cancelTask, applyTaskPatch } from '../tasks/taskService.js';
 import { combineDateTime, SCHEDULE_MIN_LEAD_MS, CANCELLABLE_SCHED } from '../tasks/taskEdit.js';
+import { emitTasksChanged } from '../tasks/events.js';
 
 // Deal Tasks (משימות) — mounted at /api/deals, serves /:dealId/tasks*. A task is
 // a FUTURE action on a deal. Open tasks live in the deal focus area; terminal
@@ -139,6 +140,7 @@ router.post(
         },
         include: TASK_INCLUDE,
       });
+      emitTasksChanged(prisma, { taskId: task.id, dealId: deal.id, reason: 'task_created' });
       const [out] = await serializeTasks([task]);
       return res.status(201).json(out);
     }
@@ -198,6 +200,8 @@ router.post(
         include: TASK_INCLUDE,
       });
     });
+    // Post-commit (the $transaction above resolved) — root client, so it fires.
+    emitTasksChanged(prisma, { taskId: task.id, dealId: deal.id, reason: 'task_created' });
     const [out] = await serializeTasks([task]);
     res.status(201).json(out);
   }),

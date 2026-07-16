@@ -9,6 +9,7 @@ import {
   createWhatsappTaskForScheduledMessage,
   syncTaskFromScheduledEdit,
 } from '../tasks/taskService.js';
+import { emitTasksChanged } from '../tasks/events.js';
 import { dealsForContact, classifyDealsForContact } from '../crm/dealResolution.js';
 import { markChatRead, markChatUnread } from '../whatsapp/readState.js';
 
@@ -1283,6 +1284,9 @@ router.post(
         });
         return sched;
       });
+      // Post-commit realtime hint for the Tasks workspace (a scheduled message
+      // with a deal context IS a task). Hints are advisory — dealId is enough.
+      emitTasksChanged(prisma, { dealId: deal.id, reason: 'task_created' });
       return res.status(201).json(toClientScheduled(row));
     }
 

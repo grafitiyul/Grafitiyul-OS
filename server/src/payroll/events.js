@@ -1,7 +1,10 @@
 // Payroll real-time invalidation bus — the ONE server→client notification
 // path for payroll changes (Admin screens + Guide Portal Pay page).
 //
-// Design rules (product spec):
+// MECHANISM (subscriber registry, fan-out, SSE plumbing, heartbeat) now lives
+// in the shared realtime hub (realtime/sse.js), extracted from this file when
+// the CRM Tasks workspace became the second realtime consumer. This module
+// keeps payroll POLICY, unchanged:
 //   • Events are INVALIDATION HINTS only: { type, activityId, entryId,
 //     externalPersonId, reason, occurredAt }. No amounts, no comments, no VAT
 //     facts, no bank data ever ride the stream — clients refetch their own
@@ -20,27 +23,24 @@
 //     stripped (they only ever match their own, and other guides' identifiers
 //     must not travel on their stream).
 //
-// Delivery is in-process (single Railway service). If GOS ever scales to
-// multiple instances this module is the seam to swap for pg NOTIFY/Redis.
+// Every export keeps its original name and behaviour — the existing tests are
+// the regression net proving the extraction changed nothing.
 
 import { prisma } from '../db.js';
+import { subscribe, subscribersOf, subscriberCount, openStream, sseData, SSE_HEARTBEAT, SSE_RETRY, HEARTBEAT_MS } from '../realtime/sse.js';
 
 export const PAYROLL_CHANGED_TYPE = 'payroll.changed';
-export const SSE_HEARTBEAT = ':hb\n\n';
-export const SSE_RETRY = 'retry: 5000\n\n';
-export const HEARTBEAT_MS = 25_000; // well under Railway's edge idle timeout
+export const PAYROLL_CHANNEL = 'payroll';
+export { sseData, SSE_HEARTBEAT, SSE_RETRY, HEARTBEAT_MS };
 
-// ── subscriber registry ─────────────────────────────────────────
+// ── subscriber registry (now channelised in the shared hub) ─────
 // sub: { scope: 'admin' } | { scope: 'guide', externalPersonId }, plus send(event).
-const subscribers = new Set();
-
 export function subscribePayrollEvents(sub) {
-  subscribers.add(sub);
-  return () => subscribers.delete(sub);
+  return subscribe(PAYROLL_CHANNEL, sub);
 }
 
 export function payrollSubscriberCount() {
-  return subscribers.size;
+  return subscriberCount(PAYROLL_CHANNEL);
 }
 
 // ── emission ────────────────────────────────────────────────────
@@ -56,7 +56,9 @@ async function loadActivityPersons(activityId) {
 }
 
 // Exported for tests (injectable loader, awaitable). Production code goes
-// through emitPayrollChanged below.
+// through emitPayrollChanged below. Payroll does NOT use the hub's plain
+// publish(): guide filtering + payload stripping are policy, so it iterates
+// the subscriber snapshot itself.
 export async function dispatchPayrollChanged(
   { activityId = null, entryId = null, externalPersonId = null, externalPersonIds = null, reason },
   { loadPersons = loadActivityPersons } = {},
@@ -71,9 +73,11 @@ export async function dispatchPayrollChanged(
     occurredAt: new Date().toISOString(),
   };
 
+  const subs = subscribersOf(PAYROLL_CHANNEL);
+
   // Resolve the affected-person set only if a guide is actually listening.
   let persons = null;
-  const hasGuideSubs = [...subscribers].some((s) => s.scope === 'guide');
+  const hasGuideSubs = subs.some((s) => s.scope === 'guide');
   if (hasGuideSubs) {
     if (externalPersonIds) persons = externalPersonIds;
     else if (externalPersonId) persons = [externalPersonId];
@@ -81,7 +85,7 @@ export async function dispatchPayrollChanged(
     else persons = [];
   }
 
-  for (const sub of subscribers) {
+  for (const sub of subs) {
     try {
       if (sub.scope === 'admin') {
         sub.send(event);
@@ -107,36 +111,7 @@ export function emitPayrollChanged(client, fields) {
   });
 }
 
-// ── SSE plumbing ────────────────────────────────────────────────
-export function sseData(event) {
-  return `data: ${JSON.stringify(event)}\n\n`;
-}
-
-// Attach an SSE stream to an Express response and register the subscriber.
-// One stream per mounted client surface; heartbeat keeps proxies from closing
-// the idle connection; close cleans everything up (no leaked listeners).
+// ── SSE plumbing (shared hub) ───────────────────────────────────
 export function openPayrollStream(req, res, scope) {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-store',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-  res.write(SSE_RETRY);
-  res.write(':connected\n\n');
-
-  const sub = { ...scope, send: (event) => res.write(sseData(event)) };
-  const unsubscribe = subscribePayrollEvents(sub);
-  const heartbeat = setInterval(() => {
-    try {
-      res.write(SSE_HEARTBEAT);
-    } catch {
-      cleanup();
-    }
-  }, HEARTBEAT_MS);
-  const cleanup = () => {
-    clearInterval(heartbeat);
-    unsubscribe();
-  };
-  req.on('close', cleanup);
+  openStream(req, res, { channel: PAYROLL_CHANNEL, ...scope });
 }

@@ -26,6 +26,8 @@ import { adminDisplayName } from '../admin/displayName.js';
 import { comparePriority } from '../tasks/priority.js';
 import { userOrigin, completeTask, cancelTask, applyTaskPatch } from '../tasks/taskService.js';
 import { parseBulkRequest, chunkIds, summarizeResults } from '../tasks/bulkActions.js';
+import { openStream } from '../realtime/sse.js';
+import { TASKS_CHANNEL } from '../tasks/events.js';
 import { resolveWindow, countScanBounds, bucketOf, WINDOWS } from '../tasks/windows.js';
 import {
   parseTaskQuery, buildTaskWhere, buildBaseWhere, buildTaskOrderBy,
@@ -299,6 +301,14 @@ router.get(
     res.json({ today, counts, empty });
   }),
 );
+
+// GET /api/tasks/stream — SSE invalidation hints (shared realtime hub; same
+// contract as /api/payroll/stream). Every subscriber is an admin (mount-site
+// auth), so there is no per-subscriber filtering. Exact path, so the PATCH
+// /:id param route below can never shadow it.
+router.get('/stream', (req, res) => {
+  openStream(req, res, { channel: TASKS_CHANNEL, scope: 'admin' });
+});
 
 // ── Writes ───────────────────────────────────────────────────────────────────
 // Both endpoints are THIN CALLERS of taskService — the same canonical write

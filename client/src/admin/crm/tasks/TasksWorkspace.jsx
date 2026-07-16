@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import { hasDirtyForms } from '../../../lib/dirtyForms.js';
+import { useRealtime } from '../../../lib/realtime.js';
+import { DEAL_TASKS_CHANGED_EVENT } from '../../deals/tasks/taskEvents.js';
 import DealDrawer from '../../common/DealDrawer.jsx';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 import { dealPath } from '../../deals/config.js';
@@ -177,9 +179,18 @@ export default function TasksWorkspace() {
     [filters, sort, page],
   );
 
-  const load = useCallback(async () => {
+  // Row-diff bookkeeping for the realtime animation: rows that ENTER during a
+  // silent refetch (same query — an invalidation, not navigation) glow briefly.
+  const prevIdsRef = useRef(null);
+  const prevQueryRef = useRef(null);
+  const [freshIds, setFreshIds] = useState(() => new Set());
+  const freshTimerRef = useRef(null);
+
+  const load = useCallback(async (cause = 'user') => {
     if (!filters || rangeIncomplete(filters)) return;
-    setLoading(true);
+    // A silent (realtime) refetch must not blank the grid with a spinner —
+    // rows should update in place, subtly, not flash.
+    if (cause !== 'realtime') setLoading(true);
     setError('');
     try {
       // The counts bar deliberately ignores `window` — it varies only that.
@@ -188,21 +199,49 @@ export default function TasksWorkspace() {
         api.tasks.list(query),
         api.tasks.counts(countsQuery).catch(() => null),
       ]);
+      // Diff by task id, but ONLY when the query is unchanged: entering rows on
+      // navigation are expected and must not glow.
+      const ids = new Set((list.rows || []).map((r) => r.id));
+      if (cause === 'realtime' && prevQueryRef.current === query && prevIdsRef.current) {
+        const entering = [...ids].filter((id) => !prevIdsRef.current.has(id));
+        if (entering.length) {
+          setFreshIds(new Set(entering));
+          clearTimeout(freshTimerRef.current);
+          freshTimerRef.current = setTimeout(() => setFreshIds(new Set()), 1200);
+        }
+      }
+      prevIdsRef.current = ids;
+      prevQueryRef.current = query;
       setData(list);
       if (cnt) setCounts(cnt);
-      setCursor(0);
+      if (cause !== 'realtime') setCursor(0);
     } catch (e) {
-      setError(e.payload?.error || e.message);
+      if (cause !== 'realtime') setError(e.payload?.error || e.message);
     } finally {
-      setLoading(false);
+      if (cause !== 'realtime') setLoading(false);
     }
   }, [filters, query]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => () => clearTimeout(freshTimerRef.current), []);
 
   // The window bounds move at Israel midnight — reuse the ONE existing timer
   // rather than writing a second one.
   useTourMidnightRefresh(() => load());
+
+  // ── live updates ──
+  // SSE (shared realtime core — the same one payroll uses): covers OTHER
+  // actors — another admin's edit, the WhatsApp worker completing a send.
+  // Debounce/backoff/focus-recovery live in the core.
+  useRealtime('/api/tasks/stream', () => load('realtime'));
+  // Local event bus: instant same-browser echo when a task changes elsewhere
+  // in this app (the Deal drawer's task strip, the WhatsApp dock) — no need to
+  // wait a debounce round-trip for our own actions.
+  useEffect(() => {
+    const onChanged = () => load('realtime');
+    window.addEventListener(DEAL_TASKS_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(DEAL_TASKS_CHANGED_EVENT, onChanged);
+  }, [load]);
 
   const rows = data.rows || [];
   const today = data.today;
@@ -705,9 +744,11 @@ export default function TasksWorkspace() {
                 // Clicking anywhere that is not a control opens the Deal drawer
                 // — the table stays visible, the operator keeps their place.
                 onClick={() => openDrawer(idx)}
-                className={`border-b border-gray-100 transition-colors ${rowTone(row, today)} ${
-                  idx === cursor ? 'ring-1 ring-inset ring-blue-400' : ''
-                } ${selected.has(row.id) ? 'bg-blue-50/60' : 'hover:bg-gray-50'}`}
+                className={`border-b border-gray-100 transition-colors duration-700 ${
+                  freshIds.has(row.id) ? 'bg-indigo-100/70' : rowTone(row, today)
+                } ${idx === cursor ? 'ring-1 ring-inset ring-blue-400' : ''} ${
+                  selected.has(row.id) ? 'bg-blue-50/60' : 'hover:bg-gray-50'
+                }`}
               >
                 <td className={`px-2 ${COL_SEP}`} onClick={(e) => e.stopPropagation()}>
                   <input
