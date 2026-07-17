@@ -90,11 +90,22 @@ router.get(
     const r = await resolveReservationLink(req.params.token);
     if (r.error) return sendResolveError(res, r.error);
     const catalog = await bookableCatalog();
+    // Read-only identity for the "איש קשר להזמנה" card — the agent is known
+    // from the token; the form never asks for (or accepts) identity input.
+    const channels = await prisma.contact.findUnique({
+      where: { id: r.contact.id },
+      select: {
+        phones: { where: { isPrimary: true }, take: 1, select: { value: true } },
+        emails: { where: { isPrimary: true }, take: 1, select: { value: true } },
+      },
+    });
     res.json({
       agent: {
         // Bilingual display names — the form greets the agent in its language.
         nameHe: `${r.contact.firstNameHe || ''} ${r.contact.lastNameHe || ''}`.trim(),
         nameEn: `${r.contact.firstNameEn || ''} ${r.contact.lastNameEn || ''}`.trim(),
+        phone: channels?.phones?.[0]?.value || null,
+        email: channels?.emails?.[0]?.value || null,
       },
       organization: { name: r.organization.name },
       defaultLanguage: r.link.defaultLanguage,

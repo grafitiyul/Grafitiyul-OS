@@ -14,13 +14,14 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const KEY_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const TOUR_LANGUAGES = ['he', 'en', 'es', 'fr', 'ru'];
 
-// Session-wide legal confirmations (BINDING #7: the wording frames a
+// Session-wide legal confirmation (BINDING #7: the wording frames a
 // reservation REQUEST). Keys + version are recorded on the session; the
 // display text lives in the client's L tables. Bump the version when the
-// wording changes materially.
+// wording changes materially. v2 (redesign): ONE combined confirmation —
+// "the reservation is subject to Grafitiyul approval" — per the approved
+// mockup's single-checkbox footer.
 export const REQUIRED_CONFIRMATIONS = [
-  { key: 'reservation_request', textVersion: 1 }, // "this is a request, not a confirmed booking"
-  { key: 'details_correct', textVersion: 1 }, // "the details I provided are correct"
+  { key: 'reservation_request', textVersion: 2 },
 ];
 
 function isPng(buf) {
@@ -161,49 +162,61 @@ export function validateSubmission(body, catalog, { today = israelToday() } = {}
   };
 }
 
-// The public catalog DTO: bookable business tours as flat variants +
-// locations, bilingual labels only — never the admin product DTOs.
-export async function bookableCatalog(db = prisma) {
-  const variants = await db.productVariant.findMany({
+// The public catalog DTO — the CHANNEL's commercial view, never the admin
+// product DTOs and never internal names. City-first: the agent picks a
+// COMMERCIAL city (which may group several operational locations), then an
+// activity listed for that city. Both come from owner-configured
+// VariantChannelListing rows; the canonical variant silently carries the
+// operational product/location that the Deal will store.
+export async function bookableCatalog(db = prisma, { channel = 'agent' } = {}) {
+  const listings = await db.variantChannelListing.findMany({
     where: {
-      active: true,
-      availableBusiness: true, // business tours only (BINDING #4)
-      product: { active: true },
-      location: { active: true },
+      channel,
+      visible: true,
+      productVariant: {
+        active: true,
+        availableBusiness: true, // business tours only (BINDING #4)
+        product: { active: true },
+        location: { active: true },
+      },
     },
+    orderBy: [{ commercialCity: 'asc' }, { sortOrder: 'asc' }, { displayName: 'asc' }],
     select: {
-      id: true,
-      productId: true,
-      locationId: true,
-      product: { select: { nameHe: true, nameEn: true, sortOrder: true } },
-      location: { select: { nameHe: true, nameEn: true, sortOrder: true } },
+      productVariantId: true,
+      displayName: true,
+      displayNameEn: true,
+      description: true,
+      commercialCity: true,
+      commercialCityEn: true,
+      productVariant: { select: { productId: true, locationId: true } },
     },
-    orderBy: [{ location: { sortOrder: 'asc' } }, { product: { sortOrder: 'asc' } }],
   });
-  const locations = [];
+  const cities = [];
   const seen = new Set();
-  for (const v of variants) {
-    if (!seen.has(v.locationId)) {
-      seen.add(v.locationId);
-      locations.push({
-        id: v.locationId,
-        nameHe: v.location.nameHe,
-        nameEn: v.location.nameEn || v.location.nameHe,
+  for (const l of listings) {
+    if (!seen.has(l.commercialCity)) {
+      seen.add(l.commercialCity);
+      cities.push({
+        key: l.commercialCity,
+        nameHe: l.commercialCity,
+        nameEn: l.commercialCityEn || l.commercialCity,
       });
     }
   }
   return {
-    locations,
-    variants: variants.map((v) => ({
-      id: v.id,
-      productId: v.productId,
-      locationId: v.locationId,
-      nameHe: v.product.nameHe,
-      nameEn: v.product.nameEn || v.product.nameHe,
-      // Frozen display snapshots persisted on the group (Hebrew — the
-      // operational language of the CRM).
-      productLabel: v.product.nameHe,
-      locationLabel: v.location.nameHe,
+    cities,
+    variants: listings.map((l) => ({
+      id: l.productVariantId,
+      productId: l.productVariant.productId,
+      locationId: l.productVariant.locationId, // operational — resolved by the variant
+      cityKey: l.commercialCity,
+      nameHe: l.displayName,
+      nameEn: l.displayNameEn || l.displayName,
+      description: l.description,
+      // Frozen display snapshots persisted on the group — WHAT THE AGENT SAW
+      // (commercial names); the created Deal stores the canonical refs.
+      productLabel: l.displayName,
+      locationLabel: l.commercialCity,
     })),
   };
 }

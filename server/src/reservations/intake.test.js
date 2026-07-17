@@ -147,11 +147,11 @@ test('signature: drawn requires a valid PNG; typed requires only the name', () =
 
 test('all required confirmations must be accepted', () => {
   const r = validateSubmission(
-    validBody({ confirmations: [{ key: 'reservation_request', accepted: true }] }),
+    validBody({ confirmations: [] }),
     CATALOG,
     { today: TODAY },
   );
-  assert.equal(codesByPath(r)['confirmations.details_correct'], 'required');
+  assert.equal(codesByPath(r)['confirmations.reservation_request'], 'required');
 });
 
 test('group cap and empty-group list are rejected', () => {

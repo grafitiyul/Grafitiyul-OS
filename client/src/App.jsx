@@ -101,6 +101,7 @@ import FinanceSettingsHome from './admin/settings/FinanceSettingsHome.jsx';
 import PayrollComponentsSettings from './admin/finance/settings/PayrollComponentsSettings.jsx';
 import GeneralActivityTypesSettings from './admin/finance/settings/GeneralActivityTypesSettings.jsx';
 import ProductsAreaHome from './admin/settings/ProductsAreaHome.jsx';
+import AgentCatalogSettings from './admin/settings/AgentCatalogSettings.jsx';
 import DealStagesSettings from './admin/crm/settings/DealStagesSettings.jsx';
 import LostReasonsSettings from './admin/crm/settings/LostReasonsSettings.jsx';
 import DealSourcesSettings from './admin/crm/settings/DealSourcesSettings.jsx';
@@ -290,6 +291,7 @@ export default function App() {
           path="settings/crm/organization-types"
           element={<CrmSettingsPage />}
         />
+        <Route path="settings/crm/agent-catalog" element={<AgentCatalogSettings />} />
         <Route
           path="settings/crm/deal-stages"
           element={<DealStagesSettings />}

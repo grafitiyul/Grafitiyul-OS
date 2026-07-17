@@ -1966,6 +1966,7 @@ model ProductVariant {
   openTourTemplateProducts OpenTourTemplateProduct[]
   ticketRegistrations      TicketRegistration[]
   reservationGroups        ReservationGroup[]
+  channelListings          VariantChannelListing[]
 
   @@unique([productId, locationId])
   @@index([productId])
@@ -4877,6 +4878,35 @@ model ReservationSession {
   @@index([organizationId])
   @@index([linkId])
   @@index([submittedAt])
+}
+
+// Channel presentation for a canonical ProductVariant — how a SALES CHANNEL
+// (travel agents today; website / schools / corporate / partners / API later)
+// sees the variant. PRESENTATION ONLY, owner-configurable in settings: no
+// pricing, no operational data, and deliberately NO second catalogue — the
+// variant stays the single source of truth and deals always store the
+// canonical product/variant/location. The commercial city groups internal
+// operational locations (e.g. "תל אביב - קריית המלאכה" and "תל אביב -
+// פלורנטין" both present as "תל אביב"); the VARIANT resolves the operational
+// location, the channel user never sees the internal hierarchy. A variant
+// with no row (or visible=false) simply does not exist on that channel.
+model VariantChannelListing {
+  id               String         @id @default(cuid())
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
+  productVariantId String
+  channel          String // 'agent' | future: 'website' | 'school' | 'corporate' | 'partner' | 'api'
+  visible          Boolean        @default(false)
+  displayName      String // commercial name shown on the channel (never the internal variant name)
+  displayNameEn    String?
+  description      String? // optional short commercial line (e.g. "גילאי 13 ומעלה")
+  commercialCity   String // the city label the channel user chooses
+  commercialCityEn String?
+  sortOrder        Int            @default(0)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([productVariantId, channel])
+  @@index([channel, visible, sortOrder])
 }
 
 // One group inside a session — the exactly-once unit of work: each group
