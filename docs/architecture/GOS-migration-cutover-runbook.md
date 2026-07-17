@@ -1,254 +1,228 @@
-# GOS Migration — Cutover Lifecycle Runbook
+# GOS Migration — Cutover Lifecycle Runbook (v2 — owner amendments 2026-07-17)
 
-**The official migration runbook. Architecture only — no code implied beyond
-what already exists.** Grounded in the live state as of 2026-07-17:
+**The official migration runbook. Architecture only.** v2 supersedes v1 with
+nine binding owner corrections; the load-bearing changes: **cancelled tours are
+excluded from the migration entirely**, and **Wave 1 imports only tours that
+actually took place**. Grounded in the live state:
 
-- Imported and verified: 20,454 Contacts · 2,691 Organizations · 24,358 Deals
-  (hash-gated, side-effect-free, idempotent). Crosswalk: 48,414 LegacyRecords.
-- Tours: rehearsal approved (hash `07695d1f…`), importer NOT built. 4 open-slot
-  duplicate decisions pending in the review queue.
-- **Two legacy systems are still operational**: Pipedrive (CRM intake — GOS has
-  only 4 native deals) and Airtable (tour operations — 134 future tours vs 49
-  native GOS tours). Snapshot #1 is dated 2026-07-14 and is already drifting.
-- GOS is *partially* live: native tours, payroll for native tours, guide
-  portal, calendar sync, WhatsApp, quotes/payments run in production today.
-
-The question this document answers: **how the business safely stops being an
-Airtable/Pipedrive company and becomes a GOS company** — without a day of lost
-work, a duplicated tour, or a guide getting a wrong invitation.
+- Imported and verified: 20,454 Contacts · 2,691 Organizations · 24,358 Deals.
+  Crosswalk: 48,414 LegacyRecords.
+- Tours: rehearsal engine approved; importer NOT built. 4 open-slot duplicates
+  pending (blanket rule approved — see §Duplicates).
+- **Two legacy systems still operational**: Pipedrive (CRM intake) and Airtable
+  (tour operations). Snapshot #1 (2026-07-14) drifts daily.
 
 ---
 
 ## The lifecycle
 
 ```
-Stage 0 — Preparation            (done / in progress)
-Stage 1 — Initial Import: HISTORY ONLY        ← the next implementation step
-Stage 2 — Mirror Period          (days–weeks; legacy stays operational)
-Stage 3 — Freeze + Delta         (one evening)
-Stage 4 — Operational Import     (future tours; same evening)
-Stage 5 — Cutover Switch         (same evening; the moment of truth)
-Stage 6 — Post-Cutover           (first two weeks in GOS)
+Stage 0 — Preparation
+Stage 1 — WAVE 1: completed historical tours only
+Stage 2 — Mirror Period (legacy fully operational)
+Stage 3 — Freeze + FINAL SNAPSHOT + reclassification
+Stage 4 — CUTOVER IMPORT (delta history + future operational tours)
+Stage 5 — Cutover Switch
+Stage 6 — Post-Cutover
 ```
 
-The single most important design decision, stated once:
+The two governing laws, stated once:
 
-> **Future operational data crosses in Stage 4, inside the freeze — never
-> earlier.** History (completed/cancelled tours, frozen payroll, past
-> registrations) imports in Stage 1 because it cannot collide with live
-> operations. Future tours, future bookings and guide-facing artifacts import
-> only after Airtable stops changing. This removes the entire class of
-> "two systems both think they own Thursday's tour" problems, and removes any
-> need for special UI marking machinery during the mirror period.
+> **Law 1 — Wave 1 is strictly historical.** A tour qualifies only when its
+> actual date is in the past, it was not cancelled, it genuinely took place,
+> and its relationships reconcile safely through the crosswalk. Future tours,
+> cancelled tours, postponed tours, and anything still operationally editable
+> in Airtable do NOT exist in GOS before cutover.
+>
+> **Law 2 — Cancelled tours never become TourEvents.** They are deliberate,
+> audited exclusions (`cancelled_tour_not_migrated`) — never rows, never
+> bookings, never registrations, never assignments, never payroll, never
+> calendar. Evidence proves intent; absence is the design.
 
----
+## Wave 1 inclusion rule (exact)
 
-## Stage 0 — Preparation *(current stage)*
+Import a TourEvent for an Airtable master tour **iff**:
+`date < wave1_date` **AND** `status ≠ מבוטל` **AND** `status ≠ נדחה` **AND**
+its bookings resolve through the deal crosswalk (unresolvable links degrade to
+card evidence, never placeholders).
 
-**Owner:** decides the 4 open-slot duplicates (recommended blanket rule: *use
-the native GOS slot; the importer redirects the Airtable twin's bookings onto
-it*). Confirms this runbook.
-**GOS:** tour importer gets built and tested against the approved rehearsal
-hash. The payroll-suppression gate (migration-ownership = crosswalk row) is
-implemented and pinned by tests.
-**Airtable/Pipedrive:** fully authoritative for everything operational.
-**Workers:** unchanged — everything that runs today keeps running for NATIVE
-GOS entities only.
+With it: its historical Bookings, historical TicketRegistrations (linked deal +
+seat count), historical guide assignments (PersonRef where resolvable, external
+identity otherwise), frozen payroll evidence, and legacy cards.
 
-## Stage 1 — Initial Import: history only
+**Excluded from Wave 1:** the 916 cancelled (Law 2, permanent), the 123
+currently-future (deferred to cutover), the 1 postponed (never took place —
+reclassified at freeze; if still unresolved then, it is excluded like a
+cancellation and recorded as such), and any tour completing between Snapshot #1
+and the wave (it arrives in the cutover delta).
 
-**What imports:** the 3,381 historical tours (completed 2,468 · cancelled 916 ·
-postponed 1, minus already-imported), their bookings, historical
-TicketRegistrations (3,682 / 37,513 seats), guide assignments, frozen payroll
-evidence (1,305 activities / 1,923 entries), legacy cards. Hash-gated against
-the approved rehearsal, chunked, idempotent — the proven executor pattern.
-**What does NOT import:** the 123 future scheduled tours and the 4 duplicates.
-They stay in Airtable until Stage 4.
-**Owner does:** approves execution; spot-checks history in GOS (past tours in
-the guide portal, participant lists, payroll history views).
-**Airtable owns:** every future tour, all ongoing coordination and payroll.
-**Authoritative:** Airtable/Pipedrive for operations; GOS for everything
-already imported (history is now GOS-truth — Airtable history becomes
-reference-only from this point).
-**Workers:** no change. Historical tours are `completed`/`cancelled` — outside
-every sweep (midnight worker, capacity, sync). Payroll lazy-ensure is blocked
-for crosswalk-owned tours. Calendar/Woo flags are null (= never considered).
+**Expected Wave 1 populations** (from the approved rehearsal's measured splits;
+the Wave-1 rehearsal pins exact numbers and Hash A):
+completed tours **≈ 2,468** · their bookings/registrations/assignments/payroll
+are the historical subsets of 3,697 / 3,682 / 2,234 / 1,305+1,923 after
+removing future-tour and cancelled-tour attachments — exact counts are a
+required Wave-1 rehearsal output, reconciling to `3,508 = wave1_imported +
+cancelled_excluded + postponed_excluded + deferred_future (+already_imported)`.
 
-## Stage 2 — Mirror Period *(the dangerous one)*
+**Wave 1 triggers no live behavior** — by construction, not by suppression
+alone: completed tours sit outside the midnight worker, capacity sweeps and
+booking-driven detectors; calendar/Woo flags stay null ("never considered");
+payroll lazy-ensure is blocked for crosswalk-owned tours; nothing appears as
+future workload in the guide portal. History browsing only.
 
-Airtable is STILL the operational system. People work there. Tours change,
-participants change, guides change, payroll accrues, cancellations happen.
+## Cancelled-tour audit evidence (exact)
 
-**GOS is allowed to:**
-- serve all imported history (read/search/report);
-- continue running its NATIVE operations exactly as today (native tours,
-  their payroll, their calendar events, the portal);
-- accept new native work if the team chooses to start some flows in GOS early
-  (each such flow must be *fully* in GOS — never half-and-half for one tour).
+- The import plan and `MigrationRun.counters` record the exclusion population:
+  count, rule (`cancelled_tour_not_migrated`), and the plan hash they were
+  excluded under.
+- Snapshot #1 remains the immutable full record of every cancelled tour.
+- A `LegacyRecord` row (entity null, exclusion reason in cardData) is created
+  **only** where a linked record needs explaining — e.g. a payroll row attached
+  to a cancelled tour imports as **legacy-only evidence** (month-level, card
+  form) rather than minting a cancelled TourEvent. Nothing cancelled is ever
+  exposed as a real tour.
 
-**GOS must NOT:**
-- hold any future tour that Airtable also holds (structurally impossible —
-  they weren't imported);
-- generate payroll for any crosswalk-owned tour;
-- send anything to guides/customers about imported data;
-- create calendar events for imported data;
-- re-import or "refresh" from Airtable ad-hoc — the only refresh is the
-  Stage 3 delta.
+## Stage 2 — Mirror Period
 
-**How imported entities are marked:** migration ownership **is the crosswalk**
-(`LegacyRecord` row → the entity). No new flags, no UI paint: every suppression
-gate (payroll, and any future one) queries the same single fact. Because no
-operational future data exists in GOS during the mirror, there is nothing a
-user could accidentally treat as production — the confusion class is designed
-out rather than warned about.
+Airtable remains the operational source of truth for ALL current and future
+tours. GOS serves imported history + its native operations. GOS must not hold
+any Airtable-editable tour (structurally true — none were imported), must not
+generate payroll for crosswalk-owned tours, must not message anyone about
+imported data, and never refreshes ad-hoc — the only refresh is the freeze
+snapshot. Migration ownership remains **the crosswalk itself**; no new flags.
+Mirror length costs only delta size.
 
-**Duration:** as short as the owner wants. Every mirror day increases the
-Stage 3 delta, nothing else.
+## Stage 3 — Freeze + Final Snapshot + reclassification (one evening)
 
-## Stage 3 — Freeze + Delta *(one announced evening)*
+1. Owner announces the stop; Airtable + Pipedrive writes end.
+2. Legacy automations OFF (before extraction, so nothing mutates mid-snapshot).
+3. **Final Snapshot** captured with the existing budget-gated machinery.
+4. **All populations recalculated from the final snapshot** — the Wave-1
+   rehearsal numbers are explicitly not reused.
+5. **Reclassification at that exact moment**:
+   - completed since Wave 1 → import as historical completed
+   - future at freeze time → import as operational TourEvents
+   - cancelled (including newly-cancelled) → excluded (Law 2)
+   - changed bookings/participants/assignments/payroll → final source state
+   - **owner decisions are never overwritten**; a legacy change touching a
+     decided field is a conflict for owner review.
 
-**Freeze:** the owner announces the stop; Airtable and Pipedrive editing ends
-(remove edit grants where possible; the announcement is the real control).
-Airtable automations (calendar event creation, WhatsApp reminders, forms) are
-switched OFF now — before the delta, so nothing mutates mid-extraction.
+Delta law per domain (unchanged from v1): Replace only derived artifacts
+(cards, frozen payroll evidence) · Merge mapped source columns · Ignore
+legacy-only identifiers (all 77 future-tour calendar ids are measured
+non-adoptable — evidence only, GOS creates its own events) · nothing is ever
+deleted in GOS by a delta.
 
-**Delta = Snapshot #2**, using the existing extraction machinery
-(budget-gated: `MIGRATION_EXTRACTION_ENABLED`, request ceiling, the
-post-incident rules). Scope is *changed-since-2026-07-14* — thousands of
-records, not hundreds of thousands. Then the delta planners run with these
-per-domain rules:
+## Stage 4 — Cutover import: future tours become GOS-operational
 
-| Domain | New in legacy | Changed in legacy | Deleted in legacy | Owner-decided in GOS |
+Future-at-freeze tours import as genuine operational TourEvents, immediately
+receiving: canonical Bookings, current participants/TicketRegistrations,
+current guide assignments, correct capacity and operational location, current
+status, **GOS-owned Google Calendar events** (marked pending at this stage
+only; the sync worker creates them once, invitations fire once via
+`sendUpdates=all`), and normal guide-portal visibility + reconciliation
+behavior. **There is no mirror period for future tours: before cutover they
+belong only to Airtable; after cutover only to GOS.**
+
+**Templates (owner amendment):** imported future open tours are **NOT attached
+to templates**. They import as manual canonical TourEvents — fully GOS-
+controlled (editing, guides, registrations, capacity, calendar, Woo,
+cancellation, reconciliation all work identically; template-origin is
+irrelevant to operations). Only the four native GOS slots retain their real
+template relationship. ⚠ Consequence the owner must resolve at cutover: the
+open-tour generation worker generates from templates on its rolling horizon,
+and the slot-identity unique index only guards template-linked rows — so a
+template whose horizon reaches a date already covered by an imported manual
+slot would mint a twin. Cutover checklist therefore includes a **generation-
+collision review**: for each template × imported-manual-slot date/time
+collision, the owner either trims the template occurrence or explicitly adopts
+that one slot. This is a listed owner decision, never automatic.
+
+## The four native open-tour duplicates
+
+The approved rule is preserved: the **native GOS TourEvent survives**, the
+Airtable twin is **not created**, the twin's bookings / participants /
+assignments / reliable missing data are **redirected into the native slot**,
+and the Airtable tour receives a **crosswalk to the native TourEvent**. These
+four are **re-evaluated against the final snapshot** — their bookings may
+change during the mirror, and the duplicate population itself may grow or
+shrink as native slots and Airtable tours evolve; the current rehearsal payload
+is explicitly not the cutover payload.
+
+## Payroll (amended)
+
+Wave 1 imports frozen historical payroll evidence for **completed imported
+tours only** — never regenerated, never recalculated. Payroll attached to
+cancelled tours → legacy-only evidence (no TourEvent, no PayrollActivity).
+At cutover: the final Airtable payroll delta imports (already-paid/approved
+history preserved verbatim), then **GOS is activated as the sole payroll
+generator** for future operations — one recorded epoch decision, suppression
+by crosswalk ends there.
+
+## Two plans, two hashes (amended rehearsal strategy)
+
+The current rehearsal hash (`07695d1f…`) is **void as an executable plan** —
+it includes cancelled and future tours. The runbook now requires:
+
+- **Hash A — Historical Wave**: completed, non-cancelled historical tours only,
+  computed by the updated Wave-1 rehearsal ×2 (deterministic), reconciling
+  exactly to the Snapshot #1 population split. Pins the Wave-1 executor.
+- **Hash B — Final Cutover**: computed freeze night from the Final Snapshot —
+  delta history + future-at-freeze operational tours + final bookings/
+  participants/guides/payroll, cancelled excluded, the four duplicates
+  re-resolved. Pins the cutover executor. Approved by the owner that evening
+  against the reconciliation gates before execution.
+
+Both plans must reconcile exactly to their respective source populations.
+
+## Worker activation matrix (v2)
+
+| Worker | Stages 0–2 | Stage 3 freeze | Stage 4–5 | Post-cutover |
 |---|---|---|---|---|
-| Deals | **Create** (same planner; new ids > 26311) | **Merge**: refresh mapped columns (status, wonAt, value, stage…) | **Report** — never delete in GOS | **Never overwritten** — a decision (correction/exclude/deleted) always wins; a legacy change to a decided field → **Conflict → owner review** |
-| Contacts/Orgs | Create (through the same decision engines; new duplicates → review) | Merge identity fields *unless* an identity correction exists → correction wins | Report | Never overwritten |
-| Tours (history that changed) | Create | Merge (a tour completed/cancelled during the mirror updates its status) | Report | Duplicate decisions preserved |
-| Bookings/Participants | Create/Merge seats | Merge | Report | — |
-| Guides (assignments) | Merge per tour | Merge | Report | — |
-| Payroll | **Create/Replace rows wholesale** — frozen evidence has no GOS-side edits to protect, so the delta simply re-freezes the final Airtable truth | same | Report | n/a |
-| Calendar references | **Ignore** — measured 0/77 adoptable; legacy ids are card evidence only, refreshed with the card | | | |
-| Legacy cards | **Replace** — cards are derived views of source data, never edited in GOS | | | |
-
-General law: **Replace** applies only to derived artifacts (cards, frozen
-payroll evidence). **Merge** applies to mapped source columns. **Ignore**
-applies to legacy-only identifiers. **Conflict → owner review** applies the
-moment a legacy change touches anything an owner decision governs. Nothing is
-ever deleted in GOS by a delta.
-
-## Stage 4 — Operational Import *(same evening)*
-
-The 123 future tours import as fully operational TourEvents, plus the 4
-duplicate resolutions (bookings redirected onto native slots), future
-bookings/registrations, and guide assignments.
-
-Two mechanical requirements from the approved policies:
-1. **Template adoption for future open slots**: imported open slots get their
-   `openTourTemplateId` (+ canonical date/time) stamped at import, so the
-   generation worker recognizes them and the partial-unique slot index prevents
-   twin generation. This is what makes "origin becomes irrelevant" true.
-2. **Calendar**: imported future tours are marked `gcalSyncStatus='pending'` —
-   deliberately, at this stage only — so the sync worker creates GOS-owned
-   events (invitations go out via `sendUpdates=all`, which is now *desired*:
-   guides receive the canonical invites exactly once, from the system that
-   owns them from now on). The old Airtable-created events live on a different
-   calendar; they are cleaned up manually there (outside GOS) after cutover.
-
-## Stage 5 — Cutover Switch
-
-**Preconditions (must already be true):** delta verified and reconciled; Stage
-4 import verified; the success checklist below fully green.
-
-**The switches, in order:**
-1. Payroll generation for migration-owned tours: **enabled** (one recorded
-   decision — a stage_config-style row, not an env toggle — "payroll epoch
-   begins now"). From here lazy-ensure treats imported future tours like any
-   native tour.
-2. Airtable/Pipedrive: **read-only, permanently** (reference access retained).
-3. The team's operational home becomes GOS — announced as such.
-4. Woo sync stays under its existing gate (`WOO_SYNC_ENABLED`) — enabling it is
-   its own controlled activation, not part of cutover night.
-
-**The moment GOS becomes the Single Source of Truth** is switch #2: the instant
-legacy editing ends with a verified, reconciled GOS holding both history and
-future. Everything before it is reversible; everything after it accumulates
-GOS-only work.
-
-**How we know it succeeded:** the post-cutover checklist queries below, plus
-three business proofs on day one — a real tour runs from GOS end-to-end
-(portal, attendance, summary), a real payment collects against an imported
-deal, and payroll generates for a post-cutover tour.
-
-## Worker activation matrix
-
-| Worker | Today (Stage 0–2) | Stage 3 (freeze) | Stage 4–5 | Post-cutover |
-|---|---|---|---|---|
-| Google Calendar sync | ON for native tours only (imported = null flag) | ON (native) | imported future tours marked pending → events created | fully ON, all tours |
+| Google Calendar sync | native tours only; Wave-1 imports null-flagged | native | imported FUTURE tours pending → events created once | fully ON |
 | Woo sync | OFF (gated) | OFF | OFF | separate controlled activation |
-| Payroll (lazy-ensure + hooks) | ON for native; **suppressed for crosswalk-owned** | same | same | **fully ON** (epoch decision recorded) |
-| Notifications / WhatsApp worker | ON for native flows | ON | ON | ON |
-| Guide Portal | ON — imported history visible (desired); no imported future exists | ON | imported future tours appear (desired) | ON |
-| Task generation | native only | ON | ON | ON |
-| Timeline | native events; imported history arrives in the timeline slice | ON | ON | ON |
-| Questionnaires / completion (IL-midnight) | ON — cannot touch imported history (imported as completed) | ON | ON — future imported tours now in scope (desired) | ON |
-| Open-tour generation worker | ON for templates (native slots) | ON | imported slots template-adopted → no twins | ON |
-| Control detectors | ON — booking-driven, so imported history invisible | ON | field-consistent import keeps deal_tour_out_of_sync quiet | ON |
-| Airtable automations (legacy side) | ON | **OFF forever** (before the delta) | OFF | OFF |
+| Payroll | native ON; crosswalk-owned suppressed | same | same until switch | epoch recorded → fully ON |
+| Notifications / WhatsApp | native flows | ON | ON | ON |
+| Guide Portal | history visible (desired); zero imported future workload | same | future tours appear (desired) | ON |
+| Tasks / Timeline / Questionnaires / completion worker | native; imported history untouchable (already completed) | ON | future imports in scope (desired) | ON |
+| Open-tour generation | templates → native slots | ON | **generation-collision review** vs imported manual slots | ON |
+| Control detectors | booking-driven; history invisible | ON | field-consistent import keeps them quiet | ON |
+| Airtable automations | ON | **OFF forever** | OFF | OFF |
 
-## Rollback
+## Cutover switch, rollback, checklists
 
-**Reversible at any point before Stage 5 switch #2:** every import is additive
-and batch-tagged (`importBatchId`); an aborted stage is corrected forward or,
-at worst, a batch's rows are identifiable for surgical removal. Airtable and
-Pipedrive are untouched throughout — resuming work there costs nothing but the
-announcement.
+**The moment**: legacy goes read-only against a verified, reconciled GOS
+(Stage 5 switch #2). Before it, everything is additive, batch-tagged and
+reversible; Airtable/Pipedrive are untouched and resuming costs only an
+announcement. **The rollback horizon is the first business write into GOS
+after cutover** — beyond it, forward-correction through the Review Center
+(which survives cutover) replaces rollback. Never reversible: calendar
+invitations (fired once, inside the freeze) and anything customers were told.
 
-**The rollback horizon is the first business write into GOS after cutover.**
-From that moment, reverting to Airtable means losing real work, and rollback
-stops being a tool. The design compensates with **forward-correction**: the
-Review Center decision model, the crosswalk, and the impact engine all survive
-cutover precisely so that any discovered import defect is fixed *in GOS, with
-an audit trail* — never by going back.
+**Before cutover — every box required:**
+- [ ] 4 duplicate decisions recorded (blanket rule) — re-confirmed on Hash B
+- [ ] Wave-1 rehearsal ×2 → **Hash A** approved; executor built and pinned
+- [ ] Wave 1 executed + verified: reconciliation exact (imported + cancelled-
+      excluded + postponed-excluded + deferred-future = 3,508-equivalent),
+      side-effect tables unchanged, idempotent rerun = 0
+- [ ] Zero cancelled TourEvents exist; exclusion evidence recorded
+- [ ] Payroll suppression proven; cancelled-tour payroll is card evidence only
+- [ ] Freeze executed; automations OFF; Final Snapshot verified (checksums)
+- [ ] Populations recalculated; reclassification report reviewed
+- [ ] **Hash B** approved freeze night; cutover import executed + verified
+- [ ] Generation-collision review completed (template × imported-slot)
+- [ ] Calendar events created once; correct guides; zero duplicates
+- [ ] Legacy access read-only; team announcement; owner sign-off
 
-**Never reversible:** calendar invitations sent at Stage 4 (Google emails
-cannot be unsent — which is why they fire only inside the freeze, once), and
-anything customers were told.
-
-## Success checklist
-
-**Before cutover (all required):**
-- [ ] The 4 duplicate decisions recorded
-- [ ] Tour importer built; rehearsal hash matches the approved `07695d1f…`
-      (re-pinned after the delta — the delta changes the hash by definition,
-      so the freeze-night rehearsal produces the FINAL hash the executor pins)
-- [ ] Stage 1 history import executed + verified (reconciliation exact,
-      side-effect tables unchanged, idempotent rerun = 0)
-- [ ] Payroll suppression proven (no PayrollActivity exists for any
-      crosswalk-owned tour)
-- [ ] Delta Snapshot #2 extracted within budget, verified (checksums), planners
-      reconciled; conflicts (owner-decided fields changed in legacy) resolved
-- [ ] Stage 4 operational import verified: 123 future tours + 4 resolutions;
-      template adoption confirmed (no generatable twin possible)
-- [ ] Calendar events created once, correct guides invited, zero duplicates
-- [ ] Airtable automations OFF; legacy access flipped to read-only
-- [ ] Team announcement made; owner sign-off recorded
-
-**After cutover (first two weeks):**
-- [ ] Day 1: a tour runs fully from GOS (portal → attendance → summary)
-- [ ] Day 1: payment collected against an imported deal
-- [ ] First post-cutover tour generates payroll normally
-- [ ] Weekly reconciliation query: every future tour in GOS has exactly one
-      source (native or crosswalked), no orphan bookings, no duplicate slots
-- [ ] Guide feedback pass: portal shows correct history + future
-- [ ] Old shared calendar cleaned manually (legacy events removed)
-- [ ] Migration Review Center retired per its deletion boundary; LegacyRecord
-      and MigrationDecision remain permanently (the archive and the audit)
-- [ ] Remaining slices scheduled: timeline (notes/activities/files-metadata),
-      collection, files bodies (still gated on the classification report),
-      archive payload backfill
+**After cutover (first two weeks):** day-1 tour runs fully from GOS · payment
+collects on an imported deal · first post-cutover payroll generates · weekly
+reconciliation (every future tour has exactly one source; no orphan bookings;
+no duplicate slots incl. template collisions) · guide-portal feedback pass ·
+old shared calendar manually cleaned · Review Center retired per its deletion
+boundary (LegacyRecord + MigrationDecision permanent) · remaining slices
+scheduled: timeline, collection, files (gated), archive payload backfill.
 
 ---
-
-*With every checkbox green, the migration is complete: GOS is the operating
-system of the business, and 15 years of history are inside it — every record
-imported, deliberately excluded, or owner-deleted, with the decision trail to
-prove it.*
+*v2 — cancelled tours excluded by design; Wave 1 strictly historical; future
+tours cross only at the freeze; two hashes, two approvals; owner decisions are
+never overwritten.*
