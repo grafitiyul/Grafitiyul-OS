@@ -12,6 +12,26 @@ import { kickPayrollReconcile } from '../payroll/service.js';
 
 const router = Router();
 
+// Persist an explicit product display order (drag-and-drop in settings).
+// `ids` = the FULL list in the desired order; sortOrder = array index — the
+// same canonical sortOrder every consumer already orders by. Registered
+// BEFORE '/:id' so the literal path isn't captured as an id.
+router.put(
+  '/reorder',
+  handle(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids)
+      ? req.body.ids.filter((x) => typeof x === 'string')
+      : [];
+    if (!ids.length) return res.json({ ok: true });
+    await prisma.$transaction(
+      ids.map((id, i) =>
+        prisma.product.update({ where: { id }, data: { sortOrder: i } }),
+      ),
+    );
+    res.json({ ok: true });
+  }),
+);
+
 function toMinor(v) {
   if (v === undefined || v === null || v === '') return null;
   const n = Number(v);

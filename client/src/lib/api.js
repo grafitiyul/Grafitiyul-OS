@@ -933,6 +933,7 @@ export const api = {
   },
   products: {
     list: () => request('/api/products'),
+    reorder: (ids) => request('/api/products/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
     // Flat variant list (id + product/location labels) for the video variant picker.
     variantOptions: () => request('/api/products/variant-options'),
     get: (id) => request(`/api/products/${id}`),

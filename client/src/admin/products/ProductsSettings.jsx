@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import {
+  DndContext,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+} from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { api } from '../../lib/api.js';
 import SettingsChrome from '../settings/SettingsChrome.jsx';
 import Dialog from '../common/Dialog.jsx';
@@ -54,6 +64,36 @@ export default function ProductsSettings() {
     return (p.nameHe || '').toLowerCase().includes(s) || (p.nameEn || '').toLowerCase().includes(s);
   };
   const shown = rows.filter((p) => (showArchived || p.active) && matchesSearch(p));
+
+  // Drag-and-drop ordering — the ONE canonical Product.sortOrder every list
+  // and picker already orders by. Disabled while searching (reordering a
+  // filtered subset is ambiguous). Rows hidden by the archive filter keep
+  // their relative order: the persisted list = new shown order + hidden rows.
+  const canReorder = !q.trim();
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 6 } }),
+  );
+
+  async function onDragEnd(event) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const shownIds = shown.map((p) => p.id);
+    const from = shownIds.indexOf(active.id);
+    const to = shownIds.indexOf(over.id);
+    if (from < 0 || to < 0) return;
+    const newShown = arrayMove(shownIds, from, to);
+    const hidden = rows.filter((p) => !shownIds.includes(p.id)).map((p) => p.id);
+    const fullOrder = [...newShown, ...hidden];
+    // Optimistic: the list snaps instantly; persistence is automatic.
+    setRows((rs) => fullOrder.map((id) => rs.find((p) => p.id === id)).filter(Boolean));
+    try {
+      await api.products.reorder(fullOrder);
+    } catch (e) {
+      alert('שגיאה בשמירת הסדר: ' + (e.payload?.error || e.message));
+      await refresh();
+    }
+  }
 
   async function createProduct() {
     if (!nameHe.trim() || !locationId) return;
@@ -162,70 +202,15 @@ export default function ProductsSettings() {
         ) : shown.length === 0 ? (
           <EmptyState hasAny={rows.length > 0} q={q} onCreate={() => setShowCreate(true)} />
         ) : (
-          <ul>
-            {shown.map((p) => (
-              <li
-                key={p.id}
-                onClick={() => navigate(`/admin/settings/crm/products/${p.id}`)}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/admin/settings/crm/products/${p.id}`); } }}
-                role="button"
-                tabIndex={0}
-                aria-label={`פתיחת ${p.nameHe}`}
-                className={`group flex items-center gap-4 px-5 py-4 border-b border-gray-50 last:border-b-0 last:rounded-b-2xl cursor-pointer transition-colors hover:bg-gray-50/70 focus:outline-none focus-visible:bg-gray-50 ${
-                  !p.active ? 'opacity-60' : ''
-                }`}
-              >
-                {/* Identity */}
-                <div className="flex items-center gap-3.5 min-w-0 flex-1">
-                  <Avatar name={p.nameHe} />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[18px] font-semibold text-gray-900 truncate group-hover:text-blue-700 transition-colors">
-                        {p.nameHe}
-                      </span>
-                      {!p.active && (
-                        <span className="shrink-0 inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-inset ring-amber-100">
-                          בארכיון
-                        </span>
-                      )}
-                    </div>
-                    <div className={`text-[14px] truncate ${p.nameEn ? 'text-gray-400' : 'text-gray-300'}`} dir="ltr">
-                      {p.nameEn || '—'}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Locations */}
-                <div className="w-32 text-center text-[14px] text-gray-600">
-                  <span className="inline-flex items-center gap-1">📍 {p._count?.variants ?? 0} מיקומים</span>
-                </div>
-
-                {/* Status */}
-                <div className="w-24 flex justify-center">
-                  {p.active ? (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[12px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-100">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> פעיל
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-[12px] font-medium text-gray-500 ring-1 ring-inset ring-gray-200">
-                      בארכיון
-                    </span>
-                  )}
-                </div>
-
-                {/* Actions — only the three-dot menu; stop row navigation on click */}
-                <div className="w-12 flex items-center justify-end" onClick={(e) => e.stopPropagation()}>
-                  <ActionsMenu
-                    items={
-                      p.active
-                        ? [{ label: 'העברה לארכיון', onClick: () => archive(p), tone: 'amber' }]
-                        : [{ label: 'שחזור מארכיון', onClick: () => setActive(p, true) }]
-                    }
-                  />
-                </div>
-              </li>
-            ))}
-          </ul>
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+            <SortableContext items={shown.map((p) => p.id)} strategy={verticalListSortingStrategy}>
+              <ul>
+                {shown.map((p) => (
+                  <ProductRow key={p.id} product={p} canReorder={canReorder} navigate={navigate} archive={archive} setActive={setActive} />
+                ))}
+              </ul>
+            </SortableContext>
+          </DndContext>
         )}
       </section>
 
@@ -277,6 +262,93 @@ export default function ProductsSettings() {
         )}
       </Dialog>
     </div>
+  );
+}
+
+// One product row — sortable (dnd-kit, same sensors as the CRM catalog kits).
+// The drag handle is the only drag surface, so row-click navigation stays
+// untouched; while searching the handle is hidden (subset reorder is
+// ambiguous).
+function ProductRow({ product: p, canReorder, navigate, archive, setActive }) {
+  const s = useSortable({ id: p.id, disabled: !canReorder });
+  const style = { transform: CSS.Transform.toString(s.transform), transition: s.transition };
+  return (
+    <li
+      ref={s.setNodeRef}
+      style={style}
+      onClick={() => navigate(`/admin/settings/crm/products/${p.id}`)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/admin/settings/crm/products/${p.id}`); } }}
+      role="button"
+      tabIndex={0}
+      aria-label={`פתיחת ${p.nameHe}`}
+      className={`group flex items-center gap-4 px-5 py-4 border-b border-gray-50 last:border-b-0 last:rounded-b-2xl cursor-pointer transition-colors hover:bg-gray-50/70 focus:outline-none focus-visible:bg-gray-50 ${
+        !p.active ? 'opacity-60' : ''
+      } ${s.isDragging ? 'relative z-10 bg-white shadow-md rounded-xl' : ''}`}
+    >
+      {/* Drag handle — leading edge; stops row navigation. */}
+      {canReorder && (
+        <button
+          {...s.attributes}
+          {...s.listeners}
+          onClick={(e) => e.stopPropagation()}
+          aria-label="גרור לשינוי סדר"
+          title="גרור לשינוי סדר"
+          className="shrink-0 -me-2 p-1 text-gray-300 hover:text-gray-500 cursor-grab active:cursor-grabbing"
+          style={{ touchAction: 'none' }}
+        >
+          <GripIcon />
+        </button>
+      )}
+
+      {/* Identity */}
+      <div className="flex items-center gap-3.5 min-w-0 flex-1">
+        <Avatar name={p.nameHe} />
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-[18px] font-semibold text-gray-900 truncate group-hover:text-blue-700 transition-colors">
+              {p.nameHe}
+            </span>
+            {!p.active && (
+              <span className="shrink-0 inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-inset ring-amber-100">
+                בארכיון
+              </span>
+            )}
+          </div>
+          <div className={`text-[14px] truncate ${p.nameEn ? 'text-gray-400' : 'text-gray-300'}`} dir="ltr">
+            {p.nameEn || '—'}
+          </div>
+        </div>
+      </div>
+
+      {/* Locations */}
+      <div className="w-32 text-center text-[14px] text-gray-600">
+        <span className="inline-flex items-center gap-1">📍 {p._count?.variants ?? 0} מיקומים</span>
+      </div>
+
+      {/* Status */}
+      <div className="w-24 flex justify-center">
+        {p.active ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[12px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-100">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> פעיל
+          </span>
+        ) : (
+          <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-[12px] font-medium text-gray-500 ring-1 ring-inset ring-gray-200">
+            בארכיון
+          </span>
+        )}
+      </div>
+
+      {/* Actions — only the three-dot menu; stop row navigation on click */}
+      <div className="w-12 flex items-center justify-end" onClick={(e) => e.stopPropagation()}>
+        <ActionsMenu
+          items={
+            p.active
+              ? [{ label: 'העברה לארכיון', onClick: () => archive(p), tone: 'amber' }]
+              : [{ label: 'שחזור מארכיון', onClick: () => setActive(p, true) }]
+          }
+        />
+      </div>
+    </li>
   );
 }
 
@@ -368,3 +440,4 @@ function PlusIcon() { return (<svg {...ic} aria-hidden="true"><line x1="12" y1="
 function SearchIcon() { return (<svg {...ic} aria-hidden="true"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>); }
 function ArchiveIcon() { return (<svg {...ic} width="15" height="15" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1" /><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" /><line x1="10" y1="12" x2="14" y2="12" /></svg>); }
 function DotsIcon() { return (<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="12" cy="19" r="1.6" /></svg>); }
+function GripIcon() { return (<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.5" /><circle cx="15" cy="6" r="1.5" /><circle cx="9" cy="12" r="1.5" /><circle cx="15" cy="12" r="1.5" /><circle cx="9" cy="18" r="1.5" /><circle cx="15" cy="18" r="1.5" /></svg>); }

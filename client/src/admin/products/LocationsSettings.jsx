@@ -1,4 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  DndContext,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+} from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { api } from '../../lib/api.js';
 import SettingsChrome from '../settings/SettingsChrome.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
@@ -52,6 +62,50 @@ export default function LocationsSettings() {
     return out;
   }, [rows]);
 
+  // Drag-and-drop ordering over the ONE canonical Location.sortOrder.
+  // Sibling-constrained: roots reorder among roots, children among their own
+  // parent's children — a drop outside the sibling group is ignored, so a
+  // drag can never change the hierarchy itself.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 6 } }),
+  );
+
+  async function onDragEnd(event) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const a = byId.get(active.id);
+    const b = byId.get(over.id);
+    if (!a || !b) return;
+    const groupKey = a.parentLocationId || 'root';
+    if ((b.parentLocationId || 'root') !== groupKey) return; // cross-group drop — ignored
+
+    const groupIds = rows
+      .filter((r) => (r.parentLocationId || 'root') === groupKey)
+      .map((r) => r.id);
+    const next = arrayMove(groupIds, groupIds.indexOf(active.id), groupIds.indexOf(over.id));
+    const orderOf = (key) =>
+      key === groupKey
+        ? next
+        : rows.filter((r) => (r.parentLocationId || 'root') === key).map((r) => r.id);
+
+    // Persist the FULL flattened order (each root followed by its children) —
+    // plain global sortOrder, hierarchy untouched.
+    const full = [];
+    for (const rootId of orderOf('root')) {
+      full.push(rootId);
+      for (const childId of orderOf(rootId)) full.push(childId);
+    }
+    setRows(full.map((id) => byId.get(id)).filter(Boolean)); // instant
+    try {
+      await api.locations.reorder(full);
+    } catch (e) {
+      alert('שגיאה בשמירת הסדר: ' + (e.payload?.error || e.message));
+      await refresh();
+    }
+  }
+
   async function add(e) {
     e.preventDefault();
     if (!nameHe.trim()) return;
@@ -84,11 +138,15 @@ export default function LocationsSettings() {
           ) : rows.length === 0 ? (
             <div className="px-3 py-12 text-center text-sm text-gray-400">עדיין אין מיקומים. הוסיפו את הראשון למטה.</div>
           ) : (
-            <ul className="divide-y divide-gray-100">
-              {ordered.map(({ row, depth }) => (
-                <LocationRow key={row.id} row={row} depth={depth} locations={rows} onChange={refresh} />
-              ))}
-            </ul>
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+              <SortableContext items={ordered.map(({ row }) => row.id)} strategy={verticalListSortingStrategy}>
+                <ul className="divide-y divide-gray-100">
+                  {ordered.map(({ row, depth }) => (
+                    <LocationRow key={row.id} row={row} depth={depth} locations={rows} onChange={refresh} />
+                  ))}
+                </ul>
+              </SortableContext>
+            </DndContext>
           )}
         </div>
         <div className="px-4 sm:px-5 py-4 border-t border-gray-100 bg-gray-50/60">
@@ -117,6 +175,7 @@ const PARENT_ERRORS = {
 };
 
 function LocationRow({ row, depth = 0, locations, onChange }) {
+  const sortable = useSortable({ id: row.id });
   const [editing, setEditing] = useState(false);
   const [showDefaults, setShowDefaults] = useState(false);
   const [nameHe, setNameHe] = useState(row.nameHe);
@@ -266,7 +325,23 @@ function LocationRow({ row, depth = 0, locations, onChange }) {
   const hasMeeting = !!(row.meetingPointHe || row.meetingPointEn || row.meetingPointImageId);
 
   return (
-    <li className={`group flex items-center gap-3 px-2.5 py-2.5 rounded-lg hover:bg-gray-50 ${depth ? 'ps-9' : ''}`}>
+    <li
+      ref={sortable.setNodeRef}
+      style={{ transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition }}
+      className={`group flex items-center gap-3 px-2.5 py-2.5 rounded-lg hover:bg-gray-50 ${depth ? 'ps-9' : ''} ${
+        sortable.isDragging ? 'relative z-10 bg-white shadow-md' : ''
+      }`}
+    >
+      <button
+        {...sortable.attributes}
+        {...sortable.listeners}
+        aria-label="גרור לשינוי סדר (בתוך אותה רמה)"
+        title="גרור לשינוי סדר — שורש בין שורשים, מיקום בן בתוך אותה עיר"
+        className="shrink-0 -me-1.5 p-1 text-gray-300 hover:text-gray-500 cursor-grab active:cursor-grabbing"
+        style={{ touchAction: 'none' }}
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.5" /><circle cx="15" cy="6" r="1.5" /><circle cx="9" cy="12" r="1.5" /><circle cx="15" cy="12" r="1.5" /><circle cx="9" cy="18" r="1.5" /><circle cx="15" cy="18" r="1.5" /></svg>
+      </button>
       {depth > 0 && <span className="text-gray-300" aria-hidden>↳</span>}
       <span className="font-medium text-gray-900 text-[15px]">{row.nameHe}</span>
       {hasChildren && (
