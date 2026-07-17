@@ -21,8 +21,14 @@ const TOUR_LANGUAGES = ['he', 'en', 'es', 'fr', 'ru'];
 // "the reservation is subject to Grafitiyul approval" — per the approved
 // mockup's single-checkbox footer.
 export const REQUIRED_CONFIRMATIONS = [
+  // Acknowledgement of the agent-specific flexible cancellation terms
+  // (checkbox before the signature; acceptance + timestamp recorded in
+  // legalConfirmations like every confirmation).
+  { key: 'flexible_cancellation', textVersion: 1 },
   { key: 'reservation_request', textVersion: 2 },
 ];
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function isPng(buf) {
   if (!Buffer.isBuffer(buf) || buf.length < 8) return false;
@@ -54,7 +60,11 @@ const str = (v, max) =>
 // Returns { problems } (each { path, code }) OR { session, groups } normalized
 // for persistence. Problems use stable codes — the client renders bilingual
 // messages; nothing user-facing is composed here.
-export function validateSubmission(body, catalog, { today = israelToday() } = {}) {
+export function validateSubmission(
+  body,
+  catalog,
+  { today = israelToday(), orgFinanceEmail = null } = {},
+) {
   const problems = [];
   const push = (path, code) => problems.push({ path, code });
 
@@ -146,10 +156,32 @@ export function validateSubmission(body, catalog, { today = israelToday() } = {}
     if (!accepted.has(c.key)) push(`confirmations.${c.key}`, 'required');
   }
 
+  // Invoice delivery ("לאן לשלוח את החשבונית?") — same business data GOS
+  // Deals use: the Organization's finance contact. The CHOICE is frozen in
+  // the payload snapshot; the contact details persist ORG-level (see
+  // persistSubmission), never reservation-level.
+  const inv = body?.invoice || {};
+  const sendToFinance = inv.sendToFinance === true;
+  const financeName = str(inv.financeName, 120);
+  const financeEmail =
+    typeof inv.financeEmail === 'string' ? inv.financeEmail.trim().slice(0, 160) : '';
+  // Org-centric rule: when the Organization already has a finance contact,
+  // "לאיש הכספים" needs no input (the saved contact is used, read-only).
+  // Otherwise ("לאיש כספים אחר") an email is required — it becomes the
+  // Organization's canonical finance contact.
+  if (sendToFinance) {
+    if (financeEmail && !EMAIL_RE.test(financeEmail)) {
+      push('invoice.financeEmail', 'invalid');
+    } else if (!financeEmail && !orgFinanceEmail) {
+      push('invoice.financeEmail', 'required');
+    }
+  }
+
   if (problems.length) return { problems };
 
   const acceptedAt = new Date().toISOString();
   return {
+    invoice: { sendToFinance, financeName, financeEmail: financeEmail || null },
     session: {
       language,
       submissionKey,
@@ -188,7 +220,10 @@ export async function bookableCatalog(db = prisma) {
       product: { active: true },
       location: { active: true },
     },
-    orderBy: [{ location: { sortOrder: 'asc' } }, { sortOrder: 'asc' }],
+    // Business order: the canonical Main Products order FIRST, then each
+    // product's configured variant order — never alphabetical, never by
+    // location or creation date.
+    orderBy: [{ product: { sortOrder: 'asc' } }, { sortOrder: 'asc' }],
     select: {
       id: true,
       productId: true,
@@ -280,6 +315,21 @@ export async function persistSubmission(
         where: { id: link.id },
         data: { lastUsedAt: new Date() },
       });
+      // Finance-contact details entered on the form persist onto the
+      // ORGANIZATION (the same fields GOS Deals read), so every future
+      // reservation from any employee of this agency sees them pre-filled.
+      // Provided values only — an empty name never clears an existing one.
+      if (validated.invoice?.sendToFinance && validated.invoice.financeEmail) {
+        await tx.organization.update({
+          where: { id: organization.id },
+          data: {
+            financeEmail: validated.invoice.financeEmail,
+            ...(validated.invoice.financeName
+              ? { financeContactName: validated.invoice.financeName }
+              : {}),
+          },
+        });
+      }
       return created;
     });
   } catch (e) {

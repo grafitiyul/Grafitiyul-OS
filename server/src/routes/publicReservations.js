@@ -107,7 +107,13 @@ router.get(
         phone: channels?.phones?.[0]?.value || null,
         email: channels?.emails?.[0]?.value || null,
       },
-      organization: { name: r.organization.name },
+      organization: {
+        name: r.organization.name,
+        // The invoice section pre-fills the ORGANIZATION's canonical finance
+        // contact — the same fields the GOS Deal/accounting flow reads.
+        financeContactName: r.organization.financeContactName || null,
+        financeEmail: r.organization.financeEmail || null,
+      },
       defaultLanguage: r.link.defaultLanguage,
       maxGroups: MAX_GROUPS,
       requiredConfirmations: REQUIRED_CONFIRMATIONS.map((c) => c.key),
@@ -126,7 +132,9 @@ router.post(
     if (r.error) return sendResolveError(res, r.error);
 
     const catalog = await bookableCatalog();
-    const validated = validateSubmission(req.body || {}, catalog);
+    const validated = validateSubmission(req.body || {}, catalog, {
+      orgFinanceEmail: r.organization.financeEmail || null,
+    });
     if (validated.problems) {
       return res.status(422).json({ error: 'validation', problems: validated.problems });
     }

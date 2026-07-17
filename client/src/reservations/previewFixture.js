@@ -10,10 +10,14 @@ export const PREVIEW_BOOT = {
     phone: '054-1234567',
     email: 'ayelet@travel.co.il',
   },
-  organization: { name: 'מסעות עולם' },
+  organization: {
+    name: 'מסעות עולם',
+    financeContactName: 'רותי לוין',
+    financeEmail: 'finance@travel.co.il',
+  },
   defaultLanguage: 'he',
   maxGroups: 30,
-  requiredConfirmations: ['reservation_request'],
+  requiredConfirmations: ['flexible_cancellation', 'reservation_request'],
   catalog: {
     cities: [
       { key: 'תל אביב', nameHe: 'תל אביב', nameEn: 'Tel Aviv' },

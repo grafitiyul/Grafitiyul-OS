@@ -173,6 +173,44 @@ test('decodeSignaturePng rejects non-PNG payloads and accepts real PNG', () => {
   assert.ok(Buffer.isBuffer(decodeSignaturePng(PNG_DATA_URL)));
 });
 
+test('invoice: "לאיש כספים אחר" requires a valid email when the org has no finance contact', () => {
+  const missing = validateSubmission(
+    validBody({ invoice: { sendToFinance: true } }),
+    CATALOG,
+    { today: TODAY },
+  );
+  assert.equal(codesByPath(missing)['invoice.financeEmail'], 'required');
+
+  const bad = validateSubmission(
+    validBody({ invoice: { sendToFinance: true, financeEmail: 'not-an-email' } }),
+    CATALOG,
+    { today: TODAY },
+  );
+  assert.equal(codesByPath(bad)['invoice.financeEmail'], 'invalid');
+
+  const ok = validateSubmission(
+    validBody({ invoice: { sendToFinance: true, financeName: 'רותי', financeEmail: 'fin@a.co' } }),
+    CATALOG,
+    { today: TODAY },
+  );
+  assert.equal(ok.problems, undefined);
+  assert.deepEqual(ok.invoice, { sendToFinance: true, financeName: 'רותי', financeEmail: 'fin@a.co' });
+});
+
+test('invoice: a SAVED org finance contact needs no input; "אליי" needs nothing', () => {
+  const saved = validateSubmission(
+    validBody({ invoice: { sendToFinance: true } }),
+    CATALOG,
+    { today: TODAY, orgFinanceEmail: 'finance@org.co' },
+  );
+  assert.equal(saved.problems, undefined);
+  assert.equal(saved.invoice.financeEmail, null); // canonical org value is used
+
+  const toMe = validateSubmission(validBody(), CATALOG, { today: TODAY });
+  assert.equal(toMe.problems, undefined);
+  assert.equal(toMe.invoice.sendToFinance, false);
+});
+
 // ── persistSubmission idempotency ────────────────────────────────────────────
 
 function fakePersistDb(existingByKey = new Map()) {
@@ -189,8 +227,15 @@ function fakePersistDb(existingByKey = new Map()) {
       },
     },
     agentReservationLink: { update: async () => ({}) },
+    organization: {
+      update: async ({ where, data }) => {
+        db.orgUpdates.push({ where, data });
+        return {};
+      },
+    },
     $transaction: async (fn) => fn(db),
   };
+  db.orgUpdates = [];
   return db;
 }
 
@@ -212,6 +257,24 @@ test('persistSubmission: same submissionKey returns the existing session (no dup
   assert.equal(second.created, false);
   assert.equal(second.session.id, first.session.id);
   assert.equal(db.createdSessions.length, 1);
+});
+
+test('persistSubmission: a new finance contact persists onto the ORGANIZATION (canonical fields)', async () => {
+  const validated = validateSubmission(
+    validBody({ invoice: { sendToFinance: true, financeName: 'רותי לוין', financeEmail: 'fin@a.co' } }),
+    CATALOG,
+    { today: TODAY },
+  );
+  const db = fakePersistDb();
+  await persistSubmission(PERSIST_ARGS(validated), db);
+  assert.deepEqual(db.orgUpdates, [
+    { where: { id: 'org1' }, data: { financeEmail: 'fin@a.co', financeContactName: 'רותי לוין' } },
+  ]);
+
+  // "אליי" (or the saved-contact mode, which sends no email) never touches the org.
+  const dbNone = fakePersistDb();
+  await persistSubmission(PERSIST_ARGS(validateSubmission(validBody({ submissionKey: 'sub_other_key_0001' }), CATALOG, { today: TODAY })), dbNone);
+  assert.deepEqual(dbNone.orgUpdates, []);
 });
 
 test('persistSubmission: unique-key race (P2002) resolves to the winning session', async () => {

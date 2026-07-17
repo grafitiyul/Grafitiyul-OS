@@ -221,7 +221,6 @@ export default function GroupCard({
               <input
                 value={g.groupName}
                 onChange={(e) => set('groupName', e.target.value)}
-                placeholder={lang === 'en' ? 'e.g. Morning group — Alpha' : 'לדוגמה: קבוצת בוקר — אלפא'}
                 className={inputCls(p.groupName)}
               />
               <Err msg={p.groupName} />

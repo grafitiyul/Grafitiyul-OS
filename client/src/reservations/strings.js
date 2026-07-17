@@ -8,7 +8,7 @@ export const L = {
     dir: 'rtl',
     brandTag: 'TOURS & WORKSHOPS',
     title: 'טופס הזמנת פעילות לסוכני תיירות',
-    intro: 'מלאו את פרטי הקבוצות. ניתן להוסיף כמה קבוצות לאותה בקשה, ונציג יחזור אליכם בהקדם.',
+    intro: 'מלאו את פרטי הקבוצות. ניתן להוסיף כמה קבוצות לאותה בקשה. נעדכן אתכם כשההזמנה תאושר.',
     groupsTitle: 'הקבוצות שלכם',
     summary: {
       title: 'סיכום הבקשה',
@@ -47,6 +47,21 @@ export const L = {
       collapsedLine: (parts) => parts.join(' · '),
     },
     addGroup: 'הוסף קבוצה נוספת',
+    cancellation: {
+      lines: [
+        'תנאי הביטול הגמישים במיוחד לסוכני תיירות ידועים לי:',
+        'עד 24 שעות לפני הפעילות ללא דמי ביטול.',
+        'בפחות מ־24 שעות - דמי ביטול של 100%.',
+      ],
+    },
+    invoice: {
+      title: 'לאן לשלוח את החשבונית?',
+      toMe: 'אליי (מזמין ההזמנה)',
+      toFinance: 'לאיש הכספים',
+      toOtherFinance: 'לאיש כספים אחר',
+      financeName: 'שם איש הכספים',
+      financeEmail: 'אימייל איש הכספים',
+    },
     footer: {
       confirm_reservation_request: 'ידוע לי שההזמנה כפופה לאישור גרפיטיול.',
       signatureTitle: 'חתימה (אחת עבור כל הבקשה)',
@@ -65,7 +80,8 @@ export const L = {
       too_many: 'יותר מדי קבוצות',
       form: 'יש להשלים את הפרטים המסומנים',
       signature: 'חסרה חתימה',
-      confirmations: 'יש לאשר את הסעיף לפני השליחה',
+      confirmations: 'יש לאשר את כל הסעיפים לפני השליחה',
+      financeEmail: 'יש להזין אימייל תקין לאיש הכספים',
       network: 'שגיאה בשליחה — נסו שוב',
     },
     thanks: {
@@ -87,7 +103,7 @@ export const L = {
     dir: 'ltr',
     brandTag: 'TOURS & WORKSHOPS',
     title: 'Activity Reservation Form for Travel Agents',
-    intro: 'Fill in the group details. You can add several groups to one request, and we will get back to you shortly.',
+    intro: "Fill in the group details. You can add several groups to one request. We'll update you once the reservation is approved.",
     groupsTitle: 'Your groups',
     summary: {
       title: 'Request summary',
@@ -126,6 +142,21 @@ export const L = {
       collapsedLine: (parts) => parts.join(' · '),
     },
     addGroup: 'Add another group',
+    cancellation: {
+      lines: [
+        'I acknowledge the especially flexible cancellation terms for travel agents:',
+        'Up to 24 hours before the activity — no cancellation fee.',
+        'Less than 24 hours — a 100% cancellation fee.',
+      ],
+    },
+    invoice: {
+      title: 'Where should we send the invoice?',
+      toMe: 'To me (the booker)',
+      toFinance: 'To the finance contact',
+      toOtherFinance: 'To another finance contact',
+      financeName: 'Finance contact name',
+      financeEmail: 'Finance contact email',
+    },
     footer: {
       confirm_reservation_request: 'I understand the reservation is subject to Grafitiyul approval.',
       signatureTitle: 'Signature (one for the entire request)',
@@ -144,7 +175,8 @@ export const L = {
       too_many: 'Too many groups',
       form: 'Please complete the highlighted fields',
       signature: 'Signature is missing',
-      confirmations: 'Please confirm before submitting',
+      confirmations: 'Please accept all confirmations before submitting',
+      financeEmail: 'Please enter a valid finance contact email',
       network: 'Something went wrong — please try again',
     },
     thanks: {

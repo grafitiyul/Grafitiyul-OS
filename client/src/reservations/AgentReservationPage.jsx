@@ -46,7 +46,11 @@ export default function AgentReservationPage() {
   const [lang, setLang] = useState(null);
   const [groups, setGroups] = useState([emptyGroup()]);
   const [collapsedKeys, setCollapsedKeys] = useState(() => new Set());
-  const [confirmed, setConfirmed] = useState(false);
+  const [confirmations, setConfirmations] = useState({});
+  // Invoice delivery — org-centric: when the agency already has a finance
+  // contact it shows read-only; otherwise the entered details persist onto
+  // the Organization (canonical finance fields, shared with GOS Deals).
+  const [invoice, setInvoice] = useState({ sendToFinance: false, financeName: '', financeEmail: '' });
   const [signature, setSignature] = useState({ method: 'typed', signerName: '', image: null });
   const [submissionKey] = useState(() => loadDraft(token)?.submissionKey || crypto.randomUUID());
   const [submitting, setSubmitting] = useState(false);
@@ -158,6 +162,12 @@ export default function AgentReservationPage() {
 
   // ── submit ─────────────────────────────────────────────────────────────────
   const allComplete = groups.length > 0 && groups.every(groupComplete);
+  const allConfirmed = (boot?.requiredConfirmations || []).every((k) => confirmations[k]);
+  const orgHasFinance = !!boot?.organization?.financeEmail;
+  const invoiceOk =
+    !invoice.sendToFinance ||
+    orgHasFinance ||
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(invoice.financeEmail.trim());
   const signatureOk =
     (signature.signerName || '').trim() &&
     (signature.method === 'typed' || !!signature.image);
@@ -173,7 +183,8 @@ export default function AgentReservationPage() {
       setCollapsedKeys(new Set()); // reveal what's missing
       return setFormError(t.problems.form);
     }
-    if (!confirmed) return setFormError(t.problems.confirmations);
+    if (!allConfirmed) return setFormError(t.problems.confirmations);
+    if (!invoiceOk) return setFormError(t.problems.financeEmail);
     if (!signatureOk) return setFormError(t.problems.signature);
     setSubmitting(true);
     try {
@@ -195,7 +206,18 @@ export default function AgentReservationPage() {
           method: signature.method,
           image: signature.method === 'drawn' ? signature.image : undefined,
         },
-        confirmations: (boot.requiredConfirmations || []).map((k) => ({ key: k, accepted: confirmed })),
+        confirmations: (boot.requiredConfirmations || []).map((k) => ({
+          key: k,
+          accepted: !!confirmations[k],
+        })),
+        invoice: {
+          sendToFinance: invoice.sendToFinance,
+          // Editable details are sent only in the "לאיש כספים אחר" mode —
+          // with a saved org contact the server uses the canonical values.
+          ...(invoice.sendToFinance && !orgHasFinance
+            ? { financeName: invoice.financeName || null, financeEmail: invoice.financeEmail.trim() }
+            : {}),
+        },
       };
       const r = await api.publicReservations.submit(token, body);
       sessionStorage.removeItem(draftKey(token));
@@ -321,8 +343,92 @@ export default function AgentReservationPage() {
             </button>
           )}
 
+          {/* Flexible-cancellation acknowledgement — mandatory, before the
+              signature. Acceptance + timestamp are frozen on the session. */}
+          <div className="mt-6 rounded-2xl border border-gray-200/80 bg-white p-5">
+            <label className="flex cursor-pointer items-start gap-2.5 text-[13px] leading-relaxed text-gray-700">
+              <input
+                type="checkbox"
+                checked={!!confirmations.flexible_cancellation}
+                onChange={(e) =>
+                  setConfirmations((c) => ({ ...c, flexible_cancellation: e.target.checked }))
+                }
+                className="mt-0.5"
+              />
+              <span>
+                <span className="text-red-500">* </span>
+                {t.cancellation.lines.map((line, i) => (
+                  <span key={i} className={i === 0 ? 'font-medium text-gray-800' : 'block'}>
+                    {line}{i === 0 ? <br /> : null}
+                  </span>
+                ))}
+              </span>
+            </label>
+          </div>
+
+          {/* Invoice delivery — org-centric finance contact. */}
+          <div className="mt-4 rounded-2xl border border-gray-200/80 bg-white p-5">
+            <div className="mb-3 text-[14px] font-semibold text-gray-900">{t.invoice.title}</div>
+            <div className="space-y-2.5">
+              <label className="flex cursor-pointer items-center gap-2 text-[13px] text-gray-700">
+                <input
+                  type="radio"
+                  name="invoiceTarget"
+                  checked={!invoice.sendToFinance}
+                  onChange={() => setInvoice((v) => ({ ...v, sendToFinance: false }))}
+                />
+                {t.invoice.toMe}
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 text-[13px] text-gray-700">
+                <input
+                  type="radio"
+                  name="invoiceTarget"
+                  checked={invoice.sendToFinance}
+                  onChange={() => setInvoice((v) => ({ ...v, sendToFinance: true }))}
+                />
+                {orgHasFinance ? t.invoice.toFinance : t.invoice.toOtherFinance}
+              </label>
+              {invoice.sendToFinance && orgHasFinance && (
+                // Saved organization finance contact — read-only display.
+                <div className="ms-6 rounded-xl bg-gray-50/80 px-3.5 py-2.5 text-[13px]">
+                  {boot.organization.financeContactName && (
+                    <div className="font-medium text-gray-800">{boot.organization.financeContactName}</div>
+                  )}
+                  <div className="text-gray-600" dir="ltr">{boot.organization.financeEmail}</div>
+                </div>
+              )}
+              {invoice.sendToFinance && !orgHasFinance && (
+                <div className="ms-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <span className="mb-1 block text-[12px] font-medium text-gray-600">{t.invoice.financeName}</span>
+                    <input
+                      value={invoice.financeName}
+                      onChange={(e) => setInvoice((v) => ({ ...v, financeName: e.target.value }))}
+                      className="h-10 w-full rounded-lg border border-gray-200 px-3 text-[14px] outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                  <div>
+                    <span className="mb-1 block text-[12px] font-medium text-gray-600">
+                      <span className="text-red-500">* </span>
+                      {t.invoice.financeEmail}
+                    </span>
+                    <input
+                      value={invoice.financeEmail}
+                      onChange={(e) => setInvoice((v) => ({ ...v, financeEmail: e.target.value }))}
+                      dir="ltr"
+                      inputMode="email"
+                      className={`h-10 w-full rounded-lg border px-3 text-[14px] outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 ${
+                        formError === t.problems.financeEmail ? 'border-red-300' : 'border-gray-200'
+                      }`}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Signature (one per request — session-wide) + confirmation + submit. */}
-          <div className="mt-6 space-y-4 rounded-2xl border border-gray-200/80 bg-white p-5">
+          <div className="mt-4 space-y-4 rounded-2xl border border-gray-200/80 bg-white p-5">
             <div>
               <div className="mb-2 text-[14px] font-semibold text-gray-900">{t.footer.signatureTitle}</div>
               <SignatureBox t={t} value={signature} onChange={setSignature} error={formError === t.problems.signature} />
@@ -330,8 +436,10 @@ export default function AgentReservationPage() {
             <label className="flex cursor-pointer items-start gap-2 text-[13px] text-gray-700">
               <input
                 type="checkbox"
-                checked={confirmed}
-                onChange={(e) => setConfirmed(e.target.checked)}
+                checked={!!confirmations.reservation_request}
+                onChange={(e) =>
+                  setConfirmations((c) => ({ ...c, reservation_request: e.target.checked }))
+                }
                 className="mt-0.5"
               />
               <span>
