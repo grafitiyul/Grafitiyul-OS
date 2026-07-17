@@ -34,7 +34,6 @@ import organizationSubtypesRouter from './routes/organizationSubtypes.js';
 import contactsRouter from './routes/contacts.js';
 import reservationLinksRouter from './routes/reservationLinks.js';
 import reservationsRouter from './routes/reservations.js';
-import channelListingsRouter from './routes/channelListings.js';
 import searchRouter from './routes/search.js';
 import dealsRouter from './routes/deals.js';
 import quoteDocumentsRouter from './routes/quoteDocuments.js';
@@ -306,9 +305,6 @@ app.use('/api/contacts', requireAdminAuth, reservationLinksRouter);
 
 // Travel Agency Reservations — admin read surface (sessions list).
 app.use('/api/reservations', requireAdminAuth, reservationsRouter);
-// Variant channel listings — the owner-configurable commercial catalogue per
-// sales channel (presentation only; variants stay canonical).
-app.use('/api/channel-listings', requireAdminAuth, channelListingsRouter);
 
 // Global header search — THE one cross-entity search service (deals, contacts,
 // organizations, tasks, timeline). Admin-only.

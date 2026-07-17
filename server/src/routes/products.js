@@ -23,7 +23,16 @@ function str(v) {
 }
 
 const VARIANT_INCLUDE = {
-  location: { select: { id: true, nameHe: true, nameEn: true } },
+  location: {
+    select: {
+      id: true,
+      nameHe: true,
+      nameEn: true,
+      // The agent-form section shows the resolved commercial city
+      // (parentLocation ?? location) so the owner sees what agents will see.
+      parentLocation: { select: { id: true, nameHe: true } },
+    },
+  },
   meetingPointImage: true,
   galleryImages: {
     orderBy: { sortOrder: 'asc' },
@@ -272,6 +281,9 @@ function variantData(b) {
   ['availablePublic','availablePrivate','availableBusiness','active'].forEach((k) => {
     if (b[k] !== undefined) data[k] = !!b[k];
   });
+  // Agent-form presentation ("מוצג בטופס סוכנים") — presentation only.
+  if (b.agentVisible !== undefined) data.agentVisible = !!b.agentVisible;
+  ['agentDisplayName','agentDisplayNameEn','agentDescription'].forEach(setStr);
   return data;
 }
 
@@ -312,9 +324,25 @@ router.post(
 router.put(
   '/variants/:variantId',
   handle(async (req, res) => {
+    const data = variantData(req.body || {});
+    // A variant shown on the agent form MUST carry an agent display name —
+    // an internal name can never leak to agents. Effective check across
+    // partial updates (incoming value if sent, else the stored one).
+    if (data.agentVisible !== undefined || data.agentDisplayName !== undefined) {
+      const existing = await prisma.productVariant.findUnique({
+        where: { id: req.params.variantId },
+        select: { agentVisible: true, agentDisplayName: true },
+      });
+      if (!existing) return res.status(404).json({ error: 'not_found' });
+      const effVisible = data.agentVisible ?? existing.agentVisible;
+      const effName = data.agentDisplayName !== undefined ? data.agentDisplayName : existing.agentDisplayName;
+      if (effVisible && !effName) {
+        return res.status(422).json({ error: 'agent_display_name_required' });
+      }
+    }
     const variant = await prisma.productVariant.update({
       where: { id: req.params.variantId },
-      data: variantData(req.body || {}),
+      data,
       include: VARIANT_INCLUDE,
     });
     // Pay rates (baseGuidePayment/travelPayment) may have moved — DRAFT

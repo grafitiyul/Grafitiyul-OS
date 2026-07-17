@@ -26,7 +26,6 @@ export const SETTINGS_TREE = {
   '/admin/settings/crm/products': { label: 'מוצרים ראשיים', parent: '/admin/settings/crm/products-area' },
   '/admin/settings/crm/locations': { label: 'מיקומים', parent: '/admin/settings/crm/products-area' },
   '/admin/settings/crm/addons': { label: 'תוספות', parent: '/admin/settings/crm/products-area' },
-  '/admin/settings/crm/agent-catalog': { label: 'קטלוג סוכנים', parent: '/admin/settings/crm/products-area' },
   '/admin/settings/crm/payment': { label: 'הגדרות תשלום', parent: '/admin/settings/crm' },
   '/admin/settings/crm/pricing': { label: 'תמחור', parent: '/admin/settings/crm' },
   '/admin/settings/crm/pricing/advanced': { label: 'תמחור מתקדם', parent: '/admin/settings/crm/pricing' },

@@ -43,6 +43,12 @@ function makeBuffer(v) {
     availablePublic: v.availablePublic,
     availablePrivate: v.availablePrivate,
     availableBusiness: v.availableBusiness,
+    // Agent-form presentation (מוצג בטופס סוכנים) — presentation only; the
+    // canonical name/location stay untouched.
+    agentVisible: v.agentVisible || false,
+    agentDisplayName: v.agentDisplayName || '',
+    agentDisplayNameEn: v.agentDisplayNameEn || '',
+    agentDescription: v.agentDescription || '',
     active: v.active,
   };
 }
@@ -88,6 +94,7 @@ const SECTIONS = [
   { group: 'operational', key: 'availability', title: 'זמינות לפי פורמט', sub: 'באילו פורמטים הוריאציה נמכרת', track: false },
   { group: 'operational', key: 'components', title: 'מרכיבי פעילות (ברירת מחדל)', sub: 'המרכיבים שהוריאציה מספקת — נזרעים לכל סיור חדש', track: false },
   { group: 'operational', key: 'guidePay', title: 'תשלום למדריך', sub: 'תשלום בסיס ותשלום נסיעות', track: true },
+  { group: 'operational', key: 'agentForm', title: 'טופס סוכנים', sub: 'האם ואיך הוריאציה מוצגת בטופס ההזמנות לסוכני נסיעות', track: false },
   { group: 'advanced', key: 'status', title: 'סטטוס וניהול', sub: 'הפעלה / השבתה ומחיקת הוריאציה', track: false },
 ];
 
@@ -162,6 +169,13 @@ export default function VariantEditor() {
   function toggle(key) { setOpenKey((k) => (k === key ? null : key)); }
 
   async function save() {
+    // Agent-form invariant (mirrors the server 422): visible requires a name.
+    if (form.agentVisible && !form.agentDisplayName.trim()) {
+      alert('כדי להציג את הוריאציה בטופס הסוכנים יש להזין שם תצוגה לסוכן.');
+      setOpenKey('agentForm');
+      setActiveGroup('operational');
+      return;
+    }
     setSaving(true);
     try {
       await api.products.updateVariant(variantId, {
@@ -177,6 +191,10 @@ export default function VariantEditor() {
         availablePublic: form.availablePublic,
         availablePrivate: form.availablePrivate,
         availableBusiness: form.availableBusiness,
+        agentVisible: form.agentVisible,
+        agentDisplayName: form.agentDisplayName,
+        agentDisplayNameEn: form.agentDisplayNameEn,
+        agentDescription: form.agentDescription,
         active: form.active,
       });
       setOriginal(form); // clears dirty immediately
@@ -415,6 +433,44 @@ function SectionBody({ k, form, set, variant, locations, programTitle, slotTitle
           <Field label="תשלום נסיעות (₪, אופציונלי)"><input value={form.travelPayment} onChange={(e) => set('travelPayment', e.target.value)} inputMode="decimal" dir="ltr" className={INPUT} /></Field>
         </div>
       );
+    case 'agentForm': {
+      // The commercial city agents will see — the location's parent when set,
+      // else the location itself (the ONE resolution rule).
+      const agentCity = variant.location?.parentLocation?.nameHe || variant.location?.nameHe || '—';
+      return (
+        <div className="space-y-4">
+          <Check label="מוצג בטופס סוכנים" checked={form.agentVisible} onChange={(c) => set('agentVisible', c)} />
+          {form.agentVisible ? (
+            <>
+              <div className="rounded-lg bg-blue-50/60 px-3 py-2 text-[12px] text-blue-900">
+                סוכנים יראו את הפעילות תחת העיר: <b>{agentCity}</b>
+                {variant.location?.parentLocation
+                  ? ` (מיקום תפעולי: ${variant.location.nameHe})`
+                  : ' — ניתן לשייך את המיקום לעיר רחבה יותר במסך המיקומים.'}
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field label="שם תצוגה בטופס סוכנים *">
+                  <input value={form.agentDisplayName} onChange={(e) => set('agentDisplayName', e.target.value)} placeholder='לדוגמה: "סיור גרפיטי בנושא 7/10 כולל התנסות"' className={INPUT} />
+                </Field>
+                <Field label="Display name (English, אופציונלי)" ltr>
+                  <input value={form.agentDisplayNameEn} onChange={(e) => set('agentDisplayNameEn', e.target.value)} dir="ltr" className={INPUT} />
+                </Field>
+              </div>
+              <Field label="שורת מידע קצרה (אופציונלי)">
+                <input value={form.agentDescription} onChange={(e) => set('agentDescription', e.target.value)} placeholder='לדוגמה: "גילאי 13 ומעלה"' className={INPUT} />
+              </Field>
+              <p className="text-[12px] text-gray-500">
+                הסוכן רואה רק את שם התצוגה — לעולם לא את השם הפנימי. בהזמנה נשמרים המוצר, הוריאציה והמיקום התפעולי הקנוניים.
+              </p>
+            </>
+          ) : (
+            <p className="text-[12px] text-gray-500">
+              כשהאפשרות כבויה — הוריאציה לא מופיעה בטופס ההזמנות לסוכנים.
+            </p>
+          )}
+        </div>
+      );
+    }
     case 'status':
       return (
         <div className="space-y-4">

@@ -18,8 +18,32 @@ function scFail(res, e) {
 
 // Location catalog (e.g. "תל אביב - פלורנטין"). Simple sortable list. Hebrew
 // name required; English optional.
+//
+// Hierarchy (ONE level): a location may point at a parent ("מיקום אב / עיר
+// לתצוגה", e.g. "תל אביב") shown to external users (agent form) instead of
+// the operational location. Enforced here: no self-parenting, a parent must
+// be a root (no grandparents = no cycles), and a location that already has
+// children cannot itself become a child.
 
 const router = Router();
+
+// Validate a requested parent for `id` (null clears). Returns
+// { value } on success or { error } with a stable code.
+async function resolveParent(id, parentLocationId) {
+  if (!parentLocationId) return { value: null };
+  if (id && parentLocationId === id) return { error: 'self_parent' };
+  const parent = await prisma.location.findUnique({
+    where: { id: parentLocationId },
+    select: { id: true, parentLocationId: true },
+  });
+  if (!parent) return { error: 'parent_not_found' };
+  if (parent.parentLocationId) return { error: 'parent_not_root' };
+  if (id) {
+    const children = await prisma.location.count({ where: { parentLocationId: id } });
+    if (children > 0) return { error: 'has_children' };
+  }
+  return { value: parent.id };
+}
 
 router.get(
   '/',
@@ -28,7 +52,8 @@ router.get(
       orderBy: [{ sortOrder: 'asc' }, { nameHe: 'asc' }],
       include: {
         meetingPointImage: true,
-        _count: { select: { variants: true } },
+        parentLocation: { select: { id: true, nameHe: true, active: true } },
+        _count: { select: { variants: true, childLocations: true } },
       },
     });
     res.json(rows);
@@ -56,6 +81,12 @@ router.post(
   handle(async (req, res) => {
     const nameHe = String(req.body?.nameHe || '').trim();
     if (!nameHe) return res.status(400).json({ error: 'nameHe_required' });
+    let parentLocationId = null;
+    if (req.body?.parentLocationId) {
+      const parent = await resolveParent(null, req.body.parentLocationId);
+      if (parent.error) return res.status(422).json({ error: parent.error });
+      parentLocationId = parent.value;
+    }
     const last = await prisma.location.findFirst({
       orderBy: { sortOrder: 'desc' },
       select: { sortOrder: true },
@@ -64,6 +95,7 @@ router.post(
       data: {
         nameHe,
         nameEn: req.body?.nameEn ? String(req.body.nameEn).trim() : null,
+        parentLocationId,
         sortOrder: (last?.sortOrder ?? -1) + 1,
       },
     });
@@ -97,6 +129,12 @@ router.put(
     if (req.body?.meetingPointImageId !== undefined)
       data.meetingPointImageId = req.body.meetingPointImageId || null;
     if (req.body?.active !== undefined) data.active = !!req.body.active;
+    // "מיקום אב / עיר לתצוגה" — validated one-level hierarchy; null clears.
+    if (req.body?.parentLocationId !== undefined) {
+      const parent = await resolveParent(req.params.id, req.body.parentLocationId);
+      if (parent.error) return res.status(422).json({ error: parent.error });
+      data.parentLocationId = parent.value;
+    }
     // Home Location is single-owner: setting one true unsets any other. Enforced
     // here (API), like PriceList.isDefault. No city name is hardcoded.
     let setHome = false;

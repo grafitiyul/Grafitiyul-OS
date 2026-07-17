@@ -1865,6 +1865,14 @@ model Location {
   // PriceList.isDefault convention. Drives a visual-only reminder on the Deal panel
   // when a deal's city differs from home; never affects pricing or any workflow.
   isHomeLocation        Boolean              @default(false)
+  // Hierarchy (ONE level, API-enforced): an operational location may belong
+  // to a broader COMMERCIAL parent ("עיר לתצוגה") shown to external users —
+  // e.g. "תל אביב - פלורנטין" under "תל אביב". Presentation/navigation only:
+  // deals always store the operational child. A root may have children; a
+  // child cannot be a parent; no self-parenting or cycles (see locations.js).
+  parentLocation        Location?            @relation("LocationHierarchy", fields: [parentLocationId], references: [id], onDelete: SetNull)
+  parentLocationId      String?
+  childLocations        Location[]           @relation("LocationHierarchy")
   sortOrder             Int                  @default(0)
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
@@ -1890,6 +1898,7 @@ model Location {
   @@index([sortOrder])
   @@index([defaultMeetingPointId])
   @@index([defaultEndingPointId])
+  @@index([parentLocationId])
 }
 
 // What we sell. Bilingual name + rich marketing descriptions. No pricing, no
@@ -1946,6 +1955,16 @@ model ProductVariant {
   availablePublic          Boolean                           @default(true)
   availablePrivate         Boolean                           @default(true)
   availableBusiness        Boolean                           @default(true)
+  // Travel-agent form presentation — configured in the variant editor
+  // ("מוצג בטופס סוכנים"). PRESENTATION ONLY: the form shows agentDisplayName
+  // under the variant's effective city (location.parentLocation ?? location);
+  // deals keep storing the canonical variant + operational location. A
+  // visible variant requires a display name (API-enforced). EN falls back to
+  // the Hebrew commercial name (the approved channel fallback).
+  agentVisible             Boolean                           @default(false)
+  agentDisplayName         String?
+  agentDisplayNameEn       String?
+  agentDescription         String? // optional short line, e.g. "גילאי 13 ומעלה"
   active                   Boolean                           @default(true)
   sortOrder                Int                               @default(0)
   createdAt                DateTime                          @default(now())
@@ -1966,7 +1985,6 @@ model ProductVariant {
   openTourTemplateProducts OpenTourTemplateProduct[]
   ticketRegistrations      TicketRegistration[]
   reservationGroups        ReservationGroup[]
-  channelListings          VariantChannelListing[]
 
   @@unique([productId, locationId])
   @@index([productId])
@@ -4878,35 +4896,6 @@ model ReservationSession {
   @@index([organizationId])
   @@index([linkId])
   @@index([submittedAt])
-}
-
-// Channel presentation for a canonical ProductVariant — how a SALES CHANNEL
-// (travel agents today; website / schools / corporate / partners / API later)
-// sees the variant. PRESENTATION ONLY, owner-configurable in settings: no
-// pricing, no operational data, and deliberately NO second catalogue — the
-// variant stays the single source of truth and deals always store the
-// canonical product/variant/location. The commercial city groups internal
-// operational locations (e.g. "תל אביב - קריית המלאכה" and "תל אביב -
-// פלורנטין" both present as "תל אביב"); the VARIANT resolves the operational
-// location, the channel user never sees the internal hierarchy. A variant
-// with no row (or visible=false) simply does not exist on that channel.
-model VariantChannelListing {
-  id               String         @id @default(cuid())
-  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
-  productVariantId String
-  channel          String // 'agent' | future: 'website' | 'school' | 'corporate' | 'partner' | 'api'
-  visible          Boolean        @default(false)
-  displayName      String // commercial name shown on the channel (never the internal variant name)
-  displayNameEn    String?
-  description      String? // optional short commercial line (e.g. "גילאי 13 ומעלה")
-  commercialCity   String // the city label the channel user chooses
-  commercialCityEn String?
-  sortOrder        Int            @default(0)
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
-
-  @@unique([productVariantId, channel])
-  @@index([channel, visible, sortOrder])
 }
 
 // One group inside a session — the exactly-once unit of work: each group

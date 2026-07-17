@@ -162,63 +162,89 @@ export function validateSubmission(body, catalog, { today = israelToday() } = {}
   };
 }
 
-// The public catalog DTO — the CHANNEL's commercial view, never the admin
-// product DTOs and never internal names. City-first: the agent picks a
-// COMMERCIAL city (which may group several operational locations), then an
-// activity listed for that city. Both come from owner-configured
-// VariantChannelListing rows; the canonical variant silently carries the
-// operational product/location that the Deal will store.
-export async function bookableCatalog(db = prisma, { channel = 'agent' } = {}) {
-  const listings = await db.variantChannelListing.findMany({
+// THE canonical resolution rule for the city an external user sees:
+//   effectiveAgentCity(variant.location) = location.parentLocation ?? location
+// The parent ("עיר לתצוגה") is presentation/navigation only — it never
+// replaces the operational location the Deal stores. Shared by the public
+// catalog, validation snapshots and (via the catalog) submission processing.
+export function effectiveAgentCity(location) {
+  if (!location) return null;
+  return location.parentLocation && location.parentLocation.active !== false
+    ? location.parentLocation
+    : location;
+}
+
+// The public catalog DTO — the agents' commercial view, derived from the
+// CANONICAL entities: variants marked `agentVisible` (with a display name),
+// grouped under their effective city (Location hierarchy). Never internal
+// names, never the admin product DTOs. A city appears only when at least one
+// eligible variant resolves to it — no empty city choices.
+export async function bookableCatalog(db = prisma) {
+  const variants = await db.productVariant.findMany({
     where: {
-      channel,
-      visible: true,
-      productVariant: {
-        active: true,
-        availableBusiness: true, // business tours only (BINDING #4)
-        product: { active: true },
-        location: { active: true },
+      active: true,
+      availableBusiness: true, // business tours only (BINDING #4)
+      agentVisible: true,
+      product: { active: true },
+      location: { active: true },
+    },
+    orderBy: [{ location: { sortOrder: 'asc' } }, { sortOrder: 'asc' }],
+    select: {
+      id: true,
+      productId: true,
+      locationId: true,
+      agentDisplayName: true,
+      agentDisplayNameEn: true,
+      agentDescription: true,
+      location: {
+        select: {
+          id: true,
+          nameHe: true,
+          nameEn: true,
+          sortOrder: true,
+          parentLocation: {
+            select: { id: true, nameHe: true, nameEn: true, sortOrder: true, active: true },
+          },
+        },
       },
     },
-    orderBy: [{ commercialCity: 'asc' }, { sortOrder: 'asc' }, { displayName: 'asc' }],
-    select: {
-      productVariantId: true,
-      displayName: true,
-      displayNameEn: true,
-      description: true,
-      commercialCity: true,
-      commercialCityEn: true,
-      productVariant: { select: { productId: true, locationId: true } },
-    },
   });
+
   const cities = [];
-  const seen = new Set();
-  for (const l of listings) {
-    if (!seen.has(l.commercialCity)) {
-      seen.add(l.commercialCity);
+  const cityById = new Map();
+  const rows = [];
+  for (const v of variants) {
+    // Defense in depth: the API blocks visible-without-name, but a stale row
+    // must be excluded rather than leak an internal name.
+    if (!v.agentDisplayName) continue;
+    const city = effectiveAgentCity(v.location);
+    if (!cityById.has(city.id)) {
+      cityById.set(city.id, true);
       cities.push({
-        key: l.commercialCity,
-        nameHe: l.commercialCity,
-        nameEn: l.commercialCityEn || l.commercialCity,
+        key: city.id,
+        nameHe: city.nameHe,
+        nameEn: city.nameEn || city.nameHe,
+        sortOrder: city.sortOrder ?? 0,
       });
     }
+    rows.push({
+      id: v.id,
+      productId: v.productId,
+      locationId: v.locationId, // operational — what the Deal will store
+      cityKey: city.id,
+      nameHe: v.agentDisplayName,
+      // EN falls back to the Hebrew COMMERCIAL name (approved channel rule) —
+      // never to the internal variant/product name.
+      nameEn: v.agentDisplayNameEn || v.agentDisplayName,
+      description: v.agentDescription,
+      // Frozen display snapshots persisted on the group — WHAT THE AGENT SAW;
+      // the created Deal stores the canonical refs.
+      productLabel: v.agentDisplayName,
+      locationLabel: city.nameHe,
+    });
   }
-  return {
-    cities,
-    variants: listings.map((l) => ({
-      id: l.productVariantId,
-      productId: l.productVariant.productId,
-      locationId: l.productVariant.locationId, // operational — resolved by the variant
-      cityKey: l.commercialCity,
-      nameHe: l.displayName,
-      nameEn: l.displayNameEn || l.displayName,
-      description: l.description,
-      // Frozen display snapshots persisted on the group — WHAT THE AGENT SAW
-      // (commercial names); the created Deal stores the canonical refs.
-      productLabel: l.displayName,
-      locationLabel: l.commercialCity,
-    })),
-  };
+  cities.sort((a, b) => a.sortOrder - b.sortOrder || a.nameHe.localeCompare(b.nameHe, 'he'));
+  return { cities: cities.map(({ sortOrder, ...c }) => c), variants: rows };
 }
 
 // Persist a validated submission. Idempotent: an existing session with the

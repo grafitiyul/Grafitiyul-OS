@@ -33,13 +33,7 @@ export default function ProductsAreaHome() {
           to="/admin/settings/crm/locations"
           icon="📍"
           title="מיקומים"
-          description="קטלוג המיקומים (עיר / אזור)."
-        />
-        <CategoryCard
-          to="/admin/settings/crm/agent-catalog"
-          icon="🧳"
-          title="קטלוג סוכנים"
-          description="אילו פעילויות מוצגות לסוכני נסיעות, באיזה שם מסחרי ותחת איזו עיר."
+          description="קטלוג המיקומים (עיר / אזור), כולל שיוך לעיר לתצוגה בטופס הסוכנים."
         />
       </CategoryGrid>
     </div>

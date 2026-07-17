@@ -1685,16 +1685,6 @@ export const api = {
     list: () => request('/api/reservations'),
     process: (id) => request(`/api/reservations/${id}/process`, { method: 'POST' }),
   },
-  // Variant channel listings — commercial catalogue per sales channel.
-  channelListings: {
-    list: (channel = 'agent') =>
-      request(`/api/channel-listings?channel=${encodeURIComponent(channel)}`),
-    save: (variantId, data) =>
-      request(`/api/channel-listings/${variantId}`, {
-        method: 'PUT',
-        body: JSON.stringify(data),
-      }),
-  },
   // PUBLIC travel-agent reservation form (/r/:token) — token = capability.
   publicReservations: {
     bootstrap: (token) => request(`/api/public/reservations/${token}`),
