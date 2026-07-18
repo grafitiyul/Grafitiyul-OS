@@ -286,3 +286,13 @@ test('totals: mixed active/inactive/discount lines, VAT split per line', () => {
   assert.equal(totals.netMinor, 90000);
   assert.equal(totals.vatMinor, 16200);
 });
+
+test('price_rule_base lines price at the per-unit base × quantity; legacy lines keep the full amount', () => {
+  const pr = resolution({ baseAmountMinor: 480000, unitBaseMinor: 190000 });
+  const base = productLine({ sourceKind: 'price_rule_base', quantity: 2 });
+  const legacy = productLine({ id: 'L2' });
+  const { lines } = compose([base, legacy], { productResolution: pr });
+  assert.equal(lines[0].unitPriceMinor, 190000);
+  assert.equal(lines[0].grossMinor, 380000);
+  assert.equal(lines[1].unitPriceMinor, 480000);
+});

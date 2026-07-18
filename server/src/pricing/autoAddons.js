@@ -48,6 +48,9 @@ export function buildAutoAddonLines({
   moment,
   isSabbathHoliday,
   addonCatalogById,
+  // Auto surcharges are PER GROUP (₪250 שבת × 2 groups = ₪500): the add-on's
+  // configured price is the unit, the group count is the quantity. Default 1.
+  groupCount = 1,
 }) {
   const entries = (ruleAddons || []).filter(
     (e) => !systemAddon || e.addonId !== systemAddon.id,
@@ -75,7 +78,7 @@ export function buildAutoAddonLines({
         kind: 'addon',
         label: catalog?.nameHe || 'תוספת',
         refId: e.addonId,
-        quantity: 1,
+        quantity: Math.max(1, Number(groupCount) || 1),
         unitPriceMinor: priced.priceMinor,
         vatMode: priced.vatMode,
         vatRate: priced.vatRate,

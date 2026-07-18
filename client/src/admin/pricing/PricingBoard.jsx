@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import SettingsChrome from '../settings/SettingsChrome.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
@@ -59,6 +59,61 @@ function addonNameMap(addons) {
   const m = {};
   (addons || []).forEach((a) => { m[a.id] = a.nameHe; });
   return m;
+}
+
+// Note-template variables — MUST mirror NOTE_VARIABLES in
+// server/src/pricing/noteTemplates.js (the renderer). The engine substitutes
+// values at calculation time; wording stays fully business-authored.
+const NOTE_VARIABLES = [
+  { key: 'groups', labelHe: 'מספר קבוצות' },
+  { key: 'participants', labelHe: 'משתתפים' },
+  { key: 'includedPerGroup', labelHe: 'משתתפים כלולים לקבוצה' },
+  { key: 'includedTotal', labelHe: 'סה״כ משתתפים כלולים' },
+  { key: 'pricePerGroup', labelHe: 'מחיר לקבוצה' },
+  { key: 'baseTotal', labelHe: 'סה״כ בסיס' },
+  { key: 'extraParticipants', labelHe: 'משתתפים נוספים' },
+  { key: 'extraPrice', labelHe: 'מחיר למשתתף נוסף' },
+  { key: 'extraTotal', labelHe: 'סה״כ תוספת משתתפים' },
+  { key: 'lineTotal', labelHe: 'סה״כ השורה' },
+  { key: 'variant', labelHe: 'מוצר' },
+  { key: 'city', labelHe: 'עיר' },
+];
+
+// "הוסף משתנה" — inserts a {{placeholder}} at the CURSOR of the given TipTap
+// editor instance (captured via RichEditor's onEditorReady).
+function InsertVariableMenu({ editorRef }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+  function insert(key) {
+    setOpen(false);
+    const ed = editorRef.current;
+    if (ed) ed.chain().focus().insertContent(`{{${key}}}`).run();
+  }
+  return (
+    <div className="relative inline-block" ref={ref}>
+      <button type="button" onClick={() => setOpen((v) => !v)}
+        className="h-7 rounded-md border border-gray-200 bg-white px-2 text-[12px] text-gray-600 hover:bg-gray-50">
+        ⤵ הוסף משתנה
+      </button>
+      {open && (
+        <div className="absolute z-30 mt-1 w-56 max-h-64 overflow-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+          {NOTE_VARIABLES.map((v) => (
+            <button key={v.key} type="button" onClick={() => insert(v.key)}
+              className="w-full text-right px-3 py-1.5 text-[12.5px] text-gray-700 hover:bg-gray-50 flex items-center justify-between gap-2">
+              <span>{v.labelHe}</span>
+              <span dir="ltr" className="text-[11px] text-gray-400">{`{{${v.key}}}`}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function newCardGroupId() {
@@ -657,6 +712,7 @@ function groupCards(rules) {
       // card produces. Duplicated across siblings — the representative's value is
       // the card's value.
       firstLineNote: rep.firstLineNote || '',
+      multiGroupNote: rep.multiGroupNote || '',
       // Default-selection org association (card-level, duplicated across siblings).
       defaultOrgTypeIds: Array.isArray(rep.defaultOrgTypeIds) ? rep.defaultOrgTypeIds : [],
       defaultOrgSubtypeIds: Array.isArray(rep.defaultOrgSubtypeIds) ? rep.defaultOrgSubtypeIds : [],
@@ -1161,10 +1217,14 @@ function CardEditor({ version, segment, products, ticketTypes, addons, orgTypes 
   const [vatRate, setVatRate] = useState(card?.vatRate ?? version.defaultVatRate ?? DEFAULT_VAT_RATE);
   // Business capability — offer this card in the Group Ticket Builder. Default OFF.
   const [availableForGroupTickets, setAvailGroup] = useState(card?.availableForGroupTickets === true);
-  // First-line note template — written by automatic calculation onto the first
-  // builder line this card produces. Rich text (same format as line notes) so the
-  // builder displays exactly what is authored here. Empty = no automatic note.
+  // Note TEMPLATES — rendered by the calculation onto the first builder line
+  // this card produces ({{variables}} substituted by the engine). firstLineNote
+  // = single group; multiGroupNote = groups > 1 (empty → falls back to the
+  // single-group note). Empty both = no automatic note.
   const [firstLineNote, setFirstLineNote] = useState(card?.firstLineNote || '');
+  const [multiGroupNote, setMultiGroupNote] = useState(card?.multiGroupNote || '');
+  const singleNoteEditorRef = useRef(null);
+  const multiNoteEditorRef = useRef(null);
   // Default-selection association (many-to-many): the org types/subtypes this
   // card is the automatic default for. Empty = neutral card. Preference only —
   // every card stays manually selectable on any Deal.
@@ -1284,6 +1344,7 @@ function CardEditor({ version, segment, products, ticketTypes, addons, orgTypes 
         availableForGroupTickets,
         // Raw rich text; the server normalizes blank markup to null (= no note).
         firstLineNote,
+        multiGroupNote,
         defaultOrgTypeIds,
         defaultOrgSubtypeIds,
         addons: addonsPayload,
@@ -1463,13 +1524,18 @@ function CardEditor({ version, segment, products, ticketTypes, addons, orgTypes 
         </p>
       </div>
 
-      {/* First-line note — written automatically onto the first builder line this
-          card produces during automatic calculation. */}
+      {/* Note templates — rendered automatically onto the first builder line
+          this card produces. Wording is fully business-authored; the engine only
+          substitutes the {{variables}}. */}
       <div className="border-t border-blue-100 pt-3 space-y-1.5">
-        <span className={LABEL}>הערה אוטומטית לבונה המחיר</span>
+        <div className="flex items-center justify-between gap-2">
+          <span className={LABEL}>הערה אוטומטית לבונה המחיר (קבוצה אחת)</span>
+          <InsertVariableMenu editorRef={singleNoteEditorRef} />
+        </div>
         <RichEditor
           value={firstLineNote}
           onChange={setFirstLineNote}
+          onEditorReady={(ed) => { singleNoteEditorRef.current = ed; }}
           preset="note"
           toolbar="lite"
           collapsible
@@ -1477,8 +1543,23 @@ function CardEditor({ version, segment, products, ticketTypes, addons, orgTypes 
           ariaLabel="הערה אוטומטית לשורה הראשונה"
           placeholder="הערה שתיכתב אוטומטית בשורה הראשונה שהכרטיס מייצר…"
         />
+        <div className="flex items-center justify-between gap-2 pt-1">
+          <span className={LABEL}>הערה למספר קבוצות (כשקבוצות &gt; 1)</span>
+          <InsertVariableMenu editorRef={multiNoteEditorRef} />
+        </div>
+        <RichEditor
+          value={multiGroupNote}
+          onChange={setMultiGroupNote}
+          onEditorReady={(ed) => { multiNoteEditorRef.current = ed; }}
+          preset="note"
+          toolbar="lite"
+          collapsible
+          maxHeight="200px"
+          ariaLabel="הערה אוטומטית למספר קבוצות"
+          placeholder="ריק = תוצג הערת הקבוצה האחת גם במספר קבוצות…"
+        />
         <p className="text-[11px] text-gray-400">
-          בחישוב אוטומטי ההערה נכתבת על השורה הראשונה שכרטיס התמחור הזה מייצר בבונה המחיר (בלבד). ריק = ללא הערה אוטומטית.
+          בחישוב אוטומטי ההערה נכתבת על השורה הראשונה שהכרטיס מייצר. המשתנים (למשל {'{{groups}}'}) מוחלפים בערכים האמיתיים בזמן החישוב. ריק = ללא הערה אוטומטית.
         </p>
       </div>
 

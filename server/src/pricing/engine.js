@@ -394,7 +394,13 @@ export function sabbathHolidayWindow(ctx, rules = {}) {
   }
   for (const h of rules.holidays || []) {
     if (h.active === false || h.status !== 'approved') continue;
-    if (String(h.date).slice(0, 10) !== ctx.dateISO) continue;
+    // HolidayRule.date is a Prisma DateTime (@db.Date) → a JS Date at runtime.
+    // String(Date) is "Fri Jul 25 2026 …", which NEVER equals an ISO day — that
+    // silently ignored every configured holiday. Normalize to ISO explicitly
+    // (string inputs, as in tests, pass through unchanged).
+    const holidayISO =
+      h.date instanceof Date ? h.date.toISOString().slice(0, 10) : String(h.date).slice(0, 10);
+    if (holidayISO !== ctx.dateISO) continue;
     if (h.allDay || inWindow(minute, h.startMinute, h.endMinute)) {
       matched.push({ type: h.type, label: h.nameHe, source: 'holiday' });
     }
@@ -404,6 +410,55 @@ export function sabbathHolidayWindow(ctx, rules = {}) {
   matched.sort((a, b) => (SABBATH_TYPE_RANK[b.type] || 0) - (SABBATH_TYPE_RANK[a.type] || 0));
   const top = matched[0];
   return { applies: true, type: top.type, label: top.label, matched };
+}
+
+// Builder-line BREAKDOWN of the winning rule's base amount — how the one
+// engine amount decomposes into displayable lines:
+//   { unitBaseMinor, unitQuantity, extra: { quantity, unitPriceMinor } | null }
+// Invariant: unitBaseMinor×unitQuantity + extra.quantity×extra.unitPriceMinor
+// === amountMinor. When a model can't decompose faithfully (mixed adult/child
+// per_head pricing), returns null and the builder keeps the single-line shape.
+export function amountBreakdown(rule, counts, debug, amountMinor) {
+  const groupCount = Math.max(1, Number(counts.groupCount) || 1);
+  let breakdown = null;
+  if (rule.priceModel === 'fixed') {
+    breakdown = { unitBaseMinor: num(rule.fixedPriceMinor) || 0, unitQuantity: groupCount, extra: null };
+  } else if (rule.priceModel === 'tiered') {
+    const extraQty = debug.extraParticipants || 0;
+    breakdown = {
+      unitBaseMinor: num(rule.basePriceMinor) || 0,
+      unitQuantity: groupCount,
+      extra: extraQty > 0
+        ? { quantity: extraQty, unitPriceMinor: num(rule.perAdditionalParticipantMinor) || 0 }
+        : null,
+    };
+  } else if (rule.priceModel === 'tiered_group') {
+    // Overflow above the top tier is per-group in the current math, so the
+    // extra quantity scales by groups to keep the invariant exact.
+    const extraQty = (debug.extraParticipants || 0) * groupCount;
+    breakdown = {
+      unitBaseMinor: debug.tierTotalMinor || 0,
+      unitQuantity: groupCount,
+      extra: extraQty > 0
+        ? { quantity: extraQty, unitPriceMinor: num(rule.perAdditionalParticipantMinor) || 0 }
+        : null,
+    };
+  } else if (rule.priceModel === 'per_head') {
+    // Single-price per-head (the UX writes child = adult): unit × participants.
+    const adult = num(rule.adultPriceMinor);
+    const child = num(rule.childPriceMinor);
+    const people = (debug.adultCount || 0) + (debug.childCount || 0);
+    if (people > 0 && (child == null || child === adult || (debug.childCount || 0) === 0)) {
+      breakdown = { unitBaseMinor: adult || 0, unitQuantity: people * groupCount, extra: null };
+    }
+  }
+  if (!breakdown) return null;
+  const total =
+    breakdown.unitBaseMinor * breakdown.unitQuantity +
+    (breakdown.extra ? breakdown.extra.quantity * breakdown.extra.unitPriceMinor : 0);
+  // Faithfulness guard: a breakdown that doesn't reproduce the engine amount is
+  // discarded (single-line fallback) — the display must never contradict the math.
+  return Math.round(total) === Math.round(amountMinor) ? breakdown : null;
 }
 
 // A card's DEFAULT-selection strength for this deal's organization
@@ -492,6 +547,7 @@ export function calculate({ priceList, activityType, context, counts, pinnedCard
       // the generated product line; resolution itself never reads these.
       cardGroupId: rule.cardGroupId || null,
       firstLineNote: rule.firstLineNote || null,
+      multiGroupNote: rule.multiGroupNote || null,
       pinned: !!pinnedCardGroupId,
       scopes: {
         productId: rule.productId,
@@ -507,6 +563,8 @@ export function calculate({ priceList, activityType, context, counts, pinnedCard
     netMinor: vat.netMinor,
     vatMinor: vat.vatMinor,
     grossMinor: vat.grossMinor,
+    // Displayable decomposition of the base amount (null = keep one line).
+    breakdown: amountBreakdown(rule, counts, debug, amountMinor),
     debug: {
       candidateCount,
       ...debug,

@@ -5,6 +5,7 @@ import { calculate, baseAmountMinor, splitVat, priceAddon, addonApplies, sabbath
 import { buildGroupCards } from '../pricing/groupTicketCards.js';
 import { composeBuilderLines } from '../pricing/builderCompose.js';
 import { buildAutoAddonLines, tourMoment, AUTO_ADDON_SOURCE_KIND } from '../pricing/autoAddons.js';
+import { buildNoteVars, renderNoteTemplate, selectNoteTemplate } from '../pricing/noteTemplates.js';
 
 // Pricing engine HTTP surface: /preview (per-card draft preview), /builder (the
 // ONE multi-line calculation used by the Deal builders AND the pricing
@@ -225,6 +226,7 @@ router.post(
 
     // Product-line resolution (explanation + conflict details).
     let productResolution = { ok: false, error: 'no_product' };
+    let engineResult = null;
     if (!context.productVariantId) {
       productResolution = { ok: false, error: 'no_product' };
     } else if (!context.activityTypeId) {
@@ -239,6 +241,7 @@ router.post(
       else {
         try {
           const r = calculate({ priceList, activityType, context, counts, pinnedCardGroupId });
+          engineResult = r;
           productResolution = {
             ok: true,
             priceList: { id: priceList.id, nameHe: priceList.nameHe },
@@ -246,16 +249,15 @@ router.post(
             vatMode: r.vatMode,
             vatRate: r.vatRate,
             pinned: !!pinnedCardGroupId,
-            // Card provenance + canonical first-line note of the WINNING rule —
-            // the client stamps these on the generated product line so the note
-            // is rebuilt from canonical card data on every regeneration.
+            // Card provenance of the WINNING rule.
             ruleId: r.rule.id,
             cardGroupId: r.rule.cardGroupId || null,
             firstLineNote: r.rule.firstLineNote || null,
-            // Per-unit base in the rule's VAT terms (qty 1) — the product line's
-            // unit price. Multiplying by quantity + splitVat reproduces the engine
-            // result for qty 1 and scales linearly for more.
+            // FULL base amount (legacy single-line product pricing) and the
+            // per-unit base of the displayable breakdown (price_rule_base lines:
+            // per-group / per-participant unit × generated quantity).
             baseAmountMinor: r.debug?.baseAmountMinor ?? r.grossMinor,
+            unitBaseMinor: r.breakdown ? r.breakdown.unitBaseMinor : null,
             netMinor: r.netMinor,
             vatMinor: r.vatMinor,
             grossMinor: r.grossMinor,
@@ -294,39 +296,91 @@ router.post(
       }
     }
 
-    // Canonical first-line notes — loaded ONLY for a regeneration request. The
-    // winning card's template comes from the resolution itself; templates for
-    // every OTHER referenced card (group-ticket lines) come from any sibling rule
-    // of that cardGroupId (the template is duplicated across siblings on save).
+    // ── Regeneration (חישוב אוטומטי) — ATOMIC rebuild of every automatic line ──
+    // Live context edits never touch lines; only this path (applyCardNotes)
+    // does, and it does everything at once: drop every previously generated
+    // line, rebuild the product BREAKDOWN (base × groups + extra participants),
+    // rebuild the auto add-ons (שבת/חג, weekday — per group), and render the
+    // card note templates into final text. All from CURRENT card data.
     const applyCardNotes = b.applyCardNotes === true;
-    const noteByCard = new Map();
-    if (applyCardNotes) {
-      if (productResolution.ok && productResolution.cardGroupId)
-        noteByCard.set(productResolution.cardGroupId, productResolution.firstLineNote);
-      const missing = [
-        ...new Set(inputLines.map((ln) => ln?.sourceCardGroupId).filter(Boolean)),
-      ].filter((id) => !noteByCard.has(id));
-      if (missing.length) {
-        const reps = await prisma.priceRule.findMany({
-          where: { cardGroupId: { in: missing } },
-          orderBy: { createdAt: 'asc' },
-          select: { cardGroupId: true, firstLineNote: true },
-        });
-        for (const r of reps) {
-          if (!noteByCard.has(r.cardGroupId)) noteByCard.set(r.cardGroupId, r.firstLineNote);
-        }
-      }
+
+    // Display names for note variables + the ensured product line.
+    let productName = '';
+    let cityName = '';
+    if (applyCardNotes && context.productVariantId) {
+      const variant = await prisma.productVariant.findUnique({
+        where: { id: context.productVariantId },
+        select: { product: { select: { nameHe: true } }, location: { select: { nameHe: true } } },
+      });
+      productName = variant?.product?.nameHe || '';
+      cityName = variant?.location?.nameHe || '';
     }
 
-    // Automatic add-on lines — REGENERATION ONLY, for the winning card. Reuses
-    // the exact engine primitives the per-card preview uses (the ONE שבת/חג
-    // detector + addonApplies + priceAddon) — never re-implemented. Previous
-    // auto lines in the input are dropped and rebuilt from CURRENT card data,
-    // so a date change or card-config change never leaves a stale surcharge.
     let composeInput = inputLines;
+    const noteByCard = new Map();
     if (applyCardNotes) {
-      composeInput = inputLines.filter((ln) => ln?.sourceKind !== AUTO_ADDON_SOURCE_KIND);
-      if (productResolution.ok && productResolution.ruleId) {
+      // Drop every previously generated automatic line — rebuilt fresh below.
+      composeInput = inputLines.filter(
+        (ln) => ln?.sourceKind !== AUTO_ADDON_SOURCE_KIND && ln?.sourceKind !== 'price_rule_extra',
+      );
+
+      if (productResolution.ok && engineResult) {
+        const breakdown = engineResult.breakdown;
+
+        // Ensure ONE product line (the simulator may start empty) and stamp the
+        // breakdown shape onto it: per-unit base × generated quantity.
+        let idx = composeInput.findIndex((ln) => ln?.kind === 'product');
+        if (idx === -1) {
+          composeInput = [
+            {
+              id: 'auto-product',
+              kind: 'product',
+              label: productName,
+              refId: context.productVariantId,
+              quantity: 1,
+              unitPriceMinor: 0,
+              vatMode: 'inherit',
+              active: true,
+              note: '',
+              pinnedCardGroupId,
+            },
+            ...composeInput,
+          ];
+          idx = 0;
+        }
+        composeInput = composeInput.map((ln, i) =>
+          i === idx
+            ? {
+                ...ln,
+                overridden: false,
+                sourceKind: breakdown ? 'price_rule_base' : 'price_rule',
+                quantity: breakdown ? breakdown.unitQuantity : 1,
+              }
+            : ln,
+        );
+
+        const generated = [];
+        // The breakdown's second display line: N additional participants × ₪X.
+        if (breakdown?.extra) {
+          generated.push({
+            id: 'auto-extra',
+            kind: 'manual',
+            label: 'משתתפים נוספים',
+            refId: null,
+            quantity: breakdown.extra.quantity,
+            unitPriceMinor: breakdown.extra.unitPriceMinor,
+            vatMode: productResolution.vatMode,
+            vatRate: productResolution.vatRate,
+            active: true,
+            note: '',
+            overridden: false,
+            sourceKind: 'price_rule_extra',
+            sourceCardGroupId: productResolution.cardGroupId,
+          });
+        }
+
+        // Automatic add-on lines — the exact engine primitives the per-card
+        // preview uses (ONE שבת/חג detector + addonApplies + priceAddon).
         const winningRule = (priceList?.rules || []).find((r) => r.id === productResolution.ruleId);
         const systemAddon = await prisma.addon.findFirst({ where: { systemKey: 'sabbath_holiday' } });
         const moment = tourMoment(context.tourDate, context.tourTime);
@@ -352,23 +406,64 @@ router.post(
               select: { id: true, nameHe: true, vatMode: true, vatRate: true },
             })
           : [];
-        const autoLines = buildAutoAddonLines({
-          ruleAddons: winningRule?.addons || [],
-          systemAddon,
-          cardVat: { vatMode: productResolution.vatMode, vatRate: productResolution.vatRate },
-          cardGroupId: productResolution.cardGroupId,
-          moment,
-          isSabbathHoliday: sabbath.applies,
-          addonCatalogById: new Map(catalogRows.map((a) => [a.id, a])),
+        generated.push(
+          ...buildAutoAddonLines({
+            ruleAddons: winningRule?.addons || [],
+            systemAddon,
+            cardVat: { vatMode: productResolution.vatMode, vatRate: productResolution.vatRate },
+            cardGroupId: productResolution.cardGroupId,
+            moment,
+            isSabbathHoliday: sabbath.applies,
+            addonCatalogById: new Map(catalogRows.map((a) => [a.id, a])),
+            groupCount: counts.groupCount,
+          }),
+        );
+        if (generated.length) {
+          // Directly AFTER the product line — it stays the card's FIRST line
+          // (the note lands on it) and ordering is deterministic.
+          composeInput = [...composeInput.slice(0, idx + 1), ...generated, ...composeInput.slice(idx + 1)];
+        }
+      }
+
+      // Rendered card notes (FINAL text — the engine substitutes {{variables}},
+      // never invents wording). Winning card: full engine variables + the
+      // groups-aware template choice (multiGroupNote when groups > 1, fallback
+      // firstLineNote). Group-ticket cards: generic variables only.
+      const winningVars = buildNoteVars({
+        engineResult,
+        groupCount: counts.groupCount,
+        participantCount: counts.participantCount,
+        variantName: productName,
+        cityName,
+      });
+      if (productResolution.ok && productResolution.cardGroupId && engineResult) {
+        noteByCard.set(
+          productResolution.cardGroupId,
+          renderNoteTemplate(selectNoteTemplate(engineResult.rule, counts.groupCount), winningVars),
+        );
+      }
+      const missing = [
+        ...new Set(composeInput.map((ln) => ln?.sourceCardGroupId).filter(Boolean)),
+      ].filter((id) => !noteByCard.has(id));
+      if (missing.length) {
+        const reps = await prisma.priceRule.findMany({
+          where: { cardGroupId: { in: missing } },
+          orderBy: { createdAt: 'asc' },
+          select: { cardGroupId: true, firstLineNote: true, multiGroupNote: true },
         });
-        if (autoLines.length) {
-          // Insert directly AFTER the product line, so the product line stays the
-          // card's FIRST line (first-line note) and ordering is deterministic.
-          const idx = composeInput.findIndex((ln) => ln?.kind === 'product');
-          composeInput =
-            idx === -1
-              ? [...autoLines, ...composeInput]
-              : [...composeInput.slice(0, idx + 1), ...autoLines, ...composeInput.slice(idx + 1)];
+        const genericVars = buildNoteVars({
+          engineResult: null,
+          groupCount: counts.groupCount,
+          participantCount: counts.participantCount,
+          variantName: productName,
+          cityName,
+        });
+        for (const rp of reps) {
+          if (!noteByCard.has(rp.cardGroupId))
+            noteByCard.set(
+              rp.cardGroupId,
+              renderNoteTemplate(selectNoteTemplate(rp, counts.groupCount), genericVars),
+            );
         }
       }
     }
@@ -376,19 +471,30 @@ router.post(
     // Card OPTIONS for the manual override picker: every active card that can
     // price this product (variant-compatible), regardless of org association —
     // association is only the automatic DEFAULT, any option is selectable.
+    // Labels: the card's ORG ASSOCIATION names (who the option is for); a card
+    // with no association falls back to its authoring-tab name.
     let cardOptions = [];
     if (context.productId && priceList) {
-      const segNames = new Map(
-        (await prisma.pricingSegment.findMany({ select: { id: true, nameHe: true } })).map((s) => [s.id, s.nameHe]),
-      );
+      const [segRows, typeRows, subRows] = await Promise.all([
+        prisma.pricingSegment.findMany({ select: { id: true, nameHe: true } }),
+        prisma.organizationType.findMany({ select: { id: true, label: true } }),
+        prisma.organizationSubtype.findMany({ select: { id: true, label: true } }),
+      ]);
+      const segNames = new Map(segRows.map((s) => [s.id, s.nameHe]));
+      const typeNames = new Map(typeRows.map((t) => [t.id, t.label]));
+      const subNames = new Map(subRows.map((s) => [s.id, s.label]));
       const seen = new Map();
       for (const r of priceList.rules) {
         if (!r.cardGroupId || r.productId !== context.productId) continue;
         if (r.productVariantId && context.productVariantId && r.productVariantId !== context.productVariantId) continue;
         if (!seen.has(r.cardGroupId)) {
+          const assoc = [
+            ...(r.defaultOrgSubtypeIds || []).map((id) => subNames.get(id)),
+            ...(r.defaultOrgTypeIds || []).map((id) => typeNames.get(id)),
+          ].filter(Boolean);
           seen.set(r.cardGroupId, {
             cardGroupId: r.cardGroupId,
-            label: segNames.get(r.pricingSegmentId) || 'כרטיס תמחור',
+            label: assoc.length ? assoc.join(' · ') : segNames.get(r.pricingSegmentId) || 'כרטיס תמחור',
           });
         }
       }

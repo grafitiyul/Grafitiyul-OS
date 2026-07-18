@@ -89,3 +89,13 @@ test('manual add-ons are NEVER auto-generated', () => {
   });
   assert.equal(lines.length, 0);
 });
+
+test('auto add-on quantity multiplies by groups (₪250 שבת × 2 groups = ₪500)', () => {
+  const lines = buildAutoAddonLines({
+    ruleAddons: [], systemAddon: { ...SYSTEM, defaultPriceMinor: 25000n }, cardVat: CARD_VAT, cardGroupId: 'c',
+    moment: tourMoment('2026-07-25', '11:00'), isSabbathHoliday: true, addonCatalogById: CATALOG, groupCount: 2,
+  });
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].unitPriceMinor, 25000);
+  assert.equal(lines[0].quantity, 2);
+});

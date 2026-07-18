@@ -78,10 +78,18 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   const [paymentMethodId, setPaymentMethodId] = useState('');
   const [methodOverridden, setMethodOverridden] = useState(false);
   const calcTimer = useRef(null);
-  // Effective pricing context: starts from the Deal's context, then FOLLOWS the
-  // product chosen on the first product line so the engine reprices live and the
-  // saved Deal product matches it. One product value — the line drives the Deal.
+  // Effective pricing context: starts from the Deal's context, then follows the
+  // context controls (product pick, groups, card pin, participants). Editing it
+  // ONLY updates the context — no line is created or modified until חישוב
+  // אוטומטי runs. One product value — the line drives the Deal.
   const [ctx, setCtx] = useState(context);
+  // The context the CURRENT lines were calculated against. Line edits recompute
+  // totals against THIS snapshot; it advances only when חישוב אוטומטי runs, so
+  // the calculation feels atomic (nothing shifts while values are being picked).
+  const [appliedCtx, setAppliedCtx] = useState(context);
+  // Card options for the manual override picker (metadata only — fetching them
+  // never touches lines).
+  const [cardOptions, setCardOptions] = useState([]);
 
   // Catalogs (product+addon item dropdown, payment terms/methods dropdowns).
   useEffect(() => {
@@ -95,15 +103,20 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   // Re-seed the effective context from the Deal each time the dialog opens.
   useEffect(() => {
     setCtx(context);
+    setAppliedCtx(context);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, deal?.id]);
 
   // Simulator: the context is LIVE (the popup's top block edits it) — follow it
-  // so the engine reprices exactly as a Deal whose inputs changed. The builder's
-  // own קבוצות control is preserved across follows (the top block doesn't carry
-  // groups — the builder strip is its ONE home); reset remounts clean.
+  // into ctx ONLY (nothing recalculates until חישוב אוטומטי). The builder-owned
+  // controls (קבוצות, card pin) are preserved across follows; reset remounts.
   useEffect(() => {
-    if (simulated) setCtx((cur) => ({ ...context, groupCount: cur?.groupCount ?? context?.groupCount ?? 1 }));
+    if (simulated)
+      setCtx((cur) => ({
+        ...context,
+        groupCount: cur?.groupCount ?? context?.groupCount ?? 1,
+        pinnedCardGroupId: cur?.pinnedCardGroupId ?? null,
+      }));
   }, [simulated, context]);
 
   // Participant count follows the context prop LIVE (the embedded parallel-offer
@@ -145,31 +158,9 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, lines, products, ctx?.productId]);
 
-  // Simulator: no Deal to load — seed the product line from the simulated
-  // context (mirrors a brand-new working version). Re-seeds when the simulated
-  // product/variant changes; other (manually added) lines are kept.
-  useEffect(() => {
-    if (!open || !simulated) return undefined;
-    let live = true;
-    if (!context?.productId) {
-      setLines((ls) => ls.filter((l) => l.kind !== 'product'));
-      return undefined;
-    }
-    api.products
-      .get(context.productId)
-      .then((p) => {
-        if (!live) return;
-        setLines((ls) => [
-          normalize({ kind: 'product', label: p?.nameHe || '', refId: context.productVariantId || null }),
-          ...ls.filter((l) => l.kind !== 'product'),
-        ]);
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, simulated, context?.productId, context?.productVariantId]);
+  // (Simulator lines are NOT seeded while picking values — חישוב אוטומטי
+  // creates the complete result atomically; the server ensures the product
+  // line from the context on regeneration.)
 
   // Load working-version lines + payment fields on open.
   useEffect(() => {
@@ -219,6 +210,10 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
 
         if (!live) return;
         setLines(next);
+        // A previously saved manual card selection re-enters the context so the
+        // picker shows it and the next חישוב אוטומטי honors it.
+        const savedPin = next.find((l) => l.kind === 'product')?.pinnedCardGroupId || null;
+        if (savedPin) setCtx((c) => ({ ...(c || {}), pinnedCardGroupId: savedPin }));
         // Open only notes that actually have content. Never auto-open an empty
         // note (no large blank note area should pop open on load).
         const noteOpen = new Set(next.filter((l) => !isRichEmpty(l.note)).map((l) => l.id));
@@ -236,31 +231,11 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, deal?.id]);
 
-  // The engine resolved a (different) winning Pricing Card for the product line:
-  // stamp the card's provenance and rebuild the line's note from the card's
-  // canonical first-line note. Runs only when the CARD changes (new line, product
-  // switch) — a manual note edit under an unchanged card is never touched. A
-  // pre-existing note on a line that never had card provenance (legacy/manual) is
-  // kept on first stamping; an explicit חישוב אוטומטי always restores canonical.
-  function adoptCardResolution(pr) {
-    if (!pr?.ok) return;
-    setLines((ls) => {
-      const idx = ls.findIndex((l) => l.kind === 'product' && !l.overridden);
-      if (idx === -1) return ls;
-      const line = ls[idx];
-      if ((line.sourceCardGroupId || null) === (pr.cardGroupId || null)) return ls;
-      const keepExisting = line.sourceCardGroupId == null && !isRichEmpty(line.note);
-      const note = keepExisting ? line.note : pr.firstLineNote || '';
-      if (!isRichEmpty(note)) setOpenNotes((s) => new Set([...s, line.id]));
-      return ls.map((l, i) =>
-        i === idx
-          ? { ...l, sourceKind: pr.cardGroupId ? 'price_rule' : l.sourceKind, sourceCardGroupId: pr.cardGroupId || null, note }
-          : l,
-      );
-    });
-  }
-
-  // Recompute totals + product price via the engine whenever lines change.
+  // Recompute totals whenever LINES change — against the context of the LAST
+  // calculation (appliedCtx). Context edits (product, groups, card, participants,
+  // date…) deliberately change nothing here: lines and totals stay exactly as
+  // they are until חישוב אוטומטי rebuilds the result atomically. Line notes and
+  // provenance are NEVER touched by this recompute (no applyCardNotes).
   useEffect(() => {
     if (!open || !lines.length) {
       setComputed(null);
@@ -269,31 +244,42 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     if (calcTimer.current) clearTimeout(calcTimer.current);
     calcTimer.current = setTimeout(() => {
       api.pricing
-        .builder({ context: ctx, lines })
-        .then((r) => {
-          setComputed(r);
-          adoptCardResolution(r?.productResolution);
-        })
+        .builder({ context: appliedCtx, lines })
+        .then((r) => setComputed(r))
         .catch((e) => setComputed({ ok: false, error: e.message }));
     }, 300);
     return () => calcTimer.current && clearTimeout(calcTimer.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, lines, ctx]);
+  }, [open, lines, appliedCtx]);
+
+  // Card options for the picker follow the LIVE context (metadata-only request
+  // with no lines — nothing on screen changes).
+  useEffect(() => {
+    if (!open || !ctx?.productId) {
+      setCardOptions([]);
+      return undefined;
+    }
+    let live = true;
+    api.pricing
+      .builder({ context: { ...ctx, pinnedCardGroupId: null }, lines: [] })
+      .then((r) => {
+        if (live) setCardOptions(r?.cardOptions || []);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, ctx?.productId, ctx?.productVariantId]);
 
   const computedById = new Map((computed?.lines || []).map((l) => [l.id, l]));
   const totals = computed?.totals;
   const vatDefault = computed?.vatDefault;
   const orderVatMode = lines.find((l) => l.vatMode && l.vatMode !== 'inherit')?.vatMode || vatDefault?.mode;
-  // The product line carries the manual Pricing Card selection (option pin).
-  const productLine = lines.find((l) => l.kind === 'product') || null;
-  const cardOptions = computed?.cardOptions || [];
-
-  // Pin/unpin a Pricing Card (manual option override). Clearing the price
-  // override lets the pinned card's engine price apply; the note-adoption
-  // effect then rebuilds the first-line note from the newly winning card.
+  // Pin/unpin a Pricing Card (manual option override) — a CONTEXT edit only.
+  // Nothing recalculates until חישוב אוטומטי applies it atomically.
   function pickCard(cardGroupId) {
-    if (!productLine) return;
-    updateLine(productLine.id, { pinnedCardGroupId: cardGroupId || null, overridden: false });
+    setCtx((c) => ({ ...(c || {}), pinnedCardGroupId: cardGroupId || null }));
   }
   function setGroups(raw) {
     const n = Math.max(1, parseInt(String(raw).replace(/[^0-9]/g, ''), 10) || 1);
@@ -336,26 +322,43 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     setAutoCalcBusy(true);
     setSaveError(null);
     try {
-      // Previous auto-generated add-on lines are dropped and rebuilt from the
-      // CURRENT canonical card data (the server regenerates them fresh).
+      // ONE atomic regeneration from the CURRENT context: previously generated
+      // lines (extras, add-ons) are dropped; the server rebuilds the complete
+      // result — product breakdown, extra-participants line, auto add-ons,
+      // rendered notes — and everything renders together.
       const reqLines = lines
-        .filter((l) => l.sourceKind !== 'price_rule_addon')
-        .map((l) => (l.kind === 'product' ? { ...l, overridden: false } : l));
+        .filter((l) => l.sourceKind !== 'price_rule_addon' && l.sourceKind !== 'price_rule_extra')
+        .map((l) =>
+          l.kind === 'product'
+            ? { ...l, overridden: false, pinnedCardGroupId: ctx?.pinnedCardGroupId ?? null }
+            : l,
+        );
       const r = await api.pricing.builder({ context: ctx, lines: reqLines, applyCardNotes: true });
       setComputed(r);
-      // The response is authoritative for the regenerated set: existing lines
-      // adopt canonical note/provenance; server-added auto add-on lines (שבת/חג,
-      // weekday surcharges) enter state; ones that no longer apply disappear.
+      // The response IS the regenerated set: existing lines adopt canonical
+      // note/provenance/quantity; server-generated lines (product ensure, extra
+      // participants, auto add-ons) enter state; stale ones disappear.
       const stateById = new Map(reqLines.map((l) => [l.id, l]));
       const next = (r?.lines || []).map((rl) => {
         const existing = stateById.get(rl.id);
         if (existing) {
           if (!rl.sourceCardGroupId) return existing;
-          return { ...existing, note: rl.note || '', sourceKind: rl.sourceKind || null, sourceCardGroupId: rl.sourceCardGroupId };
+          return {
+            ...existing,
+            note: rl.note || '',
+            sourceKind: rl.sourceKind || null,
+            sourceCardGroupId: rl.sourceCardGroupId,
+            pinnedCardGroupId: rl.pinnedCardGroupId || null,
+            // The breakdown owns the generated quantity (base × groups).
+            ...(rl.sourceKind === 'price_rule_base' ? { quantity: rl.quantity } : {}),
+          };
         }
         return normalize(rl);
       });
       if (next.length) setLines(next);
+      // The applied context snapshot advances — subsequent line edits recompute
+      // against exactly what this calculation used.
+      setAppliedCtx({ ...(ctx || {}) });
       setOpenNotes((s) => new Set([...s, ...next.filter((l) => !isRichEmpty(l.note)).map((l) => l.id)]));
     } catch (e) {
       setSaveError(e.payload?.error || e.message || 'החישוב נכשל');
@@ -442,8 +445,8 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
           <button
             type="button"
             onClick={autoCalc}
-            disabled={autoCalcBusy || !lines.length}
-            title="בנייה מחדש של השורות שנוצרו מכרטיסי התמחור — מחיר, הערה ותוספות אוטומטיות"
+            disabled={autoCalcBusy || (!lines.length && !ctx?.productId)}
+            title="חישוב מלא מהנתונים הנוכחיים — פירוק מחיר, הערות ותוספות אוטומטיות נבנים יחד"
             className="h-10 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
           >
             {autoCalcBusy ? 'מחשב…' : 'חישוב אוטומטי'}
@@ -461,11 +464,11 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
             />
           </label>
           {/* Manual Pricing Card selection — automatic (org default) unless pinned. */}
-          {productLine && cardOptions.length > 1 && (
+          {cardOptions.length > 1 && (
             <label className="flex items-center gap-1.5 text-[13px] text-gray-600">
               כרטיס תמחור
               <select
-                value={productLine.pinnedCardGroupId || ''}
+                value={ctx?.pinnedCardGroupId || ''}
                 onChange={(e) => pickCard(e.target.value)}
                 className="h-10 rounded-lg border border-gray-200 bg-white px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
               >

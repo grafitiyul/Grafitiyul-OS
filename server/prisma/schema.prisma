@@ -2239,11 +2239,16 @@ model PriceRule {
   vatMode String? // included | excluded
   vatRate Int?
 
-  // Rich-text note the pricing calculation writes onto the FIRST builder line
-  // this card produces (null/empty = no automatic note). Business content, same
-  // rich-note format as QuoteLine.note. Duplicated across a card's sibling rules
-  // (one per location) like cardSortOrder; rule RESOLUTION never reads it.
-  firstLineNote String?
+  // Rich-text note TEMPLATES the pricing calculation renders onto the FIRST
+  // builder line this card produces (null/empty = no automatic note). Both
+  // support {{variable}} placeholders (see pricing/noteTemplates.js) — the
+  // engine substitutes values, never invents wording. `firstLineNote` is the
+  // single-group note; `multiGroupNote` is used when groups > 1 and falls back
+  // to firstLineNote when empty. Same rich-note format as QuoteLine.note.
+  // Duplicated across a card's sibling rules like cardSortOrder; rule
+  // RESOLUTION never reads them.
+  firstLineNote  String?
+  multiGroupNote String?
 
   // The Pricing Card's DEFAULT-selection association (many-to-many): the
   // organization types/subtypes this card is the automatic default for. One

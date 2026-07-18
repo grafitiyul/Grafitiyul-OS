@@ -497,3 +497,64 @@ test('pin errors are explicit: unknown card / card without this city', () => {
     (e) => e.code === 'pinned_card_not_applicable',
   );
 });
+
+// ── amountBreakdown: the builder's displayable decomposition ────────────────
+import { amountBreakdown } from './engine.js';
+
+test('breakdown tiered: 12p → base(1×1900) + extra(2×100); invariant holds', () => {
+  const rule = { id: 'r', active: true, priceModel: 'tiered', basePriceMinor: 190000n, baseParticipants: 10, perAdditionalParticipantMinor: 10000n, priority: 0 };
+  const r = run([rule], { participantCount: 12, groupCount: 1 });
+  assert.equal(r.netMinor, 210000);
+  assert.deepEqual(r.breakdown, { unitBaseMinor: 190000, unitQuantity: 1, extra: { quantity: 2, unitPriceMinor: 10000 } });
+});
+test('breakdown tiered ×groups: 30p/2g → base(2×1900) + extra(10×100)', () => {
+  const rule = { id: 'r', active: true, priceModel: 'tiered', basePriceMinor: 190000n, baseParticipants: 10, perAdditionalParticipantMinor: 10000n, priority: 0 };
+  const r = run([rule], { participantCount: 30, groupCount: 2 });
+  assert.deepEqual(r.breakdown, { unitBaseMinor: 190000, unitQuantity: 2, extra: { quantity: 10, unitPriceMinor: 10000 } });
+  assert.equal(190000 * 2 + 10 * 10000, r.netMinor);
+});
+test('breakdown per_head: unit × participants (single-price)', () => {
+  const rule = { id: 'r', active: true, priceModel: 'per_head', adultPriceMinor: 14000n, childPriceMinor: 14000n, priority: 0 };
+  // The /builder route maps participantCount → adultCount for per_head.
+  const r = run([rule], { participantCount: 30, adultCount: 30 });
+  assert.deepEqual(r.breakdown, { unitBaseMinor: 14000, unitQuantity: 30, extra: null });
+  assert.equal(r.netMinor, 420000);
+});
+test('breakdown per_head: mixed adult/child pricing → null (single-line fallback)', () => {
+  const rule = { id: 'r', active: true, priceModel: 'per_head', adultPriceMinor: 14000n, childPriceMinor: 7000n, priority: 0 };
+  const r = run([rule], { adultCount: 3, childCount: 2 });
+  assert.equal(r.breakdown, null);
+});
+test('breakdown fixed: unit × groups; no extras', () => {
+  const rule = { id: 'r', active: true, priceModel: 'fixed', fixedPriceMinor: 150000n, priority: 0 };
+  const r = run([rule], { participantCount: 8, groupCount: 2 });
+  assert.deepEqual(r.breakdown, { unitBaseMinor: 150000, unitQuantity: 2, extra: null });
+});
+test('breakdown tiered_group: tier total × groups + overflow extras (invariant exact)', () => {
+  const rule = {
+    id: 'r', active: true, priceModel: 'tiered_group', priority: 0,
+    perAdditionalParticipantMinor: 10000n,
+    tiers: [{ uptoParticipants: 6, totalPriceMinor: 90000n, sortOrder: 0 }],
+  };
+  const r = run([rule], { participantCount: 8, groupCount: 1 });
+  assert.deepEqual(r.breakdown, { unitBaseMinor: 90000, unitQuantity: 1, extra: { quantity: 2, unitPriceMinor: 10000 } });
+  assert.equal(r.netMinor, 110000);
+});
+
+// ── holiday date normalization (the "Fri Jul 25" bug) ───────────────────────
+test('holiday rules with Prisma Date objects now match their day', () => {
+  const holidays = [{ active: true, status: 'approved', date: new Date('2026-09-12T00:00:00Z'), allDay: true, type: 'chag', nameHe: 'חג' }];
+  const hit = sabbathHolidayWindow({ weekday: 6, minuteOfDay: 600, dateISO: '2026-09-12' }, { holidays });
+  assert.equal(hit.applies, true);
+  assert.equal(hit.type, 'chag');
+  const miss = sabbathHolidayWindow({ weekday: 0, minuteOfDay: 600, dateISO: '2026-09-13' }, { holidays });
+  assert.equal(miss.applies, false);
+});
+test('half holiday (ערב חג window) applies only inside its configured window', () => {
+  const holidays = [{ active: true, status: 'approved', date: new Date('2026-09-11T00:00:00Z'), allDay: false, startMinute: 840, endMinute: 1439, type: 'erev_chag', nameHe: 'ערב חג' }];
+  const inWin = sabbathHolidayWindow({ weekday: 5, minuteOfDay: 900, dateISO: '2026-09-11' }, { holidays });
+  assert.equal(inWin.applies, true);
+  assert.equal(inWin.type, 'erev_chag');
+  const before = sabbathHolidayWindow({ weekday: 5, minuteOfDay: 600, dateISO: '2026-09-11' }, { holidays });
+  assert.equal(before.applies, false);
+});

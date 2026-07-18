@@ -39,7 +39,14 @@ export function composeBuilderLines({
     let effMode;
     let effRate;
     if (engineProduct) {
-      unitPriceMinor = Number(productResolution.baseAmountMinor) || 0;
+      // Breakdown-generated base lines (sourceKind 'price_rule_base') price at
+      // the PER-UNIT base (per group / per participant) with their generated
+      // quantity; legacy single-line product lines keep the full engine amount
+      // at qty 1 — existing deals never change totals until regenerated.
+      unitPriceMinor =
+        ln.sourceKind === 'price_rule_base' && productResolution.unitBaseMinor != null
+          ? Number(productResolution.unitBaseMinor) || 0
+          : Number(productResolution.baseAmountMinor) || 0;
       effMode = ln.vatMode && ln.vatMode !== 'inherit' ? ln.vatMode : productResolution.vatMode;
       effRate = effMode === 'exempt' ? 0 : productResolution.vatRate != null ? productResolution.vatRate : vatDefault.rate;
     } else {

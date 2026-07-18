@@ -70,6 +70,8 @@ export default function RichEditor({
   // bold · underline · highlight · emoji · font size). Overrides the preset. The
   // editor instance is identical; only the chrome differs.
   toolbar,
+  // Optional: receive the TipTap editor instance once created (see effect below).
+  onEditorReady,
 }) {
   const [focused, setFocused] = useState(false);
   // Resolve preset defaults, letting any explicit prop win.
@@ -143,6 +145,14 @@ export default function RichEditor({
       },
     },
   });
+
+  // Expose the TipTap instance to the parent (additive; no consumer is
+  // affected unless it passes the prop). Enables cursor-position insertion —
+  // e.g. the pricing card's "insert variable" menu calling
+  // editor.chain().focus().insertContent(...).
+  useEffect(() => {
+    if (editor) onEditorReady?.(editor);
+  }, [editor, onEditorReady]);
 
   useEffect(() => {
     if (!editor) return;

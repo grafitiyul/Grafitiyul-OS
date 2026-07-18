@@ -85,10 +85,12 @@ export function buildData(body, { partial }) {
   // Card-level business capability — "Available for Group Ticket Sales". The card
   // is the sole authority for the Group Ticket Builder. Duplicated across siblings.
   set('availableForGroupTickets', body.availableForGroupTickets === true);
-  // First-line note template (rich text) the calculation writes onto the first
-  // builder line this card produces. Blank markup normalizes to null (= no note).
-  // Duplicated across siblings like availableForGroupTickets.
+  // Note templates (rich text, {{variable}} placeholders) the calculation
+  // renders onto the first builder line this card produces. firstLineNote =
+  // single group; multiGroupNote = groups > 1 (empty → falls back). Blank
+  // markup normalizes to null. Duplicated across siblings.
   set('firstLineNote', normalizeFirstLineNote(body.firstLineNote));
+  set('multiGroupNote', normalizeFirstLineNote(body.multiGroupNote));
   // Card DEFAULT-selection association (many-to-many): the org types/subtypes
   // this card is the automatic default for. Duplicated across siblings.
   set('defaultOrgTypeIds', cleanIdList(body.defaultOrgTypeIds));
