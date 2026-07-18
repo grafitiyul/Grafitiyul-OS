@@ -128,13 +128,13 @@ export default function ReservationsList() {
                   <span className="text-[12px] text-gray-500">{fmtWhen(s.submittedAt)}</span>
                   <div className="flex-1" />
                   {s.contact && (
-                    <Link to={`/admin/crm/contacts/${s.contact.id}`} className="text-[13px] text-blue-700 hover:underline">
+                    <Link to={`/admin/crm/contacts/${s.contact.contactNo ?? s.contact.id}`} className="text-[13px] text-blue-700 hover:underline">
                       {s.contact.name}
                     </Link>
                   )}
                   {s.organization && (
                     <Link
-                      to={`/admin/crm/organizations/${s.organization.id}`}
+                      to={`/admin/crm/organizations/${s.organization.orgNo ?? s.organization.id}`}
                       className="text-[13px] text-gray-600 hover:underline"
                     >
                       · {s.organization.name}

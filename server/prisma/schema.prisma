@@ -794,6 +794,14 @@ model OrganizationSubtype {
 // priority above).
 model Organization {
   id                 String                @id @default(cuid())
+  // "מספר ארגון" — stable business-facing numeric identifier (the Deal.orderNo
+  // pattern). Assigned by a dedicated Postgres sequence starting at 10000;
+  // numbers only grow and are never reused. Nullable: rows created before the
+  // sequence existed stay NULL until the legacy-migration backfill assigns
+  // their original Pipedrive org ids (max legacy id 3,053 — no collision with
+  // the 10000+ sequence range). Used in the Organization URL; the cuid `id`
+  // stays the internal PK/FK key.
+  orgNo              Int?                  @unique @default(dbgenerated("nextval('org_no_seq')"))
   name               String
   organizationType   OrganizationType?     @relation(fields: [organizationTypeId], references: [id], onDelete: SetNull)
   organizationTypeId String?
@@ -852,6 +860,14 @@ model OrganizationUnit {
 // optionally to a specific unit.
 model Contact {
   id                    String                @id @default(cuid())
+  // "מספר איש קשר" — stable business-facing numeric identifier (the
+  // Deal.orderNo pattern). Dedicated Postgres sequence starting at 50000;
+  // numbers only grow and are never reused. Nullable: rows created before the
+  // sequence existed stay NULL until the legacy-migration backfill assigns
+  // their original Pipedrive person ids (max legacy id 37,636 — no collision
+  // with the 50000+ sequence range). Used in the Contact URL; the cuid `id`
+  // stays the internal PK/FK key.
+  contactNo             Int?                  @unique @default(dbgenerated("nextval('contact_no_seq')"))
   firstNameHe           String
   lastNameHe            String
   firstNameEn           String

@@ -17,9 +17,9 @@ router.get(
       take: 200,
       include: {
         contact: {
-          select: { id: true, firstNameHe: true, lastNameHe: true, firstNameEn: true, lastNameEn: true },
+          select: { id: true, contactNo: true, firstNameHe: true, lastNameHe: true, firstNameEn: true, lastNameEn: true },
         },
-        organization: { select: { id: true, name: true } },
+        organization: { select: { id: true, orgNo: true, name: true } },
         groups: {
           orderBy: { sortOrder: 'asc' },
           include: { createdDeal: { select: { id: true, orderNo: true } } },

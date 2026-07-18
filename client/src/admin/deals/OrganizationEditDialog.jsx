@@ -320,7 +320,7 @@ export default function OrganizationEditDialog({ deal, orgs, types, subtypes, op
 
         {orgId && (
           <div className="pt-1">
-            <Link to={`/admin/crm/organizations/${orgId}`} className="text-[13px] text-blue-700 hover:underline">
+            <Link to={`/admin/crm/organizations/${orgFull?.orgNo ?? orgId}`} className="text-[13px] text-blue-700 hover:underline">
               פתח את כרטיס הארגון המלא (יחידות, כספים) ←
             </Link>
           </div>

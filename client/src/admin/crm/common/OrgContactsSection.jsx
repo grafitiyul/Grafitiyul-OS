@@ -41,7 +41,7 @@ export default function OrgContactsSection({ org, onChange }) {
         <ul className="divide-y divide-gray-100">
           {org.contactLinks.map((l) => (
             <li key={l.id} className="py-2 text-sm flex items-center gap-2">
-              <Link to={`/admin/crm/contacts/${l.contact.id}`} className="text-blue-700 hover:underline font-medium">
+              <Link to={`/admin/crm/contacts/${l.contact.contactNo ?? l.contact.id}`} className="text-blue-700 hover:underline font-medium">
                 {contactName(l.contact)}
               </Link>
               {l.isPrimary && (

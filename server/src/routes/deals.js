@@ -162,6 +162,7 @@ async function reconcileClassification(data, resulting) {
 
 const CONTACT_SELECT = {
   id: true,
+  contactNo: true,
   firstNameHe: true,
   lastNameHe: true,
   firstNameEn: true,
@@ -176,7 +177,7 @@ const CONTACT_SELECT = {
 const DEAL_INCLUDE = {
   dealStage: true,
   organization: {
-    select: { id: true, name: true, organizationTypeId: true, organizationType: { select: { id: true, label: true } } },
+    select: { id: true, orgNo: true, name: true, organizationTypeId: true, organizationType: { select: { id: true, label: true } } },
   },
   organizationUnit: { select: { id: true, name: true } },
   organizationSubtype: { select: { id: true, label: true, organizationTypeId: true } },

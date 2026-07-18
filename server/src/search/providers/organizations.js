@@ -15,12 +15,19 @@ const INCLUDE = {
   _count: { select: { deals: true, contactLinks: true } },
 };
 
+const INT4_MAX = 2147483647;
+
 function ci(q) {
   return { contains: q, mode: 'insensitive' };
 }
 
-function reasonsForOrg(o, q, legacyByOrg) {
+function reasonsForOrg(o, q, legacyByOrg, orgNo) {
   const out = [];
+  // Public numeric identifier ("מספר ארגון") — exact match only, like the
+  // deal-number path in the deals provider.
+  if (orgNo !== null && o.orgNo === orgNo) {
+    out.push({ key: 'org_number_exact', text: `#${o.orgNo}` });
+  }
   if (equals(o.name, q)) out.push({ key: 'name_exact', text: o.name });
   else if (startsWith(o.name, q)) out.push({ key: 'name_prefix', text: o.name });
   else if (contains(o.name, q)) out.push({ key: 'name_partial', text: o.name });
@@ -53,7 +60,10 @@ function toDto(o, reasons, q) {
   return {
     type: 'organization',
     id: o.id,
-    path: `/admin/crm/organizations/${o.id}`,
+    orgNo: o.orgNo,
+    // Prefer the public number in the URL (deals pattern); cuid fallback for
+    // rows not yet backfilled — the server resolves both forms.
+    path: `/admin/crm/organizations/${o.orgNo ?? o.id}`,
     name: o.name,
     typeLabel: o.organizationType?.label || null,
     units: units.map((u) => u.name),
@@ -65,6 +75,10 @@ function toDto(o, reasons, q) {
 }
 
 export async function searchOrganizations(q, pq, limit, todayIso, db) {
+  const trimmed = q.trim();
+  const orgNo =
+    /^\d+$/.test(trimmed) && Number(trimmed) <= INT4_MAX ? Number(trimmed) : null;
+
   const legacyRows = await lookupLegacy(q, 'Organization', db);
   const legacyByOrg = new Map(legacyRows.map((r) => [r.entityId, r.cardData]));
 
@@ -77,6 +91,7 @@ export async function searchOrganizations(q, pq, limit, todayIso, db) {
     { financeContactName: ci(q) },
     { units: { some: { name: ci(q) } } },
   ];
+  if (orgNo !== null) or.push({ orgNo });
   if (/\d/.test(q)) or.push({ financePhone: { contains: q.replace(/\D/g, '') } });
   if (legacyByOrg.size) or.push({ id: { in: [...legacyByOrg.keys()] } });
 
@@ -89,7 +104,7 @@ export async function searchOrganizations(q, pq, limit, todayIso, db) {
 
   const hits = [];
   for (const o of rows) {
-    const reasons = reasonsForOrg(o, q, legacyByOrg);
+    const reasons = reasonsForOrg(o, q, legacyByOrg, orgNo);
     if (!reasons.length) continue;
     hits.push({
       score: scoreOf(reasons),

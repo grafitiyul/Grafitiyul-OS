@@ -217,7 +217,7 @@ export default function ContactEditDialog({ contactId, open, onClose, onSaved })
                   <ul className="divide-y divide-gray-100">
                     {contact.orgLinks.map((l) => (
                       <li key={l.id} className="py-2 flex items-center gap-2 text-sm">
-                        <Link to={`/admin/crm/organizations/${l.organization.id}`} className="text-blue-700 hover:underline font-medium">
+                        <Link to={`/admin/crm/organizations/${l.organization.orgNo ?? l.organization.id}`} className="text-blue-700 hover:underline font-medium">
                           {l.organization.name}
                         </Link>
                         {l.organizationUnit && <span className="text-[12px] text-gray-500">· {l.organizationUnit.name}</span>}
@@ -249,7 +249,7 @@ export default function ContactEditDialog({ contactId, open, onClose, onSaved })
 
           <div className="pt-1">
             <Link
-              to={`/admin/crm/contacts/${contactId}`}
+              to={`/admin/crm/contacts/${contact?.contactNo ?? contactId}`}
               className="text-[13px] text-gray-500 hover:text-gray-700 hover:underline"
             >
               פתח כרטיס איש קשר מלא ←

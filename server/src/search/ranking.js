@@ -40,6 +40,8 @@
 // "why this matched" in the UI.
 export const MATCH_SCORE = {
   deal_number_exact: 100,
+  org_number_exact: 100,
+  contact_number_exact: 100,
   phone_exact: 95,
   email_exact: 92,
   name_exact: 90,
@@ -69,6 +71,8 @@ export const IDENTIFIER_TIER_MIN = 88;
 
 export const REASON_LABEL = {
   deal_number_exact: 'התאמה מדויקת למספר הזמנה',
+  org_number_exact: 'התאמה מדויקת למספר ארגון',
+  contact_number_exact: 'התאמה מדויקת למספר איש קשר',
   phone_exact: 'התאמה מדויקת לטלפון',
   email_exact: 'התאמה מדויקת לאימייל',
   name_exact: 'התאמה מדויקת לשם',

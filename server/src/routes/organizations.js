@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
+import { numericIdResolver } from './numericIdParam.js';
 import { setOrganizationFinanceContact } from '../organizations/financeContact.js';
 import { userOrigin } from '../timeline/events.js';
 
@@ -13,6 +14,15 @@ import { userOrigin } from '../timeline/events.js';
 // (not implemented in Phase 1).
 
 const router = Router();
+
+// "מספר ארגון" URL support — /:id routes accept either the cuid or the public
+// numeric orgNo (deals.js orderNo pattern; see numericIdParam.js).
+router.param(
+  'id',
+  numericIdResolver((orgNo) =>
+    prisma.organization.findUnique({ where: { orgNo }, select: { id: true } }),
+  ),
+);
 
 // Whitelisted optional finance/identity fields shared by Organization and Unit.
 const FINANCE_FIELDS = [
@@ -98,6 +108,7 @@ router.get(
             contact: {
               select: {
                 id: true,
+                contactNo: true,
                 firstNameHe: true,
                 lastNameHe: true,
                 firstNameEn: true,

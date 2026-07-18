@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
+import { numericIdResolver } from './numericIdParam.js';
 
 // Contact CRUD + phones + emails + organization memberships. Reference data for
 // the future Deals/Activities workflow.
@@ -10,6 +11,15 @@ import { handle } from '../asyncHandler.js';
 // one, or many organizations (ContactOrganization), optionally to a unit.
 
 const router = Router();
+
+// "מספר איש קשר" URL support — /:id routes accept either the cuid or the
+// public numeric contactNo (deals.js orderNo pattern; see numericIdParam.js).
+router.param(
+  'id',
+  numericIdResolver((contactNo) =>
+    prisma.contact.findUnique({ where: { contactNo }, select: { id: true } }),
+  ),
+);
 
 // Derive the convenience full-name fields without persisting them.
 function withFullNames(contact) {
@@ -29,7 +39,7 @@ const CONTACT_INCLUDE = {
   emails: { orderBy: { sortOrder: 'asc' } },
   orgLinks: {
     include: {
-      organization: { select: { id: true, name: true } },
+      organization: { select: { id: true, orgNo: true, name: true } },
       organizationUnit: { select: { id: true, name: true } },
     },
   },

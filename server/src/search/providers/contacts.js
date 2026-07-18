@@ -26,6 +26,8 @@ const INCLUDE = {
   _count: { select: { dealContacts: true } },
 };
 
+const INT4_MAX = 2147483647;
+
 function ci(q) {
   return { contains: q, mode: 'insensitive' };
 }
@@ -46,8 +48,14 @@ function nameReasons(c, q) {
   return out;
 }
 
-function reasonsForContact(c, q, phoneMap, emailMap, legacyByContact) {
+function reasonsForContact(c, q, phoneMap, emailMap, legacyByContact, contactNo) {
   const out = [...nameReasons(c, q)];
+
+  // Public numeric identifier ("מספר איש קשר") — exact match only, like the
+  // deal-number path in the deals provider.
+  if (contactNo !== null && c.contactNo === contactNo) {
+    out.push({ key: 'contact_number_exact', text: `#${c.contactNo}` });
+  }
 
   const phone = phoneMap.get(c.id);
   if (phone) out.push({ key: phone.exact ? 'phone_exact' : 'phone_partial', text: phone.value });
@@ -79,7 +87,10 @@ function toDto(c, reasons) {
   return {
     type: 'contact',
     id: c.id,
-    path: `/admin/crm/contacts/${c.id}`,
+    contactNo: c.contactNo,
+    // Prefer the public number in the URL (deals pattern); cuid fallback for
+    // rows not yet backfilled — the server resolves both forms.
+    path: `/admin/crm/contacts/${c.contactNo ?? c.id}`,
     fullNameHe: fullNameHe(c),
     fullNameEn: fullNameEn(c),
     phone: primaryPhone?.value || null,
@@ -96,6 +107,10 @@ function toDto(c, reasons) {
 }
 
 export async function searchContacts(q, pq, limit, todayIso, db) {
+  const trimmed = q.trim();
+  const contactNo =
+    /^\d+$/.test(trimmed) && Number(trimmed) <= INT4_MAX ? Number(trimmed) : null;
+
   const [phoneMap, emailMap, legacyRows] = await Promise.all([
     lookupPhoneContacts(pq, db),
     lookupEmailContacts(q, db),
@@ -110,6 +125,7 @@ export async function searchContacts(q, pq, limit, todayIso, db) {
     { orgLinks: { some: { organization: { is: { name: ci(q) } } } } },
     { orgLinks: { some: { organizationUnit: { is: { name: ci(q) } } } } },
   ];
+  if (contactNo !== null) or.push({ contactNo });
   const contactIds = [...new Set([...phoneMap.keys(), ...emailMap.keys(), ...legacyByContact.keys()])];
   if (contactIds.length) or.push({ id: { in: contactIds } });
 
@@ -122,7 +138,7 @@ export async function searchContacts(q, pq, limit, todayIso, db) {
 
   const hits = [];
   for (const c of rows) {
-    const reasons = reasonsForContact(c, q, phoneMap, emailMap, legacyByContact);
+    const reasons = reasonsForContact(c, q, phoneMap, emailMap, legacyByContact, contactNo);
     if (!reasons.length) continue;
     hits.push({
       score: scoreOf(reasons),

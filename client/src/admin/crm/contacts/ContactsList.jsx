@@ -42,7 +42,7 @@ function OrgCell({ contact }) {
 const COLUMNS = [
   { key: 'name', label: 'שם', def: true,
     render: (c) => (
-      <Link to={`/admin/crm/contacts/${c.id}`} className="font-medium text-blue-700 hover:underline">
+      <Link to={`/admin/crm/contacts/${c.contactNo ?? c.id}`} className="font-medium text-blue-700 hover:underline">
         {fullName(c) || '—'}
       </Link>
     ) },

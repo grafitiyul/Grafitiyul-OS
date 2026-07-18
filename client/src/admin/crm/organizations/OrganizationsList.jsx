@@ -228,7 +228,7 @@ export default function OrganizationsList() {
                   <tr
                     key={o.id}
                     className="group hover:bg-blue-50/40 cursor-pointer transition-colors"
-                    onClick={() => navigate(`/admin/crm/organizations/${o.id}`)}
+                    onClick={() => navigate(`/admin/crm/organizations/${o.orgNo ?? o.id}`)}
                   >
                     {visibleCols.map((c) => (
                       <TableCell key={c.key} col={c}>{c.render(o)}</TableCell>
