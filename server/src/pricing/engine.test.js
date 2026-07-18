@@ -37,13 +37,15 @@ function run(rules, counts, context = {}, listOverrides = {}) {
 }
 
 // ── per_head (regression) ───────────────────────────────────────────────────
-test('per_head: adult+child per person, ×groupCount', () => {
+// Counts are TOTALS (canonical group semantics): groups never multiply
+// per-head pricing — 30 people cost the same split into 1 group or 2.
+test('per_head: adult+child per person; groupCount does NOT multiply', () => {
   const r = run(
     [{ id: 'r1', active: true, priceModel: 'per_head', adultPriceMinor: 10000n, childPriceMinor: 5000n, priority: 0 }],
     { adultCount: 3, childCount: 2, groupCount: 2 },
   );
-  // (3*10000 + 2*5000) * 2 = 80000
-  assert.equal(r.netMinor, 80000);
+  // 3*10000 + 2*5000 = 40000 — regardless of groups.
+  assert.equal(r.netMinor, 40000);
   assert.equal(r.priceModel, 'per_head');
 });
 

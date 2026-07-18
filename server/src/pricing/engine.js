@@ -86,6 +86,12 @@ export function selectRule(candidates) {
 export function baseAmountMinor(rule, counts) {
   const groupCount = Math.max(1, Number(counts.groupCount) || 1);
 
+  // per_head — price × PEOPLE. Counts are TOTALS (the canonical group
+  // semantics: participants is the whole tour, groups only describe how it
+  // splits), so groupCount does NOT multiply here — 30 people at ₪140 cost
+  // ₪4,200 whether they walk as one group or two. (The pre-groups engine
+  // multiplied by groupCount under counts-per-group semantics; production
+  // always sent groupCount=1, so behavior is unchanged for every real deal.)
   if (rule.priceModel === 'per_head') {
     if (num(rule.adultPriceMinor) == null && num(rule.childPriceMinor) == null) {
       throw new PricingError('rule_incomplete', {
@@ -95,12 +101,12 @@ export function baseAmountMinor(rule, counts) {
     }
     const adultCount = Math.max(0, Number(counts.adultCount) || 0);
     const childCount = Math.max(0, Number(counts.childCount) || 0);
-    const perGroup =
+    const amount =
       adultCount * (num(rule.adultPriceMinor) || 0) +
       childCount * (num(rule.childPriceMinor) || 0);
     return {
-      amountMinor: Math.round(perGroup * groupCount),
-      debug: { adultCount, childCount, groupCount, perGroupMinor: Math.round(perGroup) },
+      amountMinor: Math.round(amount),
+      debug: { adultCount, childCount, groupCount },
     };
   }
 
@@ -444,12 +450,13 @@ export function amountBreakdown(rule, counts, debug, amountMinor) {
         : null,
     };
   } else if (rule.priceModel === 'per_head') {
-    // Single-price per-head (the UX writes child = adult): unit × participants.
+    // Single-price per-head (the UX writes child = adult): unit × PEOPLE.
+    // People are totals — groups never multiply per-head pricing.
     const adult = num(rule.adultPriceMinor);
     const child = num(rule.childPriceMinor);
     const people = (debug.adultCount || 0) + (debug.childCount || 0);
     if (people > 0 && (child == null || child === adult || (debug.childCount || 0) === 0)) {
-      breakdown = { unitBaseMinor: adult || 0, unitQuantity: people * groupCount, extra: null };
+      breakdown = { unitBaseMinor: adult || 0, unitQuantity: people, extra: null };
     }
   }
   if (!breakdown) return null;

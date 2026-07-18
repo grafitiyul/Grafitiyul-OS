@@ -89,7 +89,9 @@ export function composeBuilderLines({
       // the first-line note is assigned deterministically; other lines echo
       // whatever the caller sent (group-ticket lines carry their card already).
       sourceKind: engineProduct && productResolution.cardGroupId
-        ? 'price_rule'
+        ? ln.sourceKind === 'price_rule_base'
+          ? 'price_rule_base' // breakdown marker MUST survive the echo — it selects per-unit pricing
+          : 'price_rule'
         : ln.sourceKind || null,
       sourceCardGroupId: engineProduct
         ? productResolution.cardGroupId || null

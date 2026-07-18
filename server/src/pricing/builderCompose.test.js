@@ -296,3 +296,9 @@ test('price_rule_base lines price at the per-unit base × quantity; legacy lines
   assert.equal(lines[0].grossMinor, 380000);
   assert.equal(lines[1].unitPriceMinor, 480000);
 });
+
+test('echo preserves the price_rule_base marker (persistence must not degrade to legacy pricing)', () => {
+  const pr = resolution({ baseAmountMinor: 480000, unitBaseMinor: 190000 });
+  const { lines } = compose([productLine({ sourceKind: 'price_rule_base', quantity: 2 })], { productResolution: pr });
+  assert.equal(lines[0].sourceKind, 'price_rule_base');
+});
