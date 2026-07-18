@@ -3,6 +3,7 @@ import { api } from '../../lib/api.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import { edgeAccentStyle } from '../../color/staffColorUi.js';
 import TourTeamEditor, { StaffAvatar } from './TourTeamEditor.jsx';
+import { resolveStaffDisplayName } from '../../../../shared/staffAssignmentDisplay.mjs';
 import TourComponents from './TourComponents.jsx';
 import ComponentChipList from './ComponentChips.jsx';
 import {
@@ -162,10 +163,10 @@ export default function DealTourSummary({ booking, onGroupSlot, canReplace, onRe
                         >
                           <StaffAvatar
                             src={a.personRef?.profile?.imageUrl}
-                            name={a.personRef?.displayName || a.displayName}
+                            name={resolveStaffDisplayName(a)}
                             className="h-5 w-5"
                           />
-                          {a.personRef?.displayName || a.displayName || '?'}
+                          {resolveStaffDisplayName(a)}
                           <span className="opacity-75">· {ASSIGNMENT_ROLE_LABELS[a.role] || a.role}</span>
                         </span>
                       ))}

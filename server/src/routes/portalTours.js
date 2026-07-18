@@ -91,9 +91,14 @@ async function loadAssignedTours(person) {
   // Cancelled tours are invisible in the portal (same rule the detail
   // resolver enforces) — deal-reopen keeps assignment rows on the cancelled
   // twin for plan restore, and those must never surface here.
+  // Match the canonical link (personRefId — set on native assignments AND on
+  // historical imports once resolveHistoricalStaffLinks claims them) OR the
+  // legacy handle. Historical tours were keyed by the guide's EMAIL in
+  // externalPersonId, so a handle-only match would miss them; the personRefId
+  // arm is what lets a guide see their imported history in the portal.
   return prisma.tourAssignment.findMany({
     where: {
-      externalPersonId: person.externalPersonId,
+      OR: [{ personRefId: person.id }, { externalPersonId: person.externalPersonId }],
       tourEvent: guideVisibleTourWhere(),
     },
     include: { tourEvent: { include: CARD_TOUR_INCLUDE } },
@@ -209,7 +214,7 @@ router.get(
         assignments: {
           orderBy: { createdAt: 'asc' },
           include: {
-            personRef: { select: { profile: { select: { imageUrl: true } } } },
+            personRef: { select: { displayName: true, profile: { select: { imageUrl: true } } } },
           },
         },
         activityComponents: {

@@ -10,6 +10,7 @@ import CoordinationFormAction from './CoordinationFormAction.jsx';
 import TourSlotModal from './TourSlotModal.jsx';
 import TourComponents from './TourComponents.jsx';
 import TourTeamEditor from './TourTeamEditor.jsx';
+import { resolveStaffDisplayName } from '../../../../shared/staffAssignmentDisplay.mjs';
 import TourGalleryCard from './gallery/TourGalleryCard.jsx';
 import ParallelToursList from './ParallelToursList.jsx';
 import LegacyInfoCard from '../common/LegacyInfoCard.jsx';
@@ -517,10 +518,11 @@ export default function TourPage() {
                       ) : null}
                       {requiredGuides.map((a) => {
                         const st = summaryByScope[a.externalPersonId] || null;
+                        const name = resolveStaffDisplayName(a);
                         return (
                           <div key={a.id} className="flex items-center justify-between gap-2">
                             <div className="min-w-0 truncate text-[13px] text-gray-600">
-                              {a.displayName}
+                              {name}
                               <span className="ms-1 text-[11.5px] text-gray-400">
                                 · {ASSIGNMENT_ROLE_LABELS[a.role] || a.role}
                               </span>
@@ -531,7 +533,7 @@ export default function TourPage() {
                               onClick={() =>
                                 setSummaryOpen({
                                   actorScope: a.externalPersonId,
-                                  title: `טופס סיכום סיור · ${a.displayName}`,
+                                  title: `טופס סיכום סיור · ${name}`,
                                 })
                               }
                             />

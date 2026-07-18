@@ -30,6 +30,7 @@ import { summaryCompletionState, completeTour, reopenTour } from '../tours/compl
 import { cancelTourPayroll, kickPayrollReconcile } from '../payroll/service.js';
 import { isAssignableStaff } from '../people/eligibility.js';
 import { resolveTourGuideColor, resolveTourGuideColorInfo } from '../../../shared/guideColor.mjs';
+import { resolveStaffDisplayName } from '../../../shared/staffAssignmentDisplay.mjs';
 import {
   resolveBookingsCustomerIdentity,
   withBookingCount,
@@ -137,8 +138,9 @@ async function tourListExtrasFor(tourEventIds) {
         tourEventId: true,
         role: true,
         displayName: true,
+        externalPersonId: true,
         personRef: {
-          select: { profile: { select: { displayColor: true, imageUrl: true } } },
+          select: { displayName: true, profile: { select: { displayColor: true, imageUrl: true } } },
         },
       },
     }),
@@ -201,7 +203,7 @@ async function tourListExtrasFor(tourEventIds) {
   const namesByTour = new Map();
   for (const [tid, rows] of regsByTour) namesByTour.set(tid, tourCustomerNames(rows));
   const staff = (a) => ({
-    name: a.displayName,
+    name: resolveStaffDisplayName(a),
     imageUrl: a.personRef?.profile?.imageUrl || null,
     role: a.role,
   });
@@ -387,8 +389,9 @@ router.get(
         assignments: {
           select: {
             displayName: true,
+            externalPersonId: true,
             role: true,
-            personRef: { select: { profile: { select: { displayColor: true } } } },
+            personRef: { select: { displayName: true, profile: { select: { displayColor: true } } } },
           },
         },
         activityComponents: {
@@ -442,7 +445,7 @@ router.get(
           participants: o.activeSeats,
           capacity: t.capacity,
           notes: t.notes,
-          leadGuideName: lead?.displayName || null,
+          leadGuideName: lead ? resolveStaffDisplayName(lead) : null,
           teamCount: t.assignments.length,
           guideColor: colorInfo.color,
           guideColorSource: colorInfo.source,

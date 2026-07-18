@@ -35,6 +35,7 @@ import {
 import { entryTotals, deriveOfficeState, autoAmountMinor, reportTotals } from '../payroll/engine.js';
 import { emitPayrollChanged, openPayrollStream } from '../payroll/events.js';
 import { guideConversationDto } from '../payroll/dto.js';
+import { resolveStaffDisplayName } from '../../../shared/staffAssignmentDisplay.mjs';
 import { isAssignableStaff } from '../people/eligibility.js';
 import { businessToday } from '../tours/completion.js';
 
@@ -78,7 +79,7 @@ function entryPayload(e) {
   const lines = [...(e.lines || [])].sort((a, b) => a.sortOrder - b.sortOrder);
   return {
     id: e.id,
-    displayName: e.displayName,
+    displayName: resolveStaffDisplayName(e),
     externalPersonId: e.externalPersonId,
     role: e.role,
     state: e.state,
@@ -136,7 +137,9 @@ function activitySummary(a) {
   };
 }
 
-const ACTIVITY_INCLUDE = { entries: { include: { lines: true } } };
+const ACTIVITY_INCLUDE = {
+  entries: { include: { lines: true, personRef: { select: { displayName: true } } } },
+};
 
 // ---------- day screen ----------
 // GET /api/payroll/day?date=YYYY-MM-DD — lazily materialises payroll for every
@@ -201,14 +204,14 @@ router.get(
 
     const allEntries = await prisma.payrollEntry.findMany({
       where: { state: 'active', activity: { state: 'active', payrollMonth: { in: months } } },
-      include: { activity: true, lines: true },
+      include: { activity: true, lines: true, personRef: { select: { displayName: true } } },
       orderBy: { createdAt: 'asc' },
     });
     // Guide options come from the UNfiltered month set (so the dropdown keeps
     // showing everyone in range); totals/rows below honor the filter — the
     // summary numbers stay server-owned under any selection.
     const guideOptions = [
-      ...new Map(allEntries.map((e) => [e.externalPersonId, e.displayName])).entries(),
+      ...new Map(allEntries.map((e) => [e.externalPersonId, resolveStaffDisplayName(e)])).entries(),
     ]
       .map(([value, label]) => ({ value, label }))
       .sort((a, b) => a.label.localeCompare(b.label, 'he'));
@@ -244,12 +247,13 @@ router.get(
             ? 'completed'
             : 'waiting_guide';
 
+      const resolvedName = resolveStaffDisplayName(e);
       let g = byGuide.get(e.externalPersonId);
       if (!g) {
-        g = { externalPersonId: e.externalPersonId, displayName: e.displayName, entries: [], totals: zero() };
+        g = { externalPersonId: e.externalPersonId, displayName: resolvedName, entries: [], totals: zero() };
         byGuide.set(e.externalPersonId, g);
       }
-      g.displayName = e.displayName; // latest snapshot wins for the header
+      g.displayName = resolvedName; // canonical name (linked PersonRef) wins for the header
       for (const t of [g.totals, summary]) {
         if (officeApproved) {
           t.officeApprovedMinor += totals.totalMinor;
@@ -534,7 +538,14 @@ router.get(
         include: {
           product: { select: { nameHe: true } },
           location: { select: { nameHe: true } },
-          assignments: { select: { displayName: true, role: true, externalPersonId: true } },
+          assignments: {
+            select: {
+              displayName: true,
+              role: true,
+              externalPersonId: true,
+              personRef: { select: { displayName: true } },
+            },
+          },
           bookings: {
             where: { status: 'active' },
             select: {
@@ -569,7 +580,7 @@ router.get(
             title: b.deal?.title || null,
             organization: b.deal?.organization?.name || null,
           })),
-          team: t.assignments.map((a) => ({ displayName: a.displayName, role: a.role })),
+          team: t.assignments.map((a) => ({ displayName: resolveStaffDisplayName(a), role: a.role })),
         };
       }
     }

@@ -7,6 +7,7 @@ import {
   ASSIGNMENT_ROLE_STYLES,
   ASSIGNMENT_ROLE_DOTS,
 } from './config.js';
+import { resolveStaffDisplayName } from '../../../../shared/staffAssignmentDisplay.mjs';
 
 // Shared guide-assignment editor ("צוות משובץ") — the ONE implementation used by
 // BOTH the Tour modal and the Deal-side tour editor, so staff assignment logic,
@@ -35,7 +36,7 @@ export function StaffAvatar({ src, name, className = 'h-6 w-6' }) {
 function GuideChip({ a, onRoleChange, onRemove, busy }) {
   const [menu, setMenu] = useState(false);
   const gone = !a.personRef;
-  const name = a.personRef?.displayName || a.displayName || '?';
+  const name = resolveStaffDisplayName(a);
   return (
     <div className="relative">
       <div

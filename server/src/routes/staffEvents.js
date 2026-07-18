@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { diffPersonFields, recordPersonChanges } from '../timeline/personChangelog.js';
+import { tryResolveHistoricalStaffLinks, normalizeEmail } from '../people/historicalStaffLinks.js';
 
 // Recruitment-driven identity writes are attributed explicitly in the person
 // changelog — nothing changes silently.
@@ -98,6 +99,11 @@ router.post('/', handle(async (req, res) => {
       origin: RECRUITMENT_ORIGIN,
       source: 'recruitment_sync',
     });
+    // If this event set/changed the email, the person may now own historical
+    // imported rows keyed by that email — claim them (idempotent, non-blocking).
+    if (identity.email !== undefined && normalizeEmail(identity.email) !== normalizeEmail(existing.email)) {
+      await tryResolveHistoricalStaffLinks(prisma, existing.id);
+    }
     return res.json({ ok: true, event, created: false, lifecycleHint: person.lifecycleHint });
   }
 
@@ -117,6 +123,8 @@ router.post('/', handle(async (req, res) => {
     },
     select: { id: true, lifecycleHint: true },
   });
+  // A freshly-ingested person may be the canonical identity for historical rows.
+  if (identity.email) await tryResolveHistoricalStaffLinks(prisma, person.id);
   res.json({ ok: true, event, created: true, lifecycleHint: person.lifecycleHint });
 }));
 

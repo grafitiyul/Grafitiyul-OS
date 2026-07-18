@@ -7,6 +7,8 @@
 // Pure functions — every builder takes already-fetched rows so the logic is
 // unit-testable without a database.
 
+import { resolveStaffDisplayName } from '../../../../shared/staffAssignmentDisplay.mjs';
+
 const DEFAULT_TOUR_DURATION_HOURS = 3;
 
 // TourEvent.kind IS the Deal's activity vocabulary (same mapping the admin
@@ -216,7 +218,7 @@ export function guideTourDetailDto({
     team: permissions.viewTeam
       ? (tour.assignments || []).map((a) => ({
           id: a.id,
-          displayName: a.displayName,
+          displayName: resolveStaffDisplayName(a),
           role: a.role,
           imageUrl: a.personRef?.profile?.imageUrl || null,
         }))

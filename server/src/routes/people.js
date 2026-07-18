@@ -19,6 +19,7 @@ import {
 } from '../timeline/personChangelog.js';
 import { storeImageAsset, storeProfileImage } from '../people/profileImage.js';
 import { ASSIGNABLE_WHERE } from '../people/eligibility.js';
+import { tryResolveHistoricalStaffLinks, normalizeEmail } from '../people/historicalStaffLinks.js';
 import { isStaffColorKey } from '../../../shared/staffColors.mjs';
 
 // Guide (PersonRef + PersonProfile) CRUD, portal token management, image
@@ -131,6 +132,11 @@ async function syncFromUpstream() {
         },
         source: 'recruitment_sync',
       });
+      // If the sync just set/changed this recruitment person's email, they may
+      // now own historical imported rows keyed by that email — claim them.
+      if (normalizeEmail(data.email) !== normalizeEmail(existing.email)) {
+        await tryResolveHistoricalStaffLinks(prisma, existing.id);
+      }
       updated += 1;
     } else {
       // Slice E: GOS no longer DERIVES the roster from recruitment. People enter
@@ -387,6 +393,11 @@ router.post(
       include: PERSON_INCLUDE,
     });
 
+    // A newly-created person may be the canonical identity for historical
+    // imported tours that were keyed by this email before GOS existed. Claim
+    // them now — idempotent, conflict-safe, never blocks the create response.
+    if (person.email) await tryResolveHistoricalStaffLinks(prisma, person.id);
+
     // Audit: WHO (admin origin) + WHEN (entry timestamp) + source='admin' +
     // the initial identity/profile values + status + portal access. Later
     // profile/status edits land in the SAME immutable person changelog.
@@ -453,6 +464,11 @@ router.put(
       origin: await userOrigin(req.adminAuth?.userId),
       source: 'admin',
     });
+    // If the email was newly set or changed, this person may now be the
+    // canonical owner of historical rows keyed by that email — claim them.
+    if (data.email !== undefined && normalizeEmail(data.email) !== normalizeEmail(before.email)) {
+      await tryResolveHistoricalStaffLinks(prisma, person.id);
+    }
     res.json(person);
   }),
 );
