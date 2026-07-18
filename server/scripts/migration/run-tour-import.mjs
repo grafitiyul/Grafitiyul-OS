@@ -34,11 +34,16 @@ const personRefByEmail = new Map(personRefs.filter((p) => p.email).map((p) => [S
 const dealMetaByLegacyId = new Map(legacyDeals.map((d) => [d.orderNo, { activityType: d.activityType }]));
 console.log(`inputs: master ${masterTours.length} · coord ${coordRows.length} · payroll ${payrollRows.length} · deal xwalk ${dealXwalk.size} · tours done ${existingTourXwalk.size} · today pinned ${today}`);
 
-// ── plan + gates ──────────────────────────────────────────────────────────────
-const plan = planTourImport({ masterTours, coordRows, payrollRows, dealXwalk, dealMetaByLegacyId, personRefByEmail, existingTourXwalk, today });
-console.log(`plan hash: ${plan.payloadHash}`);
+// ── two plans (proven pattern) ────────────────────────────────────────────────
+// PIN plan: EMPTY tour crosswalk — its hash must equal the approved Hash A,
+// proving the source + decisions state is unchanged since the rehearsal.
+// EXECUTION plan: real crosswalk — writes only what is missing (resume/rerun).
+const common = { masterTours, coordRows, payrollRows, dealXwalk, dealMetaByLegacyId, personRefByEmail, today };
+const pinPlan = planTourImport({ ...common, existingTourXwalk: new Map() });
+const plan = planTourImport({ ...common, existingTourXwalk });
+console.log(`pin hash: ${pinPlan.payloadHash}`);
 const s = plan.stats;
-console.log(`create ${s.create} · already ${s.alreadyImported} · cancelled-excluded ${s.cancelledExcluded} · postponed-excluded ${s.postponedExcluded} · deferred-future ${s.deferredFuture}`);
+console.log(`execution: create ${s.create} · already ${s.alreadyImported} · cancelled-excluded ${s.cancelledExcluded} · postponed-excluded ${s.postponedExcluded} · deferred-future ${s.deferredFuture}`);
 
 // Expected populations come from the approved rehearsal output — never stale
 // constants (the future/completed split moves with the pinned date).
@@ -52,10 +57,13 @@ if (Object.values(expected).some((v) => !Number.isFinite(v))) {
   console.error('missing --expect-master/--expect-wave1/--expect-cancelled/--expect-future (from the rehearsal output)');
   await prisma.$disconnect(); process.exit(1);
 }
-const gates = checkTourExecutionGates({ plan, expectHash, expected });
-console.log(`\nHARD GATES: ${gates.ok ? 'ALL PASS ✓' : 'REFUSED'}`);
-for (const f of gates.failures) console.error(`  ✗ ${f}`);
-if (!gates.ok) { await prisma.$disconnect(); process.exit(2); }
+// Hash + populations gate on the PIN plan; structural gates on BOTH.
+const pinGates = checkTourExecutionGates({ plan: pinPlan, expectHash, expected });
+const execGates = checkTourExecutionGates({ plan, expectHash: plan.payloadHash, expected });
+const failures = [...pinGates.failures, ...execGates.failures];
+console.log(`\nHARD GATES: ${failures.length === 0 ? 'ALL PASS ✓' : 'REFUSED'}`);
+for (const f of failures) console.error(`  ✗ ${f}`);
+if (failures.length) { await prisma.$disconnect(); process.exit(2); }
 
 // ── side-effect baseline: everything Wave 1 must NOT touch ────────────────────
 const SIDE_TABLES = ['task', 'quoteOffer', 'quoteDocument', 'paymentRequest', 'dealPaymentLink', 'icountDocument', 'emailThread', 'whatsAppChat', 'operationalIssue'];
@@ -84,7 +92,7 @@ console.log(`frozen-evidence payroll component: ${component.id} (key migration_h
 // ── execute ───────────────────────────────────────────────────────────────────
 const batchId = `tours-w1-${new Date().toISOString().replace(/[:.]/g, '').slice(0, 15)}`;
 const run = await prisma.migrationRun.create({
-  data: { kind: 'import', target: 'import.tours.wave1', status: 'running', snapshotId, batchId, startedAt: new Date(), counters: { ...s, exclusionRule: 'cancelled_tour_not_migrated', hashA: plan.payloadHash } },
+  data: { kind: 'import', target: 'import.tours.wave1', status: 'running', snapshotId, batchId, startedAt: new Date(), counters: { ...s, exclusionRule: 'cancelled_tour_not_migrated', hashA: pinPlan.payloadHash, execHash: plan.payloadHash } },
 });
 console.log(`\nexecuting batch ${batchId} (run ${run.id})…`);
 const t0 = Date.now();
@@ -92,9 +100,9 @@ try {
   const res = await executeTourPlan(prisma, plan, {
     batchId, snapshotId, historicalComponentId: component.id, chunk: 500,
     log: (m) => console.log(m),
-    checkpoint: async (c) => prisma.migrationRun.update({ where: { id: run.id }, data: { counters: { ...s, ...c, hashA: plan.payloadHash } } }),
+    checkpoint: async (c) => prisma.migrationRun.update({ where: { id: run.id }, data: { counters: { ...s, ...c, hashA: pinPlan.payloadHash, execHash: plan.payloadHash } } }),
   });
-  await prisma.migrationRun.update({ where: { id: run.id }, data: { status: 'done', finishedAt: new Date(), counters: { ...s, written: res.written, evidence: res.evidence, hashA: plan.payloadHash } } });
+  await prisma.migrationRun.update({ where: { id: run.id }, data: { status: 'done', finishedAt: new Date(), counters: { ...s, written: res.written, evidence: res.evidence, hashA: pinPlan.payloadHash, execHash: plan.payloadHash } } });
   console.log(`\n✔ wrote ${res.written} tours + ${res.evidence} evidence rows in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 } catch (e) {
   await prisma.migrationRun.update({ where: { id: run.id }, data: { status: 'failed', finishedAt: new Date(), error: String(e?.message || e).slice(0, 500) } });
