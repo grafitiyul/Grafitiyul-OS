@@ -10,6 +10,7 @@ import DealSalesScript from './DealSalesScript.jsx';
 import DealContactsDialog from './DealContactsDialog.jsx';
 import OrganizationEditDialog from './OrganizationEditDialog.jsx';
 import PriceBuilderDialog from './PriceBuilderDialog.jsx';
+import HistoricalPricingDialog from './HistoricalPricingDialog.jsx';
 import GroupTicketBuilderDialog from './GroupTicketBuilderDialog.jsx';
 import GroupRegistrationModal from './GroupRegistrationModal.jsx';
 import WorkspaceLayout from '../../shell/WorkspaceLayout.jsx';
@@ -127,6 +128,11 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
   const [variants, setVariants] = useState([]);
   const [allLocations, setAllLocations] = useState([]);
   const [priceBuilderOpen, setPriceBuilderOpen] = useState(false);
+  // Frozen historical commercial breakdown (migrated from Pipedrive). One cheap
+  // read on deal load: null = unknown, { exists:false } = none, else the frozen
+  // read-only payload. The trigger + viewer appear ONLY when exists:true.
+  const [historicalPricing, setHistoricalPricing] = useState(null);
+  const [historicalPricingOpen, setHistoricalPricingOpen] = useState(false);
   // Tours lifecycle dialogs. WON is gated server-side (declarative required
   // fields, no draft tours) — these render the server's answers:
   //   • wonMissing: the 422 checklist ("להשלים לפני WON")
@@ -290,6 +296,19 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
     api.activityTypes.list().then(setActivityTypes).catch(() => {});
     api.locations.list().then(setAllLocations).catch(() => {});
   }, []);
+
+  // One cheap READ-ONLY probe for a migrated historical price breakdown, keyed on
+  // the deal's UUID (like getPriceLines). Failures/absence simply hide the entry
+  // point — the page is unchanged for non-migrated deals.
+  useEffect(() => {
+    if (!deal?.id) { setHistoricalPricing(null); return undefined; }
+    let live = true;
+    api.deals
+      .historicalPriceLines(deal.id)
+      .then((r) => { if (live) setHistoricalPricing(r || null); })
+      .catch(() => { if (live) setHistoricalPricing(null); });
+    return () => { live = false; };
+  }, [deal?.id]);
 
   // Map the Deal's activityType (group|private|business) to the pricing
   // ActivityType catalog (public|private|business). 'group' → 'public' — the
@@ -872,6 +891,19 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
           onRefresh={refresh}
         />
 
+        {/* Read-only historical commercial breakdown (migrated from Pipedrive).
+            Appears ONLY for deals that carry a frozen imported price version. It
+            opens a display-only viewer — no working version, no save. */}
+        {historicalPricing?.exists && (
+          <button
+            type="button"
+            onClick={() => setHistoricalPricingOpen(true)}
+            className="inline-flex items-center gap-1.5 text-[13px] font-medium text-gray-600 hover:text-gray-900 hover:underline"
+          >
+            🗄️ פירוט מסחרי היסטורי (מערכת קודמת)
+          </button>
+        )}
+
       {deal.status === 'lost' && (
         <Card variant="panel" title="פרטי LOST">
           <dl className="space-y-2 text-sm">
@@ -1303,6 +1335,14 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
           open={priceBuilderOpen}
           onClose={() => setPriceBuilderOpen(false)}
           onSaved={refresh}
+        />
+      )}
+
+      {historicalPricingOpen && historicalPricing?.exists && (
+        <HistoricalPricingDialog
+          open
+          data={historicalPricing}
+          onClose={() => setHistoricalPricingOpen(false)}
         />
       )}
 

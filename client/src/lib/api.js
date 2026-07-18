@@ -521,6 +521,11 @@ export const api = {
     // non-group deal (nothing tour-visible changes).
     savePriceLines: (id, data) =>
       tourMutation(request(`/api/deals/${id}/price-lines`, { method: 'PUT', body: JSON.stringify(data) })),
+    // Frozen historical commercial breakdown migrated from Pipedrive (READ-ONLY).
+    // Returns { exists:false } or the frozen version + client-shaped lines (same
+    // shape as getPriceLines). Pure read — never creates or mutates a working
+    // version; the UI displays it and can never write it back.
+    historicalPriceLines: (id) => request(`/api/deals/${id}/price-lines/historical`),
     // Group registration completion (the progressive modal's actions). All
     // idempotent; the server builds on the shipped lifecycle primitives.
     registerPaymentUrl: (id) =>
