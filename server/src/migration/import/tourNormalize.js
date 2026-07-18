@@ -4,7 +4,14 @@ import * as r2 from '../r2.js';
 import { createSnapshotReader } from '../review/snapshotReader.js';
 
 const first = (v) => (Array.isArray(v) ? v[0] : v);
-const t = (s) => String(s ?? '').trim();
+// Postgres/Prisma reject NUL and unpaired UTF-16 surrogates (e.g. an emoji
+// cut in half by slicing) — strip both from every string we normalize.
+const sanitize = (s) => String(s)
+  .replace(new RegExp('\\u0000', 'g'), '')
+  .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
+  .replace(/(^|[^\uD800-\uDBFF])([\uDC00-\uDFFF])/g, '$1');
+const cut = (s, n) => sanitize(String(s).slice(0, n));
+const t = (s) => sanitize(String(s ?? '')).trim();
 const num = (v) => { const m = /(\d{2,})/.exec(String(first(v) ?? '')); return m ? Number(m[1]) : null; };
 const hhmm = (s) => { const m = /(\d{1,2}):(\d{2})/.exec(String(first(s) || '')); return m ? `${m[1].padStart(2, '0')}:${m[2]}` : null; };
 const toMinor = (v) => (v == null || v === '' ? null : Math.round(Number(first(v)) * 100));
@@ -33,7 +40,7 @@ export async function loadNormalizedTourLayer(snapshotId) {
       status: t(first(f['סטטוס']) || ''),
       legacyCalendarId: null,
       cardExtras: [
-        ...(f['סיכום סיור'] ? [{ label: 'סיכום סיור (מקור)', value: t(first(f['סיכום סיור'])).slice(0, 500) }] : []),
+        ...(f['סיכום סיור'] ? [{ label: 'סיכום סיור (מקור)', value: cut(t(first(f['סיכום סיור'])), 500) }] : []),
         ...(f['משתתפים בסיור'] != null ? [{ label: 'משתתפים בסיור (מקור)', value: String(f['משתתפים בסיור']) }] : []),
       ],
     };
