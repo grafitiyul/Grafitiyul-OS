@@ -100,7 +100,6 @@ router.put(
       labelEn,
       sortOrder,
       isActive,
-      defaultPriceListId,
       quoteContentHe,
       quoteContentEn,
       defaultPaymentTermId,
@@ -114,9 +113,10 @@ router.put(
       data.labelEn = labelEn ? String(labelEn).trim() : null;
     if (sortOrder !== undefined) data.sortOrder = Number(sortOrder) || 0;
     if (isActive !== undefined) data.isActive = !!isActive;
-    // Pricing (Slice 2): default price list for this org type ('' clears it).
-    if (defaultPriceListId !== undefined)
-      data.defaultPriceListId = defaultPriceListId || null;
+    // defaultPriceListId is INERT legacy storage (never populated in prod; the
+    // advanced-pricing screen that wrote it was removed and resolution no
+    // longer reads per-org price lists — in-list organizationSubtypeId rule
+    // scoping covers per-org pricing). Deliberately NOT writable.
     // Quote content (rich HTML) owned by the org classification. NOT wired to
     // Quotes yet — stored for future automatic insertion by type/subtype.
     if (quoteContentHe !== undefined)

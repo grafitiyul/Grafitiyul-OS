@@ -16,30 +16,20 @@ import { composeBuilderLines } from '../pricing/builderCompose.js';
 
 const router = Router();
 
-// Resolve which price list applies: organization SUBTYPE default overrides the
-// organization TYPE default, which falls back to the system default list.
-async function resolvePriceListId({ organizationTypeId, organizationSubtypeId }) {
-  if (organizationSubtypeId) {
-    const sub = await prisma.organizationSubtype.findUnique({
-      where: { id: organizationSubtypeId },
-      select: { defaultPriceListId: true },
-    });
-    if (sub?.defaultPriceListId)
-      return { id: sub.defaultPriceListId, source: 'organization_subtype' };
-  }
-  if (organizationTypeId) {
-    const type = await prisma.organizationType.findUnique({
-      where: { id: organizationTypeId },
-      select: { defaultPriceListId: true },
-    });
-    if (type?.defaultPriceListId)
-      return { id: type.defaultPriceListId, source: 'organization_type' };
-  }
+// The DEFAULT price list (isDefault) is the LIVE pricing version — the one
+// list resolution ever uses; the board's version settings flip it atomically.
+//
+// Removed (hidden-config cleanup): per-organization-type/subtype price-list
+// overrides. They were never populated in production, had no UI, and per-org
+// pricing is already expressed INSIDE the live list via the rules'
+// organizationSubtypeId scope. The defaultPriceListId columns remain as inert
+// legacy storage — nothing reads or writes them anymore.
+async function resolvePriceListId() {
   const def = await prisma.priceList.findFirst({
     where: { isDefault: true },
     select: { id: true },
   });
-  return def ? { id: def.id, source: 'system_default' } : null;
+  return def ? { id: def.id } : null;
 }
 
 // Draft-rule preview (Slice B). Computes ONE rule's price for a participant
@@ -201,7 +191,7 @@ router.post(
 
     // Applicable price list (subtype → type → system default) for the VAT default
     // and the product-line resolution.
-    const resolvedList = await resolvePriceListId(context);
+    const resolvedList = await resolvePriceListId();
     const priceList = resolvedList
       ? await prisma.priceList.findUnique({
           where: { id: resolvedList.id },
@@ -237,7 +227,6 @@ router.post(
           productResolution = {
             ok: true,
             priceList: { id: priceList.id, nameHe: priceList.nameHe },
-            priceListSource: resolvedList.source,
             priceModel: r.priceModel,
             vatMode: r.vatMode,
             vatRate: r.vatRate,

@@ -1002,9 +1002,13 @@ export const api = {
     removeMethod: (id) => request(`/api/payment-config/methods/${id}`, { method: 'DELETE' }),
   },
   // ── Products & Pricing — Slice 2 (pricing engine + add-ons) ──
+  // Pricing versions (גרסת תמחור) — managed from the Pricing board's version bar.
   priceLists: {
     list: () => request('/api/price-lists'),
     create: (data) => request('/api/price-lists', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/api/price-lists/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    setDefault: (id) => request(`/api/price-lists/${id}/default`, { method: 'PUT' }),
+    remove: (id) => request(`/api/price-lists/${id}`, { method: 'DELETE' }),
   },
   priceRules: {
     list: (priceListId) => request(`/api/price-rules${qs({ priceListId })}`),
@@ -1036,9 +1040,11 @@ export const api = {
     // flag is the SOLE authority; no product/city/activity filtering, server-side.
     groupCards: () => request('/api/pricing/group-cards'),
   },
-  // Pricing Segments — the 6 business tabs (read-only; bindings are stored data).
+  // Pricing Segments — the business tabs. Bindings (activity/subtype scope
+  // stamped onto the tab's cards) are managed from the board's tab settings.
   pricingSegments: {
     list: () => request('/api/pricing-segments'),
+    update: (id, data) => request(`/api/pricing-segments/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   },
   // שעות שבת וחג — Sabbath & Holiday hours (source of truth for time detection).
   sabbathHours: {

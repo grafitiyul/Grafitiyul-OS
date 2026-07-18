@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api.js';
 import SettingsChrome from '../settings/SettingsChrome.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
+import Dialog from '../common/Dialog.jsx';
 import PricingSimulatorDialog from './PricingSimulatorDialog.jsx';
 import { formatMinor, toMinor, minorToInput } from '../../lib/money.js';
 
@@ -108,10 +109,16 @@ export default function PricingBoard() {
   const [products, setProducts] = useState([]);
   const [ticketTypes, setTicketTypes] = useState([]);
   const [addons, setAddons] = useState([]);
+  const [activityTypes, setActivityTypes] = useState([]);
+  const [orgSubtypes, setOrgSubtypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   // Pricing Simulator popup — rendered only while open so every open starts clean.
   const [simulatorOpen, setSimulatorOpen] = useState(false);
+  // Canonical settings popups for the two formerly-hidden configurations:
+  // version settings (name/VAT defaults/live default) and tab bindings.
+  const [versionSettingsOpen, setVersionSettingsOpen] = useState(false);
+  const [tabSettingsOpen, setTabSettingsOpen] = useState(false);
 
   const [versionId, setVersionId] = useState(null);
   const [segmentId, setSegmentId] = useState(null);
@@ -130,17 +137,21 @@ export default function PricingBoard() {
   const refreshAll = useCallback(async () => {
     setError(null);
     try {
-      const [seg, p, tt, ad] = await Promise.all([
+      const [seg, p, tt, ad, at, os] = await Promise.all([
         api.pricingSegments.list(),
         api.products.list(),
         api.ticketTypes.list(),
         api.addons.list(),
+        api.activityTypes.list(),
+        api.organizationSubtypes.list(),
         loadLists(),
       ]);
       setSegments(seg);
       setProducts(p);
       setTicketTypes(tt);
       setAddons(ad);
+      setActivityTypes(at);
+      setOrgSubtypes(os);
       setSegmentId((cur) => cur || seg[0]?.id || null);
     } catch (e) {
       setError(e.message);
@@ -179,11 +190,22 @@ export default function PricingBoard() {
         <div className="py-16 text-center text-sm text-gray-400">טוען…</div>
       ) : (
         <>
-          <VersionBar lists={lists} versionId={versionId} onSelect={setVersionId} onChanged={loadLists} />
+          <VersionBar
+            lists={lists}
+            versionId={versionId}
+            onSelect={setVersionId}
+            onChanged={loadLists}
+            onSettings={() => setVersionSettingsOpen(true)}
+          />
 
           {version ? (
             <>
-              <TabBar segments={segments} segmentId={segmentId} onSelect={setSegmentId} />
+              <TabBar
+                segments={segments}
+                segmentId={segmentId}
+                onSelect={setSegmentId}
+                onSettings={() => setTabSettingsOpen(true)}
+              />
               {segment && (
                 <SegmentPanel
                   key={`${version.id}:${segment.id}`}
@@ -202,13 +224,40 @@ export default function PricingBoard() {
       )}
 
       {simulatorOpen && <PricingSimulatorDialog open onClose={() => setSimulatorOpen(false)} />}
+
+      {versionSettingsOpen && version && (
+        <VersionSettingsDialog
+          list={version}
+          onClose={() => setVersionSettingsOpen(false)}
+          onChanged={async () => {
+            await loadLists();
+          }}
+          onDeleted={async () => {
+            setVersionSettingsOpen(false);
+            setVersionId(null);
+            await loadLists();
+          }}
+        />
+      )}
+      {tabSettingsOpen && segment && (
+        <SegmentBindingDialog
+          segment={segment}
+          activityTypes={activityTypes}
+          orgSubtypes={orgSubtypes}
+          onClose={() => setTabSettingsOpen(false)}
+          onSaved={async () => {
+            setTabSettingsOpen(false);
+            setSegments(await api.pricingSegments.list());
+          }}
+        />
+      )}
     </div>
   );
 }
 
 // ─────────────────────── Version selector (light bar) ──────────────────────
 
-function VersionBar({ lists, versionId, onSelect, onChanged }) {
+function VersionBar({ lists, versionId, onSelect, onChanged, onSettings }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
@@ -253,15 +302,199 @@ function VersionBar({ lists, versionId, onSelect, onChanged }) {
       ) : (
         <button onClick={() => setAdding(true)} className="h-9 rounded-full border border-dashed border-gray-300 px-3 text-[13px] text-gray-500 hover:bg-gray-50">+ גרסה</button>
       )}
+      {versionId && (
+        <button
+          type="button"
+          onClick={onSettings}
+          title="הגדרות הגרסה — שם, מע״מ ברירת מחדל, גרסה פעילה"
+          className="h-9 w-9 inline-flex items-center justify-center rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-50"
+        >
+          ⚙
+        </button>
+      )}
     </div>
+  );
+}
+
+// ───────────────────────── Version settings dialog ─────────────────────────
+// Canonical home for the per-version configuration that used to hide in the
+// retired הגדרות מתקדמות screen: name, VAT defaults, live-default flag, and a
+// guarded delete. The VAT default's only pricing role is builder lines set to
+// "inherit" — pricing cards always carry explicit VAT.
+
+const LIST_VAT_OPTS = [
+  { value: 'included', name: 'כולל מע״מ' },
+  { value: 'excluded', name: 'לפני מע״מ' },
+];
+
+function VersionSettingsDialog({ list, onClose, onChanged, onDeleted }) {
+  const [nameHe, setNameHe] = useState(list.nameHe || '');
+  const [vatMode, setVatMode] = useState(list.defaultVatMode || 'included');
+  const [vatRate, setVatRate] = useState(list.defaultVatRate ?? DEFAULT_VAT_RATE);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const ruleCount = list._count?.rules ?? 0;
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.priceLists.update(list.id, {
+        nameHe,
+        defaultVatMode: vatMode,
+        defaultVatRate: Number(vatRate) || 0,
+      });
+      await onChanged();
+      onClose();
+    } catch (e) {
+      setErr(e.payload?.error || e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function makeDefault() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.priceLists.setDefault(list.id);
+      await onChanged();
+      onClose();
+    } catch (e) {
+      setErr(e.payload?.error || e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function remove() {
+    if (!confirm(`למחוק את הגרסה "${list.nameHe}"?`)) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.priceLists.remove(list.id);
+      await onDeleted();
+    } catch (e) {
+      setErr(e.payload?.error === 'has_rules' ? 'לא ניתן למחוק גרסה שיש בה כרטיסי תמחור.' : e.payload?.error || e.message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={`הגדרות גרסה — ${list.nameHe}`}
+      footer={
+        <>
+          <button type="button" onClick={onClose} className="text-sm text-gray-600 border border-gray-300 rounded-md px-4 py-2 hover:bg-gray-50">ביטול</button>
+          <button type="button" onClick={save} disabled={busy || !nameHe.trim()} className="bg-blue-600 text-white text-sm font-semibold rounded-md px-6 py-2 hover:bg-blue-700 disabled:opacity-50">
+            {busy ? 'שומר…' : 'שמירה'}
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-4 px-1 py-1">
+        {err && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">שגיאה: {err}</div>}
+        <Field label="שם הגרסה">
+          <input value={nameHe} onChange={(e) => setNameHe(e.target.value)} className={INPUT} />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="מע״מ ברירת מחדל"><Select value={vatMode} onChange={setVatMode} options={LIST_VAT_OPTS} /></Field>
+          <Field label="שיעור מע״מ %">
+            <input dir="ltr" inputMode="numeric" value={vatRate}
+              onChange={(e) => setVatRate(e.target.value === '' ? '' : Math.max(0, Number(e.target.value) || 0))}
+              className={`${INPUT} text-left`} />
+          </Field>
+        </div>
+        <p className="text-[12px] text-gray-400 leading-relaxed">
+          מע״מ ברירת המחדל חל רק על שורות בבונה המחיר שלא נקבע להן מע״מ מפורש. כרטיסי תמחור תמיד קובעים מע״מ במפורש בכרטיס עצמו.
+        </p>
+
+        <div className="border-t border-gray-100 pt-3 space-y-2">
+          {list.isDefault ? (
+            <p className="text-[13px] text-emerald-700">★ זו הגרסה הפעילה — המנוע מתמחר לפיה.</p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3">
+              <button type="button" onClick={makeDefault} disabled={busy} className="text-[13px] font-medium text-emerald-700 border border-emerald-200 bg-emerald-50 rounded-lg px-3 py-1.5 hover:bg-emerald-100 disabled:opacity-50">
+                ★ קבע כגרסה הפעילה
+              </button>
+              <button type="button" onClick={remove} disabled={busy || ruleCount > 0}
+                title={ruleCount > 0 ? 'לא ניתן למחוק גרסה שיש בה כרטיסים' : 'מחיקת הגרסה'}
+                className="text-[13px] text-red-600 border border-red-200 rounded-lg px-3 py-1.5 hover:bg-red-50 disabled:opacity-40">
+                מחק גרסה
+              </button>
+            </div>
+          )}
+          {!list.isDefault && (
+            <p className="text-[12px] text-gray-400">קביעת גרסה כפעילה מחליפה את הגרסה הפעילה הנוכחית באופן מיידי לכל התמחור במערכת.</p>
+          )}
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+// ───────────────────────── Tab binding dialog ───────────────────────────────
+// Canonical home for the tab→scope binding: the activity type / org subtype a
+// tab stamps onto every card saved under it (this IS engine matching scope).
+// Saving propagates the new scope to the tab's EXISTING cards too, so old and
+// new cards always resolve consistently.
+
+function SegmentBindingDialog({ segment, activityTypes, orgSubtypes, onClose, onSaved }) {
+  const [activityTypeId, setActivityTypeId] = useState(segment.activityType?.id || '');
+  const [organizationSubtypeId, setOrganizationSubtypeId] = useState(segment.organizationSubtype?.id || '');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.pricingSegments.update(segment.id, { activityTypeId, organizationSubtypeId });
+      await onSaved();
+    } catch (e) {
+      setErr(e.payload?.error || e.message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={`שיוך לשונית — ${segment.nameHe}`}
+      footer={
+        <>
+          <button type="button" onClick={onClose} className="text-sm text-gray-600 border border-gray-300 rounded-md px-4 py-2 hover:bg-gray-50">ביטול</button>
+          <button type="button" onClick={save} disabled={busy} className="bg-blue-600 text-white text-sm font-semibold rounded-md px-6 py-2 hover:bg-blue-700 disabled:opacity-50">
+            {busy ? 'שומר…' : 'שמירה'}
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-4 px-1 py-1">
+        {err && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">שגיאה: {err}</div>}
+        <Field label="סוג פעילות">
+          <Select value={activityTypeId} onChange={setActivityTypeId}
+            options={[{ value: '', name: '— ללא שיוך (כל הפעילויות) —' }, ...activityTypes.map((a) => ({ value: a.id, name: a.nameHe }))]} />
+        </Field>
+        <Field label="תת-סוג ארגון">
+          <Select value={organizationSubtypeId} onChange={setOrganizationSubtypeId}
+            options={[{ value: '', name: '— ללא שיוך —' }, ...orgSubtypes.map((s) => ({ value: s.id, name: s.label }))]} />
+        </Field>
+        <p className="text-[12px] text-gray-400 leading-relaxed">
+          השיוך קובע את טווח ההתאמה של כרטיסי הלשונית במנוע התמחור (איזה כרטיס מנצח לאיזה דיל).
+          שינוי כאן מעדכן אוטומטית גם את כל הכרטיסים הקיימים בלשונית, כדי שכרטיס ישן לעולם לא יתומחר אחרת מכרטיס חדש.
+        </p>
+      </div>
+    </Dialog>
   );
 }
 
 // ─────────────────────────────── Tab bar ───────────────────────────────────
 
-function TabBar({ segments, segmentId, onSelect }) {
+function TabBar({ segments, segmentId, onSelect, onSettings }) {
   return (
-    <div className="flex flex-wrap gap-1 border-b border-gray-200">
+    <div className="flex flex-wrap items-center gap-1 border-b border-gray-200">
       {segments.map((s) => (
         <button key={s.id} onClick={() => onSelect(s.id)}
           className={`h-10 rounded-t-lg px-4 text-sm font-medium transition -mb-px border-b-2 ${
@@ -272,6 +505,16 @@ function TabBar({ segments, segmentId, onSelect }) {
           {s.nameHe}
         </button>
       ))}
+      {segmentId && (
+        <button
+          type="button"
+          onClick={onSettings}
+          title="שיוך הלשונית — סוג פעילות ותת-סוג ארגון לכרטיסי הלשונית"
+          className="h-9 w-9 inline-flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-50 -mb-px"
+        >
+          ⚙
+        </button>
+      )}
     </div>
   );
 }

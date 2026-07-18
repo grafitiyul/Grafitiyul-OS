@@ -98,7 +98,6 @@ router.put(
       organizationTypeId,
       sortOrder,
       isActive,
-      defaultPriceListId,
       quoteContentHe,
       quoteContentEn,
     } = req.body || {};
@@ -110,9 +109,9 @@ router.put(
       data.organizationTypeId = organizationTypeId || null;
     if (sortOrder !== undefined) data.sortOrder = Number(sortOrder) || 0;
     if (isActive !== undefined) data.isActive = !!isActive;
-    // Pricing (Slice 2): default price list for this subtype ('' clears it).
-    if (defaultPriceListId !== undefined)
-      data.defaultPriceListId = defaultPriceListId || null;
+    // defaultPriceListId is INERT legacy storage (never populated in prod; see
+    // organizationTypes.js — resolution no longer reads per-org price lists).
+    // Deliberately NOT writable.
     // Quote content (rich HTML) owned by the org classification. NOT wired to
     // Quotes yet — stored for future automatic insertion by type/subtype.
     if (quoteContentHe !== undefined)

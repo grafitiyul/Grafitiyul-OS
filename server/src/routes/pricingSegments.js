@@ -46,11 +46,48 @@ router.get(
   }),
 );
 
-// Dead-code removal (הגדרות מתקדמות cleanup): the PUT binding editor (with its
-// bulk scope propagation onto the tab's PriceRules) served ONLY the retired
-// advanced pricing screen and was removed with it. The stored bindings
-// (activityTypeId / organizationSubtypeId) remain and are still copied onto new
-// cards by the business editor — configuration data untouched, editor gone
-// (recoverable from git history if binding management ever returns).
+// Update a tab's owner-set bindings. Canonical write path for the Pricing
+// board's tab settings (the retired הגדרות מתקדמות screen is NOT the consumer).
+// Bindings are ACTIVE pricing configuration: they are stamped as the engine
+// scope of every card saved under the tab. Empty/null clears back to
+// "unmapped" (cards then price as activity-wildcard).
+//
+// When a binding changes, PROPAGATE it to every PriceRule authored under this
+// tab (matched by pricingSegmentId), so the cards' engine scope stays truthful
+// and an old card never resolves differently from a new one. This is the only
+// place the activity/subtype scope of card rules is rewritten in bulk.
+router.put(
+  '/:id',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const data = {};
+    if (b.nameHe !== undefined) data.nameHe = String(b.nameHe);
+    if (b.active !== undefined) data.active = b.active !== false;
+    const bindingChanged =
+      b.activityTypeId !== undefined || b.organizationSubtypeId !== undefined;
+    if (b.activityTypeId !== undefined) data.activityTypeId = b.activityTypeId || null;
+    if (b.organizationSubtypeId !== undefined)
+      data.organizationSubtypeId = b.organizationSubtypeId || null;
+
+    const segment = await prisma.$transaction(async (tx) => {
+      const updated = await tx.pricingSegment.update({
+        where: { id: req.params.id },
+        data,
+        include,
+      });
+      if (bindingChanged) {
+        await tx.priceRule.updateMany({
+          where: { pricingSegmentId: updated.id },
+          data: {
+            activityTypeId: updated.activityTypeId,
+            organizationSubtypeId: updated.organizationSubtypeId,
+          },
+        });
+      }
+      return updated;
+    });
+    res.json(segment);
+  }),
+);
 
 export default router;
