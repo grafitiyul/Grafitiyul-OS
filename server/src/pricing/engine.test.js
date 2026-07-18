@@ -396,3 +396,104 @@ test('higher priority breaks a specificity tie', () => {
   const hi = { id: 'hi', active: true, priceModel: 'fixed', fixedPriceMinor: 200n, priority: 5 };
   assert.equal(selectRule([lo, hi]).id, 'hi');
 });
+
+// ── group-aware tiered formula (pricing options slice) ──────────────────────
+// base total = base × groups; included = includedPerGroup × groups;
+// extra = max(0, participants − included) × perAdditional.
+test('tiered ×groups: 30p/1g, 1900 incl 10 +100 → 3900', () => {
+  const r = run(
+    [{ id: 'r1', active: true, priceModel: 'tiered', basePriceMinor: 190000n, baseParticipants: 10, perAdditionalParticipantMinor: 10000n, priority: 0 }],
+    { participantCount: 30, groupCount: 1 },
+  );
+  assert.equal(r.netMinor, 390000);
+});
+test('tiered ×groups: 30p/2g, 1900 incl 10 each → 3800 + 10×100 = 4800', () => {
+  const r = run(
+    [{ id: 'r1', active: true, priceModel: 'tiered', basePriceMinor: 190000n, baseParticipants: 10, perAdditionalParticipantMinor: 10000n, priority: 0 }],
+    { participantCount: 30, groupCount: 2 },
+  );
+  assert.equal(r.netMinor, 480000);
+  assert.equal(r.debug.includedParticipants, 20);
+  assert.equal(r.debug.extraParticipants, 10);
+});
+test('tiered ×groups: no extras when groups cover everyone', () => {
+  const r = run(
+    [{ id: 'r1', active: true, priceModel: 'tiered', basePriceMinor: 190000n, baseParticipants: 10, perAdditionalParticipantMinor: 10000n, priority: 0 }],
+    { participantCount: 18, groupCount: 2 },
+  );
+  assert.equal(r.netMinor, 380000);
+});
+
+// ── org default association (many-to-many, card-level) ──────────────────────
+import { associationTier } from './engine.js';
+
+const neutral = { id: 'n', active: true, priceModel: 'fixed', fixedPriceMinor: 100n, priority: 0, cardGroupId: 'card_n' };
+const forType = { id: 't', active: true, priceModel: 'fixed', fixedPriceMinor: 200n, priority: 0, cardGroupId: 'card_t', defaultOrgTypeIds: ['ot_biz', 'ot_prod'] };
+const forSub = { id: 's', active: true, priceModel: 'fixed', fixedPriceMinor: 300n, priority: 0, cardGroupId: 'card_s', defaultOrgSubtypeIds: ['os_school'] };
+
+test('associationTier: subtype(3) > type(2) > neutral(1) > associated-elsewhere(0)', () => {
+  assert.equal(associationTier(forSub, { organizationSubtypeId: 'os_school' }), 3);
+  assert.equal(associationTier(forType, { organizationTypeId: 'ot_biz' }), 2);
+  assert.equal(associationTier(forType, { organizationTypeId: 'ot_prod' }), 2); // M2M: several types share one card
+  assert.equal(associationTier(neutral, { organizationTypeId: 'ot_biz' }), 1);
+  assert.equal(associationTier(forType, { organizationTypeId: 'ot_other' }), 0);
+});
+test('resolution prefers the deal-org-associated card over the neutral card', () => {
+  const r = run([neutral, forType], { participantCount: 1 }, { organizationTypeId: 'ot_biz' });
+  assert.equal(r.rule.id, 't');
+});
+test('an org without an associated card falls back to the neutral card', () => {
+  const r = run([neutral, forType], { participantCount: 1 }, { organizationTypeId: 'ot_unknown' });
+  assert.equal(r.rule.id, 'n');
+});
+test('subtype association outranks type association', () => {
+  const r = run([neutral, forType, forSub], { participantCount: 1 }, { organizationTypeId: 'ot_biz', organizationSubtypeId: 'os_school' });
+  assert.equal(r.rule.id, 's');
+});
+test('all candidates associated elsewhere → no_price_rule (explicit, no silent pick)', () => {
+  assert.throws(
+    () => run([forType], { participantCount: 1 }, { organizationTypeId: 'ot_unknown' }),
+    (e) => e instanceof PricingError && e.code === 'no_price_rule',
+  );
+});
+
+// ── manual card pin (option override) ───────────────────────────────────────
+function pinList(rules) {
+  return { id: 'pl1', nameHe: 'x', currency: 'ILS', isDefault: true, defaultVatMode: 'excluded', defaultVatRate: 0, rules };
+}
+test('pin bypasses scope + association: a Business deal can use the Private card', () => {
+  const privateCard = { id: 'p1', active: true, priceModel: 'fixed', fixedPriceMinor: 500n, priority: 0, cardGroupId: 'card_private', activityTypeId: 'at_private', defaultOrgTypeIds: ['ot_private'] };
+  const r = calculate({
+    priceList: pinList([neutral, privateCard]),
+    activityType: { id: 'at1' },
+    context: { activityTypeId: 'at1', organizationTypeId: 'ot_biz' },
+    counts: { participantCount: 1 },
+    pinnedCardGroupId: 'card_private',
+  });
+  assert.equal(r.rule.id, 'p1');
+  assert.equal(r.rule.pinned, true);
+  assert.equal(r.netMinor, 500);
+});
+test('pin picks the sibling rule matching the context variant', () => {
+  const sibV1 = { id: 'v1r', active: true, priceModel: 'fixed', fixedPriceMinor: 100n, priority: 0, cardGroupId: 'card_x', productVariantId: 'v1' };
+  const sibV2 = { id: 'v2r', active: true, priceModel: 'fixed', fixedPriceMinor: 200n, priority: 0, cardGroupId: 'card_x', productVariantId: 'v2' };
+  const r = calculate({
+    priceList: pinList([sibV1, sibV2]),
+    activityType: { id: 'at1' },
+    context: { activityTypeId: 'at1', productVariantId: 'v2' },
+    counts: { participantCount: 1 },
+    pinnedCardGroupId: 'card_x',
+  });
+  assert.equal(r.rule.id, 'v2r');
+});
+test('pin errors are explicit: unknown card / card without this city', () => {
+  const sibV1 = { id: 'v1r', active: true, priceModel: 'fixed', fixedPriceMinor: 100n, priority: 0, cardGroupId: 'card_x', productVariantId: 'v1' };
+  assert.throws(
+    () => calculate({ priceList: pinList([sibV1]), activityType: { id: 'at1' }, context: { activityTypeId: 'at1' }, counts: {}, pinnedCardGroupId: 'nope' }),
+    (e) => e.code === 'pinned_card_not_found',
+  );
+  assert.throws(
+    () => calculate({ priceList: pinList([sibV1]), activityType: { id: 'at1' }, context: { activityTypeId: 'at1', productVariantId: 'v9' }, counts: {}, pinnedCardGroupId: 'card_x' }),
+    (e) => e.code === 'pinned_card_not_applicable',
+  );
+});

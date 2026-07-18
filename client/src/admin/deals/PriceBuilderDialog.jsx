@@ -39,6 +39,8 @@ function normalize(l) {
     sourceKind: l.sourceKind || null,
     sourceCardGroupId: l.sourceCardGroupId || null,
     ticketTypeId: l.ticketTypeId || null,
+    // Manual Pricing Card selection (INPUT to resolution; null = automatic).
+    pinnedCardGroupId: l.pinnedCardGroupId || null,
   };
 }
 function seedProductLine(context) {
@@ -96,10 +98,12 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, deal?.id]);
 
-  // Simulator: the context is LIVE (the page's top block edits it) — follow it so
-  // the engine reprices exactly as a Deal whose inputs changed. Parent memoizes.
+  // Simulator: the context is LIVE (the popup's top block edits it) — follow it
+  // so the engine reprices exactly as a Deal whose inputs changed. The builder's
+  // own קבוצות control is preserved across follows (the top block doesn't carry
+  // groups — the builder strip is its ONE home); reset remounts clean.
   useEffect(() => {
-    if (simulated) setCtx(context);
+    if (simulated) setCtx((cur) => ({ ...context, groupCount: cur?.groupCount ?? context?.groupCount ?? 1 }));
   }, [simulated, context]);
 
   // Participant count follows the context prop LIVE (the embedded parallel-offer
@@ -280,6 +284,21 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   const totals = computed?.totals;
   const vatDefault = computed?.vatDefault;
   const orderVatMode = lines.find((l) => l.vatMode && l.vatMode !== 'inherit')?.vatMode || vatDefault?.mode;
+  // The product line carries the manual Pricing Card selection (option pin).
+  const productLine = lines.find((l) => l.kind === 'product') || null;
+  const cardOptions = computed?.cardOptions || [];
+
+  // Pin/unpin a Pricing Card (manual option override). Clearing the price
+  // override lets the pinned card's engine price apply; the note-adoption
+  // effect then rebuilds the first-line note from the newly winning card.
+  function pickCard(cardGroupId) {
+    if (!productLine) return;
+    updateLine(productLine.id, { pinnedCardGroupId: cardGroupId || null, overridden: false });
+  }
+  function setGroups(raw) {
+    const n = Math.max(1, parseInt(String(raw).replace(/[^0-9]/g, ''), 10) || 1);
+    setCtx((c) => ({ ...(c || {}), groupCount: n }));
+  }
 
   function updateLine(id, patch) {
     setLines((ls) => ls.map((l) => (l.id === id ? { ...l, ...patch } : l)));
@@ -317,16 +336,26 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     setAutoCalcBusy(true);
     setSaveError(null);
     try {
-      const reqLines = lines.map((l) => (l.kind === 'product' ? { ...l, overridden: false } : l));
+      // Previous auto-generated add-on lines are dropped and rebuilt from the
+      // CURRENT canonical card data (the server regenerates them fresh).
+      const reqLines = lines
+        .filter((l) => l.sourceKind !== 'price_rule_addon')
+        .map((l) => (l.kind === 'product' ? { ...l, overridden: false } : l));
       const r = await api.pricing.builder({ context: ctx, lines: reqLines, applyCardNotes: true });
       setComputed(r);
-      const byId = new Map((r?.lines || []).map((l) => [l.id, l]));
-      const next = reqLines.map((l) => {
-        const c = byId.get(l.id);
-        if (!c || !c.sourceCardGroupId) return l;
-        return { ...l, note: c.note || '', sourceKind: c.sourceKind || null, sourceCardGroupId: c.sourceCardGroupId };
+      // The response is authoritative for the regenerated set: existing lines
+      // adopt canonical note/provenance; server-added auto add-on lines (שבת/חג,
+      // weekday surcharges) enter state; ones that no longer apply disappear.
+      const stateById = new Map(reqLines.map((l) => [l.id, l]));
+      const next = (r?.lines || []).map((rl) => {
+        const existing = stateById.get(rl.id);
+        if (existing) {
+          if (!rl.sourceCardGroupId) return existing;
+          return { ...existing, note: rl.note || '', sourceKind: rl.sourceKind || null, sourceCardGroupId: rl.sourceCardGroupId };
+        }
+        return normalize(rl);
       });
-      setLines(next);
+      if (next.length) setLines(next);
       setOpenNotes((s) => new Set([...s, ...next.filter((l) => !isRichEmpty(l.note)).map((l) => l.id)]));
     } catch (e) {
       setSaveError(e.payload?.error || e.message || 'החישוב נכשל');
@@ -370,6 +399,9 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
         valueMinor: totals ? totals.grossMinor : 0,
         productId: ctx?.productId || null,
         productVariantId: ctx?.productVariantId || null,
+        // Operational groups persist to the Deal (canonical Deal.groups) so the
+        // builder's context and the tour details never diverge.
+        groups: ctx?.groupCount ?? 1,
         ...(ctx && 'locationId' in ctx ? { locationId: ctx.locationId } : {}),
       });
       // Payment terms are DEAL-level; embedded (parallel-offer) mode never
@@ -403,17 +435,47 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
             {saveError}
           </div>
         )}
-        {/* Toolbar — auto-calc on the right (RTL), VAT + "⋯" pushed to the left. */}
-        <div className="flex items-center gap-2">
+        {/* Toolbar — the SHARED pricing context strip (auto-calc, groups, card
+            option pick) on the right (RTL), VAT + "⋯" pushed to the left. One
+            implementation for Deal and simulator alike. */}
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={autoCalc}
             disabled={autoCalcBusy || !lines.length}
-            title="בנייה מחדש של השורות שנוצרו מכרטיסי התמחור — מחיר והערה קנוניים"
+            title="בנייה מחדש של השורות שנוצרו מכרטיסי התמחור — מחיר, הערה ותוספות אוטומטיות"
             className="h-10 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
           >
             {autoCalcBusy ? 'מחשב…' : 'חישוב אוטומטי'}
           </button>
+          {/* Operational groups (Deal.groups) — group-aware base pricing. */}
+          <label className="flex items-center gap-1.5 text-[13px] text-gray-600">
+            קבוצות
+            <input
+              value={ctx?.groupCount ?? 1}
+              onChange={(e) => setGroups(e.target.value)}
+              inputMode="numeric"
+              dir="ltr"
+              title="מספר קבוצות (תפעולי) — הבסיס מוכפל בקבוצות והמשתתפים הכלולים נספרים לפי קבוצה"
+              className="w-14 h-10 text-center rounded-lg border border-gray-200 px-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+            />
+          </label>
+          {/* Manual Pricing Card selection — automatic (org default) unless pinned. */}
+          {productLine && cardOptions.length > 1 && (
+            <label className="flex items-center gap-1.5 text-[13px] text-gray-600">
+              כרטיס תמחור
+              <select
+                value={productLine.pinnedCardGroupId || ''}
+                onChange={(e) => pickCard(e.target.value)}
+                className="h-10 rounded-lg border border-gray-200 bg-white px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+              >
+                <option value="">אוטומטי — לפי הארגון</option>
+                {cardOptions.map((o) => (
+                  <option key={o.cardGroupId} value={o.cardGroupId}>{o.label}</option>
+                ))}
+              </select>
+            </label>
+          )}
           <div className="flex items-center gap-2 ms-auto">
             <VatButton mode={orderVatMode} rate={vatDefault?.rate} onPick={setOrderVat} />
             <button

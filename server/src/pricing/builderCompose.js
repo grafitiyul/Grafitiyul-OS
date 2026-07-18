@@ -88,6 +88,9 @@ export function composeBuilderLines({
         ? productResolution.cardGroupId || null
         : ln.sourceCardGroupId || null,
       ticketTypeId: ln.ticketTypeId || null,
+      // The operator's manual card selection (input) echoes through so the
+      // client round-trips it; resolution consumed it before composition.
+      pinnedCardGroupId: ln.pinnedCardGroupId || null,
     };
   });
 

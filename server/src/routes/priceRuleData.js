@@ -39,6 +39,12 @@ export function toInt(v) {
   const n = Number(v);
   return Number.isFinite(n) ? Math.round(n) : null;
 }
+// Loose-id list (org default associations): strings only, deduped; anything
+// else → empty list. Same loose-key convention as cardGroupId.
+function cleanIdList(v) {
+  if (!Array.isArray(v)) return [];
+  return [...new Set(v.filter((x) => typeof x === 'string' && x.trim() !== ''))];
+}
 
 // Build the writable data payload shared by create/update. `partial` controls
 // whether absent keys are skipped (update) or defaulted (create). Throws
@@ -83,6 +89,10 @@ export function buildData(body, { partial }) {
   // builder line this card produces. Blank markup normalizes to null (= no note).
   // Duplicated across siblings like availableForGroupTickets.
   set('firstLineNote', normalizeFirstLineNote(body.firstLineNote));
+  // Card DEFAULT-selection association (many-to-many): the org types/subtypes
+  // this card is the automatic default for. Duplicated across siblings.
+  set('defaultOrgTypeIds', cleanIdList(body.defaultOrgTypeIds));
+  set('defaultOrgSubtypeIds', cleanIdList(body.defaultOrgSubtypeIds));
   // Card display order (business). Engine ignores it.
   set('cardSortOrder', toInt(body.cardSortOrder) ?? 0);
   if (!partial || body.active !== undefined) data.active = body.active !== false;

@@ -243,7 +243,16 @@ export function splitBuilderPatch(offer, b = {}) {
     patch.participants = Number.isFinite(n) && n >= 0 ? n : null;
   }
   const toOffer = !!offer && !offer.isPrimary && offer.contextMode === 'own';
-  return toOffer ? { dealPatch: {}, offerPatch: patch } : { dealPatch: patch, offerPatch: {} };
+  if (toOffer) return { dealPatch: {}, offerPatch: patch };
+  // groups is a DEAL-ONLY operational scalar (Deal.groups; QuoteOffer carries no
+  // groups column): the primary builder persists it, an own-mode alternative
+  // offer prices with it transiently but never mutates the Deal.
+  const dealPatch = { ...patch };
+  if (b.groups !== undefined) {
+    const n = parseInt(b.groups, 10);
+    dealPatch.groups = Number.isFinite(n) && n >= 1 ? n : null;
+  }
+  return { dealPatch, offerPatch: {} };
 }
 
 // Remove an offer, safely:

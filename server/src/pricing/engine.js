@@ -104,6 +104,12 @@ export function baseAmountMinor(rule, counts) {
     };
   }
 
+  // tiered — group-aware base+extra (the canonical business formula):
+  //   base total   = basePrice × groups
+  //   included     = baseParticipants × groups   (each group includes N)
+  //   extra        = max(0, participants − included)
+  //   extra total  = extra × perAdditionalParticipant
+  // e.g. 1900 incl 10 +100: 30p/1g → 1900+20×100=3900; 30p/2g → 3800+10×100=4800.
   if (rule.priceModel === 'tiered') {
     if (num(rule.basePriceMinor) == null) {
       throw new PricingError('rule_incomplete', {
@@ -114,16 +120,18 @@ export function baseAmountMinor(rule, counts) {
     const participantCount = resolveParticipantCount(counts);
     const baseParticipants = Math.max(0, num(rule.baseParticipants) || 0);
     const perAdd = num(rule.perAdditionalParticipantMinor) || 0;
-    const extra = Math.max(0, participantCount - baseParticipants);
-    const perGroup = (num(rule.basePriceMinor) || 0) + extra * perAdd;
+    const includedParticipants = baseParticipants * groupCount;
+    const extra = Math.max(0, participantCount - includedParticipants);
+    const baseTotal = (num(rule.basePriceMinor) || 0) * groupCount;
     return {
-      amountMinor: Math.round(perGroup * groupCount),
+      amountMinor: Math.round(baseTotal + extra * perAdd),
       debug: {
         participantCount,
         baseParticipants,
+        includedParticipants,
         extraParticipants: extra,
         groupCount,
-        perGroupMinor: Math.round(perGroup),
+        baseTotalMinor: Math.round(baseTotal),
       },
     };
   }
@@ -398,18 +406,63 @@ export function sabbathHolidayWindow(ctx, rules = {}) {
   return { applies: true, type: top.type, label: top.label, matched };
 }
 
+// A card's DEFAULT-selection strength for this deal's organization
+// classification (defaultOrgTypeIds/defaultOrgSubtypeIds are the card-level
+// many-to-many association, duplicated across sibling rules):
+//   3 — associated with the deal's org SUBTYPE (most specific default)
+//   2 — associated with the deal's org TYPE
+//   1 — neutral card (no association) — the fallback default
+//   0 — associated ONLY with OTHER org kinds: never auto-selected for this
+//       deal (it is someone else's default), but still manually pinnable.
+export function associationTier(rule, ctx = {}) {
+  const subs = Array.isArray(rule.defaultOrgSubtypeIds) ? rule.defaultOrgSubtypeIds : [];
+  const types = Array.isArray(rule.defaultOrgTypeIds) ? rule.defaultOrgTypeIds : [];
+  if (ctx.organizationSubtypeId && subs.includes(ctx.organizationSubtypeId)) return 3;
+  if (ctx.organizationTypeId && types.includes(ctx.organizationTypeId)) return 2;
+  if (subs.length === 0 && types.length === 0) return 1;
+  return 0;
+}
+
 // Full calculation. `priceList` (with `rules`), `activityType`, `context`, and
 // `counts` are supplied by the caller. Returns a structured result or throws a
 // PricingError with a clear `code`.
-export function calculate({ priceList, activityType, context, counts }) {
+//
+// `pinnedCardGroupId` — the operator's manual Pricing Card selection. When set,
+// resolution uses THAT card (choosing the sibling rule for the context's
+// variant) and BYPASSES scope/association ranking entirely: a manual pin is an
+// explicit business decision. Automatic resolution stays the default.
+export function calculate({ priceList, activityType, context, counts, pinnedCardGroupId = null }) {
   if (!activityType) throw new PricingError('activity_type_not_found');
   if (!priceList) throw new PricingError('no_price_list');
 
-  // Match on SCOPE only; the winning rule owns its price model.
-  const candidates = (priceList.rules || []).filter((r) =>
-    ruleMatches(r, context),
-  );
-  const rule = selectRule(candidates);
+  let rule;
+  let candidateCount = 0;
+  if (pinnedCardGroupId) {
+    let pinned = (priceList.rules || []).filter(
+      (r) => r.active !== false && r.cardGroupId === pinnedCardGroupId,
+    );
+    if (pinned.length === 0) throw new PricingError('pinned_card_not_found', { pinnedCardGroupId });
+    // Prefer the sibling rule for the context's variant; a variant-wildcard
+    // sibling is acceptable. A card that doesn't cover this city at all is an
+    // explicit error, never a silent wrong-city price.
+    const variantMatched = pinned.filter(
+      (r) => !r.productVariantId || r.productVariantId === context.productVariantId,
+    );
+    if (variantMatched.length === 0)
+      throw new PricingError('pinned_card_not_applicable', { pinnedCardGroupId });
+    candidateCount = variantMatched.length;
+    rule = selectRule(variantMatched);
+  } else {
+    // Match on SCOPE, then rank by the org DEFAULT association: the strongest
+    // tier present wins; specificity + priority (selectRule) decide within it.
+    // Tier-0 cards (someone else's default) are excluded from auto-selection.
+    const scoped = (priceList.rules || []).filter((r) => ruleMatches(r, context));
+    const tiers = scoped.map((r) => associationTier(r, context));
+    const best = Math.max(0, ...tiers);
+    const candidates = best > 0 ? scoped.filter((_, i) => tiers[i] === best) : [];
+    candidateCount = candidates.length;
+    rule = selectRule(candidates);
+  }
   const priceModel = rule.priceModel; // per_head | tiered | tiered_group | fixed
 
   const { amountMinor, debug } = baseAmountMinor(rule, counts);
@@ -439,6 +492,7 @@ export function calculate({ priceList, activityType, context, counts }) {
       // the generated product line; resolution itself never reads these.
       cardGroupId: rule.cardGroupId || null,
       firstLineNote: rule.firstLineNote || null,
+      pinned: !!pinnedCardGroupId,
       scopes: {
         productId: rule.productId,
         productVariantId: rule.productVariantId,
@@ -454,7 +508,7 @@ export function calculate({ priceList, activityType, context, counts }) {
     vatMinor: vat.vatMinor,
     grossMinor: vat.grossMinor,
     debug: {
-      candidateCount: candidates.length,
+      candidateCount,
       ...debug,
       baseAmountMinor: amountMinor,
     },

@@ -1090,6 +1090,11 @@ model Deal {
   tourDate              String? // "YYYY-MM-DD"
   tourTime              String? // "HH:MM"
   participants          Int?
+  // Operational number of GROUPS the tour runs in (2 groups = the participants
+  // split into two guided groups). Canonical here beside the other operational
+  // scalars; pricing CONSUMES it (group-aware base calculation) — there is no
+  // pricing-specific copy. NULL = 1 group.
+  groups                Int?
   // DEPRECATED back-compat only — no longer written. Superseded by paymentMethodId.
   paymentMethod         String?
   communicationLanguage String? // he | en
@@ -1818,6 +1823,12 @@ model QuoteLine {
   // catalog delete degrades gracefully like productVariant/addon.
   sourceKind        String?
   sourceCardGroupId String?
+  // The operator's INTENTIONAL Pricing Card selection for this line — INPUT to
+  // resolution (the engine prices with this card instead of auto-resolving).
+  // Distinct from sourceCardGroupId, the OUTPUT provenance of which card
+  // actually priced the line. Null = automatic resolution. Loose key like
+  // sourceCardGroupId.
+  pinnedCardGroupId String?
   ticketType        TicketType?     @relation(fields: [ticketTypeId], references: [id], onDelete: SetNull)
   ticketTypeId      String?
   sortOrder         Int             @default(0)
@@ -2233,6 +2244,16 @@ model PriceRule {
   // rich-note format as QuoteLine.note. Duplicated across a card's sibling rules
   // (one per location) like cardSortOrder; rule RESOLUTION never reads it.
   firstLineNote String?
+
+  // The Pricing Card's DEFAULT-selection association (many-to-many): the
+  // organization types/subtypes this card is the automatic default for. One
+  // card may serve several org kinds; empty arrays = neutral card (default when
+  // nothing more specific matches). PREFERENCE only — never a hard scope: any
+  // card stays manually selectable on any Deal via pinnedCardGroupId. Loose ids
+  // (same convention as cardGroupId); card-level values duplicated across
+  // sibling rules like cardSortOrder/firstLineNote, replace-synced on save.
+  defaultOrgTypeIds    String[] @default([])
+  defaultOrgSubtypeIds String[] @default([])
 
   priority                 Int      @default(0)
   // Business capability (card-level, business-driven): when true, this Pricing

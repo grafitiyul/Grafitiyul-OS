@@ -62,3 +62,11 @@ test('firstLineNote: blank rich markup normalizes to null', () => {
   assert.equal(buildData({ firstLineNote: '' }, { partial: true }).firstLineNote, null);
   assert.equal(buildData({ firstLineNote: '<p>תוכן</p>' }, { partial: true }).firstLineNote, '<p>תוכן</p>');
 });
+
+test('defaultOrg association arrays: strings deduped, junk → empty, absent skipped on update', () => {
+  const created = buildData({ ...CREATE_BODY, defaultOrgTypeIds: ['a', 'a', '', 'b'], defaultOrgSubtypeIds: 'nope' }, { partial: false });
+  assert.deepEqual(created.defaultOrgTypeIds, ['a', 'b']);
+  assert.deepEqual(created.defaultOrgSubtypeIds, []);
+  const updated = buildData({ firstLineNote: '<p>x</p>' }, { partial: true });
+  assert.equal('defaultOrgTypeIds' in updated, false);
+});

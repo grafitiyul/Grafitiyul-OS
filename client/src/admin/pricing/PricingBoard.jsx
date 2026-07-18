@@ -110,6 +110,7 @@ export default function PricingBoard() {
   const [ticketTypes, setTicketTypes] = useState([]);
   const [addons, setAddons] = useState([]);
   const [activityTypes, setActivityTypes] = useState([]);
+  const [orgTypes, setOrgTypes] = useState([]);
   const [orgSubtypes, setOrgSubtypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -137,12 +138,13 @@ export default function PricingBoard() {
   const refreshAll = useCallback(async () => {
     setError(null);
     try {
-      const [seg, p, tt, ad, at, os] = await Promise.all([
+      const [seg, p, tt, ad, at, ot, os] = await Promise.all([
         api.pricingSegments.list(),
         api.products.list(),
         api.ticketTypes.list(),
         api.addons.list(),
         api.activityTypes.list(),
+        api.organizationTypes.list(),
         api.organizationSubtypes.list(),
         loadLists(),
       ]);
@@ -151,6 +153,7 @@ export default function PricingBoard() {
       setTicketTypes(tt);
       setAddons(ad);
       setActivityTypes(at);
+      setOrgTypes(ot);
       setOrgSubtypes(os);
       setSegmentId((cur) => cur || seg[0]?.id || null);
     } catch (e) {
@@ -214,6 +217,8 @@ export default function PricingBoard() {
                   products={products}
                   ticketTypes={ticketTypes}
                   addons={addons}
+                  orgTypes={orgTypes}
+                  orgSubtypes={orgSubtypes}
                 />
               )}
             </>
@@ -521,7 +526,7 @@ function TabBar({ segments, segmentId, onSelect, onSettings }) {
 
 // ───────────────────────────── Segment panel ───────────────────────────────
 
-function SegmentPanel({ version, segment, products, ticketTypes, addons }) {
+function SegmentPanel({ version, segment, products, ticketTypes, addons, orgTypes, orgSubtypes }) {
   const [rules, setRules] = useState([]);
   const [loading, setLoading] = useState(true);
   const [productCache, setProductCache] = useState({});
@@ -593,7 +598,8 @@ function SegmentPanel({ version, segment, products, ticketTypes, addons }) {
           {cards.map((card, index) =>
             editingCardId === card.cardGroupId ? (
               <CardEditor key={card.cardGroupId} version={version} segment={segment}
-                products={products} ticketTypes={ticketTypes} addons={addons} productCache={productCache} setProductCache={setProductCache}
+                products={products} ticketTypes={ticketTypes} addons={addons} orgTypes={orgTypes} orgSubtypes={orgSubtypes}
+                productCache={productCache} setProductCache={setProductCache}
                 card={card} onClose={() => setEditingCardId(null)}
                 onSaved={() => { setEditingCardId(null); refresh(); }} />
             ) : (
@@ -608,7 +614,8 @@ function SegmentPanel({ version, segment, products, ticketTypes, addons }) {
 
           {adding ? (
             <CardEditor version={version} segment={segment}
-              products={products} ticketTypes={ticketTypes} addons={addons} productCache={productCache} setProductCache={setProductCache}
+              products={products} ticketTypes={ticketTypes} addons={addons} orgTypes={orgTypes} orgSubtypes={orgSubtypes}
+              productCache={productCache} setProductCache={setProductCache}
               nextSortOrder={nextSortOrder}
               onClose={() => setAdding(false)}
               onSaved={() => { setAdding(false); refresh(); }} />
@@ -650,6 +657,9 @@ function groupCards(rules) {
       // card produces. Duplicated across siblings — the representative's value is
       // the card's value.
       firstLineNote: rep.firstLineNote || '',
+      // Default-selection org association (card-level, duplicated across siblings).
+      defaultOrgTypeIds: Array.isArray(rep.defaultOrgTypeIds) ? rep.defaultOrgTypeIds : [],
+      defaultOrgSubtypeIds: Array.isArray(rep.defaultOrgSubtypeIds) ? rep.defaultOrgSubtypeIds : [],
       tiers: (rep.tiers || []).map((t) => ({
         uptoParticipants: Number(t.uptoParticipants),
         totalPriceMinor: Number(t.totalPriceMinor),
@@ -1082,7 +1092,7 @@ function previewError(code) {
 
 // ────────────────────────────── Card editor ────────────────────────────────
 
-function CardEditor({ version, segment, products, ticketTypes, addons, productCache, setProductCache, card, nextSortOrder = 0, onClose, onSaved }) {
+function CardEditor({ version, segment, products, ticketTypes, addons, orgTypes = [], orgSubtypes = [], productCache, setProductCache, card, nextSortOrder = 0, onClose, onSaved }) {
   const [productId, setProductId] = useState(card?.productId || '');
   const [variantIds, setVariantIds] = useState(card?.variantIds || []);
   const [priceModel, setPriceModel] = useState(card?.priceModel || 'tiered_group');
@@ -1155,6 +1165,13 @@ function CardEditor({ version, segment, products, ticketTypes, addons, productCa
   // builder line this card produces. Rich text (same format as line notes) so the
   // builder displays exactly what is authored here. Empty = no automatic note.
   const [firstLineNote, setFirstLineNote] = useState(card?.firstLineNote || '');
+  // Default-selection association (many-to-many): the org types/subtypes this
+  // card is the automatic default for. Empty = neutral card. Preference only —
+  // every card stays manually selectable on any Deal.
+  const [defaultOrgTypeIds, setDefaultOrgTypeIds] = useState(card?.defaultOrgTypeIds || []);
+  const [defaultOrgSubtypeIds, setDefaultOrgSubtypeIds] = useState(card?.defaultOrgSubtypeIds || []);
+  const toggleIn = (setter) => (id) =>
+    setter((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
@@ -1267,6 +1284,8 @@ function CardEditor({ version, segment, products, ticketTypes, addons, productCa
         availableForGroupTickets,
         // Raw rich text; the server normalizes blank markup to null (= no note).
         firstLineNote,
+        defaultOrgTypeIds,
+        defaultOrgSubtypeIds,
         addons: addonsPayload,
         ...modelPayload(),
       };
@@ -1404,6 +1423,44 @@ function CardEditor({ version, segment, products, ticketTypes, addons, productCa
               className={`${INPUT} text-left`} />
           </Field>
         )}
+      </div>
+
+      {/* Default org association — which organization kinds auto-select this
+          card. Preference only; manual override always allowed on the Deal. */}
+      <div className="border-t border-blue-100 pt-3 space-y-2">
+        <span className={LABEL}>ברירת מחדל עבור סוגי ארגון (אפשר כמה)</span>
+        <div className="flex flex-wrap gap-1.5">
+          {orgTypes.map((t) => (
+            <button type="button" key={t.id} onClick={() => toggleIn(setDefaultOrgTypeIds)(t.id)}
+              className={`h-8 rounded-lg px-2.5 text-[12.5px] transition ring-1 ${
+                defaultOrgTypeIds.includes(t.id)
+                  ? 'bg-blue-600 text-white ring-blue-600'
+                  : 'bg-white text-gray-700 ring-gray-200 hover:bg-gray-50'
+              }`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        {orgSubtypes.length > 0 && (
+          <>
+            <span className={LABEL}>ברירת מחדל עבור תת-סוגים</span>
+            <div className="flex flex-wrap gap-1.5">
+              {orgSubtypes.map((s) => (
+                <button type="button" key={s.id} onClick={() => toggleIn(setDefaultOrgSubtypeIds)(s.id)}
+                  className={`h-8 rounded-lg px-2.5 text-[12.5px] transition ring-1 ${
+                    defaultOrgSubtypeIds.includes(s.id)
+                      ? 'bg-blue-600 text-white ring-blue-600'
+                      : 'bg-white text-gray-700 ring-gray-200 hover:bg-gray-50'
+                  }`}>
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        <p className="text-[11px] text-gray-400">
+          כשדיל שייך לאחד מסוגי הארגון המסומנים — הכרטיס הזה נבחר אוטומטית. ללא סימון הכרטיס הוא ברירת המחדל הכללית. בכל דיל אפשר תמיד לבחור ידנית כרטיס אחר.
+        </p>
       </div>
 
       {/* First-line note — written automatically onto the first builder line this

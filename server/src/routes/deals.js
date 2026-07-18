@@ -111,6 +111,16 @@ function applyTourFields(b, data) {
       data.participants = n;
     }
   }
+  // Operational GROUP count of the tour (canonical beside participants; pricing
+  // consumes it). NULL = 1 group; an explicit value must be a whole number ≥ 1.
+  if (b.groups !== undefined) {
+    if (b.groups === null || b.groups === '') data.groups = null;
+    else {
+      const n = Number(b.groups);
+      if (!Number.isInteger(n) || n < 1) return 'invalid_groups';
+      data.groups = n;
+    }
+  }
   // (Payment method is handled as an FK — paymentMethodId — in the PUT handler;
   // the deprecated free-text paymentMethod is no longer written here.)
   if (b.communicationLanguage !== undefined) {

@@ -184,6 +184,7 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
         tourDate: d.tourDate || '',
         tourTime: d.tourTime || '',
         participants: d.participants ?? '',
+        groups: d.groups ?? '',
         // Auto-fill defaults (suggestion only): empty → Hebrew. Applied at load
         // when empty; the baseline below is set to the SAME value, so a default is
         // never flagged as an unsaved change and never silently re-applied after
@@ -343,6 +344,11 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
             organizationTypeId: effectiveOrgTypeId(deal),
             organizationSubtypeId: deal?.organizationSubtypeId || null,
             participantCount: form.participants === '' ? 0 : Number(form.participants),
+            // Operational groups (Deal.groups) + tour moment — group-aware base
+            // pricing and automatic time-based add-ons (שבת/חג).
+            groupCount: form.groups === '' || form.groups == null ? 1 : Number(form.groups),
+            tourDate: form.tourDate || null,
+            tourTime: form.tourTime || null,
           }
         : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -351,6 +357,9 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
       form?.productVariantId,
       form?.activityType,
       form?.participants,
+      form?.groups,
+      form?.tourDate,
+      form?.tourTime,
       deal?.organization?.organizationTypeId,
       deal?.organizationTypeId,
       deal?.organizationSubtypeId,
@@ -791,6 +800,12 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
                 readOnly={isGroup}
                 readOnlyHint="מספר המשתתפים בדיל קבוצתי נגזר מכמות הכרטיסים בבונה הכרטיסים הקבוצתי"
                 onSave={(v) => saveField({ participants: v === '' ? null : Number(v) })} />
+              {/* Operational group count (Deal.groups, canonical) — pricing
+                  consumes it (base × groups + extras). Empty = 1 group. */}
+              <InlineField id="f-groups" iconInline icon={<span className={FIELD_EMOJI}>👨‍👩‍👧‍👦</span>} label="קבוצות"
+                type="number" numeric value={deal.groups ?? ''} editFirst={editFirst}
+                placeholder="1"
+                onSave={(v) => saveField({ groups: v === '' ? null : Number(v) })} />
 
               {/* Row 3 — col 3 intentionally empty. City value turns red as a
                   visual-only reminder when the city differs from the Home Location. */}

@@ -280,3 +280,13 @@ test('remove: archiving the primary offer hands primary to the remaining one', a
   const remaining = client.state.offers.find((o) => o.id === 'off_2');
   assert.equal(remaining.isPrimary, true, 'primary reassigned');
 });
+
+test('splitBuilderPatch: groups is DEAL-ONLY — primary persists it, own-mode offer never mutates the Deal', () => {
+  const primary = splitBuilderPatch(null, { valueMinor: 100, groups: 2 });
+  assert.equal(primary.dealPatch.groups, 2);
+  const cleared = splitBuilderPatch(null, { groups: '' });
+  assert.equal(cleared.dealPatch.groups, null);
+  const own = splitBuilderPatch({ isPrimary: false, contextMode: 'own' }, { valueMinor: 100, groups: 3 });
+  assert.deepEqual(own.dealPatch, {});
+  assert.equal('groups' in own.offerPatch, false);
+});

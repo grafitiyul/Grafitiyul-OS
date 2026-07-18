@@ -28,6 +28,9 @@ export function toClientLine(l) {
     sourceKind: l.sourceKind || null,
     sourceCardGroupId: l.sourceCardGroupId || null,
     ticketTypeId: l.ticketTypeId || null,
+    // Manual Pricing Card selection (INPUT to resolution; sourceCardGroupId is
+    // the OUTPUT provenance). Null = automatic resolution.
+    pinnedCardGroupId: l.pinnedCardGroupId || null,
   };
 }
 
@@ -69,6 +72,7 @@ export function lineToData(ln, i) {
     sourceKind: ln.sourceKind ? String(ln.sourceKind) : null,
     sourceCardGroupId: ln.sourceCardGroupId ? String(ln.sourceCardGroupId) : null,
     ticketTypeId: ln.ticketTypeId ? String(ln.ticketTypeId) : null,
+    pinnedCardGroupId: ln.pinnedCardGroupId ? String(ln.pinnedCardGroupId) : null,
     sortOrder: i,
   };
 }

@@ -4,6 +4,7 @@ import { handle } from '../asyncHandler.js';
 import { calculate, baseAmountMinor, splitVat, priceAddon, addonApplies, sabbathHolidayWindow, resolveSystemAddonEntry, PricingError } from '../pricing/engine.js';
 import { buildGroupCards } from '../pricing/groupTicketCards.js';
 import { composeBuilderLines } from '../pricing/builderCompose.js';
+import { buildAutoAddonLines, tourMoment, AUTO_ADDON_SOURCE_KIND } from '../pricing/autoAddons.js';
 
 // Pricing engine HTTP surface: /preview (per-card draft preview), /builder (the
 // ONE multi-line calculation used by the Deal builders AND the pricing
@@ -90,17 +91,17 @@ router.post(
         if (resolved) addonEntries.push(resolved);
       }
 
-      const dateISO = b.date ? String(b.date).slice(0, 10) : null;
-      let weekday = b.weekday != null && b.weekday !== '' ? Number(b.weekday) : null;
-      let minuteOfDay = null;
-      if (dateISO) {
-        const dt = new Date(`${dateISO}T00:00:00Z`);
-        if (!Number.isNaN(dt.getTime())) weekday = dt.getUTCDay();
-      }
-      if (b.time) {
-        const [hh, mm] = String(b.time).split(':').map(Number);
-        if (Number.isFinite(hh) && Number.isFinite(mm)) minuteOfDay = hh * 60 + mm;
-      }
+      // ONE moment parser (shared with the builder's auto add-ons); the preview
+      // additionally accepts an explicit weekday when no date is given.
+      const moment = tourMoment(b.date, b.time);
+      const dateISO = moment.dateISO;
+      const weekday =
+        moment.weekday != null
+          ? moment.weekday
+          : b.weekday != null && b.weekday !== ''
+            ? Number(b.weekday)
+            : null;
+      const minuteOfDay = moment.minuteOfDay;
 
       let sabbathHoliday = { applies: false };
       if (dateISO && addonEntries.some((e) => e.autoApply === 'sabbath_holiday')) {
@@ -180,17 +181,27 @@ router.post(
       activityTypeId: c.activityTypeId || null,
       organizationTypeId: c.organizationTypeId || null,
       organizationSubtypeId: c.organizationSubtypeId || null,
+      // Operational tour moment (Deal.tourDate/tourTime) — drives automatic
+      // time-based add-ons (שבת/חג, weekday surcharges) on regeneration.
+      tourDate: c.tourDate || null,
+      tourTime: c.tourTime || null,
     };
     const counts = {
       participantCount: c.participantCount,
       adultCount: c.adultCount != null ? c.adultCount : c.participantCount,
       childCount: c.childCount,
+      // Canonical operational group count (Deal.groups). Default 1.
       groupCount: c.groupCount != null ? c.groupCount : 1,
     };
+    // Manual Pricing Card selection (option override) — carried on the product
+    // line; automatic resolution stays the default when absent.
+    const pinnedCardGroupId =
+      c.pinnedCardGroupId ||
+      (Array.isArray(b.lines) ? b.lines.find((l) => l?.kind === 'product')?.pinnedCardGroupId : null) ||
+      null;
     const inputLines = Array.isArray(b.lines) ? b.lines : [];
 
-    // Applicable price list (subtype → type → system default) for the VAT default
-    // and the product-line resolution.
+    // The live (default) price list for the VAT default and product resolution.
     const resolvedList = await resolvePriceListId();
     const priceList = resolvedList
       ? await prisma.priceList.findUnique({
@@ -198,7 +209,11 @@ router.post(
           include: {
             rules: {
               where: { active: true },
-              include: { tiers: { orderBy: { sortOrder: 'asc' } }, ticketPrices: true },
+              include: {
+                tiers: { orderBy: { sortOrder: 'asc' } },
+                ticketPrices: true,
+                addons: { orderBy: { sortOrder: 'asc' } },
+              },
             },
           },
         })
@@ -223,13 +238,14 @@ router.post(
       if (!activityType) productResolution = { ok: false, error: 'activity_type_not_found' };
       else {
         try {
-          const r = calculate({ priceList, activityType, context, counts });
+          const r = calculate({ priceList, activityType, context, counts, pinnedCardGroupId });
           productResolution = {
             ok: true,
             priceList: { id: priceList.id, nameHe: priceList.nameHe },
             priceModel: r.priceModel,
             vatMode: r.vatMode,
             vatRate: r.vatRate,
+            pinned: !!pinnedCardGroupId,
             // Card provenance + canonical first-line note of the WINNING rule —
             // the client stamps these on the generated product line so the note
             // is rebuilt from canonical card data on every regeneration.
@@ -302,16 +318,93 @@ router.post(
       }
     }
 
+    // Automatic add-on lines — REGENERATION ONLY, for the winning card. Reuses
+    // the exact engine primitives the per-card preview uses (the ONE שבת/חג
+    // detector + addonApplies + priceAddon) — never re-implemented. Previous
+    // auto lines in the input are dropped and rebuilt from CURRENT card data,
+    // so a date change or card-config change never leaves a stale surcharge.
+    let composeInput = inputLines;
+    if (applyCardNotes) {
+      composeInput = inputLines.filter((ln) => ln?.sourceKind !== AUTO_ADDON_SOURCE_KIND);
+      if (productResolution.ok && productResolution.ruleId) {
+        const winningRule = (priceList?.rules || []).find((r) => r.id === productResolution.ruleId);
+        const systemAddon = await prisma.addon.findFirst({ where: { systemKey: 'sabbath_holiday' } });
+        const moment = tourMoment(context.tourDate, context.tourTime);
+        let sabbath = { applies: false };
+        const entriesNeedSabbath =
+          !!systemAddon || (winningRule?.addons || []).some((e) => e.autoApply === 'sabbath_holiday');
+        if (moment.dateISO && entriesNeedSabbath) {
+          const [weekly, holidays] = await Promise.all([
+            prisma.sabbathWeeklyRule.findMany({ where: { active: true } }),
+            prisma.holidayRule.findMany({ where: { active: true, status: 'approved' } }),
+          ]);
+          sabbath = sabbathHolidayWindow(
+            { weekday: moment.weekday, minuteOfDay: moment.minuteOfDay ?? 0, dateISO: moment.dateISO },
+            { weekly, holidays },
+          );
+        }
+        const entryAddonIds = [
+          ...new Set([...(winningRule?.addons || []).map((e) => e.addonId), systemAddon?.id].filter(Boolean)),
+        ];
+        const catalogRows = entryAddonIds.length
+          ? await prisma.addon.findMany({
+              where: { id: { in: entryAddonIds } },
+              select: { id: true, nameHe: true, vatMode: true, vatRate: true },
+            })
+          : [];
+        const autoLines = buildAutoAddonLines({
+          ruleAddons: winningRule?.addons || [],
+          systemAddon,
+          cardVat: { vatMode: productResolution.vatMode, vatRate: productResolution.vatRate },
+          cardGroupId: productResolution.cardGroupId,
+          moment,
+          isSabbathHoliday: sabbath.applies,
+          addonCatalogById: new Map(catalogRows.map((a) => [a.id, a])),
+        });
+        if (autoLines.length) {
+          // Insert directly AFTER the product line, so the product line stays the
+          // card's FIRST line (first-line note) and ordering is deterministic.
+          const idx = composeInput.findIndex((ln) => ln?.kind === 'product');
+          composeInput =
+            idx === -1
+              ? [...autoLines, ...composeInput]
+              : [...composeInput.slice(0, idx + 1), ...autoLines, ...composeInput.slice(idx + 1)];
+        }
+      }
+    }
+
+    // Card OPTIONS for the manual override picker: every active card that can
+    // price this product (variant-compatible), regardless of org association —
+    // association is only the automatic DEFAULT, any option is selectable.
+    let cardOptions = [];
+    if (context.productId && priceList) {
+      const segNames = new Map(
+        (await prisma.pricingSegment.findMany({ select: { id: true, nameHe: true } })).map((s) => [s.id, s.nameHe]),
+      );
+      const seen = new Map();
+      for (const r of priceList.rules) {
+        if (!r.cardGroupId || r.productId !== context.productId) continue;
+        if (r.productVariantId && context.productVariantId && r.productVariantId !== context.productVariantId) continue;
+        if (!seen.has(r.cardGroupId)) {
+          seen.set(r.cardGroupId, {
+            cardGroupId: r.cardGroupId,
+            label: segNames.get(r.pricingSegmentId) || 'כרטיס תמחור',
+          });
+        }
+      }
+      cardOptions = [...seen.values()];
+    }
+
     // ONE composition for every caller (Deal builders + pricing simulator).
     const { lines, totals } = composeBuilderLines({
-      inputLines,
+      inputLines: composeInput,
       productResolution,
       vatDefault,
       applyCardNotes,
       noteByCard,
     });
 
-    res.json({ ok: true, vatDefault, productResolution, lines, totals });
+    res.json({ ok: true, vatDefault, productResolution, cardOptions, lines, totals });
   }),
 );
 

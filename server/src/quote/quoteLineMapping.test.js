@@ -117,3 +117,12 @@ test('manual price override flag round-trips', () => {
   assert.equal(row.unitPriceMinor, 15000n);
   assert.equal(toClientLine({ ...row, id: 'q' }).overridden, true);
 });
+
+test('pinnedCardGroupId (manual option selection) round-trips; absent stays null', () => {
+  const row = lineToData({ kind: 'product', label: 'x', refId: 'v1', unitPriceMinor: 1000, pinnedCardGroupId: 'card_private' }, 0);
+  assert.equal(row.pinnedCardGroupId, 'card_private');
+  const back = toClientLine({ ...row, id: 'q1' });
+  assert.equal(back.pinnedCardGroupId, 'card_private');
+  const none = lineToData({ kind: 'manual', label: 'y', unitPriceMinor: 1 }, 0);
+  assert.equal(none.pinnedCardGroupId, null);
+});

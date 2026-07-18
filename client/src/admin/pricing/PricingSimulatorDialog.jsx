@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api.js';
+import { DateField, TimeField } from '../common/pickers/DateTimeFields.jsx';
 import PriceBuilderDialog from '../deals/PriceBuilderDialog.jsx';
 
 // Pricing Simulator — a POPUP over CRM Settings → תמחור, not a page. It answers
@@ -24,6 +25,8 @@ const EMPTY_FORM = {
   organizationTypeId: '',
   organizationSubtypeId: '',
   participants: '',
+  tourDate: '',
+  tourTime: '',
 };
 
 function Field({ label, children }) {
@@ -100,6 +103,9 @@ export default function PricingSimulatorDialog({ open, onClose }) {
       organizationTypeId: form.organizationTypeId || null,
       organizationSubtypeId: form.organizationSubtypeId || null,
       participantCount: form.participants === '' ? 0 : Number(form.participants),
+      // Tour moment — drives automatic שבת/חג / weekday add-ons, like a Deal.
+      tourDate: form.tourDate || null,
+      tourTime: form.tourTime || null,
     }),
     [form],
   );
@@ -161,6 +167,8 @@ export default function PricingSimulatorDialog({ open, onClose }) {
             className={INPUT}
           />
         </Field>
+        <DateField label="תאריך הסיור" value={form.tourDate} onChange={(v) => set('tourDate', v)} placeholder="ללא תאריך" />
+        <TimeField label="שעת הסיור" value={form.tourTime} onChange={(v) => set('tourTime', v)} placeholder="ללא שעה" />
       </div>
     </div>
   );
