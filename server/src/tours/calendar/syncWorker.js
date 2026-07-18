@@ -298,6 +298,11 @@ export function startTourCalendarSyncWorker(log = console) {
     if (inFlight) return;
     inFlight = true;
     try {
+      // Operational kill switch (default ON). Exists for the migration
+      // cutover night: imported future tours must be verifiable BEFORE
+      // Google fires invitations. 'false' pauses ALL calendar convergence
+      // (rows just stay pending/null); removing the var resumes normally.
+      if (process.env.TOUR_CALENDAR_SYNC_ENABLED === 'false') return;
       if (!emailIntegrationConfigured()) return;
 
       const swept = await sweepUnsyncedTours(prisma);

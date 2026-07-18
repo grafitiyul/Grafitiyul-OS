@@ -109,7 +109,8 @@ console.log('scope: records + Airtable attachment bodies + Pipedrive file METADA
 
 const started = Date.now();
 try {
-  const manifest = await runSnapshot({ snapshotId, store, pd, at, log: (m) => console.log(m), mirror, budget });
+  const omit = String(arg('--omit') || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const manifest = await runSnapshot({ snapshotId, store, pd, at, log: (m) => console.log(m), mirror, budget, omit });
   await budget.flush();
   console.log(`\n✔ COMPLETE in ${((Date.now() - started) / 60000).toFixed(1)} min — Pipedrive requests used: ${budget.used}/${limit}`);
   console.log('counters:', JSON.stringify(manifest.counters, null, 2));

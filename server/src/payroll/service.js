@@ -222,6 +222,11 @@ export async function ensureTourPayroll(client, tourEventId) {
     },
   });
   if (!tour || tour.status !== 'completed' || !tour.date) return null;
+  // Migration-owned tours (runbook v2): their payroll is FROZEN historical
+  // evidence written by the importer — never reconciled, never regenerated.
+  // completedReason='migration' is set only by the importer, atomically with
+  // the LegacyRecord crosswalk row, so it is the migration-ownership marker.
+  if (tour.completedReason === 'migration') return tour.payrollActivity ?? null;
 
   let activity = tour.payrollActivity;
   // A VOIDED activity is a deliberate human decision — reconciliation never
@@ -892,7 +897,9 @@ export async function createGeneralActivity(client, { typeId, payrollMonth, date
 // before the module existed).
 export async function ensureDayPayroll(client, dateISO) {
   const tours = await client.tourEvent.findMany({
-    where: { status: 'completed', date: dateISO },
+    // Migration-owned tours carry frozen imported payroll — excluded here AND
+    // guarded again inside ensureTourPayroll (defense in depth).
+    where: { status: 'completed', date: dateISO, NOT: { completedReason: 'migration' } },
     select: { id: true },
   });
   for (const t of tours) {

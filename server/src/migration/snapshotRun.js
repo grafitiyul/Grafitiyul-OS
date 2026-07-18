@@ -44,13 +44,13 @@ function pipedrivePlan() {
   ];
 }
 
-export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, mirror = null, budget = null }) {
+export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, mirror = null, budget = null, omit = [] }) {
   const writer = new SnapshotWriter({ snapshotId, store });
 
   // ── load or initialize run state (R2 is authoritative) ─────────────────────
   let state = await writer.readRunState();
   if (!state || state.snapshotId !== snapshotId) {
-    const plan = pipedrivePlan();
+    let plan = pipedrivePlan();
     for (const b of at.bases) {
       const tables = await at.tables(b.id);
       for (const t of tables) {
@@ -63,9 +63,19 @@ export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, m
       }
     }
     plan.push({ key: 'airtable/attachments', system: 'airtable', entity: 'attachments', kind: 'atAttachments' });
+    // Scoped snapshots (e.g. the cutover Final Snapshot skips the 1,255-request
+    // files census): omitted keys are RECORDED in the state so a resume never
+    // re-appends them, and the manifest honestly shows what was excluded.
+    const om = new Set(omit);
+    if (om.size) {
+      const dropped = plan.filter((p) => om.has(p.key)).map((p) => p.key);
+      plan = plan.filter((p) => !om.has(p.key));
+      log(`plan: omitting ${dropped.length} entities by request: ${dropped.join(', ')}`);
+    }
     state = {
       snapshotId, kind: 'snapshot', status: 'running', startedAt: nowIso(), updatedAt: nowIso(),
-      excludedTables: [EXCLUDED_TABLE_NAME], plan: plan.map((p) => p.key), planDetail: plan,
+      excludedTables: [EXCLUDED_TABLE_NAME], omittedEntities: [...om],
+      plan: plan.map((p) => p.key), planDetail: plan,
       completed: {}, current: null, counters: {},
     };
     await persist();
@@ -77,8 +87,10 @@ export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, m
     // newly-planned Pipedrive entities. Completed entities and their manifests are
     // never touched — an implementation change must NEVER fork a second snapshot.
     const fixed = new Map(pipedrivePlan().map((p) => [p.key, p]));
+    const omitted = new Set(state.omittedEntities || []);
     state.planDetail = state.planDetail.map((p) => (fixed.has(p.key) && !state.completed[p.key] ? fixed.get(p.key) : p));
     for (const [key, desc] of fixed) {
+      if (omitted.has(key)) continue; // a scoped snapshot never re-appends what it omitted
       if (!state.plan.includes(key)) { state.plan.push(key); state.planDetail.push(desc); log(`plan: + ${key} (new)`); }
     }
     log(`resuming snapshot ${snapshotId} — ${Object.keys(state.completed).length}/${state.plan.length} entities already complete`);
