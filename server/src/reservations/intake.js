@@ -7,6 +7,7 @@
 
 import { prisma } from '../db.js';
 import { israelToday, isValidDate } from '../lib/israelDate.js';
+import { normalizePhoneIntl } from '../whatsapp/phone.js';
 
 export const MAX_GROUPS = 30;
 export const MAX_SIGNATURE_BYTES = 5 * 1024 * 1024; // signers.js convention
@@ -156,24 +157,33 @@ export function validateSubmission(
     if (!accepted.has(c.key)) push(`confirmations.${c.key}`, 'required');
   }
 
-  // Invoice delivery ("לאן לשלוח את החשבונית?") — same business data GOS
-  // Deals use: the Organization's finance contact. The CHOICE is frozen in
-  // the payload snapshot; the contact details persist ORG-level (see
-  // persistSubmission), never reservation-level.
+  // Invoice delivery ("לאן לשלוח את החשבונית?") — MULTI-recipient: organizer
+  // and/or finance contact, as independent booleans (at least one). Contact
+  // details are the Organization's canonical finance fields (same data GOS
+  // Deals use); the selection + shown details freeze in the payload snapshot
+  // (see the route), never as reservation-level source of truth.
   const inv = body?.invoice || {};
-  const sendToFinance = inv.sendToFinance === true;
+  const toOrganizer = inv.toOrganizer === true;
+  const toFinance = inv.toFinance === true;
+  if (!toOrganizer && !toFinance) push('invoice.recipients', 'required');
   const financeName = str(inv.financeName, 120);
   const financeEmail =
     typeof inv.financeEmail === 'string' ? inv.financeEmail.trim().slice(0, 160) : '';
-  // Org-centric rule: when the Organization already has a finance contact,
-  // "לאיש הכספים" needs no input (the saved contact is used, read-only).
-  // Otherwise ("לאיש כספים אחר") an email is required — it becomes the
-  // Organization's canonical finance contact.
-  if (sendToFinance) {
+  // Phone: ORIGINAL entered value is kept; the canonical normalizer
+  // (whatsapp/phone.js) is used for VALIDATION only — project convention.
+  const financePhone = str(inv.financePhone, 40);
+  // Org-centric rule: a SAVED finance contact needs no input (read-only, the
+  // canonical values are used). A NEW contact ("לאיש כספים אחר") requires a
+  // valid email AND phone — it becomes the Organization's finance contact.
+  if (toFinance) {
     if (financeEmail && !EMAIL_RE.test(financeEmail)) {
       push('invoice.financeEmail', 'invalid');
     } else if (!financeEmail && !orgFinanceEmail) {
       push('invoice.financeEmail', 'required');
+    }
+    if (!orgFinanceEmail) {
+      if (!financePhone) push('invoice.financePhone', 'required');
+      else if (!normalizePhoneIntl(financePhone)) push('invoice.financePhone', 'invalid');
     }
   }
 
@@ -181,7 +191,13 @@ export function validateSubmission(
 
   const acceptedAt = new Date().toISOString();
   return {
-    invoice: { sendToFinance, financeName, financeEmail: financeEmail || null },
+    invoice: {
+      toOrganizer,
+      toFinance,
+      financeName,
+      financeEmail: financeEmail || null,
+      financePhone,
+    },
     session: {
       language,
       submissionKey,
@@ -282,6 +298,33 @@ export async function bookableCatalog(db = prisma) {
   return { cities: cities.map(({ sortOrder, ...c }) => c), variants: rows };
 }
 
+// Resolved invoice recipients for downstream document/invoice delivery —
+// reads the FROZEN snapshot (what the agent selected and saw), returns a
+// flat list deduped by lowercased email so organizer==finance never receives
+// the same document twice. The ONE reader contract for delivery flows.
+export function invoiceRecipients(payloadSnapshot, { organizerName = null, organizerEmail = null } = {}) {
+  const inv = payloadSnapshot?.invoice || {};
+  const out = [];
+  if (inv.toOrganizer && organizerEmail) {
+    out.push({ kind: 'organizer', name: organizerName, email: organizerEmail, phone: null });
+  }
+  if (inv.toFinance && inv.financeEmail) {
+    out.push({
+      kind: 'finance',
+      name: inv.financeName || null,
+      email: inv.financeEmail,
+      phone: inv.financePhone || null,
+    });
+  }
+  const seen = new Set();
+  return out.filter((r) => {
+    const key = r.email.trim().toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 // Persist a validated submission. Idempotent: an existing session with the
 // same submissionKey is returned as-is (created: false) — including sessions
 // already processed by Slice 3, so a very late retry still gets its numbers.
@@ -316,16 +359,24 @@ export async function persistSubmission(
         data: { lastUsedAt: new Date() },
       });
       // Finance-contact details entered on the form persist onto the
-      // ORGANIZATION (the same fields GOS Deals read), so every future
-      // reservation from any employee of this agency sees them pre-filled.
-      // Provided values only — an empty name never clears an existing one.
-      if (validated.invoice?.sendToFinance && validated.invoice.financeEmail) {
+      // ORGANIZATION (the same fields GOS Deals/accounting read), so every
+      // future reservation from any employee of this agency sees them
+      // pre-filled. ONLY when the org has none yet — the public form never
+      // overwrites a saved finance contact.
+      if (
+        validated.invoice?.toFinance &&
+        validated.invoice.financeEmail &&
+        !organization.financeEmail
+      ) {
         await tx.organization.update({
           where: { id: organization.id },
           data: {
             financeEmail: validated.invoice.financeEmail,
             ...(validated.invoice.financeName
               ? { financeContactName: validated.invoice.financeName }
+              : {}),
+            ...(validated.invoice.financePhone
+              ? { financePhone: validated.invoice.financePhone }
               : {}),
           },
         });

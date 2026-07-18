@@ -4,6 +4,7 @@ import {
   validateSubmission,
   decodeSignaturePng,
   persistSubmission,
+  invoiceRecipients,
   REQUIRED_CONFIRMATIONS,
   MAX_GROUPS,
 } from './intake.js';
@@ -53,6 +54,7 @@ function validBody(over = {}) {
     groups: [validGroup()],
     signature: { signerName: 'דנה כהן', method: 'drawn', image: PNG_DATA_URL },
     confirmations: REQUIRED_CONFIRMATIONS.map((c) => ({ key: c.key, accepted: true })),
+    invoice: { toOrganizer: true, toFinance: false },
     ...over,
   };
 }
@@ -173,33 +175,57 @@ test('decodeSignaturePng rejects non-PNG payloads and accepts real PNG', () => {
   assert.ok(Buffer.isBuffer(decodeSignaturePng(PNG_DATA_URL)));
 });
 
-test('invoice: "לאיש כספים אחר" requires a valid email when the org has no finance contact', () => {
-  const missing = validateSubmission(
-    validBody({ invoice: { sendToFinance: true } }),
+test('invoice: at least one recipient is required; both may be selected', () => {
+  const none = validateSubmission(
+    validBody({ invoice: { toOrganizer: false, toFinance: false } }),
     CATALOG,
     { today: TODAY },
   );
-  assert.equal(codesByPath(missing)['invoice.financeEmail'], 'required');
+  assert.equal(codesByPath(none)['invoice.recipients'], 'required');
 
-  const bad = validateSubmission(
-    validBody({ invoice: { sendToFinance: true, financeEmail: 'not-an-email' } }),
+  const both = validateSubmission(
+    validBody({ invoice: { toOrganizer: true, toFinance: true } }),
     CATALOG,
-    { today: TODAY },
+    { today: TODAY, orgFinanceEmail: 'finance@org.co' },
   );
-  assert.equal(codesByPath(bad)['invoice.financeEmail'], 'invalid');
+  assert.equal(both.problems, undefined);
+  assert.equal(both.invoice.toOrganizer, true);
+  assert.equal(both.invoice.toFinance, true);
+});
+
+test('invoice: a NEW finance contact requires a valid email AND phone (canonical normalizer)', () => {
+  const p = (invoice) =>
+    codesByPath(validateSubmission(validBody({ invoice }), CATALOG, { today: TODAY }));
+
+  const missing = p({ toFinance: true });
+  assert.equal(missing['invoice.financeEmail'], 'required');
+  assert.equal(missing['invoice.financePhone'], 'required');
+
+  const bad = p({ toFinance: true, financeEmail: 'not-an-email', financePhone: '12' });
+  assert.equal(bad['invoice.financeEmail'], 'invalid');
+  assert.equal(bad['invoice.financePhone'], 'invalid');
 
   const ok = validateSubmission(
-    validBody({ invoice: { sendToFinance: true, financeName: 'רותי', financeEmail: 'fin@a.co' } }),
+    validBody({
+      invoice: { toFinance: true, financeName: 'רותי', financeEmail: 'fin@a.co', financePhone: '050-123 4567' },
+    }),
     CATALOG,
     { today: TODAY },
   );
   assert.equal(ok.problems, undefined);
-  assert.deepEqual(ok.invoice, { sendToFinance: true, financeName: 'רותי', financeEmail: 'fin@a.co' });
+  // The ORIGINAL entered phone is preserved — normalization is validation-only.
+  assert.deepEqual(ok.invoice, {
+    toOrganizer: false,
+    toFinance: true,
+    financeName: 'רותי',
+    financeEmail: 'fin@a.co',
+    financePhone: '050-123 4567',
+  });
 });
 
-test('invoice: a SAVED org finance contact needs no input; "אליי" needs nothing', () => {
+test('invoice: a SAVED org finance contact needs no input; organizer-only needs nothing', () => {
   const saved = validateSubmission(
-    validBody({ invoice: { sendToFinance: true } }),
+    validBody({ invoice: { toFinance: true } }),
     CATALOG,
     { today: TODAY, orgFinanceEmail: 'finance@org.co' },
   );
@@ -208,7 +234,32 @@ test('invoice: a SAVED org finance contact needs no input; "אליי" needs noth
 
   const toMe = validateSubmission(validBody(), CATALOG, { today: TODAY });
   assert.equal(toMe.problems, undefined);
-  assert.equal(toMe.invoice.sendToFinance, false);
+  assert.equal(toMe.invoice.toFinance, false);
+});
+
+test('invoiceRecipients: reads the frozen snapshot, dedupes organizer==finance emails', () => {
+  const snap = (invoice) => ({ invoice });
+  const organizer = { organizerName: 'איילת', organizerEmail: 'Ayelet@Travel.co.il' };
+
+  const both = invoiceRecipients(
+    snap({ toOrganizer: true, toFinance: true, financeName: 'רותי', financeEmail: 'fin@a.co', financePhone: '03-555' }),
+    organizer,
+  );
+  assert.deepEqual(both.map((r) => r.kind), ['organizer', 'finance']);
+
+  // Same address (case-insensitive) → one delivery, never a duplicate email.
+  const dup = invoiceRecipients(
+    snap({ toOrganizer: true, toFinance: true, financeEmail: 'ayelet@travel.CO.IL' }),
+    organizer,
+  );
+  assert.equal(dup.length, 1);
+  assert.equal(dup[0].kind, 'organizer');
+
+  const financeOnly = invoiceRecipients(
+    snap({ toOrganizer: false, toFinance: true, financeEmail: 'fin@a.co' }),
+    organizer,
+  );
+  assert.deepEqual(financeOnly.map((r) => r.email), ['fin@a.co']);
 });
 
 // ── persistSubmission idempotency ────────────────────────────────────────────
@@ -261,20 +312,45 @@ test('persistSubmission: same submissionKey returns the existing session (no dup
 
 test('persistSubmission: a new finance contact persists onto the ORGANIZATION (canonical fields)', async () => {
   const validated = validateSubmission(
-    validBody({ invoice: { sendToFinance: true, financeName: 'רותי לוין', financeEmail: 'fin@a.co' } }),
+    validBody({
+      invoice: { toOrganizer: true, toFinance: true, financeName: 'רותי לוין', financeEmail: 'fin@a.co', financePhone: '050-1234567' },
+    }),
     CATALOG,
     { today: TODAY },
   );
   const db = fakePersistDb();
   await persistSubmission(PERSIST_ARGS(validated), db);
   assert.deepEqual(db.orgUpdates, [
-    { where: { id: 'org1' }, data: { financeEmail: 'fin@a.co', financeContactName: 'רותי לוין' } },
+    {
+      where: { id: 'org1' },
+      data: { financeEmail: 'fin@a.co', financeContactName: 'רותי לוין', financePhone: '050-1234567' },
+    },
   ]);
 
-  // "אליי" (or the saved-contact mode, which sends no email) never touches the org.
+  // Organizer-only (or the saved-contact mode, which sends no email) never touches the org.
   const dbNone = fakePersistDb();
   await persistSubmission(PERSIST_ARGS(validateSubmission(validBody({ submissionKey: 'sub_other_key_0001' }), CATALOG, { today: TODAY })), dbNone);
   assert.deepEqual(dbNone.orgUpdates, []);
+});
+
+test('persistSubmission: the public form NEVER overwrites a saved org finance contact', async () => {
+  // Even if a client somehow sends editable details, an org that already has
+  // a finance contact is left untouched.
+  const validated = validateSubmission(
+    validBody({
+      submissionKey: 'sub_guard_key_0001',
+      invoice: { toFinance: true, financeEmail: 'attacker@evil.co', financePhone: '050-9999999' },
+    }),
+    CATALOG,
+    { today: TODAY, orgFinanceEmail: 'saved@org.co' },
+  );
+  assert.equal(validated.problems, undefined);
+  const db = fakePersistDb();
+  await persistSubmission(
+    { ...PERSIST_ARGS(validated), organization: { id: 'org1', financeEmail: 'saved@org.co' } },
+    db,
+  );
+  assert.deepEqual(db.orgUpdates, []);
 });
 
 test('persistSubmission: unique-key race (P2002) resolves to the winning session', async () => {

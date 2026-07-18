@@ -61,6 +61,7 @@ export const L = {
       toOtherFinance: 'לאיש כספים אחר',
       financeName: 'שם איש הכספים',
       financeEmail: 'אימייל איש הכספים',
+      financePhone: 'טלפון איש הכספים',
     },
     footer: {
       confirm_reservation_request: 'ידוע לי שההזמנה כפופה לאישור גרפיטיול.',
@@ -81,7 +82,8 @@ export const L = {
       form: 'יש להשלים את הפרטים המסומנים',
       signature: 'חסרה חתימה',
       confirmations: 'יש לאשר את כל הסעיפים לפני השליחה',
-      financeEmail: 'יש להזין אימייל תקין לאיש הכספים',
+      recipients: 'יש לבחור לפחות נמען אחד לחשבונית',
+      financeDetails: 'יש להזין אימייל וטלפון תקינים לאיש הכספים',
       network: 'שגיאה בשליחה — נסו שוב',
     },
     thanks: {
@@ -156,6 +158,7 @@ export const L = {
       toOtherFinance: 'To another finance contact',
       financeName: 'Finance contact name',
       financeEmail: 'Finance contact email',
+      financePhone: 'Finance contact phone',
     },
     footer: {
       confirm_reservation_request: 'I understand the reservation is subject to Grafitiyul approval.',
@@ -176,7 +179,8 @@ export const L = {
       form: 'Please complete the highlighted fields',
       signature: 'Signature is missing',
       confirmations: 'Please accept all confirmations before submitting',
-      financeEmail: 'Please enter a valid finance contact email',
+      recipients: 'Please choose at least one invoice recipient',
+      financeDetails: 'Please enter a valid finance contact email and phone',
       network: 'Something went wrong — please try again',
     },
     thanks: {

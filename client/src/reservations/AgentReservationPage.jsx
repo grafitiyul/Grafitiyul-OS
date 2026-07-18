@@ -47,10 +47,17 @@ export default function AgentReservationPage() {
   const [groups, setGroups] = useState([emptyGroup()]);
   const [collapsedKeys, setCollapsedKeys] = useState(() => new Set());
   const [confirmations, setConfirmations] = useState({});
-  // Invoice delivery — org-centric: when the agency already has a finance
-  // contact it shows read-only; otherwise the entered details persist onto
-  // the Organization (canonical finance fields, shared with GOS Deals).
-  const [invoice, setInvoice] = useState({ sendToFinance: false, financeName: '', financeEmail: '' });
+  // Invoice delivery — MULTI-recipient (organizer and/or finance contact, at
+  // least one). Org-centric: a saved agency finance contact shows read-only;
+  // otherwise the entered details persist onto the Organization (canonical
+  // finance fields, shared with GOS Deals).
+  const [invoice, setInvoice] = useState({
+    toOrganizer: true,
+    toFinance: false,
+    financeName: '',
+    financeEmail: '',
+    financePhone: '',
+  });
   const [signature, setSignature] = useState({ method: 'typed', signerName: '', image: null });
   const [submissionKey] = useState(() => loadDraft(token)?.submissionKey || crypto.randomUUID());
   const [submitting, setSubmitting] = useState(false);
@@ -164,10 +171,12 @@ export default function AgentReservationPage() {
   const allComplete = groups.length > 0 && groups.every(groupComplete);
   const allConfirmed = (boot?.requiredConfirmations || []).every((k) => confirmations[k]);
   const orgHasFinance = !!boot?.organization?.financeEmail;
-  const invoiceOk =
-    !invoice.sendToFinance ||
+  const anyRecipient = invoice.toOrganizer || invoice.toFinance;
+  const financeDetailsOk =
+    !invoice.toFinance ||
     orgHasFinance ||
-    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(invoice.financeEmail.trim());
+    (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(invoice.financeEmail.trim()) &&
+      invoice.financePhone.replace(/\D/g, '').length >= 8);
   const signatureOk =
     (signature.signerName || '').trim() &&
     (signature.method === 'typed' || !!signature.image);
@@ -184,7 +193,8 @@ export default function AgentReservationPage() {
       return setFormError(t.problems.form);
     }
     if (!allConfirmed) return setFormError(t.problems.confirmations);
-    if (!invoiceOk) return setFormError(t.problems.financeEmail);
+    if (!anyRecipient) return setFormError(t.problems.recipients);
+    if (!financeDetailsOk) return setFormError(t.problems.financeDetails);
     if (!signatureOk) return setFormError(t.problems.signature);
     setSubmitting(true);
     try {
@@ -211,11 +221,16 @@ export default function AgentReservationPage() {
           accepted: !!confirmations[k],
         })),
         invoice: {
-          sendToFinance: invoice.sendToFinance,
+          toOrganizer: invoice.toOrganizer,
+          toFinance: invoice.toFinance,
           // Editable details are sent only in the "לאיש כספים אחר" mode —
           // with a saved org contact the server uses the canonical values.
-          ...(invoice.sendToFinance && !orgHasFinance
-            ? { financeName: invoice.financeName || null, financeEmail: invoice.financeEmail.trim() }
+          ...(invoice.toFinance && !orgHasFinance
+            ? {
+                financeName: invoice.financeName || null,
+                financeEmail: invoice.financeEmail.trim(),
+                financePhone: invoice.financePhone.trim(),
+              }
             : {}),
         },
       };
@@ -366,39 +381,42 @@ export default function AgentReservationPage() {
             </label>
           </div>
 
-          {/* Invoice delivery — org-centric finance contact. */}
+          {/* Invoice delivery — independent recipients: organizer and/or the
+              finance contact (both allowed; at least one required). */}
           <div className="mt-4 rounded-2xl border border-gray-200/80 bg-white p-5">
             <div className="mb-3 text-[14px] font-semibold text-gray-900">{t.invoice.title}</div>
             <div className="space-y-2.5">
               <label className="flex cursor-pointer items-center gap-2 text-[13px] text-gray-700">
                 <input
-                  type="radio"
-                  name="invoiceTarget"
-                  checked={!invoice.sendToFinance}
-                  onChange={() => setInvoice((v) => ({ ...v, sendToFinance: false }))}
+                  type="checkbox"
+                  checked={invoice.toOrganizer}
+                  onChange={(e) => setInvoice((v) => ({ ...v, toOrganizer: e.target.checked }))}
                 />
                 {t.invoice.toMe}
               </label>
               <label className="flex cursor-pointer items-center gap-2 text-[13px] text-gray-700">
                 <input
-                  type="radio"
-                  name="invoiceTarget"
-                  checked={invoice.sendToFinance}
-                  onChange={() => setInvoice((v) => ({ ...v, sendToFinance: true }))}
+                  type="checkbox"
+                  checked={invoice.toFinance}
+                  onChange={(e) => setInvoice((v) => ({ ...v, toFinance: e.target.checked }))}
                 />
                 {orgHasFinance ? t.invoice.toFinance : t.invoice.toOtherFinance}
               </label>
-              {invoice.sendToFinance && orgHasFinance && (
-                // Saved organization finance contact — read-only display.
+              {invoice.toFinance && orgHasFinance && (
+                // Saved organization finance contact — read-only display; the
+                // public form never edits or overwrites it.
                 <div className="ms-6 rounded-xl bg-gray-50/80 px-3.5 py-2.5 text-[13px]">
                   {boot.organization.financeContactName && (
                     <div className="font-medium text-gray-800">{boot.organization.financeContactName}</div>
                   )}
                   <div className="text-gray-600" dir="ltr">{boot.organization.financeEmail}</div>
+                  {boot.organization.financePhone && (
+                    <div className="text-gray-600" dir="ltr">{boot.organization.financePhone}</div>
+                  )}
                 </div>
               )}
-              {invoice.sendToFinance && !orgHasFinance && (
-                <div className="ms-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {invoice.toFinance && !orgHasFinance && (
+                <div className="ms-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <div>
                     <span className="mb-1 block text-[12px] font-medium text-gray-600">{t.invoice.financeName}</span>
                     <input
@@ -418,7 +436,22 @@ export default function AgentReservationPage() {
                       dir="ltr"
                       inputMode="email"
                       className={`h-10 w-full rounded-lg border px-3 text-[14px] outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 ${
-                        formError === t.problems.financeEmail ? 'border-red-300' : 'border-gray-200'
+                        formError === t.problems.financeDetails ? 'border-red-300' : 'border-gray-200'
+                      }`}
+                    />
+                  </div>
+                  <div>
+                    <span className="mb-1 block text-[12px] font-medium text-gray-600">
+                      <span className="text-red-500">* </span>
+                      {t.invoice.financePhone}
+                    </span>
+                    <input
+                      value={invoice.financePhone}
+                      onChange={(e) => setInvoice((v) => ({ ...v, financePhone: e.target.value }))}
+                      dir="ltr"
+                      inputMode="tel"
+                      className={`h-10 w-full rounded-lg border px-3 text-[14px] outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 ${
+                        formError === t.problems.financeDetails ? 'border-red-300' : 'border-gray-200'
                       }`}
                     />
                   </div>

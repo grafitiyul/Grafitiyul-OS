@@ -14,6 +14,7 @@ export const PREVIEW_BOOT = {
     name: 'מסעות עולם',
     financeContactName: 'רותי לוין',
     financeEmail: 'finance@travel.co.il',
+    financePhone: '03-5551234',
   },
   defaultLanguage: 'he',
   maxGroups: 30,

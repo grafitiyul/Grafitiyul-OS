@@ -113,6 +113,7 @@ router.get(
         // contact — the same fields the GOS Deal/accounting flow reads.
         financeContactName: r.organization.financeContactName || null,
         financeEmail: r.organization.financeEmail || null,
+        financePhone: r.organization.financePhone || null,
       },
       defaultLanguage: r.link.defaultLanguage,
       maxGroups: MAX_GROUPS,
@@ -140,10 +141,21 @@ router.post(
     }
 
     // Frozen audit snapshot of what was submitted — WITHOUT the signature
-    // image (bytes live in their own column; the snapshot stays light).
+    // image (bytes live in their own column; the snapshot stays light). The
+    // invoice block freezes the RESOLVED view: which recipients were selected
+    // and the finance details as SHOWN at submission time (entered values in
+    // the new-contact mode, the saved org contact in read-only mode) —
+    // historical evidence; the editable truth stays on the Organization.
     const { signature, ...rest } = req.body || {};
     const payloadSnapshot = {
       ...rest,
+      invoice: {
+        toOrganizer: validated.invoice.toOrganizer,
+        toFinance: validated.invoice.toFinance,
+        financeName: validated.invoice.financeName ?? r.organization.financeContactName ?? null,
+        financeEmail: validated.invoice.financeEmail ?? r.organization.financeEmail ?? null,
+        financePhone: validated.invoice.financePhone ?? r.organization.financePhone ?? null,
+      },
       signature: { signerName: validated.session.signerName, method: validated.session.signatureMethod },
     };
 
