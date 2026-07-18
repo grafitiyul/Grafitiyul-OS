@@ -364,9 +364,9 @@ app.use('/api/products', requireAdminAuth, productsRouter);
 app.use('/api/activity-types', requireAdminAuth, activityTypesRouter);
 app.use('/api/payment-config', requireAdminAuth, paymentConfigRouter);
 
-// Products & Pricing — Slice 2 (pricing engine + add-ons). Admin only. NOT
-// wired to Deals; no DealLineItem, no Quotes. /api/pricing/calculate is a
-// read-only test endpoint for the engine.
+// Products & Pricing (pricing engine + add-ons). Admin only. /api/pricing
+// carries /preview, /builder (the ONE Deal/simulator calculation) and
+// /group-cards.
 app.use('/api/price-lists', requireAdminAuth, priceListsRouter);
 app.use('/api/price-rules', requireAdminAuth, priceRulesRouter);
 app.use('/api/addons', requireAdminAuth, addonsRouter);

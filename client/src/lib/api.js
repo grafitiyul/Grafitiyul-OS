@@ -1005,10 +1005,6 @@ export const api = {
   priceLists: {
     list: () => request('/api/price-lists'),
     create: (data) => request('/api/price-lists', { method: 'POST', body: JSON.stringify(data) }),
-    update: (id, data) => request(`/api/price-lists/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-    remove: (id) => request(`/api/price-lists/${id}`, { method: 'DELETE' }),
-    reorder: (ids) => request('/api/price-lists/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
-    setDefault: (id) => request(`/api/price-lists/${id}/default`, { method: 'PUT' }),
   },
   priceRules: {
     list: (priceListId) => request(`/api/price-rules${qs({ priceListId })}`),
@@ -1032,7 +1028,6 @@ export const api = {
     remove: (id) => request(`/api/addon-price-rules/${id}`, { method: 'DELETE' }),
   },
   pricing: {
-    calculate: (input) => request('/api/pricing/calculate', { method: 'POST', body: JSON.stringify(input) }),
     preview: (input) => request('/api/pricing/preview', { method: 'POST', body: JSON.stringify(input) }),
     // Multi-line Price Builder calc (product line via the engine + per-line VAT
     // splits + totals + explanation/conflict). All math server-side.
@@ -1041,10 +1036,9 @@ export const api = {
     // flag is the SOLE authority; no product/city/activity filtering, server-side.
     groupCards: () => request('/api/pricing/group-cards'),
   },
-  // Pricing Segments (Slice A) — the 6 business tabs + owner-set bindings.
+  // Pricing Segments — the 6 business tabs (read-only; bindings are stored data).
   pricingSegments: {
     list: () => request('/api/pricing-segments'),
-    update: (id, data) => request(`/api/pricing-segments/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   },
   // שעות שבת וחג — Sabbath & Holiday hours (source of truth for time detection).
   sabbathHours: {

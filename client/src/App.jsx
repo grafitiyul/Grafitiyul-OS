@@ -124,8 +124,6 @@ import VariantEditor from './admin/products/VariantEditor.jsx';
 import LocationsSettings from './admin/products/LocationsSettings.jsx';
 import PaymentConfigSettings from './admin/products/PaymentConfigSettings.jsx';
 import PricingBoard from './admin/pricing/PricingBoard.jsx';
-import PricingSettings from './admin/pricing/PricingSettings.jsx';
-import PricingSimulator from './admin/pricing/PricingSimulator.jsx';
 import AddonsSettings from './admin/pricing/AddonsSettings.jsx';
 // TEMPORARY (Phase 1/2 review scaffolding): mounts the public-website
 // foundation at a NON-root path so it can be reviewed without touching the
@@ -322,8 +320,6 @@ export default function App() {
         <Route path="settings/crm/locations" element={<LocationsSettings />} />
         <Route path="settings/crm/payment" element={<PaymentConfigSettings />} />
         <Route path="settings/crm/pricing" element={<PricingBoard />} />
-        <Route path="settings/crm/pricing/advanced" element={<PricingSettings />} />
-        <Route path="settings/crm/pricing/simulator" element={<PricingSimulator />} />
         <Route path="settings/crm/addons" element={<AddonsSettings />} />
         <Route path="settings/crm/ticket-types" element={<TicketTypesSettings />} />
         <Route path="settings/crm/sabbath-hours" element={<SabbathHoursSettings />} />

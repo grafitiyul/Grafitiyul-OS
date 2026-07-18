@@ -4,6 +4,14 @@ import { handle } from '../asyncHandler.js';
 
 // Price Lists (Slice 2). A named set of pricing rules with VAT/currency
 // defaults. Exactly one row is the system default (isDefault). Admin-only.
+//
+// Dead-code removal (הגדרות מתקדמות cleanup): the rename/VAT-edit, delete,
+// reorder and set-default endpoints existed ONLY for the retired advanced
+// pricing screen and were removed with it. The PriceList columns they edited
+// (isDefault, defaultVatMode/Rate, sortOrder, nameEn, currency, active) are
+// STILL READ by engine resolution and the business board — the storage stays;
+// only the orphaned write endpoints are gone (git history has them if a
+// management UI ever returns).
 
 const router = Router();
 
@@ -44,81 +52,6 @@ router.post(
       },
     });
     res.status(201).json(list);
-  }),
-);
-
-router.put(
-  '/reorder',
-  handle(async (req, res) => {
-    const ids = Array.isArray(req.body?.ids)
-      ? req.body.ids.filter((x) => typeof x === 'string')
-      : [];
-    if (!ids.length) return res.json({ ok: true });
-    await prisma.$transaction(
-      ids.map((id, i) =>
-        prisma.priceList.update({ where: { id }, data: { sortOrder: i } }),
-      ),
-    );
-    res.json({ ok: true });
-  }),
-);
-
-// Make this list the single system default (unset all others). Atomic.
-router.put(
-  '/:id/default',
-  handle(async (req, res) => {
-    const { id } = req.params;
-    const exists = await prisma.priceList.findUnique({ where: { id } });
-    if (!exists) return res.status(404).json({ error: 'not_found' });
-    await prisma.$transaction([
-      prisma.priceList.updateMany({
-        where: { id: { not: id } },
-        data: { isDefault: false },
-      }),
-      prisma.priceList.update({ where: { id }, data: { isDefault: true } }),
-    ]);
-    res.json(await prisma.priceList.findUnique({ where: { id } }));
-  }),
-);
-
-router.put(
-  '/:id',
-  handle(async (req, res) => {
-    const data = {};
-    if (req.body?.nameHe !== undefined) {
-      const v = String(req.body.nameHe).trim();
-      if (!v) return res.status(400).json({ error: 'nameHe_required' });
-      data.nameHe = v;
-    }
-    if (req.body?.nameEn !== undefined)
-      data.nameEn = req.body.nameEn ? String(req.body.nameEn).trim() : null;
-    if (req.body?.defaultVatMode !== undefined)
-      data.defaultVatMode = cleanVatMode(req.body.defaultVatMode);
-    if (req.body?.defaultVatRate !== undefined)
-      data.defaultVatRate = Number(req.body.defaultVatRate) || 0;
-    if (req.body?.currency !== undefined)
-      data.currency = String(req.body.currency || 'ILS');
-    if (req.body?.active !== undefined) data.active = !!req.body.active;
-    const list = await prisma.priceList.update({
-      where: { id: req.params.id },
-      data,
-    });
-    res.json(list);
-  }),
-);
-
-router.delete(
-  '/:id',
-  handle(async (req, res) => {
-    const list = await prisma.priceList.findUnique({
-      where: { id: req.params.id },
-    });
-    if (!list) return res.status(404).json({ error: 'not_found' });
-    if (list.isDefault)
-      return res.status(409).json({ error: 'cannot_delete_default' });
-    // Rules cascade-delete via FK. Org type/subtype defaults SetNull.
-    await prisma.priceList.delete({ where: { id: req.params.id } });
-    res.status(204).end();
   }),
 );
 

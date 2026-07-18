@@ -56,12 +56,12 @@ const CELL = 'h-10 rounded-md border border-gray-200 px-2.5 text-sm focus:outlin
 //   skipDealTermsWrite — when true, payment terms/method are NOT edited or
 //     written (they are DEAL-level commercial terms; a parallel offer follows
 //     the Deal's terms and must never mutate the Deal).
-//   inline    — render the builder body WITHOUT the Dialog shell (simulator page).
 //   simulated — no Deal: nothing is loaded from or saved to the server. Lines are
 //     seeded from the supplied context and live only in this component. The SAME
 //     builder + the SAME /api/pricing/builder engine path as a real Deal — only
-//     persistence is disabled.
-export default function PriceBuilderDialog({ open, deal, context, onClose, onSaved, title, headerExtra, skipDealTermsWrite = false, inline = false, simulated = false }) {
+//     persistence is disabled. The footer becomes סגור + איפוס סימולטור
+//     (onReset, provided by the simulator wrapper) instead of save.
+export default function PriceBuilderDialog({ open, deal, context, onClose, onSaved, onReset, title, headerExtra, skipDealTermsWrite = false, simulated = false }) {
   const [lines, setLines] = useState([]);
   const [openNotes, setOpenNotes] = useState(() => new Set());
   const [freeRows, setFreeRows] = useState(() => new Set());
@@ -391,8 +391,8 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
 
   if (!open) return null;
 
-  // ONE builder body for both renderings: the Deal dialog and the inline
-  // simulator page. The body is identical — only the shell differs.
+  // ONE builder body for both modes — the Deal dialog and the simulator popup
+  // share the shell and layout; only the footer differs (save vs reset/close).
   const body = (
     <>
       {headerExtra}
@@ -520,9 +520,6 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     </>
   );
 
-  // Inline (simulator page): the SAME builder body, no Dialog shell, no save.
-  if (inline) return <div>{body}</div>;
-
   return (
     <Dialog
       open={open}
@@ -530,14 +527,25 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
       title={title || 'עריכת מחיר'}
       size="2xl"
       footer={
-        <>
-          <button type="button" onClick={onClose} className="text-sm text-gray-600 border border-gray-300 rounded-md px-4 py-2 hover:bg-gray-50">
-            ביטול
-          </button>
-          <button onClick={save} disabled={saving} className="bg-emerald-600 text-white text-sm font-semibold rounded-md px-6 py-2 hover:bg-emerald-700 disabled:opacity-50">
-            {saving ? 'שומר…' : 'שמור וסגור'}
-          </button>
-        </>
+        simulated ? (
+          <>
+            <button type="button" onClick={onReset} className="text-sm text-gray-600 border border-gray-300 rounded-md px-4 py-2 hover:bg-gray-50">
+              איפוס סימולטור
+            </button>
+            <button type="button" onClick={onClose} className="bg-blue-600 text-white text-sm font-semibold rounded-md px-6 py-2 hover:bg-blue-700">
+              סגור
+            </button>
+          </>
+        ) : (
+          <>
+            <button type="button" onClick={onClose} className="text-sm text-gray-600 border border-gray-300 rounded-md px-4 py-2 hover:bg-gray-50">
+              ביטול
+            </button>
+            <button onClick={save} disabled={saving} className="bg-emerald-600 text-white text-sm font-semibold rounded-md px-6 py-2 hover:bg-emerald-700 disabled:opacity-50">
+              {saving ? 'שומר…' : 'שמור וסגור'}
+            </button>
+          </>
+        )
       }
     >
       {body}

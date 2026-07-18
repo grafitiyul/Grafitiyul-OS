@@ -5,10 +5,14 @@ import { calculate, baseAmountMinor, splitVat, priceAddon, addonApplies, sabbath
 import { buildGroupCards } from '../pricing/groupTicketCards.js';
 import { composeBuilderLines } from '../pricing/builderCompose.js';
 
-// Pricing calculator (Slice 2). Admin-only TEST endpoint for the pricing engine.
-// It does NOT touch Deals and writes nothing — it resolves a price list + rule
-// for a given context and returns the computed net/vat/gross plus a debug
-// summary. This is the only consumer of the engine for now.
+// Pricing engine HTTP surface: /preview (per-card draft preview), /builder (the
+// ONE multi-line calculation used by the Deal builders AND the pricing
+// simulator) and /group-cards (Group Ticket Builder catalog). Admin-only.
+//
+// Dead-code removal (הגדרות מתקדמות cleanup): POST /calculate — the raw
+// single-context test endpoint — served ONLY the retired advanced screen's
+// calculator and was removed with it. The engine's calculate() itself lives on
+// inside /builder's product resolution.
 
 const router = Router();
 
@@ -37,68 +41,6 @@ async function resolvePriceListId({ organizationTypeId, organizationSubtypeId })
   });
   return def ? { id: def.id, source: 'system_default' } : null;
 }
-
-router.post(
-  '/calculate',
-  handle(async (req, res) => {
-    const b = req.body || {};
-    const context = {
-      productId: b.productId || null,
-      productVariantId: b.productVariantId || null,
-      activityTypeId: b.activityTypeId || null,
-      organizationTypeId: b.organizationTypeId || null,
-      organizationSubtypeId: b.organizationSubtypeId || null,
-    };
-    const counts = {
-      adultCount: b.adultCount,
-      childCount: b.childCount,
-      participantCount: b.participantCount,
-      groupCount: b.groupCount != null ? b.groupCount : 1,
-    };
-
-    if (!context.activityTypeId)
-      return res.json({ ok: false, error: 'activity_type_required' });
-
-    const activityType = await prisma.activityType.findUnique({
-      where: { id: context.activityTypeId },
-    });
-    if (!activityType)
-      return res.json({ ok: false, error: 'activity_type_not_found' });
-
-    const resolved = await resolvePriceListId(context);
-    if (!resolved)
-      return res.json({ ok: false, error: 'no_price_list' });
-
-    const priceList = await prisma.priceList.findUnique({
-      where: { id: resolved.id },
-      include: {
-        rules: {
-          where: { active: true },
-          include: { tiers: { orderBy: { sortOrder: 'asc' } }, ticketPrices: true },
-        },
-      },
-    });
-    if (!priceList) return res.json({ ok: false, error: 'no_price_list' });
-
-    try {
-      const result = calculate({ priceList, activityType, context, counts });
-      result.priceListSource = resolved.source;
-      return res.json(result);
-    } catch (e) {
-      if (e instanceof PricingError) {
-        return res.json({
-          ok: false,
-          error: e.code,
-          details: e.details,
-          priceList: { id: priceList.id, nameHe: priceList.nameHe },
-          priceListSource: resolved.source,
-          priceModel: activityType.priceModel,
-        });
-      }
-      throw e;
-    }
-  }),
-);
 
 // Draft-rule preview (Slice B). Computes ONE rule's price for a participant
 // count using the same engine math (baseAmountMinor + splitVat) — NO resolution,

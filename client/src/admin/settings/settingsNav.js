@@ -28,8 +28,6 @@ export const SETTINGS_TREE = {
   '/admin/settings/crm/addons': { label: 'תוספות', parent: '/admin/settings/crm/products-area' },
   '/admin/settings/crm/payment': { label: 'הגדרות תשלום', parent: '/admin/settings/crm' },
   '/admin/settings/crm/pricing': { label: 'תמחור', parent: '/admin/settings/crm' },
-  '/admin/settings/crm/pricing/advanced': { label: 'תמחור מתקדם', parent: '/admin/settings/crm/pricing' },
-  '/admin/settings/crm/pricing/simulator': { label: 'סימולטור תמחור', parent: '/admin/settings/crm/pricing' },
   '/admin/settings/crm/ticket-types': { label: 'סוגי כרטיסים', parent: '/admin/settings/crm' },
   '/admin/settings/crm/sabbath-hours': { label: 'שעות שבת וחג', parent: '/admin/settings/crm' },
   '/admin/settings/crm/shared-content': { label: 'ספריית תוכן משותף', parent: '/admin/settings/crm' },

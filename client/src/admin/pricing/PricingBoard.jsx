@@ -1,20 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import SettingsChrome from '../settings/SettingsChrome.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
+import PricingSimulatorDialog from './PricingSimulatorDialog.jsx';
 import { formatMinor, toMinor, minorToInput } from '../../lib/money.js';
 
-// Business-facing Pricing editor (Slice C). The PRIMARY pricing experience is
-// MAINTAINING PRICES, not configuring the engine:
+// Business-facing Pricing editor (Slice C) — THE pricing screen:
 //   version (PriceList) → tab (PricingSegment) → card → model → values → VAT.
-// A tab opens straight onto its cards. All engine configuration (segment→activity
-// /subtype mapping, raw rules, priority) lives behind "הגדרות מתקדמות".
+// A tab opens straight onto its cards. (The old "הגדרות מתקדמות" engine screen
+// was retired; the Pricing Simulator popup replaced its calculator.)
 //
 // A "card" is sibling PriceRules sharing a `cardGroupId`, one per chosen location
-// (ProductVariant), with identical model + values + VAT. The tab's activity/subtype
-// scope is configured once in Advanced and copied onto the card's rules there; the
-// business editor never asks about it. The engine is untouched.
+// (ProductVariant), with identical model + values + VAT. The tab's stored
+// activity/subtype binding is copied onto the card's rules on save; the business
+// editor never asks about it. The engine is untouched.
 
 // Width-free base so fixed-width fields can size themselves; INPUT keeps w-full
 // for the default full-width inputs. (Appending w-20 to a class that already has
@@ -111,6 +110,8 @@ export default function PricingBoard() {
   const [addons, setAddons] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // Pricing Simulator popup — rendered only while open so every open starts clean.
+  const [simulatorOpen, setSimulatorOpen] = useState(false);
 
   const [versionId, setVersionId] = useState(null);
   const [segmentId, setSegmentId] = useState(null);
@@ -163,16 +164,13 @@ export default function PricingBoard() {
             נהלו מחירים למוצרים. בחרו גרסה, עברו בין הלשוניות, והוסיפו כרטיסי תמחור.
           </p>
         </div>
-        <div className="shrink-0 mt-1 flex items-center gap-4">
-          <Link to="/admin/settings/crm/pricing/simulator"
-            className="inline-flex items-center gap-1 text-[12px] text-gray-400 hover:text-gray-600">
-            🧮 סימולטור תמחור
-          </Link>
-          <Link to="/admin/settings/crm/pricing/advanced"
-            className="inline-flex items-center gap-1 text-[12px] text-gray-400 hover:text-gray-600">
-            ⚙ הגדרות מתקדמות
-          </Link>
-        </div>
+        <button
+          type="button"
+          onClick={() => setSimulatorOpen(true)}
+          className="shrink-0 mt-1 h-10 inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-4 text-sm font-medium text-blue-700 hover:bg-blue-100"
+        >
+          🧮 סימולטור תמחור
+        </button>
       </header>
 
       {error && <div className="text-sm text-red-600">שגיאה: {error}</div>}
@@ -202,6 +200,8 @@ export default function PricingBoard() {
           )}
         </>
       )}
+
+      {simulatorOpen && <PricingSimulatorDialog open onClose={() => setSimulatorOpen(false)} />}
     </div>
   );
 }
