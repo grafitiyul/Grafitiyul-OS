@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import SettingsChrome from '../settings/SettingsChrome.jsx';
+import RichEditor from '../../editor/RichEditor.jsx';
 import { formatMinor, toMinor, minorToInput } from '../../lib/money.js';
 
 // Business-facing Pricing editor (Slice C). The PRIMARY pricing experience is
@@ -162,10 +163,16 @@ export default function PricingBoard() {
             נהלו מחירים למוצרים. בחרו גרסה, עברו בין הלשוניות, והוסיפו כרטיסי תמחור.
           </p>
         </div>
-        <Link to="/admin/settings/crm/pricing/advanced"
-          className="shrink-0 mt-1 inline-flex items-center gap-1 text-[12px] text-gray-400 hover:text-gray-600">
-          ⚙ הגדרות מתקדמות
-        </Link>
+        <div className="shrink-0 mt-1 flex items-center gap-4">
+          <Link to="/admin/settings/crm/pricing/simulator"
+            className="inline-flex items-center gap-1 text-[12px] text-gray-400 hover:text-gray-600">
+            🧮 סימולטור תמחור
+          </Link>
+          <Link to="/admin/settings/crm/pricing/advanced"
+            className="inline-flex items-center gap-1 text-[12px] text-gray-400 hover:text-gray-600">
+            ⚙ הגדרות מתקדמות
+          </Link>
+        </div>
       </header>
 
       {error && <div className="text-sm text-red-600">שגיאה: {error}</div>}
@@ -396,6 +403,10 @@ function groupCards(rules) {
       vatMode: rep.vatMode || 'included',
       vatRate: rep.vatRate ?? DEFAULT_VAT_RATE,
       availableForGroupTickets: rep.availableForGroupTickets === true,
+      // Rich-text note the calculation writes onto the FIRST builder line this
+      // card produces. Duplicated across siblings — the representative's value is
+      // the card's value.
+      firstLineNote: rep.firstLineNote || '',
       tiers: (rep.tiers || []).map((t) => ({
         uptoParticipants: Number(t.uptoParticipants),
         totalPriceMinor: Number(t.totalPriceMinor),
@@ -897,6 +908,10 @@ function CardEditor({ version, segment, products, ticketTypes, addons, productCa
   const [vatRate, setVatRate] = useState(card?.vatRate ?? version.defaultVatRate ?? DEFAULT_VAT_RATE);
   // Business capability — offer this card in the Group Ticket Builder. Default OFF.
   const [availableForGroupTickets, setAvailGroup] = useState(card?.availableForGroupTickets === true);
+  // First-line note template — written by automatic calculation onto the first
+  // builder line this card produces. Rich text (same format as line notes) so the
+  // builder displays exactly what is authored here. Empty = no automatic note.
+  const [firstLineNote, setFirstLineNote] = useState(card?.firstLineNote || '');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
@@ -1007,6 +1022,8 @@ function CardEditor({ version, segment, products, ticketTypes, addons, productCa
         vatRate: vatMode === 'exempt' ? 0 : (Number(vatRate) || 0),
         active: true,
         availableForGroupTickets,
+        // Raw rich text; the server normalizes blank markup to null (= no note).
+        firstLineNote,
         addons: addonsPayload,
         ...modelPayload(),
       };
@@ -1144,6 +1161,25 @@ function CardEditor({ version, segment, products, ticketTypes, addons, productCa
               className={`${INPUT} text-left`} />
           </Field>
         )}
+      </div>
+
+      {/* First-line note — written automatically onto the first builder line this
+          card produces during automatic calculation. */}
+      <div className="border-t border-blue-100 pt-3 space-y-1.5">
+        <span className={LABEL}>הערה אוטומטית לבונה המחיר</span>
+        <RichEditor
+          value={firstLineNote}
+          onChange={setFirstLineNote}
+          preset="note"
+          toolbar="lite"
+          collapsible
+          maxHeight="200px"
+          ariaLabel="הערה אוטומטית לשורה הראשונה"
+          placeholder="הערה שתיכתב אוטומטית בשורה הראשונה שהכרטיס מייצר…"
+        />
+        <p className="text-[11px] text-gray-400">
+          בחישוב אוטומטי ההערה נכתבת על השורה הראשונה שכרטיס התמחור הזה מייצר בבונה המחיר (בלבד). ריק = ללא הערה אוטומטית.
+        </p>
       </div>
 
       {/* Group Ticket Sales — business capability. The flag alone decides whether

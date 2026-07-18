@@ -2212,6 +2212,12 @@ model PriceRule {
   vatMode String? // included | excluded
   vatRate Int?
 
+  // Rich-text note the pricing calculation writes onto the FIRST builder line
+  // this card produces (null/empty = no automatic note). Business content, same
+  // rich-note format as QuoteLine.note. Duplicated across a card's sibling rules
+  // (one per location) like cardSortOrder; rule RESOLUTION never reads it.
+  firstLineNote String?
+
   priority                 Int      @default(0)
   // Business capability (card-level, business-driven): when true, this Pricing
   // Card is offered in the Group Ticket Builder. The Pricing Card itself is the

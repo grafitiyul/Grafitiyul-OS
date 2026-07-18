@@ -34,6 +34,11 @@ function normalize(l) {
     active: l.active !== false,
     note: l.note || '',
     overridden: !!l.overridden,
+    // Structured provenance — which Pricing Card produced this line (engine
+    // stamps the product line with the winning card). Round-trips to QuoteLine.
+    sourceKind: l.sourceKind || null,
+    sourceCardGroupId: l.sourceCardGroupId || null,
+    ticketTypeId: l.ticketTypeId || null,
   };
 }
 function seedProductLine(context) {
@@ -51,7 +56,12 @@ const CELL = 'h-10 rounded-md border border-gray-200 px-2.5 text-sm focus:outlin
 //   skipDealTermsWrite — when true, payment terms/method are NOT edited or
 //     written (they are DEAL-level commercial terms; a parallel offer follows
 //     the Deal's terms and must never mutate the Deal).
-export default function PriceBuilderDialog({ open, deal, context, onClose, onSaved, title, headerExtra, skipDealTermsWrite = false }) {
+//   inline    — render the builder body WITHOUT the Dialog shell (simulator page).
+//   simulated — no Deal: nothing is loaded from or saved to the server. Lines are
+//     seeded from the supplied context and live only in this component. The SAME
+//     builder + the SAME /api/pricing/builder engine path as a real Deal — only
+//     persistence is disabled.
+export default function PriceBuilderDialog({ open, deal, context, onClose, onSaved, title, headerExtra, skipDealTermsWrite = false, inline = false, simulated = false }) {
   const [lines, setLines] = useState([]);
   const [openNotes, setOpenNotes] = useState(() => new Set());
   const [freeRows, setFreeRows] = useState(() => new Set());
@@ -85,6 +95,12 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     setCtx(context);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, deal?.id]);
+
+  // Simulator: the context is LIVE (the page's top block edits it) — follow it so
+  // the engine reprices exactly as a Deal whose inputs changed. Parent memoizes.
+  useEffect(() => {
+    if (simulated) setCtx(context);
+  }, [simulated, context]);
 
   // Participant count follows the context prop LIVE (the embedded parallel-offer
   // header edits it while the builder is open; the deal flow's context is stable
@@ -125,9 +141,35 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, lines, products, ctx?.productId]);
 
+  // Simulator: no Deal to load — seed the product line from the simulated
+  // context (mirrors a brand-new working version). Re-seeds when the simulated
+  // product/variant changes; other (manually added) lines are kept.
+  useEffect(() => {
+    if (!open || !simulated) return undefined;
+    let live = true;
+    if (!context?.productId) {
+      setLines((ls) => ls.filter((l) => l.kind !== 'product'));
+      return undefined;
+    }
+    api.products
+      .get(context.productId)
+      .then((p) => {
+        if (!live) return;
+        setLines((ls) => [
+          normalize({ kind: 'product', label: p?.nameHe || '', refId: context.productVariantId || null }),
+          ...ls.filter((l) => l.kind !== 'product'),
+        ]);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, simulated, context?.productId, context?.productVariantId]);
+
   // Load working-version lines + payment fields on open.
   useEffect(() => {
-    if (!open) return;
+    if (!open || simulated) return;
     let live = true;
     setPaymentTermId(deal?.paymentTermId || '');
     setPaymentMethodId(deal?.paymentMethodId || '');
@@ -190,6 +232,30 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, deal?.id]);
 
+  // The engine resolved a (different) winning Pricing Card for the product line:
+  // stamp the card's provenance and rebuild the line's note from the card's
+  // canonical first-line note. Runs only when the CARD changes (new line, product
+  // switch) — a manual note edit under an unchanged card is never touched. A
+  // pre-existing note on a line that never had card provenance (legacy/manual) is
+  // kept on first stamping; an explicit חישוב אוטומטי always restores canonical.
+  function adoptCardResolution(pr) {
+    if (!pr?.ok) return;
+    setLines((ls) => {
+      const idx = ls.findIndex((l) => l.kind === 'product' && !l.overridden);
+      if (idx === -1) return ls;
+      const line = ls[idx];
+      if ((line.sourceCardGroupId || null) === (pr.cardGroupId || null)) return ls;
+      const keepExisting = line.sourceCardGroupId == null && !isRichEmpty(line.note);
+      const note = keepExisting ? line.note : pr.firstLineNote || '';
+      if (!isRichEmpty(note)) setOpenNotes((s) => new Set([...s, line.id]));
+      return ls.map((l, i) =>
+        i === idx
+          ? { ...l, sourceKind: pr.cardGroupId ? 'price_rule' : l.sourceKind, sourceCardGroupId: pr.cardGroupId || null, note }
+          : l,
+      );
+    });
+  }
+
   // Recompute totals + product price via the engine whenever lines change.
   useEffect(() => {
     if (!open || !lines.length) {
@@ -200,10 +266,14 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     calcTimer.current = setTimeout(() => {
       api.pricing
         .builder({ context: ctx, lines })
-        .then((r) => setComputed(r))
+        .then((r) => {
+          setComputed(r);
+          adoptCardResolution(r?.productResolution);
+        })
         .catch((e) => setComputed({ ok: false, error: e.message }));
     }, 300);
     return () => calcTimer.current && clearTimeout(calcTimer.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, lines, ctx]);
 
   const computedById = new Map((computed?.lines || []).map((l) => [l.id, l]));
@@ -233,6 +303,36 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   }
   function setFree(id, on) {
     setFreeRows((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n; });
+  }
+
+  // חישוב אוטומטי — explicit regeneration. Card-produced lines are rebuilt from
+  // the CURRENT canonical Pricing Card data via the ONE engine path
+  // (/api/pricing/builder with applyCardNotes): the product line returns to the
+  // engine price (manual override cleared) and each card's first-line note is
+  // restored from the card — replacing any manual edit on those lines. Manual
+  // lines and their notes are untouched. Identical in a real Deal and in the
+  // simulator (same component, same request).
+  const [autoCalcBusy, setAutoCalcBusy] = useState(false);
+  async function autoCalc() {
+    setAutoCalcBusy(true);
+    setSaveError(null);
+    try {
+      const reqLines = lines.map((l) => (l.kind === 'product' ? { ...l, overridden: false } : l));
+      const r = await api.pricing.builder({ context: ctx, lines: reqLines, applyCardNotes: true });
+      setComputed(r);
+      const byId = new Map((r?.lines || []).map((l) => [l.id, l]));
+      const next = reqLines.map((l) => {
+        const c = byId.get(l.id);
+        if (!c || !c.sourceCardGroupId) return l;
+        return { ...l, note: c.note || '', sourceKind: c.sourceKind || null, sourceCardGroupId: c.sourceCardGroupId };
+      });
+      setLines(next);
+      setOpenNotes((s) => new Set([...s, ...next.filter((l) => !isRichEmpty(l.note)).map((l) => l.id)]));
+    } catch (e) {
+      setSaveError(e.payload?.error || e.message || 'החישוב נכשל');
+    } finally {
+      setAutoCalcBusy(false);
+    }
   }
 
   // Payment Term → auto-fill Payment Method via the catalog relationship BY ID,
@@ -291,33 +391,29 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
 
   if (!open) return null;
 
-  return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      title={title || 'עריכת מחיר'}
-      size="2xl"
-      footer={
-        <>
-          <button type="button" onClick={onClose} className="text-sm text-gray-600 border border-gray-300 rounded-md px-4 py-2 hover:bg-gray-50">
-            ביטול
-          </button>
-          <button onClick={save} disabled={saving} className="bg-emerald-600 text-white text-sm font-semibold rounded-md px-6 py-2 hover:bg-emerald-700 disabled:opacity-50">
-            {saving ? 'שומר…' : 'שמור וסגור'}
-          </button>
-        </>
-      }
-    >
+  // ONE builder body for both renderings: the Deal dialog and the inline
+  // simulator page. The body is identical — only the shell differs.
+  const body = (
+    <>
       {headerExtra}
       <div className="space-y-7 px-2 py-2 min-h-[60vh] flex flex-col">
-        {/* In-app save error (no native alert). */}
+        {/* In-app error (no native alert). */}
         {saveError && (
           <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">
-            שמירה נכשלה: {saveError}
+            {saveError}
           </div>
         )}
-        {/* Toolbar — VAT button then "⋯", pushed to the left in RTL. */}
-        <div className="flex">
+        {/* Toolbar — auto-calc on the right (RTL), VAT + "⋯" pushed to the left. */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={autoCalc}
+            disabled={autoCalcBusy || !lines.length}
+            title="בנייה מחדש של השורות שנוצרו מכרטיסי התמחור — מחיר והערה קנוניים"
+            className="h-10 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {autoCalcBusy ? 'מחשב…' : 'חישוב אוטומטי'}
+          </button>
           <div className="flex items-center gap-2 ms-auto">
             <VatButton mode={orderVatMode} rate={vatDefault?.rate} onPick={setOrderVat} />
             <button
@@ -382,8 +478,12 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
 
         <div className="flex-1" />
 
-        {/* Bottom — payment (right) and totals (left). */}
+        {/* Bottom — payment (right) and totals (left). The simulator has no Deal,
+            so payment terms are not shown there at all. */}
         <div className="flex flex-wrap items-start justify-between gap-8 pt-4 border-t border-gray-100">
+          {simulated ? (
+            <div />
+          ) : (
           <div className="w-72 space-y-3 pt-2">
             {skipDealTermsWrite ? (
               <p className="rounded-lg bg-gray-50 px-3 py-2 text-[12px] leading-relaxed text-gray-500 ring-1 ring-gray-200">
@@ -406,6 +506,7 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
               </>
             )}
           </div>
+          )}
 
           <div className="min-w-[18rem] space-y-2 text-[15px] pt-2">
             <TotalRow label="סכום ביניים" minor={totals?.netMinor} />
@@ -416,6 +517,30 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
           </div>
         </div>
       </div>
+    </>
+  );
+
+  // Inline (simulator page): the SAME builder body, no Dialog shell, no save.
+  if (inline) return <div>{body}</div>;
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={title || 'עריכת מחיר'}
+      size="2xl"
+      footer={
+        <>
+          <button type="button" onClick={onClose} className="text-sm text-gray-600 border border-gray-300 rounded-md px-4 py-2 hover:bg-gray-50">
+            ביטול
+          </button>
+          <button onClick={save} disabled={saving} className="bg-emerald-600 text-white text-sm font-semibold rounded-md px-6 py-2 hover:bg-emerald-700 disabled:opacity-50">
+            {saving ? 'שומר…' : 'שמור וסגור'}
+          </button>
+        </>
+      }
+    >
+      {body}
     </Dialog>
   );
 }

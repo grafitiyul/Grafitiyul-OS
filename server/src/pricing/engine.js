@@ -434,6 +434,11 @@ export function calculate({ priceList, activityType, context, counts }) {
       priceModel: rule.priceModel,
       specificity: specificity(rule),
       priority: rule.priority,
+      // Card provenance — which Pricing Card (sibling-rule group) won, and its
+      // configured first-line note. Consumed by the builder composition to stamp
+      // the generated product line; resolution itself never reads these.
+      cardGroupId: rule.cardGroupId || null,
+      firstLineNote: rule.firstLineNote || null,
       scopes: {
         productId: rule.productId,
         productVariantId: rule.productVariantId,

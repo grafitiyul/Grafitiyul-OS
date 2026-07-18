@@ -83,6 +83,34 @@ test('regular (non-group) lines carry NULL identity, never fabricated', () => {
   assert.equal(back.ticketTypeId, null);
 });
 
+// Card first-line note slice: the engine-priced product line carries
+// sourceKind='price_rule' + the winning card, and its (possibly multiline
+// Hebrew) card note round-trips byte-exact through persistence.
+test('price_rule product line: card provenance + multiline Hebrew note round-trip', () => {
+  const note = '<p>שורה ראשונה</p><p></p><p>Second line בעברית</p>';
+  const row = lineToData(
+    {
+      kind: 'product',
+      label: 'סיור גרפיטי',
+      refId: 'v1',
+      quantity: 1,
+      unitPriceMinor: 118000,
+      sourceKind: 'price_rule',
+      sourceCardGroupId: 'cardMain',
+      note,
+    },
+    0,
+  );
+  assert.equal(row.sourceKind, 'price_rule');
+  assert.equal(row.sourceCardGroupId, 'cardMain');
+  assert.equal(row.productVariantId, 'v1'); // product line variant via refId, unchanged
+  assert.equal(row.note, note);
+  const back = toClientLine({ ...row, id: 'ql3' });
+  assert.equal(back.sourceKind, 'price_rule');
+  assert.equal(back.sourceCardGroupId, 'cardMain');
+  assert.equal(back.note, note);
+});
+
 test('manual price override flag round-trips', () => {
   const row = lineToData(groupTicketLine({ overridden: true, unitPriceMinor: 15000 }), 0);
   assert.equal(row.overridden, true);

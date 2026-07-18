@@ -154,6 +154,17 @@ const GroupTicketBuilder = forwardRef(function GroupTicketBuilder(
     setSaveError(null);
     try {
       const toSave = lines.filter((l) => l.quantity > 0 || l.overridden);
+      // Canonical notes + totals at SAVE time, via the ONE engine path
+      // (/api/pricing/builder with applyCardNotes): each card's configured
+      // first-line note lands on the FIRST persisted line of that card; every
+      // other card line gets an empty note. Rebuilt from current card data on
+      // every save — never stale, never client-derived.
+      const calc = await api.pricing.builder({ context, lines: toSave, applyCardNotes: true });
+      const byId = new Map((calc?.lines || []).map((l) => [l.id, l]));
+      const linesToSave = toSave.map((l) => {
+        const c = byId.get(l.id);
+        return c ? { ...l, note: c.note || '' } : l;
+      });
       const productPatch = {};
       const firstSelectedCard = cards.find((c) =>
         c.rows.some((row) => (byRow[rowIdFor(c.cardGroupId, row.ticketTypeId)]?.quantity || 0) > 0),
@@ -163,8 +174,9 @@ const GroupTicketBuilder = forwardRef(function GroupTicketBuilder(
         productPatch.productVariantId = firstSelectedCard.productVariantId || null;
       }
       const participants = lines.reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
-      const valueMinor = totals ? totals.grossMinor : 0;
-      const payload = { lines: toSave, valueMinor, participants, ...productPatch };
+      // Deal value from the SAVE-time engine result (not the debounced preview).
+      const valueMinor = calc?.totals ? calc.totals.grossMinor : totals ? totals.grossMinor : 0;
+      const payload = { lines: linesToSave, valueMinor, participants, ...productPatch };
       if (opts.waiverDecision) payload.waiverDecision = opts.waiverDecision;
       await api.deals.savePriceLines(deal.id, payload);
       const summary = { ok: true, participants, valueMinor, ...productPatch };

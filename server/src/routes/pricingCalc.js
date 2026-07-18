@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { calculate, baseAmountMinor, splitVat, priceAddon, addonApplies, sabbathHolidayWindow, resolveSystemAddonEntry, PricingError } from '../pricing/engine.js';
 import { buildGroupCards } from '../pricing/groupTicketCards.js';
+import { composeBuilderLines } from '../pricing/builderCompose.js';
 
 // Pricing calculator (Slice 2). Admin-only TEST endpoint for the pricing engine.
 // It does NOT touch Deals and writes nothing — it resolves a price list + rule
@@ -230,8 +231,11 @@ router.post(
 //   • an ambiguous rule returns the conflicting rules (scopes/model) so the UI can
 //     EXPLAIN the conflict instead of dead-ending (the user can override meanwhile).
 // No quote/version storage — the caller persists the lines JSON on the Deal.
-
-const SIGN = (kind) => (kind === 'discount' || kind === 'credit' ? -1 : 1);
+//
+// `applyCardNotes: true` marks a (re)generation request: card-produced lines get
+// their notes REBUILT from the current canonical Pricing Card `firstLineNote`
+// templates (first line per card = the template, other card lines = empty).
+// Plain recomputes omit the flag and echo user notes untouched.
 
 router.post(
   '/builder',
@@ -295,6 +299,12 @@ router.post(
             priceModel: r.priceModel,
             vatMode: r.vatMode,
             vatRate: r.vatRate,
+            // Card provenance + canonical first-line note of the WINNING rule —
+            // the client stamps these on the generated product line so the note
+            // is rebuilt from canonical card data on every regeneration.
+            ruleId: r.rule.id,
+            cardGroupId: r.rule.cardGroupId || null,
+            firstLineNote: r.rule.firstLineNote || null,
             // Per-unit base in the rule's VAT terms (qty 1) — the product line's
             // unit price. Multiplying by quantity + splitVat reproduces the engine
             // result for qty 1 and scales linearly for more.
@@ -337,74 +347,38 @@ router.post(
       }
     }
 
-    // Compose every line into net/vat/gross. The product line uses the engine's
-    // own split when resolved & not overridden; otherwise splitVat the line amount.
-    const lines = inputLines.map((ln) => {
-      const kind = ln.kind || 'manual';
-      const isProduct = kind === 'product';
-      const active = ln.active !== false;
-      const engineProduct = isProduct && !ln.overridden && productResolution.ok;
-      // Quantity applies to EVERY line (the product line included — this was the
-      // qty×price bug). Default 1 when unset.
-      let quantity = parseInt(ln.quantity, 10);
-      if (!Number.isFinite(quantity) || quantity < 0) quantity = 1;
-
-      // Per-unit price + effective VAT. The product line's unit is the engine's
-      // per-unit base (rule VAT terms) unless overridden; an explicit (non-inherit)
-      // VAT mode on the line wins so the toolbar VAT choice applies to it too.
-      let unitPriceMinor;
-      let effMode;
-      let effRate;
-      if (engineProduct) {
-        unitPriceMinor = Number(productResolution.baseAmountMinor) || 0;
-        effMode = ln.vatMode && ln.vatMode !== 'inherit' ? ln.vatMode : productResolution.vatMode;
-        effRate = effMode === 'exempt' ? 0 : productResolution.vatRate != null ? productResolution.vatRate : vatDefault.rate;
-      } else {
-        unitPriceMinor = Number(ln.unitPriceMinor) || 0;
-        effMode = !ln.vatMode || ln.vatMode === 'inherit' ? vatDefault.mode : ln.vatMode;
-        effRate = effMode === 'exempt' ? 0 : ln.vatRate != null ? Number(ln.vatRate) : vatDefault.rate;
+    // Canonical first-line notes — loaded ONLY for a regeneration request. The
+    // winning card's template comes from the resolution itself; templates for
+    // every OTHER referenced card (group-ticket lines) come from any sibling rule
+    // of that cardGroupId (the template is duplicated across siblings on save).
+    const applyCardNotes = b.applyCardNotes === true;
+    const noteByCard = new Map();
+    if (applyCardNotes) {
+      if (productResolution.ok && productResolution.cardGroupId)
+        noteByCard.set(productResolution.cardGroupId, productResolution.firstLineNote);
+      const missing = [
+        ...new Set(inputLines.map((ln) => ln?.sourceCardGroupId).filter(Boolean)),
+      ].filter((id) => !noteByCard.has(id));
+      if (missing.length) {
+        const reps = await prisma.priceRule.findMany({
+          where: { cardGroupId: { in: missing } },
+          orderBy: { createdAt: 'asc' },
+          select: { cardGroupId: true, firstLineNote: true },
+        });
+        for (const r of reps) {
+          if (!noteByCard.has(r.cardGroupId)) noteByCard.set(r.cardGroupId, r.firstLineNote);
+        }
       }
+    }
 
-      // Single, uniform calc for all lines: amount = sign × unit × quantity → VAT split.
-      let net = 0;
-      let vat = 0;
-      let gross = 0;
-      if (active) {
-        const amount = SIGN(kind) * unitPriceMinor * quantity;
-        const s = splitVat(amount, effMode, effRate);
-        net = s.netMinor;
-        vat = s.vatMinor;
-        gross = s.grossMinor;
-      }
-
-      return {
-        id: ln.id,
-        kind,
-        label: ln.label || '',
-        refId: ln.refId || null,
-        note: ln.note || '',
-        active,
-        overridden: !!ln.overridden,
-        quantity,
-        unitPriceMinor,
-        vatMode: ln.vatMode || 'inherit',
-        vatRate: ln.vatRate != null ? ln.vatRate : null,
-        effectiveVatMode: effMode,
-        effectiveVatRate: effRate,
-        netMinor: net,
-        vatMinor: vat,
-        grossMinor: gross,
-      };
+    // ONE composition for every caller (Deal builders + pricing simulator).
+    const { lines, totals } = composeBuilderLines({
+      inputLines,
+      productResolution,
+      vatDefault,
+      applyCardNotes,
+      noteByCard,
     });
-
-    const totals = lines.reduce(
-      (t, l) => ({
-        netMinor: t.netMinor + l.netMinor,
-        vatMinor: t.vatMinor + l.vatMinor,
-        grossMinor: t.grossMinor + l.grossMinor,
-      }),
-      { netMinor: 0, vatMinor: 0, grossMinor: 0 },
-    );
 
     res.json({ ok: true, vatDefault, productResolution, lines, totals });
   }),

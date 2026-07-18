@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { productHasVariants } from './products.js';
+import { normalizeFirstLineNote } from '../pricing/cardNotes.js';
 
 // Price Rules (Slice 2 + Slice A). Each rule belongs to a PriceList. Scopes
 // (product, variant, activityType, organizationSubtype) are optional — null =
@@ -68,6 +69,10 @@ function buildData(body, { partial }) {
   // Card-level business capability — "Available for Group Ticket Sales". The card
   // is the sole authority for the Group Ticket Builder. Duplicated across siblings.
   set('availableForGroupTickets', body.availableForGroupTickets === true);
+  // First-line note template (rich text) the calculation writes onto the first
+  // builder line this card produces. Blank markup normalizes to null (= no note).
+  // Duplicated across siblings like availableForGroupTickets.
+  set('firstLineNote', normalizeFirstLineNote(body.firstLineNote));
   // Card display order (business). Engine ignores it.
   set('cardSortOrder', toInt(body.cardSortOrder) ?? 0);
   if (!partial || body.active !== undefined) data.active = body.active !== false;
