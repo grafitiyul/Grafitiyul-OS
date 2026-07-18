@@ -102,6 +102,7 @@ import controlRouter from './routes/control.js';
 import { startControlSweepWorker } from './control/sweepWorker.js';
 import './control/detectors/index.js';
 import migrationRouter from './routes/migration.js';
+import legacyCardRouter from './routes/legacyCard.js';
 import { makeLegacyRedirect } from './legacyRedirect.js';
 import { buildManifest } from './pwa/manifest.js';
 
@@ -417,6 +418,11 @@ app.use('/api/control', requireAdminAuth, controlRouter);
 // FOUNDATION ONLY: a read-only status/health endpoint over the migration
 // infrastructure tables. No extraction, no imports, no destination writes here.
 app.use('/api/migration', requireAdminAuth, migrationRouter);
+
+// "מידע ממערכת קודמת" — read-only curated legacy card data (LegacyRecord.
+// cardData) for the entity pages. Permanent surface, not part of the
+// deletable migration Review Center.
+app.use('/api/legacy-card', requireAdminAuth, legacyCardRouter);
 
 // Unknown /api/* paths get a real JSON 404 instead of falling through to
 // the SPA fallback (which would serve HTML for an API request).

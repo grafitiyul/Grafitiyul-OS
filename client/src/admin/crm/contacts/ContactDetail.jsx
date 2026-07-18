@@ -8,6 +8,7 @@ import PhoneDisplay from '../../common/PhoneDisplay.jsx';
 import WorkspaceLayout from '../../../shell/WorkspaceLayout.jsx';
 import TimelineFeed from '../../common/timeline/TimelineFeed.jsx';
 import ReservationLinkSection from './ReservationLinkSection.jsx';
+import LegacyInfoCard from '../../common/LegacyInfoCard.jsx';
 import { useDirtyWhen } from '../../../lib/dirtyForms.js';
 
 function fmtDate(iso) {
@@ -168,6 +169,10 @@ export default function ContactDetail() {
         contactId={id}
       />
 
+      {/* מידע ממערכת קודמת — curated legacy data for migrated contacts.
+          Renders nothing when the contact has no legacy records. */}
+      <LegacyInfoCard entityType="Contact" entityId={id} />
+
       <Section title="מטא-דאטה">
         <dl className="space-y-1 text-[13px]">
           <Row label="נוצר" value={fmtDate(contact.createdAt)} />
@@ -311,7 +316,7 @@ function MembershipsSection({ contact, onChange }) {
           {contact.orgLinks.map((l) => (
             <li key={l.id} className="py-2 flex items-center gap-2 text-sm">
               <Link
-                to={`/admin/crm/organizations/${l.organization.id}`}
+                to={`/admin/crm/organizations/${l.organization.orgNo ?? l.organization.id}`}
                 className="text-blue-700 hover:underline"
               >
                 {l.organization.name}

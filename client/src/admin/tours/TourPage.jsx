@@ -12,6 +12,7 @@ import TourComponents from './TourComponents.jsx';
 import TourTeamEditor from './TourTeamEditor.jsx';
 import TourGalleryCard from './gallery/TourGalleryCard.jsx';
 import ParallelToursList from './ParallelToursList.jsx';
+import LegacyInfoCard from '../common/LegacyInfoCard.jsx';
 import { todayIL } from './calendar/dates.js';
 import { useTourChanged } from './tourEvents.js';
 import { contactNameHe, dealPath, resolveActivityLabel, effectiveOrgTypeLabel } from '../deals/config.js';
@@ -578,6 +579,11 @@ export default function TourPage() {
                   );
                 })()}
               </Section>
+
+              {/* מידע ממערכת קודמת — curated legacy data for migrated tours
+                  (near the tour details, above the timeline). Renders nothing
+                  when the tour has no legacy records. */}
+              <LegacyInfoCard entityType="TourEvent" entityId={tour.id} />
 
               {/* History — collapsed accordion. */}
               <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">

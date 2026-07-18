@@ -42,6 +42,7 @@ import DealCollectionCard from './DealCollectionCard.jsx';
 import { emitDealTasksChanged } from './tasks/taskEvents.js';
 import { productContextFor, locationContextFor } from './tourContext.js';
 import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
+import LegacyInfoCard from '../common/LegacyInfoCard.jsx';
 import Dialog from '../common/Dialog.jsx';
 import TourSlotPickerDialog from '../tours/TourSlotPickerDialog.jsx';
 import DealTourSummary from '../tours/DealTourSummary.jsx';
@@ -876,6 +877,10 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
           )}
         </Card>
       )}
+
+        {/* מידע ממערכת קודמת — curated legacy data (Pipedrive/Airtable) for
+            migrated deals. Renders nothing for deals with no legacy records. */}
+        <LegacyInfoCard entityType="Deal" entityId={deal.id} />
 
         <SystemInfo deal={deal} />
       </div>
@@ -1895,7 +1900,7 @@ function ContactHoverCard({ contactId, fallbackName, roles, onEdit }) {
           נהל אנשי קשר
         </button>
         {/* Secondary: open the full contact page. */}
-        <Link to={`/admin/crm/contacts/${contactId}`} className="text-[12px] text-gray-500 hover:text-gray-700 hover:underline">
+        <Link to={`/admin/crm/contacts/${c?.contactNo ?? contactId}`} className="text-[12px] text-gray-500 hover:text-gray-700 hover:underline">
           פתח איש קשר ←
         </Link>
       </div>
@@ -1927,7 +1932,7 @@ function OrgHoverCard({ org, orgTypeLabel, subtypeLabel, onEdit }) {
           ערוך ארגון
         </button>
         {/* Secondary: open the full organization page. */}
-        <Link to={`/admin/crm/organizations/${org.id}`} className="text-[12px] text-gray-500 hover:text-gray-700 hover:underline">
+        <Link to={`/admin/crm/organizations/${org.orgNo ?? org.id}`} className="text-[12px] text-gray-500 hover:text-gray-700 hover:underline">
           פתח ארגון ←
         </Link>
       </div>

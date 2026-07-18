@@ -1712,4 +1712,9 @@ export const api = {
     resolveRequirement: (id, reqId, body) =>
       request(`/api/control/issues/${id}/requirements/${reqId}/resolve`, { method: 'POST', body: JSON.stringify(body) }),
   },
+  // "מידע ממערכת קודמת" — read-only curated legacy card data for an entity
+  // page (LegacyInfoCard). entityType ∈ Deal|Contact|Organization|TourEvent.
+  legacyCard: {
+    get: (entityType, entityId) => request(`/api/legacy-card${qs({ entityType, entityId })}`),
+  },
 };

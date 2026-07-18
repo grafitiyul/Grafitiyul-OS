@@ -5,6 +5,7 @@ import { api } from '../../../lib/api.js';
 import WorkspaceLayout from '../../../shell/WorkspaceLayout.jsx';
 import TimelineFeed from '../../common/timeline/TimelineFeed.jsx';
 import OrgContactsSection from '../common/OrgContactsSection.jsx';
+import LegacyInfoCard from '../../common/LegacyInfoCard.jsx';
 import { useDirtyWhen } from '../../../lib/dirtyForms.js';
 
 function fmtDate(iso) {
@@ -168,6 +169,10 @@ export default function OrganizationDetail() {
         <OrgContactsSection org={org} onChange={refresh} />
       </Section>
       <FinanceSection form={form} set={set} onSave={save} saving={saving} />
+
+      {/* מידע ממערכת קודמת — curated legacy data for migrated organizations.
+          Renders nothing when the organization has no legacy records. */}
+      <LegacyInfoCard entityType="Organization" entityId={id} />
 
       <Section title="מטא-דאטה">
         <dl className="space-y-1 text-[13px]">
