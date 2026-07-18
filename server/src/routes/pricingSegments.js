@@ -59,6 +59,8 @@ router.get(
 router.put(
   '/:id',
   handle(async (req, res) => {
+    const exists = await prisma.pricingSegment.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!exists) return res.status(404).json({ error: 'not_found' });
     const b = req.body || {};
     const data = {};
     if (b.nameHe !== undefined) data.nameHe = String(b.nameHe);

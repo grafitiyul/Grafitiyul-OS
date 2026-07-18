@@ -59,6 +59,8 @@ router.post(
 router.put(
   '/:id',
   handle(async (req, res) => {
+    const current = await prisma.priceList.findUnique({ where: { id: req.params.id } });
+    if (!current) return res.status(404).json({ error: 'not_found' });
     const data = {};
     if (req.body?.nameHe !== undefined) {
       const v = String(req.body.nameHe).trim();
@@ -76,8 +78,6 @@ router.put(
     if (req.body?.active !== undefined) {
       // The DEFAULT (live) version can never be hidden — there must always be
       // a visible live version.
-      const current = await prisma.priceList.findUnique({ where: { id: req.params.id } });
-      if (!current) return res.status(404).json({ error: 'not_found' });
       if (current.isDefault && !req.body.active)
         return res.status(409).json({ error: 'cannot_deactivate_default' });
       data.active = !!req.body.active;
