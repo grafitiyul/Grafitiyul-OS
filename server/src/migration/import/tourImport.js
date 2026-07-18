@@ -61,6 +61,7 @@ export function planTourImport({
     create: 0, alreadyImported: 0,
     cancelledExcluded: 0, postponedExcluded: 0, deferredFuture: 0,
     bookings: 0, bookingsDealResolved: 0, bookingsDealMissing: 0,
+    bookingsMergedRows: 0, bookingsDemotedMultiTour: 0,
     registrations: 0, seatsTotal: 0,
     assignments: 0, assignmentsPersonRef: 0, assignmentsExternal: 0,
     orphanCoordRows: 0, toursWithoutDeals: 0,
@@ -125,7 +126,10 @@ export function planTourImport({
       : dealMetaByLegacyId.get(legacyDealIds[0])?.activityType === 'business' ? 'business' : 'private';
     stats.kinds[kind] += 1;
 
-    const bookings = [];
+    // Same deal appearing on the SAME tour more than once (duplicate
+    // coordination rows) merges into ONE booking with summed seats; each
+    // original row with seats>0 keeps its own registration.
+    const byDeal = new Map();
     const missingDeals = [];
     for (const c of coords) {
       if (c.legacyDealId == null) continue;
@@ -139,10 +143,13 @@ export function planTourImport({
       }
       stats.bookingsDealResolved += 1;
       const seats = c.seats ?? null;
-      bookings.push({ gosDealId, legacyDealId: c.legacyDealId, seats: seats || 0, registration: seats != null && seats > 0 });
-      if (seats != null && seats > 0) { stats.registrations += 1; stats.seatsTotal += seats; }
+      if (!byDeal.has(gosDealId)) byDeal.set(gosDealId, { gosDealId, legacyDealId: c.legacyDealId, seats: 0, registrations: [] });
+      const b = byDeal.get(gosDealId);
+      b.seats += seats || 0;
+      if (seats != null && seats > 0) { b.registrations.push(seats); stats.registrations += 1; stats.seatsTotal += seats; }
     }
-    stats.bookings += bookings.length;
+    const bookings = [...byDeal.values()];
+    stats.bookingsMergedRows += coords.filter((c) => c.legacyDealId != null).length - missingDeals.length - bookings.length;
 
     const guides = [];
     const seen = new Set();
@@ -178,7 +185,7 @@ export function planTourImport({
       date: m.date, startTime: m.startTime || null, endTime: m.endTime || null,
       status: 'completed',
       completedReason: 'migration',
-      bookings, guides, payroll: payrollOut,
+      bookings, extraRegistrations: [], guides, payroll: payrollOut,
       cardData: [
         { label: 'Tour_ID במערכת הקודמת', value: String(m.tourId ?? m.recId) },
         { label: 'סטטוס מקורי', value: m.status || '—' },
@@ -189,6 +196,33 @@ export function planTourImport({
     });
     stats.create += 1;
   }
+
+  // GOS invariant: ONE active booking per deal (partial unique index
+  // Booking_one_active_per_deal_key). A legacy deal spanning several tours
+  // keeps its active booking on the LATEST tour; earlier tours keep the seat
+  // evidence as registration-only rows (no booking) + a card note.
+  const dealSites = new Map(); // gosDealId → [{payload, booking}]
+  for (const p of payloads) for (const b of p.bookings) {
+    if (!dealSites.has(b.gosDealId)) dealSites.set(b.gosDealId, []);
+    dealSites.get(b.gosDealId).push({ p, b });
+  }
+  const later = (x, y) => {
+    if (x.p.date !== y.p.date) return x.p.date > y.p.date ? x : y;
+    if ((x.p.startTime || '') !== (y.p.startTime || '')) return (x.p.startTime || '') > (y.p.startTime || '') ? x : y;
+    return x.p.sourceRecId > y.p.sourceRecId ? x : y;
+  };
+  for (const sites of dealSites.values()) {
+    if (sites.length < 2) continue;
+    const keeper = sites.reduce((a, c) => later(a, c));
+    for (const site of sites) {
+      if (site === keeper) continue;
+      site.p.bookings = site.p.bookings.filter((b) => b !== site.b);
+      site.p.extraRegistrations.push({ gosDealId: site.b.gosDealId, legacyDealId: site.b.legacyDealId, registrations: site.b.registrations.length ? site.b.registrations : (site.b.seats > 0 ? [site.b.seats] : []) });
+      site.p.cardData.push({ label: 'הזמנה מרובת סיורים', value: `דיל ${site.b.legacyDealId} מקושר לכמה סיורים — ההזמנה הפעילה נשמרה בסיור האחרון (${keeper.p.date}); כאן נשמר הרישום בלבד` });
+      stats.bookingsDemotedMultiTour += 1;
+    }
+  }
+  stats.bookings = payloads.reduce((n, p) => n + p.bookings.length, 0);
 
   // Unlinked payroll rows: legacy-only evidence, never guessed onto a tour.
   for (const pr of payrollUnlinked) {
@@ -255,8 +289,14 @@ export async function executeTourPlan(prisma, plan, { batchId, snapshotId, histo
       for (const b of p.bookings) {
         const bookingId = crypto.randomUUID();
         bookingRows.push({ id: bookingId, tourEventId: tourId, dealId: b.gosDealId, seats: b.seats, status: 'active' });
-        if (b.registration) {
-          regRows.push({ tourEventId: tourId, bookingId, dealId: b.gosDealId, quantity: b.seats, source: 'migration', status: 'confirmed' });
+        for (const qty of b.registrations) {
+          regRows.push({ tourEventId: tourId, bookingId, dealId: b.gosDealId, quantity: qty, source: 'migration', status: 'confirmed' });
+        }
+      }
+      // Multi-tour deals: seat evidence without a booking (one-active-per-deal).
+      for (const x of p.extraRegistrations) {
+        for (const qty of x.registrations) {
+          regRows.push({ tourEventId: tourId, bookingId: null, dealId: x.gosDealId, quantity: qty, source: 'migration', status: 'confirmed' });
         }
       }
       for (const g of p.guides) {

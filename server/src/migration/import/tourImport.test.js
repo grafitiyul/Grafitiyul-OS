@@ -84,6 +84,38 @@ test('an included tour carries bookings/registrations/guides/payroll; kind deriv
   assert.equal(byId.rOpen.guides[0].personRefId, 'pr1');
 });
 
+test('ONE active booking per deal: same-tour duplicates merge; multi-tour deals keep the latest booking, earlier tours get registration-only evidence', () => {
+  const r = planTourImport(base({
+    masterTours: [
+      master({ id: 'rT1', date: '2023-06-01' }),
+      master({ id: 'rT2', date: '2023-06-03' }),
+    ],
+    coordRows: [
+      // deal 1 twice on the SAME tour → one booking, seats summed, 2 registrations
+      coordOf({ id: 'c1', master: 'rT1', deal: 1, seats: 4 }),
+      coordOf({ id: 'c2', master: 'rT1', deal: 1, seats: 3 }),
+      // deal 2 on BOTH tours → active booking on rT2 (later), rT1 registration-only
+      coordOf({ id: 'c3', master: 'rT1', deal: 2, seats: 5 }),
+      coordOf({ id: 'c4', master: 'rT2', deal: 2, seats: 5 }),
+    ],
+    dealXwalk: new Map([['1', 'd1'], ['2', 'd2']]),
+  }));
+  const byId = Object.fromEntries(r.payloads.map((p) => [p.sourceRecId, p]));
+  const d1 = byId.rT1.bookings.find((b) => b.gosDealId === 'd1');
+  assert.equal(d1.seats, 7, 'same-tour duplicate rows merge with summed seats');
+  assert.deepEqual(d1.registrations, [4, 3]);
+  assert.equal(r.stats.bookingsMergedRows, 1);
+  assert.ok(!byId.rT1.bookings.some((b) => b.gosDealId === 'd2'), 'earlier tour loses the booking');
+  assert.ok(byId.rT2.bookings.some((b) => b.gosDealId === 'd2'), 'latest tour keeps the active booking');
+  assert.deepEqual(byId.rT1.extraRegistrations, [{ gosDealId: 'd2', legacyDealId: 2, registrations: [5] }]);
+  assert.ok(byId.rT1.cardData.some((c) => c.label === 'הזמנה מרובת סיורים'), 'card evidence on the demoted tour');
+  assert.equal(r.stats.bookingsDemotedMultiTour, 1);
+  assert.equal(r.stats.bookings, 2, 'Booking rows: d1@rT1 merged + d2@rT2 only');
+  // no deal ever holds two active bookings in the plan
+  const activeDeals = r.payloads.flatMap((p) => p.bookings.map((b) => b.gosDealId));
+  assert.equal(new Set(activeDeals).size, activeDeals.length);
+});
+
 test('the hard gates enforce hash, population equation and both laws structurally', () => {
   const plan = planTourImport(base({
     masterTours: [master({ id: 'rA', date: '2023-06-01' }), master({ id: 'rF', date: '2026-09-01', status: 'עתידי' }), master({ id: 'rC', date: '2023-01-01', status: 'מבוטל' })],
