@@ -134,18 +134,21 @@ export function validateSubmission(
     };
   });
 
-  // ONE signature per session (BINDING: session footer). Typed signatures are
-  // the signer's name; drawn signatures must be a valid PNG data URL.
+  // ONE signature per session (BINDING: session footer). EITHER method alone
+  // satisfies the requirement: a drawn signature is a valid PNG data URL (the
+  // signer name is then optional extra context); a typed signature is the
+  // signer's full name. Only when neither exists does validation fail.
   const signerName = str(body?.signature?.signerName, 120);
   const signatureMethod = ['drawn', 'typed'].includes(body?.signature?.method)
     ? body.signature.method
     : null;
-  if (!signerName) push('signature.signerName', 'required');
   if (!signatureMethod) push('signature.method', 'required');
   let signatureBytes = null;
   if (signatureMethod === 'drawn') {
     signatureBytes = decodeSignaturePng(body?.signature?.image);
     if (!signatureBytes) push('signature.image', 'invalid');
+  } else if (signatureMethod === 'typed' && !signerName) {
+    push('signature.signerName', 'required');
   }
 
   // Session-wide confirmations — every required key must be accepted.

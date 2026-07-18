@@ -39,23 +39,67 @@ const bidi = bidiFactory();
 
 // Produce the string that fontkit needs to render Hebrew correctly.
 //
-// @pdf-lib/fontkit's OpenType layout engine detects Hebrew as RTL and
-// REVERSES the glyphs AFTER shaping. If we pass visual-order text directly,
-// we get double-reversal (mirror image). Fix: run full UBA via bidi-js,
-// then reverse the result before passing to pdf-lib. fontkit reverses it
-// back into correct visual order.
+// @pdf-lib/fontkit's OpenType layout engine detects the run's script from
+// the FIRST strongly-scripted character (Script.forString) and, for RTL
+// scripts, REVERSES the glyphs AFTER shaping. If we pass visual-order text
+// directly for such runs, we get double-reversal (mirror image). Fix: run
+// full UBA via bidi-js with the SAME first-strong paragraph direction, then
+// pre-reverse ONLY when fontkit will reverse (first strong char is Hebrew).
+//
+// A line that STARTS with Latin but contains Hebrew (mixed EN/HE notes) is
+// laid out LTR by fontkit with NO reversal — pre-reversing it was exactly
+// the "mirrored English" bug this replaces; such lines now pass the plain
+// visual-order string.
 //
 // For pure Hebrew: reverse(bidi(x)) == x. For mixed text with LTR numbers:
 // digit runs preserve their order within the RTL paragraph ("הרצל 15"
 // renders "15", not "51"). Bracket mirroring handled by bidi-js.
+const STRONG_CHAR_RE = /[A-Za-z֐-׿؀-ۿ]/;
 function toFontkitInput(text) {
-  const levels = bidi.getEmbeddingLevels(text, 'rtl');
+  const first = STRONG_CHAR_RE.exec(text);
+  const dir = first && /[A-Za-z]/.test(first[0]) ? 'ltr' : 'rtl';
+  const levels = bidi.getEmbeddingLevels(text, dir);
   const visual = bidi.getReorderedString(text, levels);
-  return [...visual].reverse().join('');
+  return dir === 'rtl' ? [...visual].reverse().join('') : visual;
 }
 
 // Fields expected to be numeric-only (never Hebrew) — skip bidi for these.
 const NUMERIC_FIELD_TYPES = new Set(['date', 'phone', 'number', 'email']);
+
+// Character-level safety net: the embedded font cannot encode every glyph
+// (emoji, dingbats, exotic symbols). pdf-lib throws on the FIRST unsupported
+// character — which, before this filter, made the per-annotation catch
+// swallow the WHOLE note/field (an emoji in a note silently deleted the whole
+// text). One unsupported character must degrade to "that character is
+// dropped", never to losing the surrounding text. Newlines are preserved for
+// the note layout.
+export function supportedTextFilter(font) {
+  let set;
+  try {
+    set = new Set(font.getCharacterSet());
+  } catch {
+    return (text) => text;
+  }
+  return (text) => {
+    const s = String(text ?? '');
+    let out = '';
+    for (const ch of s) {
+      const cp = ch.codePointAt(0);
+      if (cp === 0x0a || cp === 0x0d || set.has(cp)) out += ch;
+    }
+    return out;
+  };
+}
+
+// Measurement-only embed of the SAME canonical Hebrew font the renderer
+// draws with. Flow-layout callers (reservation PDF) count wrapped lines with
+// it before rendering, so measured pagination matches the drawn output
+// glyph-for-glyph. The scratch document is never saved.
+export async function createMeasurementFont() {
+  const doc = await PDFDocument.create();
+  doc.registerFontkit(fontkit);
+  return doc.embedFont(fs.readFileSync(HEBREW_TTF));
+}
 
 // Text sizing rule for value fields. Scales with field height; floor keeps
 // small fields readable; cap keeps oversized fields from looking absurd.
@@ -84,6 +128,7 @@ export async function renderFinalPdf(sourcePdfBytes, fields, annotations = []) {
   pdfDoc.registerFontkit(fontkit);
   const hebrewFontBytes = fs.readFileSync(HEBREW_TTF);
   const hebrewFont = await pdfDoc.embedFont(hebrewFontBytes);
+  const keepSupported = supportedTextFilter(hebrewFont);
   const pages = pdfDoc.getPages();
 
   // ── Pass 1: highlights (under values, so text reads over the colour) ─────
@@ -97,7 +142,7 @@ export async function renderFinalPdf(sourcePdfBytes, fields, annotations = []) {
   // ── Pass 2: value fields (text) ──────────────────────────────────────────
   for (const field of fields) {
     if (isImageField(field.fieldType)) continue;
-    const raw = (field.textValue ?? '').toString().trim();
+    const raw = keepSupported((field.textValue ?? '').toString()).trim();
     if (!raw) continue;
 
     const page = pages[field.page - 1];
@@ -180,7 +225,7 @@ export async function renderFinalPdf(sourcePdfBytes, fields, annotations = []) {
       else if (ann.kind === 'x') drawXAnnotation(page, ann);
       else if (ann.kind === 'line') drawLineAnnotation(page, ann);
       else if (ann.kind === 'ellipse') drawEllipseAnnotation(page, ann);
-      else if (ann.kind === 'note') drawNoteAnnotation(page, ann, hebrewFont);
+      else if (ann.kind === 'note') drawNoteAnnotation(page, ann, hebrewFont, keepSupported);
     } catch {
       // Swallow per-annotation errors so a bad one cannot kill the render.
     }
@@ -295,8 +340,9 @@ function drawXAnnotation(page, ann) {
 }
 
 // Line height for note text. Matches the editor preview (lineHeight: 1.25),
-// so on-screen wrapping/spacing and the PDF stay in step.
-const NOTE_LINE_HEIGHT_RATIO = 1.25;
+// so on-screen wrapping/spacing and the PDF stay in step. Exported so flow
+// layouts (reservation PDF) advance their cursor by the exact drawn height.
+export const NOTE_LINE_HEIGHT_RATIO = 1.25;
 
 // Split a note's logical text into display lines that fit maxWidthPt.
 // Explicit newlines (\n) are hard breaks; each logical line is then
@@ -307,10 +353,32 @@ const NOTE_LINE_HEIGHT_RATIO = 1.25;
 // fixed 24pt line height, overlapping into a smear for larger fonts).
 // Width is measured on the logical string: visual reordering permutes the
 // same glyphs, so the advance width is identical.
+//
+// opts.breakLongWords: split a single over-wide word (long email/URL) at
+// character level so it can never overflow the box horizontally. OPT-IN —
+// the default keeps the documents-editor parity behavior (overflow like the
+// on-screen preview).
 // Exported for regression tests.
-export function layoutNoteLines(rawText, font, fontSize, maxWidthPt) {
+export function layoutNoteLines(rawText, font, fontSize, maxWidthPt, opts = {}) {
   const logical = String(rawText ?? '').replace(/\r\n?/g, '\n').split('\n');
   const out = [];
+  const pushFit = (line) => {
+    if (!opts.breakLongWords || font.widthOfTextAtSize(line, fontSize) <= maxWidthPt) {
+      out.push(line);
+      return;
+    }
+    let cur = '';
+    for (const ch of line) {
+      const cand = cur + ch;
+      if (cur && font.widthOfTextAtSize(cand, fontSize) > maxWidthPt) {
+        out.push(cur);
+        cur = ch;
+      } else {
+        cur = cand;
+      }
+    }
+    if (cur) out.push(cur);
+  };
   for (const line of logical) {
     if (!line.trim()) {
       out.push(''); // intentional blank line — keeps its vertical slot
@@ -321,29 +389,31 @@ export function layoutNoteLines(rawText, font, fontSize, maxWidthPt) {
     for (const word of words) {
       const cand = cur ? `${cur} ${word}` : word;
       if (cur && font.widthOfTextAtSize(cand, fontSize) > maxWidthPt) {
-        out.push(cur);
-        cur = word; // a single over-wide word overflows rather than breaking
+        pushFit(cur);
+        cur = word; // over-wide single words are handled by pushFit
       } else {
         cur = cand;
       }
     }
-    if (cur) out.push(cur);
+    if (cur) pushFit(cur);
   }
   // Trim trailing blank lines — they have no visual meaning below the text.
   while (out.length && out[out.length - 1] === '') out.pop();
   return out;
 }
 
-function drawNoteAnnotation(page, ann, hebrewFont) {
+function drawNoteAnnotation(page, ann, hebrewFont, keepSupported = (t) => t) {
   const { x, y, w, h } = annRect(page, ann);
-  const raw = (ann.text ?? '').toString();
+  const raw = keepSupported((ann.text ?? '').toString());
   if (!raw.trim()) return;
   const color = parseColor(ann.color || '#111827');
   const fontSize = Number.isFinite(ann.fontSize)
     ? Math.max(8, Math.min(48, ann.fontSize))
     : fontSizeForFieldHeight(h);
   const lineHeight = fontSize * NOTE_LINE_HEIGHT_RATIO;
-  const lines = layoutNoteLines(raw, hebrewFont, fontSize, Math.max(8, w - 4));
+  const lines = layoutNoteLines(raw, hebrewFont, fontSize, Math.max(8, w - 4), {
+    breakLongWords: ann.breakLongWords === true,
+  });
 
   // Text is top-aligned in the rect (like the editor). Every wrapped line is
   // drawn — no clipping at the rect edge; a too-short rect overflows below,
@@ -357,8 +427,12 @@ function drawNoteAnnotation(page, ann, hebrewFont) {
       // line at a time so newlines never enter the bidi algorithm.
       const visual = HEB_RE.test(line) ? toFontkitInput(line) : line;
       const textWidth = hebrewFont.widthOfTextAtSize(visual, fontSize);
-      // Right-aligned like the editor preview (RTL document convention).
-      const textX = x + w - 2 - Math.min(textWidth, Math.max(0, w - 4));
+      // Right-aligned like the editor preview (RTL document convention);
+      // ann.align === 'left' opts into LTR-document alignment (EN copies).
+      const textX =
+        ann.align === 'left'
+          ? x + 2
+          : x + w - 2 - Math.min(textWidth, Math.max(0, w - 4));
       page.drawText(visual, {
         x: Math.max(x + 2, textX),
         y: baseline,

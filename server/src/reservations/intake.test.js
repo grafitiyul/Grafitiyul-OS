@@ -147,6 +147,39 @@ test('signature: drawn requires a valid PNG; typed requires only the name', () =
   assert.equal(typed.session.signatureBytes, null);
 });
 
+test('signature: EITHER method alone satisfies — drawn needs no typed name', () => {
+  // Option A: a drawn signature alone (no name) is valid.
+  const drawnOnly = validateSubmission(
+    validBody({ signature: { method: 'drawn', image: PNG_DATA_URL } }),
+    CATALOG,
+    { today: TODAY },
+  );
+  assert.equal(drawnOnly.problems, undefined);
+  assert.equal(drawnOnly.session.signerName, null);
+  assert.ok(Buffer.isBuffer(drawnOnly.session.signatureBytes));
+
+  // A name alongside a drawn signature is kept as context.
+  const drawnNamed = validateSubmission(validBody(), CATALOG, { today: TODAY });
+  assert.equal(drawnNamed.problems, undefined);
+  assert.equal(drawnNamed.session.signerName, 'דנה כהן');
+
+  // Option B failure: typed with no name → the name IS the signature.
+  const typedEmpty = validateSubmission(
+    validBody({ signature: { method: 'typed', signerName: '   ' } }),
+    CATALOG,
+    { today: TODAY },
+  );
+  assert.equal(codesByPath(typedEmpty)['signature.signerName'], 'required');
+
+  // Neither method → validation fails.
+  const neither = validateSubmission(
+    validBody({ signature: { method: 'drawn' } }),
+    CATALOG,
+    { today: TODAY },
+  );
+  assert.equal(codesByPath(neither)['signature.image'], 'invalid');
+});
+
 test('all required confirmations must be accepted', () => {
   const r = validateSubmission(
     validBody({ confirmations: [] }),

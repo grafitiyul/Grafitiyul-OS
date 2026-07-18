@@ -100,12 +100,14 @@ export default function SignatureBox({ t, value, onChange, error }) {
         ))}
       </div>
 
+      {/* Name field: THE signature in typed mode; optional context in drawn
+          mode (a drawn signature alone satisfies the requirement). */}
       <input
         value={value.signerName || ''}
         onChange={(e) => set({ signerName: e.target.value })}
-        placeholder={t.footer.signerNamePh}
+        placeholder={method === 'typed' ? t.footer.signerNamePh : t.footer.signerNameOptionalPh}
         className={`w-full rounded-xl border px-4 py-3 text-[15px] outline-none focus:border-gray-400 ${
-          error ? 'border-red-300' : 'border-gray-200'
+          error && method === 'typed' ? 'border-red-300' : 'border-gray-200'
         }`}
       />
 
@@ -119,7 +121,7 @@ export default function SignatureBox({ t, value, onChange, error }) {
           </span>
         </div>
       ) : (
-        <div className="mt-3">
+        <div className={`mt-3 ${error ? 'rounded-xl ring-2 ring-red-200' : ''}`}>
           <DrawPad onChange={(image) => set({ image })} clearSignal={clearSignal} />
           <button
             type="button"

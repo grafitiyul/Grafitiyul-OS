@@ -228,3 +228,66 @@ test('render smoke: ellipse annotation draws as vector outline', async () => {
   assert.ok(looksLikePdf(out));
   assert.ok(out.length > src.length);
 });
+
+// ── QA 2026-07-18 additions: glyph safety net, long-word breaking, align ────
+
+test('supportedTextFilter drops emoji but keeps Hebrew/Latin/newlines', async () => {
+  const { supportedTextFilter } = await import('./pdfRender.js');
+  const font = await loadFont();
+  const filter = supportedTextFilter(font);
+  assert.equal(filter('שלום 🎉 world'), 'שלום  world');
+  assert.equal(filter('שורה א\n🌍\nשורה ב'), 'שורה א\n\nשורה ב');
+  assert.equal(filter('ללא אימוג׳י'), 'ללא אימוג׳י');
+});
+
+test('a note containing emoji still draws its supported text (nothing vanishes)', async () => {
+  const { calls } = await renderWithSpy(
+    [],
+    [noteAnn('הערה חשובה 🎉🎉 עם אימוג׳י')],
+  );
+  assert.ok(calls.length >= 1, 'note with emoji must still draw');
+  assert.ok(calls[0].text.length > 0);
+});
+
+test('breakLongWords splits an over-wide unbroken word to fit the width', async () => {
+  const font = await loadFont();
+  const email = 'very.long.email.address@extremely-long-subdomain.example.co.il';
+  const maxW = 120;
+  // Default: the over-wide word overflows as one line (documents parity).
+  assert.equal(layoutNoteLines(email, font, 12, maxW).length, 1);
+  // Opt-in: character-level wrapping, every line fits.
+  const broken = layoutNoteLines(email, font, 12, maxW, { breakLongWords: true });
+  assert.ok(broken.length > 1);
+  for (const line of broken) {
+    assert.ok(font.widthOfTextAtSize(line, 12) <= maxW, `over-wide: "${line}"`);
+  }
+  assert.equal(broken.join(''), email, 'no characters lost');
+});
+
+test('align:left draws at the rect left edge; default stays right-aligned', async () => {
+  const left = await renderWithSpy([], [noteAnn('קצר', { align: 'left' })]);
+  const right = await renderWithSpy([], [noteAnn('קצר')]);
+  const rectX = (50 / 100) * 595;
+  const rectRight = rectX + (40 / 100) * 595;
+  assert.ok(Math.abs(left.calls[0].x - (rectX + 2)) < 0.01, `left x=${left.calls[0].x}`);
+  assert.ok(right.calls[0].x > rectRight - 60, `right x=${right.calls[0].x}`);
+});
+
+test('Latin-first line containing Hebrew is NOT mirrored (fontkit direction match)', async () => {
+  // Regression: lines starting with Latin text but containing Hebrew were
+  // pre-reversed for a fontkit reversal that never happens (fontkit detects
+  // the run direction from the FIRST strong character) → mirrored English.
+  const { calls } = await renderWithSpy(
+    [],
+    [noteAnn('Please assign אבי to the group', { wPct: 45 })],
+  );
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].text.includes('Please assign'), `mirrored: "${calls[0].text}"`);
+  assert.ok(calls[0].text.includes('to the group'), `mirrored: "${calls[0].text}"`);
+
+  // Hebrew-first lines keep the load-bearing double-reversal path: for pure
+  // Hebrew reverse(bidi(x)) == x, so the drawn payload equals the logical
+  // string (fontkit performs the final visual reversal).
+  const heb = await renderWithSpy([], [noteAnn('שלום עולם')]);
+  assert.equal(heb.calls[0].text, 'שלום עולם');
+});

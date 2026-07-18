@@ -170,9 +170,12 @@ export default function AgentReservationPage() {
     (invoice.financeName.trim() &&
       /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(invoice.financeEmail.trim()) &&
       invoice.financePhone.replace(/\D/g, '').length >= 8);
+  // EITHER method alone satisfies the signature: a drawn signature needs no
+  // typed name; a typed signature is the full name. (Server rule mirrored.)
   const signatureOk =
-    (signature.signerName || '').trim() &&
-    (signature.method === 'typed' || !!signature.image);
+    signature.method === 'drawn'
+      ? !!signature.image
+      : !!(signature.signerName || '').trim();
 
   async function submit() {
     if (token === PREVIEW_TOKEN) {
@@ -205,7 +208,7 @@ export default function AgentReservationPage() {
           notes: g.notes || null,
         })),
         signature: {
-          signerName: signature.signerName.trim(),
+          signerName: signature.signerName.trim() || undefined,
           method: signature.method,
           image: signature.method === 'drawn' ? signature.image : undefined,
         },
