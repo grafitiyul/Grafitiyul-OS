@@ -58,7 +58,7 @@ console.log(`  assignments ${s.assignments} (PersonRef ${s.assignmentsPersonRef}
 console.log(`  payroll: activities ${s.payrollActivities} · entries ${s.payrollEntries}`);
 console.log(`  legacy-only payroll evidence ${s.payrollLegacyOnlyRows} (cancelled-tour + unlinked rows)`);
 console.log(`  legacy evidence rows total ${run1.legacyEvidence.length} · warnings ${run1.warnings.length}`);
-if (run1.warnings.length) for (const w of run1.warnings.slice(0, 10)) console.log(`    ⚠ ${w}`);
+if (run1.warnings.length) for (const w of run1.warnings.slice(0, 10)) console.log(`    ⚠ ${w.kind} · ${w.recId} · ${w.detail}`);
 if (run1.warnings.length > 10) console.log(`    … +${run1.warnings.length - 10} more`);
 
 // ── self-check the gates exactly as the production runner will apply them ─────

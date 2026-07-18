@@ -126,11 +126,14 @@ export function planTourImport({
     stats.kinds[kind] += 1;
 
     const bookings = [];
+    const missingDeals = [];
     for (const c of coords) {
       if (c.legacyDealId == null) continue;
       const gosDealId = dealXwalk.get(String(c.legacyDealId)) || null;
       if (!gosDealId) {
+        // Runbook: unresolvable links degrade to CARD EVIDENCE, never placeholders.
         stats.bookingsDealMissing += 1;
+        missingDeals.push(c.legacyDealId);
         warnings.push({ recId: m.recId, kind: 'booking_deal_missing', detail: `deal ${c.legacyDealId} has no GOS entity` });
         continue;
       }
@@ -180,6 +183,7 @@ export function planTourImport({
         { label: 'Tour_ID במערכת הקודמת', value: String(m.tourId ?? m.recId) },
         { label: 'סטטוס מקורי', value: m.status || '—' },
         ...(m.legacyCalendarId ? [{ label: 'מזהה אירוע יומן (מערכת קודמת)', value: m.legacyCalendarId }] : []),
+        ...(missingDeals.length ? [{ label: 'קישורי דיל שלא נפתרו', value: `דילים ${missingDeals.join(', ')} לא קיימים ב-GOS — ההזמנה לא יובאה (ראיה בלבד)` }] : []),
         ...(m.cardExtras || []),
       ],
     });
