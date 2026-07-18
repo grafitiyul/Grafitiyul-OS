@@ -1781,6 +1781,11 @@ model QuoteVersion {
   status         String          @default("draft") // draft | produced | accepted | rejected (only 'draft' used now)
   isWorking      Boolean         @default(true) // the version the builder/panel edits (exactly one per deal for now)
   isSelected     Boolean         @default(false) // the accepted/main version (unused until the quote workflow)
+  // Provenance for imported/immutable versions. Null = a native GOS version.
+  // 'pipedrive_import' = a READ-ONLY frozen historical breakdown migrated from
+  // Pipedrive: never isWorking, never priced by the engine, never affects
+  // Deal.valueMinor. The builder opens it read-only.
+  sourceKind     String?
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   lines          QuoteLine[]
@@ -1788,6 +1793,7 @@ model QuoteVersion {
 
   @@index([dealId])
   @@index([offerId])
+  @@index([dealId, sourceKind])
 }
 
 // One priced line on a quote version. Same shape the Price Builder UI uses; refs

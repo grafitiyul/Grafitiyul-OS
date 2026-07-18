@@ -1245,6 +1245,35 @@ router.get(
   }),
 );
 
+// READ-ONLY historical commercial breakdown imported from Pipedrive. Returns the
+// frozen pipedrive_import version (never the working version); the builder opens
+// it read-only with a banner. No writes, no engine, no side effects.
+router.get(
+  '/:id/price-lines/historical',
+  handle(async (req, res) => {
+    const deal = await prisma.deal.findUnique({ where: { id: req.params.id }, select: { id: true, valueMinor: true } });
+    if (!deal) return res.status(404).json({ error: 'not_found' });
+    const version = await prisma.quoteVersion.findFirst({
+      where: { dealId: req.params.id, sourceKind: 'pipedrive_import' },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!version) return res.json({ exists: false });
+    const [lines, xwalk] = await Promise.all([
+      prisma.quoteLine.findMany({ where: { quoteVersionId: version.id }, orderBy: { sortOrder: 'asc' } }),
+      prisma.legacyRecord.findFirst({ where: { entityType: 'QuoteVersion', entityId: version.id }, select: { cardData: true } }),
+    ]);
+    res.json({
+      exists: true,
+      versionId: version.id,
+      readOnly: true,
+      source: 'pipedrive',
+      importedAt: version.createdAt,
+      reconciliation: xwalk?.cardData ?? null,
+      lines: lines.map(toClientLine),
+    });
+  }),
+);
+
 router.put(
   '/:id/price-lines',
   handle(async (req, res) => {
