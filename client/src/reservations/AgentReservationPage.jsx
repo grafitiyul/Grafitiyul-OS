@@ -109,19 +109,6 @@ export default function AgentReservationPage() {
     }
   }, [token, boot, result, submissionKey, lang, groups]);
 
-  const totals = useMemo(() => {
-    const total = groups.reduce((a, g) => a + (Number(g.participants) || 0), 0);
-    const activityNames = [
-      ...new Set(
-        groups
-          .map((g) => boot?.catalog.variants.find((v) => v.id === g.productVariantId))
-          .filter(Boolean)
-          .map((v) => (lang === 'en' ? v.nameEn : v.nameHe)),
-      ),
-    ];
-    return { total, activityNames };
-  }, [groups, boot, lang]);
-
   const problemsByGroup = useMemo(() => {
     const map = {};
     for (const p of serverProblems || []) {
@@ -513,38 +500,8 @@ export default function AgentReservationPage() {
           </div>
         </div>
 
-        {/* Sidebar — live request summary + booking-contact identity. */}
+        {/* Sidebar — booking-contact identity (פרטי המזמין). */}
         <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
-          <div className="rounded-2xl border border-gray-200/80 bg-white p-5">
-            <h3 className="text-[15px] font-bold text-gray-900">{t.summary.title}</h3>
-            <dl className="mt-3 divide-y divide-gray-100">
-              <div className="flex items-center justify-between py-2.5">
-                <dt className="text-[13px] text-gray-500">{t.summary.groups}</dt>
-                <dd className="text-[18px] font-bold text-gray-900">{groups.length}</dd>
-              </div>
-              <div className="flex items-center justify-between py-2.5">
-                <dt className="text-[13px] text-gray-500">{t.summary.participants}</dt>
-                <dd className="text-[18px] font-bold text-gray-900">{totals.total}</dd>
-              </div>
-            </dl>
-            {totals.activityNames.length > 0 && (
-              <div className="mt-2">
-                <div className="text-[12px] font-medium text-gray-500">{t.summary.activities}</div>
-                <ul className="mt-1 space-y-1">
-                  {totals.activityNames.map((n) => (
-                    <li key={n} className="flex items-start gap-1.5 text-[12px] text-gray-700">
-                      <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-gray-400" />
-                      {n}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2.5 text-[12px] leading-relaxed text-amber-800">
-              {t.summary.approvalNote}
-            </div>
-          </div>
-
           <div className="rounded-2xl border border-gray-200/80 bg-white p-5">
             <h3 className="flex items-center gap-2 text-[15px] font-bold text-gray-900">
               <span className="text-blue-600">

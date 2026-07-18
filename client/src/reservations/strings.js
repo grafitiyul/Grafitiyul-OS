@@ -10,15 +10,8 @@ export const L = {
     title: 'טופס הזמנת פעילות לסוכני תיירות',
     intro: 'מלאו את פרטי הקבוצות. ניתן להוסיף כמה קבוצות לאותה בקשה. נעדכן אתכם כשההזמנה תאושר.',
     groupsTitle: 'הקבוצות שלכם',
-    summary: {
-      title: 'סיכום הבקשה',
-      groups: 'מספר קבוצות',
-      participants: 'סה"כ משתתפים',
-      activities: 'פעילויות',
-      approvalNote: 'ההזמנה כפופה לאישור גרפיטיול. נציג יחזור אליכם בהקדם.',
-    },
     agentCard: {
-      title: 'איש קשר להזמנה',
+      title: 'פרטי המזמין',
       name: 'שם',
       phone: 'טלפון',
       email: 'אימייל',
@@ -109,15 +102,8 @@ export const L = {
     title: 'Activity Reservation Form for Travel Agents',
     intro: "Fill in the group details. You can add several groups to one request. We'll update you once the reservation is approved.",
     groupsTitle: 'Your groups',
-    summary: {
-      title: 'Request summary',
-      groups: 'Groups',
-      participants: 'Total participants',
-      activities: 'Activities',
-      approvalNote: 'The reservation is subject to Grafitiyul approval. We will get back to you shortly.',
-    },
     agentCard: {
-      title: 'Booking contact',
+      title: 'Booker details',
       name: 'Name',
       phone: 'Phone',
       email: 'Email',
