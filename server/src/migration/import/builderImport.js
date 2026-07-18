@@ -101,25 +101,27 @@ export function planBuilderImport(docs, dealByLegacyId, existingXwalk = new Set(
   return { payloads, stats };
 }
 
-export async function executeBuilderImport(prisma, plan, { batchId, snapshotId, chunk = 200, log = () => {}, checkpoint = async () => {} } = {}) {
+export async function executeBuilderImport(prisma, plan, { batchId, snapshotId, chunk = 500, log = () => {}, checkpoint = async () => {} } = {}) {
   let written = 0, linesWritten = 0;
   const chunks = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
+  // Batched: explicit version ids let lines reference their version WITHOUT a
+  // round trip, so a chunk of N deals is ONE transaction of 3 createMany calls
+  // (not 3×N). Each chunk is still atomic; the crosswalk keeps it idempotent.
   for (const slice of chunks(plan.payloads, chunk)) {
+    const versionRows = [], lineRows = [], legacyRows = [];
     for (const pl of slice) {
-      await prisma.$transaction(async (tx) => {
-        const version = await tx.quoteVersion.create({ data: {
-          dealId: pl.dealId, isWorking: false, isSelected: false, status: 'draft', sourceKind: 'pipedrive_import',
-        } });
-        await tx.quoteLine.createMany({ data: pl.lines.map((l) => ({ ...l, quoteVersionId: version.id })) });
-        await tx.legacyRecord.create({ data: {
-          sourceSystem: 'pipedrive', sourceType: 'deal_product', sourceId: pl.legacyDealId,
-          entityType: 'QuoteVersion', entityId: version.id,
-          importBatchId: batchId, snapshotId, cardData: pl.reconciliation,
-        } });
-      });
-      written += 1;
-      linesWritten += pl.lines.length;
+      const versionId = crypto.randomUUID();
+      versionRows.push({ id: versionId, dealId: pl.dealId, isWorking: false, isSelected: false, status: 'draft', sourceKind: 'pipedrive_import' });
+      for (const l of pl.lines) lineRows.push({ ...l, quoteVersionId: versionId });
+      legacyRows.push({ sourceSystem: 'pipedrive', sourceType: 'deal_product', sourceId: pl.legacyDealId, entityType: 'QuoteVersion', entityId: versionId, importBatchId: batchId, snapshotId, cardData: pl.reconciliation });
     }
+    await prisma.$transaction([
+      prisma.quoteVersion.createMany({ data: versionRows }),
+      prisma.quoteLine.createMany({ data: lineRows }),
+      prisma.legacyRecord.createMany({ data: legacyRows, skipDuplicates: true }),
+    ]);
+    written += slice.length;
+    linesWritten += lineRows.length;
     await checkpoint({ written, linesWritten });
     log(`  ✓ ${written}/${plan.payloads.length} deals`);
   }

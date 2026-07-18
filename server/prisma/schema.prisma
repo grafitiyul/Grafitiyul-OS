@@ -896,6 +896,9 @@ model Contact {
 
   @@index([lastNameHe])
   @@index([lastNameEn])
+  // Serves the Contacts list default sort (lastNameHe, firstNameHe) as one
+  // ordered index for paginated reads.
+  @@index([lastNameHe, firstNameHe])
 }
 
 // One of a contact's phone numbers. Exactly one should be primary (enforced at
@@ -1150,6 +1153,9 @@ model Deal {
   @@index([lostReasonId])
   @@index([dealSourceId])
   @@index([status])
+  // Serves the Deals list default sort (ORDER BY updatedAt DESC) so a paginated
+  // take-50 reads an ordered index instead of sorting the whole table.
+  @@index([updatedAt])
 }
 
 // ── CRM Tasks (משימות) ──────────────────────────────────────────────────────

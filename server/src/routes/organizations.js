@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { numericIdResolver } from './numericIdParam.js';
+import { parseListQuery, containsI } from './listPagination.js';
 import { setOrganizationFinanceContact } from '../organizations/financeContact.js';
 import { userOrigin } from '../timeline/events.js';
 
@@ -78,18 +79,33 @@ router.get(
     // capped result set — pickers must never pull thousands of rows into a
     // client select. No `q` keeps the full alphabetical list (existing
     // consumers: settings/admin screens with modest catalogs).
+    const listRelations = {
+      organizationType: { select: { id: true, label: true } },
+      _count: { select: { units: true, contactLinks: true } },
+    };
+
+    // Paginated list-screen path (opt-in via `page`): narrow select + count.
+    const { paginated, page, pageSize, skip, take: pageTake, search } = parseListQuery(req.query);
+    if (paginated) {
+      const where = search ? { name: containsI(search) } : {};
+      const [total, rows] = await Promise.all([
+        prisma.organization.count({ where }),
+        prisma.organization.findMany({
+          where, orderBy: { name: 'asc' }, skip, take: pageTake,
+          select: { id: true, orgNo: true, name: true, createdAt: true, updatedAt: true, ...listRelations },
+        }),
+      ]);
+      return res.json({ rows, total, page, pageSize });
+    }
+
+    // Legacy path: `?q=` type-ahead (capped) for pickers, or full list otherwise.
     const q = String(req.query.q || '').trim();
-    const take = q
-      ? Math.min(50, Math.max(1, Number(req.query.take) || 20))
-      : undefined;
+    const take = q ? Math.min(50, Math.max(1, Number(req.query.take) || 20)) : undefined;
     const orgs = await prisma.organization.findMany({
-      where: q ? { name: { contains: q, mode: 'insensitive' } } : undefined,
+      where: q ? { name: containsI(q) } : undefined,
       orderBy: { name: 'asc' },
       take,
-      include: {
-        organizationType: { select: { id: true, label: true } },
-        _count: { select: { units: true, contactLinks: true } },
-      },
+      include: listRelations,
     });
     res.json(orgs);
   }),

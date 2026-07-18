@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { numericIdResolver } from './numericIdParam.js';
+import { parseListQuery, containsI, digits } from './listPagination.js';
 
 // Contact CRUD + phones + emails + organization memberships. Reference data for
 // the future Deals/Activities workflow.
@@ -49,20 +50,49 @@ const CONTACT_INCLUDE = {
 
 router.get(
   '/',
-  handle(async (_req, res) => {
-    const contacts = await prisma.contact.findMany({
-      orderBy: [{ lastNameHe: 'asc' }, { firstNameHe: 'asc' }],
-      include: {
-        phones: { where: { isPrimary: true }, take: 1 },
-        emails: { where: { isPrimary: true }, take: 1 },
-        // Linked organizations (primary first) for the list column, plus counts.
-        orgLinks: {
-          orderBy: { isPrimary: 'desc' },
-          select: { isPrimary: true, organization: { select: { id: true, name: true } } },
-        },
-        _count: { select: { orgLinks: true, dealContacts: true } },
-      },
-    });
+  handle(async (req, res) => {
+    // The relations the list table reads (primary phone/email, org names, counts).
+    const listRelations = {
+      phones: { where: { isPrimary: true }, take: 1 },
+      emails: { where: { isPrimary: true }, take: 1 },
+      orgLinks: { orderBy: { isPrimary: 'desc' }, select: { isPrimary: true, organization: { select: { id: true, name: true } } } },
+      _count: { select: { orgLinks: true, dealContacts: true } },
+    };
+    const orderBy = [{ lastNameHe: 'asc' }, { firstNameHe: 'asc' }];
+
+    const { paginated, page, pageSize, skip, take, search } = parseListQuery(req.query);
+    if (paginated) {
+      const where = {};
+      if (search) {
+        // Token-AND across name fields (so "דוד כהן" matches first+last), each
+        // token also allowed to hit phone / email / org / contact number.
+        const tokens = search.split(/\s+/).filter(Boolean);
+        where.AND = tokens.map((tok) => ({
+          OR: [
+            { firstNameHe: containsI(tok) }, { lastNameHe: containsI(tok) },
+            { firstNameEn: containsI(tok) }, { lastNameEn: containsI(tok) },
+            { phones: { some: { value: { contains: digits(tok) } } } },
+            { emails: { some: { value: containsI(tok) } } },
+            { orgLinks: { some: { organization: { name: containsI(tok) } } } },
+            ...(/^\d+$/.test(tok) ? [{ contactNo: Number(tok) }] : []),
+          ],
+        }));
+      }
+      const [total, rows] = await Promise.all([
+        prisma.contact.count({ where }),
+        prisma.contact.findMany({
+          where, orderBy, skip, take,
+          select: {
+            id: true, contactNo: true, firstNameHe: true, lastNameHe: true, firstNameEn: true, lastNameEn: true,
+            createdAt: true, updatedAt: true, ...listRelations,
+          },
+        }),
+      ]);
+      return res.json({ rows: rows.map(withFullNames), total, page, pageSize });
+    }
+
+    // Legacy full-array path (pickers / cross-refs). Unchanged shape.
+    const contacts = await prisma.contact.findMany({ orderBy, include: listRelations });
     res.json(contacts.map(withFullNames));
   }),
 );

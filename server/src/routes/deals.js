@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { toClientLine, lineToData } from '../quote/quoteLineMapping.js';
+import { parseListQuery, containsI } from './listPagination.js';
 import {
   ensureWorkingVersion,
   ensureDraftQuoteDocument,
@@ -342,34 +343,58 @@ router.get(
     if (req.query.organizationId) {
       where.organizationId = String(req.query.organizationId);
     }
-    const deals = await prisma.deal.findMany({
-      where,
-      orderBy: { updatedAt: 'desc' },
-      include: {
-        dealStage: { select: { id: true, label: true } },
-        organization: { select: { id: true, name: true } },
-        organizationUnit: { select: { id: true, name: true } },
-        organizationSubtype: { select: { id: true, label: true } },
-        lostReasonRef: { select: { id: true, nameHe: true } },
-        // Only the primary contact is needed for the optional "primary contact"
-        // table column — keep the payload lean (don't ship every contact).
-        contacts: {
-          where: { isPrimary: true },
-          take: 1,
+    // The relations the list table columns read — never the heavy scalar
+    // columns (notes, customerInfo, JSON blobs) the grid never shows.
+    const listRelations = {
+      dealStage: { select: { id: true, label: true } },
+      organization: { select: { id: true, name: true } },
+      organizationUnit: { select: { id: true, name: true } },
+      organizationSubtype: { select: { id: true, label: true } },
+      lostReasonRef: { select: { id: true, nameHe: true } },
+      contacts: { where: { isPrimary: true }, take: 1, select: { contact: { select: { firstNameHe: true, lastNameHe: true, firstNameEn: true, lastNameEn: true } } } },
+      _count: { select: { contacts: true } },
+    };
+
+    const { paginated, page, pageSize, skip, take, search } = parseListQuery(req.query);
+    if (paginated) {
+      if (req.query.stageId) where.dealStageId = String(req.query.stageId);
+      const minVal = Number(req.query.minVal);
+      const maxVal = Number(req.query.maxVal);
+      if (Number.isFinite(minVal) || Number.isFinite(maxVal)) {
+        where.valueMinor = {};
+        if (Number.isFinite(minVal)) where.valueMinor.gte = Math.round(minVal * 100);
+        if (Number.isFinite(maxVal)) where.valueMinor.lte = Math.round(maxVal * 100);
+      }
+      if (search) {
+        const or = [{ title: containsI(search) }, { organization: { name: containsI(search) } }];
+        if (/^\d+$/.test(search)) or.push({ orderNo: Number(search) });
+        where.OR = or;
+      }
+      const SORTS = {
+        updatedAt: (d) => ({ updatedAt: d }), createdAt: (d) => ({ createdAt: d }),
+        valueMinor: (d) => ({ valueMinor: d }), orderNo: (d) => ({ orderNo: d }),
+        title: (d) => ({ title: d }), expectedClose: (d) => ({ expectedCloseDate: d }),
+      };
+      const [sortKey, sortDir] = String(req.query.sort || 'updatedAt:desc').split(':');
+      const dir = sortDir === 'asc' ? 'asc' : 'desc';
+      const orderBy = [(SORTS[sortKey] || SORTS.updatedAt)(dir), { id: 'desc' }];
+      const [total, rows] = await Promise.all([
+        prisma.deal.count({ where }),
+        prisma.deal.findMany({
+          where, orderBy, skip, take,
           select: {
-            contact: {
-              select: {
-                firstNameHe: true,
-                lastNameHe: true,
-                firstNameEn: true,
-                lastNameEn: true,
-              },
-            },
+            id: true, orderNo: true, title: true, status: true, valueMinor: true, currency: true,
+            discountMinor: true, paymentTerms: true, source: true, expectedCloseDate: true,
+            wonAt: true, lostAt: true, lostReason: true, createdAt: true, updatedAt: true,
+            ...listRelations,
           },
-        },
-        _count: { select: { contacts: true } },
-      },
-    });
+        }),
+      ]);
+      return res.json({ rows, total, page, pageSize });
+    }
+
+    // Legacy full-array path (pickers / cross-refs). Unchanged shape.
+    const deals = await prisma.deal.findMany({ where, orderBy: { updatedAt: 'desc' }, include: listRelations });
     res.json(deals);
   }),
 );
