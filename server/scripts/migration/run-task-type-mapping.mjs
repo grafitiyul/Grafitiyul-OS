@@ -79,14 +79,15 @@ try {
     const subject = t(a?.subject);
     const header = `${d.typeLabel || 'פעילות'}${subject ? ` · ${subject}` : ''}`;
     const when = pdIso(a?.marked_as_done_time || a?.due_date || a?.add_time) || new Date().toISOString();
-    await prisma.$transaction([
-      prisma.timelineEntry.create({ data: {
+    await prisma.$transaction(async (tx) => {
+      const te = await tx.timelineEntry.create({ data: {
         subjectType: 'deal', subjectId: task.dealId, kind: 'note', isSystem: true,
         body: `<div><b>${escapeHtml(header)}</b></div>${note ? `<div>${note}</div>` : ''}`,
         actorType: 'import', actorLabel: 'ייבוא: פעילות מ-Pipedrive', createdAt: new Date(when),
-      } }).then((te) => prisma.legacyRecord.update({ where: { id: xwByActivity.get(item.actId) }, data: { entityType: 'TimelineEntry', entityId: te.id, importBatchId: batchId } })),
-      prisma.task.delete({ where: { id: d.taskId } }),
-    ]);
+      } });
+      await tx.legacyRecord.update({ where: { id: xwByActivity.get(item.actId) }, data: { entityType: 'TimelineEntry', entityId: te.id, importBatchId: batchId } });
+      await tx.task.delete({ where: { id: d.taskId } });
+    });
     demoted += 1;
   }
   await prisma.migrationRun.update({ where: { id: run.id }, data: { status: 'done', finishedAt: new Date(), counters: { ...plan.stats, applied: plan.setType.length, demoted } } });
