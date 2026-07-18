@@ -1,92 +1,73 @@
-// TOUR IMPORT planner — PURE. Consumes normalized Airtable tour data + the
-// crosswalk + native GOS tours + the owner's five policy decisions (2026-07-17),
-// and produces deterministic TourEvent/Booking/Assignment/Registration/Payroll
-// payloads plus the business-identity overlap classification.
+// TOUR IMPORT planner + executor — Wave 1 (runbook v2, owner-approved 2026-07-17).
 //
-// ── THE FIVE POLICIES ─────────────────────────────────────────────────────────
-// 1. CALENDAR: legacy Google events are adopted ONLY when proven to live on the
-//    org's primary calendar (the same account+calendar the GOS sync worker
-//    owns) — adoption stamps GOS ownership so future edits update THAT event
-//    and no duplicate invitation can exist. Unproven → import normally, legacy
-//    id preserved as evidence, GOS creates its own canonical event later.
-//    Historical tours: legacy id is ALWAYS evidence-only.
-// 2. OVERLAPS: business identity, never timestamps. A deal-identity match
-//    (an Airtable tour's legacy deal is booked on a native GOS tour) or an
-//    open-slot match (open tour, same date + same start time as a native
-//    group_slot) is a genuine duplicate; same-date-only is coincidence.
-// 3. FUTURE OPEN TOURS: normal TourEvents (template null — never inferred);
-//    fully GOS-controlled after import.
-// 4. PAYROLL: historical rows import as frozen evidence (never recalculated);
-//    payroll GENERATION for migration-owned tours is suppressed by MIGRATION
-//    OWNERSHIP (the tour has a LegacyRecord), not by date; a final cutover
-//    delta re-imports late Airtable changes, then GOS generation is enabled.
-// 5. HISTORICAL PARTICIPANTS: TicketRegistrations import wherever reliable
-//    (a linked deal + seat count), source='migration' — visible history that
-//    triggers nothing (completed tours are outside every operational sweep).
+// ── THE TWO LAWS (runbook v2) ─────────────────────────────────────────────────
+// Law 1 — WAVE 1 IS STRICTLY HISTORICAL. A tour imports iff its date is in the
+//   past, it was not cancelled, it was not postponed (a postponed tour never
+//   took place), and its relationships resolve through the crosswalk. Future
+//   tours, cancelled tours and postponed tours do NOT exist in GOS before
+//   cutover — Airtable remains their operational source of truth.
+// Law 2 — CANCELLED TOURS NEVER BECOME TOUREVENTS. They are deliberate,
+//   audited exclusions (`cancelled_tour_not_migrated`): no bookings, no
+//   registrations, no assignments, no payroll activities, no calendar. Payroll
+//   rows attached to a cancelled tour become LEGACY-ONLY card evidence.
+//
+// Wave 1 rows are historical evidence: status='completed', completedReason=
+// 'migration' (never scheduled-in-the-past — the IL-midnight worker must have
+// nothing to sweep), calendar/Woo flags null ("never considered"), and payroll
+// lazy-ensure is suppressed by migration ownership (the crosswalk row).
+//
+// The planner is PURE and deterministic (canonical hash = Hash A). The executor
+// follows the proven pattern: hard gates, 500-row transactional chunks,
+// crosswalk-first idempotency, MigrationRun checkpoints, forward-correction.
 import crypto from 'node:crypto';
 
 const t = (s) => String(s ?? '').trim();
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
-const hhmm = (s) => {
-  const m = /(\d{1,2}):(\d{2})/.exec(String(s || ''));
-  return m ? `${m[1].padStart(2, '0')}:${m[2]}` : null;
-};
 
-// Airtable status → TourEvent status. Airtable statuses are STALE ("עתידי" on
-// past dates) — the DATE decides; the status only distinguishes cancelled and
-// the single postponed row.
+// Airtable statuses are STALE ("עתידי" on past dates) — the DATE decides;
+// the status only distinguishes cancelled and postponed.
 export function tourStatusOf({ status, date, today }) {
   if (status === 'מבוטל') return 'cancelled';
   if (status === 'נדחה') return 'postponed';
   return date >= today ? 'scheduled' : 'completed';
 }
 
-// ── OVERLAP: business identity ────────────────────────────────────────────────
-// gosTours: [{ id, date, startTime, kind, status, bookedLegacyDealIds:Set }]
+// ── OVERLAP: business identity (kept for the CUTOVER planner; Wave 1 imports
+// no future tours, so it never fires there) ───────────────────────────────────
 export function classifyOverlap(tour, gosTours) {
   const sameDate = gosTours.filter((g) => g.date === tour.date && g.status !== 'cancelled');
   if (!sameDate.length) return { kind: 'none' };
-  // (a) DEAL IDENTITY — the strongest signal: the same commercial engagement.
   for (const g of sameDate) {
     const shared = tour.legacyDealIds.filter((d) => g.bookedLegacyDealIds?.has(d));
     if (shared.length) return { kind: 'duplicate_deal', gosTourId: g.id, sharedDeals: shared };
   }
-  // (b) OPEN-SLOT IDENTITY: an open tour occupying the same public slot.
   if (tour.isOpen) {
     const slot = sameDate.find((g) => g.kind === 'group_slot' && g.startTime === tour.startTime);
     if (slot) return { kind: 'duplicate_open_slot', gosTourId: slot.id };
   }
-  // (c) Same date only — two different tours on one day. Not a duplicate.
   return { kind: 'coincidental_date', gosSameDate: sameDate.length };
 }
 
-// ── the planner ───────────────────────────────────────────────────────────────
-// masterTours: [{ recId, tourId, name, date, startTime, endTime, status, freeSeats,
-//                 legacyCalendarId, cardExtras:[{label,value}] }]
-// coordRows:   [{ recId, masterRecId|null, legacyDealId|null, guideEmail, guideName,
-//                 seats, legacyCalendarId }]
-// payrollRows: [{ recId, masterRecId|null, guideEmail, guideName, role, date, month,
-//                 baseMinor, totalPreVatMinor, vatMinor, approved, guideApproved, note }]
-// adoptedCalendar: Map<masterRecId, { eventId, accountId }> — ONLY verified ones.
+// ── the Wave-1 planner ────────────────────────────────────────────────────────
 export function planTourImport({
   masterTours, coordRows, payrollRows = [],
-  gosTours = [], dealXwalk = new Map(), personRefByEmail = new Map(),
-  existingTourXwalk = new Map(), adoptedCalendar = new Map(), today,
+  dealXwalk = new Map(), dealMetaByLegacyId = new Map(), // legacyDealId → {activityType}
+  personRefByEmail = new Map(),
+  existingTourXwalk = new Map(), today,
 }) {
-  const problems = [];
   const warnings = [];
   const stats = {
     masterTours: masterTours.length, coordRows: coordRows.length,
-    create: 0, alreadyImported: 0, duplicatesForReview: 0,
-    byStatus: { scheduled: 0, completed: 0, cancelled: 0, postponed: 0 },
-    future: 0, historical: 0,
+    create: 0, alreadyImported: 0,
+    cancelledExcluded: 0, postponedExcluded: 0, deferredFuture: 0,
     bookings: 0, bookingsDealResolved: 0, bookingsDealMissing: 0,
-    assignments: 0, assignmentsPersonRef: 0, assignmentsExternal: 0,
     registrations: 0, seatsTotal: 0,
-    orphanCoordRows: 0, orphanTours: 0,
-    calendarAdopted: 0, calendarEvidenceOnly: 0,
-    payrollActivities: 0, payrollEntries: 0, payrollUnlinked: 0,
-    legacyCards: 0,
+    assignments: 0, assignmentsPersonRef: 0, assignmentsExternal: 0,
+    orphanCoordRows: 0, toursWithoutDeals: 0,
+    payrollActivities: 0, payrollEntries: 0,
+    payrollLegacyOnlyRows: 0, // unlinked OR attached to an excluded tour
+    legacyCards: 0, legacyEvidenceRows: 0,
+    kinds: { group_slot: 0, private: 0, business: 0 },
   };
 
   const coordByMaster = new Map();
@@ -96,43 +77,63 @@ export function planTourImport({
     coordByMaster.get(c.masterRecId).push(c);
   }
   const payrollByMaster = new Map();
+  const payrollUnlinked = [];
   for (const pr of payrollRows) {
-    if (!pr.masterRecId) { stats.payrollUnlinked += 1; continue; }
+    if (!pr.masterRecId) { payrollUnlinked.push(pr); continue; }
     if (!payrollByMaster.has(pr.masterRecId)) payrollByMaster.set(pr.masterRecId, []);
     payrollByMaster.get(pr.masterRecId).push(pr);
   }
 
   const payloads = [];
-  const duplicates = [];
+  // LEGACY-ONLY evidence rows (Law 2 + unlinked payroll): LegacyRecord rows with
+  // NO entity — proof of deliberate exclusion, never a tour.
+  const legacyEvidence = [];
   const ordered = [...masterTours].sort((a, b) => a.recId.localeCompare(b.recId));
 
   for (const m of ordered) {
+    const status = tourStatusOf({ status: m.status, date: m.date, today });
+    const payroll = (payrollByMaster.get(m.recId) || []).sort((a, b) => a.recId.localeCompare(b.recId));
+
+    // Law 2 first: cancelled is excluded whatever the date.
+    if (status === 'cancelled') {
+      stats.cancelledExcluded += 1;
+      if (payroll.length) {
+        stats.payrollLegacyOnlyRows += payroll.length;
+        legacyEvidence.push({
+          sourceType: 'tour', sourceId: m.recId,
+          cardData: [
+            { label: 'החרגה', value: 'cancelled_tour_not_migrated — סיור מבוטל, הוחרג בכוונה מהמיגרציה (חוק 2 בספר הריצה)' },
+            { label: 'Tour_ID במערכת הקודמת', value: String(m.tourId ?? m.recId) },
+            { label: 'תאריך', value: m.date },
+            ...payroll.map((pr) => ({ label: `שכר (ראיה בלבד): ${t(pr.guideName) || '—'}`, value: `${((pr.totalPreVatMinor ?? 0) / 100).toFixed(0)} ₪ לפני מע"מ${pr.approved ? ' · מאושר' : ''}` })),
+          ],
+        });
+        stats.legacyEvidenceRows += 1;
+      }
+      continue;
+    }
+    if (status === 'postponed') { stats.postponedExcluded += 1; continue; } // never took place
+    if (status === 'scheduled') { stats.deferredFuture += 1; continue; }    // belongs to Airtable until cutover
     if (existingTourXwalk.has(m.recId)) { stats.alreadyImported += 1; continue; }
+
+    // ── an included, completed historical tour ──────────────────────────────
     const coords = (coordByMaster.get(m.recId) || []).sort((a, b) => a.recId.localeCompare(b.recId));
     const legacyDealIds = [...new Set(coords.map((c) => c.legacyDealId).filter((x) => x != null))].sort((a, b) => a - b);
-    const isOpen = legacyDealIds.length > 1 || (legacyDealIds.length === 0 && m.date >= today);
-    const status = tourStatusOf({ status: m.status, date: m.date, today });
-    const future = m.date >= today && status === 'scheduled';
-    stats.byStatus[status] += 1;
-    if (future) stats.future += 1; else stats.historical += 1;
-    if (!coords.length) stats.orphanTours += 1;
+    if (!coords.length) stats.toursWithoutDeals += 1;
+    const isOpen = legacyDealIds.length > 1;
+    const kind = isOpen ? 'group_slot'
+      : dealMetaByLegacyId.get(legacyDealIds[0])?.activityType === 'business' ? 'business' : 'private';
+    stats.kinds[kind] += 1;
 
-    // Overlap — FUTURE tours only (history cannot collide with live operations).
-    if (future) {
-      const overlap = classifyOverlap({ date: m.date, startTime: m.startTime, isOpen, legacyDealIds }, gosTours);
-      if (overlap.kind.startsWith('duplicate')) {
-        stats.duplicatesForReview += 1;
-        duplicates.push({ masterRecId: m.recId, tourId: m.tourId, name: m.name, date: m.date, startTime: m.startTime, isOpen, legacyDealIds, ...overlap });
-        continue; // held for the owner — never auto-imported, never auto-dropped
-      }
-    }
-
-    // Bookings + historical/future registrations (policy 5).
     const bookings = [];
     for (const c of coords) {
       if (c.legacyDealId == null) continue;
       const gosDealId = dealXwalk.get(String(c.legacyDealId)) || null;
-      if (!gosDealId) { stats.bookingsDealMissing += 1; warnings.push({ recId: m.recId, kind: 'booking_deal_missing', detail: `deal ${c.legacyDealId} has no GOS entity` }); continue; }
+      if (!gosDealId) {
+        stats.bookingsDealMissing += 1;
+        warnings.push({ recId: m.recId, kind: 'booking_deal_missing', detail: `deal ${c.legacyDealId} has no GOS entity` });
+        continue;
+      }
       stats.bookingsDealResolved += 1;
       const seats = c.seats ?? null;
       bookings.push({ gosDealId, legacyDealId: c.legacyDealId, seats: seats || 0, registration: seats != null && seats > 0 });
@@ -140,7 +141,6 @@ export function planTourImport({
     }
     stats.bookings += bookings.length;
 
-    // Guide assignments — distinct guides across the coordination rows.
     const guides = [];
     const seen = new Set();
     for (const c of coords) {
@@ -153,55 +153,168 @@ export function planTourImport({
     }
     stats.assignments += guides.length;
 
-    // Calendar (policy 1): adopted only when VERIFIED; else evidence on the card.
-    const adopted = future ? adoptedCalendar.get(m.recId) || null : null;
-    if (adopted) stats.calendarAdopted += 1;
-    else if (m.legacyCalendarId) stats.calendarEvidenceOnly += 1;
-
-    // Payroll (policy 4): frozen historical evidence per tour.
-    const payroll = (payrollByMaster.get(m.recId) || []).sort((a, b) => a.recId.localeCompare(b.recId)).map((pr) => ({
-      guideEmail: t(pr.guideEmail).toLowerCase() || null,
-      displayName: t(pr.guideName) || t(pr.guideEmail) || 'לא ידוע',
-      personRefId: personRefByEmail.get(t(pr.guideEmail).toLowerCase()) || null,
-      role: pr.role || null,
-      totalPreVatMinor: pr.totalPreVatMinor ?? null,
-      vatMinor: pr.vatMinor ?? null,
+    const payrollOut = payroll.map((pr) => ({
+      displayName: t(pr.guideName) || 'לא ידוע',
+      personRefId: null, // payroll rows carry names, not emails — resolved at cutover if ever needed
+      role: /ראשי/.test(t(pr.role)) ? 'lead_guide' : /עוזר|סדנ/.test(t(pr.role)) ? 'workshop_assistant' : 'guide',
+      totalPreVatMinor: pr.totalPreVatMinor ?? 0,
+      vatMinor: pr.vatMinor ?? 0,
       officeApproved: !!pr.approved,
       guideApproved: !!pr.guideApproved,
       note: t(pr.note) || null,
       sourceRecId: pr.recId,
     }));
-    if (payroll.length) { stats.payrollActivities += 1; stats.payrollEntries += payroll.length; }
+    if (payrollOut.length) { stats.payrollActivities += 1; stats.payrollEntries += payrollOut.length; }
 
-    const card = [
-      { label: 'Tour_ID במערכת הקודמת', value: String(m.tourId ?? m.recId) },
-      { label: 'סטטוס מקורי', value: m.status || '—' },
-      ...(m.legacyCalendarId && !adopted ? [{ label: 'מזהה אירוע יומן (מערכת קודמת)', value: m.legacyCalendarId }] : []),
-      ...(m.cardExtras || []),
-    ];
     stats.legacyCards += 1;
-
     payloads.push({
-      kind: isOpen ? 'group_slot' : 'deal_tour',
       sourceRecId: m.recId,
       tourId: m.tourId ?? null,
+      kind,
       name: t(m.name) || null,
-      date: m.date, startTime: m.startTime, endTime: m.endTime || null,
-      status,
-      completedReason: status === 'completed' ? 'migration' : null,
-      capacity: isOpen && m.freeSeats != null ? null : null, // capacity semantics deferred to import-time derivation
-      bookings, guides, payroll,
-      calendar: adopted ? { eventId: adopted.eventId, accountId: adopted.accountId } : null,
-      cardData: card,
+      date: m.date, startTime: m.startTime || null, endTime: m.endTime || null,
+      status: 'completed',
+      completedReason: 'migration',
+      bookings, guides, payroll: payrollOut,
+      cardData: [
+        { label: 'Tour_ID במערכת הקודמת', value: String(m.tourId ?? m.recId) },
+        { label: 'סטטוס מקורי', value: m.status || '—' },
+        ...(m.legacyCalendarId ? [{ label: 'מזהה אירוע יומן (מערכת קודמת)', value: m.legacyCalendarId }] : []),
+        ...(m.cardExtras || []),
+      ],
     });
     stats.create += 1;
   }
 
-  const canonical = JSON.stringify(payloads, (key, value) => {
+  // Unlinked payroll rows: legacy-only evidence, never guessed onto a tour.
+  for (const pr of payrollUnlinked) {
+    stats.payrollLegacyOnlyRows += 1;
+    legacyEvidence.push({
+      sourceType: 'payroll', sourceId: pr.recId,
+      cardData: [
+        { label: 'החרגה', value: 'שורת שכר ללא קישור לסיור — נשמרת כראיה בלבד' },
+        { label: 'מדריך', value: t(pr.guideName) || '—' },
+        { label: 'סכום לפני מע"מ', value: `${((pr.totalPreVatMinor ?? 0) / 100).toFixed(0)} ₪` },
+        { label: 'מאושר', value: pr.approved ? 'כן' : 'לא' },
+      ],
+    });
+  }
+  stats.legacyEvidenceRows = legacyEvidence.length;
+
+  const canonical = JSON.stringify({ payloads, legacyEvidence }, (key, value) => {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
       return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)));
     }
     return value;
   });
-  return { payloads, duplicates, stats, problems, warnings, payloadHash: sha256(canonical), payloadBytes: canonical.length };
+  return { payloads, legacyEvidence, stats, warnings, payloadHash: sha256(canonical), payloadBytes: canonical.length };
+}
+
+// ── HARD GATES — refuse before any write ──────────────────────────────────────
+export function checkTourExecutionGates({ plan, expectHash, expected }) {
+  const failures = [];
+  if (!expectHash) failures.push('expect-hash חסר');
+  else if (plan.payloadHash !== expectHash) failures.push(`hash התוכנית שונה מהמאושר (${plan.payloadHash.slice(0, 16)}… ≠ ${String(expectHash).slice(0, 16)}…)`);
+  const s = plan.stats;
+  const accounted = s.create + s.alreadyImported + s.cancelledExcluded + s.postponedExcluded + s.deferredFuture;
+  if (accounted !== s.masterTours) failures.push(`אוכלוסיות לא מתאזנות: ${accounted} ≠ ${s.masterTours}`);
+  if (expected) {
+    if (s.masterTours !== expected.masterTours) failures.push(`סך סיורי מקור ${s.masterTours} ≠ ${expected.masterTours}`);
+    if (s.create + s.alreadyImported !== expected.wave1) failures.push(`Wave 1: ${s.create}+${s.alreadyImported} ≠ ${expected.wave1}`);
+    if (s.cancelledExcluded !== expected.cancelled) failures.push(`מבוטלים ${s.cancelledExcluded} ≠ ${expected.cancelled}`);
+    if (s.deferredFuture !== expected.future) failures.push(`עתידיים ${s.deferredFuture} ≠ ${expected.future}`);
+  }
+  // Law 1+2 structural assertions over the actual payloads:
+  if (plan.payloads.some((p) => p.status !== 'completed')) failures.push('נמצא payload שאינו completed — הפרת חוק 1');
+  if (plan.payloads.some((p) => p.calendar)) failures.push('נמצא payload עם יומן — אסור ב-Wave 1');
+  return { ok: failures.length === 0, failures };
+}
+
+// ── EXECUTOR — proven pattern; writes tourEvent + booking + ticketRegistration
+// + tourAssignment + payrollActivity/Entry/Line + legacyRecord ONLY. ──────────
+export async function executeTourPlan(prisma, plan, { batchId, snapshotId, historicalComponentId, chunk = 500, log = () => {}, checkpoint = async () => {} } = {}) {
+  const chunks = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
+  let written = 0;
+
+  for (const slice of chunks(plan.payloads, chunk)) {
+    const tourRows = [], bookingRows = [], regRows = [], assignRows = [], legacyRows = [];
+    const activityRows = [], entryRows = [], lineRows = [];
+    for (const p of slice) {
+      const tourId = crypto.randomUUID();
+      tourRows.push({
+        id: tourId, kind: p.kind, status: 'completed',
+        completedAt: new Date(`${p.date}T${p.endTime || p.startTime || '23:00'}:00`),
+        completedReason: 'migration',
+        date: p.date, startTime: p.startTime,
+        notes: null, capacity: null,
+      });
+      for (const b of p.bookings) {
+        const bookingId = crypto.randomUUID();
+        bookingRows.push({ id: bookingId, tourEventId: tourId, dealId: b.gosDealId, seats: b.seats, status: 'active' });
+        if (b.registration) {
+          regRows.push({ tourEventId: tourId, bookingId, dealId: b.gosDealId, quantity: b.seats, source: 'migration', status: 'confirmed' });
+        }
+      }
+      for (const g of p.guides) {
+        assignRows.push({ tourEventId: tourId, personRefId: g.personRefId, externalPersonId: g.email, displayName: g.displayName, role: g.role });
+      }
+      if (p.payroll.length) {
+        const activityId = crypto.randomUUID();
+        activityRows.push({
+          id: activityId, sourceType: 'tour_event', tourEventId: tourId,
+          titleHe: p.name || `סיור ${p.tourId ?? ''}`.trim(),
+          payrollMonth: p.date.slice(0, 7), date: p.date, state: 'active',
+        });
+        for (const pr of p.payroll) {
+          const entryId = crypto.randomUUID();
+          entryRows.push({
+            id: entryId, activityId,
+            personRefId: pr.personRefId, externalPersonId: `legacy:${pr.sourceRecId}`,
+            displayName: pr.displayName, role: pr.role,
+            officeStatus: pr.officeApproved ? 'approved' : 'draft',
+            guideStatus: pr.guideApproved ? 'approved' : 'pending',
+            vatStatusSnapshot: (pr.vatMinor ?? 0) > 0 ? 'vat_18' : 'exempt',
+            calcSnapshot: { migration: true, frozen: true, totalPreVatMinor: pr.totalPreVatMinor, vatMinor: pr.vatMinor, sourceRecId: pr.sourceRecId },
+            notes: pr.note,
+          });
+          lineRows.push({
+            entryId, componentId: historicalComponentId,
+            componentNameHe: 'שכר היסטורי — מערכת קודמת', sign: 1, vatMode: 'net',
+            quantity: null, unitPriceMinor: null,
+            calculatedMinor: BigInt(pr.totalPreVatMinor ?? 0),
+            note: 'יובא מהמערכת הקודמת — ראיה מוקפאת, לא מחושב מחדש',
+          });
+        }
+      }
+      legacyRows.push({
+        sourceSystem: 'airtable', sourceType: 'tour', sourceId: p.sourceRecId,
+        entityType: 'TourEvent', entityId: tourId,
+        importBatchId: batchId, snapshotId, cardData: p.cardData,
+      });
+    }
+    await prisma.$transaction([
+      prisma.tourEvent.createMany({ data: tourRows }),
+      prisma.booking.createMany({ data: bookingRows }),
+      prisma.ticketRegistration.createMany({ data: regRows }),
+      prisma.tourAssignment.createMany({ data: assignRows, skipDuplicates: true }),
+      prisma.payrollActivity.createMany({ data: activityRows }),
+      prisma.payrollEntry.createMany({ data: entryRows }),
+      prisma.payrollEntryLine.createMany({ data: lineRows, skipDuplicates: true }),
+      prisma.legacyRecord.createMany({ data: legacyRows, skipDuplicates: true }),
+    ]);
+    written += slice.length;
+    await checkpoint({ written, total: plan.payloads.length });
+    if (written % 1000 < chunk) log(`  ✓ ${written}/${plan.payloads.length} tours`);
+  }
+
+  // Law 2 evidence + unlinked payroll: LegacyRecord rows with NO entity.
+  const evidenceRows = plan.legacyEvidence.map((e) => ({
+    sourceSystem: 'airtable', sourceType: e.sourceType, sourceId: e.sourceId,
+    entityType: null, entityId: null, importBatchId: batchId, snapshotId, cardData: e.cardData,
+  }));
+  for (const slice of chunks(evidenceRows, chunk)) {
+    await prisma.legacyRecord.createMany({ data: slice, skipDuplicates: true });
+  }
+  log(`  ✓ legacy evidence rows: ${evidenceRows.length}`);
+  return { written, evidence: evidenceRows.length };
 }

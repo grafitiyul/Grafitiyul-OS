@@ -1,156 +1,132 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyOverlap, tourStatusOf, planTourImport } from './tourImport.js';
+import { classifyOverlap, tourStatusOf, planTourImport, checkTourExecutionGates } from './tourImport.js';
 
 // SYNTHETIC fixtures — this repo is public.
-const TODAY = '2026-07-17';
-const gos = (o) => ({ id: o.id, date: o.date, startTime: o.time ?? '10:00', kind: o.kind || 'group_slot', status: o.status || 'scheduled', bookedLegacyDealIds: new Set(o.deals || []) });
-
-test('OVERLAP is business identity, never a timestamp', () => {
-  const gosTours = [
-    gos({ id: 'g1', date: '2026-08-01', time: '10:00', kind: 'group_slot' }),
-    gos({ id: 'g2', date: '2026-08-01', time: '17:00', kind: 'private', deals: [1234] }),
-  ];
-  // (a) deal identity → duplicate even at a DIFFERENT time.
-  const byDeal = classifyOverlap({ date: '2026-08-01', startTime: '18:00', isOpen: false, legacyDealIds: [1234] }, gosTours);
-  assert.equal(byDeal.kind, 'duplicate_deal');
-  assert.equal(byDeal.gosTourId, 'g2');
-  assert.deepEqual(byDeal.sharedDeals, [1234]);
-  // (b) open slot: open + same date + same start time.
-  const openDup = classifyOverlap({ date: '2026-08-01', startTime: '10:00', isOpen: true, legacyDealIds: [] }, gosTours);
-  assert.equal(openDup.kind, 'duplicate_open_slot');
-  // (c) same date alone is COINCIDENCE — a private tour at the open slot's time…
-  const priv = classifyOverlap({ date: '2026-08-01', startTime: '10:00', isOpen: false, legacyDealIds: [999] }, gosTours);
-  assert.equal(priv.kind, 'coincidental_date', 'a private tour never matches an open slot by time');
-  // …an open tour at a different time…
-  const otherTime = classifyOverlap({ date: '2026-08-01', startTime: '12:00', isOpen: true, legacyDealIds: [] }, gosTours);
-  assert.equal(otherTime.kind, 'coincidental_date');
-  // …and a different date matches nothing.
-  assert.equal(classifyOverlap({ date: '2026-08-02', startTime: '10:00', isOpen: true, legacyDealIds: [] }, gosTours).kind, 'none');
-  // A cancelled GOS tour never claims a duplicate.
-  const cancelled = classifyOverlap({ date: '2026-08-03', startTime: '10:00', isOpen: true, legacyDealIds: [] }, [gos({ id: 'g3', date: '2026-08-03', status: 'cancelled' })]);
-  assert.equal(cancelled.kind, 'none');
-});
-
-test('Airtable statuses are stale — the DATE decides; cancelled/postponed survive', () => {
-  assert.equal(tourStatusOf({ status: 'עתידי', date: '2023-05-01', today: TODAY }), 'completed', 'stale עתידי on a past date');
-  assert.equal(tourStatusOf({ status: 'עתידי', date: '2026-09-01', today: TODAY }), 'scheduled');
-  assert.equal(tourStatusOf({ status: 'הסתיים', date: '2024-01-01', today: TODAY }), 'completed');
-  assert.equal(tourStatusOf({ status: 'מבוטל', date: '2026-09-01', today: TODAY }), 'cancelled');
-  assert.equal(tourStatusOf({ status: 'נדחה', date: '2024-01-01', today: TODAY }), 'postponed');
-});
-
-const master = (o) => ({ recId: o.id, tourId: o.tourId ?? 1, name: o.name || 'סיור', date: o.date, startTime: o.time ?? '10:00', endTime: null, status: o.status || 'הסתיים', freeSeats: null, legacyCalendarId: o.cal || null, cardExtras: [] });
+const TODAY = '2026-07-18';
+const master = (o) => ({ recId: o.id, tourId: o.tourId ?? 1, name: o.name || 'סיור', date: o.date, startTime: o.time ?? '10:00', endTime: o.end ?? null, status: o.status || 'הסתיים', legacyCalendarId: o.cal || null, cardExtras: [] });
 const coordOf = (o) => ({ recId: o.id, masterRecId: o.master ?? null, legacyDealId: o.deal ?? null, guideEmail: o.email || '', guideName: o.guide || '', seats: o.seats ?? null });
+const base = (over = {}) => ({ masterTours: [], coordRows: [], payrollRows: [], dealXwalk: new Map(), dealMetaByLegacyId: new Map(), personRefByEmail: new Map(), existingTourXwalk: new Map(), today: TODAY, ...over });
 
-test('past tours import DIRECTLY as completed — the midnight worker can never sweep them', () => {
-  const r = planTourImport({
-    masterTours: [master({ id: 'rA', date: '2023-06-01', status: 'עתידי' })],
-    coordRows: [], today: TODAY,
-  });
-  assert.equal(r.payloads[0].status, 'completed');
-  assert.equal(r.payloads[0].completedReason, 'migration');
+test('LAW 1 — Wave 1 is strictly historical: future, cancelled and postponed never import', () => {
+  const r = planTourImport(base({
+    masterTours: [
+      master({ id: 'rPast', date: '2023-06-01', status: 'עתידי' }),   // stale status, past date → completed
+      master({ id: 'rFuture', date: '2026-09-01', status: 'עתידי' }), // deferred to cutover
+      master({ id: 'rCancelled', date: '2023-06-01', status: 'מבוטל' }),
+      master({ id: 'rCancelledFut', date: '2026-09-01', status: 'מבוטל' }), // cancelled beats future
+      master({ id: 'rPostponed', date: '2023-06-01', status: 'נדחה' }),     // never took place
+    ],
+  }));
+  assert.equal(r.stats.create, 1);
+  assert.equal(r.stats.deferredFuture, 1);
+  assert.equal(r.stats.cancelledExcluded, 2, 'cancelled excluded whatever the date');
+  assert.equal(r.stats.postponedExcluded, 1);
+  // Population equation — the reconciliation the gates enforce.
+  const s = r.stats;
+  assert.equal(s.create + s.alreadyImported + s.cancelledExcluded + s.postponedExcluded + s.deferredFuture, s.masterTours);
+  // Every payload is completed history.
+  assert.ok(r.payloads.every((p) => p.status === 'completed' && p.completedReason === 'migration'));
 });
 
-test('bookings resolve through the deal crosswalk only; registrations where seats exist (policy 5)', () => {
-  const r = planTourImport({
+test('LAW 2 — a cancelled tour with payroll leaves ONLY card evidence, never entities', () => {
+  const r = planTourImport(base({
+    masterTours: [master({ id: 'rC', date: '2023-06-01', status: 'מבוטל' })],
+    payrollRows: [{ recId: 'p1', masterRecId: 'rC', guideName: 'רון', role: 'מדריך', totalPreVatMinor: 45000, vatMinor: 0, approved: true, guideApproved: false, note: '' }],
+  }));
+  assert.equal(r.stats.create, 0);
+  assert.equal(r.stats.payrollActivities, 0, 'no activity for an excluded tour');
+  assert.equal(r.stats.payrollLegacyOnlyRows, 1);
+  assert.equal(r.legacyEvidence.length, 1);
+  const e = r.legacyEvidence[0];
+  assert.equal(e.sourceId, 'rC');
+  assert.match(e.cardData[0].value, /cancelled_tour_not_migrated/);
+  assert.ok(e.cardData.some((c) => /450 ₪/.test(c.value)), 'the payroll amount is preserved as evidence');
+});
+
+test('unlinked payroll rows become legacy-only evidence — never guessed onto a tour', () => {
+  const r = planTourImport(base({
     masterTours: [master({ id: 'rA', date: '2023-06-01' })],
-    coordRows: [
-      coordOf({ id: 'c1', master: 'rA', deal: 100, seats: 12, email: 'g1@x.com', guide: 'רון' }),
-      coordOf({ id: 'c2', master: 'rA', deal: 200, seats: 0 }),
-      coordOf({ id: 'c3', master: 'rA', deal: 999 }),                 // deal not in crosswalk
-      coordOf({ id: 'c4', master: null, deal: 300 }),                  // orphan coordination
+    payrollRows: [{ recId: 'pX', masterRecId: null, guideName: 'דנה', totalPreVatMinor: 30000, approved: false }],
+  }));
+  assert.equal(r.stats.payrollLegacyOnlyRows, 1);
+  assert.equal(r.legacyEvidence[0].sourceType, 'payroll');
+});
+
+test('an included tour carries bookings/registrations/guides/payroll; kind derives from deals', () => {
+  const r = planTourImport(base({
+    masterTours: [
+      master({ id: 'rOpen', date: '2023-06-01' }),
+      master({ id: 'rBiz', date: '2023-06-02' }),
+      master({ id: 'rPriv', date: '2023-06-03' }),
     ],
-    dealXwalk: new Map([['100', 'deal-a'], ['200', 'deal-b']]),
-    personRefByEmail: new Map([['g1@x.com', 'pr1']]),
-    today: TODAY,
-  });
-  const p = r.payloads[0];
-  assert.equal(p.bookings.length, 2);
-  assert.equal(p.bookings[0].registration, true, 'seats>0 → historical registration');
-  assert.equal(p.bookings[1].registration, false);
-  assert.equal(r.stats.bookingsDealMissing, 1, 'no placeholder — counted and warned');
+    coordRows: [
+      coordOf({ id: 'c1', master: 'rOpen', deal: 1, seats: 4, email: 'g@x.com', guide: 'רון' }),
+      coordOf({ id: 'c2', master: 'rOpen', deal: 2, seats: 6 }),
+      coordOf({ id: 'c3', master: 'rBiz', deal: 3, seats: 20 }),
+      coordOf({ id: 'c4', master: 'rPriv', deal: 4 }),
+      coordOf({ id: 'c5', master: null, deal: 9 }), // orphan
+    ],
+    dealXwalk: new Map([['1', 'd1'], ['2', 'd2'], ['3', 'd3'], ['4', 'd4']]),
+    dealMetaByLegacyId: new Map([[3, { activityType: 'business' }], [4, { activityType: 'private' }]]),
+    payrollRows: [{ recId: 'p1', masterRecId: 'rOpen', guideName: 'רון', role: 'מדריך ראשי', totalPreVatMinor: 50000, vatMinor: 9000, approved: true, guideApproved: true }],
+    personRefByEmail: new Map([['g@x.com', 'pr1']]),
+  }));
+  const byId = Object.fromEntries(r.payloads.map((p) => [p.sourceRecId, p]));
+  assert.equal(byId.rOpen.kind, 'group_slot', 'multi-deal → open');
+  assert.equal(byId.rBiz.kind, 'business');
+  assert.equal(byId.rPriv.kind, 'private');
+  assert.equal(r.stats.bookings, 4);
+  assert.equal(r.stats.registrations, 3, 'seats>0 only');
+  assert.equal(r.stats.seatsTotal, 30);
   assert.equal(r.stats.orphanCoordRows, 1);
-  assert.equal(r.stats.registrations, 1);
-  assert.equal(r.stats.seatsTotal, 12);
-  assert.equal(p.guides[0].personRefId, 'pr1');
+  assert.equal(byId.rOpen.payroll[0].role, 'lead_guide');
+  assert.equal(byId.rOpen.guides[0].personRefId, 'pr1');
 });
 
-test('a future duplicate goes to the OWNER queue — never auto-imported, never auto-dropped', () => {
-  const r = planTourImport({
-    masterTours: [
-      master({ id: 'rOpen', date: '2026-09-01', time: '10:00', status: 'עתידי' }),
-      master({ id: 'rSafe', date: '2026-09-02', time: '10:00', status: 'עתידי' }),
-    ],
-    coordRows: [
-      coordOf({ id: 'c1', master: 'rOpen', deal: 1 }), coordOf({ id: 'c2', master: 'rOpen', deal: 2 }), // multi-deal → open
-    ],
-    gosTours: [gos({ id: 'g1', date: '2026-09-01', time: '10:00', kind: 'group_slot' })],
-    dealXwalk: new Map([['1', 'd1'], ['2', 'd2']]),
-    today: TODAY,
-  });
-  assert.equal(r.stats.duplicatesForReview, 1);
-  assert.equal(r.duplicates[0].kind, 'duplicate_open_slot');
-  assert.equal(r.stats.create, 1, 'only the non-duplicate future tour imports');
-});
+test('the hard gates enforce hash, population equation and both laws structurally', () => {
+  const plan = planTourImport(base({
+    masterTours: [master({ id: 'rA', date: '2023-06-01' }), master({ id: 'rF', date: '2026-09-01', status: 'עתידי' }), master({ id: 'rC', date: '2023-01-01', status: 'מבוטל' })],
+  }));
+  const expected = { masterTours: 3, wave1: 1, cancelled: 1, future: 1 };
+  assert.equal(checkTourExecutionGates({ plan, expectHash: plan.payloadHash, expected }).ok, true);
 
-test('calendar policy: adopted only when VERIFIED; otherwise the legacy id is card evidence', () => {
-  const inputs = {
-    masterTours: [
-      master({ id: 'rF', date: '2026-09-01', status: 'עתידי', cal: 'evt_future' }),
-      master({ id: 'rH', date: '2023-01-01', cal: 'evt_hist' }),
-    ],
-    coordRows: [], today: TODAY,
-  };
-  // Nothing verified → both are evidence-only.
-  const none = planTourImport(inputs);
-  assert.equal(none.stats.calendarAdopted, 0);
-  assert.equal(none.stats.calendarEvidenceOnly, 2);
-  assert.ok(none.payloads.find((p) => p.sourceRecId === 'rF').cardData.some((c) => c.value === 'evt_future'));
-  // The future tour verified → adopted; the HISTORICAL one stays evidence even if listed.
-  const adopted = planTourImport({ ...inputs, adoptedCalendar: new Map([['rF', { eventId: 'evt_future', accountId: 'acc1' }], ['rH', { eventId: 'evt_hist', accountId: 'acc1' }]]) });
-  assert.equal(adopted.stats.calendarAdopted, 1, 'historical tours never adopt');
-  assert.deepEqual(adopted.payloads.find((p) => p.sourceRecId === 'rF').calendar, { eventId: 'evt_future', accountId: 'acc1' });
-  assert.equal(adopted.payloads.find((p) => p.sourceRecId === 'rH').calendar, null);
-});
-
-test('payroll imports as FROZEN evidence attached to its tour (policy 4)', () => {
-  const r = planTourImport({
-    masterTours: [master({ id: 'rA', date: '2023-06-01' })],
-    coordRows: [],
-    payrollRows: [
-      { recId: 'p1', masterRecId: 'rA', guideEmail: 'g1@x.com', guideName: 'רון', role: 'מדריך ראשי', totalPreVatMinor: 45000, vatMinor: 0, approved: true, guideApproved: true, note: null },
-      { recId: 'p2', masterRecId: null, guideEmail: 'g2@x.com', guideName: 'דנה', totalPreVatMinor: 30000, approved: false },
-    ],
-    personRefByEmail: new Map([['g1@x.com', 'pr1']]),
-    today: TODAY,
-  });
-  assert.equal(r.stats.payrollActivities, 1);
-  assert.equal(r.stats.payrollEntries, 1);
-  assert.equal(r.stats.payrollUnlinked, 1, 'a payroll row without a tour link is counted, not guessed');
-  const pr = r.payloads[0].payroll[0];
-  assert.equal(pr.totalPreVatMinor, 45000);
-  assert.equal(pr.officeApproved, true);
-  assert.equal(pr.personRefId, 'pr1');
+  for (const [label, mutate] of [
+    ['hash drift', (g) => { g.expectHash = 'OTHER'; }],
+    ['missing hash', (g) => { g.expectHash = null; }],
+    ['wrong wave1 count', (g) => { g.expected = { ...expected, wave1: 2 }; }],
+    ['wrong cancelled count', (g) => { g.expected = { ...expected, cancelled: 0 }; }],
+    ['wrong future count', (g) => { g.expected = { ...expected, future: 0 }; }],
+  ]) {
+    const g = { plan, expectHash: plan.payloadHash, expected };
+    mutate(g);
+    assert.equal(checkTourExecutionGates(g).ok, false, `${label} must refuse`);
+  }
+  // A tampered plan smuggling a non-completed payload is refused structurally.
+  const tampered = { ...plan, payloads: [...plan.payloads, { status: 'scheduled' }] };
+  assert.equal(checkTourExecutionGates({ plan: tampered, expectHash: plan.payloadHash, expected }).ok, false);
 });
 
 test('DETERMINISM: identical hashes across runs, whatever the input order', () => {
-  const inputs = (order) => ({
-    masterTours: order,
-    coordRows: [coordOf({ id: 'c1', master: 'rA', deal: 100, seats: 3 })],
-    dealXwalk: new Map([['100', 'd1']]),
-    today: TODAY,
-  });
+  const inputs = (order) => base({ masterTours: order, coordRows: [coordOf({ id: 'c1', master: 'rA', deal: 1, seats: 3 })], dealXwalk: new Map([['1', 'd1']]) });
   const a = planTourImport(inputs([master({ id: 'rA', date: '2023-06-01' }), master({ id: 'rB', date: '2023-06-02' })]));
   const b = planTourImport(inputs([master({ id: 'rB', date: '2023-06-02' }), master({ id: 'rA', date: '2023-06-01' })]));
   assert.equal(a.payloadHash, b.payloadHash);
 });
 
-test('idempotency: an already-imported tour is skipped', () => {
-  const r = planTourImport({
+test('idempotency: an already-imported tour is skipped and still reconciles', () => {
+  const r = planTourImport(base({
     masterTours: [master({ id: 'rA', date: '2023-06-01' })],
-    coordRows: [], existingTourXwalk: new Map([['rA', 'tour-live-1']]), today: TODAY,
-  });
+    existingTourXwalk: new Map([['rA', 'tour-live-1']]),
+  }));
   assert.equal(r.stats.create, 0);
   assert.equal(r.stats.alreadyImported, 1);
+  assert.equal(checkTourExecutionGates({ plan: r, expectHash: r.payloadHash, expected: { masterTours: 1, wave1: 1, cancelled: 0, future: 0 } }).ok, true);
+});
+
+test('the overlap classifier survives for the CUTOVER planner (business identity)', () => {
+  const gosTours = [{ id: 'g1', date: '2026-08-01', startTime: '10:00', kind: 'group_slot', status: 'scheduled', bookedLegacyDealIds: new Set() }];
+  assert.equal(classifyOverlap({ date: '2026-08-01', startTime: '10:00', isOpen: true, legacyDealIds: [] }, gosTours).kind, 'duplicate_open_slot');
+  assert.equal(classifyOverlap({ date: '2026-08-01', startTime: '12:00', isOpen: true, legacyDealIds: [] }, gosTours).kind, 'coincidental_date');
+  assert.equal(tourStatusOf({ status: 'עתידי', date: '2023-05-01', today: TODAY }), 'completed');
 });
