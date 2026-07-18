@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import { MIGRATION_TABS, tabForPath } from './config.js';
 import { ALL_MODULES, moduleForPath } from '../../shell/moduleRoutes.js';
 
-test('the six tabs match the approved information architecture, in order', () => {
+test('the seven tabs match the approved information architecture, in order', () => {
   assert.deepEqual(
     MIGRATION_TABS.map((t) => t.key),
-    ['organizations', 'contacts', 'name_cleanup', 'stage_config', 'exceptional', 'legacy_archive'],
+    ['organizations', 'contacts', 'name_cleanup', 'stage_config', 'deals', 'exceptional', 'legacy_archive'],
   );
-  assert.equal(MIGRATION_TABS.length, 6);
+  assert.equal(MIGRATION_TABS.length, 7);
 });
 
 test('there is NO separate Units tab and NO separate phone-duplicates tab', () => {
