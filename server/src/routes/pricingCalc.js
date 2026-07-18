@@ -210,6 +210,9 @@ router.post(
           include: {
             rules: {
               where: { active: true },
+              // Deterministic order so the card-option list + its labels are
+              // stable across requests (resolution itself is order-independent).
+              orderBy: [{ cardSortOrder: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
               include: {
                 tiers: { orderBy: { sortOrder: 'asc' } },
                 ticketPrices: true,
@@ -469,34 +472,30 @@ router.post(
     }
 
     // Card OPTIONS for the manual override picker: every active card that can
-    // price this product (variant-compatible), regardless of org association —
-    // association is only the automatic DEFAULT, any option is selectable.
-    // Labels: the card's ORG ASSOCIATION names (who the option is for); a card
-    // with no association falls back to its authoring-tab name.
+    // price this product (variant-compatible). Association is only the automatic
+    // DEFAULT — any card is selectable here.
+    //
+    // Label = the card's AUTHORING TAB (pricing segment) name — ONE stable
+    // source, singular, identical everywhere and independent of context (the
+    // previous association/tab mix produced different labels for similar cards).
+    // The tabs ARE the commercial categories (פרטי / עסקי / בית ספר / סוכנים /
+    // מפיקים / קבוצתי). When two cards for one product share a tab, later ones
+    // get a deterministic ordinal suffix (stable rule order above), so the label
+    // is always unique and never surprises.
     let cardOptions = [];
     if (context.productId && priceList) {
-      const [segRows, typeRows, subRows] = await Promise.all([
-        prisma.pricingSegment.findMany({ select: { id: true, nameHe: true } }),
-        prisma.organizationType.findMany({ select: { id: true, label: true } }),
-        prisma.organizationSubtype.findMany({ select: { id: true, label: true } }),
-      ]);
+      const segRows = await prisma.pricingSegment.findMany({ select: { id: true, nameHe: true } });
       const segNames = new Map(segRows.map((s) => [s.id, s.nameHe]));
-      const typeNames = new Map(typeRows.map((t) => [t.id, t.label]));
-      const subNames = new Map(subRows.map((s) => [s.id, s.label]));
       const seen = new Map();
+      const tabCount = new Map();
       for (const r of priceList.rules) {
         if (!r.cardGroupId || r.productId !== context.productId) continue;
         if (r.productVariantId && context.productVariantId && r.productVariantId !== context.productVariantId) continue;
-        if (!seen.has(r.cardGroupId)) {
-          const assoc = [
-            ...(r.defaultOrgSubtypeIds || []).map((id) => subNames.get(id)),
-            ...(r.defaultOrgTypeIds || []).map((id) => typeNames.get(id)),
-          ].filter(Boolean);
-          seen.set(r.cardGroupId, {
-            cardGroupId: r.cardGroupId,
-            label: assoc.length ? assoc.join(' · ') : segNames.get(r.pricingSegmentId) || 'כרטיס תמחור',
-          });
-        }
+        if (seen.has(r.cardGroupId)) continue;
+        const tab = segNames.get(r.pricingSegmentId) || 'כרטיס תמחור';
+        const n = (tabCount.get(tab) || 0) + 1;
+        tabCount.set(tab, n);
+        seen.set(r.cardGroupId, { cardGroupId: r.cardGroupId, label: n === 1 ? tab : `${tab} · ${n}` });
       }
       cardOptions = [...seen.values()];
     }

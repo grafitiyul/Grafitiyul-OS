@@ -53,3 +53,26 @@ test('whitespace-tolerant placeholders; missing engine values render empty', () 
   assert.equal(renderNoteTemplate('<p></p>', vars), null);
   assert.equal(renderNoteTemplate(null, vars), null);
 });
+
+// Integration: tiered_group (the dominant production model) now exposes the
+// group note variables, so a multi-group note renders fully (issue #2).
+import { calculate } from './engine.js';
+
+test('tiered_group multi-group note renders all variables (17p/2g example)', () => {
+  const rule = {
+    id: 'r', active: true, priceModel: 'tiered_group', cardGroupId: 'c',
+    firstLineNote: '<p>יחיד</p>',
+    multiGroupNote: '<p>מחיר ל-{{groups}} קבוצות, עד {{includedPerGroup}} משתתפים לקבוצה, ₪{{pricePerGroup}} לקבוצה.</p>',
+    perAdditionalParticipantMinor: 10000n,
+    tiers: [{ uptoParticipants: 10, totalPriceMinor: 190000n, sortOrder: 0 }],
+  };
+  const engineResult = calculate({
+    priceList: { id: 'pl', nameHe: 'x', currency: 'ILS', isDefault: true, defaultVatMode: 'excluded', defaultVatRate: 0, rules: [rule] },
+    activityType: { id: 'at1' },
+    context: { activityTypeId: 'at1' },
+    counts: { participantCount: 17, groupCount: 2 },
+  });
+  const vars = buildNoteVars({ engineResult, groupCount: 2, participantCount: 17, variantName: '', cityName: '' });
+  const rendered = renderNoteTemplate(selectNoteTemplate(rule, 2), vars);
+  assert.equal(rendered, '<p>מחיר ל-2 קבוצות, עד 10 משתתפים לקבוצה, ₪1,900 לקבוצה.</p>');
+});

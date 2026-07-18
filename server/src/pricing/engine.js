@@ -158,9 +158,14 @@ export function baseAmountMinor(rule, counts) {
   }
 
   // tiered_group — model 1: an ordered ladder of (uptoParticipants → total group
-  // price). Pick the first tier whose upper bound covers the group; above the
-  // largest tier, add perAdditionalParticipantMinor per participant over it. The
-  // tier prices are TOTALS for the whole group, not per-person.
+  // price), the tier prices being TOTALS for one group, not per-person.
+  //
+  // GROUP-AWARE: participants are TOTALS and are DISTRIBUTED across the groups as
+  // evenly as possible (17 in 2 groups → 9 + 8); each group is then priced by
+  // the ladder on ITS OWN size and the results summed. Above the top tier a
+  // group pays that tier's total + perAdditionalParticipant per head over it.
+  // For groupCount=1 this is exactly one group of size=participants — identical
+  // to the pre-groups behavior every existing deal used.
   if (rule.priceModel === 'tiered_group') {
     const tiers = [...(rule.tiers || [])]
       .map((t) => ({
@@ -179,36 +184,49 @@ export function baseAmountMinor(rule, counts) {
       });
     }
     const participantCount = resolveParticipantCount(counts);
-    const matchedTier = tiers.find(
-      (t) => participantCount <= t.uptoParticipants,
-    );
-    let perGroup;
-    let tierUpto;
-    let tierTotalMinor;
-    let extraParticipants = 0;
-    if (matchedTier) {
-      perGroup = matchedTier.totalPriceMinor;
-      tierUpto = matchedTier.uptoParticipants;
-      tierTotalMinor = matchedTier.totalPriceMinor;
-    } else {
-      // Above the largest tier: that tier's total + per-additional overflow.
-      const last = tiers[tiers.length - 1];
-      const perAdd = num(rule.perAdditionalParticipantMinor) || 0;
-      extraParticipants = participantCount - last.uptoParticipants;
-      perGroup = last.totalPriceMinor + extraParticipants * perAdd;
-      tierUpto = last.uptoParticipants;
-      tierTotalMinor = last.totalPriceMinor;
+    const perAdd = num(rule.perAdditionalParticipantMinor) || 0;
+    const last = tiers[tiers.length - 1];
+    // Even split: `rem` groups of (q+1), the rest of q.
+    const q = Math.floor(participantCount / groupCount);
+    const rem = participantCount % groupCount;
+
+    let total = 0;
+    let totalOverflow = 0;
+    let baseTierSum = 0; // Σ matched tier totals, before per-additional overflow
+    let repTierUpto = 0; // representative "included per group" (largest tier hit)
+    const baseTierPrices = new Set();
+    for (let i = 0; i < groupCount; i++) {
+      const size = i < rem ? q + 1 : q;
+      if (size <= 0) {
+        baseTierPrices.add(0); // an empty group is never charged
+        continue;
+      }
+      const matched = tiers.find((t) => size <= t.uptoParticipants);
+      const tier = matched || last;
+      const overflow = matched ? 0 : size - last.uptoParticipants;
+      total += tier.totalPriceMinor + overflow * perAdd;
+      baseTierSum += tier.totalPriceMinor;
+      totalOverflow += overflow;
+      baseTierPrices.add(tier.totalPriceMinor);
+      repTierUpto = Math.max(repTierUpto, tier.uptoParticipants);
     }
+    // "Uniform" = every group landed on the same base tier price, so the total
+    // decomposes cleanly into (tierPrice × groups) + (overflow × perAdditional);
+    // otherwise the builder keeps one combined line (breakdown guard).
+    const uniformBase = baseTierPrices.size === 1;
+    const repTierPrice = uniformBase ? [...baseTierPrices][0] : null;
     return {
-      amountMinor: Math.round(perGroup * groupCount),
+      amountMinor: Math.round(total),
       debug: {
         participantCount,
-        tierUpto,
-        tierTotalMinor: Math.round(tierTotalMinor),
-        extraParticipants,
-        tierCount: tiers.length,
         groupCount,
-        perGroupMinor: Math.round(perGroup),
+        baseParticipants: repTierUpto,
+        includedParticipants: repTierUpto * groupCount,
+        extraParticipants: totalOverflow,
+        tierTotalMinor: Math.round(repTierPrice != null ? repTierPrice : baseTierSum / Math.max(1, groupCount)),
+        baseTotalMinor: Math.round(baseTierSum),
+        tierCount: tiers.length,
+        uniformBase,
       },
     };
   }
@@ -439,9 +457,12 @@ export function amountBreakdown(rule, counts, debug, amountMinor) {
         : null,
     };
   } else if (rule.priceModel === 'tiered_group') {
-    // Overflow above the top tier is per-group in the current math, so the
-    // extra quantity scales by groups to keep the invariant exact.
-    const extraQty = (debug.extraParticipants || 0) * groupCount;
+    // Only when every group shares one base tier does the total decompose into a
+    // clean per-group base line + a total-overflow line; a mixed-tier split
+    // (uneven groups crossing a tier boundary) keeps one combined line. debug's
+    // extraParticipants is ALREADY the total overflow across all groups.
+    if (!debug.uniformBase) return null;
+    const extraQty = debug.extraParticipants || 0;
     breakdown = {
       unitBaseMinor: debug.tierTotalMinor || 0,
       unitQuantity: groupCount,

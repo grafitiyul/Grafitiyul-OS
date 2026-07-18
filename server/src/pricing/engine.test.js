@@ -131,8 +131,58 @@ test('tiered_group: above top tier → top total + overflow×perAdditional', () 
   // 180000 + 3*15000 = 225000
   assert.equal(run([LADDER], { participantCount: 23 }).netMinor, 225000);
 });
-test('tiered_group: ×groupCount', () => {
+test('tiered_group: groupCount distributes then prices per group (no ×total)', () => {
+  // 8 split 4+4, each in tier 1 → 100000 × 2 = 200000.
   assert.equal(run([LADDER], { participantCount: 8, groupCount: 2 }).netMinor, 200000);
+});
+
+// ── tiered_group DISTRIBUTION (issue #1): participants are TOTALS, split across
+// groups; each group priced on its OWN size — never the total treated as
+// per-group. Single-tier ladder "up to 10 = 1900, +100 additional".
+const SINGLE = {
+  id: 'r1', active: true, priceModel: 'tiered_group', priority: 0,
+  perAdditionalParticipantMinor: 10000n,
+  tiers: [{ uptoParticipants: 10, totalPriceMinor: 190000n, sortOrder: 0 }],
+};
+test('tiered_group 17p/2g: 9+8 both within tier → base ×2, NO extra = 3800 (was 5200)', () => {
+  const r = run([SINGLE], { participantCount: 17, groupCount: 2 });
+  assert.equal(r.netMinor, 380000);
+  assert.equal(r.debug.extraParticipants, 0);
+  assert.deepEqual(r.breakdown, { unitBaseMinor: 190000, unitQuantity: 2, extra: null });
+});
+test('tiered_group 17p/3g: 6+6+5 all within tier → base ×3 = 5700', () => {
+  assert.equal(run([SINGLE], { participantCount: 17, groupCount: 3 }).netMinor, 570000);
+});
+test('tiered_group 30p/2g: 15+15, each overflow 5 → base ×2 + 10 extra ×100 = 4800', () => {
+  const r = run([SINGLE], { participantCount: 30, groupCount: 2 });
+  assert.equal(r.netMinor, 480000);
+  assert.equal(r.debug.extraParticipants, 10);
+  assert.deepEqual(r.breakdown, { unitBaseMinor: 190000, unitQuantity: 2, extra: { quantity: 10, unitPriceMinor: 10000 } });
+});
+test('tiered_group 30p/3g: 10+10+10 all within tier → base ×3 = 5700, no extra', () => {
+  const r = run([SINGLE], { participantCount: 30, groupCount: 3 });
+  assert.equal(r.netMinor, 570000);
+  assert.equal(r.debug.extraParticipants, 0);
+});
+test('tiered_group: uneven overflow sums exactly (31p/2g → 16+15)', () => {
+  // 16→1900+600, 15→1900+500 = 4900; breakdown stays uniform (same base tier).
+  const r = run([SINGLE], { participantCount: 31, groupCount: 2 });
+  assert.equal(r.netMinor, 490000);
+  assert.deepEqual(r.breakdown, { unitBaseMinor: 190000, unitQuantity: 2, extra: { quantity: 11, unitPriceMinor: 10000 } });
+});
+test('tiered_group: mixed base tiers across groups → single line (breakdown null), amount still exact', () => {
+  // Ladder up-to-6=900, up-to-12=1500; 17p/2g → 9+8, both in tier2 (uniform).
+  // Force a mix: 13p/2g → 7+6 → 6 in tier1(900), 7 in tier2(1500). Sum 2400.
+  const two = { id: 'r', active: true, priceModel: 'tiered_group', priority: 0, perAdditionalParticipantMinor: 10000n,
+    tiers: [{ uptoParticipants: 6, totalPriceMinor: 90000n, sortOrder: 0 }, { uptoParticipants: 12, totalPriceMinor: 150000n, sortOrder: 1 }] };
+  const r = run([two], { participantCount: 13, groupCount: 2 });
+  assert.equal(r.netMinor, 240000);
+  assert.equal(r.breakdown, null); // mixed tiers → no clean decomposition
+});
+test('tiered_group G=1 is unchanged from the pre-groups behavior', () => {
+  // One group of size=participants → ladder as before (regression guard).
+  assert.equal(run([LADDER], { participantCount: 23, groupCount: 1 }).netMinor, 225000);
+  assert.equal(run([LADDER], { participantCount: 15, groupCount: 1 }).netMinor, 180000);
 });
 test('tiered_group: unsorted tiers are sorted before walking', () => {
   const unsorted = { ...LADDER, tiers: [LADDER.tiers[1], LADDER.tiers[0]] };

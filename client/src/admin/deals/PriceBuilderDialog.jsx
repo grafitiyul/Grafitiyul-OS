@@ -630,10 +630,19 @@ function LineRow({ line, computed, products, addons, defaultProductId, noteOpen,
   const lineTotalMinor = (Number(unitMinor) || 0) * (qty || 0);
   const negative = lineTotalMinor < 0;
 
+  // Engine-GENERATED computed lines (the "משתתפים נוספים" breakdown line, an
+  // auto שבת/חג surcharge) are NOT catalog items and must NEVER become editable
+  // free-text rows — they render as a standard pricing line with a read-only
+  // label. Regeneration owns them; the item picker/free-text is only for real
+  // manually-created rows. (The product line keeps its normal product picker.)
+  const generated =
+    line.sourceKind === 'price_rule_extra' || line.sourceKind === 'price_rule_addon';
+
   // Item dropdown value: addon → a:<id>, product (by label or product-line default)
   // → p:<id>, free-text → __free__, else empty.
   const matchedProduct = products.find((p) => p.nameHe === line.label);
-  const freeMode = free || (!isAddon && !matchedProduct && !!line.label && !(isProduct && !line.label));
+  const freeMode =
+    !generated && (free || (!isAddon && !matchedProduct && !!line.label && !(isProduct && !line.label)));
   let selectValue = '';
   if (isAddon && line.refId) selectValue = `a:${line.refId}`;
   else if (freeMode) selectValue = '__free__';
@@ -667,31 +676,41 @@ function LineRow({ line, computed, products, addons, defaultProductId, noteOpen,
         <span className="w-5 shrink-0 flex justify-center">{handle}</span>
         <Toggle checked={line.active} onChange={(v) => onChange({ active: v })} />
 
-        {/* Center: item (product/addon dropdown), price, quantity */}
+        {/* Center: item (product/addon dropdown), price, quantity. Generated
+            computed lines show a read-only label in the SAME full-width cell —
+            standard pricing-line layout, no item picker, no free-text control. */}
         <div className="flex-1 min-w-[12rem] flex items-center gap-2">
-          <select
-            value={selectValue}
-            disabled={disabled}
-            onChange={(e) => onPickItem(e.target.value)}
-            className={`${CELL} ${freeMode ? 'w-44' : 'flex-1'}`}
-          >
-            <option value="">— בחר פריט —</option>
-            <optgroup label="מוצרים">
-              {products.map((p) => (<option key={p.id} value={`p:${p.id}`}>{p.nameHe}</option>))}
-            </optgroup>
-            <optgroup label="תוספות">
-              {addons.map((a) => (<option key={a.id} value={`a:${a.id}`}>{a.nameHe}</option>))}
-            </optgroup>
-            <option value="__free__">— טקסט חופשי —</option>
-          </select>
-          {freeMode && (
-            <input
-              value={line.label}
-              disabled={disabled}
-              onChange={(e) => onChange({ label: e.target.value })}
-              placeholder="תיאור"
-              className={`${CELL} flex-1`}
-            />
+          {generated ? (
+            <div className={`${CELL} flex-1 flex items-center bg-gray-50 text-gray-700`}>
+              <span className="truncate">{line.label}</span>
+            </div>
+          ) : (
+            <>
+              <select
+                value={selectValue}
+                disabled={disabled}
+                onChange={(e) => onPickItem(e.target.value)}
+                className={`${CELL} ${freeMode ? 'w-44' : 'flex-1'}`}
+              >
+                <option value="">— בחר פריט —</option>
+                <optgroup label="מוצרים">
+                  {products.map((p) => (<option key={p.id} value={`p:${p.id}`}>{p.nameHe}</option>))}
+                </optgroup>
+                <optgroup label="תוספות">
+                  {addons.map((a) => (<option key={a.id} value={`a:${a.id}`}>{a.nameHe}</option>))}
+                </optgroup>
+                <option value="__free__">— טקסט חופשי —</option>
+              </select>
+              {freeMode && (
+                <input
+                  value={line.label}
+                  disabled={disabled}
+                  onChange={(e) => onChange({ label: e.target.value })}
+                  placeholder="תיאור"
+                  className={`${CELL} flex-1`}
+                />
+              )}
+            </>
           )}
         </div>
 
