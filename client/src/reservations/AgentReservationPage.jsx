@@ -54,6 +54,7 @@ export default function AgentReservationPage() {
   const [invoice, setInvoice] = useState({
     toOrganizer: true,
     toFinance: false,
+    replaceFinance: false,
     financeName: '',
     financeEmail: '',
     financePhone: '',
@@ -170,12 +171,17 @@ export default function AgentReservationPage() {
   // ── submit ─────────────────────────────────────────────────────────────────
   const allComplete = groups.length > 0 && groups.every(groupComplete);
   const allConfirmed = (boot?.requiredConfirmations || []).every((k) => confirmations[k]);
-  const orgHasFinance = !!boot?.organization?.financeEmail;
+  const savedFinance = boot?.organization?.financeContact || null;
+  const orgHasFinance = !!savedFinance;
   const anyRecipient = invoice.toOrganizer || invoice.toFinance;
+  // Nominating = defining a (first or replacement) finance person — name,
+  // email and phone are all required; the saved contact itself is never
+  // editable from the public form.
+  const nominating = invoice.toFinance && (!orgHasFinance || invoice.replaceFinance);
   const financeDetailsOk =
-    !invoice.toFinance ||
-    orgHasFinance ||
-    (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(invoice.financeEmail.trim()) &&
+    !nominating ||
+    (invoice.financeName.trim() &&
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(invoice.financeEmail.trim()) &&
       invoice.financePhone.replace(/\D/g, '').length >= 8);
   const signatureOk =
     (signature.signerName || '').trim() &&
@@ -223,11 +229,12 @@ export default function AgentReservationPage() {
         invoice: {
           toOrganizer: invoice.toOrganizer,
           toFinance: invoice.toFinance,
-          // Editable details are sent only in the "לאיש כספים אחר" mode —
-          // with a saved org contact the server uses the canonical values.
-          ...(invoice.toFinance && !orgHasFinance
+          replaceFinance: invoice.replaceFinance,
+          // Nomination details are sent only when defining a first/replacement
+          // finance person — the saved contact is server-side canonical.
+          ...(nominating
             ? {
-                financeName: invoice.financeName || null,
+                financeName: invoice.financeName.trim(),
                 financeEmail: invoice.financeEmail.trim(),
                 financePhone: invoice.financePhone.trim(),
               }
@@ -402,27 +409,55 @@ export default function AgentReservationPage() {
                 />
                 {orgHasFinance ? t.invoice.toFinance : t.invoice.toOtherFinance}
               </label>
-              {invoice.toFinance && orgHasFinance && (
-                // Saved organization finance contact — read-only display; the
-                // public form never edits or overwrites it.
+              {invoice.toFinance && orgHasFinance && !invoice.replaceFinance && (
+                // Saved organization finance contact — read-only; the public
+                // form can only NOMINATE a replacement, never edit this person.
                 <div className="ms-6 rounded-xl bg-gray-50/80 px-3.5 py-2.5 text-[13px]">
-                  {boot.organization.financeContactName && (
-                    <div className="font-medium text-gray-800">{boot.organization.financeContactName}</div>
+                  {savedFinance.name && (
+                    <div className="font-medium text-gray-800">{savedFinance.name}</div>
                   )}
-                  <div className="text-gray-600" dir="ltr">{boot.organization.financeEmail}</div>
-                  {boot.organization.financePhone && (
-                    <div className="text-gray-600" dir="ltr">{boot.organization.financePhone}</div>
+                  {savedFinance.email && (
+                    <div className="text-gray-600" dir="ltr">{savedFinance.email}</div>
                   )}
+                  {savedFinance.phone && (
+                    <div className="text-gray-600" dir="ltr">{savedFinance.phone}</div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setInvoice((v) => ({ ...v, replaceFinance: true }))}
+                    className="mt-1.5 text-[12px] font-medium text-blue-700 hover:underline"
+                  >
+                    {t.invoice.replaceAction}
+                  </button>
                 </div>
               )}
-              {invoice.toFinance && !orgHasFinance && (
+              {invoice.toFinance && orgHasFinance && invoice.replaceFinance && (
+                <div className="ms-6 -mb-1 text-[12px] text-gray-500">
+                  {t.invoice.replacingNote}{' '}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setInvoice((v) => ({ ...v, replaceFinance: false, financeName: '', financeEmail: '', financePhone: '' }))
+                    }
+                    className="font-medium text-blue-700 hover:underline"
+                  >
+                    {t.invoice.keepSaved}
+                  </button>
+                </div>
+              )}
+              {nominating && (
                 <div className="ms-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <div>
-                    <span className="mb-1 block text-[12px] font-medium text-gray-600">{t.invoice.financeName}</span>
+                    <span className="mb-1 block text-[12px] font-medium text-gray-600">
+                      <span className="text-red-500">* </span>
+                      {t.invoice.financeName}
+                    </span>
                     <input
                       value={invoice.financeName}
                       onChange={(e) => setInvoice((v) => ({ ...v, financeName: e.target.value }))}
-                      className="h-10 w-full rounded-lg border border-gray-200 px-3 text-[14px] outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                      className={`h-10 w-full rounded-lg border px-3 text-[14px] outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 ${
+                        formError === t.problems.financeDetails ? 'border-red-300' : 'border-gray-200'
+                      }`}
                     />
                   </div>
                   <div>
@@ -466,20 +501,6 @@ export default function AgentReservationPage() {
               <div className="mb-2 text-[14px] font-semibold text-gray-900">{t.footer.signatureTitle}</div>
               <SignatureBox t={t} value={signature} onChange={setSignature} error={formError === t.problems.signature} />
             </div>
-            <label className="flex cursor-pointer items-start gap-2 text-[13px] text-gray-700">
-              <input
-                type="checkbox"
-                checked={!!confirmations.reservation_request}
-                onChange={(e) =>
-                  setConfirmations((c) => ({ ...c, reservation_request: e.target.checked }))
-                }
-                className="mt-0.5"
-              />
-              <span>
-                <span className="text-red-500">* </span>
-                {t.footer.confirm_reservation_request}
-              </span>
-            </label>
             {formError && <div className="text-center text-[13px] font-medium text-red-600">{formError}</div>}
             <button
               type="button"

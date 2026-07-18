@@ -273,7 +273,7 @@ test('on-site contact: reused by exact phone digits, else created with role fiel
   db.state.contactPhones.push({ contactId: 'existing9', value: '+972501234567' });
   await processReservationSession('s1', db);
   const contacts = db.state.deals[0].contacts.create;
-  assert.deepEqual(contacts[1], { contactId: 'existing9', roles: ['fieldRep'] });
+  assert.deepEqual(contacts[1], { contactId: 'existing9', isPrimary: false, roles: ['fieldRep'] });
   assert.equal(db.state.contacts.length, 0); // reused, not created
 
   const db2 = fakeDb({

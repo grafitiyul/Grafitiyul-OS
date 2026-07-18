@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
+import { setOrganizationFinanceContact } from '../organizations/financeContact.js';
+import { userOrigin } from '../timeline/events.js';
 
 // Organization + Organization Unit CRUD. Reference data for the future
 // Deals/Activities workflow — NOT a daily working screen.
@@ -20,11 +22,41 @@ const FINANCE_FIELDS = [
   'financePhone',
   'financeEmail',
 ];
+// Org-level finance CONTACT fields are canonical-Contact-backed and owned by
+// the financeContact service — org routes never write them raw (units keep
+// their own plain scalars; a unit-level contact model is a future slice).
+const ORG_FINANCE_CONTACT_FIELDS = ['financeContactName', 'financePhone', 'financeEmail'];
 
-function pickFinance(body, data) {
+function pickFinance(body, data, { exclude = [] } = {}) {
   for (const f of FINANCE_FIELDS) {
+    if (exclude.includes(f)) continue;
     if (body[f] !== undefined) data[f] = body[f] ? String(body[f]).trim() : null;
   }
+}
+
+// Apply an org finance-contact edit through the ONE canonical service:
+// effective values = incoming when provided, else the stored mirror. All
+// three empty → the designation is cleared.
+async function applyOrgFinanceContact(req, organizationId) {
+  const body = req.body || {};
+  if (!ORG_FINANCE_CONTACT_FIELDS.some((f) => body[f] !== undefined)) return;
+  const current = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { financeContactName: true, financePhone: true, financeEmail: true },
+  });
+  const eff = (field) =>
+    body[field] !== undefined ? (body[field] ? String(body[field]).trim() : null) : current?.[field] || null;
+  const origin = await userOrigin(req.adminAuth?.userId);
+  await prisma.$transaction((tx) =>
+    setOrganizationFinanceContact(tx, {
+      organizationId,
+      name: eff('financeContactName'),
+      email: eff('financeEmail'),
+      phone: eff('financePhone'),
+      source: 'admin',
+      origin,
+    }),
+  );
 }
 
 // ---------- Organizations ----------
@@ -93,9 +125,10 @@ router.post(
       organizationTypeId: organizationTypeId || null,
       notes: notes ? String(notes).trim() : null,
     };
-    pickFinance(req.body || {}, data);
+    pickFinance(req.body || {}, data, { exclude: ORG_FINANCE_CONTACT_FIELDS });
     const org = await prisma.organization.create({ data });
-    res.status(201).json(org);
+    await applyOrgFinanceContact(req, org.id);
+    res.status(201).json(await prisma.organization.findUnique({ where: { id: org.id } }));
   }),
 );
 
@@ -113,12 +146,15 @@ router.put(
       data.organizationTypeId = body.organizationTypeId || null;
     if (body.notes !== undefined)
       data.notes = body.notes ? String(body.notes).trim() : null;
-    pickFinance(body, data);
-    const org = await prisma.organization.update({
+    pickFinance(body, data, { exclude: ORG_FINANCE_CONTACT_FIELDS });
+    await prisma.organization.update({
       where: { id: req.params.id },
       data,
     });
-    res.json(org);
+    // Finance-contact edits flow through the canonical service (contact
+    // resolution + designation + timeline), never as raw scalar writes.
+    await applyOrgFinanceContact(req, req.params.id);
+    res.json(await prisma.organization.findUnique({ where: { id: req.params.id } }));
   }),
 );
 

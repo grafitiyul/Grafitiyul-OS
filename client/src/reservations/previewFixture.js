@@ -12,13 +12,16 @@ export const PREVIEW_BOOT = {
   },
   organization: {
     name: 'מסעות עולם',
-    financeContactName: 'רותי לוין',
-    financeEmail: 'finance@travel.co.il',
-    financePhone: '03-5551234',
+    financeContact: {
+      contactId: 'preview-finance',
+      name: 'רותי לוין',
+      email: 'finance@travel.co.il',
+      phone: '03-5551234',
+    },
   },
   defaultLanguage: 'he',
   maxGroups: 30,
-  requiredConfirmations: ['flexible_cancellation', 'reservation_request'],
+  requiredConfirmations: ['flexible_cancellation'],
   catalog: {
     cities: [
       { key: 'תל אביב', nameHe: 'תל אביב', nameEn: 'Tel Aviv' },

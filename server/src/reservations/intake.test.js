@@ -153,7 +153,7 @@ test('all required confirmations must be accepted', () => {
     CATALOG,
     { today: TODAY },
   );
-  assert.equal(codesByPath(r)['confirmations.reservation_request'], 'required');
+  assert.equal(codesByPath(r)['confirmations.flexible_cancellation'], 'required');
 });
 
 test('group cap and empty-group list are rejected', () => {
@@ -186,22 +186,23 @@ test('invoice: at least one recipient is required; both may be selected', () => 
   const both = validateSubmission(
     validBody({ invoice: { toOrganizer: true, toFinance: true } }),
     CATALOG,
-    { today: TODAY, orgFinanceEmail: 'finance@org.co' },
+    { today: TODAY, orgHasFinance: true },
   );
   assert.equal(both.problems, undefined);
   assert.equal(both.invoice.toOrganizer, true);
   assert.equal(both.invoice.toFinance, true);
 });
 
-test('invoice: a NEW finance contact requires a valid email AND phone (canonical normalizer)', () => {
+test('invoice: nominating a finance contact requires name, valid email AND phone', () => {
   const p = (invoice) =>
     codesByPath(validateSubmission(validBody({ invoice }), CATALOG, { today: TODAY }));
 
   const missing = p({ toFinance: true });
+  assert.equal(missing['invoice.financeName'], 'required');
   assert.equal(missing['invoice.financeEmail'], 'required');
   assert.equal(missing['invoice.financePhone'], 'required');
 
-  const bad = p({ toFinance: true, financeEmail: 'not-an-email', financePhone: '12' });
+  const bad = p({ toFinance: true, financeName: 'רותי', financeEmail: 'not-an-email', financePhone: '12' });
   assert.equal(bad['invoice.financeEmail'], 'invalid');
   assert.equal(bad['invoice.financePhone'], 'invalid');
 
@@ -213,24 +214,52 @@ test('invoice: a NEW finance contact requires a valid email AND phone (canonical
     { today: TODAY },
   );
   assert.equal(ok.problems, undefined);
+  assert.equal(ok.invoice.nominating, true);
   // The ORIGINAL entered phone is preserved — normalization is validation-only.
-  assert.deepEqual(ok.invoice, {
-    toOrganizer: false,
-    toFinance: true,
-    financeName: 'רותי',
-    financeEmail: 'fin@a.co',
-    financePhone: '050-123 4567',
-  });
+  assert.equal(ok.invoice.financePhone, '050-123 4567');
+});
+
+test('invoice: replacement nominates via the SAME flow; forged fields without replaceFinance are inert', () => {
+  // Explicit replacement with a saved contact → full nomination is required.
+  const missing = validateSubmission(
+    validBody({ invoice: { toFinance: true, replaceFinance: true } }),
+    CATALOG,
+    { today: TODAY, orgHasFinance: true },
+  );
+  assert.equal(codesByPath(missing)['invoice.financeName'], 'required');
+
+  const ok = validateSubmission(
+    validBody({
+      invoice: { toFinance: true, replaceFinance: true, financeName: 'רותי', financeEmail: 'fin@a.co', financePhone: '050-1234567' },
+    }),
+    CATALOG,
+    { today: TODAY, orgHasFinance: true },
+  );
+  assert.equal(ok.problems, undefined);
+  assert.equal(ok.invoice.replaceFinance, true);
+  assert.equal(ok.invoice.nominating, true);
+
+  // Forged details WITHOUT replaceFinance against a saved contact → not a
+  // nomination at all; the saved contact stays authoritative.
+  const forged = validateSubmission(
+    validBody({
+      invoice: { toFinance: true, financeName: 'תוקף', financeEmail: 'evil@x.co', financePhone: '050-9999999' },
+    }),
+    CATALOG,
+    { today: TODAY, orgHasFinance: true },
+  );
+  assert.equal(forged.problems, undefined);
+  assert.equal(forged.invoice.nominating, false);
 });
 
 test('invoice: a SAVED org finance contact needs no input; organizer-only needs nothing', () => {
   const saved = validateSubmission(
     validBody({ invoice: { toFinance: true } }),
     CATALOG,
-    { today: TODAY, orgFinanceEmail: 'finance@org.co' },
+    { today: TODAY, orgHasFinance: true },
   );
   assert.equal(saved.problems, undefined);
-  assert.equal(saved.invoice.financeEmail, null); // canonical org value is used
+  assert.equal(saved.invoice.nominating, false);
 
   const toMe = validateSubmission(validBody(), CATALOG, { today: TODAY });
   assert.equal(toMe.problems, undefined);
@@ -278,15 +307,37 @@ function fakePersistDb(existingByKey = new Map()) {
       },
     },
     agentReservationLink: { update: async () => ({}) },
+    // Finance-contact service internals (nomination path).
     organization: {
+      findUnique: async () => ({
+        id: 'org1',
+        financeContactId: db.orgState.financeContactId,
+        financeContactName: null,
+        financeEmail: db.orgState.financeEmail,
+        financePhone: null,
+        financeContact: null,
+      }),
       update: async ({ where, data }) => {
         db.orgUpdates.push({ where, data });
+        Object.assign(db.orgState, data);
         return {};
       },
     },
+    contactPhone: { findMany: async () => [] },
+    contactEmail: { findFirst: async () => null },
+    contact: {
+      create: async ({ data }) => {
+        db.createdContacts.push(data);
+        return { id: `fin${db.createdContacts.length}` };
+      },
+    },
+    contactOrganization: { findFirst: async () => null, create: async ({ data }) => data },
+    timelineEntry: { create: async ({ data }) => data },
     $transaction: async (fn) => fn(db),
   };
   db.orgUpdates = [];
+  db.createdContacts = [];
+  db.orgState = { financeContactId: null, financeEmail: null };
   return db;
 }
 
@@ -310,7 +361,7 @@ test('persistSubmission: same submissionKey returns the existing session (no dup
   assert.equal(db.createdSessions.length, 1);
 });
 
-test('persistSubmission: a new finance contact persists onto the ORGANIZATION (canonical fields)', async () => {
+test('persistSubmission: a nomination resolves a canonical Contact and designates it on the ORG', async () => {
   const validated = validateSubmission(
     validBody({
       invoice: { toOrganizer: true, toFinance: true, financeName: 'רותי לוין', financeEmail: 'fin@a.co', financePhone: '050-1234567' },
@@ -319,38 +370,70 @@ test('persistSubmission: a new finance contact persists onto the ORGANIZATION (c
     { today: TODAY },
   );
   const db = fakePersistDb();
-  await persistSubmission(PERSIST_ARGS(validated), db);
-  assert.deepEqual(db.orgUpdates, [
-    {
-      where: { id: 'org1' },
-      data: { financeEmail: 'fin@a.co', financeContactName: 'רותי לוין', financePhone: '050-1234567' },
-    },
-  ]);
+  const { session } = await persistSubmission(PERSIST_ARGS(validated), db);
+  // A real Contact was created (no match in the fake) and designated.
+  assert.equal(db.createdContacts.length, 1);
+  assert.equal(db.createdContacts[0].firstNameHe, 'רותי');
+  assert.equal(db.orgState.financeContactId, 'fin1');
+  // The frozen snapshot carries the resolved contact id + mode.
+  assert.equal(session.payloadSnapshot.invoice.financeContactId, 'fin1');
+  assert.equal(session.payloadSnapshot.invoice.financeMode, 'created');
 
-  // Organizer-only (or the saved-contact mode, which sends no email) never touches the org.
+  // Organizer-only never touches the org or creates contacts.
   const dbNone = fakePersistDb();
   await persistSubmission(PERSIST_ARGS(validateSubmission(validBody({ submissionKey: 'sub_other_key_0001' }), CATALOG, { today: TODAY })), dbNone);
   assert.deepEqual(dbNone.orgUpdates, []);
+  assert.deepEqual(dbNone.createdContacts, []);
 });
 
-test('persistSubmission: the public form NEVER overwrites a saved org finance contact', async () => {
-  // Even if a client somehow sends editable details, an org that already has
-  // a finance contact is left untouched.
+test('persistSubmission: saved-contact mode never writes the org; forged fields stay inert', async () => {
+  // toFinance against a saved contact WITHOUT replaceFinance → nominating is
+  // false (server-derived), so even forged details change nothing.
   const validated = validateSubmission(
     validBody({
       submissionKey: 'sub_guard_key_0001',
-      invoice: { toFinance: true, financeEmail: 'attacker@evil.co', financePhone: '050-9999999' },
+      invoice: { toFinance: true, financeName: 'תוקף', financeEmail: 'attacker@evil.co', financePhone: '050-9999999' },
     }),
     CATALOG,
-    { today: TODAY, orgFinanceEmail: 'saved@org.co' },
+    { today: TODAY, orgHasFinance: true },
   );
   assert.equal(validated.problems, undefined);
   const db = fakePersistDb();
-  await persistSubmission(
-    { ...PERSIST_ARGS(validated), organization: { id: 'org1', financeEmail: 'saved@org.co' } },
+  db.orgState.financeContactId = 'cSaved';
+  db.orgState.financeEmail = 'saved@org.co';
+  const { session } = await persistSubmission(
+    { ...PERSIST_ARGS(validated), organization: { id: 'org1', financeContactId: 'cSaved', financeEmail: 'saved@org.co' } },
     db,
   );
   assert.deepEqual(db.orgUpdates, []);
+  assert.deepEqual(db.createdContacts, []);
+  // Snapshot still records the SAVED designation as the finance contact.
+  assert.equal(session.payloadSnapshot.invoice.financeContactId, 'cSaved');
+  assert.equal(session.payloadSnapshot.invoice.financeMode, 'existing');
+});
+
+test('persistSubmission: an explicit replacement transfers the designation (old contact preserved)', async () => {
+  const validated = validateSubmission(
+    validBody({
+      submissionKey: 'sub_replace_key_01',
+      invoice: { toFinance: true, replaceFinance: true, financeName: 'רותי לוין', financeEmail: 'ruti@b.co', financePhone: '052-2222222' },
+    }),
+    CATALOG,
+    { today: TODAY, orgHasFinance: true },
+  );
+  assert.equal(validated.problems, undefined);
+  const db = fakePersistDb();
+  db.orgState.financeContactId = 'cOld';
+  db.orgState.financeEmail = 'old@org.co';
+  const { session } = await persistSubmission(
+    { ...PERSIST_ARGS(validated), organization: { id: 'org1', financeContactId: 'cOld', financeEmail: 'old@org.co' } },
+    db,
+  );
+  // Designation moved to the newly resolved contact; nothing deleted the old
+  // one (the fake exposes no contact.update/delete — the service has none).
+  assert.equal(db.orgState.financeContactId, 'fin1');
+  assert.equal(session.payloadSnapshot.invoice.financeMode, 'replaced');
+  assert.equal(session.payloadSnapshot.invoice.financeContactId, 'fin1');
 });
 
 test('persistSubmission: unique-key race (P2002) resolves to the winning session', async () => {

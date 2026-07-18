@@ -652,6 +652,13 @@ app.listen(port, () => {
     .then(({ startDedupeRacedTourSlots }) => startDedupeRacedTourSlots(prisma, console))
     .catch((e) => console.warn('[maintenance] raced-slot dedupe failed:', e?.message));
 
+  // Durable one-time backfill: legacy org finance scalars → canonical finance
+  // Contacts (phone/email identity matching, membership link, designation,
+  // timeline). Idempotent; summary lands on the MaintenanceJob row.
+  import('./maintenance/migrateOrgFinanceContacts.js')
+    .then(({ startMigrateOrgFinanceContacts }) => startMigrateOrgFinanceContacts(prisma, console))
+    .catch((e) => console.warn('[maintenance] org finance-contact migration failed:', e?.message));
+
   // Durable one-time repair of generated-slot identity (runs AFTER the
   // tour_canonical_slot_identity migration): re-attributes live slots that point
   // at a deleted rule to their current rule, and reopens occurrences whose cancel

@@ -121,13 +121,35 @@ export async function createDealFromReservationGroup(tx, { session, group }) {
     subtypeTypeId: null,
   });
 
-  const contactsCreate = [
-    { contactId: session.contactId, isPrimary: true, roles: ['ongoingBooking'] },
-  ];
+  // Deal contacts — merged by contactId (a person may hold several roles).
+  const rolesByContact = new Map([[session.contactId, { isPrimary: true, roles: ['ongoingBooking'] }]]);
+  const addRole = (contactId, role) => {
+    if (!contactId) return;
+    const cur = rolesByContact.get(contactId);
+    if (cur) {
+      if (!cur.roles.includes(role)) cur.roles.push(role);
+    } else {
+      rolesByContact.set(contactId, { isPrimary: false, roles: [role] });
+    }
+  };
   const fieldRepId = await resolveFieldRepContact(tx, group);
-  if (fieldRepId && fieldRepId !== session.contactId) {
-    contactsCreate.push({ contactId: fieldRepId, roles: ['fieldRep'] });
+  if (fieldRepId) addRole(fieldRepId, 'fieldRep');
+  // Invoice-to-finance reservations link the organization's resolved finance
+  // Contact (frozen on the session snapshot) with the canonical 'finance'
+  // role, so Deal + accounting flows show the same person.
+  const inv = session.payloadSnapshot?.invoice;
+  if (inv?.toFinance && inv.financeContactId) {
+    const financeContact = await tx.contact.findUnique({
+      where: { id: inv.financeContactId },
+      select: { id: true },
+    });
+    if (financeContact) addRole(financeContact.id, 'finance');
   }
+  const contactsCreate = [...rolesByContact.entries()].map(([contactId, v]) => ({
+    contactId,
+    isPrimary: v.isPrimary,
+    roles: v.roles,
+  }));
 
   return tx.deal.create({
     data: {

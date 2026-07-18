@@ -23,6 +23,7 @@ import {
 import { processReservationSession } from '../reservations/processor.js';
 import { buildReservationPdf } from '../reservations/pdf.js';
 import { createRateLimiter } from '../reservations/rateLimit.js';
+import { financeContactDisplay } from '../organizations/financeContact.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
 
 const router = Router();
@@ -35,6 +36,32 @@ const submitLimiter = createRateLimiter({ windowMs: 60 * 60 * 1000, max: 20 });
 
 function clientIp(req) {
   return String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+}
+
+// The organization's CURRENT finance contact as displayed — resolved from the
+// canonical Contact (designation) with the service-owned mirror as fallback
+// for not-yet-migrated rows. Null when the org has none.
+async function orgFinanceDisplay(organizationId) {
+  const org = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: {
+      financeContactId: true,
+      financeContactName: true,
+      financeEmail: true,
+      financePhone: true,
+      financeContact: {
+        select: {
+          firstNameHe: true,
+          lastNameHe: true,
+          firstNameEn: true,
+          lastNameEn: true,
+          phones: { where: { isPrimary: true }, take: 1, select: { value: true } },
+          emails: { where: { isPrimary: true }, take: 1, select: { value: true } },
+        },
+      },
+    },
+  });
+  return financeContactDisplay(org);
 }
 
 function guard(limiter) {
@@ -109,11 +136,9 @@ router.get(
       },
       organization: {
         name: r.organization.name,
-        // The invoice section pre-fills the ORGANIZATION's canonical finance
-        // contact — the same fields the GOS Deal/accounting flow reads.
-        financeContactName: r.organization.financeContactName || null,
-        financeEmail: r.organization.financeEmail || null,
-        financePhone: r.organization.financePhone || null,
+        // The CURRENT finance contact (canonical Contact, mirror fallback) —
+        // read-only display; the public form can only NOMINATE a replacement.
+        financeContact: await orgFinanceDisplay(r.organization.id),
       },
       defaultLanguage: r.link.defaultLanguage,
       maxGroups: MAX_GROUPS,
@@ -134,7 +159,7 @@ router.post(
 
     const catalog = await bookableCatalog();
     const validated = validateSubmission(req.body || {}, catalog, {
-      orgFinanceEmail: r.organization.financeEmail || null,
+      orgHasFinance: !!(r.organization.financeContactId || r.organization.financeEmail),
     });
     if (validated.problems) {
       return res.status(422).json({ error: 'validation', problems: validated.problems });
@@ -147,14 +172,19 @@ router.post(
     // the new-contact mode, the saved org contact in read-only mode) —
     // historical evidence; the editable truth stays on the Organization.
     const { signature, ...rest } = req.body || {};
+    // Saved-contact mode freezes the details as DISPLAYED (canonical
+    // contact); nomination mode freezes the entered values. persistSubmission
+    // enriches with the resolved financeContactId + financeMode.
+    const savedFinance = validated.invoice.nominating ? null : await orgFinanceDisplay(r.organization.id);
     const payloadSnapshot = {
       ...rest,
       invoice: {
         toOrganizer: validated.invoice.toOrganizer,
         toFinance: validated.invoice.toFinance,
-        financeName: validated.invoice.financeName ?? r.organization.financeContactName ?? null,
-        financeEmail: validated.invoice.financeEmail ?? r.organization.financeEmail ?? null,
-        financePhone: validated.invoice.financePhone ?? r.organization.financePhone ?? null,
+        replaceFinance: validated.invoice.replaceFinance,
+        financeName: validated.invoice.nominating ? validated.invoice.financeName : savedFinance?.name ?? null,
+        financeEmail: validated.invoice.nominating ? validated.invoice.financeEmail : savedFinance?.email ?? null,
+        financePhone: validated.invoice.nominating ? validated.invoice.financePhone : savedFinance?.phone ?? null,
       },
       signature: { signerName: validated.session.signerName, method: validated.session.signatureMethod },
     };

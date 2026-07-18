@@ -8,6 +8,7 @@
 import { prisma } from '../db.js';
 import { israelToday, isValidDate } from '../lib/israelDate.js';
 import { normalizePhoneIntl } from '../whatsapp/phone.js';
+import { setOrganizationFinanceContact } from '../organizations/financeContact.js';
 
 export const MAX_GROUPS = 30;
 export const MAX_SIGNATURE_BYTES = 5 * 1024 * 1024; // signers.js convention
@@ -22,11 +23,11 @@ const TOUR_LANGUAGES = ['he', 'en', 'es', 'fr', 'ru'];
 // "the reservation is subject to Grafitiyul approval" — per the approved
 // mockup's single-checkbox footer.
 export const REQUIRED_CONFIRMATIONS = [
-  // Acknowledgement of the agent-specific flexible cancellation terms
-  // (checkbox before the signature; acceptance + timestamp recorded in
-  // legalConfirmations like every confirmation).
+  // The ONE mandatory acknowledgement (owner decision 2026-07-18): the
+  // agent-specific flexible cancellation terms, checked before the signature;
+  // acceptance + timestamp recorded in legalConfirmations. The former
+  // approval-acknowledgement checkbox was removed.
   { key: 'flexible_cancellation', textVersion: 1 },
-  { key: 'reservation_request', textVersion: 2 },
 ];
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -64,7 +65,7 @@ const str = (v, max) =>
 export function validateSubmission(
   body,
   catalog,
-  { today = israelToday(), orgFinanceEmail = null } = {},
+  { today = israelToday(), orgHasFinance = false } = {},
 ) {
   const problems = [];
   const push = (path, code) => problems.push({ path, code });
@@ -166,25 +167,26 @@ export function validateSubmission(
   const toOrganizer = inv.toOrganizer === true;
   const toFinance = inv.toFinance === true;
   if (!toOrganizer && !toFinance) push('invoice.recipients', 'required');
+  // "החלף לאיש כספים חדש" — the agent NOMINATES a replacement person; the
+  // existing Contact is never edited. Only meaningful with a saved contact
+  // and while the finance recipient is selected.
+  const replaceFinance = inv.replaceFinance === true && toFinance && orgHasFinance;
+  // Nomination happens on the first finance contact OR on a replacement —
+  // deliberately the SAME flow (contact match → create → membership →
+  // designation); only the transfer history differs.
+  const nominating = toFinance && (!orgHasFinance || replaceFinance);
   const financeName = str(inv.financeName, 120);
   const financeEmail =
     typeof inv.financeEmail === 'string' ? inv.financeEmail.trim().slice(0, 160) : '';
   // Phone: ORIGINAL entered value is kept; the canonical normalizer
   // (whatsapp/phone.js) is used for VALIDATION only — project convention.
   const financePhone = str(inv.financePhone, 40);
-  // Org-centric rule: a SAVED finance contact needs no input (read-only, the
-  // canonical values are used). A NEW contact ("לאיש כספים אחר") requires a
-  // valid email AND phone — it becomes the Organization's finance contact.
-  if (toFinance) {
-    if (financeEmail && !EMAIL_RE.test(financeEmail)) {
-      push('invoice.financeEmail', 'invalid');
-    } else if (!financeEmail && !orgFinanceEmail) {
-      push('invoice.financeEmail', 'required');
-    }
-    if (!orgFinanceEmail) {
-      if (!financePhone) push('invoice.financePhone', 'required');
-      else if (!normalizePhoneIntl(financePhone)) push('invoice.financePhone', 'invalid');
-    }
+  if (nominating) {
+    if (!financeName) push('invoice.financeName', 'required');
+    if (financeEmail && !EMAIL_RE.test(financeEmail)) push('invoice.financeEmail', 'invalid');
+    else if (!financeEmail) push('invoice.financeEmail', 'required');
+    if (!financePhone) push('invoice.financePhone', 'required');
+    else if (!normalizePhoneIntl(financePhone)) push('invoice.financePhone', 'invalid');
   }
 
   if (problems.length) return { problems };
@@ -194,6 +196,8 @@ export function validateSubmission(
     invoice: {
       toOrganizer,
       toFinance,
+      replaceFinance,
+      nominating,
       financeName,
       financeEmail: financeEmail || null,
       financePhone,
@@ -341,6 +345,50 @@ export async function persistSubmission(
   let session;
   try {
     session = await db.$transaction(async (tx) => {
+      // Finance-contact nomination (first contact OR explicit replacement —
+      // one canonical flow): the entered person is resolved through the ONE
+      // finance-contact service (phone→email match, else create; org
+      // membership; designation transfer + timeline). Runs BEFORE the
+      // session create so the frozen snapshot can carry the resolved contact
+      // id. A saved contact is NEVER overwritten without an explicit
+      // replaceFinance nomination (validated server-side); the previous
+      // person is never edited or deleted — only the designation moves.
+      const inv = validated.invoice || {};
+      let financeResult = null;
+      if (inv.nominating && inv.financeEmail) {
+        financeResult = await setOrganizationFinanceContact(tx, {
+          organizationId: organization.id,
+          name: inv.financeName,
+          email: inv.financeEmail,
+          phone: inv.financePhone,
+          source: 'travel_agent',
+          context: {
+            submissionKey: validated.session.submissionKey,
+            agentContactId: contact.id,
+          },
+        });
+      }
+      // Snapshot enrichment — historical evidence of what was shown/decided:
+      // recipients, the resolved Contact id, and how the contact came to be
+      // (existing designation / matched / created / replaced).
+      const financeMode = inv.nominating
+        ? inv.replaceFinance
+          ? 'replaced'
+          : financeResult?.matchedBy === 'created'
+            ? 'created'
+            : 'matched_existing'
+        : inv.toFinance
+          ? 'existing'
+          : null;
+      const snapshot = {
+        ...payloadSnapshot,
+        invoice: {
+          ...payloadSnapshot.invoice,
+          financeContactId: financeResult?.contactId ?? organization.financeContactId ?? null,
+          financeMode,
+        },
+      };
+
       const created = await tx.reservationSession.create({
         data: {
           source: 'travel_agent',
@@ -348,7 +396,7 @@ export async function persistSubmission(
           contactId: contact.id,
           organizationId: organization.id,
           ...validated.session,
-          payloadSnapshot,
+          payloadSnapshot: snapshot,
           clientMeta: clientMeta || null,
           groups: { create: validated.groups },
         },
@@ -358,29 +406,6 @@ export async function persistSubmission(
         where: { id: link.id },
         data: { lastUsedAt: new Date() },
       });
-      // Finance-contact details entered on the form persist onto the
-      // ORGANIZATION (the same fields GOS Deals/accounting read), so every
-      // future reservation from any employee of this agency sees them
-      // pre-filled. ONLY when the org has none yet — the public form never
-      // overwrites a saved finance contact.
-      if (
-        validated.invoice?.toFinance &&
-        validated.invoice.financeEmail &&
-        !organization.financeEmail
-      ) {
-        await tx.organization.update({
-          where: { id: organization.id },
-          data: {
-            financeEmail: validated.invoice.financeEmail,
-            ...(validated.invoice.financeName
-              ? { financeContactName: validated.invoice.financeName }
-              : {}),
-            ...(validated.invoice.financePhone
-              ? { financePhone: validated.invoice.financePhone }
-              : {}),
-          },
-        });
-      }
       return created;
     });
   } catch (e) {

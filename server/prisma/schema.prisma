@@ -801,6 +801,14 @@ model Organization {
   // Optional finance / identity fields.
   taxId              String?
   address            String?
+  // CURRENT finance contact — a real canonical Contact (designation only,
+  // exactly one per organization). Replacing the designation NEVER edits or
+  // deletes the previous Contact; transfers are recorded on the organization
+  // timeline. The scalar name/phone/email trio below is a SERVICE-OWNED
+  // display mirror maintained by organizations/financeContact.js — every
+  // write path goes through that ONE service, never raw field edits.
+  financeContact     Contact?              @relation("OrgFinanceContact", fields: [financeContactId], references: [id], onDelete: SetNull)
+  financeContactId   String?
   financeContactName String?
   financePhone       String?
   financeEmail       String?
@@ -814,6 +822,7 @@ model Organization {
 
   @@index([organizationTypeId])
   @@index([name])
+  @@index([financeContactId])
 }
 
 // A department / division / business unit. Belongs to one Organization. Every
@@ -866,6 +875,8 @@ model Contact {
   // Travel Agency Reservations (the contact as the travel agent).
   reservationLinks      AgentReservationLink[]
   reservationSessions   ReservationSession[]
+  // Organizations whose CURRENT finance contact is this person.
+  financeContactFor     Organization[]         @relation("OrgFinanceContact")
 
   @@index([lastNameHe])
   @@index([lastNameEn])
