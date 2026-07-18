@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../../lib/api.js';
 import {
   TOUR_STATUS_LABELS,
@@ -240,18 +240,35 @@ const MONTH_CELL_MAX_EVENTS = 3;
 
 function MonthView({ weeks, monthStart, byDate, today, onOpenTour, onOpenDay }) {
   const nextMonth = addMonths(monthStart, 1);
+  // Fill the viewport: the weeks region gets min-height = remaining screen
+  // space below the calendar's document position, and each week row grows an
+  // equal share (flex-1). 104px stays as the row FLOOR, so a six-week month
+  // on a short screen scrolls normally instead of crushing the rows.
+  const rootRef = useRef(null);
+  const [fillPx, setFillPx] = useState(null);
+  useLayoutEffect(() => {
+    const measure = () => {
+      const el = rootRef.current;
+      if (!el) return;
+      const top = el.getBoundingClientRect().top + window.scrollY;
+      setFillPx(Math.max(0, Math.round(window.innerHeight - top - 16)));
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, []);
   return (
     // Wide grid scrolls inside its own container on narrow screens — the page
     // body never scrolls horizontally.
-    <div className="overflow-x-auto">
-      <div className="min-w-[640px]">
+    <div className="overflow-x-auto" ref={rootRef}>
+      <div className="flex min-w-[640px] flex-col" style={fillPx ? { minHeight: fillPx } : undefined}>
       <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50/70 text-center text-[11.5px] font-semibold text-gray-500">
         {WEEKDAY_HEADERS.map((d) => (
           <div key={d} className="py-1.5">{d}</div>
         ))}
       </div>
       {weeks.map((week, wi) => (
-        <div key={wi} className="grid grid-cols-7 border-b border-gray-100 last:border-b-0">
+        <div key={wi} className="grid min-h-[104px] flex-1 grid-cols-7 border-b border-gray-100 last:border-b-0">
           {week.map((day) => {
             const inMonth = day >= monthStart && day < nextMonth;
             const list = byDate.get(day) || [];
@@ -259,7 +276,7 @@ function MonthView({ weeks, monthStart, byDate, today, onOpenTour, onOpenDay }) 
             return (
               <div
                 key={day}
-                className={`min-h-[104px] border-s border-gray-100 p-1 first:border-s-0 ${
+                className={`border-s border-gray-100 p-1 first:border-s-0 ${
                   inMonth ? 'bg-white' : 'bg-gray-50/60'
                 }`}
               >
