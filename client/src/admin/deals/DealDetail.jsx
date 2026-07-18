@@ -764,7 +764,8 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
                 not clickable.
                   Row 1: Product (cols 1-2) · Price (col 3)
                   Row 2: Date · Time · Participants
-                  Row 3: City · Tour Language · (empty) */}
+                  Row 3: City · Tour Language · Groups
+                (RTL reading of row 3: Location → Language → Groups.) */}
             <div className="grid grid-cols-[1.9fr_1fr_1fr] gap-x-2 gap-y-3">
               {/* Row 1 — min-w-0 on grid items so inner truncation can engage
                   (grid items otherwise refuse to shrink below content width). */}
@@ -800,15 +801,9 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
                 readOnly={isGroup}
                 readOnlyHint="מספר המשתתפים בדיל קבוצתי נגזר מכמות הכרטיסים בבונה הכרטיסים הקבוצתי"
                 onSave={(v) => saveField({ participants: v === '' ? null : Number(v) })} />
-              {/* Operational group count (Deal.groups, canonical) — pricing
-                  consumes it (base × groups + extras). Empty = 1 group. */}
-              <InlineField id="f-groups" iconInline icon={<span className={FIELD_EMOJI}>👨‍👩‍👧‍👦</span>} label="קבוצות"
-                type="number" numeric value={deal.groups ?? ''} editFirst={editFirst}
-                placeholder="1"
-                onSave={(v) => saveField({ groups: v === '' ? null : Number(v) })} />
 
-              {/* Row 3 — col 3 intentionally empty. City value turns red as a
-                  visual-only reminder when the city differs from the Home Location. */}
+              {/* Row 3 — RTL order Location → Language → Groups. City value turns
+                  red as a visual-only reminder when the city differs from Home. */}
               <InlineField id="f-city" iconInline icon={<span className={FIELD_EMOJI}>📍</span>} label="עיר"
                 type="dropdown" value={deal.locationId || ''} options={cityOptions} editFirst={editFirst}
                 placeholder="בחר עיר"
@@ -819,6 +814,12 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
                 type="dropdown" value={deal.tourLanguage || ''} options={tourLangOptions} editFirst={editFirst}
                 readOnly={onGroupSlot} readOnlyHint={GROUP_LOCK_MSG}
                 placeholder="ללא" onSave={(v) => saveField({ tourLanguage: v || null })} />
+              {/* Operational group count (Deal.groups, canonical) — pricing
+                  consumes it (base × groups + extras). Empty = 1 group. */}
+              <InlineField id="f-groups" iconInline icon={<span className={FIELD_EMOJI}>👨‍👩‍👧‍👦</span>} label="קבוצות"
+                type="number" numeric value={deal.groups ?? ''} editFirst={editFirst}
+                placeholder="1"
+                onSave={(v) => saveField({ groups: v === '' ? null : Number(v) })} />
             </div>
             {locNotConfigured && (
               <p className="text-[12px] text-amber-600">
