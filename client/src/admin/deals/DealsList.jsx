@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
-import { formatMinor, toMinor } from '../../lib/money.js';
+import { formatMinor } from '../../lib/money.js';
 import { contactNamesFromFull } from '../../lib/nameSplit.js';
 import { useDirtyWhen } from '../../lib/dirtyForms.js';
 import { DEAL_STATUS_LABELS, DEAL_STATUS_STYLES, dealPath } from './config.js';
 import AnchoredMenu from '../common/AnchoredMenu.jsx';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../common/tableColumns.jsx';
+import PageSizeSelector, { usePageSizePref } from '../common/PageSizeSelector.jsx';
+import Pager from '../common/Pager.jsx';
+import useDebouncedValue from '../../shell/search/useDebouncedValue.js';
 import { OrgPicker, resolveOrganization } from '../crm/common/OrgPicker.jsx';
 
 const MODAL_INPUT =
@@ -16,9 +19,20 @@ const MODAL_INPUT =
 // dominant search + a roomy, user-configurable table. OPEN deals come first
 // because they need action; ALL is last. דילים / OPEN·WON·LOST.
 
-const PAGE_SIZE = 14;
 const FILTERS_KEY = 'deals.filters.v1';
 const COLUMNS_KEY = 'deals.columns.v1';
+const PAGESIZE_KEY = 'deals.pageSize.v1';
+
+// Column key → server sort key. Only these columns are click-to-sort; the rest
+// have no server-side sort and stay reorder-only (sortable:false). The server
+// default is updatedAt:desc, so that is our initial sort too.
+const SORT_KEY = {
+  name: 'title',
+  amount: 'valueMinor',
+  expectedClose: 'expectedClose',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt',
+};
 
 function loadFilters() {
   try {
@@ -111,6 +125,11 @@ function fmtDate(iso) {
 export default function DealsList() {
   const navigate = useNavigate();
   const [deals, setDeals] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState({
+    open: { count: 0, sumMinor: 0 }, won: { count: 0, sumMinor: 0 },
+    lost: { count: 0, sumMinor: 0 }, all: { count: 0, sumMinor: 0 },
+  });
   const [stages, setStages] = useState([]);
   const [orgs, setOrgs] = useState([]);
   const [types, setTypes] = useState([]);
@@ -130,6 +149,14 @@ export default function DealsList() {
   const [minVal, setMinVal] = useState(saved.minVal ?? '');
   const [maxVal, setMaxVal] = useState(saved.maxVal ?? '');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = usePageSizePref(PAGESIZE_KEY);
+  const [sort, setSort] = useState({ key: 'updatedAt', dir: 'desc' });
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Debounce free-typed inputs so a burst of keystrokes costs one request.
+  const debouncedSearch = useDebouncedValue(search, 300);
+  const debouncedMin = useDebouncedValue(minVal, 300);
+  const debouncedMax = useDebouncedValue(maxVal, 300);
 
   // Persist whenever any filter changes.
   useEffect(() => {
@@ -141,33 +168,83 @@ export default function DealsList() {
   const { colKeys, toggleCol, moveCol, setColWidth, widths, visibleCols, orderedColumns } =
     useTableColumns(COLUMNS_KEY, COLUMNS);
 
-  async function refresh() {
-    setError(null);
-    try {
-      const [d, s, o, ty, st, src] = await Promise.all([
-        api.deals.list(),
-        api.dealStages.list(),
-        api.organizations.list(),
-        api.organizationTypes.list(),
-        api.organizationSubtypes.list(),
-        api.dealSources.list(),
-      ]);
-      setDeals(d);
-      setStages(s);
-      setOrgs(o);
-      setTypes(ty);
-      setSubtypes(st);
-      setSources(src);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
+  // Reference catalogs (stage/org/type/subtype/source filters + create modal) —
+  // small lists, loaded once. Deals themselves come from the paginated fetch.
   useEffect(() => {
-    refresh();
+    Promise.all([
+      api.dealStages.list(),
+      api.organizations.list(),
+      api.organizationTypes.list(),
+      api.organizationSubtypes.list(),
+      api.dealSources.list(),
+    ])
+      .then(([s, o, ty, st, src]) => {
+        setStages(s);
+        setOrgs(o);
+        setTypes(ty);
+        setSubtypes(st);
+        setSources(src);
+      })
+      .catch((e) => setError(e.message));
   }, []);
+
+  // Common server filter params (status excluded — added per call). 'all'
+  // sentinels map to undefined so qs drops them.
+  const baseParams = useMemo(
+    () => ({
+      search: debouncedSearch,
+      stageId: stageId === 'all' ? undefined : stageId,
+      organizationId: orgId === 'all' ? undefined : orgId,
+      minVal: debouncedMin || undefined,
+      maxVal: debouncedMax || undefined,
+    }),
+    [debouncedSearch, stageId, orgId, debouncedMin, debouncedMax],
+  );
+
+  // Reset to the first page whenever a filter / search / sort / page size changes.
+  useEffect(() => {
+    setPage(1);
+  }, [baseParams, status, sort, pageSize]);
+
+  // The paginated deals fetch — one page of rows + the matching total.
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    setError(null);
+    api.deals
+      .list({
+        ...baseParams,
+        status: status === 'all' ? undefined : status,
+        page,
+        pageSize,
+        sort: `${SORT_KEY[sort.key] || 'updatedAt'}:${sort.dir}`,
+      })
+      .then((data) => {
+        if (!live) return;
+        setDeals(data.rows);
+        setTotal(data.total);
+      })
+      .catch((e) => {
+        if (live) setError(e.message);
+      })
+      .finally(() => {
+        if (live) setLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [baseParams, status, page, pageSize, sort, refreshKey]);
+
+  // Status-card count + money SUM per status under the SAME search/stage/org/
+  // value filters (independent of which card is selected) — one grouped server
+  // query, so the sums are correct across the whole filtered set, not a page.
+  useEffect(() => {
+    let live = true;
+    api.deals.summary(baseParams)
+      .then((s) => { if (live) setSummary(s); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [baseParams, refreshKey]);
 
   const stageColor = useMemo(() => {
     const m = new Map();
@@ -175,39 +252,21 @@ export default function DealsList() {
     return m;
   }, [stages]);
 
-  const summary = useMemo(() => {
-    const acc = { all: { n: 0, v: 0 }, open: { n: 0, v: 0 }, won: { n: 0, v: 0 }, lost: { n: 0, v: 0 } };
-    for (const d of deals) {
-      const v = Number(d.valueMinor || 0);
-      acc.all.n++; acc.all.v += v;
-      if (acc[d.status]) { acc[d.status].n++; acc[d.status].v += v; }
-    }
-    return acc;
-  }, [deals]);
+  // Header cells: only server-sortable columns are click-to-sort; the rest stay
+  // reorder-only so a click can never request an unsupported sort key.
+  const headerCols = useMemo(
+    () => visibleCols.map((c) => (SORT_KEY[c.key] ? c : { ...c, sortable: false })),
+    [visibleCols],
+  );
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const min = toMinor(minVal);
-    const max = toMinor(maxVal);
-    return deals.filter((d) => {
-      if (status !== 'all' && d.status !== status) return false;
-      if (stageId !== 'all' && d.dealStageId !== stageId) return false;
-      if (orgId !== 'all' && d.organizationId !== orgId) return false;
-      const v = Number(d.valueMinor || 0);
-      if (min !== null && v < min) return false;
-      if (max !== null && v > max) return false;
-      if (q) {
-        const hay = [d.title, d.organization?.name].filter(Boolean).join(' ').toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    });
-  }, [deals, search, status, stageId, orgId, minVal, maxVal]);
-
-  useEffect(() => setPage(1), [search, status, stageId, orgId, minVal, maxVal]);
-
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  function handleSort(colKey) {
+    if (!SORT_KEY[colKey]) return;
+    setSort((s) =>
+      s.key === colKey
+        ? { key: colKey, dir: s.dir === 'asc' ? 'desc' : 'asc' }
+        : { key: colKey, dir: 'desc' },
+    );
+  }
 
   const hasFilters = search || stageId !== 'all' || orgId !== 'all' || minVal || maxVal;
   function clearFilters() {
@@ -238,13 +297,13 @@ export default function DealsList() {
       {/* Summary cards double as the status filter — click to filter.
           Order OPEN · WON · LOST · ALL. Compact "dashboard widgets". */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
-        <MetricCard label="OPEN" n={summary.open.n} v={summary.open.v} tone="blue" icon="🕓"
+        <MetricCard label="OPEN" n={summary.open.count} v={summary.open.sumMinor} tone="blue" icon="🕓"
           active={status === 'open'} onClick={() => setStatus('open')} />
-        <MetricCard label="WON" n={summary.won.n} v={summary.won.v} tone="emerald" icon="🏆"
+        <MetricCard label="WON" n={summary.won.count} v={summary.won.sumMinor} tone="emerald" icon="🏆"
           active={status === 'won'} onClick={() => setStatus('won')} />
-        <MetricCard label="LOST" n={summary.lost.n} v={summary.lost.v} tone="red" icon="✕"
+        <MetricCard label="LOST" n={summary.lost.count} v={summary.lost.sumMinor} tone="red" icon="✕"
           active={status === 'lost'} onClick={() => setStatus('lost')} />
-        <MetricCard label="ALL" n={summary.all.n} v={summary.all.v} tone="indigo" icon="🤝"
+        <MetricCard label="ALL" n={summary.all.count} v={summary.all.sumMinor} tone="indigo" icon="🤝"
           active={status === 'all'} onClick={() => setStatus('all')} />
       </div>
 
@@ -288,9 +347,9 @@ export default function DealsList() {
           <div className="py-12 text-center text-sm text-red-600">
             שגיאה: <span dir="ltr" className="font-mono">{error}</span>
           </div>
-        ) : deals.length === 0 ? (
+        ) : total === 0 && !hasFilters && status === 'all' ? (
           <EmptyState onCreate={() => setShowCreate(true)} />
-        ) : filtered.length === 0 ? (
+        ) : deals.length === 0 ? (
           <div className="py-16 text-center">
             <div className="text-sm text-gray-500 mb-2">לא נמצאו דילים תואמים</div>
             <button onClick={clearFilters} className="text-sm text-blue-700 hover:underline">נקה פילטרים</button>
@@ -301,26 +360,28 @@ export default function DealsList() {
               <table className="w-full text-sm">
                 <thead>
                   <SortableHeaderRow
-                    cols={visibleCols}
+                    cols={headerCols}
                     onMove={moveCol}
                     widths={widths}
                     onResize={setColWidth}
+                    sort={sort}
+                    onSort={handleSort}
                     trClassName="text-gray-500 bg-gray-50/70 border-b border-gray-100"
                   >
                     <Th className="w-10 border-s border-gray-100/70" />
                   </SortableHeaderRow>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {pageRows.map((d) => (
+                  {deals.map((d) => (
                     <DealRow
                       key={d.id}
                       deal={d}
                       cols={visibleCols}
-                      stageCls={stageColor.get(d.dealStageId)}
+                      stageCls={stageColor.get(d.dealStage?.id)}
                       onOpen={() => navigate(dealPath(d))}
                       onDelete={async () => {
                         if (!confirm(`למחוק את הדיל "${d.title}"?`)) return;
-                        try { await api.deals.remove(d.id); await refresh(); }
+                        try { await api.deals.remove(d.id); setRefreshKey((k) => k + 1); }
                         catch (e) { alert('שגיאה: ' + e.message); }
                       }}
                     />
@@ -328,16 +389,9 @@ export default function DealsList() {
                 </tbody>
               </table>
             </div>
-            {pageCount > 1 && (
-              <div className="flex items-center justify-between px-4 py-2.5 border-t border-gray-100 text-[13px] text-gray-600">
-                <span>{(page - 1) * PAGE_SIZE + 1}-{Math.min(page * PAGE_SIZE, filtered.length)} מתוך {filtered.length}</span>
-                <div className="flex items-center gap-1">
-                  <PagerBtn disabled={page === 1} onClick={() => setPage((p) => p - 1)}>‹</PagerBtn>
-                  <span className="px-2">{page} / {pageCount}</span>
-                  <PagerBtn disabled={page === pageCount} onClick={() => setPage((p) => p + 1)}>›</PagerBtn>
-                </div>
-              </div>
-            )}
+            <Pager page={page} pageSize={pageSize} total={total} onPage={setPage}>
+              <PageSizeSelector value={pageSize} onChange={setPageSize} />
+            </Pager>
           </>
         )}
       </div>
@@ -393,7 +447,9 @@ function MetricCard({ label, n, v, tone, icon, active, onClick }) {
         <div className={`text-[10px] font-semibold tracking-wide ${TONE_TEXT[tone]}`}>{label}</div>
         <div className="flex items-baseline gap-1.5">
           <span className="text-lg font-bold leading-none text-gray-900">{n}</span>
-          <span className="truncate text-[11px] text-gray-500 tabular-nums" dir="ltr">{formatMinor(v, 'ILS')}</span>
+          {v != null && (
+            <span className="truncate text-[11px] text-gray-500 tabular-nums" dir="ltr">{formatMinor(v, 'ILS')}</span>
+          )}
         </div>
       </div>
       <span className={`h-7 w-7 shrink-0 flex items-center justify-center rounded-full text-sm ring-1 ${TONES[tone]}`}>
@@ -676,9 +732,4 @@ function Field({ label, children }) {
 }
 function Th({ children, className = '' }) {
   return <th className={`text-right text-[11px] uppercase tracking-wide font-semibold px-4 py-2.5 ${className}`}>{children}</th>;
-}
-function PagerBtn({ children, disabled, onClick }) {
-  return (
-    <button onClick={onClick} disabled={disabled} className="h-8 w-8 rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40">{children}</button>
-  );
 }

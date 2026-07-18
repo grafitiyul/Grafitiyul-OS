@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../../lib/api.js';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../../common/tableColumns.jsx';
+import PageSizeSelector, { usePageSizePref } from '../../common/PageSizeSelector.jsx';
+import Pager from '../../common/Pager.jsx';
+import useDebouncedValue from '../../../shell/search/useDebouncedValue.js';
 
 // Organizations index — reference/management list. Bank Leumi is one
 // Organization; its divisions/departments are Organization Units (managed on
@@ -43,6 +46,7 @@ const COLUMNS = [
 export default function OrganizationsList() {
   const navigate = useNavigate();
   const [orgs, setOrgs] = useState([]);
+  const [total, setTotal] = useState(0);
   const [types, setTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -51,30 +55,58 @@ export default function OrganizationsList() {
   const [typeId, setTypeId] = useState('');
   const [creating, setCreating] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = usePageSizePref('organizations.pageSize.v1');
+
+  // Server-driven search: debounce keystrokes so typing doesn't spam the API.
+  const debouncedSearch = useDebouncedValue(search, 300);
 
   const { colKeys, toggleCol, moveCol, setColWidth, widths, visibleCols, orderedColumns } =
     useTableColumns('organizations.columns.v1', COLUMNS);
 
-  async function refresh() {
+  // Types are a small catalog for the create form — load once.
+  useEffect(() => {
+    api.organizationTypes.list().then(setTypes).catch(() => {});
+  }, []);
+
+  // Reset to page 1 whenever the search term settles or the page size changes.
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, pageSize]);
+
+  // The one paginated fetch — re-runs on search / page / pageSize.
+  useEffect(() => {
+    let live = true;
     setLoading(true);
     setError(null);
-    try {
-      const [o, t] = await Promise.all([
-        api.organizations.list(),
-        api.organizationTypes.list(),
-      ]);
-      setOrgs(o);
-      setTypes(t);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }
+    api.organizations
+      .list({ page, pageSize, search: debouncedSearch })
+      .then((data) => {
+        if (!live) return;
+        setOrgs(data.rows);
+        setTotal(data.total);
+      })
+      .catch((e) => {
+        if (live) setError(e.message);
+      })
+      .finally(() => {
+        if (live) setLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [debouncedSearch, page, pageSize]);
 
-  useEffect(() => {
-    refresh();
-  }, []);
+  function reload() {
+    // Re-fetch the current page (after a create) without changing filters.
+    api.organizations
+      .list({ page, pageSize, search: debouncedSearch })
+      .then((data) => {
+        setOrgs(data.rows);
+        setTotal(data.total);
+      })
+      .catch((e) => setError(e.message));
+  }
 
   async function createOrg(e) {
     e.preventDefault();
@@ -89,7 +121,7 @@ export default function OrganizationsList() {
       setName('');
       setTypeId('');
       setShowCreate(false);
-      await refresh();
+      reload();
     } catch (e) {
       alert('שגיאה ביצירת ארגון: ' + e.message);
     } finally {
@@ -97,11 +129,7 @@ export default function OrganizationsList() {
     }
   }
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return orgs;
-    return orgs.filter((o) => (o.name || '').toLowerCase().includes(q));
-  }, [orgs, search]);
+  const isEmpty = total === 0 && !debouncedSearch;
 
   return (
     <div className="mx-auto max-w-[1400px] px-5 lg:px-8 py-4">
@@ -113,7 +141,7 @@ export default function OrganizationsList() {
           </div>
           <div>
             <h1 className="text-xl lg:text-2xl font-bold tracking-tight text-gray-900 leading-tight">ארגונים</h1>
-            <p className="text-[12px] text-gray-500">ניהול הארגונים והלקוחות העסקיים ({orgs.length})</p>
+            <p className="text-[12px] text-gray-500">ניהול הארגונים והלקוחות העסקיים ({total})</p>
           </div>
         </div>
         <button
@@ -197,7 +225,7 @@ export default function OrganizationsList() {
           <div className="py-12 text-center text-sm text-red-600">
             שגיאה בטעינה: <span dir="ltr" className="font-mono">{error}</span>
           </div>
-        ) : orgs.length === 0 ? (
+        ) : isEmpty ? (
           <div className="py-20 text-center max-w-sm mx-auto">
             <div className="text-5xl mb-4 opacity-70">🏢</div>
             <h3 className="text-lg font-semibold text-gray-900 mb-1">אין ארגונים עדיין</h3>
@@ -209,35 +237,40 @@ export default function OrganizationsList() {
               + ארגון חדש
             </button>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : orgs.length === 0 ? (
           <div className="py-16 text-center text-sm text-gray-500">לא נמצאו תוצאות.</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <SortableHeaderRow
-                  cols={visibleCols}
-                  onMove={moveCol}
-                  widths={widths}
-                  onResize={setColWidth}
-                  trClassName="text-gray-500 bg-gray-50/70 border-b border-gray-100"
-                />
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {filtered.map((o) => (
-                  <tr
-                    key={o.id}
-                    className="group hover:bg-blue-50/40 cursor-pointer transition-colors"
-                    onClick={() => navigate(`/admin/crm/organizations/${o.orgNo ?? o.id}`)}
-                  >
-                    {visibleCols.map((c) => (
-                      <TableCell key={c.key} col={c}>{c.render(o)}</TableCell>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <SortableHeaderRow
+                    cols={visibleCols}
+                    onMove={moveCol}
+                    widths={widths}
+                    onResize={setColWidth}
+                    trClassName="text-gray-500 bg-gray-50/70 border-b border-gray-100"
+                  />
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {orgs.map((o) => (
+                    <tr
+                      key={o.id}
+                      className="group hover:bg-blue-50/40 cursor-pointer transition-colors"
+                      onClick={() => navigate(`/admin/crm/organizations/${o.orgNo ?? o.id}`)}
+                    >
+                      {visibleCols.map((c) => (
+                        <TableCell key={c.key} col={c}>{c.render(o)}</TableCell>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pager page={page} pageSize={pageSize} total={total} onPage={setPage}>
+              <PageSizeSelector value={pageSize} onChange={setPageSize} />
+            </Pager>
+          </>
         )}
       </div>
     </div>

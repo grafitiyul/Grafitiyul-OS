@@ -314,11 +314,11 @@ export const api = {
   // ── CRM foundation (Phase 1) — reference data only ───────────────
   organizations: {
     // list() = full catalog (settings screens); list({ q }) = capped
-    // server-side type-ahead search for pickers.
-    list: (params) =>
-      request(
-        `/api/organizations${params?.q ? `?q=${encodeURIComponent(params.q)}` : ''}`,
-      ),
+    // server-side type-ahead search for pickers; list({ page, pageSize,
+    // search }) = server paginated envelope { rows, total, page, pageSize }
+    // for the list screen. qs(undefined) === '' keeps param-less callers
+    // (full catalog) unchanged.
+    list: (params) => request(`/api/organizations${qs(params)}`),
     get: (id) => request(`/api/organizations/${id}`),
     create: (data) =>
       request('/api/organizations', {
@@ -391,7 +391,10 @@ export const api = {
     query: ({ q, category }) => request(`/api/search${qs({ q, category })}`),
   },
   contacts: {
-    list: () => request('/api/contacts'),
+    // list() = full array (pickers / cross-refs); list({ page, pageSize,
+    // search }) = server paginated envelope { rows, total, page, pageSize }.
+    // qs(undefined) === '' so existing param-less callers are unchanged.
+    list: (params) => request(`/api/contacts${qs(params)}`),
     get: (id) => request(`/api/contacts/${id}`),
     create: (data) =>
       request('/api/contacts', { method: 'POST', body: JSON.stringify(data) }),
@@ -480,6 +483,7 @@ export const api = {
   },
   deals: {
     list: (filters) => request(`/api/deals${qs(filters)}`),
+    summary: (filters) => request(`/api/deals/summary${qs(filters)}`),
     get: (id) => request(`/api/deals/${id}`),
     create: (data) =>
       request('/api/deals', { method: 'POST', body: JSON.stringify(data) }),

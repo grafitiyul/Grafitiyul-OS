@@ -333,16 +333,50 @@ router.param('id', (req, _res, next, value) => {
 
 // ---------- Deals ----------
 
+// The non-status filter clauses (org, stage, value range, text search) shared by
+// the paginated list and the status-card summary, so both honour the same
+// filters and can never diverge.
+function dealFilterWhere(query = {}) {
+  const where = {};
+  if (query.organizationId) where.organizationId = String(query.organizationId);
+  if (query.stageId) where.dealStageId = String(query.stageId);
+  const minVal = Number(query.minVal);
+  const maxVal = Number(query.maxVal);
+  if (Number.isFinite(minVal) || Number.isFinite(maxVal)) {
+    where.valueMinor = {};
+    if (Number.isFinite(minVal)) where.valueMinor.gte = Math.round(minVal * 100);
+    if (Number.isFinite(maxVal)) where.valueMinor.lte = Math.round(maxVal * 100);
+  }
+  const search = String(query.search ?? query.q ?? '').trim();
+  if (search) {
+    const or = [{ title: containsI(search) }, { organization: { name: containsI(search) } }];
+    if (/^\d+$/.test(search)) or.push({ orderNo: Number(search) });
+    where.OR = or;
+  }
+  return where;
+}
+
+// Status-card summary: count + money SUM per status under the active filters,
+// in ONE grouped query (the cards can't sum a single page, so the server does).
+router.get(
+  '/summary',
+  handle(async (req, res) => {
+    const base = dealFilterWhere(req.query);
+    const grouped = await prisma.deal.groupBy({ by: ['status'], where: base, _count: { _all: true }, _sum: { valueMinor: true } });
+    const out = { open: { count: 0, sumMinor: 0 }, won: { count: 0, sumMinor: 0 }, lost: { count: 0, sumMinor: 0 }, all: { count: 0, sumMinor: 0 } };
+    for (const g of grouped) {
+      const cell = { count: g._count._all, sumMinor: Number(g._sum.valueMinor || 0) };
+      if (out[g.status]) out[g.status] = cell;
+      out.all.count += cell.count;
+      out.all.sumMinor += cell.sumMinor;
+    }
+    res.json(out);
+  }),
+);
+
 router.get(
   '/',
   handle(async (req, res) => {
-    const where = {};
-    if (req.query.status && VALID_STATUS.includes(String(req.query.status))) {
-      where.status = String(req.query.status);
-    }
-    if (req.query.organizationId) {
-      where.organizationId = String(req.query.organizationId);
-    }
     // The relations the list table columns read — never the heavy scalar
     // columns (notes, customerInfo, JSON blobs) the grid never shows.
     const listRelations = {
@@ -355,21 +389,10 @@ router.get(
       _count: { select: { contacts: true } },
     };
 
-    const { paginated, page, pageSize, skip, take, search } = parseListQuery(req.query);
+    const { paginated, page, pageSize, skip, take } = parseListQuery(req.query);
     if (paginated) {
-      if (req.query.stageId) where.dealStageId = String(req.query.stageId);
-      const minVal = Number(req.query.minVal);
-      const maxVal = Number(req.query.maxVal);
-      if (Number.isFinite(minVal) || Number.isFinite(maxVal)) {
-        where.valueMinor = {};
-        if (Number.isFinite(minVal)) where.valueMinor.gte = Math.round(minVal * 100);
-        if (Number.isFinite(maxVal)) where.valueMinor.lte = Math.round(maxVal * 100);
-      }
-      if (search) {
-        const or = [{ title: containsI(search) }, { organization: { name: containsI(search) } }];
-        if (/^\d+$/.test(search)) or.push({ orderNo: Number(search) });
-        where.OR = or;
-      }
+      const where = dealFilterWhere(req.query);
+      if (req.query.status && VALID_STATUS.includes(String(req.query.status))) where.status = String(req.query.status);
       const SORTS = {
         updatedAt: (d) => ({ updatedAt: d }), createdAt: (d) => ({ createdAt: d }),
         valueMinor: (d) => ({ valueMinor: d }), orderNo: (d) => ({ orderNo: d }),
@@ -393,8 +416,12 @@ router.get(
       return res.json({ rows, total, page, pageSize });
     }
 
-    // Legacy full-array path (pickers / cross-refs). Unchanged shape.
-    const deals = await prisma.deal.findMany({ where, orderBy: { updatedAt: 'desc' }, include: listRelations });
+    // Legacy full-array path (pickers / cross-refs). Unchanged shape: honours
+    // only status + organizationId, exactly as before.
+    const legacyWhere = {};
+    if (req.query.status && VALID_STATUS.includes(String(req.query.status))) legacyWhere.status = String(req.query.status);
+    if (req.query.organizationId) legacyWhere.organizationId = String(req.query.organizationId);
+    const deals = await prisma.deal.findMany({ where: legacyWhere, orderBy: { updatedAt: 'desc' }, include: listRelations });
     res.json(deals);
   }),
 );
