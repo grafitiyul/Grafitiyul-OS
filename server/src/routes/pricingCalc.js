@@ -4,8 +4,10 @@ import { handle } from '../asyncHandler.js';
 import { calculate, baseAmountMinor, splitVat, priceAddon, addonApplies, sabbathHolidayWindow, resolveSystemAddonEntry, PricingError } from '../pricing/engine.js';
 import { buildGroupCards } from '../pricing/groupTicketCards.js';
 import { composeBuilderLines } from '../pricing/builderCompose.js';
-import { buildAutoAddonLines, tourMoment, AUTO_ADDON_SOURCE_KIND } from '../pricing/autoAddons.js';
+import { tourMoment, AUTO_ADDON_SOURCE_KIND } from '../pricing/autoAddons.js';
 import { buildNoteVars, renderNoteTemplate, selectNoteTemplate } from '../pricing/noteTemplates.js';
+import { buildCardOptions } from '../pricing/cardOptions.js';
+import { loadAndBuildAutoAddons } from '../pricing/resolveAutoAddons.js';
 
 // Pricing engine HTTP surface: /preview (per-card draft preview), /builder (the
 // ONE multi-line calculation used by the Deal builders AND the pricing
@@ -230,6 +232,9 @@ router.post(
     // Product-line resolution (explanation + conflict details).
     let productResolution = { ok: false, error: 'no_product' };
     let engineResult = null;
+    // Loaded ActivityType (for both the product resolution and the card-option
+    // eligibility probe). Null when the context has no activity → nothing prices.
+    let eligibilityActivityType = null;
     if (!context.productVariantId) {
       productResolution = { ok: false, error: 'no_product' };
     } else if (!context.activityTypeId) {
@@ -240,6 +245,7 @@ router.post(
       const activityType = await prisma.activityType.findUnique({
         where: { id: context.activityTypeId },
       });
+      eligibilityActivityType = activityType;
       if (!activityType) productResolution = { ok: false, error: 'activity_type_not_found' };
       else {
         try {
@@ -382,45 +388,18 @@ router.post(
           });
         }
 
-        // Automatic add-on lines — the exact engine primitives the per-card
-        // preview uses (ONE שבת/חג detector + addonApplies + priceAddon).
+        // Automatic add-on lines — the ONE shared resolver (same שבת/חג detector
+        // + buildAutoAddonLines the agent pricing display uses; no duplication).
         const winningRule = (priceList?.rules || []).find((r) => r.id === productResolution.ruleId);
-        const systemAddon = await prisma.addon.findFirst({ where: { systemKey: 'sabbath_holiday' } });
-        const moment = tourMoment(context.tourDate, context.tourTime);
-        let sabbath = { applies: false };
-        const entriesNeedSabbath =
-          !!systemAddon || (winningRule?.addons || []).some((e) => e.autoApply === 'sabbath_holiday');
-        if (moment.dateISO && entriesNeedSabbath) {
-          const [weekly, holidays] = await Promise.all([
-            prisma.sabbathWeeklyRule.findMany({ where: { active: true } }),
-            prisma.holidayRule.findMany({ where: { active: true, status: 'approved' } }),
-          ]);
-          sabbath = sabbathHolidayWindow(
-            { weekday: moment.weekday, minuteOfDay: moment.minuteOfDay ?? 0, dateISO: moment.dateISO },
-            { weekly, holidays },
-          );
-        }
-        const entryAddonIds = [
-          ...new Set([...(winningRule?.addons || []).map((e) => e.addonId), systemAddon?.id].filter(Boolean)),
-        ];
-        const catalogRows = entryAddonIds.length
-          ? await prisma.addon.findMany({
-              where: { id: { in: entryAddonIds } },
-              select: { id: true, nameHe: true, vatMode: true, vatRate: true },
-            })
-          : [];
-        generated.push(
-          ...buildAutoAddonLines({
-            ruleAddons: winningRule?.addons || [],
-            systemAddon,
-            cardVat: { vatMode: productResolution.vatMode, vatRate: productResolution.vatRate },
-            cardGroupId: productResolution.cardGroupId,
-            moment,
-            isSabbathHoliday: sabbath.applies,
-            addonCatalogById: new Map(catalogRows.map((a) => [a.id, a])),
-            groupCount: counts.groupCount,
-          }),
-        );
+        const { lines: autoLines } = await loadAndBuildAutoAddons(prisma, {
+          winningRule,
+          cardVat: { vatMode: productResolution.vatMode, vatRate: productResolution.vatRate },
+          cardGroupId: productResolution.cardGroupId,
+          tourDate: context.tourDate,
+          tourTime: context.tourTime,
+          groupCount: counts.groupCount,
+        });
+        generated.push(...autoLines);
         if (generated.length) {
           // Directly AFTER the product line — it stays the card's FIRST line
           // (the note lands on it) and ordering is deterministic.
@@ -471,33 +450,23 @@ router.post(
       }
     }
 
-    // Card OPTIONS for the manual override picker: every active card that can
-    // price this product (variant-compatible). Association is only the automatic
-    // DEFAULT — any card is selectable here.
-    //
-    // Label = the card's AUTHORING TAB (pricing segment) name — ONE stable
-    // source, singular, identical everywhere and independent of context (the
-    // previous association/tab mix produced different labels for similar cards).
-    // The tabs ARE the commercial categories (פרטי / עסקי / בית ספר / סוכנים /
-    // מפיקים / קבוצתי). When two cards for one product share a tab, later ones
-    // get a deterministic ordinal suffix (stable rule order above), so the label
-    // is always unique and never surprises.
+    // Card OPTIONS for the manual override picker — the CANONICAL eligibility
+    // gate (buildCardOptions): a card is offered ONLY if pinning it and running
+    // the engine yields a real positive price for THIS context. That single rule
+    // excludes non-covering cards, null-variant duplicates, incomplete configs
+    // and ₪0 group-ticket cards, so every visible option is guaranteed to
+    // calculate. Label = the authoring TAB name; genuine same-tab duplicates get
+    // a deterministic ordinal. Cards stay editable in admin regardless.
     let cardOptions = [];
     if (context.productId && priceList) {
       const segRows = await prisma.pricingSegment.findMany({ select: { id: true, nameHe: true } });
-      const segNames = new Map(segRows.map((s) => [s.id, s.nameHe]));
-      const seen = new Map();
-      const tabCount = new Map();
-      for (const r of priceList.rules) {
-        if (!r.cardGroupId || r.productId !== context.productId) continue;
-        if (r.productVariantId && context.productVariantId && r.productVariantId !== context.productVariantId) continue;
-        if (seen.has(r.cardGroupId)) continue;
-        const tab = segNames.get(r.pricingSegmentId) || 'כרטיס תמחור';
-        const n = (tabCount.get(tab) || 0) + 1;
-        tabCount.set(tab, n);
-        seen.set(r.cardGroupId, { cardGroupId: r.cardGroupId, label: n === 1 ? tab : `${tab} · ${n}` });
-      }
-      cardOptions = [...seen.values()];
+      cardOptions = buildCardOptions({
+        priceList,
+        activityType: eligibilityActivityType,
+        context,
+        counts,
+        segNameById: new Map(segRows.map((s) => [s.id, s.nameHe])),
+      });
     }
 
     // ONE composition for every caller (Deal builders + pricing simulator).

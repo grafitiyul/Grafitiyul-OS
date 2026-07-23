@@ -1705,6 +1705,12 @@ export const api = {
       }),
     status: (token, submissionKey) =>
       request(`/api/public/reservations/${token}/session/${submissionKey}`),
+    // Read-only Agents pricing display for one group card (Part B).
+    pricing: (token, body) =>
+      request(`/api/public/reservations/${token}/pricing`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
   },
   // בקרה (Operations Control) — the canonical operational-issue surface.
   // Mutations that already have endpoints (whatsapp.scheduledCancel,

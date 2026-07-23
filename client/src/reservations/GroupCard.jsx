@@ -1,4 +1,7 @@
+import { useEffect, useRef, useState } from 'react';
 import { DateField, TimeField } from '../admin/common/pickers/DateTimeFields.jsx';
+import { api } from '../lib/api.js';
+import { formatMinor } from '../lib/money.js';
 
 // One reservation group — an elegant collapsible card (approved mockup).
 // City-first flow: the agent picks a COMMERCIAL city, then only the
@@ -61,6 +64,101 @@ const fmtDate = (ymd) => {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
 };
 
+// ── Agent pricing display (Part B) ──────────────────────────────────────────
+// Read-only. Derives entirely from the canonical Agents pricing card via the
+// shared server resolver — no formulas, no product mappings here. Refetches
+// (debounced) when the variant/date/time/participants of THIS card change.
+function AgentPriceSection({ token, isPreview, lang, productVariantId, tourDate, tourTime, participants }) {
+  const [state, setState] = useState({ phase: 'idle' });
+  const reqId = useRef(0);
+
+  useEffect(() => {
+    // The design preview has no real link → no live pricing.
+    if (isPreview || !productVariantId) {
+      setState({ phase: 'idle' });
+      return undefined;
+    }
+    const mine = ++reqId.current;
+    setState((s) => (s.phase === 'available' || s.phase === 'fallback' ? s : { phase: 'loading' }));
+    const timer = setTimeout(async () => {
+      try {
+        const model = await api.publicReservations.pricing(token, {
+          productVariantId,
+          tourDate: tourDate || null,
+          tourTime: tourTime || null,
+          participants: participants === '' ? null : Number(participants),
+        });
+        if (mine !== reqId.current) return; // a newer request superseded this one
+        setState({ phase: model?.available ? 'available' : 'fallback', model });
+      } catch {
+        if (mine !== reqId.current) return;
+        setState({ phase: 'error' });
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [token, isPreview, productVariantId, tourDate, tourTime, participants]);
+
+  if (state.phase === 'idle') return null;
+
+  const title = lang === 'en' ? 'Agent price' : 'מחיר לסוכנים';
+  const surchargeSuffix = (row) => (row.perGroup ? ` ${lang === 'en' ? 'per group' : 'לקבוצה'}` : '');
+
+  return (
+    <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 p-3.5" dir="rtl">
+      <div className="mb-2 text-[13px] font-semibold text-emerald-900">{title}</div>
+      {state.phase === 'loading' && (
+        <div className="text-[13px] text-gray-400">{lang === 'en' ? 'Loading price…' : 'טוען מחיר…'}</div>
+      )}
+      {state.phase === 'error' && (
+        <div className="text-[13px] text-amber-700">
+          {lang === 'en' ? 'Could not load the price right now.' : 'לא ניתן לטעון את המחיר כרגע.'}
+        </div>
+      )}
+      {state.phase === 'fallback' && (
+        <div className="text-[13px] leading-relaxed text-gray-600">{state.model?.messageHe}</div>
+      )}
+      {state.phase === 'available' && (
+        <div className="space-y-1.5">
+          {state.model.degraded ? (
+            <div className="text-[13px] text-gray-600">
+              {lang === 'en' ? 'See the agent price list.' : 'המחיר יהיה כפי שכתוב במחירון לסוכנים.'}
+            </div>
+          ) : (
+            <>
+              {(state.model.rows || []).map((row, i) => (
+                <div key={`r${i}`} className="flex items-baseline justify-between gap-3 text-[13.5px] text-gray-800">
+                  <span>{row.labelHe}</span>
+                  <span className="font-medium tabular-nums" dir="ltr">{formatMinor(row.amountMinor)}</span>
+                </div>
+              ))}
+              {(state.model.surcharges || []).map((row, i) => (
+                <div key={`s${i}`} className="flex items-baseline justify-between gap-3 text-[13.5px] text-amber-800">
+                  <span>{row.labelHe}</span>
+                  <span className="font-medium tabular-nums" dir="ltr">
+                    {formatMinor(row.amountMinor)}{surchargeSuffix(row)}
+                  </span>
+                </div>
+              ))}
+              {state.model.totalMinor != null ? (
+                <div className="mt-1.5 flex items-baseline justify-between gap-3 border-t border-emerald-100 pt-1.5 text-[14px] font-bold text-emerald-900">
+                  <span>{lang === 'en' ? 'Expected total per group' : 'סה״כ צפוי לקבוצה'}</span>
+                  <span className="tabular-nums" dir="ltr">{formatMinor(state.model.totalMinor)}</span>
+                </div>
+              ) : (
+                <div className="mt-1 text-[11px] text-gray-400">
+                  {lang === 'en'
+                    ? 'Enter a participant count to see the expected total.'
+                    : 'הזינו מספר משתתפים לחישוב הסכום הצפוי.'}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function GroupCard({
   index,
   group,
@@ -73,6 +171,8 @@ export default function GroupCard({
   onChange,
   onRemove,
   canRemove,
+  token,
+  isPreview,
 }) {
   const g = group;
   const set = (field, v) => onChange({ ...g, [field]: v });
@@ -266,6 +366,17 @@ export default function GroupCard({
               {g.notes.length}/{NOTES_MAX}
             </div>
           </div>
+
+          {/* Agent pricing — under the notes; uses THIS card's own context. */}
+          <AgentPriceSection
+            token={token}
+            isPreview={isPreview}
+            lang={lang}
+            productVariantId={g.productVariantId}
+            tourDate={g.tourDate}
+            tourTime={g.tourTime}
+            participants={g.participants}
+          />
         </div>
       )}
     </section>

@@ -22,6 +22,7 @@ import {
 } from '../reservations/intake.js';
 import { processReservationSession } from '../reservations/processor.js';
 import { buildReservationPdf } from '../reservations/pdf.js';
+import { resolveAgentPricing } from '../pricing/agentPricing.js';
 import { createRateLimiter } from '../reservations/rateLimit.js';
 import { financeContactDisplay } from '../organizations/financeContact.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
@@ -145,6 +146,36 @@ router.get(
       requiredConfirmations: REQUIRED_CONFIRMATIONS.map((c) => c.key),
       catalog,
     });
+  }),
+);
+
+// Agent pricing preview (Part B) — READ-ONLY. Resolves the Agents-segment
+// pricing card for a group's product/variant + date/time/participants and
+// returns a structured display model (or the exact business fallback). Uses the
+// canonical engine; creates/mutates NOTHING. Token-gated + rate-limited like the
+// other reads. One group card per call — each carries its own context.
+router.post(
+  '/reservations/:token/pricing',
+  guard(readLimiter),
+  handle(async (req, res) => {
+    const r = await resolveReservationLink(req.params.token);
+    if (r.error) return sendResolveError(res, r.error);
+    const b = req.body || {};
+    // The variant must be one the agent catalog actually exposes — reject a
+    // foreign/hidden variant rather than pricing it (no id enumeration).
+    const catalog = await bookableCatalog();
+    const allowed = new Set((catalog.variants || []).map((v) => v.id));
+    if (!b.productVariantId || !allowed.has(String(b.productVariantId))) {
+      return res.json({ available: false, reason: 'no_variant', messageHe:
+        'החישוב האוטומטי של המחיר לא זמין למוצר זה, המחיר יהיה כפי שכתוב במחירון לסוכנים.' });
+    }
+    const model = await resolveAgentPricing(prisma, {
+      productVariantId: String(b.productVariantId),
+      participants: b.participants,
+      tourDate: b.tourDate || null,
+      tourTime: b.tourTime || null,
+    });
+    res.json(model);
   }),
 );
 

@@ -335,6 +335,17 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
         );
       const r = await api.pricing.builder({ context: ctx, lines: reqLines, applyCardNotes: true });
       setComputed(r);
+      // A selected/resolved card that cannot price this context must say so
+      // explicitly — never a silent no-op. (The card picker only offers eligible
+      // options, so this is a backstop for a context that changed after picking.)
+      const pr = r?.productResolution;
+      if (ctx?.pinnedCardGroupId && pr && pr.ok === false) {
+        setSaveError(
+          pr.error === 'pinned_card_not_applicable'
+            ? 'כרטיס התמחור שנבחר אינו זמין לעיר/הקשר הנוכחי. בחרו כרטיס אחר או שנו את ההקשר.'
+            : 'כרטיס התמחור שנבחר אינו יכול לחשב מחיר בהקשר הנוכחי.',
+        );
+      }
       // The response IS the regenerated set: existing lines adopt canonical
       // note/provenance/quantity; server-generated lines (product ensure, extra
       // participants, auto add-ons) enter state; stale ones disappear.

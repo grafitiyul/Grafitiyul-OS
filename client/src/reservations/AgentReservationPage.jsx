@@ -336,6 +336,8 @@ export default function AgentReservationPage() {
                 onChange={(next) => updateGroup(i, next)}
                 onRemove={() => removeGroup(i)}
                 canRemove={groups.length > 1}
+                token={token}
+                isPreview={token === PREVIEW_TOKEN}
               />
             ))}
           </div>
