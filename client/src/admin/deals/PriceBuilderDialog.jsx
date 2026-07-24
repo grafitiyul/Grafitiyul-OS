@@ -183,6 +183,15 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
         // card since this version was last saved. We refresh that line's product
         // (label + variant) from the Deal; no duplicate product state is created and
         // the engine is untouched (it already prices via the effective context).
+        //
+        // EXCEPTION — frozen reservation lines (sourceKind 'agent_reservation'):
+        // their label is the FROZEN agent-facing display name and their overridden
+        // price is the ACCEPTED reservation price. The label never equals the
+        // product's internal name, so the "product changed" heuristic would fire
+        // on every open, rename the line and clear `overridden` — silently
+        // repricing the frozen accepted amount from live cards. These lines are
+        // left exactly as saved; an explicit חישוב אוטומטי remains the one way to
+        // deliberately reprice such a deal.
         if (context?.productId) {
           const dp = await api.products.get(context.productId).catch(() => null);
           if (live && dp) {
@@ -190,7 +199,7 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
             const name = dp.nameHe || '';
             if (idx === -1) {
               next = [normalize({ kind: 'product', label: name, refId: context.productVariantId || null }), ...next];
-            } else {
+            } else if (next[idx].sourceKind !== 'agent_reservation') {
               next = next.map((l, i) => {
                 if (i !== idx) return l;
                 const productChanged = l.label !== name;
@@ -668,18 +677,35 @@ function LineRow({ line, computed, products, addons, defaultProductId, noteOpen,
   const generated =
     line.sourceKind === 'price_rule_extra' || line.sourceKind === 'price_rule_addon';
 
-  // Item dropdown value: addon → a:<id>, product (by label or product-line default)
-  // → p:<id>, free-text → __free__, else empty.
+  // CANONICAL LABELED rows — structured pricing lines whose identity is their
+  // frozen label rather than a catalog ref (agent-reservation base/extra/
+  // surcharge lines, group-ticket rows, …): any non-generated row carrying a
+  // structured sourceKind + a label, unless it's an addon already matched to a
+  // catalog item. The row's item dropdown DISPLAYS the canonical label as its
+  // selected value ("▼ תוספת שפה", "▼ משתתף נוסף") and the user may re-pick a
+  // catalog item / free text to re-type the row. A canonical row must NEVER
+  // render as a "טקסט חופשי" row with an inner input, and never as an empty
+  // "בחר פריט" picker that hides its label.
+  const canonicalLabeled =
+    !generated && !free && !!line.sourceKind && !!line.label && !(isAddon && line.refId);
+
+  // Item dropdown value: addon → a:<id>, canonical labeled → __label__,
+  // product (by label or product-line default) → p:<id>, free-text → __free__,
+  // else empty.
   const matchedProduct = products.find((p) => p.nameHe === line.label);
   const freeMode =
-    !generated && (free || (!isAddon && !matchedProduct && !!line.label && !(isProduct && !line.label)));
+    !generated &&
+    !canonicalLabeled &&
+    (free || (!isAddon && !matchedProduct && !!line.label && !(isProduct && !line.label)));
   let selectValue = '';
   if (isAddon && line.refId) selectValue = `a:${line.refId}`;
+  else if (canonicalLabeled) selectValue = '__label__';
   else if (freeMode) selectValue = '__free__';
   else if (matchedProduct) selectValue = `p:${matchedProduct.id}`;
   else if (isProduct && defaultProductId && products.some((p) => p.id === defaultProductId)) selectValue = `p:${defaultProductId}`;
 
   function onPickItem(v) {
+    if (v === '__label__') return; // the row's own canonical label — no-op
     if (v === '') {
       onSetFree(false);
       onChange({ label: '', refId: null, kind: isProduct ? 'product' : 'manual' });
@@ -722,6 +748,11 @@ function LineRow({ line, computed, products, addons, defaultProductId, noteOpen,
                 onChange={(e) => onPickItem(e.target.value)}
                 className={`${CELL} ${freeMode ? 'w-44' : 'flex-1'}`}
               >
+                {/* Canonical labeled row: its OWN frozen label is the selected
+                    value — the row reads as its real pricing type, never as an
+                    empty picker or a free-text row. Picking another option
+                    re-types the row as usual. */}
+                {canonicalLabeled && <option value="__label__">{line.label}</option>}
                 <option value="">— בחר פריט —</option>
                 <optgroup label="מוצרים">
                   {products.map((p) => (<option key={p.id} value={`p:${p.id}`}>{p.nameHe}</option>))}
