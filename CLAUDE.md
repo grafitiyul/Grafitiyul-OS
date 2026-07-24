@@ -266,3 +266,124 @@ Editing and display parity is mandatory.
   not installed) — do not use them.
 - New features must reuse `RichText`; introducing a separate/simplified
   renderer is a violation of this rule.
+
+# Product & UX Standards
+
+These are global implementation rules that apply to every future feature
+unless a task explicitly overrides them.
+
+## 1. Build products, not forms
+- Always optimize for the user's workflow, not for implementation simplicity.
+- Every screen should feel like part of a polished commercial product, not an
+  internal admin tool.
+- Think like a senior Product Designer and Product Manager, not only like a
+  software engineer.
+
+## 2. Use screen space intentionally
+- Never automatically center every screen or form.
+- Every layout should intentionally choose the appropriate width according to
+  the workflow.
+- Usually deserve wide layouts: tables, builders, editors, complex
+  configuration screens, dashboards, multi-step workflows.
+- May intentionally remain narrow: login, confirmation dialogs, simple forms,
+  small settings.
+- Do not waste large portions of the screen with empty margins unless there is
+  a clear UX reason. Likewise, do not force every screen to full width.
+  Use professional judgement.
+
+## 3. Design hierarchy first
+- Every screen must have: clear primary action, clear secondary actions, strong
+  visual hierarchy, proper spacing, readable typography, obvious grouping of
+  related information.
+- Avoid walls of identical controls.
+- The user should understand the screen within a few seconds.
+
+## 4. Progressive disclosure
+- Do not expose every option immediately.
+- Show the common workflow first; reveal advanced functionality only when needed.
+- Large systems should feel simple.
+
+## 5. Reuse premium components
+- Before creating a new component, audit the project.
+- If an equivalent high-quality component already exists, reuse it (improve it
+  if necessary).
+- Do not build weaker duplicate implementations.
+
+## 6. Build for scale
+- Whenever a selector may eventually contain dozens or hundreds of items, use a
+  searchable selector. Do not assume today's data size.
+- Searchable selectors must support: search while typing, keyboard navigation,
+  loading state, empty state, RTL, large datasets.
+
+## 7. Use domain-specific editors
+- Do not use plain textareas when the domain requires a richer editing
+  experience (email, WhatsApp, documents, landing pages, content management).
+- Choose an editor appropriate for the task.
+
+## 8. RTL is a first-class requirement
+- Never mirror LTR layouts mechanically.
+- Always verify: arrow direction, icon direction, alignment, spacing, dropdown
+  placement, keyboard navigation, mixed Hebrew/English text, numbers inside RTL.
+- Every Hebrew screen should feel intentionally designed for RTL.
+
+## 9. Hide technical details
+- Do not expose implementation terminology to users.
+- Avoid exposing: internal IDs, enum names, database concepts, technical field
+  names, developer terminology.
+- Always present business language.
+
+## 10. Every important screen must feel premium
+- Before considering a screen complete, ask: would this feel natural inside
+  products like Linear, Notion, Monday, ClickUp, Pipedrive?
+- If it still feels like an internal developer tool, improve it.
+
+## 11. Mobile is first-class
+- Responsive design is not simply stacking controls vertically.
+- Think about: touch targets, sticky actions, keyboard interaction, comfortable
+  spacing, scrolling, rich-editor usability.
+
+## 12. Large modals are workspaces
+- If users are expected to spend more than a few minutes inside a modal, treat
+  it as a workspace.
+- Use: near full-screen layout, persistent actions, proper navigation, strong
+  hierarchy, comfortable spacing.
+- Do not force complex workflows into small dialogs.
+
+## 13. Do not implement the minimum acceptable UI
+- If a feature is expected to become a core workflow, invest in the UI
+  immediately.
+- Avoid "good enough for now" interfaces that will inevitably require rebuilding.
+
+## 14. Challenge the proposed layout
+- Do not blindly implement the first layout described in a prompt.
+- If a significantly better UX can be achieved while preserving all requested
+  functionality: stop, explain the alternative, and wait for approval before
+  implementing.
+
+## 15. Think in products, not screens
+- Never optimize a screen in isolation. Always consider: how users arrive there,
+  what they are trying to accomplish, what information can already be known,
+  which clicks can be eliminated, which decisions can be automated, what the
+  next step in the workflow will be.
+- The best implementation reduces cognitive load and repetitive work.
+
+## 16. Always audit before building UI
+- Before implementing a new screen, audit the project for existing components,
+  patterns, editors, tables, dialogs, selectors, navigation, and design language.
+- The new feature should feel like it belongs to the rest of GOS.
+- Prefer extending existing premium components over creating new inconsistent
+  ones.
+
+## 17. Consistency is more important than novelty
+- Do not redesign controls just because a different implementation is possible.
+- Users should immediately recognize interactions across the system.
+- Maintain consistent: buttons, tables, editors, filters, search, cards,
+  dialogs, navigation, status indicators, empty states, loading states.
+
+## 18. When in doubt, ask
+- If there are two or more reasonable UX approaches and the decision materially
+  affects the user's workflow, do not guess.
+- Present the alternatives with a short explanation of the trade-offs and wait
+  for approval before implementing.
+- This applies to UX structure and product decisions, not to ordinary
+  implementation details.
