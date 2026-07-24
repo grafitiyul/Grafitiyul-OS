@@ -221,10 +221,10 @@ export default function GroupCard({
       )
     : t.group.collapsedNoActivity;
 
+  // Card language: white card + elegant blue border — clear separation from
+  // the page background without feeling boxed (design decision 2026-07-24;
+  // applies to every card in the reservation form's design language).
   return (
-    {/* Card language: white card + elegant blue border — clear separation from
-        the page background without feeling boxed (design decision 2026-07-24;
-        applies to every card in the reservation form's design language). */}
     <section className="rounded-2xl border border-blue-200 bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
       {/* Header — group number leading; activity badge; collapse + delete. */}
       <div className="flex items-center gap-2.5 px-5 pt-4 pb-1">
