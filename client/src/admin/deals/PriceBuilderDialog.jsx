@@ -253,7 +253,10 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
   }, [open, lines, appliedCtx]);
 
   // Card options for the picker follow the LIVE context (metadata-only request
-  // with no lines — nothing on screen changes).
+  // with no lines — nothing on screen changes). The SIMULATOR lists
+  // configuration-valid cards (inspectable as soon as a product is chosen,
+  // before city/activity); the Deal builder stays strict (context-applicable
+  // cards only — every visible option calculates).
   useEffect(() => {
     if (!open || !ctx?.productId) {
       setCardOptions([]);
@@ -261,7 +264,11 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
     }
     let live = true;
     api.pricing
-      .builder({ context: { ...ctx, pinnedCardGroupId: null }, lines: [] })
+      .builder({
+        context: { ...ctx, pinnedCardGroupId: null },
+        lines: [],
+        optionsMode: simulated ? 'config' : 'applicable',
+      })
       .then((r) => {
         if (live) setCardOptions(r?.cardOptions || []);
       })
@@ -270,7 +277,7 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, ctx?.productId, ctx?.productVariantId]);
+  }, [open, simulated, ctx?.productId, ctx?.productVariantId, ctx?.activityTypeId]);
 
   const computedById = new Map((computed?.lines || []).map((l) => [l.id, l]));
   const totals = computed?.totals;
@@ -335,16 +342,24 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
         );
       const r = await api.pricing.builder({ context: ctx, lines: reqLines, applyCardNotes: true });
       setComputed(r);
-      // A selected/resolved card that cannot price this context must say so
-      // explicitly — never a silent no-op. (The card picker only offers eligible
-      // options, so this is a backstop for a context that changed after picking.)
+      // A calculation that cannot run must say so explicitly — never a silent
+      // no-op. Missing context (city/activity) names the missing input; a
+      // selected card that doesn't apply says exactly that. The selected card
+      // stays selected either way (ctx keeps the pin).
       const pr = r?.productResolution;
-      if (ctx?.pinnedCardGroupId && pr && pr.ok === false) {
-        setSaveError(
-          pr.error === 'pinned_card_not_applicable'
-            ? 'כרטיס התמחור שנבחר אינו זמין לעיר/הקשר הנוכחי. בחרו כרטיס אחר או שנו את ההקשר.'
-            : 'כרטיס התמחור שנבחר אינו יכול לחשב מחיר בהקשר הנוכחי.',
-        );
+      if (pr && pr.ok === false) {
+        const msgs = {
+          no_product: 'חסרה עיר/מיקום — בחרו עיר כדי לחשב מחיר.',
+          activity_type_required: 'חסר סוג פעילות — בחרו סוג פעילות כדי לחשב מחיר.',
+          activity_type_not_found: 'חסר סוג פעילות — בחרו סוג פעילות כדי לחשב מחיר.',
+          pinned_card_not_found: 'כרטיס התמחור שנבחר אינו קיים עוד — בחרו כרטיס אחר.',
+          pinned_card_not_applicable:
+            'כרטיס התמחור שנבחר אינו חל על ההקשר הנוכחי (עיר/מוצר). בחרו כרטיס אחר או שנו את ההקשר.',
+          no_price_rule: 'אין כרטיס תמחור שמתאים אוטומטית להקשר הנוכחי — אפשר לבחור כרטיס ידנית.',
+          ambiguous_price_rule: 'יותר מכרטיס תמחור אחד מתאים — בחרו כרטיס ידנית.',
+          no_price_list: 'לא הוגדר מחירון פעיל.',
+        };
+        setSaveError(msgs[pr.error] || 'לא ניתן לחשב מחיר בהקשר הנוכחי.');
       }
       // The response IS the regenerated set: existing lines adopt canonical
       // note/provenance/quantity; server-generated lines (product ensure, extra
@@ -474,8 +489,10 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
               className="w-14 h-10 text-center rounded-lg border border-gray-200 px-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
             />
           </label>
-          {/* Manual Pricing Card selection — automatic (org default) unless pinned. */}
-          {cardOptions.length > 1 && (
+          {/* Manual Pricing Card selection — automatic (org default) unless
+              pinned. Same-tab duplicates carry a representative-price
+              descriptor so genuine twins are distinguishable. */}
+          {cardOptions.length >= 1 && (
             <label className="flex items-center gap-1.5 text-[13px] text-gray-600">
               כרטיס תמחור
               <select
@@ -485,7 +502,9 @@ export default function PriceBuilderDialog({ open, deal, context, onClose, onSav
               >
                 <option value="">אוטומטי — לפי הארגון</option>
                 {cardOptions.map((o) => (
-                  <option key={o.cardGroupId} value={o.cardGroupId}>{o.label}</option>
+                  <option key={o.cardGroupId} value={o.cardGroupId}>
+                    {o.descriptor ? `${o.label} — ${o.descriptor}` : o.label}
+                  </option>
                 ))}
               </select>
             </label>

@@ -7,8 +7,10 @@
 import { tourMoment, buildAutoAddonLines } from './autoAddons.js';
 import { sabbathHolidayWindow } from './engine.js';
 
-// Returns { sabbath, lines } — the auto-generated add-on builder lines for the
-// winning card at this moment (empty when no date / nothing applies).
+// Returns { sabbath, lines, systemAddonId } — the auto-generated add-on builder
+// lines for the winning card at this moment (empty when no date / nothing
+// applies). `sabbath` carries the detector's verdict (type: shabbat/chag/…) so
+// display layers can name the surcharge semantically.
 export async function loadAndBuildAutoAddons(prisma, { winningRule, cardVat, cardGroupId, tourDate, tourTime, groupCount }) {
   const systemAddon = await prisma.addon.findFirst({ where: { systemKey: 'sabbath_holiday' } });
   const moment = tourMoment(tourDate, tourTime);
@@ -44,5 +46,5 @@ export async function loadAndBuildAutoAddons(prisma, { winningRule, cardVat, car
     addonCatalogById: new Map(catalogRows.map((a) => [a.id, a])),
     groupCount,
   });
-  return { sabbath, lines };
+  return { sabbath, lines, systemAddonId: systemAddon?.id || null };
 }

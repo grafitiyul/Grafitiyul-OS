@@ -12,17 +12,17 @@
 
 import { calculate, splitVat } from './engine.js';
 import { probeCard } from './cardOptions.js';
-import { describeStructure, describeSurcharges } from './pricingDisplay.js';
+import { describeApplied, describeStructure, describeSurcharges } from './pricingDisplay.js';
 import { loadAndBuildAutoAddons } from './resolveAutoAddons.js';
 
 export const AGENT_PRICE_FALLBACK_HE =
   'החישוב האוטומטי של המחיר לא זמין למוצר זה, המחיר יהיה כפי שכתוב במחירון לסוכנים.';
 
 function fallback(reason) {
-  return { available: false, reason, messageHe: AGENT_PRICE_FALLBACK_HE };
+  return { available: false, reason, fallbackKey: 'agent_price_list', messageHe: AGENT_PRICE_FALLBACK_HE };
 }
 
-export async function resolveAgentPricing(prisma, { productVariantId, participants, tourDate, tourTime }) {
+export async function resolveAgentPricing(prisma, { productVariantId, participants, groups, tourDate, tourTime }) {
   if (!productVariantId) return fallback('no_variant');
   const variant = await prisma.productVariant.findUnique({
     where: { id: productVariantId },
@@ -85,51 +85,66 @@ export async function resolveAgentPricing(prisma, { productVariantId, participan
     if (invalid) {
       // Admin-facing detail in the server log ONLY — never leaked to the agent.
       console.warn(`[agentPricing] invalid Agents card config for product=${variant.productId}: card=${invalid.cardGroupId} reason=${invalid.reason}`);
-      return { available: false, reason: 'invalid_config', messageHe: AGENT_PRICE_FALLBACK_HE };
+      return { available: false, reason: 'invalid_config', fallbackKey: 'agent_price_list', messageHe: AGENT_PRICE_FALLBACK_HE };
     }
     return fallback('no_agents_card');
   }
 
-  // Canonical price for this group (groups = 1: each reservation card is ONE
-  // group and carries its OWN participant count — never another card's).
-  const counts = { participantCount: pCount, adultCount: pCount, childCount: 0, groupCount: 1 };
+  // Canonical price for THIS reservation card: participants are the card's
+  // TOTAL, "מספר מדריכים" is the pricing group count — the engine owns the
+  // distribution (each card independent; nothing leaks between cards).
+  const gCount = Math.max(1, Number(groups) || 1);
+  const counts = { participantCount: pCount, adultCount: pCount, childCount: 0, groupCount: gCount };
   const engineResult = calculate({ priceList, activityType: chosen.activityType, context, counts, pinnedCardGroupId: chosen.cardGroupId });
   const winningRule = priceList.rules.find((r) => r.id === engineResult.rule.id);
 
-  const { lines: autoLines } = await loadAndBuildAutoAddons(prisma, {
+  const { lines: autoLines, sabbath, systemAddonId } = await loadAndBuildAutoAddons(prisma, {
     winningRule,
     cardVat: { vatMode: engineResult.vatMode, vatRate: engineResult.vatRate },
     cardGroupId: chosen.cardGroupId,
     tourDate,
     tourTime,
-    groupCount: 1,
+    groupCount: gCount,
   });
+  const surchargeRows = describeSurcharges(autoLines, { systemAddonId, sabbathType: sabbath?.type || null });
 
   const ticketNames = new Map((winningRule.ticketPrices || []).map((p) => [p.ticketTypeId, p.ticketType?.nameHe]));
   const structure = describeStructure(winningRule, ticketNames);
-  const surcharges = describeSurcharges(autoLines);
-
-  // Exact total = engine base gross (already VAT-split for this group's
-  // participants) + each surcharge's VAT-split gross. Same numbers the Builder
-  // produces; shown only with a real participant count and a total-able model.
   const participantsKnown = pCount >= 1;
-  let totalMinor = null;
-  if (participantsKnown && !structure.degraded && !structure.totalUnavailable) {
-    let surchargeGross = 0;
+
+  // EXACT mode: applied rows only (what the calculation actually used) plus a
+  // structured VAT breakdown — subtotal + VAT reconcile to the total exactly
+  // (base engine split + each surcharge's own split, all canonical).
+  const applied = participantsKnown && !structure.totalUnavailable ? describeApplied(winningRule, engineResult) : null;
+  if (applied) {
+    let net = engineResult.netMinor;
+    let vat = engineResult.vatMinor;
+    let gross = engineResult.grossMinor;
     for (const l of autoLines) {
       const s = splitVat((Number(l.unitPriceMinor) || 0) * (Number(l.quantity) || 1), l.vatMode, l.vatRate);
-      surchargeGross += s.grossMinor;
+      net += s.netMinor;
+      vat += s.vatMinor;
+      gross += s.grossMinor;
     }
-    totalMinor = engineResult.grossMinor + surchargeGross;
+    return {
+      available: true,
+      mode: 'exact',
+      priceModel: structure.priceModel,
+      rows: [...applied, ...surchargeRows],
+      totals: { netMinor: net, vatMinor: vat, grossMinor: gross, vatMode: engineResult.vatMode, vatRate: engineResult.vatRate },
+      missing: [],
+    };
   }
 
+  // STRUCTURAL mode: the card's structure (clearly not an applied calculation);
+  // surcharge rows still shown when the date makes them apply. No totals.
   return {
     available: true,
+    mode: 'structural',
     priceModel: structure.priceModel,
-    rows: structure.rows,
-    surcharges,
+    rows: [...structure.rows, ...surchargeRows],
+    totals: null,
     degraded: structure.degraded,
-    participantsKnown,
-    totalMinor,
+    missing: participantsKnown ? [] : ['participants'],
   };
 }

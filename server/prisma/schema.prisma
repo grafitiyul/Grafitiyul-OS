@@ -4997,6 +4997,11 @@ model ReservationGroup {
   // Business participant count (no ticket categories — business tours only;
   // pricing arrives later from the Pricing Module).
   participants       Int
+  // "מספר מדריכים" — user-facing "number of guides", canonically the PRICING
+  // GROUP COUNT of this reservation card (same contract as Deal.groups:
+  // NULL = 1). Flows onto the created Deal.groups; the engine's group-aware
+  // distribution owns all math.
+  groups             Int?
   tourLanguage       String? // he | en | es | fr | ru
   // Optional operational representative. When filled, processing creates a
   // Contact linked to the Deal with DealContact role 'onSiteRep' ("נציג

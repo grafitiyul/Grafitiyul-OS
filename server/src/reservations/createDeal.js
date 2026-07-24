@@ -165,6 +165,9 @@ export async function createDealFromReservationGroup(tx, { session, group }) {
       tourDate: group.tourDate,
       tourTime: group.tourTime,
       participants: group.participants,
+      // Canonical group-count contract: guides on the reservation card ARE the
+      // Deal's operational group count (NULL = 1).
+      groups: group.groups || null,
       tourLanguage: group.tourLanguage,
       communicationLanguage: session.language,
       dealSourceId: await travelAgentSourceId(tx),

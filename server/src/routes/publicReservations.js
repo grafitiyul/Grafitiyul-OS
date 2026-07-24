@@ -166,12 +166,14 @@ router.post(
     const catalog = await bookableCatalog();
     const allowed = new Set((catalog.variants || []).map((v) => v.id));
     if (!b.productVariantId || !allowed.has(String(b.productVariantId))) {
-      return res.json({ available: false, reason: 'no_variant', messageHe:
+      return res.json({ available: false, reason: 'no_variant', fallbackKey: 'agent_price_list', messageHe:
         'החישוב האוטומטי של המחיר לא זמין למוצר זה, המחיר יהיה כפי שכתוב במחירון לסוכנים.' });
     }
     const model = await resolveAgentPricing(prisma, {
       productVariantId: String(b.productVariantId),
       participants: b.participants,
+      // "מספר מדריכים" — this card's pricing group count.
+      groups: b.groups,
       tourDate: b.tourDate || null,
       tourTime: b.tourTime || null,
     });

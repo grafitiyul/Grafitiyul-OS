@@ -84,3 +84,46 @@ test('eligibility probes at ≥1 participant so a 0-participant context still li
   });
   assert.deepEqual(opts.map((o) => o.cardGroupId).sort(), ['c_biz1', 'c_biz2', 'c_priv'].sort());
 });
+
+// ── Simulator 'config' mode: configuration-valid cards, listable before a
+// city/activity is chosen; Builder 'applicable' mode unchanged. ─────────────
+
+test("config mode lists every configuration-valid card WITHOUT a context variant", () => {
+  const opts = buildCardOptions({
+    priceList: list(), activityType: null,
+    context: { productId: 'p1', productVariantId: null, activityTypeId: null },
+    counts: {}, segNameById: SEG, mode: 'config',
+  });
+  const ids = opts.map((o) => o.cardGroupId).sort();
+  // Both עסקי twins, פרטי AND the other-variant card are config-valid; the
+  // incomplete card and the ₪0 ticket card are not.
+  assert.deepEqual(ids, ['c_biz1', 'c_biz2', 'c_haifa', 'c_priv'].sort());
+  assert.equal(opts.some((o) => o.cardGroupId === 'c_bad'), false);
+  assert.equal(opts.some((o) => o.cardGroupId === 'c_grp'), false);
+});
+
+test('config mode: same-tab duplicates keep stable labels + get price descriptors', () => {
+  const opts = buildCardOptions({
+    priceList: list(), activityType: null,
+    context: { productId: 'p1', productVariantId: null, activityTypeId: null },
+    counts: {}, segNameById: SEG, mode: 'config',
+  });
+  const biz = opts.filter((o) => o.label.startsWith('עסקי'));
+  assert.deepEqual(biz.map((o) => o.label), ['עסקי', 'עסקי · 2', 'עסקי · 3']);
+  // representative-price descriptors distinguish genuine twins (no raw ids)
+  assert.deepEqual(biz.map((o) => o.descriptor), ['₪1,400', '₪1,700', '₪9,000']);
+});
+
+test('applicable mode (Builder) is unchanged by config mode existence', () => {
+  const a = build(V).map((o) => o.cardGroupId).sort();
+  assert.deepEqual(a, ['c_biz1', 'c_biz2', 'c_priv'].sort());
+});
+
+test('config mode is deterministic across repeated builds', () => {
+  const args = {
+    priceList: list(), activityType: null,
+    context: { productId: 'p1', productVariantId: null, activityTypeId: null },
+    counts: {}, segNameById: SEG, mode: 'config',
+  };
+  assert.deepEqual(buildCardOptions(args), buildCardOptions(args));
+});

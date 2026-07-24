@@ -42,6 +42,7 @@ function validGroup(over = {}) {
     tourDate: '2026-08-01',
     tourTime: '10:30',
     participants: 42,
+    groups: 2, // "מספר מדריכים" — the card's pricing group count
     tourLanguage: 'en',
     ...over,
   };

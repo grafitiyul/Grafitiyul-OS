@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { DateField, TimeField } from '../admin/common/pickers/DateTimeFields.jsx';
 import { api } from '../lib/api.js';
-import { formatMinor } from '../lib/money.js';
+import { pricingRowText, pricingTotalsText, pricingT } from './pricingText.js';
 
 // One reservation group — an elegant collapsible card (approved mockup).
 // City-first flow: the agent picks a COMMERCIAL city, then only the
@@ -20,6 +20,8 @@ export const emptyGroup = () => ({
   tourDate: '',
   tourTime: '',
   participants: '',
+  // "מספר מדריכים" — canonically this card's pricing group count. Default 1.
+  groups: '1',
   onSiteContactName: '',
   onSiteContactPhone: '',
   notes: '',
@@ -29,6 +31,7 @@ export const emptyGroup = () => ({
 // The server remains the authority (422 problems re-render inline).
 export function groupComplete(g) {
   const participants = Number(g.participants);
+  const groups = Number(g.groups);
   const pairOk = !!g.onSiteContactName.trim() === !!g.onSiteContactPhone.trim();
   return !!(
     g.groupName.trim() &&
@@ -37,6 +40,8 @@ export function groupComplete(g) {
     g.tourTime &&
     Number.isInteger(participants) &&
     participants >= 1 &&
+    Number.isInteger(groups) &&
+    groups >= 1 &&
     pairOk
   );
 }
@@ -64,13 +69,15 @@ const fmtDate = (ymd) => {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
 };
 
-// ── Agent pricing display (Part B) ──────────────────────────────────────────
-// Read-only. Derives entirely from the canonical Agents pricing card via the
-// shared server resolver — no formulas, no product mappings here. Refetches
-// (debounced) when the variant/date/time/participants of THIS card change.
-function AgentPriceSection({ token, isPreview, lang, productVariantId, tourDate, tourTime, participants }) {
+// ── Agent pricing display ───────────────────────────────────────────────────
+// Read-only. Renders the server's SEMANTIC pricing model (applied rows +
+// structured VAT totals) localized by pricingText.js — no formulas, no Hebrew
+// baked into cards, no product mappings. Refetches (debounced) when THIS
+// card's variant/date/time/participants/guides change.
+function AgentPriceSection({ token, isPreview, lang, productVariantId, tourDate, tourTime, participants, groups }) {
   const [state, setState] = useState({ phase: 'idle' });
   const reqId = useRef(0);
+  const t = pricingT(lang);
 
   useEffect(() => {
     // The design preview has no real link → no live pricing.
@@ -87,6 +94,7 @@ function AgentPriceSection({ token, isPreview, lang, productVariantId, tourDate,
           tourDate: tourDate || null,
           tourTime: tourTime || null,
           participants: participants === '' ? null : Number(participants),
+          groups: groups === '' ? 1 : Number(groups),
         });
         if (mine !== reqId.current) return; // a newer request superseded this one
         setState({ phase: model?.available ? 'available' : 'fallback', model });
@@ -96,60 +104,65 @@ function AgentPriceSection({ token, isPreview, lang, productVariantId, tourDate,
       }
     }, 400);
     return () => clearTimeout(timer);
-  }, [token, isPreview, productVariantId, tourDate, tourTime, participants]);
+  }, [token, isPreview, productVariantId, tourDate, tourTime, participants, groups]);
 
   if (state.phase === 'idle') return null;
-
-  const title = lang === 'en' ? 'Agent price' : 'מחיר לסוכנים';
-  const surchargeSuffix = (row) => (row.perGroup ? ` ${lang === 'en' ? 'per group' : 'לקבוצה'}` : '');
+  const m = state.model;
+  const totalsRows = m?.totals ? pricingTotalsText(m.totals, lang) : [];
 
   return (
-    <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 p-3.5" dir="rtl">
-      <div className="mb-2 text-[13px] font-semibold text-emerald-900">{title}</div>
-      {state.phase === 'loading' && (
-        <div className="text-[13px] text-gray-400">{lang === 'en' ? 'Loading price…' : 'טוען מחיר…'}</div>
-      )}
-      {state.phase === 'error' && (
-        <div className="text-[13px] text-amber-700">
-          {lang === 'en' ? 'Could not load the price right now.' : 'לא ניתן לטעון את המחיר כרגע.'}
-        </div>
-      )}
+    <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 p-3.5" dir={lang === 'en' ? 'ltr' : 'rtl'}>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-[13px] font-semibold text-emerald-900">{t.title}</span>
+        {m?.mode === 'structural' && !m?.degraded && (
+          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700">{t.structuralBadge}</span>
+        )}
+      </div>
+      {state.phase === 'loading' && <div className="text-[13px] text-gray-400">{t.loading}</div>}
+      {state.phase === 'error' && <div className="text-[13px] text-amber-700">{t.error}</div>}
       {state.phase === 'fallback' && (
-        <div className="text-[13px] leading-relaxed text-gray-600">{state.model?.messageHe}</div>
+        <div className="text-[13px] leading-relaxed text-gray-600">
+          {m?.fallbackKey === 'agent_price_list' ? t.fallback : t.error}
+        </div>
       )}
       {state.phase === 'available' && (
         <div className="space-y-1.5">
-          {state.model.degraded ? (
-            <div className="text-[13px] text-gray-600">
-              {lang === 'en' ? 'See the agent price list.' : 'המחיר יהיה כפי שכתוב במחירון לסוכנים.'}
-            </div>
+          {m.degraded ? (
+            <div className="text-[13px] text-gray-600">{t.degraded}</div>
           ) : (
             <>
-              {(state.model.rows || []).map((row, i) => (
-                <div key={`r${i}`} className="flex items-baseline justify-between gap-3 text-[13.5px] text-gray-800">
-                  <span>{row.labelHe}</span>
-                  <span className="font-medium tabular-nums" dir="ltr">{formatMinor(row.amountMinor)}</span>
+              {(m.rows || []).map((row, i) => {
+                const { label, amountText } = pricingRowText(row, lang);
+                const surcharge = row.type.endsWith('surcharge');
+                return (
+                  <div
+                    key={`r${i}`}
+                    className={`flex items-baseline justify-between gap-3 text-[13.5px] ${surcharge ? 'text-amber-800' : 'text-gray-800'}`}
+                  >
+                    <span>{label}</span>
+                    <span className="font-medium tabular-nums" dir="ltr">{amountText}</span>
+                  </div>
+                );
+              })}
+              {m.mode === 'exact' && totalsRows.length > 0 && (
+                <div className="mt-1.5 space-y-1 border-t border-emerald-100 pt-1.5">
+                  {totalsRows.map((row) => (
+                    <div
+                      key={row.kind}
+                      className={`flex items-baseline justify-between gap-3 ${
+                        row.kind === 'total'
+                          ? 'text-[14px] font-bold text-emerald-900'
+                          : 'text-[12.5px] text-gray-500'
+                      }`}
+                    >
+                      <span>{row.label}</span>
+                      <span className="tabular-nums" dir="ltr">{row.amountText}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-              {(state.model.surcharges || []).map((row, i) => (
-                <div key={`s${i}`} className="flex items-baseline justify-between gap-3 text-[13.5px] text-amber-800">
-                  <span>{row.labelHe}</span>
-                  <span className="font-medium tabular-nums" dir="ltr">
-                    {formatMinor(row.amountMinor)}{surchargeSuffix(row)}
-                  </span>
-                </div>
-              ))}
-              {state.model.totalMinor != null ? (
-                <div className="mt-1.5 flex items-baseline justify-between gap-3 border-t border-emerald-100 pt-1.5 text-[14px] font-bold text-emerald-900">
-                  <span>{lang === 'en' ? 'Expected total per group' : 'סה״כ צפוי לקבוצה'}</span>
-                  <span className="tabular-nums" dir="ltr">{formatMinor(state.model.totalMinor)}</span>
-                </div>
-              ) : (
-                <div className="mt-1 text-[11px] text-gray-400">
-                  {lang === 'en'
-                    ? 'Enter a participant count to see the expected total.'
-                    : 'הזינו מספר משתתפים לחישוב הסכום הצפוי.'}
-                </div>
+              )}
+              {m.mode === 'structural' && (
+                <div className="mt-1 text-[11px] text-gray-400">{t.structuralHint}</div>
               )}
             </>
           )}
@@ -327,6 +340,25 @@ export default function GroupCard({
             </div>
           </div>
 
+          {/* Number of guides — canonically this card's pricing GROUP COUNT
+              (feeds the engine as groupCount; the engine owns distribution). */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <Label required>{t.group.guides}</Label>
+              <input
+                type="number"
+                min="1"
+                max="50"
+                step="1"
+                inputMode="numeric"
+                value={g.groups}
+                onChange={(e) => set('groups', e.target.value)}
+                className={inputCls(p.groups)}
+              />
+              <Err msg={p.groups} />
+            </div>
+          </div>
+
           {/* On-site contact — quiet sub-box. */}
           <div className="rounded-xl bg-blue-50/50 p-3.5">
             <div className="mb-2 text-[13px] font-semibold text-blue-900">{t.group.onSiteTitle}</div>
@@ -376,6 +408,7 @@ export default function GroupCard({
             tourDate={g.tourDate}
             tourTime={g.tourTime}
             participants={g.participants}
+            groups={g.groups}
           />
         </div>
       )}

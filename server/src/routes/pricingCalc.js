@@ -466,6 +466,10 @@ router.post(
         context,
         counts,
         segNameById: new Map(segRows.map((s) => [s.id, s.nameHe])),
+        // 'config' (the Simulator's inspection list: configuration-valid cards,
+        // listable before city/activity are chosen) vs the default 'applicable'
+        // (the Builder: only cards that price the CURRENT context).
+        mode: b.optionsMode === 'config' ? 'config' : 'applicable',
       });
     }
 

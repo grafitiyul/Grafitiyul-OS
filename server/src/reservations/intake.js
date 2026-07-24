@@ -105,6 +105,13 @@ export function validateSubmission(
       p('participants', 'invalid');
     }
 
+    // "מספר מדריכים" — the card's pricing group count (Deal.groups contract).
+    // Required, integer, ≥1; capped like a sane operational number.
+    const groups = Number(g?.groups);
+    if (!Number.isInteger(groups) || groups < 1 || groups > 50) {
+      p('groups', 'invalid');
+    }
+
     const tourLanguage = TOUR_LANGUAGES.includes(g?.tourLanguage) ? g.tourLanguage : null;
 
     // On-site contact (BINDING #5): both-or-nothing keeps the later Contact
@@ -127,6 +134,7 @@ export function validateSubmission(
       tourDate,
       tourTime: TIME_RE.test(tourTime) ? tourTime : null,
       participants: Number.isInteger(participants) ? participants : 0,
+      groups: Number.isInteger(groups) && groups >= 1 ? groups : 1,
       tourLanguage,
       onSiteContactName,
       onSiteContactPhone,

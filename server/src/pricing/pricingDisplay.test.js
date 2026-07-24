@@ -1,69 +1,107 @@
-// Structured pricing description (Part B formatter) — pure, no DB.
+// Structured semantic pricing display — pure, no DB. Covers the applied-row
+// builder (only rows that participated in the calculation), the structural
+// preview, and semantic surcharge typing.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { describeStructure, describeSurcharges } from './pricingDisplay.js';
+import { describeApplied, describeStructure, describeSurcharges } from './pricingDisplay.js';
+import { calculate } from './engine.js';
 
-test('fixed → one row', () => {
-  const d = describeStructure({ priceModel: 'fixed', fixedPriceMinor: 190000n });
-  assert.deepEqual(d.rows, [{ kind: 'fixed', labelHe: 'מחיר קבוע', amountMinor: 190000 }]);
-});
-
-test('per_head → per-participant row (single price)', () => {
-  const d = describeStructure({ priceModel: 'per_head', adultPriceMinor: 15000n, childPriceMinor: 15000n });
-  assert.deepEqual(d.rows, [{ kind: 'perParticipant', labelHe: 'מחיר למשתתף', amountMinor: 15000 }]);
-});
-
-test('tiered → base-up-to-threshold + extra participant (dynamic values)', () => {
-  const d = describeStructure({ priceModel: 'tiered', basePriceMinor: 190000n, baseParticipants: 10, perAdditionalParticipantMinor: 12000n });
-  assert.deepEqual(d.rows, [
-    { kind: 'tier', labelHe: 'עד 10 משתתפים', amountMinor: 190000 },
-    { kind: 'perExtra', labelHe: 'כל משתתף נוסף', amountMinor: 12000 },
-  ]);
-});
-
-test('tiered_group multiple tiers → all tiers in order + extra', () => {
-  const d = describeStructure({
-    priceModel: 'tiered_group', perAdditionalParticipantMinor: 10000n,
-    tiers: [{ uptoParticipants: 12, totalPriceMinor: 150000n, sortOrder: 1 }, { uptoParticipants: 6, totalPriceMinor: 90000n, sortOrder: 0 }],
+const runRule = (rule, counts) =>
+  calculate({
+    priceList: { id: 'pl', nameHe: 'x', currency: 'ILS', isDefault: true, defaultVatMode: 'excluded', defaultVatRate: 0, rules: [rule] },
+    activityType: { id: 'at1' },
+    context: { activityTypeId: 'at1' },
+    counts,
   });
-  assert.deepEqual(d.rows, [
-    { kind: 'tier', labelHe: 'עד 6 משתתפים', amountMinor: 90000 },
-    { kind: 'tier', labelHe: 'עד 12 משתתפים', amountMinor: 150000 },
-    { kind: 'perExtra', labelHe: 'כל משתתף נוסף', amountMinor: 10000 },
-  ]);
-});
 
-test('tiered_group with no per-additional → tiers only', () => {
-  const d = describeStructure({ priceModel: 'tiered_group', tiers: [{ uptoParticipants: 10, totalPriceMinor: 100000n, sortOrder: 0 }] });
-  assert.deepEqual(d.rows, [{ kind: 'tier', labelHe: 'עד 10 משתתפים', amountMinor: 100000 }]);
-});
+const LADDER = {
+  id: 'r1', active: true, priceModel: 'tiered_group', priority: 0,
+  perAdditionalParticipantMinor: 12000n,
+  tiers: [
+    { uptoParticipants: 5, totalPriceMinor: 90000n, sortOrder: 0 },
+    { uptoParticipants: 10, totalPriceMinor: 165000n, sortOrder: 1 },
+  ],
+};
 
-test('ticket_types → per-category rows, total unavailable', () => {
-  const d = describeStructure(
-    { priceModel: 'ticket_types', ticketPrices: [{ ticketTypeId: 'a', priceMinor: 6000n }, { ticketTypeId: 'b', priceMinor: 4000n }] },
-    new Map([['a', 'מבוגר'], ['b', 'ילד']]),
-  );
-  assert.deepEqual(d.rows, [
-    { kind: 'ticket', labelHe: 'מבוגר', amountMinor: 6000 },
-    { kind: 'ticket', labelHe: 'ילד', amountMinor: 4000 },
-  ]);
-  assert.equal(d.totalUnavailable, true);
-});
+// ── applied rows: ONLY what the calculation used ────────────────────────────
 
-test('unknown/unusual model degrades safely (no misleading rows)', () => {
-  const d = describeStructure({ priceModel: 'some_future_model' });
-  assert.deepEqual(d.rows, []);
-  assert.equal(d.degraded, true);
-});
-
-test('surcharges from auto add-on lines are per-group with their amounts', () => {
-  const rows = describeSurcharges([
-    { label: 'תוספת שבת', unitPriceMinor: 25000, quantity: 1 },
-    { label: 'תוספת חג', unitPriceMinor: 30000, quantity: 1 },
-  ]);
+test('20 participants: unused lower tier omitted; applied tier + extra row only', () => {
+  const r = runRule(LADDER, { participantCount: 20, groupCount: 1 });
+  const rows = describeApplied(LADDER, r);
   assert.deepEqual(rows, [
-    { kind: 'surcharge', labelHe: 'תוספת שבת', amountMinor: 25000, perGroup: true },
-    { kind: 'surcharge', labelHe: 'תוספת חג', amountMinor: 30000, perGroup: true },
+    { type: 'tier_up_to', threshold: 10, scope: 'per_group', quantity: 1, unitAmountMinor: 165000, totalMinor: 165000 },
+    { type: 'extra_participant', scope: 'per_participant', quantity: 10, unitAmountMinor: 12000, totalMinor: 120000 },
   ]);
+  // NO "up to 5" row, and the totals reconcile with the engine amount.
+  assert.equal(165000 + 120000, r.netMinor);
+});
+
+test('3 participants: only the applied small tier; no next tier, no extra row', () => {
+  const r = runRule(LADDER, { participantCount: 3, groupCount: 1 });
+  const rows = describeApplied(LADDER, r);
+  assert.deepEqual(rows, [
+    { type: 'tier_up_to', threshold: 5, scope: 'per_group', quantity: 1, unitAmountMinor: 90000, totalMinor: 90000 },
+  ]);
+});
+
+test('groups > 1: applied tier row carries quantity = groups', () => {
+  const r = runRule(LADDER, { participantCount: 16, groupCount: 2 }); // 8+8 → tier 10 each
+  const rows = describeApplied(LADDER, r);
+  assert.deepEqual(rows, [
+    { type: 'tier_up_to', threshold: 10, scope: 'per_group', quantity: 2, unitAmountMinor: 165000, totalMinor: 330000 },
+  ]);
+});
+
+test('fixed: one applied fixed row (quantity = groups)', () => {
+  const rule = { id: 'r', active: true, priceModel: 'fixed', fixedPriceMinor: 130000n, priority: 0 };
+  const rows = describeApplied(rule, runRule(rule, { participantCount: 4, groupCount: 1 }));
+  assert.deepEqual(rows, [{ type: 'fixed_price', scope: 'per_group', quantity: 1, unitAmountMinor: 130000, totalMinor: 130000 }]);
+});
+
+test('per_head: applied per-participant row with quantity = participants', () => {
+  const rule = { id: 'r', active: true, priceModel: 'per_head', adultPriceMinor: 12000n, childPriceMinor: 12000n, priority: 0 };
+  const rows = describeApplied(rule, runRule(rule, { participantCount: 10, adultCount: 10 }));
+  assert.deepEqual(rows, [{ type: 'per_participant', scope: 'per_participant', quantity: 10, unitAmountMinor: 12000, totalMinor: 120000 }]);
+});
+
+test('mixed-tier group split (no faithful decomposition) → null (caller falls back)', () => {
+  // 13p/2g → 7+6 land on different tiers → breakdown null → applied null.
+  const two = { id: 'r', active: true, priceModel: 'tiered_group', priority: 0, perAdditionalParticipantMinor: 10000n,
+    tiers: [{ uptoParticipants: 6, totalPriceMinor: 90000n, sortOrder: 0 }, { uptoParticipants: 12, totalPriceMinor: 150000n, sortOrder: 1 }] };
+  assert.equal(describeApplied(two, runRule(two, { participantCount: 13, groupCount: 2 })), null);
+});
+
+// ── structural preview (no context): full structure, quantity null ──────────
+
+test('structural: all tiers + extra row, quantity null (nothing multiplied)', () => {
+  const s = describeStructure(LADDER);
+  assert.deepEqual(s.rows.map((r) => [r.type, r.threshold ?? null, r.unitAmountMinor, r.quantity]), [
+    ['tier_up_to', 5, 90000, null],
+    ['tier_up_to', 10, 165000, null],
+    ['extra_participant', null, 12000, null],
+  ]);
+});
+
+test('structural: unknown model degrades safely', () => {
+  const s = describeStructure({ priceModel: 'future_model' });
+  assert.deepEqual(s.rows, []);
+  assert.equal(s.degraded, true);
+});
+
+// ── semantic surcharges ─────────────────────────────────────────────────────
+
+test('system שבת addon on Saturday → saturday_surcharge; on chag → holiday_surcharge', () => {
+  const line = { refId: 'sys1', label: 'תוספת שבת/חג', unitPriceMinor: 25000, quantity: 2 };
+  const sat = describeSurcharges([line], { systemAddonId: 'sys1', sabbathType: 'shabbat' });
+  assert.deepEqual(sat, [{ type: 'saturday_surcharge', scope: 'per_group', quantity: 2, unitAmountMinor: 25000, totalMinor: 50000 }]);
+  const hol = describeSurcharges([line], { systemAddonId: 'sys1', sabbathType: 'chag' });
+  assert.equal(hol[0].type, 'holiday_surcharge');
+  const erev = describeSurcharges([line], { systemAddonId: 'sys1', sabbathType: 'erev_chag' });
+  assert.equal(erev[0].type, 'holiday_surcharge');
+});
+
+test('business (non-system) auto addon keeps its catalog label with generic type', () => {
+  const rows = describeSurcharges([{ refId: 'a9', label: 'תוספת שישי', unitPriceMinor: 15000, quantity: 1 }], { systemAddonId: 'sys1', sabbathType: null });
+  assert.deepEqual(rows, [{ type: 'surcharge', scope: 'per_group', quantity: 1, unitAmountMinor: 15000, totalMinor: 15000, labelHe: 'תוספת שישי' }]);
 });
