@@ -1,28 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../../lib/api.js';
+import FileEntryList from '../../common/files/FileEntryList.jsx';
 
-// Deal Files tab — upload (picker + drag & drop, multiple), list, open/download
-// (via the authed signed-redirect endpoint), delete. Reuses the existing private
-// R2 infra; no public URLs are ever produced.
-
-function fmtSize(n) {
-  if (!n) return '';
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function fileEmoji(mime) {
-  const m = String(mime || '');
-  if (m.startsWith('image/')) return '🖼️';
-  if (m === 'application/pdf') return '📕';
-  if (m.startsWith('video/')) return '🎬';
-  if (m.startsWith('audio/')) return '🎵';
-  if (m.includes('word') || m.includes('document')) return '📄';
-  if (m.includes('sheet') || m.includes('excel')) return '📊';
-  if (m.includes('zip') || m.includes('compressed')) return '🗜️';
-  return '📎';
-}
+// Deal Files tab — upload (picker + drag & drop, multiple), plus the unified
+// canonical files list (uploaded DealFiles + system-generated files such as
+// the agent reservation summary) via the ONE FileEntryList renderer.
+// Downloads go through the authed scoped endpoints; no public URLs.
 
 export default function DealFilesTab({ dealId, onChanged }) {
   const [files, setFiles] = useState([]);
@@ -91,6 +74,13 @@ export default function DealFilesTab({ dealId, onChanged }) {
     }
   }
 
+  // Each source has its own scoped download door (association re-verified
+  // server-side per request).
+  const downloadHref = (f) =>
+    f.source === 'reservation_summary'
+      ? api.dealFiles.reservationDocumentUrl(dealId, f.id)
+      : api.dealFiles.downloadUrl(dealId, f.id);
+
   return (
     <div className="space-y-3" dir="rtl">
       {/* Dropzone */}
@@ -135,56 +125,7 @@ export default function DealFilesTab({ dealId, onChanged }) {
           אין עדיין קבצים בדיל.
         </div>
       ) : (
-        <ul className="space-y-2">
-          {files.map((f) => {
-            // Canonical reservation-summary documents are filed by DERIVED
-            // association (never uploaded here) — read-only entries with
-            // their own download door; system documents cannot be deleted.
-            const isReservationDoc = f.source === 'reservation_summary';
-            const href = isReservationDoc
-              ? api.dealFiles.reservationDocumentUrl(dealId, f.id)
-              : api.dealFiles.downloadUrl(dealId, f.id);
-            return (
-              <li key={f.id} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm">
-                <span aria-hidden className="text-[18px] leading-none">{fileEmoji(f.mimeType)}</span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-[13.5px] font-medium text-gray-800">{f.filename}</span>
-                    {isReservationDoc && (
-                      <span className="shrink-0 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700">
-                        סיכום הזמנת סוכן
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-[11.5px] text-gray-500">
-                    {fmtSize(f.sizeBytes)}
-                    {' · '}
-                    {new Date(f.createdAt).toLocaleDateString('he-IL')}
-                    {f.uploadedById && userMap[f.uploadedById] ? ` · ${userMap[f.uploadedById]}` : ''}
-                    {isReservationDoc && f.sessionNo ? ` · בקשה #${f.sessionNo}` : ''}
-                  </div>
-                </div>
-                <a
-                  href={href}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-[12.5px] text-gray-700 hover:bg-gray-50"
-                >
-                  פתיחה
-                </a>
-                {!isReservationDoc && (
-                  <button
-                    type="button"
-                    onClick={() => remove(f)}
-                    className="rounded-lg px-2 py-1 text-[12.5px] text-red-600 hover:bg-red-50"
-                  >
-                    מחיקה
-                  </button>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+        <FileEntryList files={files} downloadHref={downloadHref} onRemove={remove} userMap={userMap} />
       )}
     </div>
   );

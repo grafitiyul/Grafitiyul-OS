@@ -9,6 +9,7 @@ import WorkspaceLayout from '../../../shell/WorkspaceLayout.jsx';
 import TimelineFeed from '../../common/timeline/TimelineFeed.jsx';
 import ReservationLinkSection from './ReservationLinkSection.jsx';
 import LegacyInfoCard from '../../common/LegacyInfoCard.jsx';
+import FileEntryList from '../../common/files/FileEntryList.jsx';
 import { useDirtyWhen } from '../../../lib/dirtyForms.js';
 
 function fmtDate(iso) {
@@ -169,9 +170,10 @@ export default function ContactDetail() {
         contactId={id}
       />
 
-      {/* מסמכים קנוניים שתויקו על איש הקשר (סיכומי הזמנות סוכן). Renders
-          nothing when there are none. */}
-      <ContactDocumentsSection contactId={id} />
+      {/* קבצים — the contact's view into the ONE unified Files system
+          (system-generated canonical files, e.g. agent reservation
+          summaries). Renders nothing while there are none. */}
+      <ContactFilesSection contactId={id} />
 
       {/* מידע ממערכת קודמת — curated legacy data for migrated contacts.
           Renders nothing when the contact has no legacy records. */}
@@ -207,51 +209,30 @@ export default function ContactDetail() {
   );
 }
 
-// Canonical documents filed on the contact — currently agent-reservation
-// summary PDFs (one immutable document per submission, derived association).
-// Read-only: open/download only, no delete for system documents.
-function ContactDocumentsSection({ contactId }) {
-  const [docs, setDocs] = useState(null);
+// קבצים — the contact's canonical files through the SAME unified Files list
+// the Deal Files tab renders (FileEntryList; entry.source picks the scoped
+// download door). No parallel browsing logic, no separate "documents"
+// concept: today the entries are derived system files (agent reservation
+// summaries); a future contact upload store slots into the same list.
+function ContactFilesSection({ contactId }) {
+  const [files, setFiles] = useState(null);
 
   useEffect(() => {
     let live = true;
     api.contacts
-      .reservationDocuments(contactId)
-      .then((d) => { if (live) setDocs(d); })
-      .catch(() => { if (live) setDocs([]); });
+      .files(contactId)
+      .then((d) => { if (live) setFiles(d); })
+      .catch(() => { if (live) setFiles([]); });
     return () => { live = false; };
   }, [contactId]);
 
-  if (!docs?.length) return null;
+  if (!files?.length) return null;
   return (
-    <Section title="מסמכים">
-      <ul className="space-y-2">
-        {docs.map((d) => (
-          <li key={d.id} className="flex items-center gap-3 rounded-lg border border-gray-200 px-3 py-2">
-            <span aria-hidden className="text-[16px] leading-none">📕</span>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="truncate text-[13px] font-medium text-gray-800">{d.filename}</span>
-                <span className="shrink-0 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700">
-                  סיכום הזמנת סוכן
-                </span>
-              </div>
-              <div className="text-[11.5px] text-gray-500">
-                {d.sessionNo ? `בקשה #${d.sessionNo} · ` : ''}
-                {fmtDate(d.generatedAt)}
-              </div>
-            </div>
-            <a
-              href={api.contacts.reservationDocumentUrl(contactId, d.id)}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-[12px] text-gray-700 hover:bg-gray-50"
-            >
-              פתיחה
-            </a>
-          </li>
-        ))}
-      </ul>
+    <Section title="קבצים">
+      <FileEntryList
+        files={files}
+        downloadHref={(f) => api.contacts.reservationDocumentUrl(contactId, f.id)}
+      />
     </Section>
   );
 }

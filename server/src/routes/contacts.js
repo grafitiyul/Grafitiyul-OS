@@ -464,13 +464,17 @@ router.delete(
   }),
 );
 
-// ---------- Canonical documents filed on the contact ----------
-// Reservation-summary PDFs are filed by DERIVED association (the document's
-// session belongs to this contact) — one stored asset, never copied. The list
-// is metadata only; bytes go through the download route below.
+// ---------- Unified Files list for the contact ----------
+// ONE Files system across GOS: every binary artifact surfaces as a file
+// entry (same DTO shape the Deal Files list uses — id, source, readonly,
+// filename, mimeType, sizeBytes, createdAt). Today the contact's entries are
+// DERIVED system files (agent reservation summaries whose session belongs to
+// this contact) — one stored asset, never copied; a future contact upload
+// store merges into this same list. Bytes go only through the scoped
+// download route below.
 
 router.get(
-  '/:id/reservation-documents',
+  '/:id/files',
   handle(async (req, res) => {
     const contact = await prisma.contact.findUnique({
       where: { id: req.params.id },
@@ -482,8 +486,6 @@ router.get(
       orderBy: { generatedAt: 'desc' },
       select: {
         id: true,
-        kind: true,
-        language: true,
         filename: true,
         mimeType: true,
         sizeBytes: true,
@@ -495,12 +497,14 @@ router.get(
     res.json(
       docs.map((d) => ({
         id: d.id,
-        kind: d.kind,
-        language: d.language,
+        contactId: contact.id,
+        source: 'reservation_summary',
+        readonly: true,
         filename: d.filename,
         mimeType: d.mimeType,
         sizeBytes: d.sizeBytes,
-        generatedAt: d.generatedAt,
+        uploadedById: null,
+        createdAt: d.generatedAt,
         sessionNo: d.session?.sessionNo ?? null,
       })),
     );

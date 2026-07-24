@@ -396,8 +396,10 @@ export const api = {
     // qs(undefined) === '' so existing param-less callers are unchanged.
     list: (params) => request(`/api/contacts${qs(params)}`),
     get: (id) => request(`/api/contacts/${id}`),
-    // Canonical documents filed on the contact (reservation summaries).
-    reservationDocuments: (id) => request(`/api/contacts/${id}/reservation-documents`),
+    // Unified Files list for the contact (system-generated canonical files,
+    // e.g. agent reservation summaries — same DTO shape as api.dealFiles.list).
+    files: (id) => request(`/api/contacts/${id}/files`),
+    // Scoped download door for source 'reservation_summary' entries.
     reservationDocumentUrl: (id, documentId) =>
       `/api/contacts/${id}/reservation-documents/${documentId}/download`,
     create: (data) =>
