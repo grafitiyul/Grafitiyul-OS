@@ -120,7 +120,7 @@ export default function AgentReservationPage() {
 
   if (blocked) {
     return (
-      <div className="min-h-screen bg-[#f6f8fb] px-6 py-24 text-center">
+      <div className="min-h-screen bg-gradient-to-b from-[#eef2f8] to-[#e4eaf4] px-6 py-24 text-center">
         <div className="mx-auto max-w-md space-y-3 rounded-2xl border border-gray-200 bg-white p-8">
           <div className="text-3xl">🔒</div>
           <div dir="rtl" className="text-[15px] font-medium text-gray-800">{L.he.blocked[blocked]}</div>
@@ -130,7 +130,7 @@ export default function AgentReservationPage() {
     );
   }
   if (!boot || !lang) {
-    return <div className="min-h-screen bg-[#f6f8fb] p-10 text-center text-sm text-gray-400">…</div>;
+    return <div className="min-h-screen bg-gradient-to-b from-[#eef2f8] to-[#e4eaf4] p-10 text-center text-sm text-gray-400">…</div>;
   }
 
   const agentName = lang === 'en' ? boot.agent.nameEn || boot.agent.nameHe : boot.agent.nameHe;
@@ -338,7 +338,7 @@ export default function AgentReservationPage() {
       <div className="mx-auto max-w-3xl">
         {/* Booker details (פרטי המזמין) — a normal full-width section near the
             top of the form (read-only identity from the link token). */}
-        <section className="mb-6 rounded-2xl border border-blue-200 bg-white p-5">
+        <section className="mb-6 rounded-2xl border border-blue-200 bg-white p-5 shadow-[0_1px_2px_rgba(16,24,40,0.06),0_16px_36px_-14px_rgba(37,99,235,0.22)]">
           <h3 className="flex items-center gap-2 text-[15px] font-bold text-gray-900">
             <span className="text-blue-600">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -400,7 +400,7 @@ export default function AgentReservationPage() {
               (boot.legalTexts) so the text shown here is byte-identical to what
               the server freezes into the session + summary PDF at submit; the
               local L table is only a fallback (design preview / older boot). */}
-          <div className="mt-6 rounded-2xl border border-blue-200 bg-white p-5">
+          <div className="mt-6 rounded-2xl border border-blue-200 bg-white p-5 shadow-[0_1px_2px_rgba(16,24,40,0.06),0_16px_36px_-14px_rgba(37,99,235,0.22)]">
             <label className="flex cursor-pointer items-start gap-2.5 text-[13px] leading-relaxed text-gray-700">
               <input
                 type="checkbox"
@@ -423,7 +423,7 @@ export default function AgentReservationPage() {
 
           {/* Invoice delivery — independent recipients: organizer and/or the
               finance contact (both allowed; at least one required). */}
-          <div className="mt-4 rounded-2xl border border-blue-200 bg-white p-5">
+          <div className="mt-4 rounded-2xl border border-blue-200 bg-white p-5 shadow-[0_1px_2px_rgba(16,24,40,0.06),0_16px_36px_-14px_rgba(37,99,235,0.22)]">
             <div className="mb-3 text-[14px] font-semibold text-gray-900">{t.invoice.title}</div>
             <div className="space-y-2.5">
               <label className="flex cursor-pointer items-center gap-2 text-[13px] text-gray-700">
@@ -529,7 +529,7 @@ export default function AgentReservationPage() {
           </div>
 
           {/* Signature (one per request — session-wide) + confirmation + submit. */}
-          <div className="mt-4 space-y-4 rounded-2xl border border-blue-200 bg-white p-5">
+          <div className="mt-4 space-y-4 rounded-2xl border border-blue-200 bg-white p-5 shadow-[0_1px_2px_rgba(16,24,40,0.06),0_16px_36px_-14px_rgba(37,99,235,0.22)]">
             <div>
               <div className="mb-2 text-[14px] font-semibold text-gray-900">{t.footer.signatureTitle}</div>
               <SignatureBox t={t} value={signature} onChange={setSignature} error={formError === t.problems.signature} />
@@ -569,7 +569,7 @@ function IdRow({ label, value, ltr }) {
 // flips at the root so RTL/EN mirror correctly.
 function Shell({ t, lang, onLang, children }) {
   return (
-    <div dir={t.dir} className="min-h-screen bg-[#f6f8fb] text-gray-900">
+    <div dir={t.dir} className="min-h-screen bg-gradient-to-b from-[#eef2f8] to-[#e4eaf4] text-gray-900">
       <div className="mx-auto max-w-6xl px-4 pb-20 pt-5 sm:px-6">
         <header className="mb-8">
           <div className="flex items-center justify-between gap-3">

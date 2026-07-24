@@ -225,7 +225,7 @@ export default function GroupCard({
   // the page background without feeling boxed (design decision 2026-07-24;
   // applies to every card in the reservation form's design language).
   return (
-    <section className="rounded-2xl border border-blue-200 bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+    <section className="rounded-2xl border border-blue-200 bg-white shadow-[0_1px_2px_rgba(16,24,40,0.06),0_16px_36px_-14px_rgba(37,99,235,0.22)]">
       {/* Header — group number leading; activity badge; collapse + delete. */}
       <div className="flex items-center gap-2.5 px-5 pt-4 pb-1">
         <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600/10 text-blue-700">
