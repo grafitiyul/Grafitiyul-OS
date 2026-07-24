@@ -5,6 +5,11 @@
 const EVENT_STYLE = {
   file_uploaded: { label: 'קובץ הועלה', cls: 'bg-blue-50 text-blue-700 ring-blue-200', emoji: '📎' },
   file_deleted: { label: 'קובץ נמחק', cls: 'bg-gray-100 text-gray-500 ring-gray-200', emoji: '🗑️' },
+  agent_reservation_summary_generated: {
+    label: 'הופק סיכום הזמנת סוכן',
+    cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+    emoji: '📕',
+  },
 };
 
 export default function FileEventRow({ entry }) {
