@@ -395,7 +395,11 @@ export default function AgentReservationPage() {
           )}
 
           {/* Flexible-cancellation acknowledgement — mandatory, before the
-              signature. Acceptance + timestamp are frozen on the session. */}
+              signature. Acceptance + timestamp are frozen on the session.
+              LEGAL: the statement renders from the SERVER's canonical registry
+              (boot.legalTexts) so the text shown here is byte-identical to what
+              the server freezes into the session + summary PDF at submit; the
+              local L table is only a fallback (design preview / older boot). */}
           <div className="mt-6 rounded-2xl border border-gray-200/80 bg-white p-5">
             <label className="flex cursor-pointer items-start gap-2.5 text-[13px] leading-relaxed text-gray-700">
               <input
@@ -408,7 +412,7 @@ export default function AgentReservationPage() {
               />
               <span>
                 <span className="text-red-500">* </span>
-                {t.cancellation.lines.map((line, i) => (
+                {(boot?.legalTexts?.[lang || 'he']?.cancellation?.lines || t.cancellation.lines).map((line, i) => (
                   <span key={i} className={i === 0 ? 'font-medium text-gray-800' : 'block'}>
                     {line}{i === 0 ? <br /> : null}
                   </span>

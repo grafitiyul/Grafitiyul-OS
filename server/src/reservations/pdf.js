@@ -600,13 +600,22 @@ export async function buildReservationSummaryLayout(snapshot, opts = {}) {
 
   // Invoice delivery — the checkbox group as submitted: BOTH options with
   // vector checked/unchecked boxes, preserving each label and state.
+  //
+  // LEGAL IMMUTABILITY: every legal sentence below renders from the FROZEN
+  // snapshot (snapshot.legal + each confirmation's frozen textLines) when the
+  // session recorded it; the module's L tables are only the fallback for
+  // legacy snapshots issued before wording was frozen. Editing the registry
+  // can therefore never reword a previously-submitted reservation.
+  const legal = snapshot.legal || null;
   const inv = snapshot.invoice || null;
   const closing = [];
   if (inv && (inv.toOrganizer !== undefined || inv.toFinance !== undefined)) {
+    const invLabel = (frozenStem, legacyFn, details) =>
+      frozenStem ? `${frozenStem}${details ? ` — ${details}` : ''}` : legacyFn(details);
     closing.push({ divider: true, spaceAfter: 10 });
-    closing.push({ text: clean(t.invoiceTitle), fontSize: 12.5, spaceAfter: 4 });
+    closing.push({ text: clean(legal?.invoice?.title || t.invoiceTitle), fontSize: 12.5, spaceAfter: 4 });
     closing.push({
-      text: clean(t.invOrganizer(booker.name || '')),
+      text: clean(invLabel(legal?.invoice?.toOrganizer, t.invOrganizer, booker.name || '')),
       fontSize: 11,
       color: inv.toOrganizer ? '#111827' : '#9ca3af',
       check: inv.toOrganizer ? 'checked' : 'unchecked',
@@ -616,7 +625,7 @@ export async function buildReservationSummaryLayout(snapshot, opts = {}) {
       .filter(Boolean)
       .join(' · ');
     closing.push({
-      text: clean(t.invFinance(inv.toFinance ? financeParts : '')),
+      text: clean(invLabel(legal?.invoice?.toFinance, t.invFinance, inv.toFinance ? financeParts : '')),
       fontSize: 11,
       color: inv.toFinance ? '#111827' : '#9ca3af',
       check: inv.toFinance ? 'checked' : 'unchecked',
@@ -624,8 +633,31 @@ export async function buildReservationSummaryLayout(snapshot, opts = {}) {
     });
   }
   const confirmations = Array.isArray(snapshot.confirmations) ? snapshot.confirmations : [];
-  if (confirmations.some((c) => c?.key === 'flexible_cancellation')) {
-    closing.push({ text: clean(t.confirmed), fontSize: 10, color: '#374151', check: true });
+  const cancellation = confirmations.find((c) => c?.key === 'flexible_cancellation');
+  if (cancellation) {
+    // The EXACT accepted statement, line for line (frozen on the confirmation at
+    // submit; snapshot.legal is the same registry text). Legacy sessions without
+    // frozen text keep the historical one-line summary.
+    const frozenLines =
+      (Array.isArray(cancellation.textLines) && cancellation.textLines.length
+        ? cancellation.textLines
+        : null) ||
+      (Array.isArray(legal?.cancellation?.lines) && legal.cancellation.lines.length
+        ? legal.cancellation.lines
+        : null);
+    if (frozenLines) {
+      frozenLines.forEach((line, i) => {
+        closing.push({
+          text: clean(line),
+          fontSize: 10,
+          color: '#374151',
+          ...(i === 0 ? { check: true } : {}),
+          spaceAfter: i === frozenLines.length - 1 ? 0 : 2,
+        });
+      });
+    } else {
+      closing.push({ text: clean(t.confirmed), fontSize: 10, color: '#374151', check: true });
+    }
   }
   if (closing.length) blocks.push({ items: closing });
 
@@ -717,7 +749,8 @@ export async function buildReservationSummaryLayout(snapshot, opts = {}) {
     hPct: 4,
     fontSize: 9,
     color: '#6b7280',
-    text: clean(t.disclaimer),
+    // Frozen disclaimer wins (legal immutability); L-table only for legacy.
+    text: clean(legal?.disclaimer || t.disclaimer),
     align,
   });
 

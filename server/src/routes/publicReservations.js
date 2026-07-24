@@ -27,6 +27,7 @@ import {
   jsonSafe,
 } from '../reservations/document.js';
 import { resolveAgentPricing } from '../pricing/agentPricing.js';
+import { LEGAL_TEXTS, legalTextsFor } from '../reservations/legalTexts.js';
 import { createRateLimiter } from '../reservations/rateLimit.js';
 import { financeContactDisplay } from '../organizations/financeContact.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
@@ -151,6 +152,10 @@ router.get(
       defaultLanguage: r.link.defaultLanguage,
       maxGroups: MAX_GROUPS,
       requiredConfirmations: REQUIRED_CONFIRMATIONS.map((c) => c.key),
+      // Canonical legal wording (both languages — the form toggles live). The
+      // form MUST render the acceptance statement from this payload so the text
+      // the agent sees is byte-identical to what gets frozen at submit.
+      legalTexts: LEGAL_TEXTS,
       catalog,
     });
   }),
@@ -251,6 +256,12 @@ router.post(
     const payloadSnapshot = {
       ...rest,
       pricingByGroup,
+      // LEGAL IMMUTABILITY: the exact contractual wording (cancellation
+      // statement, disclaimer, invoice-delivery labels) in the submission
+      // language, frozen verbatim from the ONE registry the form rendered.
+      // The summary PDF renders legal content from THIS block only — later
+      // registry edits can never reword an already-submitted reservation.
+      legal: legalTextsFor(validated.session.language),
       invoice: {
         toOrganizer: validated.invoice.toOrganizer,
         toFinance: validated.invoice.toFinance,

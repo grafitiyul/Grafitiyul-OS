@@ -24,7 +24,10 @@ import { prisma } from '../db.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
 import { buildReservationSummaryPdf } from './pdf.js';
 
-export const GENERATOR_VERSION = 'v1';
+// v2: the snapshot carries the FROZEN legal wording (payloadSnapshot.legal +
+// per-confirmation textLines) and the PDF renders legal content from it —
+// registry edits can never reword an already-submitted reservation.
+export const GENERATOR_VERSION = 'v2';
 
 // Human-readable, ASCII-safe (Content-Disposition friendly) filename.
 export function reservationDocumentFilename(sessionNo) {
@@ -98,7 +101,13 @@ export function buildDocumentSnapshot(session, { generatedAt = new Date() } = {}
           financePhone: inv.financePhone || null,
         }
       : null,
+    // Accepted confirmations WITH their frozen wording (textLines) — the exact
+    // statement the agent checked, never re-rendered from today's registry.
     confirmations: jsonSafe(session.legalConfirmations) || [],
+    // The frozen legal wording block (cancellation/disclaimer/invoice labels)
+    // in the submission language. Null on legacy sessions — the renderer then
+    // falls back to its historical built-in wording.
+    legal: jsonSafe(session.payloadSnapshot?.legal) || null,
     signature: {
       signerName: session.signerName || null,
       method: session.signatureMethod || null,

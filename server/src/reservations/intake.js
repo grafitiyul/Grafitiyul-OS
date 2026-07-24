@@ -9,6 +9,7 @@ import { prisma } from '../db.js';
 import { israelToday, isValidDate } from '../lib/israelDate.js';
 import { normalizePhoneIntl } from '../whatsapp/phone.js';
 import { setOrganizationFinanceContact } from '../organizations/financeContact.js';
+import { legalTextsFor } from './legalTexts.js';
 
 export const MAX_GROUPS = 30;
 export const MAX_SIGNATURE_BYTES = 5 * 1024 * 1024; // signers.js convention
@@ -205,6 +206,14 @@ export function validateSubmission(
   if (problems.length) return { problems };
 
   const acceptedAt = new Date().toISOString();
+  // LEGAL IMMUTABILITY: each accepted confirmation freezes the EXACT statement
+  // (line for line, in the submission language) alongside the key/version, so
+  // the session — and the summary document built from it — remains a complete
+  // historical legal record even if the registry wording later changes.
+  const legal = legalTextsFor(language);
+  const confirmationText = {
+    flexible_cancellation: legal.cancellation.lines,
+  };
   return {
     invoice: {
       toOrganizer,
@@ -221,7 +230,14 @@ export function validateSubmission(
       signerName,
       signatureMethod,
       signatureBytes,
-      legalConfirmations: REQUIRED_CONFIRMATIONS.map((c) => ({ ...c, acceptedAt })),
+      legalConfirmations: REQUIRED_CONFIRMATIONS.map((c) => ({
+        ...c,
+        acceptedAt,
+        language,
+        legalTextsVersion: legal.version,
+        // The exact accepted wording, frozen verbatim (never re-rendered later).
+        textLines: confirmationText[c.key] || null,
+      })),
     },
     groups,
   };
