@@ -203,6 +203,9 @@ export default function AgentReservationPage() {
           tourDate: g.tourDate,
           tourTime: g.tourTime,
           participants: Number(g.participants),
+          // "מספר מדריכים" — the card's pricing group count. The server
+          // REQUIRES it (intake validation); omitting it fails every submit.
+          groups: Number(g.groups),
           onSiteContactName: g.onSiteContactName || null,
           onSiteContactPhone: g.onSiteContactPhone || null,
           notes: g.notes || null,
@@ -235,7 +238,7 @@ export default function AgentReservationPage() {
       sessionStorage.removeItem(draftKey(token));
       setResult(r.session);
       window.scrollTo({ top: 0 });
-      schedulePoll();
+      if (r.session.groups.some((g) => !g.orderNo) || !r.session.documentReady) schedulePoll();
     } catch (e) {
       if (e?.status === 422 && e.payload?.problems) {
         setServerProblems(e.payload.problems);
@@ -255,7 +258,9 @@ export default function AgentReservationPage() {
       try {
         const r = await api.publicReservations.status(token, submissionKey);
         setResult(r.session);
-        if (r.session.groups.some((g) => !g.orderNo)) schedulePoll();
+        // Keep polling until every group has its GOS number AND the canonical
+        // summary PDF is stored (documentReady gates the download button).
+        if (r.session.groups.some((g) => !g.orderNo) || !r.session.documentReady) schedulePoll();
       } catch {
         /* transient — the numbers arrive on the next successful poll */
       }
@@ -295,12 +300,22 @@ export default function AgentReservationPage() {
             ))}
           </div>
           <div className="mt-6 flex flex-col items-center gap-2 sm:flex-row sm:justify-center">
-            <a
-              href={`/api/public/reservations/${token}/session/${submissionKey}/pdf`}
-              className="w-full rounded-xl bg-gray-900 px-6 py-2.5 text-center text-[14px] font-semibold text-white hover:brightness-110 sm:w-auto"
-            >
-              {t.thanks.downloadPdf}
-            </a>
+            {result.documentReady ? (
+              <a
+                href={`/api/public/reservations/${token}/session/${submissionKey}/pdf`}
+                className="w-full rounded-xl bg-gray-900 px-6 py-2.5 text-center text-[14px] font-semibold text-white hover:brightness-110 sm:w-auto"
+              >
+                {t.thanks.downloadPdf}
+              </a>
+            ) : (
+              <button
+                type="button"
+                disabled
+                className="w-full cursor-wait rounded-xl bg-gray-400 px-6 py-2.5 text-center text-[14px] font-semibold text-white sm:w-auto"
+              >
+                {t.thanks.preparingPdf}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => window.location.reload()}
@@ -317,8 +332,27 @@ export default function AgentReservationPage() {
   // ── form ───────────────────────────────────────────────────────────────────
   return (
     <Shell t={t} lang={lang} onLang={setLang}>
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-        {/* Main column — the groups. */}
+      <div className="mx-auto max-w-3xl">
+        {/* Booker details (פרטי המזמין) — a normal full-width section near the
+            top of the form (read-only identity from the link token). */}
+        <section className="mb-6 rounded-2xl border border-gray-200/80 bg-white p-5">
+          <h3 className="flex items-center gap-2 text-[15px] font-bold text-gray-900">
+            <span className="text-blue-600">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path d="M12 12a4 4 0 100-8 4 4 0 000 8zM4 20a8 8 0 0116 0" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+              </svg>
+            </span>
+            {t.agentCard.title}
+          </h3>
+          <dl className="mt-3 grid grid-cols-1 gap-3 text-[13px] sm:grid-cols-2 lg:grid-cols-4">
+            <IdRow label={t.agentCard.name} value={agentName} />
+            {boot.agent.phone && <IdRow label={t.agentCard.phone} value={boot.agent.phone} ltr />}
+            {boot.agent.email && <IdRow label={t.agentCard.email} value={boot.agent.email} ltr />}
+            <IdRow label={t.agentCard.company} value={boot.organization.name} />
+          </dl>
+        </section>
+
+        {/* The groups. */}
         <div>
           <h2 className="mb-3 text-[17px] font-bold text-gray-900">{t.groupsTitle}</h2>
           <div className="space-y-4">
@@ -504,26 +538,6 @@ export default function AgentReservationPage() {
             </button>
           </div>
         </div>
-
-        {/* Sidebar — booking-contact identity (פרטי המזמין). */}
-        <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
-          <div className="rounded-2xl border border-gray-200/80 bg-white p-5">
-            <h3 className="flex items-center gap-2 text-[15px] font-bold text-gray-900">
-              <span className="text-blue-600">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <path d="M12 12a4 4 0 100-8 4 4 0 000 8zM4 20a8 8 0 0116 0" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-                </svg>
-              </span>
-              {t.agentCard.title}
-            </h3>
-            <dl className="mt-3 space-y-2.5 text-[13px]">
-              <IdRow label={t.agentCard.name} value={agentName} />
-              {boot.agent.phone && <IdRow label={t.agentCard.phone} value={boot.agent.phone} ltr />}
-              {boot.agent.email && <IdRow label={t.agentCard.email} value={boot.agent.email} ltr />}
-              <IdRow label={t.agentCard.company} value={boot.organization.name} />
-            </dl>
-          </div>
-        </aside>
       </div>
     </Shell>
   );

@@ -4960,13 +4960,39 @@ model ReservationSession {
   createdAt          DateTime              @default(now())
   updatedAt          DateTime              @updatedAt
 
-  groups ReservationGroup[]
+  groups   ReservationGroup[]
+  document ReservationDocument?
 
   @@index([status, nextRetryAt])
   @@index([contactId])
   @@index([organizationId])
   @@index([linkId])
   @@index([submittedAt])
+}
+
+// THE canonical reservation-summary document — exactly ONE per successfully
+// processed session (`sessionId` unique IS the idempotency anchor; a concurrent
+// generation loses the P2002 race and adopts the winner). Immutable after
+// creation: `pdfBytes` is the final artifact (FinalDocument convention — bytes
+// in the DB, no R2 dependency) and `contentSnapshot` freezes every value the
+// document renders (booker identity, group labels, pricing, deal orderNos), so
+// later catalog/contact/pricing edits can never change an issued document.
+// Contact and Deal filing is DERIVED, never copied: the booker's Contact via
+// session.contactId, each Deal via its ReservationGroup.createdDealId — one
+// stored asset, N associations, zero duplicated binaries.
+model ReservationDocument {
+  id               String             @id @default(cuid())
+  session          ReservationSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sessionId        String             @unique
+  kind             String             @default("agent_summary")
+  language         String
+  filename         String
+  mimeType         String             @default("application/pdf")
+  sizeBytes        Int
+  pdfBytes         Bytes
+  contentSnapshot  Json
+  generatorVersion String             @default("v1")
+  generatedAt      DateTime           @default(now())
 }
 
 // One group inside a session — the exactly-once unit of work: each group

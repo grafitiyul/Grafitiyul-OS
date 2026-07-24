@@ -1,5 +1,11 @@
-// Travel Agency Reservations — the customer's official reservation copy
-// (BINDING #7/#8): "הורד הזמנה (PDF)" on the Thank-You page.
+// Travel Agency Reservations — THE canonical reservation-summary PDF
+// ("סיכום הזמנת פעילות לסוכני תיירות").
+//
+// Input contract: a FROZEN content snapshot (built once by
+// reservations/document.js when the session finishes processing) — booker
+// identity, group labels, pricing models and Deal order numbers are all
+// values-as-submitted/values-as-created, never live catalog reads. The
+// function is pure: the same snapshot always renders the identical document.
 //
 // Generated THROUGH the canonical Documents engine — every glyph is drawn by
 // services/pdfRender.js `renderFinalPdf` (Heebo font, the load-bearing
@@ -10,17 +16,25 @@
 // are exact — long notes, long names and long addresses push content down
 // and onto the next page instead of overlapping. NO second PDF engine.
 //
-// Layout contract (QA 2026-07-18):
+// Layout contract (QA 2026-07-18, extended for the summary document):
 //   - notes render in FULL (paragraph breaks + blank lines preserved, long
 //     words/emails character-wrapped) — never truncated, never overflowing
 //     the margins;
 //   - a group block is kept on one page when it fits, split at line level
 //     when it is taller than a page;
+//   - pricing rows are two independent runs — label on the leading edge,
+//     amount on the trailing edge as a PURE-LTR string — so the semantic
+//     order "qty × unit = total" can never be bidi-reordered;
+//   - checkboxes are VECTOR marks (outlined square + drawn check), never
+//     font glyphs or form widgets — identical in every viewer and in print;
 //   - the signature/disclaimer footer is pinned to the bottom of the final
 //     page — if content reaches into the footer zone, the footer moves to
 //     its own page;
 //   - EN copies are left-aligned, HE copies right-aligned (mirrored layout).
 
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { PDFDocument } from 'pdf-lib';
 import {
   renderFinalPdf,
@@ -29,6 +43,23 @@ import {
   supportedTextFilter,
   NOTE_LINE_HEIGHT_RATIO,
 } from '../services/pdfRender.js';
+import { formatMinor, formatQuantityRow } from '../lib/money.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Brand logo for the document header — server-owned copy of the canonical
+// asset (232×202 PNG). Loaded once; absence degrades to a text-only header.
+const LOGO_PNG = path.resolve(__dirname, '../../assets/brand/logo.png');
+let logoCache;
+function logoBytes() {
+  if (logoCache === undefined) {
+    try {
+      logoCache = fs.readFileSync(LOGO_PNG);
+    } catch {
+      logoCache = null;
+    }
+  }
+  return logoCache;
+}
 
 const A4 = { w: 595.28, h: 841.89 };
 const MARGIN_X_PCT = 8;
@@ -41,27 +72,56 @@ const TOP_REST_PT = (8 / 100) * A4.h;
 const BOTTOM_PT = (92 / 100) * A4.h; // content floor on regular pages
 const FOOTER_TOP_PT = (74 / 100) * A4.h; // content floor on the footer page
 
-// Check-mark gutter for confirmation lines (pt → pct of page width).
+// Logo box (header, leading edge). Height fixed; width follows the PNG's
+// true aspect ratio at build time.
+const LOGO_H_PCT = 4.6;
+
+// Vector checkbox metrics (pt → pct of page dimensions).
 const CHECK_W_PCT = 1.7;
 const CHECK_GUTTER_PCT = 2.8;
 
+// Amount column: gap between the label run and the trailing amount run.
+const ROW_GAP_PCT = 2;
+
 const L = {
   he: {
-    title: 'אישור קבלת בקשת הזמנה',
+    title: 'סיכום הזמנת פעילות לסוכני תיירות',
     brand: 'גרפיטיול',
     request: (no) => `בקשה מספר ${no}`,
     submitted: (d) => `הוגשה בתאריך ${d}`,
-    agent: (name, org) => `סוכן: ${name} · ${org}`,
     totals: (g, p) => `${g} קבוצות · ${p} משתתפים סה״כ`,
+    bookerTitle: 'פרטי המזמין',
+    bookerName: (v) => `שם: ${v}`,
+    bookerPhone: (v) => `טלפון: ${v}`,
+    bookerEmail: (v) => `אימייל: ${v}`,
+    bookerCompany: (v) => `חברת נסיעות: ${v}`,
     group: (i) => `קבוצה ${i}`,
     order: (no) => `מספר הזמנה: GOS-${no}`,
     orderPending: 'מספר הזמנה: יימסר באישור',
+    city: (v) => `עיר: ${v}`,
+    activity: (v) => `פעילות: ${v}`,
     when: (d, t) => `תאריך: ${d}${t ? ` · שעה: ${t}` : ''}`,
-    where: (loc, prod) => [loc, prod].filter(Boolean).join(' · '),
     participants: (n) => `משתתפים: ${n}`,
+    guides: (n) => `מספר מדריכים: ${n}`,
     tourLanguage: (l2) => `שפת הסיור: ${l2}`,
     onSite: (n, p) => `נציג בשטח: ${n}${p ? ` · ${p}` : ''}`,
     notes: (t) => `הערות: ${t}`,
+    pricingTitle: 'מחיר לסוכנים',
+    row: {
+      fixed_price: () => 'מחיר קבוע',
+      per_participant: () => 'מחיר למשתתף',
+      tier_up_to: (n) => `עד ${n} משתתפים`,
+      extra_participant: () => 'כל משתתף נוסף',
+      saturday_surcharge: () => 'תוספת שבת/חג',
+      holiday_surcharge: () => 'תוספת שבת/חג',
+    },
+    subtotal: 'צפי להזמנה זו',
+    vat: (rate) => (rate != null ? `מע״מ (${rate}%)` : 'מע״מ'),
+    vatExempt: 'פטור ממע״מ',
+    total: 'סה״כ לתשלום',
+    priceFallback:
+      'החישוב האוטומטי של המחיר לא זמין למוצר זה, המחיר יהיה כפי שכתוב במחירון לסוכנים.',
+    priceDegraded: 'המחיר יהיה כפי שכתוב במחירון לסוכנים.',
     invoiceTitle: 'משלוח חשבונית',
     invOrganizer: (name) => `למזמין ההזמנה${name ? ` — ${name}` : ''}`,
     invFinance: (parts) => `לאיש הכספים${parts ? ` — ${parts}` : ''}`,
@@ -71,26 +131,49 @@ const L = {
     signedOn: (d) => `נחתם בתאריך ${d}`,
     continued: (no) => `גרפיטיול · בקשה מספר ${no} — המשך`,
     pageOf: (i, n) => `עמוד ${i} מתוך ${n}`,
+    generated: (no, d) => `בקשה מספר ${no} · המסמך הופק בתאריך ${d}`,
     disclaimer:
-      'מסמך זה מאשר את קבלת בקשת ההזמנה בלבד. ההזמנה תיכנס לתוקף רק לאחר אישור סופי של גרפיטיול לכל קבוצה.',
+      'מסמך זה מסכם את בקשת ההזמנה כפי שהוגשה. ההזמנה תיכנס לתוקף רק לאחר אישור סופי של גרפיטיול לכל קבוצה.',
     langNames: { he: 'עברית', en: 'אנגלית', es: 'ספרדית', fr: 'צרפתית', ru: 'רוסית' },
   },
   en: {
-    title: 'Reservation Request Received',
+    title: 'Travel Agent Activity Reservation Summary',
     brand: 'Grafitiyul',
     request: (no) => `Request #${no}`,
     submitted: (d) => `Submitted on ${d}`,
-    agent: (name, org) => `Agent: ${name} · ${org}`,
     totals: (g, p) => `${g} groups · ${p} participants in total`,
+    bookerTitle: 'Booker details',
+    bookerName: (v) => `Name: ${v}`,
+    bookerPhone: (v) => `Phone: ${v}`,
+    bookerEmail: (v) => `Email: ${v}`,
+    bookerCompany: (v) => `Travel company: ${v}`,
     group: (i) => `Group ${i}`,
     order: (no) => `Order number: GOS-${no}`,
     orderPending: 'Order number: assigned upon confirmation',
+    city: (v) => `City: ${v}`,
+    activity: (v) => `Activity: ${v}`,
     when: (d, t) => `Date: ${d}${t ? ` · Time: ${t}` : ''}`,
-    where: (loc, prod) => [loc, prod].filter(Boolean).join(' · '),
     participants: (n) => `Participants: ${n}`,
+    guides: (n) => `Number of guides: ${n}`,
     tourLanguage: (l2) => `Tour language: ${l2}`,
     onSite: (n, p) => `On-site contact: ${n}${p ? ` · ${p}` : ''}`,
     notes: (t) => `Notes: ${t}`,
+    pricingTitle: 'Agent price',
+    row: {
+      fixed_price: () => 'Fixed price',
+      per_participant: () => 'Price per participant',
+      tier_up_to: (n) => `Up to ${n} participants`,
+      extra_participant: () => 'Each additional participant',
+      saturday_surcharge: () => 'Saturday / Holiday surcharge',
+      holiday_surcharge: () => 'Saturday / Holiday surcharge',
+    },
+    subtotal: 'Expected for this reservation',
+    vat: (rate) => (rate != null ? `VAT (${rate}%)` : 'VAT'),
+    vatExempt: 'VAT exempt',
+    total: 'Total to pay',
+    priceFallback:
+      'Automatic price calculation is not available for this product. The price will be according to the agent price list.',
+    priceDegraded: 'The price will be according to the agent price list.',
     invoiceTitle: 'Invoice delivery',
     invOrganizer: (name) => `To the booker${name ? ` — ${name}` : ''}`,
     invFinance: (parts) => `To the finance contact${parts ? ` — ${parts}` : ''}`,
@@ -100,8 +183,9 @@ const L = {
     signedOn: (d) => `Signed on ${d}`,
     continued: (no) => `Grafitiyul · Request #${no} — continued`,
     pageOf: (i, n) => `Page ${i} of ${n}`,
+    generated: (no, d) => `Request #${no} · document generated on ${d}`,
     disclaimer:
-      'This document confirms receipt of the reservation request only. The reservation becomes final only after confirmation by Grafitiyul for each group.',
+      'This document summarizes the reservation request as submitted. The reservation becomes final only after confirmation by Grafitiyul for each group.',
     langNames: { he: 'Hebrew', en: 'English', es: 'Spanish', fr: 'French', ru: 'Russian' },
   },
 };
@@ -111,9 +195,16 @@ const fmtDate = (ymd) => {
   return m ? `${m[3]}.${m[2]}.${m[1]}` : String(ymd || '');
 };
 
+const fmtIsoDate = (iso) => {
+  const d = iso ? new Date(iso) : null;
+  return d && !Number.isNaN(d.getTime()) ? fmtDate(d.toISOString().slice(0, 10)) : '';
+};
+
+const fmtInt = (n) => String(Math.trunc(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
 // PNG pixel dimensions from the IHDR chunk (always at a fixed offset in a
-// valid PNG — intake verified the magic). Used to place the drawn signature
-// with its TRUE aspect ratio instead of stretching it into a fixed box.
+// valid PNG — intake verified the magic). Used to place drawn images with
+// their TRUE aspect ratio instead of stretching them into a fixed box.
 export function pngDimensions(buf) {
   if (!Buffer.isBuffer(buf) || buf.length < 24) return null;
   const w = buf.readUInt32BE(16);
@@ -121,11 +212,91 @@ export function pngDimensions(buf) {
   return w > 0 && h > 0 ? { w, h } : null;
 }
 
+// ── pricing model → flow items ───────────────────────────────────────────────
+// Renders the FROZEN agent-pricing display model (pricing/pricingDisplay.js
+// semantics) exactly as the form showed it: applied rows ("qty × unit =
+// total" for quantity > 1), Saturday/holiday surcharges, then the structured
+// VAT totals. Unavailable/structural models degrade to the same price-list
+// fallback sentence the form uses.
+function pricingRowLabel(row, t) {
+  const fn = t.row[row.type];
+  if (fn) return fn(row.threshold != null ? fmtInt(row.threshold) : '');
+  return row.labelHe || '';
+}
+
+function pricingRowAmount(row) {
+  const qty = Number(row.quantity) || 0;
+  if (qty > 1) return formatQuantityRow(qty, row.unitAmountMinor, row.totalMinor);
+  return formatMinor(row.totalMinor != null ? row.totalMinor : row.unitAmountMinor);
+}
+
+function pricingItems(model, t, clean) {
+  const items = [{ text: clean(t.pricingTitle), fontSize: 11.5, color: '#065f46', spaceAfter: 3 }];
+  if (!model || model.available !== true || model.degraded) {
+    items.push({ text: clean(t.priceFallback), fontSize: 10, color: '#6b7280', spaceAfter: 0 });
+    return items;
+  }
+  for (const row of model.rows || []) {
+    items.push({
+      rowLabel: clean(pricingRowLabel(row, t)),
+      rowAmount: pricingRowAmount(row),
+      fontSize: 10.5,
+      color: row.type?.endsWith?.('surcharge') ? '#92400e' : '#374151',
+      spaceAfter: 2,
+    });
+  }
+  const totals = model.mode === 'exact' ? model.totals : null;
+  if (totals) {
+    items.push({ gap: 3 });
+    items.push({
+      rowLabel: clean(t.subtotal),
+      rowAmount: formatMinor(totals.netMinor),
+      fontSize: 11.5,
+      color: '#065f46',
+      spaceAfter: 2,
+    });
+    if (totals.vatMode === 'exempt') {
+      items.push({
+        rowLabel: clean(t.vatExempt),
+        rowAmount: formatMinor(0),
+        fontSize: 10,
+        color: '#6b7280',
+        spaceAfter: 2,
+      });
+    } else {
+      items.push({
+        rowLabel: clean(t.vat(totals.vatRate ?? null)),
+        rowAmount: formatMinor(totals.vatMinor),
+        fontSize: 10,
+        color: '#6b7280',
+        spaceAfter: 2,
+      });
+    }
+    items.push({
+      rowLabel: clean(t.total),
+      rowAmount: formatMinor(totals.grossMinor),
+      fontSize: 11,
+      color: '#111827',
+      spaceAfter: 0,
+    });
+  } else {
+    items.push({ gap: 2 });
+    items.push({ text: clean(t.priceDegraded), fontSize: 10, color: '#6b7280', spaceAfter: 0 });
+  }
+  return items;
+}
+
 // ── flow layout engine ───────────────────────────────────────────────────────
-// Items: { text, fontSize, color?, spaceAfter?, check? } | { divider: true,
-// spaceAfter? } | { gap: pt }. Blocks: { items } — kept on one page when the
-// whole block fits on a fresh page; split at LINE level otherwise. All
-// heights are measured with the renderer's own wrap function + font.
+// Items:
+//   { text, fontSize, color?, spaceAfter?, check? }        — wrapped text
+//       check: true → green check gutter (accepted confirmation)
+//       check: 'checked' | 'unchecked' → vector checkbox frame (+ check)
+//   { rowLabel, rowAmount, fontSize, color?, spaceAfter? } — two-run pricing
+//       row: label on the leading edge, PURE-LTR amount on the trailing edge
+//   { divider: true, spaceAfter? } | { gap: pt }
+// Blocks: { items } — kept on one page when the whole block fits on a fresh
+// page; split at LINE level otherwise. All heights are measured with the
+// renderer's own wrap function + font.
 
 function flowBlocks(blocks, font, { align }) {
   const annotations = [];
@@ -141,7 +312,24 @@ function flowBlocks(blocks, font, { align }) {
   const measureItem = (item) => {
     if (item.gap) return { kind: 'gap', h: item.gap };
     if (item.divider) return { kind: 'divider', h: 2, spaceAfter: item.spaceAfter ?? 10 };
-    const wrapW = item.check ? WRAP_W_PT - (CHECK_GUTTER_PCT / 100) * A4.w : WRAP_W_PT;
+    if (item.rowLabel !== undefined) {
+      const amountWPt = font.widthOfTextAtSize(item.rowAmount, item.fontSize) + 4;
+      const amountWPct = Math.min(50, (amountWPt / A4.w) * 100);
+      const labelWrapPt = Math.max(40, WRAP_W_PT - ((amountWPct + ROW_GAP_PCT) / 100) * A4.w);
+      const lines = layoutNoteLines(item.rowLabel, font, item.fontSize, labelWrapPt, {
+        breakLongWords: true,
+      });
+      return {
+        kind: 'row',
+        item,
+        lines: lines.length ? lines : [''],
+        amountWPct,
+        h: Math.max(lines.length, 1) * lineH(item.fontSize),
+        spaceAfter: item.spaceAfter ?? 0,
+      };
+    }
+    const gutter = item.check ? CHECK_GUTTER_PCT : 0;
+    const wrapW = gutter ? WRAP_W_PT - (gutter / 100) * A4.w : WRAP_W_PT;
     const lines = layoutNoteLines(item.text, font, item.fontSize, wrapW, {
       breakLongWords: true,
     });
@@ -154,11 +342,44 @@ function flowBlocks(blocks, font, { align }) {
     };
   };
 
+  // Vector check/checkbox marks in the leading-edge gutter of the item's
+  // first line. `mode` true → bare green check (accepted confirmation);
+  // 'checked' → outlined box, light fill, dark check; 'unchecked' → outlined
+  // empty box.
+  const emitCheckMark = (mode, yPct) => {
+    const boxX = align === 'left' ? MARGIN_X_PCT : 100 - MARGIN_X_PCT - CHECK_W_PCT;
+    if (mode === 'checked' || mode === 'unchecked') {
+      annotations.push({
+        kind: 'box',
+        page,
+        xPct: boxX,
+        yPct,
+        wPct: CHECK_W_PCT,
+        hPct: 1.15,
+        thickness: 1.1,
+        color: '#374151',
+        ...(mode === 'checked' ? { fillColor: '#d1fae5' } : {}),
+      });
+    }
+    if (mode === true || mode === 'checked') {
+      annotations.push({
+        kind: 'check',
+        page,
+        xPct: boxX + (mode === 'checked' ? 0.2 : 0),
+        yPct: yPct + 0.1,
+        wPct: CHECK_W_PCT - (mode === 'checked' ? 0.4 : 0),
+        hPct: mode === 'checked' ? 0.95 : 1.15,
+        thickness: 1.8,
+        color: mode === 'checked' ? '#065f46' : '#059669',
+      });
+    }
+  };
+
   const emitText = (m) => {
     let lines = m.lines;
     const fs = m.item.fontSize;
     const lh = lineH(fs);
-    let checkPending = m.item.check === true;
+    let checkPending = !!m.item.check;
     while (lines.length) {
       const maxLines = Math.floor((BOTTOM_PT - cursor) / lh);
       if (maxLines < 1) {
@@ -168,7 +389,7 @@ function flowBlocks(blocks, font, { align }) {
       const chunk = lines.slice(0, maxLines);
       lines = lines.slice(maxLines);
       const chunkH = chunk.length * lh;
-      // Confirmation lines reserve a leading-edge gutter for the check mark.
+      // Check/checkbox lines reserve a leading-edge gutter for the mark.
       const xPct = m.item.check
         ? align === 'left'
           ? MARGIN_X_PCT + CHECK_GUTTER_PCT
@@ -190,19 +411,7 @@ function flowBlocks(blocks, font, { align }) {
       });
       if (checkPending) {
         checkPending = false;
-        annotations.push({
-          kind: 'check',
-          page,
-          xPct:
-            align === 'left'
-              ? MARGIN_X_PCT
-              : 100 - MARGIN_X_PCT - CHECK_W_PCT,
-          yPct: (cursor / A4.h) * 100 + 0.1,
-          wPct: CHECK_W_PCT,
-          hPct: 1.15,
-          thickness: 1.8,
-          color: '#059669',
-        });
+        emitCheckMark(m.item.check, (cursor / A4.h) * 100 + 0.1);
       }
       cursor += chunkH;
       if (lines.length) newPage();
@@ -210,9 +419,53 @@ function flowBlocks(blocks, font, { align }) {
     cursor = Math.min(cursor + m.spaceAfter, BOTTOM_PT);
   };
 
+  // A pricing row never splits across pages (it is at most a few lines) —
+  // when it does not fit, it moves to the next page whole.
+  const emitRow = (m) => {
+    if (cursor + m.h > BOTTOM_PT) newPage();
+    const fs = m.item.fontSize;
+    const yPct = (cursor / A4.h) * 100;
+    const labelWPct = CONTENT_W_PCT - m.amountWPct - ROW_GAP_PCT;
+    // Label on the leading edge (right in HE, left in EN)…
+    annotations.push({
+      kind: 'note',
+      page,
+      xPct: align === 'left' ? MARGIN_X_PCT : MARGIN_X_PCT + m.amountWPct + ROW_GAP_PCT,
+      yPct,
+      wPct: labelWPct,
+      hPct: (m.h / A4.h) * 100,
+      fontSize: fs,
+      ...(m.item.color ? { color: m.item.color } : {}),
+      text: m.lines.join('\n'),
+      align,
+      breakLongWords: true,
+    });
+    // …amount on the trailing edge, as its own pure-LTR run. It contains no
+    // Hebrew, so the renderer draws it verbatim — "qty × unit = total" order
+    // is locked by construction.
+    annotations.push({
+      kind: 'note',
+      page,
+      xPct: align === 'left' ? 100 - MARGIN_X_PCT - m.amountWPct : MARGIN_X_PCT,
+      yPct,
+      wPct: m.amountWPct,
+      hPct: (lineH(fs) / A4.h) * 100,
+      fontSize: fs,
+      ...(m.item.color ? { color: m.item.color } : {}),
+      text: m.item.rowAmount,
+      // Amount hugs the trailing edge: right-aligned in EN (trailing = right),
+      // left-aligned in HE (trailing = left).
+      align: align === 'left' ? undefined : 'left',
+    });
+    cursor += m.h;
+    cursor = Math.min(cursor + m.spaceAfter, BOTTOM_PT);
+  };
+
   const freshCapacity = BOTTOM_PT - TOP_REST_PT;
   for (const block of blocks) {
-    const measured = block.items.map(measureItem).filter((m) => m.kind !== 'text' || m.lines.length);
+    const measured = block.items
+      .map(measureItem)
+      .filter((m) => m.kind !== 'text' || m.lines.length);
     if (!measured.length) continue;
     const blockH = measured.reduce((a, m) => a + m.h + (m.spaceAfter || 0), 0);
     if (blockH > BOTTOM_PT - cursor && blockH <= freshCapacity) newPage();
@@ -232,6 +485,8 @@ function flowBlocks(blocks, font, { align }) {
           thickness: 1,
         });
         cursor = Math.min(cursor + m.h + m.spaceAfter, BOTTOM_PT);
+      } else if (m.kind === 'row') {
+        emitRow(m);
       } else {
         emitText(m);
       }
@@ -242,31 +497,52 @@ function flowBlocks(blocks, font, { align }) {
 }
 
 // Compose the full layout (annotations + fields + page count) from a frozen
-// session. Pure and deterministic — exported for tests + stress harness.
-export async function buildReservationLayout(session, font = null) {
-  const t = L[session.language === 'en' ? 'en' : 'he'];
-  const align = session.language === 'en' ? 'left' : 'right';
-  const measureFont = font || (await createMeasurementFont());
+// content snapshot. Pure and deterministic — exported for tests.
+export async function buildReservationSummaryLayout(snapshot, opts = {}) {
+  const t = L[snapshot.language === 'en' ? 'en' : 'he'];
+  const align = snapshot.language === 'en' ? 'left' : 'right';
+  const measureFont = opts.font || (await createMeasurementFont());
   const clean = supportedTextFilter(measureFont);
-  const groups = session.groups || [];
+  const groups = snapshot.groups || [];
+  const signatureBytes = opts.signatureBytes || null;
 
   const totalParticipants = groups.reduce((a, g) => a + (g.participants || 0), 0);
-  const submittedDate = session.submittedAt
-    ? fmtDate(new Date(session.submittedAt).toISOString().slice(0, 10))
-    : '';
+  const submittedDate = fmtIsoDate(snapshot.submittedAt);
 
   const blocks = [];
+  const fields = [];
 
-  // Header: brand, title, request meta, divider.
+  // Header — logo (leading edge, true aspect ratio), title, request meta.
+  const logo = logoBytes();
+  let logoHPct = 0;
+  if (logo) {
+    const dims = pngDimensions(logo);
+    const hPct = LOGO_H_PCT;
+    const wPct = dims
+      ? Math.min(24, ((dims.w / dims.h) * ((hPct / 100) * A4.h) * 100) / A4.w)
+      : 8;
+    fields.push({
+      fieldType: 'stamp',
+      page: 1,
+      xPct: align === 'left' ? MARGIN_X_PCT : 100 - MARGIN_X_PCT - wPct,
+      yPct: 4,
+      wPct,
+      hPct,
+      imageBytes: logo,
+    });
+    logoHPct = hPct + 1.2;
+  }
+
   blocks.push({
     items: [
-      { text: clean(t.brand), fontSize: 12, color: '#6b7280', spaceAfter: 6 },
-      { text: clean(t.title), fontSize: 22, spaceAfter: 10 },
+      ...(logoHPct
+        ? [{ gap: (logoHPct / 100) * A4.h }]
+        : [{ text: clean(t.brand), fontSize: 12, color: '#6b7280', spaceAfter: 6 }]),
+      { text: clean(t.title), fontSize: 20, spaceAfter: 8 },
       {
         text: clean(
           [
-            `${t.request(session.sessionNo)} · ${t.submitted(submittedDate)}`,
-            t.agent(session.agentName || '', session.organizationName || ''),
+            `${t.request(snapshot.sessionNo)} · ${t.submitted(submittedDate)}`,
             t.totals(groups.length, totalParticipants),
           ].join('\n'),
         ),
@@ -274,49 +550,80 @@ export async function buildReservationLayout(session, font = null) {
         color: '#374151',
         spaceAfter: 10,
       },
-      { divider: true, spaceAfter: 14 },
+      { divider: true, spaceAfter: 12 },
     ],
   });
 
-  // Groups — one keep-together block each; FULL notes with paragraph breaks.
+  // Booker details — a normal full-width section near the top (same order as
+  // the form): name, phone, email, travel company.
+  const booker = snapshot.booker || {};
+  const bookerLines = [];
+  if (booker.name) bookerLines.push(t.bookerName(booker.name));
+  if (booker.phone) bookerLines.push(t.bookerPhone(booker.phone));
+  if (booker.email) bookerLines.push(t.bookerEmail(booker.email));
+  if (booker.company) bookerLines.push(t.bookerCompany(booker.company));
+  if (bookerLines.length) {
+    blocks.push({
+      items: [
+        { text: clean(t.bookerTitle), fontSize: 13, spaceAfter: 4 },
+        { text: clean(bookerLines.join('\n')), fontSize: 11, color: '#374151', spaceAfter: 0 },
+        { gap: 14 },
+      ],
+    });
+  }
+
+  // Groups — one keep-together block each; FULL notes with paragraph breaks;
+  // per-group frozen pricing summary.
   groups.forEach((g, i) => {
-    const details = [g.createdDealOrderNo ? t.order(g.createdDealOrderNo) : t.orderPending];
-    const where = t.where(g.locationLabel, g.productLabel);
-    if (where) details.push(where);
+    const details = [g.orderNo ? t.order(g.orderNo) : t.orderPending];
+    if (g.cityLabel) details.push(t.city(g.cityLabel));
+    if (g.activityLabel) details.push(t.activity(g.activityLabel));
     details.push(t.when(fmtDate(g.tourDate), g.tourTime));
     details.push(t.participants(g.participants));
+    if (g.guides != null) details.push(t.guides(g.guides));
     if (g.tourLanguage) details.push(t.tourLanguage(t.langNames[g.tourLanguage] || g.tourLanguage));
     if (g.onSiteContactName) details.push(t.onSite(g.onSiteContactName, g.onSiteContactPhone || ''));
 
     const items = [
-      { text: clean(`${t.group(i + 1)} — ${g.groupName || ''}`), fontSize: 12.5, spaceAfter: 4 },
+      { text: clean(`${t.group(g.index || i + 1)} — ${g.groupName || ''}`), fontSize: 12.5, spaceAfter: 4 },
       { text: clean(details.join('\n')), fontSize: 11, color: '#374151', spaceAfter: 0 },
     ];
     if (g.notes) {
       items.push({ gap: 4 });
       items.push({ text: clean(t.notes(String(g.notes))), fontSize: 11, color: '#374151' });
     }
+    items.push({ gap: 6 });
+    items.push(...pricingItems(g.pricing, t, clean));
     items.push({ gap: 16 });
     blocks.push({ items });
   });
 
-  // Invoice delivery + accepted confirmations — one closing block.
-  const inv = session.payloadSnapshot?.invoice || null;
+  // Invoice delivery — the checkbox group as submitted: BOTH options with
+  // vector checked/unchecked boxes, preserving each label and state.
+  const inv = snapshot.invoice || null;
   const closing = [];
-  if (inv && (inv.toOrganizer || inv.toFinance)) {
+  if (inv && (inv.toOrganizer !== undefined || inv.toFinance !== undefined)) {
     closing.push({ divider: true, spaceAfter: 10 });
     closing.push({ text: clean(t.invoiceTitle), fontSize: 12.5, spaceAfter: 4 });
-    const lines = [];
-    if (inv.toOrganizer) lines.push(t.invOrganizer(session.agentName || ''));
-    if (inv.toFinance) {
-      const parts = [inv.financeName, inv.financeEmail, inv.financePhone]
-        .filter(Boolean)
-        .join(' · ');
-      lines.push(t.invFinance(parts));
-    }
-    closing.push({ text: clean(lines.join('\n')), fontSize: 11, color: '#374151', spaceAfter: 10 });
+    closing.push({
+      text: clean(t.invOrganizer(booker.name || '')),
+      fontSize: 11,
+      color: inv.toOrganizer ? '#111827' : '#9ca3af',
+      check: inv.toOrganizer ? 'checked' : 'unchecked',
+      spaceAfter: 4,
+    });
+    const financeParts = [inv.financeName, inv.financeEmail, inv.financePhone]
+      .filter(Boolean)
+      .join(' · ');
+    closing.push({
+      text: clean(t.invFinance(inv.toFinance ? financeParts : '')),
+      fontSize: 11,
+      color: inv.toFinance ? '#111827' : '#9ca3af',
+      check: inv.toFinance ? 'checked' : 'unchecked',
+      spaceAfter: 10,
+    });
   }
-  const confirmations = Array.isArray(session.legalConfirmations) ? session.legalConfirmations : [];
+  const confirmations = Array.isArray(snapshot.confirmations) ? snapshot.confirmations : [];
   if (confirmations.some((c) => c?.key === 'flexible_cancellation')) {
     closing.push({ text: clean(t.confirmed), fontSize: 10, color: '#374151', check: true });
   }
@@ -329,7 +636,6 @@ export async function buildReservationLayout(session, font = null) {
   const footerPage = flow.cursorPt > FOOTER_TOP_PT ? flow.lastPage + 1 : flow.lastPage;
   const pageCount = footerPage;
   const annotations = [...flow.annotations];
-  const fields = [];
 
   annotations.push({
     kind: 'line',
@@ -342,10 +648,10 @@ export async function buildReservationLayout(session, font = null) {
     thickness: 1,
   });
 
-  if (session.signatureBytes?.length) {
+  if (signatureBytes?.length) {
     // Drawn signature — aspect-fit into a 24% × 8% box, anchored to the
     // leading edge (right in HE, left in EN), above the signer line.
-    const dims = pngDimensions(session.signatureBytes);
+    const dims = pngDimensions(signatureBytes);
     const maxWpt = (24 / 100) * A4.w;
     const maxHpt = (8 / 100) * A4.h;
     let wPct = 24;
@@ -362,9 +668,9 @@ export async function buildReservationLayout(session, font = null) {
       yPct: 77 + (8 - hPct), // bottom-anchored inside the 77–85% zone
       wPct,
       hPct,
-      imageBytes: session.signatureBytes,
+      imageBytes: signatureBytes,
     });
-  } else if (session.signerName) {
+  } else if (snapshot.signature?.signerName) {
     // Typed signature — the name IS the signature; render it prominently.
     annotations.push({
       kind: 'note',
@@ -374,15 +680,16 @@ export async function buildReservationLayout(session, font = null) {
       wPct: CONTENT_W_PCT,
       hPct: 3,
       fontSize: 16,
-      text: session.signerName,
+      text: snapshot.signature.signerName,
       align,
       breakLongWords: true,
     });
   }
 
-  const signedLine = session.signerName
-    ? t.signedBy(session.signerName, submittedDate)
-    : session.signatureBytes?.length
+  const signerName = snapshot.signature?.signerName || null;
+  const signedLine = signerName
+    ? t.signedBy(signerName, submittedDate)
+    : signatureBytes?.length
       ? t.signedOn(submittedDate)
       : null;
   if (signedLine) {
@@ -414,6 +721,21 @@ export async function buildReservationLayout(session, font = null) {
     align,
   });
 
+  // Reservation reference + generation timestamp — small, on the footer page.
+  const generatedDate = fmtIsoDate(snapshot.generatedAt) || submittedDate;
+  annotations.push({
+    kind: 'note',
+    page: footerPage,
+    xPct: MARGIN_X_PCT,
+    yPct: 94.2,
+    wPct: CONTENT_W_PCT,
+    hPct: 1.4,
+    fontSize: 8.5,
+    color: '#9ca3af',
+    text: clean(t.generated(snapshot.sessionNo, generatedDate)),
+    align,
+  });
+
   // Continuation headers + page numbers (multi-page documents only).
   if (pageCount > 1) {
     for (let p = 2; p <= pageCount; p += 1) {
@@ -426,7 +748,7 @@ export async function buildReservationLayout(session, font = null) {
         hPct: 1.6,
         fontSize: 9,
         color: '#9ca3af',
-        text: clean(t.continued(session.sessionNo)),
+        text: clean(t.continued(snapshot.sessionNo)),
         align,
       });
     }
@@ -451,12 +773,13 @@ export async function buildReservationLayout(session, font = null) {
 }
 
 /**
- * Build the reservation-copy PDF from a frozen session (+ groups, each
- * optionally carrying createdDealOrderNo). Pure function of session data —
- * a re-download regenerates the identical official copy.
+ * Build the canonical reservation-summary PDF from a frozen content snapshot
+ * (+ the session's signature PNG bytes, kept outside the JSON snapshot).
+ * Pure function of its inputs — the same snapshot renders the identical
+ * document, forever.
  */
-export async function buildReservationPdf(session) {
-  const layout = await buildReservationLayout(session);
+export async function buildReservationSummaryPdf(snapshot, { signatureBytes = null } = {}) {
+  const layout = await buildReservationSummaryLayout(snapshot, { signatureBytes });
 
   // Blank A4 base — same pdf-lib as the canonical renderer.
   const base = await PDFDocument.create();

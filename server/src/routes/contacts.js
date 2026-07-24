@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { numericIdResolver } from './numericIdParam.js';
 import { parseListQuery, containsI, digits } from './listPagination.js';
+import { sendReservationDocument } from '../reservations/document.js';
 
 // Contact CRUD + phones + emails + organization memberships. Reference data for
 // the future Deals/Activities workflow.
@@ -460,6 +461,64 @@ router.delete(
     if (!link) return res.status(404).json({ error: 'not_found' });
     await prisma.contactOrganization.delete({ where: { id: link.id } });
     res.json(await reloadContact(link.contactId));
+  }),
+);
+
+// ---------- Canonical documents filed on the contact ----------
+// Reservation-summary PDFs are filed by DERIVED association (the document's
+// session belongs to this contact) — one stored asset, never copied. The list
+// is metadata only; bytes go through the download route below.
+
+router.get(
+  '/:id/reservation-documents',
+  handle(async (req, res) => {
+    const contact = await prisma.contact.findUnique({
+      where: { id: req.params.id },
+      select: { id: true },
+    });
+    if (!contact) return res.status(404).json({ error: 'not_found' });
+    const docs = await prisma.reservationDocument.findMany({
+      where: { session: { contactId: contact.id } },
+      orderBy: { generatedAt: 'desc' },
+      select: {
+        id: true,
+        kind: true,
+        language: true,
+        filename: true,
+        mimeType: true,
+        sizeBytes: true,
+        generatedAt: true,
+        session: { select: { sessionNo: true } },
+      },
+    });
+    res.set('Cache-Control', 'no-store');
+    res.json(
+      docs.map((d) => ({
+        id: d.id,
+        kind: d.kind,
+        language: d.language,
+        filename: d.filename,
+        mimeType: d.mimeType,
+        sizeBytes: d.sizeBytes,
+        generatedAt: d.generatedAt,
+        sessionNo: d.session?.sessionNo ?? null,
+      })),
+    );
+  }),
+);
+
+router.get(
+  '/:id/reservation-documents/:documentId/download',
+  handle(async (req, res) => {
+    const doc = await prisma.reservationDocument.findUnique({
+      where: { id: req.params.documentId },
+      include: { session: { select: { contactId: true } } },
+    });
+    // Ownership re-verified on every request — a foreign document 404s.
+    if (!doc || doc.session?.contactId !== req.params.id) {
+      return res.status(404).json({ error: 'not_found' });
+    }
+    sendReservationDocument(res, doc, { disposition: 'inline' });
   }),
 );
 

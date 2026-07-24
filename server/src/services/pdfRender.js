@@ -222,6 +222,7 @@ export async function renderFinalPdf(sourcePdfBytes, fields, annotations = []) {
     if (!page) continue;
     try {
       if (ann.kind === 'check') drawCheckAnnotation(page, ann);
+      else if (ann.kind === 'box') drawBoxAnnotation(page, ann);
       else if (ann.kind === 'x') drawXAnnotation(page, ann);
       else if (ann.kind === 'line') drawLineAnnotation(page, ann);
       else if (ann.kind === 'ellipse') drawEllipseAnnotation(page, ann);
@@ -317,6 +318,24 @@ function drawCheckAnnotation(page, ann) {
     end: { x: rightX, y: topY },
     thickness,
     color,
+  });
+}
+
+// Vector checkbox frame: an outlined square, optionally with a light fill
+// (`fillColor`). PDF-safe by construction — no font glyphs, no form widgets —
+// so a checked/unchecked state renders identically in every viewer and in
+// print. Pair with a 'check' annotation inside the same rect for the checked
+// state.
+function drawBoxAnnotation(page, ann) {
+  const { x, y, w, h } = annRect(page, ann);
+  page.drawRectangle({
+    x,
+    y,
+    width: w,
+    height: h,
+    ...(ann.fillColor ? { color: parseColor(ann.fillColor) } : {}),
+    borderColor: parseColor(ann.color || '#111827'),
+    borderWidth: Number(ann.thickness) || 1.2,
   });
 }
 

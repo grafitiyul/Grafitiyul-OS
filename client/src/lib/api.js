@@ -396,6 +396,10 @@ export const api = {
     // qs(undefined) === '' so existing param-less callers are unchanged.
     list: (params) => request(`/api/contacts${qs(params)}`),
     get: (id) => request(`/api/contacts/${id}`),
+    // Canonical documents filed on the contact (reservation summaries).
+    reservationDocuments: (id) => request(`/api/contacts/${id}/reservation-documents`),
+    reservationDocumentUrl: (id, documentId) =>
+      `/api/contacts/${id}/reservation-documents/${documentId}/download`,
     create: (data) =>
       request('/api/contacts', { method: 'POST', body: JSON.stringify(data) }),
     update: (id, data) =>
@@ -674,6 +678,9 @@ export const api = {
       request(`/api/deals/${dealId}/files`, { method: 'POST', body: JSON.stringify(data) }),
     remove: (dealId, fileId) => request(`/api/deals/${dealId}/files/${fileId}`, { method: 'DELETE' }),
     downloadUrl: (dealId, fileId) => `/api/deals/${dealId}/files/${fileId}/download`,
+    // Canonical reservation-summary document filed on this deal (read-only).
+    reservationDocumentUrl: (dealId, documentId) =>
+      `/api/deals/${dealId}/reservation-documents/${documentId}/download`,
     // Full upload: presign → PUT bytes straight to R2 → persist the row.
     upload: async (dealId, file) => {
       const { uploadUrl, key } = await request(`/api/deals/${dealId}/files/presign`, {

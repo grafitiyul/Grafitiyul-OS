@@ -21,7 +21,11 @@ import {
   MAX_GROUPS,
 } from '../reservations/intake.js';
 import { processReservationSession } from '../reservations/processor.js';
-import { buildReservationPdf } from '../reservations/pdf.js';
+import {
+  ensureReservationDocument,
+  sendReservationDocument,
+  jsonSafe,
+} from '../reservations/document.js';
 import { resolveAgentPricing } from '../pricing/agentPricing.js';
 import { createRateLimiter } from '../reservations/rateLimit.js';
 import { financeContactDisplay } from '../organizations/financeContact.js';
@@ -88,6 +92,8 @@ function publicSessionDto(session) {
     sessionNo: session.sessionNo,
     status: session.status,
     submittedAt: session.submittedAt,
+    // The canonical summary PDF exists → the download button goes live.
+    documentReady: !!session.document,
     groups: (session.groups || []).map((g) => ({
       id: g.id,
       sortOrder: g.sortOrder,
@@ -108,6 +114,7 @@ const SESSION_INCLUDE = {
     orderBy: { sortOrder: 'asc' },
     include: { createdDeal: { select: { orderNo: true } } },
   },
+  document: { select: { id: true } },
 };
 
 // Bootstrap: who the agent is + the bookable catalog + form policy.
@@ -209,8 +216,36 @@ router.post(
     // contact); nomination mode freezes the entered values. persistSubmission
     // enriches with the resolved financeContactId + financeMode.
     const savedFinance = validated.invoice.nominating ? null : await orgFinanceDisplay(r.organization.id);
+
+    // Freeze the agent pricing the form displayed — the SAME canonical engine
+    // the live preview used, resolved once per group at submission time and
+    // carried on the snapshot (keyed by group position). This is what the
+    // summary document renders forever; later Pricing Card edits can never
+    // change it. Best-effort: a pricing hiccup must never block a submission
+    // (the document then shows the price-list fallback sentence, exactly like
+    // the form would have).
+    const pricingByGroup = [];
+    for (const g of validated.groups) {
+      try {
+        pricingByGroup.push(
+          jsonSafe(
+            await resolveAgentPricing(prisma, {
+              productVariantId: g.productVariantId,
+              participants: g.participants,
+              groups: g.groups,
+              tourDate: g.tourDate,
+              tourTime: g.tourTime,
+            }),
+          ),
+        );
+      } catch {
+        pricingByGroup.push(null);
+      }
+    }
+
     const payloadSnapshot = {
       ...rest,
+      pricingByGroup,
       invoice: {
         toOrganizer: validated.invoice.toOrganizer,
         toFinance: validated.invoice.toFinance,
@@ -299,10 +334,12 @@ router.get(
   }),
 );
 
-// Official reservation copy (BINDING #7/#8) — rendered through the canonical
-// Documents engine from the FROZEN session data, so a re-download always
-// regenerates the identical document. Token + ownership gated like the status
-// endpoint; the response is a direct attachment download.
+// The canonical reservation-summary document (BINDING #7/#8) — ONE immutable
+// PDF per submission, generated after processing completes and stored on the
+// session. Every download (and refresh, and retry) serves the SAME stored
+// bytes; when generation hasn't happened yet this endpoint lazily ensures it
+// (idempotent — the unique sessionId makes duplicates impossible). Token +
+// ownership gated like the status endpoint.
 router.get(
   '/reservations/:token/session/:submissionKey/pdf',
   guard(readLimiter),
@@ -311,36 +348,26 @@ router.get(
     if (r.error) return sendResolveError(res, r.error);
     const session = await prisma.reservationSession.findUnique({
       where: { submissionKey: req.params.submissionKey },
-      include: {
-        groups: {
-          orderBy: { sortOrder: 'asc' },
-          include: { createdDeal: { select: { orderNo: true } } },
-        },
-        contact: { select: { firstNameHe: true, lastNameHe: true, firstNameEn: true, lastNameEn: true } },
-        organization: { select: { name: true } },
-      },
+      select: { id: true, contactId: true, status: true },
     });
     if (!session || session.contactId !== r.contact.id) {
       return res.status(404).json({ error: 'not_found' });
     }
-    const agentName =
-      session.language === 'en'
-        ? `${session.contact?.firstNameEn || ''} ${session.contact?.lastNameEn || ''}`.trim() ||
-          `${session.contact?.firstNameHe || ''} ${session.contact?.lastNameHe || ''}`.trim()
-        : `${session.contact?.firstNameHe || ''} ${session.contact?.lastNameHe || ''}`.trim();
-    const pdf = await buildReservationPdf({
-      ...session,
-      agentName,
-      organizationName: session.organization?.name || '',
-      groups: session.groups.map((g) => ({
-        ...g,
-        createdDealOrderNo: g.createdDeal?.orderNo || null,
-      })),
-    });
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Length', pdf.length);
-    res.setHeader('Content-Disposition', `attachment; filename="reservation-${session.sessionNo}.pdf"`);
-    res.send(pdf);
+    let result = await ensureReservationDocument(session.id);
+    if (result.error === 'not_ready') {
+      // The inline processing attempt may have failed at submit time — give
+      // the session one more claim-guarded pass, then re-ensure.
+      try {
+        await processReservationSession(session.id);
+      } catch {
+        /* the sweep worker keeps retrying; the document simply isn't ready */
+      }
+      result = await ensureReservationDocument(session.id);
+    }
+    if (!result.document) {
+      return res.status(409).json({ error: 'not_ready' });
+    }
+    sendReservationDocument(res, result.document, { disposition: 'attachment' });
   }),
 );
 

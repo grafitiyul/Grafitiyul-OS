@@ -136,35 +136,54 @@ export default function DealFilesTab({ dealId, onChanged }) {
         </div>
       ) : (
         <ul className="space-y-2">
-          {files.map((f) => (
-            <li key={f.id} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm">
-              <span aria-hidden className="text-[18px] leading-none">{fileEmoji(f.mimeType)}</span>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[13.5px] font-medium text-gray-800">{f.filename}</div>
-                <div className="text-[11.5px] text-gray-500">
-                  {fmtSize(f.sizeBytes)}
-                  {' · '}
-                  {new Date(f.createdAt).toLocaleDateString('he-IL')}
-                  {f.uploadedById && userMap[f.uploadedById] ? ` · ${userMap[f.uploadedById]}` : ''}
+          {files.map((f) => {
+            // Canonical reservation-summary documents are filed by DERIVED
+            // association (never uploaded here) — read-only entries with
+            // their own download door; system documents cannot be deleted.
+            const isReservationDoc = f.source === 'reservation_summary';
+            const href = isReservationDoc
+              ? api.dealFiles.reservationDocumentUrl(dealId, f.id)
+              : api.dealFiles.downloadUrl(dealId, f.id);
+            return (
+              <li key={f.id} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm">
+                <span aria-hidden className="text-[18px] leading-none">{fileEmoji(f.mimeType)}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-[13.5px] font-medium text-gray-800">{f.filename}</span>
+                    {isReservationDoc && (
+                      <span className="shrink-0 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700">
+                        סיכום הזמנת סוכן
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11.5px] text-gray-500">
+                    {fmtSize(f.sizeBytes)}
+                    {' · '}
+                    {new Date(f.createdAt).toLocaleDateString('he-IL')}
+                    {f.uploadedById && userMap[f.uploadedById] ? ` · ${userMap[f.uploadedById]}` : ''}
+                    {isReservationDoc && f.sessionNo ? ` · בקשה #${f.sessionNo}` : ''}
+                  </div>
                 </div>
-              </div>
-              <a
-                href={api.dealFiles.downloadUrl(dealId, f.id)}
-                target="_blank"
-                rel="noreferrer"
-                className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-[12.5px] text-gray-700 hover:bg-gray-50"
-              >
-                פתיחה
-              </a>
-              <button
-                type="button"
-                onClick={() => remove(f)}
-                className="rounded-lg px-2 py-1 text-[12.5px] text-red-600 hover:bg-red-50"
-              >
-                מחיקה
-              </button>
-            </li>
-          ))}
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-[12.5px] text-gray-700 hover:bg-gray-50"
+                >
+                  פתיחה
+                </a>
+                {!isReservationDoc && (
+                  <button
+                    type="button"
+                    onClick={() => remove(f)}
+                    className="rounded-lg px-2 py-1 text-[12.5px] text-red-600 hover:bg-red-50"
+                  >
+                    מחיקה
+                  </button>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

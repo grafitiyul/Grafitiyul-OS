@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import * as r2 from '../r2.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
+import { sendReservationDocument } from '../reservations/document.js';
 
 // Deal Files — mounted at /api/deals, serves /:dealId/files*. PRIVATE by
 // contract: unlike MediaFile there is NO public URL. Objects live under
@@ -36,18 +37,83 @@ function toClient(f) {
   };
 }
 
-// GET /:dealId/files — newest first.
+// Canonical reservation-summary documents filed on this deal — DERIVED via
+// the deal's ReservationGroup (createdDealId), never copied: every deal born
+// from the same submission points at the SAME stored document.
+async function reservationDocsForDeal(dealId) {
+  const groups = await prisma.reservationGroup.findMany({
+    where: { createdDealId: dealId },
+    select: {
+      session: {
+        select: {
+          sessionNo: true,
+          document: {
+            select: {
+              id: true,
+              filename: true,
+              mimeType: true,
+              sizeBytes: true,
+              generatedAt: true,
+            },
+          },
+        },
+      },
+    },
+  });
+  return groups
+    .filter((g) => g.session?.document)
+    .map((g) => ({
+      id: g.session.document.id,
+      dealId,
+      source: 'reservation_summary',
+      readonly: true,
+      filename: g.session.document.filename,
+      mimeType: g.session.document.mimeType,
+      sizeBytes: g.session.document.sizeBytes,
+      uploadedById: null,
+      createdAt: g.session.document.generatedAt,
+      sessionNo: g.session.sessionNo,
+    }));
+}
+
+// GET /:dealId/files — newest first; uploaded DealFiles merged with canonical
+// reservation-summary documents (read-only entries, own download route).
 router.get(
   '/:dealId/files',
   handle(async (req, res) => {
     const deal = await ensureDeal(req, res);
     if (!deal) return;
-    const files = await prisma.dealFile.findMany({
-      where: { dealId: deal.id },
-      orderBy: { createdAt: 'desc' },
-    });
+    const [files, reservationDocs] = await Promise.all([
+      prisma.dealFile.findMany({
+        where: { dealId: deal.id },
+        orderBy: { createdAt: 'desc' },
+      }),
+      reservationDocsForDeal(deal.id),
+    ]);
+    const merged = [...files.map(toClient), ...reservationDocs].sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt),
+    );
     res.set('Cache-Control', 'no-store');
-    res.json(files.map(toClient));
+    res.json(merged);
+  }),
+);
+
+// GET /:dealId/reservation-documents/:documentId/download — the stored bytes
+// of a reservation-summary document, served ONLY when this deal was created
+// from that document's submission (association re-verified on every request).
+router.get(
+  '/:dealId/reservation-documents/:documentId/download',
+  handle(async (req, res) => {
+    const doc = await prisma.reservationDocument.findUnique({
+      where: { id: req.params.documentId },
+    });
+    if (!doc) return res.status(404).json({ error: 'not_found' });
+    const link = await prisma.reservationGroup.findFirst({
+      where: { createdDealId: req.params.dealId, sessionId: doc.sessionId },
+      select: { id: true },
+    });
+    if (!link) return res.status(404).json({ error: 'not_found' });
+    sendReservationDocument(res, doc, { disposition: 'inline' });
   }),
 );
 

@@ -57,6 +57,7 @@ function fakeDb({ session, groups, failDealFor = () => false, stages = [STAGE] }
     dealSources: [],
     contacts: [],
     contactPhones: [],
+    documents: [],
   };
   const db = {
     state,
@@ -141,6 +142,20 @@ function fakeDb({ session, groups, failDealFor = () => false, stages = [STAGE] }
         return data;
       },
     },
+    reservationDocument: {
+      findUnique: async ({ where }) =>
+        state.documents.find((d) => d.sessionId === where.sessionId || d.id === where.id) || null,
+      create: async ({ data }) => {
+        if (state.documents.some((d) => d.sessionId === data.sessionId)) {
+          const e = new Error('unique');
+          e.code = 'P2002';
+          throw e;
+        }
+        const row = { id: `doc${state.documents.length + 1}`, generatedAt: new Date(), ...data };
+        state.documents.push(row);
+        return row;
+      },
+    },
     $transaction: async (fn) => fn(db),
   };
   return db;
@@ -182,6 +197,23 @@ test('full success: every group becomes exactly one deal, session processed, cla
   assert.equal(dealEvents.length, 2);
   assert.ok(db.state.timeline.some((t) => t.subjectType === 'reservation_session'));
   assert.ok(db.state.timeline.some((t) => t.subjectType === 'contact'));
+  // Canonical summary document: generated exactly once on full success, a
+  // REAL PDF, filed on the contact + EVERY created deal (kind 'file').
+  assert.equal(db.state.documents.length, 1);
+  const doc = db.state.documents[0];
+  assert.equal(doc.sessionId, 's1');
+  assert.ok(doc.pdfBytes.length > 1000);
+  assert.equal(doc.filename, 'Grafitiyul-Agent-Reservation-1001.pdf');
+  const fileEvents = db.state.timeline.filter(
+    (t) => t.data?.event === 'agent_reservation_summary_generated',
+  );
+  assert.equal(fileEvents.filter((t) => t.subjectType === 'contact').length, 1);
+  assert.equal(fileEvents.filter((t) => t.subjectType === 'deal').length, 2);
+  const dealIds = [...db.state.groups.values()].map((g) => g.createdDealId).sort();
+  assert.deepEqual(
+    fileEvents.filter((t) => t.subjectType === 'deal').map((t) => t.subjectId).sort(),
+    dealIds,
+  );
 });
 
 test('re-run is idempotent: stamped groups are skipped, no duplicate deals', async () => {

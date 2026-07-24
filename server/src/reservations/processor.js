@@ -19,6 +19,7 @@ import crypto from 'node:crypto';
 import { prisma } from '../db.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
 import { createDealFromReservationGroup } from './createDeal.js';
+import { ensureReservationDocument } from './document.js';
 
 export const CLAIM_TTL_MS = 2 * 60 * 1000;
 export const MAX_ATTEMPTS = 8;
@@ -153,6 +154,18 @@ export async function processReservationSession(sessionId, db = prisma) {
     }
   } catch {
     /* history must never fail the processing result */
+  }
+
+  // Canonical summary document — generated ONCE, only after full success
+  // (every group has its Deal). Best-effort: a PDF failure never affects the
+  // processing result; every download path retries via the same idempotent
+  // ensure, so a transient failure self-heals.
+  if (status === 'processed') {
+    try {
+      await ensureReservationDocument(sessionId, db);
+    } catch (e) {
+      console.warn('[reservations] summary document generation failed:', e?.message);
+    }
   }
 
   return { claimed: true, status, processed, failed };

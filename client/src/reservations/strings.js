@@ -90,7 +90,8 @@ export const L = {
       received: 'התקבל',
       participants: (n) => `${n} משתתפים`,
       orderNo: (n) => `GOS-${n}`,
-      downloadPdf: 'הורד הזמנה (PDF)',
+      downloadPdf: 'הורדת סיכום ההזמנה',
+      preparingPdf: 'מכין את סיכום ההזמנה…',
       newReservation: 'הזמנה חדשה',
     },
     blocked: {
@@ -184,7 +185,8 @@ export const L = {
       received: 'Received',
       participants: (n) => `${n} participants`,
       orderNo: (n) => `GOS-${n}`,
-      downloadPdf: 'Download reservation (PDF)',
+      downloadPdf: 'Download reservation summary',
+      preparingPdf: 'Preparing your reservation summary…',
       newReservation: 'New reservation',
     },
     blocked: {
