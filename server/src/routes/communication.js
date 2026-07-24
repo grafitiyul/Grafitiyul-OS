@@ -552,7 +552,9 @@ router.post('/messages/:id/translate', handle(async (req, res) => {
   } catch (err) {
     if (err.code === 'translation_not_configured') return res.status(422).json({ error: err.code });
     if (err.code === 'translation_tokens_changed') return res.status(422).json({ error: err.code, detail: err.detail });
-    if (err.code === 'translation_failed') return res.status(502).json({ error: err.code, detail: err.detail });
+    // 422 (not 502) — Cloudflare replaces 502/504 with its own HTML page and
+    // the client would lose the structured error (project caching/CF rule).
+    if (err.code === 'translation_failed') return res.status(422).json({ error: err.code, detail: err.detail });
     throw err;
   }
 }));
@@ -722,7 +724,9 @@ router.post('/messages/:id/test-send', handle(async (req, res) => {
       createdById: req.adminAuth?.userId || null,
     },
   });
-  if (status === 'failed') return res.status(502).json({ error: 'test_send_failed', detail: error });
+  // 422 (not 502) — see the Cloudflare note above: a 5xx here would surface as
+  // Cloudflare's HTML error page instead of the structured failure reason.
+  if (status === 'failed') return res.status(422).json({ error: 'test_send_failed', detail: error });
   res.json({ ok: true, destination });
 }));
 

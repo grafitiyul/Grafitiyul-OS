@@ -11,7 +11,11 @@ export const TRIGGERS = [
   {
     type: 'deal_won',
     labelHe: 'דיל נסגר (WON)',
-    contexts: ['deal', 'contact', 'org', 'tour', 'payment', 'quote'],
+    // 'reservation' included: a WON deal born from an agent reservation carries
+    // its session (context.js derives it via reservationGroup), so the
+    // canonical reservation PDF is attachable; deals without one resolve the
+    // document as missing and the delivery policy handles it.
+    contexts: ['deal', 'contact', 'org', 'tour', 'payment', 'quote', 'reservation'],
     anchors: ['trigger_time', 'tour_datetime'],
   },
   {
@@ -23,7 +27,7 @@ export const TRIGGERS = [
   {
     type: 'reservation_submitted',
     labelHe: 'הזמנת סוכן נקלטה',
-    contexts: ['deal', 'contact', 'org', 'reservation'],
+    contexts: ['deal', 'contact', 'org', 'reservation', 'payment'],
     anchors: ['trigger_time'],
   },
   {
