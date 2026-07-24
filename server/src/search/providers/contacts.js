@@ -1,8 +1,8 @@
 // Contact search provider.
 
-import { lookupPhoneContacts, lookupEmailContacts, lookupLegacy, legacyCardHit, CANDIDATE_CAP } from '../lookups.js';
+import { legacyCardHit, CANDIDATE_CAP } from '../lookups.js';
 import { scoreOf, bestReason } from '../ranking.js';
-import { contactNameOr } from '../nameWhere.js';
+import { contactSearchWhere } from '../contactWhere.js';
 import { contains, startsWith, equals, fullNameHe, fullNameEn } from '../text.js';
 
 const INCLUDE = {
@@ -25,12 +25,6 @@ const INCLUDE = {
   },
   _count: { select: { dealContacts: true } },
 };
-
-const INT4_MAX = 2147483647;
-
-function ci(q) {
-  return { contains: q, mode: 'insensitive' };
-}
 
 function nameReasons(c, q) {
   const out = [];
@@ -107,30 +101,12 @@ function toDto(c, reasons) {
 }
 
 export async function searchContacts(q, pq, limit, todayIso, db) {
-  const trimmed = q.trim();
-  const contactNo =
-    /^\d+$/.test(trimmed) && Number(trimmed) <= INT4_MAX ? Number(trimmed) : null;
-
-  const [phoneMap, emailMap, legacyRows] = await Promise.all([
-    lookupPhoneContacts(pq, db),
-    lookupEmailContacts(q, db),
-    lookupLegacy(q, 'Contact', db),
-  ]);
-  const legacyByContact = new Map(legacyRows.map((r) => [r.entityId, r.cardData]));
-
-  const or = [
-    ...contactNameOr(q),
-    { notes: ci(q) },
-    { taxId: ci(q) },
-    { orgLinks: { some: { organization: { is: { name: ci(q) } } } } },
-    { orgLinks: { some: { organizationUnit: { is: { name: ci(q) } } } } },
-  ];
-  if (contactNo !== null) or.push({ contactNo });
-  const contactIds = [...new Set([...phoneMap.keys(), ...emailMap.keys(), ...legacyByContact.keys()])];
-  if (contactIds.length) or.push({ id: { in: contactIds } });
+  // ONE contact-search WHERE, shared with the paginated Contacts list route.
+  const { where, phoneMap, emailMap, legacyByContact, contactNo } =
+    await contactSearchWhere(q, pq, db);
 
   const rows = await db.contact.findMany({
-    where: { OR: or },
+    where,
     include: INCLUDE,
     orderBy: { updatedAt: 'desc' },
     take: CANDIDATE_CAP,

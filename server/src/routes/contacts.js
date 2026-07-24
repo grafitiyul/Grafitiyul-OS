@@ -2,7 +2,9 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { numericIdResolver } from './numericIdParam.js';
-import { parseListQuery, containsI, digits } from './listPagination.js';
+import { parseListQuery } from './listPagination.js';
+import { contactSearchWhere } from '../search/contactWhere.js';
+import { phoneQuery } from '../search/phoneQuery.js';
 import { sendReservationDocument } from '../reservations/document.js';
 
 // Contact CRUD + phones + emails + organization memberships. Reference data for
@@ -63,22 +65,13 @@ router.get(
 
     const { paginated, page, pageSize, skip, take, search } = parseListQuery(req.query);
     if (paginated) {
-      const where = {};
-      if (search) {
-        // Token-AND across name fields (so "דוד כהן" matches first+last), each
-        // token also allowed to hit phone / email / org / contact number.
-        const tokens = search.split(/\s+/).filter(Boolean);
-        where.AND = tokens.map((tok) => ({
-          OR: [
-            { firstNameHe: containsI(tok) }, { lastNameHe: containsI(tok) },
-            { firstNameEn: containsI(tok) }, { lastNameEn: containsI(tok) },
-            { phones: { some: { value: { contains: digits(tok) } } } },
-            { emails: { some: { value: containsI(tok) } } },
-            { orgLinks: { some: { organization: { name: containsI(tok) } } } },
-            ...(/^\d+$/.test(tok) ? [{ contactNo: Number(tok) }] : []),
-          ],
-        }));
-      }
+      // Server-side search over the WHOLE dataset via the ONE canonical
+      // contact-search WHERE (same matching as global search): full name across
+      // separate columns, case-insensitive partial email/org, normalized-phone
+      // (formatting-agnostic), exact contact number. Empty search → unfiltered.
+      const where = search
+        ? (await contactSearchWhere(search, phoneQuery(search), prisma)).where
+        : {};
       const [total, rows] = await Promise.all([
         prisma.contact.count({ where }),
         prisma.contact.findMany({
