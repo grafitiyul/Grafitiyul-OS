@@ -50,6 +50,39 @@ test('quantity > 1 renders qty × unit = total; quantity 1 renders one amount', 
   assert.match(groups2, /^2 × /);
 });
 
+// ── REGRESSION LOCK: semantic order quantity → UNIT price → row TOTAL, and
+// bidi safety. he-IL currency strings embed RLM (U+200F) marks that visually
+// reversed the runs ("2 × 2,600 = 1,300"); amounts must arrive stripped of
+// bidi controls and wrapped in LTR isolates so the painted order always
+// matches the logical order in RTL and LTR alike. ───────────────────────────
+test('multiplication order locked: qty then UNIT then TOTAL, bidi-safe (he + en)', () => {
+  const cases = [
+    // 2 groups × ₪1,300 = ₪2,600 (fixed × group count)
+    { row: { type: 'fixed_price', quantity: 2, unitAmountMinor: 130000, totalMinor: 260000 }, qty: 2, unit: '1,300', total: '2,600' },
+    // 10 participants × ₪120 = ₪1,200
+    { row: { type: 'per_participant', quantity: 10, unitAmountMinor: 12000, totalMinor: 120000 }, qty: 10, unit: '120', total: '1,200' },
+    // 2 × ₪250 = ₪500 (Saturday/Holiday surcharge per group)
+    { row: { type: 'saturday_surcharge', quantity: 2, unitAmountMinor: 25000, totalMinor: 50000 }, qty: 2, unit: '250', total: '500' },
+  ];
+  for (const lang of ['he', 'en']) {
+    for (const c of cases) {
+      const text = pricingRowText(c.row, lang).amountText;
+      // No RLM/LRM/ALM bidi marks may survive inside the expression.
+      assert.equal(/[‎‏؜]/.test(text), false, `bidi mark leaked: ${JSON.stringify(text)}`);
+      // Each amount is wrapped in an explicit LTR isolate.
+      assert.equal((text.match(/⁦/g) || []).length, 2, 'two isolated amounts expected');
+      // Logical token order: quantity, then ×, then UNIT, then =, then TOTAL.
+      const stripped = text.replace(/[⁦⁩]/g, '');
+      const iQty = stripped.indexOf(`${c.qty} ×`);
+      const iUnit = stripped.indexOf(c.unit, iQty);
+      const iEq = stripped.indexOf('=', iUnit);
+      const iTotal = stripped.indexOf(c.total, iEq);
+      assert.ok(iQty === 0 && iUnit > iQty && iEq > iUnit && iTotal > iEq,
+        `order broken (${lang}): ${JSON.stringify(stripped)}`);
+    }
+  }
+});
+
 test('structural rows (quantity null) render the unit amount without multiplication', () => {
   const structural = pricingRowText({ type: 'tier_up_to', threshold: 5, quantity: null, unitAmountMinor: 90000, totalMinor: null }, 'he');
   assert.equal(structural.amountText.includes('×'), false);

@@ -57,10 +57,21 @@ const T = {
 
 export const pricingT = (lang) => T[lang === 'en' ? 'en' : 'he'];
 
+// A money amount safe to embed inside a composed math expression. he-IL
+// currency formatting embeds RLM (U+200F) bidi marks before the number and the
+// ₪ sign; inside "qty × unit = total" those strong RTL marks visually REORDER
+// the runs (the browser painted "2 × 2,600 = 1,300" from a logically-correct
+// string). Strip the invisible bidi controls and wrap the amount in an explicit
+// LTR ISOLATE (U+2066…U+2069) so nothing can leak into the expression's order.
+function isolatedAmount(minor) {
+  const cleaned = formatMinor(minor).replace(/[\u200e\u200f\u061c]/g, '');
+  return `\u2066${cleaned}\u2069`; // LRI ... PDI
+}
+
 // One row → { label, amountText }. quantity > 1 renders the explicit
-// multiplication "qty × unit = total"; quantity ≤ 1 (or structural null)
-// renders one clean amount. Business-labeled generic surcharges ('surcharge',
-// 'ticket') keep their catalog label.
+// multiplication "qty × unit = total" (semantic order locked, bidi-safe);
+// quantity ≤ 1 (or structural null) renders one clean amount. Business-labeled
+// generic surcharges ('surcharge', 'ticket') keep their catalog label.
 export function pricingRowText(row, lang) {
   const t = pricingT(lang);
   const label =
@@ -70,7 +81,7 @@ export function pricingRowText(row, lang) {
   const qty = Number(row.quantity) || 0;
   const amountText =
     qty > 1
-      ? `${qty} × ${formatMinor(row.unitAmountMinor)} = ${formatMinor(row.totalMinor)}`
+      ? `${qty} × ${isolatedAmount(row.unitAmountMinor)} = ${isolatedAmount(row.totalMinor)}`
       : formatMinor(row.totalMinor != null ? row.totalMinor : row.unitAmountMinor);
   return { label, amountText };
 }
