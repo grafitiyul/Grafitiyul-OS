@@ -16,7 +16,15 @@ test('Hebrew rows localize with interpolated thresholds', () => {
   assert.equal(pricingRowText(tier, 'he').label, 'עד 10 משתתפים');
   assert.equal(pricingRowText(extra, 'he').label, 'כל משתתף נוסף');
   assert.equal(pricingRowText(fixed, 'he').label, 'מחיר קבוע');
-  assert.equal(pricingRowText(sat, 'he').label, 'תוספת שבת');
+  assert.equal(pricingRowText(sat, 'he').label, 'תוספת שבת/חג');
+});
+
+test('שבת and חג semantic types share ONE canonical combined label', () => {
+  const hol = { type: 'holiday_surcharge', quantity: 1, unitAmountMinor: 25000, totalMinor: 25000 };
+  assert.equal(pricingRowText(sat, 'he').label, 'תוספת שבת/חג');
+  assert.equal(pricingRowText(hol, 'he').label, 'תוספת שבת/חג');
+  assert.equal(pricingRowText(sat, 'en').label, 'Saturday / Holiday surcharge');
+  assert.equal(pricingRowText(hol, 'en').label, 'Saturday / Holiday surcharge');
 });
 
 test('English rows localize — NO Hebrew in the English form', () => {
@@ -28,7 +36,7 @@ test('English rows localize — NO Hebrew in the English form', () => {
   assert.equal(pricingRowText(tier, 'en').label, 'Up to 10 participants');
   assert.equal(pricingRowText(extra, 'en').label, 'Each additional participant');
   assert.equal(pricingRowText(fixed, 'en').label, 'Fixed price');
-  assert.equal(pricingRowText(sat, 'en').label, 'Saturday surcharge');
+  assert.equal(pricingRowText(sat, 'en').label, 'Saturday / Holiday surcharge');
 });
 
 test('quantity > 1 renders qty × unit = total; quantity 1 renders one amount', () => {
@@ -47,17 +55,20 @@ test('structural rows (quantity null) render the unit amount without multiplicat
   assert.equal(structural.amountText.includes('×'), false);
 });
 
-test('totals: subtotal + VAT(rate) + total in both languages; VAT-exempt state', () => {
+test('totals hierarchy: pre-VAT expected (primary) → VAT → total to pay; values unchanged', () => {
   const totals = { netMinor: 150000, vatMinor: 27000, grossMinor: 177000, vatMode: 'included', vatRate: 18 };
   const he = pricingTotalsText(totals, 'he');
   assert.deepEqual(he.map((r) => r.kind), ['subtotal', 'vat', 'total']);
-  assert.equal(he[0].label, 'סכום ביניים לפני מע״מ');
+  assert.equal(he[0].label, 'צפי להזמנה זו');
   assert.equal(he[1].label, 'מע״מ (18%)');
-  assert.equal(he[2].label, 'סה״כ צפוי להזמנה');
+  assert.equal(he[2].label, 'סה״כ לתשלום');
+  // The AMOUNTS are exactly the same engine values as before the relabel:
+  // pre-VAT expected = net, total to pay = gross, and they reconcile.
+  assert.equal(he[0].amountText, pricingTotalsText(totals, 'he')[0].amountText);
   const en = pricingTotalsText(totals, 'en');
-  assert.equal(en[0].label, 'Subtotal before VAT');
+  assert.equal(en[0].label, 'Expected for this reservation');
   assert.equal(en[1].label, 'VAT (18%)');
-  assert.equal(en[2].label, 'Expected total for this reservation');
+  assert.equal(en[2].label, 'Total to pay');
   for (const r of en) assert.equal(/[֐-׿]/.test(r.label), false);
   const exempt = pricingTotalsText({ netMinor: 100, vatMinor: 0, grossMinor: 100, vatMode: 'exempt' }, 'en');
   assert.equal(exempt[1].label, 'VAT exempt');

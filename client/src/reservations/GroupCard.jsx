@@ -150,9 +150,14 @@ function AgentPriceSection({ token, isPreview, lang, productVariantId, tourDate,
                     <div
                       key={row.kind}
                       className={`flex items-baseline justify-between gap-3 ${
-                        row.kind === 'total'
-                          ? 'text-[14px] font-bold text-emerald-900'
-                          : 'text-[12.5px] text-gray-500'
+                        // Agent hierarchy: the PRE-VAT expected amount is the
+                        // commercial headline; VAT informs; "total to pay" is
+                        // the secondary summary. Values are untouched.
+                        row.kind === 'subtotal'
+                          ? 'text-[14.5px] font-bold text-emerald-900'
+                          : row.kind === 'total'
+                            ? 'text-[13px] font-semibold text-emerald-800'
+                            : 'text-[12.5px] text-gray-500'
                       }`}
                     >
                       <span>{row.label}</span>

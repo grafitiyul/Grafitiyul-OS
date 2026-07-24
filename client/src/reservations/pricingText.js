@@ -14,12 +14,17 @@ const T = {
     per_participant: () => 'מחיר למשתתף',
     tier_up_to: (n) => `עד ${n} משתתפים`,
     extra_participant: () => 'כל משתתף נוסף',
-    saturday_surcharge: () => 'תוספת שבת',
-    holiday_surcharge: () => 'תוספת חג',
-    subtotal: 'סכום ביניים לפני מע״מ',
+    // ONE canonical label for the שבת/חג addon — a holiday is not necessarily a
+    // Saturday, so both semantic types render the same combined wording. The
+    // row still appears only when the engine says the surcharge applies.
+    saturday_surcharge: () => 'תוספת שבת/חג',
+    holiday_surcharge: () => 'תוספת שבת/חג',
+    // Agent-facing hierarchy: the PRE-VAT amount is the commercial headline
+    // ("צפי להזמנה זו"); VAT informs; the gross is the secondary "to pay" row.
+    subtotal: 'צפי להזמנה זו',
     vat: (rate) => (rate != null ? `מע״מ (${rate}%)` : 'מע״מ'),
     vatExempt: 'פטור ממע״מ',
-    total: 'סה״כ צפוי להזמנה',
+    total: 'סה״כ לתשלום',
     structuralHint: 'הזינו מספר משתתפים לחישוב מדויק.',
     structuralBadge: 'מבנה תמחור (לא חישוב סופי)',
     loading: 'טוען מחיר…',
@@ -34,12 +39,12 @@ const T = {
     per_participant: () => 'Price per participant',
     tier_up_to: (n) => `Up to ${n} participants`,
     extra_participant: () => 'Each additional participant',
-    saturday_surcharge: () => 'Saturday surcharge',
-    holiday_surcharge: () => 'Holiday surcharge',
-    subtotal: 'Subtotal before VAT',
+    saturday_surcharge: () => 'Saturday / Holiday surcharge',
+    holiday_surcharge: () => 'Saturday / Holiday surcharge',
+    subtotal: 'Expected for this reservation',
     vat: (rate) => (rate != null ? `VAT (${rate}%)` : 'VAT'),
     vatExempt: 'VAT exempt',
-    total: 'Expected total for this reservation',
+    total: 'Total to pay',
     structuralHint: 'Enter a participant count for an exact calculation.',
     structuralBadge: 'Pricing structure (not a final calculation)',
     loading: 'Loading price…',
