@@ -13,6 +13,13 @@ import { subscribeVersion, getVersionState, safeToReload } from '../lib/version.
 //
 // Mount once, inside the Router (it uses useLocation). It renders nothing until
 // an update is actually pending.
+//
+// SCOPING: mounted inside AppShell (the authenticated internal workspace, behind
+// AdminGuard) — deliberately NOT global. Public/external experiences (agent
+// reservation form, guide portal, public payment/quote pages, customer galleries,
+// questionnaire fills, landing/preview routes) must never show a deploy prompt or
+// be auto-reloaded out from under a customer; they update silently on the next
+// natural full navigation/reload (HTML is served no-store).
 export default function VersionGate() {
   const [state, setState] = useState(getVersionState);
   const location = useLocation();

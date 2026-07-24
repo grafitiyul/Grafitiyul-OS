@@ -2,10 +2,16 @@ import { Outlet } from 'react-router-dom';
 import NavRail from './NavRail.jsx';
 import TopBar from './TopBar.jsx';
 import MobileTabBar from './MobileTabBar.jsx';
+import VersionGate from './VersionGate.jsx';
 
 export default function AppShell() {
   return (
     <div className="h-full flex flex-col">
+      {/* Deploy-update surface — scoped to the authenticated internal workspace.
+          AppShell renders only behind AdminGuard (the /admin/* tree), so the
+          "גרסה חדשה זמינה" banner + safe auto-reload run for admins/staff and
+          never on public/external pages. */}
+      <VersionGate />
       <TopBar />
       <div className="flex-1 flex min-h-0">
         <NavRail />

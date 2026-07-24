@@ -1,5 +1,4 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
-import VersionGate from './shell/VersionGate.jsx';
 import AppShell from './shell/AppShell.jsx';
 import Landing from './shell/Landing.jsx';
 import AdminGuard from './admin/auth/AdminGuard.jsx';
@@ -138,9 +137,14 @@ import TourDetailPage from './public/pages/tours/TourDetailPage.jsx';
 export default function App() {
   return (
     <>
-      {/* Global, route-agnostic: detects a new deployment and updates open tabs
-          at a safe moment (non-blocking toast + auto-reload on navigation). */}
-      <VersionGate />
+      {/* The "new version available" surface is NOT mounted here. It is scoped to
+          the authenticated internal workspace (AppShell, behind AdminGuard) so it
+          never appears on public/external experiences — agent reservation forms,
+          the guide portal, public payment/quote pages, customer galleries,
+          questionnaire fills, landing/preview routes. Those update silently on a
+          natural full navigation/reload (HTML is no-store), and are never
+          interrupted by a deploy prompt or an auto-reload that could drop form
+          data. See shell/VersionGate.jsx (mounted in shell/AppShell.jsx). */}
       <Routes>
       {/* Root route is "smart" — guides who installed the PWA from
           their portal page need to land back on /p/:token, not on
