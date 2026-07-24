@@ -2,6 +2,7 @@ import { createTourForWonDeal } from '../tours/tourFromDeal.js';
 import { findHeldRegistrationForDeal } from '../tours/registrationLifecycle.js';
 import { REG_EXPIRED } from '../tours/registrationStatus.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
+import { fireCommunicationTrigger } from '../communication/engine.js';
 
 // THE one canonical WON transition every completion mode funnels through —
 // verified payment (pay-now / late payment) AND register-without-payment. No WON
@@ -18,7 +19,7 @@ export async function settleDealWon(
   { dealId, targetTourEventId = null, allowOverbook = false, origin, paymentStatus = 'paid', noPaymentReason = null } = {},
 ) {
   const runOrigin = origin || systemOrigin();
-  return client.$transaction(async (tx) => {
+  const result = await client.$transaction(async (tx) => {
     const deal = await tx.deal.findUnique({ where: { id: dealId } });
     if (!deal) {
       const e = new Error('deal_not_found');
@@ -76,6 +77,10 @@ export async function settleDealWon(
     }
     return { dealId, wonNow: true, tourEventId, lateExpired, overbook: effectiveOverbook };
   });
+  // Communication Center — post-commit (callers pass the root prisma client),
+  // fire-and-forget; the engine's idempotency drops replays.
+  if (result?.wonNow) fireCommunicationTrigger({ type: 'deal_won', dealId });
+  return result;
 }
 
 // Verified payment → WON. Every payment provider calls THIS.

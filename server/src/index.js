@@ -37,6 +37,8 @@ import reservationsRouter from './routes/reservations.js';
 import searchRouter from './routes/search.js';
 import dealsRouter from './routes/deals.js';
 import quoteDocumentsRouter from './routes/quoteDocuments.js';
+import communicationRouter from './routes/communication.js';
+import { startCommunicationWorker } from './communication/deliveryWorker.js';
 import publicQuoteRouter from './routes/publicQuote.js';
 import dealStagesRouter from './routes/dealStages.js';
 import tasksRouter from './routes/tasks.js';
@@ -356,6 +358,10 @@ app.use('/api/workshop-locations', requireAdminAuth, workshopLocationsRouter);
 // Quote Module — Slice 1 (quote document foundation). Admin-only. Draft
 // metadata only; no produce/render/public page/signature/PDF/delivery yet.
 app.use('/api/quote-documents', requireAdminAuth, quoteDocumentsRouter);
+// Communication Center ("נוסחים למייל + WhatsApp") — canonical outbound
+// communication templates + automation: events, messages, sending windows,
+// deliveries, preview/test-send. Admin-only.
+app.use('/api/communication', requireAdminAuth, communicationRouter);
 
 // Products & Pricing — Slice 1 (catalog + R2 files + payment config). Admin
 // only. Pricing engine, add-ons, and Deal integration are NOT built yet.
@@ -631,6 +637,9 @@ app.listen(port, () => {
   // בקרה detectors — re-derive operational issues from live domain state
   // (raise missing, auto-resolve fixed); 60s tick.
   startControlSweepWorker(console);
+  // Communication Center deliveries — claim-based 60s tick: windows,
+  // dependency waits, rendering, channel sends, retries.
+  startCommunicationWorker(console);
 
   // One-time, idempotent repair of the QA tour↔deal time drift (17/07 test
   // case). Safe on repeated deploy — only touches drifted rows.

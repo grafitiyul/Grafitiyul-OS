@@ -34,8 +34,19 @@ export const DYNAMIC_FIELDS = [
 
 const byKey = new Map(DYNAMIC_FIELDS.map((f) => [f.key, f]));
 
+// Runtime-registered fields (server-driven registries, e.g. the Communication
+// Center variable list from GET /api/communication/meta). Same chip rendering
+// path — registered labels resolve everywhere DynamicFieldNode renders.
+const registered = new Map();
+
+export function registerDynamicFields(fields) {
+  for (const f of fields || []) {
+    if (f?.key) registered.set(f.key, { key: f.key, label: f.label, description: f.description || null });
+  }
+}
+
 export function getDynamicFieldByKey(key) {
-  return byKey.get(key) || null;
+  return byKey.get(key) || registered.get(key) || null;
 }
 
 // Shape check — callers may still accept unregistered keys (e.g. content

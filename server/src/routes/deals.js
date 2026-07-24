@@ -42,6 +42,7 @@ import {
   waiverBreakdown,
 } from '../deals/waiver.js';
 import { settleDealWonFromPayment } from '../deals/paymentWon.js';
+import { fireCommunicationTrigger } from '../communication/engine.js';
 import { sendWhatsAppText } from '../whatsapp/send.js';
 
 // Deal CRUD + DealContact management. The Deal is the commercial object: it
@@ -793,6 +794,10 @@ router.put(
       after: deal,
       origin,
     });
+    // Communication Center triggers — post-commit, fire-and-forget (a trigger
+    // failure can never fail or slow the save).
+    if (wonTransition) fireCommunicationTrigger({ type: 'deal_won', dealId: req.params.id });
+    if (lostTransition) fireCommunicationTrigger({ type: 'deal_lost', dealId: req.params.id });
     // WON audit trail: which proposal the win was based on (or none).
     if (b.status === 'won' && existing.status !== 'won' && deal.wonQuoteRef) {
       await emitTimelineEvent(prisma, {

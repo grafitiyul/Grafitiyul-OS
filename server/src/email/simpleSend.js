@@ -1,6 +1,6 @@
 import { prisma } from '../db.js';
 import { emailIntegrationConfigured, gmail } from './googleClient.js';
-import { buildRawMessage } from './mime.js';
+import { buildRawMessage, htmlToText } from './mime.js';
 import { ingestGmailMessage } from './ingest.js';
 
 // Minimal server-initiated CRM email (no composer): a plain-text message
@@ -30,15 +30,28 @@ export async function getSendAccount() {
 }
 
 export async function sendSimpleEmail({ to, subject, bodyText, dealId = null, contactId = null, createdByUserId = null }) {
+  return sendCrmEmail({ to, subject, bodyText, dealId, contactId, createdByUserId });
+}
+
+// Generalized server-initiated CRM send — the Communication Center's email
+// channel adapter calls this with sanitized rich HTML + optional attachments
+// ([{ filename, mimeType, contentBase64 }], the buildRawMessage contract).
+// Same account selection, mirroring and CRM-linking as the plain-text path.
+export async function sendCrmEmail({
+  to, toName = null, subject, bodyText = null, bodyHtml = null, attachments = null,
+  dealId = null, contactId = null, createdByUserId = null,
+}) {
   if (!emailIntegrationConfigured()) throw coded('email_not_configured');
   const account = await getSendAccount();
   if (!account) throw coded('no_connected_account');
 
   const raw = buildRawMessage({
     from: { email: account.emailAddress, name: account.displayName },
-    to: [{ email: to, name: null }],
+    to: [{ email: to, name: toName }],
     subject,
-    bodyText,
+    bodyHtml: bodyHtml || undefined,
+    bodyText: bodyText || (bodyHtml ? htmlToText(bodyHtml) : undefined),
+    attachments: attachments || undefined,
   });
   const sent = await gmail.sendRaw(prisma, account, raw, null);
 

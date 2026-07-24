@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { DOC_TYPE_LABELS, emitAccountingEvent, systemOrigin } from '../icountDocs.js';
 import { settleDealWonFromPayment } from '../deals/paymentWon.js';
+import { fireCommunicationTrigger } from '../communication/engine.js';
 import { REG_HELD, REG_EXPIRED } from '../tours/registrationStatus.js';
 
 // iCount doctypes that RECORD money received (a קבלה / חשבונית מס קבלה). Only
@@ -82,6 +83,17 @@ async function captureDocumentFromIpn(dealId, payload, customLinkId) {
       });
     });
     console.log(`[icount webhook] captured document ${doctype}/${docnum} for deal ${dealId}`);
+    // Communication Center — a verified money-received document (receipt /
+    // invrec) is THE canonical payment_received signal. Post-commit,
+    // fire-and-forget; triggerRef includes the doc identity so a second
+    // payment on the same deal fires again while IPN replays stay deduped.
+    if (PAID_DOCTYPES.has(doctype)) {
+      fireCommunicationTrigger({
+        type: 'payment_received',
+        dealId,
+        triggerRef: `${dealId}:${doctype}:${docnum}`,
+      });
+    }
   } catch (err) {
     // Capture is best-effort — the raw log row is already persisted.
     console.error('[icount webhook] document capture failed', err);

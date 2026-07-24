@@ -111,6 +111,8 @@ import SabbathHoursSettings from './admin/crm/settings/SabbathHoursSettings.jsx'
 // Products & Pricing — Slice 1 (catalog + files + payment config).
 import ProductsSettings from './admin/products/ProductsSettings.jsx';
 import SharedContentLibrary from './admin/shared-content/SharedContentLibrary.jsx';
+import CommunicationPage from './admin/communication/CommunicationPage.jsx';
+import CommEventEditorPage from './admin/communication/EventEditorPage.jsx';
 // Tour Content module — GOS-owned internal tour content. 3-pane master-detail:
 // Tours → Stations → Station editor (workflow-first; the content library is
 // contextual, not a nav tab).
@@ -328,6 +330,10 @@ export default function App() {
         <Route path="settings/crm/ticket-types" element={<TicketTypesSettings />} />
         <Route path="settings/crm/sabbath-hours" element={<SabbathHoursSettings />} />
         <Route path="settings/crm/shared-content" element={<SharedContentLibrary />} />
+        {/* Communication Center — נוסחים למייל + WhatsApp: full-width management
+            table + dedicated event editor route (large editing surface). */}
+        <Route path="settings/communication" element={<CommunicationPage />} />
+        <Route path="settings/communication/events/:id" element={<CommEventEditorPage />} />
         {/* Tour Content — 3-pane master-detail. Tours → Stations → Station editor.
             The two list panes persist (in the shell); the editor is the Outlet. */}
         <Route path="tour-content" element={<TourContentShell />}>

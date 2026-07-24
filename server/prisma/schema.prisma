@@ -5059,3 +5059,269 @@ model ReservationGroup {
   @@index([productVariantId])
   @@index([locationId])
 }
+
+// ============================================================================
+// Communication Center ("נוסחים למייל + WhatsApp") — the canonical source of
+// truth for reusable + automatically scheduled outbound communications.
+//
+// Domain boundaries:
+//   CommunicationEvent    — the shared business reason: trigger, timing,
+//                           applicability. Owns child messages.
+//   CommunicationMessage  — ONE delivery definition under an event (channel,
+//                           audience, sender, language, content, window).
+//                           publicNumber is the permanent human-facing "#24" —
+//                           a Postgres sequence: DB-assigned, never reused,
+//                           never recalculated client-side.
+//   CommunicationMessageVersion — immutable published-content snapshots. A
+//                           delivery freezes the version it was scheduled with.
+//   CommunicationDelivery — one scheduled/sent/failed delivery per (message ×
+//                           business trigger × recipient). Idempotency is the
+//                           (messageId, triggerKey, recipientKey) unique.
+//                           Business-entity refs are LOOSE ids (audit rows
+//                           outlive the entities they describe).
+//   CommunicationSendingWindow / CommunicationWindowException — the ONE
+//                           sending-window evaluator's configuration (weekly
+//                           rules as Json on the window; date exceptions as
+//                           rows, window-scoped or global).
+//   CommunicationTestSend — internal test-send log (never a Timeline event).
+// ============================================================================
+
+model CommunicationEvent {
+  id            String   @id @default(cuid())
+  internalName  String
+  description   String?
+  status        String   @default("draft") // draft | active | disabled | archived
+  // Business trigger. V1 wired triggers: deal_won | deal_lost |
+  // reservation_submitted | payment_received | tour_cancelled. The engine is
+  // registry-driven (src/communication/triggers.js) — adding a trigger is a
+  // registry entry + one fire call at the business site, never a new worker.
+  triggerType   String
+  // Send-time anchor: trigger_time (the moment the trigger fired) or
+  // tour_datetime (the linked tour's start — enables "3 days before the tour").
+  anchorType    String   @default("trigger_time")
+  timingMode    String   @default("immediate") // immediate | before | after
+  timingAmount  Int?
+  timingUnit    String? // minutes | hours | days | weeks | months
+  // Applicability: activity gate + business-org filters + generic conditions.
+  activityMode  String   @default("all") // all | include | exclude
+  activityTypes String[] @default([]) // group | private | business
+  orgTypeIds    String[] @default([]) // OrganizationType ids (business deals)
+  orgSubtypeIds String[] @default([]) // OrganizationSubtype ids
+  // Extensible declarative conditions: [{ field, op, values }] with op in
+  // eq | neq | any_of | none_of | exists | not_exists. Evaluated by
+  // src/communication/conditions.js — never stored as executable code.
+  conditions    Json?
+  createdById   String?
+  updatedById   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  messages   CommunicationMessage[]
+  deliveries CommunicationDelivery[]
+
+  @@index([status, triggerType])
+  @@index([updatedAt])
+}
+
+model CommunicationMessage {
+  id           String             @id @default(cuid())
+  // The permanent public "#24". SERIAL — assigned by Postgres, monotonic,
+  // never reused (duplication mints a new number), survives edits/disable/
+  // archive/versioning. Searchable in the UI and queryable directly.
+  publicNumber Int                @unique @default(autoincrement())
+  event        CommunicationEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  eventId      String
+  internalName String?
+  channel      String // whatsapp | email
+  status       String             @default("draft") // draft | active | disabled
+
+  // Audience (recipient SOURCE — resolution happens server-side at delivery
+  // creation; phones/emails are never copied into the template):
+  //   primary_contact | field_contact | assigned_guides | explicit_contact |
+  //   explicit_staff | wa_group (WhatsApp group destination)
+  audienceType        String  @default("primary_contact")
+  audienceContactId   String? // loose Contact id (explicit_contact)
+  audiencePersonRefId String? // loose PersonRef id (explicit_staff)
+
+  // WhatsApp channel config (message-level — siblings under one event may use
+  // different senders/destinations). waAccountId is the stable WhatsAppAccount
+  // key ('main'/'office'); waGroupChatId is the WhatsAppChat id of a synced
+  // group (loose — validated at publish + re-validated at send).
+  waAccountId       String?
+  waDestinationType String? // private | group
+  waGroupChatId     String?
+
+  // "כפוף לחלון שליחה" — message-level, independent of siblings.
+  windowEnabled   Boolean                     @default(false)
+  sendingWindow   CommunicationSendingWindow? @relation(fields: [sendingWindowId], references: [id], onDelete: SetNull)
+  sendingWindowId String?
+
+  // Language: auto = recipient's canonical communication language with
+  // explicit fallback; he_only / en_only force one language (internal msgs).
+  languagePolicy   String @default("auto") // auto | he_only | en_only
+  fallbackLanguage String @default("he") // he | en
+
+  // Canonical document tokens: [{ kind: 'reservation_pdf'|'quote_document',
+  // mode: 'attach'|'link'|'both' }]. Resolution always points at the existing
+  // immutable stored artifact — never regenerated, never copied.
+  attachments Json?
+
+  // Working draft (pre-publish): { he:{subject?,body}, en:{subject?,body},
+  // enState: 'missing'|'ai_draft'|'reviewed' }. Bodies are editor HTML;
+  // WhatsApp bodies are converted by the ONE shared serializer
+  // (shared/waMarkup.mjs) at render time.
+  draftContent Json?
+
+  // The version live deliveries are scheduled with. Null = never published.
+  publishedVersion   CommunicationMessageVersion? @relation("CommMsgPublishedVersion", fields: [publishedVersionId], references: [id], onDelete: SetNull)
+  publishedVersionId String?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  versions   CommunicationMessageVersion[] @relation("CommMsgVersions")
+  deliveries CommunicationDelivery[]
+  testSends  CommunicationTestSend[]
+
+  @@index([eventId])
+  @@index([channel, status])
+  @@index([updatedAt])
+}
+
+model CommunicationMessageVersion {
+  id        String               @id @default(cuid())
+  message   CommunicationMessage @relation("CommMsgVersions", fields: [messageId], references: [id], onDelete: Cascade)
+  messageId String
+  versionNo Int
+  // Immutable full content snapshot: { he, en, enState, attachments,
+  // channelConfig } — everything needed to render without the mutable message.
+  content     Json
+  note        String?
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  publishedOn CommunicationMessage[]  @relation("CommMsgPublishedVersion")
+  deliveries  CommunicationDelivery[]
+
+  @@unique([messageId, versionNo])
+}
+
+model CommunicationDelivery {
+  id      String               @id @default(cuid())
+  event   CommunicationEvent   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  eventId String
+  message CommunicationMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  messageId String
+  // Frozen audit copy of the message's publicNumber at scheduling time.
+  messageNumber Int
+  version   CommunicationMessageVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull)
+  versionId String?
+
+  channel  String
+  language String?
+
+  // Idempotency: one delivery per (message × business trigger × recipient).
+  // triggerKey e.g. 'deal_won:<dealId>'; recipientKey e.g. 'contact:<id>',
+  // 'person:<id>', 'group:<chatId>'.
+  triggerKey   String
+  recipientKey String
+
+  // Loose business-entity refs (log filtering + timeline links; audit rows
+  // must survive entity deletion, so no FK constraints).
+  dealId      String?
+  tourEventId String?
+  sessionId   String?
+  contactId   String?
+
+  // Frozen resolution audit: { audienceType, recipientName, phone, email,
+  // waAccountId, waDestinationType, groupChatId, groupJid, groupSubject }.
+  recipientSnapshot Json?
+  // Frozen at send: { subject, body, attachments:[{kind,filename,fileId}] }.
+  renderedContent   Json?
+
+  intendedAt  DateTime // the originally computed send time (never mutated)
+  effectiveAt DateTime? // next allowed time when waiting for a window
+  waitReason  String?
+
+  // scheduled | waiting_window | waiting_dependency | sending | sent |
+  // failed (retryable) | failed_final | skipped | cancelled
+  status     String  @default("scheduled")
+  skipReason String?
+
+  claimedAt         DateTime?
+  claimedBy         String?
+  attemptCount      Int       @default(0)
+  lastAttemptAt     DateTime?
+  nextRetryAt       DateTime?
+  lastError         String?
+  providerMessageId String?
+  sentAt            DateTime?
+  cancelledAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([messageId, triggerKey, recipientKey])
+  @@index([status, intendedAt])
+  @@index([status, nextRetryAt])
+  @@index([dealId])
+  @@index([messageId, createdAt])
+  @@index([createdAt])
+}
+
+model CommunicationSendingWindow {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+  isDefault   Boolean @default(false)
+  active      Boolean @default(true)
+  // Weekly allow rules: [{ days:[0..6 — 0=Sunday], start:"HH:MM",
+  // end:"HH:MM" }]. All times are Israel local (Asia/Jerusalem); the
+  // evaluator (src/communication/windows.js) does the DST-correct math.
+  rules     Json
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages   CommunicationMessage[]
+  exceptions CommunicationWindowException[]
+}
+
+// Date exceptions. windowId null = GLOBAL: a global 'block' applies to EVERY
+// delivery (including messages not subject to a window); a global 'allow'
+// applies to every windowed message. Precedence (deterministic, documented in
+// windows.js): block always defeats allow — safety (Yom Kippur) wins over
+// urgency; urgent sends on a blocked date require removing the block.
+model CommunicationWindowException {
+  id       String                      @id @default(cuid())
+  window   CommunicationSendingWindow? @relation(fields: [windowId], references: [id], onDelete: Cascade)
+  windowId String?
+  kind     String // block | allow
+  label    String
+  dateFrom String // "YYYY-MM-DD" (Israel calendar date)
+  dateTo   String? // inclusive; null = single day
+  startTime String? // "HH:MM" — null = all day
+  endTime   String?
+  active   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([windowId])
+  @@index([active, dateFrom])
+}
+
+model CommunicationTestSend {
+  id          String               @id @default(cuid())
+  message     CommunicationMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  messageId   String
+  channel     String
+  destination String // explicit test phone / email / group label
+  language    String?
+  status      String // sent | failed
+  error       String?
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@index([messageId, createdAt])
+}

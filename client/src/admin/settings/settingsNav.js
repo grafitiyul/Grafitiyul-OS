@@ -31,6 +31,7 @@ export const SETTINGS_TREE = {
   '/admin/settings/crm/ticket-types': { label: 'סוגי כרטיסים', parent: '/admin/settings/crm' },
   '/admin/settings/crm/sabbath-hours': { label: 'שעות שבת וחג', parent: '/admin/settings/crm' },
   '/admin/settings/crm/shared-content': { label: 'ספריית תוכן משותף', parent: '/admin/settings/crm' },
+  '/admin/settings/communication': { label: 'נוסחים למייל + WhatsApp', parent: '/admin/settings' },
   '/admin/settings/finance': { label: 'הגדרות כספים', parent: '/admin/settings' },
   '/admin/settings/finance/payroll-components': { label: 'רכיבי שכר', parent: '/admin/settings/finance' },
   '/admin/settings/finance/activity-types': { label: 'סוגי תוספת כללית', parent: '/admin/settings/finance' },
@@ -56,6 +57,10 @@ export function resolveNode(pathname, dynamicLabel) {
   const variantMatch = pathname.match(/^(\/admin\/settings\/crm\/products\/[^/]+)\/variant\/[^/]+$/);
   if (variantMatch) {
     return { path: pathname, label: dynamicLabel || 'וריאציה', parent: variantMatch[1] };
+  }
+  // Communication Center event editor (…/communication/events/<id>).
+  if (/^\/admin\/settings\/communication\/events\/[^/]+$/.test(pathname)) {
+    return { path: pathname, label: dynamicLabel || 'אירוע תקשורת', parent: '/admin/settings/communication' };
   }
   return null;
 }

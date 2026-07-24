@@ -20,6 +20,7 @@ import { prisma } from '../db.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
 import { createDealFromReservationGroup } from './createDeal.js';
 import { ensureReservationDocument } from './document.js';
+import { fireCommunicationTrigger } from '../communication/engine.js';
 import { writeReservationBuilder } from './reservationBuilder.js';
 
 // The group's FROZEN pricing model (payloadSnapshot.pricingByGroup), keyed by
@@ -220,6 +221,12 @@ export async function processReservationSession(sessionId, db = prisma) {
       await ensureReservationDocument(sessionId, db);
     } catch (e) {
       console.warn('[reservations] summary document generation failed:', e?.message);
+    }
+    // Communication Center — fired AFTER the document ensure so an attached
+    // reservation PDF resolves immediately. First-processing only (the
+    // engine's triggerKey idempotency also guards replays).
+    if (!wasProcessedBefore) {
+      fireCommunicationTrigger({ type: 'reservation_submitted', sessionId });
     }
   }
 

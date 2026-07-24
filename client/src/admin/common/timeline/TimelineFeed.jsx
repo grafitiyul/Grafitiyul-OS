@@ -18,6 +18,7 @@ import WhatsAppIconShared from '../icons/WhatsAppIcon.jsx';
 import GmailIcon from '../icons/GmailIcon.jsx';
 import AccountingEventRow from './AccountingEventRow.jsx';
 import QuoteEventRow from './QuoteEventRow.jsx';
+import CommunicationEventRow from './CommunicationEventRow.jsx';
 import { DEAL_TASKS_CHANGED_EVENT } from '../../deals/tasks/taskEvents.js';
 import { useDirtyForm } from '../../../lib/dirtyForms.js';
 
@@ -562,6 +563,14 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
                     return (
                       <li key={entry.id}>
                         <TourEventRow entry={entry} />
+                      </li>
+                    );
+                  }
+                  // Communication Center automated sends (kind='communication').
+                  if (entry.kind === 'communication') {
+                    return (
+                      <li key={entry.id}>
+                        <CommunicationEventRow entry={entry} />
                       </li>
                     );
                   }

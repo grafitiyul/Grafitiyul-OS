@@ -1747,4 +1747,44 @@ export const api = {
   legacyCard: {
     get: (entityType, entityId) => request(`/api/legacy-card${qs({ entityType, entityId })}`),
   },
+  // Communication Center ("נוסחים למייל + WhatsApp") — events, messages,
+  // sending windows, deliveries, preview/test-send/translate.
+  communication: {
+    meta: () => request('/api/communication/meta'),
+    events: (params) => request(`/api/communication/events${qs(params)}`),
+    createEvent: (body) => request('/api/communication/events', { method: 'POST', body: JSON.stringify(body) }),
+    event: (id) => request(`/api/communication/events/${id}`),
+    updateEvent: (id, body) => request(`/api/communication/events/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    eventAction: (id, action) => request(`/api/communication/events/${id}/${action}`, { method: 'POST' }),
+    createMessage: (eventId, body) =>
+      request(`/api/communication/events/${eventId}/messages`, { method: 'POST', body: JSON.stringify(body) }),
+    updateMessage: (id, body) => request(`/api/communication/messages/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    publishMessage: (id, note) =>
+      request(`/api/communication/messages/${id}/publish`, { method: 'POST', body: JSON.stringify({ note }) }),
+    messageAction: (id, action) => request(`/api/communication/messages/${id}/${action}`, { method: 'POST' }),
+    deleteMessage: (id) => request(`/api/communication/messages/${id}`, { method: 'DELETE' }),
+    versions: (id) => request(`/api/communication/messages/${id}/versions`),
+    restoreVersion: (id, versionId) =>
+      request(`/api/communication/messages/${id}/restore`, { method: 'POST', body: JSON.stringify({ versionId }) }),
+    translate: (id, body) =>
+      request(`/api/communication/messages/${id}/translate`, { method: 'POST', body: JSON.stringify(body || {}) }),
+    preview: (id, body) =>
+      request(`/api/communication/messages/${id}/preview`, { method: 'POST', body: JSON.stringify(body) }),
+    testSend: (id, body) =>
+      request(`/api/communication/messages/${id}/test-send`, { method: 'POST', body: JSON.stringify(body) }),
+    deliveries: (params) => request(`/api/communication/deliveries${qs(params)}`),
+    cancelDelivery: (id) => request(`/api/communication/deliveries/${id}/cancel`, { method: 'POST' }),
+    windows: () => request('/api/communication/windows'),
+    createWindow: (body) => request('/api/communication/windows', { method: 'POST', body: JSON.stringify(body) }),
+    updateWindow: (id, body) => request(`/api/communication/windows/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    deleteWindow: (id) => request(`/api/communication/windows/${id}`, { method: 'DELETE' }),
+    createException: (body) => request('/api/communication/window-exceptions', { method: 'POST', body: JSON.stringify(body) }),
+    updateException: (id, body) =>
+      request(`/api/communication/window-exceptions/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    deleteException: (id) => request(`/api/communication/window-exceptions/${id}`, { method: 'DELETE' }),
+    waGroups: (params) => request(`/api/communication/wa-groups${qs(params)}`),
+    contactsSearch: (q) => request(`/api/communication/contacts-search${qs({ q })}`),
+    staffSearch: (q) => request(`/api/communication/staff-search${qs({ q })}`),
+    dealsSearch: (q) => request(`/api/communication/deals-search${qs({ q })}`),
+  },
 };

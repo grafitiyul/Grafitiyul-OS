@@ -165,6 +165,21 @@ export const TOOLBAR_PRESETS = {
     ['highlight', 'emoji'],
     ['fontSize'],
   ],
+  // Communication Center email body: full rich email formatting, but no
+  // video/font-family (email clients render them unreliably) and no the HR
+  // dynamicField menu — the Communication editor renders its own
+  // category-grouped variable menu next to the editor.
+  email: [
+    ['undo', 'redo'],
+    ['heading'],
+    ['bold', 'italic', 'underline'],
+    ['textColor', 'highlight'],
+    ['bulletList', 'orderedList'],
+    ['alignRight', 'alignCenter', 'alignLeft'],
+    ['dirRtl', 'dirLtr'],
+    ['link'],
+    ['image', 'emoji'],
+  ],
 };
 
 export default function Toolbar({ editor, setUploadState, preset = 'full' }) {

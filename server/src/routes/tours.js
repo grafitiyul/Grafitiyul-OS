@@ -17,6 +17,7 @@ import { findParallelTours, toAdminParallelTours } from '../tours/parallelTours.
 import { replaceTourEvent } from '../tours/replaceTour.js';
 import { emitTourChangeImpact } from '../tours/changeImpact.js';
 import { cancelTourAssignments } from '../tours/assignmentLifecycle.js';
+import { processTrigger as processCommunicationTrigger } from '../communication/engine.js';
 import {
   cancelDealBooking,
   reconnectOrphanBooking,
@@ -1198,6 +1199,15 @@ router.put(
       // Manual cancel joins the SAME gallery cleanup path as auto-cancel:
       // links revoked now, R2 purged async after the grace window.
       if (data.status === 'cancelled') {
+        // Communication Center — fired INLINE (not setImmediate) and BEFORE
+        // cancelTourAssignments below, so an assigned-guides message resolves
+        // the guides who WERE on the tour into frozen delivery snapshots.
+        // Never fails the cancel.
+        try {
+          await processCommunicationTrigger({ type: 'tour_cancelled', tourEventId: tour.id });
+        } catch (e) {
+          console.error('[tours] communication trigger failed', e?.message);
+        }
         await scheduleGalleryCleanup(prisma, tour.id, { reason: 'tour_cancelled', origin });
         // Payroll history survives — the activity/entries park as 'cancelled'
         // (no-op when the tour never generated payroll).

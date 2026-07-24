@@ -37,6 +37,12 @@ export default function SettingsHome() {
           description="תיבת השיחות, חיבור מספרי WhatsApp, מצב חיבור ופעולות ניהול."
         />
         <CategoryCard
+          to="/admin/settings/communication"
+          icon="💬"
+          title="נוסחים למייל + WhatsApp"
+          description="מרכז התקשורת — נוסחים אוטומטיים, טריגרים, תזמונים וחלונות שליחה."
+        />
+        <CategoryCard
           to="/admin/settings/finance"
           icon="💰"
           title="כספים"
