@@ -105,7 +105,7 @@ const L = {
     guides: (n) => `מספר מדריכים: ${n}`,
     tourLanguage: (l2) => `שפת הסיור: ${l2}`,
     onSite: (n, p) => `נציג בשטח: ${n}${p ? ` · ${p}` : ''}`,
-    notes: (t) => `הערות: ${t}`,
+    notes: (t) => `הערות / דגשים: ${t}`,
     pricingTitle: 'מחיר לסוכנים',
     row: {
       fixed_price: () => 'מחיר קבוע',
@@ -157,7 +157,7 @@ const L = {
     guides: (n) => `Number of guides: ${n}`,
     tourLanguage: (l2) => `Tour language: ${l2}`,
     onSite: (n, p) => `On-site contact: ${n}${p ? ` · ${p}` : ''}`,
-    notes: (t) => `Notes: ${t}`,
+    notes: (t) => `Notes / Highlights: ${t}`,
     pricingTitle: 'Agent price',
     row: {
       fixed_price: () => 'Fixed price',
@@ -218,10 +218,13 @@ export function pngDimensions(buf) {
 // total" for quantity > 1), Saturday/holiday surcharges, then the structured
 // VAT totals. Unavailable/structural models degrade to the same price-list
 // fallback sentence the form uses.
-function pricingRowLabel(row, t) {
+function pricingRowLabel(row, t, lang) {
   const fn = t.row[row.type];
   if (fn) return fn(row.threshold != null ? fmtInt(row.threshold) : '');
-  return row.labelHe || '';
+  // Business-labeled rows (generic surcharge / ticket): the frozen snapshot
+  // carries the catalog label in both languages — the EN document uses the EN
+  // label (legacy rows without labelEn keep the Hebrew one).
+  return (lang === 'en' ? row.labelEn || row.labelHe : row.labelHe) || '';
 }
 
 function pricingRowAmount(row) {
@@ -230,7 +233,7 @@ function pricingRowAmount(row) {
   return formatMinor(row.totalMinor != null ? row.totalMinor : row.unitAmountMinor);
 }
 
-function pricingItems(model, t, clean) {
+function pricingItems(model, t, clean, lang) {
   const items = [{ text: clean(t.pricingTitle), fontSize: 11.5, color: '#065f46', spaceAfter: 3 }];
   if (!model || model.available !== true || model.degraded) {
     items.push({ text: clean(t.priceFallback), fontSize: 10, color: '#6b7280', spaceAfter: 0 });
@@ -238,7 +241,7 @@ function pricingItems(model, t, clean) {
   }
   for (const row of model.rows || []) {
     items.push({
-      rowLabel: clean(pricingRowLabel(row, t)),
+      rowLabel: clean(pricingRowLabel(row, t, lang)),
       rowAmount: pricingRowAmount(row),
       fontSize: 10.5,
       color: row.type?.endsWith?.('surcharge') ? '#92400e' : '#374151',
@@ -294,22 +297,55 @@ function pricingItems(model, t, clean) {
 //   { rowLabel, rowAmount, fontSize, color?, spaceAfter? } — two-run pricing
 //       row: label on the leading edge, PURE-LTR amount on the trailing edge
 //   { divider: true, spaceAfter? } | { gap: pt }
+//   { cardStart: { color, fill?, padX? } } … { cardEnd: true } — FORM-SNAPSHOT
+//       cards: everything between the markers is wrapped in a bordered
+//       (optionally filled) card box, mirroring the reservation form's card
+//       language. A card that splits across pages draws one box per page
+//       segment. Cards nest one level (a group card containing the emerald
+//       pricing box). Inner padding comes from the block's own {gap} items;
+//       horizontal padding extends OUTSIDE the content margin (padX, pct).
 // Blocks: { items } — kept on one page when the whole block fits on a fresh
 // page; split at LINE level otherwise. All heights are measured with the
 // renderer's own wrap function + font.
 
 function flowBlocks(blocks, font, { align }) {
   const annotations = [];
+  const cardBoxes = []; // drawn BEFORE text annotations ⇒ always behind content
+  const openCards = [];
   let page = 1;
   let cursor = TOP_FIRST_PT;
 
   const lineH = (fs) => fs * NOTE_LINE_HEIGHT_RATIO;
+  const pushCardSegment = (c, endPt) => {
+    if (endPt - c.segStart < 4) return; // skip empty/hairline segments
+    const padX = c.opts.padX ?? 1.6;
+    cardBoxes.push({
+      kind: 'box',
+      page: c.segPage,
+      xPct: MARGIN_X_PCT - padX,
+      yPct: (c.segStart / A4.h) * 100,
+      wPct: CONTENT_W_PCT + 2 * padX,
+      hPct: ((endPt - c.segStart) / A4.h) * 100,
+      color: c.opts.color || '#bfdbfe',
+      thickness: c.opts.thickness ?? 1.1,
+      ...(c.opts.fill ? { fillColor: c.opts.fill } : {}),
+    });
+  };
   const newPage = () => {
+    // Close every open card's segment on the page we are leaving; reopen on
+    // the fresh page so a split card keeps its border on both sides.
+    for (const c of openCards) pushCardSegment(c, cursor);
     page += 1;
     cursor = TOP_REST_PT;
+    for (const c of openCards) {
+      c.segPage = page;
+      c.segStart = cursor;
+    }
   };
 
   const measureItem = (item) => {
+    if (item.cardStart) return { kind: 'cardStart', opts: item.cardStart, h: 0, spaceAfter: 0 };
+    if (item.cardEnd) return { kind: 'cardEnd', h: 0, spaceAfter: item.spaceAfter ?? 0 };
     if (item.gap) return { kind: 'gap', h: item.gap };
     if (item.divider) return { kind: 'divider', h: 2, spaceAfter: item.spaceAfter ?? 10 };
     if (item.rowLabel !== undefined) {
@@ -470,7 +506,13 @@ function flowBlocks(blocks, font, { align }) {
     const blockH = measured.reduce((a, m) => a + m.h + (m.spaceAfter || 0), 0);
     if (blockH > BOTTOM_PT - cursor && blockH <= freshCapacity) newPage();
     for (const m of measured) {
-      if (m.kind === 'gap') {
+      if (m.kind === 'cardStart') {
+        openCards.push({ opts: m.opts, segPage: page, segStart: cursor });
+      } else if (m.kind === 'cardEnd') {
+        const c = openCards.pop();
+        if (c) pushCardSegment(c, cursor);
+        cursor = Math.min(cursor + (m.spaceAfter || 0), BOTTOM_PT);
+      } else if (m.kind === 'gap') {
         cursor = Math.min(cursor + m.h, BOTTOM_PT);
       } else if (m.kind === 'divider') {
         if (cursor + 16 > BOTTOM_PT) newPage();
@@ -493,7 +535,10 @@ function flowBlocks(blocks, font, { align }) {
     }
   }
 
-  return { annotations, lastPage: page, cursorPt: cursor };
+  // Unbalanced cardStart (builder bug guard) — close at the current cursor.
+  for (const c of openCards.splice(0)) pushCardSegment(c, cursor);
+  // Card boxes first ⇒ borders/fills always render BEHIND text and checkboxes.
+  return { annotations: [...cardBoxes, ...annotations], lastPage: page, cursorPt: cursor };
 }
 
 // Compose the full layout (annotations + fields + page count) from a frozen
@@ -554,8 +599,17 @@ export async function buildReservationSummaryLayout(snapshot, opts = {}) {
     ],
   });
 
-  // Booker details — a normal full-width section near the top (same order as
-  // the form): name, phone, email, travel company.
+  // FORM-SNAPSHOT STYLING: the document mirrors the reservation form's card
+  // language — every section is a bordered card in the form's palette (blue
+  // card borders; the emerald pricing box; the blue on-site sub-box), in the
+  // form's section order. Someone holding the submitted form next to this
+  // document should immediately recognize the same document.
+  const CARD = { color: '#bfdbfe', padX: 1.6 }; // form: white card, blue border
+  const PRICE_BOX = { color: '#a7f3d0', fill: '#ecfdf5', padX: 0.8 }; // emerald box
+  const ONSITE_BOX = { color: '#dbeafe', fill: '#eff6ff', padX: 0.8 }; // blue-50 box
+
+  // Booker details card ("פרטי המזמין") — same order as the form: name, phone,
+  // email, travel company.
   const booker = snapshot.booker || {};
   const bookerLines = [];
   if (booker.name) bookerLines.push(t.bookerName(booker.name));
@@ -565,15 +619,20 @@ export async function buildReservationSummaryLayout(snapshot, opts = {}) {
   if (bookerLines.length) {
     blocks.push({
       items: [
+        { cardStart: CARD },
+        { gap: 9 },
         { text: clean(t.bookerTitle), fontSize: 13, spaceAfter: 4 },
         { text: clean(bookerLines.join('\n')), fontSize: 11, color: '#374151', spaceAfter: 0 },
-        { gap: 14 },
+        { gap: 9 },
+        { cardEnd: true, spaceAfter: 14 },
       ],
     });
   }
 
-  // Groups — one keep-together block each; FULL notes with paragraph breaks;
-  // per-group frozen pricing summary.
+  // Group cards — one keep-together card each, mirroring the form card's
+  // internal order: header (group N — name) → details (city, activity,
+  // date/time, participants, guides, tour language) → on-site contact sub-box →
+  // notes → the emerald pricing box. FULL notes with paragraph breaks.
   groups.forEach((g, i) => {
     const details = [g.orderNo ? t.order(g.orderNo) : t.orderPending];
     if (g.cityLabel) details.push(t.city(g.cityLabel));
@@ -582,19 +641,40 @@ export async function buildReservationSummaryLayout(snapshot, opts = {}) {
     details.push(t.participants(g.participants));
     if (g.guides != null) details.push(t.guides(g.guides));
     if (g.tourLanguage) details.push(t.tourLanguage(t.langNames[g.tourLanguage] || g.tourLanguage));
-    if (g.onSiteContactName) details.push(t.onSite(g.onSiteContactName, g.onSiteContactPhone || ''));
 
     const items = [
+      { cardStart: CARD },
+      { gap: 9 },
       { text: clean(`${t.group(g.index || i + 1)} — ${g.groupName || ''}`), fontSize: 12.5, spaceAfter: 4 },
       { text: clean(details.join('\n')), fontSize: 11, color: '#374151', spaceAfter: 0 },
     ];
+    if (g.onSiteContactName) {
+      // On-site contact — the form's quiet blue sub-box.
+      items.push({ gap: 6 });
+      items.push({ cardStart: ONSITE_BOX });
+      items.push({ gap: 5 });
+      items.push({
+        text: clean(t.onSite(g.onSiteContactName, g.onSiteContactPhone || '')),
+        fontSize: 10.5,
+        color: '#1e3a5f',
+        spaceAfter: 0,
+      });
+      items.push({ gap: 5 });
+      items.push({ cardEnd: true });
+    }
     if (g.notes) {
-      items.push({ gap: 4 });
+      items.push({ gap: 6 });
       items.push({ text: clean(t.notes(String(g.notes))), fontSize: 11, color: '#374151' });
     }
+    // Pricing — the form's emerald box, same rows/totals the agent saw.
+    items.push({ gap: 8 });
+    items.push({ cardStart: PRICE_BOX });
     items.push({ gap: 6 });
-    items.push(...pricingItems(g.pricing, t, clean));
-    items.push({ gap: 16 });
+    items.push(...pricingItems(g.pricing, t, clean, snapshot.language));
+    items.push({ gap: 6 });
+    items.push({ cardEnd: true });
+    items.push({ gap: 9 });
+    items.push({ cardEnd: true, spaceAfter: 14 });
     blocks.push({ items });
   });
 
@@ -608,36 +688,15 @@ export async function buildReservationSummaryLayout(snapshot, opts = {}) {
   // can therefore never reword a previously-submitted reservation.
   const legal = snapshot.legal || null;
   const inv = snapshot.invoice || null;
-  const closing = [];
-  if (inv && (inv.toOrganizer !== undefined || inv.toFinance !== undefined)) {
-    const invLabel = (frozenStem, legacyFn, details) =>
-      frozenStem ? `${frozenStem}${details ? ` — ${details}` : ''}` : legacyFn(details);
-    closing.push({ divider: true, spaceAfter: 10 });
-    closing.push({ text: clean(legal?.invoice?.title || t.invoiceTitle), fontSize: 12.5, spaceAfter: 4 });
-    closing.push({
-      text: clean(invLabel(legal?.invoice?.toOrganizer, t.invOrganizer, booker.name || '')),
-      fontSize: 11,
-      color: inv.toOrganizer ? '#111827' : '#9ca3af',
-      check: inv.toOrganizer ? 'checked' : 'unchecked',
-      spaceAfter: 4,
-    });
-    const financeParts = [inv.financeName, inv.financeEmail, inv.financePhone]
-      .filter(Boolean)
-      .join(' · ');
-    closing.push({
-      text: clean(invLabel(legal?.invoice?.toFinance, t.invFinance, inv.toFinance ? financeParts : '')),
-      fontSize: 11,
-      color: inv.toFinance ? '#111827' : '#9ca3af',
-      check: inv.toFinance ? 'checked' : 'unchecked',
-      spaceAfter: 10,
-    });
-  }
+
+  // Cancellation acknowledgement card — FIRST, matching the form's order
+  // (the checkbox card sits above the invoice section). The EXACT accepted
+  // statement, line for line (frozen on the confirmation at submit;
+  // snapshot.legal is the same registry text). Legacy sessions without frozen
+  // text keep the historical one-line summary.
   const confirmations = Array.isArray(snapshot.confirmations) ? snapshot.confirmations : [];
   const cancellation = confirmations.find((c) => c?.key === 'flexible_cancellation');
   if (cancellation) {
-    // The EXACT accepted statement, line for line (frozen on the confirmation at
-    // submit; snapshot.legal is the same registry text). Legacy sessions without
-    // frozen text keep the historical one-line summary.
     const frozenLines =
       (Array.isArray(cancellation.textLines) && cancellation.textLines.length
         ? cancellation.textLines
@@ -645,9 +704,10 @@ export async function buildReservationSummaryLayout(snapshot, opts = {}) {
       (Array.isArray(legal?.cancellation?.lines) && legal.cancellation.lines.length
         ? legal.cancellation.lines
         : null);
+    const items = [{ cardStart: CARD }, { gap: 8 }];
     if (frozenLines) {
       frozenLines.forEach((line, i) => {
-        closing.push({
+        items.push({
           text: clean(line),
           fontSize: 10,
           color: '#374151',
@@ -656,10 +716,45 @@ export async function buildReservationSummaryLayout(snapshot, opts = {}) {
         });
       });
     } else {
-      closing.push({ text: clean(t.confirmed), fontSize: 10, color: '#374151', check: true });
+      items.push({ text: clean(t.confirmed), fontSize: 10, color: '#374151', check: true });
     }
+    items.push({ gap: 8 });
+    items.push({ cardEnd: true, spaceAfter: 14 });
+    blocks.push({ items });
   }
-  if (closing.length) blocks.push({ items: closing });
+
+  // Invoice delivery card — the checkbox group as submitted: BOTH options with
+  // vector checked/unchecked boxes, preserving each label and state.
+  if (inv && (inv.toOrganizer !== undefined || inv.toFinance !== undefined)) {
+    const invLabel = (frozenStem, legacyFn, details) =>
+      frozenStem ? `${frozenStem}${details ? ` — ${details}` : ''}` : legacyFn(details);
+    const financeParts = [inv.financeName, inv.financeEmail, inv.financePhone]
+      .filter(Boolean)
+      .join(' · ');
+    blocks.push({
+      items: [
+        { cardStart: CARD },
+        { gap: 8 },
+        { text: clean(legal?.invoice?.title || t.invoiceTitle), fontSize: 12.5, spaceAfter: 4 },
+        {
+          text: clean(invLabel(legal?.invoice?.toOrganizer, t.invOrganizer, booker.name || '')),
+          fontSize: 11,
+          color: inv.toOrganizer ? '#111827' : '#9ca3af',
+          check: inv.toOrganizer ? 'checked' : 'unchecked',
+          spaceAfter: 4,
+        },
+        {
+          text: clean(invLabel(legal?.invoice?.toFinance, t.invFinance, inv.toFinance ? financeParts : '')),
+          fontSize: 11,
+          color: inv.toFinance ? '#111827' : '#9ca3af',
+          check: inv.toFinance ? 'checked' : 'unchecked',
+          spaceAfter: 0,
+        },
+        { gap: 8 },
+        { cardEnd: true },
+      ],
+    });
+  }
 
   const flow = flowBlocks(blocks, measureFont, { align });
 
@@ -816,6 +911,13 @@ export async function buildReservationSummaryPdf(snapshot, { signatureBytes = nu
 
   // Blank A4 base — same pdf-lib as the canonical renderer.
   const base = await PDFDocument.create();
+  // Pin the PDF metadata dates to the snapshot's FROZEN generation time —
+  // pdf-lib otherwise stamps wall-clock "now" (second granularity), which was
+  // the only nondeterminism in the bytes. With the dates pinned, the same
+  // frozen snapshot always yields the exact same PDF bytes.
+  const docDate = snapshot.generatedAt ? new Date(snapshot.generatedAt) : new Date(0);
+  base.setCreationDate(docDate);
+  base.setModificationDate(docDate);
   for (let i = 0; i < layout.pageCount; i += 1) base.addPage([A4.w, A4.h]);
   const baseBytes = Buffer.from(await base.save());
 

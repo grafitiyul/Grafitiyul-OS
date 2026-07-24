@@ -116,7 +116,11 @@ export function describeSurcharges(autoAddonLines = [], { systemAddonId = null, 
       quantity: qty,
       unitAmountMinor: unit,
       totalMinor: unit * qty,
-      ...(type === 'surcharge' ? { labelHe: l.label || 'תוספת' } : {}),
+      // Business-labeled surcharges carry BOTH catalog labels so the display
+      // layer localizes (EN experience shows nameEn, never mixed Hebrew).
+      ...(type === 'surcharge'
+        ? { labelHe: l.label || 'תוספת', ...(l.labelEn ? { labelEn: l.labelEn } : {}) }
+        : {}),
     };
   });
 }

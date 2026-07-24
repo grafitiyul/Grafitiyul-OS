@@ -283,7 +283,7 @@ export default function AgentReservationPage() {
           </div>
           <div className="mt-4 space-y-2">
             {result.groups.map((g) => (
-              <div key={g.id} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
+              <div key={g.id} className="flex items-center gap-3 rounded-xl border border-blue-200 bg-white px-4 py-3">
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[14px] font-medium text-gray-900">{g.groupName}</div>
                   <div className="text-[12px] text-gray-500">
@@ -338,7 +338,7 @@ export default function AgentReservationPage() {
       <div className="mx-auto max-w-3xl">
         {/* Booker details (פרטי המזמין) — a normal full-width section near the
             top of the form (read-only identity from the link token). */}
-        <section className="mb-6 rounded-2xl border border-gray-200/80 bg-white p-5">
+        <section className="mb-6 rounded-2xl border border-blue-200 bg-white p-5">
           <h3 className="flex items-center gap-2 text-[15px] font-bold text-gray-900">
             <span className="text-blue-600">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -383,7 +383,7 @@ export default function AgentReservationPage() {
             <button
               type="button"
               onClick={addGroup}
-              className="mt-4 flex w-full items-center justify-center gap-2.5 rounded-2xl border border-gray-200/80 bg-white py-4 text-[14px] font-semibold text-gray-700 transition hover:border-blue-200 hover:text-blue-700"
+              className="mt-4 flex w-full items-center justify-center gap-2.5 rounded-2xl border border-blue-200 bg-white py-4 text-[14px] font-semibold text-gray-700 transition hover:border-blue-200 hover:text-blue-700"
             >
               <span className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-white">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -400,7 +400,7 @@ export default function AgentReservationPage() {
               (boot.legalTexts) so the text shown here is byte-identical to what
               the server freezes into the session + summary PDF at submit; the
               local L table is only a fallback (design preview / older boot). */}
-          <div className="mt-6 rounded-2xl border border-gray-200/80 bg-white p-5">
+          <div className="mt-6 rounded-2xl border border-blue-200 bg-white p-5">
             <label className="flex cursor-pointer items-start gap-2.5 text-[13px] leading-relaxed text-gray-700">
               <input
                 type="checkbox"
@@ -423,7 +423,7 @@ export default function AgentReservationPage() {
 
           {/* Invoice delivery — independent recipients: organizer and/or the
               finance contact (both allowed; at least one required). */}
-          <div className="mt-4 rounded-2xl border border-gray-200/80 bg-white p-5">
+          <div className="mt-4 rounded-2xl border border-blue-200 bg-white p-5">
             <div className="mb-3 text-[14px] font-semibold text-gray-900">{t.invoice.title}</div>
             <div className="space-y-2.5">
               <label className="flex cursor-pointer items-center gap-2 text-[13px] text-gray-700">
@@ -529,7 +529,7 @@ export default function AgentReservationPage() {
           </div>
 
           {/* Signature (one per request — session-wide) + confirmation + submit. */}
-          <div className="mt-4 space-y-4 rounded-2xl border border-gray-200/80 bg-white p-5">
+          <div className="mt-4 space-y-4 rounded-2xl border border-blue-200 bg-white p-5">
             <div>
               <div className="mb-2 text-[14px] font-semibold text-gray-900">{t.footer.signatureTitle}</div>
               <SignatureBox t={t} value={signature} onChange={setSignature} error={formError === t.problems.signature} />

@@ -87,6 +87,10 @@ function makeSnapshot(groupCount, over = {}) {
 
 // Layout invariants: nothing may start above the top margin or extend past
 // the physical printable area; the signature field lives on the last page.
+// Card boxes (form-snapshot borders) deliberately extend up to ~2% OUTSIDE the
+// content margin — the card frame wraps the content like the form's padding —
+// but must still stay well inside the physical page. All text stays inside the
+// content margins exactly as before.
 function assertLayoutInvariants(layout) {
   for (const a of layout.annotations) {
     assert.ok(a.page >= 1 && a.page <= layout.pageCount, `page ${a.page} in range`);
@@ -95,7 +99,12 @@ function assertLayoutInvariants(layout) {
       a.yPct + a.hPct <= 98,
       `annotation bottom ${(a.yPct + a.hPct).toFixed(1)} inside page`,
     );
-    assert.ok(a.xPct >= 7.9 && a.xPct + a.wPct <= 92.1, 'inside side margins');
+    if (a.kind === 'box' && a.wPct > 50) {
+      // Card frame — wraps the content column; ≥5.9% keeps it printable.
+      assert.ok(a.xPct >= 5.9 && a.xPct + a.wPct <= 94.1, 'card frame inside page');
+    } else {
+      assert.ok(a.xPct >= 7.9 && a.xPct + a.wPct <= 92.1, 'inside side margins');
+    }
   }
   for (const f of layout.fields.filter((f) => f.fieldType === 'signature')) {
     assert.equal(f.page, layout.pageCount, 'signature on the last page');
@@ -194,10 +203,14 @@ test('invoice checkbox group: checked = box+fill+check, unchecked = empty box', 
       invoice: { toOrganizer: true, toFinance: false, financeName: null, financeEmail: null, financePhone: null },
     }),
   );
-  const boxes = layout.annotations.filter((a) => a.kind === 'box');
+  // Checkbox frames are the SMALL boxes; wide boxes are form-snapshot card frames.
+  const boxes = layout.annotations.filter((a) => a.kind === 'box' && a.wPct < 5);
   assert.equal(boxes.length, 2, 'both recipients render a checkbox frame');
   const filled = boxes.filter((b) => b.fillColor);
   assert.equal(filled.length, 1, 'exactly the selected recipient is filled');
+  // Form-snapshot card frames exist (booker/group/cancellation/invoice + boxes).
+  const cards = layout.annotations.filter((a) => a.kind === 'box' && a.wPct > 50);
+  assert.ok(cards.length >= 5, `expected card frames, got ${cards.length}`);
   // The check mark itself is a vector annotation, never a font glyph.
   const checks = layout.annotations.filter((a) => a.kind === 'check');
   assert.ok(checks.length >= 2, 'checked recipient + accepted cancellation terms');

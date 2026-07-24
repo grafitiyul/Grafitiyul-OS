@@ -27,7 +27,10 @@ import { buildReservationSummaryPdf } from './pdf.js';
 // v2: the snapshot carries the FROZEN legal wording (payloadSnapshot.legal +
 // per-confirmation textLines) and the PDF renders legal content from it —
 // registry edits can never reword an already-submitted reservation.
-export const GENERATOR_VERSION = 'v2';
+// v3: form-snapshot presentation — the PDF mirrors the reservation form's card
+// language (bordered cards, emerald pricing box, form section order) and the
+// EN document localizes business-labeled surcharge rows (labelEn).
+export const GENERATOR_VERSION = 'v3';
 
 // Human-readable, ASCII-safe (Content-Disposition friendly) filename.
 export function reservationDocumentFilename(sessionNo) {

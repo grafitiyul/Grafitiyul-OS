@@ -88,6 +88,9 @@ export function buildAutoAddonLines({
         id: `auto-addon:${e.addonId}`,
         kind: 'addon',
         label: catalog?.nameHe || 'תוספת',
+        // EN catalog label — consumed by the agent-facing display layers
+        // (pricingDisplay → form/PDF); the admin Builder keeps the HE label.
+        labelEn: catalog?.nameEn || null,
         refId: e.addonId,
         quantity: Math.max(1, Number(groupCount) || 1),
         unitPriceMinor: priced.priceMinor,

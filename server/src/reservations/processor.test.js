@@ -339,3 +339,32 @@ test('createDealFromReservationGroup requires the agency organization (BINDING #
     (e) => e.code === 'organization_missing',
   );
 });
+
+// ── pinned Deal note from the group's הערות / דגשים ─────────────────────────
+test('createPinnedNotesNote: pinned+editable note, line breaks preserved, per-group isolation', async () => {
+  const { createPinnedNotesNote } = await import('./processor.js');
+  const created = [];
+  const tx = { timelineEntry: { create: async ({ data }) => created.push(data) } };
+  const session = { id: 's1', sessionNo: 1234 };
+
+  await createPinnedNotesNote(tx, {
+    dealId: 'deal1',
+    group: { id: 'g1', notes: 'שורה ראשונה\nשורה שנייה <b>לא HTML</b>' },
+    session,
+  });
+  assert.equal(created.length, 1);
+  const n = created[0];
+  assert.equal(n.subjectType, 'deal');
+  assert.equal(n.subjectId, 'deal1');
+  assert.equal(n.kind, 'note');
+  assert.equal(n.isPinned, true, 'pinned');
+  assert.equal(n.isSystem, false, 'must stay EDITABLE (not a system event)');
+  assert.ok(n.body.includes('שורה ראשונה<br>שורה שנייה'), 'line breaks preserved as <br>');
+  assert.ok(n.body.includes('&lt;b&gt;'), 'agent text is escaped, never raw HTML');
+  assert.equal(n.data.reservationGroupId, 'g1');
+
+  // Empty/whitespace notes create nothing.
+  await createPinnedNotesNote(tx, { dealId: 'deal2', group: { id: 'g2', notes: '   ' }, session });
+  await createPinnedNotesNote(tx, { dealId: 'deal3', group: { id: 'g3', notes: null }, session });
+  assert.equal(created.length, 1, 'no note without text');
+});

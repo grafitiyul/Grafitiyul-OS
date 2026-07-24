@@ -77,7 +77,9 @@ export function pricingRowText(row, lang) {
   const label =
     typeof t[row.type] === 'function'
       ? t[row.type](row.threshold != null ? row.threshold.toLocaleString(lang === 'en' ? 'en-US' : 'he-IL') : '')
-      : row.labelHe || '';
+      : // Business-labeled rows (generic surcharge / ticket): use the catalog's
+        // EN label in the English experience — never a mixed-Hebrew line.
+        (lang === 'en' ? row.labelEn || row.labelHe : row.labelHe) || '';
   const qty = Number(row.quantity) || 0;
   const amountText =
     qty > 1

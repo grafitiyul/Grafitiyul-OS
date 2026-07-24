@@ -116,7 +116,7 @@ function AgentPriceSection({ token, isPreview, lang, productVariantId, tourDate,
   const totalsRows = m?.totals ? pricingTotalsText(m.totals, lang) : [];
 
   return (
-    <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 p-3.5" dir={lang === 'en' ? 'ltr' : 'rtl'}>
+    <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3.5" dir={lang === 'en' ? 'ltr' : 'rtl'}>
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="text-[13px] font-semibold text-emerald-900">{t.title}</span>
         {m?.mode === 'structural' && !m?.degraded && (
@@ -222,7 +222,10 @@ export default function GroupCard({
     : t.group.collapsedNoActivity;
 
   return (
-    <section className="rounded-2xl border border-gray-200/80 bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+    {/* Card language: white card + elegant blue border — clear separation from
+        the page background without feeling boxed (design decision 2026-07-24;
+        applies to every card in the reservation form's design language). */}
+    <section className="rounded-2xl border border-blue-200 bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
       {/* Header — group number leading; activity badge; collapse + delete. */}
       <div className="flex items-center gap-2.5 px-5 pt-4 pb-1">
         <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600/10 text-blue-700">

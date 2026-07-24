@@ -32,6 +32,37 @@ function pricingForGroup(session, group) {
   return pbg[group.sortOrder] ?? null;
 }
 
+const escapeHtml = (s) =>
+  String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+// The agent's "הערות / דגשים" → ONE PINNED note on the group's own Deal.
+// Operational information for the office: rendered as a normal (yellow) pinned
+// note, line breaks preserved, and — deliberately — EDITABLE later
+// (isSystem:false, unlike system history events), so the office can refine it.
+// Each Deal receives only ITS group's text; groups never merge.
+export async function createPinnedNotesNote(tx, { dealId, group, session }) {
+  const raw = String(group.notes || '').trim();
+  if (!raw) return;
+  const body = `<p>${escapeHtml(raw).replace(/\r?\n/g, '<br>')}</p>`;
+  await tx.timelineEntry.create({
+    data: {
+      subjectType: 'deal',
+      subjectId: dealId,
+      kind: 'note',
+      body,
+      isPinned: true,
+      isSystem: false, // editable operational note — NOT an immutable history event
+      actorType: 'system',
+      actorLabel: `טופס סוכנים — בקשה #${session.sessionNo}`,
+      data: {
+        event: 'reservation_group_notes',
+        reservationSessionId: session.id,
+        reservationGroupId: group.id,
+      },
+    },
+  });
+}
+
 export const CLAIM_TTL_MS = 2 * 60 * 1000;
 export const MAX_ATTEMPTS = 8;
 const RETRY_BASE_MS = 60 * 1000; // 1m, 2m, 4m … capped at 1h
@@ -93,6 +124,9 @@ export async function processReservationSession(sessionId, db = prisma) {
           productVariantId: fresh.productVariantId,
           productLabel: fresh.productLabel,
         });
+        // The group's notes become a pinned, editable note on ITS Deal — same
+        // exactly-once transaction, so retries can never duplicate it.
+        await createPinnedNotesNote(tx, { dealId: deal.id, group: fresh, session });
         await tx.reservationGroup.update({
           where: { id: group.id },
           data: {

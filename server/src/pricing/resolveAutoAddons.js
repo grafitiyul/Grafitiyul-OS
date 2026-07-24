@@ -18,7 +18,7 @@ export async function loadAndBuildAutoAddons(prisma, { winningRule, cardVat, car
   // as data; the engine decides applicability from the tour language.
   const languageAddon = await prisma.addon.findFirst({
     where: { systemKey: 'language_surcharge' },
-    select: { id: true, nameHe: true, active: true, defaultPriceMinor: true, vatMode: true, vatRate: true, autoApplyLanguages: true },
+    select: { id: true, nameHe: true, nameEn: true, active: true, defaultPriceMinor: true, vatMode: true, vatRate: true, autoApplyLanguages: true },
   });
   const moment = tourMoment(tourDate, tourTime);
   let sabbath = { applies: false };
@@ -42,7 +42,9 @@ export async function loadAndBuildAutoAddons(prisma, { winningRule, cardVat, car
   const catalogRows = entryAddonIds.length
     ? await prisma.addon.findMany({
         where: { id: { in: entryAddonIds } },
-        select: { id: true, nameHe: true, vatMode: true, vatRate: true },
+        // nameEn feeds the EN agent experience (form pricing + EN PDF) so
+        // business-labeled surcharges localize instead of leaking Hebrew.
+        select: { id: true, nameHe: true, nameEn: true, vatMode: true, vatRate: true },
       })
     : [];
   const lines = buildAutoAddonLines({
