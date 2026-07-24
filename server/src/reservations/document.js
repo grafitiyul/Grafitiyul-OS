@@ -79,8 +79,11 @@ export function buildDocumentSnapshot(session, { generatedAt = new Date() } = {}
     groups: (session.groups || []).map((g, i) => ({
       index: i + 1,
       groupName: g.groupName || '',
-      cityLabel: g.locationLabel || null,
-      activityLabel: g.productLabel || null,
+      // Language-appropriate frozen display labels — an EN document shows the
+      // labels the EN form showed (frozen at submit; legacy groups without the
+      // EN pair keep the Hebrew labels).
+      cityLabel: (language === 'en' ? g.locationLabelEn || g.locationLabel : g.locationLabel) || null,
+      activityLabel: (language === 'en' ? g.productLabelEn || g.productLabel : g.productLabel) || null,
       tourDate: g.tourDate,
       tourTime: g.tourTime || null,
       participants: g.participants,

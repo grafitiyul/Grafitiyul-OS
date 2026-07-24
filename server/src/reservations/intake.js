@@ -134,6 +134,8 @@ export function validateSubmission(
       locationId: variant?.locationId || null,
       productLabel: variant?.productLabel || null,
       locationLabel: variant?.locationLabel || null,
+      productLabelEn: variant?.productLabelEn || null,
+      locationLabelEn: variant?.locationLabelEn || null,
       tourDate,
       tourTime: TIME_RE.test(tourTime) ? tourTime : null,
       participants: Number.isInteger(participants) ? participants : 0,
@@ -322,9 +324,13 @@ export async function bookableCatalog(db = prisma) {
       nameEn: v.agentDisplayNameEn || v.agentDisplayName,
       description: v.agentDescription,
       // Frozen display snapshots persisted on the group — WHAT THE AGENT SAW;
-      // the created Deal stores the canonical refs.
+      // the created Deal stores the canonical refs. The EN pair mirrors the
+      // form's own display rule (EN label, falling back to the Hebrew
+      // commercial name) so an EN submission's document matches the EN form.
       productLabel: v.agentDisplayName,
       locationLabel: city.nameHe,
+      productLabelEn: v.agentDisplayNameEn || v.agentDisplayName,
+      locationLabelEn: city.nameEn || city.nameHe,
     });
   }
   cities.sort((a, b) => a.sortOrder - b.sortOrder || a.nameHe.localeCompare(b.nameHe, 'he'));

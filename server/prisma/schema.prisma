@@ -5024,6 +5024,11 @@ model ReservationGroup {
   locationId         String?
   productLabel       String?
   locationLabel      String?
+  // EN display snapshots — what an ENGLISH-form agent saw (catalog EN labels,
+  // themselves falling back to the Hebrew commercial names). Frozen so the EN
+  // summary document mirrors the EN form exactly.
+  productLabelEn     String?
+  locationLabelEn    String?
   tourDate           String // "YYYY-MM-DD" (Deal working-scalar convention)
   tourTime           String? // "HH:MM"
   // Business participant count (no ticket categories — business tours only;
