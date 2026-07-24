@@ -183,6 +183,8 @@ router.post(
       groups: b.groups,
       tourDate: b.tourDate || null,
       tourTime: b.tourTime || null,
+      // Drives the data-driven non-standard-language surcharge in the live preview.
+      tourLanguage: b.tourLanguage || null,
     });
     res.json(model);
   }),
@@ -235,6 +237,9 @@ router.post(
               groups: g.groups,
               tourDate: g.tourDate,
               tourTime: g.tourTime,
+              // Freeze the surcharge with the accepted price: the validated group's
+              // canonical tour language selects the data-driven language addon.
+              tourLanguage: g.tourLanguage,
             }),
           ),
         );

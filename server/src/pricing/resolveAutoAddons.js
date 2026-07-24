@@ -11,8 +11,15 @@ import { sabbathHolidayWindow } from './engine.js';
 // lines for the winning card at this moment (empty when no date / nothing
 // applies). `sabbath` carries the detector's verdict (type: shabbat/chag/…) so
 // display layers can name the surcharge semantically.
-export async function loadAndBuildAutoAddons(prisma, { winningRule, cardVat, cardGroupId, tourDate, tourTime, groupCount }) {
+export async function loadAndBuildAutoAddons(prisma, { winningRule, cardVat, cardGroupId, tourDate, tourTime, groupCount, tourLanguage = null }) {
   const systemAddon = await prisma.addon.findFirst({ where: { systemKey: 'sabbath_holiday' } });
+  // The non-standard-language surcharge is a SYSTEM addon like שבת/חג, matched by
+  // its stable key (never by name). It carries its own trigger languages + price
+  // as data; the engine decides applicability from the tour language.
+  const languageAddon = await prisma.addon.findFirst({
+    where: { systemKey: 'language_surcharge' },
+    select: { id: true, nameHe: true, active: true, defaultPriceMinor: true, vatMode: true, vatRate: true, autoApplyLanguages: true },
+  });
   const moment = tourMoment(tourDate, tourTime);
   let sabbath = { applies: false };
   const entriesNeedSabbath =
@@ -28,7 +35,9 @@ export async function loadAndBuildAutoAddons(prisma, { winningRule, cardVat, car
     );
   }
   const entryAddonIds = [
-    ...new Set([...(winningRule?.addons || []).map((e) => e.addonId), systemAddon?.id].filter(Boolean)),
+    ...new Set(
+      [...(winningRule?.addons || []).map((e) => e.addonId), systemAddon?.id, languageAddon?.id].filter(Boolean),
+    ),
   ];
   const catalogRows = entryAddonIds.length
     ? await prisma.addon.findMany({
@@ -39,6 +48,8 @@ export async function loadAndBuildAutoAddons(prisma, { winningRule, cardVat, car
   const lines = buildAutoAddonLines({
     ruleAddons: winningRule?.addons || [],
     systemAddon,
+    languageAddon,
+    tourLanguage,
     cardVat,
     cardGroupId,
     moment,
@@ -46,5 +57,5 @@ export async function loadAndBuildAutoAddons(prisma, { winningRule, cardVat, car
     addonCatalogById: new Map(catalogRows.map((a) => [a.id, a])),
     groupCount,
   });
-  return { sabbath, lines, systemAddonId: systemAddon?.id || null };
+  return { sabbath, lines, systemAddonId: systemAddon?.id || null, languageAddonId: languageAddon?.id || null };
 }

@@ -204,7 +204,12 @@ export default function ContactDetail() {
           <div className="text-sm text-gray-500 mt-0.5" dir="ltr">{fullNameEn}</div>
         )}
       </div>
-      <TimelineFeed subjectType="contact" subjectId={id} aggregate />
+      {/* Timeline is keyed by the contact CUID — the aggregate endpoint matches
+          events + deal links by id, NOT by the numeric contactNo in the URL. The
+          route param `id` is the contactNo, so passing it here would return an
+          empty history (and hide the filed reservation-summary file event). This
+          mirrors the same fix DealDetail applies (deal.id, not the orderNo). */}
+      {contact?.id && <TimelineFeed subjectType="contact" subjectId={contact.id} aggregate />}
     </WorkspaceLayout>
   );
 }

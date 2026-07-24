@@ -339,6 +339,17 @@ export function addonApplies(entry, ctx = {}) {
   if (entry.autoApply === 'sabbath_holiday') {
     return ctx.isSabbathHoliday === true;
   }
+  // 'language' → the SURCHARGE addon declares which tour languages trigger it
+  // (entry.autoApplyLanguages, data). The engine evaluates that configuration and
+  // never special-cases language codes: the "regular" languages are simply those
+  // absent from the configured trigger set, editable without a deploy.
+  if (entry.autoApply === 'language') {
+    return (
+      Array.isArray(entry.autoApplyLanguages) &&
+      ctx.tourLanguage != null &&
+      entry.autoApplyLanguages.map(String).includes(String(ctx.tourLanguage))
+    );
+  }
   return Array.isArray(ctx.manualAddonIds) && ctx.manualAddonIds.includes(entry.addonId);
 }
 
@@ -369,6 +380,36 @@ export function resolveSystemAddonEntry(systemAddon, override) {
     vatMode: override && override.vatMode ? override.vatMode : null,
     vatRate: override && override.vatMode && override.vatRate != null ? override.vatRate : null,
     autoApply: 'sabbath_holiday',
+  };
+}
+
+// Resolve the effective entry for the LANGUAGE-surcharge SYSTEM add-on (a
+// non-standard-language surcharge inherited by every card, like שבת/חג). It
+// carries autoApply='language' + the addon's configured trigger languages, so
+// applicability + amount are 100% data (Addon.autoApplyLanguages /
+// defaultPriceMinor), never a code condition. Returns null when it should not
+// apply at all (globally inactive, card-disabled, no trigger languages, or
+// effective price ≤ 0). Mirrors resolveSystemAddonEntry.
+export function resolveLanguageAddonEntry(languageAddon, override) {
+  if (!languageAddon || languageAddon.active === false) return null;
+  if (override && override.enabled === false) return null;
+  const langs = Array.isArray(languageAddon.autoApplyLanguages)
+    ? languageAddon.autoApplyLanguages.filter(Boolean).map(String)
+    : [];
+  if (langs.length === 0) return null; // nothing configured to trigger → inert
+  const priceMinor =
+    override && override.priceMinor != null
+      ? Number(override.priceMinor)
+      : Number(languageAddon.defaultPriceMinor) || 0;
+  if (!(priceMinor > 0)) return null;
+  return {
+    addonId: languageAddon.id,
+    enabled: true,
+    priceMinor,
+    vatMode: override && override.vatMode ? override.vatMode : null,
+    vatRate: override && override.vatMode && override.vatRate != null ? override.vatRate : null,
+    autoApply: 'language',
+    autoApplyLanguages: langs,
   };
 }
 

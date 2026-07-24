@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { DateField, TimeField } from '../admin/common/pickers/DateTimeFields.jsx';
 import { api } from '../lib/api.js';
 import { pricingRowText, pricingTotalsText, pricingT } from './pricingText.js';
+import { TOUR_LANGUAGE_OPTIONS, DEFAULT_TOUR_LANGUAGE } from './strings.js';
 
 // One reservation group — an elegant collapsible card (approved mockup).
 // City-first flow: the agent picks a COMMERCIAL city, then only the
@@ -22,6 +23,9 @@ export const emptyGroup = () => ({
   participants: '',
   // "מספר מדריכים" — canonically this card's pricing group count. Default 1.
   groups: '1',
+  // שפת הסיור — canonical stable key (he|en|es|fr|ru). Default English (owner
+  // rule); a non-regular language triggers the data-driven surcharge server-side.
+  tourLanguage: DEFAULT_TOUR_LANGUAGE,
   onSiteContactName: '',
   onSiteContactPhone: '',
   notes: '',
@@ -74,7 +78,7 @@ const fmtDate = (ymd) => {
 // structured VAT totals) localized by pricingText.js — no formulas, no Hebrew
 // baked into cards, no product mappings. Refetches (debounced) when THIS
 // card's variant/date/time/participants/guides change.
-function AgentPriceSection({ token, isPreview, lang, productVariantId, tourDate, tourTime, participants, groups }) {
+function AgentPriceSection({ token, isPreview, lang, productVariantId, tourDate, tourTime, participants, groups, tourLanguage }) {
   const [state, setState] = useState({ phase: 'idle' });
   const reqId = useRef(0);
   const t = pricingT(lang);
@@ -95,6 +99,7 @@ function AgentPriceSection({ token, isPreview, lang, productVariantId, tourDate,
           tourTime: tourTime || null,
           participants: participants === '' ? null : Number(participants),
           groups: groups === '' ? 1 : Number(groups),
+          tourLanguage: tourLanguage || null,
         });
         if (mine !== reqId.current) return; // a newer request superseded this one
         setState({ phase: model?.available ? 'available' : 'fallback', model });
@@ -104,7 +109,7 @@ function AgentPriceSection({ token, isPreview, lang, productVariantId, tourDate,
       }
     }, 400);
     return () => clearTimeout(timer);
-  }, [token, isPreview, productVariantId, tourDate, tourTime, participants, groups]);
+  }, [token, isPreview, productVariantId, tourDate, tourTime, participants, groups, tourLanguage]);
 
   if (state.phase === 'idle') return null;
   const m = state.model;
@@ -346,7 +351,8 @@ export default function GroupCard({
           </div>
 
           {/* Number of guides — canonically this card's pricing GROUP COUNT
-              (feeds the engine as groupCount; the engine owns distribution). */}
+              (feeds the engine as groupCount; the engine owns distribution) —
+              and the tour language (default English; drives the surcharge). */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <Label required>{t.group.guides}</Label>
@@ -361,6 +367,21 @@ export default function GroupCard({
                 className={inputCls(p.groups)}
               />
               <Err msg={p.groups} />
+            </div>
+            <div>
+              <Label required>{t.group.tourLanguage}</Label>
+              <select
+                value={g.tourLanguage || ''}
+                onChange={(e) => set('tourLanguage', e.target.value)}
+                className={inputCls(p.tourLanguage)}
+              >
+                {TOUR_LANGUAGE_OPTIONS.map((o) => (
+                  <option key={o.key} value={o.key}>
+                    {lang === 'en' ? o.en : o.he}
+                  </option>
+                ))}
+              </select>
+              <Err msg={p.tourLanguage} />
             </div>
           </div>
 
@@ -414,6 +435,7 @@ export default function GroupCard({
             tourTime={g.tourTime}
             participants={g.participants}
             groups={g.groups}
+            tourLanguage={g.tourLanguage}
           />
         </div>
       )}

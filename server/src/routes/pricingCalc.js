@@ -188,6 +188,9 @@ router.post(
       // time-based add-ons (שבת/חג, weekday surcharges) on regeneration.
       tourDate: c.tourDate || null,
       tourTime: c.tourTime || null,
+      // Deal.tourLanguage — drives the data-driven non-standard-language surcharge
+      // so the staff Builder reconciles with the reservation preview/PDF globally.
+      tourLanguage: c.tourLanguage || null,
     };
     const counts = {
       participantCount: c.participantCount,
@@ -397,6 +400,7 @@ router.post(
           cardGroupId: productResolution.cardGroupId,
           tourDate: context.tourDate,
           tourTime: context.tourTime,
+          tourLanguage: context.tourLanguage,
           groupCount: counts.groupCount,
         });
         generated.push(...autoLines);

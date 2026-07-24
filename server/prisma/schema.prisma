@@ -2392,6 +2392,12 @@ model Addon {
   // never by name. This Addon row is the global default (price/VAT/active) every
   // card inherits unless it stores a PriceRuleAddon override.
   systemKey         String?  @unique
+  // For a LANGUAGE-surcharge system add-on (systemKey='language_surcharge'): the
+  // tour-language keys that TRIGGER the surcharge (e.g. ['es','fr','ru']). Fully
+  // data-driven — the engine evaluates this set, never a hard-coded language
+  // condition; the "regular" languages are simply those absent from it. Empty on
+  // every other add-on (inert).
+  autoApplyLanguages String[] @default([])
   defaultPriceMinor BigInt   @default(0)
   currency          String   @default("ILS")
   // null = "כמו כרטיס התמחור" — the add-on inherits the Pricing Card's VAT.

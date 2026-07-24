@@ -3,6 +3,20 @@
 // data-borne catalog labels come bilingual from the server DTO (commercial
 // channel names — never internal product/variant/location names).
 
+// Canonical tour-language options for the form. KEYS are the system-wide stable
+// identifiers (Deal/ReservationGroup.tourLanguage; server-validated in
+// intake.js) — never a translated label. English is the default (owner rule).
+// Display labels are bilingual so the option reads naturally in the form's own
+// language; the pricing surcharge is decided by the KEY, in data, on the server.
+export const TOUR_LANGUAGE_OPTIONS = [
+  { key: 'en', he: 'אנגלית', en: 'English' },
+  { key: 'he', he: 'עברית', en: 'Hebrew' },
+  { key: 'es', he: 'ספרדית', en: 'Spanish' },
+  { key: 'fr', he: 'צרפתית', en: 'French' },
+  { key: 'ru', he: 'רוסית', en: 'Russian' },
+];
+export const DEFAULT_TOUR_LANGUAGE = 'en';
+
 export const L = {
   he: {
     dir: 'rtl',
@@ -28,6 +42,7 @@ export const L = {
       time: 'שעה',
       participants: 'מספר משתתפים',
       guides: 'מספר מדריכים',
+      tourLanguage: 'שפת הסיור',
       onSiteTitle: 'איש קשר בשטח (אופציונלי)',
       onSiteName: 'שם מלא',
       onSitePhone: 'טלפון נייד',
@@ -123,6 +138,7 @@ export const L = {
       time: 'Time',
       participants: 'Participants',
       guides: 'Number of guides',
+      tourLanguage: 'Tour language',
       onSiteTitle: 'On-site contact (optional)',
       onSiteName: 'Full name',
       onSitePhone: 'Mobile phone',

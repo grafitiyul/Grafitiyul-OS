@@ -22,7 +22,7 @@ function fallback(reason) {
   return { available: false, reason, fallbackKey: 'agent_price_list', messageHe: AGENT_PRICE_FALLBACK_HE };
 }
 
-export async function resolveAgentPricing(prisma, { productVariantId, participants, groups, tourDate, tourTime }) {
+export async function resolveAgentPricing(prisma, { productVariantId, participants, groups, tourDate, tourTime, tourLanguage = null }) {
   if (!productVariantId) return fallback('no_variant');
   const variant = await prisma.productVariant.findUnique({
     where: { id: productVariantId },
@@ -104,6 +104,7 @@ export async function resolveAgentPricing(prisma, { productVariantId, participan
     cardGroupId: chosen.cardGroupId,
     tourDate,
     tourTime,
+    tourLanguage,
     groupCount: gCount,
   });
   const surchargeRows = describeSurcharges(autoLines, { systemAddonId, sabbathType: sabbath?.type || null });

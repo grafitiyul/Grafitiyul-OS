@@ -206,6 +206,9 @@ export default function AgentReservationPage() {
           // "מספר מדריכים" — the card's pricing group count. The server
           // REQUIRES it (intake validation); omitting it fails every submit.
           groups: Number(g.groups),
+          // שפת הסיור — canonical key (defaults to English); server freezes it
+          // on the group, the snapshot, the PDF and the created Deal.
+          tourLanguage: g.tourLanguage || null,
           onSiteContactName: g.onSiteContactName || null,
           onSiteContactPhone: g.onSiteContactPhone || null,
           notes: g.notes || null,

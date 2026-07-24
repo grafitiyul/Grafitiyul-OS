@@ -151,30 +151,70 @@ export async function createDealFromReservationGroup(tx, { session, group }) {
     roles: v.roles,
   }));
 
+  const dealSourceId = await travelAgentSourceId(tx);
   return tx.deal.create({
-    data: {
-      title: group.groupName,
-      groupName: group.groupName,
-      dealStageId: stage.id,
-      status: 'open',
-      ...classification,
-      organizationId: org.id,
-      productId: variant.productId,
-      productVariantId: variant.id,
-      locationId: variant.locationId,
-      tourDate: group.tourDate,
-      tourTime: group.tourTime,
-      participants: group.participants,
-      // Canonical group-count contract: guides on the reservation card ARE the
-      // Deal's operational group count (NULL = 1).
-      groups: group.groups || null,
-      tourLanguage: group.tourLanguage,
-      communicationLanguage: session.language,
-      dealSourceId: await travelAgentSourceId(tx),
-      source: `${SOURCE_LABEL} — בקשה #${session.sessionNo}`,
-      notes: group.notes,
-      contacts: { create: contactsCreate },
-    },
+    data: mapReservationGroupToDeal({
+      session,
+      group,
+      variant,
+      classification,
+      stageId: stage.id,
+      dealSourceId,
+      contactsCreate,
+    }),
     select: { id: true, orderNo: true },
   });
+}
+
+// THE canonical, complete reservation-group → Deal field mapping (defect #5).
+// One place, so no field is silently dropped and one group's values never leak
+// into another Deal — every value is read from THIS group (per-group data) or
+// the session (genuinely session-wide: agent language, source attribution).
+// Pure: the caller resolves the async pieces (variant, org classification,
+// stage, source id, contacts) and passes them in.
+//
+// Deliberately NOT copied (no Deal column exists; they live on their canonical
+// home and would be duplicated state): the session-wide invoice-delivery choice
+// and legal confirmations (frozen on the ReservationSession + rendered in the
+// immutable summary PDF), and the frozen display labels (the Deal stores the
+// canonical product/variant/location refs). The session is referenced via the
+// human-readable `source` ("בקשה #N").
+export function mapReservationGroupToDeal({
+  session,
+  group,
+  variant,
+  classification,
+  stageId,
+  dealSourceId,
+  contactsCreate,
+}) {
+  return {
+    // Identity / stage
+    title: group.groupName,
+    groupName: group.groupName, // seeds BOTH Deal title and Deal.groupName (#6)
+    dealStageId: stageId,
+    status: 'open', // pre-WON — no TourEvent/registration side effects
+    // Classification (org-linked ⇒ business; canonical rule, clears type copy)
+    ...classification,
+    organizationId: session.organizationId,
+    // Catalog refs (operational truth — never the frozen display labels)
+    productId: variant.productId,
+    productVariantId: variant.id,
+    locationId: variant.locationId,
+    // Operational tour context (per-group)
+    tourDate: group.tourDate,
+    tourTime: group.tourTime,
+    participants: group.participants,
+    // Canonical group-count contract: guides on the reservation card ARE the
+    // Deal's operational group count (NULL = 1).
+    groups: group.groups || null,
+    tourLanguage: group.tourLanguage, // per-group (#3)
+    communicationLanguage: session.language, // session-wide agent language
+    // Attribution
+    dealSourceId,
+    source: `${SOURCE_LABEL} — בקשה #${session.sessionNo}`,
+    notes: group.notes,
+    // People (agent booker + on-site fieldRep + finance), merged by contactId
+    contacts: { create: contactsCreate },
+  };
 }

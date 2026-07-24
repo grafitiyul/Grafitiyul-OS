@@ -167,6 +167,9 @@ export async function ensureReservationDocument(sessionId, db = prisma) {
       // duplicate them (no document ⇒ no events; document ⇒ events exist).
       const eventData = (dealId = null) => ({
         event: 'agent_reservation_summary_generated',
+        // Generic discriminator so any file-event consumer can resolve the stored
+        // document via the subject's scoped download route (documentId is the key).
+        source: 'reservation_summary',
         reservationSessionId: session.id,
         sessionNo: session.sessionNo,
         documentId: doc.id,

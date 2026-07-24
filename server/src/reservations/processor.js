@@ -20,6 +20,17 @@ import { prisma } from '../db.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
 import { createDealFromReservationGroup } from './createDeal.js';
 import { ensureReservationDocument } from './document.js';
+import { writeReservationBuilder } from './reservationBuilder.js';
+
+// The group's FROZEN pricing model (payloadSnapshot.pricingByGroup), keyed by
+// the group's submission position — the SAME canonical result the preview + PDF
+// use. Consumed as-is by the Builder writer; never recomputed here.
+function pricingForGroup(session, group) {
+  const pbg = Array.isArray(session?.payloadSnapshot?.pricingByGroup)
+    ? session.payloadSnapshot.pricingByGroup
+    : [];
+  return pbg[group.sortOrder] ?? null;
+}
 
 export const CLAIM_TTL_MS = 2 * 60 * 1000;
 export const MAX_ATTEMPTS = 8;
@@ -72,6 +83,16 @@ export async function processReservationSession(sessionId, db = prisma) {
         const fresh = await tx.reservationGroup.findUnique({ where: { id: group.id } });
         if (!fresh || fresh.createdDealId) return;
         const deal = await createDealFromReservationGroup(tx, { session, group: fresh });
+        // The accepted price IS the Deal's Builder state (defects #6/#7): write the
+        // group's FROZEN pricing into the Deal's primary Builder version + cache the
+        // gross on Deal.valueMinor. Same transaction as the exactly-once pointer, so
+        // a Deal never exists without its priced Builder (and never double-writes).
+        await writeReservationBuilder(tx, {
+          dealId: deal.id,
+          pricing: pricingForGroup(session, fresh),
+          productVariantId: fresh.productVariantId,
+          productLabel: fresh.productLabel,
+        });
         await tx.reservationGroup.update({
           where: { id: group.id },
           data: {

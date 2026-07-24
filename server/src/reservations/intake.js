@@ -112,7 +112,9 @@ export function validateSubmission(
       p('groups', 'invalid');
     }
 
-    const tourLanguage = TOUR_LANGUAGES.includes(g?.tourLanguage) ? g.tourLanguage : null;
+    // שפת הסיור — canonical key; defaults to English (owner rule) when absent or
+    // invalid, so every group carries a stable language for pricing + the Deal.
+    const tourLanguage = TOUR_LANGUAGES.includes(g?.tourLanguage) ? g.tourLanguage : 'en';
 
     // On-site contact (BINDING #5): both-or-nothing keeps the later Contact
     // creation meaningful — a phone without a name (or vice versa) is asked

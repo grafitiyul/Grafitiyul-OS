@@ -5,7 +5,7 @@
 // addon rows, the system שבת/חג addon, the active שבת rules, the addon catalog)
 // and this module decides which add-on lines a regeneration emits.
 
-import { addonApplies, priceAddon, resolveSystemAddonEntry } from './engine.js';
+import { addonApplies, priceAddon, resolveSystemAddonEntry, resolveLanguageAddonEntry } from './engine.js';
 
 // Marks a builder line as an auto-generated card add-on. Regeneration
 // (applyCardNotes) rebuilds these from canonical card data; the client and the
@@ -43,6 +43,12 @@ export function tourMoment(dateISO, time) {
 export function buildAutoAddonLines({
   ruleAddons,
   systemAddon,
+  // The non-standard-language SYSTEM surcharge (Addon.systemKey='language_surcharge')
+  // and the tour's language — both optional. When present and the tour language is
+  // in the addon's configured trigger set, one surcharge line is emitted, PER GROUP
+  // like every other auto surcharge (uniform: no language special-casing).
+  languageAddon = null,
+  tourLanguage = null,
   cardVat,
   cardGroupId,
   moment,
@@ -52,13 +58,17 @@ export function buildAutoAddonLines({
   // configured price is the unit, the group count is the quantity. Default 1.
   groupCount = 1,
 }) {
-  const entries = (ruleAddons || []).filter(
-    (e) => !systemAddon || e.addonId !== systemAddon.id,
-  );
+  const systemIds = new Set([systemAddon?.id, languageAddon?.id].filter(Boolean));
+  const entries = (ruleAddons || []).filter((e) => !systemIds.has(e.addonId));
   if (systemAddon) {
     const override = (ruleAddons || []).find((e) => e.addonId === systemAddon.id) || null;
     const resolved = resolveSystemAddonEntry(systemAddon, override);
     if (resolved) entries.push(resolved);
+  }
+  if (languageAddon) {
+    const override = (ruleAddons || []).find((e) => e.addonId === languageAddon.id) || null;
+    const resolvedLang = resolveLanguageAddonEntry(languageAddon, override);
+    if (resolvedLang) entries.push(resolvedLang);
   }
 
   const ctx = {
@@ -66,6 +76,7 @@ export function buildAutoAddonLines({
     minuteOfDay: moment?.minuteOfDay ?? null,
     manualAddonIds: [], // manual add-ons are operator-added lines, never auto
     isSabbathHoliday: isSabbathHoliday === true,
+    tourLanguage: tourLanguage ?? null,
   };
 
   return entries
