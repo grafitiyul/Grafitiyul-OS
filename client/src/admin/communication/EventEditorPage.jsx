@@ -13,7 +13,7 @@ import SimulatorPanel, { DealPicker } from './SimulatorPanel.jsx';
 import { toEventForm, isEventFormDirty, reconcileEventForm } from './eventFormState.js';
 import {
   STATUS_LABELS, STATUS_TONES, CHANNEL_LABELS, AUDIENCE_LABELS,
-  ACTIVITY_LABELS, timingLabel, StatusChip, ChannelBadge,
+  ACTIVITY_LABELS, timingLabel, StatusChip, ChannelBadge, TRIGGER_KIND_TONES,
 } from './commLabels.jsx';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -187,23 +187,54 @@ export default function EventEditorPage() {
                     const anchors = next?.anchors || ['trigger_time'];
                     patchEvent({
                       triggerType: e.target.value,
-                      anchorType: anchors.includes(form.anchorType) ? form.anchorType : 'trigger_time',
+                      // Keep the current anchor when the new trigger supports
+                      // it, otherwise its canonical first anchor (e.g. "מועד
+                      // הסיור" is tour-anchored by definition).
+                      anchorType: anchors.includes(form.anchorType) ? form.anchorType : anchors[0],
                     });
                   }}
                   className={`${selectCls} mt-1 w-full`}>
-                  {meta.triggers.map((t) => <option key={t.type} value={t.type}>{t.labelHe}</option>)}
+                  {Object.entries(meta.triggerCategories || {}).map(([cat, catLabel]) => {
+                    const items = meta.triggers.filter((t) => t.category === cat);
+                    if (!items.length) return null;
+                    return (
+                      <optgroup key={cat} label={catLabel}>
+                        {items.map((t) => (
+                          <option key={t.type} value={t.type}>
+                            {t.labelHe}{t.kind !== 'event' ? ` · ${meta.triggerKinds?.[t.kind] || ''}` : ''}
+                          </option>
+                        ))}
+                      </optgroup>
+                    );
+                  })}
+                  {meta.triggers.some((t) => !t.category) && (
+                    <optgroup label="אחר">
+                      {meta.triggers.filter((t) => !t.category).map((t) => (
+                        <option key={t.type} value={t.type}>{t.labelHe}</option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
               </div>
               <div>
                 <label className={label12}>עוגן זמן</label>
                 <select value={form.anchorType} onChange={(e) => patchEvent({ anchorType: e.target.value })}
-                  className={`${selectCls} mt-1 w-full`}>
+                  disabled={(trigger?.anchors || []).length === 1}
+                  className={`${selectCls} mt-1 w-full disabled:bg-gray-50 disabled:text-gray-500`}>
                   {(trigger?.anchors || ['trigger_time']).map((a) => (
                     <option key={a} value={a}>{a === 'trigger_time' ? 'רגע האירוע' : 'מועד הסיור'}</option>
                   ))}
                 </select>
               </div>
             </div>
+            {trigger && (
+              <div className="flex items-start gap-2 rounded-lg bg-gray-50 px-3 py-2">
+                <span className={`mt-0.5 inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10.5px] font-semibold ring-1 ${TRIGGER_KIND_TONES[trigger.kind] || TRIGGER_KIND_TONES.event}`}>
+                  {meta.triggerKinds?.[trigger.kind] || 'אירוע'}
+                </span>
+                <p className="text-[12px] leading-relaxed text-gray-600">{trigger.hintHe}</p>
+              </div>
+            )}
             <div>
               <label className={label12}>תזמון</label>
               <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -221,7 +252,7 @@ export default function EventEditorPage() {
                     }
                   }}
                   className={selectCls}>
-                  <option value="immediate">מיידי</option>
+                  <option value="immediate">{form.anchorType === 'tour_datetime' ? 'במועד הסיור' : 'מיידי'}</option>
                   <option value="before">לפני</option>
                   <option value="after">אחרי</option>
                 </select>
@@ -365,6 +396,7 @@ export default function EventEditorPage() {
                 meta={meta}
                 message={selectedMessage}
                 draft={simDraft}
+                triggerType={form.triggerType}
                 onOpenTest={(ctx) => setTestCtx(ctx || {})}
               />
             </div>

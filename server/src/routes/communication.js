@@ -42,7 +42,10 @@ import { sendCrmEmail } from '../email/simpleSend.js';
 import {
   TRIGGERS, TRIGGER_TYPES, TIMING_UNITS, TIMING_MODES, ANCHOR_TYPES,
   EVENT_STATUSES, CHANNELS, AUDIENCE_TYPES, triggerByType,
+  CATEGORY_LABELS, KIND_LABELS,
 } from '../communication/triggers.js';
+import { processTrigger } from '../communication/engine.js';
+import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
 import { VARIABLES, VARIABLE_CATEGORIES, variablesForTrigger } from '../communication/variables.js';
 import { CONDITION_FIELDS, CONDITION_OPS, ACTIVITY_TYPES, evaluateApplicability } from '../communication/conditions.js';
 import { DOCUMENT_KINDS } from '../communication/documents.js';
@@ -85,7 +88,11 @@ router.get('/meta', handle(async (_req, res) => {
     }
   }
   res.json({
-    triggers: TRIGGERS.map(({ type, labelHe, contexts, anchors }) => ({ type, labelHe, contexts, anchors })),
+    triggers: TRIGGERS.map(({ type, labelHe, contexts, anchors, category, kind, hintHe }) => ({
+      type, labelHe, contexts, anchors, category, kind, hintHe,
+    })),
+    triggerCategories: CATEGORY_LABELS,
+    triggerKinds: KIND_LABELS,
     timingUnits: TIMING_UNITS,
     timingModes: TIMING_MODES,
     anchorTypes: ANCHOR_TYPES,
@@ -605,6 +612,9 @@ async function simulateHandler(req, res) {
     versionContent: { ...draft, attachments: message.attachments || [] },
     ctx,
     language: b.language === 'en' || b.language === 'he' ? b.language : null,
+    // Sample trigger payload (e.g. tour_datetime_changed prev/new values) so
+    // change/action variables can be simulated through the same override path.
+    triggerData: b.triggerData && typeof b.triggerData === 'object' ? b.triggerData : null,
   });
   res.json({ mode, ...result });
 }
@@ -720,6 +730,82 @@ router.post('/messages/:id/test-send', handle(async (req, res) => {
   // Cloudflare's HTML error page instead of the structured failure reason.
   if (status === 'failed') return res.status(422).json({ error: 'test_send_failed', detail: error });
   res.json({ ok: true, destination });
+}));
+
+// ── explicit business actions that INVOKE the Communication Center ───────────
+
+// "שלח הצעת מחיר" — the canonical explicit quote-send action. The Communication
+// Center is the sending authority: this creates deliveries for every active
+// published message on active quote_send events (the worker then performs the
+// real sends; nothing is recorded as sent before a channel adapter succeeds).
+// The named QuoteDocument is frozen onto the deliveries (triggerData override)
+// so the exact immutable public link is what ships — never "whatever is
+// latest", never a regenerated artifact. No configured event ⇒ an explicit
+// admin-facing 422, never a silent fallback to hardcoded text.
+router.post('/actions/send-quote', handle(async (req, res) => {
+  const b = req.body || {};
+  const dealId = str(b.dealId);
+  const quoteDocumentId = str(b.quoteDocumentId);
+  if (!dealId || !quoteDocumentId) return res.status(400).json({ error: 'deal_and_quote_required' });
+
+  const doc = await prisma.quoteDocument.findUnique({
+    where: { id: quoteDocumentId },
+    select: { id: true, dealId: true, status: true, publicToken: true, versionNo: true, language: true, offerId: true },
+  });
+  if (!doc || doc.dealId !== dealId) return res.status(404).json({ error: 'quote_not_found' });
+  if (doc.status === 'draft') return res.status(409).json({ error: 'quote_not_produced' });
+
+  // Configured-event gate BEFORE firing — the admin must see the true state.
+  const configured = await prisma.communicationEvent.count({
+    where: {
+      triggerType: 'quote_send',
+      status: 'active',
+      messages: { some: { status: 'active', publishedVersionId: { not: null } } },
+    },
+  });
+  if (configured === 0) {
+    return res.status(422).json({
+      error: 'no_quote_send_event',
+      message: 'לא מוגדר אירוע "שליחת הצעת מחיר" פעיל עם מסרים מפורסמים במרכז התקשורת',
+    });
+  }
+
+  const initiatedAt = new Date().toISOString();
+  const result = await processTrigger({
+    type: 'quote_send',
+    dealId,
+    // A deliberate RE-SEND is a new business action — the trigger ref is
+    // unique per invocation (idempotency still guards replays of the same
+    // invocation via the created rows themselves).
+    triggerRef: `${dealId}:${doc.id}:${Date.parse(initiatedAt)}`,
+    data: {
+      quoteDocumentId: doc.id,
+      publicToken: doc.publicToken,
+      versionNo: doc.versionNo,
+      quoteLanguage: doc.language || null,
+      initiatedByUserId: req.adminAuth?.userId || null,
+      initiatedAt,
+    },
+  });
+
+  // Invocation audit on the Deal (NOT a "sent" record — deliveries record the
+  // actual sends only after the channel adapter succeeds).
+  await emitTimelineEvent(prisma, {
+    subjectType: 'deal',
+    subjectId: dealId,
+    kind: 'quote',
+    data: {
+      event: 'quote_send_invoked',
+      via: 'communication_center',
+      quoteDocumentId: doc.id,
+      versionNo: doc.versionNo,
+      publicToken: doc.publicToken,
+      deliveriesCreated: result.created,
+    },
+    origin: await userOrigin(req.adminAuth?.userId),
+  }).catch(() => {});
+
+  res.json({ ok: true, created: result.created });
 }));
 
 // ── deliveries (log + admin actions) ─────────────────────────────────────────

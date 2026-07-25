@@ -5238,6 +5238,13 @@ model CommunicationDelivery {
   // Frozen resolution audit: { audienceType, recipientName, phone, email,
   // waAccountId, waDestinationType, groupChatId, groupJid, groupSubject }.
   recipientSnapshot Json?
+  // Trigger-carried payload frozen at fire time — e.g. tour_datetime_changed's
+  // { prevDate, prevTime, newDate, newTime } or quote_send's explicit quote
+  // identity { quoteDocumentId, publicToken, versionNo, initiatedByUserId,
+  // initiatedAt }. The worker re-applies it onto the rebuilt context
+  // (applyTriggerOverrides) so change/action variables resolve identically at
+  // send time.
+  triggerData Json?
   // Frozen at send: { subject, body, attachments:[{kind,filename,fileId}] }.
   renderedContent   Json?
 

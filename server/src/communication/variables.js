@@ -13,7 +13,9 @@
 
 import { contactPhone, contactEmail, contactFullName } from './context.js';
 import { adminDisplayName } from '../admin/displayName.js';
-import { TOUR_LANG_LABELS, ACTIVITY_TYPE_LABELS, formatDateHe, formatMoney } from './format.js';
+import {
+  TOUR_LANG_LABELS, ACTIVITY_TYPE_LABELS, formatDateHe, formatMoney, tourChangeDescription,
+} from './format.js';
 
 // category → Hebrew group label for the editor menu.
 export const VARIABLE_CATEGORIES = {
@@ -108,6 +110,18 @@ export const VARIABLES = [
     resolve: (ctx, lang) => contactFullName(ctx.fieldContact, lang) },
   { key: 'field_contact_phone', labelHe: 'טלפון נציג בשטח', labelEn: 'Field contact phone', category: 'tour', contexts: ['deal'],
     resolve: (ctx) => contactPhone(ctx.fieldContact) },
+
+  // ── tour datetime change (tour_datetime_changed trigger payload) ──
+  { key: 'tour_prev_date', labelHe: 'תאריך קודם של הסיור', labelEn: 'Previous tour date', category: 'tour', contexts: ['change'],
+    resolve: (ctx) => formatDateHe(ctx.triggerData?.prevDate) },
+  { key: 'tour_prev_time', labelHe: 'שעה קודמת של הסיור', labelEn: 'Previous tour time', category: 'tour', contexts: ['change'],
+    resolve: (ctx) => ctx.triggerData?.prevTime || null },
+  { key: 'tour_new_date', labelHe: 'תאריך חדש של הסיור', labelEn: 'New tour date', category: 'tour', contexts: ['change'],
+    resolve: (ctx) => formatDateHe(ctx.triggerData?.newDate) },
+  { key: 'tour_new_time', labelHe: 'שעה חדשה של הסיור', labelEn: 'New tour time', category: 'tour', contexts: ['change'],
+    resolve: (ctx) => ctx.triggerData?.newTime || null },
+  { key: 'tour_change_description', labelHe: 'תיאור שינוי המועד', labelEn: 'Change description', category: 'tour', contexts: ['change'],
+    resolve: (ctx, lang) => tourChangeDescription(ctx.triggerData, lang) },
 
   // ── payment ──
   { key: 'payment_total', labelHe: 'סכום העסקה', labelEn: 'Total amount', category: 'payment', contexts: ['payment'],

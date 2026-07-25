@@ -5,6 +5,7 @@
 // the same shape) it reports precisely what a real delivery would do and why.
 
 import { prisma } from '../db.js';
+import { applyTriggerOverrides } from './context.js';
 import { evaluateApplicability } from './conditions.js';
 import { resolveRecipients, resolveLanguage } from './recipients.js';
 import { computeIntendedAt } from './timing.js';
@@ -22,10 +23,12 @@ import { extractTokens, resolveVariables } from './variables.js';
  */
 export async function prepareMessageRun({
   message, event, versionContent, ctx, language = null, now = Date.now(),
+  triggerData = null,
   // Injection seam for pure tests only — production always uses the canonical
   // DB-backed window-policy loader.
   policyLoader = loadWindowPolicy,
 }) {
+  if (triggerData) applyTriggerOverrides(ctx, triggerData);
   const applicability = evaluateApplicability(event, ctx);
   const { recipients, group, error: recipientError } = await resolveRecipients(message, ctx);
   const recipient = recipients.find((r) => !r.missing) || recipients[0] || null;

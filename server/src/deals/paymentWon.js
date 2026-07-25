@@ -79,7 +79,12 @@ export async function settleDealWon(
   });
   // Communication Center — post-commit (callers pass the root prisma client),
   // fire-and-forget; the engine's idempotency drops replays.
-  if (result?.wonNow) fireCommunicationTrigger({ type: 'deal_won', dealId });
+  if (result?.wonNow) {
+    fireCommunicationTrigger({ type: 'deal_won', dealId });
+    // Tour-anchored ("מועד הסיור") reminder deliveries materialize with the
+    // now-attached tour; the worker re-anchors on later date moves.
+    fireCommunicationTrigger({ type: 'tour_datetime', dealId });
+  }
   return result;
 }
 

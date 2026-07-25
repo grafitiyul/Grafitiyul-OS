@@ -17,7 +17,7 @@ import { findParallelTours, toAdminParallelTours } from '../tours/parallelTours.
 import { replaceTourEvent } from '../tours/replaceTour.js';
 import { emitTourChangeImpact } from '../tours/changeImpact.js';
 import { cancelTourAssignments } from '../tours/assignmentLifecycle.js';
-import { processTrigger as processCommunicationTrigger } from '../communication/engine.js';
+import { processTrigger as processCommunicationTrigger, fireCommunicationTrigger } from '../communication/engine.js';
 import {
   cancelDealBooking,
   reconnectOrphanBooking,
@@ -1248,7 +1248,7 @@ router.post(
     const b = req.body || {};
     const existing = await prisma.tourEvent.findUnique({
       where: { id: req.params.id },
-      select: { id: true, kind: true, productId: true, productVariantId: true },
+      select: { id: true, kind: true, productId: true, productVariantId: true, date: true, startTime: true },
     });
     if (!existing) return res.status(404).json({ error: 'not_found' });
     if (existing.kind !== 'group_slot') return res.status(409).json({ error: 'deal_owns_planning_fields' });
@@ -1271,6 +1271,24 @@ router.post(
     try {
       const origin = await userOrigin(req.adminAuth?.userId);
       const result = await replaceTourEvent(prisma, { originalId: existing.id, patch, origin });
+      // Communication Center — "מועד הסיור השתנה", one fire per affected deal,
+      // only when the effective datetime actually changed. Post-commit.
+      const newDate = result.replacement?.date ?? patch.date ?? existing.date;
+      const newTime = result.replacement?.startTime ?? patch.startTime ?? existing.startTime;
+      const datetimeChanged = existing.date !== newDate || existing.startTime !== newTime;
+      if (datetimeChanged) {
+        for (const dealId of result.dealIds || []) {
+          fireCommunicationTrigger({
+            type: 'tour_datetime_changed',
+            dealId,
+            tourEventId: result.replacement.id,
+            triggerRef: `${existing.id}->${result.replacement.id}:${dealId}`,
+            data: { prevDate: existing.date, prevTime: existing.startTime, newDate, newTime },
+          });
+          // Re-anchor "מועד הסיור" deliveries onto the replacement occurrence.
+          fireCommunicationTrigger({ type: 'tour_datetime', dealId });
+        }
+      }
       res.json({ ok: true, replacementId: result.replacement.id, dealIds: result.dealIds, reused: result.reused });
     } catch (e) {
       if (e.code === 'not_found') return res.status(404).json({ error: 'not_found' });

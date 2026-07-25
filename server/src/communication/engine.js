@@ -21,14 +21,14 @@
 // must see.
 
 import { prisma } from '../db.js';
-import { loadTriggerContext } from './context.js';
+import { loadTriggerContext, applyTriggerOverrides } from './context.js';
 import { evaluateApplicability } from './conditions.js';
 import { computeIntendedAt } from './timing.js';
 import { resolveRecipients, resolveLanguage } from './recipients.js';
 
 const DEPENDENCY_RECHECK_MS = 10 * 60_000;
 
-export async function processTrigger({ type, dealId = null, sessionId = null, tourEventId = null, triggerRef = null, at = null }, log = console) {
+export async function processTrigger({ type, dealId = null, sessionId = null, tourEventId = null, triggerRef = null, at = null, data = null }, log = console) {
   const events = await prisma.communicationEvent.findMany({
     where: { triggerType: type, status: 'active' },
     include: {
@@ -39,7 +39,7 @@ export async function processTrigger({ type, dealId = null, sessionId = null, to
   });
   if (!events.length) return { created: 0 };
 
-  const ctx = await loadTriggerContext({ dealId, sessionId, tourEventId });
+  const ctx = applyTriggerOverrides(await loadTriggerContext({ dealId, sessionId, tourEventId }), data);
   const triggerAtMs = at ? new Date(at).getTime() : Date.now();
   const triggerKey = `${type}:${triggerRef || dealId || sessionId || tourEventId}`;
   let created = 0;
@@ -60,6 +60,7 @@ export async function processTrigger({ type, dealId = null, sessionId = null, to
         versionId: message.publishedVersionId,
         channel: message.channel,
         triggerKey,
+        triggerData: data ?? undefined,
         dealId: dealId || ctx.reservation?.groups?.find((g) => g.createdDealId)?.createdDealId || null,
         tourEventId: tourEventId || ctx.tour?.id || null,
         sessionId: sessionId || ctx.reservation?.id || null,

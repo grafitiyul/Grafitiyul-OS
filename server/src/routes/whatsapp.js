@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
+import { fireCommunicationTrigger } from '../communication/engine.js';
 import { buildPhoneIndex, matchContactId, normalizePhoneIntl } from '../whatsapp/phone.js';
 import { bridgeUrlMap, callBridge } from '../whatsapp/bridgeClient.js';
 import { isConfigured as r2Configured, presignGet } from '../r2.js';
@@ -801,6 +802,8 @@ router.post(
       },
       select: { id: true },
     });
+    // Communication Center — "ליד חדש נוצר" (deal opened from a WhatsApp chat).
+    fireCommunicationTrigger({ type: 'deal_created', dealId: deal.id });
     res.status(201).json({ dealId: deal.id, contactId });
     } catch (err) {
       console.error('[whatsapp] open-deal failed:', err);

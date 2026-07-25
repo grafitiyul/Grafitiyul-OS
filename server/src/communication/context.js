@@ -103,6 +103,29 @@ async function resolveQuoteDoc(deal) {
 }
 
 /**
+ * Apply a trigger-carried payload onto a loaded context — the ONE place
+ * trigger data augments/overrides context, used identically by the engine at
+ * fire time, the worker at send time, and the simulator:
+ *   - ctx.triggerData          — change payloads etc. for the variables.
+ *   - explicit quote identity  — quote_send names a SPECIFIC immutable
+ *     QuoteDocument; it overrides the default resolution rule so the exact
+ *     chosen document is linked, frozen with the delivery.
+ */
+export function applyTriggerOverrides(ctx, triggerData) {
+  if (!triggerData || typeof triggerData !== 'object') return ctx;
+  ctx.triggerData = triggerData;
+  if (triggerData.quoteDocumentId && triggerData.publicToken) {
+    ctx.quoteDoc = {
+      quoteDocumentId: triggerData.quoteDocumentId,
+      publicToken: triggerData.publicToken,
+      versionNo: triggerData.versionNo ?? null,
+      source: 'explicit_action',
+    };
+  }
+  return ctx;
+}
+
+/**
  * Load the full context for a trigger payload: { dealId?, sessionId?,
  * tourEventId? }. At least one id is required.
  */

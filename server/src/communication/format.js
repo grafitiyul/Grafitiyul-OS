@@ -19,6 +19,26 @@ export function formatDateHe(dateStr, _lang = 'he') {
   return `${m[3]}/${m[2]}/${m[1]}`;
 }
 
+/**
+ * Human description of a tour datetime change from a tour_datetime_changed
+ * trigger payload { prevDate, prevTime, newDate, newTime }. Handles
+ * date-only / time-only / both; null when nothing effectively changed.
+ */
+export function tourChangeDescription(data, lang = 'he') {
+  if (!data) return null;
+  const dateChanged = !!(data.prevDate || data.newDate) && data.prevDate !== data.newDate;
+  const timeChanged = !!(data.prevTime || data.newTime) && data.prevTime !== data.newTime;
+  if (!dateChanged && !timeChanged) return null;
+  const d = (s) => formatDateHe(s) || s || null;
+  const at = (date, time) => [d(date), time].filter(Boolean).join(lang === 'en' ? ' at ' : ' בשעה ');
+  if (lang === 'en') {
+    if (dateChanged) return `The tour was moved from ${at(data.prevDate, data.prevTime)} to ${at(data.newDate, data.newTime)}`;
+    return `The tour time changed from ${data.prevTime} to ${data.newTime} (${d(data.newDate)})`;
+  }
+  if (dateChanged) return `מועד הסיור השתנה מ-${at(data.prevDate, data.prevTime)} ל-${at(data.newDate, data.newTime)}`;
+  return `שעת הסיור השתנתה מ-${data.prevTime} ל-${data.newTime} (${d(data.newDate)})`;
+}
+
 /** Minor units → "₪1,234" / "₪1,234.50". Null-safe. */
 export function formatMoney(minor, currency = 'ILS') {
   if (minor == null) return null;

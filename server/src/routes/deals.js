@@ -505,6 +505,9 @@ router.post(
     if (classErr) return res.status(400).json({ error: classErr });
 
     const deal = await prisma.deal.create({ data, include: DEAL_INCLUDE });
+    // Communication Center — "ליד חדש נוצר": fires ONCE per deal (idempotent
+    // triggerKey deal_created:<id>); later edits never re-fire.
+    fireCommunicationTrigger({ type: 'deal_created', dealId: deal.id });
     res.status(201).json(deal);
   }),
 );
@@ -796,7 +799,12 @@ router.put(
     });
     // Communication Center triggers — post-commit, fire-and-forget (a trigger
     // failure can never fail or slow the save).
-    if (wonTransition) fireCommunicationTrigger({ type: 'deal_won', dealId: req.params.id });
+    if (wonTransition) {
+      fireCommunicationTrigger({ type: 'deal_won', dealId: req.params.id });
+      // "מועד הסיור" anchor events: WON attaches the tour, so tour-anchored
+      // reminder deliveries materialize now (worker re-anchors on later moves).
+      fireCommunicationTrigger({ type: 'tour_datetime', dealId: req.params.id });
+    }
     if (lostTransition) fireCommunicationTrigger({ type: 'deal_lost', dealId: req.params.id });
     // WON audit trail: which proposal the win was based on (or none).
     if (b.status === 'won' && existing.status !== 'won' && deal.wonQuoteRef) {
@@ -847,6 +855,30 @@ router.post(
       // AFTER the tx commits: draft payroll reconciles as a projection of the
       // new tour state (date/variant/seats all feed the engine).
       kickPayrollReconcile('tour', booking.tourEventId);
+
+      // Communication Center — post-commit. The EFFECTIVE datetime diff:
+      // before = the tour as it was, after = the deal values just applied.
+      const prevDate = booking.tourEvent.date;
+      const prevTime = booking.tourEvent.startTime;
+      const newDate = deal.tourDate || null;
+      const newTime = deal.tourTime || null;
+      const datetimeChanged = (prevDate || newDate) && (prevDate !== newDate || prevTime !== newTime);
+      if (datetimeChanged && newDate) {
+        // "מועד הסיור השתנה" — only when a live scheduled datetime actually
+        // changed (never on unrelated tour edits; postpone has no new datetime).
+        fireCommunicationTrigger({
+          type: 'tour_datetime_changed',
+          dealId: deal.id,
+          tourEventId: booking.tourEventId,
+          triggerRef: `${booking.tourEventId}:${prevDate}T${prevTime || ''}->${newDate}T${newTime || ''}`,
+          data: { prevDate, prevTime, newDate, newTime },
+        });
+      }
+      if (datetimeChanged && newDate) {
+        // "מועד הסיור" anchor deliveries: existing ones re-anchor via the
+        // worker's re-check; this covers events configured after WON.
+        fireCommunicationTrigger({ type: 'tour_datetime', dealId: deal.id });
+      }
     }
     res.json(withTourUpdatePending(await loadDeal(deal.id)));
   }),

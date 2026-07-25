@@ -32,13 +32,21 @@ const UNIT_LABELS = {
 
 export function timingLabel(event) {
   if (!event) return '';
-  if (event.timingMode === 'immediate') return 'מיידי';
+  if (event.timingMode === 'immediate') {
+    return event.anchorType === 'tour_datetime' ? 'במועד הסיור' : 'מיידי';
+  }
   const amount = event.timingAmount || 0;
   const unit = UNIT_LABELS[event.timingUnit] || event.timingUnit || '';
   const rel = event.timingMode === 'before' ? 'לפני' : 'אחרי';
   const anchor = event.anchorType === 'tour_datetime' ? 'הסיור' : 'האירוע';
   return `${amount} ${unit} ${rel} ${anchor}`;
 }
+
+export const TRIGGER_KIND_TONES = {
+  event: 'bg-blue-50 text-blue-700 ring-blue-200',
+  anchor: 'bg-amber-50 text-amber-700 ring-amber-200',
+  action: 'bg-violet-50 text-violet-700 ring-violet-200',
+};
 
 export function StatusChip({ status, small }) {
   return (

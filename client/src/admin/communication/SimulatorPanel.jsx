@@ -70,16 +70,20 @@ const VERDICTS = {
   skip: { label: 'לא תישלח (דילוג)', tone: 'bg-red-50 text-red-700 ring-red-200', icon: '⛔' },
 };
 
-export default function SimulatorPanel({ meta, message, draft, onOpenTest }) {
+export default function SimulatorPanel({ meta, message, draft, triggerType, onOpenTest }) {
   const [mode, setMode] = useState('synthetic');
   const [deal, setDeal] = useState(null);
   const [fields, setFields] = useState(DEFAULT_FIELDS);
   const [language, setLanguage] = useState('');
   const [fieldsOpen, setFieldsOpen] = useState(true);
+  // Sample change payload for "מועד הסיור השתנה" — rides body.triggerData in
+  // both modes through the same applyTriggerOverrides path real deliveries use.
+  const [change, setChange] = useState({ prevDate: '2030-08-10', prevTime: '10:00', newDate: '2030-08-12', newTime: '14:00' });
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const seq = useRef(0);
+  const isChangeTrigger = triggerType === 'tour_datetime_changed';
 
   // Debounced auto-run over everything that affects the result.
   useEffect(() => {
@@ -93,6 +97,7 @@ export default function SimulatorPanel({ meta, message, draft, onOpenTest }) {
           mode,
           language: language || undefined,
           draftOverride: draft ? { ...draft.draftContent, attachments: draft.attachments } : undefined,
+          triggerData: isChangeTrigger ? change : undefined,
         };
         if (mode === 'real') body.dealId = deal.id;
         else body.fields = fields;
@@ -107,7 +112,7 @@ export default function SimulatorPanel({ meta, message, draft, onOpenTest }) {
       }
     }, 600);
     return () => clearTimeout(t);
-  }, [message?.id, mode, deal, fields, language, draft]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [message?.id, mode, deal, fields, language, draft, change, isChangeTrigger]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!message) return null;
 
@@ -198,6 +203,31 @@ export default function SimulatorPanel({ meta, message, draft, onOpenTest }) {
                 {field('paidAmount', 'שולם (₪)', 'number')}
               </div>
             )}
+          </div>
+        )}
+
+        {/* change payload for "מועד הסיור השתנה" (both modes) */}
+        {isChangeTrigger && (
+          <div className="rounded-lg border border-amber-100 bg-amber-50/50 p-3">
+            <div className="mb-1.5 text-[11px] font-semibold text-amber-800">שינוי המועד לסימולציה</div>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block">
+                <span className="mb-0.5 block text-[10.5px] font-semibold text-gray-500">תאריך קודם</span>
+                <input type="date" dir="ltr" value={change.prevDate} onChange={(e) => setChange((c) => ({ ...c, prevDate: e.target.value }))} className={inputCls} />
+              </label>
+              <label className="block">
+                <span className="mb-0.5 block text-[10.5px] font-semibold text-gray-500">שעה קודמת</span>
+                <input type="time" dir="ltr" value={change.prevTime} onChange={(e) => setChange((c) => ({ ...c, prevTime: e.target.value }))} className={inputCls} />
+              </label>
+              <label className="block">
+                <span className="mb-0.5 block text-[10.5px] font-semibold text-gray-500">תאריך חדש</span>
+                <input type="date" dir="ltr" value={change.newDate} onChange={(e) => setChange((c) => ({ ...c, newDate: e.target.value }))} className={inputCls} />
+              </label>
+              <label className="block">
+                <span className="mb-0.5 block text-[10.5px] font-semibold text-gray-500">שעה חדשה</span>
+                <input type="time" dir="ltr" value={change.newTime} onChange={(e) => setChange((c) => ({ ...c, newTime: e.target.value }))} className={inputCls} />
+              </label>
+            </div>
           </div>
         )}
 

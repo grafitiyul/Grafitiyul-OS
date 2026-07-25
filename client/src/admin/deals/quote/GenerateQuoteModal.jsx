@@ -419,6 +419,28 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated, o
     }
   }
 
+  // "שלח הצעת מחיר" — the explicit Communication Center action: the configured
+  // quote_send event's messages (customer email/WhatsApp + internal) do the
+  // actual sending with THIS exact immutable QuoteDocument frozen in. No
+  // configured event ⇒ a clear admin-facing message, never a hardcoded
+  // fallback send.
+  async function sendViaCommunicationCenter() {
+    if (!produced || busy) return;
+    setBusy(true); setError(null);
+    try {
+      const r = await api.communication.sendQuote({ dealId: deal.id, quoteDocumentId: produced.id });
+      setSentNote(`✓ הועבר למרכז התקשורת — ${r.created} מסרים נכנסו לתור השליחה (גרסה ${produced.versionNo}).`);
+      setPhase('done');
+    } catch (e) {
+      const code = e?.payload?.error;
+      setError(code === 'no_quote_send_event'
+        ? 'לא מוגדר אירוע "שליחת הצעת מחיר" פעיל במרכז התקשורת. הגדירו אותו תחת הגדרות ← נוסחים למייל + WhatsApp, ונסו שוב.'
+        : e?.payload?.message || code || 'send_failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // ── Commercial context bar (the offer's identity) ─────────────────────────
   const isOwnOffer = activeOffer?.contextMode === 'own';
   const contextSeed = useMemo(() => {
@@ -546,6 +568,15 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated, o
       <button type="button" onClick={() => setPhase('done')} className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">דלג על השליחה</button>
       <button
         type="button"
+        onClick={sendViaCommunicationCenter}
+        disabled={busy || !produced}
+        title="שליחה דרך המסרים המוגדרים במרכז התקשורת (מייל / WhatsApp / עדכון פנימי)"
+        className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-100 disabled:opacity-50"
+      >
+        {busy ? 'שולח…' : '💬 שלח הצעת מחיר (מרכז התקשורת)'}
+      </button>
+      <button
+        type="button"
         onClick={sendEmail}
         disabled={busy || !to.trim() || !subject.trim() || !body.trim()}
         className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
@@ -554,7 +585,20 @@ export default function GenerateQuoteModal({ open, onClose, deal, onGenerated, o
       </button>
     </>
   ) : (
-    <button type="button" onClick={onClose} className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black">סגור</button>
+    <>
+      {produced && (
+        <button
+          type="button"
+          onClick={sendViaCommunicationCenter}
+          disabled={busy}
+          title="שליחה דרך המסרים המוגדרים במרכז התקשורת"
+          className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-100 disabled:opacity-50"
+        >
+          {busy ? 'שולח…' : '💬 שלח הצעת מחיר (מרכז התקשורת)'}
+        </button>
+      )}
+      <button type="button" onClick={onClose} className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black">סגור</button>
+    </>
   );
 
   return (

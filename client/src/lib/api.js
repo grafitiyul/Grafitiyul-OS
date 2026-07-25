@@ -1772,6 +1772,8 @@ export const api = {
       request(`/api/communication/messages/${id}/preview`, { method: 'POST', body: JSON.stringify(body) }),
     simulate: (id, body) =>
       request(`/api/communication/messages/${id}/simulate`, { method: 'POST', body: JSON.stringify(body) }),
+    sendQuote: (body) =>
+      request('/api/communication/actions/send-quote', { method: 'POST', body: JSON.stringify(body) }),
     testSend: (id, body) =>
       request(`/api/communication/messages/${id}/test-send`, { method: 'POST', body: JSON.stringify(body) }),
     deliveries: (params) => request(`/api/communication/deliveries${qs(params)}`),

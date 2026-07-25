@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { Router } from 'express';
 import { prisma } from '../db.js';
+import { fireCommunicationTrigger } from '../communication/engine.js';
 import { handle } from '../asyncHandler.js';
 import {
   emailIntegrationConfigured,
@@ -718,6 +719,8 @@ router.post(
       where: { id: thread.id },
       data: { linkedDealId: deal.id, linkSource: 'manual' },
     });
+    // Communication Center — "ליד חדש נוצר" (deal opened from an email thread).
+    fireCommunicationTrigger({ type: 'deal_created', dealId: deal.id });
     res.status(201).json({ dealId: deal.id, contactId });
   }),
 );
