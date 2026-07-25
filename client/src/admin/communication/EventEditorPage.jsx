@@ -9,6 +9,8 @@ import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import SearchSelect from './SearchSelect.jsx';
 import WhatsAppBodyEditor from './WhatsAppBodyEditor.jsx';
 import EmailBodyEditor from './EmailBodyEditor.jsx';
+import SimulatorPanel, { DealPicker } from './SimulatorPanel.jsx';
+import { toEventForm, isEventFormDirty, reconcileEventForm } from './eventFormState.js';
 import {
   STATUS_LABELS, STATUS_TONES, CHANNEL_LABELS, AUDIENCE_LABELS,
   ACTIVITY_LABELS, timingLabel, StatusChip, ChannelBadge,
@@ -30,21 +32,29 @@ export default function EventEditorPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [meta, setMeta] = useState(null);
+  // Server snapshot vs the user's editable form — SEPARATE states. A refresh
+  // (initial fetch resolving late, or any child action reloading) rehydrates
+  // the form ONLY while it is clean; typed-but-unsaved content is never
+  // overwritten (eventFormState.js — the תיאור-קצר data-loss fix).
   const [event, setEvent] = useState(null);
-  const [original, setOriginal] = useState(null);
+  const [form, setForm] = useState(null);
+  const serverRef = useRef(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [selectedMessageId, setSelectedMessageId] = useState(null);
   const [confirm, setConfirm] = useState(null);
+  const [simDraft, setSimDraft] = useState(null);
+  const [testCtx, setTestCtx] = useState(null); // {dealId?} | {synthetic?} — opens the test-send dialog
 
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ forceHydrate = false } = {}) => {
     try {
       const [m, e] = await Promise.all([api.communication.meta(), api.communication.event(id)]);
       registerDynamicFields(m.variables.map((v) => ({ key: v.key, label: v.labelHe, description: v.labelEn })));
       setMeta(m);
       setEvent(e);
-      setOriginal(e);
+      setForm((prev) => reconcileEventForm(prev, serverRef.current, e, { force: forceHydrate }));
+      serverRef.current = e;
       setSelectedMessageId((cur) => cur && e.messages.some((x) => x.id === cur) ? cur : e.messages[0]?.id || null);
     } catch (err) {
       setError(err?.payload?.error || err.message);
@@ -54,32 +64,16 @@ export default function EventEditorPage() {
   }, [id]);
   useEffect(() => { load(); }, [load]);
 
-  const eventForm = event && {
-    internalName: event.internalName, description: event.description || '',
-    triggerType: event.triggerType, anchorType: event.anchorType,
-    timingMode: event.timingMode, timingAmount: event.timingAmount, timingUnit: event.timingUnit,
-    activityMode: event.activityMode, activityTypes: event.activityTypes,
-    orgTypeIds: event.orgTypeIds, orgSubtypeIds: event.orgSubtypeIds,
-    conditions: event.conditions || [],
-  };
-  const originalForm = original && {
-    internalName: original.internalName, description: original.description || '',
-    triggerType: original.triggerType, anchorType: original.anchorType,
-    timingMode: original.timingMode, timingAmount: original.timingAmount, timingUnit: original.timingUnit,
-    activityMode: original.activityMode, activityTypes: original.activityTypes,
-    orgTypeIds: original.orgTypeIds, orgSubtypeIds: original.orgSubtypeIds,
-    conditions: original.conditions || [],
-  };
-  const eventDirty = eventForm && originalForm && !valuesEqual(eventForm, originalForm);
-  useDirtyWhen(eventForm || {}, originalForm || {});
+  const eventDirty = isEventFormDirty(form, event);
+  useDirtyWhen(form || {}, event ? toEventForm(event) : {});
 
-  const patchEvent = (patch) => setEvent((e) => ({ ...e, ...patch }));
+  const patchEvent = (patch) => setForm((f) => ({ ...f, ...patch }));
 
   async function saveEvent() {
     setSaving(true);
     try {
-      await api.communication.updateEvent(id, eventForm);
-      await load();
+      await api.communication.updateEvent(id, form);
+      await load({ forceHydrate: true });
     } catch (err) {
       alert(`שמירה נכשלה: ${err?.payload?.error || err.message}`);
     } finally {
@@ -104,7 +98,7 @@ export default function EventEditorPage() {
   }
 
   if (loading) return <div className="px-8 py-10 text-sm text-gray-400">טוען…</div>;
-  if (error || !event) {
+  if (error || !event || !form) {
     return (
       <div className="px-8 py-10">
         <SettingsChrome />
@@ -113,11 +107,13 @@ export default function EventEditorPage() {
     );
   }
 
-  const trigger = meta.triggers.find((t) => t.type === event.triggerType);
+  const trigger = meta.triggers.find((t) => t.type === form.triggerType);
   const selectedMessage = event.messages.find((m) => m.id === selectedMessageId) || null;
-  const businessRelevant = event.activityMode === 'all'
-    || (event.activityMode === 'include' && event.activityTypes.includes('business'))
-    || (event.activityMode === 'exclude' && !event.activityTypes.includes('business'));
+  const businessRelevant = form.activityMode === 'all'
+    || (form.activityMode === 'include' && form.activityTypes.includes('business'))
+    || (form.activityMode === 'exclude' && !form.activityTypes.includes('business'));
+  const tourAnchorSupported = (trigger?.anchors || []).includes('tour_datetime');
+  const beforeInvalid = form.timingMode === 'before' && form.anchorType !== 'tour_datetime';
 
   return (
     <div dir="rtl" className="mx-auto max-w-[1600px] px-5 pb-16 lg:px-8">
@@ -132,7 +128,7 @@ export default function EventEditorPage() {
             <StatusChip status={event.status} />
             <span>{trigger?.labelHe}</span>
             <span>·</span>
-            <span>{timingLabel(event)}</span>
+            <span>{timingLabel(form)}</span>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -174,25 +170,33 @@ export default function EventEditorPage() {
           <div className="space-y-3">
             <div>
               <label className={label12}>שם פנימי</label>
-              <input type="text" value={event.internalName} onChange={(e) => patchEvent({ internalName: e.target.value })}
+              <input type="text" value={form.internalName} onChange={(e) => patchEvent({ internalName: e.target.value })}
                 className={`${inputCls} mt-1 w-full`} />
             </div>
             <div>
               <label className={label12}>תיאור קצר</label>
-              <input type="text" value={event.description || ''} onChange={(e) => patchEvent({ description: e.target.value })}
+              <input type="text" value={form.description || ''} onChange={(e) => patchEvent({ description: e.target.value })}
                 className={`${inputCls} mt-1 w-full`} placeholder="למה האירוע הזה קיים…" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={label12}>טריגר</label>
-                <select value={event.triggerType} onChange={(e) => patchEvent({ triggerType: e.target.value, anchorType: 'trigger_time' })}
+                <select value={form.triggerType}
+                  onChange={(e) => {
+                    const next = meta.triggers.find((t) => t.type === e.target.value);
+                    const anchors = next?.anchors || ['trigger_time'];
+                    patchEvent({
+                      triggerType: e.target.value,
+                      anchorType: anchors.includes(form.anchorType) ? form.anchorType : 'trigger_time',
+                    });
+                  }}
                   className={`${selectCls} mt-1 w-full`}>
                   {meta.triggers.map((t) => <option key={t.type} value={t.type}>{t.labelHe}</option>)}
                 </select>
               </div>
               <div>
                 <label className={label12}>עוגן זמן</label>
-                <select value={event.anchorType} onChange={(e) => patchEvent({ anchorType: e.target.value })}
+                <select value={form.anchorType} onChange={(e) => patchEvent({ anchorType: e.target.value })}
                   className={`${selectCls} mt-1 w-full`}>
                   {(trigger?.anchors || ['trigger_time']).map((a) => (
                     <option key={a} value={a}>{a === 'trigger_time' ? 'רגע האירוע' : 'מועד הסיור'}</option>
@@ -202,17 +206,30 @@ export default function EventEditorPage() {
             </div>
             <div>
               <label className={label12}>תזמון</label>
-              <div className="mt-1 flex items-center gap-2">
-                <select value={event.timingMode} onChange={(e) => patchEvent({ timingMode: e.target.value })} className={selectCls}>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <select
+                  value={form.timingMode}
+                  onChange={(e) => {
+                    const mode = e.target.value;
+                    // "לפני" is only meaningful relative to the tour anchor —
+                    // auto-switch when the trigger supports it, otherwise the
+                    // inline validation below explains what to change.
+                    if (mode === 'before' && form.anchorType !== 'tour_datetime' && tourAnchorSupported) {
+                      patchEvent({ timingMode: 'before', anchorType: 'tour_datetime' });
+                    } else {
+                      patchEvent({ timingMode: mode });
+                    }
+                  }}
+                  className={selectCls}>
                   <option value="immediate">מיידי</option>
+                  <option value="before">לפני</option>
                   <option value="after">אחרי</option>
-                  {event.anchorType === 'tour_datetime' && <option value="before">לפני</option>}
                 </select>
-                {event.timingMode !== 'immediate' && (
+                {form.timingMode !== 'immediate' && (
                   <>
-                    <input type="number" min={1} value={event.timingAmount || ''} onChange={(e) => patchEvent({ timingAmount: Number(e.target.value) || null })}
+                    <input type="number" min={1} value={form.timingAmount || ''} onChange={(e) => patchEvent({ timingAmount: Number(e.target.value) || null })}
                       className={`${inputCls} w-20`} />
-                    <select value={event.timingUnit || ''} onChange={(e) => patchEvent({ timingUnit: e.target.value })} className={selectCls}>
+                    <select value={form.timingUnit || ''} onChange={(e) => patchEvent({ timingUnit: e.target.value })} className={selectCls}>
                       <option value="" disabled>יחידה…</option>
                       <option value="minutes">דקות</option>
                       <option value="hours">שעות</option>
@@ -220,10 +237,24 @@ export default function EventEditorPage() {
                       <option value="weeks">שבועות</option>
                       <option value="months">חודשים</option>
                     </select>
-                    <span className="text-[12px] text-gray-500">{event.anchorType === 'tour_datetime' ? 'ביחס למועד הסיור' : 'אחרי האירוע'}</span>
+                    <span className="text-[12px] text-gray-500">
+                      {form.timingMode === 'before' ? 'לפני מועד הסיור' : form.anchorType === 'tour_datetime' ? 'אחרי מועד הסיור' : 'אחרי האירוע'}
+                    </span>
                   </>
                 )}
               </div>
+              {beforeInvalid && (
+                <p className="mt-1 text-[12px] font-medium text-red-600">
+                  "לפני" אפשרי רק ביחס למועד הסיור{tourAnchorSupported
+                    ? ' — בחרו עוגן זמן "מועד הסיור".'
+                    : ' — הטריגר שנבחר אינו כולל מועד סיור, בחרו "מיידי" או "אחרי".'}
+                </p>
+              )}
+              {form.timingMode === 'before' && !beforeInvalid && (
+                <p className="mt-1 text-[11.5px] text-gray-400">
+                  המועד המחושב המדויק מוצג בסימולטור עבור כל דיל/הקשר.
+                </p>
+              )}
             </div>
           </div>
 
@@ -232,18 +263,18 @@ export default function EventEditorPage() {
             <div>
               <label className={label12}>סוגי פעילות</label>
               <div className="mt-1 flex items-center gap-2">
-                <select value={event.activityMode} onChange={(e) => patchEvent({ activityMode: e.target.value })} className={selectCls}>
+                <select value={form.activityMode} onChange={(e) => patchEvent({ activityMode: e.target.value })} className={selectCls}>
                   <option value="all">כל הסוגים</option>
                   <option value="include">רק הסוגים שנבחרו</option>
                   <option value="exclude">כל הסוגים חוץ מהנבחרים</option>
                 </select>
-                {event.activityMode !== 'all' && (
+                {form.activityMode !== 'all' && (
                   <div className="flex gap-1.5">
                     {meta.activityTypes.map((t) => {
-                      const on = event.activityTypes.includes(t);
+                      const on = form.activityTypes.includes(t);
                       return (
                         <button key={t} type="button"
-                          onClick={() => patchEvent({ activityTypes: on ? event.activityTypes.filter((x) => x !== t) : [...event.activityTypes, t] })}
+                          onClick={() => patchEvent({ activityTypes: on ? form.activityTypes.filter((x) => x !== t) : [...form.activityTypes, t] })}
                           className={`rounded-full px-3 py-1 text-[12px] font-medium ring-1 transition-colors ${
                             on ? 'bg-blue-600 text-white ring-blue-600' : 'bg-white text-gray-600 ring-gray-300 hover:bg-gray-50'
                           }`}>
@@ -258,12 +289,12 @@ export default function EventEditorPage() {
             {businessRelevant && (
               <div className="grid grid-cols-2 gap-3">
                 <MultiPick label="סוגי ארגון (עסקי)" options={meta.orgTypes.map((t) => ({ id: t.id, label: t.label }))}
-                  value={event.orgTypeIds} onChange={(v) => patchEvent({ orgTypeIds: v })} emptyLabel="כל הסוגים" />
+                  value={form.orgTypeIds} onChange={(v) => patchEvent({ orgTypeIds: v })} emptyLabel="כל הסוגים" />
                 <MultiPick label="תת-סוגי ארגון" options={meta.orgSubtypes.map((t) => ({ id: t.id, label: t.label }))}
-                  value={event.orgSubtypeIds} onChange={(v) => patchEvent({ orgSubtypeIds: v })} emptyLabel="כל תת-הסוגים" />
+                  value={form.orgSubtypeIds} onChange={(v) => patchEvent({ orgSubtypeIds: v })} emptyLabel="כל תת-הסוגים" />
               </div>
             )}
-            <ConditionsEditor meta={meta} conditions={event.conditions || []} onChange={(c) => patchEvent({ conditions: c })} />
+            <ConditionsEditor meta={meta} conditions={form.conditions || []} onChange={(c) => patchEvent({ conditions: c })} />
           </div>
         </div>
       </div>
@@ -290,7 +321,7 @@ export default function EventEditorPage() {
           <div className="mt-1 text-[12.5px] text-gray-500">הוסיפו מסר WhatsApp או מייל — כל מסר מקבל מספר קבוע (#) ומוגדר בנפרד.</div>
         </div>
       ) : (
-        <div className="grid items-start gap-4 lg:grid-cols-[270px,1fr]">
+        <div className="grid items-start gap-4 lg:grid-cols-[260px,minmax(0,1fr)] 2xl:grid-cols-[260px,minmax(0,1fr),400px]">
           {/* message rail */}
           <div className={`${card} sticky top-4 overflow-hidden`}>
             {event.messages.map((m) => (
@@ -321,9 +352,34 @@ export default function EventEditorPage() {
               message={selectedMessage}
               onChanged={load}
               onConfirm={setConfirm}
+              onDraftChange={setSimDraft}
+              onOpenTest={() => setTestCtx({})}
             />
           )}
+
+          {/* simulator — third column on wide desktops (the previously unused
+              left side in RTL), stacked below the editor on narrower screens */}
+          {selectedMessage && (
+            <div className="2xl:sticky 2xl:top-4">
+              <SimulatorPanel
+                meta={meta}
+                message={selectedMessage}
+                draft={simDraft}
+                onOpenTest={(ctx) => setTestCtx(ctx || {})}
+              />
+            </div>
+          )}
         </div>
+      )}
+
+      {testCtx && selectedMessage && (
+        <TestSendDialog
+          message={selectedMessage}
+          meta={meta}
+          draft={simDraft}
+          initialContext={testCtx}
+          onClose={() => setTestCtx(null)}
+        />
       )}
 
       <ConfirmDialog
@@ -437,17 +493,23 @@ function ConditionsEditor({ meta, conditions, onChange }) {
 
 // ── message editor ───────────────────────────────────────────────────────────
 
-function MessageEditor({ meta, event, message, onChanged, onConfirm }) {
+function MessageEditor({ meta, event, message, onChanged, onConfirm, onDraftChange, onOpenTest }) {
   const [form, setForm] = useState(() => toForm(message));
   const [savedForm, setSavedForm] = useState(() => toForm(message));
   const [lang, setLang] = useState('he');
   const [saving, setSaving] = useState(false);
   const [translating, setTranslating] = useState(false);
   const [validationErrors, setValidationErrors] = useState(message.validationErrors || []);
-  const [dialog, setDialog] = useState(null); // 'preview' | 'test' | 'versions' | 'docs'
+  const [dialog, setDialog] = useState(null); // 'versions' | 'docs'
 
   const dirty = !valuesEqual(form, savedForm);
   useDirtyWhen(form, savedForm);
+
+  // Feed the simulator the CURRENT (possibly unsaved) draft — it simulates
+  // live via draftOverride without persisting anything.
+  useEffect(() => {
+    onDraftChange?.({ draftContent: form.draftContent, attachments: form.attachments });
+  }, [form.draftContent, form.attachments]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function toForm(m) {
     return {
@@ -590,11 +652,7 @@ function MessageEditor({ meta, event, message, onChanged, onConfirm }) {
             className={`${inputCls} min-w-[220px] flex-1`}
           />
           <div className="flex items-center gap-1.5">
-            <button type="button" onClick={() => setDialog('preview')}
-              className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-[12.5px] font-medium text-gray-700 hover:bg-gray-50">
-              תצוגה מקדימה
-            </button>
-            <button type="button" onClick={() => setDialog('test')}
+            <button type="button" onClick={() => onOpenTest?.()}
               className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-[12.5px] font-medium text-gray-700 hover:bg-gray-50">
               שלח אליי בדיקה
             </button>
@@ -783,12 +841,20 @@ function MessageEditor({ meta, event, message, onChanged, onConfirm }) {
               </>
             )}
             <button type="button" onClick={translate} disabled={translating || !meta.translationConfigured}
-              title={meta.translationConfigured ? undefined : 'חסר ANTHROPIC_API_KEY בסביבת השרת'}
               className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-[12.5px] font-semibold text-violet-700 hover:bg-violet-100 disabled:opacity-50">
               {translating ? 'מתרגם…' : '✨ צור גרסה באנגלית'}
             </button>
           </div>
         </div>
+
+        {!meta.translationConfigured && (
+          <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+            <span className="font-semibold">תרגום ה-AI אינו מוגדר בסביבה.</span>{' '}
+            כדי להפעיל את "✨ צור גרסה באנגלית" יש להוסיף את משתנה הסביבה{' '}
+            <code className="rounded bg-amber-100 px-1 font-mono text-[11px]" dir="ltr">ANTHROPIC_API_KEY</code>{' '}
+            לשירות <span className="font-medium" dir="ltr">Grafitiyul-OS</span> ב-Railway. שאר עורך התוכן פועל כרגיל.
+          </div>
+        )}
 
         <div dir={lang === 'en' ? 'ltr' : 'rtl'}>
           {isWa ? (
@@ -872,12 +938,6 @@ function MessageEditor({ meta, event, message, onChanged, onConfirm }) {
           onChange={(a) => patch({ attachments: a })}
           onClose={() => setDialog(null)}
         />
-      )}
-      {dialog === 'preview' && (
-        <PreviewDialog message={message} form={form} meta={meta} dirty={dirty} onSave={save} onClose={() => setDialog(null)} />
-      )}
-      {dialog === 'test' && (
-        <TestSendDialog message={message} form={form} meta={meta} dirty={dirty} onSave={save} onClose={() => setDialog(null)} />
       )}
       {dialog === 'versions' && (
         <VersionsDialog message={message} onRestored={onChanged} onClose={() => setDialog(null)} />
@@ -973,194 +1033,40 @@ function DocumentsDialog({ meta, attachments, onChange, onClose }) {
   );
 }
 
-// ── preview dialog ───────────────────────────────────────────────────────────
-
-function DealPicker({ value, onSelect }) {
-  return (
-    <SearchSelect
-      value={value}
-      onSelect={onSelect}
-      search={async (q) => {
-        if (!q.trim()) return [];
-        const rows = await api.communication.dealsSearch(q);
-        return rows.map((d) => ({
-          id: d.id,
-          label: `#${d.orderNo} · ${d.title}`,
-          subtitle: [ACTIVITY_LABELS[d.activityType], d.tourDate, STATUS_LABELS[d.status] || d.status].filter(Boolean).join(' · '),
-        }));
-      }}
-      placeholder="חיפוש דיל לפי שם או מספר הזמנה…"
-      emptySearch={false}
-    />
-  );
-}
-
-function PreviewDialog({ message, meta, dirty, onSave, onClose }) {
-  const [deal, setDeal] = useState(null);
-  const [lang, setLang] = useState(null);
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    if (!deal) { setData(null); return undefined; }
-    let stop = false;
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        if (dirty) await onSave();
-        const r = await api.communication.preview(message.id, { dealId: deal.id, language: lang || undefined });
-        if (!stop) setData(r);
-      } catch (err) {
-        if (!stop) setError(err?.payload?.error || err.message);
-      } finally {
-        if (!stop) setLoading(false);
-      }
-    })();
-    return () => { stop = true; };
-  }, [deal, lang]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const fmt = (iso) => (iso ? new Date(iso).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—');
-
-  return (
-    <Dialog open onClose={onClose} title={`תצוגה מקדימה — מסר #${message.publicNumber}`} size="xl">
-      <div dir="rtl" className="space-y-4 p-1">
-        <div className="flex items-center gap-3">
-          <div className="flex-1"><DealPicker value={deal} onSelect={setDeal} /></div>
-          <select value={lang || ''} onChange={(e) => setLang(e.target.value || null)} className={selectCls}>
-            <option value="">שפה לפי הנמען</option>
-            <option value="he">עברית</option>
-            <option value="en">English</option>
-          </select>
-        </div>
-        {!deal && <div className="rounded-xl border border-dashed border-gray-300 px-4 py-10 text-center text-[13px] text-gray-400">בחרו דיל אמיתי כדי לראות את המסר עם נתונים אמיתיים. התצוגה אינה יוצרת משלוח.</div>}
-        {loading && <div className="py-8 text-center text-[13px] text-gray-400">טוען תצוגה…</div>}
-        {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-[13px] text-red-700">שגיאה: {error}</div>}
-        {data && !loading && (
-          <div className="grid gap-4 lg:grid-cols-[1fr,320px]">
-            {/* rendered message */}
-            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-              {message.channel === 'email' && (
-                <div className="mb-2 border-b border-gray-200 pb-2 text-[14px]">
-                  <span className="text-gray-400">נושא: </span>
-                  <span className="font-semibold text-gray-900">{data.rendered.subject || '—'}</span>
-                </div>
-              )}
-              {message.channel === 'email' ? (
-                <div className="rounded-lg bg-white p-4" dir={data.language === 'en' ? 'ltr' : 'rtl'}
-                  // eslint-disable-next-line react/no-danger
-                  dangerouslySetInnerHTML={{ __html: data.rendered.body || '<span style="color:#9ca3af">אין תוכן</span>' }} />
-              ) : (
-                <div className="mr-auto max-w-[85%] whitespace-pre-wrap rounded-xl rounded-tr-sm bg-[#d9fdd3] px-3 py-2 text-[13.5px] leading-relaxed shadow-sm"
-                  dir={data.language === 'en' ? 'ltr' : 'rtl'}>
-                  {data.rendered.body || <span className="text-gray-400">אין תוכן</span>}
-                </div>
-              )}
-              {(data.rendered.attachments.length > 0 || data.rendered.links.length > 0) && (
-                <div className="mt-3 space-y-1.5">
-                  {data.rendered.attachments.map((a) => (
-                    <div key={a.kind} className="flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-[12.5px] ring-1 ring-gray-200">
-                      📎 <span className="font-medium">{a.filename || meta.documentKinds.find((k) => k.kind === a.kind)?.labelHe}</span>
-                      <span className="text-emerald-600">קיים ✓</span>
-                    </div>
-                  ))}
-                  {data.rendered.links.map((l) => (
-                    <div key={l.kind} className="flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-[12.5px] ring-1 ring-gray-200">
-                      🔗 <a href={l.url} target="_blank" rel="noopener noreferrer" className="text-blue-700 hover:underline" dir="ltr">{l.url}</a>
-                      {l.versionNo != null && <span className="text-gray-400">גרסה {l.versionNo}</span>}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {data.rendered.missingDocuments.length > 0 && (
-                <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
-                  {data.rendered.missingDocuments.map((d) => <div key={d.kind}>⚠ {d.reason}</div>)}
-                </div>
-              )}
-              {data.rendered.missingVariables.length > 0 && (
-                <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
-                  ⚠ משתנים ללא ערך בהקשר הזה: {data.rendered.missingVariables.join(', ')}
-                </div>
-              )}
-            </div>
-
-            {/* resolution details */}
-            <div className="space-y-3 text-[12.5px]">
-              <InfoBlock title="נמען">
-                {data.group ? (
-                  <>
-                    <Row k="קבוצה" v={data.group.subject || data.group.jid} />
-                    <Row k="חשבון" v={data.sender?.waAccountId} />
-                  </>
-                ) : data.recipients.length ? data.recipients.map((r) => (
-                  <div key={r.key} className="mb-1 border-b border-gray-100 pb-1 last:border-0">
-                    <Row k="שם" v={r.name || '—'} />
-                    {message.channel === 'whatsapp' ? <Row k="טלפון" v={r.phone || '⚠ חסר'} bad={!r.phone} /> : <Row k="אימייל" v={r.email || '⚠ חסר'} bad={!r.email} />}
-                  </div>
-                )) : <div className="text-amber-700">⚠ {data.recipientError || 'לא נמצא נמען'}</div>}
-                {data.sender && !data.group && <Row k="חשבון שולח" v={data.sender.waAccountId || '⚠ לא נבחר'} bad={!data.sender.waAccountId} />}
-                <Row k="שפה" v={data.language === 'en' ? 'English' : 'עברית'} />
-              </InfoBlock>
-              <InfoBlock title="תזמון">
-                <Row k="מועד מיועד" v={fmt(data.timing.intendedAt)} />
-                <Row k="מועד בפועל" v={fmt(data.timing.effectiveAt)} />
-                {data.timing.windowReason && <div className="mt-1 text-amber-700">⏳ {data.timing.windowReason}</div>}
-              </InfoBlock>
-              <InfoBlock title="תנאי האירוע">
-                {data.applicability.checks.map((c) => (
-                  <div key={c.key} className={c.pass ? 'text-emerald-700' : 'text-red-600'}>
-                    {c.pass ? '✓' : '✗'} {c.label}{c.detail ? ` (${c.detail})` : ''}
-                  </div>
-                ))}
-                <div className={`mt-1 font-semibold ${data.applicability.applicable ? 'text-emerald-700' : 'text-red-600'}`}>
-                  {data.applicability.applicable ? 'האירוע חל על הדיל הזה' : 'האירוע לא היה נשלח לדיל הזה'}
-                </div>
-              </InfoBlock>
-            </div>
-          </div>
-        )}
-      </div>
-    </Dialog>
-  );
-}
-
-function InfoBlock({ title, children }) {
-  return (
-    <div className="rounded-xl border border-gray-200 bg-white p-3">
-      <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-gray-400">{title}</div>
-      {children}
-    </div>
-  );
-}
-function Row({ k, v, bad }) {
-  return (
-    <div className="flex justify-between gap-2 py-0.5">
-      <span className="text-gray-500">{k}</span>
-      <span className={`text-left font-medium ${bad ? 'text-amber-700' : 'text-gray-900'}`} dir="auto">{v ?? '—'}</span>
-    </div>
-  );
-}
-
 // ── test-send dialog ─────────────────────────────────────────────────────────
+// Sends the CURRENT draft (draftOverride — same content the simulator shows)
+// through the real channel adapter, to an explicitly chosen safe destination
+// only. Context comes from the simulator (real deal or synthetic fields) or a
+// deal picked here; the resolved customer recipient is NEVER used.
 
-function TestSendDialog({ message, form, meta, dirty, onSave, onClose }) {
+function TestSendDialog({ message, meta, draft, initialContext, onClose }) {
   const [deal, setDeal] = useState(null);
   const [lang, setLang] = useState('he');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
-  const [testAccount, setTestAccount] = useState(form.waAccountId ? { id: form.waAccountId, label: meta.waAccounts.find((a) => a.id === form.waAccountId)?.label || form.waAccountId } : null);
+  const [testAccount, setTestAccount] = useState(
+    message.waAccountId
+      ? { id: message.waAccountId, label: meta.waAccounts.find((a) => a.id === message.waAccountId)?.label || message.waAccountId }
+      : null,
+  );
   const [testGroup, setTestGroup] = useState(null);
   const [mode, setMode] = useState('phone'); // phone | group
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
 
+  const synthetic = initialContext?.synthetic || null;
+  const fixedDealId = initialContext?.dealId || null;
+
   async function send() {
     setSending(true);
     setResult(null);
     try {
-      if (dirty) await onSave();
-      const body = { dealId: deal?.id || null, language: lang };
+      const body = {
+        language: lang,
+        draftOverride: draft ? { ...draft.draftContent, attachments: draft.attachments } : undefined,
+      };
+      if (synthetic) body.synthetic = synthetic;
+      else body.dealId = fixedDealId || deal?.id || null;
       if (message.channel === 'whatsapp') {
         body.testAccountId = testAccount?.id || null;
         if (mode === 'group') body.testGroupChatId = testGroup?.id || null;
@@ -1184,12 +1090,22 @@ function TestSendDialog({ message, form, meta, dirty, onSave, onClose }) {
     <Dialog open onClose={onClose} title={`שלח אליי בדיקה — מסר #${message.publicNumber}`} size="md-wide">
       <div dir="rtl" className="space-y-3.5 p-1">
         <div className="rounded-lg bg-blue-50 px-3 py-2 text-[12px] text-blue-800">
-          הבדיקה נשלחת אך ורק ליעד שתזינו כאן — לעולם לא לנמען האמיתי. היא מסומנת כבדיקה ולא נרשמת בהיסטוריית הלקוח.
+          הבדיקה נשלחת אך ורק ליעד שתבחרו כאן — לעולם לא לנמען האמיתי. היא מסומנת כבדיקה ולא נרשמת בהיסטוריית הלקוח.
         </div>
-        <div>
-          <label className={label12}>הקשר לנתונים (דיל אמיתי, אופציונלי)</label>
-          <div className="mt-1"><DealPicker value={deal} onSelect={setDeal} /></div>
-        </div>
+        {synthetic ? (
+          <div className="rounded-lg bg-violet-50 px-3 py-2 text-[12px] text-violet-800">
+            ההקשר: נתוני הבדיקה הסינתטיים מהסימולטור.
+          </div>
+        ) : fixedDealId ? (
+          <div className="rounded-lg bg-gray-50 px-3 py-2 text-[12px] text-gray-600">
+            ההקשר: הדיל שנבחר בסימולטור (קריאה בלבד).
+          </div>
+        ) : (
+          <div>
+            <label className={label12}>הקשר לנתונים (דיל אמיתי, אופציונלי)</label>
+            <div className="mt-1"><DealPicker value={deal} onSelect={setDeal} /></div>
+          </div>
+        )}
         <div className="flex items-center gap-3">
           <label className={label12}>שפה:</label>
           <select value={lang} onChange={(e) => setLang(e.target.value)} className={selectCls}>
@@ -1265,6 +1181,7 @@ function TestSendDialog({ message, form, meta, dirty, onSave, onClose }) {
     </Dialog>
   );
 }
+
 
 // ── versions dialog ──────────────────────────────────────────────────────────
 

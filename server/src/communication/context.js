@@ -1,18 +1,32 @@
 // THE trigger-context loader — one include tree shared by the live delivery
-// engine, the worker's pre-send re-resolution, and the preview route, so
-// preview can never disagree with actual sending behavior.
+// engine, the worker's pre-send re-resolution, and the preview/simulator
+// routes, so preview can never disagree with actual sending behavior.
 //
 // Shape: { deal, contact, fieldContact, org, tour, payment, reservation,
-// quoteDoc } — every branch nullable; the variable registry and condition
-// evaluator read ONLY from this object.
+// quoteDoc, owner, links } — every branch nullable; the variable registry and
+// condition evaluator read ONLY from this object.
+//
+// `links` policy: origin comes from PUBLIC_ORIGIN; the personal payment URL is
+// exposed only when the deal already carries its permanent paymentToken.
+// `allowMint: true` (the delivery worker) lazily mints the token through the
+// canonical dealPayment helper — read-only surfaces (preview / simulator)
+// never mint, so a preview can never mutate a Deal.
 
 import { prisma } from '../db.js';
 import { dealCollection } from '../collection.js';
+import { ensurePaymentToken } from '../dealPayment.js';
+import { ADMIN_NAME_SELECT } from '../admin/displayName.js';
+
+/** Public origin for customer-facing links built outside a request context. */
+export function publicOrigin() {
+  return String(process.env.PUBLIC_ORIGIN || '').replace(/\/+$/, '') || null;
+}
 
 const DEAL_INCLUDE = {
   organization: { include: { organizationType: true } },
   organizationType: true,
   organizationSubtype: true,
+  organizationUnit: true,
   product: true,
   productVariant: true,
   location: true,
@@ -92,7 +106,10 @@ async function resolveQuoteDoc(deal) {
  * Load the full context for a trigger payload: { dealId?, sessionId?,
  * tourEventId? }. At least one id is required.
  */
-export async function loadTriggerContext({ dealId = null, sessionId = null, tourEventId = null } = {}) {
+export async function loadTriggerContext(
+  { dealId = null, sessionId = null, tourEventId = null } = {},
+  { allowMint = false } = {},
+) {
   let deal = null;
   if (dealId) {
     deal = await prisma.deal.findUnique({ where: { id: dealId }, include: DEAL_INCLUDE });
@@ -139,6 +156,29 @@ export async function loadTriggerContext({ dealId = null, sessionId = null, tour
   const payment = deal ? await dealCollection(prisma, deal) : null;
   const quoteDoc = deal ? await resolveQuoteDoc(deal) : null;
 
+  // Deal owner — resolved through the canonical admin display-name contract
+  // (ADMIN_NAME_SELECT keeps displayName+username travelling together). The
+  // shape stays a list-ready single ref so a future multi-owner model extends
+  // it without breaking variables. No owner ⇒ null (honest missing value).
+  const owner = deal?.ownerUserId
+    ? await prisma.adminUser.findUnique({ where: { id: deal.ownerUserId }, select: ADMIN_NAME_SELECT })
+    : null;
+
+  // Canonical customer-facing links. Payment token is exposed as-is; the
+  // worker (allowMint) lazily mints the permanent token via the canonical
+  // helper — preview/simulator stay strictly read-only.
+  const origin = publicOrigin();
+  let paymentToken = deal?.paymentToken || null;
+  if (!paymentToken && allowMint && deal) {
+    try {
+      paymentToken = await ensurePaymentToken(prisma, deal);
+    } catch { /* payment link stays a missing value */ }
+  }
+  const links = {
+    origin,
+    paymentUrl: origin && paymentToken ? `${origin}/payment/icount/${paymentToken}` : null,
+  };
+
   return {
     deal,
     contact,
@@ -148,5 +188,7 @@ export async function loadTriggerContext({ dealId = null, sessionId = null, tour
     payment,
     reservation,
     quoteDoc,
+    owner,
+    links,
   };
 }

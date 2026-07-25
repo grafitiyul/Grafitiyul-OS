@@ -1,7 +1,8 @@
-import { useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import RichEditor from '../../editor/RichEditor.jsx';
 import VariableMenu from './VariableMenu.jsx';
 import { getDynamicFieldByKey } from '../../lib/dynamicFields.js';
+import { normalizeTokensToChips } from '../../../../shared/variableTokens.mjs';
 
 // Email content editor: subject line WITH variable support (tokens render as
 // readable chips in the live preview under the input; stored as {{key}}), and
@@ -31,6 +32,12 @@ function SubjectPreview({ value }) {
 export default function EmailBodyEditor({ subject, body, onSubjectChange, onBodyChange, variables, categories, onInsertDocument }) {
   const subjectRef = useRef(null);
   const bodyEditorRef = useRef(null);
+  // Canonical chip representation on hydration: recognized raw {{tokens}} in
+  // stored/AI/legacy body HTML become chip nodes before entering TipTap.
+  const normalizedBody = useMemo(
+    () => normalizeTokensToChips(body || '', (key) => getDynamicFieldByKey(key)?.label || null),
+    [body],
+  );
 
   function insertIntoSubject(v) {
     const input = subjectRef.current;
@@ -82,7 +89,7 @@ export default function EmailBodyEditor({ subject, body, onSubjectChange, onBody
           </div>
         </div>
         <RichEditor
-          value={body || ''}
+          value={normalizedBody}
           onChange={onBodyChange}
           toolbar="email"
           minContentHeight={220}

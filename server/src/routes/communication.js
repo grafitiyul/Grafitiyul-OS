@@ -48,10 +48,12 @@ import { CONDITION_FIELDS, CONDITION_OPS, ACTIVITY_TYPES, evaluateApplicability 
 import { DOCUMENT_KINDS } from '../communication/documents.js';
 import { validateMessageForPublish, validateEventForActivation } from '../communication/validation.js';
 import { loadTriggerContext } from '../communication/context.js';
-import { resolveRecipients, resolveLanguage } from '../communication/recipients.js';
 import { renderMessage } from '../communication/render.js';
-import { computeIntendedAt } from '../communication/timing.js';
-import { loadWindowPolicy, evaluateAt, nextAllowedAt, parseHHMM } from '../communication/windows.js';
+import { parseHHMM } from '../communication/windows.js';
+import { prepareMessageRun } from '../communication/prepare.js';
+import { buildSyntheticContext } from '../communication/synthetic.js';
+import { normalizeTokensToChips } from '../../../shared/variableTokens.mjs';
+import { variableByKey } from '../communication/variables.js';
 import { translateContent, translationConfigured } from '../communication/translate.js';
 import { loadDocumentBytes } from '../communication/documents.js';
 
@@ -345,6 +347,16 @@ function duplicateMessageData(m, eventId) {
 
 // ── messages ─────────────────────────────────────────────────────────────────
 
+// Draft normalization — the ONE storage representation: recognized raw
+// {{tokens}} in body HTML become canonical chip nodes at save time (unknown
+// tokens stay visible for flagging). Published versions are never rewritten;
+// the renderer stays backward-compatible with historical raw tokens.
+function normalizeDraftContent(draft) {
+  const label = (key) => variableByKey(key)?.labelHe || null;
+  const norm = (c) => (c ? { ...c, body: normalizeTokensToChips(c.body || '', label) } : c);
+  return { ...draft, he: norm(draft.he), en: norm(draft.en) };
+}
+
 const MESSAGE_FIELDS = (b) => ({
   ...(b.internalName !== undefined ? { internalName: str(b.internalName) } : {}),
   ...(b.status !== undefined && ['draft', 'active', 'disabled'].includes(b.status) ? {} : {}),
@@ -359,7 +371,7 @@ const MESSAGE_FIELDS = (b) => ({
   ...(b.languagePolicy !== undefined && ['auto', 'he_only', 'en_only'].includes(b.languagePolicy) ? { languagePolicy: b.languagePolicy } : {}),
   ...(b.fallbackLanguage !== undefined && ['he', 'en'].includes(b.fallbackLanguage) ? { fallbackLanguage: b.fallbackLanguage } : {}),
   ...(b.attachments !== undefined ? { attachments: Array.isArray(b.attachments) ? b.attachments : [] } : {}),
-  ...(b.draftContent !== undefined ? { draftContent: b.draftContent || {} } : {}),
+  ...(b.draftContent !== undefined ? { draftContent: normalizeDraftContent(b.draftContent || {}) } : {}),
 });
 
 router.post('/events/:id/messages', handle(async (req, res) => {
@@ -559,72 +571,47 @@ router.post('/messages/:id/translate', handle(async (req, res) => {
   }
 }));
 
-// ── preview (production resolvers; NEVER creates a delivery or timeline) ─────
+// ── simulator / preview — ONE dry-run pipeline (prepare.js), two context
+//    modes. NEVER creates a delivery, timeline entry or any business record.
+//    mode 'real': read-only canonical context (the same loader real triggers
+//    use). mode 'synthetic': user-entered test fields shaped into the same
+//    context object, then the identical pipeline. `draftOverride` lets the
+//    editor simulate unsaved content without persisting it.
 
-router.post('/messages/:id/preview', handle(async (req, res) => {
+async function simulateHandler(req, res) {
   const message = await prisma.communicationMessage.findUnique({
     where: { id: req.params.id }, include: { event: true, sendingWindow: true },
   });
   if (!message) return res.status(404).json({ error: 'not_found' });
-  const { dealId = null, sessionId = null } = req.body || {};
-  if (!dealId && !sessionId) return res.status(400).json({ error: 'context_required' });
+  const b = req.body || {};
+  const mode = b.mode === 'synthetic' ? 'synthetic' : 'real';
 
-  const ctx = await loadTriggerContext({ dealId, sessionId });
-  if (dealId && !ctx.deal) return res.status(404).json({ error: 'deal_not_found' });
+  let ctx;
+  if (mode === 'synthetic') {
+    ctx = buildSyntheticContext(b.fields || {});
+  } else {
+    const { dealId = null, sessionId = null } = b;
+    if (!dealId && !sessionId) return res.status(400).json({ error: 'context_required' });
+    ctx = await loadTriggerContext({ dealId, sessionId });
+    if (dealId && !ctx.deal) return res.status(404).json({ error: 'deal_not_found' });
+  }
 
-  const applicability = evaluateApplicability(message.event, ctx);
-  const { recipients, group, error: recipientError } = await resolveRecipients(message, ctx);
-  const recipient = recipients[0] || null;
-  const language = req.body?.language === 'en' || req.body?.language === 'he'
-    ? req.body.language
-    : resolveLanguage(message, recipient);
-
-  const now = Date.now();
-  const intendedMs = computeIntendedAt(message.event, ctx, now);
-  const policy = await loadWindowPolicy(prisma, message);
-  const gate = intendedMs != null ? evaluateAt(policy, Math.max(intendedMs, now)) : { allowed: false, reason: 'אין עוגן זמן' };
-  const effectiveMs = intendedMs != null
-    ? (gate.allowed ? Math.max(intendedMs, now) : nextAllowedAt(policy, Math.max(intendedMs, now)))
-    : null;
-
-  // Preview renders the CURRENT DRAFT (what the editor sees).
-  const rendered = await renderMessage({
+  const draft = b.draftOverride && typeof b.draftOverride === 'object'
+    ? normalizeDraftContent(b.draftOverride)
+    : (message.draftContent || {});
+  const result = await prepareMessageRun({
     message,
-    versionContent: { ...(message.draftContent || {}), attachments: message.attachments || [] },
-    language,
+    event: message.event,
+    versionContent: { ...draft, attachments: message.attachments || [] },
     ctx,
+    language: b.language === 'en' || b.language === 'he' ? b.language : null,
   });
+  res.json({ mode, ...result });
+}
 
-  res.json({
-    applicability,
-    recipients: recipients.map((r) => ({
-      key: r.key, name: r.name, phone: r.phone || null, email: r.email || null,
-      language: r.language, missing: !!r.missing,
-    })),
-    recipientError: recipientError || null,
-    group,
-    sender: message.channel === 'whatsapp'
-      ? { waAccountId: message.waAccountId, destinationType: message.waDestinationType }
-      : null,
-    language,
-    rendered: {
-      subject: rendered.subject || null,
-      body: rendered.body || null,
-      language: rendered.language || language,
-      attachments: rendered.attachments || [],
-      links: rendered.links || [],
-      missingVariables: rendered.missingVariables || [],
-      unknownVariables: rendered.unknownVariables || [],
-      missingDocuments: rendered.missingDocuments || [],
-      error: rendered.error || null,
-    },
-    timing: {
-      intendedAt: intendedMs != null ? new Date(intendedMs).toISOString() : null,
-      effectiveAt: effectiveMs != null ? new Date(effectiveMs).toISOString() : null,
-      windowReason: gate.allowed ? null : gate.reason,
-    },
-  });
-}));
+router.post('/messages/:id/simulate', handle(simulateHandler));
+// Back-compat alias — the old preview endpoint rides the same dry-run service.
+router.post('/messages/:id/preview', handle(simulateHandler));
 
 // ── test send (explicit destination only; internal log, no timeline) ─────────
 
@@ -637,7 +624,12 @@ router.post('/messages/:id/test-send', handle(async (req, res) => {
   const { dealId = null, sessionId = null } = b;
   const language = b.language === 'en' ? 'en' : 'he';
 
-  const ctx = (dealId || sessionId) ? await loadTriggerContext({ dealId, sessionId }) : {};
+  // Context: synthetic simulator fields, a real read-only record, or none.
+  // Either way the rendering path is the canonical one; only the DESTINATION
+  // below is the explicit test destination.
+  const ctx = b.synthetic && typeof b.synthetic === 'object'
+    ? buildSyntheticContext(b.synthetic)
+    : (dealId || sessionId) ? await loadTriggerContext({ dealId, sessionId }) : {};
   const rendered = await renderMessage({
     message,
     versionContent: { ...(message.draftContent || {}), attachments: message.attachments || [] },

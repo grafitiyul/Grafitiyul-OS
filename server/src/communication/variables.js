@@ -12,7 +12,8 @@
 // validation for required-empty variables rather than sending "שלום {{x}}").
 
 import { contactPhone, contactEmail, contactFullName } from './context.js';
-import { TOUR_LANG_LABELS, formatDateHe, formatMoney } from './format.js';
+import { adminDisplayName } from '../admin/displayName.js';
+import { TOUR_LANG_LABELS, ACTIVITY_TYPE_LABELS, formatDateHe, formatMoney } from './format.js';
 
 // category → Hebrew group label for the editor menu.
 export const VARIABLE_CATEGORIES = {
@@ -41,6 +42,10 @@ export const VARIABLES = [
     resolve: (ctx) => ctx.org?.name || null },
   { key: 'org_type', labelHe: 'סוג הארגון', labelEn: 'Organization type', category: 'org', contexts: ['org'],
     resolve: (ctx, lang) => (lang === 'en' ? ctx.org?.organizationType?.labelEn || ctx.org?.organizationType?.label : ctx.org?.organizationType?.label) || null },
+  { key: 'sub_organization', labelHe: 'תת-ארגון', labelEn: 'Sub-organization', category: 'org', contexts: ['org', 'deal'],
+    // The deal's OrganizationUnit (the org-hierarchy child), never the parent
+    // organization; a deal without a unit ⇒ honest missing value.
+    resolve: (ctx) => ctx.deal?.organizationUnit?.name || null },
 
   // ── deal ──
   { key: 'deal_number', labelHe: 'מספר הזמנה', labelEn: 'Order number', category: 'deal', contexts: ['deal'],
@@ -49,6 +54,21 @@ export const VARIABLES = [
     resolve: (ctx) => ctx.deal?.title || null },
   { key: 'group_name', labelHe: 'שם הקבוצה', labelEn: 'Group name', category: 'deal', contexts: ['deal'],
     resolve: (ctx) => ctx.deal?.groupName || ctx.deal?.title || null },
+  { key: 'deal_link', labelHe: 'קישור לדיל (פנימי)', labelEn: 'Deal link (internal)', category: 'deal', contexts: ['deal'],
+    // Canonical internal route (the client dealPath convention: orderNo IS the URL).
+    resolve: (ctx) => (ctx.deal?.orderNo != null && ctx.links?.origin
+      ? `${ctx.links.origin}/admin/crm/deals/${ctx.deal.orderNo}` : null) },
+  { key: 'deal_owner', labelHe: 'בעלים של הדיל', labelEn: 'Deal owner', category: 'deal', contexts: ['deal'],
+    // Canonical admin display-name contract; no owner ⇒ honest missing value
+    // (never another person's name substituted).
+    resolve: (ctx) => (ctx.owner ? adminDisplayName(ctx.owner) || null : null) },
+  { key: 'activity_type', labelHe: 'סוג הפעילות', labelEn: 'Activity type', category: 'deal', contexts: ['deal'],
+    // Business label, never the enum. Linked org forces business (the
+    // classification SSOT rule — same as the condition evaluator).
+    resolve: (ctx, lang) => {
+      const type = ctx.deal?.organizationId ? 'business' : ctx.deal?.activityType;
+      return type ? ACTIVITY_TYPE_LABELS[lang === 'en' ? 'en' : 'he'][type] || null : null;
+    } },
 
   // ── tour ──
   { key: 'tour_product', labelHe: 'שם הפעילות', labelEn: 'Activity name', category: 'tour', contexts: ['deal', 'tour'],
@@ -149,31 +169,48 @@ export function resolveVariables(keys, ctx, lang = 'he') {
   return { values, missing, unknown };
 }
 
+// Preview-only readable marker for a recognized variable with no value in the
+// current context. Live sends never render this — the worker blocks on missing
+// values first. Unknown keys stay raw {{key}} and are flagged separately.
+function missingMarker(key) {
+  const def = BY_KEY.get(key);
+  return def ? `⟨${def.labelHe} — חסר⟩` : null;
+}
+
 /** Substitute {{key}} tokens in PLAIN text (WhatsApp markup / email subject). */
-export function substituteTokens(text, values) {
-  return String(text ?? '').replace(TOKEN_RE, (m, key) =>
-    Object.prototype.hasOwnProperty.call(values, key) && values[key] != null ? values[key] : m,
-  );
+export function substituteTokens(text, values, { missingLabels = false } = {}) {
+  return String(text ?? '').replace(TOKEN_RE, (m, key) => {
+    if (Object.prototype.hasOwnProperty.call(values, key) && values[key] != null) return values[key];
+    if (missingLabels) return missingMarker(key) ?? m;
+    return m;
+  });
 }
 
 const escapeHtml = (s) => String(s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 /** Replace chip spans + raw tokens in EMAIL HTML with escaped resolved values. */
-export function substituteHtmlTokens(html, values) {
+export function substituteHtmlTokens(html, values, { missingLabels = false } = {}) {
+  const missing = (key) => {
+    if (missingLabels) {
+      const marker = missingMarker(key);
+      if (marker) return `<span style="color:#b45309">${escapeHtml(marker)}</span>`;
+    }
+    return `{{${key}}}`;
+  };
   let out = String(html ?? '');
   // Chip spans: <span data-type="dynamic-field" data-field-key="x">label</span>
   out = out.replace(
     /<span[^>]*data-field-key="([a-z][a-z0-9_]*)"[^>]*>([\s\S]*?)<\/span>/g,
     (m, key) => {
       const v = values[key];
-      return v != null ? escapeHtml(v) : `{{${key}}}`;
+      return v != null ? escapeHtml(v) : missing(key);
     },
   );
   // Raw tokens typed as text.
   out = out.replace(TOKEN_RE, (m, key) => {
     const v = values[key];
-    return v != null ? escapeHtml(v) : m;
+    return v != null ? escapeHtml(v) : (missingLabels ? missing(key) : m);
   });
   return out;
 }

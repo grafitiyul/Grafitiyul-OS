@@ -5,7 +5,15 @@ import Placeholder from '@tiptap/extension-placeholder';
 import { DynamicFieldNode } from '../../editor/DynamicFieldNode.jsx';
 import EmojiButton from '../../editor/EmojiButton.jsx';
 import { htmlToWhatsApp, whatsAppTextPreview } from '../../../../shared/waMarkup.mjs';
+import { normalizeTokensToChips } from '../../../../shared/variableTokens.mjs';
 import { getDynamicFieldByKey } from '../../lib/dynamicFields.js';
+
+// Hydration normalization — stored/AI/legacy content may carry recognized raw
+// {{tokens}} as plain text; TipTap's input/paste rules only fire on typing, so
+// convert to canonical chip spans BEFORE setContent. Unknown keys stay raw and
+// render as the amber warning chip via the paste rule when typed, or as text.
+const chipLabel = (key) => getDynamicFieldByKey(key)?.label || null;
+const normalizeIncoming = (html) => normalizeTokensToChips(html || '', chipLabel);
 import VariableMenu from './VariableMenu.jsx';
 import '../../editor/editor.css';
 
@@ -48,7 +56,7 @@ export default function WhatsAppBodyEditor({ value, onChange, variables, categor
       Placeholder.configure({ placeholder: 'כתבו כאן את נוסח ההודעה…' }),
       DynamicFieldNode,
     ],
-    content: value || '',
+    content: normalizeIncoming(value),
     editorProps: {
       attributes: {
         dir: 'rtl',
@@ -62,9 +70,10 @@ export default function WhatsAppBodyEditor({ value, onChange, variables, categor
   // External value replacement (language tab switch) without clobbering typing.
   useEffect(() => {
     if (!editor) return;
+    const incoming = normalizeIncoming(value);
     const current = editor.getHTML();
-    if ((value || '') !== current && !editor.isFocused) {
-      editor.commands.setContent(value || '', false);
+    if (incoming !== current && !editor.isFocused) {
+      editor.commands.setContent(incoming, false);
     }
   }, [value, editor]);
 

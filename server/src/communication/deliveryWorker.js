@@ -92,9 +92,12 @@ async function processDelivery(row, log) {
     return;
   }
 
+  // allowMint: the worker may lazily mint the deal's permanent payment token
+  // (canonical dealPayment helper) so a payment_link variable can resolve;
+  // read-only surfaces (preview/simulator) never mint.
   const ctx = await loadTriggerContext({
     dealId: row.dealId, sessionId: row.sessionId, tourEventId: row.tourEventId,
-  });
+  }, { allowMint: true });
 
   // 2. Anchor re-check for tour-anchored deliveries — the tour may have moved
   //    or been cancelled while this delivery waited.

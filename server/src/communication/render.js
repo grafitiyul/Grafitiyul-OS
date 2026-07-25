@@ -5,11 +5,9 @@ import { htmlToWhatsApp } from '../../../shared/waMarkup.mjs';
 import { sanitizeEmailHtml } from '../email/sanitize.js';
 import { extractTokens, resolveVariables, substituteTokens, substituteHtmlTokens } from './variables.js';
 import { resolveDocument } from './documents.js';
+import { publicOrigin } from './context.js';
 
-/** Public origin for customer-facing links built outside a request context. */
-export function publicOrigin() {
-  return String(process.env.PUBLIC_ORIGIN || '').replace(/\/+$/, '') || null;
-}
+export { publicOrigin };
 
 const hasContent = (c) => !!(c && (String(c.body || '').trim() || String(c.subject || '').trim()));
 
@@ -33,8 +31,13 @@ export function contentForLanguage(versionContent, lang, fallbackLanguage = 'he'
  *   missingVariables, unknownVariables, missingDocuments
  * }
  * Never throws on missing data — reports it; the caller decides policy.
+ *
+ * `missingLabels: true` (preview/simulator display ONLY) replaces recognized-
+ * but-missing tokens with a readable ⟨label — חסר⟩ marker instead of raw
+ * moustache. Live sends never use it — the worker blocks on missing values
+ * before anything ships.
  */
-export async function renderMessage({ message, versionContent, language, ctx }) {
+export async function renderMessage({ message, versionContent, language, ctx, missingLabels = false }) {
   const picked = contentForLanguage(versionContent, language, message.fallbackLanguage);
   if (!picked) {
     return { error: 'no_content', language, missingVariables: [], unknownVariables: [], attachments: [], links: [] };
@@ -62,9 +65,11 @@ export async function renderMessage({ message, versionContent, language, ctx }) 
     if ((mode === 'link' || mode === 'both') && resolved.url) links.push({ ...resolved, mode });
   }
 
+  const subOpts = missingLabels ? { missingLabels: true } : undefined;
+
   if (message.channel === 'whatsapp') {
     // HTML → WhatsApp markup (chips become {{key}}), then token substitution.
-    let text = substituteTokens(htmlToWhatsApp(content.body || ''), values);
+    let text = substituteTokens(htmlToWhatsApp(content.body || ''), values, subOpts);
     for (const link of links) {
       text = `${text}\n\n${link.kind === 'quote_document' ? `הצעת המחיר: ${link.url}` : link.url}`;
     }
@@ -76,8 +81,8 @@ export async function renderMessage({ message, versionContent, language, ctx }) 
   }
 
   // Email: subject is plain text with tokens; body is sanitized rich HTML.
-  const subject = substituteTokens(String(content.subject || ''), values).trim();
-  let bodyHtml = substituteHtmlTokens(String(content.body || ''), values);
+  const subject = substituteTokens(String(content.subject || ''), values, subOpts).trim();
+  let bodyHtml = substituteHtmlTokens(String(content.body || ''), values, subOpts);
   for (const link of links) {
     const label = link.kind === 'quote_document' ? 'לצפייה בהצעת המחיר' : 'להורדת המסמך';
     bodyHtml += `<p style="margin:16px 0"><a href="${link.url}" target="_blank" rel="noopener" `

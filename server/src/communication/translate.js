@@ -7,7 +7,8 @@
 // is rejected here rather than surfaced as broken content.
 
 import Anthropic from '@anthropic-ai/sdk';
-import { extractTokens } from './variables.js';
+import { extractTokens, variableByKey } from './variables.js';
+import { normalizeTokensToChips } from '../../../shared/variableTokens.mjs';
 
 const MODEL = 'claude-opus-4-8';
 
@@ -50,11 +51,14 @@ function coded(code, detail) {
 /**
  * Translate { subject?, body } Hebrew content to natural English.
  * `channel` is 'whatsapp' | 'email'; `tone` an optional TONE_HINTS key.
- * Throws coded errors: translation_not_configured | translation_failed |
- * translation_tokens_changed (with detail listing the drift).
+ * `providerClient` is injectable for tests — production uses the env-keyed
+ * SDK client. Throws coded errors: translation_not_configured |
+ * translation_failed | translation_tokens_changed (with drift detail).
+ * The returned body is normalized so recognized variables come back as
+ * canonical chip nodes even if the model emitted raw {{tokens}}.
  */
-export async function translateContent({ subject = '', body = '', channel, tone = null }) {
-  const c = client();
+export async function translateContent({ subject = '', body = '', channel, tone = null, providerClient = null }) {
+  const c = providerClient || client();
   if (!c) throw coded('translation_not_configured');
 
   const toneHint = TONE_HINTS[tone] || TONE_HINTS.service;
@@ -99,5 +103,11 @@ export async function translateContent({ subject = '', body = '', channel, tone 
     throw coded('translation_tokens_changed', { lost, invented });
   }
 
-  return { subject: result.subject || '', body: result.body || '' };
+  // Canonicalize: recognized raw {{tokens}} in the translated body become chip
+  // nodes (the ONE storage representation); unknown tokens stay visible as-is.
+  const normalizedBody = normalizeTokensToChips(
+    result.body || '',
+    (key) => variableByKey(key)?.labelHe || null,
+  );
+  return { subject: result.subject || '', body: normalizedBody };
 }

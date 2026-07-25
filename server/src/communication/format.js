@@ -5,6 +5,13 @@ export const TOUR_LANG_LABELS = {
   en: { he: 'Hebrew', en: 'English', es: 'Spanish', fr: 'French', ru: 'Russian' },
 };
 
+// Business-facing activity labels (the Deal activityType string enum) —
+// mirrors the client SSOT (admin/deals/config.js), never the technical value.
+export const ACTIVITY_TYPE_LABELS = {
+  he: { group: 'קבוצתי', private: 'פרטי', business: 'עסקי' },
+  en: { group: 'Group', private: 'Private', business: 'Business' },
+};
+
 /** "YYYY-MM-DD" → "DD/MM/YYYY" (both languages use the Israeli day-first form). */
 export function formatDateHe(dateStr, _lang = 'he') {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr ?? ''));
