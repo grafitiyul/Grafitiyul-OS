@@ -17,6 +17,43 @@ const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 export const GMAIL_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
 
+// Every outbound Google call is bounded (same rule as the iCount port): an
+// unbounded fetch that hangs turns the OAuth callback / send request into a
+// real gateway timeout, and Cloudflare replaces 502/504 origin responses with
+// its own raw HTML page (project Cloudflare-502 rule). 20s < Cloudflare's
+// origin timeout, so a slow Google always surfaces as a controlled error.
+export const GOOGLE_TIMEOUT_MS = Number(process.env.GOOGLE_TIMEOUT_MS) || 20_000;
+
+// AbortSignal.timeout throws a DOMException named 'TimeoutError'; a dropped
+// connection throws a TypeError. Map both to coded, non-leaky errors.
+export function mapFetchNetworkError(e) {
+  const timedOut = e?.name === 'TimeoutError';
+  const err = new Error(`google endpoint unreachable: ${timedOut ? 'timeout' : e?.message || 'network error'}`);
+  err.code = timedOut ? 'google_timeout' : 'google_unreachable';
+  err.status = 504;
+  return err;
+}
+
+// Does this error mean the refresh token itself is dead (only a human reconnect
+// fixes it), as opposed to a transient network blip?
+export function isInvalidGrant(err) {
+  return err?.code === 'invalid_grant' || /invalid_grant/i.test(err?.message || '');
+}
+
+// Business-readable Hebrew for any Google auth failure. NEVER returns a raw
+// Google/Cloudflare body — the UI and stored `lastAuthError` only ever see this.
+export function sanitizeAuthError(err) {
+  const code = err?.code || '';
+  const status = String(err?.status || '');
+  if (isInvalidGrant(err)) return 'ההרשאה ב-Google בוטלה או פגה — יש להתחבר מחדש';
+  if (code === 'google_timeout' || code === 'google_unreachable') {
+    return 'החיבור ל-Google לא הגיב בזמן — נסו שוב בעוד רגע';
+  }
+  if (code === 'not_connected') return 'החשבון אינו מחובר ל-Google — יש להתחבר';
+  if (status === '401' || status === '403') return 'ההרשאה ל-Google נדחתה — ייתכן שנדרש חיבור מחדש';
+  return 'החיבור ל-Google נכשל — נסו שוב';
+}
+
 export const GMAIL_MODIFY_SCOPE = 'https://www.googleapis.com/auth/gmail.modify';
 // Tours→Google Calendar mirror (events CRUD on the org account's calendar —
 // not full calendar management; see src/tours/calendar/).
@@ -73,11 +110,17 @@ export function buildAuthUrl({ redirectUri, state }) {
 }
 
 async function tokenRequest(form) {
-  const res = await fetch(TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(form),
-  });
+  let res;
+  try {
+    res = await fetch(TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(form),
+      signal: AbortSignal.timeout(GOOGLE_TIMEOUT_MS),
+    });
+  } catch (e) {
+    throw mapFetchNetworkError(e);
+  }
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = new Error(`google token endpoint ${res.status}: ${body.error || ''} ${body.error_description || ''}`.trim());
@@ -86,6 +129,34 @@ async function tokenRequest(form) {
     throw err;
   }
   return body;
+}
+
+// Build the EmailAccount upsert payload from a token-exchange response.
+// CRITICAL invariant: `refreshTokenEnc` is present ONLY when Google actually
+// returned a refresh_token. Spreading this into an upsert `update` therefore
+// never nulls a working refresh token when Google omits one (token-only
+// responses) — the previous connection is preserved. exchangeCode has already
+// validated the credentials, so reaching here means the reconnect is good.
+export function buildConnectData({ tokens, claims, connectedById = null, now = Date.now() }) {
+  return {
+    provider: 'gmail',
+    displayName: claims?.name || null,
+    googleAccountId: claims?.sub || null,
+    accessTokenEnc: encryptToken(tokens.access_token),
+    accessTokenExpiresAt: new Date(now + (Number(tokens.expires_in) || 3600) * 1000),
+    ...(tokens.refresh_token ? { refreshTokenEnc: encryptToken(tokens.refresh_token) } : {}),
+    scopes: tokens.scope || null,
+    isActive: true,
+    syncStatus: 'idle',
+    syncError: null,
+    // A completed consent is the authoritative "healthy" signal for the whole
+    // Google connection (Gmail + Calendar).
+    healthState: 'connected',
+    lastRefreshAt: new Date(now),
+    lastAuthError: null,
+    lastAuthErrorAt: null,
+    connectedById: connectedById || null,
+  };
 }
 
 export function exchangeCode({ code, redirectUri }) {
@@ -144,6 +215,22 @@ export function verifyOAuthState(state, maxAgeMs = 15 * 60_000) {
 
 const EXPIRY_SLACK_MS = 2 * 60_000;
 
+// Persist an authoritative connection-health verdict on the shared account
+// (Gmail AND Calendar hang off this one token). Only invalid_grant — a dead
+// refresh token that a human must re-consent to fix — flips healthState;
+// transient network errors just record a sanitized note. Best-effort: callers
+// wrap this so it never masks the original failure.
+export async function markAccountAuthError(client, account, err) {
+  await client.emailAccount.update({
+    where: { id: account.id },
+    data: {
+      ...(isInvalidGrant(err) ? { healthState: 'reconnect_required' } : {}),
+      lastAuthError: sanitizeAuthError(err),
+      lastAuthErrorAt: new Date(),
+    },
+  });
+}
+
 export async function getFreshAccessToken(client, account) {
   const notExpired =
     account.accessTokenEnc &&
@@ -157,14 +244,30 @@ export async function getFreshAccessToken(client, account) {
     err.code = 'not_connected';
     throw err;
   }
-  const fresh = await refreshAccessToken(refreshToken);
+  let fresh;
+  try {
+    fresh = await refreshAccessToken(refreshToken);
+  } catch (e) {
+    await markAccountAuthError(client, account, e).catch(() => {});
+    throw e;
+  }
   const expiresAt = new Date(Date.now() + (Number(fresh.expires_in) || 3600) * 1000);
+  const accessTokenEnc = encryptToken(fresh.access_token);
+  // A successful refresh is the authoritative "connected" signal for the whole
+  // Google connection — clear any stale auth error the same write.
   await client.emailAccount.update({
     where: { id: account.id },
-    data: { accessTokenEnc: encryptToken(fresh.access_token), accessTokenExpiresAt: expiresAt },
+    data: {
+      accessTokenEnc,
+      accessTokenExpiresAt: expiresAt,
+      healthState: 'connected',
+      lastRefreshAt: new Date(),
+      lastAuthError: null,
+      lastAuthErrorAt: null,
+    },
   });
   // Keep the in-memory row coherent for the caller's continued use.
-  account.accessTokenEnc = encryptToken(fresh.access_token);
+  account.accessTokenEnc = accessTokenEnc;
   account.accessTokenExpiresAt = expiresAt;
   return fresh.access_token;
 }
@@ -182,14 +285,20 @@ export async function gmailFetch(client, account, path, { method = 'GET', query,
       if (Array.isArray(v)) for (const item of v) url.searchParams.append(k, item);
       else url.searchParams.set(k, String(v));
     }
-    const res = await fetch(url, {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(body ? { 'Content-Type': 'application/json' } : {}),
-      },
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    let res;
+    try {
+      res = await fetch(url, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(GOOGLE_TIMEOUT_MS),
+      });
+    } catch (e) {
+      throw mapFetchNetworkError(e);
+    }
     if (res.status === 401 && attempt === 0) {
       // Force-refresh once (expiry clock skew / revoked access token).
       await client.emailAccount.update({

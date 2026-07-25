@@ -3072,6 +3072,16 @@ model EmailAccount {
   syncStatus           String         @default("idle")
   syncError            String?
   lastSyncAt           DateTime?
+  // Connection health surface (independent of Gmail-sync status above): the
+  // whole Google connection — Gmail AND the shared Calendar sync — hangs off
+  // one refresh token, so an auth failure here is authoritative for both.
+  // connected | reconnect_required | error | disconnected | unknown.
+  healthState          String         @default("unknown")
+  lastRefreshAt        DateTime? // last successful access-token refresh
+  lastGmailCheckAt     DateTime? // last successful read-only Gmail probe
+  lastCalendarCheckAt  DateTime? // last successful read-only Calendar probe
+  lastAuthError        String? // sanitized Hebrew — never a raw Google/CF body
+  lastAuthErrorAt      DateTime?
   // Gmail incremental cursor (users.history.list). Null until backfill completes.
   historyId            String?
   backfillDone         Boolean        @default(false)

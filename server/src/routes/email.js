@@ -12,10 +12,14 @@ import {
   mintOAuthState,
   verifyOAuthState,
   accountHasModifyScope,
+  isInvalidGrant,
+  sanitizeAuthError,
+  markAccountAuthError,
+  buildConnectData,
   gmail,
 } from '../email/googleClient.js';
+import { runHealthCheck, describeScopes } from '../email/health.js';
 import { recomputeThreadState } from '../email/providerState.js';
-import { encryptToken } from '../email/tokenCrypto.js';
 import { buildRawMessage, htmlToText, normalizeEmail, normalizeSubject } from '../email/mime.js';
 import { sanitizeEmailHtml } from '../email/sanitize.js';
 import { ingestGmailMessage } from '../email/ingest.js';
@@ -59,6 +63,12 @@ const ACCOUNT_SAFE_SELECT = {
   isActive: true,
   signature: true,
   createdAt: true,
+  healthState: true,
+  lastRefreshAt: true,
+  lastGmailCheckAt: true,
+  lastCalendarCheckAt: true,
+  lastAuthError: true,
+  lastAuthErrorAt: true,
 };
 
 const DEAL_LITE_SELECT = {
@@ -117,16 +127,29 @@ router.get(
       orderBy: { createdAt: 'asc' },
       select: { ...ACCOUNT_SAFE_SELECT, refreshTokenEnc: true, scopes: true },
     });
+    res.set('Cache-Control', 'no-store');
     res.json({
       configured: emailIntegrationConfigured(),
       missing: missingEmailConfig(),
-      accounts: accounts.map(({ refreshTokenEnc, scopes, ...a }) => ({
-        ...a,
-        connected: !!refreshTokenEnc,
-        // Connected under the old read-only scopes → Gmail-write actions
-        // (archive / mark read-unread) are gated until a re-consent reconnect.
-        needsReconsent: !!refreshTokenEnc && !String(scopes || '').includes('gmail.modify'),
-      })),
+      accounts: accounts.map(({ refreshTokenEnc, scopes, ...a }) => {
+        const connected = !!refreshTokenEnc;
+        const hasCalendarScope = String(scopes || '').includes('calendar.events');
+        const hasModifyScope = String(scopes || '').includes('gmail.modify');
+        return {
+          ...a,
+          connected,
+          scopeLabels: describeScopes(scopes),
+          hasCalendarScope,
+          hasModifyScope,
+          // Connected under the old read-only scopes → Gmail-write actions
+          // (archive / mark read-unread) are gated until a re-consent reconnect.
+          needsReconsent: connected && !hasModifyScope,
+          // The whole Google connection needs a human reconnect: the token was
+          // revoked/expired (healthState), or calendar sync was never granted.
+          needsReconnect:
+            connected && (a.healthState === 'reconnect_required' || !hasCalendarScope),
+        };
+      }),
     });
   }),
 );
@@ -152,48 +175,51 @@ router.get(
 router.get(
   '/connect/callback',
   handle(async (req, res) => {
+    // This is a top-level browser navigation from Google, so EVERY exit must be
+    // a redirect back into the GOS app — never a JSON 500 or (worse) a hung
+    // request that Cloudflare turns into a raw 502 page. The whole body is
+    // wrapped so any unexpected throw still lands the admin on a controlled
+    // Hebrew screen. exchangeCode is timeout-bounded (googleClient), so a slow
+    // Google now fails fast into `exchange_failed` instead of hanging.
+    res.set('Cache-Control', 'no-store');
     const fail = (reason) => res.redirect(`/admin/email?connect_error=${encodeURIComponent(reason)}`);
-    if (!emailIntegrationConfigured()) return fail('not_configured');
-    if (req.query.error) return fail(String(req.query.error));
-    if (!verifyOAuthState(req.query.state)) return fail('bad_state');
-    const code = String(req.query.code || '');
-    if (!code) return fail('missing_code');
-
-    let tokens;
     try {
-      tokens = await exchangeCode({ code, redirectUri: callbackRedirectUri(req) });
+      if (!emailIntegrationConfigured()) return fail('not_configured');
+      if (req.query.error) return fail(String(req.query.error));
+      if (!verifyOAuthState(req.query.state)) return fail('bad_state');
+      const code = String(req.query.code || '');
+      if (!code) return fail('missing_code');
+
+      let tokens;
+      try {
+        tokens = await exchangeCode({ code, redirectUri: callbackRedirectUri(req) });
+      } catch (e) {
+        console.error('[email] code exchange failed:', e?.code || e?.message);
+        return fail('exchange_failed');
+      }
+      const claims = decodeIdToken(tokens.id_token) || {};
+      const emailAddress = normalizeEmail(claims.email);
+      if (!emailAddress) return fail('no_email_claim');
+
+      // Atomic reconnect: exchangeCode already VALIDATED the new credentials
+      // (Google returned tokens + a signed id_token) before we touch the stored
+      // record, so a failed reconnect never overwrites a working connection.
+      // buildConnectData omits refreshTokenEnc when Google returns none, so a
+      // token-only response never nulls a working refresh token.
+      const data = buildConnectData({ tokens, claims, connectedById: req.adminAuth?.userId || null });
+      const account = await prisma.emailAccount.upsert({
+        where: { emailAddress },
+        create: { emailAddress, ...data },
+        update: data,
+      });
+
+      // Kick the first sync in the background — the UI polls account status.
+      syncAccount(account.id).catch((e) => console.error('[email] initial sync failed:', e?.message));
+      return res.redirect(`/admin/email?connected=${encodeURIComponent(emailAddress)}`);
     } catch (e) {
-      console.error('[email] code exchange failed:', e?.message);
-      return fail('exchange_failed');
+      console.error('[email] connect callback failed:', e?.message);
+      return fail('server_error');
     }
-    const claims = decodeIdToken(tokens.id_token) || {};
-    const emailAddress = normalizeEmail(claims.email);
-    if (!emailAddress) return fail('no_email_claim');
-
-    const data = {
-      provider: 'gmail',
-      displayName: claims.name || null,
-      googleAccountId: claims.sub || null,
-      accessTokenEnc: encryptToken(tokens.access_token),
-      accessTokenExpiresAt: new Date(Date.now() + (Number(tokens.expires_in) || 3600) * 1000),
-      // prompt=consent guarantees a refresh_token on every connect; keep the
-      // existing one if Google ever omits it anyway.
-      ...(tokens.refresh_token ? { refreshTokenEnc: encryptToken(tokens.refresh_token) } : {}),
-      scopes: tokens.scope || null,
-      isActive: true,
-      syncStatus: 'idle',
-      syncError: null,
-      connectedById: req.adminAuth?.userId || null,
-    };
-    const account = await prisma.emailAccount.upsert({
-      where: { emailAddress },
-      create: { emailAddress, ...data },
-      update: data,
-    });
-
-    // Kick the first sync in the background — the UI polls account status.
-    syncAccount(account.id).catch((e) => console.error('[email] initial sync failed:', e?.message));
-    res.redirect(`/admin/email?connected=${encodeURIComponent(emailAddress)}`);
   }),
 );
 
@@ -207,8 +233,30 @@ router.post(
       const result = await syncAccount(account);
       res.json({ ok: true, ...result });
     } catch (e) {
-      res.status(502).json({ error: 'sync_failed', detail: (e?.message || '').slice(0, 300) });
+      // 422 (not 502): a provider failure must pass through Cloudflare as JSON,
+      // never be replaced by a raw CF error page. invalid_grant flips the shared
+      // connection to reconnect_required so the UI shows a clean Hebrew state.
+      if (isInvalidGrant(e)) await markAccountAuthError(prisma, account, e).catch(() => {});
+      res.status(422).json({
+        error: 'sync_failed',
+        reconnectRequired: isInvalidGrant(e),
+        message: sanitizeAuthError(e),
+      });
     }
+  }),
+);
+
+// Read-only connection health check — refreshes the access token and probes
+// Gmail (profile) + Calendar (events.list, maxResults 1). Sends NO mail and
+// creates NO events. Persists a sanitized verdict and returns it.
+router.post(
+  '/accounts/:id/health-check',
+  handle(async (req, res) => {
+    const account = await prisma.emailAccount.findUnique({ where: { id: req.params.id } });
+    if (!account) return res.status(404).json({ error: 'not_found' });
+    res.set('Cache-Control', 'no-store');
+    const result = await runHealthCheck(account);
+    res.json(result);
   }),
 );
 
@@ -246,6 +294,9 @@ router.post(
         refreshTokenEnc: null,
         isActive: false,
         syncStatus: 'disconnected',
+        healthState: 'disconnected',
+        lastAuthError: null,
+        lastAuthErrorAt: null,
       },
       select: ACCOUNT_SAFE_SELECT,
     });

@@ -12,12 +12,21 @@ import EmailInbox from './EmailInbox.jsx';
 // full-page redirect → Google consent → callback lands back here with
 // ?connected=<email> or ?connect_error=<reason>.
 
-const SYNC_STATUS = {
-  idle: { label: 'מסונכרן', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
-  syncing: { label: 'מסנכרן…', cls: 'bg-blue-50 text-blue-600 ring-blue-100' },
-  error: { label: 'שגיאת סנכרון', cls: 'bg-red-50 text-red-700 ring-red-200' },
+// Connection HEALTH is the authoritative surface (Gmail + Calendar share one
+// Google connection). We never render raw Google/OAuth errors — only these
+// business-readable Hebrew states, driven by the server's sanitized healthState.
+const HEALTH_STATUS = {
+  connected: { label: 'מחובר ותקין', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
+  reconnect_required: { label: 'נדרש חיבור מחדש', cls: 'bg-amber-50 text-amber-800 ring-amber-200' },
+  error: { label: 'בעיה בחיבור', cls: 'bg-red-50 text-red-700 ring-red-200' },
   disconnected: { label: 'מנותק', cls: 'bg-gray-100 text-gray-500 ring-gray-200' },
+  unknown: { label: 'ממתין לבדיקה', cls: 'bg-gray-100 text-gray-500 ring-gray-200' },
 };
+
+function connectionBadge(a) {
+  if (!a.connected) return HEALTH_STATUS.disconnected;
+  return HEALTH_STATUS[a.healthState] || HEALTH_STATUS.unknown;
+}
 
 const CONNECT_ERRORS = {
   not_configured: 'האינטגרציה עדיין לא הוגדרה בשרת (משתני סביבה חסרים).',
@@ -26,6 +35,8 @@ const CONNECT_ERRORS = {
   exchange_failed: 'החלפת קוד ההרשאה מול גוגל נכשלה — נסו שוב.',
   no_email_claim: 'גוגל לא החזירה את כתובת המייל של החשבון.',
   access_denied: 'החיבור בוטל במסך ההרשאות של גוגל.',
+  server_error: 'אירעה שגיאה בשרת במהלך החיבור — נסו שוב.',
+  not_configured: 'האינטגרציה עדיין לא הוגדרה בשרת (משתני סביבה חסרים).',
 };
 
 function fmtTime(iso) {
@@ -151,7 +162,32 @@ export default function EmailPage() {
       await api.email.syncAccount(account.id);
       await load();
     } catch (e) {
-      setError('הסנכרון נכשל: ' + (e?.payload?.detail || e?.payload?.error || e?.message));
+      // Server returns sanitized Hebrew (422, never a raw provider/CF body).
+      setError('הסנכרון נכשל: ' + (e?.payload?.message || e?.payload?.error || e?.message));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function checkHealth(account) {
+    setBusy(account.id);
+    try {
+      const r = await api.email.healthCheck(account.id);
+      const gmailOk = r?.gmail?.ok;
+      const calOk = r?.calendar?.ok;
+      if (r?.needsReconnect) {
+        setNotice({ kind: 'error', text: 'ההרשאה ב-Google בוטלה או פגה — יש להתחבר מחדש.' });
+      } else if (gmailOk && (calOk || !r?.calendar?.scopeGranted)) {
+        setNotice({
+          kind: 'ok',
+          text: `בדיקת החיבור הצליחה — Gmail תקין${r?.calendar?.scopeGranted ? ' ויומן תקין' : ' (יומן לא מחובר)'}.`,
+        });
+      } else {
+        setNotice({ kind: 'error', text: 'בדיקת החיבור נכשלה — ' + (r?.gmail?.error || r?.calendar?.error || 'שגיאה לא ידועה') });
+      }
+      await load();
+    } catch (e) {
+      setError('בדיקת החיבור נכשלה: ' + (e?.payload?.message || e?.payload?.error || e?.message));
     } finally {
       setBusy(null);
     }
@@ -270,7 +306,7 @@ export default function EmailPage() {
           {/* Accounts */}
           <div className="space-y-3">
             {accounts.map((a) => {
-              const st = SYNC_STATUS[a.connected ? a.syncStatus : 'disconnected'] || SYNC_STATUS.idle;
+              const st = connectionBadge(a);
               return (
                 <div key={a.id} className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                   <div className="flex flex-wrap items-center gap-3">
@@ -296,11 +332,28 @@ export default function EmailPage() {
                         {a.displayName && <span dir="auto">{a.displayName} · </span>}
                         סנכרון אחרון: {fmtTime(a.lastSyncAt)}
                       </p>
-                      {a.syncError && (
-                        <p className="mt-1 text-[12px] text-red-600" dir="ltr">{a.syncError}</p>
+                      {a.connected && (
+                        <p className="mt-0.5 text-[12px] text-gray-400">
+                          Gmail: {fmtTime(a.lastGmailCheckAt)} · יומן:{' '}
+                          {a.hasCalendarScope ? fmtTime(a.lastCalendarCheckAt) : 'לא מחובר'}
+                        </p>
+                      )}
+                      {/* Sanitized Hebrew only — never a raw Google/OAuth body. */}
+                      {a.connected && a.lastAuthError && a.healthState !== 'connected' && (
+                        <p className="mt-1 text-[12px] text-amber-700" dir="rtl">{a.lastAuthError}</p>
                       )}
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
+                      {a.connected && (
+                        <button
+                          type="button"
+                          disabled={busy === a.id}
+                          onClick={() => checkHealth(a)}
+                          className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                        >
+                          {busy === a.id ? 'בודק…' : 'בדוק חיבור'}
+                        </button>
+                      )}
                       {a.connected && (
                         <button
                           type="button"
@@ -311,7 +364,7 @@ export default function EmailPage() {
                           {busy === a.id ? 'מסנכרן…' : 'סנכרון עכשיו'}
                         </button>
                       )}
-                      {(!a.connected || a.needsReconsent) && (
+                      {(!a.connected || a.needsReconnect || a.needsReconsent) && (
                         <button
                           type="button"
                           disabled={busy === 'connect' || !data?.configured}

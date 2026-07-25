@@ -876,6 +876,7 @@ export const api = {
     accounts: () => request('/api/email/accounts'),
     connectStart: () => request('/api/email/connect/start'),
     syncAccount: (id) => request(`/api/email/accounts/${id}/sync`, { method: 'POST', body: JSON.stringify({}) }),
+    healthCheck: (id) => request(`/api/email/accounts/${id}/health-check`, { method: 'POST', body: JSON.stringify({}) }),
     updateAccount: (id, data) =>
       request(`/api/email/accounts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     disconnectAccount: (id) =>

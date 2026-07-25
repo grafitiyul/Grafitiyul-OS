@@ -1,4 +1,4 @@
-import { getFreshAccessToken } from '../../email/googleClient.js';
+import { getFreshAccessToken, GOOGLE_TIMEOUT_MS, mapFetchNetworkError } from '../../email/googleClient.js';
 
 // Google Calendar v3 REST, hand-rolled over global fetch — the SAME lean
 // pattern as gmailFetch (src/email/googleClient.js): bearer token from the
@@ -21,14 +21,20 @@ export async function calendarFetch(client, account, path, { method = 'GET', que
       if (v === undefined || v === null || v === '') continue;
       url.searchParams.set(k, String(v));
     }
-    const res = await fetch(url, {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(body ? { 'Content-Type': 'application/json' } : {}),
-      },
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    let res;
+    try {
+      res = await fetch(url, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(GOOGLE_TIMEOUT_MS),
+      });
+    } catch (e) {
+      throw mapFetchNetworkError(e);
+    }
     if (res.status === 401 && attempt === 0) {
       // Force-refresh once (expiry clock skew / revoked access token).
       await client.emailAccount.update({
@@ -81,6 +87,17 @@ export const gcal = {
       method: 'DELETE',
       query: { sendUpdates: 'all' },
     }),
+
+  // Read-only reachability probe for the connection health check: lists at most
+  // one event on the org's primary calendar. Covered by the calendar.events
+  // scope, creates/changes NOTHING, and proves the token can actually reach the
+  // Calendar API. Returns the calendar's own id/timezone for display.
+  probe: async (client, account) => {
+    const res = await calendarFetch(client, account, `/calendars/${CAL}/events`, {
+      query: { maxResults: '1', showDeleted: 'false' },
+    });
+    return { calendarId: CAL, timeZone: res?.timeZone || null, summary: res?.summary || null };
+  },
 
   // Idempotency guard for creates: if a previous insert succeeded but the DB
   // write of the event id was lost, the event is findable by the private
