@@ -118,6 +118,23 @@ const THREAD_INCLUDE = {
   linkedDeal: { select: DEAL_LITE_SELECT },
 };
 
+// ── Canonical unread membership ──────────────────────────────────────────────
+// ONE definition of "this thread is unread", shared by: the unread view's
+// query, the unread-first sectioning of every other view, and the badge count.
+// A thread is unread when Gmail still labels one of its live inbox messages
+// UNREAD (unreadCount, derived in providerState.recomputeThreadState) or the
+// team explicitly flagged it unread inside GOS (manualUnread).
+const UNREAD_OR = [{ unreadCount: { gt: 0 } }, { manualUnread: true }];
+
+function unreadWhere(accountId) {
+  return { ...(accountId ? { accountId } : {}), inInbox: true, OR: UNREAD_OR };
+}
+
+// In-memory counterpart of unreadWhere — must stay in lockstep with it.
+function isUnreadThread(t) {
+  return t.unreadCount > 0 || t.manualUnread;
+}
+
 // ── Accounts & OAuth ─────────────────────────────────────────────────────────
 
 router.get(
@@ -326,7 +343,7 @@ router.get(
     // ארכיון and נשלחו are their own views); free-text search spans everything.
     if (filter === 'archive') where.inInbox = false;
     else if (filter !== 'sent' && !q) where.inInbox = true;
-    if (filter === 'unread') where.AND = [{ OR: [{ unreadCount: { gt: 0 } }, { manualUnread: true }] }];
+    if (filter === 'unread') where.AND = [{ OR: UNREAD_OR }]; // same rule as unreadWhere/isUnreadThread
     else if (filter === 'read') where.AND = [{ unreadCount: 0, manualUnread: false }];
     else if (filter === 'unmatched') where.contactId = null;
     else if (filter === 'deal') where.linkedDealId = { not: null };
@@ -374,30 +391,51 @@ router.get(
       ];
     }
 
+    const ORDER = [
+      // Explicit nulls:'last' everywhere — Postgres DESC defaults to NULLS
+      // FIRST, which pinned broken-dated threads to the TOP (live-QA bug).
+      { pinnedAt: { sort: 'desc', nulls: 'last' } },
+      { lastMessageAt: { sort: 'desc', nulls: 'last' } },
+      { createdAt: 'desc' },
+    ];
+
     const rows = await prisma.emailThread.findMany({
       where,
       include: THREAD_INCLUDE,
-      // Explicit nulls:'last' everywhere — Postgres DESC defaults to NULLS
-      // FIRST, which pinned broken-dated threads to the TOP (live-QA bug).
-      orderBy: [
-        { pinnedAt: { sort: 'desc', nulls: 'last' } },
-        { lastMessageAt: { sort: 'desc', nulls: 'last' } },
-        { createdAt: 'desc' },
-      ],
+      orderBy: ORDER,
       take: 200,
     });
+
+    // The paginated page is the NEWEST 200 threads, so an unread thread older
+    // than that window would silently drop out of the "all" view even though
+    // the unread view lists it — two different answers to "is this unread?".
+    // Canonical rule: unread MEMBERSHIP (unreadWhere) never depends on
+    // pagination. Every unread thread is unioned into the page, then the
+    // sectioning below puts them on top; the remaining paginated threads follow
+    // without duplicates.
+    let page = rows;
+    if (filter === 'all' && !q) {
+      const unreadRows = await prisma.emailThread.findMany({
+        where: unreadWhere(accountId),
+        include: THREAD_INCLUDE,
+        orderBy: ORDER,
+      });
+      const seen = new Set(rows.map((t) => t.id));
+      page = [...rows, ...unreadRows.filter((t) => !seen.has(t.id))];
+    }
+
     // Unread-first sectioning (stable — recency order kept inside each
     // section). Pinned threads stay on top regardless of read state; a manual
     // "סמן כלא נקרא" joins the unread section visually.
-    const isUnread = (t) => t.unreadCount > 0 || t.manualUnread;
-    const pinned = rows.filter((t) => t.pinnedAt);
-    const unread = rows.filter((t) => !t.pinnedAt && isUnread(t));
-    const read = rows.filter((t) => !t.pinnedAt && !isUnread(t));
+    const pinned = page.filter((t) => t.pinnedAt);
+    const unread = page.filter((t) => !t.pinnedAt && isUnreadThread(t));
+    const read = page.filter((t) => !t.pinnedAt && !isUnreadThread(t));
     const threads = [...pinned, ...unread, ...read];
 
-    const unreadTotal = await prisma.emailThread.count({
-      where: { ...(accountId ? { accountId } : {}), inInbox: true, unreadCount: { gt: 0 } },
-    });
+    // Badge count uses the SAME membership rule as the unread view and the
+    // sectioning above — previously it counted only unreadCount>0, so a
+    // manually-unread thread was listed but never counted.
+    const unreadTotal = await prisma.emailThread.count({ where: unreadWhere(accountId) });
     res.json({ threads: threads.map(toClientThread), unreadTotal });
   }),
 );

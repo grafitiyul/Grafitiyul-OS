@@ -69,10 +69,16 @@ function fmtMoney(minor) {
   return new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 }).format(n / 100);
 }
 
+// EmailThread.participants holds COUNTERPARTIES only — the connected mailbox's
+// own address is deliberately never stored there. So a thread with no
+// participants is a conversation the mailbox had with ITSELF (Gmail stamps
+// notes-to-self SENT+INBOX): the correct label is "אני", never "(לא מזוהה)".
+// Mirrors the WhatsApp module, which already renders one's own side as 'אני'.
 function threadTitle(t) {
   if (t.contactName) return t.contactName;
   const p = (t.participants || [])[0];
-  return p?.name || p?.email || '(לא מזוהה)';
+  if (!p) return 'אני';
+  return p.name || p.email || '(לא מזוהה)';
 }
 
 function errText(prefix, e) {
@@ -475,6 +481,13 @@ export default function EmailInbox({ accounts = [] }) {
       archive: api.email.archiveThread,
       unarchive: api.email.unarchiveThread,
     }[action];
+    // Marking the OPEN thread unread closes it immediately: leaving it on
+    // screen would re-assert "read" the moment the pane refreshes, and the
+    // whole point of the action is to come back to it later. The reading pane
+    // returns to its empty state and NO other message is auto-opened — the
+    // thread stays in the list and simply repositions under the canonical
+    // unread-first ordering. Done before the await so the UI responds at once.
+    if (action === 'unread' && selected?.id === t.id) setSelected(null);
     try {
       await call(t.id);
       // Archiving removes the thread from the current view — don't leave its
@@ -500,8 +513,10 @@ export default function EmailInbox({ accounts = [] }) {
       } else if (res.failed > 0) {
         setError(`הפעולה נכשלה עבור ${res.failed} שיחות — נסו שוב.`);
       }
-      if (action === 'archive' && selected && selectedIds.has(selected.id) && filter !== 'archive') {
-        setSelected(null);
+      // Same rule as the single-thread path: archiving or marking-unread the
+      // OPEN thread closes the reading pane (empty state, nothing auto-opened).
+      if (selected && selectedIds.has(selected.id)) {
+        if (action === 'unread' || (action === 'archive' && filter !== 'archive')) setSelected(null);
       }
       setSelectedIds(new Set());
       await load();
