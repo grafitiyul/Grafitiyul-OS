@@ -65,17 +65,37 @@ function thread(db, { lastReadAt = null } = {}) {
   return row;
 }
 
-test('unread counts ONLY inbox∩unread inbound messages (Gmail badge semantics)', async () => {
+test('unread counts exactly inbox∩unread messages (Gmail badge semantics)', async () => {
   const db = fakeDb();
   const t = thread(db);
   msg(db, t.id, { labels: ['INBOX', 'UNREAD'] }); // counts
   msg(db, t.id, { labels: ['UNREAD'] }); // archived-unread → does NOT count
   msg(db, t.id, { labels: ['INBOX'] }); // read inbox mail → does NOT count
-  msg(db, t.id, { labels: ['INBOX', 'UNREAD'], direction: 'outbound' }); // outbound → never
   await recomputeThreadState(t.id, db);
   assert.equal(t.unreadCount, 1);
   assert.equal(t.inInbox, true);
-  assert.equal(t.messageCount, 4);
+  assert.equal(t.messageCount, 3);
+});
+
+// Self-sent mail: Gmail stamps notes-to-self SENT *and* INBOX and shows them as
+// unread. Direction must NOT exclude them — normal sent mail never carries
+// INBOX, so this is the only case the old direction filter actually affected.
+test('self-sent mail (SENT+INBOX+UNREAD) counts as unread, like Gmail', async () => {
+  const db = fakeDb();
+  const t = thread(db);
+  msg(db, t.id, { labels: ['INBOX', 'UNREAD', 'SENT'], direction: 'outbound' });
+  await recomputeThreadState(t.id, db);
+  assert.equal(t.unreadCount, 1);
+});
+
+test('ordinary sent mail (SENT, no INBOX) never counts as unread', async () => {
+  const db = fakeDb();
+  const t = thread(db);
+  msg(db, t.id, { labels: ['SENT'], direction: 'outbound' });
+  msg(db, t.id, { labels: ['SENT', 'UNREAD'], direction: 'outbound' }); // still no INBOX
+  await recomputeThreadState(t.id, db);
+  assert.equal(t.unreadCount, 0);
+  assert.equal(t.inInbox, false);
 });
 
 test('a thread with no live INBOX message leaves the active inbox', async () => {
@@ -88,13 +108,26 @@ test('a thread with no live INBOX message leaves the active inbox', async () => 
   assert.equal(t.unreadCount, 0); // inbox badge doesn't count archived unread
 });
 
-test('GOS read marker (lastReadAt) suppresses older unread; newer mail still counts', async () => {
+// Gmail's UNREAD label is the single source of truth. The old lastReadAt cutoff
+// (from the read-only-scope era) hid messages that were still genuinely unread
+// in the mailbox; GOS now writes read-state back to Gmail, so the label clears
+// there and disappears here on the next sync.
+test('lastReadAt no longer suppresses mail Gmail still labels UNREAD', async () => {
   const db = fakeDb();
   const t = thread(db, { lastReadAt: new Date(1751900005000) });
-  msg(db, t.id, { labels: ['INBOX', 'UNREAD'], at: 1751900000000 }); // before read → suppressed
-  msg(db, t.id, { labels: ['INBOX', 'UNREAD'], at: 1751900010000 }); // after read → counts
+  msg(db, t.id, { labels: ['INBOX', 'UNREAD'], at: 1751900000000 }); // older than the GOS read marker
+  msg(db, t.id, { labels: ['INBOX', 'UNREAD'], at: 1751900010000 });
   await recomputeThreadState(t.id, db);
-  assert.equal(t.unreadCount, 1);
+  assert.equal(t.unreadCount, 2); // both still unread in Gmail → both counted
+});
+
+test('a thread read in Gmail (UNREAD label gone) reports zero unread', async () => {
+  const db = fakeDb();
+  const t = thread(db, { lastReadAt: null });
+  msg(db, t.id, { labels: ['INBOX'] });
+  msg(db, t.id, { labels: ['INBOX'] });
+  await recomputeThreadState(t.id, db);
+  assert.equal(t.unreadCount, 0);
 });
 
 test('provider-deleted messages leave every computation', async () => {

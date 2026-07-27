@@ -9,6 +9,11 @@ import { prisma } from '../db.js';
 //   recomputeThreadState       → inInbox / unreadCount / lastMessageAt /
 //                                snippet derived from LIVE messages only
 //
+// UNREAD CONTRACT (single source of truth): a thread's unread count is exactly
+// the number of live messages Gmail itself labels INBOX ∩ UNREAD. GOS never
+// second-guesses that label — see recomputeThreadState for why the previous
+// direction/lastReadAt filters were removed.
+//
 // All operations are idempotent — the history window may be replayed after an
 // interrupted tick and must converge to the same state.
 
@@ -53,13 +58,26 @@ export async function applyMessageDeleted(account, gmailMessageId, db = prisma) 
 
 // Re-derive thread state from its LIVE (non-deleted) messages:
 //   inInbox     — any live message carries INBOX
-//   unreadCount — live inbound messages carrying BOTH UNREAD and INBOX (the
-//                 exact set Gmail's own inbox badge counts — an archived
-//                 unread message doesn't bold Gmail's inbox, so it must not
-//                 bold ours) that the team hasn't read IN GOS (sentAt >
-//                 lastReadAt). GOS reads can't clear Gmail's UNREAD label
-//                 (read-only scope), so the GOS read marker wins; a Gmail-side
-//                 read arrives as labelRemoved and clears it here too.
+//   unreadCount — live messages carrying BOTH UNREAD and INBOX: the exact set
+//                 Gmail's own inbox badge counts. An archived unread message
+//                 doesn't bold Gmail's inbox, so it must not bold ours.
+//
+//                 Deliberately NOT filtered by direction: normal sent mail
+//                 never carries INBOX, so the old `direction === 'inbound'`
+//                 test excluded exactly one real case — mail the user sends to
+//                 THEMSELVES (Gmail stamps it SENT *and* INBOX). Those are
+//                 notes-to-self/reminders that Gmail shows as unread, and
+//                 hiding them made the GOS badge diverge from Gmail's.
+//
+//                 Deliberately NOT suppressed by thread.lastReadAt either.
+//                 That cutoff dates from the read-only-scope era, when a GOS
+//                 read could not clear Gmail's UNREAD label. GOS now holds
+//                 gmail.modify and writes read-state back, so Gmail's label is
+//                 authoritative: a thread read in GOS is cleared in Gmail and
+//                 the label disappears here on the next sync. (Trade-off,
+//                 accepted deliberately: if that write-back ever fails, the
+//                 thread stays honestly unread instead of silently hiding a
+//                 message that is still unread in the real mailbox.)
 //   lastMessageAt / snippet — from the newest live message.
 export async function recomputeThreadState(threadId, db = prisma) {
   const thread = await db.emailThread.findUnique({
@@ -69,18 +87,12 @@ export async function recomputeThreadState(threadId, db = prisma) {
   if (!thread) return null;
   const messages = await db.emailMessage.findMany({
     where: { threadId, providerDeletedAt: null },
-    select: { labelIds: true, direction: true, sentAt: true, snippet: true },
+    select: { labelIds: true, sentAt: true, snippet: true },
     orderBy: { sentAt: 'desc' },
   });
   const has = (m, label) => Array.isArray(m.labelIds) && m.labelIds.includes(label);
   const inInbox = messages.some((m) => has(m, 'INBOX'));
-  const unreadCount = messages.filter(
-    (m) =>
-      m.direction === 'inbound' &&
-      has(m, 'UNREAD') &&
-      has(m, 'INBOX') &&
-      (!thread.lastReadAt || (m.sentAt && m.sentAt > thread.lastReadAt)),
-  ).length;
+  const unreadCount = messages.filter((m) => has(m, 'UNREAD') && has(m, 'INBOX')).length;
   const newest = messages[0] || null;
   return db.emailThread.update({
     where: { id: threadId },

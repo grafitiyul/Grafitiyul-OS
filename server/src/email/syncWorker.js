@@ -141,6 +141,9 @@ export async function syncAccount(accountOrId, logger = console) {
 const SNAPSHOT_FETCH_BUDGET = 20; // full-message imports per pass
 const SNAPSHOT_MAX_IDS = 5000; // hard cap — a real inbox is far smaller
 
+// → { ids, truncated }. `truncated` = the cap stopped us before Gmail ran out
+// of pages, so `ids` is only the NEWEST slice and absence from it proves
+// nothing (see the strip guard in snapshotInboxState).
 async function listAllMessageIds(account, labelIds) {
   const ids = new Set();
   let pageToken;
@@ -153,12 +156,18 @@ async function listAllMessageIds(account, labelIds) {
     for (const m of page.messages || []) ids.add(m.id);
     pageToken = page.nextPageToken;
   } while (pageToken && ids.size < SNAPSHOT_MAX_IDS);
-  return ids;
+  return { ids, truncated: !!pageToken };
 }
 
 async function snapshotInboxState(account, logger) {
-  const inboxIds = await listAllMessageIds(account, ['INBOX']);
-  const unreadIds = await listAllMessageIds(account, ['INBOX', 'UNREAD']);
+  const { ids: listedInboxIds, truncated: inboxTruncated } = await listAllMessageIds(account, ['INBOX']);
+  const { ids: unreadIds } = await listAllMessageIds(account, ['INBOX', 'UNREAD']);
+  // The INBOX listing is capped (SNAPSHOT_MAX_IDS) and Gmail returns newest
+  // first, so on a very large mailbox the oldest inbox ids fall outside it.
+  // The UNREAD listing is tiny and never truncates in practice — union it in so
+  // an unread message can NEVER be invisible to this pass just because the
+  // inbox is big.
+  const inboxIds = new Set([...listedInboxIds, ...unreadIds]);
   const dirty = new Set();
   let stripped = 0;
   let refreshed = 0;
@@ -166,22 +175,33 @@ async function snapshotInboxState(account, logger) {
 
   // 1) Rows claiming INBOX that Gmail no longer has in the inbox → strip the
   //    label (archived/deleted in Gmail while we weren't looking).
-  const claiming = await prisma.emailMessage.findMany({
-    where: {
-      accountId: account.id,
-      providerDeletedAt: null,
-      labelIds: { array_contains: ['INBOX'] },
-    },
-    select: { id: true, gmailMessageId: true, threadId: true, labelIds: true },
-  });
-  for (const row of claiming) {
-    if (inboxIds.has(row.gmailMessageId)) continue;
-    await prisma.emailMessage.update({
-      where: { id: row.id },
-      data: { labelIds: (row.labelIds || []).filter((l) => l !== 'INBOX') },
+  //
+  //    SKIPPED when the inbox listing truncated: we then hold only the newest
+  //    slice, so "not in the list" does NOT mean "archived in Gmail" — stripping
+  //    on that basis would silently evict genuinely-in-inbox mail from the GOS
+  //    inbox. Importing/refreshing below stays safe and still runs.
+  if (inboxTruncated) {
+    logger.warn(
+      `[email-sync] ${account.emailAddress}: inbox listing truncated at ${SNAPSHOT_MAX_IDS} — skipping INBOX-strip pass this tick (import/unread refresh still applied)`,
+    );
+  } else {
+    const claiming = await prisma.emailMessage.findMany({
+      where: {
+        accountId: account.id,
+        providerDeletedAt: null,
+        labelIds: { array_contains: ['INBOX'] },
+      },
+      select: { id: true, gmailMessageId: true, threadId: true, labelIds: true },
     });
-    dirty.add(row.threadId);
-    stripped += 1;
+    for (const row of claiming) {
+      if (inboxIds.has(row.gmailMessageId)) continue;
+      await prisma.emailMessage.update({
+        where: { id: row.id },
+        data: { labelIds: (row.labelIds || []).filter((l) => l !== 'INBOX') },
+      });
+      dirty.add(row.threadId);
+      stripped += 1;
+    }
   }
 
   // 2) Gmail's current inbox: ensure every id is mirrored with correct
