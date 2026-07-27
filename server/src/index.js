@@ -38,6 +38,8 @@ import searchRouter from './routes/search.js';
 import dealsRouter from './routes/deals.js';
 import quoteDocumentsRouter from './routes/quoteDocuments.js';
 import communicationRouter from './routes/communication.js';
+import adminReportsRouter from './routes/adminReports.js';
+import { startAdminReportsWorker } from './adminReports/worker.js';
 import { startCommunicationWorker } from './communication/deliveryWorker.js';
 import publicQuoteRouter from './routes/publicQuote.js';
 import dealStagesRouter from './routes/dealStages.js';
@@ -362,6 +364,10 @@ app.use('/api/quote-documents', requireAdminAuth, quoteDocumentsRouter);
 // communication templates + automation: events, messages, sending windows,
 // deliveries, preview/test-send. Admin-only.
 app.use('/api/communication', requireAdminAuth, communicationRouter);
+// Admin Reports (דיווחי מנהלים) — CODE-MANAGED internal notifications: the
+// catalog lives in src/adminReports/registry.js; only destination + enabled
+// are configurable here.
+app.use('/api/admin-reports', requireAdminAuth, adminReportsRouter);
 
 // Products & Pricing — Slice 1 (catalog + R2 files + payment config). Admin
 // only. Pricing engine, add-ons, and Deal integration are NOT built yet.
@@ -640,6 +646,9 @@ app.listen(port, () => {
   // Communication Center deliveries — claim-based 60s tick: windows,
   // dependency waits, rendering, channel sends, retries.
   startCommunicationWorker(console);
+  // Admin Reports retry worker — 60s tick; only re-sends transiently failed
+  // internal notifications (the dispatcher sends inline).
+  startAdminReportsWorker(console);
 
   // One-time, idempotent repair of the QA tour↔deal time drift (17/07 test
   // case). Safe on repeated deploy — only touches drifted rows.

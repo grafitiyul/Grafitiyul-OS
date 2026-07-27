@@ -112,6 +112,7 @@ import SabbathHoursSettings from './admin/crm/settings/SabbathHoursSettings.jsx'
 import ProductsSettings from './admin/products/ProductsSettings.jsx';
 import SharedContentLibrary from './admin/shared-content/SharedContentLibrary.jsx';
 import CommunicationPage from './admin/communication/CommunicationPage.jsx';
+import AdminReportsPage from './admin/adminReports/AdminReportsPage.jsx';
 import CommEventEditorPage from './admin/communication/EventEditorPage.jsx';
 // Tour Content module — GOS-owned internal tour content. 3-pane master-detail:
 // Tours → Stations → Station editor (workflow-first; the content library is
@@ -333,6 +334,8 @@ export default function App() {
         {/* Communication Center — נוסחים למייל + WhatsApp: full-width management
             table + dedicated event editor route (large editing surface). */}
         <Route path="settings/communication" element={<CommunicationPage />} />
+        {/* דיווחי מנהלים — code-managed internal notifications (registry in code). */}
+        <Route path="settings/admin-reports" element={<AdminReportsPage />} />
         <Route path="settings/communication/events/:id" element={<CommEventEditorPage />} />
         {/* Tour Content — 3-pane master-detail. Tours → Stations → Station editor.
             The two list panes persist (in the shell); the editor is the Outlet. */}

@@ -3,8 +3,9 @@ import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { DOC_TYPE_LABELS, emitAccountingEvent, systemOrigin } from '../icountDocs.js';
 import { settleDealWonFromPayment } from '../deals/paymentWon.js';
-import { fireCommunicationTrigger } from '../communication/engine.js';
+import { emitPaymentCompleted, PAYMENT_SOURCE_LINK } from '../payments/paymentCompleted.js';
 import { REG_HELD, REG_EXPIRED } from '../tours/registrationStatus.js';
+import { logRejectedWebhook } from '../payments/webhookAudit.js';
 
 // iCount doctypes that RECORD money received (a קבלה / חשבונית מס קבלה). Only
 // these represent a completed payment — an invoice alone does not.
@@ -83,15 +84,19 @@ async function captureDocumentFromIpn(dealId, payload, customLinkId) {
       });
     });
     console.log(`[icount webhook] captured document ${doctype}/${docnum} for deal ${dealId}`);
-    // Communication Center — a verified money-received document (receipt /
-    // invrec) is THE canonical payment_received signal. Post-commit,
-    // fire-and-forget; triggerRef includes the doc identity so a second
-    // payment on the same deal fires again while IPN replays stay deduped.
+    // THE canonical online-payment-completion event (payments/paymentCompleted).
+    // A money-received document arriving on the link's own IPN URL IS the
+    // customer completing an online payment; the amount reported is the
+    // document's amount, never the deal total. Manually issued documents never
+    // reach this code path.
     if (PAID_DOCTYPES.has(doctype)) {
-      fireCommunicationTrigger({
-        type: 'payment_received',
+      emitPaymentCompleted({
         dealId,
-        triggerRef: `${dealId}:${doctype}:${docnum}`,
+        amountMinor: Math.round(amountIls * 100),
+        currency: deal.currency || 'ILS',
+        provider: 'icount',
+        reference: `${doctype}:${docnum}`,
+        source: PAYMENT_SOURCE_LINK,
       });
     }
   } catch (err) {
@@ -140,7 +145,12 @@ router.post(
   handle(async (req, res) => {
     const expected = process.env.ICOUNT_WEBHOOK_SECRET;
     if (!expected || req.params.secret !== expected) {
+      // A rejected call used to vanish silently — which made "is iCount even
+      // calling us?" unanswerable (e.g. after a secret rotation, since links
+      // are permanent and carry the old secret forever). Persist a bounded,
+      // body-free marker so a misconfigured callback is diagnosable.
       console.error('[icount webhook] rejected: bad or unset secret');
+      await logRejectedWebhook(prisma, 'icount', req, !expected ? 'secret_not_set' : 'bad_secret');
       return res.status(200).json({ ok: false });
     }
     const dealId = typeof req.query.dealId === 'string' && req.query.dealId ? req.query.dealId : null;

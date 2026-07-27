@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { fireAdminReport } from '../adminReports/dispatch.js';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import {
@@ -81,6 +82,30 @@ router.post(
       },
       origin: await userOrigin(req.adminAuth?.userId),
     });
+
+    // Admin Report #2 "הצעת מחיר הופקה" — every produced version, sent or not.
+    // The amount and type come from the OFFER that was produced (a parallel
+    // offer has its own total), and the link points at THIS immutable
+    // document. Idempotent per document, so a retried produce never reports
+    // twice. Fire-and-forget: reporting never affects the produce result.
+    fireAdminReport({
+      number: 2,
+      idempotencyKey: `quote:${r.doc.id}`,
+      dealId: r.doc.dealId,
+      data: {
+        quoteReport: {
+          quoteDocumentId: r.doc.id,
+          publicToken: r.doc.publicToken,
+          versionNo: r.doc.versionNo,
+          offerNo: r.offer?.offerNo ?? 1,
+          isPrimary: r.offer?.isPrimary ?? true,
+          // The offer's OWN gross when it has one (parallel offers always do).
+          // When absent the renderer falls back to the deal headline from the
+          // canonical context — which by invariant IS the primary offer's total.
+          totalMinor: r.offer?.valueMinor == null ? null : Number(r.offer.valueMinor),
+        },
+      },
+    }).catch(() => {});
 
     res.json({ quoteDocument: toClientQuoteDocument(r.doc) });
   }),

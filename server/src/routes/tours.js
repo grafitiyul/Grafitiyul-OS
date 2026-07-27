@@ -18,6 +18,8 @@ import { replaceTourEvent } from '../tours/replaceTour.js';
 import { emitTourChangeImpact } from '../tours/changeImpact.js';
 import { cancelTourAssignments } from '../tours/assignmentLifecycle.js';
 import { processTrigger as processCommunicationTrigger, fireCommunicationTrigger } from '../communication/engine.js';
+import { fireAdminReport } from '../adminReports/dispatch.js';
+import { actorForReport } from '../adminReports/actor.js';
 import {
   cancelDealBooking,
   reconnectOrphanBooking,
@@ -1287,6 +1289,20 @@ router.post(
           });
           // Re-anchor "מועד הסיור" deliveries onto the replacement occurrence.
           fireCommunicationTrigger({ type: 'tour_datetime', dealId });
+          // Admin Report #3 — ONE report per affected deal, carrying the real
+          // authenticated actor who performed the replacement.
+          fireAdminReport({
+            number: 3,
+            idempotencyKey: `replace:${existing.id}->${result.replacement.id}:${dealId}`,
+            dealId,
+            tourEventId: result.replacement.id,
+            data: {
+              changeReport: {
+                prevDate: existing.date, prevTime: existing.startTime, newDate, newTime,
+                actor: await actorForReport(req.adminAuth?.userId),
+              },
+            },
+          }).catch(() => {});
         }
       }
       res.json({ ok: true, replacementId: result.replacement.id, dealIds: result.dealIds, reused: result.reused });

@@ -43,6 +43,8 @@ import {
 } from '../deals/waiver.js';
 import { settleDealWonFromPayment } from '../deals/paymentWon.js';
 import { fireCommunicationTrigger } from '../communication/engine.js';
+import { fireAdminReport } from '../adminReports/dispatch.js';
+import { actorForReport } from '../adminReports/actor.js';
 import { sendWhatsAppText } from '../whatsapp/send.js';
 
 // Deal CRUD + DealContact management. The Deal is the commercial object: it
@@ -878,6 +880,20 @@ router.post(
         // "מועד הסיור" anchor deliveries: existing ones re-anchor via the
         // worker's re-check; this covers events configured after WON.
         fireCommunicationTrigger({ type: 'tour_datetime', dealId: deal.id });
+        // Admin Report #3 — the REAL actor is the authenticated user who
+        // pressed "עדכון סיור", never the deal's owner. Frozen at fire time.
+        fireAdminReport({
+          number: 3,
+          idempotencyKey: `tour:${booking.tourEventId}:${prevDate}T${prevTime || ''}->${newDate}T${newTime || ''}`,
+          dealId: deal.id,
+          tourEventId: booking.tourEventId,
+          data: {
+            changeReport: {
+              prevDate, prevTime, newDate, newTime,
+              actor: await actorForReport(req.adminAuth?.userId),
+            },
+          },
+        }).catch(() => {});
       }
     }
     res.json(withTourUpdatePending(await loadDeal(deal.id)));

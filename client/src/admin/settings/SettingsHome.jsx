@@ -43,6 +43,12 @@ export default function SettingsHome() {
           description="מרכז התקשורת — נוסחים אוטומטיים, טריגרים, תזמונים וחלונות שליחה."
         />
         <CategoryCard
+          to="/admin/settings/admin-reports"
+          icon="📣"
+          title="דיווחי מנהלים"
+          description="התראות פנימיות אוטומטיות המנוהלות בקוד — תשלום, הצעת מחיר, שינוי מועד."
+        />
+        <CategoryCard
           to="/admin/settings/finance"
           icon="💰"
           title="כספים"

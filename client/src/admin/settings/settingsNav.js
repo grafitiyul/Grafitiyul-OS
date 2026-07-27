@@ -32,6 +32,7 @@ export const SETTINGS_TREE = {
   '/admin/settings/crm/sabbath-hours': { label: 'שעות שבת וחג', parent: '/admin/settings/crm' },
   '/admin/settings/crm/shared-content': { label: 'ספריית תוכן משותף', parent: '/admin/settings/crm' },
   '/admin/settings/communication': { label: 'נוסחים למייל + WhatsApp', parent: '/admin/settings' },
+  '/admin/settings/admin-reports': { label: 'דיווחי מנהלים', parent: '/admin/settings' },
   '/admin/settings/finance': { label: 'הגדרות כספים', parent: '/admin/settings' },
   '/admin/settings/finance/payroll-components': { label: 'רכיבי שכר', parent: '/admin/settings/finance' },
   '/admin/settings/finance/activity-types': { label: 'סוגי תוספת כללית', parent: '/admin/settings/finance' },

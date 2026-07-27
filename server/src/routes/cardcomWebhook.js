@@ -2,6 +2,7 @@ import express, { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { processCardcomResult } from '../touristPayment.js';
+import { logRejectedWebhook } from '../payments/webhookAudit.js';
 
 // Cardcom webhook receiver — audit log + verified payment capture.
 //
@@ -33,7 +34,9 @@ router.post(
   handle(async (req, res) => {
     const expected = process.env.CARDCOM_WEBHOOK_SECRET;
     if (!expected || req.params.secret !== expected) {
+      // Same diagnosability repair as the iCount receiver (webhookAudit.js).
       console.error('[cardcom webhook] rejected: bad or unset secret');
+      await logRejectedWebhook(prisma, 'cardcom', req, !expected ? 'secret_not_set' : 'bad_secret');
       return res.status(200).json({ ok: false });
     }
     const payload = req.body ?? {};

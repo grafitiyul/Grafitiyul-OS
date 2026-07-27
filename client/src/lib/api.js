@@ -1749,6 +1749,17 @@ export const api = {
   legacyCard: {
     get: (entityType, entityId) => request(`/api/legacy-card${qs({ entityType, entityId })}`),
   },
+  // Admin Reports (דיווחי מנהלים) — code-managed internal notifications.
+  adminReports: {
+    list: () => request('/api/admin-reports'),
+    saveConfig: (number, body) =>
+      request(`/api/admin-reports/${number}/config`, { method: 'PUT', body: JSON.stringify(body) }),
+    preview: (number, body) =>
+      request(`/api/admin-reports/${number}/preview`, { method: 'POST', body: JSON.stringify(body || {}) }),
+    testSend: (number, body) =>
+      request(`/api/admin-reports/${number}/test-send`, { method: 'POST', body: JSON.stringify(body) }),
+    deliveries: (params) => request(`/api/admin-reports/deliveries${qs(params)}`),
+  },
   // Communication Center ("נוסחים למייל + WhatsApp") — events, messages,
   // sending windows, deliveries, preview/test-send/translate.
   communication: {

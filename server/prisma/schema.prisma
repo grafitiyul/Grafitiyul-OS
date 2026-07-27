@@ -5328,6 +5328,65 @@ model CommunicationWindowException {
   @@index([active, dateFrom])
 }
 
+// ============================================================================
+// Admin Reports ("דיווחי מנהלים") — CODE-MANAGED internal notifications.
+//
+// Deliberately SEPARATE from the Communication Center: those are editable data
+// templates authored by admins; these are defined in code (src/adminReports/
+// registry.js), carry a stable human-readable number that is never reused, and
+// change only through a development update. What IS configurable here: whether
+// a report is enabled and where it is delivered.
+//
+// No business logic lives in these tables — every value a report renders comes
+// from the canonical SSOT models through the shared context loader.
+// ============================================================================
+
+model AdminReportConfig {
+  // The report's stable catalog number (registry.js owns the definition).
+  reportNumber Int      @id
+  enabled      Boolean  @default(true)
+  // Destination: a connected WhatsApp account + a synced chat (typically the
+  // internal operations group). Loose refs — a deleted chat must not delete
+  // configuration history; delivery attempts report the problem instead.
+  waAccountId  String?
+  waChatId     String?
+  updatedById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// One dispatch attempt of one report. Auditable forever: the rendered text and
+// the trigger inputs are FROZEN at fire time, so later edits to the deal/tour
+// can never rewrite what was reported.
+model AdminReportDelivery {
+  id               String    @id @default(cuid())
+  reportNumber     Int
+  // Business-event identity — (reportNumber, idempotencyKey) is unique, so a
+  // retried trigger or replayed webhook can never produce a second send.
+  idempotencyKey   String
+  status           String    @default("pending") // pending | sent | failed | failed_final | skipped
+  skipReason       String?
+  // Loose business ref for the log UI (audit rows outlive their entities).
+  dealId           String?
+  // Frozen trigger inputs + the exact rendered message.
+  payload          Json?
+  renderedText     String?
+  waAccountId      String?
+  waChatId         String?
+  destinationLabel String?
+  providerMessageId String?
+  attemptCount     Int       @default(0)
+  nextRetryAt      DateTime?
+  lastError        String?
+  sentAt           DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([reportNumber, idempotencyKey])
+  @@index([reportNumber, createdAt])
+  @@index([status, nextRetryAt])
+}
+
 model CommunicationTestSend {
   id          String               @id @default(cuid())
   message     CommunicationMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)

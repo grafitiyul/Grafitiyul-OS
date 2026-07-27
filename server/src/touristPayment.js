@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { createLowProfile, getLpResult, isCardcomConfigured, SUPPORTED_CURRENCIES } from './cardcom.js';
+import { emitPaymentCompleted, PAYMENT_SOURCE_LINK } from './payments/paymentCompleted.js';
 import { ICOUNT_DEAL_INCLUDE, issueDocument, systemOrigin } from './icountDocs.js';
 import { emitTimelineEvent, userOrigin } from './timeline/events.js';
 import { newPaymentToken, pickPaymentContact, resolvePublicOrigin } from './dealPayment.js';
@@ -426,6 +427,18 @@ export async function markPaidFromResult(prisma, req, result) {
     return true;
   });
   if (!won) return { alreadyProcessed: true };
+
+  // THE canonical online-payment-completion event. Only the race winner gets
+  // here, so this is exactly-once per payment. Previously Cardcom completions
+  // announced nothing at all — no trigger, no report could react to them.
+  emitPaymentCompleted({
+    dealId: req.dealId,
+    amountMinor: verifiedAmountMinor, // the VERIFIED amount, never the deal total
+    currency: paid.currency,
+    provider: 'cardcom',
+    reference: result.transactionId || req.token,
+    source: PAYMENT_SOURCE_LINK,
+  });
 
   // The document is generated from the PAID (frozen) values — never the Deal.
   await autoIssueDocument(prisma, paid, result);
