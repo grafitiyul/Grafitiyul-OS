@@ -9,7 +9,10 @@ import sanitizeHtml from 'sanitize-html';
 
 const OPTIONS = {
   allowedTags: [
-    'a', 'b', 'i', 'u', 's', 'em', 'strong', 'p', 'div', 'span', 'br', 'hr',
+    // `mark` = highlight / text background. The editor's Highlight extension
+    // emits <mark style="background-color:…">; without it here the tag was
+    // discarded (text kept, background silently lost) on BOTH send and ingest.
+    'a', 'b', 'i', 'u', 's', 'em', 'strong', 'mark', 'p', 'div', 'span', 'br', 'hr',
     'ul', 'ol', 'li', 'blockquote', 'pre', 'code',
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
     'table', 'thead', 'tbody', 'tfoot', 'tr', 'td', 'th', 'caption', 'colgroup', 'col',

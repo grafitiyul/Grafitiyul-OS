@@ -256,7 +256,11 @@ export default function EmailComposer({
         className={field}
       />
       <RichEditor
-        preset="lite"
+        // Email body chrome (same toolbar the Communication Center email editor
+        // uses): text color, highlight, alignment AND the RTL/LTR direction
+        // buttons. The previous 'lite' toolbar had no direction control, so a
+        // quoted reply or paste that carried dir="ltr" could not be fixed.
+        toolbar="email"
         value={body}
         onChange={setBodyT}
         placeholder="תוכן ההודעה…"
