@@ -18,6 +18,7 @@ import {
   gmail,
 } from '../email/googleClient.js';
 import { runHealthCheck, describeScopes } from '../email/health.js';
+import { adminDisplayName, ADMIN_NAME_SELECT } from '../admin/displayName.js';
 import { Prisma } from '@prisma/client';
 import { contactSearchWhere } from '../search/contactWhere.js';
 import { phoneQuery } from '../search/phoneQuery.js';
@@ -962,13 +963,47 @@ const SCHEDULE_SAFE_SELECT = {
   scheduledAt: true,
   status: true,
   sentAt: true,
+  cancelledAt: true,
   failureReason: true,
   attemptCount: true,
+  connectionDeferredCount: true,
   dealId: true,
   contactId: true,
   threadId: true,
+  createdById: true,
   createdAt: true,
+  attachments: true,
+  replyToMessageId: true,
+  forwardOfMessageId: true,
 };
+
+// Rows → client DTOs. Resolves the sending ACCOUNT and the CREATOR in one
+// batched pass (createdById is a loose key by convention — no FK relation — so
+// it is resolved here rather than joined). `attachments` never leaves the
+// server as bytes: only names/sizes, which is all any list or preview needs.
+async function toScheduledDtos(rows) {
+  if (!rows.length) return [];
+  const accountIds = [...new Set(rows.map((r) => r.accountId))];
+  const userIds = [...new Set(rows.map((r) => r.createdById).filter(Boolean))];
+  const [accounts, users] = await Promise.all([
+    prisma.emailAccount.findMany({ where: { id: { in: accountIds } }, select: { id: true, emailAddress: true } }),
+    userIds.length
+      ? prisma.adminUser.findMany({ where: { id: { in: userIds } }, select: ADMIN_NAME_SELECT })
+      : Promise.resolve([]),
+  ]);
+  const accountBy = new Map(accounts.map((a) => [a.id, a.emailAddress]));
+  const userBy = new Map(users.map((u) => [u.id, adminDisplayName(u)]));
+  return rows.map(({ attachments, createdById, ...r }) => ({
+    ...r,
+    accountEmail: accountBy.get(r.accountId) || null,
+    createdByName: createdById ? userBy.get(createdById) || null : null,
+    attachments: (Array.isArray(attachments) ? attachments : []).map((a) => ({
+      filename: a?.filename || null,
+      mimeType: a?.mimeType || null,
+      sizeBytes: a?.contentBase64 ? Math.floor(String(a.contentBase64).length * 0.75) : null,
+    })),
+  }));
+}
 
 // Minimum lead time — a schedule in the past (or a few seconds out) would fire
 // on the very next tick, which is indistinguishable from "send now" and hides
@@ -1033,8 +1068,16 @@ router.post(
   }),
 );
 
-// Pending/failed items, optionally scoped to a deal or contact (the composer
-// surfaces show only their own context).
+// Scheduled list. Optionally scoped to a deal or contact — the Deal/Contact
+// email panels show only their own customer's pending mail.
+//
+// scope:
+//   'open'    (default) — actionable queue: pending + failed. SENT items leave
+//                         it deliberately; they live on in normal email history
+//                         (the mirrored thread), so the queue never doubles as
+//                         an archive.
+//   'history'           — everything incl. cancelled + sent, so a cancelled item
+//                         stays visible with its final state for audit.
 router.get(
   '/scheduled',
   handle(async (req, res) => {
@@ -1042,15 +1085,102 @@ router.get(
     if (req.query.dealId) where.dealId = String(req.query.dealId);
     if (req.query.contactId) where.contactId = String(req.query.contactId);
     if (req.query.status) where.status = String(req.query.status);
-    else where.status = { in: ['pending', 'failed'] };
+    else if (String(req.query.scope || 'open') === 'history') {
+      where.status = { in: ['pending', 'failed', 'cancelled', 'sent'] };
+    } else where.status = { in: ['pending', 'failed'] };
     res.set('Cache-Control', 'no-store');
     const rows = await prisma.scheduledEmail.findMany({
       where,
-      orderBy: { scheduledAt: 'asc' },
+      // Soonest-first for the queue; history reads newest-activity first.
+      orderBy: where.status?.in?.includes('sent') ? { createdAt: 'desc' } : { scheduledAt: 'asc' },
       take: 200,
       select: SCHEDULE_SAFE_SELECT,
     });
-    res.json(rows);
+    res.json(await toScheduledDtos(rows));
+  }),
+);
+
+// One item WITH its body — powers Preview and Edit. Attachment bytes are still
+// withheld (names/sizes only); editing keeps the stored files unless the caller
+// explicitly replaces them.
+router.get(
+  '/scheduled/:id',
+  handle(async (req, res) => {
+    const row = await prisma.scheduledEmail.findUnique({
+      where: { id: req.params.id },
+      select: { ...SCHEDULE_SAFE_SELECT, bodyHtml: true, bodyText: true },
+    });
+    if (!row) return res.status(404).json({ error: 'not_found' });
+    res.set('Cache-Control', 'no-store');
+    const [dto] = await toScheduledDtos([row]);
+    res.json({ ...dto, bodyHtml: row.bodyHtml, bodyText: row.bodyText });
+  }),
+);
+
+// Edit a still-pending scheduled email IN PLACE — same row, same id, so its
+// audit trail (created-by, creation time, deal/contact context) survives an
+// edit. Only a pending item is editable; the guard is part of the write, so an
+// item the worker claimed mid-edit can never be silently rewritten.
+// `attachments` omitted → the stored files are kept; passed → they replace.
+router.put(
+  '/scheduled/:id',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    const existing = await prisma.scheduledEmail.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, status: true, attachments: true },
+    });
+    if (!existing) return res.status(404).json({ error: 'not_found' });
+    if (existing.status !== 'pending') {
+      return res.status(409).json({ error: 'not_editable', status: existing.status });
+    }
+    try {
+      const at = b.scheduledAt !== undefined ? parseScheduledAt(b.scheduledAt) : undefined;
+      const account = b.accountId ? await resolveSendAccount(b.accountId) : null;
+      // Re-run the SAME validation a create/immediate send runs, so an edit can
+      // never leave the row in an unsendable shape.
+      const clean = validateComposition({
+        to: b.to,
+        cc: b.cc,
+        bcc: b.bcc,
+        subject: b.subject,
+        bodyHtml: b.bodyHtml,
+        bodyText: b.bodyText,
+        attachments: b.attachments !== undefined ? b.attachments : existing.attachments,
+        replyToMessageId: b.replyToMessageId,
+        forwardOfMessageId: b.forwardOfMessageId,
+      });
+      const result = await prisma.scheduledEmail.updateMany({
+        where: { id: existing.id, status: 'pending' }, // guarded: worker may have claimed it
+        data: {
+          ...(account ? { accountId: account.id } : {}),
+          toJson: clean.to,
+          ccJson: clean.cc,
+          bccJson: clean.bcc,
+          subject: clean.subject || null,
+          bodyHtml: clean.bodyHtml,
+          bodyText: clean.bodyText,
+          attachments: clean.attachments.length ? clean.attachments : Prisma.DbNull,
+          ...(at ? { scheduledAt: at } : {}),
+          // A fresh intent gets a fresh retry ladder.
+          attemptCount: 0,
+          nextRetryAt: null,
+          failureReason: null,
+        },
+      });
+      if (!result.count) return res.status(409).json({ error: 'not_editable' });
+      const row = await prisma.scheduledEmail.findUnique({
+        where: { id: existing.id },
+        select: SCHEDULE_SAFE_SELECT,
+      });
+      const [dto] = await toScheduledDtos([row]);
+      res.json(dto);
+    } catch (e) {
+      if (e?.code === 'invalid_schedule' || e?.code === 'schedule_too_soon') {
+        return res.status(400).json({ error: e.code });
+      }
+      return sendErrorResponse(res, e);
+    }
   }),
 );
 
@@ -1075,7 +1205,8 @@ router.post(
       where: { id: req.params.id },
       select: SCHEDULE_SAFE_SELECT,
     });
-    res.json(row);
+    const [dto] = await toScheduledDtos([row]);
+    res.json(dto);
   }),
 );
 
@@ -1099,7 +1230,8 @@ router.post(
       where: { id: req.params.id },
       select: SCHEDULE_SAFE_SELECT,
     });
-    res.json(row);
+    const [dto] = await toScheduledDtos([row]);
+    res.json(dto);
   }),
 );
 

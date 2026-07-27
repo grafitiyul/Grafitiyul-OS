@@ -57,6 +57,7 @@ function editorIsEmpty(html) {
 export default function EmailComposer({
   defaultTo = '',
   defaultCc = '',
+  defaultBcc = '',
   defaultSubject = '',
   initialBody = '', // quoted history for reply/forward (below the caret + signature)
   replyToMessageId = null,
@@ -64,8 +65,13 @@ export default function EmailComposer({
   dealId = null,
   contactId = null,
   draftKey = null,
+  // Edit an EXISTING scheduled email in place: { id, scheduledAt }. Saving PUTs
+  // to that same record, so it keeps its id, creator and audit trail instead of
+  // being deleted and recreated.
+  editScheduled = null,
   onSent,
   onScheduled,
+  onScheduledUpdated,
   onCancel,
 }) {
   const [accounts, setAccounts] = useState(null);
@@ -74,7 +80,7 @@ export default function EmailComposer({
   const saved = draftKey ? readDrafts()[draftKey] : null;
   const [to, setTo] = useState(saved?.to ?? defaultTo);
   const [cc, setCc] = useState(saved?.cc ?? defaultCc);
-  const [bcc, setBcc] = useState(saved?.bcc ?? '');
+  const [bcc, setBcc] = useState(saved?.bcc ?? defaultBcc);
   const [showCc, setShowCc] = useState(!!(saved?.cc ?? defaultCc));
   const [showBcc, setShowBcc] = useState(!!saved?.bcc);
   const [subject, setSubject] = useState(saved?.subject ?? defaultSubject);
@@ -206,6 +212,34 @@ export default function EmailComposer({
       clearDraftAnd(() => onSent?.(result));
     } catch (e) {
       setError('השליחה נכשלה: ' + (e.payload?.message || e.payload?.error || e.message));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  // Save changes to an EXISTING scheduled email (same record, same id).
+  async function saveScheduledEdit(instant = null) {
+    const payload = buildPayload();
+    if (!payload) return;
+    setSending(true);
+    setError(null);
+    try {
+      const row = await api.email.updateScheduled(editScheduled.id, {
+        ...payload,
+        ...(instant ? { scheduledAt: instant.toISOString() } : {}),
+      });
+      setScheduling(false);
+      onScheduledUpdated?.(row);
+    } catch (e) {
+      const code = e.payload?.error;
+      setError(
+        code === 'not_editable'
+          ? 'לא ניתן לערוך — המייל כבר נשלח או בוטל.'
+          : code === 'schedule_too_soon'
+            ? 'יש לבחור מועד לפחות דקה קדימה'
+            : 'שמירת השינויים נכשלה: ' + (e.payload?.message || code || e.message),
+      );
+      setScheduling(false);
     } finally {
       setSending(false);
     }
@@ -408,23 +442,49 @@ export default function EmailComposer({
               ביטול
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => setScheduling(true)}
-            disabled={sending}
-            title="שליחה במועד עתידי"
-            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            🕐 תזמון שליחה
-          </button>
-          <button
-            type="button"
-            onClick={send}
-            disabled={sending}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            {sending ? 'שולח…' : 'שליחה'}
-          </button>
+          {/* Editing an existing scheduled item: save in place, optionally also
+              moving its time. Sending immediately is deliberately NOT offered
+              here — that would leave an orphaned pending row behind. */}
+          {editScheduled ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setScheduling(true)}
+                disabled={sending}
+                className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                🕐 שמירה ושינוי מועד
+              </button>
+              <button
+                type="button"
+                onClick={() => saveScheduledEdit(null)}
+                disabled={sending}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {sending ? 'שומר…' : 'שמירת שינויים'}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => setScheduling(true)}
+                disabled={sending}
+                title="שליחה במועד עתידי"
+                className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                🕐 תזמון שליחה
+              </button>
+              <button
+                type="button"
+                onClick={send}
+                disabled={sending}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {sending ? 'שולח…' : 'שליחה'}
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -432,7 +492,7 @@ export default function EmailComposer({
         open={scheduling}
         busy={sending}
         onCancel={() => setScheduling(false)}
-        onConfirm={scheduleSend}
+        onConfirm={editScheduled ? saveScheduledEdit : scheduleSend}
       />
     </div>
   );

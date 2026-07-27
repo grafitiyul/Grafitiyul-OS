@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import EmailThreadView from './EmailThreadView.jsx';
 import EmailComposer from './EmailComposer.jsx';
+import ScheduledEmailsView from './ScheduledEmailsView.jsx';
 
 // The Email surface a CRM page embeds (Deal אימייל tab / Contact page) —
 // mirror of WhatsAppPanel: threads linked to the subject, open one inline,
@@ -112,6 +113,15 @@ export default function EmailPanel({ subjectType, subjectId }) {
 
   return (
     <div className="space-y-2" dir="rtl">
+      {/* Pending outgoing mail for THIS customer — the same canonical scheduled
+          management component, scoped to this deal/contact, so a user sees what
+          is about to go out to them without leaving the record. */}
+      <ScheduledEmailsView
+        compact
+        dealId={isDeal ? subjectId : null}
+        contactId={isDeal ? null : subjectId}
+        onChanged={load}
+      />
       <div className="flex items-center justify-between">
         <span className="text-[12.5px] text-gray-500">
           {threads.length ? `${threads.length} שיחות מייל` : ''}

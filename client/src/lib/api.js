@@ -884,6 +884,9 @@ export const api = {
     recipientSuggestions: (q) => request(`/api/email/recipient-suggestions${qs({ q })}`),
     scheduleSend: (payload) => request('/api/email/scheduled', { method: 'POST', body: JSON.stringify(payload) }),
     scheduledList: (params) => request(`/api/email/scheduled${qs(params)}`),
+    scheduledOne: (id) => request(`/api/email/scheduled/${id}`),
+    updateScheduled: (id, payload) =>
+      request(`/api/email/scheduled/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
     cancelScheduled: (id) => request(`/api/email/scheduled/${id}/cancel`, { method: 'POST', body: JSON.stringify({}) }),
     rescheduleScheduled: (id, scheduledAt) =>
       request(`/api/email/scheduled/${id}/reschedule`, { method: 'POST', body: JSON.stringify({ scheduledAt }) }),

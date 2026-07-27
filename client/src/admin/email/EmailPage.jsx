@@ -4,6 +4,7 @@ import { api } from '../../lib/api.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import RichEditor from '../../editor/RichEditor.jsx';
 import EmailInbox from './EmailInbox.jsx';
+import ScheduledEmailsView from './ScheduledEmailsView.jsx';
 
 // Email module page — the inbox is the working surface (landing view);
 // Gmail account management lives one tab over, mirroring the WhatsApp page.
@@ -245,6 +246,7 @@ export default function EmailPage() {
       <div className={`flex items-center gap-1 border-b border-gray-200 ${isInbox ? 'mb-3' : 'mb-6'}`}>
         {[
           { key: 'inbox', label: 'תיבת מיילים' },
+          { key: 'scheduled', label: 'מתוזמנים' },
           { key: 'connections', label: 'חשבונות מחוברים' },
         ].map((t) => (
           <button
@@ -260,7 +262,9 @@ export default function EmailPage() {
         ))}
       </div>
 
-      {isInbox ? (
+      {view === 'scheduled' ? (
+        <ScheduledEmailsView />
+      ) : isInbox ? (
         connectedAccounts.length === 0 && data ? (
           <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 px-6 py-14 text-center">
             <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-blue-50 text-3xl">📧</div>
