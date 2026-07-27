@@ -882,6 +882,11 @@ export const api = {
     disconnectAccount: (id) =>
       request(`/api/email/accounts/${id}/disconnect`, { method: 'POST', body: JSON.stringify({}) }),
     recipientSuggestions: (q) => request(`/api/email/recipient-suggestions${qs({ q })}`),
+    scheduleSend: (payload) => request('/api/email/scheduled', { method: 'POST', body: JSON.stringify(payload) }),
+    scheduledList: (params) => request(`/api/email/scheduled${qs(params)}`),
+    cancelScheduled: (id) => request(`/api/email/scheduled/${id}/cancel`, { method: 'POST', body: JSON.stringify({}) }),
+    rescheduleScheduled: (id, scheduledAt) =>
+      request(`/api/email/scheduled/${id}/reschedule`, { method: 'POST', body: JSON.stringify({ scheduledAt }) }),
     inbox: (params) => request(`/api/email/inbox${qs(params)}`),
     threadsByDeal: (dealId) => request(`/api/email/by-deal/${dealId}`),
     threadsByContact: (contactId) => request(`/api/email/by-contact/${contactId}`),

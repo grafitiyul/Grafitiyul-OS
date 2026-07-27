@@ -91,6 +91,7 @@ import emailRouter from './routes/email.js';
 import emailTrackingRouter from './routes/emailTracking.js';
 import { startScheduledWorker } from './whatsapp/scheduledWorker.js';
 import { startEmailSyncWorker } from './email/syncWorker.js';
+import { startScheduledEmailWorker } from './email/scheduledWorker.js';
 import { startTourGalleryCleanupWorker } from './tours/gallery/cleanupWorker.js';
 import { startTourCalendarSyncWorker } from './tours/calendar/syncWorker.js';
 import { startTourCompletionWorker } from './tours/completionWorker.js';
@@ -609,6 +610,8 @@ app.listen(port, () => {
   // Gmail read-only sync mirror — 60s tick; no-op until GOOGLE_CLIENT_ID/SECRET
   // + EMAIL_TOKEN_KEY are configured and an account is connected.
   startEmailSyncWorker(console);
+  // Scheduled (send-later) composed emails — same 60s claim-based pattern.
+  startScheduledEmailWorker(console);
   // Tour Gallery R2 purge (cancelled/deleted tours) + abandoned-upload sweep —
   // claim-based 60s tick; verifies the prefix is empty before marking done.
   startTourGalleryCleanupWorker(console);

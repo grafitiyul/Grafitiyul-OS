@@ -3093,8 +3093,71 @@ model EmailAccount {
   updatedAt            DateTime       @updatedAt
   threads              EmailThread[]
   messages             EmailMessage[]
+  scheduledEmails      ScheduledEmail[]
 
   @@index([isActive])
+}
+
+// An email composed in GOS and queued to send LATER. Same proven shape as
+// WhatsAppScheduledMessage (claim-based worker, retry ladder, cancellable) —
+// the pattern is reused, not a second scheduler bolted on.
+//
+// The composition is frozen here at scheduling time and replayed through the
+// ONE canonical send path (email/composedSend.js), so a scheduled email is
+// identical to what "send now" would have produced: same recipients, subject,
+// rich HTML, attachments, direction serialization and signature.
+model ScheduledEmail {
+  id           String       @id @default(cuid())
+  account      EmailAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  // The account chosen AT SCHEDULING TIME — the send must come from it.
+  accountId    String
+  // Frozen composition. Recipients are [{ email, name }]; attachments are
+  // [{ filename, mimeType, contentBase64 }] (bounded by the app-wide 16MB
+  // request limit, the same ceiling an immediate send accepts).
+  toJson       Json
+  ccJson       Json?
+  bccJson      Json?
+  subject      String?
+  bodyHtml     String?
+  bodyText     String?
+  attachments  Json?
+  // Reply/forward context, so a scheduled reply still threads correctly.
+  replyToMessageId  String?
+  forwardOfMessageId String?
+  // CRM context applied to the resulting thread after sending.
+  dealId       String?
+  contactId    String?
+
+  // Canonical instant to send at, stored in UTC. The client sends an absolute
+  // instant computed from the user's timezone; the worker never re-interprets
+  // wall-clock text.
+  scheduledAt  DateTime
+  // pending | sending | sent | failed | cancelled
+  status       String       @default("pending")
+  attemptCount Int          @default(0)
+  lastAttemptAt DateTime?
+  nextRetryAt  DateTime?
+  // Gmail connection unhealthy at send time: the row is PRESERVED and retried
+  // without burning a real attempt (mirrors the WhatsApp connection-deferral).
+  connectionDeferredCount Int @default(0)
+  // Claim guard — exactly-once delivery across overlapping ticks.
+  claimedAt    DateTime?
+  claimedBy    String?
+  sentAt       DateTime?
+  // Set the moment Gmail accepts the message; also the idempotency marker that
+  // stops any retry from ever sending a second copy.
+  gmailMessageId String?
+  threadId     String?
+  failureReason String?
+  createdById  String?
+  cancelledAt  DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([status, scheduledAt])
+  @@index([accountId, status])
+  @@index([dealId])
+  @@index([contactId])
 }
 
 // A Gmail conversation mirrored into the CRM. CRM linking lives HERE (thread

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { splitAddresses, addAddresses, isValidAddress } from './recipientParse.js';
+import { dirForInput } from '../../lib/inputDirection.js';
 
 // Gmail-style recipient field: addresses become chips, with autocomplete over
 // CRM contacts + addresses already corresponded with.
@@ -97,7 +98,9 @@ export default function RecipientField({ value, onChange, placeholder, ariaLabel
   }
 
   return (
-    <div className="relative">
+    // RTL shell: chips flow from the right and the placeholder starts on the
+    // right, while each chip's ADDRESS stays dir="ltr" so it reads correctly.
+    <div className="relative" dir="rtl">
       <div
         className="flex w-full flex-wrap items-center gap-1 rounded-lg border border-gray-300 px-2 py-1 focus-within:border-blue-500"
         onClick={() => inputRef.current?.focus()}
@@ -152,7 +155,9 @@ export default function RecipientField({ value, onChange, placeholder, ariaLabel
             }, 150);
           }}
           placeholder={chips.length ? '' : placeholder}
-          dir="ltr"
+          // Empty → RTL so the Hebrew placeholder starts on the right; once
+          // typing starts the content decides (an address renders LTR).
+          dir={dirForInput(draft)}
           className="min-w-[8rem] flex-1 border-0 bg-transparent px-1 py-0.5 text-[13px] focus:outline-none"
         />
       </div>

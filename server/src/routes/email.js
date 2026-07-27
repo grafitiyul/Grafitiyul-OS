@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { fireCommunicationTrigger } from '../communication/engine.js';
@@ -23,9 +22,9 @@ import { Prisma } from '@prisma/client';
 import { contactSearchWhere } from '../search/contactWhere.js';
 import { phoneQuery } from '../search/phoneQuery.js';
 import { recomputeThreadState } from '../email/providerState.js';
-import { buildRawMessage, htmlToText, normalizeEmail, normalizeSubject } from '../email/mime.js';
+import { normalizeEmail } from '../email/mime.js';
+import { sendComposedEmail, resolveSendAccount, validateComposition } from '../email/composedSend.js';
 import { sanitizeEmailHtml } from '../email/sanitize.js';
-import { ingestGmailMessage } from '../email/ingest.js';
 import { syncAccount } from '../email/syncWorker.js';
 import { dealsForContact, classifyDealsForContact } from '../crm/dealResolution.js';
 import { resolvePublicOrigin } from '../dealPayment.js';
@@ -878,208 +877,232 @@ router.post(
 );
 
 // ── Send ─────────────────────────────────────────────────────────────────────
+//
+// Both "send now" and "send later" go through email/composedSend.js — one
+// implementation, so a scheduled email is byte-for-byte what the composer would
+// have sent immediately.
 
-const MAX_ATTACHMENT_TOTAL = 16 * 1024 * 1024; // matches the app-wide JSON limit
+// Coded errors from the send path → HTTP. Provider/upstream failures return 422
+// (never 5xx): Cloudflare replaces 502/504 bodies with its own HTML page.
+const SEND_ERROR_STATUS = {
+  email_not_configured: 503,
+  no_connected_account: 400,
+  recipient_required: 400,
+  subject_required: 400,
+  body_required: 400,
+  attachments_too_large: 400,
+  reply_source_not_found: 400,
+  reply_account_mismatch: 400,
+  forward_source_not_found: 400,
+  forward_account_mismatch: 400,
+  forward_attachment_failed: 422,
+  send_failed: 422,
+};
 
-function cleanRecipientList(input) {
-  const out = [];
-  for (const item of Array.isArray(input) ? input : []) {
-    const email = normalizeEmail(typeof item === 'string' ? item : item?.email);
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
-    out.push({ email, name: (typeof item === 'object' && item?.name) || null });
+function sendErrorResponse(res, e) {
+  const status = SEND_ERROR_STATUS[e?.code];
+  if (!status) throw e; // unexpected → generic error handler
+  const body = { error: e.code };
+  if (e.detail) body.detail = e.detail;
+  if (e.code === 'send_failed' || e.code === 'forward_attachment_failed') {
+    body.message = sanitizeAuthError(e.cause || e);
   }
-  return out;
+  if (e.code === 'email_not_configured') body.missing = missingEmailConfig();
+  return res.status(status).json(body);
 }
 
-// POST /send — new email or reply. { accountId?, to[], cc?, bcc?, subject,
-// bodyHtml, replyToMessageId?, dealId?, contactId?, attachments?[] }.
-// The sent message is mirrored immediately (Gmail gives it back to us), an
-// engagement row is created, and the thread is linked to the given deal/contact.
+// POST /send — send NOW. { accountId?, to[], cc?, bcc?, subject, bodyHtml,
+// replyToMessageId?, forwardOfMessageId?, dealId?, contactId?, attachments?[] }.
+// All composition/threading/mirroring lives in email/composedSend.js so this
+// route and the scheduled worker cannot drift apart.
 router.post(
   '/send',
   handle(async (req, res) => {
-    if (!emailIntegrationConfigured()) {
-      return res.status(503).json({ error: 'email_not_configured', missing: missingEmailConfig() });
-    }
     const b = req.body || {};
-    const account = b.accountId
-      ? await prisma.emailAccount.findUnique({ where: { id: String(b.accountId) } })
-      : await prisma.emailAccount.findFirst({
-          where: { isActive: true, refreshTokenEnc: { not: null } },
-          orderBy: { createdAt: 'asc' },
-        });
-    if (!account || !account.refreshTokenEnc || !account.isActive) {
-      return res.status(400).json({ error: 'no_connected_account' });
-    }
-
-    const to = cleanRecipientList(b.to);
-    const cc = cleanRecipientList(b.cc);
-    const bcc = cleanRecipientList(b.bcc);
-    if (!to.length) return res.status(400).json({ error: 'recipient_required' });
-
-    // Reply context: inherit the Gmail thread + RFC 822 threading headers.
-    let gmailThreadId = null;
-    let inReplyTo = null;
-    let references = null;
-    let subject = String(b.subject || '').trim();
-    if (b.replyToMessageId) {
-      const orig = await prisma.emailMessage.findUnique({
-        where: { id: String(b.replyToMessageId) },
-        include: { thread: { select: { gmailThreadId: true, accountId: true } } },
-      });
-      if (!orig) return res.status(400).json({ error: 'reply_source_not_found' });
-      if (orig.thread.accountId !== account.id) return res.status(400).json({ error: 'reply_account_mismatch' });
-      gmailThreadId = orig.thread.gmailThreadId;
-      inReplyTo = orig.messageIdHeader || null;
-      references = [orig.referencesHeader, orig.messageIdHeader].filter(Boolean).join(' ') || null;
-      if (!subject) {
-        const base = normalizeSubject(orig.subject || '');
-        subject = base ? `Re: ${base}` : 'Re:';
-      }
-    }
-
-    // Forward: stays in the same Gmail conversation (Gmail threads forwards
-    // too) and the ORIGINAL files are re-attached SERVER-side — the client
-    // never had their bytes to begin with.
-    const forwardAttachments = [];
-    if (b.forwardOfMessageId && !b.replyToMessageId) {
-      const orig = await prisma.emailMessage.findUnique({
-        where: { id: String(b.forwardOfMessageId) },
-        include: { attachments: true, thread: { select: { gmailThreadId: true, accountId: true } } },
-      });
-      if (!orig) return res.status(400).json({ error: 'forward_source_not_found' });
-      if (orig.thread.accountId !== account.id) return res.status(400).json({ error: 'forward_account_mismatch' });
-      gmailThreadId = orig.thread.gmailThreadId;
-      if (!subject) {
-        const base = normalizeSubject(orig.subject || '');
-        subject = base ? `Fwd: ${base}` : 'Fwd:';
-      }
-      for (const att of orig.attachments) {
-        if (!att.gmailAttachmentId) continue;
-        try {
-          const payload = await gmail.getAttachment(prisma, account, orig.gmailMessageId, att.gmailAttachmentId);
-          forwardAttachments.push({
-            filename: att.fileName,
-            mimeType: att.mimeType || 'application/octet-stream',
-            contentBase64: Buffer.from(payload.data || '', 'base64url').toString('base64'),
-          });
-        } catch (e) {
-          console.error('[email] forward attachment fetch failed:', e?.message);
-          return res.status(502).json({ error: 'forward_attachment_failed', detail: (e?.message || '').slice(0, 200) });
-        }
-      }
-    }
-    if (!subject) return res.status(400).json({ error: 'subject_required' });
-
-    // Body: sanitize the HTML we send too (defence in depth — the composer is
-    // trusted, but the stored mirror must obey the same rules as ingest).
-    const bodyHtml = sanitizeEmailHtml(b.bodyHtml || null);
-    const bodyText = String(b.bodyText || '').trim() || htmlToText(bodyHtml || '');
-    if (!bodyHtml && !bodyText) return res.status(400).json({ error: 'body_required' });
-
-    const attachments = [...forwardAttachments];
-    let attachmentBytes = forwardAttachments.reduce(
-      (s, a) => s + Math.floor(a.contentBase64.length * 0.75),
-      0,
-    );
-    if (attachmentBytes > MAX_ATTACHMENT_TOTAL) {
-      return res.status(400).json({ error: 'attachments_too_large' });
-    }
-    for (const a of Array.isArray(b.attachments) ? b.attachments : []) {
-      const filename = String(a?.filename || '').trim();
-      const contentBase64 = String(a?.dataBase64 || '');
-      if (!filename || !contentBase64) continue;
-      attachmentBytes += Math.floor(contentBase64.length * 0.75);
-      if (attachmentBytes > MAX_ATTACHMENT_TOTAL) {
-        return res.status(400).json({ error: 'attachments_too_large' });
-      }
-      attachments.push({ filename, mimeType: a?.mimeType || null, contentBase64 });
-    }
-
-    // Open-tracking pixel (GOS-sent mail only). Public unauthenticated GET —
-    // the tracking id is unguessable. Honest signal, not proof of reading.
-    const trackingId = crypto.randomBytes(16).toString('base64url');
-    const pixelUrl = `${resolvePublicOrigin(req)}/api/track/email-open/${trackingId}.gif`;
-    const htmlOut = `${bodyHtml || `<p>${bodyText.replace(/</g, '&lt;').replace(/\n/g, '<br>')}</p>`}<img src="${pixelUrl}" width="1" height="1" alt="" style="display:none">`;
-
-    const raw = buildRawMessage({
-      from: { email: account.emailAddress, name: account.displayName },
-      to,
-      cc,
-      bcc,
-      subject,
-      bodyHtml: htmlOut,
-      bodyText,
-      inReplyTo,
-      references,
-      attachments,
-    });
-
-    let sent;
     try {
-      sent = await gmail.sendRaw(prisma, account, raw, gmailThreadId);
-    } catch (e) {
-      console.error('[email] send failed:', e?.message);
-      return res.status(502).json({ error: 'send_failed', detail: (e?.message || '').slice(0, 300) });
-    }
-
-    // Mirror immediately (don't wait for the worker) + engagement row.
-    let mirrored = null;
-    try {
-      const full = await gmail.getMessage(prisma, account, sent.id);
-      mirrored = await ingestGmailMessage(account, full, {
+      const result = await sendComposedEmail({
+        accountId: b.accountId,
+        to: b.to,
+        cc: b.cc,
+        bcc: b.bcc,
+        subject: b.subject,
+        bodyHtml: b.bodyHtml,
+        bodyText: b.bodyText,
+        attachments: b.attachments,
+        replyToMessageId: b.replyToMessageId,
+        forwardOfMessageId: b.forwardOfMessageId,
+        dealId: b.dealId,
+        contactId: b.contactId,
         createdByUserId: req.adminAuth?.userId || null,
-        trackingId,
+        origin: resolvePublicOrigin(req),
       });
-      // If the sync worker mirrored the sent message FIRST (rare race), its row
-      // has no trackingId/creator — patch them in so opens still count.
-      if (mirrored && mirrored.created === false && mirrored.message?.id) {
-        await prisma.emailMessage.updateMany({
-          where: { id: mirrored.message.id, trackingId: null },
-          data: { trackingId, createdByUserId: req.adminAuth?.userId || null },
-        });
-      }
-      if (mirrored?.message?.id) {
-        await prisma.emailEngagement.upsert({
-          where: { messageId: mirrored.message.id },
-          create: { messageId: mirrored.message.id },
-          update: {},
-        });
-      }
-      // Explicit CRM context from the composer wins over auto-linking.
-      if (mirrored?.threadId) {
-        const patch = {};
-        const t = await prisma.emailThread.findUnique({
-          where: { id: mirrored.threadId },
-          select: { contactId: true, linkedDealId: true },
-        });
-        if (b.dealId && !t.linkedDealId) {
-          patch.linkedDealId = String(b.dealId);
-          patch.linkSource = 'manual';
-        }
-        if (b.contactId && !t.contactId) {
-          patch.contactId = String(b.contactId);
-          patch.matchSource = 'manual';
-        }
-        if (Object.keys(patch).length) {
-          await prisma.emailThread.update({ where: { id: mirrored.threadId }, data: patch });
-        }
-      }
+      res.status(201).json(result);
     } catch (e) {
-      // The send SUCCEEDED — never fail the request on mirror hiccups; the
-      // sync worker will pick the message up within a minute.
-      console.error('[email] sent but mirror failed (worker will catch up):', e?.message);
+      if (e?.code !== 'send_failed') console.error('[email] send failed:', e?.code || e?.message);
+      return sendErrorResponse(res, e);
     }
-
-    res.status(201).json({
-      ok: true,
-      gmailMessageId: sent.id,
-      gmailThreadId: sent.threadId,
-      threadId: mirrored?.threadId || null,
-      messageId: mirrored?.message?.id || null,
-    });
   }),
 );
+
+// ── Scheduled sending (send later) ───────────────────────────────────────────
+//
+// The composition is validated with the SAME rules as an immediate send and
+// frozen on the row, then replayed through the same send path by
+// email/scheduledWorker.js. `scheduledAt` is an absolute instant (ISO, stored
+// UTC) computed by the client from the user's timezone — the server never
+// re-interprets wall-clock text.
+
+const SCHEDULE_SAFE_SELECT = {
+  id: true,
+  accountId: true,
+  toJson: true,
+  ccJson: true,
+  bccJson: true,
+  subject: true,
+  scheduledAt: true,
+  status: true,
+  sentAt: true,
+  failureReason: true,
+  attemptCount: true,
+  dealId: true,
+  contactId: true,
+  threadId: true,
+  createdAt: true,
+};
+
+// Minimum lead time — a schedule in the past (or a few seconds out) would fire
+// on the very next tick, which is indistinguishable from "send now" and hides
+// mistakes. 60s keeps the item visibly cancellable before it goes.
+const MIN_LEAD_MS = 60_000;
+
+function parseScheduledAt(value) {
+  const at = new Date(String(value || ''));
+  if (Number.isNaN(at.getTime())) throw Object.assign(new Error('invalid_schedule'), { code: 'invalid_schedule' });
+  if (at.getTime() - Date.now() < MIN_LEAD_MS) {
+    throw Object.assign(new Error('schedule_too_soon'), { code: 'schedule_too_soon' });
+  }
+  return at;
+}
+
+router.post(
+  '/scheduled',
+  handle(async (req, res) => {
+    const b = req.body || {};
+    try {
+      if (!emailIntegrationConfigured()) throw Object.assign(new Error('x'), { code: 'email_not_configured' });
+      const at = parseScheduledAt(b.scheduledAt);
+      // Same account resolution and the same validation an immediate send runs,
+      // so a scheduled item can never be accepted in an unsendable shape.
+      const account = await resolveSendAccount(b.accountId);
+      const clean = validateComposition({
+        to: b.to,
+        cc: b.cc,
+        bcc: b.bcc,
+        subject: b.subject,
+        bodyHtml: b.bodyHtml,
+        bodyText: b.bodyText,
+        attachments: b.attachments,
+        replyToMessageId: b.replyToMessageId,
+        forwardOfMessageId: b.forwardOfMessageId,
+      });
+      const row = await prisma.scheduledEmail.create({
+        data: {
+          accountId: account.id,
+          toJson: clean.to,
+          ccJson: clean.cc,
+          bccJson: clean.bcc,
+          subject: clean.subject || null,
+          bodyHtml: clean.bodyHtml,
+          bodyText: clean.bodyText,
+          attachments: clean.attachments.length ? clean.attachments : undefined,
+          replyToMessageId: b.replyToMessageId ? String(b.replyToMessageId) : null,
+          forwardOfMessageId: b.forwardOfMessageId ? String(b.forwardOfMessageId) : null,
+          dealId: b.dealId ? String(b.dealId) : null,
+          contactId: b.contactId ? String(b.contactId) : null,
+          scheduledAt: at,
+          createdById: req.adminAuth?.userId || null,
+        },
+        select: SCHEDULE_SAFE_SELECT,
+      });
+      res.status(201).json(row);
+    } catch (e) {
+      if (e?.code === 'invalid_schedule') return res.status(400).json({ error: 'invalid_schedule' });
+      if (e?.code === 'schedule_too_soon') return res.status(400).json({ error: 'schedule_too_soon' });
+      return sendErrorResponse(res, e);
+    }
+  }),
+);
+
+// Pending/failed items, optionally scoped to a deal or contact (the composer
+// surfaces show only their own context).
+router.get(
+  '/scheduled',
+  handle(async (req, res) => {
+    const where = {};
+    if (req.query.dealId) where.dealId = String(req.query.dealId);
+    if (req.query.contactId) where.contactId = String(req.query.contactId);
+    if (req.query.status) where.status = String(req.query.status);
+    else where.status = { in: ['pending', 'failed'] };
+    res.set('Cache-Control', 'no-store');
+    const rows = await prisma.scheduledEmail.findMany({
+      where,
+      orderBy: { scheduledAt: 'asc' },
+      take: 200,
+      select: SCHEDULE_SAFE_SELECT,
+    });
+    res.json(rows);
+  }),
+);
+
+// Cancel — terminal, and guarded on status:'pending' so an item the worker has
+// already claimed/sent can never be "cancelled" after the fact.
+router.post(
+  '/scheduled/:id/cancel',
+  handle(async (req, res) => {
+    const result = await prisma.scheduledEmail.updateMany({
+      where: { id: req.params.id, status: 'pending' },
+      data: { status: 'cancelled', cancelledAt: new Date(), claimedAt: null, claimedBy: null },
+    });
+    if (!result.count) {
+      const row = await prisma.scheduledEmail.findUnique({
+        where: { id: req.params.id },
+        select: { status: true },
+      });
+      if (!row) return res.status(404).json({ error: 'not_found' });
+      return res.status(409).json({ error: 'not_cancellable', status: row.status });
+    }
+    const row = await prisma.scheduledEmail.findUnique({
+      where: { id: req.params.id },
+      select: SCHEDULE_SAFE_SELECT,
+    });
+    res.json(row);
+  }),
+);
+
+// Reschedule (edit the time before it sends). Same guard + same lead-time rule.
+router.post(
+  '/scheduled/:id/reschedule',
+  handle(async (req, res) => {
+    let at;
+    try {
+      at = parseScheduledAt(req.body?.scheduledAt);
+    } catch (e) {
+      return res.status(400).json({ error: e.code || 'invalid_schedule' });
+    }
+    const result = await prisma.scheduledEmail.updateMany({
+      where: { id: req.params.id, status: 'pending' },
+      // Rescheduling resets the retry ladder — a fresh intent gets fresh attempts.
+      data: { scheduledAt: at, nextRetryAt: null, attemptCount: 0, failureReason: null },
+    });
+    if (!result.count) return res.status(409).json({ error: 'not_reschedulable' });
+    const row = await prisma.scheduledEmail.findUnique({
+      where: { id: req.params.id },
+      select: SCHEDULE_SAFE_SELECT,
+    });
+    res.json(row);
+  }),
+);
+
 
 // ── Attachments (private — Gmail-fetch on demand, cached to R2) ──────────────
 

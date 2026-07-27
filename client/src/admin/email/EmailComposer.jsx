@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import RichEditor from '../../editor/RichEditor.jsx';
 import RecipientField from './RecipientField.jsx';
+import ScheduleSendDialog from './ScheduleSendDialog.jsx';
 import { useDirtyForm } from '../../lib/dirtyForms.js';
+import { dirForInput } from '../../lib/inputDirection.js';
 
 // Email composer — new mail, reply, reply-all or forward. Sends through the
 // connected Gmail account (selectable when several are connected).
@@ -63,6 +65,7 @@ export default function EmailComposer({
   contactId = null,
   draftKey = null,
   onSent,
+  onScheduled,
   onCancel,
 }) {
   const [accounts, setAccounts] = useState(null);
@@ -79,6 +82,8 @@ export default function EmailComposer({
   const [draftRestored] = useState(!!saved);
   const [files, setFiles] = useState([]); // { filename, mimeType, dataBase64, size }
   const [sending, setSending] = useState(false);
+  const [scheduling, setScheduling] = useState(false); // dialog open
+  const [scheduled, setScheduled] = useState(null); // success state after scheduling
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState(null);
   // Signature injects ONCE into a pristine body (never over a restored draft
@@ -158,37 +163,124 @@ export default function EmailComposer({
     cb?.();
   }
 
-  async function send() {
+  // ONE payload builder for both "send now" and "schedule" — the scheduled
+  // email is exactly the composition that would have been sent immediately
+  // (recipients, subject, rich HTML, attachments, reply/forward context, the
+  // selected account and the signature already merged into `body`).
+  function buildPayload() {
     const toList = parseRecipients(to);
-    if (!toList.length) return setError('נדרשת כתובת נמען תקינה');
-    if (!replyToMessageId && !forwardOfMessageId && !subject.trim()) return setError('נדרש נושא');
-    if (editorIsEmpty(body)) return setError('אין תוכן להודעה');
+    if (!toList.length) {
+      setError('נדרשת כתובת נמען תקינה');
+      return null;
+    }
+    if (!replyToMessageId && !forwardOfMessageId && !subject.trim()) {
+      setError('נדרש נושא');
+      return null;
+    }
+    if (editorIsEmpty(body)) {
+      setError('אין תוכן להודעה');
+      return null;
+    }
+    return {
+      accountId,
+      to: toList,
+      cc: parseRecipients(cc),
+      bcc: parseRecipients(bcc),
+      subject: subject.trim(),
+      bodyHtml: body,
+      replyToMessageId,
+      forwardOfMessageId,
+      dealId,
+      contactId,
+      attachments: files.map(({ filename, mimeType, dataBase64 }) => ({ filename, mimeType, dataBase64 })),
+    };
+  }
+
+  async function send() {
+    const payload = buildPayload();
+    if (!payload) return;
     setSending(true);
     setError(null);
     try {
-      const result = await api.email.send({
-        accountId,
-        to: toList,
-        cc: parseRecipients(cc),
-        bcc: parseRecipients(bcc),
-        subject: subject.trim(),
-        bodyHtml: body,
-        replyToMessageId,
-        forwardOfMessageId,
-        dealId,
-        contactId,
-        attachments: files.map(({ filename, mimeType, dataBase64 }) => ({ filename, mimeType, dataBase64 })),
-      });
+      const result = await api.email.send(payload);
       clearDraftAnd(() => onSent?.(result));
     } catch (e) {
-      setError('השליחה נכשלה: ' + (e.payload?.error || e.message));
+      setError('השליחה נכשלה: ' + (e.payload?.message || e.payload?.error || e.message));
     } finally {
       setSending(false);
     }
   }
 
+  async function scheduleSend(instant) {
+    const payload = buildPayload();
+    if (!payload) return setScheduling(false);
+    setSending(true);
+    setError(null);
+    try {
+      const row = await api.email.scheduleSend({ ...payload, scheduledAt: instant.toISOString() });
+      setScheduling(false);
+      setScheduled(row);
+      // The composed content now lives on the server — clear the local draft so
+      // it cannot be sent twice from a restored draft.
+      clearDraftAnd(() => onScheduled?.(row));
+    } catch (e) {
+      const code = e.payload?.error;
+      setError(
+        code === 'schedule_too_soon'
+          ? 'יש לבחור מועד לפחות דקה קדימה'
+          : 'התזמון נכשל: ' + (e.payload?.message || code || e.message),
+      );
+      setScheduling(false);
+    } finally {
+      setSending(false);
+    }
+    return undefined;
+  }
+
   const field =
     'w-full rounded-lg border border-gray-300 px-3 py-1.5 text-[13px] focus:border-blue-500 focus:outline-none';
+
+  // Success state after scheduling — the composition now lives on the server,
+  // so the composer is replaced by a clear confirmation that stays cancellable.
+  if (scheduled) {
+    const when = new Date(scheduled.scheduledAt).toLocaleString('he-IL', {
+      weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
+    return (
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-center" dir="rtl">
+        <p className="text-[15px] font-semibold text-emerald-900">✓ המייל תוזמן לשליחה</p>
+        <p className="mt-1 text-[13.5px] text-emerald-800">{when}</p>
+        <p className="mt-0.5 text-[12.5px] text-emerald-700">
+            אל: {(scheduled.toJson || []).map((r) => r.email).join(', ')}
+        </p>
+        <div className="mt-3 flex justify-center gap-2">
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await api.email.cancelScheduled(scheduled.id);
+                setScheduled(null);
+                onCancel?.();
+              } catch (e) {
+                setError('ביטול התזמון נכשל: ' + (e.payload?.error || e.message));
+              }
+            }}
+            className="rounded-lg border border-red-200 bg-white px-4 py-1.5 text-[13px] font-semibold text-red-600 hover:bg-red-50"
+          >
+            ביטול התזמון
+          </button>
+          <button
+            type="button"
+            onClick={() => onCancel?.()}
+            className="rounded-lg border border-gray-300 bg-white px-4 py-1.5 text-[13px] font-semibold text-gray-600 hover:bg-gray-50"
+          >
+            סגירה
+          </button>
+        </div>
+        {error && <p className="mt-2 text-[12.5px] text-red-600">{error}</p>}
+      </div>
+    );
+  }
 
   if (accounts !== null && accounts.length === 0) {
     return (
@@ -250,7 +342,8 @@ export default function EmailComposer({
         value={subject}
         onChange={(e) => setSubjectT(e.target.value)}
         placeholder={replyToMessageId || forwardOfMessageId ? 'נושא (ריק = Re:/Fwd: אוטומטי)' : 'נושא'}
-        dir="auto"
+        // Empty → RTL (Hebrew placeholder starts right); typed → content decides.
+        dir={dirForInput(subject)}
         className={field}
       />
       <RichEditor
@@ -317,6 +410,15 @@ export default function EmailComposer({
           )}
           <button
             type="button"
+            onClick={() => setScheduling(true)}
+            disabled={sending}
+            title="שליחה במועד עתידי"
+            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            🕐 תזמון שליחה
+          </button>
+          <button
+            type="button"
             onClick={send}
             disabled={sending}
             className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
@@ -325,6 +427,13 @@ export default function EmailComposer({
           </button>
         </div>
       </div>
+
+      <ScheduleSendDialog
+        open={scheduling}
+        busy={sending}
+        onCancel={() => setScheduling(false)}
+        onConfirm={scheduleSend}
+      />
     </div>
   );
 }
