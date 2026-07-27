@@ -1,3 +1,5 @@
+import { stampBlockDirections } from '../../../shared/textDirection.mjs';
+
 // MIME utilities for the Gmail mirror: parse the API's `full` payload tree
 // into { bodyText, bodyHtml, attachments } and build RFC 2822 messages for
 // users.messages.send. Hand-rolled (no mailparser/nodemailer) — the Gmail API
@@ -145,6 +147,13 @@ export function parsePayload(payload) {
 }
 
 // ── Building outbound RFC 2822 ────────────────────────────────────────────────
+//
+// Direction: every outgoing HTML body passes through the canonical
+// serialization rule in shared/textDirection.mjs. buildRawMessage is the single
+// choke point for ALL outbound mail (composer, Communication Center, iCount
+// fallback), so stamping here means one rule with no per-caller duplication.
+// Editor CSS/`dir` on the contenteditable never reach the wire, so without this
+// the recipient's client picks its own default and Hebrew renders LTR.
 
 export function encodeMimeWord(value) {
   const s = String(value || '');
@@ -181,6 +190,9 @@ export function buildRawMessage({
   references,
   attachments = [],
 }) {
+  // Canonical direction serialization (see the note above this function).
+  // Author-set `dir` is preserved; unmarked blocks resolve from their own text.
+  const directedHtml = bodyHtml ? stampBlockDirections(bodyHtml) : bodyHtml;
   const alt = `alt_${Math.random().toString(36).slice(2)}`;
   const mixed = `mixed_${Math.random().toString(36).slice(2)}`;
   const lines = [];
@@ -203,7 +215,7 @@ export function buildRawMessage({
     'Content-Type: text/html; charset=UTF-8',
     'Content-Transfer-Encoding: base64',
     '',
-    b64Wrap(Buffer.from(bodyHtml || '', 'utf8')),
+    b64Wrap(Buffer.from(directedHtml || '', 'utf8')),
   ].join('\r\n');
 
   let bodyBlock;
