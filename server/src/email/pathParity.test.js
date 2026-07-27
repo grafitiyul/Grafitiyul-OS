@@ -25,6 +25,16 @@ function normalize(raw) {
     .replace(/email-open\/[A-Za-z0-9_-]+\.gif/g, 'email-open/PIXEL.gif');
 }
 
+// Decode the text/html part out of an already-decoded MIME string. Base64
+// bodies wrap at 76 chars, so the lines must be JOINED before decoding.
+function htmlFromMimeText(mime) {
+  const at = mime.search(/Content-Type:\s*text\/html/i);
+  if (at < 0) return '';
+  const afterHeaders = mime.slice(at).split(/\r\n\r\n/).slice(1).join('\r\n\r\n');
+  const b64 = afterHeaders.split(/\r\n--/)[0].replace(/[\r\n]/g, '');
+  return Buffer.from(b64, 'base64').toString('utf8');
+}
+
 // Mirrors sendComposedEmail: validate → assemble the tracked HTML → build MIME.
 function buildLikeSendPath(input) {
   const clean = validateComposition(input);
@@ -97,11 +107,7 @@ test('NEITHER path injects a text colour when the author chose none', () => {
   const { immediate, scheduled } = bothPaths('<p>שלום שלום לך</p>');
   for (const [label, raw] of [['immediate', immediate], ['scheduled', scheduled]]) {
     // Decode the base64 body parts and assert no colour was invented.
-    const decoded = raw
-      .split(/\r\n/)
-      .filter((l) => /^[A-Za-z0-9+/=]{20,}$/.test(l))
-      .map((l) => Buffer.from(l, 'base64').toString('utf8'))
-      .join('\n');
+    const decoded = htmlFromMimeText(raw);
     assert.doesNotMatch(decoded, /(^|[^-])color\s*:/i, `${label} must not force a text colour`);
     assert.doesNotMatch(decoded, /#000|black|rgb\(0,\s*0,\s*0\)/i, `${label} must not emit black`);
   }
@@ -110,11 +116,7 @@ test('NEITHER path injects a text colour when the author chose none', () => {
 test('an explicit author colour SURVIVES in both paths (never stripped)', () => {
   const { immediate, scheduled } = bothPaths('<p><span style="color: #ff0000">אדום</span></p>');
   for (const raw of [immediate, scheduled]) {
-    const decoded = raw
-      .split(/\r\n/)
-      .filter((l) => /^[A-Za-z0-9+/=]{20,}$/.test(l))
-      .map((l) => Buffer.from(l, 'base64').toString('utf8'))
-      .join('\n');
+    const decoded = htmlFromMimeText(raw);
     assert.match(decoded, /color:#ff0000/i);
   }
 });

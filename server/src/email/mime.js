@@ -155,6 +155,40 @@ export function parsePayload(payload) {
 // Editor CSS/`dir` on the contenteditable never reach the wire, so without this
 // the recipient's client picks its own default and Hebrew renders LTR.
 
+// Wrap the composed body in a minimal HTML document that DECLARES support for
+// both colour schemes.
+//
+// Why this is needed even though we emit no colours: a body with no colour
+// information and no scheme declaration leaves the client to guess. Gmail's
+// dark mode then applies a heuristic inversion that is inconsistent per message
+// — which is how a message containing zero colour declarations still arrived
+// as black text on a dark background.
+//
+// `color-scheme: light dark` is the standards-based signal (CSS Color Adjust)
+// that the content renders correctly in either theme, so the client adapts the
+// default text and background together instead of half-inverting. The meta tags
+// are the widely-honoured equivalent for mail clients.
+//
+// Deliberately NOT done here: setting any explicit text colour. Default text
+// stays unstyled so it inherits the theme, and an explicit author colour keeps
+// winning exactly as before.
+//
+// Client support: honoured by Gmail, Apple Mail, Outlook.com and Outlook
+// mobile. Outlook desktop (Word engine) ignores it — but it also does not
+// force-invert, so unstyled text remains readable there. No client-specific
+// CSS hacks are used.
+export function wrapEmailDocument(bodyHtml) {
+  if (!bodyHtml) return bodyHtml;
+  return (
+    '<!DOCTYPE html><html><head>' +
+    '<meta charset="utf-8">' +
+    '<meta name="color-scheme" content="light dark">' +
+    '<meta name="supported-color-schemes" content="light dark">' +
+    '<style>:root{color-scheme:light dark;supported-color-schemes:light dark}</style>' +
+    `</head><body>${bodyHtml}</body></html>`
+  );
+}
+
 export function encodeMimeWord(value) {
   const s = String(value || '');
   // eslint-disable-next-line no-control-regex
@@ -190,9 +224,11 @@ export function buildRawMessage({
   references,
   attachments = [],
 }) {
-  // Canonical direction serialization (see the note above this function).
-  // Author-set `dir` is preserved; unmarked blocks resolve from their own text.
-  const directedHtml = bodyHtml ? stampBlockDirections(bodyHtml) : bodyHtml;
+  // Canonical outgoing-HTML serialization, applied to EVERY send path because
+  // this is the single choke point: direction is stamped per block (author
+  // choices preserved), then the result is wrapped in a document that declares
+  // light+dark support so default text stays readable in either client theme.
+  const directedHtml = bodyHtml ? wrapEmailDocument(stampBlockDirections(bodyHtml)) : bodyHtml;
   const alt = `alt_${Math.random().toString(36).slice(2)}`;
   const mixed = `mixed_${Math.random().toString(36).slice(2)}`;
   const lines = [];

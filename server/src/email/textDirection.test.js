@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveDirection, stampBlockDirections, htmlToPlainish } from '../../../shared/textDirection.mjs';
 import { buildRawMessage } from './mime.js';
+import { htmlPartOf } from './mimeParts.js';
 
 // Pins the canonical outgoing-direction rule. Each test maps to one of the
 // stated product requirements.
@@ -89,14 +90,10 @@ test('buildRawMessage applies the rule to real outgoing mail', () => {
     bodyHtml: '<p>שלום</p><p>Hello</p>',
     bodyText: 'שלום Hello',
   });
-  const decoded = Buffer.from(raw, 'base64url').toString('utf8');
-  // The html part is base64 inside the MIME — decode every base64 block.
-  const hasDirected = decoded
-    .split(/\r\n/)
-    .filter((l) => /^[A-Za-z0-9+/=]{20,}$/.test(l))
-    .map((l) => Buffer.from(l, 'base64').toString('utf8'))
-    .some((s) => s.includes('dir="rtl"') && s.includes('dir="ltr"'));
-  assert.equal(hasDirected, true, 'outgoing HTML part must carry explicit per-block direction');
+  // Base64 bodies wrap at 76 chars — join the lines before decoding.
+  const html = htmlPartOf(raw);
+  assert.ok(html.includes('dir="rtl"'), 'outgoing HTML must carry explicit RTL direction');
+  assert.ok(html.includes('dir="ltr"'), 'outgoing HTML must carry explicit LTR direction');
 });
 
 test('empty/nullish body is passed through untouched', () => {
