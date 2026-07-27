@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import RichEditor from '../../editor/RichEditor.jsx';
+import RecipientField from './RecipientField.jsx';
 import { useDirtyForm } from '../../lib/dirtyForms.js';
 
 // Email composer — new mail, reply, reply-all or forward. Sends through the
@@ -225,15 +226,16 @@ export default function EmailComposer({
           </select>
         </label>
       )}
-      <div className="flex items-center gap-2">
-        <input
-          value={to}
-          onChange={(e) => setToT(e.target.value)}
-          placeholder="אל: כתובת אימייל (מופרדות בפסיק)"
-          dir="ltr"
-          className={field}
-        />
-        <span className="flex shrink-0 gap-1.5 text-[12px] text-gray-400">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <RecipientField
+            value={to}
+            onChange={setToT}
+            placeholder="אל: כתובת אימייל"
+            ariaLabel="נמענים"
+          />
+        </div>
+        <span className="flex shrink-0 gap-1.5 pt-1.5 text-[12px] text-gray-400">
           {!showCc && (
             <button type="button" onClick={() => setShowCc(true)} className="hover:text-gray-600">עותק</button>
           )}
@@ -242,12 +244,8 @@ export default function EmailComposer({
           )}
         </span>
       </div>
-      {showCc && (
-        <input value={cc} onChange={(e) => setCcT(e.target.value)} placeholder="עותק (Cc)" dir="ltr" className={field} />
-      )}
-      {showBcc && (
-        <input value={bcc} onChange={(e) => setBccT(e.target.value)} placeholder="עותק סמוי (Bcc)" dir="ltr" className={field} />
-      )}
+      {showCc && <RecipientField value={cc} onChange={setCcT} placeholder="עותק (Cc)" ariaLabel="עותק" />}
+      {showBcc && <RecipientField value={bcc} onChange={setBccT} placeholder="עותק סמוי (Bcc)" ariaLabel="עותק סמוי" />}
       <input
         value={subject}
         onChange={(e) => setSubjectT(e.target.value)}

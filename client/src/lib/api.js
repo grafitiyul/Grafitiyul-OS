@@ -881,6 +881,7 @@ export const api = {
       request(`/api/email/accounts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     disconnectAccount: (id) =>
       request(`/api/email/accounts/${id}/disconnect`, { method: 'POST', body: JSON.stringify({}) }),
+    recipientSuggestions: (q) => request(`/api/email/recipient-suggestions${qs({ q })}`),
     inbox: (params) => request(`/api/email/inbox${qs(params)}`),
     threadsByDeal: (dealId) => request(`/api/email/by-deal/${dealId}`),
     threadsByContact: (contactId) => request(`/api/email/by-contact/${contactId}`),

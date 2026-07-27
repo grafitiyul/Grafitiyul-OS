@@ -19,6 +19,9 @@ import {
   gmail,
 } from '../email/googleClient.js';
 import { runHealthCheck, describeScopes } from '../email/health.js';
+import { Prisma } from '@prisma/client';
+import { contactSearchWhere } from '../search/contactWhere.js';
+import { phoneQuery } from '../search/phoneQuery.js';
 import { recomputeThreadState } from '../email/providerState.js';
 import { buildRawMessage, htmlToText, normalizeEmail, normalizeSubject } from '../email/mime.js';
 import { sanitizeEmailHtml } from '../email/sanitize.js';
@@ -318,6 +321,66 @@ router.post(
       select: ACCOUNT_SAFE_SELECT,
     });
     res.json(updated);
+  }),
+);
+
+// ── Recipient suggestions (composer autocomplete) ────────────────────────────
+//
+// Two sources, merged and de-duplicated by address:
+//   1. CRM contacts — via the canonical contactSearchWhere (same matching the
+//      Contacts list and global search use; never hand-rolled here).
+//   2. Addresses already corresponded with — EmailThread.participants, which is
+//      exactly "previously used email addresses" and covers people who are not
+//      (yet) CRM contacts.
+// Contacts rank first: a known person beats a raw address.
+router.get(
+  '/recipient-suggestions',
+  handle(async (req, res) => {
+    const q = String(req.query.q || '').trim();
+    res.set('Cache-Control', 'no-store');
+    if (q.length < 2) return res.json([]);
+
+    const out = [];
+    const seen = new Set();
+    const push = (email, name, source) => {
+      const addr = normalizeEmail(email);
+      if (!addr || seen.has(addr)) return;
+      seen.add(addr);
+      out.push({ email: addr, name: name || null, source });
+    };
+
+    const { where } = await contactSearchWhere(q, phoneQuery(q), prisma, { includeLegacy: false });
+    const contacts = await prisma.contact.findMany({
+      where,
+      take: 10,
+      include: { emails: { orderBy: { isPrimary: 'desc' }, take: 2 } },
+      orderBy: [{ lastNameHe: 'asc' }, { firstNameHe: 'asc' }],
+    });
+    for (const c of contacts) {
+      for (const e of c.emails) push(e.value, contactDisplayName(c), 'contact');
+    }
+
+    // Previously-corresponded addresses. participants is JSON, so filter in JS
+    // over a bounded recent window rather than pushing a JSON query into SQL.
+    if (out.length < 10) {
+      const recent = await prisma.emailThread.findMany({
+        where: { participants: { not: Prisma.DbNull } },
+        orderBy: { lastMessageAt: 'desc' },
+        take: 400,
+        select: { participants: true },
+      });
+      const needle = q.toLowerCase();
+      for (const t of recent) {
+        for (const p of Array.isArray(t.participants) ? t.participants : []) {
+          const hay = `${p?.email || ''} ${p?.name || ''}`.toLowerCase();
+          if (!hay.includes(needle)) continue;
+          push(p?.email, p?.name, 'history');
+          if (out.length >= 12) break;
+        }
+        if (out.length >= 12) break;
+      }
+    }
+    res.json(out.slice(0, 12));
   }),
 );
 
