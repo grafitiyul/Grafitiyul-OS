@@ -54,7 +54,7 @@ export const REPORTS = [
       'תשלום מקוון שהושלם בהצלחה דרך לינק תשלום (iCount או Cardcom). לא נורה על תשלומים שנרשמו ידנית במשרד, מזומן, העברה בנקאית או צ׳קים.',
     dataHe: 'סכום התשלום מגיע מהתשלום שהושלם בפועל (המסמך/האימות מול הספק) — לא מסכום העסקה.',
     render: (ctx) => lines([
-      '💰 לקוח שילם 💰',
+      '💳 לקוח הוסיף תשלום 💳',
       '',
       customerLine(ctx),
       '',
@@ -159,8 +159,204 @@ export const REPORTS = [
   },
 ];
 
+// ── coordination + summary reports (#4–#8) ───────────────────────────────────
+// Canonical units (proven by audit):
+//   coordination — ONE QuestionnaireSubmission per BOOKING (purpose
+//     'coordination'); any assigned guide may complete it. NOT per guide.
+//   tour_summary — per GUIDE (actorScope = externalPersonId) for the canonical
+//     REQUIRED_SUMMARY_ROLES (lead_guide, guide).
+// Forms are opened from the tour page, so that is the canonical form link.
+
+const tourPage = (ctx, tourEventId) =>
+  (ctx.links?.origin && tourEventId ? `${ctx.links.origin}/admin/tours/${tourEventId}` : null);
+
+/** "לקוח - ארגון" for a compact aggregate line (no empty dash). */
+const partyLabel = (item) => [item.customerName, item.orgName].filter(Boolean).join(' - ') || '—';
+
+REPORTS.push(
+  {
+    number: 4,
+    key: 'coordination_on_time',
+    nameHe: 'שיחת תיאום בוצעה בזמן',
+    triggerHe:
+      'הגשה ראשונה של טופס שיחת תיאום, כאשר ההגשה בוצעה עד המועד הנדרש — יומיים לפני מועד הסיור (כולל). נורה פעם אחת לכל שיחת תיאום (טופס אחד לכל הזמנה/לקוח).',
+    dataHe:
+      'המועד מחושב מהמועד האפקטיבי הנוכחי של הסיור; אם הסיור נדחה — המועד הנדרש זז איתו. "מדריך" הוא מי שהגיש את הטופס בפועל.',
+    render: (ctx) => {
+      const c = ctx.coordinationReport || {};
+      return lines([
+        '✅ שיחת תיאום בוצעה בזמן ✅',
+        '',
+        `מדריך: ${c.guideName || '—'}`,
+        `לקוח: ${customerLine(ctx)}`,
+        `סיור: ${[c.productName, c.cityName].filter(Boolean).join(' - ') || '—'}`,
+        `מועד הסיור: ${formatDateHe(c.tourDate) || '—'} ${c.tourTime || ''}`.trim(),
+        `כמות משתתפים: ${c.participants ?? '—'}`,
+        '',
+        `לינק לטופס: ${tourPage(ctx, c.tourEventId) || '—'}`,
+        `לינק לדיל: ${dealLink(ctx)}`,
+      ]);
+    },
+    sample: () => ({
+      contact: { firstNameHe: 'משפחת', lastNameHe: 'רוזנברג' },
+      org: null,
+      deal: { orderNo: 27210 },
+      links: { origin: 'https://app.grafitiyul.co.il' },
+      coordinationReport: {
+        guideName: 'יואב כהן', productName: 'סיור וסדנת גרפיטי', cityName: 'תל אביב',
+        tourDate: '2026-09-20', tourTime: '10:00', participants: 24, tourEventId: 'tour_sample',
+      },
+    }),
+  },
+
+  {
+    number: 5,
+    key: 'coordination_late',
+    nameHe: 'איחור בשיחת תיאום',
+    triggerHe:
+      'הגשה ראשונה של טופס שיחת תיאום לאחר המועד הנדרש (יומיים לפני הסיור). נורה פעם אחת לכל שיחת תיאום.',
+    dataHe:
+      'משך האיחור מחושב מההפרש בין מועד ההגשה בפועל למועד הנדרש — לא מתווית סטטוס. שני המועדים מוקפאים ברשומת הדיווח.',
+    render: (ctx) => {
+      const c = ctx.coordinationReport || {};
+      return lines([
+        '⛔ איחור בשיחת תיאום ⛔',
+        '',
+        `מדריך: ${c.guideName || '—'}`,
+        `לקוח: ${customerLine(ctx)}`,
+        `סיור: ${[c.productName, c.cityName].filter(Boolean).join(' - ') || '—'}`,
+        `מועד הסיור: ${formatDateHe(c.tourDate) || '—'} ${c.tourTime || ''}`.trim(),
+        `כמות משתתפים: ${c.participants ?? '—'}`,
+        `בוצע באיחור של: ${c.latenessLabel || '—'}`,
+        '',
+        `לינק לטופס: ${tourPage(ctx, c.tourEventId) || '—'}`,
+        `לינק לדיל: ${dealLink(ctx)}`,
+      ]);
+    },
+    sample: () => ({
+      contact: { firstNameHe: 'דנה', lastNameHe: 'לוי' },
+      org: { name: 'עיריית תל אביב' },
+      deal: { orderNo: 27211 },
+      links: { origin: 'https://app.grafitiyul.co.il' },
+      coordinationReport: {
+        guideName: 'מיכל ברק', productName: 'סיור גרפיטי', cityName: 'חיפה',
+        tourDate: '2026-09-18', tourTime: '16:30', participants: 30,
+        latenessLabel: 'יום ו-5 שעות', tourEventId: 'tour_sample',
+      },
+    }),
+  },
+
+  {
+    number: 6,
+    key: 'coordination_daily',
+    nameHe: 'מעקב שיחות תיאום ל-3 הימים הקרובים',
+    schedule: { hour: 15, minute: 0 },
+    triggerHe:
+      'דיווח יומי ב-15:00 (שעון ישראל): כל שיחות התיאום לסיורים ב-3 ימי הלוח הקרובים (היום ועד יומיים קדימה), שורה אחת לכל שיחה. סיורים מבוטלים אינם נכללים.',
+    dataHe:
+      '✅ בוצע · ⛔ עבר המועד ולא הוגש · ⌛ טרם הוגש והמועד לא עבר. מיון: קודם ⛔, אחר כך ⌛, ואז ✅ — ובכל קבוצה הסיור הקרוב ביותר ראשון.',
+    aggregate: true,
+    emptyHe: 'אין שיחות תיאום למעקב',
+    render: (ctx) => {
+      const items = ctx.aggregate?.items || [];
+      const icon = { overdue: '⛔', open: '⌛', done: '✅' };
+      return lines([
+        '📞 שיחות תיאום ל-3 הימים הקרובים 📞',
+        '',
+        ...items.map((i) => {
+          const late = i.status === 'done' && i.wasLate ? ' (באיחור)' : '';
+          return `${icon[i.status] || '⌛'} ${i.guideName || '—'} - ${partyLabel(i)} - ${i.participants ?? '—'}${late}`;
+        }),
+      ]);
+    },
+    sample: () => ({
+      aggregate: {
+        items: [
+          { status: 'overdue', guideName: 'מיכל ברק', customerName: 'עיריית תל אביב', orgName: null, participants: 30 },
+          { status: 'open', guideName: 'יואב כהן', customerName: 'משפחת רוזנברג', orgName: null, participants: 24 },
+          { status: 'done', guideName: 'נועה בר', customerName: 'דנה לוי', orgName: 'בית ספר אלון', participants: 18, wasLate: true },
+        ],
+      },
+    }),
+  },
+
+  {
+    number: 7,
+    key: 'summaries_missing_7d',
+    nameHe: 'סיכומי סיור שלא נשלחו ב-7 הימים האחרונים',
+    schedule: { hour: 6, minute: 0 },
+    triggerHe:
+      'דיווח יומי ב-06:00 (שעון ישראל): כל מדריך שטרם הגיש סיכום סיור לסיור שהסתיים ב-7 הימים האחרונים. שורה נפרדת לכל מדריך חסר — שני מדריכים שלא הגישו באותו סיור = שתי שורות.',
+    dataHe:
+      'מקור: הגשות סיכום סיור לפי מדריך (actorScope). תפקידים נדרשים: מדריך ראשי ומדריך. סיורים מבוטלים לא נכללים.',
+    aggregate: true,
+    emptyHe: 'כל סיכומי הסיור מ-7 הימים האחרונים הוגשו',
+    render: (ctx) => {
+      const items = ctx.aggregate?.items || [];
+      return lines([
+        '📝 סיכומי סיור שטרם נשלחו 📝',
+        '',
+        'להלן המדריכים שטרם מילאו סיכום סיור במהלך 7 הימים האחרונים:',
+        '',
+        ...items.map((i) =>
+          `⛔ ${i.guideName || '—'} - ${i.productName || '—'} - ${partyLabel(i)} - ${formatDateHe(i.tourDate) || '—'} ${i.tourTime || ''}`.trim()),
+        '',
+        `לינק לניהול: ${ctx.links?.origin ? `${ctx.links.origin}/admin/tours` : '—'}`,
+      ]);
+    },
+    sample: () => ({
+      links: { origin: 'https://app.grafitiyul.co.il' },
+      aggregate: {
+        items: [
+          { guideName: 'יואב כהן', productName: 'סיור גרפיטי', customerName: 'משפחת רוזנברג', orgName: null, tourDate: '2026-09-10', tourTime: '10:00' },
+          { guideName: 'מיכל ברק', productName: 'סיור וסדנת גרפיטי', customerName: 'דנה לוי', orgName: 'עיריית תל אביב', tourDate: '2026-09-12', tourTime: '17:00' },
+        ],
+      },
+    }),
+  },
+
+  {
+    number: 8,
+    key: 'summary_missing_yesterday',
+    nameHe: 'סיכומי הסיור של אתמול שלא נשלחו',
+    schedule: { hour: 6, minute: 0 },
+    triggerHe:
+      'דיווח יומי ב-06:00 (שעון ישראל): לכל מדריך שהיה חייב סיכום סיור לסיור שהתקיים אתמול ולא הגיש — דיווח נפרד אחד. מדריך ששכח שני סיורים יקבל שני דיווחים נפרדים.',
+    dataHe:
+      '"אתמול" נקבע לפי מועד הסיור בשעון ישראל. תפקידים נדרשים: מדריך ראשי ומדריך. סיורים מבוטלים לא נכללים; מי שכבר הגיש לא מדווח.',
+    emptyHe: 'כל סיכומי הסיור של אתמול הוגשו',
+    render: (ctx) => {
+      const s = ctx.summaryReport || {};
+      return lines([
+        '📝 לא נשלח סיכום סיור 📝',
+        '',
+        `שם המדריך: ${s.guideName || '—'}`,
+        `שם הלקוח: ${customerLine(ctx)}`,
+        `שם הסיור: ${[s.productName, s.cityName].filter(Boolean).join(' - ') || '—'}`,
+        `מועד הסיור: ${formatDateHe(s.tourDate) || '—'} ${s.tourTime || ''}`.trim(),
+        '',
+        'תודה,',
+        'גרפיטיול',
+      ]);
+    },
+    sample: () => ({
+      contact: { firstNameHe: 'משפחת', lastNameHe: 'רוזנברג' },
+      org: null,
+      summaryReport: {
+        guideName: 'יואב כהן', productName: 'סיור וסדנת גרפיטי', cityName: 'תל אביב',
+        tourDate: '2026-09-16', tourTime: '10:00',
+      },
+    }),
+  },
+);
+
 export function reportByNumber(number) {
   return REPORTS.find((r) => r.number === Number(number)) || null;
+}
+
+/** Reports that run on a daily schedule (hour/minute, Israel time). */
+export function scheduledReports() {
+  return REPORTS.filter((r) => r.schedule);
 }
 
 /** Render a report from a context — the ONE renderer, used everywhere. */

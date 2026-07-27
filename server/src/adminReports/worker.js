@@ -6,12 +6,18 @@
 import { prisma } from '../db.js';
 import { bridgeUrlMap } from '../whatsapp/bridgeClient.js';
 import { sendDelivery } from './dispatch.js';
+import { runDueScheduledReports } from './daily.js';
 
 const TICK_MS = 60_000;
 const BATCH = 5;
 
 async function tick(log) {
   const now = new Date();
+
+  // Daily scheduled reports ride THIS tick — no second scheduler. Each is
+  // idempotent on `daily:<number>:<Israel date>`, so a restart, a slow tick or
+  // a future second instance can never double-send.
+  await runDueScheduledReports({ log }).catch((e) => log.error?.(`[admin-reports] daily sweep failed: ${e?.message || e}`));
   const due = await prisma.adminReportDelivery.findMany({
     where: {
       status: { in: ['pending', 'failed'] },

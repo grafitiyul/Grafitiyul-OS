@@ -8,6 +8,7 @@
 // feed so the operational screen sees coordination state too.
 
 import { prisma } from '../../db.js';
+import { reportCoordinationSubmission } from '../../adminReports/coordinationEvent.js';
 import { emitTimelineEvent, systemOrigin } from '../../timeline/events.js';
 import { getPurpose } from '../registry.js';
 
@@ -190,5 +191,19 @@ export const bookingAdapter = {
       data,
       origin,
     });
+
+    // Admin Reports #4/#5 — on-time vs late coordination call. FIRST submit
+    // only (an edit is not a new coordination call), and only for the
+    // coordination purpose. Fire-and-forget AFTER the timeline writes; the
+    // report can never affect the submission.
+    if (firstSubmit && submission.purpose === 'coordination') {
+      reportCoordinationSubmission({
+        bookingId: subjectId,
+        tourEventId: b.tourEventId,
+        dealId: b.dealId,
+        submissionId: submission.id,
+        submittedByName: by,
+      }).catch(() => {});
+    }
   },
 };

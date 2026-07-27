@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { REPORTS, reportByNumber, renderReport, renderReportSample, customerLine } from './registry.js';
+import {
+  REPORTS, reportByNumber, renderReport, renderReportSample, customerLine, scheduledReports,
+} from './registry.js';
 
 // ── catalog integrity ────────────────────────────────────────────────────────
 
 test('report numbers are stable, unique and documented', () => {
   const numbers = REPORTS.map((r) => r.number);
-  assert.deepEqual(numbers, [1, 2, 3]);
+  assert.deepEqual(numbers, [1, 2, 3, 4, 5, 6, 7, 8]);
   assert.equal(new Set(numbers).size, numbers.length);
   for (const r of REPORTS) {
     assert.ok(r.nameHe?.length > 3, `#${r.number} has a Hebrew name`);
@@ -121,6 +123,108 @@ test('#3 with no authenticated actor reports an honest dash, never the owner', (
   });
   assert.match(text, /מי עדכן: —/);
   assert.ok(!text.includes('בעל הדיל'));
+});
+
+// ── #1 headline ──────────────────────────────────────────────────────────────
+
+test('#1 headline is the exact owner-specified line', () => {
+  assert.ok(renderReportSample(1).startsWith('💳 לקוח הוסיף תשלום 💳\n'));
+});
+
+// ── #4 / #5 coordination ─────────────────────────────────────────────────────
+
+const coordCtx = (extra) => ({
+  contact: { firstNameHe: 'דנה', lastNameHe: 'לוי' },
+  org: { name: 'עיריית תל אביב' },
+  deal: { orderNo: 27210 },
+  links: { origin: 'https://x' },
+  coordinationReport: {
+    guideName: 'יואב כהן', productName: 'סיור גרפיטי', cityName: 'חיפה',
+    tourDate: '2026-09-20', tourTime: '10:00', participants: 24, tourEventId: 'te_1',
+    ...extra,
+  },
+});
+
+test('#4 reports the guide, the customer line and the canonical form link', () => {
+  const text = renderReport(4, coordCtx());
+  assert.ok(text.startsWith('✅ שיחת תיאום בוצעה בזמן ✅\n'));
+  assert.match(text, /מדריך: יואב כהן/);
+  assert.match(text, /לקוח: דנה לוי - עיריית תל אביב/);
+  assert.match(text, /סיור: סיור גרפיטי - חיפה/);
+  assert.match(text, /מועד הסיור: 20\/09\/2026 10:00/);
+  assert.match(text, /כמות משתתפים: 24/);
+  assert.match(text, /לינק לטופס: https:\/\/x\/admin\/tours\/te_1/);
+  assert.match(text, /לינק לדיל: https:\/\/x\/admin\/crm\/deals\/27210/);
+  assert.ok(!text.includes('באיחור'), 'the on-time report never mentions lateness');
+});
+
+test('#5 adds the measured lateness and keeps the same facts', () => {
+  const text = renderReport(5, coordCtx({ latenessLabel: 'יום ו-5 שעות' }));
+  assert.ok(text.startsWith('⛔ איחור בשיחת תיאום ⛔\n'));
+  assert.match(text, /בוצע באיחור של: יום ו-5 שעות/);
+  assert.match(text, /מדריך: יואב כהן/);
+});
+
+// ── #6 daily coordination monitor ────────────────────────────────────────────
+
+test('#6 maps each status to its icon and flags a late completion', () => {
+  const text = renderReport(6, {
+    aggregate: {
+      items: [
+        { status: 'overdue', guideName: 'א', customerName: 'לקוח א', participants: 10 },
+        { status: 'open', guideName: 'ב', customerName: 'לקוח ב', orgName: 'ארגון ב', participants: 20 },
+        { status: 'done', guideName: 'ג', customerName: 'לקוח ג', participants: 30, wasLate: true },
+        { status: 'done', guideName: 'ד', customerName: 'לקוח ד', participants: 40 },
+      ],
+    },
+  });
+  const rows = text.split('\n').slice(2);
+  assert.equal(rows[0], '⛔ א - לקוח א - 10');
+  assert.equal(rows[1], '⌛ ב - לקוח ב - ארגון ב - 20');
+  assert.equal(rows[2], '✅ ג - לקוח ג - 30 (באיחור)');
+  assert.equal(rows[3], '✅ ד - לקוח ד - 40');
+});
+
+// ── #7 / #8 missing summaries ────────────────────────────────────────────────
+
+test('#7 lists one line per missing guide and links to the tours screen', () => {
+  const text = renderReport(7, {
+    links: { origin: 'https://x' },
+    aggregate: {
+      items: [
+        { guideName: 'יואב', productName: 'סיור', customerName: 'לקוח א', tourDate: '2026-09-10', tourTime: '10:00' },
+        { guideName: 'מיכל', productName: 'סדנה', customerName: 'לקוח ב', orgName: 'ארגון', tourDate: '2026-09-12', tourTime: '17:00' },
+      ],
+    },
+  });
+  assert.match(text, /⛔ יואב - סיור - לקוח א - 10\/09\/2026 10:00/);
+  assert.match(text, /⛔ מיכל - סדנה - לקוח ב - ארגון - 12\/09\/2026 17:00/);
+  assert.match(text, /לינק לניהול: https:\/\/x\/admin\/tours/);
+});
+
+test('#8 is a single-guide message signed by גרפיטיול', () => {
+  const text = renderReport(8, {
+    contact: { firstNameHe: 'משפחת', lastNameHe: 'רוזנברג' },
+    org: null,
+    summaryReport: { guideName: 'יואב כהן', productName: 'סיור', cityName: 'תל אביב', tourDate: '2026-09-16', tourTime: '10:00' },
+  });
+  assert.ok(text.startsWith('📝 לא נשלח סיכום סיור 📝\n'));
+  assert.match(text, /שם המדריך: יואב כהן/);
+  assert.match(text, /שם הלקוח: משפחת רוזנברג/);
+  assert.match(text, /שם הסיור: סיור - תל אביב/);
+  assert.ok(text.endsWith('תודה,\nגרפיטיול'));
+});
+
+// ── schedules ────────────────────────────────────────────────────────────────
+
+test('only #6/#7/#8 are scheduled, at the owner-specified Israel-time slots', () => {
+  const byNumber = Object.fromEntries(scheduledReports().map((r) => [r.number, r.schedule]));
+  assert.deepEqual(Object.keys(byNumber).map(Number).sort((a, b) => a - b), [6, 7, 8]);
+  assert.deepEqual(byNumber[6], { hour: 15, minute: 0 });
+  assert.deepEqual(byNumber[7], { hour: 6, minute: 0 });
+  assert.deepEqual(byNumber[8], { hour: 6, minute: 0 });
+  // Every scheduled report must say what it sends when there is nothing to say.
+  for (const r of scheduledReports()) assert.ok(reportByNumber(r.number).emptyHe?.length > 3);
 });
 
 test('unknown report numbers render nothing (no accidental blank sends)', () => {
