@@ -104,6 +104,7 @@ import DealStagesSettings from './admin/crm/settings/DealStagesSettings.jsx';
 import LostReasonsSettings from './admin/crm/settings/LostReasonsSettings.jsx';
 import DealSourcesSettings from './admin/crm/settings/DealSourcesSettings.jsx';
 import TaskTypesSettings from './admin/crm/settings/TaskTypesSettings.jsx';
+import WhatsAppTemplatesSettings from './admin/crm/settings/WhatsAppTemplatesSettings.jsx';
 import QuoteSectionsSettings from './admin/crm/settings/QuoteSectionsSettings.jsx';
 import QuoteLayoutSettings from './admin/crm/settings/QuoteLayoutSettings.jsx';
 import TicketTypesSettings from './admin/crm/settings/TicketTypesSettings.jsx';
@@ -311,6 +312,10 @@ export default function App() {
         <Route
           path="settings/crm/task-types"
           element={<TaskTypesSettings />}
+        />
+        <Route
+          path="settings/crm/whatsapp-templates"
+          element={<WhatsAppTemplatesSettings />}
         />
         <Route
           path="settings/crm/quote-sections"

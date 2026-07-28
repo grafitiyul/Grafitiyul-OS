@@ -616,6 +616,19 @@ export const api = {
     remove: (id) => request(`/api/task-types/${id}`, { method: 'DELETE' }),
     reorder: (ids) => request('/api/task-types/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
   },
+  // Internal reusable WhatsApp wording (CRM Settings → נוסחים לתבניות ווטסאפ).
+  // `resolved` returns plain WhatsApp markup for a deal — it does NOT send;
+  // the Deal modal feeds it to the ordinary chat composer.
+  whatsappTemplates: {
+    meta: () => request('/api/whatsapp-templates/meta'),
+    list: (activeOnly = false) => request(`/api/whatsapp-templates${activeOnly ? '?activeOnly=1' : ''}`),
+    create: (data) => request('/api/whatsapp-templates', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/api/whatsapp-templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id) => request(`/api/whatsapp-templates/${id}`, { method: 'DELETE' }),
+    reorder: (ids) => request('/api/whatsapp-templates/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
+    resolved: (id, dealId, lang) =>
+      request(`/api/whatsapp-templates/${id}/resolved${qs({ dealId, lang })}`),
+  },
   // ── Tours catalogs (Settings → Tours) ────────────────────────────
   activityComponents: {
     list: (activeOnly = false) =>

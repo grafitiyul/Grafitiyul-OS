@@ -49,6 +49,12 @@ export default function CrmSettingsHome() {
           description="הסוגים שמופיעים בבורר המשימות של הדיל — שם, אייקון, ברירות מחדל וערוץ."
         />
         <CategoryCard
+          to="/admin/settings/crm/whatsapp-templates"
+          icon="💬"
+          title="נוסחים לתבניות ווטסאפ"
+          description="ניסוחים קבועים לשימוש חוזר בוואטסאפ — עברית ואנגלית באותו נוסח, עם מילוי אוטומטי של שם הלקוח."
+        />
+        <CategoryCard
           to="/admin/settings/crm/quote-sections"
           icon="📝"
           title="הצעות מחיר"

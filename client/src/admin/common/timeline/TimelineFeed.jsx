@@ -14,6 +14,7 @@ import EmailEventRow from '../../email/EmailEventRow.jsx';
 import TourEventRow from './TourEventRow.jsx';
 import EmailPanel from '../../email/EmailPanel.jsx';
 import DealFilesTab from '../../deals/files/DealFilesTab.jsx';
+import WhatsAppTemplateModal from '../../deals/whatsapp/WhatsAppTemplateModal.jsx';
 import WhatsAppIconShared from '../icons/WhatsAppIcon.jsx';
 import GmailIcon from '../icons/GmailIcon.jsx';
 import AccountingEventRow from './AccountingEventRow.jsx';
@@ -65,7 +66,14 @@ const COMPOSER_TABS = [
   // Functional on Deal + Contact pages (EmailPanel); placeholder elsewhere.
   { key: 'email', label: 'אימייל', enabled: false, icon: <GmailIcon /> },
   { key: 'file', label: 'קובץ', enabled: false, icon: <PaperclipIcon /> },
+  // Opens a MODAL instead of switching the composer body (see MODAL_TABS) —
+  // picking a stored wording is a short focused task, not an authoring surface.
+  // Deal-only: it resolves variables against the deal's primary contact.
+  { key: 'wa_template', label: 'תבנית ווטסאפ', enabled: false, icon: <WhatsAppIconShared /> },
 ];
+
+// Composer tabs that open a dialog rather than becoming the active tab.
+const MODAL_TABS = new Set(['wa_template']);
 
 // History-only subject types — surfaces where the timeline is a READ-ONLY
 // record of what happened, never an authoring/composer surface. Tours are an
@@ -125,7 +133,7 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
   const composerTabs = COMPOSER_TABS
     .filter((t) => showWhatsApp || t.key !== 'whatsapp')
     .map((t) => {
-      if (t.key === 'task' || t.key === 'file') return { ...t, enabled: isDeal };
+      if (t.key === 'task' || t.key === 'file' || t.key === 'wa_template') return { ...t, enabled: isDeal };
       if (t.key === 'email') return { ...t, enabled: isDeal || subjectType === 'contact' };
       return t;
     });
@@ -133,6 +141,7 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [tab, setTab] = useState('note');
+  const [waTemplateOpen, setWaTemplateOpen] = useState(false);
   // Restore any saved draft for THIS subject on mount.
   const [draft, setDraft] = useState(() => readNoteDrafts()[noteDraftKey] || '');
   // True when the composer opened with a previously-saved draft (shows the
@@ -352,7 +361,11 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
             <button
               key={t.key}
               type="button"
-              onClick={() => setTab(t.key)}
+              onClick={() => {
+                if (!MODAL_TABS.has(t.key)) return setTab(t.key);
+                if (t.enabled) setWaTemplateOpen(true);
+                return undefined;
+              }}
               className={`inline-flex items-center gap-1.5 px-3 py-2 text-[13px] font-medium rounded-t-lg -mb-px border-b-2 transition ${
                 tab === t.key ? 'border-blue-500 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
@@ -433,6 +446,17 @@ export default function TimelineFeed({ subjectType, subjectId, aggregate = false
           )}
         </div>
       </div>
+      )}
+
+      {/* Template picker → resolved draft → the REAL chat composer/send path.
+          Refresh after a send so any resulting activity lands in the feed. */}
+      {!historyOnly && isDeal && (
+        <WhatsAppTemplateModal
+          open={waTemplateOpen}
+          dealId={subjectId}
+          onClose={() => setWaTemplateOpen(false)}
+          onSent={() => refresh()}
+        />
       )}
 
       {loading ? (

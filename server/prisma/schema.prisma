@@ -1710,6 +1710,35 @@ model WhatsAppDataGap {
   @@index([accountId, reconnectedAt])
 }
 
+// Internal reusable WhatsApp wording ("נוסחים לתבניות ווטסאפ"). NOT Meta/WhatsApp
+// Business API approved templates — these are our own drafts, resolved and then
+// sent through the ordinary connected-chat composer like any typed message.
+//
+// ONE record owns BOTH languages (never two unrelated rows). Bodies are stored
+// in the SAME representation the Communication Center uses: editor HTML, with
+// variables as canonical chip spans (span[data-field-key]); the shared
+// htmlToWhatsApp serializer converts to WhatsApp markup at resolve time, so the
+// authored preview and the transmitted text can never drift.
+//
+// (sourceSystem, sourceRecordId) is the one-time Airtable crosswalk key — the
+// import upserts on it, so re-running the migration never duplicates. Airtable
+// is NOT a runtime dependency: nothing reads these columns at request time.
+model WhatsAppTemplate {
+  id             String   @id @default(cuid())
+  nameHe         String // internal display name — what the Deal selector shows
+  bodyHeHtml     String? // editor HTML, Hebrew; null/empty = language unavailable
+  bodyEnHtml     String? // editor HTML, English; null/empty = language unavailable
+  isActive       Boolean  @default(true)
+  sortOrder      Int      @default(0)
+  sourceSystem   String? // 'airtable' for migrated rows, null for hand-created
+  sourceRecordId String? // Airtable recId (migration provenance)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([sourceSystem, sourceRecordId])
+  @@index([isActive, sortOrder])
+}
+
 // Raw iCount IPN payloads — audit log ONLY in this slice. The receiver persists
 // the payload and returns 200; it changes NO deal/payment state (processing is
 // a future slice). Logged now so links generated today aren't deaf: every

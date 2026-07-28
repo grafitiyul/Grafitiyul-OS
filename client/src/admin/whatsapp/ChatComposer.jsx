@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { emitDealTasksChanged } from '../deals/tasks/taskEvents.js';
 import { readDrafts, writeDraft, draftKeyFor } from './drafts.js';
@@ -159,9 +159,16 @@ function classifyFile(file) {
   return 'document';
 }
 
-export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onScheduled, dealId = null, droppedFiles = null, onDroppedFilesConsumed }) {
+// `seed` / `onTextChange` / `persistDraft` are GENERIC composer controls, not
+// feature-specific hooks: any surface that wants to hand the composer a starting
+// text (e.g. the Deal WhatsApp-template modal) passes `seed={{ text, nonce }}`
+// and bumps the nonce to replace the text. `persistDraft={false}` opts a
+// short-lived embedded composer out of the shared chat draft store, so it can
+// neither read nor clobber the draft of a composer mounted elsewhere on the
+// same chat. Defaults keep the normal thread composer behaving exactly as before.
+export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onScheduled, dealId = null, droppedFiles = null, onDroppedFilesConsumed, seed = null, onTextChange = null, persistDraft = true }) {
   const draftKey = draftKeyFor(chat);
-  const [text, setText] = useState(() => readDrafts()[draftKey] || '');
+  const [text, setText] = useState(() => (persistDraft ? readDrafts()[draftKey] || '' : seed?.text || ''));
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -181,6 +188,31 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
   const meterRef = useRef({ ctx: null, timer: null });
   const maxLevelRef = useRef(0);
   const fileInputRef = useRef(null);
+
+  // Draft persistence is opt-out (see the props note above).
+  const saveDraft = useCallback(
+    (value) => {
+      if (persistDraft) writeDraft(draftKey, value);
+    },
+    [persistDraft, draftKey],
+  );
+
+  // Externally seeded text (template modal). Keyed on the nonce so re-selecting
+  // the SAME template/language still re-seeds, and so a seed can never fight
+  // with the user's typing between seeds.
+  const seedNonce = seed?.nonce ?? null;
+  useEffect(() => {
+    if (seedNonce == null) return;
+    setText(seed?.text || '');
+    // A new text is a new logical message — mint a fresh idempotency key.
+    keyRef.current = { key: null, fingerprint: null };
+  }, [seedNonce]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Report the live text so an embedding surface can tell an edited draft from
+  // an untouched one (e.g. "replace the draft?" confirmation).
+  useEffect(() => {
+    onTextChange?.(text);
+  }, [text]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function attachFiles(fileList) {
     const files = [...(fileList || [])].filter(Boolean);
@@ -248,7 +280,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
         removeAttachment(item.key);
       }
       setText('');
-      writeDraft(draftKey, '');
+      saveDraft('');
       onCancelReply?.();
       onSent?.(lastMessage);
     } catch (e) {
@@ -270,11 +302,13 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
   // closing the panel mid-word never loses the tail.
   const textForDraftRef = useRef(text);
   textForDraftRef.current = text;
+  const saveDraftRef = useRef(saveDraft);
+  saveDraftRef.current = saveDraft;
   useEffect(() => {
-    const t = setTimeout(() => writeDraft(draftKey, text), 250);
+    const t = setTimeout(() => saveDraft(text), 250);
     return () => clearTimeout(t);
-  }, [draftKey, text]);
-  useEffect(() => () => writeDraft(draftKey, textForDraftRef.current), [draftKey]);
+  }, [saveDraft, text]);
+  useEffect(() => () => saveDraftRef.current(textForDraftRef.current), [draftKey]);
 
   // A restored multi-line draft needs its height computed once on mount.
   useEffect(() => {
@@ -462,7 +496,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
       });
       keyRef.current = { key: null, fingerprint: null };
       setText('');
-      writeDraft(draftKey, '');
+      saveDraft('');
       onCancelReply?.();
       onSent?.(resp.message || null);
     } catch (e) {
@@ -494,7 +528,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
           : {}),
       });
       setText('');
-      writeDraft(draftKey, '');
+      saveDraft('');
       setScheduleOpen(false);
       onCancelReply?.();
       onScheduled?.();
