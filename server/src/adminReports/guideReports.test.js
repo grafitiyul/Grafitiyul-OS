@@ -182,3 +182,30 @@ test('the guide notifications are one group, all addressed to guides', () => {
   assert.deepEqual(reportsInGroup('office').map((r) => r.number), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   assert.equal(reportByNumber(1).audience, undefined, 'office reports keep the group destination');
 });
+
+// ── the activation floor ─────────────────────────────────────────────────────
+
+test('a notification never reports an event from before it was switched on', async () => {
+  const { isDue } = await import('./tourSweeps.js');
+  const now = 1_000_000_000_000;
+  const hourAgo = now - 3_600_000;
+  // Due and recent, no floor → fires.
+  assert.equal(isDue(hourAgo, now, null), true);
+  // The report was enabled AFTER the event was due → never fires.
+  assert.equal(isDue(hourAgo, now, now - 60_000), false);
+  // Enabled before it was due → fires.
+  assert.equal(isDue(hourAgo, now, now - 7_200_000), true);
+  // Not yet due, and stale, both stay false regardless of the floor.
+  assert.equal(isDue(now + 1, now, null), false);
+  assert.equal(isDue(now - 4 * 86_400_000, now, null), false);
+  assert.equal(isDue(null, now, null), false);
+});
+
+test('#11 says so out loud when there are no upcoming coordination calls', () => {
+  const text = renderReport(11, {
+    guideDigest: { coordination: [], missingSummaries: [{ tourDate: '2026-07-30', customerName: 'א', productName: 'ב' }] },
+  });
+  assert.match(text, /אין שיחות תיאום לימים הקרובים\./);
+  // …and never opens with a blank gap before the separator.
+  assert.ok(!text.includes('\n\n\n'));
+});

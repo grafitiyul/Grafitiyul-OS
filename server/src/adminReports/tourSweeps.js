@@ -29,6 +29,32 @@ export const GUIDE_SEND_HOUR = 8;
 /** How stale a due notification may be before we stop chasing it. */
 const MAX_LATE_MS = 3 * 24 * 60 * 60 * 1000;
 
+/**
+ * Is this due moment inside the window the report may report on?
+ * Two floors: it must have arrived, it must not be stale — and it must not
+ * predate the moment the report was switched on. Without the last one, enabling
+ * a notification would replay a backlog of tours that already happened.
+ */
+export function isDue(dueMs, nowMs, activatedAtMs) {
+  if (dueMs == null || dueMs > nowMs) return false;
+  if (nowMs - dueMs > MAX_LATE_MS) return false;
+  if (activatedAtMs != null && dueMs < activatedAtMs) return false;
+  return true;
+}
+
+/** Activation floors for the reports a sweep touches. */
+async function activationFloors(numbers, client) {
+  const rows = await client.adminReportConfig.findMany({
+    where: { reportNumber: { in: numbers } },
+    select: { reportNumber: true, activatedAt: true, enabled: true },
+  });
+  const map = new Map();
+  for (const r of rows) map.set(r.reportNumber, r.enabled ? (r.activatedAt?.getTime() ?? null) : Infinity);
+  // A report with no config row at all is unconfigured — dispatch will record
+  // the honest skip, so nothing is suppressed here.
+  return (n) => (map.has(n) ? map.get(n) : null);
+}
+
 /** Reminder offsets after the tour ends, in hours → report number. */
 export const SUMMARY_REMINDERS = [
   { number: 14, afterHours: 0 },
@@ -93,12 +119,13 @@ export async function sweepCoordinationCalls({ nowMs = Date.now(), client = pris
     select: SWEEP_TOUR_SELECT,
   });
   if (!tours.length) return [];
+  const floorFor = await activationFloors([12], client);
   const holidays = await loadBlockingHolidays(addDays(today, -14), addDays(today, 21), client);
 
   const fired = [];
   for (const tour of tours) {
     const due = coordinationSendMs(tour.date, holidays);
-    if (due.ms == null || due.ms > nowMs || nowMs - due.ms > MAX_LATE_MS) continue;
+    if (!isDue(due.ms, nowMs, floorFor(12))) continue;
     const guides = notifiableGuides(tour.assignments);
     if (!guides.length) continue;
 
@@ -145,6 +172,7 @@ export async function sweepTourSummaries({ nowMs = Date.now(), client = prisma, 
     select: SWEEP_TOUR_SELECT,
   });
   if (!tours.length) return [];
+  const floorFor = await activationFloors(SUMMARY_REMINDERS.map((s) => s.number), client);
 
   const ids = tours.map((t) => t.id);
   const submissions = await client.questionnaireSubmission.findMany({
@@ -167,7 +195,7 @@ export async function sweepTourSummaries({ nowMs = Date.now(), client = prisma, 
       const recipient = recipientOf(a);
       for (const step of SUMMARY_REMINDERS) {
         const dueMs = end + step.afterHours * 3_600_000;
-        if (dueMs > nowMs || nowMs - dueMs > MAX_LATE_MS) continue;
+        if (!isDue(dueMs, nowMs, floorFor(step.number))) continue;
         const r = await fireAdminReport({
           number: step.number,
           idempotencyKey: `summary:${tour.id}:${a.externalPersonId}`,

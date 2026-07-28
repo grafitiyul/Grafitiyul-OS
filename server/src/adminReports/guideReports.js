@@ -86,6 +86,9 @@ export const GUIDE_REPORTS = [
       const items = g.coordination || [];
       const missing = g.missingSummaries || [];
       const out = ['☎️ סטטוס שיחות התיאום לימים הקרובים', ''];
+      // An empty list must SAY it is empty — otherwise the message opens with
+      // a blank gap and reads like a broken send.
+      if (!items.length) out.push('אין שיחות תיאום לימים הקרובים.');
       out.push(...items.map((i) => [
         `${statusIcon(i.done, i.daysAway)} ${dayLabel(i.daysAway, i.tourDate)}`,
         `${i.customerName || '—'} (${i.participants ?? '—'})`,

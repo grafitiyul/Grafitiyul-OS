@@ -108,8 +108,13 @@ router.put('/:number/config', handle(async (req, res) => {
     }
   }
 
+  // Stamp the activation floor on the OFF→ON edge only, so re-saving a
+  // destination on an already-active report does not move it.
+  const prev = await prisma.adminReportConfig.findUnique({ where: { reportNumber: number }, select: { enabled: true, activatedAt: true } });
+  const turningOn = b.enabled === true && !prev?.enabled;
   const data = {
     ...(b.enabled !== undefined ? { enabled: !!b.enabled } : {}),
+    ...(turningOn ? { activatedAt: new Date() } : {}),
     ...(waAccountId !== undefined ? { waAccountId } : {}),
     ...(waChatId !== undefined ? { waChatId } : {}),
     updatedById: req.adminAuth?.userId || null,
@@ -117,7 +122,7 @@ router.put('/:number/config', handle(async (req, res) => {
   const config = await prisma.adminReportConfig.upsert({
     where: { reportNumber: number },
     update: data,
-    create: { reportNumber: number, enabled: b.enabled !== false, waAccountId: waAccountId ?? null, waChatId: waChatId ?? null, updatedById: req.adminAuth?.userId || null },
+    create: { reportNumber: number, enabled: b.enabled !== false, activatedAt: b.enabled !== false ? new Date() : null, waAccountId: waAccountId ?? null, waChatId: waChatId ?? null, updatedById: req.adminAuth?.userId || null },
   });
   res.json({ ...config, destinationName: await destinationLabel(config) });
 }));

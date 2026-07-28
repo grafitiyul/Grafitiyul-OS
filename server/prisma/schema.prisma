@@ -5408,6 +5408,10 @@ model AdminReportConfig {
   // The report's stable catalog number (registry.js owns the definition).
   reportNumber Int      @id
   enabled      Boolean  @default(true)
+  // When this report was last switched ON. Per-tour notifications never report
+  // an event whose due moment precedes it, so enabling a notification can never
+  // back-fire a backlog of messages about tours that already happened.
+  activatedAt  DateTime?
   // Destination: a connected WhatsApp account + a synced chat (typically the
   // internal operations group). Loose refs — a deleted chat must not delete
   // configuration history; delivery attempts report the problem instead.
