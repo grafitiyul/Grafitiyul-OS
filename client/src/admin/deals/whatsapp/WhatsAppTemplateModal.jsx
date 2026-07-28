@@ -183,10 +183,10 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
           </span>
         }
         // Fixed-height flex column: compact settings on top, composer fills the rest.
-        panelClassName="h-[88vh]"
+        panelClassName="h-[92vh]"
         contentClassName="flex min-h-0 flex-1 flex-col overflow-hidden"
       >
-        <div dir="rtl" className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+        <div dir="rtl" className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3">
           {loadError ? (
             <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
               טעינה נכשלה: <span dir="ltr" className="font-mono">{loadError}</span>
@@ -196,11 +196,11 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
           ) : (
             <>
               {/* 1 — template + 2 — language. Compact, never grows. */}
-              <div className="grid shrink-0 gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+              {/* Every pixel spent here is a pixel the editor doesn't get: the
+                  controls are self-describing (placeholder + the שפה chip), so
+                  they carry no separate field labels. */}
+              <div className="grid shrink-0 gap-2.5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
                 <div>
-                  <label className="mb-1.5 block text-[12.5px] font-semibold text-gray-700">
-                    בחירת נוסח
-                  </label>
                   {/* ONE searchable field — the shared GOS combobox (portal list,
                       type-to-filter, arrow/Enter/Escape, RTL). wrapLabel keeps a
                       long template name fully readable instead of truncating. */}
@@ -218,8 +218,8 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                   )}
                 </div>
 
-                <div>
-                  <span className="mb-1.5 block text-[12.5px] font-semibold text-gray-700">שפה</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[12.5px] font-semibold text-gray-600">שפה</span>
                   <div className="inline-flex rounded-xl border border-gray-300 bg-white p-0.5">
                     {LANGS.map((l) => {
                       const available = !selected || langAvailable(l.key);
@@ -233,7 +233,7 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                           onClick={() => choose(templateId, l.key)}
                           // Amber, not green — green belongs to the send action
                           // and to delivery/success states in this modal.
-                          className={`rounded-lg px-4 py-2 text-[13px] font-medium transition ${
+                          className={`rounded-lg px-4 py-1.5 text-[13px] font-medium transition ${
                             active
                               ? 'bg-amber-500 text-white shadow-sm'
                               : available
