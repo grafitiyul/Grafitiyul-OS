@@ -41,7 +41,14 @@ const LEGACY_FIRST_NAME = /\[\s*(?:שם פרטי|first name|First Name)\s*\]/g;
 // would silently miscount when reused across rows.
 const HAS_LEGACY_FIRST_NAME = new RegExp(LEGACY_FIRST_NAME.source);
 
-const prisma = new PrismaClient();
+// Run from an operator workstation via `railway run`: DATABASE_URL points at the
+// Railway-internal host, which only resolves inside the platform. Prefer the
+// public URL when one is present so the same script works from either side.
+const prisma = new PrismaClient(
+  process.env.DATABASE_PUBLIC_URL
+    ? { datasources: { db: { url: process.env.DATABASE_PUBLIC_URL } } }
+    : undefined,
+);
 
 async function fetchRecords() {
   const token = String(process.env.AIRTABLE_PERSONAL_ACCESS_TOKEN || '').trim();
