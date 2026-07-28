@@ -8,7 +8,9 @@
 import { prisma } from '../db.js';
 import { israelToday, addDays } from '../lib/israelDate.js';
 import { REQUIRED_SUMMARY_ROLES } from '../tours/completion.js';
-import { coordinationDeadlineMs, coordinationStatus, tourStartMs, DONE_STATUSES } from './coordination.js';
+import {
+  coordinationDeadlineMs, coordinationStatus, tourStartMs, DONE_STATUSES, COORDINATION_MONITOR_DAYS,
+} from './coordination.js';
 
 // Tours that are real, dated and not cancelled/postponed.
 const LIVE_TOUR_STATUSES = ['scheduled', 'completed'];
@@ -49,12 +51,13 @@ const contactName = (deal) => {
 };
 
 /**
- * Report #6 — coordination calls for tours in the next 3 Israel calendar days
- * (today, +1, +2). ONE item per BOOKING (the canonical coordination unit).
+ * Report #6 — coordination calls for tours in the monitor window
+ * (COORDINATION_MONITOR_DAYS Israel calendar days counting today).
+ * ONE item per BOOKING (the canonical coordination unit).
  */
-export async function collectCoordinationNext3Days(nowMs = Date.now(), client = prisma) {
+export async function collectCoordinationWindow(nowMs = Date.now(), client = prisma) {
   const from = israelToday(nowMs);
-  const to = addDays(from, 2);
+  const to = addDays(from, COORDINATION_MONITOR_DAYS - 1);
   const tours = await client.tourEvent.findMany({
     where: { status: { in: LIVE_TOUR_STATUSES }, date: { gte: from, lte: to } },
     select: TOUR_SELECT,

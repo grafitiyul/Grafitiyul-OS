@@ -1,4 +1,5 @@
 import { composeQuoteDraftPreview, toPublicModel, toPublicSignature, isLockedStatus, findNewerVersion } from './composer.js';
+import { reportQuoteSigned } from '../adminReports/quoteSignedEvent.js';
 
 // Signing a proposal — the permanent audit record + the lock. One signature per
 // QuoteDocument (enforced by the unique quoteDocumentId); a signed document is
@@ -80,6 +81,11 @@ export async function signQuoteByToken(client, token, input, meta) {
       data: { status: 'accepted', producedAt: document.producedAt ?? new Date(), renderModelSnapshot: snapshot },
     }),
   ]);
+
+  // Admin Report #9 "הצעת מחיר נחתמה" — after the commit, fire-and-forget:
+  // reporting must never affect the customer's signing result. Keyed on the
+  // document, which can hold only one signature ever.
+  reportQuoteSigned(document).catch(() => {});
 
   return { result: { signature: toPublicSignature(signature), status: 'accepted' } };
 }

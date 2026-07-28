@@ -8,7 +8,7 @@ import {
 
 test('report numbers are stable, unique and documented', () => {
   const numbers = REPORTS.map((r) => r.number);
-  assert.deepEqual(numbers, [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(numbers, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   assert.equal(new Set(numbers).size, numbers.length);
   for (const r of REPORTS) {
     assert.ok(r.nameHe?.length > 3, `#${r.number} has a Hebrew name`);
@@ -160,7 +160,7 @@ test('#4 reports the guide, the customer line and the canonical form link', () =
 
 test('#5 adds the measured lateness and keeps the same facts', () => {
   const text = renderReport(5, coordCtx({ latenessLabel: 'יום ו-5 שעות' }));
-  assert.ok(text.startsWith('⛔ איחור בשיחת תיאום ⛔\n'));
+  assert.ok(text.startsWith('⛔ שיחת תיאום בוצעה באיחור ⛔\n'));
   assert.match(text, /בוצע באיחור של: יום ו-5 שעות/);
   assert.match(text, /מדריך: יואב כהן/);
 });
@@ -187,7 +187,7 @@ test('#6 maps each status to its icon and flags a late completion', () => {
 
 // ── #7 / #8 missing summaries ────────────────────────────────────────────────
 
-test('#7 lists one line per missing guide and links to the tours screen', () => {
+test('#7 is the headline plus the list — no preamble, no management link', () => {
   const text = renderReport(7, {
     links: { origin: 'https://x' },
     aggregate: {
@@ -197,12 +197,18 @@ test('#7 lists one line per missing guide and links to the tours screen', () => 
       ],
     },
   });
-  assert.match(text, /⛔ יואב - סיור - לקוח א - 10\/09\/2026 10:00/);
-  assert.match(text, /⛔ מיכל - סדנה - לקוח ב - ארגון - 12\/09\/2026 17:00/);
-  assert.match(text, /לינק לניהול: https:\/\/x\/admin\/tours/);
+  assert.deepEqual(text.split('\n'), [
+    '📝 סיכומי סיור שטרם נשלחו 📝',
+    '',
+    '⛔ יואב - סיור - לקוח א - 10/09/2026 10:00',
+    '⛔ מיכל - סדנה - לקוח ב - ארגון - 12/09/2026 17:00',
+  ]);
+  assert.ok(!text.includes('להלן'), 'the introductory sentence is gone');
+  assert.ok(!text.includes('לינק לניהול'), 'the management link is gone');
+  assert.ok(!text.includes('https://x'), 'no link of any kind remains');
 });
 
-test('#8 is a single-guide message signed by גרפיטיול', () => {
+test('#8 is a single-guide message signed by גרפיבוט', () => {
   const text = renderReport(8, {
     contact: { firstNameHe: 'משפחת', lastNameHe: 'רוזנברג' },
     org: null,
@@ -212,7 +218,92 @@ test('#8 is a single-guide message signed by גרפיטיול', () => {
   assert.match(text, /שם המדריך: יואב כהן/);
   assert.match(text, /שם הלקוח: משפחת רוזנברג/);
   assert.match(text, /שם הסיור: סיור - תל אביב/);
-  assert.ok(text.endsWith('תודה,\nגרפיטיול'));
+  assert.ok(text.endsWith('תודה,\nגרפיבוט'));
+});
+
+// ── #9 quote signed ──────────────────────────────────────────────────────────
+
+test('#9 lists customer and organization separately and ends with the deal link', () => {
+  const text = renderReport(9, {
+    contact: { firstNameHe: 'דנה', lastNameHe: 'לוי' },
+    org: { name: 'עיריית תל אביב' },
+    deal: { orderNo: 27242, valueMinor: 900000 }, // deal headline — must NOT leak
+    links: { origin: 'https://x' },
+    signedQuote: { tourDate: '2026-10-04', tourTime: '10:00', productName: 'סיור גרפיטי - חיפה', totalMinor: 372000 },
+  });
+  assert.ok(text.startsWith('✍️ הצעת מחיר נחתמה ✍️\n'));
+  assert.match(text, /לקוח: דנה לוי/);
+  assert.match(text, /ארגון: עיריית תל אביב/);
+  assert.ok(!text.includes('דנה לוי - עיריית'), 'customer and organization are separate lines');
+  assert.match(text, /תאריך הסיור: 04\/10\/2026 10:00/);
+  assert.match(text, /מוצר: סיור גרפיטי - חיפה/);
+  assert.match(text, /סכום: ₪3,720/);
+  assert.ok(!text.includes('9,000'), 'the deal total must not leak into a parallel offer');
+  assert.ok(text.endsWith('לאישור:\nhttps://x/admin/crm/deals/27242'));
+});
+
+test('#9 with no organization shows an honest dash, never an empty label', () => {
+  const text = renderReport(9, {
+    contact: { firstNameHe: 'רון', lastNameHe: 'ברק' },
+    org: null, deal: { orderNo: 1 }, links: { origin: 'https://x' },
+    signedQuote: { tourDate: null, productName: null, totalMinor: null },
+  });
+  assert.match(text, /ארגון: —/);
+  assert.match(text, /תאריך הסיור: —/);
+  assert.match(text, /סכום: —/);
+});
+
+// ── #10 agent order ──────────────────────────────────────────────────────────
+
+const agentCtx = (groups, totalMinor = null) => ({
+  contact: { firstNameHe: 'דנה', lastNameHe: 'לוי' },
+  org: { name: 'סוכנות הנסיעות' },
+  links: { origin: 'https://x' },
+  agentOrder: { orderNo: 1042, groups, totalMinor },
+});
+
+test('#10 with one group uses the full house layout', () => {
+  const text = renderReport(10, agentCtx([{
+    groupName: 'כיתה ז1', tourDate: '2026-10-04', tourTime: '10:00',
+    productName: 'סיור וסדנת גרפיטי - תל אביב', participants: 24,
+    totalMinor: 372000, dealOrderNo: 27242,
+  }]));
+  assert.deepEqual(text.split('\n'), [
+    '📥 הזמנה חדשה מסוכן 📥',
+    '',
+    'סוכן: דנה לוי',
+    'ארגון: סוכנות הנסיעות',
+    'מספר הזמנה: 1042',
+    'תאריך הפעילות: 04/10/2026 10:00',
+    'מוצר: סיור וסדנת גרפיטי - תל אביב',
+    'כמות משתתפים: 24',
+    'סכום ההזמנה: ₪3,720',
+    '',
+    'דיל: https://x/admin/crm/deals/27242',
+  ]);
+});
+
+test('#10 with several groups lists one line each plus the order total', () => {
+  const text = renderReport(10, agentCtx([
+    { groupName: 'כיתה ז1', tourDate: '2026-10-04', tourTime: '10:00', productName: 'סיור גרפיטי', participants: 24, totalMinor: 372000, dealOrderNo: 27242 },
+    { groupName: 'כיתה ז2', tourDate: '2026-10-05', tourTime: '10:00', productName: 'סיור גרפיטי', participants: 22, totalMinor: 341000, dealOrderNo: 27243 },
+  ], 713000));
+  assert.match(text, /• כיתה ז1 - 04\/10\/2026 10:00 - סיור גרפיטי - 24 משתתפים - ₪3,720/);
+  assert.match(text, /• כיתה ז2 - 05\/10\/2026 10:00 - סיור גרפיטי - 22 משתתפים - ₪3,410/);
+  assert.match(text, /סה"כ: ₪7,130/);
+  // Every booked group is reachable — no order is left without its deal link.
+  assert.match(text, /דילים:\nhttps:\/\/x\/admin\/crm\/deals\/27242\nhttps:\/\/x\/admin\/crm\/deals\/27243$/);
+});
+
+test('#10 never invents an agency or a total it does not have', () => {
+  const text = renderReport(10, {
+    contact: { firstNameHe: 'רון', lastNameHe: 'ברק' }, org: null,
+    links: { origin: 'https://x' },
+    agentOrder: { orderNo: 7, totalMinor: null, groups: [{ groupName: null, tourDate: null, productName: null, participants: null, totalMinor: null, dealOrderNo: null }] },
+  });
+  assert.match(text, /ארגון: —/);
+  assert.match(text, /סכום ההזמנה: —/);
+  assert.match(text, /דיל: —/);
 });
 
 // ── schedules ────────────────────────────────────────────────────────────────

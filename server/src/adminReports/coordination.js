@@ -17,6 +17,13 @@ import { israelLocalToMs } from '../communication/windows.js';
 /** Days before the tour by which the coordination call must be completed. */
 export const COORDINATION_LEAD_DAYS = 2;
 
+/**
+ * How many Israel calendar days forward the daily coordination monitor covers,
+ * counting today. 5 ⇒ today .. today+4. This is the ONE definition — the
+ * collector's query window and the report's wording both derive from it.
+ */
+export const COORDINATION_MONITOR_DAYS = 5;
+
 /** Statuses that count as a real, completed coordination call. */
 export const DONE_STATUSES = ['submitted', 'reviewed'];
 

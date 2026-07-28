@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  collectCoordinationNext3Days, collectMissingSummaries, last7DayRange, yesterdayRange,
+  collectCoordinationWindow, collectMissingSummaries, last7DayRange, yesterdayRange,
 } from './collectors.js';
 import { dailyKey, slotPassed } from './daily.js';
+import { COORDINATION_MONITOR_DAYS } from './coordination.js';
+import { reportByNumber, renderReport } from './registry.js';
 import { israelLocalToMs } from '../communication/windows.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -45,18 +47,27 @@ const assignment = (personId, name, role = 'guide') => ({
 
 // ── #6 coordination monitor ──────────────────────────────────────────────────
 
-test('#6 queries exactly the 3-day Israel window and excludes cancelled tours', async () => {
+test('#6 queries exactly the monitor window (today + N-1) and excludes cancelled tours', async () => {
   const c = fakeClient();
-  await collectCoordinationNext3Days(NOW, c);
-  assert.deepEqual(c.calls.tourWhere.date, { gte: '2026-09-20', lte: '2026-09-22' });
+  await collectCoordinationWindow(NOW, c);
+  assert.equal(COORDINATION_MONITOR_DAYS, 5);
+  // today .. today+4 inclusive — the window is derived from the constant, so
+  // changing the business rule moves the query with it.
+  assert.deepEqual(c.calls.tourWhere.date, { gte: '2026-09-20', lte: '2026-09-24' });
   assert.deepEqual(c.calls.tourWhere.status, { in: ['scheduled', 'completed'] });
+});
+
+test('#6 wording states the same window the query uses', () => {
+  const r = reportByNumber(6);
+  assert.ok(r.nameHe.includes(`ל-${COORDINATION_MONITOR_DAYS} הימים הקרובים`));
+  assert.ok(renderReport(6, { aggregate: { items: [] } }).includes(`ל-${COORDINATION_MONITOR_DAYS} הימים הקרובים`));
 });
 
 test('#6 produces ONE item per booking — a 2-booking tour yields 2 rows', async () => {
   const c = fakeClient({
     tours: [tour({ bookings: [booking('b1'), booking('b2')] })],
   });
-  const items = await collectCoordinationNext3Days(NOW, c);
+  const items = await collectCoordinationWindow(NOW, c);
   assert.equal(items.length, 2);
   assert.deepEqual(items.map((i) => i.key), ['booking:b1', 'booking:b2']);
 });
@@ -72,7 +83,7 @@ test('#6 classifies overdue / open / done and sorts ⛔ → ⌛ → ✅', async 
     ],
     submissions: [{ subjectId: 'bDone', submittedAt: new Date(NOW - DAY), submittedByName: 'מדריך · נועה בר' }],
   });
-  const items = await collectCoordinationNext3Days(NOW, c);
+  const items = await collectCoordinationWindow(NOW, c);
   assert.deepEqual(items.map((i) => i.status), ['overdue', 'open', 'done']);
   // The completed one reports WHO submitted, with the portal prefix stripped.
   assert.equal(items[2].guideName, 'נועה בר');
@@ -84,14 +95,14 @@ test('#6 shows the assigned guides while the call is still pending', async () =>
   const c = fakeClient({
     tours: [tour({ assignments: [assignment('p1', 'יואב'), assignment('p2', 'מיכל')], bookings: [booking('b1')] })],
   });
-  const [item] = await collectCoordinationNext3Days(NOW, c);
+  const [item] = await collectCoordinationWindow(NOW, c);
   assert.equal(item.guideName, 'יואב, מיכל');
   assert.equal(item.customerName, 'לקוח b1');
 });
 
 test('#6 only counts submitted/reviewed coordination forms — a draft is not done', async () => {
   const c = fakeClient({ tours: [tour({ bookings: [booking('b1')] })] });
-  await collectCoordinationNext3Days(NOW, c);
+  await collectCoordinationWindow(NOW, c);
   assert.equal(c.calls.subWhere.purpose, 'coordination');
   assert.equal(c.calls.subWhere.subjectType, 'booking');
   assert.deepEqual(c.calls.subWhere.status, { in: ['submitted', 'reviewed'] });

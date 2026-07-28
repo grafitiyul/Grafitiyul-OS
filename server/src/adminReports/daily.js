@@ -18,7 +18,7 @@ import { israelParts } from '../communication/windows.js';
 import { scheduledReports, reportByNumber } from './registry.js';
 import { fireAdminReport } from './dispatch.js';
 import {
-  collectCoordinationNext3Days, collectMissingSummaries, last7DayRange, yesterdayRange,
+  collectCoordinationWindow, collectMissingSummaries, last7DayRange, yesterdayRange,
 } from './collectors.js';
 
 /** Today's Israel date-key for a scheduled report's idempotency. */
@@ -62,7 +62,7 @@ export async function runScheduledReport(number, { nowMs = Date.now(), client = 
   if (await alreadyRan(number, key, client)) return { skipped: 'already_ran' };
 
   if (number === 6) {
-    const items = await collectCoordinationNext3Days(nowMs, client);
+    const items = await collectCoordinationWindow(nowMs, client);
     if (!items.length) {
       await recordEmpty(number, key, report.emptyHe, client);
       return { ran: true, items: 0, sent: false };

@@ -21,6 +21,7 @@ import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
 import { createDealFromReservationGroup } from './createDeal.js';
 import { ensureReservationDocument } from './document.js';
 import { fireCommunicationTrigger } from '../communication/engine.js';
+import { reportAgentOrder } from '../adminReports/agentOrderEvent.js';
 import { writeReservationBuilder } from './reservationBuilder.js';
 
 // The group's FROZEN pricing model (payloadSnapshot.pricingByGroup), keyed by
@@ -227,6 +228,11 @@ export async function processReservationSession(sessionId, db = prisma) {
     // engine's triggerKey idempotency also guards replays).
     if (!wasProcessedBefore) {
       fireCommunicationTrigger({ type: 'reservation_submitted', sessionId });
+      // Admin Report #10 "הזמנה חדשה מסוכן" — the internal office alert, from
+      // the SAME first-processing guard so the two can never disagree about
+      // what "a new order arrived" means. Keyed on the session, so a reprocess
+      // never reports twice. Fire-and-forget: reporting never affects intake.
+      reportAgentOrder(sessionId).catch(() => {});
     }
   }
 

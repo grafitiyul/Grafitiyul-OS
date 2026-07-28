@@ -19,6 +19,7 @@
 import { formatDateHe, formatMoney, ACTIVITY_TYPE_LABELS } from '../communication/format.js';
 import { contactFullName } from '../communication/context.js';
 import { adminDisplayName } from '../admin/displayName.js';
+import { COORDINATION_MONITOR_DAYS } from './coordination.js';
 
 // ── shared line helpers (layout only — never business logic) ─────────────────
 
@@ -220,7 +221,7 @@ REPORTS.push(
     render: (ctx) => {
       const c = ctx.coordinationReport || {};
       return lines([
-        '⛔ איחור בשיחת תיאום ⛔',
+        '⛔ שיחת תיאום בוצעה באיחור ⛔',
         '',
         `מדריך: ${c.guideName || '—'}`,
         `לקוח: ${customerLine(ctx)}`,
@@ -249,10 +250,11 @@ REPORTS.push(
   {
     number: 6,
     key: 'coordination_daily',
-    nameHe: 'מעקב שיחות תיאום ל-3 הימים הקרובים',
+    nameHe: `מעקב שיחות תיאום ל-${COORDINATION_MONITOR_DAYS} הימים הקרובים`,
     schedule: { hour: 15, minute: 0 },
     triggerHe:
-      'דיווח יומי ב-15:00 (שעון ישראל): כל שיחות התיאום לסיורים ב-3 ימי הלוח הקרובים (היום ועד יומיים קדימה), שורה אחת לכל שיחה. סיורים מבוטלים אינם נכללים.',
+      `דיווח יומי ב-15:00 (שעון ישראל): כל שיחות התיאום לסיורים ב-${COORDINATION_MONITOR_DAYS} ימי הלוח הקרובים `
+      + `(היום ועוד ${COORDINATION_MONITOR_DAYS - 1} ימים קדימה), שורה אחת לכל שיחה. סיורים מבוטלים אינם נכללים.`,
     dataHe:
       '✅ בוצע · ⛔ עבר המועד ולא הוגש · ⌛ טרם הוגש והמועד לא עבר. מיון: קודם ⛔, אחר כך ⌛, ואז ✅ — ובכל קבוצה הסיור הקרוב ביותר ראשון.',
     aggregate: true,
@@ -261,7 +263,7 @@ REPORTS.push(
       const items = ctx.aggregate?.items || [];
       const icon = { overdue: '⛔', open: '⌛', done: '✅' };
       return lines([
-        '📞 שיחות תיאום ל-3 הימים הקרובים 📞',
+        `📞 שיחות תיאום ל-${COORDINATION_MONITOR_DAYS} הימים הקרובים 📞`,
         '',
         ...items.map((i) => {
           const late = i.status === 'done' && i.wasLate ? ' (באיחור)' : '';
@@ -296,16 +298,11 @@ REPORTS.push(
       return lines([
         '📝 סיכומי סיור שטרם נשלחו 📝',
         '',
-        'להלן המדריכים שטרם מילאו סיכום סיור במהלך 7 הימים האחרונים:',
-        '',
         ...items.map((i) =>
           `⛔ ${i.guideName || '—'} - ${i.productName || '—'} - ${partyLabel(i)} - ${formatDateHe(i.tourDate) || '—'} ${i.tourTime || ''}`.trim()),
-        '',
-        `לינק לניהול: ${ctx.links?.origin ? `${ctx.links.origin}/admin/tours` : '—'}`,
       ]);
     },
     sample: () => ({
-      links: { origin: 'https://app.grafitiyul.co.il' },
       aggregate: {
         items: [
           { guideName: 'יואב כהן', productName: 'סיור גרפיטי', customerName: 'משפחת רוזנברג', orgName: null, tourDate: '2026-09-10', tourTime: '10:00' },
@@ -336,7 +333,7 @@ REPORTS.push(
         `מועד הסיור: ${formatDateHe(s.tourDate) || '—'} ${s.tourTime || ''}`.trim(),
         '',
         'תודה,',
-        'גרפיטיול',
+        'גרפיבוט',
       ]);
     },
     sample: () => ({
@@ -345,6 +342,110 @@ REPORTS.push(
       summaryReport: {
         guideName: 'יואב כהן', productName: 'סיור וסדנת גרפיטי', cityName: 'תל אביב',
         tourDate: '2026-09-16', tourTime: '10:00',
+      },
+    }),
+  },
+
+  {
+    number: 9,
+    key: 'quote_signed',
+    nameHe: 'הצעת מחיר נחתמה',
+    triggerHe:
+      'הלקוח חתם על הצעת מחיר בעמוד ההצעה. נורה פעם אחת לכל הצעה חתומה — מסמך הצעה נחתם פעם אחת בלבד ולעולם לא נחתם שוב.',
+    dataHe:
+      'הנתונים מגיעים מההצעה שנחתמה: הצעה מקבילה נושאת הקשר וסכום משלה, והצעה ראשית לוקחת אותם מהעסקה (זו הגדרת המערכת). הערכים מוקפאים ברגע החתימה.',
+    render: (ctx) => {
+      const q = ctx.signedQuote || {};
+      return lines([
+        '✍️ הצעת מחיר נחתמה ✍️',
+        '',
+        `לקוח: ${contactFullName(ctx.contact) || '—'}`,
+        `ארגון: ${ctx.org?.name || '—'}`,
+        `תאריך הסיור: ${formatDateHe(q.tourDate) || '—'} ${q.tourTime || ''}`.trim(),
+        `מוצר: ${q.productName || '—'}`,
+        `סכום: ${formatMoney(q.totalMinor, 'ILS') || '—'}`,
+        '',
+        'לאישור:',
+        dealLink(ctx),
+      ]);
+    },
+    sample: () => ({
+      contact: { firstNameHe: 'דנה', lastNameHe: 'לוי' },
+      org: { name: 'עיריית תל אביב' },
+      deal: { orderNo: 27242 },
+      links: { origin: 'https://app.grafitiyul.co.il' },
+      signedQuote: {
+        tourDate: '2026-10-04', tourTime: '10:00',
+        productName: 'סיור וסדנת גרפיטי', totalMinor: 372000,
+      },
+    }),
+  },
+
+  {
+    number: 10,
+    key: 'agent_order_received',
+    nameHe: 'הזמנה חדשה מסוכן',
+    triggerHe:
+      'טופס הזמנת סוכן עובד בהצלחה והדילים נוצרו. נורה פעם אחת לכל הזמנה — עיבוד חוזר של אותה הזמנה לא מדווח שוב.',
+    dataHe:
+      'שורה אחת לכל קבוצה בהזמנה: הזמנה עם קבוצה אחת מוצגת בפריסה מלאה, הזמנה מרובת קבוצות מוצגת כרשימה עם סכום כולל. הנתונים מגיעים מהדילים שנוצרו בפועל.',
+    render: (ctx) => {
+      const a = ctx.agentOrder || {};
+      const groups = a.groups || [];
+      const head = [
+        '📥 הזמנה חדשה מסוכן 📥',
+        '',
+        `סוכן: ${contactFullName(ctx.contact) || '—'}`,
+        `ארגון: ${ctx.org?.name || '—'}`,
+        `מספר הזמנה: ${a.orderNo ?? '—'}`,
+      ];
+      const link = (g) =>
+        (ctx.links?.origin && g.dealOrderNo != null
+          ? `${ctx.links.origin}/admin/crm/deals/${g.dealOrderNo}`
+          : '—');
+
+      // One group → the full house layout. Several → a line per group plus the
+      // order total, so a multi-class booking stays readable.
+      if (groups.length === 1) {
+        const g = groups[0];
+        return lines([
+          ...head,
+          `תאריך הפעילות: ${formatDateHe(g.tourDate) || '—'} ${g.tourTime || ''}`.trim(),
+          `מוצר: ${g.productName || '—'}`,
+          `כמות משתתפים: ${g.participants ?? '—'}`,
+          `סכום ההזמנה: ${formatMoney(g.totalMinor, 'ILS') || '—'}`,
+          '',
+          `דיל: ${link(g)}`,
+        ]);
+      }
+      return lines([
+        ...head,
+        '',
+        ...groups.map((g) => `• ${[
+          g.groupName || '—',
+          `${formatDateHe(g.tourDate) || '—'} ${g.tourTime || ''}`.trim(),
+          g.productName || '—',
+          `${g.participants ?? '—'} משתתפים`,
+          formatMoney(g.totalMinor, 'ILS') || '—',
+        ].join(' - ')}`),
+        '',
+        `סה"כ: ${formatMoney(a.totalMinor, 'ILS') || '—'}`,
+        'דילים:',
+        ...groups.map((g) => link(g)),
+      ]);
+    },
+    sample: () => ({
+      contact: { firstNameHe: 'דנה', lastNameHe: 'לוי' },
+      org: { name: 'סוכנות הנסיעות' },
+      links: { origin: 'https://app.grafitiyul.co.il' },
+      agentOrder: {
+        orderNo: 1042,
+        totalMinor: 372000,
+        groups: [{
+          groupName: 'כיתה ז1', tourDate: '2026-10-04', tourTime: '10:00',
+          productName: 'סיור וסדנת גרפיטי - תל אביב', participants: 24,
+          totalMinor: 372000, dealOrderNo: 27242,
+        }],
       },
     }),
   },
