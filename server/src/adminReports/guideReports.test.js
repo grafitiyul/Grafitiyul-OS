@@ -209,3 +209,14 @@ test('#11 says so out loud when there are no upcoming coordination calls', () =>
   // …and never opens with a blank gap before the separator.
   assert.ok(!text.includes('\n\n\n'));
 });
+
+test('#12 for an open tour with no registrations says so, never a blank gap', () => {
+  const text = renderReport(12, {
+    guideNotice: {
+      openTour: true, productName: 'סיור גרפיטי', tourDate: '2026-07-30', tourTime: '18:00',
+      participants: { total: 0, customers: [] }, portalUrl: 'https://x',
+    },
+  });
+  assert.match(text, /👥 משתתפים:\n• עדיין אין נרשמים/);
+  assert.ok(!text.includes('\n\n\n'));
+});

@@ -147,7 +147,12 @@ export const GUIDE_REPORTS = [
           `🎨 ${f.productName || '—'}`,
           '',
           '👥 משתתפים:',
-          ...(p.customers || []).map((c) => `• ${c.label} (${c.count})`),
+          // An open slot with no registrations yet must say so rather than
+          // leave a blank gap. The guide still gets the tour; #13 tells them
+          // when someone joins.
+          ...((p.customers || []).length
+            ? p.customers.map((c) => `• ${c.label} (${c.count})`)
+            : ['• עדיין אין נרשמים']),
           '',
           'לפתיחת הסיור:',
           '',
