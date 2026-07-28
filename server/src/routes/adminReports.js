@@ -12,7 +12,7 @@ import { handle } from '../asyncHandler.js';
 import { parseListQuery } from './listPagination.js';
 import { callBridge } from '../whatsapp/bridgeClient.js';
 import { loadTriggerContext } from '../communication/context.js';
-import { REPORTS, reportByNumber, renderReport, renderReportSample } from '../adminReports/registry.js';
+import { REPORTS, reportByNumber, renderReport, renderReportSample, reportGroup } from '../adminReports/registry.js';
 import { destinationLabel } from '../adminReports/dispatch.js';
 
 const router = Router();
@@ -20,7 +20,11 @@ const str = (v) => (v == null ? null : String(v).trim() || null);
 
 // ── catalog ──────────────────────────────────────────────────────────────────
 
-router.get('/', handle(async (_req, res) => {
+router.get('/', handle(async (req, res) => {
+  // `group` scopes the catalog to one surface: 'office' = the Manager Reports
+  // screen, 'coordination' = Tour Settings → שיחת תיאום → התראות. One catalog,
+  // one renderer, two windows onto it.
+  const group = str(req.query.group);
   const [configs, chats] = await Promise.all([
     prisma.adminReportConfig.findMany(),
     prisma.whatsAppChat.findMany({
@@ -47,19 +51,24 @@ router.get('/', handle(async (_req, res) => {
   const sentBy = new Map(lastSent.map((d) => [d.reportNumber, d]));
   const failedBy = new Map(lastFailed.map((d) => [d.reportNumber, d]));
 
+  const catalog = group ? REPORTS.filter((r) => reportGroup(r) === group) : REPORTS;
   res.json({
     codeManaged: true,
-    reports: REPORTS.map((r) => {
+    reports: catalog.map((r) => {
       const config = configByNumber.get(r.number) || null;
       const chat = config?.waChatId ? chatById.get(config.waChatId) : null;
       return {
         number: r.number,
         key: r.key,
         nameHe: r.nameHe,
+        group: reportGroup(r),
+        // 'guides' → the destination is each guide's own WhatsApp; the UI hides
+        // the group picker and shows the sending account only.
+        audience: r.audience || 'config',
         triggerHe: r.triggerHe,
         dataHe: r.dataHe,
         enabled: config ? config.enabled : false,
-        configured: !!(config?.waAccountId && config?.waChatId),
+        configured: r.audience === 'guides' ? !!config?.waAccountId : !!(config?.waAccountId && config?.waChatId),
         waAccountId: config?.waAccountId || null,
         waChatId: config?.waChatId || null,
         destinationName: chat?.groupSubject || null,

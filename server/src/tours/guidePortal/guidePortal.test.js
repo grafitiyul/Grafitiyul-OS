@@ -401,14 +401,13 @@ test('tour card DTO carries the derived guideColor key only', () => {
   assert.equal('assignments' in dto, false);
 });
 
-test('tourEndMs — end = start + variant duration (fallback 3h)', () => {
-  const end = tourEndMs(TOUR);
-  assert.equal(end, Date.parse('2026-07-20T10:00:00') + 2 * 3600 * 1000);
-  const noDuration = { ...TOUR, productVariant: null };
-  assert.equal(
-    tourEndMs(noDuration),
-    Date.parse('2026-07-20T10:00:00') + 3 * 3600 * 1000,
-  );
+test('tourEndMs — the canonical end: start + duration, in ISRAEL time', () => {
+  // The wall clock is Israel-local, never the server's zone. 2026-07-20 is
+  // summer time (UTC+3), so 10:00 local is 07:00Z.
+  const startZ = Date.parse('2026-07-20T07:00:00Z');
+  assert.equal(tourEndMs(TOUR), startZ + 2 * 3600 * 1000);
+  // No configured duration anywhere → the platform default (2h).
+  assert.equal(tourEndMs({ ...TOUR, productVariant: null }), startZ + 2 * 3600 * 1000);
   assert.ok(Number.isNaN(tourEndMs({ date: null, startTime: null })));
 });
 

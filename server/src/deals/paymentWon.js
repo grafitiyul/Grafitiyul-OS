@@ -3,6 +3,29 @@ import { findHeldRegistrationForDeal } from '../tours/registrationLifecycle.js';
 import { REG_EXPIRED } from '../tours/registrationStatus.js';
 import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
 import { fireCommunicationTrigger } from '../communication/engine.js';
+import { reportOpenTourParticipant } from '../adminReports/openTourParticipantEvent.js';
+
+/** Resolve the deal's registration on this tour and report the join (#13). */
+async function notifyOpenTourJoin(client, dealId, tourEventId) {
+  const reg = await client.ticketRegistration.findFirst({
+    where: { dealId, tourEventId, status: { in: ['active', 'confirmed'] } },
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true, quantity: true, customerName: true,
+      deal: { select: { organization: { select: { name: true } }, contacts: { orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }], take: 1, select: { contact: { select: { firstNameHe: true, lastNameHe: true } } } } } },
+    },
+  });
+  if (!reg) return;
+  const c = reg.deal?.contacts?.[0]?.contact;
+  const name = reg.deal?.organization?.name
+    || `${c?.firstNameHe || ''} ${c?.lastNameHe || ''}`.trim()
+    || reg.customerName
+    || null;
+  await reportOpenTourParticipant(
+    { tourEventId, registrationId: reg.id, customerName: name, count: reg.quantity },
+    { client },
+  );
+}
 
 // THE one canonical WON transition every completion mode funnels through —
 // verified payment (pay-now / late payment) AND register-without-payment. No WON
@@ -84,6 +107,11 @@ export async function settleDealWon(
     // Tour-anchored ("מועד הסיור") reminder deliveries materialize with the
     // now-attached tour; the worker re-anchors on later date moves.
     fireCommunicationTrigger({ type: 'tour_datetime', dealId });
+    // Admin Report #13 — a new participant on an OPEN tour. Post-commit and
+    // fire-and-forget; the report itself checks that the tour really is an open
+    // tour and that the guide already received the coordination notice, so
+    // every WON path can call it unconditionally.
+    if (result.tourEventId) notifyOpenTourJoin(client, dealId, result.tourEventId).catch(() => {});
   }
   return result;
 }

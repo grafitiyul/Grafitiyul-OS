@@ -8,6 +8,7 @@
 import { prisma } from '../db.js';
 import { loadTriggerContext } from '../communication/context.js';
 import { callBridge } from '../whatsapp/bridgeClient.js';
+import { phoneToJid } from '../whatsapp/send.js';
 import { reportByNumber, renderReport } from './registry.js';
 
 /** Resolve destination + enabled state for a report (null when unconfigured). */
@@ -38,18 +39,24 @@ export async function destinationLabel(config) {
  * operations.
  */
 export async function fireAdminReport(
-  { number, idempotencyKey, dealId = null, sessionId = null, tourEventId = null, data = null },
+  { number, idempotencyKey, dealId = null, sessionId = null, tourEventId = null, data = null, recipient = null },
   log = console,
 ) {
   try {
     const report = reportByNumber(number);
     if (!report) return { ok: false, reason: 'unknown_report' };
+    // A guide-audience report addresses ONE PERSON; the caller resolves who
+    // (the canonical guide resolver) and passes them in. The configured group
+    // chat is irrelevant for these — only the sending account is.
+    const toPerson = report.audience === 'guides';
+    if (toPerson && !recipient) return { ok: false, reason: 'recipient_required' };
 
     const config = await reportConfig(number);
 
     // Build the canonical context, then layer the frozen trigger payload.
     const ctx = await loadTriggerContext({ dealId, sessionId, tourEventId });
     Object.assign(ctx, data || {});
+    if (recipient) ctx.recipient = recipient;
     const renderedText = renderReport(number, ctx);
 
     const base = {
@@ -58,11 +65,15 @@ export async function fireAdminReport(
       dealId,
       payload: data ?? undefined,
       renderedText,
+      recipientPersonRefId: recipient?.personRefId || null,
+      recipientPhone: recipient?.phone || null,
+      recipientName: recipient?.name || null,
     };
 
     // Not configured / disabled → an auditable skipped row (the operator can
     // see the report WOULD have fired and what it would have said).
-    if (!config || !config.enabled || !config.waAccountId || !config.waChatId) {
+    const destinationMissing = toPerson ? !config?.waAccountId : !(config?.waAccountId && config?.waChatId);
+    if (!config || !config.enabled || destinationMissing) {
       await createDelivery({
         ...base,
         status: 'skipped',
@@ -70,17 +81,27 @@ export async function fireAdminReport(
           ? 'הדיווח לא הוגדר עדיין (לא נבחר יעד)'
           : !config.enabled
             ? 'הדיווח מושבת'
-            : 'לא הוגדר יעד WhatsApp מלא',
+            : toPerson ? 'לא נבחר חשבון שולח' : 'לא הוגדר יעד WhatsApp מלא',
       }, log);
       return { ok: false, reason: 'not_configured' };
+    }
+
+    // A guide with no phone (or a revoked portal) is an honest skip, not a
+    // silent drop — operations can see exactly who was unreachable.
+    if (toPerson && !recipient.phone) {
+      await createDelivery({
+        ...base, status: 'skipped', waAccountId: config.waAccountId,
+        skipReason: `אין מספר טלפון ל${recipient.name || 'מדריך'}`,
+      }, log);
+      return { ok: false, reason: 'recipient_unreachable' };
     }
 
     const row = await createDelivery({
       ...base,
       status: 'pending',
       waAccountId: config.waAccountId,
-      waChatId: config.waChatId,
-      destinationLabel: await destinationLabel(config),
+      waChatId: toPerson ? null : config.waChatId,
+      destinationLabel: toPerson ? (recipient.name || recipient.phone) : await destinationLabel(config),
     }, log);
     if (!row) return { ok: true, reason: 'duplicate' }; // idempotency hit
 
@@ -107,6 +128,20 @@ async function createDelivery(data, log) {
  * the FROZEN renderedText — a retry re-sends exactly what was reported.
  */
 export async function sendDelivery(row, log = console) {
+  // Per-person delivery (guide-audience report): the destination is the frozen
+  // phone, normalised by the canonical phoneToJid. No chat row is involved.
+  if (!row.waChatId && row.recipientPhone) {
+    const jid = phoneToJid(row.recipientPhone);
+    if (!jid) {
+      await prisma.adminReportDelivery.update({
+        where: { id: row.id },
+        data: { status: 'failed_final', lastError: 'מספר הטלפון של הנמען אינו תקין' },
+      });
+      return { ok: false };
+    }
+    return deliverText(row, jid, log);
+  }
+
   const chat = await prisma.whatsAppChat.findUnique({
     where: { id: row.waChatId },
     select: { externalChatId: true, accountId: true },
@@ -126,12 +161,17 @@ export async function sendDelivery(row, log = console) {
     return { ok: false };
   }
 
+  return deliverText(row, chat.externalChatId, log);
+}
+
+/** Send the FROZEN text to a resolved JID and record the outcome. */
+async function deliverText(row, jid, log = console) {
   try {
     const data = await callBridge(row.waAccountId, '/send', {
       method: 'POST',
       timeoutMs: 25_000,
       body: {
-        jid: chat.externalChatId,
+        jid,
         text: row.renderedText || '',
         // Attempt-stable key: a recovered retry replays at the bridge instead
         // of delivering a second message.

@@ -8,7 +8,7 @@ import {
 
 test('report numbers are stable, unique and documented', () => {
   const numbers = REPORTS.map((r) => r.number);
-  assert.deepEqual(numbers, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.deepEqual(numbers, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
   assert.equal(new Set(numbers).size, numbers.length);
   for (const r of REPORTS) {
     assert.ok(r.nameHe?.length > 3, `#${r.number} has a Hebrew name`);
@@ -309,12 +309,13 @@ test('#10 never invents an agency or a total it does not have', () => {
 
 // ── schedules ────────────────────────────────────────────────────────────────
 
-test('only #6/#7/#8 are scheduled, at the owner-specified Israel-time slots', () => {
+test('the scheduled reports run at exactly the owner-specified Israel slots', () => {
   const byNumber = Object.fromEntries(scheduledReports().map((r) => [r.number, r.schedule]));
-  assert.deepEqual(Object.keys(byNumber).map(Number).sort((a, b) => a - b), [6, 7, 8]);
+  assert.deepEqual(Object.keys(byNumber).map(Number).sort((a, b) => a - b), [6, 7, 8, 11]);
   assert.deepEqual(byNumber[6], { hour: 15, minute: 0 });
   assert.deepEqual(byNumber[7], { hour: 6, minute: 0 });
   assert.deepEqual(byNumber[8], { hour: 6, minute: 0 });
+  assert.deepEqual(byNumber[11], { hour: 8, minute: 0 }, 'the guide digest goes out at 08:00');
   // Every scheduled report must say what it sends when there is nothing to say.
   for (const r of scheduledReports()) assert.ok(reportByNumber(r.number).emptyHe?.length > 3);
 });

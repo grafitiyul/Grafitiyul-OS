@@ -8,8 +8,7 @@
 // unit-testable without a database.
 
 import { resolveStaffDisplayName } from '../../../../shared/staffAssignmentDisplay.mjs';
-
-const DEFAULT_TOUR_DURATION_HOURS = 3;
+import { tourEndMs as canonicalTourEndMs } from '../tourTime.js';
 
 // TourEvent.kind IS the Deal's activity vocabulary (same mapping the admin
 // header uses). The portal renders the Hebrew label client-side.
@@ -35,16 +34,15 @@ function resolveCustomerContacts(dealContacts) {
   return { primary, fieldRep };
 }
 
-// When does the tour END? date + startTime + variant duration (fallback 3h).
-// Used for the upcoming/past split — a tour running right now is upcoming.
+// When does the tour END? Delegates to the CANONICAL tours/tourTime.js — this
+// used to be a second implementation with a 3h fallback that ignored the
+// open-tour duration override and parsed the wall time in the SERVER's zone
+// (UTC in production), skewing every end by 2–3 hours. Kept as a re-export so
+// the portal's upcoming/past split and the notifications agree by construction.
+// NaN (not null) is preserved for undated tours — the callers compare with `<`.
 export function tourEndMs(tour) {
-  const date = String(tour.date || '');
-  const time = String(tour.startTime || '00:00');
-  const startMs = Date.parse(`${date}T${time}:00`);
-  if (Number.isNaN(startMs)) return Number.NaN;
-  const hours = Number(tour.productVariant?.durationHours);
-  const duration = Number.isFinite(hours) && hours > 0 ? hours : DEFAULT_TOUR_DURATION_HOURS;
-  return startMs + duration * 60 * 60 * 1000;
+  const ms = canonicalTourEndMs(tour);
+  return ms == null ? Number.NaN : ms;
 }
 
 // The variant's full display name — product + location (a ProductVariant's

@@ -20,6 +20,7 @@ import { fireAdminReport } from './dispatch.js';
 import {
   collectCoordinationWindow, collectMissingSummaries, last7DayRange, yesterdayRange,
 } from './collectors.js';
+import { collectGuideDigests } from './guideDigest.js';
 
 /** Today's Israel date-key for a scheduled report's idempotency. */
 export function dailyKey(number, nowMs = Date.now()) {
@@ -79,6 +80,27 @@ export async function runScheduledReport(number, { nowMs = Date.now(), client = 
     }
     await fireAdminReport({ number, idempotencyKey: key, data: { aggregate: { items } } }, log);
     return { ran: true, items: items.length, sent: true };
+  }
+
+  if (number === 11) {
+    // ONE message per guide, each carrying only that guide's own tours. The
+    // per-guide key makes every guide's digest independently deduped, so a
+    // crash mid-fan-out resumes exactly where it stopped.
+    const digests = await collectGuideDigests({ nowMs, client });
+    if (!digests.length) {
+      await recordEmpty(number, key, report.emptyHe, client);
+      return { ran: true, items: 0, sent: false };
+    }
+    for (const d of digests) {
+      await fireAdminReport({
+        number,
+        idempotencyKey: `daily:11:${israelToday(nowMs)}:${d.recipient.personRefId || d.recipient.name}`,
+        recipient: d.recipient,
+        data: { guideDigest: d.guideDigest },
+      }, log);
+    }
+    await recordEmpty(number, key, `נשלחו ${digests.length} דיווחים אישיים`, client);
+    return { ran: true, items: digests.length, sent: true };
   }
 
   if (number === 8) {

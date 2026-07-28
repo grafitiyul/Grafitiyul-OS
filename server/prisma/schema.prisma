@@ -5436,6 +5436,13 @@ model AdminReportDelivery {
   renderedText     String?
   waAccountId      String?
   waChatId         String?
+  // Per-person destination (guide-audience reports). waChatId null +
+  // recipientPhone set ⇒ the delivery is a private message to that number.
+  // Loose ref + frozen phone/name: an audit row stays readable after the person
+  // is renamed, changes number, or leaves.
+  recipientPersonRefId String?
+  recipientPhone       String?
+  recipientName        String?
   destinationLabel String?
   providerMessageId String?
   attemptCount     Int       @default(0)

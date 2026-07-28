@@ -1,0 +1,184 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { renderReport, reportByNumber, reportsInGroup } from './registry.js';
+import { statusIcon, dayLabel, cityChip, hebrewWeekday } from './guideReports.js';
+import { coordinationSendMs, GUIDE_SEND_HOUR, SUMMARY_REMINDERS } from './tourSweeps.js';
+import { israelLocalToMs } from '../communication/windows.js';
+
+// ── the status/label rules the owner specified ───────────────────────────────
+
+test('status icons: ✅ done at any distance, then 🔴 / 🔵 / 🟡 by days away', () => {
+  for (const d of [0, 1, 2, 3, 4]) assert.equal(statusIcon(true, d), '✅');
+  assert.equal(statusIcon(false, 0), '🔴');
+  assert.equal(statusIcon(false, 1), '🔴');
+  assert.equal(statusIcon(false, 2), '🔵');
+  assert.equal(statusIcon(false, 3), '🔵');
+  assert.equal(statusIcon(false, 4), '🟡');
+});
+
+test('there is deliberately no green bucket', () => {
+  const icons = new Set([0, 1, 2, 3, 4].flatMap((d) => [statusIcon(true, d), statusIcon(false, d)]));
+  assert.ok(!icons.has('🟢'));
+  assert.deepEqual([...icons].sort(), ['✅', '🔴', '🔵', '🟡'].sort());
+});
+
+test('date labels: היום, מחר, then the Hebrew weekday name', () => {
+  assert.equal(dayLabel(0, '2026-08-02'), 'היום');
+  assert.equal(dayLabel(1, '2026-08-03'), 'מחר');
+  assert.equal(dayLabel(2, '2026-08-04'), 'שלישי');
+  assert.equal(dayLabel(3, '2026-08-05'), 'רביעי');
+  assert.equal(dayLabel(4, '2026-08-06'), 'חמישי');
+  assert.equal(hebrewWeekday('2026-08-01'), 'שבת');
+});
+
+test('the city shows in bold ONLY when it is not the home location', () => {
+  assert.equal(cityChip({ cityName: 'ירושלים', locationId: 'l2', homeLocationId: 'l1' }), '*ירושלים*');
+  assert.equal(cityChip({ cityName: 'תל אביב', locationId: 'l1', homeLocationId: 'l1' }), null);
+  // No home location configured → show the city rather than wrongly hide it.
+  assert.equal(cityChip({ cityName: 'חיפה', locationId: 'l2', homeLocationId: null }), '*חיפה*');
+  assert.equal(cityChip({ cityName: null }), null);
+});
+
+// ── #11 the digest ───────────────────────────────────────────────────────────
+
+test('#11 is one continuous list, one line per call, with the overdue section after a rule', () => {
+  const text = renderReport(11, {
+    recipient: { name: 'יואב כהן', firstName: 'יואב' },
+    guideDigest: {
+      coordination: [
+        { done: false, daysAway: 0, tourDate: '2026-08-02', customerName: 'משפחת כהן', participants: 4, productName: 'סיור גרפיטי' },
+        { done: false, daysAway: 1, tourDate: '2026-08-03', customerName: 'חברת ABC', participants: 18, productName: 'סיור קולינרי', cityName: 'ירושלים', locationId: 'l2', homeLocationId: 'l1' },
+        { done: true, daysAway: 4, tourDate: '2026-08-06', customerName: 'רות לוי', participants: 2, productName: 'סדנת גרפיטי' },
+      ],
+      missingSummaries: [{ tourDate: '2026-07-30', customerName: 'עיריית תל אביב', productName: 'סיור וסדנת גרפיטי' }],
+    },
+  });
+  const rows = text.split('\n');
+  assert.equal(rows[0], '☎️ סטטוס שיחות התיאום לימים הקרובים');
+  assert.equal(rows[2], '🔴 היום | משפחת כהן (4) | סיור גרפיטי');
+  assert.equal(rows[3], '🔴 מחר | חברת ABC (18) | *ירושלים* | סיור קולינרי');
+  assert.equal(rows[4], '✅ חמישי | רות לוי (2) | סדנת גרפיטי');
+  assert.ok(text.includes('────────────────'));
+  assert.ok(text.includes('📝 סיכומי סיור שטרם הושלמו'));
+  assert.ok(text.includes('30/07/2026 | עיריית תל אביב | סיור וסדנת גרפיטי'));
+  // No portal link at the bottom — explicit owner requirement.
+  assert.ok(!/https?:\/\//.test(text));
+});
+
+test('#11 omits the overdue section entirely when nothing is overdue', () => {
+  const text = renderReport(11, {
+    guideDigest: {
+      coordination: [{ done: true, daysAway: 0, tourDate: '2026-08-02', customerName: 'א', participants: 1, productName: 'ב' }],
+      missingSummaries: [],
+    },
+  });
+  assert.ok(!text.includes('────────────────'));
+  assert.ok(!text.includes('סיכומי סיור שטרם הושלמו'));
+});
+
+// ── #12 private vs open tour ─────────────────────────────────────────────────
+
+test('#12 for a private tour names the customer, org, product and headcount', () => {
+  const text = renderReport(12, {
+    recipient: { name: 'יואב כהן', firstName: 'יואב' },
+    guideNotice: {
+      openTour: false, contactName: 'דנה לוי', orgName: 'עיריית תל אביב',
+      productName: 'סיור גרפיטי', participants: 24,
+      portalUrl: 'https://x/p/T/tour/t1',
+    },
+  });
+  assert.ok(text.startsWith('☎️ זמן לשיחת תיאום!'));
+  assert.match(text, /👤 דנה לוי/);
+  assert.match(text, /🏢 עיריית תל אביב/);
+  assert.match(text, /👥 24/);
+  assert.ok(text.endsWith('לפתיחת הסיור:\n\nhttps://x/p/T/tour/t1'));
+  assert.ok(!text.includes('סיור פתוח'));
+});
+
+test('#12 for an open tour is ONE message listing every booking', () => {
+  const text = renderReport(12, {
+    guideNotice: {
+      openTour: true, productName: 'סיור גרפיטי',
+      tourDate: '2026-08-04', tourTime: '10:00',
+      participants: { total: 11, customers: [
+        { label: 'משפחת כהן', count: 2 },
+        { label: 'רות לוי', count: 1 },
+        { label: 'חברת ABC', count: 8 },
+      ] },
+      portalUrl: 'https://x/p/T/tour/t1',
+    },
+  });
+  assert.match(text, /🎫 סיור פתוח/);
+  assert.match(text, /📅 04\/08\/2026 \| 10:00/);
+  assert.match(text, /• משפחת כהן \(2\)\n• רות לוי \(1\)\n• חברת ABC \(8\)/);
+  // One message — the three customers appear together, never split.
+  assert.equal((text.match(/זמן לשיחת תיאום/g) || []).length, 1);
+});
+
+// ── #13 / #14 / #15 / #16 ────────────────────────────────────────────────────
+
+test('#13 announces the joiner and their count', () => {
+  const text = renderReport(13, {
+    guideNotice: { newCustomerName: 'משפחת כהן', newCustomerCount: 2, tourDate: '2026-08-04', tourTime: '10:00', portalUrl: 'https://x' },
+  });
+  assert.ok(text.startsWith('➕ הצטרף משתתף חדש לסיור פתוח'));
+  assert.match(text, /👤 משפחת כהן \(2\)/);
+});
+
+test('the summary ladder greets by FIRST name and names the customer', () => {
+  const ctx = {
+    recipient: { name: 'יואב כהן', firstName: 'יואב' },
+    guideNotice: { customerName: 'עיריית תל אביב', tourDate: '2026-08-04', tourTime: '10:00', portalUrl: 'https://x' },
+  };
+  const first = renderReport(14, ctx);
+  assert.ok(first.startsWith('📝 הגיע הזמן למלא סיכום סיור'));
+  assert.match(first, /היי יואב,/);
+  assert.match(first, /מקווים שהיה סיור מוצלח עם עיריית תל אביב\./);
+
+  const r1 = renderReport(15, ctx);
+  assert.ok(r1.startsWith('📝 תזכורת למילוי סיכום סיור'));
+  assert.match(r1, /יאללה, עכשיו כשזה עדיין חם 😊/);
+
+  const r2 = renderReport(16, ctx);
+  assert.ok(r2.startsWith('🔔 סיכום הסיור עדיין ממתין'));
+  assert.match(r2, /בלי הסיכום - הסיור עוד לא באמת הסתיים 🙏/);
+
+  for (const t of [first, r1, r2]) assert.ok(t.endsWith('https://x'));
+});
+
+test('a guide with no known first name is still greeted, never with "undefined"', () => {
+  const text = renderReport(14, { guideNotice: { customerName: 'א', portalUrl: 'https://x' } });
+  assert.match(text, /היי מדריך,/);
+});
+
+// ── scheduling contract ──────────────────────────────────────────────────────
+
+test('#12 is due at 08:00 two days before, walked earlier off blocked days', () => {
+  // A Monday tour → D-2 is Saturday → the send moves to Friday 08:00.
+  const r = coordinationSendMs('2026-08-03', new Map());
+  assert.equal(r.date, '2026-07-31');
+  assert.equal(r.movedDays, 1);
+  assert.equal(r.ms, israelLocalToMs('2026-07-31', GUIDE_SEND_HOUR * 60));
+});
+
+test('the summary ladder is 0h / 3h / 6h after the tour ENDS', () => {
+  assert.deepEqual(SUMMARY_REMINDERS, [
+    { number: 14, afterHours: 0 },
+    { number: 15, afterHours: 3 },
+    { number: 16, afterHours: 6 },
+  ]);
+});
+
+// ── catalog wiring ───────────────────────────────────────────────────────────
+
+test('the guide notifications are one group, all addressed to guides', () => {
+  const group = reportsInGroup('coordination');
+  assert.deepEqual(group.map((r) => r.number), [11, 12, 13, 14, 15, 16]);
+  for (const r of group) {
+    assert.equal(r.audience, 'guides', `#${r.number} addresses a guide`);
+    assert.ok(r.triggerHe?.length > 10);
+  }
+  // The office reports stay where they are.
+  assert.deepEqual(reportsInGroup('office').map((r) => r.number), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.equal(reportByNumber(1).audience, undefined, 'office reports keep the group destination');
+});

@@ -1759,7 +1759,7 @@ export const api = {
   },
   // Admin Reports (דיווחי מנהלים) — code-managed internal notifications.
   adminReports: {
-    list: () => request('/api/admin-reports'),
+    list: (params) => request(`/api/admin-reports${qs(params)}`),
     saveConfig: (number, body) =>
       request(`/api/admin-reports/${number}/config`, { method: 'PUT', body: JSON.stringify(body) }),
     preview: (number, body) =>

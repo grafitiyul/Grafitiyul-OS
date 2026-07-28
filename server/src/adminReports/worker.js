@@ -7,6 +7,7 @@ import { prisma } from '../db.js';
 import { bridgeUrlMap } from '../whatsapp/bridgeClient.js';
 import { sendDelivery } from './dispatch.js';
 import { runDueScheduledReports } from './daily.js';
+import { runTourSweeps } from './tourSweeps.js';
 
 const TICK_MS = 60_000;
 const BATCH = 5;
@@ -17,14 +18,24 @@ async function tick(log) {
   // Daily scheduled reports ride THIS tick — no second scheduler. Each is
   // idempotent on `daily:<number>:<Israel date>`, so a restart, a slow tick or
   // a future second instance can never double-send.
+  // Per-tour guide notifications ride the SAME tick — due-ness is computed
+  // from canonical tour times, so there is no second scheduler and no stored
+  // schedule to drift.
+  await runTourSweeps({ log }).catch((e) => log.error?.(`[admin-reports] tour sweeps failed: ${e?.message || e}`));
   await runDueScheduledReports({ log }).catch((e) => log.error?.(`[admin-reports] daily sweep failed: ${e?.message || e}`));
   const due = await prisma.adminReportDelivery.findMany({
     where: {
       status: { in: ['pending', 'failed'] },
-      OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
-      // Only rows that actually have a destination to retry against.
       waAccountId: { not: null },
-      waChatId: { not: null },
+      // Two independent OR groups — they must be ANDed, not merged into one
+      // `OR` key (the second would silently replace the first and retries would
+      // fire before their backoff).
+      AND: [
+        { OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }] },
+        // A destination to retry against: a configured group chat, or a
+        // per-person phone (guide-audience reports).
+        { OR: [{ waChatId: { not: null } }, { recipientPhone: { not: null } }] },
+      ],
     },
     orderBy: { createdAt: 'asc' },
     take: BATCH,

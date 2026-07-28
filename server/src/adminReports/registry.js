@@ -20,6 +20,7 @@ import { formatDateHe, formatMoney, ACTIVITY_TYPE_LABELS } from '../communicatio
 import { contactFullName } from '../communication/context.js';
 import { adminDisplayName } from '../admin/displayName.js';
 import { COORDINATION_MONITOR_DAYS } from './coordination.js';
+import { GUIDE_REPORTS } from './guideReports.js';
 
 // ── shared line helpers (layout only — never business logic) ─────────────────
 
@@ -453,8 +454,23 @@ REPORTS.push(
   },
 );
 
+// Guide-facing notifications share this catalog (one engine, one renderer
+// contract) but are surfaced in Tour Settings rather than on the Manager
+// Reports screen. `group` is what routes them; 'office' is the default.
+REPORTS.push(...GUIDE_REPORTS);
+
 export function reportByNumber(number) {
   return REPORTS.find((r) => r.number === Number(number)) || null;
+}
+
+/** The UI group a report belongs to: 'office' (Manager Reports) | 'coordination'. */
+export function reportGroup(report) {
+  return report?.group || 'office';
+}
+
+/** Reports in one UI group, in catalog order. */
+export function reportsInGroup(group) {
+  return REPORTS.filter((r) => reportGroup(r) === group);
 }
 
 /** Reports that run on a daily schedule (hour/minute, Israel time). */
