@@ -23,6 +23,21 @@ import { registerDynamicFields } from '../../../lib/dynamicFields.js';
 // same shared serializer), so what is authored here is exactly what the Deal
 // composer receives.
 
+// Chip labels are registered SYNCHRONOUSLY at module load, not only from the
+// async /meta response: the editor can open before meta resolves, and an
+// unregistered key renders as the amber "unknown field" chip showing the raw
+// {{customer_first_name}} — exactly the technical name CRM authors must never
+// need to read. The registry is still the source of truth for the KEY and for
+// resolution; this is a display-label fallback, not a second registry (meta
+// refreshes the same entry a moment later).
+registerDynamicFields([
+  {
+    key: 'customer_first_name',
+    label: 'שם פרטי של הלקוח',
+    description: 'מתמלא אוטומטית בשם הפרטי של הלקוח בדיל',
+  },
+]);
+
 const LANG_TABS = [
   { key: 'he', label: 'עברית', bodyKey: 'bodyHeHtml' },
   { key: 'en', label: 'English', bodyKey: 'bodyEnHtml' },
@@ -163,12 +178,15 @@ function TemplateEditor({ open, initial, variables, categories, onClose, onSubmi
 
         {/* The Communication Center WhatsApp editor — toolbar, variable chips and
             the live "כפי שיישלח" preview all come from the one shared editor. */}
+        {/* showVariableKeys={false}: CRM authors pick "שם פרטי של הלקוח", never
+            a technical key. The chip and the stored token are unchanged. */}
         <WhatsAppBodyEditor
           key={lang}
           value={draft[bodyKey] || ''}
           onChange={(html) => setDraft((d) => ({ ...d, [bodyKey]: html }))}
           variables={variables}
           categories={categories}
+          showVariableKeys={false}
         />
       </div>
     </Dialog>
@@ -202,7 +220,9 @@ export default function WhatsAppTemplatesSettings() {
       .then((m) => {
         setMeta(m);
         // Chips render their label from the shared registry, by key.
-        registerDynamicFields((m.variables || []).map((v) => ({ key: v.key, label: v.labelHe })));
+        registerDynamicFields(
+          (m.variables || []).map((v) => ({ key: v.key, label: v.labelHe, description: v.descriptionHe })),
+        );
       })
       .catch(() => setMeta({ variables: [], categories: {} }));
   }, [refresh]);

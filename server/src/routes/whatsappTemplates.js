@@ -8,6 +8,7 @@ import {
   resolveTemplateBody,
   templateVariables,
   unsupportedTokens,
+  canonicalizeTemplateTokens,
   TEMPLATE_VARIABLE_KEYS,
 } from '../whatsapp/templateResolve.js';
 
@@ -25,15 +26,18 @@ const router = Router();
 const MAX_NAME = 120;
 const MAX_BODY = 20_000;
 
-// Body HTML in, storable body HTML out. Recognized raw {{key}} moustache becomes
-// a canonical chip span (the project-wide token rule), and an all-whitespace
-// body normalizes to null so "no version in this language" is a single, honest
-// representation rather than '' / '<p></p>' / null.
+// Body HTML in, storable body HTML out:
+//   1. alias moustache → canonical spelling ({{first_name}} → {{customer_first_name}}),
+//      so storage only ever holds the canonical token;
+//   2. recognized raw {{key}} → a canonical chip span (the project-wide token rule);
+//   3. an all-whitespace body → null, so "no version in this language" has a
+//      single honest representation rather than '' / '<p></p>' / null.
 function cleanBody(raw) {
   if (raw == null) return null;
   const s = String(raw);
   if (!s.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim()) return null;
-  return normalizeTokensToChips(s, (key) => variableByKey(key)?.labelHe || null).slice(0, MAX_BODY);
+  const canonical = canonicalizeTemplateTokens(s);
+  return normalizeTokensToChips(canonical, (key) => variableByKey(key)?.labelHe || null).slice(0, MAX_BODY);
 }
 
 // A template must not store a token this feature cannot resolve — that is the

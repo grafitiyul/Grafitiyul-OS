@@ -39,11 +39,39 @@ export function canonicalTemplateKey(key) {
   return KEY_ALIASES[k] || k;
 }
 
+/**
+ * Rewrite alias moustache to its canonical spelling BEFORE a body is stored, so
+ * the database only ever holds the canonical token ({{first_name}} typed by a
+ * user, or arriving from legacy content, is saved as {{customer_first_name}}).
+ * Chip spans already carry the canonical key, so they are untouched.
+ */
+export function canonicalizeTemplateTokens(html) {
+  if (!html) return html ?? '';
+  return String(html).replace(/\{\{\s*([a-z][a-z0-9_]*)\s*\}\}/g, (m, key) => {
+    const canonical = canonicalTemplateKey(key);
+    return canonical === key ? m : `{{${canonical}}}`;
+  });
+}
+
+// Business-language help text per supported key. This is a DISPLAY layer over
+// the canonical registry (which stores no description), not a second registry —
+// keys, labels and resolution all still come from variables.js. It exists so a
+// CRM author never has to read `customer_first_name` to understand a chip.
+const VARIABLE_HELP_HE = {
+  customer_first_name: 'מתמלא אוטומטית בשם הפרטי של הלקוח בדיל',
+};
+
 /** The picker/menu list for the settings editor (label comes from the registry). */
 export function templateVariables() {
   return TEMPLATE_VARIABLE_KEYS.map((key) => {
     const def = variableByKey(key);
-    return { key, labelHe: def?.labelHe || key, labelEn: def?.labelEn || key, category: def?.category || 'customer' };
+    return {
+      key,
+      labelHe: def?.labelHe || key,
+      labelEn: def?.labelEn || key,
+      category: def?.category || 'customer',
+      descriptionHe: VARIABLE_HELP_HE[key] || null,
+    };
   });
 }
 

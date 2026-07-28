@@ -5,6 +5,7 @@ import {
   normalizeAfterEmptyFill,
   unsupportedTokens,
   canonicalTemplateKey,
+  canonicalizeTemplateTokens,
   templateVariables,
 } from './templateResolve.js';
 
@@ -21,6 +22,27 @@ test('templateVariables exposes exactly the supported set, labelled from the can
   const vars = templateVariables();
   assert.deepEqual(vars.map((v) => v.key), ['customer_first_name']);
   assert.equal(vars[0].labelHe, 'שם פרטי של הלקוח');
+});
+
+test('templateVariables carries business-language help, never the technical key', () => {
+  const [v] = templateVariables();
+  assert.equal(v.descriptionHe, 'מתמלא אוטומטית בשם הפרטי של הלקוח בדיל');
+  assert.ok(!v.labelHe.includes('customer_first_name'));
+  assert.ok(!v.descriptionHe.includes('customer_first_name'));
+});
+
+test('canonicalizeTemplateTokens stores the canonical token for an alias', () => {
+  assert.equal(
+    canonicalizeTemplateTokens('<p>היי {{first_name}},</p>'),
+    '<p>היי {{customer_first_name}},</p>',
+  );
+});
+
+test('canonicalizeTemplateTokens leaves canonical tokens, chips and other keys alone', () => {
+  assert.equal(canonicalizeTemplateTokens('<p>{{customer_first_name}}</p>'), '<p>{{customer_first_name}}</p>');
+  assert.equal(canonicalizeTemplateTokens(chip('customer_first_name', 'x')), chip('customer_first_name', 'x'));
+  assert.equal(canonicalizeTemplateTokens('<p>{{tour_date}}</p>'), '<p>{{tour_date}}</p>');
+  assert.equal(canonicalizeTemplateTokens(''), '');
 });
 
 test('unsupportedTokens accepts supported keys and the alias', () => {

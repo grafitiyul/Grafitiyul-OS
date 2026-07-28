@@ -5,7 +5,12 @@ import AnchoredMenu from '../common/AnchoredMenu.jsx';
 // registry (GET /api/communication/meta). Inserts a DynamicFieldNode chip at
 // the cursor of the given TipTap editor (or calls onInsert for plain inputs
 // like the email subject).
-export default function VariableMenu({ variables, categories, editorRef, onInsert, label = 'הוסף משתנה' }) {
+// `showKeys={false}` hides the technical {{key}} next to each row — for surfaces
+// whose authors are CRM users rather than system configurators. The inserted chip
+// and the stored token are identical either way; only the menu's display changes.
+export default function VariableMenu({
+  variables, categories, editorRef, onInsert, label = 'הוסף משתנה', showKeys = true,
+}) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState('');
   const btnRef = useRef(null);
@@ -70,8 +75,15 @@ export default function VariableMenu({ variables, categories, editorRef, onInser
                     onClick={() => insert(v)}
                     className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-right text-[13px] text-gray-800 hover:bg-blue-50"
                   >
-                    <span>{v.labelHe}</span>
-                    <span className="font-mono text-[10px] text-gray-300" dir="ltr">{`{{${v.key}}}`}</span>
+                    <span className="min-w-0">
+                      <span className="block">{v.labelHe}</span>
+                      {!showKeys && v.descriptionHe && (
+                        <span className="block text-[11px] text-gray-400">{v.descriptionHe}</span>
+                      )}
+                    </span>
+                    {showKeys && (
+                      <span className="font-mono text-[10px] text-gray-300" dir="ltr">{`{{${v.key}}}`}</span>
+                    )}
                   </button>
                 ))}
               </div>

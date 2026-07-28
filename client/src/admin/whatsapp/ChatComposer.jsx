@@ -165,8 +165,12 @@ function classifyFile(file) {
 // and bumps the nonce to replace the text. `persistDraft={false}` opts a
 // short-lived embedded composer out of the shared chat draft store, so it can
 // neither read nor clobber the draft of a composer mounted elsewhere on the
-// same chat. Defaults keep the normal thread composer behaving exactly as before.
-export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onScheduled, dealId = null, droppedFiles = null, onDroppedFilesConsumed, seed = null, onTextChange = null, persistDraft = true }) {
+// same chat. `fill` makes the composer a flex column that FILLS its container —
+// the text area grows to the available height instead of the thread's 200px
+// auto-grow cap (used when the composer is the main surface of a tall modal
+// rather than a strip under a message list). Defaults keep the normal thread
+// composer behaving exactly as before.
+export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onScheduled, dealId = null, droppedFiles = null, onDroppedFilesConsumed, seed = null, onTextChange = null, persistDraft = true, fill = false }) {
   const draftKey = draftKeyFor(chat);
   const [text, setText] = useState(() => (persistDraft ? readDrafts()[draftKey] || '' : seed?.text || ''));
   const [sending, setSending] = useState(false);
@@ -310,14 +314,17 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
   }, [saveDraft, text]);
   useEffect(() => () => saveDraftRef.current(textForDraftRef.current), [draftKey]);
 
-  // A restored multi-line draft needs its height computed once on mount.
+  // A restored multi-line draft needs its height computed once on mount. In
+  // `fill` mode the height is CSS-driven (flex), so inline sizing must not run —
+  // it would pin the field to the text's height and stop it filling the modal.
   useEffect(() => {
+    if (fill) return;
     const el = textareaRef.current;
     if (el && el.value) {
       el.style.height = 'auto';
       el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fill]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Teardown on unmount: stop any live recording + release blob URLs
   // (recording preview + attachment image previews).
@@ -546,7 +553,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
   }
 
   return (
-    <div className="border-t border-gray-200 bg-gray-50">
+    <div className={`border-t border-gray-200 bg-gray-50 ${fill ? 'flex h-full min-h-0 flex-col' : ''}`}>
       {replyTo && (
         <div className="flex items-center gap-2 border-b border-gray-200 bg-white px-3 py-1.5">
           <div className="min-w-0 flex-1 rounded-lg border-r-4 border-emerald-500 bg-gray-50 px-2.5 py-1.5">
@@ -637,7 +644,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
         // beneath — nothing squeezes the text. Dropping a file anywhere here
         // attaches them (the thread area forwards drops via droppedFiles).
         <div
-          className="relative px-3 pb-2 pt-2"
+          className={`relative px-3 pb-2 pt-2 ${fill ? 'flex min-h-0 flex-1 flex-col' : ''}`}
           onDragOver={(e) => {
             if (e.dataTransfer?.types?.includes('Files')) e.preventDefault();
           }}
@@ -689,7 +696,9 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
             disabled={sending}
             onChange={(e) => {
               setText(e.target.value);
-              // auto-grow, capped so the thread stays visible
+              // auto-grow, capped so the thread stays visible. In `fill` mode the
+              // field already occupies the available height — leave it to CSS.
+              if (fill) return;
               e.target.style.height = 'auto';
               e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
             }}
@@ -713,9 +722,11 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
             }}
             placeholder={attachments.length ? 'כיתוב לקובץ הראשון (לא חובה)…' : 'כתבו הודעה…'}
             dir="auto"
-            className="block min-h-[42px] w-full resize-none rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-[14px] leading-relaxed focus:border-emerald-500 focus:outline-none disabled:opacity-60"
+            className={`block w-full resize-none rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-[14px] leading-relaxed focus:border-emerald-500 focus:outline-none disabled:opacity-60 ${
+              fill ? 'min-h-0 flex-1 overflow-y-auto' : 'min-h-[42px]'
+            }`}
           />
-          <div className="mt-1.5 flex items-center gap-1.5">
+          <div className={`mt-1.5 flex items-center gap-1.5 ${fill ? 'shrink-0' : ''}`}>
             <input
               ref={fileInputRef}
               type="file"

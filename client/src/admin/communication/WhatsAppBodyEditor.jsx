@@ -43,7 +43,9 @@ export function waPreviewHtml(markup) {
   return out.replace(/\n/g, '<br>');
 }
 
-export default function WhatsAppBodyEditor({ value, onChange, variables, categories, onInsertDocument, documents }) {
+export default function WhatsAppBodyEditor({
+  value, onChange, variables, categories, onInsertDocument, documents, showVariableKeys = true,
+}) {
   const editorRef = useRef(null);
   const editor = useEditor({
     extensions: [
@@ -107,7 +109,7 @@ export default function WhatsAppBodyEditor({ value, onChange, variables, categor
           <span className="mx-1 h-4 w-px bg-gray-200" />
           {editor && <EmojiButton editor={editor} placement="down" />}
           <span className="mx-1 h-4 w-px bg-gray-200" />
-          <VariableMenu variables={variables} categories={categories} editorRef={editorRef} />
+          <VariableMenu variables={variables} categories={categories} editorRef={editorRef} showKeys={showVariableKeys} />
           {onInsertDocument && (
             <button
               type="button"

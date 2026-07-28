@@ -15,8 +15,12 @@ import { createPortal } from 'react-dom';
 //   placeholder string
 //   emptySearch bool — run search('') on open (small/global lists)
 //   disabled    bool
+//   wrapLabel   bool — labels WRAP instead of truncating (long names stay fully
+//               readable, both on the trigger and in the list). Off by default so
+//               every existing single-line caller keeps its exact layout.
 export default function SearchSelect({
   value, onSelect, search, placeholder = 'חיפוש…', emptySearch = true, disabled = false,
+  wrapLabel = false,
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
@@ -97,7 +101,15 @@ export default function SearchSelect({
     setQ('');
   }
   function onKeyDown(e) {
-    if (e.key === 'Escape') { e.preventDefault(); setOpen(false); return; }
+    if (e.key === 'Escape') {
+      // stopPropagation, not just preventDefault: the list is PORTALLED to
+      // <body>, so the event would otherwise bubble to a host dialog's
+      // document-level Escape handler and close the whole modal behind us.
+      e.preventDefault();
+      e.stopPropagation();
+      setOpen(false);
+      return;
+    }
     if (!items.length) return;
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(a + 1, items.length - 1)); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
@@ -127,8 +139,14 @@ export default function SearchSelect({
         <span className="min-w-0 flex-1">
           {value ? (
             <>
-              <span className="block truncate font-medium text-gray-900">{value.label}</span>
-              {value.subtitle && <span className="block truncate text-[11.5px] text-gray-500">{value.subtitle}</span>}
+              <span className={`block font-medium text-gray-900 ${wrapLabel ? 'whitespace-normal break-words' : 'truncate'}`}>
+                {value.label}
+              </span>
+              {value.subtitle && (
+                <span className={`block text-[11.5px] text-gray-500 ${wrapLabel ? 'whitespace-normal break-words' : 'truncate'}`}>
+                  {value.subtitle}
+                </span>
+              )}
             </>
           ) : (
             <span className="text-gray-400">{placeholder}</span>
@@ -203,9 +221,11 @@ export default function SearchSelect({
                   <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-100 text-[13px]">{item.icon}</span>
                 ) : null}
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate">{item.label}</span>
+                  <span className={`block ${wrapLabel ? 'whitespace-normal break-words leading-snug' : 'truncate'}`}>
+                    {item.label}
+                  </span>
                   {(item.subtitle || item.disabledReason) && (
-                    <span className="block truncate text-[11px] text-gray-400">
+                    <span className={`block text-[11px] text-gray-400 ${wrapLabel ? 'whitespace-normal break-words' : 'truncate'}`}>
                       {item.disabled && item.disabledReason ? item.disabledReason : item.subtitle}
                     </span>
                   )}

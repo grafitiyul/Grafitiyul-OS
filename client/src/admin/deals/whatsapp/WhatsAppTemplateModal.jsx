@@ -3,6 +3,7 @@ import { api } from '../../../lib/api.js';
 import Dialog from '../../common/Dialog.jsx';
 import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 import WhatsAppLogo from '../../common/WhatsAppLogo.jsx';
+import SearchSelect from '../../communication/SearchSelect.jsx';
 import ChatComposer from '../../whatsapp/ChatComposer.jsx';
 
 // Deal → "תבנית ווטסאפ". Pick an internal template + language, get the resolved
@@ -17,6 +18,12 @@ import ChatComposer from '../../whatsapp/ChatComposer.jsx';
 //
 // The template library is never mutated here: `resolved` returns a COPY, and the
 // stored template keeps its {{customer_first_name}} chip.
+//
+// Layout: the dialog is a fixed-height flex column (most of the viewport). The
+// selector row stays compact at the top and the composer takes ALL remaining
+// height — a long imported template must be reviewable without scrolling inside
+// a two-line box. The language toggle is deliberately AMBER, not green: green is
+// reserved here for the WhatsApp send action and delivery/success states.
 
 // Chats come from the same endpoint the Deal's WhatsAppDock uses, so "which
 // conversation" is answered identically on both surfaces: the deal's PRIMARY
@@ -40,7 +47,6 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
   const [templateId, setTemplateId] = useState('');
   const [lang, setLang] = useState('he');
   const [chatId, setChatId] = useState('');
-  const [search, setSearch] = useState('');
 
   // The resolved copy currently seeded into the composer + the composer's live
   // text, so an edited draft can be told from an untouched one.
@@ -81,17 +87,32 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
     setResolveError(null);
     setMissingVars([]);
     setPendingSwitch(null);
-    setSearch('');
   }, [open]);
 
   const chats = chatData?.chats || [];
   const chat = chats.find((c) => c.id === chatId) || null;
   const selected = (templates || []).find((t) => t.id === templateId) || null;
 
-  const filtered = useMemo(() => {
-    const needle = search.trim();
-    return (templates || []).filter((t) => !needle || t.nameHe.includes(needle));
-  }, [templates, search]);
+  // Combobox options — the search runs locally over the already-loaded active
+  // catalog (inactive templates are never fetched, so they can't appear).
+  const searchTemplates = useCallback(
+    async (q) => {
+      const needle = q.trim();
+      return (templates || [])
+        .filter((t) => !needle || t.nameHe.includes(needle))
+        .map((t) => ({
+          id: t.id,
+          label: t.nameHe,
+          subtitle: !t.hasHe ? 'אנגלית בלבד' : !t.hasEn ? 'עברית בלבד' : 'עברית · English',
+        }));
+    },
+    [templates],
+  );
+
+  const selectedOption = useMemo(
+    () => (selected ? { id: selected.id, label: selected.nameHe } : null),
+    [selected],
+  );
 
   // An untouched draft is one the operator has not changed since it was seeded.
   const isDirty = !!seed && liveText.trim() !== (seed.text || '').trim();
@@ -161,9 +182,11 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
             תבנית ווטסאפ
           </span>
         }
-        contentClassName="flex-1 overflow-y-auto"
+        // Fixed-height flex column: compact settings on top, composer fills the rest.
+        panelClassName="h-[88vh]"
+        contentClassName="flex min-h-0 flex-1 flex-col overflow-hidden"
       >
-        <div dir="rtl" className="flex flex-col gap-4 p-4">
+        <div dir="rtl" className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
           {loadError ? (
             <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
               טעינה נכשלה: <span dir="ltr" className="font-mono">{loadError}</span>
@@ -172,34 +195,22 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
             <p className="py-12 text-center text-sm text-gray-400">טוען…</p>
           ) : (
             <>
-              {/* 1 — template + 2 — language, side by side on desktop. */}
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+              {/* 1 — template + 2 — language. Compact, never grows. */}
+              <div className="grid shrink-0 gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
                 <div>
                   <label className="mb-1.5 block text-[12.5px] font-semibold text-gray-700">
                     בחירת נוסח
                   </label>
-                  {templates.length > 8 && (
-                    <input
-                      type="text"
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      placeholder="חיפוש נוסח…"
-                      className="mb-1.5 w-full rounded-lg border border-gray-300 px-3 py-2 text-[13.5px] focus:border-emerald-500 focus:outline-none"
-                    />
-                  )}
-                  <select
-                    value={templateId}
-                    onChange={(e) => choose(e.target.value, lang)}
-                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-[14px] focus:border-emerald-500 focus:outline-none"
-                  >
-                    <option value="">— בחרו נוסח —</option>
-                    {filtered.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.nameHe}
-                        {!t.hasHe ? ' (אנגלית בלבד)' : !t.hasEn ? ' (עברית בלבד)' : ''}
-                      </option>
-                    ))}
-                  </select>
+                  {/* ONE searchable field — the shared GOS combobox (portal list,
+                      type-to-filter, arrow/Enter/Escape, RTL). wrapLabel keeps a
+                      long template name fully readable instead of truncating. */}
+                  <SearchSelect
+                    value={selectedOption}
+                    onSelect={(item) => choose(item?.id || '', lang)}
+                    search={searchTemplates}
+                    placeholder="חיפוש או בחירת נוסח…"
+                    wrapLabel
+                  />
                   {templates.length === 0 && (
                     <p className="mt-1.5 text-[12px] text-gray-500">
                       אין עדיין נוסחים פעילים. אפשר להוסיף בהגדרות CRM → נוסחים לתבניות ווטסאפ.
@@ -220,11 +231,13 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                           disabled={!available}
                           title={available ? undefined : 'אין נוסח בשפה הזו לתבנית שנבחרה'}
                           onClick={() => choose(templateId, l.key)}
+                          // Amber, not green — green belongs to the send action
+                          // and to delivery/success states in this modal.
                           className={`rounded-lg px-4 py-2 text-[13px] font-medium transition ${
                             active
-                              ? 'bg-emerald-600 text-white'
+                              ? 'bg-amber-500 text-white shadow-sm'
                               : available
-                                ? 'text-gray-600 hover:bg-gray-50'
+                                ? 'text-gray-600 hover:bg-amber-50'
                                 : 'cursor-not-allowed text-gray-300 line-through'
                           }`}
                         >
@@ -238,7 +251,7 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
 
               {/* Which conversation this goes to — same resolution as the dock. */}
               {chats.length > 1 && (
-                <div>
+                <div className="shrink-0">
                   <label className="mb-1.5 block text-[12.5px] font-semibold text-gray-700">שיחה</label>
                   <select
                     value={chatId}
@@ -256,19 +269,20 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
               )}
 
               {missingVars.includes('customer_first_name') && (
-                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
+                <p className="shrink-0 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
                   ללקוח אין שם פרטי שמור — הנוסח הותאם בלעדיו. אפשר להשלים ידנית לפני השליחה.
                 </p>
               )}
               {resolveError && (
-                <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12.5px] text-red-700">
+                <p className="shrink-0 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12.5px] text-red-700">
                   {resolveError}
                 </p>
               )}
 
-              {/* 3 + 4 — the REAL composer. Its שליחה button is the send action. */}
+              {/* 3 + 4 — the REAL composer, taking every remaining pixel. Its
+                  שליחה button IS the send action (canonical path, untouched). */}
               {!chat ? (
-                <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-gray-300 px-6 py-10 text-center">
+                <div className="flex shrink-0 flex-col items-center gap-2 rounded-xl border border-dashed border-gray-300 px-6 py-10 text-center">
                   <WhatsAppLogo size={26} />
                   <p className="text-sm font-medium text-gray-700">אין עדיין שיחת WhatsApp בדיל הזה</p>
                   <p className="max-w-md text-[12.5px] leading-relaxed text-gray-500">
@@ -277,8 +291,8 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                   </p>
                 </div>
               ) : (
-                <div className="overflow-hidden rounded-xl border border-gray-200">
-                  <div className="flex items-center gap-2 bg-gray-50 px-3 py-1.5 text-[12px] text-gray-600">
+                <div className="flex min-h-[240px] flex-1 flex-col overflow-hidden rounded-xl border border-gray-200">
+                  <div className="flex shrink-0 items-center gap-2 bg-gray-50 px-3 py-1.5 text-[12px] text-gray-600">
                     <span className="font-medium text-gray-700">
                       {chat.contact?.name || chat.displayName || 'לא מזוהה'}
                     </span>
@@ -286,13 +300,14 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                     {resolving && <span className="mr-auto text-gray-400">מרכיב את הנוסח…</span>}
                   </div>
                   {!templateId ? (
-                    <p className="px-4 py-10 text-center text-[13px] text-gray-400">
+                    <p className="flex flex-1 items-center justify-center px-4 py-10 text-center text-[13px] text-gray-400">
                       בחרו נוסח כדי לערוך ולשלוח.
                     </p>
                   ) : (
                     <ChatComposer
                       chat={chat}
                       dealId={dealId}
+                      fill
                       persistDraft={false}
                       seed={seed}
                       onTextChange={setLiveText}
