@@ -29,16 +29,21 @@ function esc(s) {
 }
 
 // WhatsApp markup → styled preview HTML (bubble). Tokens render as chips.
+//
+// ORDER MATTERS: tokens are substituted BEFORE the italic rule. A key like
+// customer_first_name contains `_first_`, which the italic rule would otherwise
+// consume — leaving a mangled "{{customerfirstname}}" in the preview and hiding
+// the fact that the variable is recognised at all.
 export function waPreviewHtml(markup) {
   let out = esc(markup);
   out = out.replace(/```([\s\S]+?)```/g, '<code class="rounded bg-black/10 px-1">$1</code>');
-  out = out.replace(/\*([^*\n]+)\*/g, '<strong>$1</strong>');
-  out = out.replace(/_([^_\n]+)_/g, '<em>$1</em>');
-  out = out.replace(/~([^~\n]+)~/g, '<s>$1</s>');
   out = out.replace(/\{\{([a-z][a-z0-9_]*)\}\}/g, (m, key) => {
     const f = getDynamicFieldByKey(key);
     return `<span class="mx-0.5 inline-flex items-center rounded bg-blue-100 px-1 text-[0.85em] font-medium text-blue-800">${esc(f?.label || key)}</span>`;
   });
+  out = out.replace(/\*([^*\n]+)\*/g, '<strong>$1</strong>');
+  out = out.replace(/_([^_\n]+)_/g, '<em>$1</em>');
+  out = out.replace(/~([^~\n]+)~/g, '<s>$1</s>');
   out = out.replace(/(https?:\/\/[^\s<]+)/g, '<span class="text-sky-700 underline">$1</span>');
   return out.replace(/\n/g, '<br>');
 }
