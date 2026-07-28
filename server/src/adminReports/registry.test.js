@@ -279,7 +279,8 @@ test('#10 with one group uses the full house layout', () => {
     'כמות משתתפים: 24',
     'סכום ההזמנה: ₪3,720',
     '',
-    'דיל: https://x/admin/crm/deals/27242',
+    'לאישור:',
+    'https://x/admin/crm/deals/27242',
   ]);
 });
 
@@ -292,7 +293,7 @@ test('#10 with several groups lists one line each plus the order total', () => {
   assert.match(text, /• כיתה ז2 - 05\/10\/2026 10:00 - סיור גרפיטי - 22 משתתפים - ₪3,410/);
   assert.match(text, /סה"כ: ₪7,130/);
   // Every booked group is reachable — no order is left without its deal link.
-  assert.match(text, /דילים:\nhttps:\/\/x\/admin\/crm\/deals\/27242\nhttps:\/\/x\/admin\/crm\/deals\/27243$/);
+  assert.match(text, /לאישור:\nhttps:\/\/x\/admin\/crm\/deals\/27242\nhttps:\/\/x\/admin\/crm\/deals\/27243$/);
 });
 
 test('#10 never invents an agency or a total it does not have', () => {
@@ -303,7 +304,7 @@ test('#10 never invents an agency or a total it does not have', () => {
   });
   assert.match(text, /ארגון: —/);
   assert.match(text, /סכום ההזמנה: —/);
-  assert.match(text, /דיל: —/);
+  assert.ok(text.endsWith('לאישור:\n—'));
 });
 
 // ── schedules ────────────────────────────────────────────────────────────────

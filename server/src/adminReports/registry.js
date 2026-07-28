@@ -415,7 +415,8 @@ REPORTS.push(
           `כמות משתתפים: ${g.participants ?? '—'}`,
           `סכום ההזמנה: ${formatMoney(g.totalMinor, 'ILS') || '—'}`,
           '',
-          `דיל: ${link(g)}`,
+          'לאישור:',
+          link(g),
         ]);
       }
       return lines([
@@ -430,7 +431,8 @@ REPORTS.push(
         ].join(' - ')}`),
         '',
         `סה"כ: ${formatMoney(a.totalMinor, 'ILS') || '—'}`,
-        'דילים:',
+        '',
+        'לאישור:',
         ...groups.map((g) => link(g)),
       ]);
     },
