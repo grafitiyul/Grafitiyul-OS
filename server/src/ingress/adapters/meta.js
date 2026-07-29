@@ -47,6 +47,38 @@ export function pickField(fieldData, key) {
   return null;
 }
 
+/**
+ * The COMPLETE submission, in Meta's original field order.
+ *
+ * Aliased extraction (`pickField`) feeds the structured GOS columns and is
+ * lossy by design — it only looks for fields it knows. This function is the
+ * lossless counterpart: every question the form asked, mapped or not, in the
+ * order the customer saw it.
+ *
+ * Empty vs missing: Meta includes a question in `field_data` even when the
+ * answer is blank, so a present-but-empty answer becomes
+ * `{ value: null, answered: false }` while a question that was never asked
+ * simply does not appear. Both states are meaningful to an operator.
+ */
+export function buildFormAnswers(fieldData) {
+  return (fieldData || []).map((f) => {
+    const values = Array.isArray(f.values) ? f.values : f.values === undefined || f.values === null ? [] : [f.values];
+    const joined = values
+      .map((v) => String(v ?? '').trim())
+      .filter((v) => v !== '')
+      .join(', ');
+    const key = String(f.name ?? '').trim();
+    return {
+      key: key || null,
+      // Meta sends a human `label` on newer forms and only `name` on older
+      // ones. Prefer the label an operator would recognise.
+      label: String(f.label ?? '').trim() || key || null,
+      value: joined === '' ? null : joined,
+      answered: joined !== '',
+    };
+  });
+}
+
 // GET handshake Meta performs once when the webhook is registered.
 export function verifySubscription(query) {
   const cfg = metaConfig();
@@ -155,6 +187,8 @@ export function toCanonicalEvent(details, lead) {
       message: pickField(fd, 'message'),
       participants: pickField(fd, 'participants'),
       formName: lead.formId ? `Meta form ${lead.formId}` : null,
+      // The lossless record of what the customer actually filled in.
+      formAnswers: buildFormAnswers(fd),
     },
     attributionInput: {
       // Meta leads have no landing URL; attribution comes from campaign ids and
@@ -178,6 +212,7 @@ export const metaAdapter = Object.freeze({
   label: 'Meta Lead Ads',
   verify,
   verifySubscription,
+  buildFormAnswers,
   extractLeads,
   isAllowed,
   fetchLeadDetails,

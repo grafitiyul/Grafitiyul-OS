@@ -24,7 +24,13 @@ import { validateEvent, hasUsableIdentity } from './contract.js';
 import { normalizeEvent } from './normalize.js';
 import { buildIdempotencyKey, buildDedupeKey, decideDedupe, dedupeWindowStart } from './identity.js';
 import { resolveContact, findOpenDealForContact } from './resolve.js';
-import { createLeadDeal, writeIntakeNote, annotateExistingDeal, emitIngressHistory } from './records.js';
+import {
+  createLeadDeal,
+  writeIntakeNote,
+  annotateExistingDeal,
+  emitIngressHistory,
+  buildIntakeNoteBody,
+} from './records.js';
 import { IngressError, toIngressError, STAGES } from './errors.js';
 import { platformConfig } from './config.js';
 
@@ -134,11 +140,19 @@ export async function processEvent(eventId, { db = prisma, canonicalEvent = null
 
     // ── Dry-run: everything decided, nothing written ────────────────────────
     if (row.dryRun) {
+      // Render the intake note through the SAME pure builder the real write
+      // uses, so shadow mode shows the exact text that would be created rather
+      // than an approximation of it. Purely in-memory; nothing is persisted
+      // beyond the event's own audit row.
+      const notePreview =
+        decision.action === 'create'
+          ? buildIntakeNoteBody(normalized, { ambiguous: match.ambiguous })
+          : null;
       await db.ingressEvent.update({
         where: { id: eventId },
         data: {
           status: 'dry_run',
-          normalized,
+          normalized: { ...normalized, notePreview },
           attribution: normalized.attribution,
           dedupeKey,
           contactId: match.contactId,
@@ -151,20 +165,51 @@ export async function processEvent(eventId, { db = prisma, canonicalEvent = null
         },
       });
       await recordAttempt(db, eventId, attemptNo, { status: 'ok', stage: 'dry_run', durationMs: Date.now() - started });
-      return { status: 'dry_run', outcome: decision.action, dealId: decision.dealId || null, decision, normalized };
+      return {
+        status: 'dry_run',
+        outcome: decision.action,
+        dealId: decision.dealId || null,
+        decision,
+        normalized,
+        notePreview,
+      };
     }
 
     // ── Persist ────────────────────────────────────────────────────────────
     stage = STAGES.PERSIST;
+    // Explicit, strictly increasing timestamps. The column default is
+    // CURRENT_TIMESTAMP = transaction start time, identical for every row in
+    // this transaction, so without these the intake note and the history entry
+    // would tie and "the first note on the deal" would not be deterministic.
+    const noteAt = new Date();
+    const historyAt = new Date(noteAt.getTime() + 1);
+
     const result = await db.$transaction(async (tx) => {
       if (decision.action === 'annotate' && decision.dealId) {
         await annotateExistingDeal(tx, { dealId: decision.dealId, normalized });
-        await emitIngressHistory(tx, { dealId: decision.dealId, normalized, outcome: 'annotated_deal' });
+        await emitIngressHistory(tx, {
+          dealId: decision.dealId,
+          normalized,
+          outcome: 'annotated_deal',
+          createdAt: historyAt,
+        });
         return { dealId: decision.dealId, contactId: match.contactId, outcome: 'annotated_deal' };
       }
       const created = await createLeadDeal(tx, { normalized, stageKey });
-      await writeIntakeNote(tx, { dealId: created.dealId, normalized, ambiguous: match.ambiguous });
-      await emitIngressHistory(tx, { dealId: created.dealId, normalized, outcome: 'created_deal' });
+      // The customer's own words land FIRST — before any system history,
+      // assignment or follow-up entry.
+      await writeIntakeNote(tx, {
+        dealId: created.dealId,
+        normalized,
+        ambiguous: match.ambiguous,
+        createdAt: noteAt,
+      });
+      await emitIngressHistory(tx, {
+        dealId: created.dealId,
+        normalized,
+        outcome: 'created_deal',
+        createdAt: historyAt,
+      });
       return { ...created, outcome: 'created_deal' };
     });
 

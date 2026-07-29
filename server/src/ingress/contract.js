@@ -31,7 +31,18 @@ export const EVENT_KINDS = Object.freeze(['lead', 'order']);
  *   order: { total, currency, items:[{ sku, name, quantity, unitPrice, externalId }],
  *            status, paid } | null
  *   context: { pageUrl, referrer, formName, message, interestedIn, participants,
- *              preferredDate }
+ *              preferredDate, formAnswers }
+ *
+ * `formAnswers` is the COMPLETE, ordered set of question/answer pairs exactly as
+ * the customer submitted them — including questions that map to no structured
+ * GOS field. It is deliberately generic (Meta Lead Ads, Elementor, Cognito all
+ * produce the same shape), so it lives in the contract rather than in `extra`.
+ *
+ * Each entry: { key, label, value, answered }
+ *   - `value: null` + `answered: false`  → the question WAS asked and left blank
+ *   - absent from the array entirely     → the question was never asked
+ * That distinction is the whole reason `answered` exists as a separate flag
+ * instead of being inferred from `value`.
  *   attributionInput: { url, utm:{...}, campaignName, adId, adsetId, campaignId }
  *   extra:  free-form display-only key/values
  * }
@@ -71,6 +82,9 @@ export function buildEvent(input = {}) {
       interestedIn: input.context?.interestedIn ?? null,
       participants: input.context?.participants ?? null,
       preferredDate: input.context?.preferredDate ?? null,
+      // Never dropped, never reordered: the raw submission in the customer's
+      // own words is what an operator reads first.
+      formAnswers: Array.isArray(input.context?.formAnswers) ? input.context.formAnswers : [],
     },
     attributionInput: {
       url: input.attributionInput?.url ?? null,

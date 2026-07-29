@@ -129,6 +129,18 @@ export function normalizeEvent(event) {
       interestedIn: clean(event.context?.interestedIn),
       participants: coerceNumber(event.context?.participants),
       preferredDate: coerceDate(event.context?.preferredDate),
+      // Whitespace-cleaned but otherwise untouched: order is preserved, no
+      // entry is dropped, and `answered` keeps the blank-vs-never-asked
+      // distinction that `value` alone cannot express.
+      formAnswers: (event.context?.formAnswers || []).map((a) => {
+        const value = clean(a?.value);
+        return {
+          key: clean(a?.key),
+          label: clean(a?.label) || clean(a?.key),
+          value,
+          answered: Boolean(a?.answered) && value !== null,
+        };
+      }),
     },
 
     attribution: resolveAttribution(event),

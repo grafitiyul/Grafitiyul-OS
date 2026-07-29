@@ -188,39 +188,100 @@ export function marketingFromIngress(normalized, label) {
   };
 }
 
-// The intake note — what arrived, from where, with which attribution. Pinned so
-// it is the first thing an operator sees on a fresh lead. isSystem:false keeps
-// it editable, matching how the reservations module treats operational notes.
-export async function writeIntakeNote(tx, { dealId, normalized, ambiguous = false }) {
+// Blank answers are rendered explicitly rather than skipped: "asked and left
+// empty" is information an operator acts on, and silently omitting it would be
+// indistinguishable from "never asked".
+const UNANSWERED = '— ללא מענה';
+
+/**
+ * THE intake note body. A pure function of the normalized event — no database,
+ * no side effects — so the dry-run preview and the real write render byte-identical
+ * text. If these ever diverge, shadow-mode comparison stops being trustworthy.
+ *
+ * Contains ONLY customer-submitted content plus non-sensitive source context.
+ * Access tokens, signatures, app secrets and raw headers are never referenced
+ * here — they live on the IngressEvent, which is not customer-facing.
+ */
+export function buildIntakeNoteBody(normalized, { ambiguous = false } = {}) {
   const lines = [];
   lines.push(`<b>${escapeHtml(sourceLabelFor(normalized))}</b>`);
   const attr = attributionSummary(normalized.attribution);
   if (attr) lines.push(escapeHtml(attr));
-  if (normalized.context.formName) lines.push(`טופס: ${escapeHtml(normalized.context.formName)}`);
-  if (normalized.context.interestedIn) lines.push(`מתעניין ב: ${escapeHtml(normalized.context.interestedIn)}`);
-  if (normalized.context.message) lines.push(escapeHtml(normalized.context.message));
-  if (normalized.context.pageUrl) lines.push(escapeHtml(normalized.context.pageUrl));
+
+  // ── What the customer actually submitted ──────────────────────────────────
+  const answers = normalized.context?.formAnswers || [];
+  if (answers.length) {
+    lines.push('');
+    lines.push('<b>תוכן הטופס</b>');
+    for (const a of answers) {
+      const label = escapeHtml(a.label || a.key || '—');
+      lines.push(a.answered && a.value ? `${label}: ${escapeHtml(a.value)}` : `${label}: ${UNANSWERED}`);
+    }
+  } else {
+    // Sources with no per-question payload (Woo orders, simple forms) keep the
+    // original compact rendering.
+    if (normalized.context.formName) lines.push(`טופס: ${escapeHtml(normalized.context.formName)}`);
+    if (normalized.context.interestedIn) lines.push(`מתעניין ב: ${escapeHtml(normalized.context.interestedIn)}`);
+    if (normalized.context.message) lines.push(escapeHtml(normalized.context.message));
+    if (normalized.context.pageUrl) lines.push(escapeHtml(normalized.context.pageUrl));
+  }
+
   if (normalized.order?.items?.length) {
-    lines.push('פריטים:');
+    lines.push('');
+    lines.push('<b>פריטים</b>');
     for (const it of normalized.order.items) {
       lines.push(`• ${escapeHtml(it.name || it.sku || it.externalId)} ×${it.quantity}`);
     }
   }
+
+  // ── Where it came from ────────────────────────────────────────────────────
+  const a = normalized.attribution || {};
+  const extra = normalized.extra || {};
+  const src = [
+    ['טופס', normalized.context?.formName],
+    ['מזהה טופס', extra.formId],
+    ['מזהה ליד', normalized.externalId],
+    ['קמפיין', a.utmCampaign || a.campaignId],
+    ['ערכת מודעות', a.adsetId],
+    ['מודעה', a.adId],
+    ['פלטפורמה', extra.platform],
+  ].filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '');
+  if (src.length) {
+    lines.push('');
+    lines.push('<b>פרטי מקור</b>');
+    for (const [k, v] of src) lines.push(`${k}: ${escapeHtml(v)}`);
+  }
+
   if (ambiguous) {
+    lines.push('');
     lines.push('<b>⚠ מספר הטלפון משויך ליותר מאיש קשר אחד — יש לוודא שיוך נכון</b>');
   }
 
+  return `<p>${lines.join('<br>')}</p>`;
+}
+
+// The intake note — what arrived, from where, with which attribution. Pinned so
+// it is the first thing an operator sees on a fresh lead. isSystem:false keeps
+// it editable, matching how the reservations module treats operational notes.
+//
+// `createdAt` is passed explicitly by the pipeline. The column default is
+// CURRENT_TIMESTAMP, which in PostgreSQL returns the TRANSACTION start time —
+// identical for every row written in the same transaction. Relying on it would
+// make "the first note" a tie broken arbitrarily, so the caller stamps an
+// explicit instant and the history entry that follows takes a later one.
+export async function writeIntakeNote(tx, { dealId, normalized, ambiguous = false, createdAt = null }) {
   await tx.timelineEntry.create({
     data: {
       subjectType: 'deal',
       subjectId: dealId,
       kind: 'note',
-      body: `<p>${lines.join('<br>')}</p>`,
+      body: buildIntakeNoteBody(normalized, { ambiguous }),
       isPinned: true,
       isSystem: false,
       actorType: 'system',
       actorLabel: sourceLabelFor(normalized),
       data: { event: 'ingress_intake', source: normalized.source, sourceKey: normalized.sourceKey },
+      ...(createdAt ? { createdAt } : {}),
     },
   });
 }
@@ -253,8 +314,9 @@ export async function annotateExistingDeal(tx, { dealId, normalized }) {
 
 // History entry on the deal — the immutable audit line (distinct from the
 // editable operational note above).
-export async function emitIngressHistory(tx, { dealId, normalized, outcome }) {
+export async function emitIngressHistory(tx, { dealId, normalized, outcome, createdAt = null }) {
   await emitTimelineEvent(tx, {
+    createdAt,
     subjectType: 'deal',
     subjectId: dealId,
     kind: 'change',
