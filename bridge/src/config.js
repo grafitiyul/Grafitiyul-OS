@@ -45,6 +45,16 @@ export const config = {
   accountId: required('WHATSAPP_ACCOUNT_ID'),
   accountLabel: optional('WHATSAPP_ACCOUNT_LABEL'),
 
+  // Stand-down switch. A retired number's service must be able to stop cleanly
+  // without being deleted: unsetting WHATSAPP_ACCOUNT_ID is NOT an option (the
+  // dispatcher would then start this container as a second GOS SERVER), and
+  // repointing it at a throwaway id just starts a fresh QR loop — the exact
+  // failure that left one bridge retrying 9,706 times.
+  //
+  // When true the process boots, serves /health, and does nothing else: no
+  // Baileys socket, no account row, no database writes.
+  disabled: String(process.env.BRIDGE_DISABLED || '').trim().toLowerCase() === 'true',
+
   // '::' (IPv6 wildcard, dual-stacks to IPv4) — REQUIRED for Railway's
   // internal service-to-service network, which routes over IPv6. Binding
   // 0.0.0.0 makes GOS→bridge fetches hang until timeout (proven in the

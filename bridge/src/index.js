@@ -41,6 +41,33 @@ async function main() {
   if (ffmpegAvailable()) log.info('ffmpeg available — voice-note transcoding enabled');
   else log.error('ffmpeg binary MISSING — /send-voice will fail until the ffmpeg-static install is fixed');
 
+  // Stand-down mode: serve health so the platform stays happy, and touch
+  // NOTHING. Deliberately before $connect — a disabled bridge must not hold a
+  // database connection, and must not re-create the account row of a number
+  // that has been retired (ensureAccountRow upserts, so a running bridge would
+  // silently resurrect a deleted account).
+  if (config.disabled) {
+    log.warn({ accountId: config.accountId }, 'BRIDGE_DISABLED=true — standing down: no socket, no account row, no writes');
+    // A stub rather than null: /health needs no client, but the other routes
+    // dereference one, and a disabled bridge should answer "disabled" instead
+    // of crashing if something still calls it.
+    const stub = {
+      getReadiness: () => ({ ready: false, status: 'disabled', reason: 'BRIDGE_DISABLED' }),
+      restartSocket: async () => { throw new Error('bridge_disabled'); },
+      hardResetSession: async () => { throw new Error('bridge_disabled'); },
+      markRead: async () => { throw new Error('bridge_disabled'); },
+      signOut: async () => { throw new Error('bridge_disabled'); },
+    };
+    const idle = await startHttpServer(stub);
+    const stop = (signal) => {
+      log.warn({ signal }, 'shutdown requested (disabled bridge)');
+      idle.close(() => process.exit(0));
+    };
+    process.on('SIGINT', () => stop('SIGINT'));
+    process.on('SIGTERM', () => stop('SIGTERM'));
+    return;
+  }
+
   await prisma.$connect();
   log.info('prisma connected');
 
