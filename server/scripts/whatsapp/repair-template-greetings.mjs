@@ -12,11 +12,16 @@
 // This converts that artefact into the canonical variable chip, so the greeting
 // resolves like every other one:  "@Hi,"  ->  "Hi {{customer_first_name}},"
 //
-// Scope is deliberately narrow — ONLY a leading "@" immediately followed by a
-// greeting word, and only when the template's HEBREW body already carries the
-// name variable (proving the greeting is meant to be personalised). Nothing is
-// invented for bodies that simply never had a name. Idempotent: a body that
-// already holds the chip is skipped.
+// It also brings an English greeting into line with its Hebrew twin where the
+// Hebrew personalises and the English does not:  "Hi,"  ->  "Hi {{…}},"
+// The Hebrew form is "היי <chip>," — the English becomes the exact parallel, and
+// NO other wording is touched.
+//
+// Scope is deliberately narrow on both rules — the match must be at the very
+// START of the body, and the template's HEBREW body must already carry the name
+// variable (proof the greeting is meant to be personalised). Nothing is invented
+// for bodies that never had a name in either language. Idempotent: a body that
+// already holds the chip is skipped entirely.
 
 import process from 'node:process';
 import { PrismaClient } from '@prisma/client';
@@ -28,6 +33,10 @@ const CHIP_MARKER = `data-field-key="${KEY}"`;
 
 // "@Hi," / "@ Hi," / "@Hello," at the very start of the body.
 const LEADING_AT_GREETING = /^(\s*<p>\s*)@\s*(Hi|Hello|Hey)(\s*,?)/i;
+// A plain "Hi," / "Hello," / "Hey," at the very start of the body. The comma is
+// REQUIRED: it is what marks the slot a name belongs in, and it keeps the rule
+// from touching a sentence that merely opens with the word "Hi".
+const LEADING_PLAIN_GREETING = /^(\s*<p>\s*)(Hi|Hello|Hey)\s*,/i;
 
 const prisma = new PrismaClient(
   process.env.DATABASE_PUBLIC_URL
@@ -37,11 +46,14 @@ const prisma = new PrismaClient(
 
 function repairEnglishGreeting(html) {
   if (!html || html.includes(CHIP_MARKER)) return null; // already personalised
-  if (!LEADING_AT_GREETING.test(html)) return null;
-  return html.replace(
-    LEADING_AT_GREETING,
-    (m, open, greet) => `${open}${greet} ${chipHtml(KEY, LABEL)},`,
-  );
+  const chip = chipHtml(KEY, LABEL);
+  if (LEADING_AT_GREETING.test(html)) {
+    return { rule: 'stray-@', next: html.replace(LEADING_AT_GREETING, (m, open, greet) => `${open}${greet} ${chip},`) };
+  }
+  if (LEADING_PLAIN_GREETING.test(html)) {
+    return { rule: 'plain-greeting', next: html.replace(LEADING_PLAIN_GREETING, (m, open, greet) => `${open}${greet} ${chip},`) };
+  }
+  return null;
 }
 
 const apply = process.argv.includes('--apply');
@@ -50,9 +62,9 @@ const templates = await prisma.whatsAppTemplate.findMany({ orderBy: { sortOrder:
 const fixes = [];
 const leftAlone = [];
 for (const t of templates) {
-  const next = repairEnglishGreeting(t.bodyEnHtml);
-  if (next && (t.bodyHeHtml || '').includes(CHIP_MARKER)) {
-    fixes.push({ t, next });
+  const repair = repairEnglishGreeting(t.bodyEnHtml);
+  if (repair && (t.bodyHeHtml || '').includes(CHIP_MARKER)) {
+    fixes.push({ t, ...repair });
   } else if (/@/.test(t.bodyEnHtml || '') || /@/.test(t.bodyHeHtml || '')) {
     leftAlone.push(t);
   }
@@ -61,10 +73,14 @@ for (const t of templates) {
 console.log(`=== ${apply ? 'APPLY' : 'DRY RUN'} ===`);
 console.log(`templates scanned : ${templates.length}`);
 console.log(`greetings to fix  : ${fixes.length}`);
-for (const { t, next } of fixes) {
-  console.log(`\n  ${t.nameHe}`);
-  console.log(`    before: ${JSON.stringify((t.bodyEnHtml || '').slice(0, 70))}`);
-  console.log(`    after : ${JSON.stringify(next.slice(0, 110))}`);
+for (const { t, next, rule } of fixes) {
+  console.log(`\n  ${t.nameHe}   [${rule}]`);
+  console.log(`    before: ${JSON.stringify((t.bodyEnHtml || '').slice(0, 80))}`);
+  console.log(`    after : ${JSON.stringify(next.slice(0, 130))}`);
+  // Prove ONLY the greeting moved: everything after the comma must be identical.
+  const tailBefore = (t.bodyEnHtml || '').replace(/^[\s\S]*?,/, '');
+  const tailAfter = next.replace(/^[\s\S]*?,/, '');
+  console.log(`    wording after the greeting unchanged: ${tailBefore === tailAfter}`);
 }
 if (leftAlone.length) {
   console.log(`\n'@' left untouched (not a leading greeting artefact): ${leftAlone.length}`);
