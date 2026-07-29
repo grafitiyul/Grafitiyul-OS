@@ -27,6 +27,7 @@ export function createTestDb(seed = {}) {
     dealSource: [],
     deal: [],
     dealContact: [],
+    dealMarketing: [],
     timelineEntry: [],
   };
 
@@ -208,6 +209,24 @@ export function createTestDb(seed = {}) {
           })
           .sort((a, b) => b.deal.createdAt - a.deal.createdAt);
         return matched[0] ? { dealId: matched[0].link.dealId } : null;
+      },
+    },
+
+    // The canonical marketing record. Unique on dealId, exactly like the real
+    // schema — so a second write for the same deal updates rather than
+    // duplicating, and first-touch immutability is genuinely exercised.
+    dealMarketing: {
+      findUnique: async ({ where }) => db.dealMarketing.find((m) => m.dealId === where.dealId) || null,
+      create: async ({ data }) => {
+        const row = { id: nextId('dm'), createdAt: new Date(), ...data };
+        db.dealMarketing.push(row);
+        return row;
+      },
+      update: async ({ where, data }) => {
+        const row = db.dealMarketing.find((m) => m.dealId === where.dealId);
+        if (!row) throw new Error('dealMarketing not found');
+        Object.assign(row, data);
+        return row;
       },
     },
 

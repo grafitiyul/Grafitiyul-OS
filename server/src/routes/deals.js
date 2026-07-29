@@ -42,6 +42,7 @@ import {
   waiverBreakdown,
 } from '../deals/waiver.js';
 import { settleDealWonFromPayment } from '../deals/paymentWon.js';
+import { marketingDto } from '../deals/marketing.js';
 import { fireCommunicationTrigger } from '../communication/engine.js';
 import { fireAdminReport } from '../adminReports/dispatch.js';
 import { actorForReport } from '../adminReports/actor.js';
@@ -237,6 +238,9 @@ const DEAL_INCLUDE = {
       },
     },
   },
+  // The canonical marketing/attribution record. Serialized through marketingDto
+  // so the panel never sees ids, enum keys or the raw attribution bag.
+  marketing: true,
 };
 
 // Compact tour payload for 409 choice dialogs (reopen / lost with a live tour).
@@ -303,6 +307,11 @@ async function loadDeal(id) {
         breakdown: waiverBreakdown(deal.noPaymentWaiver, lines),
       };
     }
+  }
+  if (deal) {
+    // Replace the raw row with the business-language DTO. The panel must never
+    // receive leadSourceKey/attributionRaw — see the ownership map §4.6.
+    deal.marketing = marketingDto(deal.marketing);
   }
   return deal;
 }

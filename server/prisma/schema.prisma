@@ -26,23 +26,23 @@ datasource db {
 // only considers active users so a deactivated admin doesn't
 // re-open bootstrap mode.
 model AdminUser {
-  id           String    @id @default(cuid())
-  username     String    @unique
+  id           String        @id @default(cuid())
+  username     String        @unique
   // Human-facing name ("שם תצוגה"). Optional: readers MUST fall back to
   // `username` when null (see src/admin/displayName.js — the one resolver).
   // Added for the CRM Tasks workspace, whose Owner column cannot render a
   // login handle where a person's name belongs.
   displayName  String?
   passwordHash String
-  role         String    @default("admin")
-  isActive     Boolean   @default(true)
+  role         String        @default("admin")
+  isActive     Boolean       @default(true)
   lastLoginAt  DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
   // Tasks owned by this admin. onDelete: Restrict — an admin who still owns
   // tasks CANNOT be deleted until they are reassigned. Retiring a person is
   // `isActive: false`, which keeps them a valid, resolvable historical owner.
-  ownedTasks   Task[]    @relation("TaskOwner")
+  ownedTasks   Task[]        @relation("TaskOwner")
   // Saved views + per-user UI state are PREFERENCES, not records: unlike tasks
   // (Restrict), they Cascade away with their owner — nothing auditable is lost.
   savedViews   SavedView[]   @relation("SavedViewOwner")
@@ -793,7 +793,7 @@ model OrganizationSubtype {
 // Deal is tied to a Unit, the Unit's finance values normally win (see resolution
 // priority above).
 model Organization {
-  id                 String                @id @default(cuid())
+  id                  String                @id @default(cuid())
   // "מספר ארגון" — stable business-facing numeric identifier (the Deal.orderNo
   // pattern). Assigned by a dedicated Postgres sequence starting at 10000;
   // numbers only grow and are never reused. Nullable: rows created before the
@@ -801,30 +801,30 @@ model Organization {
   // their original Pipedrive org ids (max legacy id 3,053 — no collision with
   // the 10000+ sequence range). Used in the Organization URL; the cuid `id`
   // stays the internal PK/FK key.
-  orgNo              Int?                  @unique @default(dbgenerated("nextval('org_no_seq')"))
-  name               String
-  organizationType   OrganizationType?     @relation(fields: [organizationTypeId], references: [id], onDelete: SetNull)
-  organizationTypeId String?
-  notes              String?
+  orgNo               Int?                  @unique @default(dbgenerated("nextval('org_no_seq')"))
+  name                String
+  organizationType    OrganizationType?     @relation(fields: [organizationTypeId], references: [id], onDelete: SetNull)
+  organizationTypeId  String?
+  notes               String?
   // Optional finance / identity fields.
-  taxId              String?
-  address            String?
+  taxId               String?
+  address             String?
   // CURRENT finance contact — a real canonical Contact (designation only,
   // exactly one per organization). Replacing the designation NEVER edits or
   // deletes the previous Contact; transfers are recorded on the organization
   // timeline. The scalar name/phone/email trio below is a SERVICE-OWNED
   // display mirror maintained by organizations/financeContact.js — every
   // write path goes through that ONE service, never raw field edits.
-  financeContact     Contact?              @relation("OrgFinanceContact", fields: [financeContactId], references: [id], onDelete: SetNull)
-  financeContactId   String?
-  financeContactName String?
-  financePhone       String?
-  financeEmail       String?
-  createdAt          DateTime              @default(now())
-  updatedAt          DateTime              @updatedAt
-  units              OrganizationUnit[]
-  contactLinks       ContactOrganization[]
-  deals              Deal[]
+  financeContact      Contact?              @relation("OrgFinanceContact", fields: [financeContactId], references: [id], onDelete: SetNull)
+  financeContactId    String?
+  financeContactName  String?
+  financePhone        String?
+  financeEmail        String?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  units               OrganizationUnit[]
+  contactLinks        ContactOrganization[]
+  deals               Deal[]
   // Agent reservations submitted under this organization (snapshot at submit).
   reservationSessions ReservationSession[]
 
@@ -859,7 +859,7 @@ model OrganizationUnit {
 // belong to zero, one, or many organizations (via ContactOrganization), and
 // optionally to a specific unit.
 model Contact {
-  id                    String                @id @default(cuid())
+  id                    String                 @id @default(cuid())
   // "מספר איש קשר" — stable business-facing numeric identifier (the
   // Deal.orderNo pattern). Dedicated Postgres sequence starting at 50000;
   // numbers only grow and are never reused. Nullable: rows created before the
@@ -867,7 +867,7 @@ model Contact {
   // their original Pipedrive person ids (max legacy id 37,636 — no collision
   // with the 50000+ sequence range). Used in the Contact URL; the cuid `id`
   // stays the internal PK/FK key.
-  contactNo             Int?                  @unique @default(dbgenerated("nextval('contact_no_seq')"))
+  contactNo             Int?                   @unique @default(dbgenerated("nextval('contact_no_seq')"))
   firstNameHe           String
   lastNameHe            String
   firstNameEn           String
@@ -880,8 +880,8 @@ model Contact {
   // organization's ח.פ lives on Organization/OrganizationUnit.taxId — this is
   // only the person-level fallback, written back from the הפק מסמך modal.
   taxId                 String?
-  createdAt             DateTime              @default(now())
-  updatedAt             DateTime              @updatedAt
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
   phones                ContactPhone[]
   emails                ContactEmail[]
   orgLinks              ContactOrganization[]
@@ -1139,6 +1139,10 @@ model Deal {
   // Back-relation only: the reservation group this deal was created from
   // (provenance lives on the reservation side — the deal is independent).
   reservationGroup      ReservationGroup?
+  // THE canonical marketing/attribution record for this deal (permanent, not a
+  // migration artefact). Written from Pipedrive today, by the ingress platform
+  // after cutover — same fields either way.
+  marketing             DealMarketing?
 
   @@index([organizationId])
   @@index([organizationUnitId])
@@ -2413,31 +2417,31 @@ model PricingSegment {
 // Carries its own default price + VAT behaviour. Per-price-list overrides live
 // in AddonPriceRule.
 model Addon {
-  id                String   @id @default(cuid())
-  nameHe            String
-  nameEn            String?
+  id                 String   @id @default(cuid())
+  nameHe             String
+  nameEn             String?
   // Stable key for SYSTEM add-ons (e.g. 'sabbath_holiday'). Null for ordinary
   // owner-created add-ons. Logic identifies the system surcharge by THIS key,
   // never by name. This Addon row is the global default (price/VAT/active) every
   // card inherits unless it stores a PriceRuleAddon override.
-  systemKey         String?  @unique
+  systemKey          String?  @unique
   // For a LANGUAGE-surcharge system add-on (systemKey='language_surcharge'): the
   // tour-language keys that TRIGGER the surcharge (e.g. ['es','fr','ru']). Fully
   // data-driven — the engine evaluates this set, never a hard-coded language
   // condition; the "regular" languages are simply those absent from it. Empty on
   // every other add-on (inert).
   autoApplyLanguages String[] @default([])
-  defaultPriceMinor BigInt   @default(0)
-  currency          String   @default("ILS")
+  defaultPriceMinor  BigInt   @default(0)
+  currency           String   @default("ILS")
   // null = "כמו כרטיס התמחור" — the add-on inherits the Pricing Card's VAT.
   // included | excluded | exempt = the add-on fixes its own VAT (overrides card).
-  vatMode           String?
-  vatRate           Int      @default(18)
-  defaultQuantity   Int      @default(1)
-  active            Boolean  @default(true)
-  sortOrder         Int      @default(0)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  vatMode            String?
+  vatRate            Int      @default(18)
+  defaultQuantity    Int      @default(1)
+  active             Boolean  @default(true)
+  sortOrder          Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   priceRules  AddonPriceRule[]
   cardEntries PriceRuleAddon[]
@@ -3088,9 +3092,9 @@ model TourStationNote {
 
 // One connected Gmail mailbox (business account, Workspace "internal" OAuth app).
 model EmailAccount {
-  id                   String         @id @default(cuid())
-  provider             String         @default("gmail")
-  emailAddress         String         @unique
+  id                   String           @id @default(cuid())
+  provider             String           @default("gmail")
+  emailAddress         String           @unique
   displayName          String?
   googleAccountId      String? // Google `sub` claim — stable across email renames
   accessTokenEnc       String? // encrypted, short-lived
@@ -3098,14 +3102,14 @@ model EmailAccount {
   refreshTokenEnc      String? // encrypted; null = disconnected (must reconnect)
   scopes               String? // space-separated granted scopes snapshot
   // idle | syncing | error | disconnected — worker status surface for the UI.
-  syncStatus           String         @default("idle")
+  syncStatus           String           @default("idle")
   syncError            String?
   lastSyncAt           DateTime?
   // Connection health surface (independent of Gmail-sync status above): the
   // whole Google connection — Gmail AND the shared Calendar sync — hangs off
   // one refresh token, so an auth failure here is authoritative for both.
   // connected | reconnect_required | error | disconnected | unknown.
-  healthState          String         @default("unknown")
+  healthState          String           @default("unknown")
   lastRefreshAt        DateTime? // last successful access-token refresh
   lastGmailCheckAt     DateTime? // last successful read-only Gmail probe
   lastCalendarCheckAt  DateTime? // last successful read-only Calendar probe
@@ -3113,13 +3117,13 @@ model EmailAccount {
   lastAuthErrorAt      DateTime?
   // Gmail incremental cursor (users.history.list). Null until backfill completes.
   historyId            String?
-  backfillDone         Boolean        @default(false)
-  isActive             Boolean        @default(true)
+  backfillDone         Boolean          @default(false)
+  isActive             Boolean          @default(true)
   connectedById        String? // AdminUser.id (loose key, same convention as tasks)
   // Per-account email signature (sanitized rich HTML) — appended by the composer.
   signature            String?
-  createdAt            DateTime       @default(now())
-  updatedAt            DateTime       @updatedAt
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
   threads              EmailThread[]
   messages             EmailMessage[]
   scheduledEmails      ScheduledEmail[]
@@ -3136,52 +3140,52 @@ model EmailAccount {
 // identical to what "send now" would have produced: same recipients, subject,
 // rich HTML, attachments, direction serialization and signature.
 model ScheduledEmail {
-  id           String       @id @default(cuid())
-  account      EmailAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  id                 String       @id @default(cuid())
+  account            EmailAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
   // The account chosen AT SCHEDULING TIME — the send must come from it.
-  accountId    String
+  accountId          String
   // Frozen composition. Recipients are [{ email, name }]; attachments are
   // [{ filename, mimeType, contentBase64 }] (bounded by the app-wide 16MB
   // request limit, the same ceiling an immediate send accepts).
-  toJson       Json
-  ccJson       Json?
-  bccJson      Json?
-  subject      String?
-  bodyHtml     String?
-  bodyText     String?
-  attachments  Json?
+  toJson             Json
+  ccJson             Json?
+  bccJson            Json?
+  subject            String?
+  bodyHtml           String?
+  bodyText           String?
+  attachments        Json?
   // Reply/forward context, so a scheduled reply still threads correctly.
-  replyToMessageId  String?
+  replyToMessageId   String?
   forwardOfMessageId String?
   // CRM context applied to the resulting thread after sending.
-  dealId       String?
-  contactId    String?
+  dealId             String?
+  contactId          String?
 
   // Canonical instant to send at, stored in UTC. The client sends an absolute
   // instant computed from the user's timezone; the worker never re-interprets
   // wall-clock text.
-  scheduledAt  DateTime
+  scheduledAt             DateTime
   // pending | sending | sent | failed | cancelled
-  status       String       @default("pending")
-  attemptCount Int          @default(0)
-  lastAttemptAt DateTime?
-  nextRetryAt  DateTime?
+  status                  String    @default("pending")
+  attemptCount            Int       @default(0)
+  lastAttemptAt           DateTime?
+  nextRetryAt             DateTime?
   // Gmail connection unhealthy at send time: the row is PRESERVED and retried
   // without burning a real attempt (mirrors the WhatsApp connection-deferral).
-  connectionDeferredCount Int @default(0)
+  connectionDeferredCount Int       @default(0)
   // Claim guard — exactly-once delivery across overlapping ticks.
-  claimedAt    DateTime?
-  claimedBy    String?
-  sentAt       DateTime?
+  claimedAt               DateTime?
+  claimedBy               String?
+  sentAt                  DateTime?
   // Set the moment Gmail accepts the message; also the idempotency marker that
   // stops any retry from ever sending a second copy.
-  gmailMessageId String?
-  threadId     String?
-  failureReason String?
-  createdById  String?
-  cancelledAt  DateTime?
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  gmailMessageId          String?
+  threadId                String?
+  failureReason           String?
+  createdById             String?
+  cancelledAt             DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 
   @@index([status, scheduledAt])
   @@index([accountId, status])
@@ -5293,16 +5297,16 @@ model CommunicationMessage {
 }
 
 model CommunicationMessageVersion {
-  id        String               @id @default(cuid())
-  message   CommunicationMessage @relation("CommMsgVersions", fields: [messageId], references: [id], onDelete: Cascade)
-  messageId String
-  versionNo Int
+  id          String               @id @default(cuid())
+  message     CommunicationMessage @relation("CommMsgVersions", fields: [messageId], references: [id], onDelete: Cascade)
+  messageId   String
+  versionNo   Int
   // Immutable full content snapshot: { he, en, enState, attachments,
   // channelConfig } — everything needed to render without the mutable message.
   content     Json
   note        String?
   createdById String?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime             @default(now())
 
   publishedOn CommunicationMessage[]  @relation("CommMsgPublishedVersion")
   deliveries  CommunicationDelivery[]
@@ -5311,15 +5315,15 @@ model CommunicationMessageVersion {
 }
 
 model CommunicationDelivery {
-  id      String               @id @default(cuid())
-  event   CommunicationEvent   @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  eventId String
-  message CommunicationMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  messageId String
+  id            String                       @id @default(cuid())
+  event         CommunicationEvent           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  eventId       String
+  message       CommunicationMessage         @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  messageId     String
   // Frozen audit copy of the message's publicNumber at scheduling time.
   messageNumber Int
-  version   CommunicationMessageVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull)
-  versionId String?
+  version       CommunicationMessageVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull)
+  versionId     String?
 
   channel  String
   language String?
@@ -5346,7 +5350,7 @@ model CommunicationDelivery {
   // initiatedAt }. The worker re-applies it onto the rebuilt context
   // (applyTriggerOverrides) so change/action variables resolve identically at
   // send time.
-  triggerData Json?
+  triggerData       Json?
   // Frozen at send: { subject, body, attachments:[{kind,filename,fileId}] }.
   renderedContent   Json?
 
@@ -5380,18 +5384,18 @@ model CommunicationDelivery {
 }
 
 model CommunicationSendingWindow {
-  id          String  @id @default(cuid())
+  id          String   @id @default(cuid())
   name        String
   description String?
-  isDefault   Boolean @default(false)
-  active      Boolean @default(true)
+  isDefault   Boolean  @default(false)
+  active      Boolean  @default(true)
   // Weekly allow rules: [{ days:[0..6 — 0=Sunday], start:"HH:MM",
   // end:"HH:MM" }]. All times are Israel local (Asia/Jerusalem); the
   // evaluator (src/communication/windows.js) does the DST-correct math.
-  rules     Json
-  sortOrder Int      @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  rules       Json
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   messages   CommunicationMessage[]
   exceptions CommunicationWindowException[]
@@ -5403,18 +5407,18 @@ model CommunicationSendingWindow {
 // windows.js): block always defeats allow — safety (Yom Kippur) wins over
 // urgency; urgent sends on a blocked date require removing the block.
 model CommunicationWindowException {
-  id       String                      @id @default(cuid())
-  window   CommunicationSendingWindow? @relation(fields: [windowId], references: [id], onDelete: Cascade)
-  windowId String?
-  kind     String // block | allow
-  label    String
-  dateFrom String // "YYYY-MM-DD" (Israel calendar date)
-  dateTo   String? // inclusive; null = single day
+  id        String                      @id @default(cuid())
+  window    CommunicationSendingWindow? @relation(fields: [windowId], references: [id], onDelete: Cascade)
+  windowId  String?
+  kind      String // block | allow
+  label     String
+  dateFrom  String // "YYYY-MM-DD" (Israel calendar date)
+  dateTo    String? // inclusive; null = single day
   startTime String? // "HH:MM" — null = all day
   endTime   String?
-  active   Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  active    Boolean                     @default(true)
+  createdAt DateTime                    @default(now())
+  updatedAt DateTime                    @updatedAt
 
   @@index([windowId])
   @@index([active, dateFrom])
@@ -5435,8 +5439,8 @@ model CommunicationWindowException {
 
 model AdminReportConfig {
   // The report's stable catalog number (registry.js owns the definition).
-  reportNumber Int      @id
-  enabled      Boolean  @default(true)
+  reportNumber Int       @id
+  enabled      Boolean   @default(true)
   // When this report was last switched ON. Per-tour notifications never report
   // an event whose due moment precedes it, so enabling a notification can never
   // back-fire a backlog of messages about tours that already happened.
@@ -5447,28 +5451,28 @@ model AdminReportConfig {
   waAccountId  String?
   waChatId     String?
   updatedById  String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 }
 
 // One dispatch attempt of one report. Auditable forever: the rendered text and
 // the trigger inputs are FROZEN at fire time, so later edits to the deal/tour
 // can never rewrite what was reported.
 model AdminReportDelivery {
-  id               String    @id @default(cuid())
-  reportNumber     Int
+  id                   String    @id @default(cuid())
+  reportNumber         Int
   // Business-event identity — (reportNumber, idempotencyKey) is unique, so a
   // retried trigger or replayed webhook can never produce a second send.
-  idempotencyKey   String
-  status           String    @default("pending") // pending | sent | failed | failed_final | skipped
-  skipReason       String?
+  idempotencyKey       String
+  status               String    @default("pending") // pending | sent | failed | failed_final | skipped
+  skipReason           String?
   // Loose business ref for the log UI (audit rows outlive their entities).
-  dealId           String?
+  dealId               String?
   // Frozen trigger inputs + the exact rendered message.
-  payload          Json?
-  renderedText     String?
-  waAccountId      String?
-  waChatId         String?
+  payload              Json?
+  renderedText         String?
+  waAccountId          String?
+  waChatId             String?
   // Per-person destination (guide-audience reports). waChatId null +
   // recipientPhone set ⇒ the delivery is a private message to that number.
   // Loose ref + frozen phone/name: an audit row stays readable after the person
@@ -5476,14 +5480,14 @@ model AdminReportDelivery {
   recipientPersonRefId String?
   recipientPhone       String?
   recipientName        String?
-  destinationLabel String?
-  providerMessageId String?
-  attemptCount     Int       @default(0)
-  nextRetryAt      DateTime?
-  lastError        String?
-  sentAt           DateTime?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  destinationLabel     String?
+  providerMessageId    String?
+  attemptCount         Int       @default(0)
+  nextRetryAt          DateTime?
+  lastError            String?
+  sentAt               DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
   @@unique([reportNumber, idempotencyKey])
   @@index([reportNumber, createdAt])
@@ -5500,7 +5504,7 @@ model CommunicationTestSend {
   status      String // sent | failed
   error       String?
   createdById String?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime             @default(now())
 
   @@index([messageId, createdAt])
 }
@@ -5519,23 +5523,23 @@ model CommunicationTestSend {
 // contactId/organizationId/dealId are deliberately NOT foreign keys — the audit
 // trail must survive deletion of the records it produced.
 model IngressEvent {
-  id     String  @id @default(cuid())
-  source String // adapter key: meta_lead_ads | woocommerce | website_form
+  id             String  @id @default(cuid())
+  source         String // adapter key: meta_lead_ads | woocommerce | website_form
   // Instance within a source (store key, form key, Meta page id). Lets one
   // adapter serve several configured origins without branching business logic.
-  sourceKey String?
+  sourceKey      String?
   // The provider's own identifier (leadgen id, Woo order id) when it exposes
   // one — kept for support/reconciliation, never used as the dedupe key.
-  externalId String?
+  externalId     String?
   // Adapter-computed replay key. Unique per source: a provider retry, a double
   // submit or a replay of the same payload can never process twice.
   idempotencyKey String
   // pending | processing | processed | duplicate | failed | dead | dry_run
-  status String  @default("pending")
+  status         String  @default("pending")
   // Shadow mode: the event is normalized, attributed and deduped in full, but
   // NO Contact/Organization/Deal is written. Enables safe pre-cutover
   // comparison against the legacy automation.
-  dryRun Boolean @default(false)
+  dryRun         Boolean @default(false)
 
   rawPayload  Json // exactly as received — source truth for replay
   rawHeaders  Json? // signature/verification headers, for forensics
@@ -5550,7 +5554,7 @@ model IngressEvent {
   organizationId String?
   dealId         String?
   // created_deal | annotated_deal | ignored — what the pipeline decided.
-  outcome String?
+  outcome        String?
 
   failureCode    String?
   failureMessage String?
@@ -5587,4 +5591,102 @@ model IngressAttempt {
   createdAt      DateTime     @default(now())
 
   @@index([eventId, attemptNo])
+}
+
+// ── Deal Marketing ───────────────────────────────────────────────────────────
+//
+// THE canonical marketing/attribution entity for a Deal. Permanent — not a
+// migration panel and not a temporary import artefact.
+//
+// The whole design goal is that the UI does NOT change at cutover. Today these
+// fields are populated from Pipedrive's marketing custom fields; once a source
+// moves to direct ingress, the ingress platform writes the SAME fields and the
+// panel keeps rendering the same thing. That is why the canonical field set is
+// wider than what Pipedrive can currently fill.
+//
+// Measured against snapshot snap-20260728T171134Z-65d8 over 24,640 deals,
+// Pipedrive holds NO UTM data whatsoever — no utm_*, no landing page, no
+// referrer, no gclid/fbclid, no first/latest touch. What it actually has is:
+//
+//   Deal created        100%    → sourceCreatedAt
+//   Source origin       100%    → originalIngressSource (API/ManuallyCreated/Automation)
+//   מקור                80.2%   → leadSourceText  (free text: דף נחיתה, המלצה, פייסבוק…)
+//   מקור-רשימה סגורה    69.9%   → leadSource + leadSourceKey (33-option closed list)
+//   קמפיין              15.6%   → campaign
+//   Source origin ID     0.1%   → attributionRaw
+//
+// The UTM/touch columns therefore start empty and are filled by ingress later.
+// They exist NOW so that cutover is a writer change, never a schema change.
+//
+// Ownership: class L (legacy-owned, badged, editable) during the mirror; the
+// post-retirement owner is the INGRESS PLATFORM, not a human — see
+// docs/architecture/GOS-source-ownership-map.md §4.6.
+model DealMarketing {
+  id     String @id @default(cuid())
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  dealId String @unique
+
+  // ── Lead source ────────────────────────────────────────────────────────────
+  // Structured label + a stable key, plus the free-text detail. Kept as three
+  // columns because Pipedrive genuinely has both a closed list and a free field
+  // and they disagree on ~10% of deals; collapsing them would lose information.
+  leadSource     String? // resolved label from the closed list
+  leadSourceKey  String? // stable option key, survives a label rename
+  leadSourceText String? // free-text detail
+
+  // Derived acquisition channel (Meta / Google / אתר / אורגני / …). Resolved by
+  // the ONE shared resolver in src/ingress/attribution.js so a Pipedrive-imported
+  // deal and an ingress-created deal can never disagree about channel naming.
+  channel String?
+
+  campaign String?
+  medium   String?
+  content  String?
+  term     String?
+
+  landingUrl String?
+  referrer   String?
+
+  // ── UTM, verbatim ──────────────────────────────────────────────────────────
+  // Never derived from each other and never back-filled from `channel` — these
+  // are the raw tags as received, and analytics depends on that being true.
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+  utmContent  String?
+  utmTerm     String?
+
+  // Provider campaign identifiers, retained verbatim for ad-spend reconciliation.
+  adId       String?
+  adsetId    String?
+  campaignId String?
+
+  // ── Touch model ────────────────────────────────────────────────────────────
+  // firstTouch* is IMMUTABLE once set (a later payload claiming a different
+  // first touch is a conflict, never an overwrite); latestTouch* is overwritten
+  // freely. Conflating the two is the classic attribution bug.
+  firstTouchAt       DateTime?
+  firstTouchSource   String?
+  firstTouchCampaign String?
+  latestTouchAt      DateTime?
+  latestTouchSource  String?
+
+  // ── Provenance ─────────────────────────────────────────────────────────────
+  // Which system originally produced this deal: 'pipedrive:API',
+  // 'pipedrive:ManuallyCreated', 'meta_lead_ads', 'woocommerce', 'website_form',
+  // 'agent_reservation'… Write-once.
+  originalIngressSource String?
+  // When the SOURCE says the deal was created — not when GOS imported it.
+  sourceCreatedAt       DateTime?
+  // The full raw marketing bag, for audit and for fields we have not promoted
+  // to columns. Never rendered as JSON to users.
+  attributionRaw        Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([leadSourceKey])
+  @@index([channel])
+  @@index([campaign])
+  @@index([sourceCreatedAt])
 }

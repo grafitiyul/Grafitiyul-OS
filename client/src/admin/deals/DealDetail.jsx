@@ -44,6 +44,8 @@ import { emitDealTasksChanged } from './tasks/taskEvents.js';
 import { productContextFor, locationContextFor } from './tourContext.js';
 import CollapsibleNote from '../common/inline/CollapsibleNote.jsx';
 import LegacyInfoCard from '../common/LegacyInfoCard.jsx';
+import Card from '../common/PanelCard.jsx';
+import MarketingCard from './MarketingCard.jsx';
 import Dialog from '../common/Dialog.jsx';
 import TourSlotPickerDialog from '../tours/TourSlotPickerDialog.jsx';
 import DealTourSummary from '../tours/DealTourSummary.jsx';
@@ -925,6 +927,12 @@ export default function DealDetail({ dealId: dealIdProp = null }) {
           )}
         </Card>
       )}
+
+        {/* שיווק ומקור הליד — the PERMANENT canonical marketing card. Fed by the
+            Pipedrive import today and by the ingress platform after cutover;
+            the same fields either way, so this does not change at cutover.
+            Renders nothing when the deal carries no marketing information. */}
+        <MarketingCard marketing={deal.marketing} />
 
         {/* מידע ממערכת קודמת — curated legacy data (Pipedrive/Airtable) for
             migrated deals. Renders nothing for deals with no legacy records. */}
@@ -1998,26 +2006,8 @@ function OrgHoverCard({ org, orgTypeLabel, subtypeLabel, onEdit }) {
 
 // variant: 'default' = elevated card for the center workspace; 'panel' = lighter
 // card that sits calmly inside a side panel (no shadow, tighter padding).
-function Card({ title, action, children, variant = 'default' }) {
-  const panel = variant === 'panel';
-  return (
-    <section
-      className={`bg-white border border-gray-200 ${panel ? 'rounded-xl' : 'rounded-2xl shadow-sm'}`}
-    >
-      <div
-        className={`flex items-center justify-between gap-2 border-b border-gray-100 ${
-          panel ? 'px-4 pt-3 pb-2.5' : 'px-5 pt-4 pb-3'
-        }`}
-      >
-        <h2 className={`font-semibold text-gray-900 ${panel ? 'text-[13px]' : 'text-[15px]'}`}>
-          {title}
-        </h2>
-        {action}
-      </div>
-      <div className={panel ? 'p-4' : 'p-5'}>{children}</div>
-    </section>
-  );
-}
+// Card now lives in ../common/PanelCard.jsx so the Deal workspace and the cards
+// rendered inside it (MarketingCard, …) share ONE implementation.
 // General tour actions (still placeholders) — surfaced in the Tour Details
 // card's header ⋮. Payment/accounting actions live in DealCollectionCard.
 // ("טופס סיכום סיור" is the guide-facing counterpart — it belongs to the Tour

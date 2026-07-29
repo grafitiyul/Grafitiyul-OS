@@ -59,17 +59,59 @@ const firstNonEmpty = (...vals) => {
   return null;
 };
 
+// Legacy lead-source labels, as they are actually spelled in Pipedrive's
+// 33-option closed list. Mapping them here — rather than in the importer — is
+// what stops an imported deal ("פייסבוק") and an ingress deal ("facebook") from
+// reporting two different channels for the same acquisition.
+const LEGACY_SOURCE_CHANNEL = Object.freeze({
+  'פייסבוק': 'Meta',
+  'אינסטגרם': 'Meta',
+  'פייסבוק/אינסטגרם ממומן': 'Meta',
+  'meta': 'Meta',
+  'fb': 'Meta',
+  'ig': 'Meta',
+  'facebook': 'Meta',
+  'גוגל': 'Google',
+  'google': 'Google',
+  'google ads': 'Google',
+  'וואטספ': 'WhatsApp',
+  'וואטסאפ': 'WhatsApp',
+  'whatsapp': 'WhatsApp',
+  'דיוור וואטספ': 'WhatsApp',
+  'אתר גרפיטיול': 'אתר',
+  'דף נחיתה': 'אתר',
+  'טופס לקוחות עסקיים': 'אתר',
+  'טופס סוכנים/מפיקים': 'אתר',
+  'הרשמה עצמאית לסיורי חשיפה': 'אתר',
+  'המלצה': 'המלצה',
+  'לקוח/ה חוזר/ת': 'לקוח חוזר',
+  'טלפון': 'טלפון',
+  'מייל': 'מייל',
+  'דיוור אימייל': 'מייל',
+  'פנייה קרה': 'פנייה קרה',
+});
+
 // The canonical channel label. Kept small and stable — it is written onto the
 // Deal and read by humans, so it must not churn with every campaign rename.
-export function channelLabel({ utmSource, utmMedium, source }) {
+//
+// `legacyLabel` is the Pipedrive closed-list value for imported deals. It is
+// consulted BEFORE the generic fallbacks but AFTER real UTM tags, because a
+// tagged URL is stronger evidence than a hand-picked dropdown.
+export function channelLabel({ utmSource, utmMedium, source, legacyLabel = null }) {
   const s = (utmSource || '').toLowerCase();
   if (s.includes('facebook') || s.includes('instagram') || s === 'fb' || s === 'ig') return 'Meta';
   if (s.includes('google')) return 'Google';
   if (s) return utmSource;
+
+  const legacy = String(legacyLabel || '').trim().toLowerCase();
+  if (legacy && LEGACY_SOURCE_CHANNEL[legacy]) return LEGACY_SOURCE_CHANNEL[legacy];
+
   if (source === 'meta_lead_ads') return 'Meta';
   if (source === 'woocommerce') return 'אתר';
   if (source === 'website_form') return 'אתר';
   if ((utmMedium || '').toLowerCase() === 'organic') return 'אורגני';
+  // An unmapped legacy label is better than "unknown" — it is real information.
+  if (legacyLabel) return String(legacyLabel).trim();
   return 'לא ידוע';
 }
 

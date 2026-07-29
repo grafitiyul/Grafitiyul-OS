@@ -13,6 +13,7 @@
 // to an id, so a CRM rename cannot silently break ingestion.
 
 import { normalizeClassification } from '../deals/classification.js';
+import { writeDealMarketing } from '../deals/marketing.js';
 import { emitTimelineEvent } from '../timeline/events.js';
 import { createContactFrom, enrichContactChannels, resolveOrganization } from './resolve.js';
 
@@ -140,7 +141,51 @@ export async function createLeadDeal(tx, { normalized, stageKey = null }) {
     select: { id: true, orderNo: true },
   });
 
+  // THE canonical marketing record — written through the same function the
+  // Pipedrive importer uses, into the same columns. This is what makes the Deal
+  // panel identical before and after a source cuts over, and it is why
+  // attribution must not also be stashed anywhere else on the deal.
+  await writeDealMarketing(tx, deal.id, marketingFromIngress(normalized, label));
+
   return { dealId: deal.id, orderNo: deal.orderNo, contactId, contactCreated, organizationId };
+}
+
+/**
+ * Map a normalized ingress event onto the canonical marketing shape.
+ * Direct ingress is the source that CAN supply real UTM data, so unlike the
+ * Pipedrive mapping this one fills the UTM columns.
+ */
+export function marketingFromIngress(normalized, label) {
+  const a = normalized.attribution || {};
+  const occurred = normalized.occurredAt instanceof Date ? normalized.occurredAt : null;
+  return {
+    leadSource: label,
+    leadSourceKey: normalized.source || null,
+    leadSourceText: normalized.context?.formName || null,
+    channel: a.channel || null,
+    campaign: a.utmCampaign || null,
+    medium: a.utmMedium || null,
+    content: a.utmContent || null,
+    term: a.utmTerm || null,
+    landingUrl: a.landingUrl || null,
+    referrer: a.referrer || null,
+    utmSource: a.utmSource || null,
+    utmMedium: a.utmMedium || null,
+    utmCampaign: a.utmCampaign || null,
+    utmContent: a.utmContent || null,
+    utmTerm: a.utmTerm || null,
+    adId: a.adId || null,
+    adsetId: a.adsetId || null,
+    campaignId: a.campaignId || null,
+    originalIngressSource: normalized.source || null,
+    sourceCreatedAt: occurred,
+    firstTouchAt: occurred,
+    firstTouchSource: a.channel || label,
+    firstTouchCampaign: a.utmCampaign || null,
+    latestTouchAt: occurred,
+    latestTouchSource: a.channel || label,
+    attributionRaw: { ingress: a },
+  };
 }
 
 // The intake note — what arrived, from where, with which attribution. Pinned so

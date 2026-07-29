@@ -274,3 +274,52 @@ test('the deal source catalogue entry is created once and then reused', async ()
   assert.equal(db._tables.dealSource.length, 1);
   assert.equal(db._tables.dealSource[0].label, 'טופס באתר');
 });
+
+// ── canonical marketing ──────────────────────────────────────────────────────
+// Ingress and the Pipedrive importer must write the SAME record through the
+// SAME code path. If these two ever diverge, the Deal panel breaks at cutover —
+// which is exactly what the canonical model exists to prevent.
+
+test('ingress writes THE canonical marketing record, not a private copy', async () => {
+  const db = createTestDb();
+  const ev = leadEvent();
+  ev.attributionInput = {
+    url: 'https://grafitiyul.co.il/tours?utm_source=facebook&utm_medium=cpc&utm_campaign=summer&utm_content=vid1&utm_term=graffiti',
+    adId: 'ad-1', adsetId: 'as-1', campaignId: 'c-1',
+  };
+  await ingest({ source: 'website_form', externalId: 'mk1', rawPayload: raw, canonicalEvent: ev }, db);
+
+  const m = db._tables.dealMarketing[0];
+  assert.ok(m, 'a marketing record was written');
+  assert.equal(m.dealId, db._tables.deal[0].id);
+  assert.equal(m.utmSource, 'facebook');
+  assert.equal(m.utmMedium, 'cpc');
+  assert.equal(m.utmCampaign, 'summer');
+  assert.equal(m.utmContent, 'vid1');
+  assert.equal(m.utmTerm, 'graffiti');
+  assert.equal(m.adId, 'ad-1');
+  assert.equal(m.channel, 'Meta', 'derived by the ONE shared resolver');
+  assert.equal(m.originalIngressSource, 'website_form');
+  assert.equal(m.landingUrl, ev.attributionInput.url);
+});
+
+test('exactly one marketing record per deal, even on a duplicate delivery', async () => {
+  const db = createTestDb();
+  const args = { source: 'website_form', externalId: 'dup-mk', rawPayload: raw, canonicalEvent: leadEvent() };
+  await ingest(args, db);
+  await ingest(args, db);
+  assert.equal(db._tables.deal.length, 1);
+  assert.equal(db._tables.dealMarketing.length, 1);
+});
+
+test('a lead with no attribution still records provenance, never a fake channel', async () => {
+  const db = createTestDb();
+  // Genuinely bare: the shared fixture carries a facebook UTM, so it is cleared.
+  const bare = leadEvent({ context: { message: 'מעוניין בסיור' }, attributionInput: {} });
+  await ingest({ source: 'website_form', externalId: 'bare', rawPayload: raw, canonicalEvent: bare }, db);
+  const m = db._tables.dealMarketing[0];
+  assert.equal(m.originalIngressSource, 'website_form');
+  assert.equal(m.channel, 'אתר', 'resolved from the source, not invented');
+  assert.equal(m.utmSource, undefined, 'no UTM is fabricated');
+  assert.equal(m.landingUrl, undefined);
+});
