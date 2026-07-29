@@ -86,6 +86,16 @@ export const OWNERSHIP = Object.freeze({
     ],
   },
 
+  // Notes → TimelineEntry. Imported history is IMMUTABLE: a note edited in
+  // Pipedrive appends a revision rather than mutating the original, so there
+  // are no mergeable fields at all. Declared so note webhooks are captured and
+  // auditable rather than dropped as an unknown entity.
+  note: {
+    system: 'pipedrive',
+    appendOnlyHistory: true,
+    fields: [],
+  },
+
   contact: {
     system: 'pipedrive',
     fields: [
