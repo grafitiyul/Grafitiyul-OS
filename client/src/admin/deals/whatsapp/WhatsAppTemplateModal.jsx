@@ -281,9 +281,14 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                 </p>
               )}
 
+              {/* Language-aware, because with strict resolution this appears
+                  whenever the name exists in the OTHER language — saying
+                  "no first name saved" there would be untrue. */}
               {missingVars.includes('customer_first_name') && (
                 <p className="shrink-0 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
-                  ללקוח אין שם פרטי שמור — הנוסח הותאם בלעדיו. אפשר להשלים ידנית לפני השליחה.
+                  {lang === 'en'
+                    ? 'לאיש הקשר אין שם פרטי באנגלית, ולכן הפנייה נפתחה בלי שם. בכוונה לא משתמשים בשם העברי בהודעה באנגלית — אפשר להשלים ידנית לפני השליחה.'
+                    : 'לאיש הקשר אין שם פרטי בעברית, ולכן הפנייה נפתחה בלי שם. אפשר להשלים ידנית לפני השליחה.'}
                 </p>
               )}
               {resolveError && (
