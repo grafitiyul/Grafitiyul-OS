@@ -1,11 +1,30 @@
-# Legacy migration — read-only audit tooling (ONE-TIME)
+# Legacy migration tooling (ONE-TIME)
 
 Single-purpose scripts for the Pipedrive + Airtable → GOS migration. **Not** a reusable import
-framework — just the read-only audit probes for this one migration.
+framework.
+
+The `*-audit.mjs` / `plan-*.mjs` / `verify-*.mjs` probes are read-only. The `run-*-import.mjs`
+runners DO write to the GOS database, but only with `--execute` (dry-run is the default) and
+never to Pipedrive or Airtable.
+
+## Snapshot contract
+
+Every importer declares the snapshot entities it requires and validates them before doing any
+work (`src/migration/snapshotContract.js`). Snapshots are deliberately scoped — the cutover
+Final Snapshot omits `pipedrive/files` — so a missing entity must fail loudly with a remedy,
+never crash late on a raw `NoSuchKey` and never degrade to a silent zero. Both of those failure
+modes existed and were fixed on 2026-07-29:
+
+- the identity import streamed `pipedrive/files` (an omitted entity) with no handling;
+- the cutover import streamed `pipedrive/deal_participants` behind `.catch(() => {})`, so a
+  missing entity silently produced deals with no participant links.
+
+`pipedrive/deal_participants` is now a canonical entity in `pipedrivePlan()` — every fresh
+snapshot contains it by construction.
 
 ## Safety contract
 
-- **GET/read only.** These scripts never write to Pipedrive, Airtable, or the GOS database.
+- **Legacy systems are GET-only.** These scripts never write to Pipedrive or Airtable.
 - **No secrets in output.** Tokens are never printed/logged/committed; `lib.redact()` is a backstop.
 - Raw inventory is written to `output/` (gitignored) — never commit legacy structure/data.
 

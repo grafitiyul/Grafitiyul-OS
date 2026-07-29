@@ -43,8 +43,18 @@ const calHold = process.env.TOUR_CALENDAR_SYNC_ENABLED;
 if (calHold === 'false') warn('TOUR_CALENDAR_SYNC_ENABLED=false — calendar HOLD is active (correct DURING the import; lift it after verification)');
 else ok('calendar sync live (normal state; set TOUR_CALENDAR_SYNC_ENABLED=false right before the cutover import)');
 if (process.env.WOO_SYNC_ENABLED === 'true') {
-  if (process.env.WOO_SYNC_BULK_ENABLED === 'true') warn('WOO_SYNC_BULK_ENABLED=true — the bulk sweep could mark imported tours for Woo; turn it off for cutover night');
-  else ok('Woo live for native tours; imported tours stay off Woo (first-publication gate + bulk sweep off)');
+  // MEASURED 2026-07-29: the bulk sweep filters on `openTourTemplateId IN mapped
+  // templates`, and imported cutover tours are created WITHOUT a template
+  // (0 of 2,473 Wave-1 tours have one). So the sweep cannot reach them — the old
+  // wording here was wrong. The REAL residual risk is narrower: with bulk ON, the
+  // worker's first-publication gate passes, so ANY later mutation of an imported
+  // tour (edit/cancel/registration marks it pending) could publish it to Woo.
+  // That is why it is still turned off for the cutover window.
+  if (process.env.WOO_SYNC_BULK_ENABLED === 'true') {
+    warn('WOO_SYNC_BULK_ENABLED=true — the bulk SWEEP cannot reach imported tours (they carry no template), '
+       + 'but with bulk on the first-publication gate is open, so a later mutation of an imported tour could publish it to Woo. '
+       + 'Turn it off just before the cutover import and restore it right after.');
+  } else ok('Woo live for native tours; imported tours cannot be first-published (bulk off → first-publication gate closed)');
 } else ok('Woo sync OFF');
 if (process.env.MIGRATION_EXTRACTION_ENABLED === 'true') warn('MIGRATION_EXTRACTION_ENABLED=true — leave unset except while actually extracting');
 else ok('extraction gate closed (open only for the Final Snapshot run)');

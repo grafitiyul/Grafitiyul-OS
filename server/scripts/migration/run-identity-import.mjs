@@ -15,7 +15,8 @@ import * as r2 from '../../src/migration/r2.js';
 import { createSnapshotReader } from '../../src/migration/review/snapshotReader.js';
 import { buildImportReadiness, getDeletedPersonIds, getIdentityEdits } from '../../src/migration/review/service.js';
 import { isNewContactName } from '../../src/migration/phoneCompare.js';
-import { planIdentityImport, executeIdentityPlan } from '../../src/migration/import/identityImport.js';
+import { planIdentityImport, executeIdentityPlan, identityHistoryCount } from '../../src/migration/import/identityImport.js';
+import { requireEntities } from '../../src/migration/snapshotContract.js';
 
 const arg = (n) => { const i = process.argv.indexOf(n); return i >= 0 ? process.argv[i + 1] : null; };
 const snapshotId = arg('--snapshot');
@@ -38,26 +39,42 @@ if (!readiness.ready) {
   if (EXECUTE) { console.error('\nABORT: --execute refused while the gate is red.'); process.exit(2); }
 }
 
+// ── 0b) snapshot input contract ──────────────────────────────────────────────
+// Declared up front so a scoped snapshot fails fast with an actionable message
+// instead of dying mid-load on a raw NoSuchKey.
+const REQUIRED_ENTITIES = ['pipedrive/persons', 'pipedrive/organizations'];
+await requireEntities({ getText: r2.getObjectText }, snapshotId, REQUIRED_ENTITIES);
+console.log(`snapshot contract satisfied: ${REQUIRED_ENTITIES.join(', ')}`);
+
 // ── 1) load the sources ──────────────────────────────────────────────────────
 console.log(`\nloading snapshot ${snapshotId}…`);
+
+// `history` answers ONE question: does this person have any footprint in Pipedrive
+// worth importing (history > 0 → importable; otherwise skipped as a 'shell')?
+//
+// It used to be reconstructed by streaming deals + activities + notes + files +
+// deal_participants and counting person_id references — ~430,000 records read to
+// derive a boolean, and a hard dependency on `pipedrive/files`, which the cutover
+// Final Snapshot deliberately OMITS. That is why step 2.1 of the checklist could
+// never run against its own Final Snapshot.
+//
+// Pipedrive already publishes these aggregates ON the person record, which is the
+// authoritative source for them. Verified equivalent over all 32,475 persons of
+// Snapshot #1: identical importability for every single person (0 gained, 0 lost).
+// See PERSON_HISTORY_FIELDS + identityHistoryCount().
+const organizations = [];
 const persons = new Map();
 await stream('pipedrive/persons', (p) => persons.set(p.id, {
   legacyId: p.id, name: String(p.name || '').trim(),
   firstName: p.first_name || null, lastName: p.last_name || null,
   phones: (p.phone || []).map((x) => x?.value).filter((v) => String(v || '').trim()),
   emails: (p.email || []).map((x) => String(x?.value || '').trim()).filter(Boolean),
-  orgId: pid(p.org_id), history: 0,
+  orgId: pid(p.org_id), history: identityHistoryCount(p),
 }));
-const organizations = [];
 await stream('pipedrive/organizations', (o) => organizations.push({ legacyId: o.id, name: String(o.name || '').trim() }));
-const bump = (v) => { const c = persons.get(pid(v)); if (c) c.history++; };
-await stream('pipedrive/deals', (d) => bump(d.person_id));
-await stream('pipedrive/activities', (a) => bump(a.person_id));
-await stream('pipedrive/notes', (n) => bump(n.person_id));
-await stream('pipedrive/files', (f) => bump(f.person_id));
-await stream('pipedrive/deal_participants', (l) => bump(l.person_id));
 for (const p of persons.values()) p.importable = p.history > 0;
 console.log(`  persons ${persons.size} · organizations ${organizations.length}`);
+console.log(`  importable (history > 0): ${[...persons.values()].filter((p) => p.importable).length}`);
 
 // ── 2) load the ledger ───────────────────────────────────────────────────────
 const [orgRows, contactRows, nameRows, deletedIds, identityEdits] = await Promise.all([

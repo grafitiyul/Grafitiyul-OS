@@ -1,6 +1,47 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { planIdentityImport } from './identityImport.js';
+import { planIdentityImport, identityHistoryCount, PERSON_HISTORY_FIELDS } from './identityImport.js';
+
+// ── person history (importability signal) ────────────────────────────────────
+// Replaced streaming deals+activities+notes+files+deal_participants, which made
+// the identity import depend on `pipedrive/files` — the one entity the cutover
+// Final Snapshot omits. Proven equivalent over all 32,475 persons of Snapshot #1.
+
+test('a person with no footprint at all is a shell (history 0)', () => {
+  assert.equal(identityHistoryCount({ open_deals_count: 0, files_count: 0 }), 0);
+  assert.equal(identityHistoryCount({}), 0);
+  assert.equal(identityHistoryCount(null), 0);
+});
+
+test('any single footprint field makes a person importable', () => {
+  for (const f of PERSON_HISTORY_FIELDS) {
+    assert.ok(identityHistoryCount({ [f]: 1 }) > 0, `${f} alone must count as history`);
+  }
+});
+
+test('files_count alone still counts — the 2 persons that depend on it are not lost', () => {
+  // Measured: exactly 2 persons in Snapshot #1 are importable ONLY via files.
+  assert.ok(identityHistoryCount({ files_count: 3 }) > 0);
+});
+
+test('participant counts alone still count — the 31 participant-only persons survive', () => {
+  assert.ok(identityHistoryCount({ participant_open_deals_count: 1 }) > 0);
+  assert.ok(identityHistoryCount({ participant_closed_deals_count: 1 }) > 0);
+});
+
+test('related_* org counters are EXCLUDED (they are the org\'s history, not the person\'s)', () => {
+  const orgMemberWithNoOwnHistory = {
+    related_open_deals_count: 9, related_closed_deals_count: 9,
+    related_won_deals_count: 9, related_lost_deals_count: 9,
+  };
+  assert.equal(identityHistoryCount(orgMemberWithNoOwnHistory), 0);
+});
+
+test('history sums footprints and tolerates junk values', () => {
+  assert.equal(identityHistoryCount({ open_deals_count: 2, notes_count: 3 }), 5);
+  assert.equal(identityHistoryCount({ open_deals_count: 'x', notes_count: 2 }), 2);
+  assert.equal(identityHistoryCount({ open_deals_count: -5, notes_count: 1 }), 1);
+});
 
 // SYNTHETIC fixtures only — this repo is public.
 const person = (o) => ({

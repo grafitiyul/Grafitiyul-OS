@@ -34,6 +34,46 @@ import { isResolved } from '../review/queues.js';
 const t = (s) => String(s ?? '').trim();
 const newId = () => crypto.randomUUID();
 
+// ── person history (importability signal) ────────────────────────────────────
+// A person is importable when they have ANY footprint in Pipedrive; otherwise
+// they are a 'shell' and are skipped. These are Pipedrive's OWN aggregate counters,
+// carried on every person record — the authoritative source for exactly this
+// question.
+//
+// This deliberately replaces the previous derivation, which streamed
+// pipedrive/deals + activities + notes + files + deal_participants and counted
+// person_id references. That approach read ~430,000 records to compute a boolean
+// and, fatally, made the identity import depend on `pipedrive/files` — an entity
+// the cutover Final Snapshot omits by design, so checklist step 2.1 could never
+// run against its own snapshot (it died on a raw NoSuchKey).
+//
+// Equivalence was PROVEN, not assumed: over all 32,475 persons in Snapshot #1 the
+// two derivations classify every single person identically (0 gained, 0 lost).
+// `related_*` counters are deliberately EXCLUDED — they count deals belonging to
+// the person's organization, not to the person, and would make org members look
+// importable on someone else's history.
+export const PERSON_HISTORY_FIELDS = [
+  'open_deals_count',
+  'closed_deals_count',
+  'won_deals_count',
+  'lost_deals_count',
+  'activities_count',
+  'notes_count',
+  'files_count',
+  'participant_open_deals_count',
+  'participant_closed_deals_count',
+];
+
+/** Total Pipedrive footprint for one person record. 0 → a shell. */
+export function identityHistoryCount(person) {
+  let n = 0;
+  for (const f of PERSON_HISTORY_FIELDS) {
+    const v = Number(person?.[f] || 0);
+    if (Number.isFinite(v) && v > 0) n += v;
+  }
+  return n;
+}
+
 // A reference to an organization that will exist: either planned in this run
 // ({ plannedId }) or already alive ({ existingId }).
 const refId = (ref) => ref?.plannedId ?? ref?.existingId ?? null;

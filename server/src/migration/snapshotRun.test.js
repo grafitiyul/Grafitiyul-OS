@@ -31,10 +31,17 @@ function fakePd(data, counters = {}) {
     '/notes': data.notes || [], '/activities': data.activities || [], '/files': data.files || [],
     '/products': data.catalog || [],
   };
-  counters.page = 0; counters.bulk = 0; counters.batchSizes = [];
+  counters.page = 0; counters.bulk = 0; counters.batchSizes = []; counters.get = 0; counters.getPaths = [];
   return {
     reference: async () => ({ pipelines: [{ id: 1 }] }),
     page: async (path, _params, start, limit = 500) => { counters.page++; return pageOf(byPath[path] || [], start, limit); },
+    // v1 GET — used only by deal_participants (no bulk endpoint exists for it).
+    get: async (path) => {
+      counters.get++; counters.getPaths.push(path);
+      const m = /^\/deals\/(\d+)\/participants$/.exec(path);
+      if (!m) throw new Error(`unexpected GET ${path}`);
+      return { data: data.participants?.[Number(m[1])] || [] };
+    },
     dealProductsBulk: async (dealIds, cursor = null) => {
       counters.bulk++; counters.batchSizes.push(dealIds.length);
       if (data.bulkThrows) throw data.bulkThrows;
@@ -61,6 +68,7 @@ function fakeAt(data) {
 
 const mk = (n, f) => Array.from({ length: n }, (_, i) => f(i));
 const TARGETS = 250; // deals with products → 3 batches of 100
+const PARTICIPANT_DEALS = 30; // deals with participants_count > 1
 
 function baseData() {
   const products = {};
@@ -70,10 +78,19 @@ function baseData() {
       { deal_id: i, product_id: 8, quantity: 1, item_price: 50, comments: null, order_nr: 1 },
     ];
   }
+  // Secondary participants on the first PARTICIPANT_DEALS deals (2 links each).
+  const participants = {};
+  for (let i = 1; i <= PARTICIPANT_DEALS; i++) {
+    participants[i] = [
+      { id: i * 10, person_id: { value: 500 + i, name: `משתתף ${i}` } },
+      { id: i * 10 + 1, person_id: 900 + i },
+    ];
+  }
   return {
     orgs: mk(2905, (i) => ({ id: i + 1 })),
     persons: mk(12000, (i) => ({ id: i + 1 })),
-    deals: mk(300, (i) => ({ id: i + 1, products_count: i < TARGETS ? 2 : 0 })),
+    deals: mk(300, (i) => ({ id: i + 1, products_count: i < TARGETS ? 2 : 0, participants_count: i < PARTICIPANT_DEALS ? 2 : 1 })),
+    participants,
     notes: mk(700, (i) => ({ id: i + 1 })),
     activities: mk(1200, (i) => ({ id: i + 1 })),
     files: mk(900, (i) => ({ id: i + 1 })),
@@ -116,6 +133,57 @@ test('product-line order (order_nr) and comments/HTML are preserved', async () =
   const first = JSON.parse(shard.split('\n')[0]);
   assert.deepEqual(first.products.map((p) => p.order_nr), [1, 2], 'sorted by order_nr');
   assert.match(first.products[1].comments, /3800 ש"ח/, 'HTML comments preserved verbatim');
+});
+
+// ── deal_participants (canonical since 2026-07-29) ───────────────────────────
+// Previously this entity existed ONLY in Snapshot #1, appended by a one-shot
+// script. Every new snapshot silently lacked it and the cutover importer swallowed
+// the absence, creating deals with no participant links. It is a plan entity now.
+
+test('deal_participants is a CANONICAL plan entity — present in every fresh snapshot', async () => {
+  const store = memStore();
+  const top = await runSnapshot({ snapshotId: 'snapPart', store, pd: fakePd(baseData()), at: fakeAt(atData()) });
+  assert.ok(top.entities['pipedrive/deal_participants'], 'entity registered in the top manifest');
+  assert.equal(top.counters['pipedrive/deal_participants'], PARTICIPANT_DEALS * 2, 'one record per participant LINK');
+});
+
+test('deal_participants targets only deals with participants_count > 1, and discovery is free', async () => {
+  const store = memStore(); const c = {};
+  await runSnapshot({ snapshotId: 'snapPart2', store, pd: fakePd(baseData(), c), at: fakeAt(atData()) });
+  assert.equal(c.get, PARTICIPANT_DEALS, 'exactly one GET per multi-participant deal — never per deal');
+  assert.ok(c.getPaths.every((p) => /^\/deals\/\d+\/participants$/.test(p)));
+  // Targets come from the already-snapshotted deals shards, so no extra /deals paging.
+  const dealsPages = 1, orgPages = 6, personPages = 24, notePages = 2, actPages = 3, filePages = 9, catPages = 1;
+  assert.equal(c.page, dealsPages + orgPages + personPages + notePages + actPages + filePages + catPages,
+    'zero Pipedrive calls to discover participant targets');
+});
+
+test('deal_participants record shape is { deal_id, person_id, participant } with person_id unwrapped', async () => {
+  const store = memStore();
+  await runSnapshot({ snapshotId: 'snapPart3', store, pd: fakePd(baseData()), at: fakeAt(atData()) });
+  const shard = store.map.get('snapshots/snapPart3/pipedrive/deal_participants/shard-00000.jsonl').toString('utf8');
+  const [a, b] = shard.split('\n').filter(Boolean).slice(0, 2).map((l) => JSON.parse(l));
+  assert.equal(a.deal_id, 1);
+  assert.equal(a.person_id, 501, 'object-shaped person_id is unwrapped to its value');
+  assert.equal(b.person_id, 901, 'scalar person_id passes through');
+  assert.ok(a.participant, 'the verbatim API object is preserved');
+});
+
+test('deal_participants is skipped entirely on a complete resume (zero GETs)', async () => {
+  const store = memStore(); const data = baseData();
+  await runSnapshot({ snapshotId: 'snapPart4', store, pd: fakePd(data), at: fakeAt(atData()) });
+  const c2 = {};
+  await runSnapshot({ snapshotId: 'snapPart4', store, pd: fakePd(data, c2), at: fakeAt(atData()) });
+  assert.equal(c2.get, 0, 'a completed participants entity is never re-fetched');
+});
+
+test('omitting deal_participants is recorded and never silently re-added on resume', async () => {
+  const store = memStore(); const data = baseData();
+  const top = await runSnapshot({ snapshotId: 'snapOmit', store, pd: fakePd(data), at: fakeAt(atData()), omit: ['pipedrive/deal_participants'] });
+  assert.equal(top.entities['pipedrive/deal_participants'], undefined, 'omitted entity is absent');
+  const c2 = {};
+  await runSnapshot({ snapshotId: 'snapOmit', store, pd: fakePd(data, c2), at: fakeAt(atData()) });
+  assert.equal(c2.get, 0, 'a resume never re-appends what was deliberately omitted');
 });
 
 test('field-parity gate ABORTS before writing if a frozen-spec field is missing', async () => {

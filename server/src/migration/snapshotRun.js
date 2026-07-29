@@ -41,6 +41,13 @@ function pipedrivePlan() {
     // Product catalog: resolves product_id → name if v2 line rows omit the name.
     { key: 'pipedrive/products', system: 'pipedrive', entity: 'products', kind: 'pdBulk', path: '/products', params: {}, limit: 500, shardSize: BULK_SHARD, note: 'product catalog (name resolution for historical line items)' },
     { key: 'pipedrive/deal_products', system: 'pipedrive', entity: 'deal_products', kind: 'pdBulkProducts', shardSize: PRODUCTS_SHARD },
+    // Secondary deal participants. CANONICAL since 2026-07-29: this used to exist
+    // only in Snapshot #1 (appended by the one-shot extract-deal-participants.mjs),
+    // so every NEW snapshot silently lacked it and the cutover importer — which
+    // swallowed the absence — created deals with no participant links. It is a
+    // first-class plan entity now, so a snapshot is self-contained by construction.
+    // Depends on pipedrive/deals (target ids are read from that snapshot: 0 discovery calls).
+    { key: 'pipedrive/deal_participants', system: 'pipedrive', entity: 'deal_participants', kind: 'pdDealParticipants', shardSize: BULK_SHARD },
   ];
 }
 
@@ -128,6 +135,7 @@ export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, m
       if (desc.kind === 'pdReference') manifest = await extractReference(desc);
       else if (desc.kind === 'pdBulk') manifest = await extractPdBulk(desc);
       else if (desc.kind === 'pdBulkProducts') manifest = await extractPdBulkProducts(desc);
+      else if (desc.kind === 'pdDealParticipants') manifest = await extractPdDealParticipants(desc);
       else if (desc.kind === 'atTable') manifest = await extractAtTable(desc);
       else if (desc.kind === 'atAttachments') manifest = await extractAtAttachments(desc);
       else throw new Error(`unknown entity kind: ${desc.kind}`);
@@ -286,6 +294,60 @@ export async function runSnapshot({ snapshotId, store, pd, at, log = () => {}, m
       system: 'pipedrive', entity: 'deal_products', shards,
       params: { targetDeals: targets.length, batchSize: DEAL_IDS_PER_BULK_CALL, observedFields, endpoint: 'GET /api/v2/deals/products' },
       note: 'v2 BULK: one record per deal with products_count>0 → {deal_id, products[]} (order_nr preserved)',
+    });
+  }
+
+  // Secondary deal participants. There is NO bulk endpoint — one v1 GET per deal
+  // that actually has more than one participant. Targets come from the ALREADY
+  // SNAPSHOTTED deals shards, so discovery costs zero requests. Resumable by
+  // target index at shard-flush boundaries, exactly like deal_products.
+  //
+  // Record shape is IDENTICAL to the 2026-07-16 one-shot append
+  // ({ deal_id, person_id, participant }) so every existing consumer — the cutover
+  // importer, the review browser, contactSections — reads it unchanged.
+  async function extractPdDealParticipants(desc) {
+    const man = await writer.readEntityManifest('pipedrive', 'deals');
+    if (!man) throw new Error('deals_entity_not_snapshotted: cannot derive deal_participants targets without the deals snapshot');
+    const targets = [];
+    let scanned = 0;
+    for (const shard of man.shards) {
+      const text = await store.getText(shard.key);
+      for (const line of text.split('\n')) {
+        if (!line) continue;
+        const d = JSON.parse(line);
+        scanned++;
+        if ((d.participants_count || 0) > 1) targets.push(d.id);
+      }
+    }
+    targets.sort((a, b) => a - b);
+    log(`    deal_participants targets: ${targets.length} of ${scanned} deals (participants_count>1; from R2 snapshot, 0 Pipedrive calls)`);
+
+    const cur = state.current;
+    if (!cur.cursor) cur.cursor = { index: 0, targetCount: targets.length };
+    cur.cursor.targetCount = targets.length;
+    const buffer = [];
+    const shards = cur.shards;
+    let shardIndex = cur.shardIndex;
+
+    for (let i = cur.cursor.index; i < targets.length; i++) {
+      const dealId = targets[i];
+      const json = await pd.get(`/deals/${dealId}/participants`, { start: 0, limit: 100 });
+      for (const p of json?.data || []) {
+        const personId = (p.person_id && typeof p.person_id === 'object' ? p.person_id.value : p.person_id) ?? null;
+        buffer.push({ deal_id: dealId, person_id: personId, participant: p });
+      }
+      if (buffer.length >= desc.shardSize) {
+        shardIndex = await flush(desc.system, desc.entity, shardIndex, buffer, shards);
+        cur.cursor.index = i + 1; cur.shardIndex = shardIndex; await persist();
+        log(`    deal_participants ${i + 1}/${targets.length}`);
+      }
+    }
+    shardIndex = await flush(desc.system, desc.entity, shardIndex, buffer, shards);
+    return writer.writeEntityManifest({
+      system: 'pipedrive', entity: 'deal_participants', shards,
+      params: { endpoint: '/api/v1/deals/{id}/participants', dealsRequested: targets.length, filter: 'participants_count > 1' },
+      note: 'Secondary deal participants. One record per LINK: { deal_id, person_id, participant }. '
+          + 'deal_id is added because the payload does not carry it and it is the only join key.',
     });
   }
 

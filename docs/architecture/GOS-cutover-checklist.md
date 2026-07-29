@@ -14,6 +14,20 @@ $env:MIGRATION_DB_URL = (railway variables --service Postgres --json | ConvertFr
 
 `<FREEZE>` below = the freeze date `YYYY-MM-DD` (the evening's date, IL time).
 
+**Snapshot contract (since 2026-07-29).** Every importer declares the snapshot
+entities it requires and validates them UP FRONT
+(`server/src/migration/snapshotContract.js`). A scoped snapshot that lacks a
+required entity is refused immediately with a message naming the gap and the fix.
+Missing input is never a silent zero and never a raw S3 error. Required entities:
+
+| Step | Requires |
+|---|---|
+| 2.1 / 2.2 identity | `pipedrive/persons`, `pipedrive/organizations` |
+| 2.3 / 3.1 cutover | `pipedrive/reference`, `pipedrive/deals`, `pipedrive/deal_participants` |
+
+`pipedrive/files` is required by NOTHING on cutover night — which is why omitting
+it in 1.3 is correct.
+
 ---
 
 ## Phase 0 — afternoon before the freeze (no business impact)
@@ -26,8 +40,15 @@ $env:MIGRATION_DB_URL = (railway variables --service Postgres --json | ConvertFr
 - Rollback: none needed (read-only). **If NOT READY — postpone; nothing announced yet.**
 
 **0.2 Woo bulk sweep off** (Owner or Operator, Railway dashboard)
-- Purpose: the bulk sweep must not mark imported tours for Woo.
-- Action: set `WOO_SYNC_BULK_ENABLED=false` on the Grafitiyul-OS service (leave `WOO_SYNC_ENABLED` as is — native tours keep syncing).
+- Purpose (CORRECTED 2026-07-29 — measured, not assumed): the bulk **sweep** itself
+  cannot reach imported tours. It filters on `openTourTemplateId IN (mapped templates)`
+  and imported tours are created without a template — 0 of 2,473 Wave-1 tours carry one.
+  The real reason to turn it off is narrower: while bulk is ON the worker's
+  first-publication gate is open, so any later *mutation* of an imported tour
+  (edit / cancel / registration marks it pending) could publish it to Woo. With bulk
+  OFF such a tour is parked back to `null` and never published.
+- Action: set `WOO_SYNC_BULK_ENABLED=false` on the Grafitiyul-OS service (leave `WOO_SYNC_ENABLED` as is — native tours keep syncing). **Restore it right after the cutover window**: while it is off, newly generated open-tour occurrences are not auto-published for sale.
+- Timing: do this immediately before Phase 3, not days ahead — it costs a service restart and suppresses auto-publication while off.
 - Verification: preflight rerun shows the Woo line as ✓.
 - Rollback: restore the previous value any time.
 
@@ -44,8 +65,10 @@ $env:MIGRATION_DB_URL = (railway variables --service Postgres --json | ConvertFr
 $env:MIGRATION_EXTRACTION_ENABLED="true"; $env:MIGRATION_MAX_REQUESTS="1800"
 railway run --service Grafitiyul-OS node server/scripts/migration/run-snapshot.mjs --new --omit pipedrive/files
 ```
-  Note the printed snapshot id → `<FINAL>`. `--omit pipedrive/files` skips the 1,255-request files census (files are a separate gated slice; not needed for cutover). If Pipedrive's daily budget trips: the run pauses resumably — resume with `--snapshot <FINAL>` after reset; the freeze simply holds longer.
-- Expected: run completes; ~600 Pipedrive requests + Airtable tables + attachments.
+  Note the printed snapshot id → `<FINAL>`. `--omit pipedrive/files` skips the files census (~1,700 requests). This is CORRECT and stays: since 2026-07-29 nothing on cutover night reads `pipedrive/files` — the identity import derives its history signal from the person record's own aggregate counters (proven equivalent over all 32,475 persons of Snapshot #1). Do **not** omit anything else. If Pipedrive's daily budget trips: the run pauses resumably — resume with `--snapshot <FINAL>` after reset; the freeze simply holds longer.
+- Expected: run completes; ~1,250 Pipedrive requests + Airtable tables + attachments.
+  Measured on the 2026-07-28 rehearsal: **1,234** requests — reference 11 · organizations 6 · persons 66 · deals 50 · notes 150 · activities ~310 · products 1 · deal_products ~158 · **deal_participants 481** (one v1 GET per deal with `participants_count > 1`; no bulk endpoint exists).
+- `pipedrive/deal_participants` is a CANONICAL plan entity (since 2026-07-29). It used to exist only in Snapshot #1 via a one-shot append script, so new snapshots silently lacked it and the cutover importer created deals with no participant links. Every fresh snapshot now contains it by construction, and the importers refuse a snapshot that does not (see "snapshot contract" below).
 - Verification: `railway run --service Grafitiyul-OS node server/scripts/migration/verify-snapshot.mjs --snapshot <FINAL>` → PASS, 0 blocking.
 - Rollback: none needed — read-only against legacy; the snapshot is additive in R2.
 - **Then unset `MIGRATION_EXTRACTION_ENABLED`.**
@@ -55,8 +78,9 @@ railway run --service Grafitiyul-OS node server/scripts/migration/run-snapshot.m
 **2.1 Identity delta (dry)**
 - Purpose: new persons/orgs created during the mirror.
 - Command: `railway run --service Grafitiyul-OS node server/scripts/migration/run-identity-import.mjs --snapshot <FINAL>`
-- Expected: small create counts (days of drift); crosswalk skips everything already imported.
-- Verification: plan numbers look like days-of-business, not thousands.
+- Expected: small create counts (days of drift); crosswalk skips everything already imported. Runs in seconds — it reads only `pipedrive/persons` + `pipedrive/organizations`.
+- Verification: plan numbers look like days-of-business, not thousands. It first prints `snapshot contract satisfied: …`; if a required entity is absent it refuses immediately with the remedy, instead of dying on a raw `NoSuchKey` (that failure was found and fixed on 2026-07-29).
+- Measured on the 2026-07-28 rehearsal (14 days of drift): 8 organizations · 245 contacts · 481 phones · 202 emails.
 - Rollback point: nothing written yet.
 
 **2.2 Identity delta (execute)**
@@ -67,8 +91,12 @@ railway run --service Grafitiyul-OS node server/scripts/migration/run-snapshot.m
 **2.3 Cutover plan → Hash B** (run TWICE)
 - Purpose: the one plan covering historical-delta tours, future operational tours, duplicate redirects, Wave-1 tour delta, deal merges/conflicts, new deals.
 - Command: `railway run --service Grafitiyul-OS node server/scripts/migration/run-cutover-import.mjs --final <FINAL> --snap1 snap-20260714T125052Z-aaaa --freeze-date <FREEZE>`
-- Expected: `GATES: PASS ✓`; identical `HASH B` across the two runs; tour reconciliation line shows ✓.
+- Expected: `GATES: PASS ✓`; identical `HASH B` across the two runs; tour reconciliation line shows ✓. It also prints `snapshot contract OK` for BOTH snapshots and the participant counts per snapshot — if either line is missing or participants read 0, stop.
 - Verification: **Owner reads the populations and approves Hash B** — this is the owner sign-off moment of the runbook.
+- Rehearsed 2026-07-29 against `snap-20260728T171134Z-65d8` (freeze-date 2026-07-29), Hash B
+  `7cda010da89a707d56b76fdc53bf154b016201a82cf83d11718379b468ecb495`, identical across two runs:
+  historical delta 28 · future create 123 + 2 redirected · new deals 282 · merges 61 (192 fields) · conflicts 1 ·
+  reconciliation `28+2473+921+1+125 = 3548 = master ✓`. **Tomorrow's real numbers will differ** (a fresh Final Snapshot after the freeze) — these are the shape to sanity-check against, not values to match.
 - Rollback point: nothing written yet. If populations look wrong — stop here, legacy still authoritative, resume tomorrow.
 
 **2.4 Calendar hold ON** (Railway dashboard)

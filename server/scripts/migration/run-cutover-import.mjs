@@ -19,6 +19,7 @@
 import { PrismaClient } from '@prisma/client';
 import * as r2 from '../../src/migration/r2.js';
 import { createSnapshotReader } from '../../src/migration/review/snapshotReader.js';
+import { requireEntities } from '../../src/migration/snapshotContract.js';
 import { loadNormalizedTourLayer } from '../../src/migration/import/tourNormalize.js';
 import { planTourImport, executeTourPlan } from '../../src/migration/import/tourImport.js';
 import { buildStageMap, resolveFieldKeys, planDealImport, executeDealPlan } from '../../src/migration/import/dealImport.js';
@@ -47,6 +48,26 @@ async function streamEntity(snapshotId, key, visit) {
   const reader = readerOf(snapshotId);
   const man = await reader.entityManifest(key);
   for (const s of man.shards || []) { for (const r of await reader.readShard(s.key)) visit(r); reader._shardCache.clear(); }
+}
+
+// ── 0) snapshot input contracts ───────────────────────────────────────────────
+// Checked BEFORE any loading, for BOTH snapshots, so a scoped/incomplete snapshot
+// is refused immediately with an actionable message rather than degrading quietly.
+// pipedrive/files is deliberately NOT required — nothing on cutover night reads it.
+const REQUIRED_ENTITIES = [
+  'pipedrive/reference',
+  'pipedrive/deals',
+  'pipedrive/deal_participants',
+];
+for (const [label, id] of [['final', finalId], ['snap1', snap1Id]]) {
+  try {
+    await requireEntities({ getText: r2.getObjectText }, id, REQUIRED_ENTITIES);
+    console.log(`snapshot contract OK (${label} ${id})`);
+  } catch (e) {
+    console.error(`\n⛔ REFUSED — ${label} snapshot fails the input contract:\n${e.message}`);
+    await prisma.$disconnect();
+    process.exit(2);
+  }
 }
 
 // ── 1) shared DB inputs ───────────────────────────────────────────────────────
@@ -109,11 +130,17 @@ const loadDealMapped = async (snapshotId) => {
   const stageMap = buildStageMap({ stageConfigRows, pipelines: ref.pipelines, stages: ref.stages });
   const deals = [];
   await streamDeals(snapshotId, (d) => deals.push(d));
+  // Participant links are REQUIRED input, never an optional extra. This used to be
+  // `.catch(() => {})`, which turned a missing entity into zero participants and
+  // created every new deal without its participant Contact links — silently. The
+  // contract check above guarantees the entity exists; any failure here is a real
+  // read error and must surface.
   const participantsByDeal = new Map();
   await streamEntity(snapshotId, 'pipedrive/deal_participants', (l) => {
     if (!participantsByDeal.has(l.deal_id)) participantsByDeal.set(l.deal_id, []);
     participantsByDeal.get(l.deal_id).push(l.person_id);
-  }).catch(() => {});
+  });
+  console.log(`  ${snapshotId}: ${participantsByDeal.size} deals carry secondary participants`);
   const inputs = { deals, participantsByDeal, dealDecisions, stageMap, fieldKeys, personXwalk, orgXwalk, gosStageIdByKey, users: ref.users };
   const full = planDealImport({ ...inputs, existingDealXwalk: new Map() });
   const exec = planDealImport({ ...inputs, existingDealXwalk });
