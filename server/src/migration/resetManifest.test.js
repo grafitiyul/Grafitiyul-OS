@@ -7,6 +7,7 @@ import {
   executeResetManifest,
   manifestHash,
   matchTestPattern,
+  parseOwnerConfirmed,
   probeDealImpact,
 } from './resetManifest.js';
 
@@ -82,13 +83,22 @@ test('a table absent from this schema version is reported as skipped, not assume
 
 // ── manifest construction ─────────────────────────────────────────────────────
 
-function manifestDb({ natives = [], impact = {}, orphans = [], sessions = {}, qaOrgs = [] } = {}) {
+function manifestDb({ natives = [], impact = {}, orphans = [], sessions = {}, qaOrgs = [], groupsBySession = {} } = {}) {
   return {
     async $queryRawUnsafe(sql, ...params) {
       if (sql.includes('information_schema.tables')) return [{ ok: 1 }];
       // Order matters: the tier-2 org query embeds `FROM "Deal" d` in a NOT
       // EXISTS subquery, so it must be matched before the natives branch.
       if (sql.includes('FROM "Organization" o')) return qaOrgs;
+      // The sibling-deal probe (session collateral protection). Defaults to
+      // "this session produced exactly the deals that reference it".
+      if (sql.includes('FROM "ReservationGroup" WHERE "sessionId"')) {
+        if (groupsBySession[params[0]]) return groupsBySession[params[0]];
+        const owners = Object.entries(sessions)
+          .filter(([, ss]) => ss.some((s) => s.sessionId === params[0]))
+          .map(([dealId]) => ({ createdDealId: dealId }));
+        return owners;
+      }
       if (sql.includes('FROM "ReservationGroup" g')) return sessions[params[0]] || [];
       if (sql.includes('FROM "Contact" c')) return orphans;
       if (sql.includes('FROM "Deal" d')) return natives;
@@ -329,6 +339,96 @@ test('a tier-2 deal that gains NON-reservation impact still aborts the run', asy
     }),
     (e) => e.code === 'IMPACT_APPEARED',
   );
+});
+
+// ── owner-confirmed removals ──────────────────────────────────────────────────
+
+test('an owner-confirmed order number is admitted even with no QA evidence', async () => {
+  const db = manifestDb({
+    natives: [deal({ orderNo: 27009, title: 'בדיקה1' })],
+    impact: { d27009: { ReservationGroup: 1 } },
+    sessions: { d27009: [qaSession({ sessionId: 's1001', sessionNo: 1001, orgName: 'גרפיטיול', signerName: null })] },
+  });
+  const m = await buildResetManifest(db, { ownerConfirmed: new Set(['27009']) });
+  assert.equal(m.removeQaReservations.deals.length, 1);
+  assert.equal(m.removeQaReservations.deals[0].ownerConfirmed, true);
+  assert.match(m.removeQaReservations.deals[0].reason, /OWNER-CONFIRMED/);
+  assert.equal(m.summary.ownerConfirmedDeals, 1);
+});
+
+test('confirmation applies ONLY to the exact numbers named — never to lookalikes', async () => {
+  const db = manifestDb({
+    natives: [deal({ orderNo: 27009, title: 'בדיקה1' }), deal({ orderNo: 27099, title: 'בדיקה9' })],
+    impact: { d27009: { ReservationGroup: 1 }, d27099: { ReservationGroup: 1 } },
+    sessions: {
+      d27009: [qaSession({ sessionId: 'sA', orgName: 'גרפיטיול', signerName: null })],
+      d27099: [qaSession({ sessionId: 'sB', orgName: 'גרפיטיול', signerName: null })],
+    },
+  });
+  const m = await buildResetManifest(db, { ownerConfirmed: new Set(['27009']) });
+  assert.deepEqual(m.removeQaReservations.deals.map((d) => d.orderNo), [27009]);
+  assert.deepEqual(m.keep.map((d) => d.orderNo), [27099]);
+  assert.match(m.keep[0].reason, /needs a manual decision/);
+});
+
+test('confirmation does NOT override money, documents or communications', async () => {
+  const db = manifestDb({
+    natives: [deal({ orderNo: 27009, title: 'בדיקה1' })],
+    impact: { d27009: { ReservationGroup: 1, IcountDocument: 1 } },
+    sessions: { d27009: [qaSession({ orgName: 'גרפיטיול' })] },
+  });
+  const m = await buildResetManifest(db, { ownerConfirmed: new Set(['27009']) });
+  assert.equal(m.removeQaReservations.deals.length, 0);
+  assert.match(m.keep[0].reason, /real-world impact/);
+});
+
+test('confirmation does not admit a deal with no test pattern at all', async () => {
+  const db = manifestDb({
+    natives: [deal({ orderNo: 27019, title: 'גיא קורן' })],
+    impact: { d27019: { ReservationGroup: 1 } },
+    sessions: { d27019: [qaSession({ orgName: 'גרפיטיול' })] },
+  });
+  const m = await buildResetManifest(db, { ownerConfirmed: new Set(['27019']) });
+  assert.equal(m.removeQaReservations.deals.length, 0);
+  assert.match(m.keep[0].reason, /no test pattern/);
+});
+
+test('parseOwnerConfirmed accepts only digit lists and ignores junk', () => {
+  assert.deepEqual([...parseOwnerConfirmed('27009, 27010,27018')], ['27009', '27010', '27018']);
+  assert.deepEqual([...parseOwnerConfirmed('27009, בדיקה, ,abc,27010')], ['27009', '27010']);
+  assert.equal(parseOwnerConfirmed('').size, 0);
+  assert.equal(parseOwnerConfirmed(null).size, 0);
+});
+
+// ── session collateral protection ─────────────────────────────────────────────
+
+test('a session that ALSO created a surviving deal is RETAINED, not deleted', async () => {
+  const db = manifestDb({
+    natives: [deal({ orderNo: 27009, title: 'בדיקה1' })],
+    impact: { d27009: { ReservationGroup: 1 } },
+    sessions: { d27009: [qaSession({ sessionId: 'shared', sessionNo: 1008, orgName: 'בדיקת מערכת' })] },
+    // The same session also produced a real deal that is NOT being removed.
+    groupsBySession: { shared: [{ createdDealId: 'd27009' }, { createdDealId: 'd27020-real' }] },
+  });
+  const m = await buildResetManifest(db);
+  assert.equal(m.removeQaReservations.deals.length, 1, 'the test deal still goes');
+  assert.equal(m.removeQaReservations.sessions.length, 0, 'but the session must NOT be deleted');
+  assert.equal(m.removeQaReservations.retainedSessions.length, 1);
+  assert.match(m.removeQaReservations.retainedSessions[0].reason, /RETAINED/);
+  assert.equal(m.summary.qaSessionsRetained, 1);
+});
+
+test('a session whose deals are ALL removed is deleted (cascading its document)', async () => {
+  const db = manifestDb({
+    natives: [deal({ orderNo: 27009, title: 'בדיקה1' })],
+    impact: { d27009: { ReservationGroup: 1 } },
+    sessions: { d27009: [qaSession({ sessionId: 'solo', orgName: 'בדיקת מערכת' })] },
+    groupsBySession: { solo: [{ createdDealId: 'd27009' }] },
+  });
+  const m = await buildResetManifest(db);
+  assert.equal(m.removeQaReservations.sessions.length, 1);
+  assert.equal(m.removeQaReservations.retainedSessions.length, 0);
+  assert.match(m.removeQaReservations.sessions[0].reason, /cascades its groups and its ReservationDocument/);
 });
 
 // ── hashing + approval gate ───────────────────────────────────────────────────

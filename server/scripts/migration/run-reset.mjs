@@ -19,7 +19,7 @@
 import { PrismaClient } from '@prisma/client';
 import * as r2 from '../../src/migration/r2.js';
 import { requireVerifiedBackup } from '../../src/migration/backup.js';
-import { buildResetManifest, executeResetManifest } from '../../src/migration/resetManifest.js';
+import { buildResetManifest, executeResetManifest, parseOwnerConfirmed } from '../../src/migration/resetManifest.js';
 
 const arg = (n) => { const i = process.argv.indexOf(n); return i >= 0 ? process.argv[i + 1] : null; };
 const EXECUTE = process.argv.includes('--execute');
@@ -31,13 +31,22 @@ const prisma = new PrismaClient({ datasourceUrl: process.env.MIGRATION_DB_URL ||
 const store = { put: r2.putObject, head: r2.headObject, getText: r2.getObjectText, getBytes: r2.getObjectBytes };
 
 async function main() {
-  const m = await buildResetManifest(prisma);
+  // Owner-confirmed removals: an EXACT allow-list of order numbers. It admits
+  // only the records named — it never relaxes a pattern and never generalises
+  // to a record that merely resembles them.
+  const ownerConfirmed = parseOwnerConfirmed(arg('--owner-confirmed'));
+  if (ownerConfirmed.size) {
+    console.log(`owner-confirmed order numbers: ${[...ownerConfirmed].join(', ')}\n`);
+  }
+  const m = await buildResetManifest(prisma, { ownerConfirmed });
 
   const s = m.summary;
   console.log(`native deals examined      : ${s.nativeDealsExamined}`);
   console.log(`→ TIER 1 remove deals      : ${s.dealsToRemove}`);
   console.log(`→ TIER 1 remove contacts   : ${s.orphanContactsToRemove}`);
-  console.log(`→ TIER 2 remove deals      : ${s.qaReservationDealsToRemove} (+ ${s.qaSessionsToRemove} QA sessions, ${s.qaOrgsToRemove} org)`);
+  console.log(`→ TIER 2 remove deals      : ${s.qaReservationDealsToRemove} (${s.ownerConfirmedDeals} owner-confirmed)`);
+  console.log(`→ TIER 2 sessions          : ${s.qaSessionsToRemove} removed, ${s.qaSessionsRetained} retained`);
+  console.log(`→ TIER 2 orgs              : ${s.qaOrgsToRemove}`);
   console.log(`→ KEEP                     : ${s.dealsKept}`);
 
   console.log('\n── TIER 1: test pattern, zero real-world impact ────────');
@@ -52,6 +61,9 @@ async function main() {
   }
   for (const x of m.removeQaReservations.sessions) {
     console.log(`  session #${x.sessionNo}  org "${x.orgName}"  signer "${x.signerName ?? '—'}"`);
+  }
+  for (const x of m.removeQaReservations.retainedSessions || []) {
+    console.log(`  session #${x.sessionNo}  RETAINED — ${x.reason}`);
   }
   for (const o of m.removeQaReservations.organizations) console.log(`  org  ${o.name}  — ${o.reason}`);
 

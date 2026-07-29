@@ -123,10 +123,25 @@ export async function probeReservationQa(db, dealId) {
   return { sessions, allQa: sessions.every((s) => s.qa) };
 }
 
+// Table-existence lookups are memoised per process. Without this the impact
+// probe issues one information_schema query PER PROBE PER DEAL — 15 × 12 = 180
+// redundant round trips, which is enough to blow a transaction timeout on a
+// remote database. The schema cannot change underneath a single run, so caching
+// is safe as well as necessary.
+// Keyed on the CLIENT object, not module-global: a plan and its transaction get
+// separate caches (each still paying the lookup only once), and two different
+// clients — including two fixtures in a test run — can never see each other's
+// answers.
+const _tableExists = new WeakMap();
 const exists = async (db, table) => {
+  let cache = _tableExists.get(db);
+  if (!cache) { cache = new Map(); _tableExists.set(db, cache); }
+  if (cache.has(table)) return cache.get(table);
   const r = await db.$queryRawUnsafe(
     `SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=$1`, table);
-  return r.length > 0;
+  const found = r.length > 0;
+  cache.set(table, found);
+  return found;
 };
 
 /**
@@ -152,7 +167,34 @@ export async function probeDealImpact(db, dealId, { probes = IMPACT_PROBES } = {
 /**
  * Build the manifest. READ-ONLY — it opens no transaction and writes nothing.
  */
-export async function buildResetManifest(db, { now = new Date() } = {}) {
+/**
+ * Owner-confirmed removals.
+ *
+ * Some records are test data that NO automatic rule can prove — production has
+ * three (#27009, #27010, #27018) whose reservations went through the real
+ * גרפיטיול org with no signer, so every evidence probe correctly refuses them.
+ * The owner confirmed them directly.
+ *
+ * That confirmation is admitted here as an EXPLICIT ALLOW-LIST OF EXACT ORDER
+ * NUMBERS — never by relaxing a pattern, never by widening a probe. This is the
+ * important property: the approval applies to precisely the records named and
+ * cannot generalise to a record that merely resembles them. A future deal
+ * titled "בדיקה4" is not covered by this list and never will be.
+ *
+ * The owner-confirmed set still has to clear every other safety check: the
+ * record must be GOS-native, and its only real-world impact may be a
+ * reservation. Money, documents, communications or seats still veto it.
+ */
+export function parseOwnerConfirmed(raw) {
+  return new Set(
+    String(raw || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => /^\d+$/.test(s)),
+  );
+}
+
+export async function buildResetManifest(db, { now = new Date(), ownerConfirmed = new Set() } = {}) {
   // GOS-native deals only: a crosswalked deal belongs to the mirror, never here.
   const natives = await db.$queryRawUnsafe(`
     SELECT d.id, d."orderNo", d.title, d.status, d."createdAt", d."valueMinor"::text AS "valueMinor"
@@ -201,7 +243,8 @@ export async function buildResetManifest(db, { now = new Date() } = {}) {
       }
     } else if (onlyReservationBlocks) {
       const qa = await probeReservationQa(db, d.id);
-      if (qa?.allQa) {
+      const confirmed = ownerConfirmed.has(String(entry.orderNo));
+      if (qa?.allQa || confirmed) {
         // `valueMinor` is deliberately NOT a blocker here. On a reservation-created
         // deal the value is computed by the pricing engine from the same QA
         // submission, so it is an artefact of the test — not evidence of a real
@@ -209,8 +252,12 @@ export async function buildResetManifest(db, { now = new Date() } = {}) {
         // far stronger evidence than a number the system generated for itself.
         removeQaReservations.push({
           ...entry,
-          reservations: qa.sessions,
-          reason: `test pattern "${pattern}"; only impact is a QA reservation (${qa.sessions.map((s) => `#${s.sessionNo} ${s.evidence}`).join(', ')})`
+          reservations: qa?.sessions || [],
+          ownerConfirmed: confirmed && !qa?.allQa,
+          reason: (qa?.allQa
+            ? `test pattern "${pattern}"; only impact is a QA reservation (${qa.sessions.map((s) => `#${s.sessionNo} ${s.evidence}`).join(', ')})`
+            : `test pattern "${pattern}"; OWNER-CONFIRMED test record (#${entry.orderNo} named explicitly); reservation carries no QA evidence of its own — ${
+              (qa?.sessions || []).map((s) => `#${s.sessionNo} org "${s.orgName}"`).join(', ')}`)
             + (hasValue ? `; engine-computed value ${d.valueMinor} is a QA artefact, not real money` : ''),
         });
       } else {
@@ -244,26 +291,53 @@ export async function buildResetManifest(db, { now = new Date() } = {}) {
   // live schema), so the QA PDFs go with it rather than being orphaned.
   const qaSessions = [];
   const seenSessions = new Set();
+  const removedDealIds = new Set(removeQaReservations.map((d) => d.id));
   for (const d of removeQaReservations) {
     for (const s of d.reservations || []) {
       if (seenSessions.has(s.sessionId)) continue;
       seenSessions.add(s.sessionId);
+
+      // A session may have created SEVERAL deals. Deleting it cascades its
+      // groups and its ReservationDocument, so it may only go when EVERY deal
+      // it produced is also going. Otherwise a surviving real deal would
+      // silently lose its reservation provenance and its signed document —
+      // collateral damage from a neighbouring test record.
+      const siblings = await db.$queryRawUnsafe(
+        `SELECT "createdDealId" FROM "ReservationGroup" WHERE "sessionId" = $1`, s.sessionId);
+      const survivors = siblings
+        .map((r) => r.createdDealId)
+        .filter((id) => id && !removedDealIds.has(id));
+      if (survivors.length) {
+        qaSessions.push({
+          entity: 'ReservationSession', id: s.sessionId, sessionNo: s.sessionNo,
+          orgName: s.orgName, signerName: s.signerName,
+          keep: true,
+          reason: `RETAINED — session #${s.sessionNo} also created ${survivors.length} deal(s) that are being kept; deleting it would destroy their reservation document`,
+        });
+        continue;
+      }
+
       qaSessions.push({
         entity: 'ReservationSession', id: s.sessionId, sessionNo: s.sessionNo,
         orgName: s.orgName, signerName: s.signerName,
-        reason: `QA reservation (${s.evidence}); cascades its groups and its ReservationDocument`,
+        reason: s.evidence
+          ? `QA reservation (${s.evidence}); every deal it created is being removed; cascades its groups and its ReservationDocument`
+          : `owner-confirmed test reservation; every deal it created is being removed; cascades its groups and its ReservationDocument`,
       });
     }
   }
+  // Only sessions genuinely free of survivors are eligible for deletion.
+  const deletableSessions = qaSessions.filter((s) => !s.keep);
+  const retainedSessions = qaSessions.filter((s) => s.keep);
 
-  const qaOrgs = qaSessions.length ? await db.$queryRawUnsafe(`
+  const qaOrgs = deletableSessions.length ? await db.$queryRawUnsafe(`
     SELECT o.id, o.name FROM "Organization" o
     WHERE NOT EXISTS (SELECT 1 FROM "LegacyRecord" l WHERE l."entityType"='Organization' AND l."entityId"=o.id)
       AND EXISTS (SELECT 1 FROM "ReservationSession" s WHERE s."organizationId"=o.id AND s.id = ANY($1::text[]))
       AND NOT EXISTS (SELECT 1 FROM "ReservationSession" s WHERE s."organizationId"=o.id AND NOT (s.id = ANY($1::text[])))
       AND NOT EXISTS (SELECT 1 FROM "Deal" d WHERE d."organizationId"=o.id AND NOT (d.id = ANY($2::text[])))
       AND NOT EXISTS (SELECT 1 FROM "ContactOrganization" co WHERE co."organizationId"=o.id)
-    ORDER BY o.id`, [...seenSessions], removeQaReservations.map((d) => d.id)) : [];
+    ORDER BY o.id`, deletableSessions.map((s) => s.id), removeQaReservations.map((d) => d.id)) : [];
 
   const manifest = {
     kind: 'gos-reset-manifest',
@@ -282,7 +356,9 @@ export async function buildResetManifest(db, { now = new Date() } = {}) {
       nativeDealsExamined: natives.length,
       dealsToRemove: remove.length,
       qaReservationDealsToRemove: removeQaReservations.length,
-      qaSessionsToRemove: qaSessions.length,
+      ownerConfirmedDeals: removeQaReservations.filter((d) => d.ownerConfirmed).length,
+      qaSessionsToRemove: deletableSessions.length,
+      qaSessionsRetained: retainedSessions.length,
       qaOrgsToRemove: qaOrgs.length,
       dealsKept: keep.length,
       orphanContactsToRemove: orphanContacts.length,
@@ -296,7 +372,8 @@ export async function buildResetManifest(db, { now = new Date() } = {}) {
     },
     removeQaReservations: {
       deals: removeQaReservations,
-      sessions: qaSessions,
+      sessions: deletableSessions,
+      retainedSessions,
       organizations: qaOrgs.map((o) => ({
         entity: 'Organization', id: o.id, name: o.name,
         reason: 'temporary test agency org; no legacy crosswalk, no contacts, and nothing but QA sessions left pointing at it',
@@ -394,6 +471,10 @@ export async function executeResetManifest(db, manifest, { approvedHash, approve
   // that was separately approved. Every other blocker still aborts the run.
   const t2Ids = new Set(t2.deals.map((d) => d.id));
 
+  // The whole removal is ONE transaction — it must not half-apply. Prisma's
+  // 5-second default is far too short for a re-probe of every record over a
+  // remote connection, so the window is set explicitly rather than left to a
+  // default that silently decides how much data integrity we get.
   await db.$transaction(async (tx) => {
     for (const d of dealsToDelete) {
       // Re-verify inside the transaction: the world may have changed since the
@@ -432,6 +513,6 @@ export async function executeResetManifest(db, manifest, { approvedHash, approve
         result.organizationIds.push(o.id);
       }
     }
-  });
+  }, { timeout: 120_000, maxWait: 30_000 });
   return result;
 }
