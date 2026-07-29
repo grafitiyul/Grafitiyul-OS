@@ -174,7 +174,10 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
       <Dialog
         open={open}
         onClose={onClose}
-        size="xl"
+        // A document-editing workspace, not a popup: sized from the viewport
+        // (~88% wide, ~90% tall) so the draft gets the screen, with a real
+        // margin off the browser edges.
+        size="workspace"
         ariaLabel="שליחת תבנית ווטסאפ"
         title={
           <span className="flex items-center gap-2">
@@ -183,7 +186,7 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
           </span>
         }
         // Fixed-height flex column: compact settings on top, composer fills the rest.
-        panelClassName="h-[92vh]"
+        panelClassName="h-[92vh] sm:h-[90vh]"
         contentClassName="flex min-h-0 flex-1 flex-col overflow-hidden"
       >
         <div dir="rtl" className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 pb-3 pt-2.5">

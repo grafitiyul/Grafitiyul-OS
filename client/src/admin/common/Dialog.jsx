@@ -72,6 +72,14 @@ export default function Dialog({
 
   if (!open) return null;
 
+  // 'workspace' — a document-editing surface, not a popup (Product & UX rule
+  // §12: a modal people spend minutes inside is a workspace). It sizes from the
+  // VIEWPORT rather than a fixed max-width breakpoint, so it fills a large
+  // monitor instead of stopping at 1152px, while keeping a real margin off the
+  // browser edges. The 1600px cap stops it sprawling on ultrawide screens; on
+  // mobile it goes full-width like any other dialog.
+  const isWorkspace = size === 'workspace';
+
   const maxW =
     size === 'sm'
       ? 'sm:max-w-sm'
@@ -86,11 +94,15 @@ export default function Dialog({
       : 'sm:max-w-md';
 
   // Cap requested widths at 95vw so the panel never overflows a small viewport.
-  const panelStyle = { maxHeight: '90vh' };
+  const panelStyle = { maxHeight: isWorkspace ? '92vh' : '90vh' };
   if (maxWidthPx != null) panelStyle.maxWidth = `min(${maxWidthPx}px, 95vw)`;
   if (minWidthPx != null) panelStyle.minWidth = `min(${minWidthPx}px, 95vw)`;
 
-  const widthCls = fitContent ? 'w-full sm:w-auto' : `w-full ${maxWidthPx != null ? '' : maxW}`;
+  const widthCls = fitContent
+    ? 'w-full sm:w-auto'
+    : isWorkspace
+      ? 'w-full sm:w-[88vw] sm:max-w-[1600px]'
+      : `w-full ${maxWidthPx != null ? '' : maxW}`;
 
   return (
     <div
@@ -109,7 +121,9 @@ export default function Dialog({
         style={panelStyle}
       >
         {title && (
-          <div className="p-3 border-b border-gray-200 flex items-center gap-2 shrink-0">
+          // Workspace headers run tighter: in a document-editing surface every
+          // pixel of chrome is a pixel the content doesn't get.
+          <div className={`${isWorkspace ? 'px-4 py-2' : 'p-3'} border-b border-gray-200 flex items-center gap-2 shrink-0`}>
             <div className="flex-1 font-semibold text-gray-900">{title}</div>
             <button
               type="button"
