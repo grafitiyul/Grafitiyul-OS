@@ -76,8 +76,13 @@ export default function Dialog({
   // §12: a modal people spend minutes inside is a workspace). It sizes from the
   // VIEWPORT rather than a fixed max-width breakpoint, so it fills a large
   // monitor instead of stopping at 1152px, while keeping a real margin off the
-  // browser edges. The 1600px cap stops it sprawling on ultrawide screens; on
-  // mobile it goes full-width like any other dialog.
+  // browser edges. On mobile it goes full-width like any other dialog.
+  //
+  // The 1920px cap only engages beyond a ~2180px viewport (i.e. ultrawide/4K):
+  // every mainstream monitor up to and including 1920 gets the full 88vw, and
+  // past that a line of text simply stops being readable. Deliberately NOT
+  // lower — a cap that trims a 1920px screen would silently override the
+  // requested proportions on very common hardware.
   const isWorkspace = size === 'workspace';
 
   const maxW =
@@ -101,7 +106,7 @@ export default function Dialog({
   const widthCls = fitContent
     ? 'w-full sm:w-auto'
     : isWorkspace
-      ? 'w-full sm:w-[88vw] sm:max-w-[1600px]'
+      ? 'w-full sm:w-[88vw] sm:max-w-[1920px]'
       : `w-full ${maxWidthPx != null ? '' : maxW}`;
 
   return (
