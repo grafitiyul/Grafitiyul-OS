@@ -42,6 +42,9 @@ import adminReportsRouter from './routes/adminReports.js';
 import { startAdminReportsWorker } from './adminReports/worker.js';
 import { startCommunicationWorker } from './communication/deliveryWorker.js';
 import { logIngressConfig } from './ingress/config.js';
+import ingressRouter from './routes/ingress.js';
+import ingressAdminRouter from './routes/ingressAdmin.js';
+import { startIngressRetryWorker } from './ingress/worker.js';
 import publicQuoteRouter from './routes/publicQuote.js';
 import dealStagesRouter from './routes/dealStages.js';
 import tasksRouter from './routes/tasks.js';
@@ -159,6 +162,14 @@ app.use((req, res, next) => {
 });
 
 app.use(cors());
+
+// Ingress Platform webhooks — mounted BEFORE the global JSON parser so the
+// router can capture the RAW request body for HMAC signature verification
+// (a re-serialized req.body cannot reproduce the provider's exact bytes).
+// Its own parser is scoped and capped at 2mb, so the 25mb upload path below is
+// unaffected and large bodies are never double-buffered.
+app.use('/api/ingress', ingressRouter);
+
 // 25mb: WhatsApp voice notes are uploaded from the composer as base64 JSON.
 // Everything else stays far below this; admin-authed surface.
 app.use(express.json({ limit: '25mb' }));
@@ -374,6 +385,9 @@ app.use('/api/communication', requireAdminAuth, communicationRouter);
 // catalog lives in src/adminReports/registry.js; only destination + enabled
 // are configurable here.
 app.use('/api/admin-reports', requireAdminAuth, adminReportsRouter);
+// Ingress observability + operator actions (retry / dry-run). Read-only apart
+// from two explicit actions, neither of which can create a duplicate deal.
+app.use('/api/ingress-admin', requireAdminAuth, ingressAdminRouter);
 
 // Products & Pricing — Slice 1 (catalog + R2 files + payment config). Admin
 // only. Pricing engine, add-ons, and Deal integration are NOT built yet.
@@ -613,6 +627,9 @@ app.listen(port, () => {
   // Purely informational: an unconfigured source is a pending deployment step,
   // never a boot failure, so a missing key can't take the service down.
   logIngressConfig(console);
+  // Ingress retry worker — claim-based 60s tick. Retries only transient
+  // failures; permanent and exhausted events are left for a human on purpose.
+  startIngressRetryWorker(console);
   // Scheduled WhatsApp messages (Slice 7) — claim-based 60s tick; no-op when
   // no bridges are configured (local dev without WHATSAPP_BRIDGE_URLS).
   startScheduledWorker(console);
