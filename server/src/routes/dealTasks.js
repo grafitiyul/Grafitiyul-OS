@@ -300,7 +300,7 @@ router.post(
     if (claimed.count === 0) return res.status(409).json({ error: 'not_sendable' });
 
     try {
-      const data = await callBridge(sched.chat.accountId, '/send', {
+      const data = await callBridge(sched.accountId, '/send', {
         method: 'POST',
         timeoutMs: 25_000,
         body: {

@@ -8,12 +8,12 @@ test('phoneToJid: normalizes an Israeli number to a WhatsApp private jid', () =>
   assert.equal(phoneToJid('123'), null); // unusable
 });
 
-test('defaultSendAccount: env override wins, else single bridge, else main', () => {
-  const prev = process.env.WHATSAPP_DEFAULT_ACCOUNT;
-  process.env.WHATSAPP_DEFAULT_ACCOUNT = 'office';
-  assert.equal(defaultSendAccount(), 'office');
-  if (prev === undefined) delete process.env.WHATSAPP_DEFAULT_ACCOUNT;
-  else process.env.WHATSAPP_DEFAULT_ACCOUNT = prev;
+// Replaces the old "env override wins, else single bridge, else main" test.
+// That fallback was the bug: with two business numbers paired it silently sent
+// from whichever account sorted first. Selection now lives in
+// whatsapp/senderAccount.js and REFUSES to guess — see senderAccount.test.js.
+test('defaultSendAccount is gone and fails loudly if anything still calls it', () => {
+  assert.throws(() => defaultSendAccount(), /defaultSendAccount_removed/);
 });
 
 test('sendWhatsAppText: invalid phone throws invalid_phone before any bridge call', async () => {

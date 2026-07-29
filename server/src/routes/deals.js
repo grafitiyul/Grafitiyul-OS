@@ -47,6 +47,7 @@ import { fireCommunicationTrigger } from '../communication/engine.js';
 import { fireAdminReport } from '../adminReports/dispatch.js';
 import { actorForReport } from '../adminReports/actor.js';
 import { sendWhatsAppText } from '../whatsapp/send.js';
+import { resolveForOperator } from '../whatsapp/senderAccount.js';
 
 // Deal CRUD + DealContact management. The Deal is the commercial object: it
 // owns agreed value (integer minor units + currency), discount, payment terms,
@@ -1103,7 +1104,16 @@ router.post(
     let externalMessageId = null;
     let failureReason = null;
     try {
+      // Explicit account: the operator's chosen sender (remembered globally),
+      // never a fallback. An ambiguous configuration fails loudly here rather
+      // than sending from whichever number happened to sort first.
+      const sender = await resolveForOperator(prisma, {
+        userId: req.adminAuth?.userId || null,
+        explicit: b.accountId || null,
+        remember: true,
+      });
       const out = await sendWhatsAppText(phone, message, {
+        accountId: sender.accountId,
         idempotencyKey: `paylink-${held.registration.id}`,
       });
       sent = true;

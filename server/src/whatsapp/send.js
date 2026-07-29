@@ -7,15 +7,20 @@
 import { callBridge, bridgeUrlMap } from './bridgeClient.js';
 import { normalizePhoneIntl } from './phone.js';
 
-// Which account to send from: WHATSAPP_DEFAULT_ACCOUNT when set, else the single
-// configured bridge, else 'main'. Explicit accountId always wins.
+// REMOVED: defaultSendAccount().
+//
+// It used to fall through to `main` when several bridges were configured, which
+// is a silent misdelivery the moment a second business number exists. Account
+// selection now goes through resolveSendAccount(), which THROWS on ambiguity
+// rather than picking whichever account sorts first.
+//
+// Kept as an export purely so any missed call site fails loudly at import time
+// instead of silently resolving to the wrong number.
 export function defaultSendAccount() {
-  const explicit = String(process.env.WHATSAPP_DEFAULT_ACCOUNT || '').trim();
-  if (explicit) return explicit;
-  const keys = Object.keys(bridgeUrlMap());
-  if (keys.length === 1) return keys[0];
-  if (keys.includes('main')) return 'main';
-  return keys[0] || 'main';
+  throw new Error(
+    'defaultSendAccount_removed: use resolveSendAccount()/resolveForOperator() from whatsapp/senderAccount.js — '
+    + 'every send must name its account explicitly.',
+  );
 }
 
 // Phone → WhatsApp private JID ("<intl-digits>@s.whatsapp.net"), or null when the
@@ -36,7 +41,16 @@ export async function sendWhatsAppText(phone, text, { accountId, idempotencyKey,
     e.code = 'invalid_phone';
     throw e;
   }
-  const account = accountId || defaultSendAccount();
+  // accountId is REQUIRED. There is no fallback: a send with no named account
+  // is a bug in the caller, and answering it with a guess is how a customer
+  // receives a message from the wrong business number.
+  if (!accountId) {
+    const e = new Error('whatsapp_account_required: sendWhatsAppText needs an explicit accountId');
+    e.code = 'whatsapp_account_required';
+    e.status = 500;
+    throw e;
+  }
+  const account = accountId;
   try {
     const data = await bridge(account, '/send', {
       method: 'POST',

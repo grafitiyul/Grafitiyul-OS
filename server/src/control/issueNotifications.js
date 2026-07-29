@@ -1,5 +1,6 @@
 import { sendSimpleEmail } from '../email/simpleSend.js';
 import { sendWhatsAppText } from '../whatsapp/send.js';
+import { resolveSendAccount } from '../whatsapp/senderAccount.js';
 import { refreshIssueClosure } from './issueRequirements.js';
 
 // Part 4 customer-notification flow. Per (requirement × recipient × channel) send
@@ -73,7 +74,13 @@ export async function sendNotification(client, { requirement, recipient, channel
     } else {
       if (!recipient.phone) throw new Error('no_phone');
       const send = deps.sendWhatsApp || sendWhatsAppText;
-      result = await send(recipient.phone, body, {});
+      // Server-initiated: there is no operator to ask, so the account comes
+      // from WHATSAPP_SYSTEM_ACCOUNT (or the single configured bridge). With
+      // several accounts and none nominated this THROWS and the notification is
+      // recorded as failed — visibly wrong beats silently sent from the wrong
+      // business number.
+      const sender = resolveSendAccount({ explicit: deps.accountId || null });
+      result = await send(recipient.phone, body, { accountId: sender.accountId });
     }
   } catch (e) {
     status = 'failed';

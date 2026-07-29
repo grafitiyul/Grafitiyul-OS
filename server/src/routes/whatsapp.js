@@ -13,6 +13,7 @@ import {
 import { emitTasksChanged } from '../tasks/events.js';
 import { dealsForContact, classifyDealsForContact } from '../crm/dealResolution.js';
 import { markChatRead, markChatUnread } from '../whatsapp/readState.js';
+import { getSenderPreference, resolveSendAccount, setSenderPreference } from '../whatsapp/senderAccount.js';
 
 // WhatsApp module — Slice 1 (accounts / connections admin).
 //
@@ -1397,6 +1398,58 @@ router.get(
     const url = await presignGet({ key: msg.mediaKey, expiresIn: 300 });
     res.set('Cache-Control', 'no-store');
     res.redirect(302, url);
+  }),
+);
+
+// ── Sender preference ────────────────────────────────────────────────────────
+//
+// GLOBAL per operator, deliberately not per deal or per chat: switching to the
+// office number on one deal must carry to the next deal opened, which is what
+// makes the picker feel like a mode rather than a per-message checkbox.
+//
+// GET returns the selectable accounts plus the operator's current choice, so a
+// client never has to guess a default. When the preference points at an account
+// that no longer exists the resolver ignores it — a retired number must not keep
+// receiving sends.
+router.get(
+  '/sender-preference',
+  handle(async (req, res) => {
+    const userId = req.adminAuth?.userId || null;
+    const accounts = await prisma.whatsAppAccount.findMany({
+      where: { active: true },
+      select: { id: true, label: true, status: true, phoneJid: true },
+      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+    });
+    const preferred = await getSenderPreference(prisma, userId);
+    let resolved = null;
+    try {
+      resolved = resolveSendAccount({ preferred }).accountId;
+    } catch {
+      resolved = null; // ambiguous: the client must make the operator choose
+    }
+    res.json({
+      accounts: accounts.map((a) => ({
+        id: a.id,
+        label: a.label,
+        connected: a.status === 'connected',
+        phone: a.phoneJid ? String(a.phoneJid).split(':')[0].split('@')[0] : null,
+      })),
+      preferred,
+      resolved,
+      mustChoose: resolved === null,
+    });
+  }),
+);
+
+router.put(
+  '/sender-preference',
+  handle(async (req, res) => {
+    const userId = req.adminAuth?.userId || null;
+    if (!userId) return res.status(401).json({ error: 'no_user' });
+    const accountId = String(req.body?.accountId || '').trim();
+    if (!accountId) return res.status(400).json({ error: 'accountId_required' });
+    const value = await setSenderPreference(prisma, userId, accountId);
+    res.json({ ok: true, preferred: value.accountId });
   }),
 );
 

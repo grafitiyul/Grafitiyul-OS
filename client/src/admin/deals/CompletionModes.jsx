@@ -6,6 +6,7 @@ import {
   durationLabelHe,
   defaultPaymentLinkMessage,
 } from '../../../../shared/reservationDuration.mjs';
+import SenderAccountSelect from '../whatsapp/SenderAccountSelect.jsx';
 
 // The three registration-completion modes (pay-now / send-link / no-payment) as a
 // SELF-CONTAINED body (no Dialog wrapper) so it embeds in both the standalone
@@ -20,6 +21,9 @@ const UNIT_LABELS = { minutes: 'דקות', hours: 'שעות', days: 'ימים' }
 const errText = (e) => 'שגיאה: ' + (e.payload?.error || e.message);
 
 export default function CompletionModes({ deal, tourEventId, phone = '', context = {}, onDone }) {
+  // Which WhatsApp number sends the link. null = use the operator's global
+  // preference, which the server resolves (and refuses to guess when ambiguous).
+  const [senderAccountId, setSenderAccountId] = useState(null);
   const [mode, setMode] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -84,7 +88,7 @@ export default function CompletionModes({ deal, tourEventId, phone = '', context
   const sendLink = async () => {
     setBusy(true);
     try {
-      await api.deals.registerSendLink(deal.id, { ...ctx, value: Number(value), unit, message: liveMessage, phone });
+      await api.deals.registerSendLink(deal.id, { ...ctx, value: Number(value), unit, message: liveMessage, phone, accountId: senderAccountId });
       onDone?.();
     } catch (e) {
       const code = e.payload?.error || e.payload?.failureReason;
@@ -152,9 +156,14 @@ export default function CompletionModes({ deal, tourEventId, phone = '', context
             <span className="pb-2.5 text-[13px] text-gray-500">≈ {durationLabelHe(value, unit)}</span>
           </div>
           <div>
-            <div className="mb-1 flex items-center gap-1.5 text-[12px] font-medium text-gray-600">
-              <span>💬 הודעת וואטסאפ</span>
-              {phone && <span className="text-gray-400" dir="ltr">→ {phone}</span>}
+            <div className="mb-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[12px] font-medium text-gray-600">
+              <span className="flex items-center gap-1.5">
+                <span>💬 הודעת וואטסאפ</span>
+                {phone && <span className="text-gray-400" dir="ltr">→ {phone}</span>}
+              </span>
+              {/* Which number sends. Renders nothing while only one account is
+                  configured; the choice is remembered globally per operator. */}
+              <SenderAccountSelect value={senderAccountId} onChange={setSenderAccountId} disabled={busy} compact />
             </div>
             <textarea
               value={liveMessage}

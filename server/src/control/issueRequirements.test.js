@@ -4,6 +4,10 @@ import { emitTourChangeImpact } from '../tours/changeImpact.js';
 import { setRequirementState, refreshIssueClosure } from './issueRequirements.js';
 import { sendNotification, evaluateCustomerNotification } from './issueNotifications.js';
 
+// One configured bridge: the sender resolver is unambiguous, which is what a
+// real single-number deployment looks like.
+process.env.WHATSAPP_BRIDGE_URLS = 'main=http://bridge:3000';
+
 // Part 4 end-to-end over an in-memory prisma fake: impact → first-class
 // requirements → per-recipient notifications → parent closure. Reuses the same
 // service code the routes call.

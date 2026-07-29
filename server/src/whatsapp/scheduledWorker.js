@@ -135,7 +135,10 @@ async function tick(log) {
     if (!row || row.claimedBy !== WORKER_ID || row.status !== 'sending') continue;
 
     try {
-      const data = await callBridge(row.chat.accountId, '/send', {
+      // The account chosen AT SCHEDULING TIME, not re-derived from the chat:
+      // a message must send from the number the operator picked, even if their
+      // default changed in the meantime.
+      const data = await callBridge(row.accountId, '/send', {
         method: 'POST',
         timeoutMs: 25_000,
         body: {
