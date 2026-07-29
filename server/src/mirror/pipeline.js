@@ -22,6 +22,7 @@ import { OWNERSHIP, owningSystem } from './ownership.js';
 import { advanceBaseline, markSourceDeleted, readBaseline } from './baseline.js';
 import { raiseSyncConflict } from './conflicts.js';
 import { mirrorShouldIgnore, sourceForLegacyLabel } from './sourceRegistry.js';
+import { applyEnabled } from './config.js';
 
 export const OUTCOME = Object.freeze({
   MERGED: 'merged',
@@ -97,11 +98,28 @@ export async function receive(db, { system, entity, externalId, changeKind, tran
  *   guards(db, gosRow)    -> { gosOwnsCommercials: bool, ... }
  *   describe(gosRow)      -> { label, orderNo } for the conflict card
  */
-export async function processEvent(db, eventId, adapter) {
+export async function processEvent(db, eventId, adapter, { allowApply = null } = {}) {
   const row = await db.mirrorEvent.findUnique({ where: { id: eventId } });
   if (!row) return { status: 'missing' };
   if (row.status === 'processed' || row.status === 'skipped') {
     return { status: row.status, outcome: row.outcome, alreadyDone: true };
+  }
+
+  // THE apply gate. One condition, consulted by every path — webhook, poll,
+  // retry worker and replay — so no route can write while apply is off.
+  // `allowApply` is the explicit override the replay runner uses during
+  // Phase C, when apply is still globally disabled but the buffered window is
+  // deliberately being drained.
+  const mayApply = allowApply === null ? applyEnabled() : allowApply;
+  if (!mayApply) {
+    // Deliberately NOT marked processed: the event stays `pending` so that when
+    // apply is switched on it is picked up and applied. Marking it processed
+    // here is exactly how a buffered window would be silently lost.
+    await db.mirrorEvent.update({
+      where: { id: eventId },
+      data: { status: 'pending', outcome: null, failureCode: null, failureMessage: null },
+    });
+    return { status: 'pending', outcome: null, buffered: true };
   }
 
   const attemptNo = (row.attemptCount || 0) + 1;
@@ -224,12 +242,12 @@ export async function processEvent(db, eventId, adapter) {
 }
 
 /** Receive + process in one call — the path webhooks and pollers both use. */
-export async function ingestMirror(db, args, adapter) {
+export async function ingestMirror(db, args, adapter, opts = {}) {
   const { eventId, duplicate, status } = await receive(db, args);
   if (duplicate && (status === 'processed' || status === 'skipped')) {
     return { eventId, duplicate: true, status };
   }
-  const res = await processEvent(db, eventId, adapter);
+  const res = await processEvent(db, eventId, adapter, opts);
   return { eventId, duplicate, ...res };
 }
 

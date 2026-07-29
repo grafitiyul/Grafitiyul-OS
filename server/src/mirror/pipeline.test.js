@@ -1,5 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+
+// This file exercises the APPLY path, so apply is on for it. The buffering
+// behaviour (apply off) is tested explicitly with an { allowApply: false }
+// override, which is the same switch the runtime flag feeds.
+process.env.MIRROR_APPLY_ENABLED = 'true';
+
 import { OUTCOME, buildIdempotencyKey, ingestMirror, mirroredEntities, receive } from './pipeline.js';
 import { CLAIM_TTL_MS, claimOneEvent, mirrorHealth, runPollTick, runRetryTick } from './worker.js';
 import { resolveConflict } from './resolve.js';
@@ -454,4 +460,77 @@ test('LAW: no mirror module exports anything that writes to a legacy system', as
         `${mod} exports ${name}, which looks like a write back to legacy`);
     }
   }
+});
+
+// ── the apply gate (Phase A: capture on, apply off) ──────────────────────────
+
+test('with apply OFF an event is buffered, not applied, and stays pending', async () => {
+  const db = mirrorDb({ crosswalk: XWALK, deals: [{ ...DEAL }] });
+  const res = await ingestMirror(db, {
+    system: 'pipedrive', entity: 'deal', externalId: '501', changeKind: 'updated',
+    transport: 'webhook', version: 'v1', rawPayload: pdPayload({ title: 'CHANGED' }),
+  }, ADAPTER, { allowApply: false });
+
+  assert.equal(res.buffered, true);
+  assert.equal(res.status, 'pending', 'stays pending so apply can pick it up later');
+  assert.equal(db._t.deal[0].title, 'A', 'GOS untouched');
+  assert.equal(db._t.mirrorEvent[0].outcome, null, 'never marked with an outcome');
+  assert.equal(db._t.legacyRecord[0].syncBaseline, null, 'and the baseline is NOT advanced');
+});
+
+test('a buffered event applies correctly once apply is permitted', async () => {
+  const db = mirrorDb({ crosswalk: XWALK, deals: [{ ...DEAL }] });
+  const args = { system: 'pipedrive', entity: 'deal', externalId: '501', changeKind: 'updated', transport: 'webhook', version: 'v1', rawPayload: pdPayload({ title: 'CHANGED' }) };
+  await ingestMirror(db, args, ADAPTER, { allowApply: false });
+  const id = db._t.mirrorEvent[0].id;
+
+  // Seed the baseline as the cutover import would, then replay with apply on.
+  db._t.legacyRecord[0].syncBaseline = { title: 'A' };
+  const { processEvent } = await import('./pipeline.js');
+  const res = await processEvent(db, id, ADAPTER, { allowApply: true });
+
+  assert.equal(res.outcome, 'merged');
+  assert.equal(db._t.deal[0].title, 'CHANGED', 'the buffered change IS applied');
+});
+
+test('THE regression this design exists to prevent: a seeded baseline stops bootstrap swallowing a change', async () => {
+  const db = mirrorDb({ crosswalk: XWALK, deals: [{ ...DEAL }] });
+  // Cutover import seeded the baseline from the snapshot ('A').
+  db._t.legacyRecord[0].syncBaseline = { title: 'A' };
+  // A change that happened AFTER the snapshot now arrives.
+  const res = await ingestMirror(db, {
+    system: 'pipedrive', entity: 'deal', externalId: '501', changeKind: 'updated',
+    transport: 'webhook', version: 'v9', rawPayload: pdPayload({ title: 'POST-SNAPSHOT CHANGE' }),
+  }, ADAPTER, { allowApply: true });
+
+  assert.equal(res.outcome, 'merged', 'NOT bootstrapped');
+  assert.equal(db._t.deal[0].title, 'POST-SNAPSHOT CHANGE', 'the change is applied, not swallowed');
+});
+
+test('a pre-snapshot event WRITES NOTHING — no timestamp filtering needed', async () => {
+  const db = mirrorDb({ crosswalk: XWALK, deals: [{ ...DEAL }] });
+  db._t.legacyRecord[0].syncBaseline = { title: 'A' };
+  const before = { ...db._t.deal[0] };
+  const res = await ingestMirror(db, {
+    system: 'pipedrive', entity: 'deal', externalId: '501', changeKind: 'updated',
+    transport: 'webhook', version: 'old', rawPayload: pdPayload({ title: 'A' }),
+  }, ADAPTER, { allowApply: true });
+
+  // Fields present in the baseline no-op; fields the seed did not cover and on
+  // which both sides already agree CONVERGE (baseline catches up, nothing is
+  // written). Either way the GOS record is untouched, which is the property
+  // that makes replaying a pre-boundary event safe.
+  assert.ok(['noop', 'converged'].includes(res.outcome), `unexpected outcome ${res.outcome}`);
+  assert.deepEqual(res.written, [], 'nothing written');
+  assert.deepEqual({ ...db._t.deal[0] }, before, 'the GOS record is byte-identical');
+});
+
+test('replaying the SAME pre-snapshot event twice is indistinguishable from once', async () => {
+  const db = mirrorDb({ crosswalk: XWALK, deals: [{ ...DEAL }] });
+  db._t.legacyRecord[0].syncBaseline = { title: 'A' };
+  const args = { system: 'pipedrive', entity: 'deal', externalId: '501', changeKind: 'updated', transport: 'webhook', version: 'old', rawPayload: pdPayload({ title: 'A' }) };
+  await ingestMirror(db, args, ADAPTER, { allowApply: true });
+  const after1 = { ...db._t.deal[0] };
+  await ingestMirror(db, args, ADAPTER, { allowApply: true });
+  assert.deepEqual({ ...db._t.deal[0] }, after1);
 });

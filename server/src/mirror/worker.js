@@ -19,6 +19,7 @@
 import crypto from 'node:crypto';
 import { prisma } from '../db.js';
 import { processEvent } from './pipeline.js';
+import { captureEnabled, mirrorMode, pollIntervalMs } from './config.js';
 
 export const CLAIM_TTL_MS = 5 * 60 * 1000;
 const RETRY_TICK_MS = 60 * 1000;
@@ -26,11 +27,6 @@ const BATCH = 20;
 
 const WORKER_ID = `mirror-${crypto.randomUUID().slice(0, 8)}`;
 
-const enabled = () => String(process.env.MIRROR_ENABLED || '').trim().toLowerCase() === 'true';
-const pollIntervalMs = () => {
-  const n = parseInt(String(process.env.MIRROR_POLL_INTERVAL_MS || ''), 10);
-  return Number.isFinite(n) && n >= 30_000 ? n : 5 * 60 * 1000;
-};
 
 // ── retry ────────────────────────────────────────────────────────────────────
 
@@ -176,14 +172,24 @@ export async function mirrorHealth(db, { staleAfterMs = 30 * 60 * 1000 } = {}) {
 let _timers = [];
 
 /**
- * Start the workers. OFF unless MIRROR_ENABLED=true — the mirror writes to
- * production CRM records, so it must never start by accident on a deploy.
+ * Start the workers.
+ *
+ * Gated on CAPTURE, not apply: during Phase A the workers must run so events
+ * are polled and buffered, while processEvent independently refuses to write.
+ * Both flags default off — the mirror touches production CRM records and must
+ * never start because someone forgot a variable.
  */
 export function startMirrorWorkers({ adapterFactory, pollTargets = [], db = prisma } = {}) {
-  if (!enabled()) {
-    console.log('[mirror] workers DISABLED (set MIRROR_ENABLED=true to start)');
+  const mode = mirrorMode();
+  if (mode.incoherent) {
+    console.error('[mirror] REFUSING TO START — apply is enabled but capture is not. That would write whatever happened to be buffered and then go blind.');
     return () => {};
   }
+  if (!mode.capture) {
+    console.log('[mirror] workers DISABLED (set MIRROR_CAPTURE_ENABLED=true to start capture)');
+    return () => {};
+  }
+  console.log(`[mirror] mode: capture=${mode.capture} apply=${mode.apply}${mode.legacy ? ' (via legacy MIRROR_ENABLED)' : ''}`);
   console.log(`[mirror] workers starting — retry ${RETRY_TICK_MS}ms, poll ${pollIntervalMs()}ms, ${pollTargets.length} target(s)`);
 
   const retryTimer = setInterval(() => {

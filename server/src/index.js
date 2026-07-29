@@ -49,7 +49,9 @@ import mirrorAdminRouter from './routes/mirrorAdmin.js';
 import { startIngressRetryWorker } from './ingress/worker.js';
 import { startMirrorWorkers } from './mirror/worker.js';
 import { registerMirrorIssueTypes } from './mirror/register.js';
-import { mirrorAdapterFactory, warmMirrorAdapters } from './mirror/adapters.js';
+import { buildPollTargets, mirrorAdapterFactory, warmMirrorAdapters } from './mirror/adapters.js';
+import { ingestMirror } from './mirror/pipeline.js';
+import { airtableClientFromEnv } from './mirror/sources/airtableClient.js';
 import publicQuoteRouter from './routes/publicQuote.js';
 import dealStagesRouter from './routes/dealStages.js';
 import tasksRouter from './routes/tasks.js';
@@ -645,7 +647,10 @@ app.listen(port, () => {
   // regardless), then the workers, which stay OFF unless MIRROR_ENABLED=true.
   registerMirrorIssueTypes();
   warmMirrorAdapters();
-  startMirrorWorkers({ adapterFactory: mirrorAdapterFactory });
+  startMirrorWorkers({
+    adapterFactory: mirrorAdapterFactory,
+    pollTargets: buildPollTargets({ ingest: ingestMirror, airtableClient: airtableClientFromEnv() }),
+  });
   // Scheduled WhatsApp messages (Slice 7) — claim-based 60s tick; no-op when
   // no bridges are configured (local dev without WHATSAPP_BRIDGE_URLS).
   startScheduledWorker(console);
