@@ -144,7 +144,10 @@ export default function SearchSelect({
         <span className="min-w-0 flex-1">
           {value ? (
             <>
-              <span className={`block font-medium text-gray-900 ${wrapLabel ? 'whitespace-normal break-words' : 'truncate'}`}>
+              {/* leading-tight in compact mode: without it the selected label's
+                  line box is taller than the placeholder's, so the control grew
+                  by ~4px the moment you picked something and nudged the row. */}
+              <span className={`block font-medium text-gray-900 ${compact ? 'leading-tight' : ''} ${wrapLabel ? 'whitespace-normal break-words' : 'truncate'}`}>
                 {value.label}
               </span>
               {value.subtitle && (
