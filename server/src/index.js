@@ -41,6 +41,7 @@ import communicationRouter from './routes/communication.js';
 import adminReportsRouter from './routes/adminReports.js';
 import { startAdminReportsWorker } from './adminReports/worker.js';
 import { startCommunicationWorker } from './communication/deliveryWorker.js';
+import { logIngressConfig } from './ingress/config.js';
 import publicQuoteRouter from './routes/publicQuote.js';
 import dealStagesRouter from './routes/dealStages.js';
 import tasksRouter from './routes/tasks.js';
@@ -608,6 +609,10 @@ const port = Number(process.env.PORT) || 4000;
 
 app.listen(port, () => {
   console.log(`[grafitiyul-os-server] listening on port ${port}`);
+  // Ingress Platform — report which external lead/order sources are credentialed.
+  // Purely informational: an unconfigured source is a pending deployment step,
+  // never a boot failure, so a missing key can't take the service down.
+  logIngressConfig(console);
   // Scheduled WhatsApp messages (Slice 7) — claim-based 60s tick; no-op when
   // no bridges are configured (local dev without WHATSAPP_BRIDGE_URLS).
   startScheduledWorker(console);

@@ -5504,3 +5504,87 @@ model CommunicationTestSend {
 
   @@index([messageId, createdAt])
 }
+
+// ── Ingress Platform ─────────────────────────────────────────────────────────
+//
+// ONE canonical pipeline for every external lead/order source (Meta Lead Ads,
+// WooCommerce stores, website/Elementor forms). Adapters translate a provider
+// payload into the canonical contract and hand it here; all normalization,
+// attribution, deduplication and record creation happen exactly once, in the
+// shared pipeline. A new source = a new adapter, nothing else.
+//
+// IngressEvent is the durable record of EVERY inbound payload: the raw body is
+// persisted BEFORE any processing (the Cardcom/iCount receiver pattern), so a
+// bug, an outage or a bad mapping can always be replayed from source truth.
+// contactId/organizationId/dealId are deliberately NOT foreign keys — the audit
+// trail must survive deletion of the records it produced.
+model IngressEvent {
+  id     String  @id @default(cuid())
+  source String // adapter key: meta_lead_ads | woocommerce | website_form
+  // Instance within a source (store key, form key, Meta page id). Lets one
+  // adapter serve several configured origins without branching business logic.
+  sourceKey String?
+  // The provider's own identifier (leadgen id, Woo order id) when it exposes
+  // one — kept for support/reconciliation, never used as the dedupe key.
+  externalId String?
+  // Adapter-computed replay key. Unique per source: a provider retry, a double
+  // submit or a replay of the same payload can never process twice.
+  idempotencyKey String
+  // pending | processing | processed | duplicate | failed | dead | dry_run
+  status String  @default("pending")
+  // Shadow mode: the event is normalized, attributed and deduped in full, but
+  // NO Contact/Organization/Deal is written. Enables safe pre-cutover
+  // comparison against the legacy automation.
+  dryRun Boolean @default(false)
+
+  rawPayload  Json // exactly as received — source truth for replay
+  rawHeaders  Json? // signature/verification headers, for forensics
+  normalized  Json? // canonical contract after normalization
+  attribution Json? // resolved UTM / campaign attribution
+
+  // Business-level duplicate key (normalized phone or email + window), distinct
+  // from idempotencyKey which is transport-level.
+  dedupeKey String?
+
+  contactId      String?
+  organizationId String?
+  dealId         String?
+  // created_deal | annotated_deal | ignored — what the pipeline decided.
+  outcome String?
+
+  failureCode    String?
+  failureMessage String?
+
+  attemptCount Int       @default(0)
+  nextRetryAt  DateTime?
+  claimedAt    DateTime?
+  claimedBy    String?
+
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+
+  attempts IngressAttempt[]
+
+  @@unique([source, idempotencyKey])
+  @@index([status, nextRetryAt])
+  @@index([source, receivedAt])
+  @@index([dedupeKey])
+  @@index([dealId])
+}
+
+// One row per processing attempt — the observability/audit spine. Answers
+// "what happened to this lead, when, and why did it fail" without reading logs.
+model IngressAttempt {
+  id             String       @id @default(cuid())
+  event          IngressEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  eventId        String
+  attemptNo      Int
+  status         String // ok | failed
+  stage          String? // validate | normalize | attribute | resolve | persist
+  failureCode    String?
+  failureMessage String?
+  durationMs     Int?
+  createdAt      DateTime     @default(now())
+
+  @@index([eventId, attemptNo])
+}
