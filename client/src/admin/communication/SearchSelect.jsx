@@ -18,9 +18,12 @@ import { createPortal } from 'react-dom';
 //   wrapLabel   bool — labels WRAP instead of truncating (long names stay fully
 //               readable, both on the trigger and in the list). Off by default so
 //               every existing single-line caller keeps its exact layout.
+//   compact     bool — ~30% shorter trigger (tighter padding, smaller type) for
+//               toolbar-style rows where the control sits beside other controls
+//               rather than being the focus of a form. Off by default.
 export default function SearchSelect({
   value, onSelect, search, placeholder = 'חיפוש…', emptySearch = true, disabled = false,
-  wrapLabel = false,
+  wrapLabel = false, compact = false,
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
@@ -123,7 +126,9 @@ export default function SearchSelect({
         type="button"
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-right text-[13.5px] transition-colors ${
+        className={`flex w-full items-center rounded-lg border text-right transition-colors ${
+          compact ? 'gap-1.5 px-2.5 py-1 text-[12.5px]' : 'gap-2 px-3 py-2 text-[13.5px]'
+        } ${
           disabled
             ? 'cursor-not-allowed border-gray-200 bg-gray-50 text-gray-400'
             : open

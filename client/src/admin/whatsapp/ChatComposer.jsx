@@ -168,9 +168,13 @@ function classifyFile(file) {
 // same chat. `fill` makes the composer a flex column that FILLS its container —
 // the text area grows to the available height instead of the thread's 200px
 // auto-grow cap (used when the composer is the main surface of a tall modal
-// rather than a strip under a message list). Defaults keep the normal thread
-// composer behaving exactly as before.
-export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onScheduled, dealId = null, droppedFiles = null, onDroppedFilesConsumed, seed = null, onTextChange = null, persistDraft = true, fill = false }) {
+// rather than a strip under a message list). `enterSends={false}` turns Enter
+// back into a plain newline and leaves the שליחה BUTTON as the only way to send —
+// for surfaces that are a message EDITOR rather than a chat input, where an
+// accidental keystroke must never reach a customer. Defaults keep the normal
+// thread composer behaving exactly as before (Enter sends, WhatsApp muscle
+// memory).
+export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onScheduled, dealId = null, droppedFiles = null, onDroppedFilesConsumed, seed = null, onTextChange = null, persistDraft = true, fill = false, enterSends = true }) {
   const draftKey = draftKeyFor(chat);
   const [text, setText] = useState(() => (persistDraft ? readDrafts()[draftKey] || '' : seed?.text || ''));
   const [sending, setSending] = useState(false);
@@ -703,6 +707,10 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
               e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
             }}
             onKeyDown={(e) => {
+              // Editor surfaces (enterSends={false}): NO keystroke sends. Enter
+              // and Shift+Enter both fall through to the textarea's native
+              // newline; the שליחה button is the only send path.
+              if (!enterSends) return;
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 // In schedule mode the ONLY primary action is scheduling —
@@ -722,8 +730,10 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
             }}
             placeholder={attachments.length ? 'כיתוב לקובץ הראשון (לא חובה)…' : 'כתבו הודעה…'}
             dir="auto"
-            className={`block w-full resize-none rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-[14px] leading-relaxed focus:border-emerald-500 focus:outline-none disabled:opacity-60 ${
-              fill ? 'min-h-0 flex-1 overflow-y-auto' : 'min-h-[42px]'
+            // `fill` surfaces are read/edit-heavy (long stored templates), so the
+            // text runs 1px larger there than in the thread's compact strip.
+            className={`block w-full resize-none rounded-xl border border-gray-300 bg-white px-3 py-2.5 leading-relaxed focus:border-emerald-500 focus:outline-none disabled:opacity-60 ${
+              fill ? 'min-h-0 flex-1 overflow-y-auto text-[15px]' : 'min-h-[42px] text-[14px]'
             }`}
           />
           <div className={`mt-1.5 flex items-center gap-1.5 ${fill ? 'shrink-0' : ''}`}>

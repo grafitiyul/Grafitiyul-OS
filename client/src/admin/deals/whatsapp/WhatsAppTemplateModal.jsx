@@ -200,16 +200,22 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                   controls are self-describing (placeholder + the שפה chip), so
                   they carry no separate field labels. */}
               <div className="grid shrink-0 gap-2.5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-                <div>
+                {/* ~30% narrower than the column it sits in — the selector is a
+                    toolbar control, not the star of the screen. */}
+                <div className="w-full lg:max-w-[620px]">
                   {/* ONE searchable field — the shared GOS combobox (portal list,
-                      type-to-filter, arrow/Enter/Escape, RTL). wrapLabel keeps a
-                      long template name fully readable instead of truncating. */}
+                      type-to-filter, arrow/Enter/Escape, RTL). `compact` trims the
+                      trigger height and the width cap trims it horizontally, so it
+                      reads as a toolbar control rather than a form field; the
+                      longest template name still fits on one line, and wrapLabel
+                      wraps rather than truncates if one ever doesn't. */}
                   <SearchSelect
                     value={selectedOption}
                     onSelect={(item) => choose(item?.id || '', lang)}
                     search={searchTemplates}
                     placeholder="חיפוש או בחירת נוסח…"
                     wrapLabel
+                    compact
                   />
                   {templates.length === 0 && (
                     <p className="mt-1.5 text-[12px] text-gray-500">
@@ -308,6 +314,10 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                       chat={chat}
                       dealId={dealId}
                       fill
+                      // This is a message EDITOR, not a chat input: Enter inserts
+                      // a newline and the שליחה button is the ONLY way to send.
+                      // An accidental keystroke must never reach a customer.
+                      enterSends={false}
                       persistDraft={false}
                       seed={seed}
                       onTextChange={setLiveText}
