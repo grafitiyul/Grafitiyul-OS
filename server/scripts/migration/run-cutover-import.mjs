@@ -188,6 +188,20 @@ console.log(`  final snapshot deals ${finalDeals.sourceCount} · new deals to cr
 console.log(`  compared ${ds.dealsCompared} · changed in source ${ds.dealsChangedInSource} · merges ${ds.merges} (${ds.fieldsMerged} fields) · CONFLICTS ${ds.conflicts}`);
 console.log(`  reconciliation: ${hs.create}+${hs.alreadyImported}+${hs.cancelledExcluded}+${hs.postponedExcluded}+${fs.future} = ${hs.create + hs.alreadyImported + hs.cancelledExcluded + hs.postponedExcluded + fs.future} vs master ${hs.masterTours} ${hs.create + hs.alreadyImported + hs.cancelledExcluded + hs.postponedExcluded + fs.future === hs.masterTours ? '✓' : '✗ CHECK'}`);
 
+// A flagged conflict the owner cannot SEE is not reviewable. The plan prints
+// every deal conflict in full (baseline → source vs GOS, per field), capped so
+// a pathological run cannot flood the log.
+if (ds.conflicts) {
+  console.log(`\n── DEAL CONFLICTS (${ds.conflicts}) ──`);
+  for (const c of dealDeltaPlan.conflicts.slice(0, 20)) {
+    console.log(`  deal ${c.orderNo} → GOS ${c.dealId}`);
+    for (const f of c.fields) {
+      console.log(`    ${f.field}: snapshot#1 ${JSON.stringify(f.snap1)} → source ${JSON.stringify(f.final)} · GOS now ${JSON.stringify(f.gos)}`);
+    }
+  }
+  if (dealDeltaPlan.conflicts.length > 20) console.log(`  …and ${dealDeltaPlan.conflicts.length - 20} more`);
+}
+
 // NAMED GATE — unusable source dates. A master tour whose DATE could not be
 // validated is neither imported nor silently dropped: planning REFUSES until
 // every one is resolved, or the owner explicitly accepts planning without
