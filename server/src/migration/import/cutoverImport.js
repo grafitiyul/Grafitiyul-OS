@@ -40,7 +40,7 @@ const canonical = (obj) => JSON.stringify(obj, (key, value) => {
 // ── 1+2: future tours + duplicate redirects ───────────────────────────────────
 export function planFutureTours({
   masterTours, coordRows,
-  dealXwalk = new Map(), dealMetaByLegacyId = new Map(), personRefByEmail = new Map(),
+  dealXwalk = new Map(), dealMetaByLegacyId = new Map(), personRefByEmail = new Map(), personIdentityByEmail = new Map(),
   existingTourXwalk = new Map(),
   nativeSlots = [],               // native GOS group_slots: {id, date, startTime, status}
   activeBookingDealIds = new Set(), // gosDealIds that already hold an ACTIVE booking in GOS
@@ -50,6 +50,8 @@ export function planFutureTours({
   const stats = {
     future: 0, create: 0, redirectedToNative: 0, alreadyImported: 0,
     bookings: 0, registrationOnly: 0, registrations: 0, seatsTotal: 0, assignments: 0,
+    // identity split: keyed by PersonRef.externalPersonId vs the legacy email
+    assignmentsCanonical: 0, assignmentsLegacyEmail: 0,
     bookingsDealMissing: 0,
   };
   const coordByMaster = new Map();
@@ -118,7 +120,24 @@ export function planFutureTours({
       const email = t(c.guideEmail).toLowerCase();
       if (!email || seen.has(email)) continue;
       seen.add(email);
-      guides.push({ email, displayName: t(c.guideName) || email, personRefId: personRefByEmail.get(email) || null, role: 'guide' });
+      // IDENTITY (canonicalised 2026-07-29): the legacy guide email is a LOOKUP
+      // key, not an identity. When it resolves to a GOS person we key the
+      // assignment by PersonRef.externalPersonId — the same identifier native
+      // assignments use — so one guide has one identity across imported and
+      // native tours. Portal access, calendar attendees and the notification
+      // dedupe keys all read externalPersonId, so a second scheme would split
+      // the same person into two recipients on the same tour.
+      // No match ⇒ keep the normalised email: still unique, still traceable.
+      const identityKey = personIdentityByEmail.get(email) || email;
+      const matched = identityKey !== email;
+      if (matched) stats.assignmentsCanonical += 1; else stats.assignmentsLegacyEmail += 1;
+      guides.push({
+        email,
+        identityKey,
+        displayName: t(c.guideName) || email,
+        personRefId: personRefByEmail.get(email) || null,
+        role: 'guide',
+      });
       stats.assignments += 1;
     }
 
@@ -327,7 +346,7 @@ export async function executeFutureTours(prisma, payloads, { batchId, snapshotId
       for (const x of p.registrationOnly) {
         for (const qty of x.registrations) regRows.push({ tourEventId: tourId, bookingId: null, dealId: x.gosDealId, quantity: qty, source: 'migration', status: 'confirmed' });
       }
-      for (const g of p.guides) assignRows.push({ tourEventId: tourId, personRefId: g.personRefId, externalPersonId: g.email, displayName: g.displayName, role: g.role });
+      for (const g of p.guides) assignRows.push({ tourEventId: tourId, personRefId: g.personRefId, externalPersonId: g.identityKey, displayName: g.displayName, role: g.role });
       legacyRows.push({ sourceSystem: 'airtable', sourceType: 'tour', sourceId: p.sourceRecId, entityType: 'TourEvent', entityId: tourId, importBatchId: batchId, snapshotId, cardData: p.cardData });
     }
     await prisma.$transaction([
@@ -355,7 +374,7 @@ export async function executeRedirects(prisma, redirects, { batchId, snapshotId,
     for (const x of r.registrationOnly) {
       for (const qty of x.registrations) regRows.push({ tourEventId: r.nativeTourEventId, bookingId: null, dealId: x.gosDealId, quantity: qty, source: 'migration', status: 'confirmed' });
     }
-    for (const g of r.guides) assignRows.push({ tourEventId: r.nativeTourEventId, personRefId: g.personRefId, externalPersonId: g.email, displayName: g.displayName, role: g.role });
+    for (const g of r.guides) assignRows.push({ tourEventId: r.nativeTourEventId, personRefId: g.personRefId, externalPersonId: g.identityKey, displayName: g.displayName, role: g.role });
     await prisma.$transaction([
       ...(bookingRows.length ? [prisma.booking.createMany({ data: bookingRows })] : []),
       ...(regRows.length ? [prisma.ticketRegistration.createMany({ data: regRows })] : []),

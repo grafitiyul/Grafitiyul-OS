@@ -73,7 +73,7 @@ for (const [label, id] of [['final', finalId], ['snap1', snap1Id]]) {
 // ── 1) shared DB inputs ───────────────────────────────────────────────────────
 const [xwalkRows, personRefs, legacyDeals, gosStages, stageConfigRows, dealDecisions] = await Promise.all([
   prisma.legacyRecord.findMany({ where: { sourceSystem: { in: ['pipedrive', 'airtable'] }, sourceType: { in: ['person', 'organization', 'deal', 'tour'] } }, select: { sourceSystem: true, sourceType: true, sourceId: true, entityType: true, entityId: true } }),
-  prisma.personRef.findMany({ select: { id: true, email: true } }),
+  prisma.personRef.findMany({ select: { id: true, email: true, externalPersonId: true } }),
   prisma.deal.findMany({ where: { orderNo: { lt: 27000 } }, select: { id: true, orderNo: true, activityType: true, title: true, status: true, dealStageId: true, valueMinor: true, currency: true, wonAt: true, lostAt: true, lostReason: true, expectedCloseDate: true, tourDate: true, tourTime: true, participants: true } }),
   prisma.dealStage.findMany({ select: { id: true, key: true } }),
   prisma.migrationDecision.findMany({ where: { queue: 'stage_config' } }),
@@ -87,6 +87,9 @@ for (const r of xwalkRows) {
   else if (r.sourceType === 'tour' && r.entityId) existingTourXwalk.set(r.sourceId, r.entityId);
 }
 const personRefByEmail = new Map(personRefs.filter((p) => p.email).map((p) => [String(p.email).toLowerCase(), p.id]));
+// Canonical identity per guide email — Wave-1 (historical) planning deliberately
+// does NOT receive this map, so its 2,179 email-keyed rows are never re-keyed.
+const personIdentityByEmail = new Map(personRefs.filter((p) => p.email && p.externalPersonId).map((p) => [String(p.email).toLowerCase(), p.externalPersonId]));
 const dealMetaByLegacyId = new Map(legacyDeals.map((d) => [d.orderNo, { activityType: d.activityType }]));
 const gosStageIdByKey = new Map(gosStages.map((s) => [s.key, s.id]));
 const stageKeyById = new Map(gosStages.map((s) => [s.id, s.key]));
@@ -119,7 +122,7 @@ const activeBookingDealIds = new Set(activeBookings.map((b) => b.dealId));
 
 // ── 3) tour plans ─────────────────────────────────────────────────────────────
 const historical = planTourImport({ ...finalLayer, dealXwalk: new Map([...existingDealXwalk]), dealMetaByLegacyId, personRefByEmail, existingTourXwalk, today: freezeDate });
-const future = planFutureTours({ masterTours: finalLayer.masterTours, coordRows: finalLayer.coordRows, dealXwalk: new Map([...existingDealXwalk]), dealMetaByLegacyId, personRefByEmail, existingTourXwalk, nativeSlots, activeBookingDealIds, freezeDate });
+const future = planFutureTours({ masterTours: finalLayer.masterTours, coordRows: finalLayer.coordRows, dealXwalk: new Map([...existingDealXwalk]), dealMetaByLegacyId, personRefByEmail, personIdentityByEmail, existingTourXwalk, nativeSlots, activeBookingDealIds, freezeDate });
 const tourDelta = planImportedTourDelta({ ...finalLayer, dealXwalk: new Map([...existingDealXwalk]), importedState, freezeDate });
 
 // ── 4) deal plans: three-way delta + new-deal creates ─────────────────────────
@@ -177,6 +180,7 @@ console.log(`  master ${hs.masterTours} · already imported ${hs.alreadyImported
 console.log(`  historical delta (completed since Wave 1): ${historical.payloads.length}`);
 console.log(`  future operational: create ${fs.create} · redirected to native slots ${fs.redirectedToNative} (of ${fs.future} future)`);
 console.log(`  future bookings ${fs.bookings} · registration-only ${fs.registrationOnly} · seats ${fs.seatsTotal} · assignments ${fs.assignments}`);
+console.log(`  guide identity: canonical (PersonRef) ${fs.assignmentsCanonical} · legacy-email fallback ${fs.assignmentsLegacyEmail}`);
 console.log(`  Wave-1 delta: tours touched ${ts.toursTouched} · +bookings ${ts.addBooking} · seat updates ${ts.updateSeats} · +payroll ${ts.addPayroll} · payroll replaced ${ts.replacePayrollAmount}`);
 console.log(`  CONFLICTS for owner review: retro-cancelled ${ts.cancelledConflicts}`);
 console.log('\n── deals ──');
@@ -184,7 +188,27 @@ console.log(`  final snapshot deals ${finalDeals.sourceCount} · new deals to cr
 console.log(`  compared ${ds.dealsCompared} · changed in source ${ds.dealsChangedInSource} · merges ${ds.merges} (${ds.fieldsMerged} fields) · CONFLICTS ${ds.conflicts}`);
 console.log(`  reconciliation: ${hs.create}+${hs.alreadyImported}+${hs.cancelledExcluded}+${hs.postponedExcluded}+${fs.future} = ${hs.create + hs.alreadyImported + hs.cancelledExcluded + hs.postponedExcluded + fs.future} vs master ${hs.masterTours} ${hs.create + hs.alreadyImported + hs.cancelledExcluded + hs.postponedExcluded + fs.future === hs.masterTours ? '✓' : '✗ CHECK'}`);
 
+// NAMED GATE — unusable source dates. A master tour whose DATE could not be
+// validated is neither imported nor silently dropped: planning REFUSES until
+// every one is resolved, or the owner explicitly accepts planning without
+// them via --accept-rejected-dates. Silence is never an option for an
+// operational record.
+const rejectedDates = finalLayer.rejectedDates || [];
+const ACCEPT_REJECTED = process.argv.includes('--accept-rejected-dates');
+if (rejectedDates.length) {
+  console.log(`\n── REJECTED SOURCE DATES (${rejectedDates.length}) ──`);
+  const byReason = {};
+  for (const r of rejectedDates) byReason[r.reason] = (byReason[r.reason] || 0) + 1;
+  for (const [reason, n] of Object.entries(byReason)) console.log(`  ${reason}: ${n}`);
+  console.log(`  NOT planned and NOT counted as future tours.`);
+  if (!ACCEPT_REJECTED) console.log(`  resolve them, or re-run with --accept-rejected-dates to plan without them.`);
+}
+
 const gates = checkCutoverGates({ plan, expectHash: EXECUTE ? expectHash : plan.payloadHash, freezeDate });
+if (rejectedDates.length && !ACCEPT_REJECTED) {
+  gates.ok = false;
+  gates.failures.push(`${rejectedDates.length} source tours have an unusable DATE — resolve them or pass --accept-rejected-dates`);
+}
 console.log(`\nGATES: ${gates.ok ? 'PASS ✓' : 'REFUSED'}`);
 for (const f of gates.failures) console.error(`  ✗ ${f}`);
 
