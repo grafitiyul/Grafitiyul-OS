@@ -4,8 +4,8 @@ Governed by `GOS-source-ownership-map.md`, which is a **precondition**: no field
 is synchronized unless that document declares it, and `src/mirror/ownership.js`
 is the executable form of that declaration.
 
-**Status:** core BUILT and tested (66 tests). Transport (webhooks + polling
-workers) NOT built — see §7.
+**Status:** COMPLETE and deployed. Core + transport + workers + conflict
+resolution, 115 tests. Runs only when `MIRROR_ENABLED=true` (default off).
 
 ---
 
@@ -97,22 +97,7 @@ one today and it is load-bearing:
 This is the only automatic ownership transfer. Everything else transfers at
 retirement, deliberately and per source.
 
-## 7. Transport — NOT YET BUILT
-
-The decided design (webhooks now, polling backstop) is not implemented. What
-remains:
-
-| Piece | Notes |
-|---|---|
-| Pipedrive webhook receiver | needs subscriptions created in the Pipedrive admin UI (manual) |
-| Airtable poller | Airtable webhooks do not cover every change type; polling is required for deletes and tour edits regardless |
-| Retry/replay worker | should reuse the ingress platform's proven pattern (persist raw first, then process) rather than invent a second one |
-| Reconciliation sweep | full compare to catch anything both transports missed, and to detect disappearance → `sourceDeletedAt` |
-| Conflict resolution actions | `accept_legacy` / `keep_gos` server actions must resolve the issue AND advance the baseline in one operation |
-
-The raw-payload-first receipt pattern, the attempt ledger and the replay tooling
-already exist in `src/ingress/`. The mirror should reuse them, not clone them.
-
+undefined
 ## 8. Deletes
 
 A record that disappears from the source is **never** deleted in GOS. It is
