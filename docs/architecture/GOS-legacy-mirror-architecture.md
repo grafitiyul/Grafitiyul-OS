@@ -97,7 +97,36 @@ one today and it is load-bearing:
 This is the only automatic ownership transfer. Everything else transfers at
 retirement, deliberately and per source.
 
-undefined
+## 7. Transport — BUILT
+
+| Piece | Where | Notes |
+|---|---|---|
+| Pipedrive webhook | `POST /api/mirror/pipedrive` | HTTP Basic, constant-time compare through the shared helper. Answers **503 until `MIRROR_PIPEDRIVE_WEBHOOK_SECRET` is set** — it never accepts an unauthenticated payload. Subscriptions must still be created in the Pipedrive admin UI. |
+| Airtable poller | `sources/airtableMirror.js` | Dependency-injected client: testable without an Airtable account, and the mirror never embeds a second HTTP client. |
+| Retry worker | `worker.js` | Claim-based with a TTL, exponential backoff, `dead` after 6 attempts so a permanent fault needs a human instead of retrying forever. |
+| Poll ticks | `worker.js` | Per `(system, entity)` cursor with its own claim, so two instances never overlap. |
+| Replay | `POST /api/mirror-admin/events/:id/replay` | Re-processes from the stored raw payload — the whole reason it is persisted before processing. |
+| Health | `GET /api/mirror-admin/status` | Surfaces the worst failure mode: a poller that silently stopped while the mirror still *looks* live. |
+
+**The kill switch stops PROCESSING, never receipt.** With `MIRROR_ENABLED=false`
+payloads still land durably, so nothing is lost while the mirror is paused and
+the retry worker drains the backlog when it is switched on.
+
+## 7a. Conflict resolution
+
+`POST /api/mirror-admin/conflicts/:issueId/resolve` with `accept_legacy` or
+`keep_gos`. Both resolve the issue **and** advance the baseline in one action:
+doing only the first makes the conflict re-raise until the operator stops
+trusting the screen; doing only the second hides a decision nobody made.
+
+`keep_gos` still advances the baseline to the **source** value. That is
+deliberate: we have SEEN that value and chosen GOS, so it stops nagging — but if
+the source changes *again*, `base ≠ source` and GOS still differs, so a new
+conflict is raised. That is correct, because it is genuinely new information.
+
+Raw values come from the MirrorEvent, never from the issue card: the card holds
+display strings, and `"5,310 ₪"` must never be written into a money column.
+
 ## 8. Deletes
 
 A record that disappears from the source is **never** deleted in GOS. It is
