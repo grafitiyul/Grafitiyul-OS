@@ -72,12 +72,18 @@ export async function headObject(key) {
   }
 }
 
-// Full object body as a UTF-8 string (manifests + JSONL read-back during verify).
-export async function getObjectText(key) {
+// Full object body as raw bytes. Required for gzipped shards, where decoding to
+// UTF-8 first would corrupt the payload before it can be decompressed/hashed.
+export async function getObjectBytes(key) {
   const out = await client().send(new GetObjectCommand({ Bucket: bucket(), Key: key }));
   const chunks = [];
   for await (const chunk of out.Body) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  return Buffer.concat(chunks).toString('utf8');
+  return Buffer.concat(chunks);
+}
+
+// Full object body as a UTF-8 string (manifests + JSONL read-back during verify).
+export async function getObjectText(key) {
+  return (await getObjectBytes(key)).toString('utf8');
 }
 
 // List object keys (+sizes) under a prefix (paged).

@@ -13,34 +13,63 @@
 // The storage functions (put/head/getText) are INJECTED so the writer is unit-
 // testable with an in-memory store and never needs R2 in tests.
 import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 
 export const SHARD_SIZE = 5000; // records per shard (bounds memory + object size)
 
 const pad5 = (n) => String(n).padStart(5, '0');
 const sha256Hex = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
+// `records` may be objects (extraction) or pre-serialized JSON text lines (the
+// GOS backup, which takes Postgres' own to_jsonb output verbatim so no JS type
+// coercion can ever touch it). Strings pass through untouched.
 const jsonlBuffer = (records) =>
-  Buffer.from(records.map((r) => JSON.stringify(r)).join('\n') + (records.length ? '\n' : ''), 'utf8');
+  Buffer.from(
+    records.map((r) => (typeof r === 'string' ? r : JSON.stringify(r))).join('\n') + (records.length ? '\n' : ''),
+    'utf8',
+  );
 
 export class SnapshotWriter {
   // store: { put({key,body,contentType,ifAbsent}), head(key), getText(key) }
-  constructor({ snapshotId, store }) {
+  //
+  // rootPrefix separates object families in the one private bucket:
+  //   'snapshots' — immutable legacy extraction snapshots (the default)
+  //   'backups'   — GOS database backups
+  // gzip compresses shard bodies. The recorded `sha256` is ALWAYS over the
+  // UNCOMPRESSED bytes, so content identity does not depend on the zlib version
+  // that happened to produce the object; `bytes` is the stored (compressed) size
+  // and `rawBytes` the uncompressed one.
+  constructor({ snapshotId, store, rootPrefix = 'snapshots', gzip = false }) {
     if (!snapshotId) throw new Error('snapshotId required');
     if (!store?.put) throw new Error('store.put required');
     this.snapshotId = snapshotId;
     this.store = store;
-    this.root = `snapshots/${snapshotId}`;
+    this.gzip = !!gzip;
+    this.root = `${rootPrefix}/${snapshotId}`;
   }
 
   entityDir(system, entity) { return `${this.root}/${system}/${entity}`; }
-  shardKey(system, entity, shardIndex) { return `${this.entityDir(system, entity)}/shard-${pad5(shardIndex)}.jsonl`; }
+  shardKey(system, entity, shardIndex) {
+    return `${this.entityDir(system, entity)}/shard-${pad5(shardIndex)}.jsonl${this.gzip ? '.gz' : ''}`;
+  }
   entityManifestKey(system, entity) { return `${this.entityDir(system, entity)}/_manifest.json`; }
 
   // Write one NDJSON shard; returns its descriptor {key,records,bytes,sha256}.
   async writeShard({ system, entity, shardIndex, records }) {
-    const body = jsonlBuffer(records);
+    const raw = jsonlBuffer(records);
+    const body = this.gzip ? zlib.gzipSync(raw, { level: 6 }) : raw;
     const key = this.shardKey(system, entity, shardIndex);
-    await this.store.put({ key, body, contentType: 'application/x-ndjson' });
-    return { key, records: records.length, bytes: body.length, sha256: sha256Hex(body) };
+    await this.store.put({
+      key,
+      body,
+      contentType: this.gzip ? 'application/gzip' : 'application/x-ndjson',
+    });
+    return {
+      key,
+      records: records.length,
+      bytes: body.length,
+      rawBytes: raw.length,
+      sha256: sha256Hex(raw),
+    };
   }
 
   // A raw object (attachment body, reference bundle). Returns {key,bytes,sha256}.
