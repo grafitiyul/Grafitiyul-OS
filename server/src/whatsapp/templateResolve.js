@@ -121,7 +121,11 @@ export function resolveTemplateBody(bodyHtml, ctx, lang = 'he') {
   const referenced = [...new Set(extractTokens(markup))];
   // Fold aliases onto their canonical key before resolving.
   const canonical = [...new Set(referenced.map(canonicalTemplateKey))];
-  const { values, missing, unknown } = resolveVariables(canonical, ctx, lang);
+  // strictLanguage: the operator picked the language this message is written in,
+  // so the greeting must carry the name recorded FOR that language or none at
+  // all — "Hi," is correct, "Hi דוד," is not. Combined with the empty-fill policy
+  // below, a name in the wrong script can never reach a customer.
+  const { values, missing, unknown } = resolveVariables(canonical, ctx, lang, { strictLanguage: true });
 
   // Substitution map that also answers to the alias spelling, and turns every
   // missing/unknown value into '' so no raw {{token}} can survive.

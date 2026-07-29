@@ -186,7 +186,7 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
         panelClassName="h-[92vh]"
         contentClassName="flex min-h-0 flex-1 flex-col overflow-hidden"
       >
-        <div dir="rtl" className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3">
+        <div dir="rtl" className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 pb-3 pt-2.5">
           {loadError ? (
             <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
               טעינה נכשלה: <span dir="ltr" className="font-mono">{loadError}</span>
@@ -195,20 +195,16 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
             <p className="py-12 text-center text-sm text-gray-400">טוען…</p>
           ) : (
             <>
-              {/* 1 — template + 2 — language. Compact, never grows. */}
-              {/* Every pixel spent here is a pixel the editor doesn't get: the
-                  controls are self-describing (placeholder + the שפה chip), so
-                  they carry no separate field labels. */}
-              <div className="grid shrink-0 gap-2.5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-                {/* ~30% narrower than the column it sits in — the selector is a
-                    toolbar control, not the star of the screen. */}
-                <div className="w-full lg:max-w-[620px]">
+              {/* ONE toolbar row: selector + language + who this goes to. The
+                  recipient used to sit in its own 29px strip on top of the editor
+                  box; folding it in here removes a whole band and its border, so
+                  the toolbar gets SHORTER while the controls stay full size. */}
+              <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2">
+                <div className="w-full min-w-0 flex-1 lg:max-w-[620px]">
                   {/* ONE searchable field — the shared GOS combobox (portal list,
-                      type-to-filter, arrow/Enter/Escape, RTL). `compact` trims the
-                      trigger height and the width cap trims it horizontally, so it
-                      reads as a toolbar control rather than a form field; the
-                      longest template name still fits on one line, and wrapLabel
-                      wraps rather than truncates if one ever doesn't. */}
+                      type-to-filter, arrow/Enter/Escape, RTL). `compact` trims
+                      padding only; the type size is unchanged, and wrapLabel keeps
+                      even the longest template name fully readable. */}
                   <SearchSelect
                     value={selectedOption}
                     onSelect={(item) => choose(item?.id || '', lang)}
@@ -217,11 +213,6 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                     wrapLabel
                     compact
                   />
-                  {templates.length === 0 && (
-                    <p className="mt-1.5 text-[12px] text-gray-500">
-                      אין עדיין נוסחים פעילים. אפשר להוסיף בהגדרות CRM → נוסחים לתבניות ווטסאפ.
-                    </p>
-                  )}
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -253,25 +244,41 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                     })}
                   </div>
                 </div>
+
+                {/* Recipient — folded into the toolbar instead of its own strip.
+                    One chat: a read-only chip. Several: the switcher, inline. */}
+                {chat && (
+                  chats.length > 1 ? (
+                    <select
+                      value={chatId}
+                      onChange={(e) => setChatId(e.target.value)}
+                      aria-label="בחירת השיחה"
+                      className="rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-[12.5px] focus:border-emerald-500 focus:outline-none"
+                    >
+                      {chats.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.contact?.name || c.displayName || 'לא מזוהה'}
+                          {c.account?.label ? ` · ${c.account.label}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="flex items-center gap-1.5 text-[12.5px] text-gray-500">
+                      <WhatsAppLogo size={14} />
+                      <span className="font-medium text-gray-700">
+                        {chat.contact?.name || chat.displayName || 'לא מזוהה'}
+                      </span>
+                      {chat.account?.label && <span>· {chat.account.label}</span>}
+                    </span>
+                  )
+                )}
+                {resolving && <span className="text-[12px] text-gray-400">מרכיב את הנוסח…</span>}
               </div>
 
-              {/* Which conversation this goes to — same resolution as the dock. */}
-              {chats.length > 1 && (
-                <div className="shrink-0">
-                  <label className="mb-1.5 block text-[12.5px] font-semibold text-gray-700">שיחה</label>
-                  <select
-                    value={chatId}
-                    onChange={(e) => setChatId(e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-[13.5px] focus:border-emerald-500 focus:outline-none"
-                  >
-                    {chats.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.contact?.name || c.displayName || 'לא מזוהה'}
-                        {c.account?.label ? ` · ${c.account.label}` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              {templates.length === 0 && (
+                <p className="shrink-0 text-[12px] text-gray-500">
+                  אין עדיין נוסחים פעילים. אפשר להוסיף בהגדרות CRM → נוסחים לתבניות ווטסאפ.
+                </p>
               )}
 
               {missingVars.includes('customer_first_name') && (
@@ -298,13 +305,6 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                 </div>
               ) : (
                 <div className="flex min-h-[240px] flex-1 flex-col overflow-hidden rounded-xl border border-gray-200">
-                  <div className="flex shrink-0 items-center gap-2 bg-gray-50 px-3 py-1.5 text-[12px] text-gray-600">
-                    <span className="font-medium text-gray-700">
-                      {chat.contact?.name || chat.displayName || 'לא מזוהה'}
-                    </span>
-                    {chat.account?.label && <span>· {chat.account.label}</span>}
-                    {resolving && <span className="mr-auto text-gray-400">מרכיב את הנוסח…</span>}
-                  </div>
                   {!templateId ? (
                     <p className="flex flex-1 items-center justify-center px-4 py-10 text-center text-[13px] text-gray-400">
                       בחרו נוסח כדי לערוך ולשלוח.

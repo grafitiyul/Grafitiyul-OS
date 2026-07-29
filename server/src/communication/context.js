@@ -61,10 +61,13 @@ export function contactPhone(contact) {
 export function contactEmail(contact) {
   return pickPrimary(contact?.emails)?.value ?? null;
 }
-export function contactFullName(contact, lang = 'he') {
+// `strictLanguage`: never substitute the other language's name (a Hebrew name in
+// an English message is wrong, not a fallback). Off by default.
+export function contactFullName(contact, lang = 'he', opts = undefined) {
   if (!contact) return null;
   const he = `${contact.firstNameHe || ''} ${contact.lastNameHe || ''}`.trim();
   const en = `${contact.firstNameEn || ''} ${contact.lastNameEn || ''}`.trim();
+  if (opts?.strictLanguage) return (lang === 'en' ? en : he) || null;
   return (lang === 'en' ? en || he : he || en) || null;
 }
 

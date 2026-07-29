@@ -30,10 +30,19 @@ export const VARIABLE_CATEGORIES = {
 // contexts: which trigger contexts provide the value (triggers.js `contexts`).
 export const VARIABLES = [
   // ── customer ──
+  // `strictLanguage` (see resolveVariables): return ONLY the name recorded in the
+  // requested language, never the other one. A Hebrew given name inside an
+  // English message is wrong, not a helpful fallback — an empty greeting is
+  // correct there. Off by default so existing consumers are unaffected.
   { key: 'customer_first_name', labelHe: 'שם פרטי של הלקוח', labelEn: 'Customer first name', category: 'customer', contexts: ['contact'],
-    resolve: (ctx, lang) => (lang === 'en' ? ctx.contact?.firstNameEn || ctx.contact?.firstNameHe : ctx.contact?.firstNameHe || ctx.contact?.firstNameEn) || null },
+    resolve: (ctx, lang, opts) => {
+      const he = ctx.contact?.firstNameHe || null;
+      const en = ctx.contact?.firstNameEn || null;
+      if (opts?.strictLanguage) return (lang === 'en' ? en : he) || null;
+      return (lang === 'en' ? en || he : he || en) || null;
+    } },
   { key: 'customer_full_name', labelHe: 'שם מלא של הלקוח', labelEn: 'Customer full name', category: 'customer', contexts: ['contact'],
-    resolve: (ctx, lang) => contactFullName(ctx.contact, lang) },
+    resolve: (ctx, lang, opts) => contactFullName(ctx.contact, lang, opts) },
   { key: 'customer_phone', labelHe: 'טלפון הלקוח', labelEn: 'Customer phone', category: 'customer', contexts: ['contact'],
     resolve: (ctx) => contactPhone(ctx.contact) },
   { key: 'customer_email', labelHe: 'אימייל הלקוח', labelEn: 'Customer email', category: 'customer', contexts: ['contact'],
@@ -167,8 +176,13 @@ export function extractTokens(text) {
 /**
  * Resolve every variable key against a context → { values: {key: string|null},
  * missing: [key], unknown: [key] }.
+ *
+ * `opts.strictLanguage` forbids cross-language substitution for the per-language
+ * name variables: a message rendered in English must never carry a Hebrew given
+ * name. Callers opt in; the automated delivery engine keeps its existing
+ * fallback behaviour untouched.
  */
-export function resolveVariables(keys, ctx, lang = 'he') {
+export function resolveVariables(keys, ctx, lang = 'he', opts = undefined) {
   const values = {};
   const missing = [];
   const unknown = [];
@@ -176,7 +190,7 @@ export function resolveVariables(keys, ctx, lang = 'he') {
     const def = BY_KEY.get(key);
     if (!def) { unknown.push(key); continue; }
     let v = null;
-    try { v = def.resolve(ctx, lang); } catch { v = null; }
+    try { v = def.resolve(ctx, lang, opts); } catch { v = null; }
     values[key] = v ?? null;
     if (v == null || v === '') missing.push(key);
   }

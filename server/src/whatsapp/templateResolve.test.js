@@ -82,9 +82,45 @@ test('resolveTemplateBody uses the English first name when the language is Engli
   assert.ok(out.text.includes('Dalia'));
 });
 
-test('resolveTemplateBody falls back to the other language rather than emptying a known name', () => {
-  const out = resolveTemplateBody(BODY, ctxWith({ firstNameHe: 'דליה' }), 'en');
-  assert.ok(out.text.includes('דליה'));
+// Language strictness — a name recorded only in Hebrew must NEVER appear in an
+// English message, and vice versa. An empty greeting is the correct output.
+test('English NEVER borrows a Hebrew-only first name', () => {
+  const out = resolveTemplateBody(BODY, ctxWith({ firstNameHe: 'דליה', firstNameEn: '' }), 'en');
+  assert.ok(!out.text.includes('דליה'));
+  assert.ok(!out.text.includes('{{'));
+  assert.ok(!out.text.includes('@'));
+  assert.equal(out.text, 'היי,\n\nרציתי לעדכן ש...'); // body chrome is Hebrew here; the NAME is what matters
+  assert.deepEqual(out.missing, ['customer_first_name']);
+});
+
+test('Hebrew NEVER borrows an English-only first name', () => {
+  const out = resolveTemplateBody(BODY, ctxWith({ firstNameHe: '', firstNameEn: 'John' }), 'he');
+  assert.ok(!out.text.includes('John'));
+  assert.ok(!out.text.includes('{{'));
+  assert.equal(out.text, 'היי,\n\nרציתי לעדכן ש...');
+});
+
+test('each language uses its own name when both exist', () => {
+  const ctx = ctxWith({ firstNameHe: 'ענת', firstNameEn: 'Anat' });
+  assert.ok(resolveTemplateBody(BODY, ctx, 'he').text.includes('ענת'));
+  assert.ok(!resolveTemplateBody(BODY, ctx, 'he').text.includes('Anat'));
+  assert.ok(resolveTemplateBody(BODY, ctx, 'en').text.includes('Anat'));
+  assert.ok(!resolveTemplateBody(BODY, ctx, 'en').text.includes('ענת'));
+});
+
+test('an English greeting with no English name reads cleanly, with no stray punctuation', () => {
+  const en = '<p>Hi {{customer_first_name}},</p><p>Following your interest…</p>';
+  const out = resolveTemplateBody(en, ctxWith({ firstNameHe: 'דוד' }), 'en');
+  assert.equal(out.text, 'Hi,\n\nFollowing your interest…');
+});
+
+test('the automated delivery engine KEEPS its cross-language fallback (unchanged)', async () => {
+  const { resolveVariables } = await import('../communication/variables.js');
+  const ctx = ctxWith({ firstNameHe: 'דליה', firstNameEn: '' });
+  const lenient = resolveVariables(['customer_first_name'], ctx, 'en');
+  assert.equal(lenient.values.customer_first_name, 'דליה');
+  const strict = resolveVariables(['customer_first_name'], ctx, 'en', { strictLanguage: true });
+  assert.equal(strict.values.customer_first_name, null);
 });
 
 test('resolveTemplateBody never leaks a raw token when there is no first name', () => {
