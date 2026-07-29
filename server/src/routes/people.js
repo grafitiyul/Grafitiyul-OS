@@ -1,4 +1,4 @@
-import crypto from 'node:crypto';
+import { markGuideFutureToursCalendarPending } from '../tours/calendar/service.js';
 import express, { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
@@ -136,6 +136,8 @@ async function syncFromUpstream() {
       // now own historical imported rows keyed by that email — claim them.
       if (normalizeEmail(data.email) !== normalizeEmail(existing.email)) {
         await tryResolveHistoricalStaffLinks(prisma, existing.id);
+        // The attendee list of their future tours just changed — re-pend them.
+        await markGuideFutureToursCalendarPending(prisma, existing.id);
       }
       updated += 1;
     } else {
@@ -468,6 +470,8 @@ router.put(
     // canonical owner of historical rows keyed by that email — claim them.
     if (data.email !== undefined && normalizeEmail(data.email) !== normalizeEmail(before.email)) {
       await tryResolveHistoricalStaffLinks(prisma, person.id);
+      // The attendee list of their future tours just changed — re-pend them.
+      await markGuideFutureToursCalendarPending(prisma, person.id);
     }
     res.json(person);
   }),

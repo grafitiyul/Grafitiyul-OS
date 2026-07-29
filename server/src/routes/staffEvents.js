@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { markGuideFutureToursCalendarPending } from '../tours/calendar/service.js';
 import crypto from 'node:crypto';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
@@ -103,6 +104,8 @@ router.post('/', handle(async (req, res) => {
     // imported rows keyed by that email — claim them (idempotent, non-blocking).
     if (identity.email !== undefined && normalizeEmail(identity.email) !== normalizeEmail(existing.email)) {
       await tryResolveHistoricalStaffLinks(prisma, existing.id);
+      // The attendee list of their future tours just changed — re-pend them.
+      await markGuideFutureToursCalendarPending(prisma, existing.id);
     }
     return res.json({ ok: true, event, created: false, lifecycleHint: person.lifecycleHint });
   }
