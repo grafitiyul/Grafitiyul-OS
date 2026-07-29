@@ -44,7 +44,12 @@ import { startCommunicationWorker } from './communication/deliveryWorker.js';
 import { logIngressConfig } from './ingress/config.js';
 import ingressRouter from './routes/ingress.js';
 import ingressAdminRouter from './routes/ingressAdmin.js';
+import mirrorRouter from './routes/mirror.js';
+import mirrorAdminRouter from './routes/mirrorAdmin.js';
 import { startIngressRetryWorker } from './ingress/worker.js';
+import { startMirrorWorkers } from './mirror/worker.js';
+import { registerMirrorIssueTypes } from './mirror/register.js';
+import { mirrorAdapterFactory, warmMirrorAdapters } from './mirror/adapters.js';
 import publicQuoteRouter from './routes/publicQuote.js';
 import dealStagesRouter from './routes/dealStages.js';
 import tasksRouter from './routes/tasks.js';
@@ -169,6 +174,10 @@ app.use(cors());
 // Its own parser is scoped and capped at 2mb, so the 25mb upload path below is
 // unaffected and large bodies are never double-buffered.
 app.use('/api/ingress', ingressRouter);
+
+// Legacy Mirror webhooks — same reason as ingress: mounted BEFORE the global
+// JSON parser so the raw body is available for credential verification.
+app.use('/api/mirror', mirrorRouter);
 
 // 25mb: WhatsApp voice notes are uploaded from the composer as base64 JSON.
 // Everything else stays far below this; admin-authed surface.
@@ -388,6 +397,8 @@ app.use('/api/admin-reports', requireAdminAuth, adminReportsRouter);
 // Ingress observability + operator actions (retry / dry-run). Read-only apart
 // from two explicit actions, neither of which can create a duplicate deal.
 app.use('/api/ingress-admin', requireAdminAuth, ingressAdminRouter);
+// Legacy Mirror observability + operator actions (replay, conflict resolution).
+app.use('/api/mirror-admin', requireAdminAuth, mirrorAdminRouter);
 
 // Products & Pricing — Slice 1 (catalog + R2 files + payment config). Admin
 // only. Pricing engine, add-ons, and Deal integration are NOT built yet.
@@ -630,6 +641,11 @@ app.listen(port, () => {
   // Ingress retry worker — claim-based 60s tick. Retries only transient
   // failures; permanent and exhausted events are left for a human on purpose.
   startIngressRetryWorker(console);
+  // Legacy Mirror: issue types first (the dashboard needs them registered
+  // regardless), then the workers, which stay OFF unless MIRROR_ENABLED=true.
+  registerMirrorIssueTypes();
+  warmMirrorAdapters();
+  startMirrorWorkers({ adapterFactory: mirrorAdapterFactory });
   // Scheduled WhatsApp messages (Slice 7) — claim-based 60s tick; no-op when
   // no bridges are configured (local dev without WHATSAPP_BRIDGE_URLS).
   startScheduledWorker(console);

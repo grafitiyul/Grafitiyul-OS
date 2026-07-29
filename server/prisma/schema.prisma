@@ -4878,33 +4878,33 @@ model IssueNotification {
 // idempotency + reversibility key: extraction/import upsert on it, so re-runs
 // never duplicate, and a whole import batch can be rolled back by batchId.
 model LegacyRecord {
-  id            String   @id @default(cuid())
+  id              String    @id @default(cuid())
   // 'pipedrive' | 'airtable' (validated in code — project convention, no enum).
-  sourceSystem  String
+  sourceSystem    String
   // e.g. 'deal' | 'person' | 'organization' | 'note' | 'activity' | 'deal_product'
   //      | 'deal_flow' | 'tour' | 'participant' | 'file' | … (source entity kind).
-  sourceType    String
+  sourceType      String
   // The legacy record id, as a string (Pipedrive numeric ids + Airtable recIds
   // both fit). Uniqueness is per (system, type) — see the compound unique.
-  sourceId      String
+  sourceId        String
   // The snapshot batch this row was last extracted from (set by Slice 2). Null
   // until first extracted.
-  snapshotId    String?
+  snapshotId      String?
   // The import batch that wrote the linked GOS entity (set by Slices 6+). Null
   // until imported; the handle for batch rollback until cutover.
-  importBatchId String?
+  importBatchId   String?
   // Raw preserved source record (the Legacy Archive payload). Never rendered as
   // JSON to users — the "View complete legacy archive" action renders it readably.
-  payload       Json?
+  payload         Json?
   // Curated label→value pairs for the permanent "מידע ממערכת קודמת" card
   // (owner, legacy stage, meaningful custom fields, pricing notes, Drive links…).
   // Shaped at import time from `payload` per the frozen mapping — no ids/JSON.
-  cardData      Json?
+  cardData        Json?
   // LOOSE link to the migrated GOS entity (no FK — survives entity deletion,
   // same convention as TimelineEntry.subjectId). entityType e.g. 'Deal' |
   // 'Contact' | 'Organization' | 'TourEvent'.
-  entityType    String?
-  entityId      String?
+  entityType      String?
+  entityId        String?
   // ── Mirror state (Intermediate Stabilization Phase) ────────────────────────
   // syncBaseline is "what the source said the last time GOS and legacy agreed",
   // stored PER FIELD. It is the third input of the 3-way merge and the only
@@ -4920,8 +4920,8 @@ model LegacyRecord {
   // legacy deletions are frequently accidental and GOS now owns operational
   // history hanging off these records. Recorded and surfaced; a human decides.
   sourceDeletedAt DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   @@unique([sourceSystem, sourceType, sourceId])
   @@index([sourceSystem, lastSyncedAt])
@@ -5706,4 +5706,88 @@ model DealMarketing {
   @@index([channel])
   @@index([campaign])
   @@index([sourceCreatedAt])
+}
+
+// ── Legacy Mirror transport ──────────────────────────────────────────────────
+//
+// The durable spine of the one-way mirror. Same discipline as IngressEvent: the
+// raw payload is persisted BEFORE any processing, so a bug, an outage or a bad
+// mapping can always be replayed from source truth rather than lost.
+//
+// Distinct from IngressEvent because the semantics are different: ingress
+// CREATES business records from a lead, the mirror UPDATES existing records
+// through a 3-way merge and may legitimately decide to write nothing.
+model MirrorEvent {
+  id             String @id @default(cuid())
+  system         String // 'pipedrive' | 'airtable'
+  entity         String // 'deal' | 'contact' | 'organization' | 'task' | 'tourEvent'
+  // The legacy record's own id (Pipedrive numeric id, Airtable recId).
+  externalId     String
+  // What the source says happened: 'updated' | 'added' | 'deleted' | 'poll'.
+  changeKind     String
+  // How we learned about it: 'webhook' | 'poll' | 'reconcile'.
+  transport      String
+  // Replay key, unique per system. A provider retry, a webhook redelivery and
+  // a poll that re-sees the same version can never process twice.
+  idempotencyKey String
+
+  // pending | processing | processed | failed | dead | skipped
+  status String @default("pending")
+
+  rawPayload Json // exactly as received — source truth for replay
+  rawHeaders Json?
+
+  // What the merge decided: merged | converged | noop | conflict | bootstrapped
+  //                       | source_deleted | ignored_source_cut_over | not_crosswalked
+  outcome       String?
+  // The GOS entity this resolved to (loose — survives its deletion).
+  gosEntityType String?
+  gosEntityId   String?
+  // Fields actually written, and fields that conflicted (both for audit).
+  fieldsWritten Json?
+  conflicts     Json?
+
+  failureCode    String?
+  failureMessage String?
+
+  attemptCount Int       @default(0)
+  nextRetryAt  DateTime?
+  claimedAt    DateTime?
+  claimedBy    String?
+
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+
+  @@unique([system, idempotencyKey])
+  @@index([status, nextRetryAt])
+  @@index([system, entity, receivedAt])
+  @@index([gosEntityType, gosEntityId])
+  @@index([outcome])
+}
+
+// Polling state per (system, entity). Polling is the BACKSTOP that makes the
+// mirror correct even when a webhook is missed, never delivered, or never
+// configured — and the only way to see deletions in Airtable, which has no
+// delete webhook worth trusting.
+model MirrorCursor {
+  id        String    @id // '<system>:<entity>'
+  system    String
+  entity    String
+  // Opaque per-source position: an updated-since timestamp for Pipedrive, a
+  // page offset / last-modified watermark for Airtable.
+  cursor    String?
+  // Claim fields so several instances can run the poller without overlapping.
+  claimedAt DateTime?
+  claimedBy String?
+
+  lastRunAt     DateTime?
+  lastSuccessAt DateTime?
+  lastError     String?
+  // Consecutive failures — surfaced so a silently dead poller is visible.
+  failureStreak Int       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([system, entity])
 }
