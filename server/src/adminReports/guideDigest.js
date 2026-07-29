@@ -14,6 +14,7 @@ import { israelToday, addDays, compareDates } from '../lib/israelDate.js';
 import { notifiableGuides, guideFirstName, guideFullName, GUIDE_ASSIGNMENT_SELECT } from '../tours/guides.js';
 import { REQUIRED_SUMMARY_ROLES } from '../tours/completion.js';
 import { tourStartMs, DONE_STATUSES, COORDINATION_MONITOR_DAYS } from './coordination.js';
+import { tourEndMs } from '../tours/tourTime.js';
 import { tourCustomerLabel } from './tourFacts.js';
 
 const LIVE = ['scheduled', 'completed'];
@@ -25,7 +26,8 @@ const DIGEST_TOUR_SELECT = {
   id: true, date: true, startTime: true, status: true, locationId: true,
   product: { select: { nameHe: true } },
   location: { select: { nameHe: true } },
-  productVariant: { select: { locationId: true, location: { select: { nameHe: true } } } },
+  productVariant: { select: { locationId: true, durationHours: true, location: { select: { nameHe: true } } } },
+  openTourTemplateId: true,
   assignments: { select: GUIDE_ASSIGNMENT_SELECT, orderBy: { createdAt: 'asc' } },
   bookings: {
     where: { status: 'active' },
@@ -55,7 +57,7 @@ export function daysBetween(from, to) {
  * [{ recipient, guideDigest }] — empty when nobody has anything, and a guide
  * with neither coordination items nor overdue summaries is simply absent.
  */
-export async function collectGuideDigests({ nowMs = Date.now(), client = prisma } = {}) {
+export async function collectGuideDigests({ nowMs = Date.now(), client = prisma, activatedAtMs = null } = {}) {
   const today = israelToday(nowMs);
   const windowEnd = addDays(today, COORDINATION_MONITOR_DAYS - 1);
   const summaryFrom = addDays(today, -MISSING_SUMMARY_LOOKBACK_DAYS);
@@ -149,6 +151,12 @@ export async function collectGuideDigests({ nowMs = Date.now(), client = prisma 
     if (isPast) {
       const startMs = tourStartMs(tour);
       if (startMs == null || startMs > nowMs) continue;
+      // ACTIVATION FLOOR (owner rule, 2026-07-29): no historical catch-up. A
+      // summary obligation begins when the tour ENDS, so a tour that ended
+      // before this notification was switched on is never reported — its
+      // summary "should already have been reported" and is legacy business.
+      const endMs = tourEndMs(tour);
+      if (activatedAtMs != null && (endMs == null || endMs < activatedAtMs)) continue;
       for (const a of tour.assignments) {
         if (!REQUIRED_SUMMARY_ROLES.includes(a.role)) continue;
         if (!a.externalPersonId) continue;

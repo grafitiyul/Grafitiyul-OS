@@ -134,3 +134,34 @@ test('the recipient carries everything the dispatcher needs to reach the guide',
   assert.equal(d.recipient.name, 'יואב כהן');
   assert.equal(d.recipient.firstName, 'יואב');
 });
+
+// ── activation floor: no historical catch-up (owner rule, 2026-07-29) ────────
+
+test('a tour that ended BEFORE activation is never reported as a missing summary', async () => {
+  const past = tour({ id: 'tPast', date: '2026-07-30', startTime: '10:00' });
+  const c = () => fakeClient({ tours: [past] });
+  // 2026-07-30 10:00 Israel + 2h default duration → ends 12:00 Israel.
+  const endedAt = israelLocalToMs('2026-07-30', 12 * 60);
+
+  // Activated a minute AFTER it ended → suppressed. This is the burst the
+  // owner does not want.
+  assert.deepEqual(
+    await collectGuideDigests({ nowMs: NOW, client: c(), activatedAtMs: endedAt + 60_000 }),
+    [],
+  );
+  // Activated a minute BEFORE it ended → legitimately reportable.
+  const kept = await collectGuideDigests({ nowMs: NOW, client: c(), activatedAtMs: endedAt - 60_000 });
+  assert.deepEqual(kept[0].guideDigest.missingSummaries.map((m) => m.tourDate), ['2026-07-30']);
+});
+
+test('no floor configured still reports everything (unchanged legacy behaviour)', async () => {
+  const c = fakeClient({ tours: [tour({ id: 'tPast', date: '2026-07-30' })] });
+  const d = await collectGuideDigests({ nowMs: NOW, client: c, activatedAtMs: null });
+  assert.equal(d[0].guideDigest.missingSummaries.length, 1);
+});
+
+test('the floor never suppresses the FORWARD-looking coordination section', async () => {
+  const c = fakeClient({ tours: [tour({ id: 'tSoon', date: '2026-08-04' })] });
+  const d = await collectGuideDigests({ nowMs: NOW, client: c, activatedAtMs: NOW });
+  assert.equal(d[0].guideDigest.coordination.length, 1, 'upcoming calls are unaffected');
+});

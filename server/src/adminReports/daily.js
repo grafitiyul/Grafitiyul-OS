@@ -86,7 +86,14 @@ export async function runScheduledReport(number, { nowMs = Date.now(), client = 
     // ONE message per guide, each carrying only that guide's own tours. The
     // per-guide key makes every guide's digest independently deduped, so a
     // crash mid-fan-out resumes exactly where it stopped.
-    const digests = await collectGuideDigests({ nowMs, client });
+    // Activation floor: no historical catch-up. Only summaries for tours that
+    // ended AFTER this notification was switched on are ever reported.
+    const cfg = await client.adminReportConfig.findUnique({
+      where: { reportNumber: 11 }, select: { activatedAt: true },
+    });
+    const digests = await collectGuideDigests({
+      nowMs, client, activatedAtMs: cfg?.activatedAt?.getTime() ?? null,
+    });
     if (!digests.length) {
       await recordEmpty(number, key, report.emptyHe, client);
       return { ran: true, items: 0, sent: false };
