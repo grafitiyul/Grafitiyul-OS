@@ -13,7 +13,7 @@ import { PrismaClient } from '@prisma/client';
 import * as r2 from '../../src/migration/r2.js';
 import { createSnapshotReader } from '../../src/migration/review/snapshotReader.js';
 import { requireEntities } from '../../src/migration/snapshotContract.js';
-import { writeDealMarketing } from '../../src/deals/marketing.js';
+import { planMarketingWrite, resolveChannel, writeDealMarketing } from '../../src/deals/marketing.js';
 import { buildLeadSourceOptions, planMarketingImport } from '../../src/migration/import/marketingImport.js';
 
 const arg = (n) => { const i = process.argv.indexOf(n); return i >= 0 ? process.argv[i + 1] : null; };
@@ -76,14 +76,38 @@ async function main() {
   }
 
   console.log('\nEXECUTE …');
-  let created = 0, updated = 0, unchanged = 0, conflicts = 0, done = 0;
-  for (const row of allRows) {
+
+  // A 24k-row backfill cannot be done one findUnique+create at a time over a
+  // remote connection — measured at ~100 rows/min, i.e. four hours. The MERGE
+  // DECISION still comes from the one canonical implementation
+  // (planMarketingWrite); only the PERSISTENCE is batched. Existing rows fall
+  // back to the single-record path, which is the rare case on a backfill.
+  const existing = new Set(
+    (await prisma.dealMarketing.findMany({ select: { dealId: true } })).map((r) => r.dealId),
+  );
+  console.log(`  already present: ${fmt(existing.size)}`);
+
+  const fresh = allRows.filter((r) => !existing.has(r.dealId));
+  const stale = allRows.filter((r) => existing.has(r.dealId));
+
+  let created = 0, updated = 0, unchanged = 0, conflicts = 0;
+  const CHUNK = 500;
+  for (let i = 0; i < fresh.length; i += CHUNK) {
+    const batch = fresh.slice(i, i + CHUNK).map((row) => {
+      const payload = { ...row.marketing };
+      if (!payload.channel) payload.channel = resolveChannel(payload);
+      const { set } = planMarketingWrite(null, payload);
+      return { dealId: row.dealId, ...set };
+    });
+    const res = await prisma.dealMarketing.createMany({ data: batch, skipDuplicates: true });
+    created += res.count;
+    console.log(`  … created ${fmt(created)} / ${fmt(fresh.length)}`);
+  }
+
+  for (const row of stale) {
     const res = await writeDealMarketing(prisma, row.dealId, row.marketing);
-    if (res.created) created++;
-    else if (res.changed) updated++;
-    else unchanged++;
+    if (res.changed) updated++; else unchanged++;
     if (res.firstTouchConflict) conflicts++;
-    if (++done % 2000 === 0) console.log(`  … ${fmt(done)} / ${fmt(allRows.length)}`);
   }
 
   console.log(`\ncreated  : ${fmt(created)}`);

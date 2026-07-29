@@ -4905,10 +4905,27 @@ model LegacyRecord {
   // 'Contact' | 'Organization' | 'TourEvent'.
   entityType    String?
   entityId      String?
+  // ── Mirror state (Intermediate Stabilization Phase) ────────────────────────
+  // syncBaseline is "what the source said the last time GOS and legacy agreed",
+  // stored PER FIELD. It is the third input of the 3-way merge and the only
+  // reason the mirror can tell a human edit apart from a source edit.
+  // Absent = never synced → the merge bootstraps (adopts a baseline, writes
+  // nothing) instead of declaring every differing field a conflict.
+  // A conflicted field deliberately keeps its OLD baseline value, so the
+  // conflict re-raises on every sync until a human resolves it.
+  syncBaseline    Json?
+  // Last time the mirror examined this record (even if nothing changed).
+  lastSyncedAt    DateTime?
+  // The record vanished from the source. GOS NEVER deletes on this signal —
+  // legacy deletions are frequently accidental and GOS now owns operational
+  // history hanging off these records. Recorded and surfaced; a human decides.
+  sourceDeletedAt DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@unique([sourceSystem, sourceType, sourceId])
+  @@index([sourceSystem, lastSyncedAt])
+  @@index([sourceDeletedAt])
   @@index([entityType, entityId])
   @@index([snapshotId])
   @@index([importBatchId])

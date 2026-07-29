@@ -29,6 +29,26 @@ test('an unmapped legacy label is kept, not flattened to "unknown"', () => {
   assert.equal(channelLabel({}), 'לא ידוע');
 });
 
+test('a closed-list option id appended to the label never reaches the channel', () => {
+  // Production really contains these: the free-text source field carries the
+  // label with its option id, which fragmented analytics and leaked an id.
+  assert.equal(channelLabel({ legacyLabel: 'וואטספ - 113' }), 'WhatsApp');
+  assert.equal(channelLabel({ legacyLabel: 'פייסבוק - 106' }), 'Meta');
+  assert.equal(channelLabel({ legacyLabel: 'גוגל - 112' }), 'Google');
+  // Unmapped labels are still kept — but cleaned.
+  assert.equal(channelLabel({ legacyLabel: 'סמוב - 118' }), 'סמוב');
+  assert.equal(channelLabel({ legacyLabel: 'TOMIX - 323' }), 'TOMIX');
+});
+
+test('stripping is bounded to real option ids and never eats a year', () => {
+  assert.equal(channelLabel({ legacyLabel: 'קמפיין 2026' }), 'קמפיין 2026', 'no dash, no strip');
+  assert.equal(channelLabel({ legacyLabel: 'ערוץ - 99999' }), 'ערוץ - 99999', '5 digits is not an option id');
+  // Measured against production: this value really exists and used to become
+  // "27-07". Every real option id is three digits (106–472).
+  assert.equal(channelLabel({ legacyLabel: '27-07-1970' }), '27-07-1970');
+  assert.equal(channelLabel({ legacyLabel: 'משהו - 2021' }), 'משהו - 2021');
+});
+
 test('existing ingress channel behaviour is unchanged', () => {
   assert.equal(channelLabel({ source: 'meta_lead_ads' }), 'Meta');
   assert.equal(channelLabel({ source: 'woocommerce' }), 'אתר');

@@ -97,21 +97,35 @@ const LEGACY_SOURCE_CHANNEL = Object.freeze({
 // `legacyLabel` is the Pipedrive closed-list value for imported deals. It is
 // consulted BEFORE the generic fallbacks but AFTER real UTM tags, because a
 // tagged URL is stronger evidence than a hand-picked dropdown.
+// The legacy free-text source field frequently carries the label with its
+// closed-list option id appended — "וואטספ - 113", "פייסבוק - 106". Left alone
+// that suffix reaches the channel verbatim, which both fragments the analytics
+// ("וואטספ - 113" and "וואטספ" counted separately) and shows an operator an
+// internal id. Stripped here, in the shared resolver, so every consumer is
+// protected rather than each one remembering to clean its own input.
+// Bounded to 2-3 digits deliberately: every real option id in the closed list
+// is three digits (106–472). Allowing four would eat the year off a date-like
+// free-text value — "27-07-1970" really occurs and became "27-07" before this
+// bound was measured against production.
+const stripOptionId = (s) => String(s || '').trim().replace(/\s*[-–—]\s*\d{2,3}$/, '').trim();
+
 export function channelLabel({ utmSource, utmMedium, source, legacyLabel = null }) {
   const s = (utmSource || '').toLowerCase();
   if (s.includes('facebook') || s.includes('instagram') || s === 'fb' || s === 'ig') return 'Meta';
   if (s.includes('google')) return 'Google';
   if (s) return utmSource;
 
-  const legacy = String(legacyLabel || '').trim().toLowerCase();
+  const cleaned = stripOptionId(legacyLabel);
+  const legacy = cleaned.toLowerCase();
   if (legacy && LEGACY_SOURCE_CHANNEL[legacy]) return LEGACY_SOURCE_CHANNEL[legacy];
 
   if (source === 'meta_lead_ads') return 'Meta';
   if (source === 'woocommerce') return 'אתר';
   if (source === 'website_form') return 'אתר';
   if ((utmMedium || '').toLowerCase() === 'organic') return 'אורגני';
-  // An unmapped legacy label is better than "unknown" — it is real information.
-  if (legacyLabel) return String(legacyLabel).trim();
+  // An unmapped legacy label is better than "unknown" — it is real information —
+  // but only the cleaned form ever escapes, never one carrying an option id.
+  if (cleaned) return cleaned;
   return 'לא ידוע';
 }
 
