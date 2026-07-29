@@ -141,12 +141,12 @@ export default function SearchSelect({
         {value?.avatar && (
           <img src={value.avatar} alt="" className="h-6 w-6 shrink-0 rounded-full object-cover" />
         )}
-        <span className="min-w-0 flex-1">
+        {/* leading-tight in compact mode — the inherited 18.75px line box is
+            what keeps the trigger tall; nothing here has a fixed height, so a
+            wrapped label can still grow it. */}
+        <span className={`min-w-0 flex-1 ${compact ? 'leading-tight' : ''}`}>
           {value ? (
             <>
-              {/* leading-tight in compact mode: without it the selected label's
-                  line box is taller than the placeholder's, so the control grew
-                  by ~4px the moment you picked something and nudged the row. */}
               <span className={`block font-medium text-gray-900 ${compact ? 'leading-tight' : ''} ${wrapLabel ? 'whitespace-normal break-words' : 'truncate'}`}>
                 {value.label}
               </span>
@@ -165,7 +165,9 @@ export default function SearchSelect({
             role="button"
             tabIndex={-1}
             onClick={(e) => { e.stopPropagation(); onSelect(null); }}
-            className="shrink-0 rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+            // The ✕ exists ONLY when a value is selected, so its line box was
+            // what made the compact trigger jump 29px -> 33px on selection.
+            className={`shrink-0 rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 ${compact ? 'leading-none' : ''}`}
             title="נקה בחירה"
           >
             ✕
