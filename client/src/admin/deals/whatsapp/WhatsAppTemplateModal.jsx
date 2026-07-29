@@ -174,10 +174,11 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
       <Dialog
         open={open}
         onClose={onClose}
-        // A document-editing workspace, not a popup: sized from the viewport
-        // (~88% wide, ~90% tall) so the draft gets the screen, with a real
-        // margin off the browser edges.
-        size="workspace"
+        // A compact, centred application dialog — NOT a workspace. Width comes
+        // from Dialog's existing maxWidthPx prop (no new size, no change to the
+        // shared component); height is content-driven and capped by Dialog's own
+        // 90vh, so the panel is only as tall as it needs to be.
+        maxWidthPx={640}
         ariaLabel="שליחת תבנית ווטסאפ"
         title={
           <span className="flex items-center gap-2">
@@ -185,11 +186,9 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
             תבנית ווטסאפ
           </span>
         }
-        // Fixed-height flex column: compact settings on top, composer fills the rest.
-        panelClassName="h-[92vh] sm:h-[90vh]"
-        contentClassName="flex min-h-0 flex-1 flex-col overflow-hidden"
+        contentClassName="flex flex-col overflow-y-auto"
       >
-        <div dir="rtl" className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 pb-3 pt-2.5">
+        <div dir="rtl" className="flex flex-col gap-2.5 px-4 pb-4 pt-3">
           {loadError ? (
             <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
               טעינה נכשלה: <span dir="ltr" className="font-mono">{loadError}</span>
@@ -198,12 +197,41 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
             <p className="py-12 text-center text-sm text-gray-400">טוען…</p>
           ) : (
             <>
-              {/* ONE toolbar row: selector + language + who this goes to. The
-                  recipient used to sit in its own 29px strip on top of the editor
-                  box; folding it in here removes a whole band and its border, so
-                  the toolbar gets SHORTER while the controls stay full size. */}
-              <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2">
-                <div className="w-full min-w-0 flex-1 lg:max-w-[620px]">
+              {/* Row 1 — who this goes to. Its own quiet line under the title,
+                  as in the design; the switcher replaces it when the deal has
+                  more than one conversation. */}
+              {chat && (
+                <div className="flex min-h-[22px] items-center justify-between gap-2">
+                  {chats.length > 1 ? (
+                    <select
+                      value={chatId}
+                      onChange={(e) => setChatId(e.target.value)}
+                      aria-label="בחירת השיחה"
+                      className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-[12.5px] focus:border-emerald-500 focus:outline-none"
+                    >
+                      {chats.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.contact?.name || c.displayName || 'לא מזוהה'}
+                          {c.account?.label ? ` · ${c.account.label}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="truncate text-[12.5px] text-gray-500">
+                      <span className="font-medium text-gray-700">
+                        {chat.contact?.name || chat.displayName || 'לא מזוהה'}
+                      </span>
+                      {chat.account?.label && <span> · {chat.account.label}</span>}
+                    </span>
+                  )}
+                  {resolving && <span className="shrink-0 text-[12px] text-gray-400">מרכיב את הנוסח…</span>}
+                </div>
+              )}
+
+              {/* Row 2 — search + language. The search takes ALL the space the
+                  language control doesn't: no dead gap beside it. */}
+              <div className="flex items-center gap-2">
+                <div className="min-w-0 flex-1">
                   {/* ONE searchable field — the shared GOS combobox (portal list,
                       type-to-filter, arrow/Enter/Escape, RTL). `compact` trims
                       padding only; the type size is unchanged, and wrapLabel keeps
@@ -212,13 +240,13 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                     value={selectedOption}
                     onSelect={(item) => choose(item?.id || '', lang)}
                     search={searchTemplates}
-                    placeholder="חיפוש או בחירת נוסח…"
+                    placeholder="חיפוש תבנית"
                     wrapLabel
                     compact
                   />
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2">
                   <span className="text-[12.5px] font-semibold text-gray-600">שפה</span>
                   <div className="inline-flex rounded-xl border border-gray-300 bg-white p-0.5">
                     {LANGS.map((l) => {
@@ -247,35 +275,6 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                     })}
                   </div>
                 </div>
-
-                {/* Recipient — folded into the toolbar instead of its own strip.
-                    One chat: a read-only chip. Several: the switcher, inline. */}
-                {chat && (
-                  chats.length > 1 ? (
-                    <select
-                      value={chatId}
-                      onChange={(e) => setChatId(e.target.value)}
-                      aria-label="בחירת השיחה"
-                      className="rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-[12.5px] focus:border-emerald-500 focus:outline-none"
-                    >
-                      {chats.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.contact?.name || c.displayName || 'לא מזוהה'}
-                          {c.account?.label ? ` · ${c.account.label}` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <span className="flex items-center gap-1.5 text-[12.5px] text-gray-500">
-                      <WhatsAppLogo size={14} />
-                      <span className="font-medium text-gray-700">
-                        {chat.contact?.name || chat.displayName || 'לא מזוהה'}
-                      </span>
-                      {chat.account?.label && <span>· {chat.account.label}</span>}
-                    </span>
-                  )
-                )}
-                {resolving && <span className="text-[12px] text-gray-400">מרכיב את הנוסח…</span>}
               </div>
 
               {templates.length === 0 && (
@@ -300,8 +299,10 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                 </p>
               )}
 
-              {/* 3 + 4 — the REAL composer, taking every remaining pixel. Its
-                  שליחה button IS the send action (canonical path, untouched). */}
+              {/* The REAL composer — its שליחה button IS the send action
+                  (canonical path, untouched). The box has a DEFINITE height so
+                  the dialog stays content-sized rather than stretching to the
+                  viewport; max-h keeps it sane on short screens. */}
               {!chat ? (
                 <div className="flex shrink-0 flex-col items-center gap-2 rounded-xl border border-dashed border-gray-300 px-6 py-10 text-center">
                   <WhatsAppLogo size={26} />
@@ -312,7 +313,7 @@ export default function WhatsAppTemplateModal({ open, dealId, onClose, onSent })
                   </p>
                 </div>
               ) : (
-                <div className="flex min-h-[240px] flex-1 flex-col overflow-hidden rounded-xl border border-gray-200">
+                <div className="flex h-[500px] max-h-[58vh] shrink-0 flex-col overflow-hidden rounded-xl border border-gray-200">
                   {!templateId ? (
                     <p className="flex flex-1 items-center justify-center px-4 py-10 text-center text-[13px] text-gray-400">
                       בחרו נוסח כדי לערוך ולשלוח.
