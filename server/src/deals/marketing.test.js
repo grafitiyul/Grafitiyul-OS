@@ -6,6 +6,8 @@ import {
   marketingDto,
   planMarketingWrite,
   resolveChannel,
+  heDate,
+  ingressLabel,
   writeDealMarketing,
 } from './marketing.js';
 
@@ -191,7 +193,7 @@ test('the DTO exposes business language only — no ids, no enum keys, no JSON',
   assert.ok(!flat.includes('106'), 'option id must not leak');
   assert.ok(!flat.includes('leadSourceKey'));
   assert.ok(!flat.includes('attributionRaw'));
-  assert.ok(flat.includes('2021-03-23'));
+  assert.ok(flat.includes('23/03/2021'), 'the date is shown Israeli, not ISO');
 });
 
 test('free text is shown as detail only when it adds something beyond the label', () => {
@@ -199,4 +201,58 @@ test('free text is shown as detail only when it adds something beyond the label'
   assert.equal(same.groups[0].rows.filter((r) => r.label === 'פירוט').length, 0);
   const diff = marketingDto({ leadSource: 'פייסבוק', leadSourceText: 'קמפיין קיץ בפייסבוק' });
   assert.equal(diff.groups[0].rows.filter((r) => r.label === 'פירוט').length, 1);
+});
+
+// ── the panel must read as Hebrew business language ───────────────────────────
+
+test('provenance is Hebrew, never a raw token like "pipedrive:ManuallyCreated"', () => {
+  const dto = marketingDto({ leadSource: 'המלצה', originalIngressSource: 'pipedrive:ManuallyCreated' });
+  const origin = dto.groups.find((g) => g.key === 'origin');
+  assert.equal(origin.rows[0].label, 'נוצר דרך');
+  assert.equal(origin.rows[0].value, 'הוזן ידנית במערכת הקודמת');
+  assert.ok(!JSON.stringify(dto).includes('ManuallyCreated'));
+});
+
+test('every ingress source has a Hebrew label, and an unknown one is not mangled', () => {
+  assert.equal(ingressLabel('pipedrive:API'), 'נקלט אוטומטית למערכת הקודמת');
+  assert.equal(ingressLabel('pipedrive:Automation'), 'נוצר באוטומציה במערכת הקודמת');
+  assert.equal(ingressLabel('pipedrive:SomethingNew'), 'המערכת הקודמת');
+  assert.equal(ingressLabel('meta_lead_ads'), 'Meta — טופס לידים');
+  assert.equal(ingressLabel('woocommerce'), 'רכישה מהאתר');
+  assert.equal(ingressLabel('website_form'), 'טופס באתר');
+  assert.equal(ingressLabel('brand_new_source'), 'brand_new_source');
+  assert.equal(ingressLabel(null), null);
+});
+
+test('dates render Israeli, not ISO', () => {
+  assert.equal(heDate('2026-07-14T09:00:00.000Z'), '14/07/2026');
+  assert.equal(heDate(new Date('2021-03-23T20:47:19Z')), '23/03/2021');
+  assert.equal(heDate('not a date'), null);
+  assert.equal(heDate(null), null);
+  const dto = marketingDto({ leadSource: 'x', sourceCreatedAt: new Date('2021-03-23T20:47:19Z') });
+  assert.ok(JSON.stringify(dto).includes('23/03/2021'));
+  assert.ok(!JSON.stringify(dto).includes('2021-03-23'));
+});
+
+test('the derived channel row is dropped when it merely repeats the source', () => {
+  const same = marketingDto({ leadSource: 'המלצה', channel: 'המלצה' });
+  assert.deepEqual(same.groups[0].rows.map((r) => r.label), ['מקור']);
+  const adds = marketingDto({ leadSource: 'פייסבוק', channel: 'Meta' });
+  assert.deepEqual(adds.groups[0].rows.map((r) => r.label), ['מקור', 'ערוץ']);
+});
+
+test('a fully-populated record surfaces every requested field group', () => {
+  const dto = marketingDto({
+    leadSource: 'פייסבוק', leadSourceText: 'קמפיין קיץ', channel: 'Meta', campaign: 'FB-AD2',
+    utmSource: 'facebook', utmMedium: 'cpc', utmCampaign: 'summer', utmContent: 'vid1', utmTerm: 'graffiti',
+    landingUrl: 'https://grafitiyul.co.il/tours', referrer: 'https://google.com',
+    firstTouchAt: new Date('2026-01-01'), firstTouchSource: 'Meta',
+    latestTouchAt: new Date('2026-07-01'), latestTouchSource: 'אתר',
+    originalIngressSource: 'meta_lead_ads', sourceCreatedAt: new Date('2026-01-01'),
+  });
+  assert.deepEqual(dto.groups.map((g) => g.key), ['source', 'utm', 'landing', 'touch', 'origin']);
+  const flat = JSON.stringify(dto);
+  for (const v of ['facebook', 'cpc', 'summer', 'vid1', 'graffiti', 'grafitiyul.co.il/tours', 'google.com', '01/01/2026', '01/07/2026']) {
+    assert.ok(flat.includes(v), `missing ${v}`);
+  }
 });

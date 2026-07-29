@@ -133,11 +133,39 @@ export async function writeDealMarketing(db, dealId, incoming) {
  * dashes, and `groups` is ordered the way the panel reads it so the server owns
  * presentation order rather than duplicating it in the client.
  */
+// Provenance in business language. The operator must never be shown
+// "pipedrive:ManuallyCreated" — that is an internal token, not information.
+const INGRESS_LABELS = Object.freeze({
+  'pipedrive:ManuallyCreated': 'הוזן ידנית במערכת הקודמת',
+  'pipedrive:API': 'נקלט אוטומטית למערכת הקודמת',
+  'pipedrive:Automation': 'נוצר באוטומציה במערכת הקודמת',
+  pipedrive: 'המערכת הקודמת',
+  meta_lead_ads: 'Meta — טופס לידים',
+  woocommerce: 'רכישה מהאתר',
+  website_form: 'טופס באתר',
+  agent_reservation: 'הזמנת סוכן',
+});
+
+export function ingressLabel(v) {
+  if (blank(v)) return null;
+  const s = String(v);
+  return INGRESS_LABELS[s] || (s.startsWith('pipedrive') ? INGRESS_LABELS.pipedrive : s);
+}
+
+// Israeli date form. ISO is a storage format, not something to read.
+export function heDate(d) {
+  if (!d) return null;
+  const dt = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(dt.getTime())) return null;
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(dt.getUTCDate())}/${p(dt.getUTCMonth() + 1)}/${dt.getUTCFullYear()}`;
+}
+
 export function marketingDto(m) {
   if (!m) return { hasAny: false, syncedFromLegacy: false, groups: [] };
 
   const row = (label, value) => (blank(value) ? null : { label, value: String(value) });
-  const date = (d) => (d ? new Date(d).toISOString() : null);
+  const date = heDate;
 
   const groups = [
     {
@@ -146,7 +174,10 @@ export function marketingDto(m) {
       rows: [
         row('מקור', m.leadSource || m.leadSourceText),
         row('פירוט', m.leadSource && m.leadSourceText && m.leadSource !== m.leadSourceText ? m.leadSourceText : null),
-        row('ערוץ', m.channel),
+        // The channel is DERIVED from the source. When it lands on the same
+        // value it says nothing, and a row that repeats the row above it is
+        // noise — so it only appears when it adds information.
+        row('ערוץ', m.channel && m.channel !== (m.leadSource || m.leadSourceText) ? m.channel : null),
         row('קמפיין', m.campaign),
       ].filter(Boolean),
     },
@@ -173,16 +204,16 @@ export function marketingDto(m) {
       key: 'touch',
       title: 'נקודות מגע',
       rows: [
-        row('מגע ראשון', [date(m.firstTouchAt)?.slice(0, 10), m.firstTouchSource, m.firstTouchCampaign].filter(Boolean).join(' · ')),
-        row('מגע אחרון', [date(m.latestTouchAt)?.slice(0, 10), m.latestTouchSource].filter(Boolean).join(' · ')),
+        row('מגע ראשון', [date(m.firstTouchAt), m.firstTouchSource, m.firstTouchCampaign].filter(Boolean).join(' · ')),
+        row('מגע אחרון', [date(m.latestTouchAt), m.latestTouchSource].filter(Boolean).join(' · ')),
       ].filter(Boolean),
     },
     {
       key: 'origin',
       title: 'מקור הרשומה',
       rows: [
-        row('נוצר במערכת', m.originalIngressSource),
-        row('נוצר בתאריך', date(m.sourceCreatedAt)?.slice(0, 10)),
+        row('נוצר דרך', ingressLabel(m.originalIngressSource)),
+        row('נוצר בתאריך', date(m.sourceCreatedAt)),
       ].filter(Boolean),
     },
   ].filter((g) => g.rows.length);
