@@ -6,9 +6,11 @@ import CodeManagedNotifications from '../../adminReports/CodeManagedNotification
 // Settings → Tours → "שיחת תיאום". Two tabs:
 //   טפסים   — binds the coordination purpose to a questionnaire template
 //             (unchanged behaviour; the builder still owns the form itself).
-//   התראות  — the automatic guide notifications for coordination calls and tour
-//             summaries. Same code-managed architecture as דיווחי מנהלים,
+//   התראות  — the automatic guide notifications of the coordination-call flow
+//             only (#11–#13). Same code-managed architecture as דיווחי מנהלים,
 //             rendered by the SAME component — not a second notification screen.
+//             The tour-summary reminders (#14–#16) live on their own workflow's
+//             page: Settings → Tours → סיכום סיור → התראות אוטומטיות.
 const TABS = [
   { key: 'forms', label: 'שאלוני שיחת תיאום' },
   { key: 'alerts', label: 'התראות אוטומטיות' },
@@ -37,7 +39,7 @@ export default function CoordinationSettingsPage() {
         <SettingsChrome />
         <h1 className="text-2xl font-bold tracking-tight text-gray-900 mt-1">שיחת תיאום</h1>
         <p className="text-[15px] text-gray-500 mt-1.5 leading-relaxed">
-          הטופס שהצוות ממלא לפני הסיור, וההתראות האוטומטיות שמזכירות למדריכים לבצע אותו ולסכם את הסיור.
+          הטופס שהצוות ממלא לפני הסיור, וההתראות האוטומטיות שמזכירות למדריכים לבצע אותו.
         </p>
       </header>
 

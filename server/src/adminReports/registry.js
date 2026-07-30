@@ -463,7 +463,10 @@ export function reportByNumber(number) {
   return REPORTS.find((r) => r.number === Number(number)) || null;
 }
 
-/** The UI group a report belongs to: 'office' (Manager Reports) | 'coordination'. */
+/**
+ * The UI group a report belongs to — which settings screen surfaces it:
+ * 'office' (Manager Reports) | 'coordination' | 'tour_summary'.
+ */
 export function reportGroup(report) {
   return report?.group || 'office';
 }

@@ -171,10 +171,13 @@ test('the summary ladder is 0h / 3h / 6h after the tour ENDS', () => {
 
 // ── catalog wiring ───────────────────────────────────────────────────────────
 
-test('the guide notifications are one group, all addressed to guides', () => {
-  const group = reportsInGroup('coordination');
-  assert.deepEqual(group.map((r) => r.number), [11, 12, 13, 14, 15, 16]);
-  for (const r of group) {
+test('each workflow owns only its own guide notifications', () => {
+  // The coordination-call flow keeps #11–#13; the summary ladder (#14–#16) is
+  // surfaced by the סיכום סיור settings page, not by שיחת תיאום.
+  assert.deepEqual(reportsInGroup('coordination').map((r) => r.number), [11, 12, 13]);
+  assert.deepEqual(reportsInGroup('tour_summary').map((r) => r.number), [14, 15, 16]);
+
+  for (const r of [...reportsInGroup('coordination'), ...reportsInGroup('tour_summary')]) {
     assert.equal(r.audience, 'guides', `#${r.number} addresses a guide`);
     assert.ok(r.triggerHe?.length > 10);
   }

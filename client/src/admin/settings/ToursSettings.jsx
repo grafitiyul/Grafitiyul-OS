@@ -42,7 +42,7 @@ export default function ToursSettings() {
           to="/admin/settings/tours/summary"
           icon="📋"
           title="סיכום סיור"
-          description="השאלון שצוות הסיור ממלא בסיום כל סיור — תבנית, בילדר וסטטוס פרסום."
+          description="השאלון שצוות הסיור ממלא בסיום כל סיור, וההתראות האוטומטיות שמזכירות למדריכים למלא אותו."
         />
         <CategoryCard
           to="/admin/settings/tours/guide-permissions"

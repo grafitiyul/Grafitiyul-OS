@@ -6,9 +6,11 @@ import AdminReportDeliveries from './AdminReportDeliveries.jsx';
 import TestSendDialog from './TestSendDialog.jsx';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// THE list of code-managed notifications — one implementation, two surfaces:
+// THE list of code-managed notifications — one implementation, several surfaces
+// (each workflow owns only its own notifications):
 //   group="office"        → Settings → דיווחי מנהלים
 //   group="coordination"  → Settings → סיורים → שיחת תיאום → התראות אוטומטיות
+//   group="tour_summary"  → Settings → סיורים → סיכום סיור → התראות אוטומטיות
 //
 // Deliberately NOT an editor: the message text lives in the codebase. What is
 // editable here is whether a notification is active and where it is delivered.

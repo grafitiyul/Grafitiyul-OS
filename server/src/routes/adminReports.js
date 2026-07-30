@@ -22,8 +22,9 @@ const str = (v) => (v == null ? null : String(v).trim() || null);
 
 router.get('/', handle(async (req, res) => {
   // `group` scopes the catalog to one surface: 'office' = the Manager Reports
-  // screen, 'coordination' = Tour Settings → שיחת תיאום → התראות. One catalog,
-  // one renderer, two windows onto it.
+  // screen, 'coordination' = Tour Settings → שיחת תיאום → התראות,
+  // 'tour_summary' = Tour Settings → סיכום סיור → התראות. One catalog, one
+  // renderer, several windows onto it.
   const group = str(req.query.group);
   const [configs, chats] = await Promise.all([
     prisma.adminReportConfig.findMany(),

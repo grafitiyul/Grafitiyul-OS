@@ -5,9 +5,12 @@
 // AUDIENCE — `audience: 'guides'` means the dispatcher addresses one person by
 // phone instead of the configured group, and ctx.recipient carries who.
 //
-// Grouping: `group: 'coordination'` puts a report in the Tour Settings →
-// שיחת תיאום → notifications tab. The Manager Reports screen keeps showing the
-// office reports. One catalog, two windows onto it.
+// Grouping: `group` decides WHICH settings screen surfaces a report, and each
+// workflow owns only its own notifications:
+//   'coordination'  → Tour Settings → שיחת תיאום → התראות אוטומטיות (#11–#13)
+//   'tour_summary'  → Tour Settings → סיכום סיור → התראות אוטומטיות (#14–#16)
+// The Manager Reports screen keeps showing the office reports. One catalog,
+// several windows onto it.
 
 import { formatDateHe } from '../communication/format.js';
 import { COORDINATION_MONITOR_DAYS } from './coordination.js';
@@ -223,7 +226,7 @@ export const GUIDE_REPORTS = [
     number: 14,
     key: 'guide_summary_due',
     nameHe: 'הגיע הזמן למלא סיכום סיור (למדריך)',
-    group: 'coordination',
+    group: 'tour_summary',
     audience: 'guides',
     triggerHe:
       'מיד עם סיום הסיור — לפי שעת הסיום המחושבת (שעת התחלה + משך הפעילות, כולל משך מיוחד לסיור פתוח).',
@@ -257,7 +260,7 @@ export const GUIDE_REPORTS = [
     number: 15,
     key: 'guide_summary_reminder_1',
     nameHe: 'תזכורת ראשונה לסיכום סיור (למדריך)',
-    group: 'coordination',
+    group: 'tour_summary',
     audience: 'guides',
     triggerHe: '3 שעות אחרי סיום הסיור, ורק אם עדיין לא הוגש סיכום.',
     dataHe: 'נשלח למדריך שחייב סיכום ולא הגיש. מי שהגיש בינתיים לא מקבל.',
@@ -290,7 +293,7 @@ export const GUIDE_REPORTS = [
     number: 16,
     key: 'guide_summary_reminder_2',
     nameHe: 'תזכורת שנייה לסיכום סיור (למדריך)',
-    group: 'coordination',
+    group: 'tour_summary',
     audience: 'guides',
     triggerHe: '6 שעות אחרי סיום הסיור, ורק אם הסיכום עדיין חסר.',
     dataHe: 'נשלח למדריך שחייב סיכום ולא הגיש. מי שהגיש בינתיים לא מקבל.',
