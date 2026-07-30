@@ -1521,6 +1521,14 @@ model WhatsAppChat {
   lidJid             String?
   phoneJid           String?
   profilePictureUrl  String?
+  // Our OWN R2 copy of the profile picture (whatsapp/<accountId>/avatars/
+  // <chatId>.jpg — stable key, refresh overwrites in place) + the last time
+  // the avatar worker CHECKED this chat (including "has no picture"), so each
+  // chat is probed at most once per refresh window. profilePictureUrl above is
+  // the raw CDN link — it carries an expiry token and rots; the key is served
+  // through the presign route and does not.
+  profilePictureKey       String?
+  profilePictureCheckedAt DateTime?
   contact            Contact?                   @relation(fields: [contactId], references: [id], onDelete: SetNull)
   contactId          String?
   matchSource        String? // 'phone' | 'manual'

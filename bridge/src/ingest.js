@@ -53,7 +53,7 @@ function senderPnFromKey(key) {
 // Best-effort profile-picture fetch — always resolves (privacy-restricted
 // contacts return 401/403 = "no picture"), bounded by a 5s timeout so a hung
 // WhatsApp server can't block ingest.
-async function fetchProfilePictureSafe(socket, jid, log) {
+export async function fetchProfilePictureSafe(socket, jid, log) {
   const FETCH_TIMEOUT_MS = 5_000;
   let timer = null;
   try {

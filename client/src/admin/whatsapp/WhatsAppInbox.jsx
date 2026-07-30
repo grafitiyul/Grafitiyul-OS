@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
@@ -766,7 +767,20 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
                         linking affordance and no deal actions. */}
                     {selected.type !== 'group' &&
                       (selected.contact ? (
-                        <span className="text-emerald-700">· {selected.contact.name}</span>
+                        // Deterministic-match badge (approved spec): the
+                        // contact's name only, linking straight to the
+                        // Contact. Links exist only for deterministic matches
+                        // by construction — exactly-one phone owner
+                        // (matchSource='phone') or a human link ('manual');
+                        // ambiguous numbers are never auto-linked.
+                        <Link
+                          to={`/admin/crm/contacts/${selected.contact.contactNo ?? selected.contact.id}`}
+                          onClick={(e) => e.stopPropagation()}
+                          title="פתיחת כרטיס איש הקשר"
+                          className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-px font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100"
+                        >
+                          {selected.contact.name}
+                        </Link>
                       ) : (
                         <button
                           type="button"

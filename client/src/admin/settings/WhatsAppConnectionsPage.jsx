@@ -3,6 +3,7 @@ import { api } from '../../lib/api.js';
 import ConfirmDialog from '../common/ConfirmDialog.jsx';
 import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import WhatsAppInbox from '../whatsapp/WhatsAppInbox.jsx';
+import { formatPhoneDisplay } from '../../lib/phone.js';
 
 // WhatsApp connections admin ("תקשורת → חיבורי וואטסאפ") — Slice 1.
 //
@@ -34,10 +35,13 @@ function fmtTime(iso) {
   }
 }
 
+// JID → the shared display formatter (052-123-4567 / +44 …). The inline
+// 972→0 conversion this used to do was the last duplicate phone-display
+// implementation in the client.
 function phoneFromJid(jid) {
   const digits = String(jid || '').split('@')[0].split(':')[0].replace(/\D/g, '');
   if (!digits) return null;
-  return digits.startsWith('972') ? `0${digits.slice(3)}` : digits;
+  return formatPhoneDisplay(digits);
 }
 
 // Product-level wiring hints, keyed by the server's diagnose verdict. The

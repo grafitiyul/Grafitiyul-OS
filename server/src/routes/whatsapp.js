@@ -228,6 +228,7 @@ for (const action of ['restart-socket', 'hard-reset-session', 'sign-out']) {
 
 const CONTACT_LITE_SELECT = {
   id: true,
+  contactNo: true, // the human-facing URL identity (numeric routing)
   firstNameHe: true,
   lastNameHe: true,
   firstNameEn: true,
@@ -291,9 +292,14 @@ function toClientChat(chat) {
     type: chat.type,
     displayName: chatDisplayName(chat),
     phoneNumber: chat.phoneNumber,
-    profilePictureUrl: chat.profilePictureUrl,
+    // Prefer OUR R2 copy (never expires; served via the presign route). The
+    // raw CDN URL is the fallback for chats the avatar worker hasn't reached —
+    // it carries an expiry token, and the client's <img onError> handles rot.
+    profilePictureUrl: chat.profilePictureKey
+      ? `/api/whatsapp/chats/${chat.id}/avatar`
+      : chat.profilePictureUrl,
     contact: chat.contact
-      ? { id: chat.contact.id, name: contactDisplayName(chat.contact) }
+      ? { id: chat.contact.id, contactNo: chat.contact.contactNo ?? null, name: contactDisplayName(chat.contact) }
       : null,
     matchSource: chat.matchSource,
     lastMessageAt: chat.lastMessageAt,
@@ -1401,6 +1407,28 @@ router.put(
       });
     }
     res.json(toClientScheduled(row));
+  }),
+);
+
+// Profile picture — serves OUR R2 copy (avatar worker) via a short-lived
+// presigned GET. Same door pattern as message media; cacheable briefly on the
+// client because the underlying object only changes on a monthly refresh.
+router.get(
+  '/chats/:chatId/avatar',
+  handle(async (req, res) => {
+    const chat = await prisma.whatsAppChat.findUnique({
+      where: { id: req.params.chatId },
+      select: { profilePictureKey: true },
+    });
+    if (!chat?.profilePictureKey) return res.status(404).json({ error: 'avatar_not_available' });
+    if (!r2Configured()) return res.status(503).json({ error: 'storage_not_configured' });
+    const url = await presignGet({ key: chat.profilePictureKey, expiresIn: 300 });
+    // Short private cache: avatars are stable between monthly refreshes, and
+    // this keeps a 200-row inbox from minting 200 presigns per poll. Consistent
+    // with the project caching rule: bounded, documented, and the content is a
+    // per-chat image whose staleness window (1h) is far below the refresh one.
+    res.set('Cache-Control', 'private, max-age=3600');
+    res.redirect(302, url);
   }),
 );
 
