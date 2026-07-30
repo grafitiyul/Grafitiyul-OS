@@ -147,6 +147,26 @@ already GOS-native; imported historical tours stay suppressed permanently by
 
 ---
 
+## Parallel open item — WhatsApp number migration (NOT part of the legacy cutover)
+
+Tracked separately because it has its own trigger (a QR scan), but it is an open
+deployment obligation and must not be lost between runbooks.
+
+**After both numbers are paired, the migration is NOT complete until the
+post-pairing checklist is done:** re-select the 10 manager-report group
+destinations, verify each resolves to the CORRECT group, and run one end-to-end
+test send per report family.
+
+→ **`GOS-whatsapp-number-migration-audit.md` §1** holds the authoritative
+checkbox list. Do not close the WhatsApp migration from this document.
+
+Why it cannot be pre-done: the destination groups live on the WhatsApp accounts,
+so they do not exist until pairing and group sync complete. The 10 stale group
+ids were cleared deliberately, so until they are re-picked reports #1–#10 skip
+with a visible *"לא הוגדר יעד"* reason rather than failing against a dead id.
+
+---
+
 ## Abort matrix
 
 | Failure at | State | Action |
