@@ -1117,6 +1117,15 @@ model Deal {
   paymentToken          String?                 @unique
   createdAt             DateTime                @default(now())
   updatedAt             DateTime                @updatedAt
+  // Canonical "when did a human-visible thing last happen here" — the Deals
+  // list orders by THIS, never by updatedAt (mirrors/reconcilers/workers touch
+  // rows without business meaning). Written ONLY by touchDealActivity
+  // (timeline/events.js), which every deal timeline creator funnels through;
+  // monotonic (GREATEST), so replays and backdated source events can never
+  // move a deal forward. DB default = now() for NEW deals (creation is
+  // meaningful); existing rows were backfilled from their real latest
+  // timeline entry / wonAt / lostAt / createdAt.
+  lastMeaningfulActivityAt DateTime?            @default(now())
   contacts              DealContact[]
   quoteVersions         QuoteVersion[]
   quoteDocuments        QuoteDocument[]
@@ -1157,9 +1166,11 @@ model Deal {
   @@index([lostReasonId])
   @@index([dealSourceId])
   @@index([status])
-  // Serves the Deals list default sort (ORDER BY updatedAt DESC) so a paginated
-  // take-50 reads an ordered index instead of sorting the whole table.
+  // Serves the (legacy-selectable) updatedAt sort.
   @@index([updatedAt])
+  // Serves the Deals list DEFAULT sort (ORDER BY lastMeaningfulActivityAt DESC)
+  // so a paginated take-50 reads an ordered index instead of sorting the table.
+  @@index([lastMeaningfulActivityAt])
 }
 
 // ── CRM Tasks (משימות) ──────────────────────────────────────────────────────

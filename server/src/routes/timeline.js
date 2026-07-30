@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { emailFeedItemsForDeal, emailFeedItemsForContact } from '../email/timelineMerge.js';
+import { touchDealActivity } from '../timeline/events.js';
 
 // Reusable Timeline / Activity-Feed API. Every item is a TimelineEntry scoped to
 // a subject via (subjectType, subjectId) — so the SAME endpoints serve Deals,
@@ -227,6 +228,8 @@ router.post(
       },
       include: ENTRY_INCLUDE,
     });
+    // A human wrote on this deal's timeline — the definition of meaningful.
+    if (subjectType === 'deal') await touchDealActivity(prisma, subjectId, entry.createdAt);
     res.status(201).json(entry);
   }),
 );

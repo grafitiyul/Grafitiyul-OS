@@ -25,13 +25,14 @@ const PAGESIZE_KEY = 'deals.pageSize.v1';
 
 // Column key → server sort key. Only these columns are click-to-sort; the rest
 // have no server-side sort and stay reorder-only (sortable:false). The server
-// default is updatedAt:desc, so that is our initial sort too.
+// default is activity:desc — latest MEANINGFUL business activity, not the
+// technical updatedAt — so that is our initial sort too.
 const SORT_KEY = {
   name: 'title',
   amount: 'valueMinor',
   expectedClose: 'expectedClose',
   createdAt: 'createdAt',
-  updatedAt: 'updatedAt',
+  updatedAt: 'activity',
 };
 
 function loadFilters() {
@@ -99,8 +100,11 @@ const COLUMNS = [
     render: (d) => fullName(d.contacts?.[0]?.contact) || dash },
   { key: 'createdAt', label: 'תאריך יצירה', def: false, dir: 'ltr',
     cls: 'text-gray-500 tabular-nums', render: (d) => fmtDate(d.createdAt) },
-  { key: 'updatedAt', label: 'תאריך עדכון', def: true, dir: 'ltr',
-    cls: 'text-gray-500 tabular-nums', render: (d) => fmtDate(d.updatedAt) },
+  // Shows lastMeaningfulActivityAt — when a human-visible thing last
+  // happened on the deal (note, stage move, task, payment, delivery…), never
+  // a worker's technical touch. Falls back to createdAt pre-backfill.
+  { key: 'updatedAt', label: 'פעילות אחרונה', def: true, dir: 'ltr',
+    cls: 'text-gray-500 tabular-nums', render: (d) => fmtDate(d.lastMeaningfulActivityAt || d.createdAt) },
   { key: 'owner', label: 'אחראי', def: false, disabled: true,
     render: () => dash, cls: 'text-gray-600' },
 ];
@@ -217,7 +221,7 @@ export default function DealsList() {
         status: status === 'all' ? undefined : status,
         page,
         pageSize,
-        sort: `${SORT_KEY[sort.key] || 'updatedAt'}:${sort.dir}`,
+        sort: `${SORT_KEY[sort.key] || 'activity'}:${sort.dir}`,
       })
       .then((data) => {
         if (!live) return;

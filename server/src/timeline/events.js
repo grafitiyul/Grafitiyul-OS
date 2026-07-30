@@ -16,7 +16,7 @@ export async function emitTimelineEvent(
   client,
   { subjectType = 'deal', subjectId, kind, body, data, origin, createdAt = null },
 ) {
-  return (client || prisma).timelineEntry.create({
+  const entry = await (client || prisma).timelineEntry.create({
     data: {
       subjectType,
       subjectId,
@@ -28,6 +28,41 @@ export async function emitTimelineEvent(
       ...(createdAt ? { createdAt } : {}),
     },
   });
+  // Every deal timeline event IS meaningful business activity by definition —
+  // this funnel is only ever called for user-visible history (field changes,
+  // stage moves, tasks, files, payments, deliveries, questionnaires…), never
+  // for technical maintenance. Stamped with the ENTRY's timestamp, so a
+  // backdated source event stamps its source time and a replay can never move
+  // the deal forward (see touchDealActivity's GREATEST).
+  if (subjectType === 'deal') await touchDealActivity(client, subjectId, entry.createdAt);
+  return entry;
+}
+
+// THE writer for Deal.lastMeaningfulActivityAt — the canonical "when did a
+// human-visible thing last happen on this deal" stamp that the Deals list
+// orders by. Deliberately NOT updatedAt: reconcilers, mirrors and workers
+// touch rows without meaning anything to a person.
+//
+// Monotonic by construction (GREATEST in one statement): idempotent under
+// event replay, safe under out-of-order delivery, and callers can pass the
+// SOURCE event's timestamp rather than processing time. Never throws — an
+// activity stamp must never break the business write it rides on.
+export async function touchDealActivity(client, dealId, at = new Date()) {
+  if (!dealId) return;
+  try {
+    // LEAST(at, now()): a FUTURE-dated entry (imported future activities
+    // exist in production) must not pin its deal to the top of the list until
+    // that date arrives — activity means "happened", not "planned".
+    await (client || prisma).$executeRaw`
+      UPDATE "Deal"
+         SET "lastMeaningfulActivityAt" = GREATEST(
+               COALESCE("lastMeaningfulActivityAt"::timestamptz, '-infinity'::timestamptz),
+               LEAST(${at}::timestamptz, now())
+             )
+       WHERE "id" = ${dealId}`;
+  } catch (e) {
+    console.error('[timeline] touchDealActivity failed (non-fatal) for deal', dealId, e?.message);
+  }
 }
 
 // Non-anonymous origin fields (same shape the timeline routes use).

@@ -14,7 +14,7 @@
 
 import { normalizeClassification } from '../deals/classification.js';
 import { writeDealMarketing } from '../deals/marketing.js';
-import { emitTimelineEvent } from '../timeline/events.js';
+import { emitTimelineEvent, touchDealActivity } from '../timeline/events.js';
 import { createContactFrom, enrichContactChannels, resolveOrganization } from './resolve.js';
 
 const escapeHtml = (s) =>
@@ -284,6 +284,7 @@ export async function writeIntakeNote(tx, { dealId, normalized, ambiguous = fals
       ...(createdAt ? { createdAt } : {}),
     },
   });
+  await touchDealActivity(tx, dealId, createdAt || new Date());
 }
 
 // Repeat contact inside the dedupe window: annotate, never duplicate.
@@ -309,6 +310,8 @@ export async function annotateExistingDeal(tx, { dealId, normalized }) {
       data: { event: 'ingress_repeat_contact', source: normalized.source },
     },
   });
+  // A repeat inbound inquiry IS meaningful — the customer just reached out.
+  await touchDealActivity(tx, dealId);
   return { dealId };
 }
 

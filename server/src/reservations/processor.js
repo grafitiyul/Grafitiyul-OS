@@ -17,7 +17,7 @@
 
 import crypto from 'node:crypto';
 import { prisma } from '../db.js';
-import { emitTimelineEvent, systemOrigin } from '../timeline/events.js';
+import { emitTimelineEvent, systemOrigin, touchDealActivity } from '../timeline/events.js';
 import { createDealFromReservationGroup } from './createDeal.js';
 import { ensureReservationDocument } from './document.js';
 import { fireCommunicationTrigger } from '../communication/engine.js';
@@ -63,6 +63,7 @@ export async function createPinnedNotesNote(tx, { dealId, group, session }) {
       },
     },
   });
+  await touchDealActivity(tx, dealId);
 }
 
 export const CLAIM_TTL_MS = 2 * 60 * 1000;

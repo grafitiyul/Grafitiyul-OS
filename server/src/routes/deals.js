@@ -407,13 +407,19 @@ router.get(
       const where = dealFilterWhere(req.query);
       if (req.query.status && VALID_STATUS.includes(String(req.query.status))) where.status = String(req.query.status);
       const SORTS = {
+        // THE default: latest meaningful business activity (touchDealActivity
+        // — timeline funnel), NOT updatedAt: mirrors/reconcilers/workers touch
+        // rows without meaning anything to a person. nulls last so any
+        // pre-backfill straggler sinks instead of floating.
+        activity: (d) => ({ lastMeaningfulActivityAt: { sort: d, nulls: 'last' } }),
         updatedAt: (d) => ({ updatedAt: d }), createdAt: (d) => ({ createdAt: d }),
         valueMinor: (d) => ({ valueMinor: d }), orderNo: (d) => ({ orderNo: d }),
         title: (d) => ({ title: d }), expectedClose: (d) => ({ expectedCloseDate: d }),
       };
-      const [sortKey, sortDir] = String(req.query.sort || 'updatedAt:desc').split(':');
+      const [sortKey, sortDir] = String(req.query.sort || 'activity:desc').split(':');
       const dir = sortDir === 'asc' ? 'asc' : 'desc';
-      const orderBy = [(SORTS[sortKey] || SORTS.updatedAt)(dir), { id: 'desc' }];
+      // Stable pagination order: sort key → createdAt → id.
+      const orderBy = [(SORTS[sortKey] || SORTS.activity)(dir), { createdAt: 'desc' }, { id: 'desc' }];
       const [total, rows] = await Promise.all([
         prisma.deal.count({ where }),
         prisma.deal.findMany({
@@ -422,6 +428,7 @@ router.get(
             id: true, orderNo: true, title: true, status: true, valueMinor: true, currency: true,
             discountMinor: true, paymentTerms: true, source: true, expectedCloseDate: true,
             wonAt: true, lostAt: true, lostReason: true, createdAt: true, updatedAt: true,
+            lastMeaningfulActivityAt: true,
             ...listRelations,
           },
         }),
