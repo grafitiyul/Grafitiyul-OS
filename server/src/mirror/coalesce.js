@@ -40,11 +40,15 @@ export async function groupByParent(db, events, adapterFactory) {
   for (const ev of events) {
     const adapter = adapterFactory(ev.system, ev.entity);
     if (!adapter || modeOf(adapter) !== MODE.PARENT_RECOMPUTE) { unresolved.push(ev); continue; }
+    // Resolution failures are NOT swallowed here. The event falls through to
+    // individual processing, where the pipeline records the named reason — if
+    // this caught and discarded the error, the audit trail would show only
+    // `no_parent` with no way to tell why.
     let parent = null;
     try {
       parent = await adapter.resolveParent(db, ev);
     } catch {
-      parent = null;
+      parent = null; // re-thrown and recorded by processEvent for this event
     }
     if (!parent?.entityId) { unresolved.push(ev); continue; }
 

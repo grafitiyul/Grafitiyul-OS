@@ -309,3 +309,72 @@ test('the derivation is DELEGATED — this module defines no booking/seat logic 
   assert.ok(!/reduce\([^)]*seats/.test(src.replace(/registrations \|\| \[\]\)\.reduce/g, '')), 'no re-implemented seat summing');
   assert.ok(!/byDeal|mergedRows/.test(src), 'no re-implemented merge-by-deal');
 });
+
+// ── no_parent must be INVESTIGABLE, not just terminal ────────────────────────
+
+test('no_parent records WHICH resolution step failed, not just that it did', async () => {
+  const db = recomputeDb({ tourLink: { ...TOUR_LINK } });
+  const adapter = {
+    ...stubChildAdapter({ desired: [], current: [] }),
+    parentSourceType: 'tour',
+    childKind: 'coordination',
+    resolveParent: async () => ({
+      entityId: null, sourceId: 'recGHOST',
+      reason: 'parent_not_crosswalked', detail: 'tour recGHOST has no LegacyRecord',
+    }),
+  };
+  const res = await ingestMirror(db, childEvent({ 'שם סיור': 'recGHOST' }), adapter, { allowApply: true });
+
+  assert.equal(res.outcome, OUTCOME.NO_PARENT);
+  assert.equal(res.reason, 'parent_not_crosswalked');
+
+  const row = db._t.mirrorEvent[0];
+  assert.equal(row.failureCode, 'parent_not_crosswalked');
+  assert.match(row.failureMessage, /no LegacyRecord/);
+  // The parent the child POINTED AT is preserved, so "which tour was this row
+  // talking about?" is answerable later.
+  assert.equal(row.fieldsWritten.attemptedParentSourceId, 'recGHOST');
+  assert.equal(row.fieldsWritten.attemptedParentSourceType, 'tour');
+  assert.equal(row.fieldsWritten.childKind, 'coordination');
+  // And the raw source row is still there to inspect alongside it.
+  assert.ok(row.rawPayload);
+});
+
+test('a THROWN resolveParent is recorded, not silently turned into a bare no_parent', async () => {
+  const db = recomputeDb({ tourLink: { ...TOUR_LINK } });
+  const adapter = {
+    ...stubChildAdapter({ desired: [], current: [] }),
+    resolveParent: async () => { throw new Error('crosswalk lookup exploded'); },
+  };
+  const res = await ingestMirror(db, childEvent({ 'שם סיור': 'recTOUR' }), adapter, { allowApply: true });
+  assert.equal(res.outcome, OUTCOME.NO_PARENT);
+  assert.equal(db._t.mirrorEvent[0].failureCode, 'resolve_parent_threw');
+  assert.match(db._t.mirrorEvent[0].failureMessage, /crosswalk lookup exploded/);
+});
+
+test('the real adapter names all three distinct failure causes', async () => {
+  const noLink = { legacyRecord: { findUnique: async () => null } };
+  const a = tourChildrenAdapter({ childKind: 'coordination', deps: {} });
+
+  const r1 = await a.resolveParent(noLink, { rawPayload: { fields: {} }, externalId: 'recC1' });
+  assert.equal(r1.reason, 'child_has_no_parent_link');
+  assert.match(r1.detail, /שם סיור/);
+
+  const r2 = await a.resolveParent(noLink, { rawPayload: { fields: { 'שם סיור': 'recX' } }, externalId: 'recC1' });
+  assert.equal(r2.reason, 'parent_not_crosswalked');
+  assert.equal(r2.sourceId, 'recX');
+  assert.match(r2.detail, /Law 2/, 'names the usual cause so an investigation starts in the right place');
+
+  const orphanXwalk = { legacyRecord: { findUnique: async () => ({ entityId: null, payload: null }) } };
+  const r3 = await a.resolveParent(orphanXwalk, { rawPayload: { fields: { 'שם סיור': 'recY' } }, externalId: 'recC1' });
+  assert.equal(r3.reason, 'parent_crosswalk_without_entity');
+  assert.equal(r3.sourceId, 'recY');
+});
+
+test('a resolved parent carries the source-deleted marker for context', async () => {
+  const db = { legacyRecord: { findUnique: async () => ({ entityId: 't1', payload: { a: 1 }, sourceDeletedAt: new Date('2026-07-01') }) } };
+  const a = tourChildrenAdapter({ childKind: 'payroll', deps: {} });
+  const p = await a.resolveParent(db, { rawPayload: { fields: { 'שם סיור': 'recT' } }, externalId: 'x' });
+  assert.equal(p.entityId, 't1');
+  assert.ok(p.parentSourceDeletedAt, 'a child arriving for a tour that vanished upstream is visible');
+});

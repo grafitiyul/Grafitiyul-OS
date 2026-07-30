@@ -116,8 +116,22 @@ export async function runRetryTick(db, adapterFactory, { max = BATCH } = {}) {
 
 // ── cursors ──────────────────────────────────────────────────────────────────
 
-export async function claimCursor(db, { system, entity }, now = new Date()) {
-  const id = `${system}:${entity}`;
+/**
+ * Cursor identity.
+ *
+ * `${system}:${entity}` is NOT sufficient: several Airtable tables all mirror
+ * into `tourEvent` (the tours table plus three child tables), so keying on the
+ * entity alone would give four pollers ONE cursor and they would overwrite each
+ * other's position — silently losing changes. `cursorKey` lets a target declare
+ * its own position; the entity-based id remains the default for single-table
+ * sources.
+ */
+export function cursorIdFor({ system, entity, cursorKey = null }) {
+  return cursorKey || `${system}:${entity}`;
+}
+
+export async function claimCursor(db, { system, entity, cursorKey = null }, now = new Date()) {
+  const id = cursorIdFor({ system, entity, cursorKey });
   const stale = new Date(now.getTime() - CLAIM_TTL_MS);
   await db.mirrorCursor.upsert({
     where: { id },
@@ -132,8 +146,8 @@ export async function claimCursor(db, { system, entity }, now = new Date()) {
   return db.mirrorCursor.findUnique({ where: { id } });
 }
 
-export async function releaseCursor(db, { system, entity }, { cursor, error = null } = {}) {
-  const id = `${system}:${entity}`;
+export async function releaseCursor(db, { system, entity, cursorKey = null }, { cursor, error = null } = {}) {
+  const id = cursorIdFor({ system, entity, cursorKey });
   const now = new Date();
   return db.mirrorCursor.update({
     where: { id },
@@ -150,8 +164,8 @@ export async function releaseCursor(db, { system, entity }, { cursor, error = nu
  * { externalId, version, payload }. The poller does no interpretation — it
  * feeds the same pipeline the webhook does.
  */
-export async function runPollTick(db, { system, entity, source, adapter, ingest }) {
-  const claim = await claimCursor(db, { system, entity });
+export async function runPollTick(db, { system, entity, cursorKey = null, source, adapter, ingest }) {
+  const claim = await claimCursor(db, { system, entity, cursorKey });
   if (!claim) return { skipped: 'not_claimed' };
 
   const stats = { fetched: 0, processed: 0, duplicates: 0, conflicts: 0 };
@@ -167,10 +181,10 @@ export async function runPollTick(db, { system, entity, source, adapter, ingest 
       else stats.processed++;
       if (res.outcome === 'conflict') stats.conflicts++;
     }
-    await releaseCursor(db, { system, entity }, { cursor: nextCursor });
+    await releaseCursor(db, { system, entity, cursorKey }, { cursor: nextCursor });
     return stats;
   } catch (e) {
-    await releaseCursor(db, { system, entity }, { error: e?.message || String(e) });
+    await releaseCursor(db, { system, entity, cursorKey }, { error: e?.message || String(e) });
     throw e;
   }
 }

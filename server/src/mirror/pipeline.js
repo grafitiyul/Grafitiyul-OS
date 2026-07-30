@@ -268,12 +268,46 @@ export async function processEvent(db, eventId, adapter, { allowApply = null } =
  * tours, bookings or Airtable.
  */
 async function runParentRecompute(db, row, adapter, finish) {
-  const parent = await adapter.resolveParent(db, row);
+  let parent = null;
+  let resolveError = null;
+  try {
+    parent = await adapter.resolveParent(db, row);
+  } catch (e) {
+    resolveError = e;
+  }
+
   if (!parent?.entityId) {
     // The child names a parent GOS has never seen. Recorded, not guessed at —
     // the mirror does not create records.
-    await finish({ status: 'processed', outcome: OUTCOME.NO_PARENT });
-    return { status: 'processed', outcome: OUTCOME.NO_PARENT };
+    //
+    // Under normal operation this should not happen: Airtable is not edited
+    // directly, so children arrive with parents that were already imported. It
+    // is a migration-period guard rail, and terminating beats sitting pending
+    // forever — but ONLY if a later investigation can tell why. So the reason,
+    // the parent reference the child actually carried, and any thrown error are
+    // all recorded. The raw payload is already persisted on the event, so the
+    // full source row remains inspectable alongside this.
+    const reason = resolveError
+      ? 'resolve_parent_threw'
+      : (parent?.reason || 'parent_unresolved');
+    const detail = resolveError
+      ? String(resolveError.message || resolveError).slice(0, 500)
+      : (parent?.detail || null);
+
+    await finish({
+      status: 'processed',
+      outcome: OUTCOME.NO_PARENT,
+      failureCode: reason,
+      failureMessage: detail,
+      // The parent the child POINTED AT, even though it did not resolve — this
+      // is what makes "which tour was this row talking about?" answerable.
+      fieldsWritten: {
+        attemptedParentSourceType: adapter.parentSourceType || null,
+        attemptedParentSourceId: parent?.sourceId ?? null,
+        childKind: adapter.childKind || null,
+      },
+    });
+    return { status: 'processed', outcome: OUTCOME.NO_PARENT, reason, detail };
   }
 
   const desired = await adapter.derive(db, parent);

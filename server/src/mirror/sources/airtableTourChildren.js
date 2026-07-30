@@ -68,16 +68,53 @@ export function tourChildrenAdapter({ childKind, deps = {} }) {
     childKind,
     conflictFieldLabel: 'מקומות בהזמנה',
 
-    /** Child event → the master tour, resolved through the tour crosswalk. */
+    /**
+     * Child event → the master tour, resolved through the tour crosswalk.
+     *
+     * Every failure path returns a NAMED reason rather than a bare null, so an
+     * investigation later can distinguish "the row had no tour link" from "the
+     * tour was never imported" from "the crosswalk exists but points nowhere".
+     * Those three have completely different causes and completely different
+     * fixes, and a plain `no_parent` cannot tell them apart.
+     */
     async resolveParent(db, event) {
       const recId = parentRecIdOf(event.rawPayload, childKind);
-      if (!recId) return null;
+      if (!recId) {
+        return {
+          entityId: null,
+          reason: 'child_has_no_parent_link',
+          detail: `field "${PARENT_LINK_FIELDS[childKind]}" is empty or absent on ${childKind} row ${event.externalId}`,
+        };
+      }
+
       const link = await db.legacyRecord.findUnique({
         where: { sourceSystem_sourceType_sourceId: { sourceSystem: 'airtable', sourceType: 'tour', sourceId: recId } },
-        select: { entityId: true, entityType: true, payload: true },
+        select: { entityId: true, entityType: true, payload: true, sourceDeletedAt: true },
       });
-      if (!link?.entityId) return null;
-      return { sourceId: recId, entityId: link.entityId, entityType: 'tourEvent', masterPayload: link.payload };
+
+      if (!link) {
+        return {
+          entityId: null,
+          sourceId: recId,
+          reason: 'parent_not_crosswalked',
+          detail: `tour ${recId} has no LegacyRecord — it was never imported (cancelled tours are excluded by Law 2, which is the usual cause)`,
+        };
+      }
+      if (!link.entityId) {
+        return {
+          entityId: null,
+          sourceId: recId,
+          reason: 'parent_crosswalk_without_entity',
+          detail: `tour ${recId} has a crosswalk row but no GOS entity — evidence-only record, or the TourEvent was deleted (crosswalks outlive their entities by design)`,
+        };
+      }
+      return {
+        sourceId: recId,
+        entityId: link.entityId,
+        entityType: 'tourEvent',
+        masterPayload: link.payload,
+        parentSourceDeletedAt: link.sourceDeletedAt || null,
+      };
     },
 
     /**

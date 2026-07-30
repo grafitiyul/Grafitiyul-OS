@@ -229,3 +229,54 @@ test('the budget refuses a batch that would overshoot, rather than partially spe
   assert.equal(b.used, 3);
   assert.equal(b.remaining, 2);
 });
+
+// ── cursor isolation across tables mirroring the same entity ─────────────────
+
+test('four Airtable tables mirroring tourEvent get FOUR cursors, not one', async () => {
+  const { cursorIdFor } = await import('./worker.js');
+  const ids = new Set([
+    cursorIdFor({ system: 'airtable', entity: 'tourEvent' }),
+    cursorIdFor({ system: 'airtable', entity: 'tourEvent', cursorKey: 'airtable:child:coordination' }),
+    cursorIdFor({ system: 'airtable', entity: 'tourEvent', cursorKey: 'airtable:child:participants' }),
+    cursorIdFor({ system: 'airtable', entity: 'tourEvent', cursorKey: 'airtable:child:payroll' }),
+  ]);
+  assert.equal(ids.size, 4, 'sharing one cursor would silently lose changes');
+  assert.ok(ids.has('airtable:tourEvent'), 'the entity-based id is still the default');
+});
+
+test('each poll target claims and releases its OWN cursor position', async () => {
+  const { claimCursor, releaseCursor } = await import('./worker.js');
+  const cursors = [];
+  const db = {
+    mirrorCursor: {
+      upsert: async ({ where, create }) => {
+        let r = cursors.find((c) => c.id === where.id);
+        if (!r) { r = { failureStreak: 0, ...create }; cursors.push(r); }
+        return r;
+      },
+      updateMany: async ({ where, data }) => {
+        const r = cursors.find((c) => c.id === where.id);
+        if (!r || r.claimedAt) return { count: 0 };
+        Object.assign(r, data); return { count: 1 };
+      },
+      update: async ({ where, data }) => {
+        const r = cursors.find((c) => c.id === where.id);
+        for (const [k, v] of Object.entries(data)) r[k] = v?.increment ? (r[k] || 0) + v.increment : v;
+        return r;
+      },
+      findUnique: async ({ where }) => cursors.find((c) => c.id === where.id) || null,
+    },
+  };
+
+  const coord = { system: 'airtable', entity: 'tourEvent', cursorKey: 'airtable:child:coordination' };
+  const payroll = { system: 'airtable', entity: 'tourEvent', cursorKey: 'airtable:child:payroll' };
+
+  assert.ok(await claimCursor(db, coord));
+  assert.ok(await claimCursor(db, payroll), 'a different table is NOT blocked by another table claim');
+
+  await releaseCursor(db, coord, { cursor: 'C1' });
+  await releaseCursor(db, payroll, { cursor: 'P1' });
+
+  assert.equal(cursors.find((c) => c.id === 'airtable:child:coordination').cursor, 'C1');
+  assert.equal(cursors.find((c) => c.id === 'airtable:child:payroll').cursor, 'P1');
+});

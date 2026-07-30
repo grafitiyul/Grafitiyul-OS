@@ -103,21 +103,59 @@ export function createAirtableClient({
     tableId,
 
     /**
-     * Records changed since `cursor`. Returns { records, nextCursor }.
+     * An arbitrary server-side filtered read of ANY table in this base.
+     *
+     * Used by the child fetcher to read one parent's children. Filtering server
+     * side is the whole point: the alternative is scanning a table and matching
+     * in memory, which is exactly the pattern that burns quota.
+     */
+    async listWhere(otherTableId, { formula = null, maxRecords = 200, fields: onlyFields = [] } = {}) {
+      const out = [];
+      let offset;
+      let pages = 0;
+      do {
+        const u = new URL(`${API}/${baseId}/${otherTableId}`);
+        u.searchParams.set('pageSize', String(Math.min(pageSize, maxRecords)));
+        if (formula) u.searchParams.set('filterByFormula', formula);
+        for (const f of onlyFields) u.searchParams.append('fields[]', f);
+        if (offset) u.searchParams.set('offset', offset);
+        const json = await request(u.toString());
+        for (const r of json.records || []) out.push({ id: r.id, fields: r.fields });
+        offset = json.offset;
+        pages += 1;
+      } while (offset && out.length < maxRecords && pages < maxPages);
+      return out;
+    },
+
+    /** Records changed since `cursor`, for THIS client's configured table. */
+    async listModifiedSince(cursor) {
+      return this.listModifiedSinceIn(tableId, cursor);
+    },
+
+    /**
+     * Records changed since `cursor`, in ANY table of this base.
+     *
+     * The child tables need the same incremental contract as the tours table, so
+     * the implementation is shared rather than duplicated per table — one place
+     * that gets the cursor semantics right.
      *
      * nextCursor is the MAXIMUM lastModified observed, not "now": using the
      * clock would skip a record written while the page was in flight.
      */
-    async listModifiedSince(cursor) {
+    async listModifiedSinceIn(inTableId, cursor, { fields: onlyFields = null } = {}) {
       const out = [];
       let offset;
       let pages = 0;
       let maxSeen = cursor || null;
+      const wanted = onlyFields ?? fields;
 
       do {
-        const u = new URL(`${API}/${baseId}/${tableId}`);
+        const u = new URL(`${API}/${baseId}/${inTableId}`);
         u.searchParams.set('pageSize', String(pageSize));
-        for (const f of fields) u.searchParams.append('fields[]', f);
+        // A child table has different fields from the tours table, so the
+        // projection must follow the table being read — sending the tours
+        // field list at a child table would return nothing useful.
+        for (const f of wanted) u.searchParams.append('fields[]', f);
         // Ask Airtable for the modified time so the cursor comes from the
         // source's own clock rather than ours.
         u.searchParams.set('cellFormat', 'json');
