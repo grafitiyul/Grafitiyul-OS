@@ -20,6 +20,7 @@ import { ingestMirror, receive } from '../mirror/pipeline.js';
 import { entityForPipedriveObject } from '../mirror/sources/pipedriveMirror.js';
 import { mirrorAdapterFactory } from '../mirror/adapters.js';
 import { safeEqual } from '../ingress/signature.js';
+import { mirrorMode } from '../mirror/config.js';
 
 const router = Router();
 
@@ -28,7 +29,12 @@ router.use(express.json({ limit: '2mb', verify: capture }));
 router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 
 const secret = () => String(process.env.MIRROR_PIPEDRIVE_WEBHOOK_SECRET || '').trim();
-const mirrorEnabled = () => String(process.env.MIRROR_ENABLED || '').trim().toLowerCase() === 'true';
+// The canonical phase flags, NOT the legacy single switch. Gating this route on
+// MIRROR_ENABLED meant that in Phase D (capture+apply, MIRROR_ENABLED unset) every
+// webhook took the buffer-only branch and was never processed inline — it worked
+// only because the retry worker eventually drained it, one poll interval late.
+// mirrorMode() keeps the route and the pipeline on the same definition of "live".
+const processingLive = () => mirrorMode().apply;
 
 /**
  * Pipedrive webhooks authenticate with HTTP Basic (username/password set when
@@ -95,7 +101,7 @@ router.post(
     // The kill switch stops PROCESSING, never receipt. Payloads keep landing
     // durably so nothing is lost while the mirror is paused, and the retry
     // worker drains them when it is switched back on.
-    if (!mirrorEnabled()) {
+    if (!processingLive()) {
       const r = await receive(prisma, args);
       return res.json({ ok: true, received: true, processing: 'disabled', eventId: r.eventId });
     }

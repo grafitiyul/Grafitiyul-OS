@@ -10,6 +10,7 @@ import { adapterFor, ENTITY_TO_SOURCE_TYPE } from './sources/pipedriveMirror.js'
 import { airtableTourSource, tourAdapter } from './sources/airtableMirror.js';
 import { CHILD_TABLES, tourChildrenAdapter } from './sources/airtableTourChildren.js';
 import { createChildDeps, createChildFetcher } from './sources/airtableTourChildDeps.js';
+import { cursorIdFor } from './worker.js';
 
 // Stage lookups are cached briefly: the mirror can process a burst of events,
 // and re-reading the stage table per event would be wasteful — but a rename in
@@ -122,3 +123,31 @@ const CHILD_FIELDS = Object.freeze({
   payroll: ['שם סיור', 'שם המדריך', 'מייל', 'סה"כ לפני מעמ', 'מאושר'],
 });
 
+
+/**
+ * The cursor identities of every Airtable poll target, derived from the target
+ * list itself.
+ *
+ * Exists so the pre-capture cursor seeding cannot drift from what the worker
+ * actually registers. A seeded cursor whose id is one character off is worse than
+ * no seeding: the script reports success, the row is never read, and capture still
+ * performs the unbounded first read this whole mechanism exists to avoid.
+ *
+ * A stub client is enough — buildPollTargets only needs it to decide that Airtable
+ * is configured, and nothing here polls.
+ */
+export function airtableCursorTargets() {
+  const targets = buildPollTargets({
+    ingest: () => { throw new Error('airtableCursorTargets must not ingest'); },
+    airtableClient: { __stub: true },
+    prisma: null,
+  });
+  return targets
+    .filter((t) => t.system === 'airtable')
+    .map((t) => ({
+      id: cursorIdFor({ system: t.system, entity: t.entity, cursorKey: t.cursorKey ?? null }),
+      system: t.system,
+      entity: t.entity,
+      cursorKey: t.cursorKey ?? null,
+    }));
+}
