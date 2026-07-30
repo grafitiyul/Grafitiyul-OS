@@ -13,7 +13,12 @@ import {
 import { emitTasksChanged } from '../tasks/events.js';
 import { dealsForContact, classifyDealsForContact } from '../crm/dealResolution.js';
 import { markChatRead, markChatUnread } from '../whatsapp/readState.js';
-import { getSenderPreference, resolveSendAccount, setSenderPreference } from '../whatsapp/senderAccount.js';
+import {
+  ACCOUNT_ORDER_BY,
+  getSenderPreference,
+  resolveSendAccount,
+  setSenderPreference,
+} from '../whatsapp/senderAccount.js';
 
 // WhatsApp module — Slice 1 (accounts / connections admin).
 //
@@ -52,9 +57,7 @@ router.get(
   '/accounts',
   handle(async (_req, res) => {
     const urls = bridgeUrlMap();
-    const rows = await prisma.whatsAppAccount.findMany({
-      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-    });
+    const rows = await prisma.whatsAppAccount.findMany({ orderBy: ACCOUNT_ORDER_BY });
     const known = new Set(rows.map((r) => r.id));
     const placeholders = Object.keys(urls)
       .filter((id) => !known.has(id))
@@ -1418,7 +1421,7 @@ router.get(
     const accounts = await prisma.whatsAppAccount.findMany({
       where: { active: true },
       select: { id: true, label: true, status: true, phoneJid: true },
-      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+      orderBy: ACCOUNT_ORDER_BY,
     });
     const preferred = await getSenderPreference(prisma, userId);
     let resolved = null;

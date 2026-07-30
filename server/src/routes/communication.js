@@ -68,6 +68,7 @@ import { normalizeTokensToChips } from '../../../shared/variableTokens.mjs';
 import { variableByKey } from '../communication/variables.js';
 import { translateContent, translationConfigured } from '../communication/translate.js';
 import { loadDocumentBytes } from '../communication/documents.js';
+import { ACCOUNT_ORDER_BY } from '../whatsapp/senderAccount.js';
 
 const router = Router();
 
@@ -78,7 +79,7 @@ const str = (v) => (v == null ? null : String(v).trim() || null);
 router.get('/meta', handle(async (_req, res) => {
   const [waAccounts, windows, orgTypes, orgSubtypes, products, variants, locations, dealSources] =
     await Promise.all([
-      prisma.whatsAppAccount.findMany({ orderBy: { sortOrder: 'asc' } }),
+      prisma.whatsAppAccount.findMany({ orderBy: ACCOUNT_ORDER_BY }),
       prisma.communicationSendingWindow.findMany({ orderBy: { sortOrder: 'asc' }, include: { exceptions: false } }),
       prisma.organizationType.findMany({ where: { isActive: true }, orderBy: { sortOrder: 'asc' }, select: { id: true, label: true } }),
       prisma.organizationSubtype.findMany({ where: { isActive: true }, orderBy: { sortOrder: 'asc' }, select: { id: true, label: true, organizationTypeId: true } }),

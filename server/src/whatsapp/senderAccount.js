@@ -23,6 +23,17 @@ import { bridgeUrlMap } from './bridgeClient.js';
 
 export const SENDER_PREF_KEY = 'whatsapp.senderAccount';
 
+// THE account display order, shared by every surface that lists our numbers
+// (connections tabs, inbox tabs, composer picker, communication settings).
+//
+// sortOrder is the admin-owned intent; `id` is the deterministic tiebreak.
+// It used to be `createdAt` on the connections list and `id` on the picker,
+// which is how the same two accounts rendered in OPPOSITE orders on two
+// screens — and how an operator ended up scanning the default-selected tab's
+// QR believing it belonged to the other number. Ordering that differs per
+// screen is not cosmetic; here it caused a real mis-pairing.
+export const ACCOUNT_ORDER_BY = [{ sortOrder: 'asc' }, { id: 'asc' }];
+
 export class AmbiguousSenderError extends Error {
   constructor(candidates) {
     super(
