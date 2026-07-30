@@ -422,6 +422,31 @@ export class WaClient {
     });
   }
 
+  // Full app-state resync — the RECOVERY half of the canonical procedure
+  // "delete this account's app-state-sync-version rows, restart the bridge".
+  // Baileys never resyncs merely because the cursor is missing (it waits for
+  // server dirty-hints or an explicit request), so after a deliberate cursor
+  // wipe this asks for everything: WhatsApp replays the account's pin /
+  // archive / read-state actions, which land through the ordinary chats event
+  // handlers. isInitialSync=true is exactly what Baileys itself passes on a
+  // fresh registration. Normal boots find cursors present and return
+  // immediately; failure is soft and retries on the next reconnect.
+  async maybeInitialAppStateResync(socketId) {
+    try {
+      const cursors = await prisma.whatsAppSession.count({
+        where: { accountId: config.accountId, kind: 'app-state-sync-version' },
+      });
+      if (cursors > 0) return;
+      if (socketId !== this.activeSocketId || !this.socket) return;
+      const collections = getBaileys().ALL_WA_PATCH_NAMES;
+      this.log.warn({ socketId, collections }, 'app-state cursor absent — requesting FULL app-state resync (recovery procedure)');
+      await this.socket.resyncAppState(collections, true);
+      this.log.info({ socketId }, 'full app-state resync requested');
+    } catch (err) {
+      this.log.warn({ socketId, err: err?.message || String(err) }, 'initial app-state resync failed — will retry on next reconnect');
+    }
+  }
+
   // Mark incoming messages READ on WhatsApp (GOS→WhatsApp read sync). Sends
   // read receipts via the canonical readMessages op, which in multi-device also
   // syncs the read to the owner's own devices (phone / WhatsApp Web). Keys are
@@ -741,6 +766,14 @@ export class WaClient {
       this.healthyTimer = setTimeout(() => {
         void accountState.markHealthy(prisma);
       }, config.reconnectHealthyMs);
+      // Recovery hook: full app-state resync when the sync cursor is absent.
+      // Baileys does NOT resync on its own just because the cursor is missing —
+      // it waits for server "dirty" hints or an explicit request. Deleting this
+      // account's app-state-sync-version rows and restarting the bridge is the
+      // CANONICAL recovery procedure (proven 2026-07-30: it replays the phone's
+      // pin/archive/read-state actions without creating a new device link).
+      // On a normal boot the cursors exist and this is a no-op.
+      void this.maybeInitialAppStateResync(socketId);
     }
 
     if (connection === 'close') {
