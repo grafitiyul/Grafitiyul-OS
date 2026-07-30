@@ -20,6 +20,8 @@ import crypto from 'node:crypto';
 import { prisma } from '../db.js';
 import { processEvent } from './pipeline.js';
 import { captureEnabled, mirrorMode, pollIntervalMs } from './config.js';
+import { MODE, modeOf } from './modes.js';
+import { processCoalesced } from './coalesce.js';
 
 export const CLAIM_TTL_MS = 5 * 60 * 1000;
 const RETRY_TICK_MS = 60 * 1000;
@@ -59,24 +61,56 @@ export async function claimOneEvent(db, now = new Date()) {
 }
 
 export async function runRetryTick(db, adapterFactory, { max = BATCH } = {}) {
-  const stats = { claimed: 0, processed: 0, failed: 0 };
+  const stats = { claimed: 0, processed: 0, failed: 0, coalesced: 0, savedRecomputes: 0 };
+
+  // Claim first, then decide how to process. Claiming the whole batch up front
+  // is what lets parent_recompute events be coalesced: several children of one
+  // parent must be in hand together to collapse into a single recompute.
+  const claimedIds = [];
   for (let i = 0; i < max; i++) {
     const id = await claimOneEvent(db);
     if (!id) break;
-    stats.claimed++;
-    const row = await db.mirrorEvent.findUnique({ where: { id }, select: { system: true, entity: true } });
+    claimedIds.push(id);
+  }
+  stats.claimed = claimedIds.length;
+  if (!claimedIds.length) return stats;
+
+  const rows = [];
+  for (const id of claimedIds) {
+    rows.push(await db.mirrorEvent.findUnique({ where: { id } }));
+  }
+
+  // Split by mode: entity_merge events carry their own intermediate values and
+  // must each be processed; parent_recompute events are coalesced per parent.
+  const perEvent = [];
+  const recompute = [];
+  for (const row of rows) {
     const adapter = adapterFactory(row.system, row.entity);
     if (!adapter) {
       await db.mirrorEvent.update({
-        where: { id },
+        where: { id: row.id },
         data: { status: 'skipped', failureCode: 'no_adapter', claimedAt: null, claimedBy: null },
       });
       continue;
     }
-    const res = await processEvent(db, id, adapter);
+    let mode;
+    try { mode = modeOf(adapter); } catch { mode = MODE.ENTITY_MERGE; }
+    (mode === MODE.PARENT_RECOMPUTE ? recompute : perEvent).push({ row, adapter });
+  }
+
+  for (const { row, adapter } of perEvent) {
+    const res = await processEvent(db, row.id, adapter);
     if (res.status === 'processed' || res.status === 'skipped') stats.processed++;
     else stats.failed++;
   }
+
+  if (recompute.length) {
+    const c = await processCoalesced(db, recompute.map((r) => r.row), adapterFactory);
+    stats.processed += c.recomputes + c.coalesced + c.unresolved;
+    stats.coalesced += c.coalesced;
+    stats.savedRecomputes += c.savedRecomputes;
+  }
+
   return stats;
 }
 
