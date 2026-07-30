@@ -378,3 +378,89 @@ test('a resolved parent carries the source-deleted marker for context', async ()
   assert.equal(p.entityId, 't1');
   assert.ok(p.parentSourceDeletedAt, 'a child arriving for a tour that vanished upstream is visible');
 });
+
+// ── disappearance policy: no auto-removal, and no SILENT retention either ─────
+
+test('protectRemoval routes a vanished member to a CONFLICT, not to remove', () => {
+  const d = diffSets({
+    current: [{ id: 'a', v: 1 }, { id: 'b', v: 2 }],
+    desired: [{ id: 'a', v: 1 }],
+    keyOf, sameOf,
+    protectRemoval: (cur) => (cur.id === 'b' ? 'conflict' : undefined),
+  });
+  assert.deepEqual(d.remove, [], 'not removed');
+  assert.equal(d.conflicts.length, 1, 'and not silently kept either');
+  assert.equal(d.conflicts[0].kind, 'removal');
+  assert.deepEqual(d.conflicts[0].current, { id: 'b', v: 2 });
+  assert.equal(d.conflicts[0].desired, null);
+});
+
+test('without protectRemoval a vanished member is removed as before', () => {
+  const d = diffSets({
+    current: [{ id: 'a', v: 1 }, { id: 'b', v: 2 }],
+    desired: [{ id: 'a', v: 1 }],
+    keyOf, sameOf,
+  });
+  assert.deepEqual(d.remove, [{ id: 'b', v: 2 }]);
+  assert.deepEqual(d.conflicts, []);
+});
+
+test('protectRemoval is per MEMBER — one protected kind does not shield the others', () => {
+  const d = diffSets({
+    current: [{ id: 'keep', v: 1 }, { id: 'drop', v: 2 }],
+    desired: [],
+    keyOf, sameOf,
+    protectRemoval: (cur) => (cur.id === 'keep' ? 'conflict' : undefined),
+  });
+  assert.deepEqual(d.remove.map((r) => r.id), ['drop']);
+  assert.deepEqual(d.conflicts.map((c) => c.current.id), ['keep']);
+});
+
+test('value conflicts and removal conflicts are DISTINGUISHABLE', () => {
+  const d = diffSets({
+    current: [{ id: 'a', v: 5 }, { id: 'gone', v: 1 }],
+    desired: [{ id: 'a', v: 9 }],
+    keyOf, sameOf,
+    protect: () => 'conflict',
+    protectRemoval: () => 'conflict',
+  });
+  assert.deepEqual(d.conflicts.map((c) => c.kind).sort(), ['removal', 'value']);
+});
+
+test('the tour adapter: payroll disappearance CONFLICTS, booking and assignment do not', () => {
+  const a = tourChildrenAdapter({ childKind: 'payroll', deps: {} });
+  assert.equal(a.protectRemoval({ kind: 'payroll', externalPersonId: 'e1' }), 'conflict',
+    'approved pay is never withdrawn by a sync, and never silently retained');
+  assert.equal(a.protectRemoval({ kind: 'booking', dealId: 'd1' }), undefined,
+    'a booking is allowed through — applyDiff cancels it rather than deleting');
+  assert.equal(a.protectRemoval({ kind: 'assignment', personRefId: 'p1' }), undefined,
+    'an assignment carries no money and is genuinely removable');
+});
+
+test('a vanished payroll row produces a labelled, operator-actionable conflict', async () => {
+  const db = recomputeDb({ tourLink: { ...TOUR_LINK } });
+  let applied = null;
+  const real = tourChildrenAdapter({ childKind: 'payroll', deps: {} });
+  const adapter = {
+    ...real,
+    resolveParent: async () => ({ sourceId: 'recTOUR', entityId: 't1', entityType: 'tourEvent' }),
+    derive: async () => [],                                                   // source row gone
+    loadCurrent: async () => [{ kind: 'payroll', externalPersonId: 'e1', displayName: 'יואב', amountMinor: 45000 }],
+    applyDiff: async (_d, _p, diff) => { applied = diff; },
+  };
+  const res = await ingestMirror(db, childEvent({ 'שם סיור': 'recTOUR' }), adapter, { allowApply: true });
+
+  assert.equal(res.outcome, OUTCOME.CONFLICT);
+  assert.equal(applied, null, 'nothing was written');
+  const issue = db._t.operationalIssue[0];
+  assert.ok(issue, 'an operator-facing issue exists');
+  assert.equal(issue.data.fields[0].label, 'שורת שכר נעלמה מהמקור');
+  assert.match(issue.explanation, /לא בוצע שום עדכון אוטומטי/);
+});
+
+test('the label distinguishes a disappearance from a refused value', () => {
+  const a = tourChildrenAdapter({ childKind: 'coordination', deps: {} });
+  assert.equal(a.conflictLabelFor({ kind: 'removal', current: { kind: 'payroll' } }), 'שורת שכר נעלמה מהמקור');
+  assert.equal(a.conflictLabelFor({ kind: 'removal', current: { kind: 'booking' } }), 'רשומה נעלמה מהמקור');
+  assert.equal(a.conflictLabelFor({ kind: 'value', current: { kind: 'booking' } }), 'מקומות בהזמנה');
+});

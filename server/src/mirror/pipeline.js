@@ -318,6 +318,7 @@ async function runParentRecompute(db, row, adapter, finish) {
     keyOf: adapter.keyOf,
     sameOf: adapter.sameOf,
     protect: adapter.protect || null,
+    protectRemoval: adapter.protectRemoval || null,
   });
 
   if (diff.conflicts.length) {
@@ -330,12 +331,17 @@ async function runParentRecompute(db, row, adapter, finish) {
       orderNo: d.orderNo,
       // Presented in the same three-value shape as a field conflict, so the
       // בקרה card renders one vocabulary regardless of which mode produced it.
+      // The reason distinguishes the two causes, because they need different
+      // operator decisions: a value was refused, versus the source row VANISHED
+      // while GOS still holds the data.
       conflicts: diff.conflicts.map((c) => ({
-        field: adapter.conflictFieldLabel || 'set',
+        field: (adapter.conflictLabelFor && adapter.conflictLabelFor(c))
+          || adapter.conflictFieldLabel
+          || 'set',
         base: null,
         source: c.desired,
         gos: c.current,
-        reason: 'set_protected',
+        reason: c.kind === 'removal' ? 'source_member_disappeared' : 'set_protected',
       })),
     });
   }

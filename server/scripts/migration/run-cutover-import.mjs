@@ -21,6 +21,7 @@ import * as r2 from '../../src/migration/r2.js';
 import { createSnapshotReader } from '../../src/migration/review/snapshotReader.js';
 import { requireEntities } from '../../src/migration/snapshotContract.js';
 import { loadNormalizedTourLayer } from '../../src/migration/import/tourNormalize.js';
+import { seedMirrorBaselinesFromSnapshot } from '../../src/mirror/seedFromSnapshot.js';
 import { planTourImport, executeTourPlan } from '../../src/migration/import/tourImport.js';
 import { buildStageMap, resolveFieldKeys, planDealImport, executeDealPlan } from '../../src/migration/import/dealImport.js';
 import {
@@ -267,6 +268,29 @@ try {
   await executeRedirects(prisma, future.redirects, { batchId, snapshotId: finalId, log: (m) => console.log(m) });
   console.log(`→ Wave-1 tour delta (${tourDelta.deltas.length})…`);
   const dc = await executeTourDelta(prisma, tourDelta.deltas, { historicalComponentId: component.id, log: (m) => console.log(m) });
+
+  // ── MIRROR BASELINE SEEDING ─────────────────────────────────────────────────
+  // This is what makes the buffered-window replay mean anything.
+  //
+  // Without it the first mirror event for each record hits BOOTSTRAP, which
+  // adopts the current source value as the baseline and WRITES NOTHING. Every
+  // change that happened between this snapshot and the mirror going live would be
+  // silently accepted as "the way things are" — no error, no conflict, no
+  // missing-data signal, and a mirror that looks perfectly healthy.
+  //
+  // Seeding from the SNAPSHOT values (not the post-import GOS values) is the
+  // point: the baseline records what the SOURCE said, so a later source change is
+  // detectable. Afterwards a buffered post-snapshot change is a real MERGE, and a
+  // buffered pre-snapshot change is a no-op by the merge algebra — which is why
+  // replay needs no timestamp filtering at all.
+  console.log('\n→ seeding mirror baselines from the snapshot…');
+  const seedStats = await seedMirrorBaselinesFromSnapshot(prisma, {
+    finalDeals: finalDeals.exec,
+    masterTours: finalLayer.masterTours,
+    log: (m) => console.log(m),
+  });
+  console.log(`   deals: ${seedStats.deals.seeded} seeded, ${seedStats.deals.skippedExisting} already had one`);
+  console.log(`   tours: ${seedStats.tours.seeded} seeded, ${seedStats.tours.skippedExisting} already had one`);
   await prisma.migrationRun.update({ where: { id: run.id }, data: { status: 'done', finishedAt: new Date(), counters: { hashB: plan.payloadHash, freezeDate, deltaApplied: dc, historical: historical.payloads.length, future: fs.create, redirects: fs.redirectedToNative, dealMerges: ds.merges, newDeals: newDealPayloads.length, conflicts: seeded } } });
 } catch (e) {
   await prisma.migrationRun.update({ where: { id: run.id }, data: { status: 'failed', finishedAt: new Date(), error: String(e?.message || e).slice(0, 500) } });

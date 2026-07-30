@@ -223,7 +223,12 @@ export function createChildDeps({ fetcher, prisma, today = () => new Date() }) {
      * Deliberately conservative about REMOVALS: a booking is not deleted, it is
      * cancelled, because payments and registrations hang off it and GOS owns
      * that history. An assignment genuinely can be removed — it carries no
-     * money — but payroll never is, for the same reason as bookings.
+     * money.
+     *
+     * Payroll never reaches this function at all: the adapter's protectRemoval
+     * routes a vanished payroll row into a CONFLICT, so it is neither deleted
+     * nor silently retained. If one ever arrives here it is a bug, and it throws
+     * rather than quietly doing the wrong thing.
      */
     async applyDiff(db, parent, diff) {
       const client = db || prisma;
@@ -256,9 +261,11 @@ export function createChildDeps({ fetcher, prisma, today = () => new Date() }) {
           await client.booking.update({ where: { id: r.id }, data: { status: 'cancelled' } });
         } else if (r.kind === 'assignment') {
           await client.tourAssignment.delete({ where: { id: r.id } });
+        } else if (r.kind === 'payroll') {
+          const e = new Error('payroll_removal_must_be_a_conflict: protectRemoval should have routed this to a conflict, never to applyDiff');
+          e.code = 'PAYROLL_REMOVAL_LEAKED';
+          throw e;
         }
-        // payroll removals are deliberately ignored: approved pay is never
-        // withdrawn by a sync.
       }
     },
 

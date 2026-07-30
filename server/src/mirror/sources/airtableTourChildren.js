@@ -195,6 +195,30 @@ export function tourChildrenAdapter({ childKind, deps = {} }) {
       return desired;
     },
 
+    /**
+     * DISAPPEARANCE policy, per kind. Three deliberately different answers:
+     *
+     *   payroll     → CONFLICT. Approved pay is never withdrawn by a sync, but
+     *                 silently keeping it would be drift nobody can see. The
+     *                 operator decides whether reconciliation is needed.
+     *   booking     → allowed through; applyDiff CANCELS rather than deletes,
+     *                 because payments and registrations hang off it.
+     *   assignment  → allowed through and genuinely removed; it carries no money.
+     */
+    protectRemoval(current) {
+      if (current.kind === 'payroll') return 'conflict';
+      return undefined;
+    },
+
+    /** Business-language label per conflict, so the card reads correctly. */
+    conflictLabelFor(c) {
+      if (c.kind === 'removal') {
+        if (c.current?.kind === 'payroll') return 'שורת שכר נעלמה מהמקור';
+        return 'רשומה נעלמה מהמקור';
+      }
+      return 'מקומות בהזמנה';
+    },
+
     describeParent: (parent) => ({ label: parent.sourceId }),
 
     /** Apply the diff. The ONLY writer, and it writes nothing else. */

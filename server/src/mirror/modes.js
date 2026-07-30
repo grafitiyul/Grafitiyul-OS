@@ -90,8 +90,15 @@ export function assertAdapterContract(adapter, mode = modeOf(adapter)) {
  * desired value, or the string 'conflict' to refuse the change. This is where
  * "never reduce seats below what GOS has already registered" lives, expressed
  * by the domain rather than hardcoded here.
+ *
+ * `protectRemoval` is its counterpart for DISAPPEARANCE. `protect` only ever
+ * sees a matched pair, so it can never see a member that vanished from the
+ * source — and "vanished" is exactly the case where silently doing nothing
+ * creates hidden drift. It receives the current member and returns 'conflict' to
+ * refuse the removal, which routes the member into `conflicts` instead of
+ * `remove`: not deleted, and not silently retained either.
  */
-export function diffSets({ current = [], desired = [], keyOf, sameOf, protect = null }) {
+export function diffSets({ current = [], desired = [], keyOf, sameOf, protect = null, protectRemoval = null }) {
   const cur = new Map(current.map((m) => [keyOf(m), m]));
   const des = new Map(desired.map((m) => [keyOf(m), m]));
 
@@ -107,7 +114,7 @@ export function diffSets({ current = [], desired = [], keyOf, sameOf, protect = 
     if (protect) {
       const verdict = protect(have, want);
       if (verdict === 'conflict') {
-        conflicts.push({ key, current: have, desired: want });
+        conflicts.push({ key, kind: 'value', current: have, desired: want });
         continue;
       }
       if (verdict !== undefined && verdict !== null) target = verdict;
@@ -116,7 +123,15 @@ export function diffSets({ current = [], desired = [], keyOf, sameOf, protect = 
   }
 
   for (const [key, have] of cur) {
-    if (!des.has(key)) remove.push(have);
+    if (des.has(key)) continue;
+    // A member that vanished from the source. Some kinds must never be removed
+    // automatically AND must never be silently kept — that is drift nobody can
+    // see. protectRemoval turns it into a decision instead.
+    if (protectRemoval && protectRemoval(have) === 'conflict') {
+      conflicts.push({ key, kind: 'removal', current: have, desired: null });
+      continue;
+    }
+    remove.push(have);
   }
 
   return {
