@@ -13,6 +13,8 @@ import { COORD_FIELDS, PAYROLL_FIELDS } from '../migration/import/tourNormalize.
 import { createChildDeps, createChildFetcher } from './sources/airtableTourChildDeps.js';
 import { cursorIdFor } from './worker.js';
 import { airtableClientFromEnv } from './sources/airtableClient.js';
+import { createContact, createDeal, createNote, createOrganization, createActivity, makeTourCreator } from './creators.js';
+import { PARENT_LINK_FIELDS } from './sources/airtableTourChildren.js';
 
 // Stage lookups are cached briefly: the mirror can process a burst of events,
 // and re-reading the stage table per event would be wasteful — but a rename in
@@ -69,7 +71,19 @@ export function mirrorAdapterFactory(system, entity, row = null) {
   if (system === 'airtable') {
     if (entity !== 'tourEvent') return null;
     const childKind = airtableChildKindOf(row?.rawPayload);
-    if (!childKind) return tourAdapter();
+    if (!childKind) {
+      const a = tourAdapter();
+      // A NEW Airtable tour (no crosswalk) is CREATED, not skipped — kind derived
+      // by the same rule planFutureTours uses, via the live child fetcher.
+      const client = airtableClientFromEnv();
+      if (client) {
+        a.createGos = makeTourCreator({
+          fetcher: createChildFetcher({ client }),
+          parentLinkField: PARENT_LINK_FIELDS.coordination,
+        });
+      }
+      return a;
+    }
     const deps = airtableChildDeps();
     if (!deps) return null;
     return tourChildrenAdapter({ childKind, deps });
@@ -86,6 +100,19 @@ export function mirrorAdapterFactory(system, entity, row = null) {
   });
   if (!adapter) return null;
   adapter.sourceType = ENTITY_TO_SOURCE_TYPE[entity] || adapter.sourceType;
+
+  // Live creation — same canonical planners as the batch importers, one-record
+  // populations, atomic entity+crosswalk. An entity absent from this map simply
+  // has no createGos, and the pipeline defers its events with a named reason.
+  const creator = {
+    deal: createDeal,
+    contact: createContact,
+    organization: createOrganization,
+    note: createNote,
+    task: createActivity,
+  }[entity];
+  if (creator) adapter.createGos = creator;
+
   return adapter;
 }
 
