@@ -187,7 +187,14 @@ export default function ChatListRow({
         <Avatar chat={chat} />
         <div className="min-w-0 flex-1">
       <div className="flex items-center gap-2">
-        {chat.pinnedAt && <span className="shrink-0 text-[11px] text-gray-400" title="שיחה נעוצה">📌</span>}
+        {(chat.pinnedAt || chat.providerPinnedAt) && (
+          <span
+            className="shrink-0 text-[11px] text-gray-400"
+            title={chat.pinnedAt ? 'שיחה נעוצה' : 'נעוצה בוואטסאפ בטלפון'}
+          >
+            📌
+          </span>
+        )}
         {snoozed && (
           <span className="shrink-0 text-[11px]" title={`בנודניק עד ${fmtSnoozedUntil(chat.snoozedUntil)}`}>💤</span>
         )}

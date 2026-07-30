@@ -304,6 +304,9 @@ function toClientChat(chat) {
     manualUnread: !!chat.manualUnreadAt,
     unread: (chat.unreadCount ?? 0) > 0 || !!chat.manualUnreadAt,
     pinnedAt: chat.pinnedAt ?? null,
+    // Pinned on the phone (read-only mirror) — the UI shows the same 📌 for
+    // both pin kinds; only the GOS pin is toggleable from here.
+    providerPinnedAt: chat.providerPinnedAt ?? null,
     snoozedUntil: chat.snoozedUntil ?? null,
     snoozedAt: chat.snoozedAt ?? null,
     providerArchivedAt: chat.providerArchivedAt ?? null,
@@ -580,9 +583,14 @@ router.get(
         // clobber each other on the same object key.
         AND: [scopeWhere, visibilityWhere, ...(searchWhere ? [searchWhere] : [])],
       },
-      // Pinned chats float to the top, then the usual recency order.
+      // Pinned chats float to the top — GOS pins, then the phone's own pins
+      // (read-only mirror), then the usual recency order. The provider pin is
+      // part of the ORDER, not just a badge: a chat pinned on the phone with a
+      // months-old last message must not sort below the take-200 horizon
+      // (that is exactly how a pinned conversation went invisible).
       orderBy: [
         { pinnedAt: { sort: 'desc', nulls: 'last' } },
+        { providerPinnedAt: { sort: 'desc', nulls: 'last' } },
         { lastMessageAt: { sort: 'desc', nulls: 'last' } },
         { createdAt: 'desc' },
       ],

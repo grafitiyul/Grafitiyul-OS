@@ -288,15 +288,30 @@ export function createIngest({ prisma, socket, log, accountId }) {
          AND ${ts}::timestamptz > COALESCE("lastReadAt"::timestamptz, '-infinity'::timestamptz)`;
   }
 
-  // WhatsApp's canonical INBOUND read signal: a chat's unreadCount hit 0 on the
-  // phone / another linked device (chats.update / chats.upsert / history set).
-  // We trust only the read transition (==0); a positive count is left to our
-  // own message-derived count (WhatsApp's history unread is not imported — the
-  // documented V1 limitation). Resolves across every JID form we track.
+  // WhatsApp's INBOUND read signals from PARTIAL events (chats.update):
+  //   0  → read on the phone / another linked device (the read transition)
+  //   -1 → "mark as unread" — WhatsApp's manual flag, not a count
+  // A POSITIVE count from a partial event is still ignored here: its absolute-
+  // vs-incremental semantics have historically been ambiguous in Baileys, and
+  // our own live bump (bumpUnreadById) already maintains the count. Positive
+  // counts are trusted only from SNAPSHOT-shaped events — see
+  // applySnapshotUnread. Resolves across every JID form we track.
   async function applyChatReadState(externalChatId, unreadCount) {
     if (isExcludedChatJid(externalChatId)) return;
     if (unreadCount === undefined || unreadCount === null) return;
-    if (Number(unreadCount) !== 0) return;
+    const n = Number(unreadCount);
+    if (n === -1) {
+      await prisma.whatsAppChat.updateMany({
+        where: {
+          accountId,
+          manualUnreadAt: null,
+          OR: [{ externalChatId }, { lidJid: externalChatId }, { phoneJid: externalChatId }],
+        },
+        data: { manualUnreadAt: new Date() },
+      });
+      return;
+    }
+    if (n !== 0) return;
     await prisma.$executeRaw`
       UPDATE "WhatsAppChat"
          SET "lastReadAt" = GREATEST(COALESCE("lastReadAt"::timestamptz, '-infinity'::timestamptz), COALESCE("lastMessageAt"::timestamptz, now())),
@@ -304,6 +319,117 @@ export function createIngest({ prisma, socket, log, accountId }) {
              "manualUnreadAt" = NULL
        WHERE "accountId" = ${accountId}
          AND ("externalChatId" = ${externalChatId} OR "lidJid" = ${externalChatId} OR "phoneJid" = ${externalChatId})`;
+  }
+
+  // SNAPSHOT unread restore (history bundle / chats.upsert — events that carry
+  // the provider's authoritative absolute state). This is what was missing on
+  // 2026-07-30: a fresh pairing created every row with unreadCount=0, positive
+  // phone counts were dropped, and the whole inbox flattened to "read".
+  //
+  // The phone's snapshot WINS here, including rewinding lastReadAt — that is
+  // deliberate. If GOS marked a chat read while the bridge was offline, the
+  // read receipt never reached WhatsApp, so the phone still honestly shows
+  // unread; the provider of record is the phone. The water-mark is derived so
+  // the two columns stay consistent: it lands just below the N newest incoming
+  // messages (null when we hold fewer than N+1 — e.g. a seeded chat whose
+  // messages weren't in the bundle).
+  async function applySnapshotUnread(externalChatId, unreadCount) {
+    if (isExcludedChatJid(externalChatId)) return;
+    if (unreadCount === undefined || unreadCount === null) return;
+    const n = Number(unreadCount);
+    if (!Number.isFinite(n) || n <= 0) return applyChatReadState(externalChatId, unreadCount);
+    const chat = await prisma.whatsAppChat.findFirst({
+      where: {
+        accountId,
+        OR: [{ externalChatId }, { lidJid: externalChatId }, { phoneJid: externalChatId }],
+      },
+      select: { id: true },
+    });
+    if (!chat) return;
+    const below = await prisma.whatsAppMessage.findMany({
+      where: { chatId: chat.id, direction: 'incoming' },
+      orderBy: { timestampFromSource: 'desc' },
+      skip: n,
+      take: 1,
+      select: { timestampFromSource: true },
+    });
+    await prisma.whatsAppChat.update({
+      where: { id: chat.id },
+      data: { unreadCount: n, lastReadAt: below[0]?.timestampFromSource ?? null },
+    });
+  }
+
+  // Pin normalization: history carries an epoch (seconds), chat-modify sync
+  // events may carry ms or a bare truthy flag. Preserving the real pin time
+  // matters — WhatsApp sorts multiple pinned chats by it.
+  function pinDate(pinned) {
+    if (!pinned) return null;
+    const n = Number(pinned);
+    if (!Number.isFinite(n) || n <= 0) return new Date();
+    if (n > 1e12) return new Date(n);
+    if (n > 1e9) return new Date(n * 1000);
+    return new Date();
+  }
+
+  // Pinned/unpinned ON THE PHONE — read-only mirror (GOS never writes pin
+  // back). `pinned` is trusted from every chat event: it is a flag, not a
+  // count, so the partial-event ambiguity above does not apply.
+  async function applyChatPinState(externalChatId, pinned) {
+    if (isExcludedChatJid(externalChatId)) return;
+    if (pinned === undefined) return;
+    await prisma.whatsAppChat.updateMany({
+      where: {
+        accountId,
+        OR: [{ externalChatId }, { lidJid: externalChatId }, { phoneJid: externalChatId }],
+      },
+      data: { providerPinnedAt: pinDate(pinned) },
+    });
+  }
+
+  // Seed a chat row straight from the history bundle's chats[] — for
+  // conversations whose MESSAGES were not in the bundle (old last message, or
+  // none at all). Until now rows were only ever created by messages, so such a
+  // chat existed on the phone but nowhere in GOS. The provider's
+  // conversationTimestamp becomes lastMessageAt, so normal active/inactive
+  // filtering keeps behaving (an ancient chat seeds in but stays out of the
+  // active scope on its own).
+  async function seedChatFromHistory(c) {
+    const jid = c?.id;
+    if (typeof jid !== 'string' || !jid || isExcludedChatJid(jid)) return;
+    if (socket.user?.id && jid === socket.user.id) return;
+    const isGroup = isGroupJid(jid);
+    if (isGroup) {
+      const existing = await prisma.whatsAppChat.findUnique({
+        where: { accountId_externalChatId: { accountId, externalChatId: jid } },
+        select: { id: true },
+      });
+      if (existing) return;
+    } else {
+      // Resolves across every JID form AND merges an existing lid/pn split —
+      // seeding must never create the duplicate that merge logic exists to kill.
+      const existing = await resolvePrivateChat(jid);
+      if (existing) return;
+    }
+    const tsNum = Number(c.conversationTimestamp || 0);
+    const lastMessageAt = tsNum > 1e12 ? new Date(tsNum) : tsNum > 0 ? new Date(tsNum * 1000) : null;
+    const name = pickName(c.name);
+    const archived = c.archived ?? c.archive;
+    await prisma.whatsAppChat.create({
+      data: {
+        accountId,
+        externalChatId: jid,
+        type: isGroup ? 'group' : 'private',
+        savedContactName: isGroup ? null : name,
+        groupSubject: isGroup ? name : null,
+        phoneNumber: isGroup ? null : jidToPhone(jid),
+        lidJid: !isGroup && jid.endsWith('@lid') ? jid : null,
+        phoneJid: !isGroup && jid.endsWith('@s.whatsapp.net') ? jid : null,
+        lastMessageAt,
+        providerArchivedAt: archived ? new Date() : null,
+        providerPinnedAt: pinDate(c.pinned),
+      },
+    });
+    log.info({ chatId: jid, lastMessageAt }, 'seeded chat from history bundle (no messages in bundle)');
   }
 
   // ── media pipeline ──────────────────────────────────────────────────────
@@ -715,13 +841,18 @@ export function createIngest({ prisma, socket, log, accountId }) {
       // Provider state AFTER the message pass — history messages just created
       // rows for archived chats; this flags them so the active inbox never
       // shows conversations the phone's own list wouldn't (root-cause fix).
+      // The bundle is a SNAPSHOT, so this pass also:
+      //   * seeds rows for chats whose messages weren't in the bundle,
+      //   * restores the phone's absolute unread counts (applySnapshotUnread),
+      //   * mirrors the phone's pin state.
       for (const c of chats) {
         try {
+          if (!c.id) continue;
+          await seedChatFromHistory(c);
           const archived = c.archived ?? c.archive;
-          if (c.id && archived !== undefined) await applyChatState(c.id, !!archived);
-          // Reconnect reconciliation: a chat that is read on the phone
-          // (unreadCount 0) repairs any GOS unread we missed while offline.
-          if (c.id && c.unreadCount !== undefined) await applyChatReadState(c.id, c.unreadCount);
+          if (archived !== undefined) await applyChatState(c.id, !!archived);
+          if (c.unreadCount !== undefined) await applySnapshotUnread(c.id, c.unreadCount);
+          if (c.pinned !== undefined) await applyChatPinState(c.id, c.pinned);
         } catch (err) {
           log.warn({ chatId: c.id, err: errSummary(err) }, 'history chats state failed');
         }
@@ -749,13 +880,16 @@ export function createIngest({ prisma, socket, log, accountId }) {
     },
 
     async onChatsUpsert(chats) {
+      // chats.upsert carries FULL chat objects (snapshot-shaped) — positive
+      // unread counts are trusted here, same as the history bundle.
       for (const chat of chats || []) {
         if (!chat.id) continue;
         try {
           await applyChatIdentity(chat.id, chat.name);
           const archived = chat.archived ?? chat.archive;
           if (archived !== undefined) await applyChatState(chat.id, !!archived);
-          if (chat.unreadCount !== undefined) await applyChatReadState(chat.id, chat.unreadCount);
+          if (chat.unreadCount !== undefined) await applySnapshotUnread(chat.id, chat.unreadCount);
+          if (chat.pinned !== undefined) await applyChatPinState(chat.id, chat.pinned);
         } catch (err) {
           log.warn({ chatId: chat.id, err: errSummary(err) }, 'chats.upsert identity failed');
         }
@@ -771,8 +905,11 @@ export function createIngest({ prisma, socket, log, accountId }) {
           // `archived`, chat-modify sync actions emit `archive`).
           const archived = update.archived ?? update.archive;
           if (archived !== undefined) await applyChatState(update.id, !!archived);
-          // Read on the phone / another linked device (unreadCount → 0).
+          // Read on the phone (0) / marked unread on the phone (-1). Positive
+          // counts from this PARTIAL event stay untrusted — see applyChatReadState.
           if (update.unreadCount !== undefined) await applyChatReadState(update.id, update.unreadCount);
+          // Pinned / unpinned on the phone.
+          if (update.pinned !== undefined) await applyChatPinState(update.id, update.pinned);
         } catch (err) {
           log.warn({ chatId: update.id, err: errSummary(err) }, 'chats.update identity failed');
         }

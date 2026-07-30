@@ -1548,6 +1548,12 @@ model WhatsAppChat {
   // excludes them while CRM history keeps the full mirror.
   providerArchivedAt DateTime?
   providerDeletedAt  DateTime?
+  // Pinned ON THE PHONE (read-only mirror; GOS never writes pin state back).
+  // Captured from the history bundle + chats events so a chat the phone shows
+  // at the very top cannot sort five months deep here — the exact failure that
+  // made a pinned conversation invisible (2026-07-30, take-200 truncation).
+  // Distinct from pinnedAt, which is the GOS team's own pin.
+  providerPinnedAt   DateTime?
   // GOS-side manual hide ("הסתר מהרשימה") — cleanup for chats deleted on the
   // phone BEFORE provider-state tracking existed (no retroactive signal).
   hiddenAt           DateTime?
