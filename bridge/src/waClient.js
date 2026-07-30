@@ -105,6 +105,7 @@ export class WaClient {
     this.auth = null;
     this.reconnectTimer = null;
     this.healthyTimer = null;
+    this.appStateResyncTimer = null;
     // loggedOut told us to stop reconnecting; cleared by explicit start().
     this.stopped = false;
     // In-memory backoff counter (the persisted reconnectAttempts is UI-only).
@@ -780,16 +781,33 @@ export class WaClient {
       // Baileys does NOT resync on its own just because the cursor is missing —
       // it waits for server "dirty" hints or an explicit request. Deleting this
       // account's app-state-sync-version rows and restarting the bridge is the
-      // CANONICAL recovery procedure (proven 2026-07-30: it replays the phone's
-      // pin/archive/read-state actions without creating a new device link).
-      // On a normal boot the cursors exist and this is a no-op.
-      void this.maybeInitialAppStateResync(socketId);
+      // CANONICAL recovery procedure: it replays the phone's pin/archive/
+      // read-state actions without creating a new device link. On a normal boot
+      // the cursors exist and this is a no-op.
+      //
+      // DELAYED past the deploy-overlap churn, and that delay is load-bearing
+      // (proven live 2026-07-30): a Railway restart briefly runs two containers,
+      // whose sockets replace each other (440 ping-pong) for a few seconds.
+      // Firing on the first 'open' put the resync on a socket that was replaced
+      // mid-processing — and a half-processed resync still REBUILDS the cursor
+      // rows (decodePatches persists versions even when the event flush dies),
+      // so the retry guard saw cursors present and never retried. Waiting until
+      // the socket has stayed open 30s runs it on the surviving socket; if this
+      // one is replaced too, the timer is cleared on close and the next 'open'
+      // re-schedules (cursors still absent, because we haven't fired yet).
+      this.clearAppStateResyncTimer();
+      this.appStateResyncTimer = setTimeout(() => {
+        void this.maybeInitialAppStateResync(socketId);
+      }, 30_000);
     }
 
     if (connection === 'close') {
       this.connected = false;
       this.socketOpenedAt = null;
       this.clearHealthyTimer();
+      // A pending recovery resync must not fire on a dead/replaced socket —
+      // the next 'open' re-schedules it (cursor still absent until it runs).
+      this.clearAppStateResyncTimer();
       const code = disconnectCode(lastDisconnect);
       const reason = describeReason(code);
       this.lastDisconnectReason = reason;
@@ -868,6 +886,13 @@ export class WaClient {
     if (this.healthyTimer) {
       clearTimeout(this.healthyTimer);
       this.healthyTimer = null;
+    }
+  }
+
+  clearAppStateResyncTimer() {
+    if (this.appStateResyncTimer) {
+      clearTimeout(this.appStateResyncTimer);
+      this.appStateResyncTimer = null;
     }
   }
 }
