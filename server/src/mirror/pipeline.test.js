@@ -9,7 +9,7 @@ process.env.MIRROR_APPLY_ENABLED = 'true';
 import { OUTCOME, buildIdempotencyKey, ingestMirror, mirroredEntities, processEvent, receive } from './pipeline.js';
 import { CLAIM_TTL_MS, claimOneEvent, mirrorHealth, runPollTick, runRetryTick } from './worker.js';
 import { resolveConflict } from './resolve.js';
-import { pdDate, toMinor, dealAdapter, entityForPipedriveObject, isDeleteEvent } from './sources/pipedriveMirror.js';
+import { pdDate, toMinor, dealAdapter, contactAdapter, entityForPipedriveObject, isDeleteEvent } from './sources/pipedriveMirror.js';
 
 // ── an in-memory stand-in for the tables the mirror touches ──────────────────
 function mirrorDb({ crosswalk = [], deals = [], issues = [] } = {}) {
@@ -206,14 +206,79 @@ test('an unresolved conflict does NOT advance the baseline, so it re-raises', as
   assert.equal(again.outcome, OUTCOME.CONFLICT, 'it re-raises until a human decides');
 });
 
-test('a record with no crosswalk is recorded, never created', async () => {
+test('an adapter without creation support DEFERS, it does not create or discard', async () => {
+  // This test used to assert the event was marked `processed` with outcome
+  // NOT_CROSSWALKED. That was a silent, permanent discard: 74% of live traffic
+  // targets records GOS does not yet have, and every one of those changes was
+  // being thrown away while the pipeline reported success.
   const db = mirrorDb({ crosswalk: [], deals: [] });
   const res = await ingestMirror(db, {
     system: 'pipedrive', entity: 'deal', externalId: '999', changeKind: 'updated',
     transport: 'webhook', version: 'v1', rawPayload: pdPayload({ id: 999 }),
   }, ADAPTER);
-  assert.equal(res.outcome, OUTCOME.NOT_CROSSWALKED);
-  assert.equal(db._t.deal.length, 0, 'the mirror NEVER creates records');
+
+  assert.equal(res.status, 'pending', 'the event survives for replay');
+  assert.equal(res.awaitingSupport, true);
+  assert.equal(db._t.deal.length, 0, 'an adapter with no createGos still creates nothing');
+  const ev = db._t.mirrorEvent[0];
+  assert.equal(ev.status, 'pending');
+  assert.equal(ev.failureCode, 'awaiting_creation_support');
+  assert.equal(ev.processedAt ?? null, null, 'nothing was processed, so processedAt stays null');
+  assert.ok(ev.nextRetryAt, 'and it is deferred rather than spun');
+});
+
+test('an adapter WITH creation support creates and crosswalks', async () => {
+  const db = mirrorDb({ crosswalk: [], deals: [] });
+  let createdWith = null;
+  const creating = {
+    ...ADAPTER,
+    createGos: async (_db, normalized) => {
+      createdWith = normalized.fields;
+      return { entityType: 'Deal', entityId: 'new-deal-1' };
+    },
+  };
+  const res = await ingestMirror(db, {
+    system: 'pipedrive', entity: 'deal', externalId: '999', changeKind: 'updated',
+    transport: 'webhook', version: 'v1', rawPayload: pdPayload({ id: 999 }),
+  }, creating);
+
+  assert.equal(res.outcome, OUTCOME.CREATED);
+  assert.equal(res.entityId, 'new-deal-1');
+  assert.ok(createdWith, 'the adapter receives the normalized fields');
+  const ev = db._t.mirrorEvent[0];
+  assert.equal(ev.status, 'processed');
+  assert.equal(ev.gosEntityId, 'new-deal-1');
+});
+
+test('a declined creation is deferred with the adapter\'s own reason', async () => {
+  const db = mirrorDb({ crosswalk: [], deals: [] });
+  const declining = {
+    ...ADAPTER,
+    createGos: async () => ({ reason: 'parent_deal_missing', detail: 'activity 5 references deal 77 which is not in GOS' }),
+  };
+  const res = await ingestMirror(db, {
+    system: 'pipedrive', entity: 'deal', externalId: '999', changeKind: 'updated',
+    transport: 'webhook', version: 'v1', rawPayload: pdPayload({ id: 999 }),
+  }, declining);
+
+  assert.equal(res.status, 'pending');
+  assert.equal(res.reason, 'parent_deal_missing');
+  const ev = db._t.mirrorEvent[0];
+  assert.equal(ev.failureCode, 'parent_deal_missing');
+  assert.match(ev.failureMessage, /deal 77/);
+  assert.equal(ev.processedAt ?? null, null);
+});
+
+test('a record deleted upstream before it was ever imported is not resurrected', async () => {
+  const db = mirrorDb({ crosswalk: [], deals: [] });
+  let createCalled = false;
+  const creating = { ...ADAPTER, createGos: async () => { createCalled = true; return { entityId: 'x' }; } };
+  const res = await ingestMirror(db, {
+    system: 'pipedrive', entity: 'deal', externalId: '999', changeKind: 'deleted',
+    transport: 'webhook', version: 'v1', rawPayload: { meta: { action: 'deleted', id: 999 }, current: null },
+  }, creating);
+  assert.equal(createCalled, false, 'creating a record the source just deleted would be absurd');
+  assert.equal(res.outcome, OUTCOME.SOURCE_DELETED);
 });
 
 test('a source deletion is recorded, never applied', async () => {
@@ -554,4 +619,75 @@ test('a buffered event releases its claim — buffering is not work in progress'
   assert.equal(row.claimedAt, null, 'the claim must be released');
   assert.equal(row.claimedBy, null);
   assert.equal(row.processedAt ?? null, null, 'and nothing may be marked processed');
+});
+
+// ── M5: append-only channel reconciliation ───────────────────────────────────
+// `reconcileAppendOnly` existed in merge.js and was called from NOWHERE in the
+// runtime. The ownership map declared phones/emails append-only, the engine
+// implemented it, and no code path joined them — so a number added in Pipedrive
+// never reached GOS.
+
+function contactDb({ phones = [], emails = [] } = {}) {
+  const db = mirrorDb({
+    crosswalk: [{ sourceSystem: 'pipedrive', sourceType: 'person', sourceId: '77', entityType: 'contact', entityId: 'c1', syncBaseline: null }],
+  });
+  db._t.contactPhone = phones.map((p, i) => ({ id: `p${i}`, contactId: 'c1', value: p, isPrimary: i === 0, sortOrder: i }));
+  db._t.contactEmail = emails.map((e, i) => ({ id: `e${i}`, contactId: 'c1', value: e, isPrimary: i === 0, sortOrder: i }));
+  db.contact = {
+    findUnique: async () => ({ id: 'c1', contactNo: 5, firstNameHe: 'א', lastNameHe: 'ב', taxId: null }),
+    update: async () => ({}),
+  };
+  db.contactPhone = {
+    findMany: async () => db._t.contactPhone,
+    create: async ({ data }) => { const r = { id: `p${db._t.contactPhone.length}`, ...data }; db._t.contactPhone.push(r); return r; },
+  };
+  db.contactEmail = {
+    findMany: async () => db._t.contactEmail,
+    create: async ({ data }) => { const r = { id: `e${db._t.contactEmail.length}`, ...data }; db._t.contactEmail.push(r); return r; },
+  };
+  return db;
+}
+const personPayload = (phone, email) => ({
+  meta: { action: 'updated', object: 'person' },
+  current: { id: 77, name: 'א ב', phone: phone ? [{ value: phone }] : [], email: email ? [{ value: email }] : [] },
+});
+
+test('a phone added in Pipedrive appears in GOS', async () => {
+  const db = contactDb({ phones: ['050-111-2222'] });
+  await ingestMirror(db, {
+    system: 'pipedrive', entity: 'contact', externalId: '77', changeKind: 'updated',
+    transport: 'webhook', version: 'v1', rawPayload: personPayload('050-333-4444', null),
+  }, contactAdapter());
+  assert.equal(db._t.contactPhone.length, 2);
+  assert.equal(db._t.contactPhone[1].value, '050-333-4444');
+});
+
+test('the SAME phone in another format is not added twice', async () => {
+  // 0501112222 and +972501112222 are one number, not two.
+  const db = contactDb({ phones: ['050-111-2222'] });
+  await ingestMirror(db, {
+    system: 'pipedrive', entity: 'contact', externalId: '77', changeKind: 'updated',
+    transport: 'webhook', version: 'v1', rawPayload: personPayload('+972501112222', null),
+  }, contactAdapter());
+  assert.equal(db._t.contactPhone.length, 1, 'compared by international normal form');
+});
+
+test('an existing GOS phone is never edited, re-primaried or removed', async () => {
+  const db = contactDb({ phones: ['050-111-2222'] });
+  const before = { ...db._t.contactPhone[0] };
+  await ingestMirror(db, {
+    system: 'pipedrive', entity: 'contact', externalId: '77', changeKind: 'updated',
+    transport: 'webhook', version: 'v1', rawPayload: personPayload('050-999-8888', null),
+  }, contactAdapter());
+  assert.deepEqual(db._t.contactPhone[0], before, 'the office may have corrected it by hand');
+  assert.equal(db._t.contactPhone[1].isPrimary, false, 'an addition never becomes primary');
+});
+
+test('emails compare case-insensitively', async () => {
+  const db = contactDb({ emails: ['Noa@Example.com'] });
+  await ingestMirror(db, {
+    system: 'pipedrive', entity: 'contact', externalId: '77', changeKind: 'updated',
+    transport: 'webhook', version: 'v1', rawPayload: personPayload(null, 'noa@example.com'),
+  }, contactAdapter());
+  assert.equal(db._t.contactEmail.length, 1);
 });

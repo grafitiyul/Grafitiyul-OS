@@ -26,6 +26,7 @@ import { applyEnabled } from './config.js';
 import { MODE, assertAdapterContract, diffSets, modeOf } from './modes.js';
 
 export const OUTCOME = Object.freeze({
+  CREATED: 'created',   // the mirror created the GOS record (no crosswalk existed)
   MERGED: 'merged',
   CONVERGED: 'converged',
   NOOP: 'noop',
@@ -41,6 +42,12 @@ export const OUTCOME = Object.freeze({
 
 const MAX_ATTEMPTS = 6;
 const retryDelayMs = (attempt) => Math.min(60_000 * 2 ** (attempt - 1), 60 * 60_000);
+
+// How long an event waits before being re-examined when nothing can be done with
+// it YET — no creation support, or an adapter that declined for a nameable
+// reason. Long enough not to spin the worker, short enough that support landing
+// mid-day is picked up without anyone poking it.
+const UNSUPPORTED_RETRY_MS = 30 * 60 * 1000;
 
 export function buildIdempotencyKey({ system, entity, externalId, changeKind, version }) {
   // `version` is whatever the source offers to distinguish one change from the
@@ -145,6 +152,28 @@ export async function processEvent(db, eventId, adapter, { allowApply = null } =
     data: { attemptCount: attemptNo, processedAt: new Date(), claimedAt: null, claimedBy: null, ...data },
   });
 
+  /**
+   * Park an event that could not be actioned YET.
+   *
+   * Deliberately NOT `finish`: that stamps processedAt, and an event nothing was
+   * done to has not been processed. Saying otherwise corrupts the one signal that
+   * tells us whether the buffer has been drained, and it is how "we handled it"
+   * quietly comes to mean "we dropped it".
+   */
+  const defer = (code, message, extra = {}) => db.mirrorEvent.update({
+    where: { id: eventId },
+    data: {
+      status: 'pending',
+      outcome: null,
+      failureCode: code,
+      failureMessage: message,
+      nextRetryAt: new Date(Date.now() + UNSUPPORTED_RETRY_MS),
+      claimedAt: null,
+      claimedBy: null,
+      ...extra,
+    },
+  });
+
   try {
     const system = row.system;
     const entity = row.entity;
@@ -175,12 +204,56 @@ export async function processEvent(db, eventId, adapter, { allowApply = null } =
     const key = { sourceSystem: system, sourceType: adapter.sourceType, sourceId: row.externalId };
     const link = await readBaseline(db, key);
 
-    // No crosswalk → this legacy record was never imported. The mirror does NOT
-    // create records: creation is the ingress platform's job, and inventing one
-    // here would produce a second, unlinked copy of a customer.
+    // ── no crosswalk ──────────────────────────────────────────────────────────
+    // Previously this marked the event `processed` and moved on, which silently
+    // and PERMANENTLY discarded every change to a record GOS did not already
+    // have — 74% of live traffic when it was measured. Two changes:
+    //
+    //  1. An adapter that knows how to create its entity does so, crosswalk-first
+    //     and idempotent, so a legacy record created after the snapshot still
+    //     arrives instead of being lost.
+    //  2. An adapter that does NOT support creation leaves the event PENDING with
+    //     a named reason and a deferred retry. It stays measurable and replayable,
+    //     and lands by itself once support exists or the record is imported.
+    //     It is never marked processed on the strength of having done nothing.
     if (!link?.entityId) {
-      await finish({ status: 'processed', outcome: OUTCOME.NOT_CROSSWALKED });
-      return { status: 'processed', outcome: OUTCOME.NOT_CROSSWALKED };
+      if (normalized.sourceDeleted) {
+        // Nothing to create: the source row is gone and GOS never had it.
+        await finish({ status: 'processed', outcome: OUTCOME.SOURCE_DELETED, failureCode: 'deleted_before_import' });
+        return { status: 'processed', outcome: OUTCOME.SOURCE_DELETED };
+      }
+
+      if (typeof adapter.createGos !== 'function') {
+        await defer(
+          'awaiting_creation_support',
+          `${system}:${entity} ${row.externalId} has no crosswalk and ${entity} creation is not implemented — event retained, not discarded`,
+        );
+        return { status: 'pending', outcome: null, awaitingSupport: true };
+      }
+
+      // Crosswalk-first and idempotent is the ADAPTER's contract: it must write
+      // the LegacyRecord in the same transaction as the entity, so a retry after a
+      // partial failure finds the crosswalk and returns it instead of creating a
+      // second copy of a customer.
+      const created = await adapter.createGos(db, normalized, row);
+      if (!created?.entityId) {
+        // Declined for a nameable reason (unresolvable parent, unmappable
+        // payload). Deferred and measurable, never discarded.
+        await defer(
+          created?.reason || 'creation_declined',
+          created?.detail || `adapter declined to create ${entity} ${row.externalId}`,
+        );
+        return { status: 'pending', outcome: null, creationDeclined: true, reason: created?.reason || 'creation_declined' };
+      }
+
+      await finish({
+        status: 'processed',
+        outcome: OUTCOME.CREATED,
+        gosEntityType: created.entityType || entity,
+        gosEntityId: created.entityId,
+        fieldsWritten: created.fieldsWritten || { created: true },
+      });
+      return { status: 'processed', outcome: OUTCOME.CREATED, entityId: created.entityId };
     }
 
     // Disappearance is recorded, never actioned. GOS owns operational history.
@@ -218,6 +291,19 @@ export async function processEvent(db, eventId, adapter, { allowApply = null } =
 
     if (Object.keys(merged.set).length) {
       await adapter.applyGos(db, link.entityId, merged.set);
+    }
+
+    // Channels travel BESIDE the field set and are reconciled append-only, so
+    // they run whether or not any field merged — a contact whose name is
+    // unchanged may still have gained a phone number. Additions are counted into
+    // the audit trail so "nothing merged" and "nothing happened" stay
+    // distinguishable.
+    let channelsAdded = null;
+    if (normalized.channels && typeof adapter.applyChannels === 'function') {
+      channelsAdded = await adapter.applyChannels(db, link.entityId, normalized.channels);
+      if (channelsAdded && (channelsAdded.phones || channelsAdded.emails) && outcome === OUTCOME.NOOP) {
+        outcome = OUTCOME.MERGED;
+      }
     }
 
     if (merged.conflicts.length) {

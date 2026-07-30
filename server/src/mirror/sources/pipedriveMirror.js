@@ -11,6 +11,8 @@
 // merge and with it the ability to clobber a human edit.
 
 import { PD_FIELD_KEYS } from '../../migration/import/marketingImport.js';
+import { reconcileAppendOnly } from '../merge.js';
+import { normalizePhoneIntl } from '../../whatsapp/phone.js';
 import { ACTIVITY_TYPE_MAP, DEAL_FIELDS, ORG_FIELDS, ORG_TYPE_LABELS, PERSON_FIELDS, stageKeyForPipedriveStage } from './pipedriveFields.js';
 
 const str = (v) => {
@@ -243,6 +245,60 @@ export function contactAdapter() {
       });
     },
     async applyGos(db, id, set) { await db.contact.update({ where: { id }, data: set }); },
+
+    /**
+     * Append-only channel reconciliation.
+     *
+     * `reconcileAppendOnly` existed in merge.js and was never called from
+     * anywhere in the runtime — the ownership map declared phones and emails
+     * append-only, the merge engine implemented it, and no code path connected
+     * the two. A number added in Pipedrive simply never reached GOS.
+     *
+     * APPEND ONLY, and that word is doing real work: nothing here edits,
+     * re-primaries, re-labels, reorders or deletes. The office may have corrected
+     * a number by hand, and a sync must never undo that. Only genuinely absent
+     * values are added, at the end.
+     *
+     * Phones compare by their INTERNATIONAL normal form, so 050-123-4567,
+     * 0501234567 and +972501234567 are recognised as the same number rather than
+     * accumulating as three. Emails compare case-insensitively for the same reason.
+     */
+    async applyChannels(db, id, channels = {}) {
+      const added = { phones: 0, emails: 0 };
+
+      const existingPhones = await db.contactPhone.findMany({ where: { contactId: id }, select: { value: true, sortOrder: true } });
+      const phonePlan = reconcileAppendOnly({
+        current: existingPhones.map((p) => p.value),
+        incoming: channels.phones || [],
+        isSame: (a, b) => (normalizePhoneIntl(a) || a) === (normalizePhoneIntl(b) || b),
+      });
+      let phoneOrder = existingPhones.reduce((m, p) => Math.max(m, p.sortOrder ?? 0), 0);
+      for (const value of phonePlan.add) {
+        await db.contactPhone.create({
+          // isPrimary stays false: the primary is a GOS decision, and a mirrored
+          // addition must never demote the number the office actually calls.
+          data: { contactId: id, value, label: 'Pipedrive', isPrimary: false, sortOrder: ++phoneOrder },
+        });
+        added.phones += 1;
+      }
+
+      const existingEmails = await db.contactEmail.findMany({ where: { contactId: id }, select: { value: true, sortOrder: true } });
+      const emailPlan = reconcileAppendOnly({
+        current: existingEmails.map((e) => e.value),
+        incoming: channels.emails || [],
+        isSame: (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase(),
+      });
+      let emailOrder = existingEmails.reduce((m, e) => Math.max(m, e.sortOrder ?? 0), 0);
+      for (const value of emailPlan.add) {
+        await db.contactEmail.create({
+          data: { contactId: id, value, label: 'Pipedrive', isPrimary: false, sortOrder: ++emailOrder },
+        });
+        added.emails += 1;
+      }
+
+      return added;
+    },
+
     describe: (gos) => ({ label: `${gos.firstNameHe || ''} ${gos.lastNameHe || ''}`.trim(), orderNo: gos.contactNo }),
   };
 }
