@@ -663,23 +663,45 @@ export function createIngest({ prisma, socket, log, accountId }) {
         { msgCount: messages.length, chatCount: chats.length, contactCount: contacts.length, lidPnMappingCount: lidPnMappings.length, isLatest: history.isLatest },
         'history sync: ingesting',
       );
-      if (lidPnMappings.length) await harvestLidPnMappings(lidPnMappings);
-      // Identity FIRST so the message pass finds populated columns; both
-      // identity handlers are no-ops on untracked chats.
-      for (const c of contacts) {
-        try {
-          if (c.id) await applyContactIdentity(c);
-        } catch (err) {
-          log.warn({ contactId: c.id, err: errSummary(err) }, 'history contacts identity failed');
+      // Enrichment runs TWICE — once before the message pass and once after —
+      // and that is not belt-and-braces, it is the difference between a first
+      // pairing arriving named and arriving as 811 phone numbers.
+      //
+      // Every enrichment pass here is deliberately a no-op on chats we don't
+      // already track (`applyChatIdentity`: "never seed empty chats from
+      // metadata"; `resolvePrivateChat`: "no-op when we track neither form").
+      // On a RECONNECT the rows already exist, so a pre-pass populates the
+      // cross-reference columns the message pass needs to resolve @lid/@pn
+      // duplicates — which is why the pre-pass exists and must stay.
+      //
+      // On a FIRST pairing there are no rows yet: the message pass is what
+      // creates them. A pre-pass alone therefore discards the entire address
+      // book. Measured on the 2026-07-30 sync of 811 chats: savedContactName
+      // 0/811, phoneNumber 83/811, lidJid 703/811 — the names and the lid→phone
+      // mappings were all present in the bundle and all dropped on the floor.
+      //
+      // The post-pass replays the same bundle against the rows that now exist.
+      // Both passes are idempotent (every write is diffed against the current
+      // value first), so a reconnect just pays for a second cheap no-op sweep.
+      const enrich = async (phase) => {
+        if (lidPnMappings.length) await harvestLidPnMappings(lidPnMappings);
+        for (const c of contacts) {
+          try {
+            if (c.id) await applyContactIdentity(c);
+          } catch (err) {
+            log.warn({ phase, contactId: c.id, err: errSummary(err) }, 'history contacts identity failed');
+          }
         }
-      }
-      for (const c of chats) {
-        try {
-          if (c.id) await applyChatIdentity(c.id, c.name);
-        } catch (err) {
-          log.warn({ chatId: c.id, err: errSummary(err) }, 'history chats identity failed');
+        for (const c of chats) {
+          try {
+            if (c.id) await applyChatIdentity(c.id, c.name);
+          } catch (err) {
+            log.warn({ phase, chatId: c.id, err: errSummary(err) }, 'history chats identity failed');
+          }
         }
-      }
+      };
+
+      await enrich('pre');
       for (const msg of messages) {
         try {
           await ingestMessage(msg, 'history');
@@ -687,6 +709,9 @@ export function createIngest({ prisma, socket, log, accountId }) {
           log.error({ err: errSummary(err), msgId: msg.key?.id ?? null, chatId: msg.key?.remoteJid ?? null }, 'history-sync ingest failed');
         }
       }
+      // The rows exist now — replay the bundle's identity against them.
+      await enrich('post');
+
       // Provider state AFTER the message pass — history messages just created
       // rows for archived chats; this flags them so the active inbox never
       // shows conversations the phone's own list wouldn't (root-cause fix).
