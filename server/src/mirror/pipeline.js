@@ -23,6 +23,7 @@ import { advanceBaseline, markSourceDeleted, readBaseline } from './baseline.js'
 import { raiseSyncConflict } from './conflicts.js';
 import { mirrorShouldIgnore, sourceForLegacyLabel } from './sourceRegistry.js';
 import { applyEnabled } from './config.js';
+import { MODE, assertAdapterContract, diffSets, modeOf } from './modes.js';
 
 export const OUTCOME = Object.freeze({
   MERGED: 'merged',
@@ -33,6 +34,9 @@ export const OUTCOME = Object.freeze({
   SOURCE_DELETED: 'source_deleted',
   NOT_CROSSWALKED: 'not_crosswalked',
   IGNORED_SOURCE_CUT_OVER: 'ignored_source_cut_over',
+  // parent_recompute outcomes
+  RECOMPUTED: 'recomputed',
+  NO_PARENT: 'no_parent',
 });
 
 const MAX_ATTEMPTS = 6;
@@ -134,6 +138,15 @@ export async function processEvent(db, eventId, adapter, { allowApply = null } =
     if (owningSystem(entity) !== system) {
       await finish({ status: 'skipped', outcome: OUTCOME.NOT_CROSSWALKED, failureCode: 'entity_not_owned_by_system' });
       return { status: 'skipped', outcome: OUTCOME.NOT_CROSSWALKED };
+    }
+
+    // ── mode dispatch ────────────────────────────────────────────────────────
+    // The adapter DECLARES its shape; the engine implements both. Everything
+    // below this point is entity_merge.
+    const mode = modeOf(adapter);
+    assertAdapterContract(adapter, mode);
+    if (mode === MODE.PARENT_RECOMPUTE) {
+      return runParentRecompute(db, row, adapter, finish);
     }
 
     const normalized = await adapter.normalize(row.rawPayload, row);
@@ -239,6 +252,87 @@ export async function processEvent(db, eventId, adapter, { allowApply = null } =
     });
     return { status, failureCode: err?.code || 'process_failed' };
   }
+}
+
+/**
+ * PARENT_RECOMPUTE.
+ *
+ * A change to a child row is not applied to that row — it is applied by
+ * recomputing the parent's whole derived set. That is the only correct move when
+ * the GOS effect is an aggregate: one coordination row's seats mean nothing
+ * without its siblings, so "merge this row" has no meaning at all.
+ *
+ * The engine owns the SHAPE (resolve → derive → compare → diff → apply) and the
+ * adapter owns the DOMAIN (what a parent is, how the set is derived, what
+ * identity and equality mean, what must be protected). Nothing here knows about
+ * tours, bookings or Airtable.
+ */
+async function runParentRecompute(db, row, adapter, finish) {
+  const parent = await adapter.resolveParent(db, row);
+  if (!parent?.entityId) {
+    // The child names a parent GOS has never seen. Recorded, not guessed at —
+    // the mirror does not create records.
+    await finish({ status: 'processed', outcome: OUTCOME.NO_PARENT });
+    return { status: 'processed', outcome: OUTCOME.NO_PARENT };
+  }
+
+  const desired = await adapter.derive(db, parent);
+  const current = await adapter.loadCurrent(db, parent);
+  const diff = diffSets({
+    current,
+    desired,
+    keyOf: adapter.keyOf,
+    sameOf: adapter.sameOf,
+    protect: adapter.protect || null,
+  });
+
+  if (diff.conflicts.length) {
+    const d = adapter.describeParent ? adapter.describeParent(parent) : {};
+    await raiseSyncConflict(db, {
+      system: row.system,
+      entity: row.entity,
+      entityId: parent.entityId,
+      entityLabel: d.label,
+      orderNo: d.orderNo,
+      // Presented in the same three-value shape as a field conflict, so the
+      // בקרה card renders one vocabulary regardless of which mode produced it.
+      conflicts: diff.conflicts.map((c) => ({
+        field: adapter.conflictFieldLabel || 'set',
+        base: null,
+        source: c.desired,
+        gos: c.current,
+        reason: 'set_protected',
+      })),
+    });
+  }
+
+  if (diff.hasWork) await adapter.applyDiff(db, parent, diff);
+
+  // The baseline for a recompute is the DERIVED set, keyed on the parent — not
+  // the child that happened to trigger it. That is what makes a second event on
+  // a sibling child a no-op once the parent already converged.
+  await advanceBaseline(
+    db,
+    { sourceSystem: row.system, sourceType: adapter.parentSourceType, sourceId: parent.sourceId },
+    { derivedSet: desired },
+  );
+
+  const outcome = diff.conflicts.length
+    ? OUTCOME.CONFLICT
+    : diff.hasWork ? OUTCOME.RECOMPUTED : OUTCOME.NOOP;
+
+  await finish({
+    status: 'processed',
+    outcome,
+    gosEntityType: parent.entityType || row.entity,
+    gosEntityId: parent.entityId,
+    fieldsWritten: diff.hasWork ? { added: diff.add.length, updated: diff.update.length, removed: diff.remove.length } : undefined,
+    conflicts: diff.conflicts.length ? diff.conflicts : undefined,
+    failureCode: null,
+    failureMessage: null,
+  });
+
+  return { status: 'processed', outcome, entityId: parent.entityId, diff };
 }
 
 /** Receive + process in one call — the path webhooks and pollers both use. */
