@@ -10,6 +10,11 @@
 //   GET  /events/:id              — full event + messages + validation state
 //   PUT  /events/:id              — update event config
 //   POST /events/:id/activate|disable|archive|duplicate
+//   DELETE /events/:id            — HARD delete (real delete, not archive).
+//                                   Requires an identified admin session, is
+//                                   refused once the event has send history, and
+//                                   writes an audit row. See
+//                                   src/communication/deleteEvent.js.
 //   POST /events/:id/messages     — add message (draft; publicNumber = DB serial)
 //   PUT  /messages/:id            — save draft (config + content; never touches
 //                                   the published version)
@@ -46,6 +51,10 @@ import {
 } from '../communication/triggers.js';
 import { processTrigger } from '../communication/engine.js';
 import { emitTimelineEvent, userOrigin } from '../timeline/events.js';
+import { requireAdminUser } from '../auth.js';
+import {
+  loadDeletionState, evaluateDeletability, deleteCommunicationEvent,
+} from '../communication/deleteEvent.js';
 import { VARIABLES, VARIABLE_CATEGORIES, variablesForTrigger } from '../communication/variables.js';
 import { CONDITION_FIELDS, CONDITION_OPS, ACTIVITY_TYPES, evaluateApplicability } from '../communication/conditions.js';
 import { DOCUMENT_KINDS } from '../communication/documents.js';
@@ -249,7 +258,15 @@ router.get('/events/:id', handle(async (req, res) => {
       validationErrors: await validateMessageForPublish(m, event),
     });
   }
-  res.json({ ...event, messages, activationErrors: validateEventForActivation(event) });
+  // Deletion verdict from the SAME evaluator the DELETE guard uses, so the
+  // editor's "מחק" affordance can never promise something the API refuses.
+  const deletionState = await loadDeletionState(prisma, event.id);
+  res.json({
+    ...event,
+    messages,
+    activationErrors: validateEventForActivation(event),
+    deletion: evaluateDeletability(deletionState),
+  });
 }));
 
 router.put('/events/:id', handle(async (req, res) => {
@@ -296,6 +313,16 @@ router.post('/events/:id/archive', handle(async (req, res) => {
   }).catch(() => null);
   if (!updated) return res.status(404).json({ error: 'not_found' });
   res.json(updated);
+}));
+
+// HARD delete — deliberately a real delete, not a status change. Archive and
+// disable above remain available and unchanged; this is the third, irreversible
+// option. requireAdminUser (not the ordinary requireAdminAuth) because an
+// irreversible delete needs a named actor for the audit row.
+router.delete('/events/:id', requireAdminUser, handle(async (req, res) => {
+  const origin = await userOrigin(req.adminAuth.userId);
+  const { status, body } = await deleteCommunicationEvent(prisma, { id: req.params.id, origin });
+  res.status(status).json(body);
 }));
 
 // Duplicate: new event (draft) + duplicated messages — each duplicate gets a

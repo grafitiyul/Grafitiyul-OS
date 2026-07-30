@@ -201,6 +201,20 @@ export function requireAdminAuth(req, res, next) {
     });
 }
 
+// Stricter gate for DESTRUCTIVE endpoints (hard deletes): a real, identified
+// session is required — the bootstrap escape hatch above is NOT accepted.
+//
+// Why the distinction matters: requireAdminAuth deliberately lets requests
+// through while zero active admins exist, so a fresh install can be set up from
+// inside the app. Every ordinary mutation tolerates that (it just records a null
+// actor). An irreversible delete must not: it needs a named actor for the audit
+// trail, and an install with no admins must not be destroyable by an anonymous
+// caller.
+export function requireAdminUser(req, res, next) {
+  if (req.adminAuth?.userId) return next();
+  return res.status(401).json({ error: 'unauthorized' });
+}
+
 export function validateUsername(raw) {
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();

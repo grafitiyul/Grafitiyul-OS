@@ -1790,6 +1790,9 @@ export const api = {
     event: (id) => request(`/api/communication/events/${id}`),
     updateEvent: (id, body) => request(`/api/communication/events/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
     eventAction: (id, action) => request(`/api/communication/events/${id}/${action}`, { method: 'POST' }),
+    // HARD delete. Refused with 422 event_has_history (+ blockers[]) once the
+    // event has send history — archive/disable stay available for that case.
+    deleteEvent: (id) => request(`/api/communication/events/${id}`, { method: 'DELETE' }),
     createMessage: (eventId, body) =>
       request(`/api/communication/events/${eventId}/messages`, { method: 'POST', body: JSON.stringify(body) }),
     updateMessage: (id, body) => request(`/api/communication/messages/${id}`, { method: 'PUT', body: JSON.stringify(body) }),

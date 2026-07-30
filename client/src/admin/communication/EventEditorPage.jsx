@@ -44,6 +44,7 @@ export default function EventEditorPage() {
   const [saving, setSaving] = useState(false);
   const [selectedMessageId, setSelectedMessageId] = useState(null);
   const [confirm, setConfirm] = useState(null);
+  const [deleting, setDeleting] = useState(false);
   const [simDraft, setSimDraft] = useState(null);
   const [testCtx, setTestCtx] = useState(null); // {dealId?} | {synthetic?} — opens the test-send dialog
 
@@ -149,6 +150,13 @@ export default function EventEditorPage() {
               השבת אירוע
             </button>
           )}
+          {/* Hard delete — a third, irreversible option next to הפעל/השבת.
+              Always visible: when the event has history the dialog explains why
+              it cannot be deleted rather than hiding the affordance. */}
+          <button type="button" onClick={() => setDeleting(true)}
+            className="rounded-lg border border-red-200 bg-white px-3 py-2 text-[13px] font-semibold text-red-600 hover:bg-red-50">
+            מחק
+          </button>
           <button type="button" onClick={() => navigate('/admin/settings/communication')}
             className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-[13px] text-gray-600 hover:bg-gray-50">
             חזרה לרשימה
@@ -423,7 +431,144 @@ export default function EventEditorPage() {
         onCancel={() => setConfirm(null)}
         onConfirm={() => { confirm?.action?.(); setConfirm(null); }}
       />
+
+      {deleting && (
+        <DeleteEventDialog
+          event={event}
+          onClose={() => setDeleting(false)}
+          onDeleted={() => navigate('/admin/settings/communication')}
+          onArchive={async () => { setDeleting(false); await eventAction('archive'); }}
+        />
+      )}
     </div>
+  );
+}
+
+// ── hard delete ──────────────────────────────────────────────────────────────
+//
+// One dialog, two states, driven by the SERVER's verdict (event.deletion):
+//   deletable → itemise exactly what disappears, require an explicit
+//               acknowledgement, then delete for real.
+//   blocked   → explain WHY in business language and offer ארכיון instead.
+// A 422 from the API (history appeared after the page loaded) flips the open
+// dialog into the blocked state rather than failing with a raw error.
+function DeleteEventDialog({ event, onClose, onDeleted, onArchive }) {
+  const verdict = event.deletion || { deletable: false, blockers: [], cascade: {} };
+  const [blockers, setBlockers] = useState(verdict.blockers || []);
+  const [stale, setStale] = useState(false);
+  const [ack, setAck] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const blocked = !verdict.deletable || blockers.length > 0;
+  const cascade = verdict.cascade || {};
+
+  async function doDelete() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.communication.deleteEvent(event.id);
+      onDeleted();
+    } catch (err) {
+      if (err?.payload?.error === 'event_has_history') {
+        setBlockers(err.payload.blockers || []);
+        setStale(true);
+      } else if (err?.payload?.error === 'unauthorized') {
+        setError('אין הרשאה למחיקה — התחברו מחדש ונסו שוב.');
+      } else {
+        setError(`המחיקה נכשלה: ${err?.payload?.error || err.message}`);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={blocked ? 'לא ניתן למחוק את האירוע' : 'מחיקת אירוע תקשורת'}
+      size="md"
+      footer={
+        <>
+          <button type="button" onClick={onClose}
+            className="rounded px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">
+            {blocked ? 'סגור' : 'ביטול'}
+          </button>
+          {blocked ? (
+            event.status !== 'archived' && (
+              <button type="button" onClick={onArchive}
+                className="rounded bg-gray-700 px-4 py-1.5 text-sm font-medium text-white hover:bg-gray-800">
+                העבר לארכיון
+              </button>
+            )
+          ) : (
+            <button type="button" onClick={doDelete} disabled={!ack || busy}
+              className="rounded bg-red-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-40">
+              {busy ? 'מוחק…' : 'מחק לצמיתות'}
+            </button>
+          )}
+        </>
+      }
+    >
+      <div dir="rtl" className="space-y-3 text-[13.5px] text-gray-800">
+        {blocked ? (
+          <>
+            {stale && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-900">
+                המצב השתנה מאז שנפתח המסך — לאירוע נוספה היסטוריה, ולכן המחיקה בוטלה.
+              </div>
+            )}
+            <p>
+              האירוע <span className="font-semibold">{event.internalName}</span> אינו נמחק, כי נשמרת עליו
+              היסטוריה שאסור לאבד:
+            </p>
+            <ul className="space-y-2">
+              {blockers.map((b) => (
+                <li key={b.code} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[12.5px] leading-relaxed text-gray-700">
+                  {b.he}
+                </li>
+              ))}
+            </ul>
+            <p className="text-[12.5px] leading-relaxed text-gray-500">
+              במקום מחיקה אפשר להעביר את האירוע לארכיון: הוא מפסיק לפעול ויוצא מהעבודה היומיומית,
+              ויומן השליחות והגרסאות נשמרים.
+            </p>
+          </>
+        ) : (
+          <>
+            <p>
+              מחיקת <span className="font-semibold">{event.internalName}</span> היא בלתי הפיכה —
+              האירוע לא עובר לארכיון אלא נמחק לגמרי.
+            </p>
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5">
+              <div className="mb-1 text-[12px] font-semibold text-gray-700">מה יימחק</div>
+              <ul className="list-inside list-disc space-y-0.5 text-[12.5px] text-gray-700">
+                <li>הגדרות האירוע (טריגר, תזמון, תנאים)</li>
+                {cascade.messages > 0 && (
+                  <li>
+                    {cascade.messages} מסרים שלא פורסמו
+                    {cascade.messageNumbers?.length ? ` (${cascade.messageNumbers.map((n) => `#${n}`).join(', ')})` : ''}
+                  </li>
+                )}
+                {cascade.testSends > 0 && <li>{cascade.testSends} רשומות שליחת בדיקה</li>}
+              </ul>
+            </div>
+            <p className="text-[12.5px] leading-relaxed text-gray-500">
+              מהאירוע הזה לא נשלחה מעולם תקשורת ולא פורסמה גרסה, ולכן אין יומן שליחות או היסטוריה
+              עסקית שתיפגע. המחיקה נרשמת ביומן הביקורת בשמכם.
+            </p>
+            <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+              <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} className="mt-0.5 h-4 w-4" />
+              <span className="text-[12.5px] leading-relaxed text-red-800">
+                אני מבין שהמחיקה בלתי הפיכה ולא ניתן לשחזר את האירוע.
+              </span>
+            </label>
+          </>
+        )}
+        {error && <div className="text-[12.5px] font-medium text-red-600">{error}</div>}
+      </div>
+    </Dialog>
   );
 }
 
