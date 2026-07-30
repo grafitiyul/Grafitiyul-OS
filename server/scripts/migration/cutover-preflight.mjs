@@ -16,6 +16,7 @@ import { PrismaClient } from '@prisma/client';
 import * as r2 from '../../src/migration/r2.js';
 import { migrationConfigStatus } from '../../src/migration/config.js';
 import { loadNormalizedTourLayer } from '../../src/migration/import/tourNormalize.js';
+import { classifyRejectedDates, REVIEWED_ON } from '../../src/migration/import/reviewedRejectedDates.js';
 import { accountHasCalendarScope, emailIntegrationConfigured } from '../../src/email/googleClient.js';
 
 const arg = (n) => { const i = process.argv.indexOf(n); return i >= 0 ? process.argv[i + 1] : null; };
@@ -69,8 +70,23 @@ try {
 } catch (e) { bad(`snapshot #1 manifest unreadable: ${String(e?.message || e).slice(0, 100)}`); }
 try {
   const layer = await loadNormalizedTourLayer(snap1Id);
-  if (layer.masterTours.length === 3508) ok(`tour normalization loads — master ${layer.masterTours.length} (=3,508)`);
-  else bad(`tour layer master count ${layer.masterTours.length} ≠ 3,508 — Hash A inputs drifted`);
+  // The invariant is the TOTAL, not the usable count. Snapshot #1 is immutable in
+  // R2, so 3,508 master records is a fixed fact — but since the date gate landed
+  // (2026-07-29) the loader splits them into usable + rejected, and asserting the
+  // usable half against the old total made a correct validation fix look like
+  // snapshot drift. Checking the sum still catches the thing this guard is for: a
+  // changed or wrong snapshot.
+  const usable = layer.masterTours.length;
+  const rejected = layer.rejectedDates.length;
+  if (usable + rejected === 3508) ok(`tour normalization loads — master ${usable + rejected} (=3,508: ${usable} usable + ${rejected} unusable-date)`);
+  else bad(`tour layer master total ${usable + rejected} ≠ 3,508 (${usable} usable + ${rejected} rejected) — Hash A inputs drifted`);
+
+  // And the rejected half must be the records the owner actually reviewed, so a
+  // NEW breakage inside Snapshot #1 trips preflight instead of passing silently.
+  const triage = classifyRejectedDates({ rejectedDates: layer.rejectedDates, coordRows: layer.coordRows });
+  const blocking = [...triage.unreviewed, ...triage.changed];
+  if (!blocking.length) ok(`unusable dates all reviewed & accepted ${REVIEWED_ON} (${triage.acknowledged.length})`);
+  else bad(`${blocking.length} unusable-date records were never reviewed (${blocking.slice(0, 3).map((r) => r.recId).join(', ')}) — audit them before the cutover`);
 } catch (e) { bad(`tour normalization failed: ${String(e?.message || e).slice(0, 100)}`); }
 
 // ── 3) database state ─────────────────────────────────────────────────────────
