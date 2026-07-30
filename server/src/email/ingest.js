@@ -10,6 +10,7 @@ import {
 } from './mime.js';
 import { sanitizeEmailHtml } from './sanitize.js';
 import { matchContactByEmails, resolveAutoDealId } from './matching.js';
+import { touchDealsForEmailThread } from '../crm/conversationActivity.js';
 
 // Idempotent ingest of ONE Gmail message (API `full` format) into the mirror.
 // Used by BOTH the sync worker (inbound + externally-sent mail) and the send
@@ -69,15 +70,21 @@ async function ensureThreadCrmLinks(db, thread) {
       });
     }
   }
-  if (!thread.linkedDealId && contactId && thread.linkSource !== 'unlinked') {
+  let linkedDealId = thread.linkedDealId;
+  if (!linkedDealId && contactId && thread.linkSource !== 'unlinked') {
     const dealId = await resolveAutoDealId(contactId, db);
     if (dealId) {
+      linkedDealId = dealId;
       await db.emailThread.update({
         where: { id: thread.id },
         data: { linkedDealId: dealId, linkSource: 'auto' },
       });
     }
   }
+  // Returned so the caller can stamp deal activity against the FRESHEST links
+  // — including a link this very call just created (a first email on a new
+  // conversation must still move its deal).
+  return { contactId, linkedDealId };
 }
 
 // → { created: boolean, message, threadId } | { skipped: true, reason }
@@ -236,7 +243,21 @@ export async function ingestGmailMessage(account, full, { createdByUserId = null
   }
 
   // ── CRM auto-linking (idempotent; outside the tx — safe to re-run) ───────
-  await ensureThreadCrmLinks(db, { ...thread, participants: mergedParticipants });
+  const links = await ensureThreadCrmLinks(db, { ...thread, participants: mergedParticipants });
+
+  // Deal activity: an email — in EITHER direction — is real business activity
+  // on the deal it belongs to. Stamped with the message's own sentAt (not
+  // ingest time), so a delayed sync records when the mail actually happened;
+  // touchDealActivity's GREATEST keeps it monotonic. Only for genuinely NEW
+  // messages — a duplicate replay must not re-do the work. Never throws into
+  // ingestion: a stamp failure must not cost us the mirrored message.
+  if (created) {
+    try {
+      await touchDealsForEmailThread({ ...links, id: thread.id }, sentAt || new Date(), db);
+    } catch (e) {
+      console.error('[email] deal activity stamp failed (non-fatal):', e?.message);
+    }
+  }
 
   return { created, message, threadId: thread.id };
 }

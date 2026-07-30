@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
+import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import { formatMinor } from '../../lib/money.js';
 import { contactNamesFromFull } from '../../lib/nameSplit.js';
 import { useDirtyWhen } from '../../lib/dirtyForms.js';
@@ -64,7 +65,12 @@ const dash = <span className="text-gray-400">—</span>;
 // `def` = part of the safe default set shown to first-time users.
 const COLUMNS = [
   { key: 'name', label: 'שם דיל', def: true,
-    render: (d) => <span className="font-semibold text-gray-900 text-[15px] group-hover:text-blue-700">{d.title}</span> },
+    render: (d) => (
+      <span className="inline-flex items-center gap-1.5">
+        <span className="font-semibold text-gray-900 text-[15px] group-hover:text-blue-700">{d.title}</span>
+        <UnreadChannels deal={d} />
+      </span>
+    ) },
   { key: 'organization', label: 'ארגון', def: true,
     render: (d) => d.organization?.name || dash, cls: 'text-gray-600' },
   { key: 'unit', label: 'יחידה', def: false,
@@ -104,7 +110,7 @@ const COLUMNS = [
   // happened on the deal (note, stage move, task, payment, delivery…), never
   // a worker's technical touch. Falls back to createdAt pre-backfill.
   { key: 'updatedAt', label: 'פעילות אחרונה', def: true, dir: 'ltr',
-    cls: 'text-gray-500 tabular-nums', render: (d) => fmtDate(d.lastMeaningfulActivityAt || d.createdAt) },
+    cls: 'text-gray-500 tabular-nums', render: (d) => fmtDateTime(d.lastMeaningfulActivityAt || d.createdAt) },
   { key: 'owner', label: 'אחראי', def: false, disabled: true,
     render: () => dash, cls: 'text-gray-600' },
 ];
@@ -124,6 +130,42 @@ function fmtDate(iso) {
   } catch {
     return '—';
   }
+}
+
+// Date + TIME — the list is ORDERED at timestamp precision, so the column that
+// explains that order must show it; a bare date makes same-day rows look
+// arbitrarily sorted.
+function fmtDateTime(iso) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleString('he-IL', {
+      day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
+  } catch {
+    return '—';
+  }
+}
+
+// "This deal is waiting on you" — one icon per channel with unread messages,
+// both when both are unread, none when everything is read. Server-computed
+// from the canonical inbox read state (WhatsAppChat / EmailThread), so an icon
+// clears the moment the conversation is read anywhere: GOS, the phone, Gmail.
+function UnreadChannels({ deal }) {
+  if (!deal.unreadWhatsapp && !deal.unreadEmail) return null;
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1">
+      {deal.unreadWhatsapp && (
+        <span title="הודעות WhatsApp שלא נקראו" aria-label="הודעות WhatsApp שלא נקראו" className="inline-flex">
+          <WhatsAppLogo size={14} />
+        </span>
+      )}
+      {deal.unreadEmail && (
+        <span title="מיילים שלא נקראו" aria-label="מיילים שלא נקראו" className="text-[13px] leading-none">
+          ✉️
+        </span>
+      )}
+    </span>
+  );
 }
 
 export default function DealsList() {

@@ -102,6 +102,7 @@ import whatsappRouter from './routes/whatsapp.js';
 import emailRouter from './routes/email.js';
 import emailTrackingRouter from './routes/emailTracking.js';
 import { startScheduledWorker } from './whatsapp/scheduledWorker.js';
+import { startWhatsAppActivitySweep } from './whatsapp/activitySweep.js';
 import { startEmailSyncWorker } from './email/syncWorker.js';
 import { startScheduledEmailWorker } from './email/scheduledWorker.js';
 import { startTourGalleryCleanupWorker } from './tours/gallery/cleanupWorker.js';
@@ -654,6 +655,10 @@ app.listen(port, () => {
   // Scheduled WhatsApp messages (Slice 7) — claim-based 60s tick; no-op when
   // no bridges are configured (local dev without WHATSAPP_BRIDGE_URLS).
   startScheduledWorker(console);
+  // WhatsApp → Deal activity attribution. The BRIDGE writes the messages and
+  // holds no CRM logic, so the server sweeps the mirror and stamps
+  // lastMeaningfulActivityAt. Idempotent (GREATEST), so overlap is free.
+  startWhatsAppActivitySweep(console);
   // Gmail read-only sync mirror — 60s tick; no-op until GOOGLE_CLIENT_ID/SECRET
   // + EMAIL_TOKEN_KEY are configured and an account is connected.
   startEmailSyncWorker(console);

@@ -82,6 +82,20 @@ function fmtDate(iso) {
   }
 }
 
+// Date + TIME. Ordering already works at timestamp precision, so anything that
+// explains the order (activity, last viewed) must show the same precision —
+// a bare date makes same-day ordering look arbitrary.
+function fmtDateTime(iso) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleString('he-IL', {
+      day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
+  } catch {
+    return '—';
+  }
+}
+
 
 // Deal detail — a 3-column sales WORKSPACE (WorkspaceLayout), not a big form.
 //   • LEFT panel  : sales script (collapsible/resizable, placeholder for now)
@@ -2048,11 +2062,26 @@ function SystemInfo({ deal }) {
       </button>
       {open && (
         <dl className="px-4 pb-3 space-y-2 text-sm">
-          <Row label="נוצר" value={fmtDate(deal.createdAt)} />
-          <Row label="עודכן" value={fmtDate(deal.updatedAt)} />
+          <Row label="נוצר" value={fmtDateTime(deal.createdAt)} />
+          {/* The field the CRM list is ORDERED by — the last time something
+              business-meaningful happened here (note, stage move, task,
+              payment, message…). Read-only by design: it is written by the
+              activity funnel, never edited. Distinct from "עודכן", which also
+              moves on technical writes, and from "נצפה לאחרונה" below, which
+              is browsing and deliberately does NOT reorder anything. */}
+          <Row label="פעילות אחרונה" value={fmtDateTime(deal.lastMeaningfulActivityAt)} />
+          <Row label="עודכן" value={fmtDateTime(deal.updatedAt)} />
+          <Row
+            label="נצפה לאחרונה"
+            value={
+              deal.lastViewedAt
+                ? `${fmtDateTime(deal.lastViewedAt)}${deal.lastViewedByName ? ` · ${deal.lastViewedByName}` : ''}`
+                : '—'
+            }
+          />
           <Row label="צפי סגירה" value={fmtDate(deal.expectedCloseDate)} />
-          {deal.wonAt && <Row label="נסגר בהצלחה" value={fmtDate(deal.wonAt)} />}
-          {deal.lostAt && <Row label="תאריך LOST" value={fmtDate(deal.lostAt)} />}
+          {deal.wonAt && <Row label="נסגר בהצלחה" value={fmtDateTime(deal.wonAt)} />}
+          {deal.lostAt && <Row label="תאריך LOST" value={fmtDateTime(deal.lostAt)} />}
         </dl>
       )}
     </section>

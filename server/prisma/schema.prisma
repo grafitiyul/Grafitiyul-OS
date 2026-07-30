@@ -1126,6 +1126,15 @@ model Deal {
   // meaningful); existing rows were backfilled from their real latest
   // timeline entry / wonAt / lostAt / createdAt.
   lastMeaningfulActivityAt DateTime?            @default(now())
+  // Who last OPENED the deal, and when. Deliberately separate from
+  // lastMeaningfulActivityAt: reading a deal is useful operational context but
+  // it is NOT business activity, and must never reorder the CRM (otherwise the
+  // list would rank by whoever browsed last). Written by a raw UPDATE on the
+  // detail read so it cannot bump `updatedAt`. Loose actor key (no FK), the
+  // same convention as EmailMessage.createdByUserId.
+  lastViewedAt          DateTime?
+  lastViewedById        String?
+  lastViewedByName      String?
   contacts              DealContact[]
   quoteVersions         QuoteVersion[]
   quoteDocuments        QuoteDocument[]

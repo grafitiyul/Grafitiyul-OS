@@ -387,6 +387,77 @@ router.get(
   }),
 );
 
+// Unread-communication flags for ONE page of deals — the icons that tell an
+// operator "this deal is waiting on you" without opening it.
+//
+// Strictly batched: 3 queries for the whole page regardless of size (deal→
+// contacts, then one WhatsApp and one email lookup), never per row. Read state
+// is the canonical server-side one both inboxes already maintain
+// (WhatsAppChat.unreadCount/manualUnreadAt, EmailThread.unreadCount/
+// manualUnread), so an icon disappears the moment that channel is read
+// anywhere — in GOS, on the phone, or in Gmail.
+//
+// Attribution mirrors crm/conversationActivity: an EXPLICIT thread→deal link
+// always counts; a contact-derived match counts only for deals that are not
+// lost, so unread mail from a repeat customer cannot light up a deal that was
+// closed a year ago.
+async function unreadChannelsForDeals(rows) {
+  const out = new Map();
+  if (!rows.length) return out;
+  const dealIds = rows.map((d) => d.id);
+  const statusById = new Map(rows.map((d) => [d.id, d.status]));
+
+  const links = await prisma.dealContact.findMany({
+    where: { dealId: { in: dealIds } },
+    select: { dealId: true, contactId: true },
+  });
+  const dealsByContact = new Map();
+  for (const l of links) {
+    if (statusById.get(l.dealId) === 'lost') continue;
+    if (!dealsByContact.has(l.contactId)) dealsByContact.set(l.contactId, []);
+    dealsByContact.get(l.contactId).push(l.dealId);
+  }
+  const contactIds = [...dealsByContact.keys()];
+
+  const [waChats, mailThreads] = await Promise.all([
+    contactIds.length
+      ? prisma.whatsAppChat.findMany({
+          where: {
+            contactId: { in: contactIds },
+            providerDeletedAt: null,
+            hiddenAt: null,
+            OR: [{ unreadCount: { gt: 0 } }, { manualUnreadAt: { not: null } }],
+          },
+          select: { contactId: true },
+        })
+      : [],
+    prisma.emailThread.findMany({
+      where: {
+        OR: [
+          { linkedDealId: { in: dealIds } },
+          ...(contactIds.length ? [{ contactId: { in: contactIds } }] : []),
+        ],
+        AND: [{ OR: [{ unreadCount: { gt: 0 } }, { manualUnread: true }] }],
+      },
+      select: { linkedDealId: true, contactId: true },
+    }),
+  ]);
+
+  const flag = (dealId, key) => {
+    if (!out.has(dealId)) out.set(dealId, { unreadWhatsapp: false, unreadEmail: false });
+    out.get(dealId)[key] = true;
+  };
+  for (const c of waChats) {
+    for (const dealId of dealsByContact.get(c.contactId) || []) flag(dealId, 'unreadWhatsapp');
+  }
+  for (const t of mailThreads) {
+    // Explicit link wins and applies whatever the deal's status is.
+    if (t.linkedDealId && statusById.has(t.linkedDealId)) flag(t.linkedDealId, 'unreadEmail');
+    else for (const dealId of dealsByContact.get(t.contactId) || []) flag(dealId, 'unreadEmail');
+  }
+  return out;
+}
+
 router.get(
   '/',
   handle(async (req, res) => {
@@ -433,7 +504,13 @@ router.get(
           },
         }),
       ]);
-      return res.json({ rows, total, page, pageSize });
+      const unread = await unreadChannelsForDeals(rows);
+      return res.json({
+        rows: rows.map((d) => ({ ...d, ...(unread.get(d.id) || { unreadWhatsapp: false, unreadEmail: false }) })),
+        total,
+        page,
+        pageSize,
+      });
     }
 
     // Legacy full-array path (pickers / cross-refs). Unchanged shape: honours
@@ -451,9 +528,36 @@ router.get(
   handle(async (req, res) => {
     const deal = await loadDeal(req.params.id);
     if (!deal) return res.status(404).json({ error: 'not_found' });
+    // Opening a deal records WHO looked and WHEN — and deliberately nothing
+    // else. It must never move lastMeaningfulActivityAt (browsing is not
+    // business activity; otherwise the CRM would rank by whoever scrolled
+    // last), and it must never bump `updatedAt` — hence a raw UPDATE rather
+    // than prisma.deal.update, whose @updatedAt would fire. Fire-and-forget:
+    // a read is never delayed or failed by view bookkeeping.
+    void stampDealViewed(deal.id, req.adminAuth?.userId);
     res.json(withTourUpdatePending(deal));
   }),
 );
+
+// Records the last viewer. Deliberately raw SQL: `@updatedAt` must NOT fire
+// (a view is not a modification), and this is a hot path — one narrow write.
+async function stampDealViewed(dealId, userId) {
+  try {
+    let name = null;
+    if (userId) {
+      const u = await prisma.adminUser.findUnique({ where: { id: userId }, select: { username: true } });
+      name = u?.username || null;
+    }
+    await prisma.$executeRaw`
+      UPDATE "Deal"
+         SET "lastViewedAt" = now(),
+             "lastViewedById" = ${userId || null},
+             "lastViewedByName" = ${name}
+       WHERE "id" = ${dealId}`;
+  } catch (e) {
+    console.error('[deals] stampDealViewed failed (non-fatal):', e?.message);
+  }
+}
 
 router.post(
   '/',
