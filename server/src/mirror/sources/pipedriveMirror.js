@@ -332,12 +332,45 @@ export function taskAdapter({ taskTypeIdForKey } = {}) {
       return { fields };
     },
     async loadGos(db, id) {
-      return db.task.findUnique({
+      // GOS stores dueDate (DateTime) + dueTime ("HH:MM"); the ownership map's
+      // field is the single instant `dueAt`. Selecting a literal `dueAt` column
+      // was schema drift — the Task model never had one — and it threw on the
+      // first real task update the mirror ever processed. Compose the instant
+      // here so the merge compares like with like.
+      const t = await db.task.findUnique({
         where: { id },
-        select: { id: true, title: true, dueAt: true, status: true, taskTypeId: true },
+        select: { id: true, title: true, dueDate: true, dueTime: true, status: true, taskTypeId: true, completedAt: true },
       });
+      if (!t) return null;
+      const date = t.dueDate ? new Date(t.dueDate).toISOString().slice(0, 10) : null;
+      return {
+        id: t.id,
+        title: t.title,
+        dueAt: date ? new Date(`${date}T${t.dueTime || '00:00'}:00Z`) : null,
+        status: t.status,
+        taskTypeId: t.taskTypeId,
+        completedAt: t.completedAt,
+      };
     },
-    async applyGos(db, id, set) { await db.task.update({ where: { id }, data: set }); },
+    async applyGos(db, id, set) {
+      const data = { ...set };
+      if ('dueAt' in data) {
+        const d = data.dueAt ? new Date(data.dueAt) : null;
+        delete data.dueAt;
+        if (d) {
+          data.dueDate = new Date(`${d.toISOString().slice(0, 10)}T00:00:00Z`);
+          const hhmm = d.toISOString().slice(11, 16);
+          if (hhmm !== '00:00') data.dueTime = hhmm;
+        }
+      }
+      // Completing a task stamps completedAt once; un-completing never erases it
+      // silently (the merge already gated the status change itself).
+      if (data.status === 'completed') {
+        const cur = await db.task.findUnique({ where: { id }, select: { completedAt: true } });
+        if (cur && !cur.completedAt) data.completedAt = new Date();
+      }
+      await db.task.update({ where: { id }, data });
+    },
     describe: (gos) => ({ label: gos.title }),
   };
 }

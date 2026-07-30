@@ -76,30 +76,24 @@ export async function atomicCreate(db, { sourceSystem = 'pipedrive', sourceType,
 let _ref = null;
 export async function referenceBundle(db) {
   if (_ref) return _ref;
+  // The CANONICAL reference location — the same path run-enrichment-import.mjs
+  // reads: snapshots/<id>/pipedrive/reference/reference.json. The first version
+  // of this loader guessed at manifest-shaped paths, silently got nothing, and
+  // the resulting EMPTY stage map made every live deal "unmappable" — 36 real
+  // deals deferred as deal_not_plannable during the first replay.
   const keys = await r2.listKeys('snapshots/');
   const ids = [...new Set(keys.map((k) => String(k.Key || k.key || k).split('/')[1]).filter(Boolean))].sort();
   let reference = null;
   for (const id of ids.reverse()) {
     try {
-      const man = JSON.parse(await r2.getObjectText(`snapshots/${id}/entities/pipedrive_reference/manifest.json`));
-      const shard = man.shards?.[0]?.key;
-      if (shard) { reference = JSON.parse(await r2.getObjectText(shard))[0]; break; }
-    } catch { /* try the next-oldest snapshot */ }
-  }
-  if (!reference) {
-    // Fallback: reader-shaped layout (entityManifest naming differs per writer version).
-    for (const id of ids) {
-      try {
-        const { createSnapshotReader } = await import('../migration/review/snapshotReader.js');
-        const reader = createSnapshotReader({ store: { getText: r2.getObjectText }, snapshotId: id });
-        const man = await reader.entityManifest('pipedrive/reference');
-        const rows = await reader.readShard(man.shards[0].key);
-        reference = rows[0];
-        break;
-      } catch { /* keep looking */ }
-    }
+      reference = JSON.parse(await r2.getObjectText(`snapshots/${id}/pipedrive/reference/reference.json`));
+      break;
+    } catch { /* older snapshot may predate the layout — keep looking */ }
   }
   if (!reference) throw Object.assign(new Error('no pipedrive/reference in any snapshot'), { code: 'NO_REFERENCE' });
+  if (!Array.isArray(reference.stages) || !Array.isArray(reference.pipelines)) {
+    throw Object.assign(new Error('reference.json missing stages/pipelines — refusing an empty stage map'), { code: 'BAD_REFERENCE' });
+  }
 
   const [stageConfigRows, gosStages] = await Promise.all([
     db.migrationDecision.findMany({ where: { queue: 'stage_config' } }),
@@ -158,8 +152,14 @@ export async function createContact(db, normalized, row) {
       await tx.contact.create({
         data: {
           id,
-          firstNameHe: t(fields.firstNameHe), lastNameHe: t(fields.lastNameHe),
-          firstNameEn: t(fields.firstNameEn), lastNameEn: t(fields.lastNameEn),
+          // EMPTY STRING, not null — Contact.firstNameHe is NOT NULL and the
+          // identity importer stores '' for the script the name doesn't use
+          // (its own t() returns ''). Nulling here crashed the insert for every
+          // Latin-named person ("Liat Kaufman") during the first replay.
+          firstNameHe: String(fields.firstNameHe ?? '').trim(),
+          lastNameHe: String(fields.lastNameHe ?? '').trim(),
+          firstNameEn: String(fields.firstNameEn ?? '').trim(),
+          lastNameEn: String(fields.lastNameEn ?? '').trim(),
         },
       });
       for (let i = 0; i < phones.length; i += 1) {
