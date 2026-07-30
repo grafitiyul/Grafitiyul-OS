@@ -18,9 +18,19 @@ const dupSrc = await prisma.$queryRawUnsafe(`
 check(dupSrc.length === 0, 'no source id is crosswalked twice', JSON.stringify(dupSrc));
 const dupEnt = await prisma.$queryRawUnsafe(`
   SELECT "entityType","entityId", count(*)::int n
-  FROM "LegacyRecord" WHERE "entityId" IS NOT NULL AND "sourceType" IN ('deal','person','organization','tour')
+  FROM "LegacyRecord" WHERE "entityId" IS NOT NULL AND "sourceType" IN ('deal','tour')
   GROUP BY 1,2 HAVING count(*) > 1 LIMIT 5`);
-check(dupEnt.length === 0, 'no entity is claimed by two source records', JSON.stringify(dupEnt));
+// persons AND organizations are deliberately N:1 — Wave-1 identity merges and
+// org-structure collapsing resolve several source records to one GOS entity
+// (all 181 N:1 orgs verified to come from batch identity-2026-07-16T1443, zero
+// from the mirror). Deals and tours are the 1:1 contracts the mirror relies on.
+check(dupEnt.length === 0, 'no deal/tour entity is claimed by two source records', JSON.stringify(dupEnt));
+// New N:1 orgs would still be a defect — assert none were created after Wave 1.
+const newDupOrg = await prisma.$queryRawUnsafe(`
+  SELECT lr."entityId", count(*)::int n FROM "LegacyRecord" lr
+  WHERE lr."sourceType"='organization' AND lr."entityId" IS NOT NULL AND lr."importBatchId" <> 'identity-2026-07-16T1443'
+  GROUP BY 1 HAVING count(*) > 1 LIMIT 5`);
+check(newDupOrg.length === 0, 'no NEW N:1 organization since the Wave-1 identity batch', JSON.stringify(newDupOrg));
 const dupOrder = await prisma.$queryRawUnsafe(`
   SELECT "orderNo", count(*)::int n FROM "Deal" GROUP BY 1 HAVING count(*) > 1 LIMIT 5`);
 check(dupOrder.length === 0, 'no duplicate deal orderNo', JSON.stringify(dupOrder));
@@ -37,7 +47,10 @@ if (done) {
   const again = await receive(prisma, {
     system: done.system, entity: done.entity, externalId: done.externalId,
     changeKind: done.changeKind, transport: 'replay-proof',
-    version: null, rawPayload: done.rawPayload,
+    // The SAME version the webhook route derives — a real redelivery carries the
+    // same meta.timestamp, so the idempotency key must be computed identically.
+    version: String(done.rawPayload?.meta?.timestamp ?? done.rawPayload?.meta?.change_source_version ?? done.rawPayload?.current?.update_time ?? '') || null,
+    rawPayload: done.rawPayload,
   });
   const after = await prisma.mirrorEvent.count();
   check(again.duplicate === true, 'redelivery recognised as duplicate', `event ${done.id}`);
@@ -51,8 +64,12 @@ const falseProcessed = await prisma.mirrorEvent.count({
   where: { status: 'processed', outcome: null },
 });
 check(falseProcessed === 0, 'every processed event carries an outcome', `${falseProcessed} without`);
-const notCross = await prisma.mirrorEvent.count({ where: { outcome: 'not_crosswalked' } });
-check(notCross === 0, 'zero events consumed as not_crosswalked (the old silent discard)', `${notCross}`);
+// gos_entity_missing is a LEGITIMATE terminal: the crosswalk resolves to a row
+// that is not a live record of the adapter's model (immutable timeline evidence,
+// or a contact merged away in GOS). Anything ELSE consumed as not_crosswalked
+// would be the old silent discard back from the dead.
+const notCross = await prisma.mirrorEvent.count({ where: { outcome: 'not_crosswalked', NOT: { failureCode: 'gos_entity_missing' } } });
+check(notCross === 0, 'zero events consumed as not_crosswalked without gos_entity_missing', `${notCross}`);
 
 // ── 4) pending = only the named exclusion class ──────────────────────────────
 console.log('\n4) remaining pending events are named and expected');
