@@ -1,6 +1,5 @@
 import { sendSimpleEmail } from '../email/simpleSend.js';
 import { sendWhatsAppText } from '../whatsapp/send.js';
-import { resolveSendAccount } from '../whatsapp/senderAccount.js';
 import { refreshIssueClosure } from './issueRequirements.js';
 
 // Part 4 customer-notification flow. Per (requirement × recipient × channel) send
@@ -74,13 +73,12 @@ export async function sendNotification(client, { requirement, recipient, channel
     } else {
       if (!recipient.phone) throw new Error('no_phone');
       const send = deps.sendWhatsApp || sendWhatsAppText;
-      // Server-initiated: there is no operator to ask, so the account comes
-      // from WHATSAPP_SYSTEM_ACCOUNT (or the single configured bridge). With
-      // several accounts and none nominated this THROWS and the notification is
-      // recorded as failed — visibly wrong beats silently sent from the wrong
-      // business number.
-      const sender = resolveSendAccount({ explicit: deps.accountId || null });
-      result = await send(recipient.phone, body, { accountId: sender.accountId });
+      // This path is OPERATOR-INITIATED (POST /api/control/issues/:id/notify),
+      // not autonomous: a human picks the recipients, the channel and the text.
+      // The account therefore comes from that operator's explicit selection,
+      // resolved by the route and passed in — never from a global default.
+      if (!deps.accountId) throw new Error('whatsapp_account_required');
+      result = await send(recipient.phone, body, { accountId: deps.accountId });
     }
   } catch (e) {
     status = 'failed';

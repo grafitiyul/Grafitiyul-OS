@@ -4,9 +4,6 @@ import { emitTourChangeImpact } from '../tours/changeImpact.js';
 import { setRequirementState, refreshIssueClosure } from './issueRequirements.js';
 import { sendNotification, evaluateCustomerNotification } from './issueNotifications.js';
 
-// One configured bridge: the sender resolver is unambiguous, which is what a
-// real single-number deployment looks like.
-process.env.WHATSAPP_BRIDGE_URLS = 'main=http://bridge:3000';
 
 // Part 4 end-to-end over an in-memory prisma fake: impact → first-class
 // requirements → per-recipient notifications → parent closure. Reuses the same
@@ -166,7 +163,7 @@ test('3+4. email + whatsapp sends create per-recipient notification records', as
     { recipientKey: 'r2', name: 'יוסי', email: 'yossi@x.com', phone: '0502' },
   ]) {
     await sendNotification(db, { requirement: cn, recipient, channel: 'email', subject: 's', body: 'b', deps: { sendEmail: okEmail } });
-    await sendNotification(db, { requirement: cn, recipient, channel: 'whatsapp', subject: 's', body: 'b', deps: { sendWhatsApp: okWhats } });
+    await sendNotification(db, { requirement: cn, recipient, channel: 'whatsapp', subject: 's', body: 'b', deps: { sendWhatsApp: okWhats, accountId: 'office' } });
   }
   assert.equal(db._notifs.length, 4); // 2 recipients × 2 channels
   assert.ok(db._notifs.every((n) => n.status === 'sent' && n.sentAt));

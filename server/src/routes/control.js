@@ -5,6 +5,7 @@ import { ACTIVE_STATUSES, resolveIssue } from '../control/issueService.js';
 import { buildIssueActions, issueTypeDef } from '../control/registry.js';
 import { setRequirementState, refreshIssueClosure } from '../control/issueRequirements.js';
 import { sendNotification, evaluateCustomerNotification, recipientsFor, defaultMessage } from '../control/issueNotifications.js';
+import { resolveForOperator } from '../whatsapp/senderAccount.js';
 
 // בקרה (Operations Control) API — read the canonical issue list, acknowledge,
 // re-check one issue against live state, and dispatch server-side actions.
@@ -170,10 +171,28 @@ router.post(
       ? all.filter((r) => req.body.recipientKeys.includes(r.recipientKey))
       : all;
 
+    // Operator-initiated: the sending number is THIS operator's explicit choice
+    // (remembered globally). Resolved once per request, never per recipient, and
+    // never from a global default — an unresolvable sender is a 409, not a guess.
+    let waAccountId = null;
+    if (channels.includes('whatsapp')) {
+      try {
+        waAccountId = (await resolveForOperator(prisma, {
+          userId: req.adminAuth?.userId || null,
+          explicit: req.body?.accountId || null,
+          remember: true,
+        })).accountId;
+      } catch (e) {
+        return res.status(e.status || 409).json({ error: e.code || 'whatsapp_sender_unresolved', candidates: e.candidates || [] });
+      }
+    }
+
     const results = [];
     for (const recipient of chosen) {
       for (const channel of channels) {
-        const row = await sendNotification(prisma, { requirement, recipient, channel, subject, body });
+        const row = await sendNotification(prisma, {
+          requirement, recipient, channel, subject, body, deps: { accountId: waAccountId },
+        });
         results.push({ recipientKey: recipient.recipientKey, channel, status: row.status });
       }
     }
@@ -200,10 +219,28 @@ router.post(
     const recipients = recipientsFor(issue);
     const byKey = new Map(recipients.map((r) => [r.recipientKey, r]));
     const failed = (requirement.notifications || []).filter((n) => n.status === 'failed');
+
+    // A retry is still operator-initiated, so it resolves the sender the same
+    // way — resolved only when a WhatsApp retry is actually present.
+    let waAccountId = null;
+    if (failed.some((n) => n.channel === 'whatsapp')) {
+      try {
+        waAccountId = (await resolveForOperator(prisma, {
+          userId: req.adminAuth?.userId || null,
+          explicit: req.body?.accountId || null,
+        })).accountId;
+      } catch (e) {
+        return res.status(e.status || 409).json({ error: e.code || 'whatsapp_sender_unresolved', candidates: e.candidates || [] });
+      }
+    }
+
     for (const n of failed) {
       const recipient = byKey.get(n.recipientKey);
       if (!recipient) continue;
-      await sendNotification(prisma, { requirement, recipient, channel: n.channel, subject: n.subject, body: n.body });
+      await sendNotification(prisma, {
+        requirement, recipient, channel: n.channel, subject: n.subject, body: n.body,
+        deps: { accountId: waAccountId },
+      });
     }
     await evaluateCustomerNotification(prisma, requirement.id);
     res.json({ ok: true, retried: failed.length });
