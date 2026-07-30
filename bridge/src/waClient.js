@@ -428,9 +428,19 @@ export class WaClient {
   // server dirty-hints or an explicit request), so after a deliberate cursor
   // wipe this asks for everything: WhatsApp replays the account's pin /
   // archive / read-state actions, which land through the ordinary chats event
-  // handlers. isInitialSync=true is exactly what Baileys itself passes on a
-  // fresh registration. Normal boots find cursors present and return
-  // immediately; failure is soft and retries on the next reconnect.
+  // handlers. Normal boots find cursors present and return immediately;
+  // failure is soft and retries on the next reconnect.
+  //
+  // isInitialSync must be FALSE here, and that is the load-bearing detail
+  // (proven live 2026-07-30): with true — the registration-time variant — every
+  // emitted update carries a `conditional` that only passes when the chat is
+  // present in the CONCURRENTLY BUFFERED history sync (chat-utils
+  // getChatUpdateConditional). During registration that buffer is full, so it
+  // works; in this recovery there is no history sync, the buffer is empty, and
+  // every replayed event is silently discarded — the cursors rebuild and
+  // nothing lands. false is the dirty-hint path Baileys itself uses for
+  // incremental resyncs: no conditional, events emit unconditionally, and with
+  // the cursor gone "incremental" means everything from version 0.
   async maybeInitialAppStateResync(socketId) {
     try {
       const cursors = await prisma.whatsAppSession.count({
@@ -440,7 +450,7 @@ export class WaClient {
       if (socketId !== this.activeSocketId || !this.socket) return;
       const collections = getBaileys().ALL_WA_PATCH_NAMES;
       this.log.warn({ socketId, collections }, 'app-state cursor absent — requesting FULL app-state resync (recovery procedure)');
-      await this.socket.resyncAppState(collections, true);
+      await this.socket.resyncAppState(collections, false);
       this.log.info({ socketId }, 'full app-state resync requested');
     } catch (err) {
       this.log.warn({ socketId, err: err?.message || String(err) }, 'initial app-state resync failed — will retry on next reconnect');
