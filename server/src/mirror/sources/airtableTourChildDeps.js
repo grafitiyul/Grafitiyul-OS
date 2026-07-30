@@ -18,7 +18,8 @@
 //     the ceiling.
 
 import { normalizePhoneIntl } from '../../whatsapp/phone.js';
-import { CHILD_TABLES } from './airtableTourChildren.js';
+import { CHILD_TABLES, PARENT_LINK_FIELDS } from './airtableTourChildren.js';
+import { normalizeCoordRow, normalizePayrollRow } from '../../migration/import/tourNormalize.js';
 import { escapeFormulaValue } from './airtableClient.js';
 
 const first = (v) => (Array.isArray(v) ? v[0] : v);
@@ -103,36 +104,20 @@ export function createChildDeps({ fetcher, prisma, today = () => new Date() }) {
         cardExtras: [],
       };
 
+      // Each table's own link field — payroll's is `סיורים`. Hardcoding `שם סיור`
+      // for both made every payroll fetch a 422.
       const [coordRaw, payrollRaw] = await Promise.all([
-        fetcher.fetchTable(CHILD_TABLES.coordination, 'שם סיור', parentRecId),
-        fetcher.fetchTable(CHILD_TABLES.payroll, 'שם סיור', parentRecId),
+        fetcher.fetchTable(CHILD_TABLES.coordination, PARENT_LINK_FIELDS.coordination, parentRecId),
+        fetcher.fetchTable(CHILD_TABLES.payroll, PARENT_LINK_FIELDS.payroll, parentRecId),
       ]);
 
-      const coordRows = coordRaw.map((r) => {
-        const cf = r.fields || {};
-        return {
-          recId: r.id,
-          masterRecId: parentRecId,
-          legacyDealId: num(cf['פייפ דיל ID']),
-          seats: num(cf['משתתפים']),
-          guideEmails: []
-            .concat(cf['מייל מדריך'] || [])
-            .map((e) => t(e))
-            .filter(Boolean),
-        };
-      });
-
-      const payrollRows = payrollRaw.map((r) => {
-        const pf = r.fields || {};
-        return {
-          recId: r.id,
-          masterRecId: parentRecId,
-          guideName: t(pf['שם המדריך']),
-          guideEmail: t(pf['מייל']),
-          totalPreVatMinor: Math.round((num(pf['סה"כ לפני מעמ']) ?? 0) * 100),
-          approved: !!first(pf['מאושר']),
-        };
-      });
+      // The SAME mappers the importer uses. These rows feed planTourImport, so a
+      // field name that differs by one character here produces an empty child set
+      // and a recompute that looks like mass deletion at the source. masterRecId is
+      // forced to the parent we fetched for: these rows were selected BY that link,
+      // and a lookup column can echo a different record id.
+      const coordRows = coordRaw.map((r) => ({ ...normalizeCoordRow(r), masterRecId: parentRecId }));
+      const payrollRows = payrollRaw.map((r) => ({ ...normalizePayrollRow(r, parentRecId), masterRecId: parentRecId }));
 
       return { masterTour, coordRows, payrollRows };
     },

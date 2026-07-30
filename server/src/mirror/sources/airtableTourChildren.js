@@ -18,12 +18,22 @@
 // reads the derived payload back out.
 
 import { planTourImport } from '../../migration/import/tourImport.js';
+import { COORD_FIELDS, PAYROLL_FIELDS } from '../../migration/import/tourNormalize.js';
 import { MODE } from '../modes.js';
 
-/** Airtable table id → the child kind it carries. */
+/**
+ * Airtable table id → the child kind it carries.
+ *
+ * `tbll83BjS4kLMRNuh` was listed here as "participants" and is NOT a participants
+ * table. Its real fields are MessageId / תוכן ההודעה / deliverAt / סוג תזכורת — it
+ * is the scheduled-REMINDERS table, linked to a tour by `סיור מקושר`. It holds no
+ * participant, seat or booking data, so recomputing a tour from it could only ever
+ * produce an empty set. Removed rather than fixed: mirroring it would poll 5,117
+ * reminder rows to derive nothing. Participant counts reach GOS through the
+ * coordination rows, which is where the importer has always read them.
+ */
 export const CHILD_TABLES = Object.freeze({
   coordination: 'tbl1JaGS5oKRIkJ9z',
-  participants: 'tbll83BjS4kLMRNuh',
   payroll: 'tbli0eBDJ6CgCj4iJ',
 });
 
@@ -40,10 +50,12 @@ const str = (v) => {
  * NAME differs per table, which is why the parent link is resolved by the
  * adapter (domain knowledge) and not by the engine.
  */
+// Taken from the canonical field contract, not restated here — payroll links
+// through `סיורים`, and asserting `שם סיור` for it (as this map used to) made every
+// payroll poll fail with UNKNOWN_FIELD_NAME.
 export const PARENT_LINK_FIELDS = Object.freeze({
-  coordination: 'שם סיור',
-  participants: 'שם סיור',
-  payroll: 'שם סיור',
+  coordination: COORD_FIELDS.parentLink,
+  payroll: PAYROLL_FIELDS.parentLink,
 });
 
 export function parentRecIdOf(payload, childKind) {

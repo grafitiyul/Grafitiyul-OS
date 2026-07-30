@@ -44,6 +44,81 @@ export function readIsoDate(raw) {
   return { date: s, reason: null };
 }
 
+// ── the child-row field contract ─────────────────────────────────────────────
+// THE canonical Airtable field names for the tour child tables, verified against
+// the live base and proven by the Wave-1 import of 2,473 tours.
+//
+// The mirror's pollers read the SAME names through the SAME two mappers below.
+// They previously carried their own hand-written guesses, and three of the four
+// pollers died on Airtable UNKNOWN_FIELD_NAME the first time they ran (2026-07-30).
+// The failure that mattered was quieter: the child fetcher read fields that do not
+// exist, so a recompute would have derived an EMPTY child set and — with apply on —
+// read as "every booking, assignment and payroll row vanished from the source".
+// One mapping, one place, or the two drift and the drift is destructive.
+export const COORD_FIELDS = Object.freeze({
+  parentLink: 'שם סיור',
+  legacyDealId: 'פייפ דיל ID',
+  guideEmail: 'אימייל של המדריך',
+  guideName: 'מדריך ששובץ (from שם סיור)',
+  seats: 'כמות משתתפים בסיור',
+  calendarId: 'מזהה ארוע ביומן (from שם סיור)',
+});
+
+export const PAYROLL_FIELDS = Object.freeze({
+  // Payroll links to its tour through `סיורים`, NOT `שם סיור` — that name belongs
+  // to the coordination table only.
+  parentLink: 'סיורים',
+  guideNameEn: 'Guide name',
+  guideLink: 'מדריך',
+  role: 'תפקיד',
+  totalPreVat: 'סה"כ לתשלום לפני מע"מ',
+  vat: 'תוספת מע"מ בש"ח',
+  approved: 'מאושר',
+  guideApproved: 'מאושר על ידי העובד',
+  note: 'הערות משרד',
+});
+
+/** One coordination record → the shape planTourImport consumes. */
+export function normalizeCoordRow(r) {
+  const f = r.fields || {};
+  const link = f[COORD_FIELDS.parentLink];
+  return {
+    recId: r.id,
+    masterRecId: Array.isArray(link) ? link[0] : null,
+    legacyDealId: num(f[COORD_FIELDS.legacyDealId]),
+    guideEmail: t(first(f[COORD_FIELDS.guideEmail]) || ''),
+    guideName: t(first(f[COORD_FIELDS.guideName]) || ''),
+    seats: f[COORD_FIELDS.seats] != null ? Math.round(Number(first(f[COORD_FIELDS.seats]))) : null,
+    legacyCalendarId: t(first(f[COORD_FIELDS.calendarId]) || '') || null,
+  };
+}
+
+/**
+ * One payroll record → the shape planTourImport consumes.
+ *
+ * `fallbackMasterRecId` is the master side's own `שכר` link, which the importer
+ * treats as authoritative; the payroll-side link is the fallback. Kept as a
+ * parameter because only the full-layer load can build that reverse index.
+ */
+export function normalizePayrollRow(r, fallbackMasterRecId = null) {
+  const f = r.fields || {};
+  const link = f[PAYROLL_FIELDS.parentLink];
+  const own = Array.isArray(link) && String(link[0] || '').startsWith('rec') ? link[0] : null;
+  return {
+    recId: r.id,
+    masterRecId: own || fallbackMasterRecId || null,
+    // `מדריך` is a LINK field, so its first element is a record id, not a name —
+    // the English lookup is tried first for exactly that reason.
+    guideName: t(first(f[PAYROLL_FIELDS.guideNameEn]) || first(f[PAYROLL_FIELDS.guideLink]) || ''),
+    role: t(first(f[PAYROLL_FIELDS.role]) || '') || null,
+    totalPreVatMinor: toMinor(f[PAYROLL_FIELDS.totalPreVat]),
+    vatMinor: toMinor(f[PAYROLL_FIELDS.vat]),
+    approved: String(first(f[PAYROLL_FIELDS.approved]) || '') !== '',
+    guideApproved: String(first(f[PAYROLL_FIELDS.guideApproved]) || '') !== '',
+    note: t(first(f[PAYROLL_FIELDS.note]) || ''),
+  };
+}
+
 export async function loadNormalizedTourLayer(snapshotId) {
   const reader = createSnapshotReader({ store: { getText: r2.getObjectText }, snapshotId });
   const all = async (key) => {
@@ -82,18 +157,7 @@ export async function loadNormalizedTourLayer(snapshotId) {
     .map((m) => ({ recId: m.recId, tourId: m.tourId, status: m.status, reason: m.dateReject, startTime: m.startTime }));
   const masterTours = masterToursRaw.filter((m) => m.date).map((m) => { const { dateReject, ...rest } = m; return rest; });
 
-  const coordRows = coordRaw.map((r) => {
-    const f = r.fields || {};
-    return {
-      recId: r.id,
-      masterRecId: Array.isArray(f['שם סיור']) ? f['שם סיור'][0] : null,
-      legacyDealId: num(f['פייפ דיל ID']),
-      guideEmail: t(first(f['אימייל של המדריך']) || ''),
-      guideName: t(first(f['מדריך ששובץ (from שם סיור)']) || ''),
-      seats: f['כמות משתתפים בסיור'] != null ? Math.round(Number(first(f['כמות משתתפים בסיור']))) : null,
-      legacyCalendarId: t(first(f['מזהה ארוע ביומן (from שם סיור)']) || '') || null,
-    };
-  });
+  const coordRows = coordRaw.map((r) => normalizeCoordRow(r));
   const calByMaster = new Map();
   for (const c of coordRows) if (c.masterRecId && c.legacyCalendarId && !calByMaster.has(c.masterRecId)) calByMaster.set(c.masterRecId, c.legacyCalendarId);
   for (const m of masterTours) m.legacyCalendarId = calByMaster.get(m.recId) || null;
@@ -105,21 +169,7 @@ export async function loadNormalizedTourLayer(snapshotId) {
     const link = r.fields?.['שכר'];
     if (Array.isArray(link)) for (const pr of link) masterByPayrollRec.set(pr, r.id);
   }
-  const payrollRows = payrollRaw.map((r) => {
-    const f = r.fields || {};
-    const tourLink = Object.entries(f).find(([k, v]) => Array.isArray(v) && String(v[0] || '').startsWith('rec') && /סיור|tour/i.test(k));
-    return {
-      recId: r.id,
-      masterRecId: (tourLink ? tourLink[1][0] : null) || masterByPayrollRec.get(r.id) || null,
-      guideName: t(first(f['Guide name']) || first(f['מדריך']) || ''),
-      role: t(first(f['תפקיד']) || '') || null,
-      totalPreVatMinor: toMinor(f['סה"כ לתשלום לפני מע"מ']),
-      vatMinor: toMinor(f['תוספת מע"מ בש"ח']),
-      approved: String(first(f['מאושר']) || '') !== '',
-      guideApproved: String(first(f['מאושר על ידי העובד']) || '') !== '',
-      note: t(first(f['הערות משרד']) || ''),
-    };
-  });
+  const payrollRows = payrollRaw.map((r) => normalizePayrollRow(r, masterByPayrollRec.get(r.id) || null));
 
   return { masterTours, coordRows, payrollRows, rejectedDates };
 }

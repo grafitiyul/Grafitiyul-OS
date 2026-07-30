@@ -9,6 +9,7 @@ import { prisma } from '../db.js';
 import { adapterFor, ENTITY_TO_SOURCE_TYPE } from './sources/pipedriveMirror.js';
 import { airtableTourSource, tourAdapter } from './sources/airtableMirror.js';
 import { CHILD_TABLES, tourChildrenAdapter } from './sources/airtableTourChildren.js';
+import { COORD_FIELDS, PAYROLL_FIELDS } from '../migration/import/tourNormalize.js';
 import { createChildDeps, createChildFetcher } from './sources/airtableTourChildDeps.js';
 import { cursorIdFor } from './worker.js';
 
@@ -117,10 +118,20 @@ function airtableChildSource(client, tableId, fields) {
  * The fields each child table must project. Only what the derivation reads, so
  * payloads stay small and linked-record blobs are never dragged along.
  */
+// The fields each poll asks Airtable for. Every name here must EXIST in its table:
+// Airtable answers an unknown field with a 422 for the whole request, so one wrong
+// name kills the entire poller rather than degrading it. Derived from the canonical
+// field contract so it cannot drift from what the mappers then read.
 const CHILD_FIELDS = Object.freeze({
-  coordination: ['שם סיור', 'פייפ דיל ID', 'משתתפים', 'מייל מדריך'],
-  participants: ['שם סיור'],
-  payroll: ['שם סיור', 'שם המדריך', 'מייל', 'סה"כ לפני מעמ', 'מאושר'],
+  coordination: [
+    COORD_FIELDS.parentLink, COORD_FIELDS.legacyDealId, COORD_FIELDS.seats,
+    COORD_FIELDS.guideEmail, COORD_FIELDS.guideName, COORD_FIELDS.calendarId,
+  ],
+  payroll: [
+    PAYROLL_FIELDS.parentLink, PAYROLL_FIELDS.guideNameEn, PAYROLL_FIELDS.role,
+    PAYROLL_FIELDS.totalPreVat, PAYROLL_FIELDS.vat, PAYROLL_FIELDS.approved,
+    PAYROLL_FIELDS.guideApproved, PAYROLL_FIELDS.note,
+  ],
 });
 
 

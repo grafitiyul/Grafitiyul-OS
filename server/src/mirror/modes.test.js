@@ -262,15 +262,21 @@ test('the tour-children adapter declares parent_recompute and satisfies the cont
 
 test('the parent link is read from the table-specific field', () => {
   assert.equal(parentRecIdOf({ fields: { 'שם סיור': ['recTOUR'] } }, 'coordination'), 'recTOUR');
-  assert.equal(parentRecIdOf({ fields: { 'שם סיור': 'recTOUR' } }, 'participants'), 'recTOUR');
+  // Payroll links through סיורים. This test used to assert שם סיור for it, which is
+  // exactly what hid the bug that made every payroll poll fail UNKNOWN_FIELD_NAME.
+  assert.equal(parentRecIdOf({ fields: { סיורים: ['recTOUR'] } }, 'payroll'), 'recTOUR');
+  assert.equal(parentRecIdOf({ fields: { 'שם סיור': ['recTOUR'] } }, 'payroll'), null);
   assert.equal(parentRecIdOf({ fields: {} }, 'coordination'), null);
   assert.equal(parentRecIdOf({}, 'coordination'), null);
 });
 
 test('child tables map to their kinds', () => {
   assert.equal(childKindForTable('tbl1JaGS5oKRIkJ9z'), 'coordination');
-  assert.equal(childKindForTable('tbll83BjS4kLMRNuh'), 'participants');
   assert.equal(childKindForTable('tbli0eBDJ6CgCj4iJ'), 'payroll');
+  // tbll83BjS4kLMRNuh was mapped as "participants" and is the scheduled-REMINDERS
+  // table (MessageId / תוכן ההודעה / deliverAt). It carries no seat or booking data,
+  // so it is deliberately NOT a mirrored child.
+  assert.equal(childKindForTable('tbll83BjS4kLMRNuh'), null);
   assert.equal(childKindForTable('tblUNKNOWN'), null);
 });
 
@@ -374,7 +380,7 @@ test('the real adapter names all three distinct failure causes', async () => {
 test('a resolved parent carries the source-deleted marker for context', async () => {
   const db = { legacyRecord: { findUnique: async () => ({ entityId: 't1', payload: { a: 1 }, sourceDeletedAt: new Date('2026-07-01') }) } };
   const a = tourChildrenAdapter({ childKind: 'payroll', deps: {} });
-  const p = await a.resolveParent(db, { rawPayload: { fields: { 'שם סיור': 'recT' } }, externalId: 'x' });
+  const p = await a.resolveParent(db, { rawPayload: { fields: { סיורים: ['recT'] } }, externalId: 'x' });
   assert.equal(p.entityId, 't1');
   assert.ok(p.parentSourceDeletedAt, 'a child arriving for a tour that vanished upstream is visible');
 });
