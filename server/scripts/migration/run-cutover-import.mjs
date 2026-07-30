@@ -319,14 +319,27 @@ try {
   // detectable. Afterwards a buffered post-snapshot change is a real MERGE, and a
   // buffered pre-snapshot change is a no-op by the merge algebra — which is why
   // replay needs no timestamp filtering at all.
+  // Mirror baselines are a prerequisite for the MIRROR, not for the cutover. Every
+  // import write above is already committed by this point, so a failure here must
+  // not abort the run and make a successful cutover read as a failed one at the
+  // worst possible moment. It is loud, it is re-runnable (idempotent, overwrite:
+  // false), and the cutover stands without it.
   console.log('\n→ seeding mirror baselines from the snapshot…');
-  const seedStats = await seedMirrorBaselinesFromSnapshot(prisma, {
-    finalDeals: finalDeals.exec,
-    masterTours: finalLayer.masterTours,
-    log: (m) => console.log(m),
-  });
-  console.log(`   deals: ${seedStats.deals.seeded} seeded, ${seedStats.deals.skippedExisting} already had one`);
-  console.log(`   tours: ${seedStats.tours.seeded} seeded, ${seedStats.tours.skippedExisting} already had one`);
+  try {
+    const seedStats = await seedMirrorBaselinesFromSnapshot(prisma, {
+      finalDeals: finalDeals.exec,
+      masterTours: finalLayer.masterTours,
+      log: (m) => console.log(m),
+    });
+    console.log(`   deals: ${seedStats.deals.seeded} seeded, ${seedStats.deals.skippedExisting} already had one`);
+    console.log(`   tours: ${seedStats.tours.seeded} seeded, ${seedStats.tours.skippedExisting} already had one`);
+  } catch (e) {
+    console.error(`\n⚠ MIRROR BASELINE SEEDING FAILED — the cutover import itself is UNAFFECTED and complete.`);
+    console.error(`   ${String(e?.message || e).slice(0, 300)}`);
+    console.error(`   Re-run this same command to retry seeding (it is idempotent and never rewinds a baseline).`);
+    console.error(`   Do NOT enable mirror apply until it has succeeded: without baselines the first`);
+    console.error(`   mirror event per record would bootstrap and silently swallow post-snapshot changes.`);
+  }
   await prisma.migrationRun.update({ where: { id: run.id }, data: { status: 'done', finishedAt: new Date(), counters: { hashB: plan.payloadHash, freezeDate, deltaApplied: dc, historical: historical.payloads.length, future: fs.create, redirects: fs.redirectedToNative, dealMerges: ds.merges, newDeals: newDealPayloads.length, conflicts: seeded } } });
 } catch (e) {
   await prisma.migrationRun.update({ where: { id: run.id }, data: { status: 'failed', finishedAt: new Date(), error: String(e?.message || e).slice(0, 500) } });
