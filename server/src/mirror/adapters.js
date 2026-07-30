@@ -12,6 +12,7 @@ import { CHILD_TABLES, tourChildrenAdapter } from './sources/airtableTourChildre
 import { COORD_FIELDS, PAYROLL_FIELDS } from '../migration/import/tourNormalize.js';
 import { createChildDeps, createChildFetcher } from './sources/airtableTourChildDeps.js';
 import { cursorIdFor } from './worker.js';
+import { airtableClientFromEnv } from './sources/airtableClient.js';
 
 // Stage lookups are cached briefly: the mirror can process a burst of events,
 // and re-reading the stage table per event would be wasteful — but a rename in
@@ -25,7 +26,55 @@ async function stageIndex() {
   return _stages.byKey;
 }
 
-export function mirrorAdapterFactory(system, entity) {
+/**
+ * Which child table a persisted Airtable event came from.
+ *
+ * All four Airtable poll targets declare entity 'tourEvent' (deliberately — in
+ * ownership terms a child change IS a change to a tour), so `entity` alone cannot
+ * tell the master table from a child one. Poll payloads now carry `childKind`
+ * explicitly; the field-shape fallback exists so events captured BEFORE that was
+ * added are still resolvable rather than stranded.
+ *
+ * Disambiguated by each table's own parent-link field, from the canonical contract:
+ * coordination has `שם סיור`, payroll has `סיורים`, the master table has neither.
+ */
+export function airtableChildKindOf(payload) {
+  const explicit = payload?.childKind;
+  if (explicit && Object.prototype.hasOwnProperty.call(CHILD_TABLES, explicit)) return explicit;
+  const f = payload?.fields || {};
+  if (f[PAYROLL_FIELDS.parentLink] !== undefined) return 'payroll';
+  if (f[COORD_FIELDS.parentLink] !== undefined) return 'coordination';
+  return null; // the master tours table
+}
+
+// Airtable child adapters need live deps (a fetcher and a db handle). Built once,
+// lazily, so the factory can serve the retry worker and the replay runner — which
+// resolve adapters from a persisted row and have no poll target to borrow from.
+let _airtableDeps = null;
+function airtableChildDeps() {
+  if (_airtableDeps) return _airtableDeps;
+  const client = airtableClientFromEnv();
+  if (!client) return null;
+  _airtableDeps = createChildDeps({ fetcher: createChildFetcher({ client }), prisma });
+  return _airtableDeps;
+}
+
+export function mirrorAdapterFactory(system, entity, row = null) {
+  // AIRTABLE. Omitting this branch meant the retry worker resolved no adapter for
+  // any Airtable event and marked it `skipped / no_adapter` — terminal. With apply
+  // off, every polled Airtable change was left pending by the apply gate and then
+  // destroyed by the worker 60s later, so the Phase A buffer silently lost every
+  // Airtable change while looking perfectly healthy. Found on production, having
+  // already discarded two real coordination-row changes.
+  if (system === 'airtable') {
+    if (entity !== 'tourEvent') return null;
+    const childKind = airtableChildKindOf(row?.rawPayload);
+    if (!childKind) return tourAdapter();
+    const deps = airtableChildDeps();
+    if (!deps) return null;
+    return tourChildrenAdapter({ childKind, deps });
+  }
+
   if (system !== 'pipedrive') return null;
   const adapter = adapterFor(entity, {
     // Pipedrive stage id → GOS stage key is owner-approved mapping data that is
@@ -82,7 +131,7 @@ export function buildPollTargets({ ingest, airtableClient = null, prisma: db = p
       // still, in ownership terms, a change to a crosswalked TourEvent.
       entity: 'tourEvent',
       cursorKey: `airtable:child:${childKind}`,
-      source: airtableChildSource(airtableClient, tableId, CHILD_FIELDS[childKind]),
+      source: airtableChildSource(airtableClient, tableId, CHILD_FIELDS[childKind], childKind),
       adapter: tourChildrenAdapter({ childKind, deps }),
       ingest,
     });
@@ -95,7 +144,7 @@ export function buildPollTargets({ ingest, airtableClient = null, prisma: db = p
  * source — server-side modified-time filter, cursor from the source's own clock
  * — reusing the client's shared implementation rather than a second one.
  */
-function airtableChildSource(client, tableId, fields) {
+function airtableChildSource(client, tableId, fields, childKind) {
   return {
     async fetchChanges(cursor) {
       const { records, nextCursor, truncated, pages } =
@@ -104,7 +153,10 @@ function airtableChildSource(client, tableId, fields) {
         records: records.map((r) => ({
           externalId: r.id,
           version: r.lastModified || null,
-          payload: { id: r.id, fields: r.fields, lastModified: r.lastModified || null },
+          // childKind is stamped on the payload because the persisted event only
+          // records entity='tourEvent', which all four targets share. Without it a
+          // retry or replay cannot tell which adapter the event belongs to.
+          payload: { id: r.id, fields: r.fields, lastModified: r.lastModified || null, childKind },
         })),
         nextCursor,
         truncated,

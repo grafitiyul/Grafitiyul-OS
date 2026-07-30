@@ -85,12 +85,26 @@ export async function runRetryTick(db, adapterFactory, { max = BATCH } = {}) {
   const perEvent = [];
   const recompute = [];
   for (const row of rows) {
-    const adapter = adapterFactory(row.system, row.entity);
+    // The row is passed so the factory can disambiguate targets that share an
+    // entity (all four Airtable pollers declare 'tourEvent').
+    const adapter = adapterFactory(row.system, row.entity, row);
     if (!adapter) {
+      // NOT 'skipped'. A missing adapter is a CONFIGURATION gap, not a decision
+      // about the data — marking it terminal destroys a real change that nothing
+      // will ever replay. It stays pending, carries the reason for the health
+      // report, and processes itself once the adapter exists. This exact branch
+      // silently ate two real Airtable coordination changes on 2026-07-30.
       await db.mirrorEvent.update({
         where: { id: row.id },
-        data: { status: 'skipped', failureCode: 'no_adapter', claimedAt: null, claimedBy: null },
+        data: {
+          status: 'pending',
+          failureCode: 'no_adapter',
+          failureMessage: `no adapter for ${row.system}:${row.entity} — the event is kept, not discarded`,
+          claimedAt: null,
+          claimedBy: null,
+        },
       });
+      stats.failed++;
       continue;
     }
     let mode;

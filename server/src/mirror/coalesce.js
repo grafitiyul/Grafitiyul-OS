@@ -38,7 +38,9 @@ export async function groupByParent(db, events, adapterFactory) {
   const unresolved = [];
 
   for (const ev of events) {
-    const adapter = adapterFactory(ev.system, ev.entity);
+    // `ev` is passed so the factory can tell WHICH Airtable target this event came
+    // from — all of them declare entity 'tourEvent'.
+    const adapter = adapterFactory(ev.system, ev.entity, ev);
     if (!adapter || modeOf(adapter) !== MODE.PARENT_RECOMPUTE) { unresolved.push(ev); continue; }
     // Resolution failures are NOT swallowed here. The event falls through to
     // individual processing, where the pipeline records the named reason — if
@@ -122,11 +124,20 @@ export async function processCoalesced(db, events, adapterFactory, { allowApply 
   // Events that could not be grouped still get processed individually — they
   // must reach a terminal state, not sit pending forever.
   for (const ev of unresolved) {
-    const adapter = adapterFactory(ev.system, ev.entity);
+    const adapter = adapterFactory(ev.system, ev.entity, ev);
     if (!adapter) {
+      // Same rule as the retry worker: a config gap must not consume the event.
+      // Kept pending with the reason attached, so it heals when the adapter exists
+      // instead of vanishing into a terminal state nothing replays.
       await db.mirrorEvent.update({
         where: { id: ev.id },
-        data: { status: 'skipped', failureCode: 'no_adapter', claimedAt: null, claimedBy: null },
+        data: {
+          status: 'pending',
+          failureCode: 'no_adapter',
+          failureMessage: `no adapter for ${ev.system}:${ev.entity} — the event is kept, not discarded`,
+          claimedAt: null,
+          claimedBy: null,
+        },
       });
     } else {
       await processEvent(db, ev.id, adapter, { allowApply });

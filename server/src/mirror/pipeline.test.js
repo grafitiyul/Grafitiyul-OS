@@ -316,12 +316,16 @@ test('the retry worker processes what it claims', async () => {
   assert.equal(stats.processed, 1);
 });
 
-test('an event with no adapter is skipped loudly, not retried forever', async () => {
+test('an event with no adapter is KEPT, not discarded', async () => {
+  // This test used to assert `skipped`, and that assertion was the bug: a missing
+  // adapter is a configuration gap, not a decision about the data. Marking it
+  // terminal destroyed a real change nothing would ever replay — which is exactly
+  // what happened to two Airtable coordination events on 2026-07-30.
   const db = mirrorDb();
   await receive(db, { system: 'pipedrive', entity: 'deal', externalId: '1', changeKind: 'updated', transport: 'webhook', version: 'v', rawPayload: {} });
   await runRetryTick(db, () => null);
-  assert.equal(db._t.mirrorEvent[0].status, 'skipped');
-  assert.equal(db._t.mirrorEvent[0].failureCode, 'no_adapter');
+  assert.equal(db._t.mirrorEvent[0].status, 'pending', 'the event must survive so it can be applied once the adapter exists');
+  assert.equal(db._t.mirrorEvent[0].failureCode, 'no_adapter', 'and the reason must be visible in health');
 });
 
 test('the poller feeds the SAME pipeline and advances its cursor', async () => {

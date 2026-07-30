@@ -188,11 +188,12 @@ test('an unresolvable event reaches no_parent rather than sitting pending foreve
   assert.equal(db.rows[0].outcome, 'no_parent');
 });
 
-test('an event with no adapter is skipped loudly', async () => {
+test('an event with no adapter is KEPT, not discarded', async () => {
+  // Same rule as the retry worker: a config gap must never consume a real change.
   const { db } = setup({ events: [{ parent: 'recTOUR', receivedAt: at(1) }] });
   const stats = await processCoalesced(db, db.rows, () => null);
   assert.equal(stats.unresolved, 1);
-  assert.equal(db.rows[0].status, 'skipped');
+  assert.equal(db.rows[0].status, 'pending');
   assert.equal(db.rows[0].failureCode, 'no_adapter');
 });
 
