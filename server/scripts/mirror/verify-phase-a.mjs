@@ -6,7 +6,7 @@
 // pass at a glance.
 import { PrismaClient } from '@prisma/client';
 import { mirrorMode } from '../../src/mirror/config.js';
-import { mirrorHealth } from '../../src/mirror/worker.js';
+import { CLAIM_TTL_MS, mirrorHealth } from '../../src/mirror/worker.js';
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.MIGRATION_DB_URL || process.env.DATABASE_URL });
 const results = [];
@@ -36,11 +36,22 @@ console.log('\n3) the retry worker has not consumed, mutated or terminally class
 const processed = await prisma.mirrorEvent.count({ where: { processedAt: { not: null } } });
 const attempted = await prisma.mirrorEvent.count({ where: { attemptCount: { gt: 0 } } });
 const outcomes = await prisma.mirrorEvent.count({ where: { outcome: { not: null } } });
+// A claim is work-in-progress, so `claimedAt != null` at an instant is NORMAL —
+// a tick was running when we looked. Two things are NOT normal:
+//   * a claim the code never releases (the bug fixed in c49ac3d: the apply gate
+//     buffered the event but kept the claim forever), and
+//   * a claim orphaned by a container replaced mid-tick that is never reclaimed.
+// Both show up the same way: a claim older than the TTL. Inside the TTL the claim
+// is either live work or an orphan the worker is about to reclaim by design.
+// Asserting "zero claims" would fail on healthy in-flight work and would have to
+// be run at a lucky moment, which is not a gate — it is a coin toss.
 const claimed = await prisma.mirrorEvent.count({ where: { claimedAt: { not: null } } });
+const staleBefore = new Date(Date.now() - CLAIM_TTL_MS);
+const staleClaims = await prisma.mirrorEvent.count({ where: { claimedAt: { lt: staleBefore } } });
 check(processed === 0, 'no event has processedAt set', `${processed} processed`);
 check(attempted === 0, 'no event has attemptCount > 0', `${attempted} attempted`);
 check(outcomes === 0, 'no event has an outcome recorded', `${outcomes} with outcome`);
-check(claimed === 0, 'no event left claimed by a dead worker', `${claimed} claimed`);
+check(staleClaims === 0, 'no claim has outlived the claim TTL', `${staleClaims} stale of ${claimed} currently claimed (in-flight claims are normal)`);
 const dead = await prisma.mirrorEvent.count({ where: { status: 'dead' } });
 check(dead === 0, 'no dead-lettered events', `${dead} dead`);
 
