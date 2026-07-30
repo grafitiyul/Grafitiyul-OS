@@ -7,6 +7,7 @@ import ChatListRow from './ChatListRow.jsx';
 import PhoneFlag from './PhoneFlag.jsx';
 import DealDrawer from '../common/DealDrawer.jsx';
 import { hasDirtyForms } from '../../lib/dirtyForms.js';
+import { formatPhoneDisplay } from '../../lib/phone.js';
 
 // Active WhatsApp inbox — WhatsApp-style two-pane workspace:
 //   RIGHT: pinned conversation list (resizable, persisted width) with the
@@ -748,14 +749,16 @@ export default function WhatsAppInbox({ accounts = [], onCountChange }) {
               <div className="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2">
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[14px] font-semibold text-gray-900" dir="auto">
-                    {selected.displayName || selected.phoneNumber || 'לא מזוהה'}
+                    {selected.displayName && selected.displayName !== selected.phoneNumber
+                      ? selected.displayName
+                      : formatPhoneDisplay(selected.phoneNumber) || 'לא מזוהה'}
                   </p>
                   <p className="flex items-center gap-2 text-[11.5px] text-gray-500">
                     {selected.type === 'group' && <span>👥 קבוצה</span>}
                     {selected.phoneNumber && (
                       <span className="flex items-center gap-1" dir="ltr">
                         <PhoneFlag phone={selected.phoneNumber} />
-                        {selected.phoneNumber}
+                        {formatPhoneDisplay(selected.phoneNumber)}
                       </span>
                     )}
                     <span>· {selected.account?.label || selected.accountId}</span>

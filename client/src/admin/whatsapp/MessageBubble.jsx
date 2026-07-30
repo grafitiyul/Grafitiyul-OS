@@ -1,6 +1,7 @@
 import MessageMedia from './MessageMedia.jsx';
 import Checks from './Checks.jsx';
 import { linkifyText } from '../../lib/linkify.jsx';
+import { formatPhoneDisplay } from '../../lib/phone.js';
 
 // One WhatsApp message, WhatsApp-style: outbound = green bubble on the far
 // side (left in RTL, like Hebrew WhatsApp), inbound = white. System events
@@ -79,7 +80,7 @@ export default function MessageBubble({ message: m, showSender = false, quoted =
   // Group sender identity ladder: display name → phone → a consistent
   // "unknown participant" fallback. NEVER hide the label in a group — an
   // unattributed bubble reads as unreliable.
-  const sender = m.senderName || m.senderPhone;
+  const sender = m.senderName || formatPhoneDisplay(m.senderPhone);
   const reactions = groupReactions(m.reactions);
 
   const actions = (
@@ -121,7 +122,7 @@ export default function MessageBubble({ message: m, showSender = false, quoted =
         {quoted && (
           <div className="mb-1.5 rounded-lg border-r-4 border-emerald-500 bg-black/5 px-2.5 py-1.5">
             <p className="text-[11px] font-semibold text-emerald-700" dir="auto">
-              {quoted.direction === 'outgoing' ? 'אני' : quoted.senderName || quoted.senderPhone || 'משתתף לא מזוהה'}
+              {quoted.direction === 'outgoing' ? 'אני' : quoted.senderName || formatPhoneDisplay(quoted.senderPhone) || 'משתתף לא מזוהה'}
             </p>
             <p className="truncate text-[12px] text-gray-600" dir="auto">
               {quotedSnippet(quoted)}

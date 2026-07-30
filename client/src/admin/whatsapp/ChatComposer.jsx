@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
 import { emitDealTasksChanged } from '../deals/tasks/taskEvents.js';
 import { readDrafts, writeDraft, draftKeyFor } from './drafts.js';
+import { formatPhoneDisplay } from '../../lib/phone.js';
 // Emoji DATA bundled locally (content-hashed static asset) — the picker's
 // default is a CDN fetch, which is both against the project's caching rules
 // and the root cause of the "טעינת האימוג׳י נכשלה" failure.
@@ -562,7 +563,7 @@ export default function ChatComposer({ chat, replyTo, onCancelReply, onSent, onS
         <div className="flex items-center gap-2 border-b border-gray-200 bg-white px-3 py-1.5">
           <div className="min-w-0 flex-1 rounded-lg border-r-4 border-emerald-500 bg-gray-50 px-2.5 py-1.5">
             <p className="text-[11px] font-semibold text-emerald-700">
-              {replyTo.direction === 'outgoing' ? 'אני' : replyTo.senderName || replyTo.senderPhone || 'תגובה להודעה'}
+              {replyTo.direction === 'outgoing' ? 'אני' : replyTo.senderName || formatPhoneDisplay(replyTo.senderPhone) || 'תגובה להודעה'}
             </p>
             <p className="truncate text-[12px] text-gray-600" dir="auto">
               {quotedPreviewText(replyTo)}

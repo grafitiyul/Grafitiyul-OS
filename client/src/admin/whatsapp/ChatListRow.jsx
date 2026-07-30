@@ -2,6 +2,7 @@ import { useState } from 'react';
 import Checks from './Checks.jsx';
 import ActivityBadgeChip from '../deals/ActivityBadgeChip.jsx';
 import PhoneFlag from './PhoneFlag.jsx';
+import { formatPhoneDisplay } from '../../lib/phone.js';
 
 // ONE conversation row — the shared list-row component for every WhatsApp
 // conversation list (the inbox today; any future surface reuses this, so the
@@ -166,7 +167,7 @@ export default function ChatListRow({
   // phone → the same consistent unknown-participant fallback the bubbles use.
   const senderPrefix =
     isGroup && chat.lastMessage && chat.lastMessage.direction === 'incoming'
-      ? `${chat.lastMessage.senderName || chat.lastMessage.senderPhone || 'משתתף לא מזוהה'}: `
+      ? `${chat.lastMessage.senderName || formatPhoneDisplay(chat.lastMessage.senderPhone) || 'משתתף לא מזוהה'}: `
       : '';
 
   return (
@@ -221,7 +222,9 @@ export default function ChatListRow({
           }`}
           dir="auto"
         >
-          {chat.displayName || chat.phoneNumber || 'לא מזוהה'}
+          {chat.displayName && chat.displayName !== chat.phoneNumber
+            ? chat.displayName
+            : formatPhoneDisplay(chat.phoneNumber) || 'לא מזוהה'}
         </span>
         <span
           className={`shrink-0 text-[10.5px] ${unread ? 'font-bold text-emerald-600' : 'text-gray-400'}`}
@@ -263,7 +266,7 @@ export default function ChatListRow({
         {showPhone && (
           <span className="flex shrink-0 items-center gap-1 text-[10.5px] text-gray-400" dir="ltr">
             <PhoneFlag phone={chat.phoneNumber} />
-            {chat.phoneNumber}
+            {formatPhoneDisplay(chat.phoneNumber)}
           </span>
         )}
         {isGroup ? (

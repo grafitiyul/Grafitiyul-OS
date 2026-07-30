@@ -3,6 +3,7 @@ import { api } from '../../lib/api.js';
 import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import ChatThread from './ChatThread.jsx';
 import { OPEN_WHATSAPP_COMPOSER_EVENT } from './composerEvents.js';
+import { formatPhoneDisplay } from '../../lib/phone.js';
 import { WorkspaceSeamContext } from '../../shell/WorkspaceLayout.jsx';
 
 // Floating WhatsApp dock for the Deal page. Rendered through WorkspaceLayout's
@@ -144,7 +145,16 @@ export default function WhatsAppDock({ subjectType, subjectId }) {
     for (const c of chats) {
       const key = c.contact?.id || c.contactId || c.id;
       if (!map.has(key)) {
-        map.set(key, { id: key, name: c.contact?.name || c.displayName || 'לא מזוהה', chats: [] });
+        map.set(key, {
+          id: key,
+          name:
+            c.contact?.name ||
+            (c.displayName && c.displayName !== c.phoneNumber
+              ? c.displayName
+              : formatPhoneDisplay(c.phoneNumber)) ||
+            'לא מזוהה',
+          chats: [],
+        });
       }
       map.get(key).chats.push(c);
     }

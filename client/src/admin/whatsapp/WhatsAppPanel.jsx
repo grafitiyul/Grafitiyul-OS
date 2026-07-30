@@ -2,6 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../lib/api.js';
 import WhatsAppLogo from '../common/WhatsAppLogo.jsx';
 import ChatThread from './ChatThread.jsx';
+import { formatPhoneDisplay } from '../../lib/phone.js';
+
+// A chat whose display name is just its raw phone gets the shared local
+// formatting (052-123-4567) — display only, canonical storage untouched.
+const chatTitle = (c) =>
+  c.displayName && c.displayName !== c.phoneNumber
+    ? c.displayName
+    : formatPhoneDisplay(c.phoneNumber) || 'לא מזוהה';
 
 // The WhatsApp surface a CRM page embeds (Deal tab / Contact page /
 // Organization page — one component, one store, zero duplication). Resolves
@@ -79,7 +87,7 @@ export default function WhatsAppPanel({ subjectType, subjectId }) {
                     : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50'
                 }`}
               >
-                <span>{c.displayName || 'לא מזוהה'}</span>
+                <span>{chatTitle(c)}</span>
                 <span className={active ? 'text-emerald-100' : 'text-gray-400'}>
                   · {c.account?.label || c.accountId}
                 </span>
@@ -93,7 +101,7 @@ export default function WhatsAppPanel({ subjectType, subjectId }) {
           {chats.length === 1 && (
             <p className="flex items-center gap-1.5 text-[12px] text-gray-500">
               <WhatsAppLogo size={14} />
-              <span>{selected.displayName || 'לא מזוהה'}</span>
+              <span>{chatTitle(selected)}</span>
               <span className="text-gray-400">· {selected.account?.label || selected.accountId}</span>
             </p>
           )}
