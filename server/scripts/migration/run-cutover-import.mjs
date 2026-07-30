@@ -22,6 +22,7 @@ import { createSnapshotReader } from '../../src/migration/review/snapshotReader.
 import { requireEntities } from '../../src/migration/snapshotContract.js';
 import { loadNormalizedTourLayer } from '../../src/migration/import/tourNormalize.js';
 import { seedMirrorBaselinesFromSnapshot } from '../../src/mirror/seedFromSnapshot.js';
+import { classifyRejectedDates, REVIEWED_ON, REVIEW_DOC, NEEDS_MANUAL_DECISION } from '../../src/migration/import/reviewedRejectedDates.js';
 import { planTourImport, executeTourPlan } from '../../src/migration/import/tourImport.js';
 import { buildStageMap, resolveFieldKeys, planDealImport, executeDealPlan } from '../../src/migration/import/dealImport.js';
 import {
@@ -210,19 +211,34 @@ if (ds.conflicts) {
 // operational record.
 const rejectedDates = finalLayer.rejectedDates || [];
 const ACCEPT_REJECTED = process.argv.includes('--accept-rejected-dates');
+const triage = classifyRejectedDates({ rejectedDates, coordRows: finalLayer.coordRows });
 if (rejectedDates.length) {
   console.log(`\n── REJECTED SOURCE DATES (${rejectedDates.length}) ──`);
   const byReason = {};
   for (const r of rejectedDates) byReason[r.reason] = (byReason[r.reason] || 0) + 1;
   for (const [reason, n] of Object.entries(byReason)) console.log(`  ${reason}: ${n}`);
   console.log(`  NOT planned and NOT counted as future tours.`);
-  if (!ACCEPT_REJECTED) console.log(`  resolve them, or re-run with --accept-rejected-dates to plan without them.`);
+
+  // Reviewed on 2026-07-30 and accepted individually — see REVIEW_DOC. The gate
+  // stays strict; only these exact record ids are pre-cleared.
+  if (triage.acknowledged.length) {
+    const byVerdict = {};
+    for (const r of triage.acknowledged) byVerdict[r.verdict] = (byVerdict[r.verdict] || 0) + 1;
+    console.log(`  reviewed & accepted ${REVIEWED_ON}: ${triage.acknowledged.length} (${Object.entries(byVerdict).map(([k, n]) => `${k} ${n}`).join(', ')})`);
+    console.log(`    evidence: ${REVIEW_DOC}`);
+    if (NEEDS_MANUAL_DECISION.length) console.log(`    left in the review queue for a manual decision: ${NEEDS_MANUAL_DECISION.join(', ')}`);
+  }
+  for (const r of triage.unreviewed) console.log(`  ⚠ UNREVIEWED ${r.recId} (Tour_ID ${r.tourId ?? '—'}, status ${r.status || '—'}) ${r.reason}`);
+  for (const r of triage.changed) console.log(`  ⚠ CHANGED SINCE REVIEW ${r.recId}: ${r.why} (${JSON.stringify({ reviewedReason: r.reviewedReason, reviewedCount: r.reviewedCount, currentCount: r.currentCount })})`);
 }
 
 const gates = checkCutoverGates({ plan, expectHash: EXECUTE ? expectHash : plan.payloadHash, freezeDate });
-if (rejectedDates.length && !ACCEPT_REJECTED) {
+// Only records nobody has reviewed block the cutover. An owner-reviewed record is
+// not a blocker; a NEW one, or one that changed since it was reviewed, still is.
+const blocking = [...triage.unreviewed, ...triage.changed];
+if (blocking.length && !ACCEPT_REJECTED) {
   gates.ok = false;
-  gates.failures.push(`${rejectedDates.length} source tours have an unusable DATE — resolve them or pass --accept-rejected-dates`);
+  gates.failures.push(`${blocking.length} source tours have an unusable DATE and were never reviewed (${blocking.slice(0, 5).map((r) => r.recId).join(', ')}${blocking.length > 5 ? ', …' : ''}) — audit them with scripts/migration/audit-rejected-tour-dates.mjs, then add them to reviewedRejectedDates.js`);
 }
 console.log(`\nGATES: ${gates.ok ? 'PASS ✓' : 'REFUSED'}`);
 for (const f of gates.failures) console.error(`  ✗ ${f}`);
@@ -256,7 +272,27 @@ try {
     console.log(`→ deal merges (${dealDeltaPlan.merges.length})…`);
     await executeDealMerges(prisma, dealDeltaPlan.merges, { gosStageIdByKey, log: (m) => console.log(m) });
   }
-  const seeded = await seedCutoverConflicts(prisma, { tourConflicts: tourDelta.conflicts, dealConflicts: dealDeltaPlan.conflicts });
+  // The deferred unusable-DATE records ride along into the review queue. They were
+  // reviewed and accepted as non-blocking, not resolved — so they stay visible.
+  const deferredReviewItems = NEEDS_MANUAL_DECISION
+    .filter((recId) => rejectedDates.some((r) => r.recId === recId))
+    .map((recId) => {
+      const r = rejectedDates.find((x) => x.recId === recId);
+      return {
+        subjectKey: `cutover:rejected_date:${recId}`,
+        proposal: {
+          kind: 'unusable_source_date',
+          sourceRecId: recId,
+          tourId: r?.tourId ?? null,
+          status: r?.status ?? null,
+          reason: r?.reason ?? null,
+          reviewedOn: REVIEWED_ON,
+          evidence: REVIEW_DOC,
+          summary: 'סיור במקור ללא תאריך שמיש — הוחרג מהמיגרציה, ממתין להחלטה',
+        },
+      };
+    });
+  const seeded = await seedCutoverConflicts(prisma, { tourConflicts: tourDelta.conflicts, dealConflicts: dealDeltaPlan.conflicts, reviewItems: deferredReviewItems });
   console.log(`→ conflicts seeded for review: ${seeded.created} new · ${seeded.kept} refreshed`);
   if (historical.payloads.length || historical.legacyEvidence.length) {
     console.log(`→ historical delta tours (${historical.payloads.length})…`);

@@ -99,6 +99,34 @@ railway run --service Grafitiyul-OS node server/scripts/migration/run-snapshot.m
   reconciliation `28+2473+921+1+125 = 3548 = master ✓`. **Tomorrow's real numbers will differ** (a fresh Final Snapshot after the freeze) — these are the shape to sanity-check against, not values to match.
 - Rollback point: nothing written yet. If populations look wrong — stop here, legacy still authoritative, resume tomorrow.
 
+**2.3a Unusable source dates — read the block, do NOT reach for the flag**
+
+The plan prints a `── REJECTED SOURCE DATES ──` block for every master tour whose
+Airtable `DATE` could not be validated. Those tours are neither imported nor
+silently dropped.
+
+- Expected on the night: `reviewed & accepted 2026-07-30: 45 (historical 34, empty_shell 9, cancelled 1, unknown 1)`
+  and `GATES: PASS ✓`. Those 45 were audited record-by-record and accepted by the
+  owner — evidence in [GOS-rejected-tour-dates-review.md](GOS-rejected-tour-dates-review.md).
+- **If the block shows `⚠ UNREVIEWED` or `⚠ CHANGED SINCE REVIEW`, the gate refuses and that is correct.**
+  A record nobody has looked at must not ride in on an old approval. Audit it:
+  `railway run --service Grafitiyul-OS node server/scripts/migration/audit-rejected-tour-dates.mjs --final <FINAL> --md <out.md>`
+  (read-only, sourced from the snapshot — zero Airtable API requests), then add the
+  reviewed ids to `server/src/migration/import/reviewedRejectedDates.js`.
+- **Do NOT pass `--accept-rejected-dates` to get past this.** It is a blanket
+  override that also silences the gate for the unreviewed record. Owner decision,
+  2026-07-30: the gate stays strict; only individually reviewed ids are cleared.
+- Root cause for the known 45: the `DATE` formula's input field `ת.סיור` is empty,
+  so `DATE` and ~12 formulas chained off it all error. Airtable is deliberately NOT
+  being changed.
+- Carried forward: `recSX9jmU0r1EnhuH` (Tour_ID 1711 / deal 20383) is the one record
+  with real content — one participant, and a Pipedrive deal that no longer exists.
+  It does not block the cutover; execute seeds it into the `exceptional` review
+  queue as `cutover:rejected_date:recSX9jmU0r1EnhuH` for a later manual decision.
+- Separate open item, NOT a cutover blocker: 34 of the 45 hold guides' written tour
+  summaries that no cutover option carries into GOS. Historical data-quality, to be
+  evaluated later.
+
 **2.4 Calendar hold ON** (Railway dashboard)
 - Purpose: imported future tours must be verifiable before invitations fire.
 - Action: set `TOUR_CALENDAR_SYNC_ENABLED=false` on Grafitiyul-OS (service restarts).

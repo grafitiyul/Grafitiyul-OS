@@ -118,17 +118,38 @@ The correlation is exact (100% / 0%), so there is no second cause to look for.
 
 Note that `סטטוס = "עתידי"` on these records is **not** evidence of a future tour. The importer already documents Airtable statuses as stale, and here it is simply the field default on a row nobody filled in.
 
-## Safest correction path
+## OWNER DECISION — 2026-07-30
+
+Recorded here so it is not carried only in conversation:
+
+- **Airtable is not changed.** No source-side edit, no deletion, no formula repair.
+- **`--accept-rejected-dates` is not used by default.** It remains available as a deliberate, per-run override.
+- **The 44 non-operational records need no further action.**
+- **`recSX9jmU0r1EnhuH` (Tour_ID 1711 / deal 20383) stays in the review queue** for a manual decision later, and **must not block the cutover**.
+- **The date gate stays strict for future runs.**
+- The 34 orphaned guide summaries are a **separate historical data-quality issue**, to be evaluated later — not a cutover issue.
+
+### How that is enforced in code
+
+`src/migration/import/reviewedRejectedDates.js` lists these 45 record ids explicitly, each with the verdict above and the number of coordination rows it had at review time. The cutover gate (`classifyRejectedDates`) then:
+
+- **passes** for a rejected record that is in the list, unchanged since review;
+- **refuses** for any record NOT in the list — a new breakage still stops the cutover;
+- **refuses** for a listed record whose failure reason changed, or that gained or lost a coordination row, because the approval no longer describes it.
+
+That is the difference between this and `--accept-rejected-dates`: the flag would wave through the next unreviewed record too. The list only clears the records that were actually read.
+
+At cutover the deferred record is seeded into the existing migration review queue (`exceptional`, subject `cutover:rejected_date:recSX9jmU0r1EnhuH`), so the pending decision lives in the system rather than in this file alone.
+
+## Correction options considered
 
 GOS never writes to Airtable, so every option below is a manual source-side action.
 
-**Recommended: change nothing in Airtable, and do not pass `--accept-rejected-dates`.**
-
-The gate is currently refusing to plan 45 records that contain, between them, one customer registration whose Pipedrive deal no longer exists. Nothing operational is behind the gate. The two ways forward:
+Between them these 45 records contain one customer registration whose Pipedrive deal no longer exists. Nothing operational is behind the gate. The options as they were presented:
 
 | option | effect | risk |
 | --- | --- | --- |
-| **A. Review the single flagged record, then re-run the plan** | Decide `recSX9jmU0r1EnhuH` on its merits; the other 44 need no action | none — read-only until the cutover is separately approved |
+| **A. Review the single flagged record, then re-run the plan** ← **CHOSEN** | Decide `recSX9jmU0r1EnhuH` on its merits; the other 44 need no action | none — read-only until the cutover is separately approved |
 | B. Fill `ת.סיור` on the 34 completion-form rows | Their formulas heal; they would import as completed tours with no product, customer or guide | adds 34 contentless tours to the Tours module |
 | C. Delete the 45 rows in Airtable | The gate clears permanently | destructive, and it discards the guides' written tour summaries |
 | D. Pass `--accept-rejected-dates` | The cutover plans without them | acceptable **only** once the list above is accepted; it silences the gate for any FUTURE breakage too |

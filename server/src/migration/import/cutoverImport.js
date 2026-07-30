@@ -475,11 +475,15 @@ export async function executeDealMerges(prisma, merges, { gosStageIdByKey = new 
 }
 
 // Conflicts (tours + deals) become pending review rows — idempotent by subjectKey.
-export async function seedCutoverConflicts(prisma, { tourConflicts = [], dealConflicts = [] } = {}) {
+export async function seedCutoverConflicts(prisma, { tourConflicts = [], dealConflicts = [], reviewItems = [] } = {}) {
   let created = 0, kept = 0;
   const rows = [
     ...tourConflicts.map((c) => ({ subjectKey: `cutover:tour:${c.sourceRecId}`, proposal: { kind: c.kind, ...c } })),
     ...dealConflicts.map((c) => ({ subjectKey: `cutover:deal:${c.orderNo}`, proposal: { kind: 'deal_field_conflict', ...c } })),
+    // Items the owner deliberately deferred rather than resolved. They do not block
+    // the cutover, but they must not evaporate into a document either — they land
+    // in the same review queue as everything else awaiting a decision.
+    ...reviewItems.map((c) => ({ subjectKey: c.subjectKey, proposal: c.proposal })),
   ];
   for (const r of rows) {
     const existing = await prisma.migrationDecision.findUnique({ where: { queue_subjectKey: { queue: 'exceptional', subjectKey: r.subjectKey } } });
