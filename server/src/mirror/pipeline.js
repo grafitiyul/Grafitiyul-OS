@@ -121,7 +121,20 @@ export async function processEvent(db, eventId, adapter, { allowApply = null } =
     // here is exactly how a buffered window would be silently lost.
     await db.mirrorEvent.update({
       where: { id: eventId },
-      data: { status: 'pending', outcome: null, failureCode: null, failureMessage: null },
+      data: {
+        status: 'pending',
+        outcome: null,
+        failureCode: null,
+        failureMessage: null,
+        // RELEASE the claim the worker took to get here. Buffering is not work in
+        // progress — nothing was evaluated — so leaving the event marked as claimed
+        // states something untrue about it, and a human reading the buffer during a
+        // cutover would see 63 events apparently mid-flight in a worker that is not
+        // touching them. It also self-throttles re-examination to the claim TTL for
+        // no reason. Terminal paths already release via `finish`; this one did not.
+        claimedAt: null,
+        claimedBy: null,
+      },
     });
     return { status: 'pending', outcome: null, buffered: true };
   }

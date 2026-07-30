@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 // override, which is the same switch the runtime flag feeds.
 process.env.MIRROR_APPLY_ENABLED = 'true';
 
-import { OUTCOME, buildIdempotencyKey, ingestMirror, mirroredEntities, receive } from './pipeline.js';
+import { OUTCOME, buildIdempotencyKey, ingestMirror, mirroredEntities, processEvent, receive } from './pipeline.js';
 import { CLAIM_TTL_MS, claimOneEvent, mirrorHealth, runPollTick, runRetryTick } from './worker.js';
 import { resolveConflict } from './resolve.js';
 import { pdDate, toMinor, dealAdapter, entityForPipedriveObject, isDeleteEvent } from './sources/pipedriveMirror.js';
@@ -537,4 +537,21 @@ test('replaying the SAME pre-snapshot event twice is indistinguishable from once
   const after1 = { ...db._t.deal[0] };
   await ingestMirror(db, args, ADAPTER, { allowApply: true });
   assert.deepEqual({ ...db._t.deal[0] }, after1);
+});
+
+test('a buffered event releases its claim — buffering is not work in progress', async () => {
+  // The apply gate left claimedAt/claimedBy set, so every buffered event looked
+  // mid-flight in a worker that was not touching it. On production that read as
+  // "63 events claimed" during the Phase A gate.
+  const db = mirrorDb();
+  const r = await receive(db, { system: 'pipedrive', entity: 'deal', externalId: '77', changeKind: 'updated', transport: 'webhook', version: 'v', rawPayload: pdPayload({ title: 'x' }) });
+  await db.mirrorEvent.update({ where: { id: r.eventId }, data: { claimedAt: new Date(), claimedBy: 'worker-1' } });
+
+  const res = await processEvent(db, r.eventId, ADAPTER, { allowApply: false });
+  assert.equal(res.buffered, true);
+  const row = db._t.mirrorEvent.find((e) => e.id === r.eventId);
+  assert.equal(row.status, 'pending', 'still buffered');
+  assert.equal(row.claimedAt, null, 'the claim must be released');
+  assert.equal(row.claimedBy, null);
+  assert.equal(row.processedAt ?? null, null, 'and nothing may be marked processed');
 });
