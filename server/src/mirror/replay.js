@@ -35,13 +35,15 @@ export async function replayBufferedWindow(db, adapterFactory, {
     where,
     orderBy: { receivedAt: 'asc' },
     take: limit,
-    select: { id: true, system: true, entity: true, externalId: true, receivedAt: true },
+    // Full rows: the factory needs rawPayload to tell an Airtable master-tour
+    // event from a child-table one — they share entity 'tourEvent' by design.
   });
 
   const stats = {
     total: events.length,
-    applied: 0, converged: 0, noop: 0, conflicts: 0,
+    applied: 0, created: 0, converged: 0, noop: 0, conflicts: 0,
     bootstrapped: 0, notCrosswalked: 0, sourceDeleted: 0, skipped: 0, failed: 0,
+    deferred: 0, deferredReasons: {},
     byEntity: {},
   };
   const conflicts = [];
@@ -50,8 +52,14 @@ export async function replayBufferedWindow(db, adapterFactory, {
 
   let i = 0;
   for (const ev of events) {
-    const adapter = adapterFactory(ev.system, ev.entity);
-    if (!adapter) { stats.skipped += 1; continue; }
+    const adapter = adapterFactory(ev.system, ev.entity, ev);
+    if (!adapter) {
+      // No adapter is a DEFERRAL, not a skip: the event stays pending and is
+      // counted so the completion report can name what remains and why.
+      stats.deferred += 1;
+      stats.deferredReasons.no_adapter = (stats.deferredReasons.no_adapter || 0) + 1;
+      continue;
+    }
 
     const res = await processEvent(db, ev.id, adapter, { allowApply: true });
     const key = `${ev.system}:${ev.entity}`;
@@ -59,6 +67,8 @@ export async function replayBufferedWindow(db, adapterFactory, {
 
     switch (res.outcome) {
       case 'merged': stats.applied += 1; stats.byEntity[key].applied += 1; break;
+      case 'created': stats.created += 1; stats.byEntity[key].applied += 1; break;
+      case 'recomputed': stats.applied += 1; stats.byEntity[key].applied += 1; break;
       case 'converged': stats.converged += 1; break;
       case 'noop': stats.noop += 1; stats.byEntity[key].noop += 1; break;
       case 'conflict':
@@ -69,7 +79,13 @@ export async function replayBufferedWindow(db, adapterFactory, {
       case 'not_crosswalked': stats.notCrosswalked += 1; break;
       case 'source_deleted': stats.sourceDeleted += 1; break;
       default:
-        if (res.status === 'skipped') stats.skipped += 1;
+        if (res.status === 'pending') {
+          // Deferred by the pipeline (awaiting creation support / declined with a
+          // reason / unresolvable parent). Still pending, still measurable.
+          stats.deferred += 1;
+          const why = res.reason || (res.awaitingSupport ? 'awaiting_creation_support' : 'deferred');
+          stats.deferredReasons[why] = (stats.deferredReasons[why] || 0) + 1;
+        } else if (res.status === 'skipped') stats.skipped += 1;
         else if (res.status !== 'processed') stats.failed += 1;
     }
     if (++i % 200 === 0) onProgress({ done: i, total: events.length });

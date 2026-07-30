@@ -326,8 +326,13 @@ try {
   // false), and the cutover stands without it.
   console.log('\n→ seeding mirror baselines from the snapshot…');
   try {
+    // RAW snapshot deals, not the exec plan: the seeder normalises through the
+    // mirror's own deal adapter, which reads Pipedrive-shaped records. Passing
+    // the plan object here was the `finalDeals is not iterable` failure.
+    const rawFinalDeals = [];
+    await streamDeals(finalId, (d) => rawFinalDeals.push(d));
     const seedStats = await seedMirrorBaselinesFromSnapshot(prisma, {
-      finalDeals: finalDeals.exec,
+      finalDeals: rawFinalDeals,
       masterTours: finalLayer.masterTours,
       log: (m) => console.log(m),
     });
