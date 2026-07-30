@@ -8,43 +8,95 @@
 // stores OUR OWN copy in R2, served through the ordinary presign route.
 //
 // Policy (product decision): very conservative — ONE chat per tick, one tick
-// per minute (~811 chats ≈ 13.5h for a full first pass; that is fine). Never
-// blocks message processing: its own timer, one item, every failure swallowed.
+// per minute. Never blocks message processing: its own timer, one item, every
+// failure swallowed. The rate is a health choice, not a throughput problem;
+// do not raise it to finish faster.
+//
+// Scheduling contract (profilePictureNextCheckAt is the ONE gate):
+//   never probed        → eligible immediately (nextCheckAt null)
+//   'stored' / 'none'   → re-check after REFRESH_DAYS. A confirmed
+//                          no-picture/privacy answer is a real answer — it is
+//                          persisted and NOT retried aggressively.
+//   'error' (transient) → bounded exponential backoff:
+//                          min(30d, 1h · 4^attempts); attempts reset on any
+//                          definitive outcome.
+//   not connected       → nothing is stamped; the tick simply passes.
+// Priority: never-probed chats first, most recently active first — the
+// visible inbox enriches before dead history.
 //
 // Cache/duplicate contract:
 //   * R2 key is STABLE per chat (whatsapp/<accountId>/avatars/<chatId>.jpg) —
-//     a refresh overwrites in place, so there is exactly one object per chat,
-//     ever. (The key embeds the immutable chat row id, NOT the JID.)
-//   * profilePictureCheckedAt stamps every attempt — including "this contact
-//     has no picture / privacy-restricted" — so the worker never hammers the
-//     same chat; each chat is re-checked at most once per REFRESH_DAYS.
-//   * Connection-down ticks stamp nothing and simply wait for the next tick.
-// Selection order: never-checked chats first, most recently active first —
-// the visible inbox enriches before dead history.
+//     a refresh overwrites in place: one object per chat, ever. The UI reads
+//     the presign route; nothing re-fetches per render.
+//
+// Visibility: every outcome logs at debug; a summary line (stored / none /
+// error / never-probed backlog) logs every SUMMARY_EVERY ticks and once at
+// start.
 
 import pino from 'pino';
 import { config } from './config.js';
 import { prisma } from './db.js';
-import { fetchProfilePictureSafe } from './ingest.js';
 import { isMediaConfigured, storeMedia } from './media.js';
 
 const log = pino({ level: config.logLevel, base: { name: 'avatar-worker' } });
 
 const TICK_MS = 60_000;
 const REFRESH_DAYS = 30;
-const MAX_AVATAR_BYTES = 2 * 1024 * 1024; // avatars are ~10-100KB; 2MB is generous
+const REFRESH_MS = REFRESH_DAYS * 86_400_000;
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+const PROBE_TIMEOUT_MS = 5_000;
+const DOWNLOAD_TIMEOUT_MS = 10_000;
+const SUMMARY_EVERY = 30; // ticks (~half hour)
+
+// Transient backoff: 1h, 4h, 16h, ~2.7d, ~10.7d, then the 30d cap.
+function errorBackoffMs(attempts) {
+  return Math.min(REFRESH_MS, 3600_000 * 4 ** Math.max(0, attempts));
+}
+
+// Probe WhatsApp for the picture URL and CLASSIFY the outcome — unlike the
+// ingest-path helper (which flattens everything to null), the worker must
+// distinguish "this contact has no picture" (a real, persistable answer) from
+// "WhatsApp/network hiccup" (retry with backoff).
+//   → { kind: 'url', url } | { kind: 'none' } | { kind: 'transient', detail }
+async function probeProfilePicture(socket, jid) {
+  let timer = null;
+  try {
+    const result = await Promise.race([
+      socket.profilePictureUrl(jid, 'image'),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('probe_timeout')), PROBE_TIMEOUT_MS);
+      }),
+    ]);
+    if (typeof result === 'string' && result) return { kind: 'url', url: result };
+    return { kind: 'none' };
+  } catch (err) {
+    const status = err?.output?.statusCode ?? err?.data ?? null;
+    const msg = String(err?.message || err);
+    // Baileys signals "no picture" as item-not-found (404); privacy-restricted
+    // contacts answer 401/403. All are definitive no-picture outcomes.
+    if ([401, 403, 404].includes(Number(status)) || /not-found|item-not-found|forbidden|unauthorized/i.test(msg)) {
+      return { kind: 'none' };
+    }
+    return { kind: 'transient', detail: msg };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export function startAvatarWorker(client) {
   if (!isMediaConfigured()) {
     log.warn('R2 not configured — avatar worker not started (pictures stay CDN-hotlinked)');
     return null;
   }
+  let ticks = 0;
   let inFlight = false;
   const timer = setInterval(async () => {
     if (inFlight) return;
     inFlight = true;
     try {
       await tick(client);
+      ticks++;
+      if (ticks % SUMMARY_EVERY === 0) await logSummary();
     } catch (err) {
       log.warn({ err: err?.message }, 'avatar tick failed (non-fatal)');
     } finally {
@@ -53,7 +105,28 @@ export function startAvatarWorker(client) {
   }, TICK_MS);
   timer.unref?.();
   log.info({ tickMs: TICK_MS, refreshDays: REFRESH_DAYS }, 'avatar worker started (1 chat/tick)');
+  void logSummary();
   return timer;
+}
+
+async function logSummary() {
+  try {
+    const rows = await prisma.whatsAppChat.groupBy({
+      by: ['profilePictureStatus'],
+      where: { accountId: config.accountId },
+      _count: { _all: true },
+    });
+    const byStatus = Object.fromEntries(rows.map((r) => [r.profilePictureStatus ?? 'never_probed', r._count._all]));
+    const due = await prisma.whatsAppChat.count({
+      where: {
+        accountId: config.accountId,
+        OR: [{ profilePictureNextCheckAt: null }, { profilePictureNextCheckAt: { lte: new Date() } }],
+      },
+    });
+    log.info({ ...byStatus, due }, 'avatar backlog summary');
+  } catch (err) {
+    log.debug({ err: err?.message }, 'avatar summary failed');
+  }
 }
 
 async function tick(client) {
@@ -61,36 +134,60 @@ async function tick(client) {
   const socket = client.socket;
   if (!socket) return;
 
-  const staleCutoff = new Date(Date.now() - REFRESH_DAYS * 86_400_000);
+  const now = new Date();
   const chat = await prisma.whatsAppChat.findFirst({
     where: {
       accountId: config.accountId,
-      OR: [{ profilePictureCheckedAt: null }, { profilePictureCheckedAt: { lt: staleCutoff } }],
+      OR: [{ profilePictureNextCheckAt: null }, { profilePictureNextCheckAt: { lte: now } }],
     },
+    // Never-probed first (null checkedAt sorts first), and among those the
+    // most recently ACTIVE chat — the visible inbox enriches before history.
     orderBy: [
       { profilePictureCheckedAt: { sort: 'asc', nulls: 'first' } },
       { lastMessageAt: { sort: 'desc', nulls: 'last' } },
     ],
-    select: { id: true, externalChatId: true, phoneJid: true, profilePictureKey: true },
+    select: {
+      id: true, externalChatId: true, phoneJid: true, profilePictureAttempts: true,
+    },
   });
-  if (!chat) return; // everything checked within the window — idle
+  if (!chat) return; // backlog converged — everything scheduled in the future
 
   // @lid chats often refuse picture lookups; the phone-form JID works.
   const jid = chat.phoneJid || chat.externalChatId;
-  const url = await fetchProfilePictureSafe(socket, jid, log);
+  const probe = await probeProfilePicture(socket, jid);
 
-  if (!url) {
-    // No picture / privacy-restricted / timeout — stamp so we move on and
-    // re-check this chat only after the refresh window.
+  if (probe.kind === 'none') {
     await prisma.whatsAppChat.update({
       where: { id: chat.id },
-      data: { profilePictureCheckedAt: new Date() },
+      data: {
+        profilePictureStatus: 'none',
+        profilePictureAttempts: 0,
+        profilePictureCheckedAt: now,
+        profilePictureNextCheckAt: new Date(now.getTime() + REFRESH_MS),
+      },
     });
+    log.debug({ chatId: chat.id }, 'avatar: confirmed no picture');
     return;
   }
 
+  if (probe.kind === 'transient') {
+    const attempts = (chat.profilePictureAttempts ?? 0) + 1;
+    await prisma.whatsAppChat.update({
+      where: { id: chat.id },
+      data: {
+        profilePictureStatus: 'error',
+        profilePictureAttempts: attempts,
+        profilePictureCheckedAt: now,
+        profilePictureNextCheckAt: new Date(now.getTime() + errorBackoffMs(attempts)),
+      },
+    });
+    log.debug({ chatId: chat.id, attempts, detail: probe.detail }, 'avatar: transient probe failure — backed off');
+    return;
+  }
+
+  // We have a URL — download and store our own copy.
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    const res = await fetch(probe.url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
     if (!res.ok) throw new Error(`avatar_download_http_${res.status}`);
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.byteLength === 0 || buf.byteLength > MAX_AVATAR_BYTES) {
@@ -102,18 +199,25 @@ async function tick(client) {
       where: { id: chat.id },
       data: {
         profilePictureKey: key,
-        profilePictureUrl: url, // freshest CDN URL kept as a fallback
-        profilePictureCheckedAt: new Date(),
+        profilePictureUrl: probe.url, // freshest CDN URL kept as a fallback
+        profilePictureStatus: 'stored',
+        profilePictureAttempts: 0,
+        profilePictureCheckedAt: now,
+        profilePictureNextCheckAt: new Date(now.getTime() + REFRESH_MS),
       },
     });
     log.info({ chatId: chat.id, bytes: buf.byteLength }, 'avatar stored');
   } catch (err) {
-    // Download/store failed — stamp anyway (retry lands on the next refresh
-    // pass; a persistent CDN failure must not wedge the queue on one chat).
-    log.debug({ chatId: chat.id, err: err?.message }, 'avatar fetch failed; stamped for later retry');
+    const attempts = (chat.profilePictureAttempts ?? 0) + 1;
     await prisma.whatsAppChat.update({
       where: { id: chat.id },
-      data: { profilePictureCheckedAt: new Date() },
+      data: {
+        profilePictureStatus: 'error',
+        profilePictureAttempts: attempts,
+        profilePictureCheckedAt: now,
+        profilePictureNextCheckAt: new Date(now.getTime() + errorBackoffMs(attempts)),
+      },
     });
+    log.debug({ chatId: chat.id, attempts, err: err?.message }, 'avatar: download failed — backed off');
   }
 }

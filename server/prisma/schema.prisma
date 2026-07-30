@@ -1529,6 +1529,16 @@ model WhatsAppChat {
   // through the presign route and does not.
   profilePictureKey       String?
   profilePictureCheckedAt DateTime?
+  // Probe outcome + scheduling (avatar worker):
+  //   status: 'stored' | 'none' (confirmed no picture / privacy — NOT retried
+  //           aggressively) | 'error' (transient — bounded exponential backoff)
+  //   attempts: consecutive transient failures (reset on stored/none)
+  //   nextCheckAt: the single scheduling gate — the worker only ever touches
+  //   rows whose nextCheckAt is null (never probed) or due. stored/none →
+  //   +30d; error → +min(30d, 1h·4^attempts). One column, no hot loops.
+  profilePictureStatus      String?
+  profilePictureAttempts    Int       @default(0)
+  profilePictureNextCheckAt DateTime?
   contact            Contact?                   @relation(fields: [contactId], references: [id], onDelete: SetNull)
   contactId          String?
   matchSource        String? // 'phone' | 'manual'

@@ -222,9 +222,20 @@ export default function ChatListRow({
           }`}
           dir="auto"
         >
-          {chat.displayName && chat.displayName !== chat.phoneNumber
-            ? chat.displayName
-            : formatPhoneDisplay(chat.phoneNumber) || 'לא מזוהה'}
+          {chat.displayName && chat.displayName !== chat.phoneNumber ? (
+            chat.displayName
+          ) : chat.phoneNumber ? (
+            // Phone-titled row (no name anywhere): the flag must ride the
+            // TITLE. The phone badge row below only renders when a NAME holds
+            // the title (showPhone), so before this, unknown foreign numbers —
+            // the rows that need a flag most — never showed one.
+            <span dir="ltr" className="inline-flex items-center gap-1">
+              <PhoneFlag phone={chat.phoneNumber} />
+              {formatPhoneDisplay(chat.phoneNumber)}
+            </span>
+          ) : (
+            'לא מזוהה'
+          )}
         </span>
         <span
           className={`shrink-0 text-[10.5px] ${unread ? 'font-bold text-emerald-600' : 'text-gray-400'}`}
