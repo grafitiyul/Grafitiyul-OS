@@ -9,6 +9,7 @@ import { prisma } from '../db.js';
 import { loadTriggerContext } from '../communication/context.js';
 import { callBridge } from '../whatsapp/bridgeClient.js';
 import { phoneToJid } from '../whatsapp/send.js';
+import { reserveSendSlot } from '../whatsapp/sendPace.js';
 import { reportByNumber, renderReport } from './registry.js';
 
 /** Resolve destination + enabled state for a report (null when unconfigured). */
@@ -167,6 +168,9 @@ export async function sendDelivery(row, log = console) {
 /** Send the FROZEN text to a resolved JID and record the outcome. */
 async function deliverText(row, jid, log = console) {
   try {
+    // Central anti-burst pacing. Manager reports used to be the worst offender:
+    // this loop had no spacing at all and fired every due delivery back to back.
+    await reserveSendSlot(prisma, row.waAccountId);
     const data = await callBridge(row.waAccountId, '/send', {
       method: 'POST',
       timeoutMs: 25_000,

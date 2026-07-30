@@ -19,7 +19,8 @@
 //                               retry in 30s (bridge down / reconnecting)
 //         retryable_send      → back to 'pending' on the backoff ladder,
 //                               'failed' after MAX_ATTEMPTS
-//   4.  1.5s pacing between sends (anti-burst).
+//   4.  anti-burst pacing via whatsapp/sendPace.js — ONE policy shared with
+//       every other automated sender, not this worker's private opinion.
 //
 // Cancel/reschedule race safety: admin mutations are guarded updateMany
 // (status:'pending'), so a row being sent right now can't be edited — the
@@ -28,10 +29,16 @@
 import { prisma } from '../db.js';
 import { callBridge, bridgeUrlMap } from './bridgeClient.js';
 import { markTaskSentByScheduled } from '../tasks/taskService.js';
+import { reserveSendSlot } from './sendPace.js';
 
 const TICK_MS = 60_000;
-const TICK_BATCH = 5;
-const SEND_PACING_MS = 1500;
+// Pacing is no longer this worker's business — whatsapp/sendPace.js owns the
+// one policy for every automated sender (see that module for why). The batch
+// is now just a bound on how long one tick may hold the loop: at ~20s per send
+// this drains ~15 messages in ~5 minutes, and the inFlight guard keeps ticks
+// from overlapping. The private SEND_PACING_MS (1500ms, spaced only against
+// THIS worker's own sends) is deliberately gone.
+const TICK_BATCH = 15;
 const MAX_ATTEMPTS = 8;
 const CLAIM_TTL_MS = 5 * 60_000;
 const CONNECTION_DEFER_MS = 30_000;
@@ -67,7 +74,6 @@ export function idempotencyKeyFor(row) {
   return `gos-sched-${row.id}-${row.scheduledAt.toISOString()}-a${row.attemptCount}`;
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function tick(log) {
   const now = new Date();
@@ -135,6 +141,10 @@ async function tick(log) {
     if (!row || row.claimedBy !== WORKER_ID || row.status !== 'sending') continue;
 
     try {
+      // Central anti-burst pacing — shared with every other automated sender.
+      // Claimed AFTER the row is claimed so a slot is never burned on a
+      // message another worker already took.
+      await reserveSendSlot(prisma, row.accountId);
       // The account chosen AT SCHEDULING TIME, not re-derived from the chat:
       // a message must send from the number the operator picked, even if their
       // default changed in the meantime.
@@ -197,8 +207,6 @@ async function tick(log) {
         log.warn(`[whatsapp-scheduled] ${isTerminal ? 'FAILED' : 'retry scheduled'} id=${id} (${c.code})`);
       }
     }
-
-    if (i < candidates.length - 1) await sleep(SEND_PACING_MS);
   }
   return sent;
 }

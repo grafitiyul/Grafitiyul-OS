@@ -30,8 +30,12 @@ import { sendWhatsAppDelivery } from './channels/whatsapp.js';
 import { sendEmailDelivery } from './channels/email.js';
 
 const TICK_MS = 60_000;
-const TICK_BATCH = 10;
-const SEND_PACING_MS = 1200;
+// WhatsApp pacing lives in whatsapp/sendPace.js (one policy, every automated
+// sender) and is applied inside the WhatsApp channel adapter, where the account
+// is known. Email has no such constraint. The private SEND_PACING_MS (1200ms,
+// spaced only against THIS worker's own sends, so it did nothing about the
+// scheduled worker ticking on the same 60s beat) is deliberately gone.
+const TICK_BATCH = 15;
 const MAX_ATTEMPTS = 8;
 const CLAIM_TTL_MS = 5 * 60_000;
 const CONNECTION_DEFER_MS = 60_000;
@@ -60,7 +64,6 @@ export function classify(err) {
   return { kind: 'retryable_send', code: String(code).slice(0, 120) };
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function release(id, data) {
   await prisma.communicationDelivery.update({
@@ -362,7 +365,6 @@ async function tick(log) {
         nextRetryAt: new Date(Date.now() + RETRY_DELAYS_MS[0]),
       }).catch(() => {});
     }
-    if (i < candidates.length - 1) await sleep(SEND_PACING_MS);
   }
 }
 

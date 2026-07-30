@@ -19,6 +19,15 @@ import {
   resolveSendAccount,
   setSenderPreference,
 } from '../whatsapp/senderAccount.js';
+import { stampManualSend } from '../whatsapp/sendPace.js';
+
+// MANUAL sends (this router's composer endpoints) are never paced — an operator
+// in a live conversation waits for nobody. They do STAMP the account's pacing
+// clock on success, so the next AUTOMATED message queues a full gap behind
+// them: an automation landing one second after a human message is the most
+// bot-like pattern there is. Fire-and-forget; a pacing write never affects the
+// response a human is waiting on.
+const noteManualSend = (accountId) => { void stampManualSend(prisma, accountId); };
 
 // WhatsApp module — Slice 1 (accounts / connections admin).
 //
@@ -1095,6 +1104,7 @@ router.post(
         });
         if (row) message = toClientMessage(row);
       }
+      noteManualSend(chat.accountId);
       res.json({ ok: true, externalMessageId: data?.externalMessageId ?? null, message });
     } catch (err) {
       if (err?.code === 'bridge_not_configured') {
@@ -1151,6 +1161,7 @@ router.post(
         });
         if (row) message = toClientMessage(row);
       }
+      noteManualSend(chat.accountId);
       res.json({ ok: true, externalMessageId: data?.externalMessageId ?? null, message });
     } catch (err) {
       if (err?.code === 'bridge_not_configured') {
@@ -1210,6 +1221,7 @@ router.post(
         });
         if (row) message = toClientMessage(row);
       }
+      noteManualSend(chat.accountId);
       res.json({ ok: true, externalMessageId: data?.externalMessageId ?? null, message });
     } catch (err) {
       if (err?.code === 'bridge_not_configured') {

@@ -6,6 +6,18 @@
 
 import { callBridge, bridgeUrlMap } from './bridgeClient.js';
 import { normalizePhoneIntl } from './phone.js';
+import { prisma } from '../db.js';
+import { MAX_INLINE_WAIT_MS, reserveSendSlot } from './sendPace.js';
+
+// This is a SERVER-INITIATED send (payment links, group-registration
+// confirmations) — automated by definition, so it takes a slot from the central
+// pacer like every other automation. It differs from a worker in one way: it
+// runs inside an HTTP request, so it will not park for minutes. Past the inline
+// ceiling it sends anyway rather than hanging the caller — the slot is still
+// consumed, so the NEXT automated message stays behind it and the queue keeps
+// its shape.
+const defaultPace = (accountId) =>
+  reserveSendSlot(prisma, accountId, { maxWaitMs: MAX_INLINE_WAIT_MS });
 
 // REMOVED: defaultSendAccount().
 //
@@ -34,7 +46,7 @@ export function phoneToJid(phone) {
 // real bridge acknowledgement; THROWS a coded error otherwise (never resolves on
 // a failed send, so callers can honestly surface success vs failure):
 //   invalid_phone | bridge_not_configured | bridge_error | bridge_unreachable
-export async function sendWhatsAppText(phone, text, { accountId, idempotencyKey, bridge = callBridge } = {}) {
+export async function sendWhatsAppText(phone, text, { accountId, idempotencyKey, bridge = callBridge, pace = defaultPace } = {}) {
   const jid = phoneToJid(phone);
   if (!jid) {
     const e = new Error('invalid_phone');
@@ -51,6 +63,7 @@ export async function sendWhatsAppText(phone, text, { accountId, idempotencyKey,
     throw e;
   }
   const account = accountId;
+  await pace(account);
   try {
     const data = await bridge(account, '/send', {
       method: 'POST',

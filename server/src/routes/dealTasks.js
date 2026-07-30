@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db.js';
 import { handle } from '../asyncHandler.js';
 import { callBridge } from '../whatsapp/bridgeClient.js';
+import { stampManualSend } from '../whatsapp/sendPace.js';
 import { userOrigin, TASK_PRIORITIES, completeTask, cancelTask, applyTaskPatch } from '../tasks/taskService.js';
 import { combineDateTime, SCHEDULE_MIN_LEAD_MS, CANCELLABLE_SCHED } from '../tasks/taskEdit.js';
 import { emitTasksChanged } from '../tasks/events.js';
@@ -309,6 +310,10 @@ router.post(
           idempotencyKey: `gos-task-sendnow-${task.id}`,
         },
       });
+      // "Send now" is an operator pressing a button, so it is a MANUAL send:
+      // never paced, but it stamps the account clock so the next automated
+      // message queues a full gap behind it.
+      stampManualSend(prisma, sched.accountId);
       await prisma.whatsAppScheduledMessage.update({
         where: { id: sched.id },
         data: {

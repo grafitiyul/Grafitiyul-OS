@@ -15,6 +15,8 @@
 
 import { callBridge } from '../../whatsapp/bridgeClient.js';
 import { phoneToJid } from '../../whatsapp/send.js';
+import { reserveSendSlot } from '../../whatsapp/sendPace.js';
+import { prisma } from '../../db.js';
 import { loadDocumentBytes } from '../documents.js';
 
 export async function sendWhatsAppDelivery({ delivery, rendered, snapshot }) {
@@ -35,6 +37,11 @@ export async function sendWhatsAppDelivery({ delivery, rendered, snapshot }) {
 
   const baseKey = `gos-comm-${delivery.id}-a${delivery.attemptCount}`;
   let externalMessageId = null;
+
+  // Central anti-burst pacing — ONE slot for the whole delivery, not one per
+  // part: body + attachments are parts of a single logical message and must
+  // not be spread 20s apart from each other.
+  await reserveSendSlot(prisma, accountId);
 
   if (rendered.body) {
     const data = await callBridge(accountId, '/send', {

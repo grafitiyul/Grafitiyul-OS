@@ -1472,6 +1472,12 @@ model WhatsAppAccount {
   lastMessageAt        DateTime? // any-direction heartbeat
   lastInboundMessageAt DateTime? // inbound-only — detects "connected but silent" zombies
   reconnectAttempts    Int                           @default(0)
+  // Outbound pacing (GOS-owned, NOT written by the bridge): the next moment an
+  // automated send from this account may leave. whatsapp/sendPace.js claims a
+  // slot by pushing this forward one gap at a time, so every automated sender
+  // shares one queue per number instead of pacing itself privately. Persisted
+  // rather than in-process so a deploy mid-wave cannot reset the clock.
+  nextSendSlotAt       DateTime?
   lastMediaError       String?
   lastMediaErrorAt     DateTime?
   createdAt            DateTime                      @default(now())
