@@ -26,6 +26,7 @@ import { planRuleReconcile, classifyRulePlan } from '../tours/ruleEdit.js';
 import { planExceptionReconcile, classifyExceptionPlan } from '../tours/exceptionEdit.js';
 import { emitTourChangeImpact } from '../tours/changeImpact.js';
 import { cancelTourAssignments } from '../tours/assignmentLifecycle.js';
+import { reconcileOpenTourDeactivation } from '../tours/openTourDeactivation.js';
 import { calendarPendingPatch, kickTourCalendarSync } from '../tours/calendar/service.js';
 import { wooPendingPatch } from '../tours/woo/service.js';
 import { reconcileAllOpenTourProducts } from '../tours/reconcileProducts.js';
@@ -147,16 +148,25 @@ router.put(
       include: TEMPLATE_INCLUDE,
     });
     await regenerate(); // capacity/language/etc. affect FUTURE slots only
-    res.json(template);
+    // Deactivation is a LIFECYCLE, not just a generation stop: empty future
+    // slots are cancelled (calendar + Woo torn down by their workers); booked
+    // slots are kept. Fire-and-report — the response carries the counts.
+    let deactivation = null;
+    if (existing.active && data.active === false) {
+      deactivation = await reconcileOpenTourDeactivation(prisma, existing.id, { log: console });
+    }
+    res.json(deactivation ? { ...template, deactivation } : template);
   }),
 );
 
 router.delete(
   '/:id',
   handle(async (req, res) => {
-    // Already-generated slots survive (loose openTourTemplateId ref) — deleting
-    // a template (cascades its rules/exceptions/products) only stops FUTURE
-    // generation, exactly like deleting a schedule rule.
+    // Deleting a template is a deactivation too: reconcile BEFORE the row goes
+    // (the loose openTourTemplateId ref on slots survives either way) so empty
+    // future slots are cancelled and booked ones kept — then cascade the
+    // rules/exceptions/products with the template itself.
+    await reconcileOpenTourDeactivation(prisma, req.params.id, { log: console });
     await prisma.openTourTemplate.delete({ where: { id: req.params.id } });
     res.status(204).end();
   }),
@@ -331,7 +341,14 @@ router.put(
 router.delete(
   '/rules/:ruleId',
   handle(async (req, res) => {
+    const rule = await prisma.openTourScheduleRule.findUnique({ where: { id: req.params.ruleId }, select: { templateId: true } });
     await prisma.openTourScheduleRule.delete({ where: { id: req.params.ruleId } });
+    // If that was the template's LAST active rule, its future empty slots are
+    // now unreachable by generation — reconcile them away (booked ones kept).
+    if (rule?.templateId) {
+      const remaining = await prisma.openTourScheduleRule.count({ where: { templateId: rule.templateId, active: true } });
+      if (remaining === 0) await reconcileOpenTourDeactivation(prisma, rule.templateId, { log: console });
+    }
     res.status(204).end();
   }),
 );
