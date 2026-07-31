@@ -6,6 +6,7 @@ import {
   dealOrganizationName,
   dealBookerLabel,
   resolveBookingsCustomerIdentity,
+  bookingsCustomerInfos,
   withBookingCount,
 } from './customerDisplay.js';
 
@@ -109,4 +110,40 @@ test('withBookingCount: "value +N" compaction', () => {
   assert.equal(withBookingCount('דור קורן', 2), 'דור קורן +2');
   assert.equal(withBookingCount('IBM', 1), 'IBM +1');
   assert.equal(withBookingCount(null, 3), null, 'no base value → null, never "+N" alone');
+});
+
+// ── per-booking customer notes (the Tours table's מידע חשוב על הלקוח) ──
+
+test('bookingsCustomerInfos: ONE entry per booking, silent customers included', () => {
+  const infos = bookingsCustomerInfos([
+    {
+      deal: deal({
+        customerInfo: '<p>יש אלרגיה</p>',
+        organization: { name: 'IBM' },
+        contacts: [{ contact: contact() }],
+      }),
+    },
+    { deal: deal({ title: 'דיל בלי מידע', customerInfo: null }) },
+  ]);
+  assert.equal(infos.length, 2, 'a customer without a note is NEVER skipped');
+  assert.equal(infos[0].html, '<p>יש אלרגיה</p>');
+  assert.equal(infos[0].label, 'דור קורן · IBM', 'canonical booker label');
+  assert.equal(infos[1].html, null, 'no note ships as null, not an empty string');
+  assert.equal(infos[1].label, 'דיל בלי מידע');
+});
+
+test('bookingsCustomerInfos: order preserved, deal-less rows dropped, empty input safe', () => {
+  const infos = bookingsCustomerInfos([
+    { deal: deal({ title: 'A', customerInfo: '<p>a</p>' }) },
+    { deal: null },
+    { deal: deal({ title: 'B', customerInfo: '<p>b</p>' }) },
+  ]);
+  assert.deepEqual(infos.map((i) => i.label), ['A', 'B'], 'caller order is preserved');
+  assert.deepEqual(bookingsCustomerInfos([]), []);
+  assert.deepEqual(bookingsCustomerInfos(null), []);
+});
+
+test('bookingsCustomerInfos: an unlabelable deal still gets a readable heading', () => {
+  const infos = bookingsCustomerInfos([{ deal: deal({ title: null }) }]);
+  assert.equal(infos[0].label, 'לקוח', 'never an empty heading');
 });

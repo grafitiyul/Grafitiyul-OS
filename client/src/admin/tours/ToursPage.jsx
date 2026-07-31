@@ -238,28 +238,49 @@ function ComponentsCell({ tour }) {
 // each labeled with the same canonical booker label the identity columns use.
 function CustomerInfoCell({ infos }) {
   if (!infos?.length) return dash;
-  const [first, ...rest] = infos;
+  // The cell previews the first customer who actually wrote something (a
+  // silent first customer must not make the column look empty); the card is
+  // the complete view. On a group tour the preview is labeled so it is never
+  // ambiguous WHOSE note is being previewed.
+  const preview = infos.find((i) => i.html) || null;
+  const many = infos.length > 1;
   return (
     <HoverCard
-      width={380}
+      width={420}
       trigger={
-        <span className="block max-w-[300px] cursor-help text-[12.5px] leading-snug">
-          <span className="block overflow-hidden [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
-            <RichText html={first.html} tight />
-          </span>
-          {rest.length > 0 && (
-            <span className="text-[11px] text-gray-400">+{rest.length} לקוחות נוספים</span>
+        <span className="block max-w-[300px] cursor-help text-right text-[12.5px] leading-snug">
+          {many && (
+            <span className="block truncate text-[11px] font-semibold text-gray-400">
+              {preview ? preview.label : `${infos.length} לקוחות`}
+            </span>
+          )}
+          {preview ? (
+            <span className="block overflow-hidden [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
+              <RichText html={preview.html} tight />
+            </span>
+          ) : (
+            <span className="block text-gray-400">אין מידע</span>
+          )}
+          {many && (
+            <span className="text-[11px] text-gray-400">
+              {infos.length} לקוחות — ריחוף לתצוגה מלאה
+            </span>
           )}
         </span>
       }
     >
-      <div className="max-h-[60vh] space-y-3 overflow-y-auto">
+      {/* One section per customer: heading + their own note, separated. A
+          customer with no note is SHOWN as such — never skipped, so the
+          operator knows nothing was hidden. */}
+      <div className="divide-y divide-gray-100">
         {infos.map((info, i) => (
-          <div key={i}>
-            {infos.length > 1 && (
-              <div className="mb-1 text-[11.5px] font-semibold text-gray-500">{info.label}</div>
+          <div key={i} className={i === 0 ? 'pb-3' : 'py-3 last:pb-0'}>
+            <div className="mb-1.5 text-[12.5px] font-bold text-gray-900">{info.label}</div>
+            {info.html ? (
+              <RichText html={info.html} tight />
+            ) : (
+              <div className="text-[12px] italic text-gray-400">לא הוזן מידע על הלקוח</div>
             )}
-            <RichText html={info.html} tight />
           </div>
         ))}
       </div>

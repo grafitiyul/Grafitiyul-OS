@@ -1,16 +1,31 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { placeAnchored } from './anchoredPosition.js';
 
-// Anchored dropdown rendered in a portal on <body>, so it escapes any
-// overflow-x/overflow-hidden clipping from ancestor containers (tables, cards).
-// It positions under the anchor, flips above when the bottom is tight, and
-// clamps fully inside the viewport on both axes — correct in RTL and LTR alike.
+// THE canonical anchored floating surface: rendered in a portal on <body> with
+// FIXED positioning, so it escapes every ancestor overflow (table scroll
+// containers, cards, sticky headers) and can never be clipped or painted
+// behind them. It positions under the anchor, FLIPS above when the bottom is
+// tight, flips to the opposite horizontal alignment when the preferred side
+// would overflow, then clamps fully inside the viewport on both axes —
+// correct in RTL and LTR alike. A menu taller than the viewport is capped and
+// scrolls internally instead of running off-screen.
+//
+// Two modes:
+//   * click menus (default) — a full-screen catcher closes on outside click;
+//   * hover cards (`overlay={false}` + onMouseEnter/onMouseLeave) — NO catcher,
+//     so the page stays interactive and the pointer can travel into the card.
+//     This is what HoverCard builds on; there is no second positioning engine.
 export default function AnchoredMenu({
   anchorRef,
   open,
   onClose,
   width = 176,
   align = 'end',
+  overlay = true,
+  onMouseEnter,
+  onMouseLeave,
+  panelClassName = 'rounded-lg py-1',
   children,
 }) {
   const menuRef = useRef(null);
@@ -24,22 +39,17 @@ export default function AnchoredMenu({
     const place = () => {
       const a = anchorRef.current;
       if (!a) return;
-      const r = a.getBoundingClientRect();
-      const margin = 8;
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      const h = menuRef.current?.offsetHeight || 0;
-      // Vertical: prefer below; flip above if it would overflow the bottom.
-      let top = r.bottom + 4;
-      if (h && top + h > vh - margin) {
-        const above = r.top - 4 - h;
-        top = above >= margin ? above : Math.max(margin, vh - margin - h);
-      }
-      // Horizontal: align the menu's end/start edge to the anchor, then clamp
-      // into the viewport so it is never clipped on either side.
-      let left = align === 'end' ? r.right - width : r.left;
-      left = Math.min(Math.max(margin, left), vw - margin - width);
-      setPos({ top, left });
+      // ALL geometry lives in the pure, unit-tested placer (flip + clamp +
+      // height cap) — this effect only feeds it measurements.
+      setPos(
+        placeAnchored({
+          anchor: a.getBoundingClientRect(),
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+          width,
+          height: menuRef.current?.offsetHeight || 0,
+          align,
+        }),
+      );
     };
     place();
     // Re-place once mounted (height now known) and on scroll/resize so the menu
@@ -66,13 +76,22 @@ export default function AnchoredMenu({
   if (!open) return null;
   return createPortal(
     <>
-      <div className="fixed inset-0 z-[90]" onClick={onClose} />
+      {overlay && <div className="fixed inset-0 z-[90]" onClick={onClose} />}
       <div
         ref={menuRef}
         dir="rtl"
-        style={{ position: 'fixed', top: pos?.top ?? -9999, left: pos?.left ?? -9999, width }}
-        className="z-[91] rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
+        style={{
+          position: 'fixed',
+          top: pos?.top ?? -9999,
+          left: pos?.left ?? -9999,
+          width,
+          maxHeight: pos?.maxHeight,
+          overflowY: 'auto',
+        }}
+        className={`z-[91] border border-gray-200 bg-white shadow-lg ${panelClassName}`}
         onClick={(e) => e.stopPropagation()}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
       >
         {children}
       </div>

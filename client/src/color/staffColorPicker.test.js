@@ -165,10 +165,10 @@ test('shared picker renders the FULL canonical palette — incl. the new yellow'
   await unmount();
 });
 
-test('AnchoredMenu flips above a bottom-edge anchor and clamps into the viewport', async () => {
+test('AnchoredMenu flips above AND sideways for a bottom-edge anchor, staying fully visible', async () => {
   // A real DOM anchor pinned near the bottom-left of the 1024×768 jsdom
-  // viewport; the menu (282 wide, 200 tall) cannot fit below or fully to
-  // the start — it must flip up and clamp inward.
+  // viewport; the menu (282 wide, 200 tall) fits neither below nor
+  // end-aligned — it must flip up and flip to the opposite horizontal edge.
   const anchor = document.createElement('button');
   document.body.appendChild(anchor);
   anchor.getBoundingClientRect = () => ({
@@ -194,8 +194,12 @@ test('AnchoredMenu flips above a bottom-edge anchor and clamps into the viewport
     assert.equal(panel.style.position, 'fixed', 'viewport-fixed positioning');
     // flip: below would end at 750+4+200=954 > 768−8 → open above: 740−4−200
     assert.equal(panel.style.top, '536px', 'flips above the anchor');
-    // clamp: align-end start would be 100−282=−182 → clamped to the 8px margin
-    assert.equal(panel.style.left, '8px', 'clamped inside the viewport');
+    // horizontal FLIP: align-end would start at 100−282=−182 (off-screen), so
+    // the panel flips to the anchor's start edge (80) instead of being jammed
+    // against the viewport margin. The invariant either way: fully visible.
+    assert.equal(panel.style.left, '80px', 'flips to the opposite edge');
+    const left = parseInt(panel.style.left, 10);
+    assert.ok(left >= 8 && left + 282 <= 1024 - 8, 'panel is fully inside the viewport');
     await unmount();
   } finally {
     if (heightDesc) Object.defineProperty(window.HTMLElement.prototype, 'offsetHeight', heightDesc);

@@ -1,38 +1,62 @@
-import { useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import AnchoredMenu from './AnchoredMenu.jsx';
 
-// Lightweight hover card (popover). The trigger is always rendered; the card
-// floats below it on hover. A short close delay lets the pointer travel from the
-// trigger into the card without it dismissing. Reusable across modules.
+// Hover-triggered floating card. POSITIONING IS NOT IMPLEMENTED HERE — it
+// delegates to AnchoredMenu, the project's canonical anchored surface (portal
+// on <body>, fixed positioning, vertical + horizontal flip, viewport clamp,
+// height cap). That is what makes the card immune to the clipping this used to
+// suffer: it previously positioned itself `absolute` inside its trigger, so any
+// ancestor with overflow (a table's scroll container, a card, a sticky region)
+// cut it off, a horizontally-scrolled table dragged it out of view, and its
+// z-50 could land behind sticky chrome.
 //
-// align: 'start' anchors the card to the trigger's start edge (right in RTL).
+// A short close delay lets the pointer travel from the trigger into the card;
+// the card keeps itself open while hovered. Keyboard users get the same
+// content — focus opens the card, blur closes it.
+//
+// align: 'start' anchors the card to the trigger's start edge (right in RTL);
+// AnchoredMenu flips to the other edge when that side has no room.
 export default function HoverCard({ trigger, children, width = 288, align = 'start' }) {
+  const anchorRef = useRef(null);
   const [open, setOpen] = useState(false);
   const timer = useRef(null);
 
-  const show = () => {
+  const show = useCallback(() => {
     clearTimeout(timer.current);
     setOpen(true);
-  };
-  const hide = () => {
+  }, []);
+  const hide = useCallback(() => {
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setOpen(false), 120);
-  };
+  }, []);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
 
   return (
-    <div className="relative inline-flex" onMouseEnter={show} onMouseLeave={hide}>
-      {trigger}
-      {open && (
-        <div
-          onMouseEnter={show}
-          onMouseLeave={hide}
-          style={{ width }}
-          className={`absolute top-full mt-2 z-50 ${
-            align === 'start' ? 'start-0' : 'end-0'
-          } rounded-xl border border-gray-200 bg-white p-3.5 shadow-lg`}
-        >
-          {children}
-        </div>
-      )}
-    </div>
+    <>
+      <span
+        ref={anchorRef}
+        className="inline-flex"
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
+      >
+        {trigger}
+      </span>
+      <AnchoredMenu
+        anchorRef={anchorRef}
+        open={open}
+        onClose={() => setOpen(false)}
+        width={width}
+        align={align}
+        overlay={false}
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        panelClassName="rounded-xl p-3.5"
+      >
+        {children}
+      </AnchoredMenu>
+    </>
   );
 }

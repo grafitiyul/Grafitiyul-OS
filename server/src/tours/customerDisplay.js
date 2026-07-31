@@ -63,6 +63,22 @@ export function resolveBookingsCustomerIdentity(bookings) {
   };
 }
 
+// "מידע חשוב על הלקוח" per BOOKING — one entry for EVERY active booking on the
+// tour, in the caller's stable order, each labeled with the same canonical
+// booker label the identity columns use. A booking whose deal has no note
+// still ships (html: null) ON PURPOSE: on a group tour the operator must be
+// able to tell "this customer wrote nothing" apart from "this customer was
+// hidden from me". The note itself is the Deal's rich HTML — projected, never
+// copied onto the TourEvent, and rendered only through the canonical renderer.
+export function bookingsCustomerInfos(bookings) {
+  return (bookings || [])
+    .filter((b) => b && b.deal)
+    .map((b) => ({
+      label: dealBookerLabel(b.deal) || 'לקוח',
+      html: b.deal.customerInfo || null,
+    }));
+}
+
 // "value +N" (or just "value", or null) — the ONE compaction the +N surfaces
 // share, so the calendar (server-composed) and the table columns (client-
 // composed) read identically.
