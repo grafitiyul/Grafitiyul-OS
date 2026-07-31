@@ -133,7 +133,7 @@ for (const { f, gosId } of buckets.copyBody.slice(0, LIMIT)) {
     await prisma.$transaction(async (tx) => {
       const df = await tx.dealFile.create({
         data: {
-          dealId: gosId, r2Key, bucket: r2.bucket || '',
+          dealId: gosId, r2Key, bucket: r2.bucket(),
           filename: f.file_name || `file-${f.id}`,
           mimeType: f.mime || 'application/octet-stream',
           sizeBytes: body.length,
@@ -155,8 +155,8 @@ for (const { f, gosId } of buckets.copyBody.slice(0, LIMIT)) {
   } catch (e) {
     if (e.code === 'CEILING') { console.log(`\nceiling reached at ${copied} — resume by re-running`); break; }
     failed += 1;
-    failures.push({ id: f.id, name: f.file_name, err: String(e.message).slice(0, 80) });
-    if (failed <= 5) console.log(`  ✗ file ${f.id} "${f.file_name}": ${String(e.message).slice(0, 80)}`);
+    failures.push({ id: f.id, name: f.file_name, err: String(e.message).slice(0, 200) });
+    if (failed <= 3) console.log(`  ✗ file ${f.id}: ${String(e.message).replace(/\s+/g, ' ').slice(0, 400)}`);
   }
 }
 

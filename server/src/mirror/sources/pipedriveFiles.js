@@ -120,7 +120,7 @@ export function fileAdapter() {
           const id = crypto.randomUUID();
           await tx.dealFile.create({
             data: {
-              id, dealId: gosDeal.id, r2Key, bucket: r2.bucket || '',
+              id, dealId: gosDeal.id, r2Key, bucket: r2.bucket(),
               filename: f.file_name || f.name || `file-${row.externalId}`,
               mimeType: f.file_type || 'application/octet-stream',
               sizeBytes: body.length,
