@@ -259,11 +259,18 @@ export async function createDeal(db, normalized, row) {
           organizationId: p.organizationId ?? null,
         },
       });
-      if (p.primaryContactId) {
+      // A person crosswalk can point at a contact later MERGED AWAY in GOS —
+      // linking it raises P2003 and deferred the whole deal forever. Link only
+      // contacts that still exist; a dead reference costs the link, not the deal.
+      const wanted = [...new Set([p.primaryContactId, ...(p.participantContactIds || [])].filter(Boolean))];
+      const alive = new Set(
+        (await tx.contact.findMany({ where: { id: { in: wanted } }, select: { id: true } })).map((x) => x.id),
+      );
+      if (p.primaryContactId && alive.has(p.primaryContactId)) {
         await tx.dealContact.create({ data: { dealId: id, contactId: p.primaryContactId, isPrimary: true } });
       }
       for (const cid of p.participantContactIds || []) {
-        if (cid !== p.primaryContactId) {
+        if (cid !== p.primaryContactId && alive.has(cid)) {
           await tx.dealContact.create({ data: { dealId: id, contactId: cid, isPrimary: false } });
         }
       }

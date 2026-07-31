@@ -81,19 +81,23 @@ if (!EXECUTE) { console.log('\n--dry: nothing written. Re-run with --execute.');
 
 // ── metadata-only rows (closed deals + remote links): crosswalk, no body ─────
 async function metadataOnly(list, why) {
+  // CHUNKED — one createMany per row over the public proxy took ~1s each and
+  // silently consumed the whole first hour of the run.
   let n = 0;
-  for (const { f, gosId } of list) {
+  for (let i = 0; i < list.length; i += 500) {
+    const slice = list.slice(i, i + 500);
     await prisma.legacyRecord.createMany({
-      data: [{
+      data: slice.map(({ f, gosId }) => ({
         sourceSystem: 'pipedrive', sourceType: 'file', sourceId: String(f.id),
         entityType: null, entityId: null,
         importBatchId: `files-${census.censusId}`,
         cardData: [{ label: 'קובץ ממערכת קודמת', value: f.file_name || `file ${f.id}` }],
         payload: { ...f, gosDealId: gosId, policy: why },
-      }],
+      })),
       skipDuplicates: true,
     });
-    n += 1;
+    n += slice.length;
+    console.log(`  metadata ${why}: ${n}/${list.length}`);
   }
   return n;
 }
