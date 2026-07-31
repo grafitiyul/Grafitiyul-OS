@@ -17,6 +17,7 @@ import {
 } from '../questionnaires/uploads.js';
 import { resolveTourGuideColor } from '../../../shared/guideColor.mjs';
 import {
+  assignmentIdentityWhere,
   guideVisibleTourWhere,
   resolveGuidePortalAccess,
   resolveGuideTourAccess,
@@ -91,14 +92,14 @@ async function loadAssignedTours(person) {
   // Cancelled tours are invisible in the portal (same rule the detail
   // resolver enforces) — deal-reopen keeps assignment rows on the cancelled
   // twin for plan restore, and those must never surface here.
-  // Match the canonical link (personRefId — set on native assignments AND on
-  // historical imports once resolveHistoricalStaffLinks claims them) OR the
-  // legacy handle. Historical tours were keyed by the guide's EMAIL in
-  // externalPersonId, so a handle-only match would miss them; the personRefId
-  // arm is what lets a guide see their imported history in the portal.
+  // Identity match via the CANONICAL where-fragment (access.js) — the same
+  // rule the per-tour detail resolver applies, so a card in the feed can
+  // always be opened. Historical tours were keyed by the guide's EMAIL in
+  // externalPersonId; the personRefId arm is what lets a guide see (and open)
+  // their imported history in the portal.
   return prisma.tourAssignment.findMany({
     where: {
-      OR: [{ personRefId: person.id }, { externalPersonId: person.externalPersonId }],
+      ...assignmentIdentityWhere(person),
       tourEvent: guideVisibleTourWhere(),
     },
     include: { tourEvent: { include: CARD_TOUR_INCLUDE } },
@@ -303,7 +304,9 @@ router.get(
       const mine = await prisma.tourAssignment.findMany({
         where: {
           tourEventId: { in: parallelRows.map((r) => r.id) },
-          externalPersonId: access.person.externalPersonId,
+          // Same canonical identity as the detail resolver — an imported
+          // historical assignment (email-keyed) is still "mine".
+          ...assignmentIdentityWhere(access.person),
         },
         select: { tourEventId: true },
       });

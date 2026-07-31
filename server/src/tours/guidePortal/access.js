@@ -87,9 +87,22 @@ export async function resolveGuidePortalAccess(client, { portalToken }) {
 // DealTourPlan so a future WON restores the team) — those live rows must not
 // grant portal access to the cancelled twin. Both resolvers below and the
 // gallery resolver share this one lookup.
+// THE canonical guide↔assignment identity match. Native assignments carry the
+// staff handle in externalPersonId; imported historical assignments carry the
+// guide's EMAIL there and are claimed via personRefId (resolveHistoricalStaffLinks).
+// Every portal query that asks "is this MY assignment?" must use this one
+// where-fragment — the 2026-07 past-tours bug was exactly this drifting: the
+// feed matched both arms while the detail resolver matched only
+// externalPersonId, so an imported past tour showed a card but 403'd on tap.
+export function assignmentIdentityWhere(person) {
+  const or = [{ externalPersonId: person.externalPersonId }];
+  if (person.id) or.unshift({ personRefId: person.id });
+  return { OR: or };
+}
+
 export async function findActiveAssignment(client, person, tourEventId) {
   return client.tourAssignment.findFirst({
-    where: { tourEventId, externalPersonId: person.externalPersonId },
+    where: { tourEventId, ...assignmentIdentityWhere(person) },
   });
 }
 

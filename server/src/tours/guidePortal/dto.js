@@ -9,6 +9,7 @@
 
 import { resolveStaffDisplayName } from '../../../../shared/staffAssignmentDisplay.mjs';
 import { tourEndMs as canonicalTourEndMs } from '../tourTime.js';
+import { stripTrailingSameDate } from '../calendar/desiredState.js';
 
 // TourEvent.kind IS the Deal's activity vocabulary (same mapping the admin
 // header uses). The portal renders the Hebrew label client-side.
@@ -47,11 +48,23 @@ export function tourEndMs(tour) {
 
 // The variant's full display name — product + location (a ProductVariant's
 // identity is the product/location pair; it has no name of its own).
+//
+// Legacy-imported tours have NO product (class D by import decision); their
+// operational identity is the legacy tour NAME stored as the first line of
+// notes — the SAME canonical rule the calendar titles use (desiredState.js),
+// including the trailing same-date strip. The generic 'סיור' remains only the
+// true last resort, never the label of a real historical activity.
 export function variantDisplayName(tour) {
-  const product = tour.product?.nameHe || 'סיור';
   const location =
     tour.location?.nameHe || tour.productVariant?.location?.nameHe || null;
-  return location ? `${product} · ${location}` : product;
+  let name = tour.product?.nameHe || null;
+  if (!name) {
+    name = stripTrailingSameDate(
+      String(tour.notes || '').trim().split('\n')[0].slice(0, 80),
+      tour.date,
+    ) || 'סיור';
+  }
+  return location ? `${name} · ${location}` : name;
 }
 
 // ---------- list card ----------

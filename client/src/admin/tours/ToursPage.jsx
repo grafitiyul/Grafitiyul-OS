@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { useTableColumns, ColumnPicker, SortableHeaderRow, TableCell } from '../common/tableColumns.jsx';
@@ -13,6 +13,9 @@ import { useTourChanged, useTourMidnightRefresh } from './tourEvents.js';
 import TourSlotModal from './TourSlotModal.jsx';
 import ToursCalendar from './calendar/ToursCalendar.jsx';
 import MultiSelectFilter from '../common/filters/MultiSelectFilter.jsx';
+import AdvancedFilterButton from '../common/filters/AdvancedFilterButton.jsx';
+import { normalizeTree, evaluateTree } from '../common/filters/advancedFilterCore.js';
+import { TOUR_FILTER_FIELDS, TOUR_FILTER_FIELDS_BY_KEY } from './tourFilterFields.js';
 import {
   TOUR_KIND_LABELS,
   TOUR_KIND_STYLES,
@@ -173,13 +176,42 @@ function TeamNames({ team }) {
   );
 }
 
+// Derived schedule helpers for the optional columns — presentation only, the
+// SSOT stays TourEvent.date/startTime + ProductVariant.durationHours.
+const WEEKDAYS_HE = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+function weekdayIdx(t) {
+  const d = new Date(`${t.date}T00:00:00`);
+  return t.date && !Number.isNaN(d.getTime()) ? d.getDay() : -1;
+}
+function durationLabel(h) {
+  if (h == null) return null;
+  return h === 1 ? 'שעה' : `${h} שעות`;
+}
+function endTimeOf(t) {
+  const h = t.productVariant?.durationHours;
+  if (!t.startTime || h == null) return null;
+  const [hh, mm] = String(t.startTime).split(':').map(Number);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+  const total = hh * 60 + mm + Math.round(h * 60);
+  return `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
 const COLUMNS = [
   // Postponed tours have no date/time — they sort last and render "—".
   { key: 'date', label: 'תאריך', def: true, sortVal: (t) => `${t.date || '9999'} ${t.startTime || ''}`,
     cls: 'font-semibold text-gray-900',
     render: (t) => fmtTourDate(t.date) },
+  { key: 'weekday', label: 'יום בשבוע', def: false, sortVal: (t) => weekdayIdx(t),
+    cls: 'text-gray-600',
+    render: (t) => (weekdayIdx(t) >= 0 ? WEEKDAYS_HE[weekdayIdx(t)] : dash) },
   { key: 'startTime', label: 'שעה', def: true, dir: 'ltr', sortVal: (t) => t.startTime || '',
     cls: 'tabular-nums text-gray-700', render: (t) => t.startTime || dash },
+  { key: 'endTime', label: 'שעת סיום', def: false, dir: 'ltr', sortVal: (t) => endTimeOf(t) || '',
+    cls: 'tabular-nums text-gray-600', render: (t) => endTimeOf(t) || dash },
+  { key: 'duration', label: 'משך', def: false,
+    sortVal: (t) => t.productVariant?.durationHours ?? -1,
+    cls: 'text-gray-600',
+    render: (t) => durationLabel(t.productVariant?.durationHours) || dash },
   { key: 'kind', label: 'סוג', def: true, sortVal: (t) => t.kind,
     render: (t) => <Chip styles={TOUR_KIND_STYLES[t.kind]} label={TOUR_KIND_LABELS[t.kind] || t.kind} /> },
   { key: 'product', label: 'מוצר', def: true, sortVal: (t) => t.product?.nameHe || '',
@@ -194,6 +226,13 @@ const COLUMNS = [
     render: (t) => TOUR_LANG_LABELS[t.tourLanguage] || dash },
   { key: 'occupancy', label: 'משתתפים', def: true, sortVal: (t) => t.activeSeats,
     render: (t) => <Occupancy t={t} /> },
+  { key: 'capacity', label: 'קיבולת', def: false, sortVal: (t) => t.capacity ?? -1,
+    cls: 'tabular-nums text-gray-600',
+    render: (t) => (t.capacity != null ? t.capacity : dash) },
+  { key: 'activeBookings', label: 'הזמנות פעילות', def: false,
+    sortVal: (t) => t.activeBookings || 0,
+    cls: 'tabular-nums text-gray-600',
+    render: (t) => t.activeBookings || dash },
   // Staff/customer columns — compact server summaries (tourListExtrasFor),
   // never profiles or Deal payloads. Lead guide + customer show by default;
   // the rest are picker opt-ins.
@@ -235,6 +274,10 @@ const COLUMNS = [
     sortVal: (t) => t.createdAt || '',
     cls: 'text-gray-500 tabular-nums',
     render: (t) => (t.createdAt ? new Date(t.createdAt).toLocaleDateString('he-IL') : dash) },
+  { key: 'updatedAt', label: 'עודכן לאחרונה', def: false, dir: 'ltr',
+    sortVal: (t) => t.updatedAt || '',
+    cls: 'text-gray-500 tabular-nums',
+    render: (t) => (t.updatedAt ? new Date(t.updatedAt).toLocaleDateString('he-IL') : dash) },
 ];
 
 const KIND_FILTERS = [
@@ -277,6 +320,10 @@ export default function ToursPage() {
   const [statuses, setStatuses] = useState(() =>
     normalizeStatusFilter(saved.statuses ?? saved.status),
   );
+  // Advanced filter tree (nested AND/OR condition groups — shared engine).
+  // Persisted with the rest of the filters; stale/renamed fields degrade
+  // gracefully through normalizeTree + the engine's unknown-field rule.
+  const [advanced, setAdvanced] = useState(() => normalizeTree(saved.advanced));
   // Upcoming first — the operational default.
   const [sort, setSort] = useState({ key: 'date', dir: 'asc' });
 
@@ -286,8 +333,8 @@ export default function ToursPage() {
   const [alertMsg, setAlertMsg] = useState(null); // system AlertDialog, never window.alert
 
   useEffect(() => {
-    saveFilters({ search, kind, statuses });
-  }, [search, kind, statuses]);
+    saveFilters({ search, kind, statuses, advanced });
+  }, [search, kind, statuses, advanced]);
 
   useEffect(() => {
     // Persist the FULL calendar context — the anchor too, so a refresh
@@ -297,6 +344,27 @@ export default function ToursPage() {
 
   const { colKeys, toggleCol, moveCol, setColWidth, resetCols, widths, visibleCols, orderedColumns } =
     useTableColumns(COLUMNS_KEY, COLUMNS);
+
+  // Sticky-table geometry: the table body scrolls INSIDE its own container
+  // (bounded to the viewport), so the column headers pin to its top while the
+  // sticky filter bar stays above — the user never loses context. The bound
+  // is re-measured on resize/scroll (the bar can wrap to two lines).
+  const tableWrapRef = useRef(null);
+  useLayoutEffect(() => {
+    const el = tableWrapRef.current;
+    if (!el) return;
+    const compute = () => {
+      const top = el.getBoundingClientRect().top;
+      el.style.maxHeight = `${Math.max(260, window.innerHeight - top - 16)}px`;
+    };
+    compute();
+    window.addEventListener('resize', compute);
+    window.addEventListener('scroll', compute, true);
+    return () => {
+      window.removeEventListener('resize', compute);
+      window.removeEventListener('scroll', compute, true);
+    };
+  });
 
   // Status filtering is SERVER-side (the exact selected set rides the query —
   // same parser as the calendar endpoint) so the two views can never diverge.
@@ -334,6 +402,9 @@ export default function ToursPage() {
       // Defensive re-check of the server-side status filter (same rule the
       // calendar applies) — the two views can never show different datasets.
       if (!statuses.includes(t.status)) return false;
+      // Advanced filter tree (nested AND/OR) — evaluated by the shared engine
+      // over the tours field registry; incomplete conditions are ignored.
+      if (!evaluateTree(advanced, t, TOUR_FILTER_FIELDS_BY_KEY)) return false;
       if (q) {
         const hay = [
           t.product?.nameHe,
@@ -365,7 +436,7 @@ export default function ToursPage() {
       });
     }
     return out;
-  }, [rows, search, kind, statuses, sort]);
+  }, [rows, search, kind, statuses, advanced, sort]);
 
   function onSort(key) {
     setSort((s) => (s.key === key ? { key, dir: s.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'asc' }));
@@ -454,8 +525,13 @@ export default function ToursPage() {
       </div>
 
       {/* Filter bar — SHARED by both views: switching טבלה ⇄ לוח שנה never
-          resets search/kind/status, and both views obey the same filters. */}
-      <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-2.5 mb-3">
+          resets search/kind/status, and both views obey the same filters.
+          STICKY (table view): the toolbar + search + filters stay visible
+          while scrolling — together with the sticky column headers the user
+          never loses context in a long list. */}
+      <div className={`bg-white border border-gray-200 rounded-xl shadow-sm p-2.5 mb-3 ${
+        tab === 'table' ? 'sticky top-0 z-30' : ''
+      }`}>
         <div className="flex flex-wrap items-center gap-2.5">
           <div className="relative flex-[2] min-w-[260px]">
             <span className="absolute inset-y-0 right-3 flex items-center text-gray-400">🔍</span>
@@ -490,15 +566,32 @@ export default function ToursPage() {
             width={200}
           />
           {tab === 'table' && (
-            <div className="ms-auto">
-              <ColumnPicker
-                columns={orderedColumns}
-                colKeys={colKeys}
-                onToggle={toggleCol}
-                onMove={moveCol}
-                onReset={resetCols}
+            <>
+              {/* Advanced filters — table view (Pipedrive-style nested AND/OR). */}
+              <AdvancedFilterButton
+                fields={TOUR_FILTER_FIELDS}
+                fieldsByKey={TOUR_FILTER_FIELDS_BY_KEY}
+                tree={advanced}
+                onChange={setAdvanced}
+                rows={rows}
               />
-            </div>
+              <div className="ms-auto flex items-center gap-2.5">
+                {/* Live visible-row counter — always in sight (sticky bar). */}
+                <span className="whitespace-nowrap text-[12.5px] text-gray-500" aria-live="polite">
+                  מציג <span className="font-semibold text-gray-800 tabular-nums">{filtered.length}</span> סיורים
+                  {filtered.length !== rows.length && (
+                    <span className="text-gray-400"> מתוך {rows.length}</span>
+                  )}
+                </span>
+                <ColumnPicker
+                  columns={orderedColumns}
+                  colKeys={colKeys}
+                  onToggle={toggleCol}
+                  onMove={moveCol}
+                  onReset={resetCols}
+                />
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -533,7 +626,7 @@ export default function ToursPage() {
             ) : filtered.length === 0 ? (
               <div className="py-16 text-center text-sm text-gray-500">לא נמצאו סיורים תואמים.</div>
             ) : (
-              <div className="overflow-x-auto">
+              <div ref={tableWrapRef} className="overflow-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <SortableHeaderRow
@@ -543,9 +636,10 @@ export default function ToursPage() {
                       onSort={onSort}
                       widths={widths}
                       onResize={setColWidth}
-                      trClassName="text-gray-500 bg-gray-50/70 border-b border-gray-100"
+                      trClassName="text-gray-500 border-b border-gray-100"
+                      thClassName={() => 'sticky top-0 z-10 bg-gray-50'}
                     >
-                      <th className="w-28 border-s border-gray-100/70" />
+                      <th className="w-28 border-s border-gray-100/70 sticky top-0 z-10 bg-gray-50" />
                     </SortableHeaderRow>
                   </thead>
                   <tbody className="divide-y divide-gray-100">

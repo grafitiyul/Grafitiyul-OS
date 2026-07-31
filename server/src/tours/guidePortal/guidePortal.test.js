@@ -460,3 +460,73 @@ test('tour detail DTO: confirmed bookings in participants, held rows in provisio
   assert.equal(dto.provisionalParticipants[0].badge, 'עוד לא סופי');
   assert.equal(dto.provisionalParticipants[0].phone, null);
 });
+
+// ── canonical assignment identity (2026-07 past-tours fix) ──────────
+
+test('assignmentIdentityWhere matches personRefId OR externalPersonId — one rule for feed and detail', async () => {
+  const { assignmentIdentityWhere } = await import('./access.js');
+  const where = assignmentIdentityWhere(GUIDE);
+  assert.deepEqual(where, {
+    OR: [{ personRefId: 'p1' }, { externalPersonId: 'ext1' }],
+  });
+  // A person shape without an id (defensive) still matches by handle.
+  assert.deepEqual(assignmentIdentityWhere({ externalPersonId: 'ext9' }), {
+    OR: [{ externalPersonId: 'ext9' }],
+  });
+});
+
+test('detail access resolves an IMPORTED assignment claimed via personRefId (email-keyed handle)', async () => {
+  // Historical import: assignment.externalPersonId is the guide's EMAIL, not
+  // her handle — only the personRefId arm matches. Before the fix the feed
+  // showed the card but the detail resolver 403'd (not_assigned) on tap.
+  const imported = { id: 'a1', personRefId: 'p1', externalPersonId: 'guide@email.com' };
+  const client = fakeClient({ person: GUIDE, tour: { id: 't1', status: 'completed' } });
+  client.tourAssignment = {
+    findFirst: async ({ where }) => {
+      const arms = where.OR || [];
+      const hit = arms.some(
+        (a) =>
+          (a.personRefId && a.personRefId === imported.personRefId) ||
+          (a.externalPersonId && a.externalPersonId === imported.externalPersonId),
+      );
+      return hit ? imported : null;
+    },
+  };
+  const res = await resolveGuideTourAccess(client, { portalToken: 'tok', tourEventId: 't1' });
+  assert.equal(res.ok, true);
+  assert.equal(res.assignment.id, 'a1');
+});
+
+// ── legacy activity name on cards (variantDisplayName) ──────────────
+
+test('variantDisplayName: product name wins; legacy tours use the notes first-line name', async () => {
+  const { variantDisplayName } = await import('./dto.js');
+  // Native tour — product name (+ location).
+  assert.equal(
+    variantDisplayName({ product: { nameHe: 'סיור גרפיטי' }, location: { nameHe: 'תל אביב' } }),
+    'סיור גרפיטי · תל אביב',
+  );
+  // Legacy-imported tour — no product; identity = notes first line, trailing
+  // same-date token stripped (the canonical calendar-title rule).
+  assert.equal(
+    variantDisplayName({
+      product: null,
+      date: '2026-03-12',
+      notes: 'סיור בת מצווה למשפחת לוי 12/03/26\nפרטים נוספים…',
+      location: null,
+    }),
+    'סיור בת מצווה למשפחת לוי',
+  );
+  // A different trailing date (NOT the tour's own day) is kept — it is part
+  // of the name, not duplication.
+  assert.equal(
+    variantDisplayName({ product: null, date: '2026-03-12', notes: 'סיור מיוחד 01/01/25', location: null }),
+    'סיור מיוחד 01/01/25',
+  );
+  // Truly nameless — the generic label remains the last resort only.
+  assert.equal(variantDisplayName({ product: null, notes: '', location: null }), 'סיור');
+  assert.equal(
+    variantDisplayName({ product: null, notes: null, location: { nameHe: 'חיפה' } }),
+    'סיור · חיפה',
+  );
+});
