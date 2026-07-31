@@ -10,6 +10,7 @@ import {
   DESCRIPTION_EN,
   CALENDAR_TIMEZONE,
   EVENT_COLOR_ID,
+  stripTrailingSameDate,
 } from './desiredState.js';
 
 function makeTour(overrides = {}) {
@@ -43,7 +44,7 @@ test('title includes the variant city when the tour has one', () => {
   const { event } = buildDesiredEvent(
     makeTour({ location: { nameHe: 'תל אביב', nameEn: 'Tel Aviv' } }),
   );
-  assert.equal(event.summary, 'סיור גרפיטי פלורנטין · תל אביב | 20.07.2026 | 10:00');
+  assert.equal(event.summary, 'סיור גרפיטי פלורנטין | תל אביב | 20.07.2026 | 10:00');
 });
 
 test('title falls back to the variant relation city when tour.location is null', () => {
@@ -52,14 +53,14 @@ test('title falls back to the variant relation city when tour.location is null',
       productVariant: { durationHours: 2.5, location: { nameHe: 'חיפה', nameEn: null } },
     }),
   );
-  assert.equal(event.summary, 'סיור גרפיטי פלורנטין · חיפה | 20.07.2026 | 10:00');
+  assert.equal(event.summary, 'סיור גרפיטי פלורנטין | חיפה | 20.07.2026 | 10:00');
 });
 
 test('non-hebrew tour: english variant name + english description', () => {
   const { event } = buildDesiredEvent(
     makeTour({ tourLanguage: 'fr', location: { nameHe: 'תל אביב', nameEn: 'Tel Aviv' } }),
   );
-  assert.equal(event.summary, 'Florentin Graffiti Tour · Tel Aviv | 20.07.2026 | 10:00');
+  assert.equal(event.summary, 'Florentin Graffiti Tour | Tel Aviv | 20.07.2026 | 10:00');
   assert.equal(event.description, DESCRIPTION_EN);
 });
 
@@ -369,4 +370,42 @@ test('a workshop component location still wins over the template meeting point',
     }),
   );
   assert.equal(event.location, 'הסטודיו — רח\' 1');
+});
+
+// ── trailing-date dedup in imported titles ───────────────────────────────────
+test('a trailing legacy date matching the tour date is stripped', () => {
+  assert.equal(stripTrailingSameDate('סיור גרפיטי מחתרתי - מקוצר 15/08/26', '2026-08-15'), 'סיור גרפיטי מחתרתי - מקוצר');
+  assert.equal(stripTrailingSameDate('סיור וסדנת גרפיטי  06/08/2026', '2026-08-06'), 'סיור וסדנת גרפיטי');
+  assert.equal(stripTrailingSameDate('שם עם נקודות 6.8.26', '2026-08-06'), 'שם עם נקודות');
+});
+test('a DIFFERENT date is preserved — it is information', () => {
+  assert.equal(stripTrailingSameDate('סיור 15/08/26', '2026-08-16'), 'סיור 15/08/26');
+  assert.equal(stripTrailingSameDate('סיור 15/08/25', '2026-08-15'), 'סיור 15/08/25');
+});
+test('numbers that are part of the name are untouched', () => {
+  assert.equal(stripTrailingSameDate('סיור מחתרת 2', '2026-08-15'), 'סיור מחתרת 2');
+  assert.equal(stripTrailingSameDate('BBYO J5', '2026-08-15'), 'BBYO J5');
+});
+test('a name that IS only a date keeps it (never emit an empty title)', () => {
+  assert.equal(stripTrailingSameDate('15/08/26', '2026-08-15'), '15/08/26');
+});
+
+// ── home-location rule (owner item 5): city only away from home, by ID ───────
+test('city is HIDDEN when the tour location IS the configured home location', () => {
+  const { event } = buildDesiredEvent(
+    makeTour({ location: { id: 'loc_home', nameHe: 'תל אביב', nameEn: 'Tel Aviv' }, homeLocationId: 'loc_home' }),
+  );
+  assert.equal(event.summary, 'סיור גרפיטי פלורנטין | 20.07.2026 | 10:00');
+});
+test('city is SHOWN when the tour location differs from home (by id, not name)', () => {
+  const { event } = buildDesiredEvent(
+    makeTour({ location: { id: 'loc_herzliya', nameHe: 'הרצליה', nameEn: 'Herzliya' }, homeLocationId: 'loc_home' }),
+  );
+  assert.equal(event.summary, 'סיור גרפיטי פלורנטין | הרצליה | 20.07.2026 | 10:00');
+});
+test('no configured home location → nothing hidden on a guess', () => {
+  const { event } = buildDesiredEvent(
+    makeTour({ location: { id: 'loc_x', nameHe: 'חיפה', nameEn: null }, homeLocationId: null }),
+  );
+  assert.equal(event.summary, 'סיור גרפיטי פלורנטין | חיפה | 20.07.2026 | 10:00');
 });

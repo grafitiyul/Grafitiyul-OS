@@ -34,9 +34,9 @@ function backoffMs(attempts) {
 const TOUR_SYNC_INCLUDE = {
   product: { select: { nameHe: true, nameEn: true } },
   productVariant: {
-    select: { durationHours: true, location: { select: { nameHe: true, nameEn: true } } },
+    select: { durationHours: true, location: { select: { id: true, nameHe: true, nameEn: true } } },
   },
-  location: { select: { nameHe: true, nameEn: true } },
+  location: { select: { id: true, nameHe: true, nameEn: true } },
   assignments: {
     orderBy: { createdAt: 'asc' },
     include: { personRef: { select: { email: true } } },
@@ -75,6 +75,10 @@ export async function reconcileTour(deps, account, tourId) {
   // Enrich with the Open Tour template (loose ref) for forced duration +
   // meeting-point fallback — before any desired-event derivation below.
   tour.openTourTemplate = await loadOpenTourTemplate(db, tour.openTourTemplateId);
+  // The canonical home location (Location.isHomeLocation) — the SAME rule guide
+  // reports use: the title shows a city only when the tour's location differs
+  // from home, compared by ID. Merged onto the tour like the template above.
+  tour.homeLocationId = (await db.location?.findFirst?.({ where: { isHomeLocation: true }, select: { id: true } }))?.id || null;
 
   // Guarded success write: if the tour mutated while we were talking to
   // Google, leave it 'pending' — the next tick re-reconciles (diff → no-op if

@@ -122,9 +122,39 @@ export function variantDisplayName(tour, he) {
 // "סיור וסדנת גרפיטי · תל אביב | 04.08.2026 | 12:00". Derived on every
 // reconcile, so a date/time/variant change updates it automatically (unless
 // the operator manually renamed the event in Google — ownership rules below).
+// Legacy Airtable tour names embed their date ("סיור גרפיטי מחתרתי - מקוצר
+// 15/08/26"), and the title builder appends the canonical date again — guides
+// saw it twice. Strip a TRAILING date token only when it denotes the SAME day
+// as the tour itself (DD/MM/YY, DD/MM/YYYY, DD.MM.YY, DD.MM.YYYY); a number or
+// date that is genuinely part of a product name (or a different date) stays.
+// Presentation-only: the stored notes are never modified.
+export function stripTrailingSameDate(name, tourDate) {
+  const m = /^(.*?)[\s\-–]*(\d{1,2})[./](\d{1,2})[./](\d{2}|\d{4})\s*$/.exec(String(name || ''));
+  if (!m) return name;
+  const iso = String(tourDate || '').slice(0, 10); // YYYY-MM-DD
+  if (!iso) return name;
+  const [y, mo, d] = iso.split('-');
+  const sameDay = Number(m[2]) === Number(d) && Number(m[3]) === Number(mo);
+  const yy = m[4].length === 2 ? m[4] : m[4].slice(2);
+  const sameYear = yy === y.slice(2);
+  if (!sameDay || !sameYear) return name;
+  const stripped = m[1].trim();
+  return stripped || name; // a name that WAS only a date keeps it
+}
+
 function eventTitle(tour, warnings) {
   const he = isHebrewTour(tour.tourLanguage);
-  let name = variantDisplayName(tour, he);
+  // City in the TITLE only when the tour happens away from the configured home
+  // location (Location.isHomeLocation — the same canonical rule guide reports
+  // use), compared by ID, never by display string. When no home location is
+  // configured, or the tour's location is unresolved, nothing is hidden on a
+  // guess: the city shows whenever it exists and cannot be proven to be home.
+  const loc = tour.location || tour.productVariant?.location || null;
+  const atHome = !!(loc?.id && tour.homeLocationId && loc.id === tour.homeLocationId);
+  const cityPart = !atHome ? (he ? loc?.nameHe : loc?.nameEn || loc?.nameHe) : null;
+
+  const product = he ? tour.product?.nameHe : tour.product?.nameEn || tour.product?.nameHe;
+  let name = product || null;
   if (!name) {
     // No product — true for every legacy-imported tour (product is class D and
     // deliberately not imported). Falling straight to the generic label sent 78
@@ -132,7 +162,10 @@ function eventTitle(tour, warnings) {
     // tour NAME (stored on notes — the same name guides knew from the legacy
     // calendar) is the descriptive identity; the kind label is the honest
     // fallback below it. Generic remains only for a tour with literally nothing.
-    const legacyName = String(tour.notes || '').trim().split('\n')[0].slice(0, 80);
+    const legacyName = stripTrailingSameDate(
+      String(tour.notes || '').trim().split('\n')[0].slice(0, 80),
+      tour.date,
+    );
     if (legacyName) {
       name = legacyName;
     } else {
@@ -145,7 +178,9 @@ function eventTitle(tour, warnings) {
       }
     }
   }
-  return `${name} | ${fmtDateDots(tour.date)} | ${tour.startTime}`;
+  // "name | city? | date | time" — the city is its own segment, present only
+  // away from home (or when home cannot be proven).
+  return [name, cityPart, fmtDateDots(tour.date), tour.startTime].filter(Boolean).join(' | ');
 }
 
 function eventLocation(tour) {
