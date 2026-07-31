@@ -34,6 +34,10 @@ for (const s of man.shards || []) {
 }
 
 const products = await prisma.product.findMany({
+  // ACTIVE only — the catalogue contains inactive stubs with null durations
+  // (the bare 'בת מצווה'), and matching one silently degrades the event to the
+  // default duration. Found the hard way on 2026-07-31.
+  where: { active: true },
   select: { id: true, nameHe: true, variants: { select: { id: true, locationId: true, durationHours: true, location: { select: { id: true, nameHe: true } } } } },
 });
 const productByName = new Map(products.map((p) => [norm(p.nameHe), p]));
